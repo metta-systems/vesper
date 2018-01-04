@@ -1,0 +1,23 @@
+{
+    "data-layout": "e-m:e-p:32:32-i64:64-v128:64:128-a:0:32-n32-S64",
+    "llvm-target": "arm-unknown-linux-musleabihf",
+    "target-endian": "little",
+    "target-pointer-width": "32",
+    "target-c-int-width": "32",
+    "os": "vesper",
+    "env": "metta",
+    "arch": "arm",
+    "linker-is-gnu": true,
+    "executables": true,
+    "linker-flavor": "ld",
+    "linker": "arm-unknown-linux-musleabihf-ld",
+    "ar": "arm-unknown-linux-musleabihf-ar",
+    "position-independent-executables": true,
+    "has-elf-tls": true,
+    "panic-strategy": "abort",
+    "no-default-libraries": true,
+    "pre-link-args": {
+        "gcc": ["-ffreestanding", "-nodefaultlibs", "-nostdlib"]
+    },
+    "default-codegen-units": 1
+}

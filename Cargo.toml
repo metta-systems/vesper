@@ -1,0 +1,42 @@
+[package]
+name = "vesper"
+version = "1.0.0"
+authors = ["Berkus Decker <berkus+cargo@metta.systems>"]
+description = "Vesper exokernel"
+documentation = "https://docs.metta.systems/vesper"
+homepage = "https://github.com/metta-systems/vesper"
+repository = "https://github.com/metta-systems/vesper"
+readme = "README.md"
+license = "BSL-1.0"
+categories = ["no-std", "embedded", "os"]
+publish = false
+
+[features]
+unstable = []
+realtime = []
+
+#[lib]
+#name = "nucleus"
+#path = "src/lib.rs"
+#crate-type = ["staticlib"]
+
+[dependencies]
+rlibc = "1.0.0"
+bitflags = "1.0.1"
+register = "0.2"
+cortex-a = "2.2"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+debug = true
+lto = true
+
+[package.metadata.cargo-xbuild]
+memcpy = true
+
+[package.metadata.bootimage]
+default-target = "targets/aarch64-vesper-metta.json"
+#run-command = ".cargo/runscript.sh"
