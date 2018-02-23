@@ -10,6 +10,9 @@ pub type VirtualAddress = usize;
 
 use self::paging::PAGE_SIZE;
 
+/**
+ * Frame is an addressable unit of the physical address space.
+ */
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Frame {
     number: usize,
