@@ -1,4 +1,4 @@
-use memory::Frame;
+use super::super::Frame;
 
 pub struct Entry(u64);
 

@@ -1,4 +1,4 @@
-use memory::{Frame, FrameAllocator};
+use super::{Frame, FrameAllocator};
 use multiboot2::{MemoryArea, MemoryAreaIter}; // replace with DTB?
 
 pub struct AreaFrameAllocator {

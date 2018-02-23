@@ -1,3 +1,5 @@
+// mod arch::aarch64::memory::paging
+
 //! Some code was borrowed from [Phil Opp's Blog](https://os.phil-opp.com/page-tables/)
 //! Paging is mostly based on https://os.phil-opp.com/page-tables/ and ARM ARM
 
@@ -28,16 +30,15 @@
 
 pub use self::entry::*;
 use core::ptr::Unique;
-use memory::{Frame, PAGE_SIZE};
 use self::table::{Level0, Table};
+use super::{Frame, FrameAllocator, PhysicalAddress, VirtualAddress};
 
 mod entry;
 mod table;
 
-const ENTRY_COUNT: usize = 512;
+pub const PAGE_SIZE: usize = 4096;
 
-pub type PhysicalAddress = usize;
-pub type VirtualAddress = usize;
+pub const ENTRY_COUNT: usize = 512;
 
 pub struct Page {
     number: usize,
