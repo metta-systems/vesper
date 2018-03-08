@@ -21,14 +21,16 @@ impl FrameAllocator for AreaFrameAllocator {
             };
 
             // the last frame of the current area
-            let current_area_last_frame = {
-                let address = area.base_addr + area.length - 1;
-                Frame::containing_address(address as usize)
-            };
+            let current_area_last_frame = Frame::containing_address(0x3f00_0000);
+            // {
+            //     let address = area.base_addr + area.length - 1;
+            //     Frame::containing_address(address as usize)
+            // };
 
             if frame > current_area_last_frame {
                 // all frames of current area are used, switch to next area
-                self.choose_next_area();
+                // self.choose_next_area();
+                unimplemented!();
             } else if frame >= self.kernel_start && frame <= self.kernel_end {
                 // `frame` is used by the kernel
                 self.next_free_frame = Frame {
@@ -76,7 +78,8 @@ impl AreaFrameAllocator {
             multiboot_start: Frame::containing_address(multiboot_start),
             multiboot_end: Frame::containing_address(multiboot_end),
         };
-        allocator.choose_next_area();
+        // allocator.choose_next_area();
+        allocator.next_free_frame = Frame::containing_address(0x100000); // start from 1Mb
         allocator
     }
 
