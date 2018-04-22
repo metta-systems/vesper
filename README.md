@@ -1,5 +1,7 @@
 # Vesper
 
+[![Join the chat at https://gitter.im/metta-systems/vesper](https://badges.gitter.im/metta-systems/vesper.svg)](https://gitter.im/metta-systems/vesper?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 ## About kernel
 
 Vesper is a capability-based single-address-space exokernel, it tries to remain small and secure. To achieve this, kernel functionality is extremely limited - it provides only address space isolation and IPC, after bootup kernel does not allocate any memory itself.
