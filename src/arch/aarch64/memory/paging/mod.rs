@@ -29,9 +29,9 @@
  */
 
 pub use self::entry::*;
-use core::ptr::Unique;
 use self::table::{Level0, Table};
 use super::{Frame, FrameAllocator, PhysicalAddress, VirtualAddress};
+use core::ptr::Unique;
 
 mod entry;
 mod table;
@@ -116,7 +116,8 @@ impl ActivePageTable {
                         // address must be 1GiB aligned
                         assert!(start_frame.number % (ENTRY_COUNT * ENTRY_COUNT) == 0);
                         return Some(Frame {
-                            number: start_frame.number + page.l2_index() * ENTRY_COUNT
+                            number: start_frame.number
+                                + page.l2_index() * ENTRY_COUNT
                                 + page.l3_index(),
                         });
                     }
@@ -182,7 +183,8 @@ impl ActivePageTable {
 
         assert!(self.translate(page.start_address()).is_some());
 
-        let l3 = self.l0_mut()
+        let l3 = self
+            .l0_mut()
             .next_table_mut(page.l0_index())
             .and_then(|l1| l1.next_table_mut(page.l1_index()))
             .and_then(|l2| l2.next_table_mut(page.l2_index()))

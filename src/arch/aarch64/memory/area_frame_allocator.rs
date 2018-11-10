@@ -84,7 +84,8 @@ impl AreaFrameAllocator {
     }
 
     fn choose_next_area(&mut self) {
-        self.current_area = self.areas
+        self.current_area = self
+            .areas
             .clone()
             .filter(|area| {
                 let address = area.base_addr + area.length - 1;

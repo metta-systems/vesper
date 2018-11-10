@@ -1,8 +1,8 @@
-use core::marker::PhantomData;
-use core::ops::{Index, IndexMut};
 use super::super::FrameAllocator;
 use super::ENTRY_COUNT;
 use arch::aarch64::memory::paging::entry::*;
+use core::marker::PhantomData;
+use core::ops::{Index, IndexMut};
 
 pub const L0: *mut Table<Level0> = 0xffff_ffff_ffff_f000 as *mut _; // L0 0o177777_777_777_777_777_0000
                                                                     // L1 0o177777_777_777_777_XXX_0000, XXX is the L0 index
