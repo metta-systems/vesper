@@ -19,16 +19,38 @@ impl VC {
 
         //        write!(uart, "inited fb_info: {}\n", fb_info);
 
-        //        let mut pixel_order = Mailbox::new();
-        //
-        //        pixel_order.buffer[0] = 24;
-        //        pixel_order.buffer[1] = mailbox::REQUEST;
-        //        pixel_order.buffer[2] = tag::SetPixelOrder;
-        //        pixel_order.buffer[3] = 4;
-        //        pixel_order.buffer[4] = 4;
-        //        pixel_order.buffer[5] = 0; // 0 - BGR, 1 - RGB
-        //
-        //        pixel_order.call(channel::PropertyTagsArmToVc).map_err(|_| ());
+        let mut mbox = Mailbox::new();
+
+        mbox.buffer[0] = 11 * 4;
+        mbox.buffer[1] = mailbox::REQUEST;
+
+        mbox.buffer[2] = tag::GetDepth;
+        mbox.buffer[3] = 4;
+        mbox.buffer[4] = 0;
+        mbox.buffer[5] = 0; // GpuFb.depth
+
+        // SetPixelOrder doesn't work in QEMU, however TestPixelOrder does.
+        mbox.buffer[6] = tag::TestPixelOrder;
+        mbox.buffer[7] = 4;
+        mbox.buffer[8] = 4;
+        mbox.buffer[9] = 1; // PixelOrder
+
+        mbox.buffer[10] = tag::End;
+
+        mbox.call(channel::PropertyTagsArmToVc)
+            .map_err(|_| ());
+
+        if (mbox.buffer[4] & VAL_LEN_FLAG) == 0
+            || (mbox.buffer[8] & VAL_LEN_FLAG) == 0
+            {
+                return None;
+            }
+
+        let order = match mbox.buffer[9] {
+            0 => PixelOrder::BGR,
+            1 => PixelOrder::RGB,
+            _ => return None,
+        };
 
         /* Need to set up max_x/max_y before using Display::write */
         let max_x = fb_info.vwidth / CHARSIZE_X;
@@ -44,7 +66,7 @@ impl VC {
             max_y,
             fb_info.vwidth,
             fb_info.vheight,
-            PixelOrder::BGR,
+            order,
         ))
     }
     /*
