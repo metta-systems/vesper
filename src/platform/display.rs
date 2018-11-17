@@ -105,23 +105,24 @@ impl Display {
         })
     }
 
-    pub fn putpixel(&mut self, x: u16, y: u16, color: u32) {
-        let f = |mut v: u32, chan: u16| unsafe {
-            if self.depth != 32 { // marker for errors
-                v = 128;
-            }
-            *(self.base as *mut u8)
-                .offset((u32::from(y) * self.pitch
-                    + u32::from(x) * (self.depth / 8)
-                    + self.color_component(chan)) as isize) = v as u8;
-        };
-
-        f(color & 0xff, 0);
-        f((color >> 8) & 0xff, 1);
-        f((color >> 16) & 0xff, 2)
+    #[inline]
+    fn write_pixel_component(&self, x: u32, y: u32, chan: u16, c: u32) {
+        unsafe {
+            *(self.base as *mut u8).offset(
+                (y * self.pitch
+                    + x * 4//(self.depth / 8)
+                    + self.color_component(chan)) as isize,
+            ) = c as u8;
+        }
     }
 
-    pub fn rect(&mut self, x1: u16, y1: u16, x2: u16, y2: u16, color: u32) {
+    pub fn putpixel(&mut self, x: u32, y: u32, color: u32) {
+        self.write_pixel_component(x, y, 0, color & 0xff);
+        self.write_pixel_component(x, y, 1, (color >> 8) & 0xff);
+        self.write_pixel_component(x, y, 2, (color >> 16) & 0xff);
+    }
+
+    pub fn rect(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: u32) {
         for y in y1..y2 {
             for x in x1..x2 {
                 self.putpixel(x, y, color);
@@ -129,7 +130,7 @@ impl Display {
         }
     }
 
-    pub fn draw_text(&mut self, x: u16, y: u16, text: &str, color: u32) {
+    pub fn draw_text(&mut self, x: u32, y: u32, text: &str, color: u32) {
         for i in 0..8 {
             let mut char_off = 0;
             // Take an 8 bit slice from each array value.
