@@ -96,18 +96,21 @@ impl Display {
         }
     }
 
+    #[inline]
+    fn color_component(&self, chan: u16) -> u32 {
+        u32::from(if self.order == PixelOrder::BGR {
+            2 - chan
+        } else {
+            chan
+        })
+    }
+
     pub fn putpixel(&mut self, x: u16, y: u16, color: u32) {
-        let c = |chan: u16| {
-            if self.order == PixelOrder::BGR {
-                2 - chan
-            } else {
-                chan
-            }
-        };
-        let f = |v: u32, chan: u16| unsafe {
-            *(self.base as *mut u8).offset(
-                (y as u32 * self.pitch + x as u32 * (self.depth / 8) + c(chan) as u32) as isize,
-            ) = v as u8;
+        let f = |mut v: u32, chan: u16| unsafe {
+            *(self.base as *mut u8)
+                .offset((u32::from(y) * self.pitch
+                    + u32::from(x) * 4//(self.depth / 8)
+                    + self.color_component(chan)) as isize) = v as u8;
         };
 
         f(color & 0xff, 0);
