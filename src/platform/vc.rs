@@ -1,6 +1,6 @@
 use core::fmt::Write;
 use platform::display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y};
-use platform::mailbox::{self, channel, tag, GpuFb, Mailbox, response::VAL_LEN_FLAG};
+use platform::mailbox::{self, channel, response::VAL_LEN_FLAG, tag, GpuFb, Mailbox};
 use platform::rpi3::bus2phys;
 use platform::uart::MiniUart;
 
@@ -8,29 +8,32 @@ pub struct VC;
 
 impl VC {
     // Use mailbox framebuffer interface to initialize
-    pub fn init_fb(size: Size2d/*, uart: &mut MiniUart*/) -> Option<Display> {
-        let mut fb_info: GpuFb = GpuFb::new(size, 24);
+    pub fn init_fb(size: Size2d /*, uart: &mut MiniUart*/) -> Option<Display> {
+        let mut fb_info = GpuFb::new(size, 24);
 
-//        uart.puts("initing fb_info\n");
-        fb_info.call().map_err(|_| {/*uart.puts("fb_info error\n");*/()});
+        //        uart.puts("initing fb_info\n");
+        fb_info.call().map_err(|_| {
+            /*uart.puts("fb_info error\n");*/
+            ()
+        });
 
-//        write!(uart, "inited fb_info: {}\n", fb_info);
+        //        write!(uart, "inited fb_info: {}\n", fb_info);
 
-//        let mut pixel_order = Mailbox::new();
-//
-//        pixel_order.buffer[0] = 24;
-//        pixel_order.buffer[1] = mailbox::REQUEST;
-//        pixel_order.buffer[2] = tag::SetPixelOrder;
-//        pixel_order.buffer[3] = 4;
-//        pixel_order.buffer[4] = 4;
-//        pixel_order.buffer[5] = 0; // 0 - BGR, 1 - RGB
-//
-//        pixel_order.call(channel::PropertyTagsArmToVc).map_err(|_| ());
+        //        let mut pixel_order = Mailbox::new();
+        //
+        //        pixel_order.buffer[0] = 24;
+        //        pixel_order.buffer[1] = mailbox::REQUEST;
+        //        pixel_order.buffer[2] = tag::SetPixelOrder;
+        //        pixel_order.buffer[3] = 4;
+        //        pixel_order.buffer[4] = 4;
+        //        pixel_order.buffer[5] = 0; // 0 - BGR, 1 - RGB
+        //
+        //        pixel_order.call(channel::PropertyTagsArmToVc).map_err(|_| ());
 
         /* Need to set up max_x/max_y before using Display::write */
         let max_x = fb_info.vwidth / CHARSIZE_X;
         let max_y = fb_info.vheight / CHARSIZE_Y;
-//        uart.puts("inited fb_info #2\n");
+        //        uart.puts("inited fb_info #2\n");
 
         Some(Display::new(
             bus2phys(fb_info.pointer),
@@ -45,91 +48,91 @@ impl VC {
         ))
     }
     /*
-    fn get_display_size() -> Option<Size2d> {
-        let mut mbox = Mbox::new();
-    
-        mbox.0[0] = 8 * 4; // Total size
-        mbox.0[1] = MAILBOX_REQ_CODE; // Request
-        mbox.0[2] = Tag::GetPhysicalWH as u32; // Display size  // tag
-        mbox.0[3] = 8; // Buffer size   // val buf size
-        mbox.0[4] = 0; // Request size  // val size
-        mbox.0[5] = 0; // Space for horizontal resolution
-        mbox.0[6] = 0; // Space for vertical resolution
-        mbox.0[7] = Tag::End as u32; // End tag
-    
-        mbox.call(Channel::PropertyTagsArmToVc)?;
-    
-//        if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
-//            return None;
-//        }
-        if mbox.0[5] == 0 && mbox.0[6] == 0 {
-            // Qemu emulation returns 0x0
-            return Some(Size2d { x: 640, y: 480 });
+        fn get_display_size() -> Option<Size2d> {
+            let mut mbox = Mbox::new();
+        
+            mbox.0[0] = 8 * 4; // Total size
+            mbox.0[1] = MAILBOX_REQ_CODE; // Request
+            mbox.0[2] = Tag::GetPhysicalWH as u32; // Display size  // tag
+            mbox.0[3] = 8; // Buffer size   // val buf size
+            mbox.0[4] = 0; // Request size  // val size
+            mbox.0[5] = 0; // Space for horizontal resolution
+            mbox.0[6] = 0; // Space for vertical resolution
+            mbox.0[7] = Tag::End as u32; // End tag
+        
+            mbox.call(Channel::PropertyTagsArmToVc)?;
+        
+    //        if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
+    //            return None;
+    //        }
+            if mbox.0[5] == 0 && mbox.0[6] == 0 {
+                // Qemu emulation returns 0x0
+                return Some(Size2d { x: 640, y: 480 });
+            }
+            Some(Size2d {
+                x: mbox.0[5],
+                y: mbox.0[6],
+            })
         }
-        Some(Size2d {
-            x: mbox.0[5],
-            y: mbox.0[6],
-        })
-    }
-    
-    fn set_display_size(size: Size2d) -> Option<Display> {
-        // @todo Make Display use VC functions internally instead
-        let mut mbox = Mbox::new();
-        let mut count: usize = 0;
-    
-        count += 1;
-        mbox.0[count] = MAILBOX_REQ_CODE; // Request
-        count += 1;
-        mbox.0[count] = Tag::SetPhysicalWH as u32;
-        count += 1;
-        mbox.0[count] = 8; // Buffer size   // val buf size
-        count += 1;
-        mbox.0[count] = 8; // Request size  // val size
-        count += 1;
-        mbox.0[count] = size.x; // Space for horizontal resolution
-        count += 1;
-        mbox.0[count] = size.y; // Space for vertical resolution
-        count += 1;
-        mbox.0[count] = Tag::SetVirtualWH as u32;
-        count += 1;
-        mbox.0[count] = 8; // Buffer size   // val buf size
-        count += 1;
-        mbox.0[count] = 8; // Request size  // val size
-        count += 1;
-        mbox.0[count] = size.x; // Space for horizontal resolution
-        count += 1;
-        mbox.0[count] = size.y; // Space for vertical resolution
-        count += 1;
-        mbox.0[count] = Tag::SetDepth as u32;
-        count += 1;
-        mbox.0[count] = 4; // Buffer size   // val buf size
-        count += 1;
-        mbox.0[count] = 4; // Request size  // val size
-        count += 1;
-        mbox.0[count] = 16; // 16 bpp
-        count += 1;
-        mbox.0[count] = Tag::AllocateBuffer as u32;
-        count += 1;
-        mbox.0[count] = 8; // Buffer size   // val buf size
-        count += 1;
-        mbox.0[count] = 4; // Request size  // val size
-        count += 1;
-        mbox.0[count] = 4096; // Alignment = 4096
-        count += 1;
-        mbox.0[count] = 0; // Space for response
-        count += 1;
-        mbox.0[count] = Tag::End as u32;
-        mbox.0[0] = (count * 4) as u32; // Total size
-    
-        let max_count = count;
-    
-        Mailbox::call(Channel::PropertyTagsArmToVc as u8, &mbox.0 as *const u32 as *const u8)?;
-    
-        if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
-            return None;
-        }
-    
-        count = 2; /* First tag */
+        
+        fn set_display_size(size: Size2d) -> Option<Display> {
+            // @todo Make Display use VC functions internally instead
+            let mut mbox = Mbox::new();
+            let mut count: usize = 0;
+        
+            count += 1;
+            mbox.0[count] = MAILBOX_REQ_CODE; // Request
+            count += 1;
+            mbox.0[count] = Tag::SetPhysicalWH as u32;
+            count += 1;
+            mbox.0[count] = 8; // Buffer size   // val buf size
+            count += 1;
+            mbox.0[count] = 8; // Request size  // val size
+            count += 1;
+            mbox.0[count] = size.x; // Space for horizontal resolution
+            count += 1;
+            mbox.0[count] = size.y; // Space for vertical resolution
+            count += 1;
+            mbox.0[count] = Tag::SetVirtualWH as u32;
+            count += 1;
+            mbox.0[count] = 8; // Buffer size   // val buf size
+            count += 1;
+            mbox.0[count] = 8; // Request size  // val size
+            count += 1;
+            mbox.0[count] = size.x; // Space for horizontal resolution
+            count += 1;
+            mbox.0[count] = size.y; // Space for vertical resolution
+            count += 1;
+            mbox.0[count] = Tag::SetDepth as u32;
+            count += 1;
+            mbox.0[count] = 4; // Buffer size   // val buf size
+            count += 1;
+            mbox.0[count] = 4; // Request size  // val size
+            count += 1;
+            mbox.0[count] = 16; // 16 bpp
+            count += 1;
+            mbox.0[count] = Tag::AllocateBuffer as u32;
+            count += 1;
+            mbox.0[count] = 8; // Buffer size   // val buf size
+            count += 1;
+            mbox.0[count] = 4; // Request size  // val size
+            count += 1;
+            mbox.0[count] = 4096; // Alignment = 4096
+            count += 1;
+            mbox.0[count] = 0; // Space for response
+            count += 1;
+            mbox.0[count] = Tag::End as u32;
+            mbox.0[0] = (count * 4) as u32; // Total size
+        
+            let max_count = count;
+        
+            Mailbox::call(Channel::PropertyTagsArmToVc as u8, &mbox.0 as *const u32 as *const u8)?;
+        
+            if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
+                return None;
+            }
+        
+            count = 2; /* First tag */
     while mbox.0[count] != 0 {
     if mbox.0[count] == Tag::AllocateBuffer as u32 {
     break;
