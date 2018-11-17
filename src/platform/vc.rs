@@ -21,7 +21,7 @@ impl VC {
 
         let mut mbox = Mailbox::new();
 
-        mbox.buffer[0] = 11 * 4;
+        mbox.buffer[0] = 15 * 4;
         mbox.buffer[1] = mailbox::REQUEST;
 
         mbox.buffer[2] = tag::GetDepth;
@@ -35,7 +35,12 @@ impl VC {
         mbox.buffer[8] = 4;
         mbox.buffer[9] = 1; // PixelOrder
 
-        mbox.buffer[10] = tag::End;
+        mbox.buffer[10] = tag::SetAlphaMode;
+        mbox.buffer[11] = 4;
+        mbox.buffer[12] = 4;
+        mbox.buffer[13] = mailbox::alpha_mode::IGNORED;
+
+        mbox.buffer[14] = tag::End;
 
         mbox.call(channel::PropertyTagsArmToVc).map_err(|_| ());
 
