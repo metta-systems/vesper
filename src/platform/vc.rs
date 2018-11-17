@@ -52,6 +52,11 @@ impl VC {
             _ => return None,
         };
 
+        let depth = mbox.buffer[5];
+        if depth != fb_info.depth {
+            return None; // this doesn't happen, so depth is ok
+        }
+
         /* Need to set up max_x/max_y before using Display::write */
         let max_x = fb_info.vwidth / CHARSIZE_X;
         let max_y = fb_info.vheight / CHARSIZE_Y;
