@@ -37,14 +37,11 @@ impl VC {
 
         mbox.buffer[10] = tag::End;
 
-        mbox.call(channel::PropertyTagsArmToVc)
-            .map_err(|_| ());
+        mbox.call(channel::PropertyTagsArmToVc).map_err(|_| ());
 
-        if (mbox.buffer[4] & VAL_LEN_FLAG) == 0
-            || (mbox.buffer[8] & VAL_LEN_FLAG) == 0
-            {
-                return None;
-            }
+        if (mbox.buffer[4] & VAL_LEN_FLAG) == 0 || (mbox.buffer[8] & VAL_LEN_FLAG) == 0 {
+            return None;
+        }
 
         let order = match mbox.buffer[9] {
             0 => PixelOrder::BGR,
