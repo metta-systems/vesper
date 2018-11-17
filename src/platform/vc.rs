@@ -9,7 +9,7 @@ pub struct VC;
 impl VC {
     // Use mailbox framebuffer interface to initialize
     pub fn init_fb(size: Size2d /*, uart: &mut MiniUart*/) -> Option<Display> {
-        let mut fb_info = GpuFb::new(size, 24);
+        let mut fb_info = GpuFb::new(size, 32);
 
         //        uart.puts("initing fb_info\n");
         fb_info.call().map_err(|_| {
