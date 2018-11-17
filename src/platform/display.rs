@@ -107,9 +107,12 @@ impl Display {
 
     pub fn putpixel(&mut self, x: u16, y: u16, color: u32) {
         let f = |mut v: u32, chan: u16| unsafe {
+            if self.depth != 32 { // marker for errors
+                v = 128;
+            }
             *(self.base as *mut u8)
                 .offset((u32::from(y) * self.pitch
-                    + u32::from(x) * 4//(self.depth / 8)
+                    + u32::from(x) * (self.depth / 8)
                     + self.color_component(chan)) as isize) = v as u8;
         };
 
