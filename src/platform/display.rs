@@ -105,7 +105,7 @@ impl Display {
         })
     }
 
-    #[inline]
+    #[inline(never)]
     fn write_pixel_component(&self, x: u32, y: u32, chan: u16, c: u32) {
         unsafe {
             *(self.base as *mut u8).offset(
@@ -116,6 +116,7 @@ impl Display {
         }
     }
 
+    #[inline(never)]
     pub fn putpixel(&mut self, x: u32, y: u32, color: u32) {
         self.write_pixel_component(x, y, 0, color & 0xff);
         self.write_pixel_component(x, y, 1, (color >> 8) & 0xff);
