@@ -12,6 +12,7 @@ pub mod mailbox;
 pub mod mini_uart;
 pub mod pl011_uart;
 pub mod power;
+pub mod usb;
 pub mod vc;
 
 /// See BCM2835-ARM-Peripherals.pdf
