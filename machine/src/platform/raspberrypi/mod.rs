@@ -12,6 +12,7 @@ pub mod drivers;
 pub mod exception;
 // pub mod fb;
 pub mod memory;
+pub mod usb;
 // pub mod vc;
 
 /// See BCM2835-ARM-Peripherals.pdf
