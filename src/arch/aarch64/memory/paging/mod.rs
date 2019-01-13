@@ -149,9 +149,9 @@ impl ActivePageTable {
         A: FrameAllocator,
     {
         let l0 = self.l0_mut();
-        let mut l1 = l0.next_table_create(page.l0_index(), allocator);
-        let mut l2 = l1.next_table_create(page.l1_index(), allocator);
-        let mut l3 = l2.next_table_create(page.l2_index(), allocator);
+        let l1 = l0.next_table_create(page.l0_index(), allocator);
+        let l2 = l1.next_table_create(page.l1_index(), allocator);
+        let l3 = l2.next_table_create(page.l2_index(), allocator);
 
         assert!(l3[page.l3_index()].is_unused());
         l3[page.l3_index()].set(frame, flags | EntryFlags::VALID);
@@ -173,7 +173,7 @@ impl ActivePageTable {
         self.map_to(page, frame, flags, allocator)
     }
 
-    fn unmap<A>(&mut self, page: Page, allocator: &mut A)
+    fn unmap<A>(&mut self, page: Page, _allocator: &mut A)
     where
         A: FrameAllocator,
     {
@@ -187,7 +187,7 @@ impl ActivePageTable {
             .and_then(|l1| l1.next_table_mut(page.l1_index()))
             .and_then(|l2| l2.next_table_mut(page.l2_index()))
             .expect("mapping code does not support huge pages");
-        let frame = l3[page.l3_index()].pointed_frame().unwrap();
+        let _frame = l3[page.l3_index()].pointed_frame().unwrap();
         l3[page.l3_index()].set_unused();
         // tlb::flush(VirtualAddress(page.start_address()));
         // TODO free p(1,2,3) table if empty

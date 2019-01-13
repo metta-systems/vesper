@@ -204,7 +204,7 @@ fn setup_paging() {
         read_mair(),
     );
 
-    let bcm2837_mem_map: [MemMapRegion; 2] = [
+    let _bcm2837_mem_map: [MemMapRegion; 2] = [
         MemMapRegion {
             virt: 0x0000_0000,
             phys: 0x0000_0000,
