@@ -191,21 +191,6 @@ struct MemMapRegion {
 
 impl MemMapRegion {}
 
-static bcm2837_mem_map: [MemMapRegion; 2] = [
-    MemMapRegion {
-        virt: 0x00000000,
-        phys: 0x00000000,
-        size: 0x3f000000,
-        attr: MemType::NORMAL | MemType::INNER_SHARE,
-    },
-    MemMapRegion {
-        virt: 0x3f000000,
-        phys: 0x3f000000,
-        size: 0x01000000,
-        attr: MemType::DEVICE_NGNRNE | MemType::NON_SHARE | MemType::PXN | MemType::UXN,
-    },
-];
-
 fn setup_paging() {
     // test if paging is enabled
     // if so, loop here
@@ -219,6 +204,21 @@ fn setup_paging() {
         read_translation_control(),
         read_mair(),
     );
+
+    let bcm2837_mem_map: [MemMapRegion; 2] = [
+        MemMapRegion {
+            virt: 0x0000_0000,
+            phys: 0x0000_0000,
+            size: 0x3f00_0000,
+            attr: MemType::NORMAL | MemType::INNER_SHARE,
+        },
+        MemMapRegion {
+            virt: 0x3f00_0000,
+            phys: 0x3f00_0000,
+            size: 0x0100_0000,
+            attr: MemType::DEVICE_NGNRNE | MemType::NON_SHARE | MemType::PXN | MemType::UXN,
+        },
+    ];
 }
 
 pub struct BcmHost;
