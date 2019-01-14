@@ -55,7 +55,7 @@ pub fn kmain() -> ! {
 //    write!(uart, "Hey there, mini uart talking!\n");
 
     if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 } /*, &mut uart*/) {
-        display.rect(100, 100, 200, 200, Color::rgb(255, 255, 255).0);
+        display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64).0);
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255).0);
         // display.draw_text(50, 150, core::fmt("Display width {}", display.width), Color::rgb(255,0,0).0);
 
