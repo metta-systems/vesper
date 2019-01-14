@@ -8,6 +8,7 @@
 #![doc(html_root_url = "https://docs.metta.systems/")]
 #![allow(dead_code)]
 #![allow(unused_assignments)]
+#![allow(unused_must_use)]
 
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 use architecture_not_supported_sorry;
@@ -27,7 +28,11 @@ pub mod arch;
 pub use arch::*;
 pub mod platform;
 
-use platform::{display::Size2d, uart::MiniUart};
+use platform::{
+    display::{Color, Size2d},
+    uart::MiniUart,
+    vc::VC,
+};
 
 // User-facing kernel parts - syscalls and capability invocations.
 // pub mod vesper; -- no mod exported, because available through syscall interface
@@ -47,6 +52,16 @@ pub fn kmain() -> ! {
     let uart = MiniUart::new();
     uart.init();
     uart.puts("Hey there, mini uart talking!");
+
+    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }) {
+        display.rect(100, 100, 200, 200, Color::rgb(255, 255, 255).0);
+        display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255).0);
+        // display.draw_text(50, 150, core::fmt("Display width {}", display.width), Color::rgb(255,0,0).0);
+
+        display.draw_text(150, 50, "RED", Color::rgb(255, 0, 0).0);
+        display.draw_text(160, 60, "GREEN", Color::rgb(0, 255, 0).0);
+        display.draw_text(170, 70, "BLUE", Color::rgb(0, 0, 255).0);
+    }
 
     uart.puts("Bye, going to sleep now");
     endless_sleep()
