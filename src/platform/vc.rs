@@ -1,15 +1,20 @@
+use core::fmt::Write;
 use platform::display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y};
 use platform::mailbox::{self, channel, tag, GpuFb, Mailbox, response::VAL_LEN_FLAG};
 use platform::rpi3::bus2phys;
+use platform::uart::MiniUart;
 
 pub struct VC;
 
 impl VC {
     // Use mailbox framebuffer interface to initialize
-    pub fn init_fb(size: Size2d) -> Option<Display> {
+    pub fn init_fb(size: Size2d, uart: &mut MiniUart) -> Option<Display> {
         let mut fb_info: GpuFb = GpuFb::new(size, 24);
 
-        fb_info.call().map_err(|_| ());
+        uart.puts("initing fb_info\n");
+        fb_info.call().map_err(|_| {uart.puts("fb_info error\n");()});
+
+        write!(uart, "inited fb_info: {}\n", fb_info);
 
 //        let mut pixel_order = Mailbox::new();
 //
@@ -25,6 +30,7 @@ impl VC {
         /* Need to set up max_x/max_y before using Display::write */
         let max_x = fb_info.vwidth / CHARSIZE_X;
         let max_y = fb_info.vheight / CHARSIZE_Y;
+        uart.puts("inited fb_info #2\n");
 
         Some(Display::new(
             bus2phys(fb_info.pointer),
