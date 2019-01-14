@@ -29,6 +29,7 @@ impl VC {
         Some(Display::new(
             bus2phys(fb_info.pointer),
             fb_info.size,
+            fb_info.depth,
             fb_info.pitch,
             max_x,
             max_y,
