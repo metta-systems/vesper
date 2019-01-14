@@ -59,9 +59,9 @@ impl VC {
     
         mbox.call(Channel::PropertyTagsArmToVc)?;
     
-        if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
-            return None;
-        }
+//        if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
+//            return None;
+//        }
         if mbox.0[5] == 0 && mbox.0[6] == 0 {
             // Qemu emulation returns 0x0
             return Some(Size2d { x: 640, y: 480 });
