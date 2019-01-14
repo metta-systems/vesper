@@ -8,16 +8,16 @@ pub struct VC;
 
 impl VC {
     // Use mailbox framebuffer interface to initialize
-    pub fn init_fb(size: Size2d /*, uart: &mut MiniUart*/) -> Option<Display> {
+    pub fn init_fb(size: Size2d, uart: &mut MiniUart) -> Option<Display> {
         let mut fb_info = GpuFb::new(size, 32);
 
-        //        uart.puts("initing fb_info\n");
+        uart.puts("initing fb_info\n");
         fb_info.call().map_err(|_| {
-            /*uart.puts("fb_info error\n");*/
+            uart.puts("fb_info error\n");
             ()
         });
 
-        //        write!(uart, "inited fb_info: {}\n", fb_info);
+//        write!(uart, "inited fb_info: {}\n", fb_info);
 
         let mut mbox = Mailbox::new();
 
@@ -62,7 +62,7 @@ impl VC {
         /* Need to set up max_x/max_y before using Display::write */
         let max_x = fb_info.vwidth / CHARSIZE_X;
         let max_y = fb_info.vheight / CHARSIZE_Y;
-        //        uart.puts("inited fb_info #2\n");
+        uart.puts("inited fb_info #2\n");
 
         Some(Display::new(
             bus2phys(fb_info.pointer),
