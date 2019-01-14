@@ -8,13 +8,13 @@ pub struct VC;
 
 impl VC {
     // Use mailbox framebuffer interface to initialize
-    pub fn init_fb(size: Size2d, uart: &mut MiniUart) -> Option<Display> {
+    pub fn init_fb(size: Size2d/*, uart: &mut MiniUart*/) -> Option<Display> {
         let mut fb_info: GpuFb = GpuFb::new(size, 24);
 
-        uart.puts("initing fb_info\n");
-        fb_info.call().map_err(|_| {uart.puts("fb_info error\n");()});
+//        uart.puts("initing fb_info\n");
+        fb_info.call().map_err(|_| {/*uart.puts("fb_info error\n");*/()});
 
-        write!(uart, "inited fb_info: {}\n", fb_info);
+//        write!(uart, "inited fb_info: {}\n", fb_info);
 
 //        let mut pixel_order = Mailbox::new();
 //
@@ -30,7 +30,7 @@ impl VC {
         /* Need to set up max_x/max_y before using Display::write */
         let max_x = fb_info.vwidth / CHARSIZE_X;
         let max_y = fb_info.vheight / CHARSIZE_Y;
-        uart.puts("inited fb_info #2\n");
+//        uart.puts("inited fb_info #2\n");
 
         Some(Display::new(
             bus2phys(fb_info.pointer),
@@ -57,7 +57,7 @@ impl VC {
         mbox.0[6] = 0; // Space for vertical resolution
         mbox.0[7] = Tag::End as u32; // End tag
     
-        Mailbox::call(Channel::PropertyTagsArmToVc as u8, &mbox.0 as *const u32 as *const u8)?;
+        mbox.call(Channel::PropertyTagsArmToVc)?;
     
         if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
             return None;

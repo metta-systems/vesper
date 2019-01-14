@@ -50,11 +50,11 @@ fn panic(_info: &PanicInfo) -> ! {
 // Kernel entry point
 // arch crate is responsible for calling this
 pub fn kmain() -> ! {
-    let mut uart = MiniUart::new();
-    uart.init();
-    write!(uart, "Hey there, mini uart talking!\n");
+//    let mut uart = MiniUart::new();
+//    uart.init();
+//    write!(uart, "Hey there, mini uart talking!\n");
 
-    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }, &mut uart) {
+    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 } /*, &mut uart*/) {
         display.rect(100, 100, 200, 200, Color::rgb(255, 255, 255).0);
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255).0);
         // display.draw_text(50, 150, core::fmt("Display width {}", display.width), Color::rgb(255,0,0).0);
@@ -64,6 +64,6 @@ pub fn kmain() -> ! {
         display.draw_text(170, 70, "BLUE", Color::rgb(0, 0, 255).0);
     }
 
-    write!(uart, "Bye, going to sleep now\n");
+//    write!(uart, "Bye, going to sleep now\n");
     endless_sleep()
 }
