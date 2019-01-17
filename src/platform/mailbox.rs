@@ -193,11 +193,11 @@ pub mod alpha_mode {
 fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
 
-//    {
-//        let mut uart = MiniUart::new();
-//        uart.init();
-//        write!(uart, "Mailbox::write {:x}/{:x}\n", buf_ptr, channel);
-//    }
+    {
+        let mut uart = MiniUart::new();
+        uart.init();
+        writeln!(uart, "Mailbox::write {:x}/{:x}", buf_ptr, channel);
+    }
 
     while regs.STATUS.is_set(STATUS::FULL) {
         count += 1;
@@ -214,8 +214,8 @@ fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
 fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
 
-//    let mut uart = MiniUart::new();
-//    uart.init();
+    // let mut uart = MiniUart::new();
+    // uart.init();
 
     loop {
         while regs.STATUS.is_set(STATUS::EMPTY) {
@@ -237,7 +237,7 @@ fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
             // is it a valid successful response?
             return Ok(());
         } else {
-            return Err(MboxError::ResponseError); //@fixme ignore invalid responses and loop again?
+            // return Err(MboxError::ResponseError); //@fixme ignore invalid responses and loop again?
         }
     }
 }
@@ -289,20 +289,20 @@ impl Mailbox {
     pub fn read(&self, channel: u32) -> Result<()> {
         read(self, phys2bus(self.buffer.as_ptr() as u32), channel)?;
 
-        //let mut uart = MiniUart::new();
-        //uart.init();
+        let mut uart = MiniUart::new();
+        uart.init();
 
         match self.buffer[1] {
             response::SUCCESS => {
-                //uart.puts("\n######\nMailbox::returning SUCCESS\n");
+                writeln!(uart, "\n######\nMailbox::returning SUCCESS");
                 Ok(())
             }
             response::ERROR => {
-                //uart.puts("\n######\nMailbox::returning ResponseError\n");
+                writeln!(uart, "\n######\nMailbox::returning ResponseError");
                 Err(MboxError::ResponseError)
             }
             _ => {
-                //uart.puts("\n######\nMailbox::returning UnknownError\n");
+                writeln!(uart, "\n######\nMailbox::returning UnknownError");
                 Err(MboxError::UnknownError)
             }
         }

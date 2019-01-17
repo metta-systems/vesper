@@ -11,13 +11,12 @@ impl VC {
     pub fn init_fb(size: Size2d, uart: &mut MiniUart) -> Option<Display> {
         let mut fb_info = GpuFb::new(size, 32);
 
-        uart.puts("initing fb_info\n");
+        writeln!(uart, "initing fb_info");
         fb_info.call().map_err(|_| {
-            uart.puts("fb_info error\n");
-            ()
+            writeln!(uart, "fb_info error");
         });
 
-//        write!(uart, "inited fb_info: {}\n", fb_info);
+        writeln!(uart, "inited fb_info: {}", fb_info);
 
         let mut mbox = Mailbox::new();
 
@@ -62,7 +61,7 @@ impl VC {
         /* Need to set up max_x/max_y before using Display::write */
         let max_x = fb_info.vwidth / CHARSIZE_X;
         let max_y = fb_info.vheight / CHARSIZE_Y;
-        uart.puts("inited fb_info #2\n");
+        writeln!(uart, "inited fb_info #2");
 
         Some(Display::new(
             bus2phys(fb_info.pointer),
@@ -79,7 +78,7 @@ impl VC {
     /*
         fn get_display_size() -> Option<Size2d> {
             let mut mbox = Mbox::new();
-        
+
             mbox.0[0] = 8 * 4; // Total size
             mbox.0[1] = MAILBOX_REQ_CODE; // Request
             mbox.0[2] = Tag::GetPhysicalWH as u32; // Display size  // tag
@@ -88,9 +87,9 @@ impl VC {
             mbox.0[5] = 0; // Space for horizontal resolution
             mbox.0[6] = 0; // Space for vertical resolution
             mbox.0[7] = Tag::End as u32; // End tag
-        
+
             mbox.call(Channel::PropertyTagsArmToVc)?;
-        
+
     //        if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
     //            return None;
     //        }
@@ -103,12 +102,12 @@ impl VC {
                 y: mbox.0[6],
             })
         }
-        
+
         fn set_display_size(size: Size2d) -> Option<Display> {
             // @todo Make Display use VC functions internally instead
             let mut mbox = Mbox::new();
             let mut count: usize = 0;
-        
+
             count += 1;
             mbox.0[count] = MAILBOX_REQ_CODE; // Request
             count += 1;
@@ -152,15 +151,15 @@ impl VC {
             count += 1;
             mbox.0[count] = Tag::End as u32;
             mbox.0[0] = (count * 4) as u32; // Total size
-        
+
             let max_count = count;
-        
+
             Mailbox::call(Channel::PropertyTagsArmToVc as u8, &mbox.0 as *const u32 as *const u8)?;
-        
+
             if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
                 return None;
             }
-        
+
             count = 2; /* First tag */
     while mbox.0[count] != 0 {
     if mbox.0[count] == Tag::AllocateBuffer as u32 {
