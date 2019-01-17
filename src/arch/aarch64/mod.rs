@@ -1,22 +1,8 @@
 // mod arch::aarch64
 
+mod boot;
+
 use cortex_a::{asm, barrier, regs::*};
-
-/// The entry to Rust, all things must be initialized
-/// This is invoked from the linker script, does arch-specific init
-/// and passes control to the kernel boot function kmain().
-#[no_mangle]
-pub unsafe extern "C" fn karch_start() -> ! {
-    // Set sp to 0x80000 (just before kernel start)
-    const STACK_START: u64 = 0x8_0000;
-
-    SP.set(STACK_START);
-
-    match read_cpu_id() {
-        0 => ::kmain(),
-        _ => endless_sleep(), // if not core0, indefinitely wait for events
-    }
-}
 
 // Data memory barrier
 #[inline]

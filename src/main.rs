@@ -15,14 +15,13 @@ use architecture_not_supported_sorry;
 
 // use core::intrinsics::abort;
 
-#[macro_use]
+// #[macro_use]
 extern crate bitflags;
 #[macro_use]
 extern crate register;
 extern crate cortex_a;
 extern crate rlibc;
 
-use core::panic::PanicInfo;
 #[macro_use]
 pub mod arch;
 pub use arch::*;
@@ -41,15 +40,9 @@ use platform::{
 // Actual interfaces to call these syscalls are in vesper-user (similar to libsel4)
 // pub mod vesper; -- exported from vesper-user
 
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    // @todo rect() + drawtext("PANIC")?
-    endless_sleep()
-}
-
 // Kernel entry point
 // arch crate is responsible for calling this
-pub fn kmain() -> ! {
+fn kmain() -> ! {
     let mut uart = MiniUart::new();
     uart.init();
     writeln!(uart, "Hey there, mini uart talking!");
@@ -65,8 +58,11 @@ pub fn kmain() -> ! {
     }
 
     writeln!(uart, "Bye, going to sleep now");
-    qemu_aarch64_exit(); //endless_sleep()
+    // qemu_aarch64_exit()
+    endless_sleep()
 }
+
+entry!(kmain);
 
 // From https://stackoverflow.com/a/49930361/895245
 // @todo specify exit value depending on tests result?
