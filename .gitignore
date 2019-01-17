@@ -1,3 +1,6 @@
 target/
 *.lock
 .idea/
+.ninja_*
+kernel8.img
+
