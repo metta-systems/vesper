@@ -150,6 +150,7 @@ impl MiniUart {
     }
 
     ///Set baud rate and characteristics (115200 8N1) and map to GPIO
+    #[cfg(not(feature = "noserial"))]
     pub fn init(&self) {
         // initialize UART
         self.AUX_ENABLES.modify(AUX_ENABLES::MINI_UART_ENABLE::SET);
@@ -180,7 +181,11 @@ impl MiniUart {
             .write(AUX_MU_CNTL::RX_EN::Enabled + AUX_MU_CNTL::TX_EN::Enabled);
     }
 
+    #[cfg(feature = "noserial")]
+    pub fn init(&self) {}
+
     /// Send a character
+    #[cfg(not(feature = "noserial"))]
     pub fn send(&self, c: char) {
         // wait until we can send
         loop_until(|| self.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_EMPTY));
@@ -189,7 +194,11 @@ impl MiniUart {
         self.AUX_MU_IO.set(c as u32);
     }
 
+    #[cfg(feature = "noserial")]
+    pub fn send(&self, _c: char) {}
+
     /// Receive a character
+    #[cfg(not(feature = "noserial"))]
     pub fn getc(&self) -> char {
         // wait until something is in the buffer
         loop_until(|| self.AUX_MU_LSR.is_set(AUX_MU_LSR::DATA_READY));
@@ -203,6 +212,11 @@ impl MiniUart {
         } else {
             ret
         }
+    }
+
+    #[cfg(feature = "noserial")]
+    pub fn getc(&self) -> char {
+        '\n'
     }
 
     /// Display a string
