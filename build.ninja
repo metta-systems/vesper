@@ -1,30 +1,50 @@
 TARGET = aarch64-vesper-metta
-FEATURES = --features "noserial"
 
 UTILS_CONTAINER = andrerichter/raspi3-utils
-DOCKER_CMD = docker run -it --rm -v ./:/work -w /work
-QEMU_CMD = qemu-system-aarch64 -M raspi3 -kernel
+DOCKER_CMD = docker run -it --rm -v $$(pwd):/work -w /work
+QEMU_CMD = qemu-system-aarch64
 
 # -d in_asm,unimp,int -S
-QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64 -M raspi3 -d int -serial null -serial stdio -kernel
+QEMU_OPTS = -M raspi3 -d int -serial null -serial stdio
+
+QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64
 
 rule cargo_build
   command = cargo xbuild --target=targets/$TARGET.json --release $FEATURES
+  description = Building kernel
 
 rule strip
   command = cargo objcopy -- --strip-all -O binary $in $out
+  description = Converting kernel ELF to binary
 
 rule docker_qemulate
-  command = $DOCKER_CMD $UTILS_CONTAINER $QEMU_CMD $in
+  command = $DOCKER_CMD $UTILS_CONTAINER $QEMU_CMD $QEMU_OPTS -kernel $in
+  description = Running QEMU in Docker
 
 rule qemulate
-  command = $QEMU $in
+  command = $QEMU $QEMU_OPTS -kernel $in
+  description = Running QEMU
 
-build kernel: cargo_build
+rule copy_file
+  command = cp -f $in /Volumes/BOOT/
+  description = Copying binary image to sdcard
+
+# todo this doesn't have deps so builds always...
+build target/${TARGET}/release/vesper | kernel: cargo_build
+  FEATURES = --features "noserial"
+  description = Building device kernel
+
+#build target/${TARGET}/release/vesper qemu_kernel: cargo_build
+#  FEATURES =
+#  description = Building QEMU kernel
 
 build kernel8.img: strip target/${TARGET}/release/vesper | kernel
 
-build qemu: qemulate kernel8.img
+build qemu_kernel8.img: strip target/${TARGET}/release/vesper | qemu_kernel
+
+build qemu: qemulate qemu_kernel8.img
+
+build device: copy_file kernel8.img
 
 default kernel8.img
 
