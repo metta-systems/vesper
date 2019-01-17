@@ -1,0 +1,30 @@
+TARGET = aarch64-vesper-metta
+FEATURES = --features "noserial"
+
+UTILS_CONTAINER = andrerichter/raspi3-utils
+DOCKER_CMD = docker run -it --rm -v ./:/work -w /work
+QEMU_CMD = qemu-system-aarch64 -M raspi3 -kernel
+
+# -d in_asm,unimp,int -S
+QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64 -M raspi3 -d int -serial null -serial stdio -kernel
+
+rule cargo_build
+  command = cargo xbuild --target=targets/$TARGET.json --release $FEATURES
+
+rule strip
+  command = cargo objcopy -- --strip-all -O binary $in $out
+
+rule docker_qemulate
+  command = $DOCKER_CMD $UTILS_CONTAINER $QEMU_CMD $in
+
+rule qemulate
+  command = $QEMU $in
+
+build kernel: cargo_build
+
+build kernel8.img: strip target/${TARGET}/release/vesper | kernel
+
+build qemu: qemulate kernel8.img
+
+default kernel8.img
+

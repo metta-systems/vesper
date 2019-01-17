@@ -1,2 +1,1 @@
 [target.aarch64-vesper-metta]
-runner=".cargo/runscript.sh"

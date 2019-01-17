@@ -33,21 +33,16 @@ Vesper has been influenced by the kernels in L4 family, notably seL4. Fawn and N
 Use rustc nightly 2018-04-01 or later because of [bugs fixed](https://github.com/rust-lang/rust/issues/48884).
 
 ```
-cargo xbuild --target=targets/aarch64-vesper-metta.json --release
-
-# Post-command:
-sh .cargo/runscript.sh
-cp target/aarch64-vesper-metta/release/vesper.bin /Volumes/boot/vesper
-
-# config.txt on RPi3
-kernel=vesper
-arm_64bit=1
-
-# To run in qemu, `brew install qemu --HEAD --with-libusb` and
-### This command is not supported by cargo-xbuild yet: xargo run --target=aarch64-vesper-metta
-# Use this instead:
-sh .cargo/runscript.sh
+ninja qemu
 ```
+
+Will run `cargo xbuild` to create kernel and run it in qemu emulator.
+
+```
+ninja device
+```
+
+Will build kernel, and copy it to sdcard at /Volumes/BOOT/
 
 ## OSdev help
 
