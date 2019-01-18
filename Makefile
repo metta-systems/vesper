@@ -25,7 +25,7 @@
 TARGET = aarch64-vesper-metta
 TARGET_JSON = targets/$(TARGET).json
 
-SOURCES = $(wildcard **/*.rs) $(wildcard **/*.S) $(wildcard **/*.ld)
+SOURCES = $(wildcard src/**/*.rs) $(wildcard src/**/*.S) $(wildcard linker/**/*.ld)
 
 OBJCOPY = cargo objcopy --
 OBJCOPY_PARAMS = --strip-all -O binary
