@@ -11,7 +11,7 @@ pub struct Color(pub u32);
 
 impl Color {
     pub fn rgb(r: u8, g: u8, b: u8) -> Color {
-        Color((b as u32) << 16 | (g as u32) << 8 | r as u32)
+        Color(u32::from(b) << 16 | u32::from(g) << 8 | u32::from(r))
     }
 }
 
@@ -116,6 +116,7 @@ impl Display {
         }
     }
 
+    /// Set a pixel value on display at given coordinates.
     #[inline(never)]
     pub fn putpixel(&mut self, x: u32, y: u32, color: u32) {
         self.write_pixel_component(x, y, 0, color & 0xff);
@@ -133,9 +134,10 @@ impl Display {
 
     pub fn draw_text(&mut self, x: u32, y: u32, text: &str, color: u32) {
         for i in 0..8 {
-            let mut char_off = 0;
             // Take an 8 bit slice from each array value.
-            for my_char in text.as_bytes() {
+            for (char_off, my_char) in text.as_bytes().iter().enumerate() {
+                let off = (char_off * 8) as u32;
+
                 if (*my_char as isize - 0x20 > 95) || (*my_char as isize - 0x20 < 0) {
                     return; // Err("Character not in font.");
                 }
@@ -143,17 +145,16 @@ impl Display {
                 let mut myval = CHAR_ARRAY[*my_char as usize - 0x20];
                 myval = myval.swap_bytes();
                 // do initial shr.
-                myval = myval >> (i * 8);
+                myval >>= i * 8;
                 for mycount in 0..8 {
                     if myval & 1 == 1 {
-                        self.putpixel(x + char_off * 8 + mycount, y + i, color);
+                        self.putpixel(x + off + mycount, y + i, color);
                     }
-                    myval = myval >> 1;
+                    myval >>= 1;
                     if myval == 0 {
                         break;
                     }
                 }
-                char_off += 1;
             }
         }
     }
