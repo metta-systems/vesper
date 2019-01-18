@@ -43,7 +43,7 @@ QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64
 all: clean kernel8.img
 
 target/$(TARGET)/release/vesper: $(SOURCES)
-	cargo xbuild --target=$(TARGET_JSON) --release
+	cargo xbuild --target=$(TARGET_JSON) --release --features "noserial"
 
 kernel8.img: target/$(TARGET)/release/vesper
 	cp $< ./kernel8
