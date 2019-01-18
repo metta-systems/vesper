@@ -55,6 +55,9 @@ docker_qemu: all
 qemu: all
 	$(QEMU) $(QEMU_OPTS) -kernel kernel8.img
 
+sdcard: all
+	cp kernel8.img /Volumes/BOOT/
+
 clippy:
 	cargo xclippy --target=$(TARGET_JSON)
 
