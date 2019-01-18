@@ -123,10 +123,15 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
 
     const CORE_0: u64 = 0;
     const CORE_MASK: u64 = 0x3;
+    const EL1: u32 = CurrentEL::EL::EL1.value;
     const EL2: u32 = CurrentEL::EL::EL2.value;
 
-    if (CORE_0 == MPIDR_EL1.get() & CORE_MASK) && (EL2 == CurrentEL.get()) {
-        setup_and_enter_el1_from_el2()
+    if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
+        if EL2 == CurrentEL.get() {
+            setup_and_enter_el1_from_el2()
+        } else if EL1 == CurrentEL.get() {
+            reset();
+        }
     }
 
     // if not core0 or EL != 2, infinitely wait for events
