@@ -3,4 +3,5 @@ target/
 .idea/
 .ninja_*
 kernel8.img
+kernel8
 
