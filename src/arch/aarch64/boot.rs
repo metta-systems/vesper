@@ -78,7 +78,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
     // Enable timer counter registers for EL1
     CNTHCTL_EL2.write(CNTHCTL_EL2::EL1PCEN::SET + CNTHCTL_EL2::EL1PCTEN::SET);
 
-    // No offset for reading the counters
+    // No virtual offset for reading the counters
     CNTVOFF_EL2.set(0);
 
     // Set EL1 execution state to AArch64
@@ -94,7 +94,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
             + SPSR_EL2::A::Masked
             + SPSR_EL2::I::Masked
             + SPSR_EL2::F::Masked
-            + SPSR_EL2::M::EL1h,
+            + SPSR_EL2::M::EL1h, // Use SP_EL1
     );
 
     // Second, let the link register point to reset().
@@ -109,13 +109,18 @@ fn setup_and_enter_el1_from_el2() -> ! {
     asm::eret()
 }
 
+// Processors enter EL3 after reset.
+// ref: http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf
+// section: 5.5.1
+// However, GPU init code must be switching it down to EL2?
+
 /// Entrypoint of the processor.
 ///
 /// Parks all cores except core0 and checks if we started in EL2. If
 /// so, proceeds with setting up EL1.
 ///
 /// This is invoked from the linker script, does arch-specific init
-/// and passes control to the kernel boot function main().
+/// and passes control to the kernel boot function reset().
 #[link_section = ".text.boot"]
 #[no_mangle]
 pub unsafe extern "C" fn _boot_cores() -> ! {
@@ -130,11 +135,11 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
         if EL2 == CurrentEL.get() {
             setup_and_enter_el1_from_el2()
         } else if EL1 == CurrentEL.get() {
-            reset();
+            reset()
         }
     }
 
-    // if not core0 or EL != 2, infinitely wait for events
+    // if not core0 or EL2/EL1, infinitely wait for events
     loop {
         asm::wfe();
     }
