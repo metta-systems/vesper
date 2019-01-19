@@ -45,9 +45,10 @@ use platform::{
 fn kmain() -> ! {
     let mut uart = MiniUart::new();
     uart.init();
-    writeln!(uart, "Hey there, mini uart talking!");
+    // Crashes if uncommenting next line: vvv
+    // writeln!(uart, "Hey there, mini uart talking!");
 
-    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }, &mut uart) {
+    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 } /*, &mut uart*/) {
         display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64).0);
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255).0);
         // display.draw_text(50, 150, core::fmt("Display width {}", display.width), Color::rgb(255,0,0).0);
@@ -57,7 +58,7 @@ fn kmain() -> ! {
         display.draw_text(170, 70, "BLUE", Color::rgb(0, 0, 255).0);
     }
 
-    writeln!(uart, "Bye, going to sleep now");
+    // writeln!(uart, "Bye, going to sleep now");
     // qemu_aarch64_exit()
     endless_sleep()
 }

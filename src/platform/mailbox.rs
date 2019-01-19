@@ -4,7 +4,7 @@ use core::{fmt::Write, ops::Deref};
 use platform::{
     display::Size2d,
     rpi3::{phys2bus, PERIPHERAL_BASE},
-    uart::MiniUart,
+    // uart::MiniUart,
 };
 use register::mmio::*;
 
@@ -193,11 +193,11 @@ pub mod alpha_mode {
 fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
 
-    {
-        let mut uart = MiniUart::new();
-        uart.init();
-        writeln!(uart, "Mailbox::write {:x}/{:x}", buf_ptr, channel);
-    }
+    // {
+    //     let mut uart = MiniUart::new();
+    //     uart.init();
+    //     writeln!(uart, "Mailbox::write {:x}/{:x}", buf_ptr, channel);
+    // }
 
     while regs.STATUS.is_set(STATUS::FULL) {
         count += 1;
@@ -289,20 +289,20 @@ impl Mailbox {
     pub fn read(&self, channel: u32) -> Result<()> {
         read(self, phys2bus(self.buffer.as_ptr() as u32), channel)?;
 
-        let mut uart = MiniUart::new();
-        uart.init();
+        // let mut uart = MiniUart::new();
+        // uart.init();
 
         match self.buffer[1] {
             response::SUCCESS => {
-                writeln!(uart, "\n######\nMailbox::returning SUCCESS");
+                // writeln!(uart, "\n######\nMailbox::returning SUCCESS");
                 Ok(())
             }
             response::ERROR => {
-                writeln!(uart, "\n######\nMailbox::returning ResponseError");
+                // writeln!(uart, "\n######\nMailbox::returning ResponseError");
                 Err(MboxError::ResponseError)
             }
             _ => {
-                writeln!(uart, "\n######\nMailbox::returning UnknownError");
+                // writeln!(uart, "\n######\nMailbox::returning UnknownError");
                 Err(MboxError::UnknownError)
             }
         }
