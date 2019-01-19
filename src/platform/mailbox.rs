@@ -1,5 +1,4 @@
 use arch::*;
-
 use core::{fmt::Write, ops::Deref};
 use platform::{
     display::Size2d,
@@ -12,7 +11,7 @@ use register::mmio::*;
 #[repr(C)]
 #[repr(align(16))]
 pub struct Mailbox {
-    // The address for buffer needs to be 16-byte aligned
+    // The address for the buffer needs to be 16-byte aligned
     // so that the VideoCore can handle it properly.
     pub buffer: [u32; 36],
 }
@@ -237,7 +236,7 @@ fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
             // is it a valid successful response?
             return Ok(());
         } else {
-            // return Err(MboxError::ResponseError); //@fixme ignore invalid responses and loop again?
+            return Err(MboxError::ResponseError); //@fixme ignore invalid responses and loop again?
         }
     }
 }
