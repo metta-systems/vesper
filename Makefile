@@ -32,10 +32,11 @@ OBJCOPY_PARAMS = --strip-all -O binary
 
 UTILS_CONTAINER = andrerichter/raspi3-utils
 DOCKER_CMD = docker run -it --rm -v $(shell pwd):/work -w /work
-QEMU_CMD = qemu-system-aarch64 -M raspi3 -kernel kernel8.img
+QEMU_CMD = qemu-system-aarch64
 
 # -d in_asm,unimp,int -S
-QEMU_OPTS = -M raspi3 -d in_asm,int -serial null -serial stdio
+QEMU_OPTS = -M raspi3 -d in_asm,int
+QEMU_SERIAL = -serial null -serial stdio
 QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64
 
 .PHONY: all qemu clippy clean objdump nm
@@ -50,10 +51,10 @@ kernel8.img: target/$(TARGET)/release/vesper
 	$(OBJCOPY) $(OBJCOPY_PARAMS) $< kernel8.img
 
 docker_qemu: all
-	$(DOCKER_CMD) $(UTILS_CONTAINER) $(QEMU_CMD) -d in_asm
+	$(DOCKER_CMD) $(UTILS_CONTAINER) $(QEMU_CMD) $(QEMU_OPTS) -kernel kernel8.img
 
 qemu: all
-	$(QEMU) $(QEMU_OPTS) -kernel kernel8.img
+	$(QEMU) $(QEMU_OPTS) $(QEMU_SERIAL) -kernel kernel8.img
 
 sdcard: all
 	cp kernel8.img /Volumes/BOOT/
