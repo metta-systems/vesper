@@ -44,7 +44,7 @@ pub struct Display {
     pitch: u32,
     max_x: u32,
     max_y: u32,
-    width: u32,
+    pub width: u32,
     height: u32,
     order: PixelOrder,
 }
@@ -121,19 +121,21 @@ impl Display {
         })
     }
 
-    #[inline(never)]
+    #[inline]
     fn write_pixel_component(&self, x: u32, y: u32, chan: u16, c: u32) {
         unsafe {
             *(self.base as *mut u8).offset(
-                (y * self.pitch
-                    + x * 4//(self.depth / 8)
-                    + self.color_component(chan)) as isize,
+                // This is still a problem!
+                // 1. Fix display output so we can print some values
+                // 2. Print display info
+                // 3. Go from there.
+                (y * self.pitch + x * 4/*(self.depth / 8)*/ + self.color_component(chan)) as isize,
             ) = c as u8;
         }
     }
 
     /// Set a pixel value on display at given coordinates.
-    #[inline(never)]
+    #[inline]
     pub fn putpixel(&mut self, x: u32, y: u32, color: u32) {
         self.write_pixel_component(x, y, 0, color & 0xff);
         self.write_pixel_component(x, y, 1, (color >> 8) & 0xff);
