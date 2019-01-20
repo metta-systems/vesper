@@ -66,6 +66,13 @@ fn kmain() -> ! {
         // display.draw_text(50, 150, s.unwrap(), Color::white());
         // }
 
+        //==============================================
+        // Since formatted output doesn't work, lets do some other preparatory steps:
+        // 1. Initialize MMU
+        // 2. Set up exception handlers
+        // Obviously, things should keep working after that...
+        //==============================================
+
         display.draw_text(150, 50, "RED", Color::red());
         display.draw_text(160, 60, "GREEN", Color::green());
         display.draw_text(170, 70, "BLUE", Color::blue());
