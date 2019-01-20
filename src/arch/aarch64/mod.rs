@@ -112,6 +112,55 @@ pub fn write_ttbr_tcr_mair(el: u8, base: u64, tcr: u64, attr: u64) {
     }
 }
 
+// Identity-map things for now.
+//
+// > but more normal the simplest form is a table with 1024 32 bit entries starting at
+// a 0x4000 aligned address, where each entry describes a 1 Mb memory part.
+// On the rpi3 only the bottom 1024 entries are relevant as it has 1 Gb memory.
+
+// aarch64 granules and page sizes howto:
+// https://stackoverflow.com/questions/34269185/simultaneous-existence-of-different-sized-pages-on-aarch64
+
+// #[repr(align=0x4000)]
+// let page_tables: [4096; u32] = ...;
+
+// Code from redox-os:
+
+// pub static mut IDTR: DescriptorTablePointer = DescriptorTablePointer {
+//     limit: 0,
+//     base: 0
+// };
+
+// pub static mut IDT: [IdtEntry; 256] = [IdtEntry::new(); 256];
+
+// /// A physical address.
+// #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+// pub struct PhysicalAddress(usize);
+
+// impl PhysicalAddress {
+//     pub fn new(address: usize) -> Self {
+//         PhysicalAddress(address)
+//     }
+
+//     pub fn get(&self) -> usize {
+//         self.0
+//     }
+// }
+
+// /// A virtual address.
+// #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+// pub struct VirtualAddress(usize);
+
+// impl VirtualAddress {
+//     pub fn new(address: usize) -> Self {
+//         VirtualAddress(address)
+//     }
+
+//     pub fn get(&self) -> usize {
+//         self.0
+//     }
+// }
+
 fn setup_paging() {
     // test if paging is enabled
     // if so, loop here
