@@ -11,6 +11,12 @@ license = "BSL-1.0"
 categories = ["no-std", "embedded", "os"]
 publish = false
 
+[package.metadata.cargo-xbuild]
+memcpy = true
+
+[package.metadata.bootimage]
+default-target = "targets/aarch64-vesper-metta.json"
+
 [features]
 unstable = []
 realtime = []
@@ -37,9 +43,3 @@ panic = "abort"
 panic = "abort"
 debug = true
 lto = true
-
-[package.metadata.cargo-xbuild]
-memcpy = true
-
-[package.metadata.bootimage]
-default-target = "targets/aarch64-vesper-metta.json"
