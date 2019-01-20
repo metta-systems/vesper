@@ -1,14 +1,15 @@
 // mod arch::aarch64::memory
 
-mod area_frame_allocator;
-mod paging;
+// mod area_frame_allocator;
+// mod paging;
 
-pub use self::area_frame_allocator::AreaFrameAllocator;
+// pub use self::area_frame_allocator::AreaFrameAllocator;
 
 pub type PhysicalAddress = usize;
 pub type VirtualAddress = usize;
 
-use self::paging::PAGE_SIZE;
+// use self::paging::PAGE_SIZE;
+pub const PAGE_SIZE: usize = 4096;
 
 /**
  * Frame is an addressable unit of the physical address space.

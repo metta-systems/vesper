@@ -86,34 +86,6 @@ pub fn write_translation_table_base(base: PhysicalAddress) {
     }
 }
 
-// Helper function similar to u-boot
-pub fn write_ttbr_tcr_mair(el: u8, base: PhysicalAddress, tcr: u64, attr: u64) {
-    unsafe {
-        asm!("dsb sy" :::: "volatile");
-    }
-    match (el) {
-        1 => unsafe {
-            asm!("msr ttbr0_el1, $0
-                msr tcr_el1, $1
-                msr mair_el1, $2" :: "r"(base), "r"(tcr), "r"(attr) : "memory" : "volatile");
-        },
-        2 => unsafe {
-            asm!("msr ttbr0_el2, $0
-                msr tcr_el2, $1
-                msr mair_el2, $2" :: "r"(base), "r"(tcr), "r"(attr) : "memory" : "volatile");
-        },
-        3 => unsafe {
-            asm!("msr ttbr0_el3, $0
-                msr tcr_el3, $1
-                msr mair_el3, $2" :: "r"(base), "r"(tcr), "r"(attr) : "memory" : "volatile");
-        },
-        _ => loop {},
-    }
-    unsafe {
-        asm!("isb" :::: "volatile");
-    }
-}
-
 // Identity-map things for now.
 //
 // > but more normal the simplest form is a table with 1024 32 bit entries starting at
@@ -160,65 +132,65 @@ pub fn write_ttbr_tcr_mair(el: u8, base: PhysicalAddress, tcr: u64, attr: u64) {
 //     }
 // }
 
-bitflags! {
-    pub struct MemType: u64 {
-        const DEVICE_NGNRNE = 0 << 2;
-        const DEVICE_NGNRE  = 1 << 2;
-        const DEVICE_GRE    = 2 << 2;
-        const NORMAL_NC     = 3 << 2;
-        const NORMAL        = 4 << 2;
+// bitflags! {
+//     pub struct MemType: u64 {
+//         const DEVICE_NGNRNE = 0 << 2;
+//         const DEVICE_NGNRE  = 1 << 2;
+//         const DEVICE_GRE    = 2 << 2;
+//         const NORMAL_NC     = 3 << 2;
+//         const NORMAL        = 4 << 2;
 
-        const NS            = 1 << 5;
+//         const NS            = 1 << 5;
 
-        const NON_SHARE     = 0 << 8;
-        const OUTER_SHARE   = 2 << 8;
-        const INNER_SHARE   = 3 << 8;
+//         const NON_SHARE     = 0 << 8;
+//         const OUTER_SHARE   = 2 << 8;
+//         const INNER_SHARE   = 3 << 8;
 
-        const AF            = 1 << 10;
-        const NG            = 1 << 11;
-        const PXN           = 1 << 53;
-        const UXN           = 1 << 54;
-    }
-}
+//         const AF            = 1 << 10;
+//         const NG            = 1 << 11;
+//         const PXN           = 1 << 53;
+//         const UXN           = 1 << 54;
+//     }
+// }
 
-struct MemMapRegion {
-    virt: VirtualAddress,
-    phys: PhysicalAddress,
-    size: usize,
-    attr: MemType, // MAIR flags
-}
+// struct MemMapRegion {
+//     virt: VirtualAddress,
+//     phys: PhysicalAddress,
+//     size: usize,
+//     attr: MemType, // MAIR flags
+// }
 
-impl MemMapRegion {}
+// impl MemMapRegion {}
 
-fn setup_paging() {
-    // test if paging is enabled
-    // if so, loop here
+// fn setup_paging() {
+//     // test if paging is enabled
+//     // if so, loop here
 
-    // @todo
-    // Check mmu and dcache states, loop forever on some setting
+//     // @todo
+//     // Check mmu and dcache states, loop forever on some setting
 
-    write_ttbr_tcr_mair(
-        1, // EL1
-        read_translation_table_base(),
-        read_translation_control(),
-        read_mair(),
-    );
+//     write_ttbr_tcr_mair(
+//         1, // EL1
+//         read_translation_table_base(),
+//         read_translation_control(),
+//         read_mair(),
+//     );
 
-    let _bcm2837_mem_map: [MemMapRegion; 2] = [
-        MemMapRegion {
-            virt: 0x0000_0000,
-            phys: 0x0000_0000,
-            size: 0x3f00_0000,
-            attr: MemType::NORMAL | MemType::INNER_SHARE,
-        },
-        MemMapRegion {
-            virt: 0x3f00_0000,
-            phys: 0x3f00_0000,
-            size: 0x0100_0000,
-            attr: MemType::DEVICE_NGNRNE | MemType::NON_SHARE | MemType::PXN | MemType::UXN,
-        },
-    ];
-}
+//     let _bcm2837_mem_map: [MemMapRegion; 2] = [
+//         MemMapRegion {
+//             virt: 0x0000_0000,
+//             phys: 0x0000_0000,
+//             size: 0x3f00_0000,
+//             attr: MemType::NORMAL | MemType::INNER_SHARE,
+//         },
+//         MemMapRegion {
+//             virt: 0x3f00_0000,
+//             phys: 0x3f00_0000,
+//             size: 0x0100_0000,
+//             attr: MemType::DEVICE_NGNRNE | MemType::NON_SHARE | MemType::PXN | MemType::UXN,
+//         },
+//     ];
+// }
 
 pub struct BcmHost;
 
