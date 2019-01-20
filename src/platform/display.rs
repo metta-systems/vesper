@@ -13,6 +13,22 @@ impl Color {
     pub fn rgb(r: u8, g: u8, b: u8) -> Color {
         Color(u32::from(b) << 16 | u32::from(g) << 8 | u32::from(r))
     }
+
+    pub fn white() -> Color {
+        Color::rgb(255, 255, 255)
+    }
+
+    pub fn red() -> Color {
+        Color::rgb(255, 0, 0)
+    }
+
+    pub fn green() -> Color {
+        Color::rgb(0, 255, 0)
+    }
+
+    pub fn blue() -> Color {
+        Color::rgb(0, 0, 255)
+    }
 }
 
 #[derive(PartialEq)]
@@ -124,15 +140,15 @@ impl Display {
         self.write_pixel_component(x, y, 2, (color >> 16) & 0xff);
     }
 
-    pub fn rect(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: u32) {
+    pub fn rect(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: Color) {
         for y in y1..y2 {
             for x in x1..x2 {
-                self.putpixel(x, y, color);
+                self.putpixel(x, y, color.0);
             }
         }
     }
 
-    pub fn draw_text(&mut self, x: u32, y: u32, text: &str, color: u32) {
+    pub fn draw_text(&mut self, x: u32, y: u32, text: &str, color: Color) {
         for i in 0..8 {
             // Take an 8 bit slice from each array value.
             for (char_off, my_char) in text.as_bytes().iter().enumerate() {
@@ -148,7 +164,7 @@ impl Display {
                 myval >>= i * 8;
                 for mycount in 0..8 {
                     if myval & 1 == 1 {
-                        self.putpixel(x + off + mycount, y + i, color);
+                        self.putpixel(x + off + mycount, y + i, color.0);
                     }
                     myval >>= 1;
                     if myval == 0 {

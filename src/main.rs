@@ -49,13 +49,12 @@ fn kmain() -> ! {
     // writeln!(uart, "Hey there, mini uart talking!");
 
     if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 } /*, &mut uart*/) {
-        display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64).0);
-        display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255).0);
-        // display.draw_text(50, 150, core::fmt("Display width {}", display.width), Color::rgb(255,0,0).0);
+        display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
+        display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255));
 
-        display.draw_text(150, 50, "RED", Color::rgb(255, 0, 0).0);
-        display.draw_text(160, 60, "GREEN", Color::rgb(0, 255, 0).0);
-        display.draw_text(170, 70, "BLUE", Color::rgb(0, 0, 255).0);
+        display.draw_text(150, 50, "RED", Color::red());
+        display.draw_text(160, 60, "GREEN", Color::green());
+        display.draw_text(170, 70, "BLUE", Color::blue());
     }
 
     // writeln!(uart, "Bye, going to sleep now");
