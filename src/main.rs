@@ -26,6 +26,7 @@ extern crate rlibc;
 pub mod arch;
 pub use arch::*;
 pub mod platform;
+mod write_to;
 
 use core::fmt::Write;
 use platform::{

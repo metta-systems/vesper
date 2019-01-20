@@ -1,5 +1,5 @@
 use arch::*;
-use core::ops;
+use core::{fmt, ops};
 use platform::{gpio, rpi3::PERIPHERAL_BASE};
 use register::mmio::*;
 
@@ -232,8 +232,8 @@ impl MiniUart {
     }
 }
 
-impl core::fmt::Write for MiniUart {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+impl fmt::Write for MiniUart {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
         self.puts(s);
         Ok(())
     }
