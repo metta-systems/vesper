@@ -46,7 +46,7 @@ all: kernel8.img
 target/$(TARGET)/release/vesper: $(SOURCES)
 	cargo xbuild --target=$(TARGET_JSON) --release --features "noserial"
 
-kernel8.img: target/$(TARGET)/release/vesper
+kernel8.img: target/$(TARGET)/release/vesper $(SOURCES)
 	cp $< ./kernel8
 	$(OBJCOPY) $(OBJCOPY_PARAMS) $< kernel8.img
 
@@ -59,6 +59,9 @@ qemu: all
 sdcard: all
 	cp kernel8.img /Volumes/BOOT/
 
+sdeject: sdcard
+	diskutil unmount /Volumes/BOOT/
+
 clippy:
 	cargo xclippy --target=$(TARGET_JSON)
 
@@ -70,4 +73,7 @@ objdump:
 
 nm:
 	cargo nm --target $(TARGET_JSON) -- kernel8 | sort
+
+hopper: all
+	hopperv4 -e kernel8.img -R --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --aarch64
 
