@@ -161,6 +161,51 @@ pub fn write_ttbr_tcr_mair(el: u8, base: u64, tcr: u64, attr: u64) {
 //     }
 // }
 
+bitflags! {
+    pub struct MemType: u64 {
+        const DEVICE_NGNRNE = 0 << 2;
+        const DEVICE_NGNRE  = 1 << 2;
+        const DEVICE_GRE    = 2 << 2;
+        const NORMAL_NC     = 3 << 2;
+        const NORMAL        = 4 << 2;
+
+        const NS            = 1 << 5;
+
+        const NON_SHARE     = 0 << 8;
+        const OUTER_SHARE   = 2 << 8;
+        const INNER_SHARE   = 3 << 8;
+
+        const AF            = 1 << 10;
+        const NG            = 1 << 11;
+        const PXN           = 1 << 53;
+        const UXN           = 1 << 54;
+    }
+}
+
+struct MemMapRegion {
+    virt: usize,
+    phys: usize,
+    size: usize,
+    attr: MemType, // MAIR flags
+}
+
+impl MemMapRegion {}
+
+static bcm2837_mem_map: [MemMapRegion; 2] = [
+    MemMapRegion {
+        virt: 0x00000000,
+        phys: 0x00000000,
+        size: 0x3f000000,
+        attr: MemType::NORMAL | MemType::INNER_SHARE,
+    },
+    MemMapRegion {
+        virt: 0x3f000000,
+        phys: 0x3f000000,
+        size: 0x01000000,
+        attr: MemType::DEVICE_NGNRNE | MemType::NON_SHARE | MemType::PXN | MemType::UXN,
+    },
+];
+
 fn setup_paging() {
     // test if paging is enabled
     // if so, loop here
@@ -175,30 +220,6 @@ fn setup_paging() {
         read_mair(),
     );
 }
-
-struct MemMapRegion {
-    virt: usize,
-    phys: usize,
-    size: usize,
-    attr: usize,
-}
-
-impl MemMapRegion {}
-
-// const bcm2837_mem_map: MemMapRegion[] = {
-//     MemMapRegion {
-//         virt: 0x00000000,
-//         phys: 0x00000000,
-//         size: 0x3f000000,
-//         attr: PTE_BLOCK_MEMTYPE(MT_NORMAL) | PTE_BLOCK_INNER_SHARE, // mair
-//     },
-//     MemMapRegion {
-//         virt: 0x3f000000,
-//         phys: 0x3f000000,
-//         size: 0x01000000,
-//         attr: PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE) | PTE_BLOCK_NON_SHARE | PTE_BLOCK_PXN | PTE_BLOCK_UXN,
-//     }
-// }
 
 pub struct BcmHost;
 
