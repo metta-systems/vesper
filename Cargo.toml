@@ -10,6 +10,7 @@ readme = "README.md"
 license = "BSL-1.0"
 categories = ["no-std", "embedded", "os"]
 publish = false
+edition = "2018"
 
 [package.metadata.cargo-xbuild]
 memcpy = true

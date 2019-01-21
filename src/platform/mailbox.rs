@@ -1,10 +1,10 @@
-use arch::*;
-use core::{fmt::Write, ops::Deref};
-use platform::{
+use crate::arch::*;
+use crate::platform::{
     display::Size2d,
     rpi3::{phys2bus, PERIPHERAL_BASE},
     // uart::MiniUart,
 };
+use core::ops::Deref;
 use register::mmio::*;
 
 // Public interface to the mailbox

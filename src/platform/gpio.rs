@@ -1,4 +1,4 @@
-use platform::rpi3::PERIPHERAL_BASE;
+use crate::platform::rpi3::PERIPHERAL_BASE;
 use register::mmio::*;
 
 const GPIO_BASE: u32 = PERIPHERAL_BASE + 0x20_0000;

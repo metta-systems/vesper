@@ -28,10 +28,10 @@ pub use arch::*;
 pub mod platform;
 mod write_to;
 
-use core::fmt::Write;
+// use core::fmt::Write;
 use platform::{
     display::{Color, Size2d},
-    uart::MiniUart,
+    // uart::MiniUart,
     vc::VC,
 };
 

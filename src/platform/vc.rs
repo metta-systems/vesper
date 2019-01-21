@@ -1,7 +1,9 @@
-use core::fmt::Write;
-use platform::display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y};
-use platform::mailbox::{self, channel, response::VAL_LEN_FLAG, tag, GpuFb, Mailbox};
-use platform::rpi3::bus2phys;
+use crate::platform::{
+    display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y},
+    mailbox::{self, channel, response::VAL_LEN_FLAG, tag, GpuFb, Mailbox},
+    rpi3::bus2phys,
+};
+// use core::fmt::Write;
 // use platform::uart::MiniUart;
 
 pub struct VC;
