@@ -52,7 +52,7 @@ fn kmain() -> ! {
     // uart.write_str(); // shall this?
 
     unsafe {
-        aarch64::mmu::init();
+        mmu::init();
     }
 
     if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 } /*, &mut uart*/) {

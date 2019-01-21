@@ -4,6 +4,7 @@ mod boot;
 mod memory;
 pub mod mmu;
 pub use self::memory::{PhysicalAddress, VirtualAddress};
+pub use mmu::*;
 
 use cortex_a::{asm, barrier, regs::*};
 
