@@ -51,6 +51,10 @@ fn kmain() -> ! {
     // uart.puts("Hey there, mini uart talking!\n"); // shall this work though?
     // uart.write_str(); // shall this?
 
+    unsafe {
+        aarch64::mmu::init();
+    }
+
     if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 } /*, &mut uart*/) {
         display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255));

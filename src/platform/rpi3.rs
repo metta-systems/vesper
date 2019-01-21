@@ -19,12 +19,12 @@ pub fn bus2phys(address: u32) -> u32 {
 // @todo use BcmHost::get_peripheral_address() instead
 pub const PERIPHERAL_BASE: u32 = phys2virt(0x3F00_0000); // Base address for all peripherals
 
-pub struct BcmHost;
+pub struct BcmHost; // One dupe of this is in arch::aarch64 mod NOW!
 
 impl BcmHost {
     // As per https://www.raspberrypi.org/documentation/hardware/raspberrypi/peripheral_addresses.md
     /// This returns the ARM-side physical address where peripherals are mapped.
-    pub fn get_peripheral_address() -> usize {
+    pub fn get_peripheral_address() -> u32 {
         0x3f00_0000
     }
 

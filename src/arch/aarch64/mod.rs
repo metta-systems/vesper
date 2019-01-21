@@ -2,6 +2,7 @@
 
 mod boot;
 mod memory;
+pub mod mmu;
 pub use self::memory::{PhysicalAddress, VirtualAddress};
 
 use cortex_a::{asm, barrier, regs::*};
@@ -197,7 +198,7 @@ pub struct BcmHost;
 impl BcmHost {
     // As per https://www.raspberrypi.org/documentation/hardware/raspberrypi/peripheral_addresses.md
     /// This returns the ARM-side physical address where peripherals are mapped.
-    pub fn get_peripheral_address() -> PhysicalAddress {
+    pub const fn get_peripheral_address() -> u32 {
         0x3f00_0000
     }
 
