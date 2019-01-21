@@ -27,7 +27,7 @@ const UART0_ITOP: u32 = UART0_BASE + 0x88;
 const UART0_TDR: u32 = UART0_BASE + 0x8C;
 
 // Mini UART
-const UART1_BASE: u32 = PERIPHERAL_BASE + 0x21_5000;
+pub const UART1_BASE: u32 = PERIPHERAL_BASE + 0x21_5000;
 
 #[allow(non_snake_case)]
 #[repr(C)]

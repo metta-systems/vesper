@@ -147,16 +147,16 @@ pub unsafe fn init() {
 
     // For educational purposes and fun, let the start of the second 2 MiB block
     // point to the 2 MiB aperture which contains the UART's base address.
-    // let uart_phys_base: u64 = (uart::UART_PHYS_BASE >> 21).into();
-    // LVL2_TABLE.entries[1] = (STAGE1_DESCRIPTOR::VALID::True
-    //     + STAGE1_DESCRIPTOR::TYPE::Block
-    //     + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE)
-    //     + STAGE1_DESCRIPTOR::AP::RW_EL1
-    //     + STAGE1_DESCRIPTOR::SH::OuterShareable
-    //     + STAGE1_DESCRIPTOR::AF::True
-    //     + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(uart_phys_base)
-    //     + STAGE1_DESCRIPTOR::XN::True)
-    //     .value;
+    let uart_phys_base: u64 = (crate::platform::uart::UART1_BASE >> 21).into();
+    LVL2_TABLE.entries[1] = (STAGE1_DESCRIPTOR::VALID::True
+        + STAGE1_DESCRIPTOR::TYPE::Block
+        + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE)
+        + STAGE1_DESCRIPTOR::AP::RW_EL1
+        + STAGE1_DESCRIPTOR::SH::OuterShareable
+        + STAGE1_DESCRIPTOR::AF::True
+        + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(uart_phys_base)
+        + STAGE1_DESCRIPTOR::XN::True)
+        .value;
 
     // Fill the rest of the LVL2 (2MiB) entries as block
     // descriptors. Differentiate between normal and device mem.
