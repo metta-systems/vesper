@@ -245,5 +245,13 @@ pub unsafe fn init() {
     SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::Cacheable + SCTLR_EL1::I::Cacheable);
 
     // Force MMU init to complete before next instruction
-    barrier::isb(barrier::SY);
+    /*
+     * Invalidate the local I-cache so that any instructions fetched
+     * speculatively from the PoC are discarded, since they may have
+     * been dynamically patched at the PoU.
+     */
+    asm!("isb
+        ic iallu
+        dsb nsh
+        isb" :::: "volatile");
 }
