@@ -65,7 +65,7 @@ impl VC {
         // writeln!(uart, "inited fb_info #2");
 
         Some(Display::new(
-            fb_info.pointer,
+            fb_info.pointer & 0x3fff_ffff,
             fb_info.size,
             fb_info.depth,
             fb_info.pitch,

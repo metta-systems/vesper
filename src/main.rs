@@ -60,7 +60,7 @@ fn kmain() -> ! {
         display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255));
 
-        let mut buf = [0u8; 64];
+        // let mut buf = [0u8; 64];
         // Crashes if uncommenting next line: vvv
         // let s = write_to::show(&mut buf, format_args!("Display width {}", display.width));
         // So, some rust runtime things are breaking it, why?
@@ -82,6 +82,10 @@ fn kmain() -> ! {
         display.draw_text(160, 60, "GREEN", Color::green());
         display.draw_text(170, 70, "BLUE", Color::blue());
     }
+
+    // unsafe {
+    //     mmu::init();
+    // }
 
     // writeln!(uart, "Bye, going to sleep now");
     // qemu_aarch64_exit()
