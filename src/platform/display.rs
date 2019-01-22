@@ -14,6 +14,10 @@ impl Color {
         Color(u32::from(b) << 16 | u32::from(g) << 8 | u32::from(r))
     }
 
+    pub fn black() -> Color {
+        Color::rgb(0, 0, 0)
+    }
+
     pub fn white() -> Color {
         Color::rgb(255, 255, 255)
     }
@@ -148,6 +152,10 @@ impl Display {
                 self.putpixel(x, y, color.0);
             }
         }
+    }
+
+    pub fn clear(&mut self, color: Color) {
+        self.rect(0, 0, self.width, self.height, color)
     }
 
     pub fn draw_text(&mut self, x: u32, y: u32, text: &str, color: Color) {
