@@ -1,7 +1,7 @@
 use crate::arch::*;
 use crate::platform::{
     display::Size2d,
-    rpi3::{phys2bus, PERIPHERAL_BASE},
+    rpi3::BcmHost,
     // uart::MiniUart,
 };
 use core::ops::Deref;
@@ -17,7 +17,7 @@ pub struct Mailbox {
 }
 
 // Identity mapped first 1Gb by u-boot
-const MAILBOX_BASE: u32 = PERIPHERAL_BASE + 0xb880;
+const MAILBOX_BASE: u32 = BcmHost::get_peripheral_address() + 0xb880;
 /* Lower 4-bits are channel ID */
 const CHANNEL_MASK: u32 = 0xf;
 
@@ -206,7 +206,7 @@ fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
     }
     dmb();
     regs.WRITE
-        .set(phys2bus(buf_ptr & !CHANNEL_MASK) | (channel & CHANNEL_MASK));
+        .set((buf_ptr & !CHANNEL_MASK) | (channel & CHANNEL_MASK));
     Ok(())
 }
 
@@ -286,7 +286,7 @@ impl Mailbox {
     }
 
     pub fn read(&self, channel: u32) -> Result<()> {
-        read(self, phys2bus(self.buffer.as_ptr() as u32), channel)?;
+        read(self, self.buffer.as_ptr() as u32, channel)?;
 
         // let mut uart = MiniUart::new();
         // uart.init();

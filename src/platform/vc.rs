@@ -1,7 +1,6 @@
 use crate::platform::{
     display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y},
     mailbox::{self, channel, response::VAL_LEN_FLAG, tag, GpuFb, Mailbox},
-    rpi3::bus2phys,
 };
 // use core::fmt::Write;
 // use platform::uart::MiniUart;
@@ -66,7 +65,7 @@ impl VC {
         // writeln!(uart, "inited fb_info #2");
 
         Some(Display::new(
-            bus2phys(fb_info.pointer),
+            fb_info.pointer,
             fb_info.size,
             fb_info.depth,
             fb_info.pitch,

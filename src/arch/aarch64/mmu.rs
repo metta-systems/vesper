@@ -160,7 +160,7 @@ pub unsafe fn init() {
 
     // Fill the rest of the LVL2 (2MiB) entries as block
     // descriptors. Differentiate between normal and device mem.
-    let mmio_base: u64 = (super::BcmHost::get_peripheral_address() >> 21).into();
+    let mmio_base: u64 = (crate::platform::rpi3::BcmHost::get_peripheral_address() >> 21).into();
     let common = STAGE1_DESCRIPTOR::VALID::True
         + STAGE1_DESCRIPTOR::TYPE::Block
         + STAGE1_DESCRIPTOR::AP::RW_EL1

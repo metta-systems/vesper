@@ -1,7 +1,7 @@
-use crate::platform::rpi3::PERIPHERAL_BASE;
+use crate::platform::rpi3::BcmHost;
 use register::mmio::*;
 
-const GPIO_BASE: u32 = PERIPHERAL_BASE + 0x20_0000;
+const GPIO_BASE: u32 = BcmHost::get_peripheral_address() + 0x20_0000;
 
 // The offsets for reach register.
 // From https://wiki.osdev.org/Raspberry_Pi_Bare_Bones

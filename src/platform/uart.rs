@@ -1,10 +1,10 @@
 use crate::arch::*;
-use crate::platform::{gpio, rpi3::PERIPHERAL_BASE};
+use crate::platform::{gpio, rpi3::BcmHost};
 use core::{fmt, ops};
 use register::mmio::*;
 
 // The base address for UART.
-const UART0_BASE: u32 = PERIPHERAL_BASE + 0x20_1000;
+const UART0_BASE: u32 = BcmHost::get_peripheral_address() + 0x20_1000;
 
 // The offsets for reach register for the UART.
 const UART0_DR: u32 = UART0_BASE + 0x00;
@@ -27,7 +27,7 @@ const UART0_ITOP: u32 = UART0_BASE + 0x88;
 const UART0_TDR: u32 = UART0_BASE + 0x8C;
 
 // Mini UART
-pub const UART1_BASE: u32 = PERIPHERAL_BASE + 0x21_5000;
+pub const UART1_BASE: u32 = BcmHost::get_peripheral_address() + 0x21_5000;
 
 #[allow(non_snake_case)]
 #[repr(C)]
