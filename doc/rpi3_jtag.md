@@ -127,10 +127,8 @@ jtag newtap $_CHIPNAME arm -irlen 5 -expected-id $_CPU_TAPID
  
 set _TARGETNAME $_CHIPNAME.arm
 target create $_TARGETNAME arm11 -chain-position $_TARGETNAME
-rspi.arm configure -event gdb-attach { halt }
+$_TARGETNAME configure -event gdb-attach { halt }
 ```
-
-(@fixme: rspi.arm on last line should be `$_TARGETNAME` instead?)
 
 [Source #1](https://electronics.stackexchange.com/questions/249008/how-to-use-rpi-2-to-debug-rpi-model-b-via-jtag-with-openocd/419724#419724), [source #2](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/)
 
