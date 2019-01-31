@@ -78,6 +78,8 @@ You need two files: interface file for driving the host GPIO correctly, and targ
 Interface configuration: rpi3_interface.cfg
 
 ```
+# Broadcom 2835 on Raspberry Pi as JTAG host
+
 interface bcm2835gpio
  
 bcm2835gpio_peripheral_base 0x3F000000
@@ -103,7 +105,7 @@ reset_config trst_only
 Target configuration: rpi3_target.cfg
 
 ```
-# Broadcom 2835 on Raspberry Pi
+# Broadcom 2835 on Raspberry Pi as JTAG target
 
 telnet_port 4444
 gdb_port 5555
