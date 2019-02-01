@@ -138,7 +138,7 @@ target create $_TARGETNAME arm11 -chain-position $_TARGETNAME
 $_TARGETNAME configure -event gdb-attach { halt }
 ```
 
-[Source #1](https://electronics.stackexchange.com/questions/249008/how-to-use-rpi-2-to-debug-rpi-model-b-via-jtag-with-openocd/419724#419724), [source #2](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/), [source #3](http://openocd.org/doc/html/Reset-Configuration.html), [source #4](http://infocenter.arm.com/help/topic/com.arm.doc.faqs/ka3854.html)
+[Source #1](https://electronics.stackexchange.com/questions/249008/how-to-use-rpi-2-to-debug-rpi-model-b-via-jtag-with-openocd/419724#419724), [source #2](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/), [source #3](http://openocd.org/doc/html/Reset-Configuration.html), [source #4](http://infocenter.arm.com/help/topic/com.arm.doc.faqs/ka3854.html), [source #5](https://www.raspberrypi.org/forums/viewtopic.php?p=1013802), [source #6 - proper rpi3 ocd config](https://www.suse.com/c/debugging-raspberry-pi-3-with-jtag/)
 
 * @todo Check the expected tap id:
 > If an SoC provides a JTAG debug interface and contains any CoreSight debug components (including any Cortex processor) you should expect to see the standard JTAG IDCODE of a single CoreSight SWJ-DP as one TAP on the JTAG chain.
