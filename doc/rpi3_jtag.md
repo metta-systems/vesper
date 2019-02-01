@@ -63,9 +63,9 @@ enable_jtag_gpio=1
 Func | Host Pin | Wire color | Target pin
 -----+----------+------------+-----------
 TCK  |    23    |   yellow   |    22
-TMS  |    22    |            |    13
-TDI  |    19    |            |     7
-TDO  |    21    |            |    18
+TMS  |    22    |   brown    |    13
+TDI  |    19    |   green    |     7
+TDO  |    21    |   orange   |    18
 TRST |    26    |    red     |    15
 GND  |    20    |   black    |    20
 ```
