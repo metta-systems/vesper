@@ -8,6 +8,8 @@ JTAG boards:
 
 # RPi3 to RPi3 jtag
 
+Helpful RPi3 GPIO header pinouts from element14 [for Model B](https://www.element14.com/community/docs/DOC-73950/l/raspberry-pi-3-model-b-gpio-40-pin-block-pinout) and [here for Model B+](https://www.element14.com/community/docs/DOC-88824/l/raspberry-pi-3-model-b-gpio-40-pin-block-poe-header-pinout) (which is the same).
+
 ## Host configuration:
 
 These are regular GPIO functions, which we specify in OpenOCD interface configuration to enable driving JTAG interface.
@@ -132,7 +134,7 @@ target create $_TARGETNAME arm11 -chain-position $_TARGETNAME
 $_TARGETNAME configure -event gdb-attach { halt }
 ```
 
-[Source #1](https://electronics.stackexchange.com/questions/249008/how-to-use-rpi-2-to-debug-rpi-model-b-via-jtag-with-openocd/419724#419724), [source #2](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/)
+[Source #1](https://electronics.stackexchange.com/questions/249008/how-to-use-rpi-2-to-debug-rpi-model-b-via-jtag-with-openocd/419724#419724), [source #2](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/), [source #3](http://openocd.org/doc/html/Reset-Configuration.html), [source #4](http://infocenter.arm.com/help/topic/com.arm.doc.faqs/ka3854.html)
 
 ## Run OpenOCD, GDB and attach to target
 
