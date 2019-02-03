@@ -33,13 +33,13 @@ Vesper has been influenced by the kernels in L4 family, notably seL4. Fawn and N
 Use rustc nightly 2018-04-01 or later because of [bugs fixed](https://github.com/rust-lang/rust/issues/48884).
 
 ```
-ninja qemu
+make qemu
 ```
 
 Will run `cargo xbuild` to create kernel and run it in qemu emulator.
 
 ```
-ninja device
+make device
 ```
 
 Will build kernel, and copy it to sdcard at /Volumes/BOOT/
