@@ -44,3 +44,5 @@ panic = "abort"
 panic = "abort"
 debug = true
 lto = true
+# https://github.com/rust-lang/cargo/pull/6564#issuecomment-457971499
+incremental = false
