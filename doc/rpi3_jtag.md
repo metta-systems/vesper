@@ -1,10 +1,9 @@
 JTAG boards:
 
-* TinCanTools Flyswatter
-* OpenMoko DebugBoard_v3
-* RasPi3 -
-    - Pinouts for rpi3 - modelB https://www.element14.com/community/docs/DOC-73950/l/raspberry-pi-3-model-b-gpio-40-pin-block-pinout and model B+ https://www.element14.com/community/docs/DOC-88824/l/raspberry-pi-3-model-b-gpio-40-pin-block-poe-header-pinout (they are the same)
+* RasPi3
 * Segger J-Link V9
+* TinCanTools Flyswatter
+* OpenMoko DebugBoard_v3 - [one i have](http://wiki.openmoko.org/wiki/Debug_Board_v3)
 
 # RPi3 to RPi3 jtag
 
@@ -36,15 +35,17 @@ These are real JTAG pins of bcm2837, enabled on target RPi via config.txt option
 ```
 FUNC  |  GPIO  |  PIN #  |  MODE
 ------+--------+---------+------
-TCK   | GPIO25 |   22    | Alt4
-TMS   | GPIO27 |   13    | Alt4
-TDI   | GPIO26 |   37    | Alt4
-TDO   | GPIO24 |   18    | Alt4
-TRST  | GPIO22 |   15    | Alt4
+TCK   | GPIO25 |   22    |  Alt4
+TMS   | GPIO27 |   13    |  Alt4
+TDI   | GPIO26 |   37    |  Alt4
+TDO   | GPIO24 |   18    |  Alt4
+TRST  | GPIO22 |   15    |  Alt4
 GND   | GND    |   20    |
 ```
 
 Connecting TDI to pin 7 (GPIO4) did not work!
+
+[Source (section 6.2 Alternative Function Assignments)](https://www.raspberrypi.org/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf)
 
 In config.txt:
 
@@ -83,9 +84,8 @@ Interface configuration: [rpi3_interface.cfg](./rpi3_interface.cfg)
 
 Target configuration: [rpi3_target.cfg](./rpi3_target.cfg)
 
-[Source #1](https://electronics.stackexchange.com/questions/249008/how-to-use-rpi-2-to-debug-rpi-model-b-via-jtag-with-openocd/419724#419724), [source #2](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/), [source #3](http://openocd.org/doc/html/Reset-Configuration.html), [source #4](http://infocenter.arm.com/help/topic/com.arm.doc.faqs/ka3854.html), [source #5](https://www.raspberrypi.org/forums/viewtopic.php?p=1013802), [source #6 - proper rpi3 ocd config](https://www.suse.com/c/debugging-raspberry-pi-3-with-jtag/), [source #7 - simpler rpi3 ocd config](https://github.com/daniel-k/openocd/blob/armv8/tcl/target/rpi3.cfg), [source #8 - explanations about SRST](https://catch22.eu/baremetal/openocd_sysfs_stm32/)
+[Source #1](https://electronics.stackexchange.com/questions/249008/how-to-use-rpi-2-to-debug-rpi-model-b-via-jtag-with-openocd/419724#419724), [source #2](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/), [source #3](http://openocd.org/doc/html/Reset-Configuration.html), [source #4](http://infocenter.arm.com/help/topic/com.arm.doc.faqs/ka3854.html), [source #5](https://www.raspberrypi.org/forums/viewtopic.php?p=1013802), [source #6 - proper rpi3 ocd config](https://www.suse.com/c/debugging-raspberry-pi-3-with-jtag/), [source #7 - simpler rpi3 ocd config](https://github.com/daniel-k/openocd/blob/armv8/tcl/target/rpi3.cfg), [source #8 - explanations about SRST](https://catch22.eu/baremetal/openocd_sysfs_stm32/), [source #9 - example RPi target config](https://github.com/OP-TEE/build/blob/master/rpi3/debugger/pi3.cfg), [source #10 - some JTAG debug hints on rpi](https://www.raspberrypi.org/forums/viewtopic.php?p=1013802), [source #11 - jtag vs swd and CoreSight info links](https://electronics.stackexchange.com/questions/53571/jtag-vs-swd-debugging?rq=1)
 
-* @todo Check the expected tap id:
 > If an SoC provides a JTAG debug interface and contains any CoreSight debug components (including any Cortex processor) you should expect to see the standard JTAG IDCODE of a single CoreSight SWJ-DP as one TAP on the JTAG chain.
 
 
@@ -109,4 +109,9 @@ x/2i $pc
 
 If `stepi` command causes CPU to make one instruction step, everything is working.
 
-[Source](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/)
+[Source](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/), [source #2](https://www.op-tee.org/docs/rpi3/#6-openocd-and-jtag), [source #3 - monitor reset halt](http://www.openstm32.org/forumthread823)
+
+# J-Link to RPi3 jtag
+
+https://www.segger.com/downloads/jlink/
+https://habr.com/ru/post/259205/
