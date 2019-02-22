@@ -1,4 +1,6 @@
 # Vesper
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fmetta-systems%2Fvesper.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fmetta-systems%2Fvesper?ref=badge_shield)
+
 
 ## About kernel
 
@@ -54,3 +56,7 @@ sh .cargo/runscript.sh
 Based on [Raspi3 tutorials by Andre Richter](https://github.com/rust-embedded/rust-raspi3-tutorial/blob/master/05_uart0/src/uart.rs),
 which are in turn based on [Raspi3 tutorials by bzt](https://github.com/bztsrc/raspi3-tutorial/).
 Various references from [OSDev Wiki](https://wiki.osdev.org/Raspberry_Pi_Bare_Bones) and [RaspberryPi.org manuals](https://www.raspberrypi.org/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf).
+
+
+## License
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fmetta-systems%2Fvesper.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fmetta-systems%2Fvesper?ref=badge_large)
