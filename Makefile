@@ -28,6 +28,9 @@ TARGET_JSON = targets/$(TARGET).json
 
 SOURCES = $(wildcard src/**/*.rs) $(wildcard src/**/*.S) $(wildcard linker/**/*.ld)
 
+DEVICE_FEATURES = --features "noserial"
+QEMU_FEATURES =
+
 OBJCOPY = cargo objcopy --
 OBJCOPY_PARAMS = --strip-all -O binary
 
@@ -36,7 +39,7 @@ DOCKER_CMD = docker run -it --rm -v $(shell pwd):/work -w /work
 QEMU_CMD = qemu-system-aarch64
 
 # -d in_asm,unimp,int -S
-QEMU_OPTS = -M raspi3 -d in_asm,int
+QEMU_OPTS = -M raspi3 -d int
 QEMU_SERIAL = -serial null -serial stdio
 QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64
 
