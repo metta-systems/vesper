@@ -1,32 +1,8 @@
-use crate::platform::rpi3::BcmHost;
-use register::mmio::*;
-
-const GPIO_BASE: u32 = BcmHost::get_peripheral_address() + 0x20_0000;
-
-// The offsets for reach register.
-// From https://wiki.osdev.org/Raspberry_Pi_Bare_Bones
-
-//const GPFSEL0: u32 = GPIO_BASE + 0x00;
-//const GPFSEL2: u32 = GPIO_BASE + 0x08;
-//const GPFSEL3: u32 = GPIO_BASE + 0x0C;
-//const GPFSEL4: u32 = GPIO_BASE + 0x10;
-//const GPFSEL5: u32 = GPIO_BASE + 0x14;
-//const GPSET0: u32 = GPIO_BASE + 0x1C;
-//const GPSET1: u32 = GPIO_BASE + 0x20;
-//const GPCLR0: u32 = GPIO_BASE + 0x28;
-//const GPLEV0: u32 = GPIO_BASE + 0x34;
-//const GPLEV1: u32 = GPIO_BASE + 0x38;
-//const GPEDS0: u32 = GPIO_BASE + 0x40;
-//const GPEDS1: u32 = GPIO_BASE + 0x44;
-//const GPHEN0: u32 = GPIO_BASE + 0x64;
-//const GPHEN1: u32 = GPIO_BASE + 0x68;
-//
-//const GPPUDCLK1: u32 = GPIO_BASE + 0x9C;
-
 /*
  * MIT License
  *
- * Copyright (c) 2018 Andre Richter <andre.o.richter@gmail.com>
+ * Copyright (c) 2018-2019 Andre Richter <andre.o.richter@gmail.com>
+ * Copyright (c) 2019 Berkus Decker <berkus+github@metta.systems>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -47,6 +23,10 @@ const GPIO_BASE: u32 = BcmHost::get_peripheral_address() + 0x20_0000;
  * SOFTWARE.
  */
 
+use crate::platform::rpi3::BcmHost;
+use core::{convert::TryFrom, ops};
+use register::{mmio::ReadWrite, register_bitfields};
+
 // Descriptions taken from
 // https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf
 register_bitfields! {
@@ -58,6 +38,7 @@ register_bitfields! {
         FSEL15 OFFSET(15) NUMBITS(3) [
             Input = 0b000,
             Output = 0b001,
+            RXD0 = 0b100, // UART0     - Alternate function 0
             RXD1 = 0b010  // Mini UART - Alternate function 5
 
         ],
@@ -66,6 +47,7 @@ register_bitfields! {
         FSEL14 OFFSET(12) NUMBITS(3) [
             Input = 0b000,
             Output = 0b001,
+            TXD0 = 0b100, // UART0     - Alternate function 0
             TXD1 = 0b010  // Mini UART - Alternate function 5
         ]
     ],
@@ -86,12 +68,64 @@ register_bitfields! {
     ]
 }
 
-pub const GPFSEL1: *const ReadWrite<u32, GPFSEL1::Register> =
-    (GPIO_BASE + 0x04) as *const ReadWrite<u32, GPFSEL1::Register>;
+// The offsets for reach register.
+// From https://wiki.osdev.org/Raspberry_Pi_Bare_Bones
+#[allow(non_snake_case)]
+#[repr(C)]
+pub struct RegisterBlock {
+    pub GPFSEL0: ReadWrite<u32>,                        // 0x00
+    pub GPFSEL1: ReadWrite<u32, GPFSEL1::Register>,     // 0x04
+    pub GPFSEL2: ReadWrite<u32>,                        // 0x08
+    pub GPFSEL3: ReadWrite<u32>,                        // 0x0C
+    pub GPFSEL4: ReadWrite<u32>,                        // 0x10
+    pub GPFSEL5: ReadWrite<u32>,                        // 0x14
+    __reserved_0: u32,                                  // 0x18
+    GPSET0: ReadWrite<u32>,                             // 0x1C
+    GPSET1: ReadWrite<u32>,                             // 0x20
+    __reserved_1: u32,                                  // 0x24
+    GPCLR0: ReadWrite<u32>,                             // 0x28
+    __reserved_2: [u32; 2],                             // 0x2C-0x30
+    GPLEV0: ReadWrite<u32>,                             // 0x34
+    GPLEV1: ReadWrite<u32>,                             // 0x38
+    __reserved_3: u32,                                  // 0x3C
+    GPEDS0: ReadWrite<u32>,                             // 0x40
+    GPEDS1: ReadWrite<u32>,                             // 0x44
+    __reserved_4: [u32; 7],                             //
+    GPHEN0: ReadWrite<u32>,                             // 0x64
+    GPHEN1: ReadWrite<u32>,                             // 0x68
+    __reserved_5: [u32; 10],                            //
+    pub GPPUD: ReadWrite<u32>,                          // 0x94
+    pub GPPUDCLK0: ReadWrite<u32, GPPUDCLK0::Register>, // 0x98
+    pub GPPUDCLK1: ReadWrite<u32>,                      // 0x9C
+}
 
-/// Controls actuation of pull up/down to ALL GPIO pins.
-pub const GPPUD: *const ReadWrite<u32> = (GPIO_BASE + 0x94) as *const ReadWrite<u32>;
+/// Public interface to the GPIO MMIO area
+pub struct GPIO {
+    base_addr: usize,
+}
 
-/// Controls actuation of pull up/down for specific GPIO pin.
-pub const GPPUDCLK0: *const ReadWrite<u32, GPPUDCLK0::Register> =
-    (GPIO_BASE + 0x98) as *const ReadWrite<u32, GPPUDCLK0::Register>;
+impl ops::Deref for GPIO {
+    type Target = RegisterBlock;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.ptr() }
+    }
+}
+
+impl GPIO {
+    pub fn new_default() -> GPIO {
+        const GPIO_BASE: u32 = BcmHost::get_peripheral_address() + 0x20_0000;
+        GPIO {
+            base_addr: usize::try_from(GPIO_BASE).unwrap(),
+        }
+    }
+
+    pub fn new(base_addr: usize) -> GPIO {
+        GPIO { base_addr }
+    }
+
+    /// Returns a pointer to the register block
+    fn ptr(&self) -> *const RegisterBlock {
+        self.base_addr as *const _
+    }
+}
