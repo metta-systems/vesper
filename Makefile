@@ -2,6 +2,7 @@
 # MIT License
 #
 # Copyright (c) 2018 Andre Richter <andre.o.richter@gmail.com>
+# Copyright (c) 2019 Berkus Decker <berkus+github@metta.systems>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -44,14 +45,14 @@ QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64
 all: kernel8.img
 
 target/$(TARGET)/release/vesper: $(SOURCES)
-	cargo xbuild --target=$(TARGET_JSON) --release --features "noserial"
+	cargo xbuild --target=$(TARGET_JSON) --release
 
 kernel8.img: target/$(TARGET)/release/vesper $(SOURCES)
 	cp $< ./kernel8
 	$(OBJCOPY) $(OBJCOPY_PARAMS) $< kernel8.img
 
 docker_qemu: all
-	$(DOCKER_CMD) $(UTILS_CONTAINER) $(QEMU_CMD) $(QEMU_OPTS) -kernel kernel8.img
+	$(DOCKER_CMD) $(UTILS_CONTAINER) $(QEMU_CMD) $(QEMU_OPTS) -serial stdio -kernel kernel8.img
 
 qemu: all
 	$(QEMU) $(QEMU_OPTS) $(QEMU_SERIAL) -kernel kernel8.img

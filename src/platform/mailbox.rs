@@ -1,8 +1,7 @@
-use crate::arch::*;
-use crate::platform::{
-    display::Size2d,
-    rpi3::BcmHost,
-    // uart::MiniUart,
+use crate::{
+    arch::*,
+    platform::{display::Size2d, rpi3::BcmHost},
+    println,
 };
 use core::ops::Deref;
 use register::mmio::*;
@@ -115,6 +114,7 @@ pub mod tag {
     pub const GetPowerState: u32 = 0x0002_0001;
     pub const SetPowerState: u32 = 0x0002_8001;
     pub const GetClockRate: u32 = 0x0003_0002;
+    pub const SetClockRate: u32 = 0x0003_8002;
     pub const AllocateBuffer: u32 = 0x0004_0001;
     pub const ReleaseBuffer: u32 = 0x0004_8001;
     pub const BlankScreen: u32 = 0x0004_0002;
@@ -192,11 +192,7 @@ pub mod alpha_mode {
 fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
 
-    // {
-    //     let mut uart = MiniUart::new();
-    //     uart.init();
-    //     writeln!(uart, "Mailbox::write {:x}/{:x}", buf_ptr, channel);
-    // }
+    println!("Mailbox::write {:x}/{:x}", buf_ptr, channel);
 
     while regs.STATUS.is_set(STATUS::FULL) {
         count += 1;
@@ -212,9 +208,6 @@ fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
 
 fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
-
-    // let mut uart = MiniUart::new();
-    // uart.init();
 
     loop {
         while regs.STATUS.is_set(STATUS::EMPTY) {
@@ -288,20 +281,17 @@ impl Mailbox {
     pub fn read(&self, channel: u32) -> Result<()> {
         read(self, self.buffer.as_ptr() as u32, channel)?;
 
-        // let mut uart = MiniUart::new();
-        // uart.init();
-
         match self.buffer[1] {
             response::SUCCESS => {
-                // writeln!(uart, "\n######\nMailbox::returning SUCCESS");
+                println!("\n######\nMailbox::returning SUCCESS");
                 Ok(())
             }
             response::ERROR => {
-                // writeln!(uart, "\n######\nMailbox::returning ResponseError");
+                println!("\n######\nMailbox::returning ResponseError");
                 Err(MboxError::ResponseError)
             }
             _ => {
-                // writeln!(uart, "\n######\nMailbox::returning UnknownError");
+                println!("\n######\nMailbox::returning UnknownError");
                 Err(MboxError::UnknownError)
             }
         }

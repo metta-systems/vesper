@@ -7,6 +7,7 @@
 #![feature(lang_items)]
 #![feature(ptr_internals)] // until we mark with PhantomData instead?
 #![feature(core_intrinsics)]
+#![feature(try_from)]
 #![doc(html_root_url = "https://docs.metta.systems/")]
 #![allow(dead_code)]
 #![allow(unused_assignments)]
@@ -27,14 +28,17 @@ extern crate rlibc;
 #[macro_use]
 pub mod arch;
 pub use arch::*;
+mod devices;
 pub mod macros;
 pub use macros::*;
 pub mod platform;
+mod sync;
 mod write_to;
 
 // use core::fmt::Write;
 use platform::{
     display::{Color, Size2d},
+    gpio::GPIO,
     // uart::MiniUart,
     vc::VC,
 };

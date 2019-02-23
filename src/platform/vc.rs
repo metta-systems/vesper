@@ -1,23 +1,24 @@
-use crate::platform::{
-    display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y},
-    mailbox::{self, channel, response::VAL_LEN_FLAG, tag, GpuFb, Mailbox},
+use crate::{
+    platform::{
+        display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y},
+        mailbox::{self, channel, response::VAL_LEN_FLAG, tag, GpuFb, Mailbox},
+    },
+    println,
 };
-// use core::fmt::Write;
-// use platform::uart::MiniUart;
 
 pub struct VC;
 
 impl VC {
     // Use mailbox framebuffer interface to initialize
-    pub fn init_fb(size: Size2d /*, uart: &mut MiniUart*/) -> Option<Display> {
+    pub fn init_fb(size: Size2d) -> Option<Display> {
         let mut fb_info = GpuFb::new(size, 32);
 
-        // writeln!(uart, "initing fb_info");
+        println!("initing fb_info");
         fb_info.call().map_err(|_| {
-            // writeln!(uart, "fb_info error");
+            println!("fb_info error");
         });
 
-        // writeln!(uart, "inited fb_info: {}", fb_info);
+        println!("inited fb_info: {}", fb_info);
 
         let mut mbox = Mailbox::new();
 
@@ -62,7 +63,7 @@ impl VC {
         /* Need to set up max_x/max_y before using Display::write */
         let max_x = fb_info.vwidth / CHARSIZE_X;
         let max_y = fb_info.vheight / CHARSIZE_Y;
-        // writeln!(uart, "inited fb_info #2");
+        println!("inited fb_info #2");
 
         Some(Display::new(
             fb_info.pointer & 0x3fff_ffff,
