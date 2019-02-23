@@ -80,24 +80,35 @@ fn kmain() -> ! {
 
     println!("\n[0] UART is live!");
 
-    println!("Hello, world!");
-
     extern "C" {
         static __exception_vectors_start: u64;
     }
+
+    //==============================================
+    // Since formatted output doesn't work, lets do some other preparatory steps:
+    // 1. Initialize MMU
+    // 2. Set up exception handlers
+    // Obviously, things should keep working after that...
+    //==============================================
 
     unsafe {
         let exception_vectors_start: u64 = &__exception_vectors_start as *const _ as u64;
 
         arch::traps::set_vbar_el1_checked(exception_vectors_start);
+        println!("Exception traps set up");
     }
 
     unsafe {
         mmu::init();
     }
+    println!("MMU initialised");
 
-    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 } /*, &mut uart*/) {
-        display.clear(Color::black());
+    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }) {
+        println!("Display created");
+
+        display.clear(Color::black()); // Takes A LOONG time, check caching opts?
+        println!("Display cleared");
+
         display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255));
 
@@ -112,21 +123,27 @@ fn kmain() -> ! {
         // display.draw_text(50, 150, s.unwrap(), Color::white());
         // }
 
-        //==============================================
-        // Since formatted output doesn't work, lets do some other preparatory steps:
-        // 1. Initialize MMU
-        // 2. Set up exception handlers
-        // Obviously, things should keep working after that...
-        //==============================================
-
         display.draw_text(150, 50, "RED", Color::red());
         display.draw_text(160, 60, "GREEN", Color::green());
         display.draw_text(170, 70, "BLUE", Color::blue());
     }
 
-    // unsafe {
-    //     mmu::init();
-    // }
+    // Cause an exception by accessing a virtual address for which no
+    // address translations have been set up.
+    //
+    // This line of code accesses the address 3 GiB, but page tables are
+    // only set up for the range [0..1] GiB.
+    let big_addr: u64 = 3 * 1024 * 1024 * 1024;
+    unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
+
+    println!("[i] Whoa! We recovered from an exception.");
+
+    //------------------------------------------------------------
+    // Start a command prompt
+    //------------------------------------------------------------
+    CONSOLE.lock(|c| {
+        c.command_prompt();
+    });
 
     // writeln!(uart, "Bye, going to sleep now");
     // qemu_aarch64_exit()

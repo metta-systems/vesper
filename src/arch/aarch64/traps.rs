@@ -43,6 +43,7 @@
 // nested exceptions, for example, to allow a higher priority interrupt
 // to interrupt the handling of a lower priority source, then software needs
 // to explicitly re-enable interrupts
+use crate::{arch::endless_sleep, println};
 use cortex_a::{barrier, regs};
 use register::cpu::RegisterReadWrite;
 
@@ -77,12 +78,10 @@ pub struct ExceptionContext {
 /// The default exception, invoked for every exception type unless the handler
 /// is overwritten.
 #[no_mangle]
-unsafe extern "C" fn default_exception_handler() {
-    // println!("Unexpected exception. Halting CPU.");
+unsafe extern "C" fn default_exception_handler() -> ! {
+    println!("Unexpected exception. Halting CPU.");
 
-    loop {
-        cortex_a::asm::wfe()
-    }
+    endless_sleep()
 }
 
 // To implement an exception handler, overwrite it by defining the respective
@@ -107,15 +106,15 @@ unsafe extern "C" fn default_exception_handler() {
 
 #[no_mangle]
 unsafe extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
-    // println!("[!] A synchronous exception happened.");
-    // println!("      ELR_EL1: {:#010X}", e.elr_el1);
-    // println!(
-    //     "      Incrementing ELR_EL1 by 4 now to continue with the first \
-    //      instruction after the exception!"
-    // );
+    println!("[!] A synchronous exception happened.");
+    println!("      ELR_EL1: {:#010X}", e.elr_el1);
+    println!(
+        "      Incrementing ELR_EL1 by 4 now to continue with the first \
+         instruction after the exception!"
+    );
 
     e.elr_el1 += 4;
 
-    // println!("      ELR_EL1 modified: {:#010X}", e.elr_el1);
-    // println!("      Returning from exception...\n");
+    println!("      ELR_EL1 modified: {:#010X}", e.elr_el1);
+    println!("      Returning from exception...\n");
 }
