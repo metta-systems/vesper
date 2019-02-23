@@ -40,6 +40,7 @@ TMS   | GPIO27 |   13    |  Alt4
 TDI   | GPIO26 |   37    |  Alt4
 TDO   | GPIO24 |   18    |  Alt4
 TRST  | GPIO22 |   15    |  Alt4
+RTCK  | GPIO23 |   16    |  Alt4
 GND   | GND    |   20    |
 ```
 
@@ -111,7 +112,44 @@ If `stepi` command causes CPU to make one instruction step, everything is workin
 
 [Source](https://sysprogs.com/tutorials/preparing-raspberry-pi-for-jtag-debugging/), [source #2](https://www.op-tee.org/docs/rpi3/#6-openocd-and-jtag), [source #3 - monitor reset halt](http://www.openstm32.org/forumthread823)
 
+
+I got RPi3-to-RPi3 JTAG working and even debugged a bit directly on the CPU, but a few things impeded my happiness:
+
+* RPi is a bit too slow for bitbanging and oftentimes opening a browser window, or running some other command caused OpenOCD to spew JTAG synchronization errors.
+* To properly debug my kernel from RPi I would need to compile it locally (otherwise all the paths in the debug info are wrong and GDB will not find the source files, I did not want to mess around with symlinks).
+
+Fortunately, at this point a Segger J-Link 9 arrived and I went to use it.
+
 # J-Link to RPi3 jtag
 
 https://www.segger.com/downloads/jlink/
 https://habr.com/ru/post/259205/
+
+JTAG pinout on segger is in UM08001_JLink.pdf distributed with the J-Link software kit, in section 17.1.1.
+
+This adds VTref for target voltage detection.
+
+Pinout:
+
+J-Link and connection to Raspi3:
+
+```
+Func  |  J-Link Pin  | Wire color  | Target pin
+------+--------------+-------------+-----------
+VTref |       1      | white       |  1
+TCK   |       9      | yellow      | 22
+TMS   |       7      | brown       | 13
+TDI   |       5      | green       | 37
+TDO   |      13      | orange      | 18
+nTRST |       3      | red         | 15
+RTCK  |      11      | magenta     | 16
+GND   |       4      | black       | 20
+```
+
+
+[Useful article](https://www.suse.com/c/debugging-raspberry-pi-3-with-jtag/)
+
+
+Rebuild openocd from git and voila, it works with 
+
+`openocd -f interface/jlink.cfg -f rpi3_jtag.cfg`
