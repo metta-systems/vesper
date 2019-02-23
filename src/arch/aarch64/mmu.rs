@@ -27,7 +27,6 @@
 //! [ARMv8 memory addressing](https://static.docs.arm.com/100940/0100/armv8_a_address%20translation_100940_0100_en.pdf)
 
 use crate::println;
-use core::marker::PhantomData;
 use cortex_a::{barrier, regs::*};
 use register::register_bitfields;
 
@@ -110,73 +109,19 @@ impl BaseAddr for [u64; 512] {
 
 const NUM_ENTRIES_4KIB: usize = 512;
 
-struct Entry(u64);
-
-impl Entry {
-    pub fn is_unused(&self) -> bool {
-        self.0 == 0
-    }
-
-    pub fn set_unused(&mut self) {
-        self.0 = 0;
-    }
-}
-
-// Levels
-trait TableLevel {}
-
-enum Level0 {}
-enum Level1 {}
-enum Level2 {}
-enum Level3 {}
-
-impl TableLevel for Level0 {}
-impl TableLevel for Level1 {}
-impl TableLevel for Level2 {}
-impl TableLevel for Level3 {}
-
-// Levels for nested tables
-trait HierarchicalLevel: TableLevel {
-    type NextLevel: TableLevel;
-}
-
-impl HierarchicalLevel for Level0 {
-    type NextLevel = Level1;
-}
-impl HierarchicalLevel for Level1 {
-    type NextLevel = Level2;
-}
-impl HierarchicalLevel for Level2 {
-    type NextLevel = Level3;
-}
-
 // We need a wrapper struct here so that we can make use of the align attribute.
 #[repr(C)]
 #[repr(align(4096))]
-struct PageTable<L: TableLevel> {
-    entries: [Entry; NUM_ENTRIES_4KIB],
-    level: PhantomData<L>,
+struct PageTable {
+    entries: [u64; NUM_ENTRIES_4KIB],
 }
 
-impl<L> PageTable<L>
-where
-    L: TableLevel,
-{
-    pub fn zero(&mut self) {
-        for entry in self.entries.iter_mut() {
-            entry.set_unused();
-        }
-    }
-}
-
-static mut LVL2_TABLE: PageTable<Level2> = PageTable {
+static mut LVL2_TABLE: PageTable = PageTable {
     entries: [0; NUM_ENTRIES_4KIB],
-    level: PhantomData<Level2>,
 };
 
-static mut SINGLE_LVL3_TABLE: PageTable<Level3> = PageTable {
+static mut SINGLE_LVL3_TABLE: PageTable = PageTable {
     entries: [0; NUM_ENTRIES_4KIB],
-    level: PhantomData<Level3>,
 };
 
 /// Set up identity mapped page tables for the first 1 gigabyte of address
