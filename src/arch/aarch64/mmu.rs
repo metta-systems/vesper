@@ -47,7 +47,9 @@ pub fn print_features() {
     }
 }
 
-register_bitfields! {u64,
+register_bitfields! {
+    u64,
+
     // AArch64 Reference Manual page 2150
     STAGE1_DESCRIPTOR [
         /// Execute-never
