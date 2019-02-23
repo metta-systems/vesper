@@ -13,12 +13,10 @@
 #![allow(unused_assignments)]
 #![allow(unused_must_use)]
 
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+//any(target_arch = "aarch64", target_arch = "x86_64")
+#[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
 
-// use core::intrinsics::abort;
-
-// #[macro_use]
 extern crate bitflags;
 #[macro_use]
 extern crate register;
