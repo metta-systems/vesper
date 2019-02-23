@@ -22,27 +22,28 @@
  * SOFTWARE.
  */
 
-// use super::uart;
+//! MMU initialisation.
+
+use crate::println;
 use cortex_a::{barrier, regs::*};
 use register::register_bitfields;
 
-/// Parse the ID_AA64MMFR0_EL1 register for runtime information about supported
-/// MMU features.
-// pub fn print_features(uart: &uart::Uart) {
-//     let mmfr = ID_AA64MMFR0_EL1.extract();
+/// Parse the ID_AA64MMFR0_EL1 register for runtime information about supported MMU features.
+pub fn print_features() {
+    let mmfr = ID_AA64MMFR0_EL1.extract();
 
-//     if let Some(ID_AA64MMFR0_EL1::TGran4::Value::Supported) =
-//         mmfr.read_as_enum(ID_AA64MMFR0_EL1::TGran4)
-//     {
-//         uart.puts("[i] MMU: 4 KiB granule supported!\n");
-//     }
+    if let Some(ID_AA64MMFR0_EL1::TGran4::Value::Supported) =
+        mmfr.read_as_enum(ID_AA64MMFR0_EL1::TGran4)
+    {
+        println!("[i] MMU: 4 KiB granule supported!");
+    }
 
-//     if let Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_40) =
-//         mmfr.read_as_enum(ID_AA64MMFR0_EL1::PARange)
-//     {
-//         uart.puts("[i] MMU: Up to 40 Bit physical address range supported!\n");
-//     }
-// }
+    if let Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_40) =
+        mmfr.read_as_enum(ID_AA64MMFR0_EL1::PARange)
+    {
+        println!("[i] MMU: Up to 40 Bit physical address range supported!");
+    }
+}
 
 register_bitfields! {u64,
     // AArch64 Reference Manual page 2150
@@ -114,6 +115,7 @@ struct PageTable {
 static mut LVL2_TABLE: PageTable = PageTable {
     entries: [0; NUM_ENTRIES_4KIB],
 };
+
 static mut SINGLE_LVL3_TABLE: PageTable = PageTable {
     entries: [0; NUM_ENTRIES_4KIB],
 };
@@ -121,6 +123,8 @@ static mut SINGLE_LVL3_TABLE: PageTable = PageTable {
 /// Set up identity mapped page tables for the first 1 gigabyte of address
 /// space.
 pub unsafe fn init() {
+    print_features();
+
     // First, define the two memory types that we will map. Normal DRAM and
     // device.
     MAIR_EL1.write(
@@ -147,7 +151,7 @@ pub unsafe fn init() {
 
     // For educational purposes and fun, let the start of the second 2 MiB block
     // point to the 2 MiB aperture which contains the UART's base address.
-    let uart_phys_base: u64 = (crate::platform::uart::UART1_BASE >> 21).into();
+    let uart_phys_base: u64 = (crate::platform::mini_uart::UART1_BASE >> 21).into();
     LVL2_TABLE.entries[1] = (STAGE1_DESCRIPTOR::VALID::True
         + STAGE1_DESCRIPTOR::TYPE::Block
         + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE)
@@ -244,14 +248,16 @@ pub unsafe fn init() {
     // Enable the MMU and turn on data and instruction caching.
     SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::Cacheable + SCTLR_EL1::I::Cacheable);
 
+    // @todo potentially disable both caches here for testing?
+
     // Force MMU init to complete before next instruction
     /*
      * Invalidate the local I-cache so that any instructions fetched
      * speculatively from the PoC are discarded, since they may have
      * been dynamically patched at the PoU.
      */
-    asm!("isb
-        ic iallu
-        dsb nsh
-        isb" :::: "volatile");
+    barrier::isb(barrier::SY);
+    asm!("ic iallu
+        dsb nsh" :::: "volatile");
+    barrier::isb(barrier::SY);
 }
