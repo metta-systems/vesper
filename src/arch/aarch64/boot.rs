@@ -126,6 +126,8 @@ fn setup_and_enter_el1_from_el2() -> ! {
 pub unsafe extern "C" fn _boot_cores() -> ! {
     use cortex_a::{asm, regs::*};
 
+    // crate::arch::aarch64::jtag_dbg_wait();
+
     const CORE_0: u64 = 0;
     const CORE_MASK: u64 = 0x3;
     const EL1: u32 = CurrentEL::EL::EL1.value;
