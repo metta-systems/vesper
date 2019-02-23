@@ -1,7 +1,7 @@
 // mod arch::aarch64
 
 mod boot;
-mod memory;
+pub mod memory;
 pub mod mmu;
 pub mod traps;
 pub use self::memory::{PhysicalAddress, VirtualAddress};
