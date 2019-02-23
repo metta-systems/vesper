@@ -40,6 +40,8 @@ QEMU_OPTS = -M raspi3 -d in_asm,int
 QEMU_SERIAL = -serial null -serial stdio
 QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64
 
+GDB = /usr/local/opt/gdb-8.2.1-aarhc64/bin/aarch64-linux-elf-gdb
+
 OPENOCD = /usr/local/openocd-20ceec69/bin/openocd
 
 .PHONY: all qemu clippy clean objdump nm
@@ -82,4 +84,13 @@ hopper: all
 
 openocd:
 	$(OPENOCD) -f interface/jlink.cfg -f ./doc/rpi3_jlink.cfg
+
+gdb: kernel8.img
+	env RUST_GDB=$(GDB) rust-gdb kernel8
+
+gdbdash: kernel8.img
+	env RUST_GDB=$(GDB) rust-gdb -x ~/.gdbinit_dashboard kernel8
+
+gdbgui:
+	gdbgui -g $(GDB) --gdb-args='--init-eval-command="set startup-with-shell off"'
 
