@@ -2,6 +2,7 @@
  * MIT License
  *
  * Copyright (c) 2018-2019 Andre Richter <andre.o.richter@gmail.com>
+ * Copyright (c) 2019 Berkus Decker <berkus+github@metta.systems>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
