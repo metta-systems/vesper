@@ -5,6 +5,7 @@ pub struct BcmHost;
 
 impl BcmHost {
     // As per https://www.raspberrypi.org/documentation/hardware/raspberrypi/peripheral_addresses.md
+    // BCM SOC could address only 1Gb of memory, so 0x4000_0000 is the high watermark.
     /// This returns the ARM-side physical address where peripherals are mapped.
     pub const fn get_peripheral_address() -> u32 {
         0x3f00_0000

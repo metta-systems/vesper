@@ -23,6 +23,7 @@
  */
 
 //! MMU initialisation.
+//! [ARMv8 memory addressing](https://static.docs.arm.com/100940/0100/armv8_a_address%20translation_100940_0100_en.pdf)
 
 use crate::println;
 use cortex_a::{barrier, regs::*};
