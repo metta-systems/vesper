@@ -4,6 +4,7 @@ use crate::{
     println,
 };
 use core::ops::Deref;
+use core::sync::atomic::{compiler_fence, Ordering};
 use register::mmio::*;
 
 // Public interface to the mailbox
@@ -193,6 +194,11 @@ fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
 
     println!("Mailbox::write {:x}/{:x}", buf_ptr, channel);
+
+    // Insert a compiler fence that ensures that all stores to the
+    // mbox buffer are finished before the GPU is signaled (which is
+    // done by a store operation as well).
+    compiler_fence(Ordering::Release);
 
     while regs.STATUS.is_set(STATUS::FULL) {
         count += 1;
