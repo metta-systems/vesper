@@ -26,7 +26,7 @@ ENTRY(_boot_cores);
 
 SECTIONS
 {
-    . = 0x80000; /* AArch64 boot address is 0x80000 */
+    . = 0x80000; /* AArch64 boot address is 0x80000, 4K-aligned */
     __ro_start = .;
     .text :
     {
