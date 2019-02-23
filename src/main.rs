@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(asm)]
 #![feature(const_fn)]
+#![feature(format_args_nl)]
 #![feature(lang_items)]
 #![feature(ptr_internals)] // until we mark with PhantomData instead?
 #![feature(core_intrinsics)]
@@ -25,6 +26,8 @@ extern crate rlibc;
 #[macro_use]
 pub mod arch;
 pub use arch::*;
+pub mod macros;
+pub use macros::*;
 pub mod platform;
 mod write_to;
 
@@ -41,15 +44,41 @@ use platform::{
 // Actual interfaces to call these syscalls are in vesper-user (similar to libsel4)
 // pub mod vesper; -- exported from vesper-user
 
+/// The global console. Output of the print! and println! macros.
+static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devices::Console::new());
+
 // Kernel entry point
 // arch crate is responsible for calling this
 fn kmain() -> ! {
-    // let mut uart = MiniUart::new();
-    // uart.init();
-    // Crashes if uncommenting next line: vvv
-    // writeln!(uart, "Hey there, mini uart talking!");
-    // uart.puts("Hey there, mini uart talking!\n"); // shall this work though?
-    // uart.write_str(); // shall this?
+    let gpio = GPIO::new_default();
+
+    let uart = platform::MiniUart::new_default();
+    uart.init(&gpio);
+    CONSOLE.lock(|c| {
+        // Moves uart into the global CONSOLE. It is not accessible
+        // anymore for the remaining parts of kernel_entry().
+        c.replace_with(uart.into());
+    });
+
+    let uart = platform::PL011Uart::new_default();
+
+    let mut mbox = platform::mailbox::Mailbox::new();
+
+    match uart.init(&mut mbox, &gpio) {
+        Ok(_) => {
+            CONSOLE.lock(|c| {
+                // Moves uart into the global CONSOLE. It is not accessible
+                // anymore for the remaining parts of kernel_entry().
+                c.replace_with(uart.into());
+            });
+        }
+        Err(_) => endless_sleep(),
+    }
+
+    println!("\n[0] UART is live!");
+
+    println!("Hello, world!");
+
 
     unsafe {
         mmu::init();
