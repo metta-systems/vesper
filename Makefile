@@ -40,6 +40,8 @@ QEMU_OPTS = -M raspi3 -d in_asm,int
 QEMU_SERIAL = -serial null -serial stdio
 QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64
 
+OPENOCD = /usr/local/openocd-20ceec69/bin/openocd
+
 .PHONY: all qemu clippy clean objdump nm
 
 all: kernel8.img
@@ -77,4 +79,7 @@ nm:
 
 hopper: all
 	hopperv4 -e kernel8.img -R --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --aarch64
+
+openocd:
+	$(OPENOCD) -f interface/jlink.cfg -f ./doc/rpi3_jlink.cfg
 
