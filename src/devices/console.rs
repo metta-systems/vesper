@@ -92,16 +92,25 @@ impl Console {
     }
 
     /// A command prompt. Currently does nothing.
-    pub fn command_prompt(&self) -> ! {
+    pub fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
         self.puts("\n$> ");
 
+        let mut i = 0;
         let mut input;
         loop {
             input = self.getc();
 
             if input == '\n' {
-                self.puts("\n$> ")
+                self.putc('\n');
+                return &buf[..i];
             } else {
+                if i < buf.len() {
+                    buf[i] = input as u8;
+                    i += 1;
+                } else {
+                    return &buf[..i];
+                }
+
                 self.putc(input);
             }
         }

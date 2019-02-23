@@ -7,6 +7,7 @@
 #![feature(lang_items)]
 #![feature(ptr_internals)] // until we mark with PhantomData instead?
 #![feature(core_intrinsics)]
+#![feature(range_contains)]
 #![feature(try_from)]
 #![doc(html_root_url = "https://docs.metta.systems/")]
 #![allow(dead_code)]
@@ -127,6 +128,34 @@ fn kmain() -> ! {
         display.draw_text(170, 70, "BLUE", Color::blue());
     }
 
+    //------------------------------------------------------------
+    // Start a command prompt
+    //------------------------------------------------------------
+    'cmd_loop: loop {
+        let mut buf = [0u8; 64];
+
+        match CONSOLE.lock(|c| c.command_prompt(&mut buf)) {
+            b"trap" => check_data_abort_trap(),
+            b"map" => arch::memory::print_layout(),
+            b"help" => print_help(),
+            b"end" => break 'cmd_loop,
+            x => println!("Unknown command {:?}, try 'help'", x),
+        }
+    }
+
+    // writeln!(uart, "Bye, going to sleep now");
+    // qemu_aarch64_exit()
+    endless_sleep()
+}
+
+fn print_help() {
+    println!("Supported console commands:");
+    println!("  trap - cause and recover from a data abort exception");
+    println!("  map  - show kernel memory layout");
+    println!("  end  - leave console and lock up");
+}
+
+fn check_data_abort_trap() {
     // Cause an exception by accessing a virtual address for which no
     // address translations have been set up.
     //
@@ -136,17 +165,6 @@ fn kmain() -> ! {
     unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
 
     println!("[i] Whoa! We recovered from an exception.");
-
-    //------------------------------------------------------------
-    // Start a command prompt
-    //------------------------------------------------------------
-    CONSOLE.lock(|c| {
-        c.command_prompt();
-    });
-
-    // writeln!(uart, "Bye, going to sleep now");
-    // qemu_aarch64_exit()
-    endless_sleep()
 }
 
 entry!(kmain);
