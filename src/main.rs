@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(asm)]
+#![feature(global_asm)]
 #![feature(const_fn)]
 #![feature(format_args_nl)]
 #![feature(lang_items)]
@@ -79,6 +80,15 @@ fn kmain() -> ! {
 
     println!("Hello, world!");
 
+    extern "C" {
+        static __exception_vectors_start: u64;
+    }
+
+    unsafe {
+        let exception_vectors_start: u64 = &__exception_vectors_start as *const _ as u64;
+
+        arch::traps::set_vbar_el1_checked(exception_vectors_start);
+    }
 
     unsafe {
         mmu::init();
