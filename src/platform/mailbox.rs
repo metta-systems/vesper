@@ -7,18 +7,19 @@ use core::ops::Deref;
 use core::sync::atomic::{compiler_fence, Ordering};
 use register::mmio::*;
 
-// Public interface to the mailbox
+// Public interface to the mailbox.
+// The address for the buffer needs to be 16-byte aligned
+// so that the VideoCore can handle it properly.
+// The reason is that lowest 4 bits of the address will contain the channel number.
 #[repr(C)]
 #[repr(align(16))]
 pub struct Mailbox {
-    // The address for the buffer needs to be 16-byte aligned
-    // so that the VideoCore can handle it properly.
     pub buffer: [u32; 36],
 }
 
 // Identity mapped first 1Gb by u-boot
 const MAILBOX_BASE: u32 = BcmHost::get_peripheral_address() + 0xb880;
-/* Lower 4-bits are channel ID */
+// Lowest 4-bits are channel ID.
 const CHANNEL_MASK: u32 = 0xf;
 
 // Mailbox Peek  Read/Write  Status  Sender  Config
