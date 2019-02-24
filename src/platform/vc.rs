@@ -1,7 +1,8 @@
 use crate::{
     platform::{
         display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y},
-        mailbox::{self, channel, response::VAL_LEN_FLAG, tag, GpuFb, Mailbox},
+        mailbox::{self, channel, response::VAL_LEN_FLAG, tag, Mailbox},
+        rpi3::BcmHost,
     },
     println,
 };
@@ -10,229 +11,103 @@ pub struct VC;
 
 impl VC {
     // Use mailbox framebuffer interface to initialize
-    pub fn init_fb(size: Size2d) -> Option<Display> {
-        let mut fb_info = GpuFb::new(size, 32);
-
-        println!("initing fb_info");
-        fb_info.call().map_err(|_| {
-            println!("fb_info error");
-        });
-
-        println!("inited fb_info: {}", fb_info);
-
+    // https://www.raspberrypi.org/forums/viewtopic.php?f=72&t=185116
+    pub fn init_fb(size: Size2d, depth: u32) -> Option<Display> {
+        // Use property channel
         let mut mbox = Mailbox::new();
+
+        mbox.buffer[0] = 22 * 4;
+        mbox.buffer[1] = mailbox::REQUEST;
+
+        mbox.buffer[2] = tag::SetPhysicalWH;
+        mbox.buffer[3] = 8; // Buffer size   // val buf size
+        mbox.buffer[4] = 8; // Request size  // val size
+        mbox.buffer[5] = size.x; // Space for horizontal resolution
+        mbox.buffer[6] = size.y; // Space for vertical resolution
+
+        mbox.buffer[7] = tag::SetVirtualWH as u32;
+        mbox.buffer[8] = 8; // Buffer size   // val buf size
+        mbox.buffer[9] = 8; // Request size  // val size
+        mbox.buffer[10] = size.x; // Space for horizontal resolution
+        mbox.buffer[11] = size.y; // Space for vertical resolution
+
+        mbox.buffer[12] = tag::SetDepth as u32;
+        mbox.buffer[13] = 4; // Buffer size   // val buf size
+        mbox.buffer[14] = 4; // Request size  // val size
+        mbox.buffer[15] = depth; // bpp
+
+        mbox.buffer[16] = tag::AllocateBuffer as u32;
+        mbox.buffer[17] = 8; // Buffer size   // val buf size
+        mbox.buffer[18] = 4; // Request size  // val size
+        mbox.buffer[19] = 4096; // Alignment = 4096 -- fb_ptr will be here
+        mbox.buffer[20] = 0; // Space for response -- fb_size will be here
+
+        mbox.buffer[21] = tag::End as u32;
+
+        mbox.call(channel::PropertyTagsArmToVc).map_err(|_| ());
+
+        if (mbox.buffer[18] & VAL_LEN_FLAG) == 0 {
+            return None;
+        }
+
+        let fb_ptr = BcmHost::bus2phys(mbox.buffer[19]);
+        let fb_size = mbox.buffer[20];
 
         mbox.buffer[0] = 15 * 4;
         mbox.buffer[1] = mailbox::REQUEST;
 
-        mbox.buffer[2] = tag::GetDepth;
-        mbox.buffer[3] = 4;
-        mbox.buffer[4] = 0;
-        mbox.buffer[5] = 0; // GpuFb.depth
-
         // SetPixelOrder doesn't work in QEMU, however TestPixelOrder does.
-        mbox.buffer[6] = tag::TestPixelOrder;
+        mbox.buffer[2] = tag::TestPixelOrder;
+        mbox.buffer[3] = 4;
+        mbox.buffer[4] = 4;
+        mbox.buffer[5] = 1; // PixelOrder
+
+        mbox.buffer[6] = tag::SetAlphaMode;
         mbox.buffer[7] = 4;
         mbox.buffer[8] = 4;
-        mbox.buffer[9] = 1; // PixelOrder
+        mbox.buffer[9] = mailbox::alpha_mode::IGNORED;
 
-        mbox.buffer[10] = tag::SetAlphaMode;
+        mbox.buffer[10] = tag::GetPitch;
         mbox.buffer[11] = 4;
-        mbox.buffer[12] = 4;
-        mbox.buffer[13] = mailbox::alpha_mode::IGNORED;
+        mbox.buffer[12] = 0;
+        mbox.buffer[13] = 0;
 
         mbox.buffer[14] = tag::End;
 
         mbox.call(channel::PropertyTagsArmToVc).map_err(|_| ());
 
-        if (mbox.buffer[4] & VAL_LEN_FLAG) == 0 || (mbox.buffer[8] & VAL_LEN_FLAG) == 0 {
+        if (mbox.buffer[4] & VAL_LEN_FLAG) == 0 || (mbox.buffer[12] & VAL_LEN_FLAG) == 0 {
             return None;
         }
 
-        let order = match mbox.buffer[9] {
+        let order = match mbox.buffer[5] {
             0 => PixelOrder::BGR,
             1 => PixelOrder::RGB,
             _ => return None,
         };
 
-        let depth = mbox.buffer[5];
-        if depth != fb_info.depth {
-            return None; // this doesn't happen, so depth is ok
-        }
+        let pitch = mbox.buffer[13];
 
         /* Need to set up max_x/max_y before using Display::write */
-        let max_x = fb_info.vwidth / CHARSIZE_X;
-        let max_y = fb_info.vheight / CHARSIZE_Y;
-        println!("inited fb_info #2");
+        let max_x = size.x / CHARSIZE_X;
+        let max_y = size.y / CHARSIZE_Y;
+
+        println!(
+            "[i] VC init: {}x{}, {}x{}, d{}, --{}--, +{}x{}, {}@{:x}",
+            size.x,
+            size.y,
+            size.x,
+            size.y,
+            depth,
+            pitch,
+            0, // x_offset
+            0, // y_offset
+            fb_size,
+            fb_ptr
+        );
 
         Some(Display::new(
-            fb_info.pointer & 0x3fff_ffff,
-            fb_info.size,
-            fb_info.depth,
-            fb_info.pitch,
-            max_x,
-            max_y,
-            fb_info.vwidth,
-            fb_info.vheight,
-            order,
+            fb_ptr, fb_size, depth, pitch, max_x, max_y, size.x, size.y, order,
         ))
     }
-    /*
-        fn get_display_size() -> Option<Size2d> {
-            let mut mbox = Mbox::new();
-
-            mbox.0[0] = 8 * 4; // Total size
-            mbox.0[1] = MAILBOX_REQ_CODE; // Request
-            mbox.0[2] = Tag::GetPhysicalWH as u32; // Display size  // tag
-            mbox.0[3] = 8; // Buffer size   // val buf size
-            mbox.0[4] = 0; // Request size  // val size
-            mbox.0[5] = 0; // Space for horizontal resolution
-            mbox.0[6] = 0; // Space for vertical resolution
-            mbox.0[7] = Tag::End as u32; // End tag
-
-            mbox.call(Channel::PropertyTagsArmToVc)?;
-
-    //        if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
-    //            return None;
-    //        }
-            if mbox.0[5] == 0 && mbox.0[6] == 0 {
-                // Qemu emulation returns 0x0
-                return Some(Size2d { x: 640, y: 480 });
-            }
-            Some(Size2d {
-                x: mbox.0[5],
-                y: mbox.0[6],
-            })
-        }
-
-        fn set_display_size(size: Size2d) -> Option<Display> {
-            // @todo Make Display use VC functions internally instead
-            let mut mbox = Mbox::new();
-            let mut count: usize = 0;
-
-            count += 1;
-            mbox.0[count] = MAILBOX_REQ_CODE; // Request
-            count += 1;
-            mbox.0[count] = Tag::SetPhysicalWH as u32;
-            count += 1;
-            mbox.0[count] = 8; // Buffer size   // val buf size
-            count += 1;
-            mbox.0[count] = 8; // Request size  // val size
-            count += 1;
-            mbox.0[count] = size.x; // Space for horizontal resolution
-            count += 1;
-            mbox.0[count] = size.y; // Space for vertical resolution
-            count += 1;
-            mbox.0[count] = Tag::SetVirtualWH as u32;
-            count += 1;
-            mbox.0[count] = 8; // Buffer size   // val buf size
-            count += 1;
-            mbox.0[count] = 8; // Request size  // val size
-            count += 1;
-            mbox.0[count] = size.x; // Space for horizontal resolution
-            count += 1;
-            mbox.0[count] = size.y; // Space for vertical resolution
-            count += 1;
-            mbox.0[count] = Tag::SetDepth as u32;
-            count += 1;
-            mbox.0[count] = 4; // Buffer size   // val buf size
-            count += 1;
-            mbox.0[count] = 4; // Request size  // val size
-            count += 1;
-            mbox.0[count] = 16; // 16 bpp
-            count += 1;
-            mbox.0[count] = Tag::AllocateBuffer as u32;
-            count += 1;
-            mbox.0[count] = 8; // Buffer size   // val buf size
-            count += 1;
-            mbox.0[count] = 4; // Request size  // val size
-            count += 1;
-            mbox.0[count] = 4096; // Alignment = 4096
-            count += 1;
-            mbox.0[count] = 0; // Space for response
-            count += 1;
-            mbox.0[count] = Tag::End as u32;
-            mbox.0[0] = (count * 4) as u32; // Total size
-
-            let max_count = count;
-
-            Mailbox::call(Channel::PropertyTagsArmToVc as u8, &mbox.0 as *const u32 as *const u8)?;
-
-            if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
-                return None;
-            }
-
-            count = 2; /* First tag */
-    while mbox.0[count] != 0 {
-    if mbox.0[count] == Tag::AllocateBuffer as u32 {
-    break;
-    }
-
-    /* Skip to next tag
-     * Advance count by 1 (tag) + 2 (buffer size/value size)
-     *                          + specified buffer size
-     */
-    count += 3 + (mbox.0[count + 1] / 4) as usize;
-
-    if count > max_count {
-    return None;
-    }
-    }
-
-    /* Must be 8 bytes, plus MSB set to indicate a response */
-    if mbox.0[count + 2] != 0x8000_0008 {
-    return None;
-    }
-
-    /* Framebuffer address/size in response */
-    let physical_screenbase = mbox.0[count + 3];
-    let screensize = mbox.0[count + 4];
-
-    if physical_screenbase == 0 || screensize == 0 {
-    return None;
-    }
-
-    /* physical_screenbase is the address of the screen in RAM
-     * screenbase needs to be the screen address in virtual memory
-     */
-    // screenbase=mem_p2v(physical_screenbase);
-    let screenbase = physical_screenbase;
-
-    /* Get the framebuffer pitch (bytes per line) */
-    mbox.0[0] = 7 * 4; // Total size
-    mbox.0[1] = 0; // Request
-    mbox.0[2] = Tag::GetPitch as u32; // Display size
-    mbox.0[3] = 4; // Buffer size
-    mbox.0[4] = 0; // Request size
-    mbox.0[5] = 0; // Space for pitch
-    mbox.0[6] = Tag::End as u32;
-
-    Mailbox::call(Channel::PropertyTagsArmToVc as u8, &mbox.0 as *const u32 as *const u8)?;
-
-    if mbox.0[1] != MAILBOX_RESP_CODE_SUCCESS {
-    return None;
-    }
-
-    /* Must be 4 bytes, plus MSB set to indicate a response */
-    if mbox.0[4] != 0x8000_0004 {
-    return None;
-    }
-
-    let pitch = mbox.0[5];
-    if pitch == 0 {
-    return None;
-    }
-
-    /* Need to set up max_x/max_y before using Display::write */
-    let max_x = size.x / CHARSIZE_X;
-    let max_y = size.y / CHARSIZE_Y;
-
-    Some(Display {
-    base: screenbase,
-    size: screensize,
-    pitch: pitch,
-    max_x: max_x,
-    max_y: max_y,
-    })
-    }*/
 }

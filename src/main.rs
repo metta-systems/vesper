@@ -103,7 +103,7 @@ fn kmain() -> ! {
     }
     println!("MMU initialised");
 
-    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }) {
+    if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }, 32) {
         println!("Display created");
 
         display.clear(Color::black()); // Takes A LOONG time, check caching opts?
