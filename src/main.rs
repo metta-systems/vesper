@@ -143,7 +143,7 @@ fn kmain() -> ! {
         }
     }
 
-    // writeln!(uart, "Bye, going to sleep now");
+    println!("Bye, going to sleep now");
     // qemu_aarch64_exit()
     endless_sleep()
 }
