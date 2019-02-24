@@ -124,26 +124,31 @@ static mut SINGLE_LVL3_TABLE: PageTable = PageTable {
     entries: [0; NUM_ENTRIES_4KIB],
 };
 
-/// Set up identity mapped page tables for the first 1 gigabyte of address
-/// space.
+/// Set up identity mapped page tables for the first 1 gigabyte of address space.
+/// default: 880 MB ARM ram, 128MB VC
 pub unsafe fn init() {
     print_features();
 
-    // First, define the two memory types that we will map. Normal DRAM and
-    // device.
+    // First, define the three memory types that we will map. Normal DRAM, Uncached and device.
     MAIR_EL1.write(
-        // Attribute 1
-        MAIR_EL1::Attr1_HIGH::Device
-            + MAIR_EL1::Attr1_LOW_DEVICE::Device_nGnRE
+        // Attribute 2
+        MAIR_EL1::Attr2_HIGH::Device
+            + MAIR_EL1::Attr2_LOW_DEVICE::Device_nGnRE
+            // Attribute 1
+            + MAIR_EL1::Attr1_HIGH::Memory_OuterNonCacheable
+            + MAIR_EL1::Attr1_LOW_MEMORY::InnerNonCacheable
             // Attribute 0
             + MAIR_EL1::Attr0_HIGH::Memory_OuterWriteBack_NonTransient_ReadAlloc_WriteAlloc
             + MAIR_EL1::Attr0_LOW_MEMORY::InnerWriteBack_NonTransient_ReadAlloc_WriteAlloc,
     );
 
-    // Two descriptive consts for indexing into the correct MAIR_EL1 attributes.
+    // Three descriptive consts for indexing into the correct MAIR_EL1 attributes.
     mod mair {
         pub const NORMAL: u64 = 0;
-        pub const DEVICE: u64 = 1;
+        pub const NORMAL_NC: u64 = 1;
+        pub const DEVICE_NGNRE: u64 = 2;
+        // DEVICE_GRE
+        // DEVICE_NGNRNE
     }
 
     // Set up the first LVL2 entry, pointing to a 4KiB table base address.
@@ -158,7 +163,7 @@ pub unsafe fn init() {
     let uart_phys_base: u64 = (crate::platform::mini_uart::UART1_BASE >> 21).into();
     LVL2_TABLE.entries[1] = (STAGE1_DESCRIPTOR::VALID::True
         + STAGE1_DESCRIPTOR::TYPE::Block
-        + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE)
+        + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE_NGNRE)
         + STAGE1_DESCRIPTOR::AP::RW_EL1
         + STAGE1_DESCRIPTOR::SH::OuterShareable
         + STAGE1_DESCRIPTOR::AF::True
@@ -167,7 +172,9 @@ pub unsafe fn init() {
         .value;
 
     // Fill the rest of the LVL2 (2MiB) entries as block
-    // descriptors. Differentiate between normal and device mem.
+    // descriptors. Differentiate between normal, VC and device mem.
+    let vc_base: u64 = (0x3700_0000u32 >> 21).into();
+
     let mmio_base: u64 = (crate::platform::rpi3::BcmHost::get_peripheral_address() >> 21).into();
     let common = STAGE1_DESCRIPTOR::VALID::True
         + STAGE1_DESCRIPTOR::TYPE::Block
@@ -180,7 +187,10 @@ pub unsafe fn init() {
         let j: u64 = i as u64;
 
         let mem_attr = if j >= mmio_base {
-            STAGE1_DESCRIPTOR::SH::OuterShareable + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE)
+            STAGE1_DESCRIPTOR::SH::OuterShareable
+                + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE_NGNRE)
+        } else if j >= vc_base {
+            STAGE1_DESCRIPTOR::SH::OuterShareable + STAGE1_DESCRIPTOR::AttrIndx.val(mair::NORMAL_NC)
         } else {
             STAGE1_DESCRIPTOR::SH::InnerShareable + STAGE1_DESCRIPTOR::AttrIndx.val(mair::NORMAL)
         };
