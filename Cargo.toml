@@ -34,7 +34,7 @@ rlibc = "1.0.0"
 panic-abort = "0.3.1"
 bitflags = "1.0.1"
 register = "0.3.2"
-cortex-a = "2.2"
+cortex-a = "2.4"
 #embedded-serial = "0.5.0"
 
 [profile.dev]
