@@ -20,4 +20,10 @@ impl BcmHost {
     pub const fn get_sdram_address() -> usize {
         0xC000_0000 // uncached
     }
+
+    /// As per https://www.raspberrypi.org/forums/viewtopic.php?p=1170522#p1170522
+    ///
+    pub fn bus2phys(bus: u32) -> u32 {
+        bus & !0xC000_0000
+    }
 }
