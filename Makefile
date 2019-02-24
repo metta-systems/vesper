@@ -35,7 +35,7 @@ OBJCOPY = cargo objcopy --
 OBJCOPY_PARAMS = --strip-all -O binary
 
 UTILS_CONTAINER = andrerichter/raspi3-utils
-DOCKER_CMD = docker run -it --rm -v $(shell pwd):/work -w /work
+DOCKER_CMD = docker run -it --rm -v $(shell pwd):/work -w /work -p 5900:5900
 QEMU_CMD = qemu-system-aarch64
 
 # -d in_asm,unimp,int -S
