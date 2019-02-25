@@ -89,7 +89,7 @@ openocd:
 	$(OPENOCD) -f interface/jlink.cfg -f ./doc/rpi3_jlink.cfg
 
 gdb: kernel8.img
-	env RUST_GDB=$(GDB) rust-gdb kernel8
+	env RUST_GDB=$(GDB) rust-gdb -x gdb-connect kernel8
 
 gdbdash: kernel8.img
 	env RUST_GDB=$(GDB) rust-gdb -x ~/.gdbinit_dashboard kernel8
