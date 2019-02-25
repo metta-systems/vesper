@@ -9,12 +9,12 @@ pub use mmu::*;
 
 use cortex_a::{asm, barrier, regs::*};
 
+#[no_mangle]
 static mut WAIT_FLAG: bool = true;
 
 /// Wait for debugger to attach.
 /// Then in gdb issue `> set var *(&WAIT_FLAG) = 0`
 /// from inside this function's frame to contiue running.
-#[inline]
 pub fn jtag_dbg_wait() {
     use core::ptr::{read_volatile, write_volatile};
 
