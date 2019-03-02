@@ -55,30 +55,31 @@ static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devices::
 // Kernel entry point
 // arch crate is responsible for calling this
 fn kmain() -> ! {
-    let gpio = GPIO::new_default();
+    // let gpio = GPIO::new_default();
 
-    let uart = platform::MiniUart::new_default();
-    uart.init(&gpio);
-    CONSOLE.lock(|c| {
-        // Moves uart into the global CONSOLE. It is not accessible
-        // anymore for the remaining parts of kernel_entry().
-        c.replace_with(uart.into());
-    });
+    // let uart = platform::MiniUart::new_default();
+    // uart.init(&gpio);
+    // CONSOLE.lock(|c| {
+    //     // Moves uart into the global CONSOLE. It is not accessible
+    //     // anymore for the remaining parts of kernel_entry().
+    //     c.replace_with(uart.into());
+    // });
 
-    let uart = platform::PL011Uart::new_default();
+    // let uart = platform::PL011Uart::new_default();
 
-    let mut mbox = platform::mailbox::Mailbox::new();
+    // let mut mbox = platform::mailbox::Mailbox::new();
 
-    match uart.init(&mut mbox, &gpio) {
-        Ok(_) => {
-            CONSOLE.lock(|c| {
-                // Moves uart into the global CONSOLE. It is not accessible
-                // anymore for the remaining parts of kernel_entry().
-                c.replace_with(uart.into());
-            });
-        }
-        Err(_) => endless_sleep(),
-    }
+    // match uart.init(&mut mbox, &gpio) {
+    //     Ok(_) => {
+    //         CONSOLE.lock(|c| {
+    //             // Moves uart into the global CONSOLE. It is not accessible
+    //             // anymore for the remaining parts of kernel_entry().
+    //             c.replace_with(uart.into());
+    //         });
+    //     }
+    //     Err(_) => endless_sleep(),
+    // }
+
 
     let mut out = Output::new();
     writeln!(out, "JLink RTT is working!"); // @todo RttConsole
