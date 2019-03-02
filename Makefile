@@ -83,7 +83,7 @@ nm:
 	cargo nm --target $(TARGET_JSON) -- kernel8 | sort
 
 hopper: all
-	hopperv4 -e kernel8.img -R --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --aarch64
+	hopperv4 -l RAW --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --aarch64 -e kernel8.img
 
 openocd:
 	$(OPENOCD) -f interface/jlink.cfg -f ./doc/rpi3_jlink.cfg
