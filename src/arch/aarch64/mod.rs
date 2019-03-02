@@ -80,7 +80,7 @@ pub fn read_translation_control() -> u64 {
     unsafe {
         asm!("mrs $0, tcr_el1" : "=r"(tcr) ::: "volatile");
     }
-    return tcr;
+    tcr
 }
 
 pub fn read_mair() -> u64 {
@@ -88,7 +88,7 @@ pub fn read_mair() -> u64 {
     unsafe {
         asm!("mrs $0, mair_el1" : "=r"(mair) ::: "volatile");
     }
-    return mair;
+    mair
 }
 
 pub fn write_translation_table_base(base: PhysicalAddress) {
