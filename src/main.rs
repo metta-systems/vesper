@@ -80,6 +80,7 @@ fn kmain() -> ! {
     //     Err(_) => endless_sleep(),
     // }
 
+    // jtag_dbg_wait();
 
     let mut out = Output::new();
     writeln!(out, "JLink RTT is working!"); // @todo RttConsole
@@ -109,6 +110,8 @@ fn kmain() -> ! {
     // }
     // println!("MMU initialised");
 
+    // jtag_dbg_wait();
+
     if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }, 32) {
         println!("Display created");
 
@@ -133,6 +136,8 @@ fn kmain() -> ! {
         display.draw_text(160, 60, "GREEN", Color::green());
         display.draw_text(170, 70, "BLUE", Color::blue());
     }
+
+    // jtag_dbg_wait();
 
     //------------------------------------------------------------
     // Start a command prompt
