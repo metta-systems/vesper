@@ -277,6 +277,12 @@ impl core::fmt::Display for Mailbox {
     }
 }
 
+impl Default for Mailbox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Mailbox {
     pub fn new() -> Mailbox {
         Mailbox { buffer: [0; 36] }
