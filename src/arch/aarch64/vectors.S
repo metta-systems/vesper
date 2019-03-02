@@ -84,6 +84,7 @@ __exception_vectors_start:
     FIQ_DUMMY                                                       // 0x700
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE lower_aarch32_serror      // 0x780
 
+.balign 0x80
 .global __restore_context
 __restore_context:
     ldr    x19,      [sp, #16 * 16]
