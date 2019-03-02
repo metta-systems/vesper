@@ -104,10 +104,10 @@ fn kmain() -> ! {
         println!("Exception traps set up");
     }
 
-    unsafe {
-        mmu::init();
-    }
-    println!("MMU initialised");
+    // unsafe {
+    //     mmu::init();
+    // }
+    // println!("MMU initialised");
 
     if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }, 32) {
         println!("Display created");
