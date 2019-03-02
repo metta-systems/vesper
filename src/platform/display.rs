@@ -133,7 +133,7 @@ impl Display {
                 // 1. Fix display output so we can print some values
                 // 2. Print display info
                 // 3. Go from there.
-                (y * self.pitch + x * 4/*(self.depth / 8)*/ + self.color_component(chan)) as isize,
+                (y * self.pitch + x * (self.depth >> 3) + self.color_component(chan)) as isize,
             ) = c as u8;
         }
     }
