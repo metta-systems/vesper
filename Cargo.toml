@@ -22,6 +22,7 @@ default-target = "targets/aarch64-vesper-metta.json"
 unstable = []
 realtime = []
 noserial = []
+jlink = ['jlink_rtt']
 
 #[lib]
 #name = "nucleus"
@@ -36,9 +37,10 @@ bitflags = "1.0.1"
 register = "0.3.2"
 cortex-a = "2.4"
 #embedded-serial = "0.5.0"
+jlink_rtt = { version = "0.1.0", optional = true }
 
 [profile.dev]
-panic = "abort"
+panic = "abort" # @todo try panic_rtt when feature jlink
 
 [profile.release]
 panic = "abort"

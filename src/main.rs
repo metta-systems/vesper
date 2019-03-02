@@ -33,7 +33,9 @@ pub mod platform;
 mod sync;
 mod write_to;
 
-// use core::fmt::Write;
+use core::fmt::Write;
+#[cfg(feature = "jlink")]
+use jlink_rtt::Output;
 use platform::{
     display::{Color, Size2d},
     gpio::GPIO,
@@ -77,6 +79,9 @@ fn kmain() -> ! {
         }
         Err(_) => endless_sleep(),
     }
+
+    let mut out = Output::new();
+    writeln!(out, "JLink RTT is working!"); // @todo RttConsole
 
     println!("\n[0] UART is live!");
 

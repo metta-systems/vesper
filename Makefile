@@ -52,7 +52,7 @@ OPENOCD = /usr/local/openocd-20ceec69/bin/openocd
 all: kernel8.img
 
 target/$(TARGET)/release/vesper: $(SOURCES)
-	cargo xbuild --target=$(TARGET_JSON) --release
+	cargo xbuild --target=$(TARGET_JSON) --release --features="jlink"
 
 kernel8.img: target/$(TARGET)/release/vesper $(SOURCES)
 	cp $< ./kernel8
