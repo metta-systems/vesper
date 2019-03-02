@@ -216,9 +216,8 @@ fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
 }
 
 fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
-    let mut count: u32 = 0;
-
     loop {
+        let mut count: u32 = 0;
         while regs.STATUS.is_set(STATUS::EMPTY) {
             count += 1;
             if count > (1 << 25) {
