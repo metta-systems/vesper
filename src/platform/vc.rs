@@ -1,4 +1,5 @@
 use crate::{
+    jtag_dbg_wait,
     platform::{
         display::{Display, PixelOrder, Size2d, CHARSIZE_X, CHARSIZE_Y},
         mailbox::{self, channel, response::VAL_LEN_FLAG, tag, Mailbox},
@@ -39,12 +40,14 @@ impl VC {
         mbox.buffer[16] = tag::AllocateBuffer as u32;
         mbox.buffer[17] = 8; // Buffer size   // val buf size
         mbox.buffer[18] = 4; // Request size  // val size
-        mbox.buffer[19] = 4096; // Alignment = 4096 -- fb_ptr will be here
+        mbox.buffer[19] = 16; // Alignment = 16 -- fb_ptr will be here
         mbox.buffer[20] = 0; // Space for response -- fb_size will be here
 
         mbox.buffer[21] = tag::End as u32;
 
         mbox.call(channel::PropertyTagsArmToVc).map_err(|_| ());
+
+        jtag_dbg_wait();
 
         if (mbox.buffer[18] & VAL_LEN_FLAG) == 0 {
             return None;

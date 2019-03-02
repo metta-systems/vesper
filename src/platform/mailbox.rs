@@ -241,7 +241,8 @@ fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
             // is it a valid successful response?
             return Ok(());
         } else {
-            return Err(MboxError::ResponseError); //@fixme ignore invalid responses and loop again?
+            // will return on Timeout if no response received...
+            // return Err(MboxError::ResponseError); //@fixme ignore invalid responses and loop again?
         }
     }
 }
@@ -310,6 +311,7 @@ impl Mailbox {
             }
             _ => {
                 println!("\n######\nMailbox::returning UnknownError");
+                println!("{:x}\n######", self.buffer[1]);
                 Err(MboxError::UnknownError)
             }
         }
