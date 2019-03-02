@@ -7,7 +7,7 @@ pub mod traps;
 pub use self::memory::{PhysicalAddress, VirtualAddress};
 pub use mmu::*;
 
-use cortex_a::{asm, barrier, regs::*};
+use cortex_a::{asm, regs::*};
 
 #[no_mangle]
 static mut WAIT_FLAG: bool = true;
@@ -23,14 +23,6 @@ pub fn jtag_dbg_wait() {
     }
     // Reset the flag so that next jtag_dbg_wait() would block again.
     unsafe { write_volatile(&mut WAIT_FLAG, true) }
-}
-
-// Data memory barrier
-#[inline]
-pub fn dmb() {
-    unsafe {
-        barrier::dmb(barrier::SY);
-    }
 }
 
 #[inline]

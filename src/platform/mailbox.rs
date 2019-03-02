@@ -1,10 +1,10 @@
 use crate::{
-    arch::*,
     platform::{display::Size2d, rpi3::BcmHost},
     println,
 };
 use core::ops::Deref;
 use core::sync::atomic::{compiler_fence, Ordering};
+use cortex_a::barrier;
 use register::mmio::*;
 
 // Public interface to the mailbox.
@@ -207,7 +207,9 @@ fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
             return Err(MboxError::Timeout);
         }
     }
-    dmb();
+    unsafe {
+        barrier::dmb(barrier::SY);
+    }
     regs.WRITE
         .set((buf_ptr & !CHANNEL_MASK) | (channel & CHANNEL_MASK));
     Ok(())
@@ -227,9 +229,13 @@ fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
         /* Read the data
          * Data memory barriers as we've switched peripheral
          */
-        dmb();
+        unsafe {
+            barrier::dmb(barrier::SY);
+        }
         let data: u32 = regs.READ.get();
-        dmb();
+        unsafe {
+            barrier::dmb(barrier::SY);
+        }
 
         // is it a response to our message?
         if ((data & CHANNEL_MASK) == channel) && ((data & !CHANNEL_MASK) == expected) {
