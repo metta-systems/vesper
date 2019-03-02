@@ -1,0 +1,13 @@
+cec_osd_name=Jellyfish
+
+# Keep rainbow splash screen on boot
+disable_splash=0
+
+# Set jtag debug pins to alt4, uses GPIO26 for TDI
+gpio=22-27=a4
+
+# Start with 128Mb of GPU memory
+start_x=1
+
+# Don't fill kernel ATAGs
+disable_commandline_tags=1
