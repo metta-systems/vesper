@@ -26,7 +26,7 @@
 TARGET = aarch64-vesper-metta
 TARGET_JSON = targets/$(TARGET).json
 
-SOURCES = $(wildcard src/**/*.rs) $(wildcard src/**/*.S) $(wildcard linker/**/*.ld)
+SOURCES = $(shell find src -name "*.rs" -o -name "*.S") $(shell find linker -name "*.ld")
 
 DEVICE_FEATURES = --features "noserial"
 QEMU_FEATURES =
