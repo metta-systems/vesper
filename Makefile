@@ -45,7 +45,7 @@ QEMU = /usr/local/Cellar/qemu/HEAD-3365de01b5-custom/bin/qemu-system-aarch64
 
 GDB = /usr/local/opt/gdb-8.2.1-aarhc64/bin/aarch64-linux-elf-gdb
 
-OPENOCD = /usr/local/openocd-20ceec69/bin/openocd
+OPENOCD = /usr/local/openocd-aeb7b327-rtt/bin/openocd
 
 .PHONY: all qemu clippy clean objdump nm
 
