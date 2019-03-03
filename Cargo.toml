@@ -38,6 +38,7 @@ register = "0.3.2"
 cortex-a = "2.4"
 #embedded-serial = "0.5.0"
 # jlink_rtt = { version = "0.1.0", optional = true }
+static_assertions = { version = "0.3.1", features = ["nightly"] }
 
 [profile.dev]
 panic = "abort" # @todo try panic_rtt when feature jlink

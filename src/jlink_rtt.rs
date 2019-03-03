@@ -15,7 +15,9 @@
 /// The cost of logging data to RTT is the cost of formatting
 /// and writing it to the ring buffer in memory.
 use core::fmt;
+use core::mem::size_of;
 use core::ptr;
+use static_assertions::const_assert_eq;
 
 static mut UP_BUF: [u8; 1024] = [0u8; 1024];
 static mut DOWN_BUF: [u8; 16] = [0u8; 16];
@@ -25,8 +27,8 @@ static mut DOWN_BUF: [u8; 16] = [0u8; 16];
 /// in the JLINK device.
 #[repr(C)]
 struct Buffer {
-    name: *const u8,
-    buf_start: *mut u8,
+    name: u32,      //*const u8,
+    buf_start: u32, // *mut u8,
     size_of_buffer: u32,
     /// Position of next item to be written
     /// Volatile as the host may change it.
@@ -35,15 +37,17 @@ struct Buffer {
     /// Volatile as the host may change it.
     read_offset: u32,
     /// In the segger library these flags control blocking
-    /// or non-blocking behavior.  Those functions are
-    /// implemented differently here.
+    /// or non-blocking behavior.
     flags: u32,
 }
 
+// Assumed by OpenOCD and probably JLink too...
+const_assert_eq!(size_of::<Buffer>(), 24);
+
 impl Buffer {
     fn init(&mut self, buf: &mut [u8]) {
-        self.name = b"Terminal\0".as_ptr();
-        self.buf_start = buf.as_mut_ptr();
+        self.name = b"Terminal\0".as_ptr() as u32;
+        self.buf_start = buf.as_mut_ptr() as u32;
         self.size_of_buffer = buf.len() as u32;
         self.write_offset = 0;
         self.read_offset = 0;
@@ -104,7 +108,7 @@ impl Buffer {
             unsafe {
                 ptr::copy(
                     buf.as_ptr(),
-                    self.buf_start.offset(write_off as isize),
+                    (self.buf_start as *mut u8).offset(write_off as isize),
                     to_copy,
                 );
             }
@@ -142,6 +146,8 @@ pub struct ControlBlock {
     down: Buffer,
 }
 
+const_assert_eq!(size_of::<ControlBlock>(), 24 + 24 + 24);
+
 unsafe impl Sync for ControlBlock {}
 
 impl ControlBlock {
@@ -172,16 +178,16 @@ pub static mut _SEGGER_RTT: ControlBlock = ControlBlock {
     max_up_buffers: 1,
     max_down_buffers: 1,
     up: Buffer {
-        name: 0 as *const u8,
-        buf_start: 0 as *mut u8,
+        name: 0,
+        buf_start: 0,
         read_offset: 0,
         write_offset: 0,
         flags: 0,
         size_of_buffer: 0,
     },
     down: Buffer {
-        name: 0 as *const u8,
-        buf_start: 0 as *mut u8,
+        name: 0,
+        buf_start: 0,
         write_offset: 0,
         read_offset: 0,
         flags: 0,

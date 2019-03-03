@@ -9,6 +9,7 @@
 #![feature(core_intrinsics)]
 #![feature(range_contains)]
 #![feature(try_from)]
+#![feature(underscore_const_names)]
 #![doc(html_root_url = "https://docs.metta.systems/")]
 #![allow(dead_code)]
 #![allow(unused_assignments)]
