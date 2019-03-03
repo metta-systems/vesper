@@ -44,6 +44,11 @@ struct Buffer {
 // Assumed by OpenOCD and probably JLink too...
 const_assert_eq!(size_of::<Buffer>(), 24);
 
+// Operating modes. Define behavior if buffer is full (not enough space for entire message)
+const NO_BLOCK_SKIP: u32 = 0; // Skip. Do not block, output nothing. (Default)
+const NO_BLOCK_TRIM: u32 = 1; // Trim: Do not block, output as much as fits.
+const BLOCK_IF_FULL: u32 = 2; // Block: Wait until there is space in the buffer.
+
 impl Buffer {
     fn init(&mut self, buf: &mut [u8]) {
         self.name = b"Terminal\0".as_ptr() as u32;
@@ -51,7 +56,7 @@ impl Buffer {
         self.size_of_buffer = buf.len() as u32;
         self.write_offset = 0;
         self.read_offset = 0;
-        self.flags = 0; // Non-blocking mode
+        self.flags = NO_BLOCK_TRIM; // Non-blocking mode
     }
 
     fn get_read_offset(&self) -> u32 {
@@ -132,9 +137,9 @@ impl Buffer {
 pub struct ControlBlock {
     /// Initialized to "SEGGER RTT"
     id: [u8; 16],
-    /// Initialized to NUM_UP
+    /// Initialized to 1
     max_up_buffers: i32,
-    /// Initialized to NUM_DOWN
+    /// Initialized to 1
     max_down_buffers: i32,
     /// Note that RTT allows for this to be an array of
     /// "up" buffers of size max_up_buffers, but for simplicity
@@ -182,7 +187,7 @@ pub static mut _SEGGER_RTT: ControlBlock = ControlBlock {
         buf_start: 0,
         read_offset: 0,
         write_offset: 0,
-        flags: 0,
+        flags: NO_BLOCK_TRIM,
         size_of_buffer: 0,
     },
     down: Buffer {
@@ -190,7 +195,7 @@ pub static mut _SEGGER_RTT: ControlBlock = ControlBlock {
         buf_start: 0,
         write_offset: 0,
         read_offset: 0,
-        flags: 0,
+        flags: NO_BLOCK_TRIM,
         size_of_buffer: 0,
     },
 };
