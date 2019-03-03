@@ -22,8 +22,9 @@
  * SOFTWARE.
  */
 
+use crate::jlink_rtt::Output as JLinkOutput;
 use crate::platform;
-use core::fmt;
+use core::fmt::{self, Write};
 
 /// A trait that must be implemented by devices that are candidates for the
 /// global console.
@@ -49,6 +50,7 @@ pub enum Output {
     None(NullConsole),
     MiniUart(platform::MiniUart),
     PL011Uart(platform::PL011Uart),
+    RTT(JLinkOutput),
 }
 
 impl From<platform::MiniUart> for Output {
@@ -60,6 +62,12 @@ impl From<platform::MiniUart> for Output {
 impl From<platform::PL011Uart> for Output {
     fn from(instance: platform::PL011Uart) -> Self {
         Output::PL011Uart(instance)
+    }
+}
+
+impl From<JLinkOutput> for Output {
+    fn from(instance: JLinkOutput) -> Self {
+        Output::RTT(instance)
     }
 }
 
@@ -80,6 +88,7 @@ impl Console {
             Output::None(i) => i,
             Output::MiniUart(i) => i,
             Output::PL011Uart(i) => i,
+            Output::RTT(i) => i,
         }
     }
 

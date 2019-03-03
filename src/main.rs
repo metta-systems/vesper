@@ -83,6 +83,9 @@ fn kmain() -> ! {
     // }
 
     // jtag_dbg_wait();
+    CONSOLE.lock(|c| {
+        c.replace_with(Output::new().into());
+    });
 
     let mut out = Output::new();
     writeln!(out, "JLink RTT is working!"); // @todo RttConsole

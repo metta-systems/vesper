@@ -216,11 +216,28 @@ impl Output {
     }
 }
 
-impl fmt::Write for Output {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
+impl Drop for Output {
+    fn drop(&mut self) {}
+}
+
+impl crate::devices::ConsoleOps for Output {
+    fn puts(&self, s: &str) {
         unsafe {
             _SEGGER_RTT.up.write(s.as_bytes(), true);
         }
+    }
+
+    fn putc(&self, c: char) {
+        let mut buf = [0u8; 4];
+        let s = c.encode_utf8(&mut buf);
+        self.puts(s);
+    }
+}
+
+impl fmt::Write for Output {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        use crate::devices::console::ConsoleOps;
+        self.puts(s);
         Ok(())
     }
 }
