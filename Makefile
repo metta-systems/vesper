@@ -89,6 +89,7 @@ openocd:
 	$(OPENOCD) -f interface/jlink.cfg -f ./doc/rpi3_jlink.cfg
 
 gdb: kernel8.img
+	make nm | grep _SEGGER_RTT | awk '{print $$1}' | ./make-gdb-connect.sh
 	env RUST_GDB=$(GDB) rust-gdb -x gdb-connect kernel8
 
 gdbdash: kernel8.img
