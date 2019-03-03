@@ -236,6 +236,9 @@ impl NonBlockingOutput {
     /// Create a non-blocking output stream
     #[inline]
     pub fn new() -> Self {
+        unsafe {
+            _SEGGER_RTT.init();
+        }
         Self { blocked: false }
     }
 }
@@ -244,7 +247,6 @@ impl fmt::Write for NonBlockingOutput {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         if !self.blocked {
             unsafe {
-                _SEGGER_RTT.init();
                 if !_SEGGER_RTT.up.write(s.as_bytes(), false) {
                     self.blocked = true;
                 }
