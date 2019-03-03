@@ -28,6 +28,7 @@ extern crate rlibc;
 pub mod arch;
 pub use arch::*;
 mod devices;
+mod jlink_rtt;
 mod macros;
 pub mod platform;
 mod sync;
