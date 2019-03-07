@@ -24,6 +24,10 @@ impl BcmHost {
     /// As per https://www.raspberrypi.org/forums/viewtopic.php?p=1170522#p1170522
     ///
     pub fn bus2phys(bus: u32) -> u32 {
-        bus & !0xC000_0000
+        bus & !0xc000_0000
+    }
+
+    pub fn phys2bus(phys: u32) -> u32 {
+        phys | 0xc000_0000
     }
 }
