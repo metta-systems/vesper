@@ -129,6 +129,11 @@ impl Buffer {
 
         true
     }
+
+    // Fill in buf
+    fn read(&mut self, buf: &mut [u8], blocking: bool) -> bool {
+        true
+    }
 }
 
 /// The ControlBlock is the magic struct that the JLINK looks
@@ -232,6 +237,13 @@ impl crate::devices::ConsoleOps for Output {
         let s = c.encode_utf8(&mut buf);
         self.puts(s);
     }
+
+    fn getc(&self) -> char {
+        ' '
+        // _SEGGER_RTT.down.read(true)
+    }
+
+    fn flush(&self) {} // @todo wait for write buffer to drain
 }
 
 impl fmt::Write for Output {
