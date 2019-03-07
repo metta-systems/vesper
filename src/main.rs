@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 #![allow(unused_assignments)]
 #![allow(unused_must_use)]
+#![allow(unused_imports)]
 
 //any(target_arch = "aarch64", target_arch = "x86_64")
 #[cfg(not(target_arch = "aarch64"))]
@@ -82,13 +83,11 @@ fn kmain() -> ! {
     //     Err(_) => endless_sleep(),
     // }
 
-    // jtag_dbg_wait();
     CONSOLE.lock(|c| {
         c.replace_with(Output::new().into());
     });
 
-    let mut out = Output::new();
-    writeln!(out, "JLink RTT is working!"); // @todo RttConsole
+    jtag_dbg_wait();
 
     println!("\n[0] UART is live!");
 

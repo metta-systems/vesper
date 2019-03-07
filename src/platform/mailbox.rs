@@ -194,6 +194,8 @@ pub mod alpha_mode {
 fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
 
+    let buf_ptr = BcmHost::phys2bus(buf_ptr);
+
     println!("Mailbox::write {:x}/{:x}", buf_ptr, channel);
 
     // Insert a compiler fence that ensures that all stores to the
@@ -221,6 +223,7 @@ fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
         while regs.STATUS.is_set(STATUS::EMPTY) {
             count += 1;
             if count > (1 << 25) {
+                println!("Timed out waiting for mbox response");
                 return Err(MboxError::Timeout);
             }
         }
@@ -235,6 +238,11 @@ fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
         unsafe {
             barrier::dmb(barrier::SY);
         }
+
+        println!(
+            "Received mbox response {:#08x}, expecting {:#08x}",
+            data, expected
+        );
 
         // is it a response to our message?
         if ((data & CHANNEL_MASK) == channel) && ((data & !CHANNEL_MASK) == expected) {
@@ -298,7 +306,11 @@ impl Mailbox {
     }
 
     pub fn read(&self, channel: u32) -> Result<()> {
-        read(self, self.buffer.as_ptr() as u32, channel)?;
+        read(
+            self,
+            BcmHost::phys2bus(self.buffer.as_ptr() as u32),
+            channel,
+        )?;
 
         match self.buffer[1] {
             response::SUCCESS => {
