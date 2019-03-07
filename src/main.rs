@@ -110,10 +110,10 @@ fn kmain() -> ! {
         println!("Exception traps set up");
     }
 
-    // unsafe {
-    //     mmu::init();
-    // }
-    // println!("MMU initialised");
+    unsafe {
+        mmu::init();
+    }
+    println!("MMU initialised");
 
     // jtag_dbg_wait();
 
