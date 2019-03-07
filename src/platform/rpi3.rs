@@ -18,7 +18,7 @@ impl BcmHost {
 
     /// This returns the bus address of the SDRAM.
     pub const fn get_sdram_address() -> usize {
-        0xC000_0000 // uncached
+        0xc000_0000 // uncached
     }
 
     /// As per https://www.raspberrypi.org/forums/viewtopic.php?p=1170522#p1170522
