@@ -100,7 +100,7 @@ impl Console {
         self.output = x;
     }
 
-    /// A command prompt. Currently does nothing.
+    /// A command prompt.
     pub fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
         self.puts("\n$> ");
 
