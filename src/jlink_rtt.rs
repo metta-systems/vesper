@@ -56,7 +56,7 @@ impl Buffer {
         self.size_of_buffer = buf.len() as u32;
         self.write_offset = 0;
         self.read_offset = 0;
-        self.flags = NO_BLOCK_TRIM; // Non-blocking mode
+        self.flags = BLOCK_IF_FULL; // Blocking mode
     }
 
     fn get_read_offset(&self) -> u32 {
@@ -187,7 +187,7 @@ pub static mut _SEGGER_RTT: ControlBlock = ControlBlock {
         buf_start: 0,
         read_offset: 0,
         write_offset: 0,
-        flags: NO_BLOCK_TRIM,
+        flags: BLOCK_IF_FULL,
         size_of_buffer: 0,
     },
     down: Buffer {
@@ -195,7 +195,7 @@ pub static mut _SEGGER_RTT: ControlBlock = ControlBlock {
         buf_start: 0,
         write_offset: 0,
         read_offset: 0,
-        flags: NO_BLOCK_TRIM,
+        flags: BLOCK_IF_FULL,
         size_of_buffer: 0,
     },
 };
