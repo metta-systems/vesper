@@ -4,4 +4,4 @@ target/
 .ninja_*
 kernel8.img
 kernel8
-
+gdb-connect
