@@ -179,6 +179,7 @@ fn print_help() {
 }
 
 fn init_mmu() {
+    mmu::print_features();
     unsafe {
         mmu::init();
     }

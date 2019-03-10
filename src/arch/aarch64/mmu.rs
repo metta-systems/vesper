@@ -47,13 +47,11 @@ pub fn print_features() {
     }
 }
 
-register_bitfields! {
-    u64,
-
+register_bitfields! {u64,
     // AArch64 Reference Manual page 2150
     STAGE1_DESCRIPTOR [
-        /// Execute-never
-        XN       OFFSET(54) NUMBITS(1) [
+        /// Privileged execute-never
+        PXN      OFFSET(53) NUMBITS(1) [
             False = 0,
             True = 1
         ],
@@ -97,13 +95,145 @@ register_bitfields! {
     ]
 }
 
+const FOUR_KIB: usize = 4 * 1024;
+const FOUR_KIB_SHIFT: usize = 12; // log2(4 * 1024)
+
+const TWO_MIB: usize = 2 * 1024 * 1024;
+const TWO_MIB_SHIFT: usize = 21; // log2(2 * 1024 * 1024)
+
+/// A descriptor pointing to the next page table.
+struct TableDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
+
+impl TableDescriptor {
+    fn new(next_lvl_table_addr: usize) -> Result<TableDescriptor, &'static str> {
+        if next_lvl_table_addr % FOUR_KIB != 0 {
+            return Err("TableDescriptor: Address is not 4 KiB aligned.");
+        }
+
+        let shifted = next_lvl_table_addr >> FOUR_KIB_SHIFT;
+
+        Ok(TableDescriptor(
+            STAGE1_DESCRIPTOR::VALID::True
+                + STAGE1_DESCRIPTOR::TYPE::Table
+                + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64),
+        ))
+    }
+
+    fn value(&self) -> u64 {
+        self.0.value
+    }
+}
+
+/// A function that maps the generic memory range attributes to HW-specific
+/// attributes of the MMU.
+fn into_mmu_attributes(
+    attribute_fields: AttributeFields,
+) -> register::FieldValue<u64, STAGE1_DESCRIPTOR::Register> {
+    use crate::memory::{AccessPermissions, MemAttributes};
+
+    // Memory attributes
+    let mut desc = match attribute_fields.mem_attributes {
+        MemAttributes::CacheableDRAM => {
+            STAGE1_DESCRIPTOR::SH::InnerShareable + STAGE1_DESCRIPTOR::AttrIndx.val(mair::NORMAL)
+        }
+        MemAttributes::NonCacheableDRAM => {
+            STAGE1_DESCRIPTOR::SH::InnerShareable
+                + STAGE1_DESCRIPTOR::AttrIndx.val(mair::NORMAL_NON_CACHEABLE)
+        }
+        MemAttributes::Device => {
+            STAGE1_DESCRIPTOR::SH::OuterShareable
+                + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE_NGNRE)
+        }
+    };
+
+    // Access Permissions
+    desc += match attribute_fields.acc_perms {
+        AccessPermissions::ReadOnly => STAGE1_DESCRIPTOR::AP::RO_EL1,
+        AccessPermissions::ReadWrite => STAGE1_DESCRIPTOR::AP::RW_EL1,
+    };
+
+    // Execute Never
+    desc += if attribute_fields.execute_never {
+        STAGE1_DESCRIPTOR::PXN::True
+    } else {
+        STAGE1_DESCRIPTOR::PXN::False
+    };
+
+    desc
+}
+
+/// A Level2 block descriptor with 2 MiB aperture.
+///
+/// The output points to physical memory.
+struct Lvl2BlockDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
+
+impl Lvl2BlockDescriptor {
+    fn new(
+        output_addr: usize,
+        attribute_fields: AttributeFields,
+    ) -> Result<Lvl2BlockDescriptor, &'static str> {
+        if output_addr % TWO_MIB != 0 {
+            return Err("BlockDescriptor: Address is not 2 MiB aligned.");
+        }
+
+        let shifted = output_addr >> TWO_MIB_SHIFT;
+
+        Ok(Lvl2BlockDescriptor(
+            STAGE1_DESCRIPTOR::VALID::True
+                + STAGE1_DESCRIPTOR::AF::True
+                + into_mmu_attributes(attribute_fields)
+                + STAGE1_DESCRIPTOR::TYPE::Block
+                + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(shifted as u64),
+        ))
+    }
+
+    fn value(&self) -> u64 {
+        self.0.value
+    }
+}
+
+/// A page descriptor with 4 KiB aperture.
+///
+/// The output points to physical memory.
+struct PageDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
+
+impl PageDescriptor {
+    fn new(
+        output_addr: usize,
+        attribute_fields: AttributeFields,
+    ) -> Result<PageDescriptor, &'static str> {
+        if output_addr % FOUR_KIB != 0 {
+            return Err("PageDescriptor: Address is not 4 KiB aligned.");
+        }
+
+        let shifted = output_addr >> FOUR_KIB_SHIFT;
+
+        Ok(PageDescriptor(
+            STAGE1_DESCRIPTOR::VALID::True
+                + STAGE1_DESCRIPTOR::AF::True
+                + into_mmu_attributes(attribute_fields)
+                + STAGE1_DESCRIPTOR::TYPE::Table
+                + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64),
+        ))
+    }
+
+    fn value(&self) -> u64 {
+        self.0.value
+    }
+}
+
 trait BaseAddr {
-    fn base_addr(&self) -> u64;
+    fn base_addr_u64(&self) -> u64;
+    fn base_addr_usize(&self) -> usize;
 }
 
 impl BaseAddr for [u64; 512] {
-    fn base_addr(&self) -> u64 {
+    fn base_addr_u64(&self) -> u64 {
         self as *const u64 as u64
+    }
+
+    fn base_addr_usize(&self) -> usize {
+        self as *const u64 as usize
     }
 }
 
@@ -120,16 +250,13 @@ static mut LVL2_TABLE: PageTable = PageTable {
     entries: [0; NUM_ENTRIES_4KIB],
 };
 
-static mut SINGLE_LVL3_TABLE: PageTable = PageTable {
+static mut LVL3_TABLE: PageTable = PageTable {
     entries: [0; NUM_ENTRIES_4KIB],
 };
 
-/// Set up identity mapped page tables for the first 1 gigabyte of address space.
-/// default: 880 MB ARM ram, 128MB VC
-pub unsafe fn init() {
-    print_features();
-
-    // First, define the three memory types that we will map. Normal DRAM, Uncached and device.
+/// Setup function for the MAIR_EL1 register.
+fn set_up_mair() {
+    // Define the three memory types that we will map. Normal DRAM, Uncached and device.
     MAIR_EL1.write(
         // Attribute 2
         MAIR_EL1::Attr2_HIGH::Device
@@ -141,105 +268,69 @@ pub unsafe fn init() {
             + MAIR_EL1::Attr0_HIGH::Memory_OuterWriteBack_NonTransient_ReadAlloc_WriteAlloc
             + MAIR_EL1::Attr0_LOW_MEMORY::InnerWriteBack_NonTransient_ReadAlloc_WriteAlloc,
     );
+}
 
-    // Three descriptive consts for indexing into the correct MAIR_EL1 attributes.
-    mod mair {
-        pub const NORMAL: u64 = 0;
-        pub const NORMAL_NC: u64 = 1;
-        pub const DEVICE_NGNRE: u64 = 2;
-        // DEVICE_GRE
-        // DEVICE_NGNRNE
-    }
+// Three descriptive consts for indexing into the correct MAIR_EL1 attributes.
+mod mair {
+    pub const NORMAL: u64 = 0;
+    pub const NORMAL_NON_CACHEABLE: u64 = 1;
+    pub const DEVICE_NGNRE: u64 = 2;
+    // DEVICE_GRE
+    // DEVICE_NGNRNE
+}
 
-    // Set up the first LVL2 entry, pointing to a 4KiB table base address.
-    let lvl3_base: u64 = SINGLE_LVL3_TABLE.entries.base_addr() >> 12;
-    LVL2_TABLE.entries[0] = (STAGE1_DESCRIPTOR::VALID::True
-        + STAGE1_DESCRIPTOR::TYPE::Table
-        + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(lvl3_base))
-    .value;
+/// Set up identity mapped page tables for the first 1 gigabyte of address space.
+/// default: 880 MB ARM ram, 128MB VC
+pub unsafe fn init() -> Result<(), &'static str> {
+    // Prepare the memory attribute indirection register.
+    set_up_mair();
 
-    // For educational purposes and fun, let the start of the second 2 MiB block
-    // point to the 2 MiB aperture which contains the UART's base address.
-    let uart_phys_base: u64 = (crate::platform::mini_uart::UART1_BASE >> 21).into();
-    LVL2_TABLE.entries[1] = (STAGE1_DESCRIPTOR::VALID::True
-        + STAGE1_DESCRIPTOR::TYPE::Block
-        + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE_NGNRE)
-        + STAGE1_DESCRIPTOR::AP::RW_EL1
-        + STAGE1_DESCRIPTOR::SH::OuterShareable
-        + STAGE1_DESCRIPTOR::AF::True
-        + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(uart_phys_base)
-        + STAGE1_DESCRIPTOR::XN::True)
-        .value;
+    // Point the first 2 MiB of virtual addresses to the follow-up LVL3
+    // page-table.
+    LVL2_TABLE.entries[0] = match TableDescriptor::new(LVL3_TABLE.entries.base_addr_usize()) {
+        Err(s) => return Err(s),
+        Ok(d) => d.value(),
+    };
 
-    // Fill the rest of the LVL2 (2MiB) entries as block
-    // descriptors. Differentiate between normal, VC and device mem.
-    let vc_base: u64 = (0x3700_0000u32 >> 21).into();
-
-    let mmio_base: u64 = (crate::platform::rpi3::BcmHost::get_peripheral_address() >> 21).into();
-    let common = STAGE1_DESCRIPTOR::VALID::True
-        + STAGE1_DESCRIPTOR::TYPE::Block
-        + STAGE1_DESCRIPTOR::AP::RW_EL1
-        + STAGE1_DESCRIPTOR::AF::True
-        + STAGE1_DESCRIPTOR::XN::True;
-
-    // Notice the skip(2)
-    for (i, entry) in LVL2_TABLE.entries.iter_mut().enumerate().skip(2) {
-        let j: u64 = i as u64;
-
-        let mem_attr = if j >= mmio_base {
-            STAGE1_DESCRIPTOR::SH::OuterShareable
-                + STAGE1_DESCRIPTOR::AttrIndx.val(mair::DEVICE_NGNRE)
-        } else if j >= vc_base {
-            STAGE1_DESCRIPTOR::SH::OuterShareable + STAGE1_DESCRIPTOR::AttrIndx.val(mair::NORMAL_NC)
-        } else {
-            STAGE1_DESCRIPTOR::SH::InnerShareable + STAGE1_DESCRIPTOR::AttrIndx.val(mair::NORMAL)
-        };
-
-        *entry = (common + mem_attr + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(j)).value;
-    }
-
-    // Finally, fill the single LVL3 table (4 KiB granule). Differentiate
-    // between code+RO and RW pages.
+    // Fill the rest of the LVL2 (2 MiB) entries as block descriptors.
     //
-    // Using the linker script, we ensure that the RO area is consecutive and 4
-    // KiB aligned, and we export the boundaries via symbols.
-    extern "C" {
-        // The inclusive start of the read-only area, aka the address of the
-        // first byte of the area.
-        static mut __ro_start: u64;
+    // Notice the skip(1) which makes the iteration start at the second 2 MiB
+    // block (0x20_0000).
+    for (block_descriptor_nr, entry) in LVL2_TABLE.entries.iter_mut().enumerate().skip(1) {
+        let virt_addr = block_descriptor_nr << TWO_MIB_SHIFT;
 
-        // The non-inclusive end of the read-only area, aka the address of the
-        // first byte _after_ the RO area.
-        static mut __ro_end: u64;
-    }
-
-    const PAGESIZE: u64 = 4096;
-    let ro_first_page_index: u64 = &__ro_start as *const _ as u64 / PAGESIZE;
-
-    // Notice the subtraction to calculate the last page index of the RO area
-    // and not the first page index after the RO area.
-    let ro_last_page_index: u64 = (&__ro_end as *const _ as u64 / PAGESIZE) - 1;
-
-    let common = STAGE1_DESCRIPTOR::VALID::True
-        + STAGE1_DESCRIPTOR::TYPE::Table
-        + STAGE1_DESCRIPTOR::AttrIndx.val(mair::NORMAL)
-        + STAGE1_DESCRIPTOR::SH::InnerShareable
-        + STAGE1_DESCRIPTOR::AF::True;
-
-    for (i, entry) in SINGLE_LVL3_TABLE.entries.iter_mut().enumerate() {
-        let j: u64 = i as u64;
-
-        let mem_attr = if j < ro_first_page_index || j > ro_last_page_index {
-            STAGE1_DESCRIPTOR::AP::RW_EL1 + STAGE1_DESCRIPTOR::XN::True
-        } else {
-            STAGE1_DESCRIPTOR::AP::RO_EL1 + STAGE1_DESCRIPTOR::XN::False
+        let (output_addr, attribute_fields) = match get_virt_addr_properties(virt_addr) {
+            Err(s) => return Err(s),
+            Ok((a, b)) => (a, b),
         };
 
-        *entry = (common + mem_attr + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(j)).value;
+        let block_desc = match Lvl2BlockDescriptor::new(output_addr, attribute_fields) {
+            Err(s) => return Err(s),
+            Ok(desc) => desc,
+        };
+
+        *entry = block_desc.value();
+    }
+
+    // Finally, fill the single LVL3 table (4 KiB granule).
+    for (page_descriptor_nr, entry) in LVL3_TABLE.entries.iter_mut().enumerate() {
+        let virt_addr = page_descriptor_nr << FOUR_KIB_SHIFT;
+
+        let (output_addr, attribute_fields) = match get_virt_addr_properties(virt_addr) {
+            Err(s) => return Err(s),
+            Ok((a, b)) => (a, b),
+        };
+
+        let page_desc = match PageDescriptor::new(output_addr, attribute_fields) {
+            Err(s) => return Err(s),
+            Ok(desc) => desc,
+        };
+
+        *entry = page_desc.value();
     }
 
     // Point to the LVL2 table base address in TTBR0.
-    TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr());
+    TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64());
 
     // Configure various settings of stage 1 of the EL1 translation regime.
     let ips = ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange);
@@ -269,7 +360,6 @@ pub unsafe fn init() {
      * been dynamically patched at the PoU.
      */
     barrier::isb(barrier::SY);
-    asm!("ic iallu
-        dsb nsh" :::: "volatile");
-    barrier::isb(barrier::SY);
+
+    Ok(())
 }
