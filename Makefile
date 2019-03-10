@@ -96,7 +96,8 @@ gdb: kernel8.img
 	env RUST_GDB=$(GDB) rust-gdb -x gdb-connect kernel8
 
 gdbdash: kernel8.img
-	env RUST_GDB=$(GDB) rust-gdb -x ~/.gdbinit_dashboard kernel8
+	make nm | grep _SEGGER_RTT | awk '{print $$1}' | ./make-gdb-connect.sh
+	env RUST_GDB=$(GDB) rust-gdb -x gdb-connect -x ~/.gdbinit_dashboard kernel8
 
 gdbgui:
 	gdbgui -g $(GDB) --gdb-args='--init-eval-command="set startup-with-shell off"'
