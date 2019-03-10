@@ -55,41 +55,52 @@ use platform::{
 /// The global console. Output of the print! and println! macros.
 static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devices::Console::new());
 
-// Kernel entry point
-// arch crate is responsible for calling this
-fn kmain() -> ! {
-    // let gpio = GPIO::new_default();
-
-    // let uart = platform::MiniUart::new_default();
-    // uart.init(&gpio);
-    // CONSOLE.lock(|c| {
-    //     // Moves uart into the global CONSOLE. It is not accessible
-    //     // anymore for the remaining parts of kernel_entry().
-    //     c.replace_with(uart.into());
-    // });
-
-    // let uart = platform::PL011Uart::new_default();
-
-    // let mut mbox = platform::mailbox::Mailbox::new();
-
-    // match uart.init(&mut mbox, &gpio) {
-    //     Ok(_) => {
-    //         CONSOLE.lock(|c| {
-    //             // Moves uart into the global CONSOLE. It is not accessible
-    //             // anymore for the remaining parts of kernel_entry().
-    //             c.replace_with(uart.into());
-    //         });
-    //     }
-    //     Err(_) => endless_sleep(),
-    // }
-
+fn init_jlink_rtt() {
     CONSOLE.lock(|c| {
         c.replace_with(Output::new().into());
     });
 
-    jtag_dbg_wait();
+    println!("\n[0] JLink RTT is live!");
+}
 
-    println!("\n[0] UART is live!");
+fn init_uart_serial() {
+    let gpio = GPIO::new_default();
+
+    let uart = platform::MiniUart::new_default();
+    uart.init(&gpio);
+    CONSOLE.lock(|c| {
+        // Moves uart into the global CONSOLE. It is not accessible
+        // anymore for the remaining parts of kernel_entry().
+        c.replace_with(uart.into());
+    });
+
+    println!("[0] MiniUART is live!");
+
+    let uart = platform::PL011Uart::new_default();
+
+    let mut mbox = platform::mailbox::Mailbox::new();
+
+    match uart.init(&mut mbox, &gpio) {
+        Ok(_) => {
+            CONSOLE.lock(|c| {
+                // Moves uart into the global CONSOLE. It is not accessible
+                // anymore for the remaining parts of kernel_entry().
+                c.replace_with(uart.into());
+            });
+        }
+        Err(_) => endless_sleep(), // @todo ignore error because MiniUart is still there?
+    }
+
+    println!("[0] UART0 is live!");
+}
+
+// Kernel entry point
+// arch crate is responsible for calling this
+fn kmain() -> ! {
+    init_jlink_rtt();
+
+    // init_uart_serial();
+    // jtag_dbg_wait();
 
     extern "C" {
         static __exception_vectors_start: u64;
