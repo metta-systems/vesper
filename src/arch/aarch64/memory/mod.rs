@@ -76,6 +76,7 @@ pub mod map {
     pub const END:                     usize =             0x3FFF_FFFF;
 
     pub mod physical {
+        pub const VIDEOMEM_BASE:       usize =             0x3e00_0000;
         pub const MMIO_BASE:           usize =             0x3F00_0000;
         pub const VIDEOCORE_MBOX_BASE: usize = MMIO_BASE + 0x0000_B880;
         pub const GPIO_BASE:           usize = MMIO_BASE + 0x0020_0000;
@@ -231,7 +232,9 @@ static KERNEL_VIRTUAL_LAYOUT: [Descriptor; 5] = [
     },
     Descriptor {
         name: "Device MMIO",
-        virtual_range: || RangeInclusive::new(map::physical::MMIO_BASE, map::physical::MMIO_END),
+        virtual_range: || {
+            RangeInclusive::new(map::physical::VIDEOMEM_BASE, map::physical::MMIO_END)
+        },
         translation: Translation::Identity,
         attribute_fields: AttributeFields {
             mem_attributes: MemAttributes::Device,
