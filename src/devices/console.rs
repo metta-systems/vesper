@@ -110,7 +110,7 @@ impl Console {
             input = self.getc();
 
             if input == '\n' {
-                self.putc('\n');
+                self.puts("\n"); // do \r\n output
                 return &buf[..i];
             } else {
                 if i < buf.len() {
