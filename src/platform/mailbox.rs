@@ -213,8 +213,8 @@ pub mod clock {
 }
 
 pub mod alpha_mode {
-    pub const OPAQUE_0: u32 = 0; // 255 - transparent
-    pub const TRANSPARENT_0: u32 = 1; // 255 - opaque
+    pub const OPAQUE_0: u32 = 0; // 255 is transparent
+    pub const TRANSPARENT_0: u32 = 1; // 255 is opaque
     pub const IGNORED: u32 = 2;
 }
 
