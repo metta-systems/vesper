@@ -131,7 +131,7 @@ impl Buffer {
     }
 
     // Fill in buf
-    fn read(&mut self, buf: &mut [u8], blocking: bool) -> bool {
+    fn read(&mut self, _buf: &mut [u8], _blocking: bool) -> bool {
         true
     }
 }
