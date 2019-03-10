@@ -5,3 +5,4 @@ target/
 kernel8.img
 kernel8
 gdb-connect
+.gdb_history
