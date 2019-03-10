@@ -144,7 +144,7 @@ pub mod kernel_mem_range {
     }
 }
 
-use kernel_mem_range::*;
+pub use kernel_mem_range::*;
 
 /// A virtual memory layout that is agnostic of the paging granularity that the
 /// hardware MMU will use.
@@ -246,7 +246,9 @@ static KERNEL_VIRTUAL_LAYOUT: [Descriptor; 5] = [
 ///
 /// If the address is not covered in VIRTUAL_LAYOUT, return a default for normal
 /// cacheable DRAM.
-fn get_virt_addr_properties(virt_addr: usize) -> Result<(usize, AttributeFields), &'static str> {
+pub fn get_virt_addr_properties(
+    virt_addr: usize,
+) -> Result<(usize, AttributeFields), &'static str> {
     if virt_addr > map::END {
         return Err("Address out of range.");
     }
