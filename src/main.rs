@@ -126,14 +126,7 @@ fn init_uart_serial() {
     println!("[0] UART0 is live!");
 }
 
-// Kernel entry point
-// arch crate is responsible for calling this
-fn kmain() -> ! {
-    init_jlink_rtt();
-
-    // init_uart_serial();
-    // jtag_dbg_wait();
-
+fn init_exception_traps() {
     extern "C" {
         static __exception_vectors_start: u64;
     }
@@ -142,16 +135,61 @@ fn kmain() -> ! {
         let exception_vectors_start: u64 = &__exception_vectors_start as *const _ as u64;
 
         arch::traps::set_vbar_el1_checked(exception_vectors_start);
-        println!("Exception traps set up");
+    }
+    println!("Exception traps set up");
+}
+
+// Kernel entry point
+// arch crate is responsible for calling this
+fn kmain() -> ! {
+    init_jlink_rtt();
+    init_uart_serial();
+    init_exception_traps();
+
+    //------------------------------------------------------------
+    // Start a command prompt
+    //------------------------------------------------------------
+    'cmd_loop: loop {
+        let mut buf = [0u8; 64];
+
+        match CONSOLE.lock(|c| c.command_prompt(&mut buf)) {
+            b"mmu" => init_mmu(),
+            b"uart" => init_uart_serial(),
+            b"disp" => check_display_init(),
+            b"trap" => check_data_abort_trap(),
+            b"map" => arch::memory::print_layout(),
+            b"help" => print_help(),
+            b"end" => break 'cmd_loop,
+            x => println!("Unknown command {:?}, try 'help'", x),
+        }
     }
 
+    println!("Bye, going to reset now");
+    reboot()
+}
+
+fn print_help() {
+    println!("Supported console commands:");
+    println!("  mmu  - initialize MMU");
+    println!("  uart - try to reinitialize UART serial");
+    println!("  disp - try to init VC framebuffer and draw some text");
+    println!("  trap - cause and recover from a data abort exception");
+    println!("  map  - show kernel memory layout");
+    println!("  end  - leave console and lock up");
+}
+
+fn init_mmu() {
     unsafe {
         mmu::init();
     }
     println!("MMU initialised");
+}
 
-    // jtag_dbg_wait();
+fn reboot() -> ! {
+    Power::new().reset()
+}
 
+fn check_display_init() {
     if let Some(mut display) = VC::init_fb(Size2d { x: 800, y: 600 }, 32) {
         println!("Display created");
 
@@ -176,34 +214,6 @@ fn kmain() -> ! {
         display.draw_text(160, 60, "GREEN", Color::green());
         display.draw_text(170, 70, "BLUE", Color::blue());
     }
-
-    // jtag_dbg_wait();
-
-    //------------------------------------------------------------
-    // Start a command prompt
-    //------------------------------------------------------------
-    'cmd_loop: loop {
-        let mut buf = [0u8; 64];
-
-        match CONSOLE.lock(|c| c.command_prompt(&mut buf)) {
-            b"trap" => check_data_abort_trap(),
-            b"map" => arch::memory::print_layout(),
-            b"help" => print_help(),
-            b"end" => break 'cmd_loop,
-            x => println!("Unknown command {:?}, try 'help'", x),
-        }
-    }
-
-    println!("Bye, going to sleep now");
-    // qemu_aarch64_exit()
-    endless_sleep()
-}
-
-fn print_help() {
-    println!("Supported console commands:");
-    println!("  trap - cause and recover from a data abort exception");
-    println!("  map  - show kernel memory layout");
-    println!("  end  - leave console and lock up");
 }
 
 fn check_data_abort_trap() {
