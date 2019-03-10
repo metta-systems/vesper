@@ -15,7 +15,7 @@ impl VC {
     // https://www.raspberrypi.org/forums/viewtopic.php?f=72&t=185116
     pub fn init_fb(size: Size2d, depth: u32) -> Option<Display> {
         // Use property channel
-        let mut mbox = Mailbox::new();
+        let mut mbox = Mailbox::default();
 
         /*
          *  * All tags in the request are processed in one operation.

@@ -5,6 +5,9 @@
 
 // pub use self::area_frame_allocator::AreaFrameAllocator;
 
+mod bump_allocator;
+pub use bump_allocator::BumpAllocator;
+
 pub type PhysicalAddress = usize;
 pub type VirtualAddress = usize;
 

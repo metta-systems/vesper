@@ -11,11 +11,13 @@ use register::mmio::*;
 // The address for the buffer needs to be 16-byte aligned
 // so that the VideoCore can handle it properly.
 // The reason is that lowest 4 bits of the address will contain the channel number.
-#[repr(C)]
-#[repr(align(16))]
-pub struct Mailbox {
-    pub buffer: [u32; 36],
+pub struct Mailbox<'a> {
+    pub buffer: &'a mut [u32],
+    base_addr: u32,
 }
+
+const MAILBOX_ALIGNMENT: usize = 16;
+const MAILBOX_ITEMS_COUNT: usize = 36;
 
 // Identity mapped first 1Gb by u-boot
 const MAILBOX_BASE: u32 = BcmHost::get_peripheral_address() + 0xb880;
@@ -292,15 +294,15 @@ fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
 /// ```
 /// unsafe { (*Mbox::ptr()).STATUS.read() }
 /// ```
-impl Deref for Mailbox {
+impl<'a> Deref for Mailbox<'a> {
     type Target = RegisterBlock;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &*Self::ptr() }
+        unsafe { &*self.ptr() }
     }
 }
 
-impl core::fmt::Display for Mailbox {
+impl<'a> core::fmt::Display for Mailbox<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         let count = self.buffer[0] / 4;
         assert_eq!(self.buffer[0], count * 4);
@@ -312,20 +314,47 @@ impl core::fmt::Display for Mailbox {
     }
 }
 
-impl Default for Mailbox {
+impl<'a> Default for Mailbox<'a> {
     fn default() -> Self {
-        Self::new()
+        Self::new_default().expect("Couldn't allocate a mailbox")
     }
 }
 
-impl Mailbox {
-    pub fn new() -> Mailbox {
-        Mailbox { buffer: [0; 36] }
+impl<'a> Mailbox<'a> {
+    pub fn new_default() -> ::core::result::Result<Mailbox<'a>, ()> {
+        let ret = crate::DMA_ALLOCATOR
+            .lock(|d| d.alloc_slice_zeroed(MAILBOX_ITEMS_COUNT, MAILBOX_ALIGNMENT));
+
+        if ret.is_err() {
+            return Err(());
+        }
+
+        Ok(Mailbox {
+            base_addr: MAILBOX_BASE,
+            buffer: ret.unwrap(),
+        })
+    }
+
+    pub fn new(base_addr: usize) -> ::core::result::Result<Mailbox<'a>, ()> {
+        let ret = crate::DMA_ALLOCATOR
+            .lock(|d| d.alloc_slice_zeroed(MAILBOX_ITEMS_COUNT, MAILBOX_ALIGNMENT));
+
+        if ret.is_err() {
+            return Err(());
+        }
+
+        use core::convert::TryFrom;
+        let base_addr = u32::try_from(base_addr).unwrap();
+
+        Ok(Mailbox {
+            base_addr,
+            buffer: ret.unwrap(),
+        })
     }
 
     /// Returns a pointer to the register block
-    fn ptr() -> *const RegisterBlock {
-        MAILBOX_BASE as *const _
+    fn ptr(&self) -> *const RegisterBlock {
+        self.base_addr as *const _
     }
 
     pub fn write(&self, channel: u32) -> Result<()> {

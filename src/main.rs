@@ -9,6 +9,7 @@
 #![feature(core_intrinsics)]
 #![feature(range_contains)]
 #![feature(underscore_const_names)]
+#![feature(allocator_api)]
 #![doc(html_root_url = "https://docs.metta.systems/")]
 #![allow(dead_code)]
 #![allow(unused_assignments)]
@@ -54,6 +55,24 @@ use platform::{
 /// The global console. Output of the print! and println! macros.
 static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devices::Console::new());
 
+/// The global allocator for DMA-able memory. That is, memory which is tagged
+/// non-cacheable in the page tables.
+static DMA_ALLOCATOR: sync::NullLock<memory::BumpAllocator> =
+    sync::NullLock::new(memory::BumpAllocator::new(
+        memory::map::virt::DMA_HEAP_START as usize,
+        memory::map::virt::DMA_HEAP_END as usize,
+        "Global DMA Allocator",
+        // Try the following arguments instead to see all mailbox operations
+        // fail. It will cause the allocator to use memory that are marked
+        // cacheable and therefore not DMA-safe. The answer from the VideoCore
+        // won't be received by the CPU because it reads an old cached value
+        // that resembles an error case instead.
+
+        // 0x00600000 as usize,
+        // 0x007FFFFF as usize,
+        // "Global Non-DMA Allocator",
+    ));
+
 fn init_jlink_rtt() {
     CONSOLE.lock(|c| {
         c.replace_with(Output::new().into());
@@ -77,7 +96,7 @@ fn init_uart_serial() {
 
     let uart = platform::PL011Uart::new_default();
 
-    let mut mbox = platform::mailbox::Mailbox::new();
+    let mut mbox = platform::mailbox::Mailbox::default();
 
     // uart.init() will reconfigure the GPIO, which causes a race against
     // the MiniUart that is still putting out characters on the physical
