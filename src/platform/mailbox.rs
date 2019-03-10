@@ -61,6 +61,20 @@ pub enum MboxError {
     Timeout,
 }
 
+impl core::fmt::Display for MboxError {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                MboxError::ResponseError => "ResponseError",
+                MboxError::UnknownError => "UnknownError",
+                MboxError::Timeout => "Timeout",
+            }
+        )
+    }
+}
+
 pub type Result<T> = ::core::result::Result<T, MboxError>;
 
 /*
@@ -97,13 +111,15 @@ pub struct GpuFb {
     pub size: u32,
 }
 
+// Single code indicating request
 pub const REQUEST: u32 = 0;
 
-// Responses
+// Possible responses
 pub mod response {
     pub const SUCCESS: u32 = 0x8000_0000;
     pub const ERROR: u32 = 0x8000_0001; // error parsing request buffer (partial response)
-    /** When responding, the VC sets this bit in val_len to indicate a response */
+    /** When responding, the VC sets this bit in val_len to indicate a response. */
+    /** Each tag with this bit set will contain VC response data. */
     pub const VAL_LEN_FLAG: u32 = 0x8000_0000;
 }
 
@@ -332,6 +348,60 @@ impl Mailbox {
     pub fn call(&self, channel: u32) -> Result<()> {
         self.write(channel)?;
         self.read(channel)
+    }
+
+    // Specific mailbox functions
+
+    #[inline]
+    pub fn request(&mut self) -> usize {
+        self.buffer[1] = REQUEST;
+        2
+    }
+
+    #[inline]
+    pub fn end(&mut self, index: usize) -> () {
+        // @todo return Result
+        self.buffer[index] = tag::End;
+        self.buffer[0] = (index as u32 + 1) * 4;
+    }
+
+    #[inline]
+    pub fn set_physical_wh(&mut self, index: usize, width: u32, height: u32) -> usize {
+        self.buffer[index] = tag::SetPhysicalWH;
+        self.buffer[index + 1] = 8; // Buffer size   // val buf size
+        self.buffer[index + 2] = 8; // Request size  // val size
+        self.buffer[index + 3] = width; // Space for horizontal resolution
+        self.buffer[index + 4] = height; // Space for vertical resolution
+        index + 5
+    }
+
+    #[inline]
+    pub fn set_virtual_wh(&mut self, index: usize, width: u32, height: u32) -> usize {
+        self.buffer[index] = tag::SetVirtualWH;
+        self.buffer[index + 1] = 8; // Buffer size   // val buf size
+        self.buffer[index + 2] = 8; // Request size  // val size
+        self.buffer[index + 3] = width; // Space for horizontal resolution
+        self.buffer[index + 4] = height; // Space for vertical resolution
+        index + 5
+    }
+
+    #[inline]
+    pub fn set_depth(&mut self, index: usize, depth: u32) -> usize {
+        self.buffer[index] = tag::SetDepth;
+        self.buffer[index + 1] = 4; // Buffer size   // val buf size
+        self.buffer[index + 2] = 4; // Request size  // val size
+        self.buffer[index + 3] = depth; // bpp
+        index + 4
+    }
+
+    #[inline]
+    pub fn allocate_buffer_aligned(&mut self, index: usize, alignment: u32) -> usize {
+        self.buffer[index] = tag::AllocateBuffer;
+        self.buffer[index + 1] = 8; // Buffer size   // val buf size
+        self.buffer[index + 2] = 4; // Request size  // val size
+        self.buffer[index + 3] = alignment; // Alignment = 16 -- fb_ptr will be here
+        self.buffer[index + 4] = 0; // Space for response -- fb_size will be here
+        index + 5
     }
 }
 

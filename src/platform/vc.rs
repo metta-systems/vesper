@@ -17,37 +17,30 @@ impl VC {
         // Use property channel
         let mut mbox = Mailbox::new();
 
-        mbox.buffer[0] = 22 * 4;
-        mbox.buffer[1] = mailbox::REQUEST;
+        /*
+         *  * All tags in the request are processed in one operation.
+         *  * It is not valid to mix Test tags with Get/Set tags
+         *    in the same operation and no tags will be returned.
+         *  * Get tags will be processed after all Set tags.
+         *  * If an allocate buffer tag is omitted when setting parameters,
+         *    then no change occurs unless it can be accommodated without changing
+         *    the buffer base or size.
+         *  * When an allocate buffer response is returned, the old buffer area
+         *    (if the base or size has changed) is implicitly freed.
+         */
 
-        mbox.buffer[2] = tag::SetPhysicalWH;
-        mbox.buffer[3] = 8; // Buffer size   // val buf size
-        mbox.buffer[4] = 8; // Request size  // val size
-        mbox.buffer[5] = size.x; // Space for horizontal resolution
-        mbox.buffer[6] = size.y; // Space for vertical resolution
+        let index = mbox.request();
+        let index = mbox.set_physical_wh(index, size.x, size.y);
+        let index = mbox.set_virtual_wh(index, size.x, size.y);
+        let index = mbox.set_depth(index, depth);
+        let index = mbox.allocate_buffer_aligned(index, 16);
+        mbox.end(index);
 
-        mbox.buffer[7] = tag::SetVirtualWH as u32;
-        mbox.buffer[8] = 8; // Buffer size   // val buf size
-        mbox.buffer[9] = 8; // Request size  // val size
-        mbox.buffer[10] = size.x; // Space for horizontal resolution
-        mbox.buffer[11] = size.y; // Space for vertical resolution
-
-        mbox.buffer[12] = tag::SetDepth as u32;
-        mbox.buffer[13] = 4; // Buffer size   // val buf size
-        mbox.buffer[14] = 4; // Request size  // val size
-        mbox.buffer[15] = depth; // bpp
-
-        mbox.buffer[16] = tag::AllocateBuffer as u32;
-        mbox.buffer[17] = 8; // Buffer size   // val buf size
-        mbox.buffer[18] = 4; // Request size  // val size
-        mbox.buffer[19] = 16; // Alignment = 16 -- fb_ptr will be here
-        mbox.buffer[20] = 0; // Space for response -- fb_size will be here
-
-        mbox.buffer[21] = tag::End as u32;
-
-        mbox.call(channel::PropertyTagsArmToVc).map_err(|_| ());
-
-        jtag_dbg_wait();
+        mbox.call(channel::PropertyTagsArmToVc).map_err(|e| {
+            println!("Mailbox call returned error {}", e);
+            println!("Mailbox contents: {}", mbox);
+            ()
+        });
 
         if (mbox.buffer[18] & VAL_LEN_FLAG) == 0 {
             return None;
