@@ -86,7 +86,10 @@ hopper: all
 	hopperv4 -l RAW --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --aarch64 -e kernel8.img
 
 openocd:
-	$(OPENOCD) -f interface/jlink.cfg -f ./doc/rpi3_jlink.cfg
+	$(OPENOCD) -f interface/jlink.cfg -f ./doc/rpi3_jlink_suse.cfg
+
+openocd_naotako:
+	$(OPENOCD) -f interface/jlink.cfg -f ./doc/rpi3_jlink_naotako.cfg
 
 gdb: kernel8.img
 	make nm | grep _SEGGER_RTT | awk '{print $$1}' | ./make-gdb-connect.sh
