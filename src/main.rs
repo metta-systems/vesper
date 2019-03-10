@@ -41,7 +41,7 @@ use jlink_rtt::Output;
 use platform::{
     display::{Color, Size2d},
     gpio::GPIO,
-    // uart::MiniUart,
+    power::Power,
     vc::VC,
 };
 

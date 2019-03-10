@@ -2,6 +2,7 @@ pub mod display;
 pub mod gpio;
 pub mod mailbox;
 pub mod mini_uart;
+pub mod power;
 pub mod rpi3;
 pub mod uart;
 pub mod vc;
