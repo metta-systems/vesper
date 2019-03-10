@@ -233,7 +233,7 @@ impl ConsoleOps for MiniUart {
     /// Display a string
     fn puts(&self, string: &str) {
         for c in string.chars() {
-            // convert newline to carrige return + newline
+            // convert newline to carriage return + newline
             if c == '\n' {
                 self.putc('\r')
             }
@@ -251,7 +251,7 @@ impl ConsoleOps for MiniUart {
         // read it and return
         let mut ret = self.AUX_MU_IO.get() as u8 as char;
 
-        // convert carrige return to newline
+        // convert carriage return to newline
         if ret == '\r' {
             ret = '\n'
         }
