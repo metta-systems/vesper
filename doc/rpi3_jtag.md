@@ -153,3 +153,10 @@ GND   |       4      | black       | 20
 Rebuild openocd from git and voila, it works with 
 
 `openocd -f interface/jlink.cfg -f rpi3_jtag.cfg`
+
+
+# Andre Richter's tutorials
+
+Finally, while I was messing with all this, Andre Richter has created another entry in his excellent Raspi tutorials dedicated exactly to [JTAG debugging](fixme) and he has also provided useful docker containers with configured [gdb-dashboard](https://github.com/rust-embedded/rust-raspi3-OS-tutorials/blob/JTAG/docker/raspi3-gdb/)
+
+So debugging is a lot easier now - just drop specifically-built JTAG enabler binary to sdcard, connect over JTAG via openocd and gdb and go load your kernel!
