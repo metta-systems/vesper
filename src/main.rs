@@ -42,6 +42,7 @@ use jlink_rtt::Output;
 use platform::{
     display::{Color, Size2d},
     gpio::GPIO,
+    mailbox::{channel, Mailbox},
     power::Power,
     vc::VC,
 };
@@ -158,6 +159,8 @@ fn kmain() -> ! {
             b"disp" => check_display_init(),
             b"trap" => check_data_abort_trap(),
             b"map" => arch::memory::print_layout(),
+            b"led on" => set_led(true),
+            b"led off" => set_led(false),
             b"help" => print_help(),
             b"end" => break 'cmd_loop,
             x => println!("Unknown command {:?}, try 'help'", x),
@@ -175,7 +178,21 @@ fn print_help() {
     println!("  disp - try to init VC framebuffer and draw some text");
     println!("  trap - cause and recover from a data abort exception");
     println!("  map  - show kernel memory layout");
-    println!("  end  - leave console and lock up");
+    println!("  led [on|off]  - change RPi LED status");
+    println!("  end  - leave console and reset board");
+}
+
+fn set_led(enable: bool) {
+    let mut mbox = Mailbox::default();
+    let index = mbox.request();
+    let index = mbox.set_led_on(index, enable);
+    mbox.end(index);
+
+    mbox.call(channel::PropertyTagsArmToVc).map_err(|e| {
+        println!("Mailbox call returned error {}", e);
+        println!("Mailbox contents: {}", mbox);
+        ()
+    });
 }
 
 fn init_mmu() {

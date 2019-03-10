@@ -177,6 +177,8 @@ pub mod tag {
     pub const SetPalette: u32 = 0x0004_800b;
     pub const SetCursorInfo: u32 = 0x0000_8010;
     pub const SetCursorState: u32 = 0x0000_8011;
+    pub const GetGpioState: u32 = 0x0003_0041;
+    pub const SetGpioState: u32 = 0x0003_8041;
     pub const End: u32 = 0;
 }
 
@@ -437,6 +439,16 @@ impl<'a> Mailbox<'a> {
         self.buffer[index + 2] = 4; // Request size  // val size
         self.buffer[index + 3] = alignment; // Alignment = 16 -- fb_ptr will be here
         self.buffer[index + 4] = 0; // Space for response -- fb_size will be here
+        index + 5
+    }
+
+    #[inline]
+    pub fn set_led_on(&mut self, index: usize, enable: bool) -> usize {
+        self.buffer[index] = tag::SetGpioState;
+        self.buffer[index + 1] = 8; // Buffer size   // val buf size
+        self.buffer[index + 2] = 0; // Response size  // val size
+        self.buffer[index + 3] = 130; // Pin Number
+        self.buffer[index + 4] = if enable { 1 } else { 0 };
         index + 5
     }
 }
