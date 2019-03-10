@@ -79,6 +79,20 @@ fn init_uart_serial() {
 
     let mut mbox = platform::mailbox::Mailbox::new();
 
+    // uart.init() will reconfigure the GPIO, which causes a race against
+    // the MiniUart that is still putting out characters on the physical
+    // line that are already buffered in its TX FIFO.
+    //
+    // To ensure the CPU doesn't rewire the GPIO before the MiniUart has put
+    // its last character, explicitly flush it before rewiring.
+    //
+    // If you switch to an output that happens to not use the same pair of
+    // physical wires (e.g. the Framebuffer), you don't need to do this,
+    // because flush() is anyways called implicitly by replace_with(). This
+    // is just a special case.
+    use crate::devices::console::ConsoleOps;
+    CONSOLE.lock(|c| c.flush());
+
     match uart.init(&mut mbox, &gpio) {
         Ok(_) => {
             CONSOLE.lock(|c| {
