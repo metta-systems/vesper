@@ -133,7 +133,16 @@ pub mod tag {
     pub const SetPowerState: u32 = 0x0002_8001;
     pub const GetClockRate: u32 = 0x0003_0002;
     pub const SetClockRate: u32 = 0x0003_8002;
-    pub const AllocateBuffer: u32 = 0x0004_0001;
+    // GPU
+    pub const AllocateMemory: u32 = 0x0003_000c; //< Allocate contiguous memory buffer
+    pub const LockMemory: u32 = 0x0003_000d;
+    pub const UnlockMemory: u32 = 0x0003_000e;
+    pub const ReleaseMemory: u32 = 0x003_000f;
+    pub const ExecuteCode: u32 = 0x0003_0010;
+    pub const GetDispmanxResourceMemHandle: u32 = 0x0003_0014;
+    pub const GetEdidBlock: u32 = 0x0003_0020;
+    // FB
+    pub const AllocateBuffer: u32 = 0x0004_0001; //< Allocate framebuffer
     pub const ReleaseBuffer: u32 = 0x0004_8001;
     pub const BlankScreen: u32 = 0x0004_0002;
     /* Physical means output signal */
@@ -164,6 +173,8 @@ pub mod tag {
     pub const GetPalette: u32 = 0x0004_000b;
     pub const TestPalette: u32 = 0x0004_400b;
     pub const SetPalette: u32 = 0x0004_800b;
+    pub const SetCursorInfo: u32 = 0x0000_8010;
+    pub const SetCursorState: u32 = 0x0000_8011;
     pub const End: u32 = 0;
 }
 
