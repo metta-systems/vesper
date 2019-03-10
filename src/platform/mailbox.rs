@@ -210,7 +210,7 @@ pub mod alpha_mode {
 fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
 
-    // let buf_ptr = BcmHost::phys2bus(buf_ptr);
+    // let buf_ptr = BcmHost::phys2bus(buf_ptr); not used for PropertyTags channel
 
     println!("Mailbox::write {:x}/{:x}", buf_ptr, channel);
 
@@ -322,11 +322,7 @@ impl Mailbox {
     }
 
     pub fn read(&self, channel: u32) -> Result<()> {
-        read(
-            self,
-            /*BcmHost::phys2bus*/ (self.buffer.as_ptr() as u32),
-            channel,
-        )?;
+        read(self, self.buffer.as_ptr() as u32, channel)?;
 
         match self.buffer[1] {
             response::SUCCESS => {
@@ -463,8 +459,16 @@ impl GpuFb {
         MAILBOX_BASE as *const _
     }
 
+    // https://github.com/raspberrypi/firmware/wiki/Accessing-mailboxes says:
+    // **With the exception of the property tags mailbox channel,**
+    // when passing memory addresses as the data part of a mailbox message,
+    // the addresses should be **bus addresses as seen from the VC.**
     pub fn write(&self) -> Result<()> {
-        write(self, &self.width as *const u32 as u32, channel::FrameBuffer)
+        write(
+            self,
+            BcmHost::phys2bus(&self.width as *const u32 as u32),
+            channel::FrameBuffer,
+        )
     }
 
     pub fn read(&mut self) -> Result<()> {
