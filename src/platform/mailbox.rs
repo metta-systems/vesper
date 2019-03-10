@@ -194,7 +194,7 @@ pub mod alpha_mode {
 fn write(regs: &RegisterBlock, buf_ptr: u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
 
-    let buf_ptr = BcmHost::phys2bus(buf_ptr);
+    // let buf_ptr = BcmHost::phys2bus(buf_ptr);
 
     println!("Mailbox::write {:x}/{:x}", buf_ptr, channel);
 
@@ -308,7 +308,7 @@ impl Mailbox {
     pub fn read(&self, channel: u32) -> Result<()> {
         read(
             self,
-            BcmHost::phys2bus(self.buffer.as_ptr() as u32),
+            /*BcmHost::phys2bus*/ (self.buffer.as_ptr() as u32),
             channel,
         )?;
 
