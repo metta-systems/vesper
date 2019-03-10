@@ -105,13 +105,6 @@ fn kmain() -> ! {
         static __exception_vectors_start: u64;
     }
 
-    //==============================================
-    // Since formatted output doesn't work, lets do some other preparatory steps:
-    // 1. Initialize MMU
-    // 2. Set up exception handlers
-    // Obviously, things should keep working after that...
-    //==============================================
-
     unsafe {
         let exception_vectors_start: u64 = &__exception_vectors_start as *const _ as u64;
 
