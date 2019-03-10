@@ -217,16 +217,16 @@ fn check_display_init() {
         display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255));
 
-        // let mut buf = [0u8; 64];
+        let mut buf = [0u8; 64];
         // Crashes if uncommenting next line: vvv
-        // let s = write_to::show(&mut buf, format_args!("Display width {}", display.width));
+        let s = write_to::show(&mut buf, format_args!("Display width {}", display.width));
         // So, some rust runtime things are breaking it, why?
 
-        // if s.is_err() {
-        //     display.draw_text(50, 150, "Error displaying", Color::red())
-        // } else {
-        // display.draw_text(50, 150, s.unwrap(), Color::white());
-        // }
+        if s.is_err() {
+            display.draw_text(50, 150, "Error displaying", Color::red())
+        } else {
+            display.draw_text(50, 150, s.unwrap(), Color::white());
+        }
 
         display.draw_text(150, 50, "RED", Color::red());
         display.draw_text(160, 60, "GREEN", Color::green());

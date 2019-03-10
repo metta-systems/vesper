@@ -129,10 +129,6 @@ impl Display {
     fn write_pixel_component(&self, x: u32, y: u32, chan: u16, c: u32) {
         unsafe {
             *(self.base as *mut u8).offset(
-                // This is still a problem!
-                // 1. Fix display output so we can print some values
-                // 2. Print display info
-                // 3. Go from there.
                 (y * self.pitch + x * (self.depth >> 3) + self.color_component(chan)) as isize,
             ) = c as u8;
         }
