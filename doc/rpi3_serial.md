@@ -28,3 +28,8 @@ RXD1  | GPIO15 |   10    |  Alt5  | Brown
 TXD1  | GPIO14 |    8    |  Alt5  | Red
 GND   | GND    |    6    |        | Green
 ```
+
+NB: SWAP the TXD and RXD wires.
+
+I.e. RXD pin of CP2104 should go to TXD pin on RPi and vice versa.
+
