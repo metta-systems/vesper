@@ -1,0 +1,364 @@
+MMU init:
+ ☐ Condense all structures for MMU into mmu.rs at first, then we'll split as needed.
+
+ ☐ NB: MUST map fault tables! (as code)
+ ☐ detect maximum supported "negative" VA - use TCR_EL1.T1SZ for this
+   ☐ lets hardcode TxSZ to 16, this gives full 48-bit VA as we want.
+ ☐ calculate VA range to cover entire RAM
+   ☐ for simplicity just hardcode 1GiB at start
+   ☐ Get ram size from dtb in the future
+ ☐ remember offset in PHYSICAL_MEMORY_OFFSET
+   ☐ We calc this as `0xFFFF_ffff_ffff_ffff - 1GiB` = `0xFFFF_ffff_bfff_ffff` ???
+ ☐ detect maximum granule size
+ ☐ calculate phys map table size
+   ☐ presumably, we can't just map two 512Mb pages because we also need to have correct physical memory attributes! i.e. this area includes MMIO and GPU framebuffer, too. As well as DMA-allocator memory that needs non-caching access. So, kernel side view of this should actually match user-side view and have the same mapping attributes...
+ ☐ allocate phys map table
+   ☐ need bump_allocator for frames?
+   ☐ need initial memory map - from dtbs? in the future
+   ☐ map all non-kernel-code space as Execute Never for safety
+ ☐ fill in mappings for RAM
+ ☐ activate TTBR1
+ ☐ Implement paging subsystem (`static MMU: NullLock<...>`)
+   ☐ Map entire physical memory to the top of virtual memory space at a `fixed offset`
+     ☐ Take virtual address space bitness into account
+     ☐ Use huge pages (2MiB) to make this mapping efficient (512 pages should map entire RPi RAM)
+     ☐ Make this accessible only in EL1
+   ☐ Page control system, initial page allocator, pages for kernel and userspace
+   ☐ Map all available memory in kernel (?), but nothing in EL0 by default.
+   ☐ MappedPageTable - see Mapper traits in x86_64 crate
+
+$> mmu
+[i] MMU: 4 KiB granule supported!
+[i] MMU: 64 KiB granule supported!
+[i] MMU: 16 bit ASIDs supported!
+[i] MMU: Up to 40 Bit physical address range supported!
+[i] MMU: 32 Bit intermediate physical address size supported!
+[i] MMU: TTBR0 4 KiB granule active!
+[i] MMU: T0sz = 64-0 bits
+[i] MMU: TTBR1 4 KiB granule active!
+[i] MMU: T1sz = 64-0 bits
+MMU initialised
+
+$> mmu feats
+[i] MMU: 4 KiB granule supported!
+[i] MMU: 64 KiB granule supported!
+[i] MMU: 16 bit ASIDs supported!
+[i] MMU: Up to 40 Bit physical address range supported!
+[i] MMU: 40 Bit intermediate physical address size supported!
+[i] MMU: TTBR0 4 KiB granule active!
+[i] MMU: T0sz = 64-34 bits                   <-- this is to traverse less levels, can be changed...
+[i] MMU: TTBR1 4 KiB granule active!
+[i] MMU: T1sz = 64-0 bits
+
+
+ ☐ introduce special type for kernel-side access to phys mem?
+   ☐ privileged code that doesn't manipulate other processes phys mem should work as usual
+   ☐ privileged code that manipulates page tables and other things should use this Mapped type
+   ☐ let v = KernelVirtAddr(phys.as_u64()) = VirtAddr(phys.as_u64() + PHYSICAL_MEMORY_OFFSET);
+   ☐ disallow dereferencing PhysAddr's at all?
+
+ ☐ TTBR0_EL1 - for lower VA range
+   ☐ TCR_EL1.T0SZ for lower VA range "size"
+ ☐ TTBR1_EL1 - for upper VA range (negative space, could be kernel space)
+   ☐ TCR_EL1.T1SZ for upper VA range "size"
+
+The Translation Control Register TCR_EL1 defines the exact number of most significant bits that are checked. TCR_EL1 contains the size fields T0SZ[5:0] and T1SZ[5:0]. The integer in the field gives the number of the most significant bits that must be either all 0s or all 1s
+
+ ☐ D5.1.4 Address tagging for top 8 bits of VA (ARMv8.3)
+ ☐ Possible errors in programming the translation table registers (page D5-2432)
+ ☐ https://stackoverflow.com/questions/14460752/linux-kernel-arm-translation-table-base-ttb0-and-ttb1#16680638
+ ☐ @todo PA sizes - When the value of ID_AA64MMFR0_EL1.PARange indicates that the implementation does not support a 52 bit PA size...
+
+RPi3:
+ ☐ move EL2->El1 bootloader and paging stuff to the beginning of history before other things
+ ☐ Implement SDcard reader and module loading
+ ☐ GLES on RPi3: https://github.com/LdB-ECM/Raspberry-Pi/blob/master/GLES2_Rotate/rpi-GLES.c
+ ✔ Could control RPi3 LEDs through mailbox interface: see @done (19-03-10 19:52)
+   https://github.com/Makogan/PiOS/blob/master/source/Hardware/Graphics/mailbox.cpp#L103
+ ☐ Boot a rust-based nano-kernel
+   ☐ Follow cs140e and build
+     ✔ xmodem protocol - we have raspbootin instead? but xmodem should be fun anyway @done (19-04-09 23:30)
+       ✔ TESTS @done (19-04-09 23:30)
+     ✔ ttywrite @done (19-04-09 23:30)
+       ✔ TESTS @done (19-04-09 23:30)
+       ☐ instead of the above we have gdb and `load` command, raspbootin should be ok too.
+     ☐ system timer
+       ☐ TESTS
+     ☐ gpio driver
+       ☐ TESTS
+     ✔ UART @done (19-03-10 19:53)
+       ☐ TESTS
+       ✔ Serial print function @done (19-03-10 19:53)
+       ✔ Serial port message @done (19-03-10 19:53)
+     ☐ panic_fmt
+       ☐ TESTS
+     ☐ ATAGS
+       ☐ TESTS
+     ✔ bump allocator (wee_alloc?) @done (19-03-10 19:53)
+       ☐ Port wee_alloc as the startup mini-allocator for the kernel?? We basically just need to allocate a few pages of tables, so probably an allocator is not even needed at all.
+       ☐ TESTS
+     ☐ bin allocator (similar to what i have from Nemesis)
+       ☐ TESTS
+     ☐ EMMC/SD driver (see https://github.com/bztsrc/raspi3-tutorial/tree/master/0B_readsector)
+       ☐ TESTS
+     ☐ FAT32 read-only
+       ☐ TESTS
+     ☐ ext2 read-only ??
+       ☐ TESTS
+     ☐ exception level switching
+       ☐ TESTS
+     ✔ exception vectors @done (19-03-10 19:54)
+       ☐ TESTS
+     ☐ switch to user mode
+       ☐ TESTS
+     ☐ timer interrupts
+       ☐ TESTS
+     ☐ scheduler
+       ☐ TESTS
+     ☐ sleep/delays
+       ☐ TESTS
+
+ ✔ simple bitfont rendering using `bitfont` crate, @done (18-03-14 00:14)
+   ✔ just grab the bitfont definition from there... @done (18-03-14 00:14)
+ ☐ ttf font rendering using `rusttype` + `ttf-noto-sans` embedded font.
+ ☐ rendering using `footile` 2d raster lib? maybe better alternatives?
+
+Nucleus (privileged core):
+ TODO: cleanly separate this code into a specialized component
+ ☐ IRQ stubs
+ ☐ privileged instructions
+ ☐
+
+Kernel debugging:
+ ☐ Read about openocd AHB-AP configuration on cortex_a, for doing side reads on memory (for RTT)
+   ☐ JLink should be able to do this for sure?
+   ☐ They also mentioned slow-mode where target is halted, memory is read and target is resumed
+     ☐ Should work -- quick one did NOT work, need to investigate.
+
+Kernel and Module Testing:
+ ☐ Devise a testing framework for modules (similar to sth in blog_os?)
+ ☐
+
+Kernel shell:
+ ☐ Implement kernel shell, similar to SBenitez courses
+ ☐
+
+User processes:
+ ☐ Implement EL0 processes
+ ☐ init user-processes and EL0
+ ☐ spawn user-level servers from the bootimage blob - emmc, fs, dtb, usb,
+
+Interrupts:
+ ☐ Implement interrupts support
+   ☐ http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.den0024a/ch10s05.html
+   ☐ VBAR_EL0 and VBAR_EL1
+   ☐ GIC architecture specification
+     ☐ Distributor config
+     ☐ CPU core interrupt config
+     ☐ mmio banks
+     ☐ "FIQ is often reserved for secure interrupt sources. In earlier architecture versions, FIQ and IRQ were used to denote high and standard interrupt priority, but this is not the case in ARMv8-A."
+     ☐ The number of physical interrupt identifier bits that are supported is indicated by `ICC_CTLR_EL1.IDbits`
+     ☐ At any time, the connected PE can determine the:
+       • INTID of its highest priority pending interrupt, by reading ICC_HPPIR0_EL1 or ICC_HPPIR1_EL1.
+       • The running priority of the CPU interface by reading ICC_RPR_EL1.
+     • The priority drop and deactivation can be performed as a single operation or can be split, as defined by ICC_CTLR_EL1.EOImode
+
+    == Activation
+
+    The interrupt handler reads ICC_IAR0_EL1 for Group 0 interrupts, and ICC_IAR1_EL1 for Group 1 interrupts, in the corresponding CPU interface to acknowledge the interrupt. This read returns either:
+      • The INTID of the highest priority pending interrupt, if that interrupt is of sufficient priority for it to be signaled to the PE. This is the normal response to an interrupt acknowledge.
+      • Under certain conditions, an INTID that indicates a special interrupt number, see INTIDs on page 2-31.
+    Whether a read of ICC_IAR0_EL1 and ICC_IAR1_EL1 returns a valid INTID depends on:
+      • Which of the two registers is accessed.
+      • The Security state of the PE.
+      • Whether there is a pending interrupt of sufficient priority to be signaled to the PE, and if so, whether:
+        — The highest priority pending interrupt is a Secure Group 1 or a Non-secure Group 1 interrupt.
+        — Interrupt signaling is enabled for that interrupt group.
+      • The Exception level at which the PE is executing.
+
+    • The effects of reading ICC_IAR0_EL1 and ICC_IAR1_EL1 on the state of a returned INTID are not guaranteed to be visible until after the execution of a `DSB`.
+
+    == Priority drop
+
+    After an interrupt has been acknowledged, a valid write to ICC_EOIR0_EL1 for Group 0 interrupts, or a valid write to ICC_EOIR1_EL1 for Group 1 interrupts, results in a priority drop.
+
+    A valid write to ICC_EOIR0_EL1 or ICC_EOIR1_EL1 to perform a priority drop is required for each acknowledged interrupt, even for LPIs which do not have an active state. A priority drop must be performed by the same PE that activated the interrupt.
+
+Capabilities:
+ ☐ Rust implementation of capabilities - ?
+   ☐ Need to implement in kernel entries storage and lookup
+   ☐ cte = cap table entry (a cap_t plus mdb_node_t)
+   ☐ mdb = ? (mdb_node_new)
+   ☐ sameObjectAs()
+
+Types:
+ ☐ move types__intf_typeinfo to types::intf_typeinfo etc because of namespace linking issues
+ ☐ Finish introspection and write a command line tool to interactively explore type system.
+ ☐ Add generic types a-la C# to type system?
+
+Demo apps:
+ ☐ We need a simple application to start coding from the user perspective. Something simple, single focused and immensely mettaish. Ideas?
+ ☐ Another realistic scenario more on the HID side
+  * make a simple cli: type in an arcname and it will try to look it up and print out formatted according to the type
+    * this needs events, contexts etc all running...
+    * needs keyboard HID driver (PS2 or USB)
+      * for USB a huge pile of protocol handling must be implemented
+
+Module loader:
+ ☐ Implement separating code, data and bss sections into different privileged stretches.
+ ☐ Implement module dependency tracking
+        Implement dependency tracking via module_depend!() macros, .modinfo section data and module dependency graph building in module loader.
+        The actual dependency information should be generated by meddler from interface info and then somehow combined into final dependency record.
+        Also can generate depsgraph based on symbols resolution between modules marked for loading.
+ ☐ Implement symbol resolution from already loaded modules.
+ ☐ stuff like console and debug logger should be loadable modules so that other components link to the shared instance.
+ ☐ can be instantiated early in kickstart and entered into pervasives? PVS(logger), PVS(console) e.g.
+
+Boot:
+ ☐ Read DTB configuration - this will be owned by the dtb server?
+ ☐ disabling kernel ATAGs in config.txt causes misboot in EL2H
+   ☐ looks like we run in EL1H otherwise??
+     ☐ need to double check EL change procedure due to this, probably EL2->EL1 switch is wrong
+
+ ☐ Clean up the C-like code from Nemesis and turn it into robust shared kernel components with dynamic loading/resolution
+ ☐ Add bootimage namespace iteration (bootimage_t::namespace_t::iterator?)
+ ☐ Make a real module loader with all tables and proper memory allocation - current one seems to step over already allocated data and needs to preload things in order to work...
+ ☐ Make a memory map tool to see what is allocated where, associate stretches and domains with allocated frames.
+     - display it at runtime at the bottom of the screen ...
+
+Build:
+ ☐ Dependency Problem during build: changing an interface that is a base for other interfaces does not trigger rebuild of these interfaces (implicit dependency information is missing from the build system...)
+ ☐
+
+Assocfs:
+ ☐ OS block cache
+   ☐ TESTS
+ ☐ write b+tree handler
+   ☐ TESTS
+ ☐ Create architecture descriptions in increasing level of detail (@sa ANSA engineering overview).
+
+System components:
+ ☐ scheduler
+ ☐ protection domains
+ ☐ memory manager
+ ☐ usermode
+
+ ☐ SMP
+   * SMP - may require serious redesign
+ ☐ NUMA
+   * NUMA-style CPU addressing
+ ☐ Hosted port
+
+Drivers:
+  ☐ keyboard (PS/2, usb support needs more drivers)
+  ☐ Device trees
+        Perform scanning of the system buses and build a device tree which describes machine configuration.
+        A prerequisite for device driver loading and probing.
+        Device tree can be represented as a naming_context, mapping various information about devices from arc-names.
+  ☐ RPi3 hardware support
+    ☐ sd/mmc
+    ☐ dwc usb otg
+      ☐ see USB section
+    ☐ power mgmt
+    ☐ VC4
+    ☐ Audio
+    ☐ Wired Network
+    ☐ Wifi
+    ☐ Bluetooth
+    ✔ Framebuffer @done (19-03-10 19:57)
+  ☐ PC hardware support
+    ☐ PCI
+      ☐ PCI bus enumeration
+      ☐ assigning PCI irqs and handlers
+    ☐ ACPI (using acpica port?)
+    ☐ Device driver infra
+    ☐ APIC
+    ☐ IO APIC
+    ☐ x2APIC
+    ☐ display
+      ☐ BGA driver
+      ☐ Intel GMA driver (http://www.x.org/docs/intel/)
+    ☐ network
+      ☐ ne2000 driver
+      * Scan pcibus
+        * This needs access interface
+      * Find netdev
+      * Start netdev driver
+        * needs irq assignment
+        * needs irq handler installation
+      * Send and receive packets
+        * needs io fbufs
+        * needs synchro events
+        * needs client QoS
+      * Use ipv6 packets
+        * needs network stacking/layering
+    ☐ PC keyboard driver
+    ☐ USB bus
+
+USB:
+  (this classification is based on https://github.com/Chadderz121/csud)
+  usbd            -- generic USB driver
+  +--hub          -- USB Hub driver
+  +--hid          -- Human-Interface Device driver
+     +--kbd       -- Keyboard driver
+     +--mouse     -- Mouse driver
+  hcd             -- Host Controller Driver, hardware-specific
+  |                  HCD implements an interface from usbd to hardware.
+  +--dwc          -- DesignWare Core, RPi-specific USB OTG implementation
+  CSUD lacks interrupt transfers, but Circle USB (https://github.com/rsta2/circle/tree/master/lib/usb) and uspi support interrupts.
+
+
+Services:
+ ☐ typesystem
+ ☐ events
+ ☐ I(nter)D(omain)C(ommunications)
+   ☐ shm transport
+   ☐ marshalling & stub generator
+   ☐ events plumbing between domains
+   ☐ exports table & lookup
+ ☐ exceptions
+
+Applications:
+ ☐ test shell
+   ☐ extract kernel shell to a separate app
+   ☐ kernel debugger server
+ ☐ child spawn
+ ☐ memory inspector
+ ☐ symbolic debugger
+
+Other:
+ ☐ Investigate possible use of TLSF for RT tasks. See http://rtportal.upv.es/rtmalloc/
+ ☐
+
+Toolchain:
+  ☐ Jotun native file format work
+  ☐
+
+Baby steps (Nemesis):
+ ☐ Port activations and handlers framework
+ ☐ Port gatekeeper
+ ☐ Port VCPU operations
+ ☐ Implement nucleus syscalls
+ ☐ Set up module namespaces tree and global context
+ ☐ Port threading packages
+   ☐ Threads
+   ☐ thread handlers
+   ☐ events
+   ☐ user-level scheduler package
+ ☐ Port IDC machinery
+   ☐ IDC stubs
+   ☐ marshal
+   ☐ CS IDC stubs
+   ☐ IDC/Shm Transports
+ ☐ Port binder
+   ☐ Binder
+   ☐ exports table
+   ☐ plumber
+   ☐ event channels
+ ☐ Port naming context
+ ☐ Port domain manager
+
+Meddler:
+ ☐ Generate dot files with dependency information in meddler
+ ☐ Use llvm doxygen scanning functionality
+ ☐ Meddler: use newline as a substitute for semicolon where possible
