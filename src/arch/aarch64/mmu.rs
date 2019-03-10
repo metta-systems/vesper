@@ -260,9 +260,11 @@ pub unsafe fn init() {
     barrier::isb(barrier::SY);
 
     // Enable the MMU and turn on data and instruction caching.
-    SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::Cacheable + SCTLR_EL1::I::Cacheable);
+    SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::NonCacheable + SCTLR_EL1::I::Cacheable);
 
     // @todo potentially disable both caches here for testing?
+    // Figured: data caching causes these mailbox misreads
+    // Need to allocate mailbox in non-cached memory perhaps for proper hw i/o
 
     // Force MMU init to complete before next instruction
     /*
