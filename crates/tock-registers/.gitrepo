@@ -1,0 +1,11 @@
+; DO NOT EDIT (unless you know what you are doing)
+;
+; This subdirectory is a git "subrepo", and this file is maintained by the
+; git-subrepo command. See https://github.com/git-commands/git-subrepo#readme
+;
+[subrepo]
+	remote = git@github.com:metta-systems/tock-registers.git
+	branch = master
+	commit = 4d8202452f5b7f1c056b524eac62445b74ceebce
+	parent = d78ffd283311c6a257f3cc93df8bc4cfe42bb44a
+	cmdver = 0.3.1
