@@ -1,0 +1,52 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+github@metta.systems>
+#
+[config]
+min_version = "0.24.0"
+default_to_workspace = true
+
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = "false"
+
+DEFAULT_TARGET = "aarch64-vesper-metta"
+
+DEVICE_FEATURES = "noserial"
+
+OBJCOPY = "cargo objcopy"
+OBJCOPY_PARAMS = "-- --strip-all -O binary"
+
+UTILS_CONTAINER = "andrerichter/raspi3-utils"
+DOCKER_CMD = "docker run -it --rm -v ${PWD}:/work -w /work -p 5900:5900"
+
+TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${DEFAULT_TARGET}.json"
+
+KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8"
+KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8.img"
+
+[tasks.default]
+alias = "all"
+
+[tasks.modules]
+command = "cargo"
+args = ["modules", "tree"]
+
+[tasks.all]
+dependencies = ["kernel-binary"]
+
+[tasks.kernel-binary] # Forward build to vesper/Makefile.toml
+env = { "CARGO_MAKE_MEMBER_TASK" = "kernel-binary" }
+run_task = "do-on-members"
+
+[tasks.build] # Forward build to vesper/Makefile.toml
+env = { "CARGO_MAKE_MEMBER_TASK" = "build" }
+run_task = "do-on-members"
+
+[tasks.sdcard]
+env = { "CARGO_MAKE_MEMBER_TASK" = "sdcard" }
+run_task = "do-on-members"
+
+[tasks.sdeject]
+env = { "CARGO_MAKE_MEMBER_TASK" = "sdeject" }
+run_task = "do-on-members"

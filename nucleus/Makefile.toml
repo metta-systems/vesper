@@ -1,0 +1,24 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+github@metta.systems>
+#
+[tasks.kernel-binary]
+script = [
+    "cp ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_ELF}",
+    "${OBJCOPY} ${OBJCOPY_PARAMS} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_BIN}"
+]
+
+[tasks.build]
+env = { "TARGET_FEATURES" = "" }
+args = ["build", "-Zbuild-std=core,compiler_builtins,alloc", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+
+[tasks.sdcard]
+dependencies = ["build", "kernel-binary"]
+command = "cp"
+args = ["${KERNEL_BIN}", "/Volumes/BOOT/"]
+
+[tasks.sdeject]
+dependencies = ["sdcard"]
+command = "diskutil"
+args = ["unmount", "/Volumes/BOOT/"]

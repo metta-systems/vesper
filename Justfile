@@ -2,4 +2,4 @@ qemu:
     @echo No QEMU support
 
 device:
-    cargo build
+    cargo make sdcard

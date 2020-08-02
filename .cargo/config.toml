@@ -1,0 +1,13 @@
+[build]
+# https://internals.rust-lang.org/t/evaluating-pipelined-rustc-compilation/10199/12
+pipelining = true
+
+[target.aarch64-vesper-metta]
+rustflags = [
+  "-C", "target-feature=-fp-armv8",
+  "-C", "target-cpu=cortex-a53",
+  "-C", "embed-bitcode=yes",
+]
+
+[unstable]
+build-std = ["core", "compiler_builtins", "alloc"]

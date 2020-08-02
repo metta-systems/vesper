@@ -1,3 +1,5 @@
 .idea/
 *.iml
 target/
+kernel8*
+.gdb_history

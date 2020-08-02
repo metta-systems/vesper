@@ -16,3 +16,5 @@ edition = "2018"
 maintenance = { status = "experimental" }
 
 [dependencies]
+r0 = "0.2"
+rlibc = "1.0"
