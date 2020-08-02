@@ -13,6 +13,17 @@ script = [
 env = { "TARGET_FEATURES" = "" }
 args = ["build", "-Zbuild-std=core,compiler_builtins,alloc", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
 
+[tasks.build-qemu]
+env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+command = "cargo"
+args = ["build", "-Zbuild-std=core,compiler_builtins,alloc", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+
+[tasks.qemu]
+dependencies = ["build-qemu", "kernel-binary"]
+env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+command = "${QEMU}"
+args = ["@@split(QEMU_OPTS, )", "@@split(QEMU_SERIAL, )", "-dtb", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb", "-kernel", "${KERNEL_BIN}"]
+
 [tasks.sdcard]
 dependencies = ["build", "kernel-binary"]
 command = "cp"

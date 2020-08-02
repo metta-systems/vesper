@@ -13,12 +13,26 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = "false"
 DEFAULT_TARGET = "aarch64-vesper-metta"
 
 DEVICE_FEATURES = "noserial"
+QEMU_FEATURES = "qemu"
 
 OBJCOPY = "cargo objcopy"
 OBJCOPY_PARAMS = "-- --strip-all -O binary"
 
 UTILS_CONTAINER = "andrerichter/raspi3-utils"
 DOCKER_CMD = "docker run -it --rm -v ${PWD}:/work -w /work -p 5900:5900"
+QEMU_CONTAINER_CMD = "qemu-system-aarch64"
+
+#
+# Could additionally use -nographic to disable GUI -- this shall be useful for automated tests.
+#
+# -d in_asm,unimp,int
+QEMU_OPTS = "-M raspi3 -d int -semihosting"
+QEMU_SERIAL = "-serial null -serial stdio"
+QEMU = "qemu-system-aarch64"
+
+# For gdb connection:
+# - if setting this, MUST have gdb attached for SYS_WRITE0 to work, otherwise QEMU will crash.
+QEMU_GDB_OPTS = "-gdb tcp::3333 -S"
 
 TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${DEFAULT_TARGET}.json"
 
@@ -41,6 +55,10 @@ run_task = "do-on-members"
 
 [tasks.build] # Forward build to vesper/Makefile.toml
 env = { "CARGO_MAKE_MEMBER_TASK" = "build" }
+run_task = "do-on-members"
+
+[tasks.qemu]
+env = { "CARGO_MAKE_MEMBER_TASK" = "qemu" }
 run_task = "do-on-members"
 
 [tasks.sdcard]

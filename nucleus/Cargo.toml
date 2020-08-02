@@ -15,6 +15,11 @@ edition = "2018"
 [badges]
 maintenance = { status = "experimental" }
 
+[features]
+# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
+qemu = ["qemu-exit"]
+
 [dependencies]
 r0 = "0.2"
 rlibc = "1.0"
+qemu-exit = { version = "0.1", optional = true }
