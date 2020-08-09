@@ -33,6 +33,7 @@ Vesper has been influenced by the kernels in L4 family, notably seL4. Fawn and N
 Use rustc nightly 2020-07-15 with cargo nightly of the same or later date.
 
 Install tools: `cargo install just cargo-make`.
+Install qemu (at least version 4.1.1): `brew install qemu`.
 
 To build kernel and run it in QEMU emulator:
 
@@ -44,6 +45,13 @@ To build kernel for Raspberry Pi and copy it to SDCard mounted at `/Volumes/BOOT
 
 ```
 just device
+```
+
+On the device boot SD card you'll need a configuration file instructing RasPi to launch in 64-bit mode.
+
+```
+# config.txt on RPi3
+arm_64bit=1
 ```
 
 ## Development flow
