@@ -46,6 +46,15 @@ To build kernel for Raspberry Pi and copy it to SDCard mounted at `/Volumes/BOOT
 just device
 ```
 
+## Development flow
+
+`mainline`, `develop` and `released` branches:
+
+- `feature branches` are fluid development lines which may be discarded or merged into `develop`. Feature branches must be either merged or fast-forward merged ("landed") into develop. Squashing history during merge is not permitted - commits must be sorted and squashed as necessary before merge.
+- `develop` is currenly developed changes. History is recommended to be immutable, however mutations are possible in some cases. Feature branches are merged into develop for stabilisation, then develop is merged into the mainline. `Develop` must be either merged or fast-forward merged ("landed") into `mainline`. Squashing history during merge is not permitted - commits must be sorted as necessary before merge. Avoid direct commits to develop. It is recommended to perform stabilisation fixes in a separate branch and then landing it into develop.
+- `mainline` is for generally accepted changes. History is immutable, to record reversals make a revert commit with explanations why. Changes from `develop` are merged or landed into the mainline after stabilisation.
+- `released` branch records points from mainline which were officially released. Mutations are not possible. Only non-fast-forward merges from mainline are acceptable. Releases are marked as annotated tags on this branch.
+
 ## OSdev help
 
 Based on [Raspi3 tutorials by Andre Richter](https://github.com/rust-embedded/rust-raspi3-tutorial/blob/master/05_uart0/src/uart.rs),
