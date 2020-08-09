@@ -1,3 +1,6 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ */
 #![no_std]
 #![no_main]
 
@@ -8,8 +11,11 @@ use architecture_not_supported_sorry;
 pub mod arch;
 pub use arch::*;
 
+entry!(kmain);
+
 // Kernel entry point
 // arch crate is responsible for calling this
+#[inline]
 pub fn kmain() -> ! {
     endless_sleep()
 }

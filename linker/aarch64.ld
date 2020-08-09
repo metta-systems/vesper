@@ -4,11 +4,11 @@
  * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
  */
 
-ENTRY(karch_start);
+ENTRY(_boot_cores);
 
 /* Symbols between __boot_start and __boot_end should be dropped after init is complete.
    Symbols between __ro_start and __ro_end are the kernel code.
-   Symbols between __bss_start and __bss_end must be initialized to zero by r0 code in kernel.
+   Symbols between __BSS_START and __BSS_END must be initialized to zero by r0 code in kernel.
 */
 SECTIONS
 {
@@ -49,11 +49,11 @@ SECTIONS
 
     .bss ALIGN(8):
     {
-        __bss_start = .;
+        __BSS_START = .;
         *(.bss .bss.*)
         *(COMMON)
         . = ALIGN(4096); /* Align up to 4KiB */
-        __bss_end = .;
+        __BSS_END = .;
     }
 
     /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) }
