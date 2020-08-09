@@ -4,7 +4,7 @@
  * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
  */
 
-ENTRY(_boot_cores);
+ENTRY(karch_start);
 
 /* Symbols between __boot_start and __boot_end should be dropped after init is complete.
    Symbols between __ro_start and __ro_end are the kernel code.

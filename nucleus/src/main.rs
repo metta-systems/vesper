@@ -1,12 +1,20 @@
 #![no_std]
 #![no_main]
 
-#[no_mangle]
-pub extern "C" fn _boot_cores() -> ! {
-    loop {}
+#[cfg(not(target_arch = "aarch64"))]
+use architecture_not_supported_sorry;
+
+#[macro_use]
+pub mod arch;
+pub use arch::*;
+
+// Kernel entry point
+// arch crate is responsible for calling this
+pub fn kmain() -> ! {
+    endless_sleep()
 }
 
 #[panic_handler]
 fn panicked(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
+    endless_sleep()
 }
