@@ -8,6 +8,3 @@ rustflags = [
   "-C", "target-cpu=cortex-a53",
   "-C", "embed-bitcode=yes",
 ]
-
-[unstable]
-build-std = ["core", "compiler_builtins", "alloc"]
