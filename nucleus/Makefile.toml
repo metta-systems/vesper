@@ -11,12 +11,12 @@ script = [
 
 [tasks.build]
 env = { "TARGET_FEATURES" = "" }
-args = ["build", "-Zbuild-std=core,compiler_builtins,alloc", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+args = ["build", "${BUILD_STD}", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
 
 [tasks.build-qemu]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 command = "cargo"
-args = ["build", "-Zbuild-std=core,compiler_builtins,alloc", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+args = ["build", "${BUILD_STD}", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
 
 [tasks.qemu]
 dependencies = ["build-qemu", "kernel-binary"]
@@ -33,3 +33,7 @@ args = ["${KERNEL_BIN}", "/Volumes/BOOT/"]
 dependencies = ["sdcard"]
 command = "diskutil"
 args = ["unmount", "/Volumes/BOOT/"]
+
+[tasks.clippy]
+command = "cargo"
+args = ["clippy", "${BUILD_STD}", "--target=${TARGET_JSON}", "--", "-D", "warnings"]

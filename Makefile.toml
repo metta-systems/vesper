@@ -12,6 +12,8 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = "false"
 
 DEFAULT_TARGET = "aarch64-vesper-metta"
 
+BUILD_STD = "-Zbuild-std=core,compiler_builtins,alloc"
+
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu"
 
@@ -67,4 +69,8 @@ run_task = "do-on-members"
 
 [tasks.sdeject]
 env = { "CARGO_MAKE_MEMBER_TASK" = "sdeject" }
+run_task = "do-on-members"
+
+[tasks.clippy]
+env = { "CARGO_MAKE_MEMBER_TASK" = "clippy" }
 run_task = "do-on-members"
