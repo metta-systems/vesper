@@ -9,6 +9,11 @@ use {
 /// The entry to Rust, all things must be initialized
 /// This is invoked from the linker script, does arch-specific init
 /// and passes control to the kernel boot function kmain().
+///
+/// # Safety
+///
+/// Totally unsafe! We're in the hardware land.
+///
 #[no_mangle]
 pub unsafe extern "C" fn karch_start() -> ! {
     // Set sp to 0x80000 (just before kernel start)
