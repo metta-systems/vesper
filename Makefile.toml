@@ -8,7 +8,7 @@ min_version = "0.24.0"
 default_to_workspace = true
 
 [env]
-CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = "false"
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
 DEFAULT_TARGET = "aarch64-vesper-metta"
 
@@ -44,33 +44,9 @@ KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8.img"
 [tasks.default]
 alias = "all"
 
-[tasks.modules]
-command = "cargo"
-args = ["modules", "tree"]
-
 [tasks.all]
 dependencies = ["kernel-binary"]
 
-[tasks.kernel-binary] # Forward build to vesper/Makefile.toml
-env = { "CARGO_MAKE_MEMBER_TASK" = "kernel-binary" }
-run_task = "do-on-members"
-
-[tasks.build] # Forward build to vesper/Makefile.toml
-env = { "CARGO_MAKE_MEMBER_TASK" = "build" }
-run_task = "do-on-members"
-
-[tasks.qemu]
-env = { "CARGO_MAKE_MEMBER_TASK" = "qemu" }
-run_task = "do-on-members"
-
-[tasks.sdcard]
-env = { "CARGO_MAKE_MEMBER_TASK" = "sdcard" }
-run_task = "do-on-members"
-
-[tasks.sdeject]
-env = { "CARGO_MAKE_MEMBER_TASK" = "sdeject" }
-run_task = "do-on-members"
-
-[tasks.clippy]
-env = { "CARGO_MAKE_MEMBER_TASK" = "clippy" }
-run_task = "do-on-members"
+[tasks.modules]
+command = "cargo"
+args = ["modules", "tree"]
