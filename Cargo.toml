@@ -4,7 +4,9 @@ members = [
 ]
 
 [profile.dev]
-panic = "abort" # @todo try panic_rtt with feature jlink
+# See https://github.com/rust-lang/cargo/issues/7359 about why panic=abort is not working here.
+# It is still defined in the target JSON so not stricly necessary to specify it here anyway.
+#panic = "abort" # @todo try panic_rtt with feature jlink
 opt-level = 's' # otherwise boot code will be mangled
 
 [profile.release]
