@@ -4,7 +4,7 @@
 # Copyright (c) Berkus Decker <berkus+github@metta.systems>
 #
 [config]
-min_version = "0.24.0"
+min_version = "0.32.0"
 default_to_workspace = true
 
 [env]
