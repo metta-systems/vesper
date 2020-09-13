@@ -179,7 +179,7 @@ fn setup_and_enter_el1_from_el3() -> ! {
 /// [here](https://leiradel.github.io/2019/01/20/Raspberry-Pi-Stubs.html).
 ///
 #[no_mangle]
-#[link_section = ".text.boot"]
+#[link_section = ".text.boot.entry"]
 pub unsafe extern "C" fn _boot_cores() -> ! {
     const CORE_0: u64 = 0;
     const CORE_MASK: u64 = 0x3;

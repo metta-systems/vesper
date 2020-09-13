@@ -16,9 +16,10 @@ SECTIONS
     __boot_start = .;
     .text :
     {
-        KEEP(*(.text.boot))
+        KEEP(*(.text.boot.entry)) // Entry point must go first
+        *(.text.boot)
         . = ALIGN(4096);
-        KEEP(*(.data.boot))
+        *(.data.boot)
         . = ALIGN(4096); /* Here boot code ends */
         __boot_end = .; // __boot_end must be 4KiB aligned
         __ro_start = .;
@@ -27,7 +28,7 @@ SECTIONS
 
     .vectors ALIGN(2048):
     {
-        *(.vectors)
+        KEEP(*(.vectors))
     }
 
     .rodata ALIGN(4):
