@@ -47,6 +47,12 @@ To build kernel for Raspberry Pi and copy it to SDCard mounted at `/Volumes/BOOT
 just device
 ```
 
+To run tests (tests require QEMU):
+
+```
+just test
+```
+
 On the device boot SD card you'll need a configuration file instructing RasPi to launch in 64-bit mode.
 
 ```

@@ -8,3 +8,4 @@ rustflags = [
   "-C", "target-cpu=cortex-a53",
   "-C", "embed-bitcode=yes",
 ]
+runner = "cargo make test-runner"

@@ -9,9 +9,25 @@ script = [
     "${OBJCOPY} ${OBJCOPY_PARAMS} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_BIN}"
 ]
 
+[tasks.custom-binary]
+script = [
+    "cp ${@} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/`basename ${@}`.elf",
+    "${OBJCOPY} ${OBJCOPY_PARAMS} ${@} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/`basename ${@}`.bin"
+]
+
 [tasks.build]
 env = { "TARGET_FEATURES" = "" }
 args = ["build", "${BUILD_STD}", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+
+[tasks.test]
+env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+args = ["test", "${BUILD_STD}", "--target=${TARGET_JSON}", "--features=${TARGET_FEATURES}"]
+
+[tasks.test-runner]
+dependencies = ["custom-binary"]
+script = [
+    "${QEMU} ${QEMU_OPTS} ${QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/`basename ${@}`.bin"
+]
 
 [tasks.build-qemu]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }

@@ -14,3 +14,6 @@ clean:
 
 clippy:
     cargo make clippy
+
+test:
+    cargo make test

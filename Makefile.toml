@@ -29,7 +29,8 @@ QEMU_CONTAINER_CMD = "qemu-system-aarch64"
 #
 # -d in_asm,unimp,int
 QEMU_OPTS = "-M raspi3 -d int -semihosting"
-QEMU_SERIAL = "-serial null -serial stdio"
+QEMU_SERIAL_OPTS = "-serial null -serial stdio"
+QEMU_TESTS_OPTS = "-nographic"
 QEMU = "qemu-system-aarch64"
 
 # For gdb connection:

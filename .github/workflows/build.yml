@@ -46,7 +46,18 @@ jobs:
       run: rustup component add rust-src llvm-tools-preview
 
     - name: "Install build tools"
-      run: cargo install cargo-make
+      run: cargo install cargo-make cargo-binutils
+
+    - name: "Validate rust-lld"
+      run: |
+        which rust-lld || echo "Not found"
+        otool -L ~/.cargo/bin/rust-lld
+      if: runner.os == 'macOS'
+
+    - name: "Print Tools Version"
+      run: |
+        cargo make --version
+        cargo objcopy --version
 
     - name: "Deny Warnings"
       run: cargo make build
@@ -55,6 +66,8 @@ jobs:
 
     - name: Install QEMU (Linux)
       run: |
+        sudo apt install software-properties-common
+        sudo add-apt-repository ppa:jacob/virtualisation
         sudo apt update
         sudo apt install qemu-system-aarch64
       if: runner.os == 'Linux'
@@ -85,7 +98,8 @@ jobs:
     - name: 'Build kernel'
       run: cargo make build
 
-    # TODO: add tests runner
+    - name: 'Run tests'
+      run: cargo make test
 
   check_formatting:
     name: "Check Formatting"
