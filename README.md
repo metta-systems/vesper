@@ -30,7 +30,7 @@ Vesper has been influenced by the kernels in L4 family, notably seL4. Fawn and N
 
 ## Build instructions
 
-Use rustc nightly 2020-07-15 with cargo nightly of the same or later date.
+Use at least rustc nightly 2020-07-15 with cargo nightly of the same or later date. It adds support for `cargo build --build-std` feature.
 
 Install tools: `cargo install just cargo-make`.
 Install qemu (at least version 4.1.1): `brew install qemu`.
