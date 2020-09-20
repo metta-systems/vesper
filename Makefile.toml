@@ -17,8 +17,8 @@ BUILD_STD = "-Zbuild-std=core,compiler_builtins,alloc"
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu"
 
-OBJCOPY = "cargo objcopy"
-OBJCOPY_PARAMS = "-- --strip-all -O binary"
+OBJCOPY = "rust-objcopy" # Part of `cargo objcopy` in cargo-binutils
+OBJCOPY_PARAMS = "--strip-all -O binary"
 
 UTILS_CONTAINER = "andrerichter/raspi3-utils"
 DOCKER_CMD = "docker run -it --rm -v ${PWD}:/work -w /work -p 5900:5900"
