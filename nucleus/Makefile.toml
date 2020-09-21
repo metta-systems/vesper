@@ -3,18 +3,6 @@
 #
 # Copyright (c) Berkus Decker <berkus+github@metta.systems>
 #
-[tasks.kernel-binary]
-script = [
-    "cp ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_ELF}",
-    "${OBJCOPY} ${OBJCOPY_PARAMS} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_BIN}"
-]
-
-[tasks.custom-binary]
-script = [
-    "cp ${@} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/`basename ${@}`.elf",
-    "${OBJCOPY} ${OBJCOPY_PARAMS} ${@} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/`basename ${@}`.bin"
-]
-
 [tasks.build]
 env = { "TARGET_FEATURES" = "" }
 args = ["build", "${BUILD_STD}", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
@@ -23,10 +11,34 @@ args = ["build", "${BUILD_STD}", "--target=${TARGET_JSON}", "--release", "--feat
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 args = ["test", "${BUILD_STD}", "--target=${TARGET_JSON}", "--features=${TARGET_FEATURES}"]
 
+# These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
+[tasks.kernel-binary]
+script_runner = "@duckscript"
+script = [
+'''
+    cp ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_ELF}
+    exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_BIN}
+'''
+]
+
+[tasks.custom-binary]
+script_runner = "@duckscript"
+script = [
+'''
+    binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
+    cp ${CARGO_MAKE_TASK_ARGS} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.elf
+    exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${CARGO_MAKE_TASK_ARGS} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+'''
+]
+
 [tasks.test-runner]
 dependencies = ["custom-binary"]
+script_runner = "@duckscript"
 script = [
-    "${QEMU} ${QEMU_OPTS} ${QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/`basename ${@}`.bin"
+'''
+    binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
+    exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+'''
 ]
 
 [tasks.build-qemu]
@@ -37,8 +49,13 @@ args = ["build", "${BUILD_STD}", "--target=${TARGET_JSON}", "--release", "--feat
 [tasks.qemu]
 dependencies = ["build-qemu", "kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
-command = "${QEMU}"
-args = ["@@split(QEMU_OPTS, )", "@@split(QEMU_SERIAL, )", "-dtb", "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb", "-kernel", "${KERNEL_BIN}"]
+script_runner = "@duckscript"
+script = [
+'''
+    binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
+    exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_SERIAL} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${KERNEL_BIN}
+'''
+]
 
 [tasks.sdcard]
 dependencies = ["build", "kernel-binary"]
