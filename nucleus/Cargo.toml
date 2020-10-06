@@ -20,7 +20,7 @@ maintenance = { status = "experimental" }
 qemu = ["qemu-exit"]
 
 [dependencies]
-r0 = "0.2"
+r0 = "1.0"
 rlibc = "1.0"
 qemu-exit = { version = "0.1", optional = true }
 cortex-a = "3.0"
