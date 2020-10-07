@@ -35,19 +35,19 @@ Use at least rustc nightly 2020-07-15 with cargo nightly of the same or later da
 Install tools: `cargo install just cargo-make`.
 Install qemu (at least version 4.1.1): `brew install qemu`.
 
-To build kernel and run it in QEMU emulator:
+### To build kernel and run it in QEMU emulator
 
 ```
 just qemu
 ```
 
-To build kernel for Raspberry Pi and copy it to SDCard mounted at `/Volumes/BOOT/`:
+### To build kernel for Raspberry Pi and copy it to SDCard mounted at `/Volumes/BOOT/`
 
 ```
 just device
 ```
 
-To run tests (tests require QEMU):
+### To run tests (tests require QEMU)
 
 ```
 just test
@@ -58,6 +58,14 @@ On the device boot SD card you'll need a configuration file instructing RasPi to
 ```
 # config.txt on RPi3
 arm_64bit=1
+```
+
+### To see kernel disassembly
+
+You need to have [Hopper](https://hopperapp.com) and hopperv4 cli helper installed.
+
+```
+just disasm
 ```
 
 ## Development flow
