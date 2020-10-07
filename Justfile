@@ -17,3 +17,8 @@ clippy:
 
 test:
     cargo make test
+
+alias disasm := hopper
+
+hopper:
+    cargo make hopper
