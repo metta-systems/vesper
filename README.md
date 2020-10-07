@@ -75,6 +75,10 @@ Based on [Raspi3 tutorials by Andre Richter](https://github.com/rust-embedded/ru
 which are in turn based on [Raspi3 tutorials by bzt](https://github.com/bztsrc/raspi3-tutorial/).
 Various references from [OSDev Wiki](https://wiki.osdev.org/Raspberry_Pi_Bare_Bones) and [RaspberryPi.org manuals](https://www.raspberrypi.org/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf).
 
+----
+
 [![Built with cargo-make](https://sagiegurari.github.io/cargo-make/assets/badges/cargo-make.svg)](https://sagiegurari.github.io/cargo-make)
 
 ![Build](https://github.com/metta-systems/vesper/workflows/Build/badge.svg)
+
+[![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/metta-systems/vesper)
