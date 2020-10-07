@@ -28,5 +28,5 @@ pub fn _print(_args: core::fmt::Arguments) {
 pub fn _print(args: core::fmt::Arguments) {
     use crate::{qemu, write_to};
     let mut buf = [0u8; 512];
-    qemu::semihosting_sys_write0_call(write_to::c_show(&mut buf, args).unwrap());
+    qemu::semihosting::sys_write0_call(write_to::c_show(&mut buf, args).unwrap());
 }

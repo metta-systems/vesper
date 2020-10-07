@@ -1,7 +1,7 @@
 //============================================================================
 // Testing environment
 //============================================================================
-use crate::println;
+use crate::{println, qemu};
 
 #[cfg(test)]
 pub fn test_runner(tests: &[&dyn Fn()]) {
@@ -10,5 +10,5 @@ pub fn test_runner(tests: &[&dyn Fn()]) {
         test();
     }
     println!("[success]");
-    qemu_exit::aarch64::exit_success();
+    qemu::semihosting::exit_success();
 }
