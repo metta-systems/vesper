@@ -1,6 +1,9 @@
 /*
  * SPDX-License-Identifier: BlueOak-1.0.0
  */
+
+//! Memory management functions for aarch64.
+
 use {
     crate::println,
     core::{fmt, ops::RangeInclusive},
@@ -23,58 +26,85 @@ pub const PAGE_SIZE: usize = 4096;
 /// @todo we need to infer the memory map from the provided DTB.
 #[rustfmt::skip]
 pub mod map {
+    /// Beginning of memory.
     pub const START:                   usize =             0x0000_0000;
+    /// End of memory.
     pub const END:                     usize =             0x3FFF_FFFF;
 
+    /// Physical RAM addresses.
     pub mod phys {
+        /// Base address of video (VC) memory.
         pub const VIDEOMEM_BASE:       usize =             0x3e00_0000;
+        /// Base address of MMIO register range.
         pub const MMIO_BASE:           usize =             0x3F00_0000;
+        /// Base address of ARM<->VC mailbox area.
         pub const VIDEOCORE_MBOX_BASE: usize = MMIO_BASE + 0x0000_B880;
+        /// Base address of GPIO registers.
         pub const GPIO_BASE:           usize = MMIO_BASE + 0x0020_0000;
+        /// Base address of regular UART.
         pub const PL011_UART_BASE:     usize = MMIO_BASE + 0x0020_1000;
+        /// Base address of MiniUART.
         pub const MINI_UART_BASE:      usize = MMIO_BASE + 0x0021_5000;
+        /// End of MMIO memory.
         pub const MMIO_END:            usize =             super::END;
     }
 
+    /// Virtual (mapped) addresses.
     pub mod virt {
+        /// Start (top) of kernel stack.
         pub const KERN_STACK_START:    usize =             super::START;
+        /// End (bottom) of kernel stack. SP starts at KERN_STACK_END + 1.
         pub const KERN_STACK_END:      usize =             0x0007_FFFF;
 
-        // The second 2 MiB block.
+        /// Location of DMA-able memory region (in the second 2 MiB block).
         pub const DMA_HEAP_START:      usize =             0x0020_0000;
+        /// End of DMA-able memory region.
         pub const DMA_HEAP_END:        usize =             0x005F_FFFF;
     }
 }
 
-/// Types used for compiling the virtual memory layout of the kernel using
-/// address ranges.
+/// Types used for compiling the virtual memory layout of the kernel using address ranges.
 pub mod kernel_mem_range {
     use core::ops::RangeInclusive;
 
+    /// Memory region attributes.
     #[derive(Copy, Clone)]
     pub enum MemAttributes {
+        /// Regular memory
         CacheableDRAM,
+        /// Memory without caching
         NonCacheableDRAM,
+        /// Device memory
         Device,
     }
 
+    /// Memory region access permissions.
     #[derive(Copy, Clone)]
     pub enum AccessPermissions {
+        /// Read-only access
         ReadOnly,
+        /// Read-write access
         ReadWrite,
     }
 
+    /// Memory region translation.
     #[allow(dead_code)]
     #[derive(Copy, Clone)]
     pub enum Translation {
+        /// One-to-one address mapping
         Identity,
+        /// Mapping with a specified offset
         Offset(usize),
     }
 
+    /// Summary structure of memory region properties.
     #[derive(Copy, Clone)]
     pub struct AttributeFields {
+        /// Attributes
         pub mem_attributes: MemAttributes,
+        /// Permissions
         pub acc_perms: AccessPermissions,
+        /// Disable executable code in this region
         pub execute_never: bool,
     }
 
@@ -88,10 +118,17 @@ pub mod kernel_mem_range {
         }
     }
 
+    /// Memory region descriptor.
+    ///
+    /// Used to construct iterable kernel memory ranges.
     pub struct Descriptor {
+        /// Name of the region
         pub name: &'static str,
+        /// Virtual memory range
         pub virtual_range: fn() -> RangeInclusive<usize>,
+        /// Mapping translation
         pub translation: Translation,
+        /// Attributes
         pub attribute_fields: AttributeFields,
     }
 }

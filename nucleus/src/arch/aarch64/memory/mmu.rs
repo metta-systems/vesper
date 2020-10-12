@@ -354,6 +354,7 @@ fn into_mmu_attributes(
  * 48-bit virtual address space; different mappings in VBAR0 (EL0) and VBAR1 (EL1+).
  */
 
+/// Number of entries in a 4KiB mmu table.
 pub const NUM_ENTRIES_4KIB: u64 = 512;
 
 /// Trait for abstracting over the possible page sizes, 4KiB, 16KiB, 2MiB, 1GiB.
@@ -412,9 +413,14 @@ pub enum PageDirectory {}
 /// L3 tables -- only pointers to 4/16KiB pages
 pub enum PageTable {}
 
+/// Shared trait for specific table levels.
 pub trait TableLevel {}
 
+/// Shared trait for hierarchical table levels.
+///
+/// Specifies what is the next level of page table hierarchy.
 pub trait HierarchicalLevel: TableLevel {
+    /// Level of the next translation table below this one.
     type NextLevel: TableLevel;
 }
 
@@ -434,7 +440,8 @@ impl HierarchicalLevel for PageDirectory {
 }
 // PageTables do not have next level, therefore they are not HierarchicalLevel
 
-// Contains just u64 internally, provides enum interface on top
+/// MMU address translation table.
+/// Contains just u64 internally, provides enum interface on top
 #[repr(C)]
 #[repr(align(4096))]
 pub struct Table<L: TableLevel> {
@@ -447,6 +454,7 @@ impl<L> Table<L>
 where
     L: TableLevel,
 {
+    /// Zero out entire table.
     pub fn zero(&mut self) {
         for entry in self.entries.iter_mut() {
             *entry = 0;
@@ -613,6 +621,11 @@ impl BaseAddr for [u64; 512] {
 
 /// Set up identity mapped page tables for the first 1 gigabyte of address space.
 /// default: 880 MB ARM ram, 128MB VC
+///
+/// # Safety
+///
+/// Completely unsafe, we're in the hardware land! Incorrectly initialised tables will just
+/// restart the CPU.
 pub unsafe fn init() -> Result<(), &'static str> {
     // Prepare the memory attribute indirection register.
     mair::set_up();

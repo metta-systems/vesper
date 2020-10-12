@@ -4,13 +4,14 @@
  * Based on ideas from Jorge Aparicio, Andre Richter, Phil Oppenheimer.
  * Copyright (c) 2019 Berkus Decker <berkus+vesper@metta.systems>
  */
+
+//! Low-level boot of the Raspberry's processor
+//! http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf
+
 use {
     crate::endless_sleep,
     cortex_a::{asm, regs::*},
 };
-
-/// Low-level boot of the Raspberry's processor
-/// http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf
 
 /// Type check the user-supplied entry function.
 #[macro_export]

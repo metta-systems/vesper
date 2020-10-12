@@ -2,13 +2,15 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  */
 
-// https://doc.rust-lang.org/src/std/macros.rs.html
+/// Macro similar to [std](https://doc.rust-lang.org/src/std/macros.rs.html)
+/// but for writing into kernel-specific output (UART or QEMU console).
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => ($crate::macros::_print(format_args!($($arg)*)));
 }
 
-// https://doc.rust-lang.org/src/std/macros.rs.html
+/// Macro similar to [std](https://doc.rust-lang.org/src/std/macros.rs.html)
+/// but for writing into kernel-specific output (UART or QEMU console).
 #[macro_export]
 macro_rules! println {
     () => (print!("\n"));

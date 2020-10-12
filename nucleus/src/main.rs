@@ -1,6 +1,11 @@
 /*
  * SPDX-License-Identifier: BlueOak-1.0.0
  */
+
+//! Vesper single-address-space exokernel.
+//!
+//! This crate implements the kernel binary proper.
+
 #![no_std]
 #![no_main]
 #![feature(asm)]
@@ -17,6 +22,7 @@ use architecture_not_supported_sorry;
 
 extern crate rlibc; // To enable linking memory intrinsics.
 
+/// Architecture-specific code.
 #[macro_use]
 pub mod arch;
 pub use arch::*;
@@ -41,8 +47,8 @@ fn init_mmu() {
     println!("MMU initialised");
 }
 
-// Kernel entry point
-// arch crate is responsible for calling this
+/// Kernel entry point.
+/// `arch` crate is responsible for calling it.
 #[inline]
 pub fn kmain() -> ! {
     init_mmu();
