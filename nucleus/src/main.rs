@@ -9,6 +9,8 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+#![deny(missing_docs)]
+#![deny(warnings)]
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;

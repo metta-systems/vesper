@@ -4,10 +4,6 @@
  * Based on ideas from Jorge Aparicio, Andre Richter, Phil Oppenheimer.
  * Copyright (c) 2019 Berkus Decker <berkus+vesper@metta.systems>
  */
-
-#![deny(missing_docs)]
-#![deny(warnings)]
-
 use {
     crate::endless_sleep,
     cortex_a::{asm, regs::*},
