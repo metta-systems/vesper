@@ -4,6 +4,7 @@
 #![no_std]
 #![no_main]
 #![feature(asm)]
+#![feature(ptr_internals)]
 #![feature(format_args_nl)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
@@ -26,10 +27,24 @@ mod write_to;
 
 entry!(kmain);
 
+fn print_mmu_state_and_features() {
+    memory::mmu::print_features();
+}
+
+fn init_mmu() {
+    print_mmu_state_and_features();
+    unsafe {
+        memory::mmu::init().unwrap();
+    }
+    println!("MMU initialised");
+}
+
 // Kernel entry point
 // arch crate is responsible for calling this
 #[inline]
 pub fn kmain() -> ! {
+    init_mmu();
+
     #[cfg(test)]
     test_main();
 

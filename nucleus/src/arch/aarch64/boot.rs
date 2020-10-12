@@ -185,9 +185,9 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
     const CORE_MASK: u64 = 0x3;
     // Can't match values with dots in match, so use intermediate consts.
     #[cfg(qemu)]
-    const EL3: u32 = CurrentEL::EL::EL3.value;
-    const EL2: u32 = CurrentEL::EL::EL2.value;
-    const EL1: u32 = CurrentEL::EL::EL1.value;
+    const EL3: u64 = CurrentEL::EL::EL3.value;
+    const EL2: u64 = CurrentEL::EL::EL2.value;
+    const EL1: u64 = CurrentEL::EL::EL1.value;
 
     if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
         match CurrentEL.get() {

@@ -6,14 +6,14 @@
 
 ENTRY(_boot_cores);
 
-/* Symbols between __boot_start and __boot_end should be dropped after init is complete.
-   Symbols between __ro_start and __ro_end are the kernel code.
+/* Symbols between __BOOT_START and __BOOT_END should be dropped after init is complete.
+   Symbols between __RO_START and __RO_END are the kernel code.
    Symbols between __BSS_START and __BSS_END must be initialized to zero by r0 code in kernel.
 */
 SECTIONS
 {
     . = 0x80000; /* AArch64 boot address is 0x80000, 4K-aligned */
-    __boot_start = .;
+    __BOOT_START = .;
     .text :
     {
         KEEP(*(.text.boot.entry)) // Entry point must go first
@@ -21,8 +21,8 @@ SECTIONS
         . = ALIGN(4096);
         *(.data.boot)
         . = ALIGN(4096); /* Here boot code ends */
-        __boot_end = .; // __boot_end must be 4KiB aligned
-        __ro_start = .;
+        __BOOT_END = .; // __BOOT_END must be 4KiB aligned
+        __RO_START = .;
         *(.text .text.*)
     }
 
@@ -37,10 +37,10 @@ SECTIONS
         FILL(0x00)
     }
     . = ALIGN(4096); /* Fill up to 4KiB */
-    __ro_end = .; /* __ro_end must be 4KiB aligned */
-    __data_start = .; /* __data_start must be 4KiB aligned */
+    __RO_END = .; /* __RO_END must be 4KiB aligned */
+    __DATA_START = .; /* __DATA_START must be 4KiB aligned */
 
-    .data : /* @todo align data to 4K -- it's already aligned up to __ro_end marker now */
+    .data : /* @todo align data to 4K -- it's already aligned up to __RO_END marker now */
     {
         *(.data .data.*)
         FILL(0x00)
