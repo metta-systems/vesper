@@ -11,11 +11,12 @@ pub mod semihosting {
     #[cfg(test)]
     pub fn sys_write0_call(text: &str) {
         // SAFETY: text must be \0-terminated!
+        let cmd = 0x04;
         unsafe {
             asm!(
-            "mov w0, #0x04
-             hlt #0xF000"
-            , in("x1") text.as_ptr() as u64
+                "hlt #0xF000"
+                , in("w0") cmd
+                , in("x1") text.as_ptr() as u64
             );
         }
     }
