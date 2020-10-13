@@ -60,7 +60,6 @@ impl<'a> fmt::Write for WriteTo<'a> {
 }
 
 #[allow(unused)]
-#[inline]
 pub fn show<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a str, fmt::Error> {
     let mut w = WriteTo::new(buffer);
     fmt::write(&mut w, args)?;
@@ -69,8 +68,6 @@ pub fn show<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a str, f
 
 // Return a zero-terminated str
 #[allow(unused)]
-#[inline]
-// Crazy bug - result of this call disappears if it's not inlined (https://github.com/rust-lang/rust/issues/68812)
 pub fn c_show<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a str, fmt::Error> {
     let mut w = WriteTo::new(buffer);
     fmt::write(&mut w, args)?;
