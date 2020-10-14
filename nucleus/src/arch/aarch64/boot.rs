@@ -45,11 +45,12 @@ unsafe fn reset() -> ! {
         // Boundaries of the .bss section, provided by the linker script
         static mut __BSS_START: u64;
         static mut __BSS_END: u64;
+        // Stack placed before first executable instruction
+        static __STACK_START: u64;
     }
 
     // Set stack pointer. Used in case we started in EL1.
-    const STACK_START: u64 = 0x80_000;
-    SP.set(STACK_START);
+    SP.set(&__STACK_START as *const u64 as u64);
 
     // Zeroes the .bss section
     r0::zero_bss(&mut __BSS_START, &mut __BSS_END);
@@ -94,8 +95,14 @@ fn setup_and_enter_el1_from_el2() -> ! {
 
     // Set up SP_EL1 (stack pointer), which will be used by EL1 once
     // we "return" to it.
-    const STACK_START: u64 = 0x80_000;
-    SP_EL1.set(STACK_START);
+    extern "C" {
+        // Stack placed before first executable instruction
+        static __STACK_START: u64;
+    }
+    // SAFETY: Only single core is booting and accessing this constant.
+    unsafe {
+        SP_EL1.set(&__STACK_START as *const u64 as u64);
+    }
 
     // Use `eret` to "return" to EL1. This will result in execution of
     // `reset()` in EL1.
@@ -159,8 +166,14 @@ fn setup_and_enter_el1_from_el3() -> ! {
 
     // Set up SP_EL1 (stack pointer), which will be used by EL1 once
     // we "return" to it.
-    const STACK_START: u64 = 0x80_000;
-    SP_EL1.set(STACK_START);
+    extern "C" {
+        // Stack placed before first executable instruction
+        static __STACK_START: u64;
+    }
+    // SAFETY: Only single core is booting and accessing this constant.
+    unsafe {
+        SP_EL1.set(&__STACK_START as *const u64 as u64);
+    }
 
     // Use `eret` to "return" to EL1. This will result in execution of
     // `reset()` in EL1.

@@ -13,6 +13,7 @@ ENTRY(_boot_cores);
 SECTIONS
 {
     . = 0x80000; /* AArch64 boot address is 0x80000, 4K-aligned */
+    __STACK_START = .; /* Stack grows from here on down. */
     __BOOT_START = .;
     .text :
     {
