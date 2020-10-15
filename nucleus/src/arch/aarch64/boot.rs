@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: BlueOak-1.0.0
  *
- * Based on ideas from Jorge Aparicio, Andre Richter, Phil Oppenheimer.
+ * Based on ideas from Jorge Aparicio, Andre Richter, Phil Oppenheimer, Sergio Benitez.
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 

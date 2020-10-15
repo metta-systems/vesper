@@ -1,5 +1,6 @@
 /*
  * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
 /// Macro similar to [std](https://doc.rust-lang.org/src/std/macros.rs.html)

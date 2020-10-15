@@ -94,3 +94,10 @@ Various references from [OSDev Wiki](https://wiki.osdev.org/Raspberry_Pi_Bare_Bo
 ### License scan
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fmetta-systems%2Fvesper.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fmetta-systems%2Fvesper?ref=badge_large)
+
+Individual files contain the following tag instead of the full license text.
+
+    SPDX-License-Identifier: BlueOak-1.0.0
+
+This enables machine processing of license information based on the SPDX
+License Identifiers that are here available: http://spdx.org/licenses/

@@ -1,6 +1,8 @@
 /*
  * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
+
 /// No-alloc write!() implementation from https://stackoverflow.com/a/50201632/145434
 /// Requires you to allocate a buffer somewhere manually.
 // @todo Try to use arrayvec::ArrayString here instead?
