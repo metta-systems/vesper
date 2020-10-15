@@ -9,6 +9,7 @@
 #![no_std]
 #![no_main]
 #![feature(asm)]
+#![feature(global_asm)]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
 #![feature(custom_test_frameworks)]
@@ -47,10 +48,25 @@ fn init_mmu() {
     println!("MMU initialised");
 }
 
+fn init_exception_traps() {
+    extern "C" {
+        static __exception_vectors_start: u64;
+    }
+
+    unsafe {
+        let exception_vectors_start: u64 = &__exception_vectors_start as *const _ as u64;
+
+        arch::traps::set_vbar_el1_checked(exception_vectors_start)
+            .expect("Vector table properly aligned!");
+    }
+    println!("Exception traps set up");
+}
+
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
 #[inline]
 pub fn kmain() -> ! {
+    init_exception_traps();
     init_mmu();
 
     #[cfg(test)]
@@ -62,4 +78,22 @@ pub fn kmain() -> ! {
 #[panic_handler]
 fn panicked(_info: &core::panic::PanicInfo) -> ! {
     endless_sleep()
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::*;
+
+    #[test_case]
+    fn check_data_abort_trap() {
+        // Cause an exception by accessing a virtual address for which no
+        // address translations have been set up.
+        //
+        // This line of code accesses the address 3 GiB, but page tables are
+        // only set up for the range [0..1) GiB.
+        let big_addr: u64 = 3 * 1024 * 1024 * 1024;
+        unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
+
+        println!("[i] Whoa! We recovered from an exception.");
+    }
 }

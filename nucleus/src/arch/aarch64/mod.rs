@@ -6,6 +6,7 @@
 
 mod boot;
 pub mod memory;
+pub mod traps;
 
 /// Loop forever in sleep mode.
 #[inline]
