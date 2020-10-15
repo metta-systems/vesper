@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BlueOak-1.0.0
 #
-# Copyright (c) Berkus Decker <berkus+github@metta.systems>
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 [tasks.build]
 env = { "TARGET_FEATURES" = "" }

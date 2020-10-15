@@ -1,7 +1,7 @@
 [package]
 name = "vesper"
 version = "0.0.1"
-authors = ["Berkus Decker <berkus+cargo@metta.systems>"]
+authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
 description = "Vesper exokernel"
 documentation = "https://docs.metta.systems/vesper"
 homepage = "https://github.com/metta-systems/vesper"
