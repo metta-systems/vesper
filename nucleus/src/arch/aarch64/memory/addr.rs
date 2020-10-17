@@ -3,7 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 use {
-    super::{align_down, align_up},
+    crate::mm::{align_down, align_up},
     bit_field::BitField,
     core::{
         convert::{From, Into, TryInto},

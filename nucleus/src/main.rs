@@ -29,6 +29,7 @@ extern crate rlibc; // To enable linking memory intrinsics.
 pub mod arch;
 pub use arch::*;
 mod macros;
+mod mm;
 mod platform;
 #[cfg(feature = "qemu")]
 mod qemu;

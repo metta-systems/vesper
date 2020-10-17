@@ -1,0 +1,56 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
+
+/// Align address downwards.
+///
+/// Returns the greatest x with alignment `align` so that x <= addr.
+/// The alignment must be a power of 2.
+pub fn align_down(addr: u64, align: u64) -> u64 {
+    assert!(align.is_power_of_two(), "`align` must be a power of two");
+    addr & !(align - 1)
+}
+
+/// Align address upwards.
+///
+/// Returns the smallest x with alignment `align` so that x >= addr.
+/// The alignment must be a power of 2.
+pub fn align_up(addr: u64, align: u64) -> u64 {
+    assert!(align.is_power_of_two(), "`align` must be a power of two");
+    let align_mask = align - 1;
+    if addr & align_mask == 0 {
+        addr // already aligned
+    } else {
+        (addr | align_mask) + 1
+    }
+}
+
+/// Calculate the next possible aligned address without sanity checking the
+/// input parameters.
+#[inline]
+fn aligned_addr_unchecked(addr: usize, alignment: usize) -> usize {
+    (addr + (alignment - 1)) & !(alignment - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_case]
+    pub fn test_align_up() {
+        // align 1
+        assert_eq!(align_up(0, 1), 0);
+        assert_eq!(align_up(1234, 1), 1234);
+        assert_eq!(align_up(0xffffffffffffffff, 1), 0xffffffffffffffff);
+        // align 2
+        assert_eq!(align_up(0, 2), 0);
+        assert_eq!(align_up(1233, 2), 1234);
+        assert_eq!(align_up(0xfffffffffffffffe, 2), 0xfffffffffffffffe);
+        // address 0
+        assert_eq!(align_up(0, 128), 0);
+        assert_eq!(align_up(0, 1), 0);
+        assert_eq!(align_up(0, 2), 0);
+        assert_eq!(align_up(0, 0x8000000000000000), 0);
+    }
+}
