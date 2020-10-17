@@ -3,6 +3,9 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
+pub mod bump_allocator;
+pub use bump_allocator::BumpAllocator;
+
 /// Align address downwards.
 ///
 /// Returns the greatest x with alignment `align` so that x <= addr.
