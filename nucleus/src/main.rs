@@ -32,6 +32,7 @@ mod macros;
 mod platform;
 #[cfg(feature = "qemu")]
 mod qemu;
+mod sync;
 #[cfg(test)]
 mod tests;
 mod write_to;
