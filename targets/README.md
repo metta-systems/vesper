@@ -23,3 +23,7 @@ rustc +nightly -Z unstable-options --target=<your target name> --print target-sp
 ### To do
 
 "panic-strategy": "abort" is ok for baremetal targets, but not for -metta, right? Will rework for userspace targets when we have unwinding.
+
+----
+
+For more information please re-read.
