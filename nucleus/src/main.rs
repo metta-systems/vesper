@@ -42,6 +42,25 @@ mod write_to;
 
 entry!(kmain);
 
+/// The global allocator for DMA-able memory. That is, memory which is tagged
+/// non-cacheable in the page tables.
+static DMA_ALLOCATOR: sync::NullLock<mm::BumpAllocator> =
+    sync::NullLock::new(mm::BumpAllocator::new(
+        // @todo Init this after we loaded boot memory map
+        memory::map::virt::DMA_HEAP_START as usize,
+        memory::map::virt::DMA_HEAP_END as usize,
+        "Global DMA Allocator",
+        // Try the following arguments instead to see all mailbox operations
+        // fail. It will cause the allocator to use memory that are marked
+        // cacheable and therefore not DMA-safe. The answer from the VideoCore
+        // won't be received by the CPU because it reads an old cached value
+        // that resembles an error case instead.
+
+        // 0x00600000 as usize,
+        // 0x007FFFFF as usize,
+        // "Global Non-DMA Allocator",
+    ));
+
 fn print_mmu_state_and_features() {
     memory::mmu::print_features();
 }
