@@ -5,6 +5,8 @@
 
 #![allow(dead_code)]
 
+pub mod mailbox;
+
 /// See BCM2835-ARM-Peripherals.pdf
 /// See https://www.raspberrypi.org/forums/viewtopic.php?t=186090 for more details.
 
