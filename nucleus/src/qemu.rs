@@ -4,13 +4,23 @@
  */
 pub mod semihosting {
     #[cfg(test)]
-    pub fn exit_success() {
+    pub fn exit_success() -> ! {
         use qemu_exit::QEMUExit;
 
         #[cfg(target_arch = "aarch64")]
         let qemu_exit_handle = qemu_exit::AArch64::new();
 
-        qemu_exit_handle.exit_success();
+        qemu_exit_handle.exit_success()
+    }
+
+    #[cfg(test)]
+    pub fn exit_failure() -> ! {
+        use qemu_exit::QEMUExit;
+
+        #[cfg(target_arch = "aarch64")]
+        let qemu_exit_handle = qemu_exit::AArch64::new();
+
+        qemu_exit_handle.exit_failure()
     }
 
     #[cfg(test)]

@@ -32,6 +32,7 @@ pub mod arch;
 pub use arch::*;
 mod macros;
 mod mm;
+mod panic;
 mod platform;
 #[cfg(feature = "qemu")]
 mod qemu;
@@ -97,11 +98,6 @@ pub fn kmain() -> ! {
     #[cfg(test)]
     test_main();
 
-    endless_sleep()
-}
-
-#[panic_handler]
-fn panicked(_info: &core::panic::PanicInfo) -> ! {
     endless_sleep()
 }
 
