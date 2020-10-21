@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+pub mod fb;
 pub mod mailbox;
 
 /// See BCM2835-ARM-Peripherals.pdf

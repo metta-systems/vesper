@@ -125,6 +125,9 @@ pub mod channel {
     // Count = 7,
     pub const PropertyTagsArmToVc: u32 = 8;
     pub const PropertyTagsVcToArm: u32 = 9;
+    /// Channel number is ignored. Use for implementations of MailboxOps that use hardcoded
+    /// channel number.
+    pub const Ignored: u32 = !0;
 }
 
 // Single code indicating request
@@ -236,7 +239,7 @@ pub mod alpha_mode {
     pub const IGNORED: u32 = 2;
 }
 
-fn write(regs: &RegisterBlock, buf: *const u32, channel: u32) -> Result<()> {
+pub fn write(regs: &RegisterBlock, buf: *const u32, channel: u32) -> Result<()> {
     let mut count: u32 = 0;
     let buf_ptr: u32 = buf as u32;
 
@@ -265,7 +268,7 @@ fn write(regs: &RegisterBlock, buf: *const u32, channel: u32) -> Result<()> {
     Ok(())
 }
 
-fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
+pub fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
     loop {
         let mut count: u32 = 0;
         while regs.STATUS.is_set(STATUS::EMPTY) {
