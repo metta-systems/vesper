@@ -97,6 +97,18 @@ impl core::fmt::Display for MailboxError {
 
 pub type Result<T> = ::core::result::Result<T, MailboxError>;
 
+/// Typical operations with a mailbox.
+pub trait MailboxOps {
+    /// Deref from self to a mailbox RegisterBlock. Used by Deref implementations.
+    fn ptr(&self) -> *const RegisterBlock;
+    fn write(&self, channel: u32) -> Result<()>;
+    fn read(&self, channel: u32) -> Result<()>;
+    fn call(&self, channel: u32) -> Result<()> {
+        self.write(channel)?;
+        self.read(channel)
+    }
+}
+
 /*
  * Source https://elinux.org/RPi_Framebuffer
  * Source for channels 8 and 9: https://github.com/raspberrypi/firmware/wiki/Mailboxes
@@ -438,18 +450,18 @@ impl Mailbox {
     }
 }
 
-impl PreparedMailbox {
+impl MailboxOps for PreparedMailbox {
     /// Returns a pointer to the register block
     fn ptr(&self) -> *const RegisterBlock {
         self.0.base_addr as *const _
     }
 
-    pub fn write(&self, channel: u32) -> Result<()> {
+    fn write(&self, channel: u32) -> Result<()> {
         write(self, self.0.buffer.as_ptr() as *const _, channel)
     }
 
     // @todo read() should probably consume PreparedMailbox completely ?
-    pub fn read(&self, channel: u32) -> Result<()> {
+    fn read(&self, channel: u32) -> Result<()> {
         // SAFETY: buffer is HW-mutable in the read call below!
         read(
             self,
@@ -472,11 +484,6 @@ impl PreparedMailbox {
                 Err(MailboxError::Unknown)
             }
         }
-    }
-
-    pub fn call(&self, channel: u32) -> Result<()> {
-        self.write(channel)?;
-        self.read(channel)
     }
 }
 
