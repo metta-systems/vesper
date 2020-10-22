@@ -11,6 +11,7 @@
 #![no_main]
 #![feature(asm)]
 #![feature(global_asm)]
+#![feature(decl_macro)]
 #![feature(allocator_api)]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
