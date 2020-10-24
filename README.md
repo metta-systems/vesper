@@ -89,6 +89,8 @@ Various references from [OSDev Wiki](https://wiki.osdev.org/Raspberry_Pi_Bare_Bo
 
 ![Build](https://github.com/metta-systems/vesper/workflows/Build/badge.svg)
 
+[![Dependency Status](https://deps.rs/repo/github/metta-systems/vesper/status.svg)](https://deps.rs/repo/github/metta-systems/vesper)
+
 [![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/metta-systems/vesper)
 
 ### License scan
