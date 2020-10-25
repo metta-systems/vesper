@@ -27,7 +27,7 @@ unsafe impl AllocRef for BumpAllocator {
         let end = start + layout.size();
 
         println!(
-            "[i] {}:\n      Allocating Start {:#010x} End {:#010x}",
+            "[i] {}:\n    Allocating Start {:#010x} End {:#010x}",
             self.name, start, end
         );
 
@@ -37,7 +37,7 @@ unsafe impl AllocRef for BumpAllocator {
         self.next.set(end);
 
         println!(
-            "[i] {}:\n      Allocated Addr {:#010x} Size {:#x}",
+            "[i] {}:\n    Allocated Addr {:#010x} Size {:#x}",
             self.name,
             start,
             layout.size()
