@@ -16,6 +16,7 @@ edition = "2018"
 maintenance = { status = "experimental" }
 
 [features]
+noserial = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = ["qemu-exit"]
 
