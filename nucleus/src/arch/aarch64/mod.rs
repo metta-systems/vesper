@@ -5,6 +5,8 @@
 
 //! Implementation of aarch64 kernel functions.
 
+use cortex_a::asm;
+
 mod boot;
 pub mod memory;
 pub mod traps;
@@ -13,6 +15,25 @@ pub mod traps;
 #[inline]
 pub fn endless_sleep() -> ! {
     loop {
-        cortex_a::asm::wfe();
+        asm::wfe();
+    }
+}
+
+/// Loop for a given number of `nop` instructions.
+#[inline]
+pub fn loop_delay(rounds: u32) {
+    for _ in 0..rounds {
+        asm::nop();
+    }
+}
+
+/// Loop until a passed function returns `true`.
+#[inline]
+pub fn loop_until<F: Fn() -> bool>(f: F) {
+    loop {
+        if f() {
+            break;
+        }
+        asm::nop();
     }
 }
