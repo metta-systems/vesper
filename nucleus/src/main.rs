@@ -45,6 +45,9 @@ mod write_to;
 
 entry!(kmain);
 
+/// The global console. Output of the kernel print! and println! macros goes here.
+static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devices::Console::new());
+
 /// The global allocator for DMA-able memory. That is, memory which is tagged
 /// non-cacheable in the page tables.
 static DMA_ALLOCATOR: sync::NullLock<mm::BumpAllocator> =
@@ -90,6 +93,20 @@ fn init_exception_traps() {
     println!("Exception traps set up");
 }
 
+#[cfg(not(feature = "noserial"))]
+fn init_uart_serial() {
+    use crate::platform::rpi3::{gpio::GPIO, mini_uart::MiniUart};
+    let gpio = GPIO::default();
+    let uart = MiniUart::default();
+    let uart = uart.prepare(&gpio);
+    CONSOLE.lock(|c| {
+        // Move uart into the global CONSOLE.
+        c.replace_with(uart.into());
+    });
+
+    println!("[0] MiniUART is live!");
+}
+
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
 #[inline]
@@ -99,6 +116,9 @@ pub fn kmain() -> ! {
 
     #[cfg(test)]
     test_main();
+
+    #[cfg(not(feature = "noserial"))]
+    init_uart_serial();
 
     endless_sleep()
 }

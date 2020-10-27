@@ -22,14 +22,20 @@ macro_rules! println {
 
 #[doc(hidden)]
 #[cfg(not(any(test, qemu)))]
-pub fn _print(_args: core::fmt::Arguments) {
-    // @todo real system implementation
+pub fn _print(args: core::fmt::Arguments) {
+    use core::fmt::Write;
+
+    crate::CONSOLE.lock(|c| {
+        c.write_fmt(args).unwrap();
+    })
 }
 
+/// qemu-based tests use semihosting write0 syscall.
 #[doc(hidden)]
 #[cfg(any(test, qemu))] // qemu feature not enabled here?? we pass --features=qemu to cargo test
 pub fn _print(args: core::fmt::Arguments) {
     use crate::{qemu, write_to};
+
     let mut buf = [0u8; 512];
     qemu::semihosting::sys_write0_call(write_to::c_show(&mut buf, args).unwrap());
 }
