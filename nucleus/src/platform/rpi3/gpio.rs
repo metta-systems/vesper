@@ -7,6 +7,7 @@
 
 use {
     super::BcmHost,
+    crate::arch::loop_delay,
     core::{marker::PhantomData, ops},
     register::{
         mmio::{ReadOnly, ReadWrite, WriteOnly},
@@ -128,6 +129,19 @@ impl GPIO {
     pub fn get_pin(&self, pin: usize) -> Pin<Uninitialized> {
         Pin::new(pin, self.base_addr)
     }
+}
+
+pub fn enable_uart_pins(gpio: &GPIO) {
+    gpio.PUD.set(0);
+
+    loop_delay(150);
+
+    // enable pins 14 and 15
+    gpio.PUDCLK[0].write(PUDCLK0::PUDCLK14::AssertClock + PUDCLK0::PUDCLK15::AssertClock);
+
+    loop_delay(150);
+
+    gpio.PUDCLK[0].set(0);
 }
 
 /// An alternative GPIO function.

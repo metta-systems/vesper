@@ -13,6 +13,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
+name = "cfg-if"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+
+[[package]]
 name = "cortex-a"
 version = "3.0.5"
 source = "git+https://github.com/berkus/cortex-a?branch=feature/asm-syntax#c6d4033bf513b02d29da2d653ece2b90c3ad1e6d"
@@ -71,6 +77,7 @@ version = "0.0.1"
 dependencies = [
  "bit_field",
  "bitflags",
+ "cfg-if",
  "cortex-a",
  "qemu-exit",
  "r0",

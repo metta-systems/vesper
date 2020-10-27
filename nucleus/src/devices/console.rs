@@ -4,6 +4,7 @@
 
 #![allow(dead_code)]
 
+use crate::platform;
 use core::fmt;
 
 /// A trait that must be implemented by devices that are candidates for the
@@ -28,6 +29,7 @@ impl ConsoleOps for NullConsole {}
 /// Possible outputs which the console can store.
 pub enum Output {
     None(NullConsole),
+    MiniUart(platform::rpi3::mini_uart::PreparedMiniUart),
 }
 
 /// Generate boilerplate for converting into one of Output enum values
@@ -40,6 +42,8 @@ macro output_from($name:ty, $optname:ident) {
 }
 
 output_from!(NullConsole, None);
+output_from!(platform::rpi3::mini_uart::PreparedMiniUart, MiniUart);
+
 pub struct Console {
     output: Output,
 }
@@ -63,6 +67,7 @@ impl Console {
     fn current_ptr(&self) -> &dyn ConsoleOps {
         match &self.output {
             Output::None(i) => i,
+            Output::MiniUart(i) => i,
         }
     }
 
