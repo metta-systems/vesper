@@ -31,6 +31,7 @@ extern crate rlibc; // To enable linking memory intrinsics.
 #[macro_use]
 pub mod arch;
 pub use arch::*;
+mod devices;
 mod macros;
 mod mm;
 mod panic;
