@@ -55,9 +55,18 @@ use {
         barrier,
         regs::{RegisterReadOnly, RegisterReadWrite, ESR_EL1, FAR_EL1, VBAR_EL1},
     },
+    snafu::Snafu,
 };
 
 global_asm!(include_str!("vectors.S"));
+
+/// Errors possibly returned from the traps module.
+#[derive(Debug, Snafu)]
+pub enum Error {
+    /// IVT address is unaligned.
+    #[snafu(display("Unaligned base address for interrupt vector table"))]
+    Unaligned,
+}
 
 /// Configure base address of interrupt vectors table.
 /// Checks that address is properly 2KiB aligned.
@@ -65,9 +74,9 @@ global_asm!(include_str!("vectors.S"));
 /// # Safety
 ///
 /// Totally unsafe in the land of the hardware.
-pub unsafe fn set_vbar_el1_checked(vec_base_addr: u64) -> Result<(), ()> {
+pub unsafe fn set_vbar_el1_checked(vec_base_addr: u64) -> Result<(), Error> {
     if vec_base_addr.trailing_zeros() < 11 {
-        return Err(());
+        return Err(Error::Unaligned);
     }
 
     VBAR_EL1.set(vec_base_addr);
