@@ -112,6 +112,14 @@ jobs:
 
   clippy:
     name: "Clippy"
+    strategy:
+      matrix:
+        features: [
+          "",
+          "noserial",
+          "qemu",
+          "noserial,qemu",
+        ]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -119,4 +127,4 @@ jobs:
     - run: rustup toolchain install nightly --profile minimal --component clippy
     - run: rustup component add rust-src llvm-tools-preview
     - run: cargo install cargo-make
-    - run: cargo make clippy
+    - run: env CLIPPY_FEATURES=${{ matrix.features }} cargo make clippy

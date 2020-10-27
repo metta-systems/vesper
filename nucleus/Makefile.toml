@@ -68,8 +68,9 @@ command = "diskutil"
 args = ["unmount", "/Volumes/BOOT/"]
 
 [tasks.clippy]
+env = { "TARGET_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
 command = "cargo"
-args = ["clippy", "${BUILD_STD}", "--target=${TARGET_JSON}", "--", "-D", "warnings"]
+args = ["clippy", "${BUILD_STD}", "--target=${TARGET_JSON}", "@@remove-empty(TARGET_FEATURES)", "--", "-D", "warnings"]
 
 [tasks.hopper]
 dependencies = ["build", "kernel-binary"]
