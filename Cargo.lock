@@ -20,8 +20,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cortex-a"
-version = "3.0.5"
-source = "git+https://github.com/berkus/cortex-a?branch=feature/asm-syntax#c6d4033bf513b02d29da2d653ece2b90c3ad1e6d"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eda21b8ec67b82099401559fe28cea4508eb1e33217b4dacf60ba22e39b486b1"
 dependencies = [
  "register",
 ]
