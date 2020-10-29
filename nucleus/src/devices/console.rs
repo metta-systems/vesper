@@ -30,6 +30,7 @@ impl ConsoleOps for NullConsole {}
 pub enum Output {
     None(NullConsole),
     MiniUart(platform::rpi3::mini_uart::PreparedMiniUart),
+    Uart(platform::rpi3::pl011_uart::PreparedPL011Uart),
 }
 
 /// Generate boilerplate for converting into one of Output enum values
@@ -43,6 +44,7 @@ macro output_from($name:ty, $optname:ident) {
 
 output_from!(NullConsole, None);
 output_from!(platform::rpi3::mini_uart::PreparedMiniUart, MiniUart);
+output_from!(platform::rpi3::pl011_uart::PreparedPL011Uart, Uart);
 
 pub struct Console {
     output: Output,
@@ -68,6 +70,7 @@ impl Console {
         match &self.output {
             Output::None(i) => i,
             Output::MiniUart(i) => i,
+            Output::Uart(i) => i,
         }
     }
 
