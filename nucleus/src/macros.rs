@@ -36,6 +36,6 @@ pub fn _print(args: core::fmt::Arguments) {
 pub fn _print(args: core::fmt::Arguments) {
     use crate::{qemu, write_to};
 
-    let mut buf = [0u8; 512];
+    let mut buf = [0u8; 2048]; // Increase this buffer size to allow dumping larger panic texts.
     qemu::semihosting::sys_write0_call(write_to::c_show(&mut buf, args).unwrap());
 }
