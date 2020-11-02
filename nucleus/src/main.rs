@@ -111,15 +111,16 @@ fn init_uart_serial() {
 /// `arch` crate is responsible for calling it.
 #[inline]
 pub fn kmain() -> ! {
+    #[cfg(not(feature = "noserial"))]
+    init_uart_serial();
+
     init_exception_traps();
     init_mmu();
 
     #[cfg(test)]
     test_main();
 
-    #[cfg(not(feature = "noserial"))]
-    init_uart_serial();
-
+    println!("Bye, hanging forever...");
     endless_sleep()
 }
 
