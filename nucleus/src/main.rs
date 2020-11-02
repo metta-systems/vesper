@@ -111,6 +111,9 @@ fn init_uart_serial() {
 /// `arch` crate is responsible for calling it.
 #[inline]
 pub fn kmain() -> ! {
+    #[cfg(feature = "jtag")]
+    jtag::wait_debugger();
+
     #[cfg(not(feature = "noserial"))]
     init_uart_serial();
 

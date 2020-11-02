@@ -119,6 +119,9 @@ jobs:
           "noserial",
           "qemu",
           "noserial,qemu",
+          "jtag",
+          "noserial,jtag",
+          # jtag and qemu together don't make much sense
         ]
     runs-on: ubuntu-latest
     timeout-minutes: 10

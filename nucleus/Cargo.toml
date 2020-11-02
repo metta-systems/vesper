@@ -17,6 +17,9 @@ maintenance = { status = "experimental" }
 
 [features]
 noserial = []
+# Enable JTAG debugging of kernel - enable jtag helpers and
+# block waiting for JTAG probe attach at the start of kernel main.
+jtag = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = ["qemu-exit"]
 

@@ -8,6 +8,8 @@
 use cortex_a::asm;
 
 mod boot;
+#[cfg(feature = "jtag")]
+pub mod jtag;
 pub mod memory;
 pub mod traps;
 
