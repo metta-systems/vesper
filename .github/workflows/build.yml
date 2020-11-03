@@ -19,7 +19,7 @@ jobs:
         ]
 
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
     - name: "Checkout Repository"
