@@ -451,6 +451,18 @@ impl Mailbox {
         buf[index + 4] = if enable { 1 } else { 0 };
         index + 5
     }
+
+    #[inline]
+    pub fn set_clock_rate(&mut self, index: usize, channel: u32, rate: u32) -> usize {
+        let buf = unsafe { self.buffer.as_mut() };
+        buf[index] = tag::SetClockRate;
+        buf[index + 1] = 12; // Buffer size   // val buf size
+        buf[index + 2] = 8; // Response size  // val size
+        buf[index + 3] = channel; // mailbox::clock::*
+        buf[index + 4] = rate;
+        buf[index + 5] = 0; // skip turbo setting
+        index + 6
+    }
 }
 
 impl MailboxOps for PreparedMailbox {
