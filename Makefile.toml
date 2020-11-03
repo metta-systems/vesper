@@ -8,9 +8,33 @@ min_version = "0.32.0"
 default_to_workspace = true
 
 [env]
+DEFAULT_TARGET = "aarch64-vesper-metta"
+
+#
+# === User-configurable ===
+#
+
+# Pass TARGET env var if it does not match the default target above.
+TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] } }
+
+# AArch64 QEMU binary
+QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
+
+# An aarch64-enabled GDB
+GDB = { value = "/usr/local/opt/gdb-8.2.1-aarhc64/bin/aarch64-linux-elf-gdb", condition = { env_not_set = ["GDB"] } }
+
+# OpenOCD with JLink support and RTT patch from http://openocd.zylin.com/#/c/4055/11
+OPENOCD = { value = "/usr/local/openocd-aeb7b327-rtt/bin/openocd", condition = { env_not_set = ["OPENOCD"] } }
+
+# Mounted sdcard partition path
+VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
+
+#
+# === Automatic ===
+#
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
-DEFAULT_TARGET = "aarch64-vesper-metta"
+TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
 
 BUILD_STD = "-Zbuild-std=core,compiler_builtins,alloc"
 
@@ -19,6 +43,7 @@ QEMU_FEATURES = "qemu"
 
 OBJCOPY = "rust-objcopy" # Part of `cargo objcopy` in cargo-binutils
 OBJCOPY_PARAMS = "--strip-all -O binary"
+NM = "rust-nm" # Part of `cargo nm` in cargo-binutils
 
 UTILS_CONTAINER = "andrerichter/raspi3-utils"
 DOCKER_CMD = "docker run -it --rm -v ${PWD}:/work -w /work -p 5900:5900"
@@ -31,13 +56,10 @@ QEMU_CONTAINER_CMD = "qemu-system-aarch64"
 QEMU_OPTS = "-M raspi3 -d int -semihosting"
 QEMU_SERIAL_OPTS = "-serial null -serial stdio"
 QEMU_TESTS_OPTS = "-nographic"
-QEMU = "qemu-system-aarch64"
-
 # For gdb connection:
-# - if setting this, MUST have gdb attached for SYS_WRITE0 to work, otherwise QEMU will crash.
-QEMU_GDB_OPTS = "-gdb tcp::3333 -S"
-
-TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${DEFAULT_TARGET}.json"
+# - if this is set, MUST have gdb attached for SYS_WRITE0 to work, otherwise QEMU will crash.
+# - port 5555 used to match JLink configuration, so we can reuse the same GDB command for both QEMU and JTAG.
+QEMU_GDB_OPTS = "-gdb tcp::5555 -S"
 
 KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8"
 KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8.img"

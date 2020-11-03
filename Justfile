@@ -22,3 +22,11 @@ alias disasm := hopper
 
 hopper:
     cargo make hopper
+
+alias ocd := openocd
+
+openocd:
+    cargo make openocd
+
+gdb:
+    cargo make gdb

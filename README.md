@@ -32,8 +32,14 @@ Vesper has been influenced by the kernels in L4 family, notably seL4. Fawn and N
 
 Use at least rustc nightly 2020-07-15 with cargo nightly of the same or later date. It adds support for `cargo build --build-std` feature.
 
-Install tools: `cargo install just cargo-make`.
-Install qemu (at least version 4.1.1): `brew install qemu`.
+* Install tools: `cargo install just cargo-make`.
+* Install qemu (at least version 4.1.1): `brew install qemu`.
+* Optionally install OpenOCD with [RTT patches](http://openocd.zylin.com/#/c/4055/11).
+* Install aarch64 gdb.
+
+You can override invoked `qemu`, `openocd` and `gdb` by specifying full paths to them as env variables `QEMU`, `OPENOCD` and `GDB`, respectively.
+
+You can override the name of mounted sdcard volume by specifying env variable `VOLUME` (it defaults to `/Volumes/BOOT`).
 
 ### To build kernel and run it in QEMU emulator
 
@@ -41,16 +47,10 @@ Install qemu (at least version 4.1.1): `brew install qemu`.
 just qemu
 ```
 
-### To build kernel for Raspberry Pi and copy it to SDCard mounted at `/Volumes/BOOT/`
+### To build kernel for Raspberry Pi and copy it to the mounted SDCard
 
 ```
 just device
-```
-
-### To run tests (tests require QEMU)
-
-```
-just test
 ```
 
 On the device boot SD card you'll need a configuration file instructing RasPi to launch in 64-bit mode.
@@ -59,6 +59,26 @@ On the device boot SD card you'll need a configuration file instructing RasPi to
 # config.txt on RPi3
 arm_64bit=1
 ```
+
+### To run tests (tests require QEMU)
+
+```
+just test
+```
+
+### To launch JTAG connected JLink probe
+
+```
+just ocd
+```
+
+### To launch GDB and load kernel binary into it
+
+```
+just gdb
+```
+
+If you launch OpenOCD or QEMU before, then gdb shall connect to it and allow you to load the kernel binary directly into memory. Type `load` in gdb to do that.
 
 ### To see kernel disassembly
 

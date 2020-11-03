@@ -16,8 +16,8 @@ args = ["test", "${BUILD_STD}", "--target=${TARGET_JSON}", "--features=${TARGET_
 script_runner = "@duckscript"
 script = [
 '''
-    cp ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_ELF}
-    exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${DEFAULT_TARGET}/release/vesper ${KERNEL_BIN}
+    cp ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/vesper ${KERNEL_ELF}
+    exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/vesper ${KERNEL_BIN}
 '''
 ]
 
@@ -57,15 +57,39 @@ script = [
 '''
 ]
 
+[tasks.openocd]
+dependencies = ["build", "kernel-binary"]
+script = [
+    "${OPENOCD} -f interface/jlink.cfg -f ../doc/rpi2rpi_jtag/rpi3_target.cfg"
+]
+
+[tasks.gdb]
+dependencies = ["build", "kernel-binary"]
+env = { "RUST_GDB" = "${GDB}" }
+script_runner = "@duckscript"
+script = [
+'''
+    connectFile = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect
+    writefile ${connectFile} "target remote :5555\n"
+    exec --fail-on-error rust-gdb -x ${connectFile} ${KERNEL_ELF}
+'''
+]
+
 [tasks.sdcard]
 dependencies = ["build", "kernel-binary"]
-command = "cp"
-args = ["${KERNEL_BIN}", "/Volumes/BOOT/"]
+script_runner = "@duckscript"
+script = [
+'''
+    kernelImage = basename ${KERNEL_BIN}
+    cp ${KERNEL_BIN} ${VOLUME}/${kernelImage}
+'''
+]
 
 [tasks.sdeject]
 dependencies = ["sdcard"]
-command = "diskutil"
-args = ["unmount", "/Volumes/BOOT/"]
+script = [
+    "diskutil unmount ${VOLUME}"
+]
 
 [tasks.clippy]
 env = { "TARGET_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
