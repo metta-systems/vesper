@@ -50,7 +50,7 @@ SECTIONS
 
     /* @todo could insert .data.boot here with proper alignment */
 
-    .bss ALIGN(8):
+    .bss ALIGN(8) (NOLOAD):
     {
         __BSS_START = .;
         *(.bss .bss.*)
