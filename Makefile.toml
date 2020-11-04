@@ -61,6 +61,8 @@ QEMU_TESTS_OPTS = "-nographic"
 # - port 5555 used to match JLink configuration, so we can reuse the same GDB command for both QEMU and JTAG.
 QEMU_GDB_OPTS = "-gdb tcp::5555 -S"
 
+GDB_CONNECT_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect"
+
 KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8"
 KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8.img"
 

@@ -63,16 +63,19 @@ script = [
     "${OPENOCD} -f interface/jlink.cfg -f ../doc/rpi2rpi_jtag/rpi3_target.cfg"
 ]
 
-[tasks.gdb]
-dependencies = ["build", "kernel-binary"]
-env = { "RUST_GDB" = "${GDB}" }
+[tasks.gdb-config]
 script_runner = "@duckscript"
 script = [
 '''
-    connectFile = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect
-    writefile ${connectFile} "target remote :5555\n"
-    exec --fail-on-error rust-gdb -x ${connectFile} ${KERNEL_ELF}
+    writefile ${GDB_CONNECT_FILE} "target remote :5555\n"
 '''
+]
+
+[tasks.gdb]
+dependencies = ["build", "kernel-binary", "gdb-config"]
+env = { "RUST_GDB" = "${GDB}" }
+script = [
+    "rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}"
 ]
 
 [tasks.sdcard]
