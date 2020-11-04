@@ -78,6 +78,13 @@ script = [
     "rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}"
 ]
 
+[tasks.nm]
+dependencies = ["build", "kernel-binary"]
+script = [
+    "${NM} -- ${KERNEL_ELF} | sort"
+]
+#install_crate = "cargo-binutils"
+
 [tasks.sdcard]
 dependencies = ["build", "kernel-binary"]
 script_runner = "@duckscript"

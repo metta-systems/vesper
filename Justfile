@@ -30,3 +30,6 @@ openocd:
 
 gdb:
     cargo make gdb
+
+nm:
+    cargo make nm

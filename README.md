@@ -80,6 +80,12 @@ just gdb
 
 If you launch OpenOCD or QEMU before, then gdb shall connect to it and allow you to load the kernel binary directly into memory. Type `load` in gdb to do that.
 
+### To see kernel symbols and their values
+
+```
+just nm
+```
+
 ### To see kernel disassembly
 
 You need to have [Hopper](https://hopperapp.com) and hopperv4 cli helper installed.
