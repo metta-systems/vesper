@@ -175,7 +175,7 @@ pub fn print_features() {
     }
 
     let t0sz = tcr.read(TCR_EL1::T0SZ);
-    println!("[i] MMU: T0sz = 64-{}={} bits", t0sz, 64 - t0sz);
+    println!("[i] MMU: T0sz = 64-{} = {} bits", t0sz, 64 - t0sz);
 
     match tcr.read_as_enum(TCR_EL1::TG1) {
         Some(TCR_EL1::TG1::Value::KiB_4) => println!("[i] MMU: TTBR1 4 KiB granule active!"),
@@ -185,7 +185,7 @@ pub fn print_features() {
     }
 
     let t1sz = tcr.read(TCR_EL1::T1SZ);
-    println!("[i] MMU: T1sz = 64-{}={} bits", t1sz, 64 - t1sz);
+    println!("[i] MMU: T1sz = 64-{} = {} bits", t1sz, 64 - t1sz);
 }
 
 register_bitfields! {

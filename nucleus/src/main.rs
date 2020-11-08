@@ -75,6 +75,7 @@ fn init_mmu() {
         memory::mmu::init().unwrap();
     }
     println!("MMU initialised");
+    print_mmu_state_and_features();
 }
 
 fn init_exception_traps() {
