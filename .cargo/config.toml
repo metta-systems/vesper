@@ -1,5 +1,7 @@
 [unstable]
 build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
+
 [build]
 # https://internals.rust-lang.org/t/evaluating-pipelined-rustc-compilation/10199/12
 pipelining = true

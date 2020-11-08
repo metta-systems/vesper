@@ -25,8 +25,6 @@
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
 
-extern crate rlibc; // To enable linking memory intrinsics.
-
 /// Architecture-specific code.
 #[macro_use]
 pub mod arch;
