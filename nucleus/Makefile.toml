@@ -5,11 +5,11 @@
 #
 [tasks.build]
 env = { "TARGET_FEATURES" = "" }
-args = ["build", "${BUILD_STD}", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+args = ["build", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
 
 [tasks.test]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
-args = ["test", "${BUILD_STD}", "--target=${TARGET_JSON}", "--features=${TARGET_FEATURES}"]
+args = ["test", "--target=${TARGET_JSON}", "--features=${TARGET_FEATURES}"]
 
 # These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
 [tasks.kernel-binary]
@@ -44,7 +44,7 @@ script = [
 [tasks.build-qemu]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 command = "cargo"
-args = ["build", "${BUILD_STD}", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+args = ["build", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
 
 [tasks.qemu]
 dependencies = ["build-qemu", "kernel-binary"]
@@ -104,7 +104,7 @@ script = [
 [tasks.clippy]
 env = { "TARGET_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
 command = "cargo"
-args = ["clippy", "${BUILD_STD}", "--target=${TARGET_JSON}", "@@remove-empty(TARGET_FEATURES)", "--", "-D", "warnings"]
+args = ["clippy", "--target=${TARGET_JSON}", "@@remove-empty(TARGET_FEATURES)", "--", "-D", "warnings"]
 
 [tasks.hopper]
 dependencies = ["build", "kernel-binary"]

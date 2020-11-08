@@ -36,8 +36,6 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
 TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
 
-BUILD_STD = "-Zbuild-std=core,compiler_builtins,alloc"
-
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu"
 
