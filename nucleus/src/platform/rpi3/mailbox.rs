@@ -247,7 +247,7 @@ pub fn write(regs: &RegisterBlock, buf: *const u32, channel: u32) -> Result<()> 
     // (see FrameBuffer for example).
     // let buf_ptr = BcmHost::phys2bus(buf_ptr); not used for PropertyTags channel
 
-    println!("Mailbox::write {:x}/{:x}", buf_ptr, channel);
+    println!("Mailbox::write {:#08x}/{:#x}", buf_ptr, channel);
 
     // Insert a compiler fence that ensures that all stores to the
     // mailbox buffer are finished before the GPU is signaled (which is

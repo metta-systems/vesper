@@ -188,7 +188,8 @@ pub fn print_features() {
     println!("[i] MMU: T1sz = 64-{}={} bits", t1sz, 64 - t1sz);
 }
 
-register_bitfields! {u64,
+register_bitfields! {
+    u64,
     // AArch64 Reference Manual page 2150, D5-2445
     STAGE1_DESCRIPTOR [
         // In table descriptors
