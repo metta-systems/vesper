@@ -42,3 +42,7 @@ gdb:
 nm:
     # Build and print all symbols in the kernel
     cargo make nm
+
+expand:
+    # Run `cargo expand` on modules
+    cargo make expand -- nucleus

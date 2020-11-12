@@ -7,6 +7,10 @@
 env = { "TARGET_FEATURES" = "" }
 args = ["build", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
 
+[tasks.expand]
+env = { "TARGET_FEATURES" = "" }
+args = ["expand", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+
 [tasks.test]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 args = ["test", "--target=${TARGET_JSON}", "--features=${TARGET_FEATURES}"]
