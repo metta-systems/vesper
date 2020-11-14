@@ -183,6 +183,8 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
     const EL2: u64 = CurrentEL::EL::EL2.value;
     const EL1: u64 = CurrentEL::EL::EL1.value;
 
+    SP.set(STACK_START);
+
     if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
         match CurrentEL.get() {
             #[cfg(qemu)]
