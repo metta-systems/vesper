@@ -2,6 +2,10 @@ qemu:
     # Build and run kernel in QEMU
     cargo make qemu
 
+qemu-gdb:
+    # Build and run kernel in QEMU with GDB port enabled
+    cargo make qemu-gdb
+
 device:
     # Build and write kernel to an SD Card
     cargo make sdcard

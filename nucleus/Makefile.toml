@@ -50,16 +50,20 @@ env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 command = "cargo"
 args = ["build", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
 
-[tasks.qemu]
-dependencies = ["build-qemu", "kernel-binary"]
+[tasks.qemu-runner]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
-script_runner = "@duckscript"
 script = [
-'''
-    binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
-    exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_SERIAL} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${KERNEL_BIN}
-'''
+    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${KERNEL_BIN}"
 ]
+dependencies = ["build-qemu", "kernel-binary"]
+
+[tasks.qemu]
+extend = "qemu-runner"
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}" }
+
+[tasks.qemu-gdb]
+extend = "qemu-runner"
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_GDB_OPTS}" }
 
 [tasks.openocd]
 dependencies = ["build", "kernel-binary"]
