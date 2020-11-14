@@ -77,6 +77,7 @@ fn shared_setup_and_enter_pre() {
         SCTLR_EL1::I::NonCacheable
             + SCTLR_EL1::C::NonCacheable
             + SCTLR_EL1::M::Disable
+            + SCTLR_EL1::A::Disable,
     );
 
     // Set Hypervisor Configuration Register (EL2)
@@ -142,18 +143,18 @@ fn setup_and_enter_el1_from_el3() -> ! {
     // Set Secure Configuration Register (EL3)
     SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
 
-        // Set Saved Program Status Register (EL3)
-        // Set up a simulated exception return.
-        //
-        // First, fake a saved program status, where all interrupts were
-        // masked and SP_EL1 was used as a stack pointer.
-        SPSR_EL3.write(
-            SPSR_EL3::D::Masked
-                + SPSR_EL3::A::Masked
-                + SPSR_EL3::I::Masked
-                + SPSR_EL3::F::Masked
-                + SPSR_EL3::M::EL1h, // Use SP_EL1
-        );
+    // Set Saved Program Status Register (EL3)
+    // Set up a simulated exception return.
+    //
+    // First, fake a saved program status, where all interrupts were
+    // masked and SP_EL1 was used as a stack pointer.
+    SPSR_EL3.write(
+        SPSR_EL3::D::Masked
+            + SPSR_EL3::A::Masked
+            + SPSR_EL3::I::Masked
+            + SPSR_EL3::F::Masked
+            + SPSR_EL3::M::EL1h, // Use SP_EL1
+    );
 
     // Make the Exception Link Register (EL3) point to reset().
     ELR_EL3.set(reset as *const () as u64);
