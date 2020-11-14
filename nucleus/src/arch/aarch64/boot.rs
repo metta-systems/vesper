@@ -13,6 +13,9 @@ use {
     cortex_a::{asm, regs::*},
 };
 
+// Stack placed before first executable instruction
+const STACK_START: u64 = 0x0008_0000; // Keep in sync with linker script
+
 /// Type check the user-supplied entry function.
 #[macro_export]
 macro_rules! entry {
@@ -42,12 +45,10 @@ unsafe fn reset() -> ! {
         // Boundaries of the .bss section, provided by the linker script
         static mut __BSS_START: u64;
         static mut __BSS_END: u64;
-        // Stack placed before first executable instruction
-        static __STACK_START: u64;
     }
 
     // Set stack pointer. Used in case we started in EL1.
-    SP.set(&__STACK_START as *const u64 as u64);
+    SP.set(STACK_START);
 
     // Zeroes the .bss section
     r0::zero_bss(&mut __BSS_START, &mut __BSS_END);
@@ -59,21 +60,50 @@ unsafe fn reset() -> ! {
     main()
 }
 
-/// Real hardware boot-up sequence.
-///
-/// Prepare and execute transition from EL2 to EL1.
 #[link_section = ".text.boot"]
 #[inline]
-fn setup_and_enter_el1_from_el2() -> ! {
+fn shared_setup_and_enter_pre() {
     // Enable timer counter registers for EL1
     CNTHCTL_EL2.write(CNTHCTL_EL2::EL1PCEN::SET + CNTHCTL_EL2::EL1PCTEN::SET);
 
     // No virtual offset for reading the counters
     CNTVOFF_EL2.set(0);
 
+    // Set System Control Register (EL1)
+    // Make memory non-cacheable and disable MMU mapping.
+    // Disable alignment checks, because Rust fmt module uses a little optimization
+    // that happily reads and writes half-words (ldrh/strh) from/to unaligned addresses.
+    SCTLR_EL1.write(
+        SCTLR_EL1::I::NonCacheable
+            + SCTLR_EL1::C::NonCacheable
+            + SCTLR_EL1::M::Disable
+    );
+
+    // Set Hypervisor Configuration Register (EL2)
     // Set EL1 execution state to AArch64
     // @todo Explain the SWIO bit (SWIO hardwired on Pi3)
     HCR_EL2.write(HCR_EL2::RW::EL1IsAarch64 + HCR_EL2::SWIO::SET);
+}
+
+#[link_section = ".text.boot"]
+#[inline]
+fn shared_setup_and_enter_post() -> ! {
+    // Set up SP_EL1 (stack pointer), which will be used by EL1 once
+    // we "return" to it.
+    SP_EL1.set(STACK_START);
+
+    // Use `eret` to "return" to EL1. This will result in execution of
+    // `reset()` in EL1.
+    asm::eret()
+}
+
+/// Real hardware boot-up sequence.
+///
+/// Prepare and execute transition from EL2 to EL1.
+#[link_section = ".text.boot"]
+#[inline]
+fn setup_and_enter_el1_from_el2() -> ! {
+    shared_setup_and_enter_pre();
 
     // Set up a simulated exception return.
     //
@@ -90,20 +120,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
     // Second, let the link register point to reset().
     ELR_EL2.set(reset as *const () as u64);
 
-    // Set up SP_EL1 (stack pointer), which will be used by EL1 once
-    // we "return" to it.
-    extern "C" {
-        // Stack placed before first executable instruction
-        static __STACK_START: u64;
-    }
-    // SAFETY: Only single core is booting and accessing this constant.
-    unsafe {
-        SP_EL1.set(&__STACK_START as *const u64 as u64);
-    }
-
-    // Use `eret` to "return" to EL1. This will result in execution of
-    // `reset()` in EL1.
-    asm::eret()
+    shared_setup_and_enter_post()
 }
 
 /// QEMU boot-up sequence.
@@ -120,29 +137,10 @@ fn setup_and_enter_el1_from_el2() -> ! {
 #[link_section = ".text.boot"]
 #[inline]
 fn setup_and_enter_el1_from_el3() -> ! {
-    use crate::arch::aarch64::regs::{ELR_EL3, SCR_EL3, SPSR_EL3};
+    shared_setup_and_enter_pre();
 
-    // Enable timer counter registers for EL1
-    CNTHCTL_EL2.write(CNTHCTL_EL2::EL1PCEN::SET + CNTHCTL_EL2::EL1PCTEN::SET);
-
-    // No virtual offset for reading the counters
-    CNTVOFF_EL2.set(0);
-
-    // Set System Control Register (EL1)
-    // Make memory non-cacheable and disable MMU mapping.
-    SCTLR_EL1
-        .write(SCTLR_EL1::I::NonCacheable + SCTLR_EL1::C::NonCacheable + SCTLR_EL1::M::Disable);
-
-    // Set Hypervisor Configuration Register (EL2)
-    // Set EL1 execution state to AArch64
-    // TODO: Explain the SWIO bit (SWIO hardwired on Pi3)
-    HCR_EL2.write(HCR_EL2::RW::EL1IsAarch64 + HCR_EL2::SWIO::SET);
-
-    {
-        use crate::register::cpu::RegisterReadWrite;
-
-        // Set Secure Configuration Register (EL3)
-        SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
+    // Set Secure Configuration Register (EL3)
+    SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
 
         // Set Saved Program Status Register (EL3)
         // Set up a simulated exception return.
@@ -157,24 +155,10 @@ fn setup_and_enter_el1_from_el3() -> ! {
                 + SPSR_EL3::M::EL1h, // Use SP_EL1
         );
 
-        // Make the Exception Link Register (EL3) point to reset().
-        ELR_EL3.set(reset as *const () as u64);
-    }
+    // Make the Exception Link Register (EL3) point to reset().
+    ELR_EL3.set(reset as *const () as u64);
 
-    // Set up SP_EL1 (stack pointer), which will be used by EL1 once
-    // we "return" to it.
-    extern "C" {
-        // Stack placed before first executable instruction
-        static __STACK_START: u64;
-    }
-    // SAFETY: Only single core is booting and accessing this constant.
-    unsafe {
-        SP_EL1.set(&__STACK_START as *const u64 as u64);
-    }
-
-    // Use `eret` to "return" to EL1. This will result in execution of
-    // `reset()` in EL1.
-    asm::eret()
+    shared_setup_and_enter_post()
 }
 
 /// Entrypoint of the processor.
