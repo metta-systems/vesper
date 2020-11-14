@@ -71,11 +71,36 @@ script = [
     "${OPENOCD} -f interface/jlink.cfg -f ../doc/rpi2rpi_jtag/rpi3_target.cfg"
 ]
 
+# Generate gdb-connect script with given RTT block address, to avoid typing it in manually.
 [tasks.gdb-config]
 script_runner = "@duckscript"
 script = [
 '''
+    # If an RTT block is defined, remember its memory location. _SEGGER_RTT
+    nmResult = exec --fail-on-error ${NM} -- ${KERNEL_ELF}
+
+    lines = split ${nmResult.stdout} "\n"
+
+    for line in ${lines}
+        check = contains ${line} "kmain"
+        if check
+            items = split ${line} " "
+            rttTargetAddr = array_get ${items} 0
+            name = array_get ${items} 2
+            echo ${rttTargetAddr} -> ${name}
+
+            release ${items}
+        end
+    end
+
+    release ${lines}
+
     writefile ${GDB_CONNECT_FILE} "target remote :5555\n"
+
+    if ${rttTargetAddr}
+        appendfile ${GDB_CONNECT_FILE} "monitor rttserver start 19021 0\n"
+        appendfile ${GDB_CONNECT_FILE} "monitor rtt setup 0x${rttTargetAddr} 24 \"SEGGER RTT\"\n"
+    end
 '''
 ]
 
