@@ -463,6 +463,17 @@ impl Mailbox {
         buf[index + 5] = 0; // skip turbo setting
         index + 6
     }
+
+    #[inline]
+    pub fn set_device_power(&mut self, index: usize, device_id: u32, power_flags: u32) -> usize {
+        let buf = unsafe { self.buffer.as_mut() };
+        buf[index] = tag::SetPowerState;
+        buf[index + 1] = 8; // Buffer size   // val buf size
+        buf[index + 2] = 8; // Response size  // val size
+        buf[index + 3] = device_id;
+        buf[index + 4] = power_flags; // bit 0: off, bit 1: no wait
+        index + 5
+    }
 }
 
 impl MailboxOps for PreparedMailbox {

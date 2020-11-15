@@ -10,6 +10,7 @@ pub mod gpio;
 pub mod mailbox;
 pub mod mini_uart;
 pub mod pl011_uart;
+pub mod power;
 
 /// See BCM2835-ARM-Peripherals.pdf
 /// See https://www.raspberrypi.org/forums/viewtopic.php?t=186090 for more details.
