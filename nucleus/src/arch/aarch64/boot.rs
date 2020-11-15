@@ -47,9 +47,6 @@ unsafe fn reset() -> ! {
         static mut __BSS_END: u64;
     }
 
-    // Set stack pointer. Used in case we started in EL1.
-    SP.set(STACK_START);
-
     // Zeroes the .bss section
     r0::zero_bss(&mut __BSS_START, &mut __BSS_END);
 
@@ -104,11 +101,10 @@ fn shared_setup_and_enter_post() -> ! {
 #[link_section = ".text.boot"]
 #[inline]
 fn setup_and_enter_el1_from_el2() -> ! {
-    shared_setup_and_enter_pre();
-
+    // Set Saved Program Status Register (EL2)
     // Set up a simulated exception return.
     //
-    // First, fake a saved program status, where all interrupts were
+    // Fake a saved program status, where all interrupts were
     // masked and SP_EL1 was used as a stack pointer.
     SPSR_EL2.write(
         SPSR_EL2::D::Masked
@@ -118,7 +114,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
             + SPSR_EL2::M::EL1h, // Use SP_EL1
     );
 
-    // Second, let the link register point to reset().
+    // Make the Exception Link Register (EL2) point to reset().
     ELR_EL2.set(reset as *const () as u64);
 
     shared_setup_and_enter_post()
@@ -138,15 +134,13 @@ fn setup_and_enter_el1_from_el2() -> ! {
 #[link_section = ".text.boot"]
 #[inline]
 fn setup_and_enter_el1_from_el3() -> ! {
-    shared_setup_and_enter_pre();
-
     // Set Secure Configuration Register (EL3)
     SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
 
     // Set Saved Program Status Register (EL3)
     // Set up a simulated exception return.
     //
-    // First, fake a saved program status, where all interrupts were
+    // Fake a saved program status, where all interrupts were
     // masked and SP_EL1 was used as a stack pointer.
     SPSR_EL3.write(
         SPSR_EL3::D::Masked
@@ -184,7 +178,10 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
     const EL2: u64 = CurrentEL::EL::EL2.value;
     const EL1: u64 = CurrentEL::EL::EL1.value;
 
+    // Set stack pointer. Used in case we started in EL1.
     SP.set(STACK_START);
+
+    shared_setup_and_enter_pre();
 
     if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
         match CurrentEL.get() {
