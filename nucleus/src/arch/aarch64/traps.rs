@@ -349,8 +349,8 @@ fn synchronous_common(e: &mut ExceptionContext) {
     } else {
         println!("      FAR_EL1: {:#016x} (location)", FAR_EL1.get());
         println!("        Stack: {:#016x}", e.spsr_el1);
-        println!("      ELR_EL1: {:#010x}", e.elr_el1);
     }
+    println!("      ELR_EL1: {:#010x}", e.elr_el1);
 
     println!("      x00: 0000000000000000    x01: {:016x}", e.gpr.x[0]);
 
