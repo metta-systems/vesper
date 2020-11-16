@@ -41,9 +41,13 @@ mod sync;
 mod tests;
 mod write_to;
 
-use crate::platform::rpi3::{
-    display::{Color, DrawError},
-    vc::VC,
+use {
+    crate::platform::rpi3::{
+        display::{Color, DrawError},
+        mailbox::{channel, Mailbox, MailboxOps},
+        vc::VC,
+    },
+    cfg_if::cfg_if,
 };
 
 entry!(kmain);
@@ -78,7 +82,7 @@ fn init_mmu() {
     unsafe {
         memory::mmu::init().unwrap();
     }
-    println!("MMU initialised");
+    println!("[!] MMU initialised");
     print_mmu_state_and_features();
 }
 
@@ -93,14 +97,13 @@ fn init_exception_traps() {
         arch::traps::set_vbar_el1_checked(exception_vectors_start)
             .expect("Vector table properly aligned!");
     }
-    println!("Exception traps set up");
+    println!("[!] Exception traps set up");
 }
 
 #[cfg(not(feature = "noserial"))]
 fn init_uart_serial() {
-    use crate::platform::rpi3::{
-        gpio::GPIO, mailbox::Mailbox, mini_uart::MiniUart, pl011_uart::PL011Uart,
-    };
+    use crate::platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, pl011_uart::PL011Uart};
+
     let gpio = GPIO::default();
     let uart = MiniUart::default();
     let uart = uart.prepare(&gpio);
@@ -158,10 +161,74 @@ pub fn kmain() -> ! {
     #[cfg(test)]
     test_main();
 
-    check_display_init();
+    command_prompt();
 
-    println!("Bye, hanging forever...");
-    endless_sleep()
+    reboot()
+}
+
+//------------------------------------------------------------
+// Start a command prompt
+//------------------------------------------------------------
+fn command_prompt() {
+    'cmd_loop: loop {
+        let mut buf = [0u8; 64];
+
+        match CONSOLE.lock(|c| c.command_prompt(&mut buf)) {
+            b"mmu" => init_mmu(),
+            b"feats" => print_mmu_state_and_features(),
+            #[cfg(not(feature = "noserial"))]
+            b"uart" => init_uart_serial(),
+            b"disp" => check_display_init(),
+            b"trap" => check_data_abort_trap(),
+            b"map" => arch::memory::print_layout(),
+            b"led on" => set_led(true),
+            b"led off" => set_led(false),
+            b"help" => print_help(),
+            b"end" => break 'cmd_loop,
+            x => println!("[!] Unknown command {:?}, try 'help'", x),
+        }
+    }
+}
+
+fn print_help() {
+    println!("Supported console commands:");
+    println!("  mmu  - initialize MMU");
+    println!("  feats - print MMU state and supported features");
+    #[cfg(not(feature = "noserial"))]
+    println!("  uart - try to reinitialize UART serial");
+    println!("  disp - try to init VC framebuffer and draw some text");
+    println!("  trap - trigger and recover from a data abort exception");
+    println!("  map  - show kernel memory layout");
+    println!("  led [on|off]  - change RPi LED status");
+    println!("  end  - leave console and reset board");
+}
+
+fn set_led(enable: bool) {
+    let mut mbox = Mailbox::default();
+    let index = mbox.request();
+    let index = mbox.set_led_on(index, enable);
+    let mbox = mbox.end(index);
+
+    mbox.call(channel::PropertyTagsArmToVc)
+        .map_err(|e| {
+            println!("Mailbox call returned error {}", e);
+            println!("Mailbox contents: {:?}", mbox);
+        })
+        .ok();
+}
+
+fn reboot() -> ! {
+    cfg_if! {
+        if #[cfg(feature = "qemu")] {
+            println!("Bye, shutting down QEMU");
+            qemu::semihosting::exit_success()
+        } else {
+            use crate::platform::rpi3::power::Power;
+
+            println!("Bye, going to reset now");
+            Power::new().reset()
+        }
+    }
 }
 
 fn check_display_init() {
@@ -198,20 +265,24 @@ fn display_graphics() -> Result<(), DrawError> {
     Ok(())
 }
 
+fn check_data_abort_trap() {
+    // Cause an exception by accessing a virtual address for which no
+    // address translations have been set up.
+    //
+    // This line of code accesses the address 3 GiB, but page tables are
+    // only set up for the range [0..1) GiB.
+    let big_addr: u64 = 3 * 1024 * 1024 * 1024;
+    unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
+
+    println!("[i] Whoa! We recovered from an exception.");
+}
+
 #[cfg(test)]
 mod main_tests {
     use super::*;
 
     #[test_case]
-    fn check_data_abort_trap() {
-        // Cause an exception by accessing a virtual address for which no
-        // address translations have been set up.
-        //
-        // This line of code accesses the address 3 GiB, but page tables are
-        // only set up for the range [0..1) GiB.
-        let big_addr: u64 = 3 * 1024 * 1024 * 1024;
-        unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
-
-        println!("[i] Whoa! We recovered from an exception.");
+    fn test_data_abort_trap() {
+        check_data_abort_trap()
     }
 }

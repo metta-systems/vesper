@@ -3,7 +3,6 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 pub mod semihosting {
-    #[cfg(test)]
     pub fn exit_success() -> ! {
         use qemu_exit::QEMUExit;
 
