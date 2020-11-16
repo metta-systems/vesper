@@ -74,7 +74,9 @@ fn shared_setup_and_enter_pre() {
         SCTLR_EL1::I::NonCacheable
             + SCTLR_EL1::C::NonCacheable
             + SCTLR_EL1::M::Disable
-            + SCTLR_EL1::A::Disable,
+            + SCTLR_EL1::A::Disable
+            + SCTLR_EL1::SA::Disable
+            + SCTLR_EL1::SA0::Disable,
     );
 
     // Set Hypervisor Configuration Register (EL2)
