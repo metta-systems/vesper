@@ -336,9 +336,22 @@ impl core::fmt::Debug for Mailbox {
     }
 }
 
+impl core::fmt::Debug for PreparedMailbox {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl Default for Mailbox {
     fn default() -> Self {
         Self::new(MAILBOX_BASE).expect("Couldn't allocate a default mailbox")
+    }
+}
+
+// @todo Probably need a ResultMailbox for accessing data after call()?
+impl PreparedMailbox {
+    pub fn value_at(&self, index: usize) -> u32 {
+        unsafe { self.0.buffer.as_ref()[index] }
     }
 }
 
@@ -462,6 +475,54 @@ impl Mailbox {
         buf[index + 4] = rate;
         buf[index + 5] = 0; // skip turbo setting
         index + 6
+    }
+
+    /// NB: Do not intermix Get/Set and Test tags in one request!
+    /// See https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
+    /// * It is not valid to mix Test tags with Get/Set tags in the same operation
+    ///   and no tags will be returned.
+    #[inline]
+    pub fn set_pixel_order(&mut self, index: usize, order: u32) -> usize {
+        let buf = unsafe { self.buffer.as_mut() };
+        buf[index] = tag::SetPixelOrder;
+        buf[index + 1] = 4; // Buffer size   // val buf size
+        buf[index + 2] = 4; // Response size  // val size
+        buf[index + 3] = order;
+        index + 4
+    }
+
+    /// NB: Do not intermix Get/Set and Test tags in one request!
+    /// See https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
+    /// * It is not valid to mix Test tags with Get/Set tags in the same operation
+    ///   and no tags will be returned.
+    #[inline]
+    pub fn test_pixel_order(&mut self, index: usize, order: u32) -> usize {
+        let buf = unsafe { self.buffer.as_mut() };
+        buf[index] = tag::TestPixelOrder;
+        buf[index + 1] = 4; // Buffer size   // val buf size
+        buf[index + 2] = 4; // Response size  // val size
+        buf[index + 3] = order;
+        index + 4
+    }
+
+    #[inline]
+    pub fn set_alpha_mode(&mut self, index: usize, mode: u32) -> usize {
+        let buf = unsafe { self.buffer.as_mut() };
+        buf[index] = tag::SetAlphaMode;
+        buf[index + 1] = 4; // Buffer size   // val buf size
+        buf[index + 2] = 4; // Response size  // val size
+        buf[index + 3] = mode;
+        index + 4
+    }
+
+    #[inline]
+    pub fn get_pitch(&mut self, index: usize) -> usize {
+        let buf = unsafe { self.buffer.as_mut() };
+        buf[index] = tag::GetPitch;
+        buf[index + 1] = 4; // Buffer size   // val buf size
+        buf[index + 2] = 4; // Response size  // val size
+        buf[index + 3] = 0; // Result placeholder
+        index + 4
     }
 
     #[inline]
