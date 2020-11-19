@@ -41,8 +41,8 @@ macro_rules! entry {
 /// Totally unsafe! We're in the hardware land.
 #[link_section = ".text.boot"]
 unsafe fn reset() -> ! {
-    // Boundaries of the .bss section, provided by the linker script
     extern "C" {
+        // Boundaries of the .bss section, provided by the linker script
         static mut __BSS_START: u64;
         static mut __BSS_END: u64;
     }
