@@ -107,6 +107,7 @@ static CHAR_ARRAY: [u64; 95] = [
 ];
 
 impl Display {
+    #[allow(clippy::too_many_arguments)] // Sorry, Clips, this api stays for now, ugly as it is.
     pub fn new(
         base: u32,
         size: u32,
