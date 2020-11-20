@@ -53,6 +53,9 @@ use {
     cfg_if::cfg_if,
 };
 
+#[cfg(feature = "jlink")]
+use devices::jlink_rtt::Output;
+
 entry!(kmain);
 
 /// The global console. Output of the kernel print! and println! macros goes here.
@@ -148,6 +151,15 @@ fn init_uart_serial() {
     }
 }
 
+#[cfg(feature = "jlink")]
+fn init_jlink_rtt() {
+    CONSOLE.lock(|c| {
+        c.replace_with(devices::jlink_rtt::Output::new().into());
+    });
+
+    println!("\n[0] JLink RTT is live!");
+}
+
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
 #[inline]
@@ -160,6 +172,9 @@ pub fn kmain() -> ! {
 
     #[cfg(not(feature = "noserial"))]
     init_uart_serial();
+
+    #[cfg(feature = "jlink")]
+    init_jlink_rtt();
 
     #[cfg(test)]
     test_main();
