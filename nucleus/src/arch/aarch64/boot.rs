@@ -57,6 +57,24 @@ unsafe fn reset() -> ! {
     main()
 }
 
+// [ARMv6 unaligned data access restrictions](https://developer.arm.com/documentation/ddi0333/h/unaligned-and-mixed-endian-data-access-support/unaligned-access-support/armv6-unaligned-data-access-restrictions?lang=en)
+// dictates that compatibility bit U in CP15 must be set to 1 to allow Unaligned accesses while MMU is off.
+// (In addition to SCTLR_EL1.A being 0)
+// See also [CP15 C1 docs](https://developer.arm.com/documentation/ddi0290/g/system-control-coprocessor/system-control-processor-registers/c1--control-register).
+// #[link_section = ".text.boot"]
+// #[inline]
+// fn enable_armv6_unaligned_access() {
+//     unsafe {
+//         asm!(
+//             "mrc p15, 0, {u}, c1, c0, 0",
+//             "or {u}, {u}, {CR_U}",
+//             "mcr p15, 0, {u}, c1, c0, 0",
+//             u = out(reg) _,
+//             CR_U = const 1 << 22
+//         );
+//     }
+// }
+
 #[link_section = ".text.boot"]
 #[inline]
 fn shared_setup_and_enter_pre() {
@@ -78,6 +96,8 @@ fn shared_setup_and_enter_pre() {
             + SCTLR_EL1::SA::Disable
             + SCTLR_EL1::SA0::Disable,
     );
+
+    // enable_armv6_unaligned_access();
 
     // Set Hypervisor Configuration Register (EL2)
     // Set EL1 execution state to AArch64

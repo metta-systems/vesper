@@ -75,7 +75,6 @@ fn print_mmu_state_and_features() {
 }
 
 fn init_mmu() {
-    print_mmu_state_and_features();
     unsafe {
         memory::mmu::init().unwrap();
     }
@@ -150,11 +149,11 @@ pub fn kmain() -> ! {
     #[cfg(feature = "jtag")]
     jtag::wait_debugger();
 
+    init_mmu();
+    init_exception_traps();
+
     #[cfg(not(feature = "noserial"))]
     init_uart_serial();
-
-    init_exception_traps();
-    init_mmu();
 
     #[cfg(test)]
     test_main();
