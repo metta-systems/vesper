@@ -80,7 +80,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb7b2b83a50d329d5d8ccc620f5c7064028828538bdf5646acd60dc1f767803"
 dependencies = [
  "argh_shared",
- "proc-macro2",
+ "proc-macro2 1.0.101",
  "quote",
  "syn",
 ]
@@ -302,7 +302,7 @@ version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
 dependencies = [
- "proc-macro2",
+ "proc-macro2 1.0.101",
  "quote",
  "syn",
 ]
@@ -424,6 +424,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "mashup"
+version = "0.1.14+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14c5b2f6069db0537825d5808a446588b47a888e5d7fa27feb1b6d88f3e5fdc0"
+dependencies = [
+ "mashup-impl",
+ "proc-macro-hack",
+]
+
+[[package]]
+name = "mashup-impl"
+version = "0.1.14+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "339cd4b195ddea8355cf77bef3d8ee9604d2687463e50c331d1d525e42fcb730"
+dependencies = [
+ "proc-macro-hack",
+ "proc-macro2 0.4.30",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -506,6 +526,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cfg-if",
  "machine",
+ "mashup",
  "snafu",
  "tock-registers",
  "usize_conversions",
@@ -563,6 +584,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
+name = "proc-macro-hack"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7f95648580798cc44ff8efb9bb0d7ee5205ea32e087b31b0732f3e8c2648ee2"
+dependencies = [
+ "proc-macro-hack-impl",
+]
+
+[[package]]
+name = "proc-macro-hack-impl"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7be55bf0ae1635f4d7c7ddd6efc05c631e98a82104a73d35550bbc52db960027"
+
+[[package]]
+name = "proc-macro2"
+version = "0.4.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf3d2011ab5c909338f7887f4fc896d35932e29146c12c8d01da6b22a80ba759"
+dependencies = [
+ "unicode-xid",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -583,7 +628,7 @@ version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
- "proc-macro2",
+ "proc-macro2 1.0.101",
 ]
 
 [[package]]
@@ -686,7 +731,7 @@ version = "1.0.222"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5f61630fe26d0ff555e6c37dc445ab2f15871c8a11ace3cf471b3195d3e4f49"
 dependencies = [
- "proc-macro2",
+ "proc-macro2 1.0.101",
  "quote",
  "syn",
 ]
@@ -770,7 +815,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
  "heck",
- "proc-macro2",
+ "proc-macro2 1.0.101",
  "quote",
  "syn",
 ]
@@ -791,7 +836,7 @@ version = "2.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ede7c438028d4436d71104916910f5bb611972c5cfd7f89b8300a8186e6fada6"
 dependencies = [
- "proc-macro2",
+ "proc-macro2 1.0.101",
  "quote",
  "unicode-ident",
 ]
@@ -828,7 +873,7 @@ version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e06d43f1345a3bcd39f6a56dbb7dcab2ba47e68e8ac134855e7e2bdbaf8cab8"
 dependencies = [
- "proc-macro2",
+ "proc-macro2 1.0.101",
  "quote",
  "syn",
 ]
@@ -876,6 +921,12 @@ name = "unicode-ident"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f63a545481291138910575129486daeaf8ac54aee4387fe7906919f7830c7d9d"
+
+[[package]]
+name = "unicode-xid"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc72304796d0818e357ead4e000d19c9c174ab23dc11093ac919054d20a6a7fc"
 
 [[package]]
 name = "usize_conversions"
