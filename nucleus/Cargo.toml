@@ -33,6 +33,7 @@ aarch64-cpu.workspace = true
 bit_field.workspace = true
 bitflags.workspace = true
 cfg-if.workspace = true
+mashup = "0.1.9"                   # @todo replace with paste 1.0
 snafu.workspace = true
 tock-registers.workspace = true
 usize_conversions.workspace = true
