@@ -5,7 +5,10 @@
 
 //! Implementation of aarch64 kernel functions.
 
+pub mod caps;
 pub mod cpu;
 pub mod exception;
 pub mod memory;
 pub mod time;
+
+pub use caps::*;
