@@ -34,4 +34,33 @@ pub mod semihosting {
             );
         }
     }
+
+    #[allow(non_upper_case_globals)]
+    const ADP_Stopped_BreakPoint: u64 = 0x20020;
+
+    #[repr(C)]
+    struct qemu_parameter_block {
+        arg0: u64,
+        arg1: u64,
+    }
+
+    fn sys_exit_call(block: &qemu_parameter_block) {
+        let cmd = 0x18;
+        unsafe {
+            asm!(
+                "hlt #0xF000"
+                 , in("w0") cmd
+                 , in("x1") block as *const _ as u64
+            );
+        }
+    }
+
+    fn sys_breakpoint_call() {
+        let block = qemu_parameter_block {
+            arg0: ADP_Stopped_BreakPoint,
+            arg1: 0,
+        };
+
+        sys_exit_call(&block)
+    }
 }
