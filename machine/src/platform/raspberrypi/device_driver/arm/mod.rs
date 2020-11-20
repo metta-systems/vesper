@@ -5,5 +5,6 @@
 //! ARM driver top level.
 
 pub mod gicv2;
+pub mod gicv3;
 
 pub use gicv2::*;
