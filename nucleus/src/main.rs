@@ -32,6 +32,7 @@ use architecture_not_supported_sorry;
 #[macro_use]
 pub mod arch;
 pub use arch::*;
+mod boot_info;
 mod devices;
 mod macros;
 mod mm;
