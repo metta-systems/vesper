@@ -14,6 +14,9 @@
 #![feature(format_args_nl)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
+#![feature(default_free_fn)]
+#![feature(const_fn_trait_bound)]
+#![feature(nonnull_slice_from_raw_parts)]
 #![deny(missing_docs)]
 #![deny(warnings)]
 #![allow(unused)]
@@ -24,7 +27,7 @@
 
 use core::panic::PanicInfo;
 #[allow(unused_imports)]
-use libconsole::{SerialOps, console::console};
+use libconsole::{console::console, SerialOps};
 use {
     cfg_if::cfg_if,
     core::{cell::UnsafeCell, time::Duration},
@@ -108,6 +111,8 @@ pub fn kernel_main() -> ! {
     // info!("MMU online. Special regions:");
     // machine::platform::memory::mmu::virt_mem_layout().print_layout();
 
+    dump_memory_map();
+
     let (_, privilege_level) = libexception::exception::current_privilege_level();
     info!("Current privilege level: {privilege_level}");
 
@@ -144,8 +149,13 @@ fn panicked(info: &PanicInfo) -> ! {
 }
 
 fn print_mmu_state_and_features() {
-    // use machine::memory::mmu::interface::MMU;
-    // memory::mmu::mmu().print_features();
+    memory::features::print_features();
+}
+
+fn dump_memory_map() {
+    // Output the memory map as we could derive from FDT and information about our loaded image
+    // Use it to imagine how the memmap would look like in the end.
+    arch::memory::print_layout();
 }
 
 //------------------------------------------------------------

@@ -47,6 +47,7 @@ libplatform = { workspace = true }
 libqemu = { workspace = true, optional = true }
 libtime = { workspace = true }
 snafu = { workspace = true }
+static_assertions = { workspace = true }
 tock-registers = { workspace = true }
 usize_conversions = { workspace = true }
 ux = { workspace = true }

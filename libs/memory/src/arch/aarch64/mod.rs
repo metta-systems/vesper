@@ -6,10 +6,30 @@
 //! Memory management functions for aarch64.
 
 mod addr;
+pub mod features; // @todo make only pub re-export?
 pub mod mmu;
+mod page_size;
+mod phys_frame;
+mod virt_page;
 
-// pub use addr::{PhysAddr, VirtAddr};
+// mod area_frame_allocator;
+// pub use self::area_frame_allocator::AreaFrameAllocator;
+// mod boot_allocator; // Hands out physical memory obtained from devtree
+// use self::paging::PAGE_SIZE;
 
+// pub use crate::memory::{PhysAddr, VirtAddr};
+pub use {page_size::PageSize, phys_frame::PhysFrame};
+
+/// @todo ??
+pub trait FrameAllocator {
+    /// Allocate a physical memory frame.
+    fn allocate_frame(&mut self) -> Option<PhysFrame>; // @todo Result<>
+    /// Deallocate a physical frame.
+    fn deallocate_frame(&mut self, frame: PhysFrame);
+}
+
+// Identity-map things for now.
+//
 // aarch64 granules and page sizes howto:
 // https://stackoverflow.com/questions/34269185/simultaneous-existence-of-different-sized-pages-on-aarch64
 

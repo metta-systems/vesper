@@ -2,11 +2,11 @@
 
 use {
     crate::{
-        Physical, Virtual,
         mmu::{
             self as generic_mmu, AccessPermissions, AddressSpace, AssociatedTranslationTable,
             AttributeFields, MemAttributes, MemoryRegion, PageAddress, TranslationGranule,
         },
+        Physical, Virtual,
     },
     liblocking::InitStateLock,
 };
@@ -108,6 +108,8 @@ fn kernel_virt_to_phys_region(virt_region: MemoryRegion<Virtual>) -> MemoryRegio
 // Subsumed by the kernel_map_binary() function
 //--------------------------------------------------------------------------------------------------
 
+// These are part of a static linked image and used for proper kernel-space initialization.
+// i.e. these data are subtracted from the dtb-provided memory map.
 // pub static LAYOUT: KernelVirtualLayout<NUM_MEM_RANGES> = KernelVirtualLayout::new(
 //     memory_map::END_INCLUSIVE,
 //     [
@@ -123,6 +125,7 @@ fn kernel_virt_to_phys_region(virt_region: MemoryRegion<Virtual>) -> MemoryRegio
 //                 execute_never: true,
 //             },
 //         },
+// @todo these should come from DTB and mem-map?
 //         TranslationDescriptor {
 //             name: "Device MMIO",
 //             virtual_range: mmio_range_inclusive,
@@ -133,6 +136,7 @@ fn kernel_virt_to_phys_region(virt_region: MemoryRegion<Virtual>) -> MemoryRegio
 //                 execute_never: true,
 //             },
 //         },
+// @todo these should come from DTB and mem-map?
 //         TranslationDescriptor {
 //             name: "DMA heap pool",
 //             virtual_range: dma_range_inclusive,
