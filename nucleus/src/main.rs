@@ -19,6 +19,7 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+#![recursion_limit = "4096"] // for mashup! macro
 #![deny(missing_docs)]
 #![deny(warnings)]
 
@@ -161,6 +162,11 @@ pub fn kmain() -> ! {
     #[cfg(test)]
     test_main();
 
+    /*
+    try_init_kernel().expect("Failed to init kernel");*/
+    //    schedule();
+    //    activate_thread();
+
     command_prompt();
 
     reboot()
@@ -229,6 +235,70 @@ fn reboot() -> ! {
             Power::new().reset()
         }
     }
+}
+
+#[derive(Debug)]
+enum KernelInitError {
+    CapabilityCreationFailed,
+}
+
+#[link_section = ".text.boot"]
+fn try_init_kernel() -> Result<(), KernelInitError> {
+    let root_capnode_cap = create_root_capnode();
+    if root_capnode_cap.is_err() {
+        return Err(KernelInitError::CapabilityCreationFailed);
+    }
+    Ok(())
+}
+
+const CONFIG_ROOT_CAPNODE_SIZE_BITS: usize = 12;
+const WORD_BITS: usize = 64;
+
+enum BootInfoCaps {
+    InitThreadCapNode = 1,
+}
+
+impl From<BootInfoCaps> for usize {
+    fn from(val: BootInfoCaps) -> usize {
+        val as usize
+    }
+}
+
+#[link_section = ".text.boot"]
+fn create_root_capnode() -> Result<CapNodeCapability, caps::CapError> {
+    // write the number of root CNode slots to global state
+    BOOT_INFO.lock(|bi| bi.max_slot_pos = 1 << CONFIG_ROOT_CAPNODE_SIZE_BITS); // 12 bits => 4096 slots
+
+    // seL4_SlotBits = 32 bytes per entry, 4096 entries =>
+    // create an empty root CapNode
+    // this goes into the kernel startup/heap memory (one of the few items that kernel DOES allocate).
+    let region_size = core::mem::size_of::<CapTableEntry>() * BOOT_INFO.lock(|bi| bi.max_slot_pos); // 12 + 5 => 131072 (128Kb)
+    let pptr = BOOT_INFO.lock(|bi| bi.alloc_region(region_size)); // GlobalAllocator::alloc_zeroed instead?
+    let pptr = match pptr {
+        Ok(pptr) => pptr,
+        Err(_) => {
+            println!("Kernel init failed: could not create root capnode");
+            return Err(caps::CapError::CannotCreate);
+        }
+    };
+    // @todo lifetime of slice -- slice here only to zero out memory
+    let slice =
+        unsafe { core::slice::from_raw_parts_mut(pptr.as_u64() as *mut u8, region_size as usize) };
+    for byte in slice.iter_mut() {
+        *byte = 0;
+    } // @todo wtf
+
+    // transmute into a type? (you can use ptr.write() to just write a type into memory location)
+
+    let cap = CapNodeCapability::new_root(pptr.as_u64());
+    use core::convert::TryFrom;
+    let mut cap_node = CapNodeCapability::try_from(cap.as_u128()).unwrap();
+
+    // this cnode contains a cap to itself...
+    /* write the root CNode cap into the root CNode */
+    cap_node.write_slot(usize::from(BootInfoCaps::InitThreadCapNode), &cap);
+
+    Ok(cap_node) // reference to pptr is here
 }
 
 fn check_display_init() {

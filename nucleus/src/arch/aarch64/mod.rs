@@ -8,6 +8,8 @@
 use cortex_a::asm;
 
 mod boot;
+pub mod caps;
+pub use self::caps::*;
 #[cfg(feature = "jtag")]
 pub mod jtag;
 pub mod memory;

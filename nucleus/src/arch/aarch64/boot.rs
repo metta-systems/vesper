@@ -13,6 +13,8 @@ use {
     cortex_a::{asm, regs::*},
 };
 
+//use crate::arch::caps::{CapNode, Capability};
+
 // Stack placed before first executable instruction
 const STACK_START: u64 = 0x0008_0000; // Keep in sync with linker script
 
@@ -218,3 +220,176 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
     // if not core0 or not EL3/EL2/EL1, infinitely wait for events
     endless_sleep()
 }
+
+/*
+// caps and mem regions init
+
+enum KernelInitError {}
+
+fn map_kernel_window() {}
+
+fn init_cpu() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn init_plat() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn arch_init_freemem() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn create_domain_cap() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn init_irqs() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn create_bootinfo_cap() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn create_asid_pool_for_initial_thread() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn create_idle_thread() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn clean_invalidate_l1_caches() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn create_initial_thread() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn init_core_state(_: Result<(), KernelInitError>) -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn create_untypeds() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn finalise_bootinfo() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn invalidate_local_tlb() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn lock_kernel_node() -> Result<(), KernelInitError> {
+    unimplemented!();
+}
+
+fn schedule() {
+    unimplemented!();
+}
+
+fn activate_thread() {
+    unimplemented!();
+}
+
+#[link_section = ".text.boot"]
+// #[used]
+fn try_init_kernel() -> Result<(), KernelInitError> {
+    map_kernel_window();
+    init_cpu()?;
+    init_plat()?;
+    arch_init_freemem()?;
+
+    let root_capnode_cap = create_root_capnode();
+    create_domain_cap(root_capnode_cap);
+    init_irqs(root_capnode_cap);
+
+    //fill in boot info and
+    create_bootinfo_cap();
+
+    let it_asid_pool_cap = create_asid_pool_for_initial_thread(root_capnode_cap);
+    create_idle_thread();
+
+    /* Before creating the initial thread (which also switches to it)
+     * we clean the cache so that any page table information written
+     * as a result of calling create_frames_of_region will be correctly
+     * read by the hardware page table walker */
+    clean_invalidate_l1_caches();
+
+    let it = create_initial_thread(root_capnode_cap);
+
+    init_core_state(it);
+
+    create_untypeds(root_capnode_cap);
+
+    finalise_bootinfo();
+
+    clean_invalidate_l1_caches();
+    invalidate_local_tlb();
+
+    // grab kernel lock before returning
+    lock_kernel_node();
+
+    Ok(())
+}
+
+fn try_init_kernel_secondary_core() -> Result<(), KernelInitError>
+{
+    init_cpu();
+
+    /* Enable per-CPU timer interrupts */
+    maskInterrupt(false, KERNEL_TIMER_IRQ);
+
+    lock_kernel_node;
+
+    ksNumCPUs++; // increase global cpu counter - this should be done differently?
+
+    init_core_state(SchedulerAction_ResumeCurrentThread);
+
+    Ok(())
+}
+
+fn init_kernel() {
+    try_init_kernel()?;
+    // or for AP:
+    //    try_init_kernel_secondary_core();
+    schedule();
+    activate_thread();
+}
+
+const CONFIG_ROOT_CAPNODE_SIZE_BITS: usize = 12;
+const wordBits: usize = 64;
+
+fn create_root_capnode() -> Capability // Attr(BOOT_CODE)
+{
+    // write the number of root CNode slots to global state
+    boot_info.max_slot_pos = 1 << CONFIG_ROOT_CAPNODE_SIZE_BITS; // 12 bits => 4096 slots
+
+    // seL4_SlotBits = 32 bytes per entry, 4096 entries =>
+    // create an empty root CapNode
+    // this goes into the kernel startup/heap memory (one of the few items that kernel DOES allocate).
+    let region_size = core::mem::size_of::<Capability> * boot_info.max_slot_pos; // 12 + 5 => 131072 (128Kb)
+    let pptr = alloc_region(region_size); // GlobalAllocator::alloc_zeroed instead?
+    if pptr.is_none() {
+        println!("Kernel init failing: could not create root capnode");
+        return Capability(NullCap::Type::value);
+    }
+    let Some(pptr) = pptr;
+    memzero(pptr, region_size); // CTE_PTR(pptr) ?
+
+    // transmute into a type? (you can use ptr.write() to just write a type into memory location)
+
+    let cap = CapNode::new_root(pptr);
+
+    // this cnode contains a cap to itself...
+    /* write the root CNode cap into the root CNode */
+    // @todo rootCapNode.write_slot(CapInitThreadCNode, cap); -- where cap and rootCapNode are synonyms!
+    write_slot(SLOT_PTR(pptr, seL4_CapInitThreadCNode), cap);
+
+    cap // reference to pptr is here
+}
+*/
