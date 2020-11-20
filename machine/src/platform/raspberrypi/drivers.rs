@@ -188,6 +188,16 @@ unsafe fn driver_uart() -> Result<(), &'static str> {
     Ok(())
 }
 
+// TODO: driver jlink console (instead of uart perhaps)
+#[cfg(feature = "jlink")]
+fn init_jlink_rtt() {
+    CONSOLE.lock(|c| {
+        c.replace_with(devices::jlink_rtt::Output::new().into());
+    });
+
+    println!("\n[0] JLink RTT is live!");
+}
+
 /// Function needs to ensure that driver registration happens only after correct instantiation.
 unsafe fn driver_gpio() -> Result<(), &'static str> {
     unsafe { instantiate_gpio()? };

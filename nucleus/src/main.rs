@@ -27,6 +27,8 @@
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
+#[cfg(feature = "jlink")]
+use devices::jlink_rtt::Output;
 #[allow(unused_imports)]
 use machine::devices::serial::SerialOps;
 use {
@@ -35,9 +37,10 @@ use {
     machine::{arch, console::console, entry, exception, info, memory, println, time, warn},
 };
 
+/// Kernel early init code.
 entry!(kernel_init);
 
-/// Kernel early init code.
+/// Kernel entry point.
 /// `arch` crate is responsible for calling it.
 ///
 /// # Safety
@@ -77,6 +80,12 @@ pub unsafe fn kernel_init() -> ! {
     // Announce conclusion of the kernel_init() phase.
     machine::state::state_manager().transition_to_single_core_main();
 
+    // #[cfg(not(feature = "noserial"))]
+    // init_uart_serial();
+
+    // #[cfg(feature = "jlink")]
+    // init_jlink_rtt();
+
     // Transition from unsafe to safe.
     kernel_main()
 }
@@ -114,6 +123,9 @@ pub fn kernel_main() -> ! {
 
     info!("Registered IRQ handlers:");
     exception::asynchronous::irq_manager().print_handler();
+
+    // #[cfg(test)]
+    // test_main();
 
     // Test a failing timer case.
     time::time_manager().spin_for(Duration::from_nanos(1));
