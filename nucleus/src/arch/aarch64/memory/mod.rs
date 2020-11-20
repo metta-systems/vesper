@@ -13,8 +13,30 @@ use {
 mod addr;
 pub mod mmu;
 
+pub mod mmu_experimental;
+pub use mmu_experimental::*;
+
+// mod area_frame_allocator;
+// pub use self::area_frame_allocator::AreaFrameAllocator;
+// mod boot_allocator; // Hands out physical memory obtained from devtree
+// use self::paging::PAGE_SIZE;
+
 pub use addr::PhysAddr;
 pub use addr::VirtAddr;
+
+use mmu_experimental::PhysFrame;
+
+// @todo ??
+pub trait FrameAllocator {
+    fn allocate_frame(&mut self) -> Option<PhysFrame>; // @todo Result<>
+    fn deallocate_frame(&mut self, frame: PhysFrame);
+}
+
+// Identity-map things for now.
+//
+// > but more normal the simplest form is a table with 1024 32 bit entries starting at
+// a 0x4000 aligned address, where each entry describes a 1 Mb memory part.
+// On the rpi3 only the bottom 1024 entries are relevant as it has 1 Gb memory.
 
 // aarch64 granules and page sizes howto:
 // https://stackoverflow.com/questions/34269185/simultaneous-existence-of-different-sized-pages-on-aarch64
