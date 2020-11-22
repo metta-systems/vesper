@@ -17,7 +17,6 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
-#![recursion_limit = "4096"] // for mashup! macro
 #![deny(missing_docs)]
 #![deny(warnings)]
 #![allow(unused)]
