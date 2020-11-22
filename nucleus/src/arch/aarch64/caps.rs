@@ -24,6 +24,7 @@ use {
     core::{convert::TryFrom, fmt},
     paste::paste,
     register::{register_bitfields, LocalRegisterCopy},
+    snafu::Snafu,
 };
 
 //==================
@@ -365,6 +366,7 @@ impl CapNodeCapability {
 #[derive(Clone)]
 pub struct DerivationTreeNode(LocalRegisterCopy<u128, CapDerivationNode::Register>);
 
+#[derive(Debug, Snafu)]
 pub enum DerivationTreeError {
     InvalidPrev,
 }
@@ -437,7 +439,7 @@ impl CapTableEntry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 pub enum CapError {
     CannotCreate,
     InvalidCapabilityType,
