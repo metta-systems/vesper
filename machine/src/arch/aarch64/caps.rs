@@ -423,8 +423,7 @@ pub struct CapTableEntry {
 
 impl fmt::Debug for CapTableEntry {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:x}", self.capability); // @todo
-        Ok(())
+        write!(f, "{:x}", self.capability) // @todo
     }
 }
 
