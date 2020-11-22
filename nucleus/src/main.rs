@@ -21,6 +21,10 @@
 #![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
 #![deny(warnings)]
+#![allow(dead_code)] // While working on features, some code may remain unused
+// repr128 is not yet stable
+#![feature(repr128)]
+#![allow(incomplete_features)]
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
