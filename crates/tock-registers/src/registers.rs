@@ -514,6 +514,11 @@ pub struct Field<T: IntLike, R: RegisterLongName> {
 }
 
 impl<T: IntLike, R: RegisterLongName> Field<T, R> {
+    /// Get the raw bitmask used by this Field.
+    pub fn mask(&self) -> T {
+        (self.mask as T) << self.shift
+    }
+
     #[inline]
     pub fn read(self, val: T) -> T {
         (val & (self.mask << self.shift)) >> self.shift
