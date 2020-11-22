@@ -20,9 +20,11 @@
 // pptr_of_cap(); -- extracts cap.pptr from cnode_cap
 // deriveCap();
 
-use core::{convert::TryFrom, fmt};
-use mashup::*;
-use register::LocalRegisterCopy;
+use {
+    core::{convert::TryFrom, fmt},
+    paste::paste,
+    register::{register_bitfields, LocalRegisterCopy},
+};
 
 //==================
 // Caps definitions
@@ -251,40 +253,33 @@ pub trait Capability {
 
 macro_rules! capdefs {
     ($($name:ident),*) => {
-        mashup! {
+        paste! {
             $(
-            m[$name "Capability"] = $name Capability;
-            m[$name "Cap"] = $name Cap;
-            )*
-        }
-
-        m! {
-            $(
-            pub struct $name "Capability"(LocalRegisterCopy<u128, $name "Cap"::Register>);
-            impl Capability for $name "Capability" {
+            pub struct [<$name Capability>](LocalRegisterCopy<u128, [<$name Cap>]::Register>);
+            impl Capability for [<$name Capability>] {
                 #[inline]
                 fn as_u128(&self) -> u128 {
                     self.0.into()
                 }
                 #[inline]
                 fn is_arch(&self) -> bool {
-                    ($name "Cap"::Type::Value::value as u8) % 2 != 0
+                    ([<$name Cap>]::Type::Value::value as u8) % 2 != 0
                 }
             }
-            impl TryFrom<u128> for $name "Capability" {
+            impl TryFrom<u128> for [<$name Capability>] {
                 type Error = CapError;
-                fn try_from(v: u128) -> Result<$name "Capability", Self::Error> {
-                    let reg = LocalRegisterCopy::<_, $name "Cap"::Register>::new(v);
-                    if reg.read($name "Cap"::Type) == u128::from($name "Cap"::Type::value) {
-                        Ok($name "Capability"(LocalRegisterCopy::new(v)))
+                fn try_from(v: u128) -> Result<[<$name Capability>], Self::Error> {
+                    let reg = LocalRegisterCopy::<_, [<$name Cap>]::Register>::new(v);
+                    if reg.read([<$name Cap>]::Type) == u128::from([<$name Cap>]::Type::value) {
+                        Ok([<$name Capability>](LocalRegisterCopy::new(v)))
                     } else {
                         Err(Self::Error::InvalidCapabilityType)
                     }
                 }
             }
-            impl From<$name "Capability"> for u128 {
+            impl From<[<$name Capability>]> for u128 {
                 #[inline]
-                fn from(v: $name "Capability") -> u128 {
+                fn from(v: [<$name Capability>]) -> u128 {
                     v.as_u128()
                 }
             }

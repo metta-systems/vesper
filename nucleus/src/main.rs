@@ -19,7 +19,6 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
-#![recursion_limit = "4096"] // for mashup! macro
 #![deny(missing_docs)]
 #![deny(warnings)]
 
