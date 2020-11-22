@@ -24,6 +24,8 @@
 #![allow(linker_messages)]
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
+#![allow(dead_code)] // While working on features, some code may remain unused
+#![allow(incomplete_features)]
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;

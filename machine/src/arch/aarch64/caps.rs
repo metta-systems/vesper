@@ -1,6 +1,9 @@
 /*
  * SPDX-License-Identifier: BlueOak-1.0.0
  */
+
+//! Implementation of seL4-like capabilities.
+
 // DerivationTree nodes record the tree of inheritance for caps:
 // See the picture on derivation from seL4 manual for how this works: each cap contains a ref to
 // DerivationTree node, which records the previous cap and the following cap(s).
@@ -256,6 +259,7 @@ macro_rules! capdefs {
     ($($name:ident),*) => {
         paste! {
             $(
+            #[doc = "Wrapper representing `" $name "Capability`."]
             pub struct [<$name Capability>](LocalRegisterCopy<u128, [<$name Cap>]::Register>);
             impl Capability for [<$name Capability>] {
                 #[inline]
@@ -309,7 +313,7 @@ capdefs! {
 // by having a root capnode cap we can traverse the whole tree.
 
 impl CapNodeCapability {
-    // create new root node
+    /// Create new root node.
     pub fn new_root(pptr: u64) -> CapNodeCapability {
         const CONFIG_ROOT_CAPNODE_SIZE_BITS: u32 = 12;
         const WORD_BITS: u32 = 64;
@@ -331,7 +335,7 @@ impl CapNodeCapability {
     //        CapNodeCapability(reg)
     //    }
 
-    // @internal
+    /// @internal
     pub fn write_slot(&mut self, slot: usize, cap: &dyn Capability) {
         let ptr = self.0.read(CapNodeCap::Ptr);
         let size =
@@ -345,12 +349,18 @@ impl CapNodeCapability {
 }
 
 impl NullCapability {
+    /// Create a Null capability.
+    ///
+    /// Such capabilities are invalid and can not be used for anything.
     pub fn new() -> NullCapability {
         NullCapability(LocalRegisterCopy::new(u128::from(NullCap::Type::value)))
     }
 }
 
 impl CapNodeCapability {
+    /// Create a capability to CapNode.
+    ///
+    /// CapNode capabilities allow to address a capability node tree entry.
     pub fn new(pptr: u64, radix: u32, guard_size: u32, guard: u64) -> CapNodeCapability {
         CapNodeCapability(LocalRegisterCopy::new(u128::from(
             CapNodeCap::Type::value
@@ -362,12 +372,14 @@ impl CapNodeCapability {
     }
 }
 
-// Wrapper for CapDerivationNode
+/// Wrapper for CapDerivationNode
 #[derive(Clone)]
 pub struct DerivationTreeNode(LocalRegisterCopy<u128, CapDerivationNode::Register>);
 
+/// Errors that may happen in capability derivation tree operations.
 #[derive(Debug, Snafu)]
 pub enum DerivationTreeError {
+    /// Previous link is invalid.
     InvalidPrev,
 }
 
@@ -376,12 +388,13 @@ impl DerivationTreeNode {
         Self(LocalRegisterCopy::new(0))
     }
 
-    // SAFETY: it is UB to get prev reference from a null Prev pointer.
+    /// SAFETY: it is UB to get prev reference from a null Prev pointer.
     pub unsafe fn get_prev(&self) -> CapTableEntry {
         let ptr = self.0.read(CapDerivationNode::Prev) as *const CapTableEntry;
         (*ptr).clone()
     }
 
+    /// Get previous link in derivation tree - this is a dervied-from capability.
     pub fn try_get_prev(&self) -> Result<CapTableEntry, DerivationTreeError> {
         if self.0.read(CapDerivationNode::Prev) == 0 {
             Err(DerivationTreeError::InvalidPrev)
@@ -417,6 +430,7 @@ impl DerivationTreeNode {
 //     mdb_node_t cteMDBNode; // two words
 // }; // -- four words: u256, 32 bytes.
 // typedef struct cte cte_t;
+/// Each entry in capability tree contains capability value and its position in the derivation tree.
 #[derive(Clone)]
 pub struct CapTableEntry {
     capability: u128,
@@ -430,7 +444,7 @@ impl fmt::Debug for CapTableEntry {
 }
 
 impl CapTableEntry {
-    // Temporary for testing:
+    /// Temporary for testing:
     fn empty() -> CapTableEntry {
         CapTableEntry {
             capability: 0,
@@ -439,9 +453,12 @@ impl CapTableEntry {
     }
 }
 
+/// Errors in capability operations.
 #[derive(Debug, Snafu)]
 pub enum CapError {
+    /// Unable to create capability, exact reason TBD.
     CannotCreate,
+    /// Capability has a type incompatible with the requested operation.
     InvalidCapabilityType,
 }
 
