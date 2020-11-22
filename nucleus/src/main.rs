@@ -262,7 +262,7 @@ impl From<BootInfoCaps> for usize {
         val as usize
     }
 }
-
+/*
 #[link_section = ".text.boot"]
 fn create_root_capnode() -> Result<CapNodeCapability, caps::CapError> {
     // write the number of root CNode slots to global state
@@ -298,7 +298,7 @@ fn create_root_capnode() -> Result<CapNodeCapability, caps::CapError> {
     cap_node.write_slot(usize::from(BootInfoCaps::InitThreadCapNode), &cap);
 
     Ok(cap_node) // reference to pptr is here
-}
+}*/
 
 fn check_display_init() {
     display_graphics()
