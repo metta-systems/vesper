@@ -241,14 +241,14 @@ enum KernelInitError {
     CapabilityCreationFailed,
 }
 
-#[link_section = ".text.boot"]
-fn try_init_kernel() -> Result<(), KernelInitError> {
-    let root_capnode_cap = create_root_capnode();
-    if root_capnode_cap.is_err() {
-        return Err(KernelInitError::CapabilityCreationFailed);
-    }
-    Ok(())
-}
+// #[link_section = ".text.boot"]
+// fn try_init_kernel() -> Result<(), KernelInitError> {
+//     let root_capnode_cap = create_root_capnode();
+//     if root_capnode_cap.is_err() {
+//         return Err(KernelInitError::CapabilityCreationFailed);
+//     }
+//     Ok(())
+// }
 
 const CONFIG_ROOT_CAPNODE_SIZE_BITS: usize = 12;
 const WORD_BITS: usize = 64;
