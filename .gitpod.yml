@@ -1,6 +1,14 @@
 image:
   file: .gitpod.Dockerfile
 
+tasks:
+  - name: Clippy
+    command: just clippy
+  - name: Testing
+    command: just test
+  - name: Build
+    command: just build
+
 github:
   prebuilds:
     master: true
