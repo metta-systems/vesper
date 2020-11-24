@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "nucleus"
+    "nucleus",
+    "crates/tock-registers"
 ]
 
 [profile.dev]
@@ -18,3 +19,6 @@ lto = true
 [profile.test]
 opt-level = 's'
 debug = true
+
+[patch.crates-io]
+tock-registers = { path = 'crates/tock-registers' }

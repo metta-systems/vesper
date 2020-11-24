@@ -113,8 +113,6 @@ dependencies = [
 [[package]]
 name = "tock-registers"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f521a79accce68c417c9c77ce22108056b626126da1932f7e2e9b5bbffee0cea"
 
 [[package]]
 name = "unicode-xid"
