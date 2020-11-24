@@ -22,3 +22,4 @@ debug = true
 
 [patch.crates-io]
 tock-registers = { path = 'crates/tock-registers' }
+# register = { git = 'https://github.com/metta-systems/register-rs', branch = 'update-deps-1' }
