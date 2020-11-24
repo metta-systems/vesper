@@ -62,9 +62,8 @@ enum MemoryKind {
 
 trait Untyped {
     // Uses T::SIZE_BITS to properly size the resulting object
-    // (`where T: KernelObject`)
     // in some cases size_bits must be passed as argument though...
-    fn retype<T>(target_cap: CapNodeRootedPath, target_cap_offset: usize, num_objects: usize) -> Result<()>; // @todo return an array of caps?
+    fn retype<T: NucleusObject>(target_cap: CapNodeRootedPath, target_cap_offset: usize, num_objects: usize) -> Result<()>; // @todo return an array of caps?
 }
 
 // MMU
@@ -101,8 +100,8 @@ trait VirtSpace {
 //          +--Page<Size4KiB> -- aka Page
 
 
+/// Cache data management.
 trait PageCacheManagement {
-    // Cache data management.
     /// Cleans the data cache out to RAM.
     /// The start and end are relative to the page being serviced.
     fn clean_data(start_offset: usize, end_offset: usize) -> Result<()>;
@@ -125,6 +124,8 @@ trait PageCacheManagement {
 }
 
 // ARM
+// mod aarch64 {
+
 struct Page {}
 
 impl Page {
@@ -221,7 +222,7 @@ trait ASIDControl {
 // 2. should be easy to map SAS style
 // 3. should not allocate any memory dynamically
 //    ^ problem with the above API is FrameAllocator
-//    ^ clients should supply their own memory for frames...
+//    ^ clients should supply their own memory for frames... from FrameCaps
 
 
 // https://github.com/seL4/seL4_libs/tree/master/libsel4allocman
