@@ -87,8 +87,14 @@ jobs:
       if: runner.os == 'Windows'
       shell: pwsh
 
+    - name: Add custom Scoop bucket (Windows)
+      run: |
+        scoop bucket add scoop-for-ci https://github.com/metta-systems/scoop-for-ci
+      if: runner.os == 'Windows'
+      shell: pwsh
+
     - name: Install QEMU (Windows)
-      run: scoop install qemu
+      run: scoop install qemu-510
       if: runner.os == 'Windows'
       shell: pwsh
 
