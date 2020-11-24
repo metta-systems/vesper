@@ -324,7 +324,7 @@ trait DomainSet {
 // Virtualisation
 // ARM
 trait VCPU {
-    fn inject_i_r_q(virq: u16, priority: u8, group: u8, index: u8) -> Result<()>;
+    fn inject_irq(virq: u16, priority: u8, group: u8, index: u8) -> Result<()>;
     fn read_registers();
     fn write_registers();
     fn set_tcb();
