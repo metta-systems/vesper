@@ -18,7 +18,8 @@
 // Kernel objects
 //================
 
-register_bitfields! {u128,
+register_bitfields! {
+    u128,
     Endpoint [
         QueueHead OFFSET(0) NUMBITS(64) [],
         QueueTail OFFSET(80) NUMBITS(46) [],
@@ -31,7 +32,8 @@ register_bitfields! {u128,
 }
 
 // @todo replace with Event
-register_bitfields! {u256,
+register_bitfields! {
+    u256,
     Notification [
         BoundTCB OFFSET(16) NUMBITS(48) [],
         MsgId OFFSET(64) NUMBITS(64) [],
@@ -49,12 +51,10 @@ register_bitfields! {u256,
 // +--VirtSpace
 // +--CapSpace
 
-
 enum MemoryKind {
     General,
     Device,
 }
-
 
 // The source of all available memory, device or general.
 // Boot code reserves kernel memory and initial mapping allocations (4 pages probably - on rpi3? should be platform-dependent).

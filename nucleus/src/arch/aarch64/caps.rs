@@ -34,7 +34,8 @@ use {
 // Caps definitions
 //==================
 
-register_bitfields! [u128,
+register_bitfields! {
+    u128,
     NullCap [
         Type OFFSET(64) NUMBITS(5) [
             value = 0
@@ -140,12 +141,13 @@ register_bitfields! [u128,
             value = 22
         ]
     ]
-];
+}
 
 // mod aarch64 {
 
 // ARM-specific caps
-register_bitfields! [u128,
+register_bitfields! {
+    u128,
     FrameCap [
         MappedASID OFFSET(0) NUMBITS(16) [],
         BasePtr OFFSET(16) NUMBITS(48) [], // PhysAddr
@@ -209,7 +211,7 @@ register_bitfields! [u128,
     //     Type OFFSET(64) NUMBITS(5) [], // 15
     //     VCPUPtr OFFSET(80) NUMBITS(48) [],
     // ],
-];
+}
 
 //================
 // Kernel objects
@@ -225,7 +227,8 @@ register_bitfields! [u128,
 //field mdbPrev 64
 //}
 
-register_bitfields! [u128,
+register_bitfields! {
+    u128,
     CapDerivationNode [
         // Next CTE node address -- per cteInsert this is address of the entire CTE slot
         Next OFFSET(16) NUMBITS(46) [], // 4-bytes-aligned, size of canonical phys address is 48 bits
@@ -240,7 +243,7 @@ register_bitfields! [u128,
         // Prev CTE node address -- per cteInsert this is address of the entire CTE slot
         Prev OFFSET(64) NUMBITS(64) []
     ]
-];
+}
 
 /// Opaque capability object, manipulated by the kernel.
 pub trait Capability {
@@ -526,7 +529,7 @@ impl CapNode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 
     #[test_case]
     fn first_capability_derivation_has_no_prev_link() {}
