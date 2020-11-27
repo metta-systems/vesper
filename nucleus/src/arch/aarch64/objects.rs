@@ -37,6 +37,7 @@ register_bitfields! {
     Notification [
         BoundTCB OFFSET(16) NUMBITS(48) [],
         MsgId OFFSET(64) NUMBITS(64) [],
+
         QueueHead OFFSET(144) NUMBITS(48) [],
         QueueTail OFFSET(192) NUMBITS(48) [],
         State OFFSET(254) NUMBITS(2) [
@@ -63,7 +64,7 @@ enum MemoryKind {
 trait Untyped {
     // Uses T::SIZE_BITS to properly size the resulting object
     // in some cases size_bits must be passed as argument though...
-    fn retype<T: NucleusObject>(target_cap: CapNodeRootedPath, target_cap_offset: usize, num_objects: usize) -> Result<()>; // @todo return an array of caps?
+    fn retype<T: NucleusObject>(target_cap: CapNodeRootedPath, target_cap_offset: usize, num_objects: usize) -> Result<CapSlice>; // @todo return an array of caps?
 }
 
 // MMU
