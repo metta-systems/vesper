@@ -397,7 +397,7 @@ impl DerivationTreeNode {
         (*ptr).clone()
     }
 
-    /// Get previous link in derivation tree - this is a dervied-from capability.
+    /// Get previous link in derivation tree - this is a derived-from capability.
     pub fn try_get_prev(&self) -> Result<CapTableEntry, DerivationTreeError> {
         if self.0.read(CapDerivationNode::Prev) == 0 {
             Err(DerivationTreeError::InvalidPrev)
