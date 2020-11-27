@@ -532,5 +532,12 @@ mod tests {
     // use super::*;
 
     #[test_case]
-    fn first_capability_derivation_has_no_prev_link() {}
+    fn first_capability_derivation_has_no_prev_link() {
+        let entry = CapTableEntry::empty();
+        assert_eq!(entry.derivation_node.try_get_prev(), Err(DerivationTreeError::InvalidPrev));
+    }
 }
+
+// @todo Use bitmatch over cap Type field?
+// Could be interesting if usable. See https://github.com/porglezomp/bitmatch
+// Maybe look at https://lib.rs/crates/enumflags2 too
