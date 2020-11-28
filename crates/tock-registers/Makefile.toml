@@ -6,3 +6,6 @@
 [tasks.build]
 env = { "TARGET_FEATURES" = "" }
 args = ["build", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FEATURES}"]
+
+[tasks.docs]
+clear = true

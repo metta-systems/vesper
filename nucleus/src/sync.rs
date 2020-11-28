@@ -19,8 +19,8 @@ pub struct NullLock<T> {
 /// threads don't exist yet in our code.
 ///
 /// Literature:
-/// https://doc.rust-lang.org/beta/nomicon/send-and-sync.html
-/// https://doc.rust-lang.org/book/ch16-04-extensible-concurrency-sync-and-send.html
+/// * <https://doc.rust-lang.org/beta/nomicon/send-and-sync.html>
+/// * <https://doc.rust-lang.org/book/ch16-04-extensible-concurrency-sync-and-send.html>
 unsafe impl<T> Sync for NullLock<T> {}
 
 impl<T> NullLock<T> {

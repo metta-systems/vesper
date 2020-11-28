@@ -15,14 +15,14 @@ pub mod power;
 pub mod vc;
 
 /// See BCM2835-ARM-Peripherals.pdf
-/// See https://www.raspberrypi.org/forums/viewtopic.php?t=186090 for more details.
+/// See <https://www.raspberrypi.org/forums/viewtopic.php?t=186090> for more details.
 
 pub struct BcmHost;
 
 impl BcmHost {
     /// This returns the ARM-side physical address where peripherals are mapped.
     ///
-    /// As per https://www.raspberrypi.org/documentation/hardware/raspberrypi/peripheral_addresses.md
+    /// As per <https://www.raspberrypi.org/documentation/hardware/raspberrypi/peripheral_addresses.md>
     /// BCM SOC could address only 1Gb of memory, so 0x4000_0000 is the high watermark.
     pub const fn get_peripheral_address() -> usize {
         0x3f00_0000
@@ -38,7 +38,7 @@ impl BcmHost {
         0xc000_0000 // uncached
     }
 
-    /// As per https://www.raspberrypi.org/forums/viewtopic.php?p=1170522#p1170522
+    /// As per <https://www.raspberrypi.org/forums/viewtopic.php?p=1170522#p1170522>
     ///
     pub fn bus2phys(bus: usize) -> usize {
         bus & !0xc000_0000

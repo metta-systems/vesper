@@ -15,6 +15,10 @@ args = ["expand", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_F
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 args = ["test", "--target=${TARGET_JSON}", "--features=${TARGET_FEATURES}"]
 
+[tasks.docs]
+env = { "TARGET_FEATURES" = "" }
+args = ["doc", "--open", "--no-deps", "--target=${TARGET_JSON}", "--features=${TARGET_FEATURES}"]
+
 # These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
 [tasks.kernel-binary]
 script_runner = "@duckscript"

@@ -50,3 +50,8 @@ nm:
 expand:
     # Run `cargo expand` on modules
     cargo make expand -- nucleus
+
+doc:
+    # Generate and open documentation
+    cargo make docs-flow
+
