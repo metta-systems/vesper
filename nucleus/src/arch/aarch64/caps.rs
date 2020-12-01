@@ -126,7 +126,7 @@ register_bitfields! {
         CanGrant OFFSET(70) NUMBITS(1) [],
         CanReceive OFFSET(71) NUMBITS(1) [],
         CanSend OFFSET(72) NUMBITS(1) [],
-        Ptr OFFSET(80) NUMBITS(48) []
+        Ptr OFFSET(80) NUMBITS(48) [],
     ],
     NotificationCap [ // @todo replace with Event
         Badge OFFSET(0) NUMBITS(64) [],
@@ -135,7 +135,7 @@ register_bitfields! {
         ],
         CanReceive OFFSET(69) NUMBITS(1) [],
         CanSend OFFSET(70) NUMBITS(1) [],
-        Ptr OFFSET(80) NUMBITS(48) []
+        Ptr OFFSET(80) NUMBITS(48) [],
     ],
     ReplyCap [
         TCBPtr OFFSET(0) NUMBITS(64) [],
@@ -143,7 +143,7 @@ register_bitfields! {
             value = 8
         ],
         ReplyCanGrant OFFSET(126) NUMBITS(1) [],
-        ReplyMaster OFFSET(127) NUMBITS(1) []
+        ReplyMaster OFFSET(127) NUMBITS(1) [],
     ],
     CapNodeCap [
         Guard OFFSET(0) NUMBITS(64) [],
@@ -152,13 +152,13 @@ register_bitfields! {
         ],
         GuardSize OFFSET(69) NUMBITS(6) [],
         Radix OFFSET(75) NUMBITS(6) [],
-        Ptr OFFSET(81) NUMBITS(47) []
+        Ptr OFFSET(81) NUMBITS(47) [],
     ],
     ThreadCap [
         Type OFFSET(64) NUMBITS(5) [
             value = 12
         ],
-        TCBPtr OFFSET(80) NUMBITS(48) []
+        TCBPtr OFFSET(80) NUMBITS(48) [],
     ],
     IrqControlCap [
         Type OFFSET(64) NUMBITS(5) [
