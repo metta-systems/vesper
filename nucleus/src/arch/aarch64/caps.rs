@@ -503,13 +503,17 @@ impl DerivationTreeNode {
         Self(LocalRegisterCopy::new(0))
     }
 
+    /// Get previous link in derivation tree.
+    /// Previous link exists if this is a derived capability.
+    ///
     /// SAFETY: it is UB to get prev reference from a null Prev pointer.
     pub unsafe fn get_prev(&self) -> CapTableEntry {
         let ptr = self.0.read(CapDerivationNode::Prev) as *const CapTableEntry;
         (*ptr).clone()
     }
 
-    /// Get previous link in derivation tree - this is a derived-from capability.
+    /// Try to get previous link in derivation tree.
+    /// Previous link exists if this is a derived capability.
     pub fn try_get_prev(&self) -> Result<CapTableEntry, DerivationTreeError> {
         if self.0.read(CapDerivationNode::Prev) == 0 {
             Err(DerivationTreeError::InvalidPrev)
