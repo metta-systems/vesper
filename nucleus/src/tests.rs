@@ -5,14 +5,28 @@
 //============================================================================
 // Testing environment
 //============================================================================
-use crate::{println, qemu};
+use crate::{print, println, qemu};
+
+pub trait TestFn {
+    fn run(&self) -> ();
+}
+
+impl<T> TestFn for T
+where
+    T: Fn(),
+{
+    fn run(&self) {
+        print!("*TEST* {}...\t", core::any::type_name::<T>());
+        self();
+        println!("[ok]\n");
+    }
+}
 
 #[cfg(test)]
-pub fn test_runner(tests: &[&dyn Fn()]) {
+pub fn test_runner(tests: &[&dyn TestFn]) {
     println!("Running {} tests", tests.len());
     for test in tests {
-        test();
-        println!("\n[ok]\n");
+        test.run();
     }
     println!("\n[success]\n");
     qemu::semihosting::exit_success();
