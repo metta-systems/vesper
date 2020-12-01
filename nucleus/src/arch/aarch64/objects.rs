@@ -266,7 +266,10 @@ trait Thread {
 
 // @todo <<SchedContext>>
 
-struct TCB {}
+struct TCB {
+    capability: u128, // should actually be a CapPath here - this is the argument to
+    // Thread.read_registers(cap, ... call for example.
+}
 
 impl Thread for TCB {}
 impl KernelObject for TCB {
@@ -319,7 +322,7 @@ impl API for Kernel {}
 
 trait DomainSet {
     // ??
-    fn set(domain, thread: TCB);
+    fn set(domain: Dom, thread: TCB);
 }
 
 // Virtualisation
