@@ -15,6 +15,7 @@
 #![feature(allocator_api)]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
+#![feature(result_contains_err)]
 #![feature(nonnull_slice_from_raw_parts)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
@@ -24,6 +25,8 @@
 #![allow(dead_code)] // While working on features, some code may remain unused
 // repr128 is not yet stable
 #![feature(repr128)]
+#![feature(const_generics)]
+#![feature(const_evaluatable_checked)] // see https://github.com/rust-lang/rust/issues/68436
 #![allow(incomplete_features)]
 
 #[cfg(not(target_arch = "aarch64"))]

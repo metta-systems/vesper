@@ -492,7 +492,7 @@ impl CapNodeCapability {
 pub struct DerivationTreeNode(LocalRegisterCopy<u128, CapDerivationNode::Register>);
 
 /// Errors that may happen in capability derivation tree operations.
-#[derive(Debug, Snafu)]
+#[derive(Debug, PartialEq, Snafu)]
 pub enum DerivationTreeError {
     /// Previous link is invalid.
     InvalidPrev,
@@ -541,6 +541,15 @@ impl DerivationTreeNode {
     }
 }
 
+/// Errors in capability operations.
+#[derive(Debug, Snafu)]
+pub enum CapError {
+    /// Unable to create capability, exact reason TBD.
+    CannotCreate,
+    /// Capability has a type incompatible with the requested operation.
+    InvalidCapabilityType,
+}
+
 // -- cte_t from seL4
 // structures.h:140
 // /* Capability table entry (CTE) */
@@ -562,6 +571,12 @@ impl fmt::Debug for CapTableEntry {
     }
 }
 
+impl Default for CapTableEntry {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl CapTableEntry {
     /// Temporary for testing:
     fn empty() -> CapTableEntry {
@@ -570,15 +585,6 @@ impl CapTableEntry {
             derivation_node: DerivationTreeNode::empty(),
         }
     }
-}
-
-/// Errors in capability operations.
-#[derive(Debug, Snafu)]
-pub enum CapError {
-    /// Unable to create capability, exact reason TBD.
-    CannotCreate,
-    /// Capability has a type incompatible with the requested operation.
-    InvalidCapabilityType,
 }
 
 // @note src and dest are swapped here, compared to seL4 api
@@ -594,7 +600,7 @@ struct CapNodeRootedPath {
 }
 
 // @todo just use CapNodeCap
-//struct CapNodeConfig {
+//struct CapNodeConfig { <-- for each CapTable we would need these..
 //    guard: u32,
 //    guard_size: u32,
 //}
@@ -640,18 +646,52 @@ impl CapNode {
     }
 }*/
 
-//struct CapSpace {} -- capspace is collection of capnodes in a single address space?
-//impl CapNode for CapSpace {}
+/// Structure holding a number of capabilities.
+// In seL4 the capnode is capability to an object called CapTable btw:
+// case seL4_CapTableObject:
+// return cap_cnode_cap_new(userSize, 0, 0, CTE_REF(regionBase));
+struct CapTable<const SIZE_BITS: usize>
+where
+    [CapTableEntry; 1 << SIZE_BITS]: Sized,
+{
+    items: [CapTableEntry; 1 << SIZE_BITS],
+}
+
+/// Conceptually a thread’s CapSpace is the portion of the directed graph that is reachable
+/// starting with the CapNode capability that is its CapSpace root.
+struct CapSpace {
+    // cap_space_root: CapNodePath,
+}
+//impl CapNode for CapSpace {} -- ?
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
+    use super::*;
+
+    #[test_case]
+    fn create_empty_cap_table() {
+        let table = CapTable::<5> {
+            items: Default::default(),
+        };
+        assert_eq!(table.items[0].capability, NullCapability::new().into());
+        assert_eq!(table.items[31].capability, NullCapability::new().into());
+    }
 
     #[test_case]
     fn first_capability_derivation_has_no_prev_link() {
         let entry = CapTableEntry::empty();
-        assert_eq!(entry.derivation_node.try_get_prev(), Err(DerivationTreeError::InvalidPrev));
+        assert!(entry
+            .derivation_node
+            .try_get_prev()
+            .contains_err(&DerivationTreeError::InvalidPrev));
     }
+
+    // Impl strategy
+    // 1. Make capabilities list
+    // 2. Fill it with capabilities
+    // 3. Test capability manipulation functions - mint/clone/revoke
+    // 4. Validate capability path, capability contents and capability derivation chain at each step
+    // 5. Start with Untyped capabilities and implement Retype()
 }
 
 // @todo Use bitmatch over cap Type field?
