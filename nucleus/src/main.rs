@@ -14,6 +14,7 @@
 #![feature(format_args_nl)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
+#![feature(result_contains_err)]
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
@@ -25,6 +26,8 @@
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 #![allow(dead_code)] // While working on features, some code may remain unused
+#![feature(const_generics)]
+#![feature(const_evaluatable_checked)] // see https://github.com/rust-lang/rust/issues/68436
 #![allow(incomplete_features)]
 
 #[cfg(not(test))]
