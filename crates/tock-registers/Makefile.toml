@@ -9,3 +9,6 @@ args = ["build", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FE
 
 [tasks.docs]
 clear = true
+
+[tasks.test]
+clear = true
