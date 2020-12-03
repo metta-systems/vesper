@@ -454,7 +454,7 @@ impl CapNodeCapability {
             (1usize << self.0.read(CapNodeCap::Radix)) * core::mem::size_of::<CapTableEntry>();
         let slice = unsafe { core::slice::from_raw_parts_mut(ptr as *mut CapTableEntry, size) };
         slice[slot].capability = cap.as_u128();
-        slice[slot].derivation_node = DerivationTreeNode::empty()
+        slice[slot].derivation = DerivationTreeNode::empty()
             .set_revocable(true)
             .set_first_badged(true);
     }
@@ -559,7 +559,7 @@ pub enum CapError {
 #[derive(Clone)]
 pub struct CapTableEntry {
     capability: u128,
-    derivation_node: DerivationTreeNode,
+    derivation: DerivationTreeNode,
 }
 
 impl fmt::Debug for CapTableEntry {
@@ -579,7 +579,7 @@ impl CapTableEntry {
     fn empty() -> CapTableEntry {
         CapTableEntry {
             capability: 0,
-            derivation_node: DerivationTreeNode::empty(),
+            derivation: DerivationTreeNode::empty(),
         }
     }
 }
@@ -679,7 +679,7 @@ mod tests {
         let entry = CapTableEntry::empty();
         assert!(
             entry
-                .derivation_node
+                .derivation
                 .try_get_prev()
                 .contains_err(&DerivationTreeError::InvalidPrev)
         );
