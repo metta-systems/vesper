@@ -42,9 +42,6 @@ jobs:
         rustc -Vv
         cargo -Vv
 
-    - name: "Install Rustup Components"
-      run: rustup component add rust-src llvm-tools-preview
-
     - name: "Install build tools"
       run: cargo install cargo-make cargo-binutils
 
@@ -133,7 +130,6 @@ jobs:
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@v1
-    - run: rustup toolchain install nightly --profile minimal --component clippy
-    - run: rustup component add rust-src llvm-tools-preview
+    - run: rustup toolchain install nightly
     - run: cargo install cargo-make
     - run: env CLIPPY_FEATURES=${{ matrix.features }} cargo make clippy
