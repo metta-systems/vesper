@@ -667,7 +667,7 @@ where
 /// Conceptually a thread’s CapSpace is the portion of the directed graph that is reachable
 /// starting with the CapNode capability that is its CapSpace root.
 struct CapSpace {
-    // cap_space_root: CapNodePath,
+    // cap_space_root: CapNodePath, -- probably not a path but direct CapNode pointer??
 }
 //impl CapNode for CapSpace {} -- ?
 
