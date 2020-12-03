@@ -682,6 +682,8 @@ mod tests {
         };
         assert_eq!(table.items[0].capability, NullCapability::new().into());
         assert_eq!(table.items[31].capability, NullCapability::new().into());
+        // Doesn't even compile:
+        // assert_eq!(table.items[32].capability, NullCapability::new().into());
     }
 
     #[test_case]
