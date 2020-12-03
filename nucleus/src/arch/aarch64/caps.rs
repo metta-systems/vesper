@@ -286,19 +286,22 @@ register_bitfields! {
 
 //-- Mapping database (MDB) node: size = 16 bytes
 //block mdb_node {
-//padding 16
-//field_high mdbNext 46
-//field mdbRevocable 1
-//field mdbFirstBadged 1
+//padding 16 -- highest in word[1]
+//field_high mdbNext 46  <-- field_high means "will need sign-extension", also value has 2 lower bits just dropped when setting
+//field mdbRevocable 1 -- second bit in word[1]
+//field mdbFirstBadged 1 -- lowest in word[1]
 //
-//field mdbPrev 64
+//field mdbPrev 64 -- enter lowest word (word[0]) in sel4
 //}
 
 register_bitfields! {
     u128,
     CapDerivationNode [
         // Next CTE node address -- per cteInsert this is address of the entire CTE slot
-        Next OFFSET(16) NUMBITS(46) [], // 4-bytes-aligned, size of canonical phys address is 48 bits
+        // cap derivation slots are supposedly aligned in u128 boundary (16 bytes) this means we can
+        // drop bottom 4 bits from it in these fields.
+        Next OFFSET(0) NUMBITS(44) [], // 16-bytes-aligned, size of canonical phys address is 48 bits
+        // -- 18 bits still free here --
         Revocable OFFSET(62) NUMBITS(1) [
             Disable = 0,
             Enable = 1
@@ -308,7 +311,8 @@ register_bitfields! {
             Enable = 1
         ],
         // Prev CTE node address -- per cteInsert this is address of the entire CTE slot
-        Prev OFFSET(64) NUMBITS(64) []
+        Prev OFFSET(64) NUMBITS(44) []
+        // -- 20 bits still free here --
     ]
 }
 
