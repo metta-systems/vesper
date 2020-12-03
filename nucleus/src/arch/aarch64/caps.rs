@@ -495,7 +495,7 @@ impl CapNodeCapability {
 }
 
 /// Wrapper for CapDerivationNode
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DerivationTreeNode(LocalRegisterCopy<u128, CapDerivationNode::Register>);
 
 /// Errors that may happen in capability derivation tree operations.
