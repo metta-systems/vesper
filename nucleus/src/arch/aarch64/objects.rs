@@ -67,6 +67,9 @@ trait Untyped {
     fn retype<T: NucleusObject>(target_cap: CapNodeRootedPath, target_cap_offset: usize, num_objects: usize) -> Result<CapSlice>; // @todo return an array of caps?
 }
 
+// with GATs
+// trait Retyped { type Result = CapTable::<T> .. }
+
 // MMU
 
 // ActivePageTable (--> impl VirtSpace for ActivePageTable etc...)
