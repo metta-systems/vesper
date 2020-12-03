@@ -1,1 +1,4 @@
-nightly
+[toolchain]
+channel = "nightly"
+components = ["clippy", "llvm-tools-preview", "rust-src", "rustfmt"]
+targets = ["aarch64-unknown-none-softfloat"]
