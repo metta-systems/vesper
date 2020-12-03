@@ -388,7 +388,7 @@ impl UntypedCapability {
     pub fn is_device(&self) -> bool {
         self.0.read(UntypedCap::IsDevice) == 1
     }
-    // BlockSize OFFSET(58) NUMBITS(6) [],
+
     pub fn block_size(&self) -> usize {
         1 << self.0.read(UntypedCap::BlockSizePower)
     }
@@ -402,7 +402,10 @@ impl UntypedCapability {
                 .unwrap(),
         )
     }
-    // Ptr OFFSET(80) NUMBITS(48) []
+
+    pub fn base(&self) -> PhysAddr {
+        self.0.read(UntypedCap::Ptr)
+    }
 
     // #define MAX_FREE_INDEX(sizeBits) (BIT( (sizeBits) - seL4_MinUntypedBits ))
     pub fn max_free_index_from_bits(size_bits: usize) -> usize {
