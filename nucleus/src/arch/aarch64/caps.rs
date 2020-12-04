@@ -425,6 +425,16 @@ impl UntypedCapability {
     }
 }
 
+// Endpoints support all 10 IPC variants (see COMP9242 slides by Gernot)
+impl EndpointCapability {}
+// Notifications support NBSend (Signal), Wait and NBWait (Poll) (see COMP9242 slides by Gernot)
+// Other objects support only Call() (see COMP9242 slides by Gernot)
+// Appear as (kernel-implemented) servers
+//     • Each has a kernel-defined protocol
+//         • operations encoded in message tag
+//         • parameters passed in message words
+//     • Mostly hidden behind “syscall” wrappers
+
 // * Capability slots: 16 bytes of memory per slot (exactly one capability). --?
 // CapNode describes `a given number of capability slots` with `a given guard`
 // of `a given guard size` bits.
@@ -505,6 +515,16 @@ pub enum DerivationTreeError {
     InvalidPrev,
 }
 
+// In seL4, the MDB is stored as a doubly-linked list, representing the **preorder-DFS** through
+// the hierarchy of capabilities. This data structure allows easy insertion of a capability
+// given its immediate ancestor or a copy, and easy checking for existence of copies and descendants.
+// But when no relations are known beforehand, finding the position to place a new capability
+// requires a O(n) linear scan through the list, as does finding ancestors and descendants
+// of a capability given just the capability’s value. This operation is performed in
+// the non-preemptable kernel, creating a scheduling hole that is problematic for real-time applications.
+// To reduce the complexity of operations described above, we replace the MDB’s linked list with
+// a more suitable search data structure.
+// -- nevill-master-thesis Using Capabilities for OS Resource Management
 impl DerivationTreeNode {
     fn empty() -> Self {
         Self(LocalRegisterCopy::new(0))
@@ -594,11 +614,13 @@ impl CapTableEntry {
     }
 }
 
-// @note src and dest are swapped here, compared to seL4 api
 /*
 struct CapNodePath {
-    index: u32,
-    depth: u32,
+    /// Index contains `depth` lowermost bits of the path.
+    index: u64,
+    /// Depth specifies the remaining amount of bits left to traverse in the path.
+    /// Once depth reaches zero, the selected CapNode slot is the final target.
+    depth: usize,
 }
 
 struct CapNodeRootedPath {
@@ -608,19 +630,22 @@ struct CapNodeRootedPath {
 
 // @todo just use CapNodeCap
 //struct CapNodeConfig { <-- for each CapTable we would need these..
-//    guard: u32,
-//    guard_size: u32,
+//    guard: u64,
+//    guard_bits: usize,
 //}
 
+// @note src and dest are swapped here, compared to seL4 api
 impl CapNode {
+    // Derives a capability into a new, less powerful one, with potentially added Badge.
     fn mint(
-        src: CapNodeRootedPath,
+        src: CapNodeRootedPath, // can be just CapNodePath since it's relative (is it?) to this CapNode.
         dest: CapNodePath,
         rights: CapRights,
         badge: Badge,
     ) -> Result<(), CapError> {
         unimplemented!();
     }
+    // [wip] is copy a derivation too?
     fn copy(src: CapNodeRootedPath, dest: CapNodePath, rights: CapRights) -> Result<(), CapError> {
         unimplemented!();
     }
@@ -645,7 +670,7 @@ impl CapNode {
     fn revoke(path: CapNodePath) -> Result<(), CapError> {
         unimplemented!();
     }
-    fn save_caller(r#where: CapNodePath) -> Result<(), CapError> {
+    fn save_caller(r#where: CapNodePath) -> Result<(), CapError> { // save_reply_cap() in sel4
         unimplemented!();
     }
     fn cancel_badged_sends(path: CapNodePath) -> Result<(), CapError> {

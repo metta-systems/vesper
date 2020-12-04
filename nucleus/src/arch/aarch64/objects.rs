@@ -61,6 +61,8 @@ enum MemoryKind {
 // Boot code reserves kernel memory and initial mapping allocations (4 pages probably - on rpi3? should be platform-dependent).
 // The rest is converted to untypeds with appropriate kind and given away to start thread.
 
+// Untyped.retype() derives cap to a typed cap (derivation tree must be maintained)
+
 trait Untyped {
     // Uses T::SIZE_BITS to properly size the resulting object
     // in some cases size_bits must be passed as argument though...
@@ -135,13 +137,13 @@ struct Page {}
 impl Page {
     // VirtSpace-like interface.
     /// Get the physical address of the underlying frame.
-    fn get_address() -> Result<PhysAddr>;
-    fn map(virt_space: VirtSpace/*Cap*/, vaddr: VirtAddr, rights: CapRights, attr: VMAttributes) -> Result<()>;
+    fn get_address() -> Result<PhysAddr> { todo!() }
+    fn map(virt_space: VirtSpace/*Cap*/, vaddr: VirtAddr, rights: CapRights, attr: VMAttributes) -> Result<()> { todo!() }
     /// Changes the permissions of an existing mapping.
-    fn remap(virt_space: VirtSpace/*Cap*/, rights: CapRights, attr: VMAttributes) -> Result<()>;
-    fn unmap() -> Result<()>;
+    fn remap(virt_space: VirtSpace/*Cap*/, rights: CapRights, attr: VMAttributes) -> Result<()> { todo!() }
+    fn unmap() -> Result<()> { todo!() }
     // MMIO space.
-    fn map_io(iospace: IoSpace/*Cap*/, rights: CapRights, ioaddr: VirtAddr) -> Result<()>;
+    fn map_io(iospace: IoSpace/*Cap*/, rights: CapRights, ioaddr: VirtAddr) -> Result<()> { todo!() }
 }
 
 impl PageCacheManagement for Page {
@@ -167,8 +169,8 @@ impl PageCacheManagement for Page {
 struct PageTable {}
 
 impl PageTable {
-    fn map(virt_space: VirtSpace/*Cap*/, vaddr: VirtAddr, attr: VMAttributes) -> Result<()>;
-    fn unmap() -> Result<()>;
+    fn map(virt_space: VirtSpace/*Cap*/, vaddr: VirtAddr, attr: VMAttributes) -> Result<()> { todo!() }
+    fn unmap() -> Result<()> { todo!() }
 }
 
 // AArch64 - probably just impl some Mapping trait for these "structs"?
@@ -176,16 +178,16 @@ impl PageTable {
 struct PageDirectory {}
 
 impl PageDirectory {
-    fn map(pud: PageUpperDirectory/*Cap*/, vaddr: VirtAddr, attr: VMAttributes) -> Result<()>;
-    fn unmap() -> Result<()>;
+    fn map(pud: PageUpperDirectory/*Cap*/, vaddr: VirtAddr, attr: VMAttributes) -> Result<()> { todo!() }
+    fn unmap() -> Result<()> { todo!() }
 }
 
 // L1 table
 struct PageUpperDirectory {}
 
 impl PageUpperDirectory {
-    fn map(pgd: PageGlobalDirectory/*Cap*/, vaddr: VirtAddr, attr: VMAttributes) -> Result<()>;
-    fn unmap() -> Result<()>;
+    fn map(pgd: PageGlobalDirectory/*Cap*/, vaddr: VirtAddr, attr: VMAttributes) -> Result<()> { todo!() }
+    fn unmap() -> Result<()> { todo!() }
 }
 
 // L0 table
@@ -195,17 +197,17 @@ struct PageGlobalDirectory {
 }
 
 impl PageCacheManagement for PageGlobalDirectory {
-    fn clean_data(start_offset: usize, end_offset: usize) -> _ {
+    fn clean_data(start_offset: usize, end_offset: usize) -> ! {
         todo!()
     }
 
-    fn clean_invalidate_data(start_offset: usize, end_offset: usize) -> _ {
+    fn clean_invalidate_data(start_offset: usize, end_offset: usize) -> ! {
         todo!()
     }
 
-    fn invalidate_data(start_offset: usize, end_offset: usize) -> _ { todo!() }
+    fn invalidate_data(start_offset: usize, end_offset: usize) -> ! { todo!() }
 
-    fn unify_instruction_cache(start_offset: usize, end_offset: usize) -> _ {
+    fn unify_instruction_cache(start_offset: usize, end_offset: usize) -> ! {
         todo!()
     }
 }
@@ -274,7 +276,87 @@ struct TCB {
     // Thread.read_registers(cap, ... call for example.
 }
 
-impl Thread for TCB {}
+impl Thread for TCB {
+    fn configure(fault_endpoint: _, cap_space_root: _, cap_space_root_data: _, virt_space_root: _, ipc_buffer_frame: _, ipc_buffer_offset: usize) -> _ {
+        unimplemented!()
+    }
+
+    fn set_space(fault_endpoint: _, cap_space_root: _, cap_space_root_data: _, virt_space_root: _) -> _ {
+        unimplemented!()
+    }
+
+    fn configure_single_stepping(bp_num: u16, _: _) {
+        unimplemented!()
+    }
+
+    fn get_breakpoint(bp_num: u16) -> _ {
+        unimplemented!()
+    }
+
+    fn set_breakpoint(bp_num: u16, bp: _) -> _ {
+        unimplemented!()
+    }
+
+    fn unset_breakpoint(bp_num: u16) -> _ {
+        unimplemented!()
+    }
+
+    fn suspend() -> _ {
+        unimplemented!()
+    }
+
+    fn resume() -> _ {
+        unimplemented!()
+    }
+
+    fn copy_registers(source: TCB, suspend_source: bool, resume_target: bool, transfer_frame_regs: bool, transfer_integer_regs: bool, arch_flags: u8) -> _ {
+        unimplemented!()
+    }
+
+    fn read_registers(suspend_source: bool, arch_flags: u8, num_regs: u16, register_context: &mut _) -> _ {
+        unimplemented!()
+    }
+
+    fn write_registers(resume_target: bool, arch_flags: u8, num_regs: u16, register_context: &_) -> _ {
+        unimplemented!()
+    }
+
+    fn bind_notification(notification: _) -> _ {
+        unimplemented!()
+    }
+
+    fn unbind_notification() -> _ {
+        unimplemented!()
+    }
+
+    fn set_priority(authority: TCB, priority: u32) -> _ {
+        unimplemented!()
+    }
+
+    fn set_mc_priority(authority: TCB, mcp: u32) -> _ {
+        unimplemented!()
+    }
+
+    fn set_sched_params(authority: TCB, mcp: u32, priority: u32) -> _ {
+        unimplemented!()
+    }
+
+    fn set_affinity(affinity: u64) -> _ {
+        unimplemented!()
+    }
+
+    fn set_ipc_buffer(ipc_buffer_frame: _, ipc_buffer_offset: usize) -> _ {
+        unimplemented!()
+    }
+
+    fn set_tls_base(tls_base: usize) -> _ {
+        unimplemented!()
+    }
+
+    fn set_ept_root(eptpml: _) -> _ {
+        unimplemented!()
+    }
+}
 impl KernelObject for TCB {
     const SIZE_BITS: usize = 12;
 }
@@ -320,8 +402,53 @@ trait API {
     // Plus some debugging calls...
 }
 
-struct Kernel {} // Nucleus, actually...
-impl API for Kernel {}
+struct Nucleus {}
+
+impl API for Nucleus {
+    fn send(cap: _, msg_info: _) {
+        unimplemented!()
+    }
+
+    fn recv(src: _, reply: _) -> _ {
+        unimplemented!()
+    }
+
+    fn call(cap: _, msg_info: _) -> _ {
+        unimplemented!()
+    }
+
+    fn reply(msg_info: _) {
+        unimplemented!()
+    }
+
+    fn nb_send(dest: _, msg_info: _) {
+        unimplemented!()
+    }
+
+    fn reply_recv(src: _, reply: _, msg_info: _) -> _ {
+        unimplemented!()
+    }
+
+    fn nb_send_recv(dest: _, msg_info: _, src: _, reply: _) -> _ {
+        unimplemented!()
+    }
+
+    fn nb_recv(src: _) -> _ {
+        unimplemented!()
+    }
+
+    fn nb_send_wait(cap: _, msg_info: _, src: _) -> _ {
+        unimplemented!()
+    }
+
+    fn wait(src: _) -> _ {
+        unimplemented!()
+    }
+
+    fn r#yield() {
+        unimplemented!()
+    }
+}
 
 trait DomainSet {
     // ??
