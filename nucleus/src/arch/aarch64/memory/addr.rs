@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
+use core::ops::{Shl, Shr};
 use {
     crate::mm::{align_down, align_up},
     bit_field::BitField,
@@ -486,6 +487,22 @@ impl Sub<PhysAddr> for PhysAddr {
     type Output = u64;
     fn sub(self, rhs: PhysAddr) -> Self::Output {
         self.as_u64().checked_sub(rhs.as_u64()).unwrap()
+    }
+}
+
+impl Shr<usize> for PhysAddr {
+    type Output = PhysAddr;
+
+    fn shr(self, shift: usize) -> Self::Output {
+        PhysAddr::new(self.0 >> shift)
+    }
+}
+
+impl Shl<usize> for PhysAddr {
+    type Output = PhysAddr;
+
+    fn shl(self, shift: usize) -> Self::Output {
+        PhysAddr::new(self.0 << shift)
     }
 }
 
