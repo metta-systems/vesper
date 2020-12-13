@@ -380,6 +380,15 @@ capdefs! {
     AsidControl, AsidPool
 }
 
+impl NullCapability {
+    /// Create a Null capability.
+    ///
+    /// Such capabilities are invalid and can not be used for anything.
+    pub fn new() -> NullCapability {
+        NullCapability(LocalRegisterCopy::new(u128::from(NullCap::Type::value)))
+    }
+}
+
 // @todo retyping a device capability requires specifying memory base exactly, can't just pick next frame?
 
 /// Capability to a block of untyped memory.
@@ -480,15 +489,6 @@ impl CapNodeCapability {
         slice[slot].derivation = DerivationTreeNode::empty()
             .set_revocable(true)
             .set_first_badged(true);
-    }
-}
-
-impl NullCapability {
-    /// Create a Null capability.
-    ///
-    /// Such capabilities are invalid and can not be used for anything.
-    pub fn new() -> NullCapability {
-        NullCapability(LocalRegisterCopy::new(u128::from(NullCap::Type::value)))
     }
 }
 
