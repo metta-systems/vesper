@@ -36,6 +36,7 @@ use architecture_not_supported_sorry;
 #[macro_use]
 pub mod arch;
 pub use arch::*;
+mod caps;
 mod devices;
 mod macros;
 mod mm;
