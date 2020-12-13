@@ -370,11 +370,16 @@ macro_rules! capdefs {
     }
 }
 
+// Generic caps - @todo move to src/caps/
 capdefs! {
     Null, Untyped, Endpoint,
     Notification, Reply, CapNode,
     Thread, IrqControl, IrqHandler,
-    Zombie, Domain, Resume,
+    Zombie, Domain, Resume
+}
+
+// ARM-specific caps
+capdefs! {
     Frame, PageTable, PageDirectory,
     PageUpperDirectory, PageGlobalDirectory,
     AsidControl, AsidPool
