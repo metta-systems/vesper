@@ -402,14 +402,17 @@ impl UntypedCapability {
     const MIN_BITS: usize = 4;
     const MAX_BITS: usize = 47;
 
+    /// This untyped belongs to device memory (will not be zeroed on allocation).
     pub fn is_device(&self) -> bool {
         self.0.read(UntypedCap::IsDevice) == 1
     }
 
+    /// Return untyped block size in bytes.
     pub fn block_size(&self) -> usize {
         1 << self.0.read(UntypedCap::BlockSizePower)
     }
     // FreeIndex OFFSET(0) NUMBITS(48) [],
+    /// Return free area offset in this block in bytes.
     pub fn free_area_offset(&self) -> usize {
         use core::convert::TryInto;
         Self::free_index_to_offset(
@@ -420,11 +423,13 @@ impl UntypedCapability {
         )
     }
 
+    /// Return start address of this untyped block.
     pub fn base(&self) -> PhysAddr {
         self.0.read(UntypedCap::Ptr)
     }
 
     // #define MAX_FREE_INDEX(sizeBits) (BIT( (sizeBits) - seL4_MinUntypedBits ))
+    /// Calculate maximum free index value based on allowed size bits.
     pub fn max_free_index_from_bits(size_bits: usize) -> usize {
         assert!(size_bits >= Self::MIN_BITS);
         assert!(size_bits <= Self::MAX_BITS);
@@ -432,11 +437,14 @@ impl UntypedCapability {
     }
 
     // #define FREE_INDEX_TO_OFFSET(freeIndex) ((freeIndex)<<seL4_MinUntypedBits)
+    /// Convert free index to byte offset.
     fn free_index_to_offset(index: usize) -> usize {
         index << Self::MIN_BITS
     }
 
     // #define OFFSET_TO_FREE_INDEX(offset) ((offset)>>seL4_MinUntypedBits)
+    /// Convert byte offset to free index.
+    /// @todo Check proper offset alignment!
     fn offset_to_free_index(offset: usize) -> usize {
         offset >> Self::MIN_BITS
     }
@@ -691,6 +699,7 @@ struct CapNodeRootedPath {
     path: CapNodePath,
 }
 
+// sel4: cnode_capdata_t
 // @todo just use CapNodeCap
 //struct CapNodeConfig { <-- for each CapTable we would need these..
 //    guard: u64,
@@ -708,7 +717,7 @@ impl CapNode {
     ) -> Result<(), CapError> {
         unimplemented!();
     }
-    // [wip] is copy a derivation too?
+    // [wip] is copy a derivation too? - yes it is - kernel_final.c:15769
     fn copy(src: CapNodeRootedPath, dest: CapNodePath, rights: CapRights) -> Result<(), CapError> {
         unimplemented!();
     }
