@@ -31,6 +31,7 @@ use architecture_not_supported_sorry;
 /// Architecture-specific code.
 #[macro_use]
 pub mod arch;
+pub mod caps;
 pub mod console;
 pub mod cpu;
 pub mod debug;
