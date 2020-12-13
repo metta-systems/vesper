@@ -9,7 +9,7 @@
 use {
     super::captable::CapTableEntry,
     crate::memory::PhysAddr,
-    register::{register_bitfields, LocalRegisterCopy},
+    register::{LocalRegisterCopy, register_bitfields},
     snafu::Snafu,
 };
 
@@ -49,7 +49,7 @@ register_bitfields! {
 }
 
 /// Wrapper for CapDerivationNode
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct DerivationTreeNode(LocalRegisterCopy<u128, CapDerivationNode::Register>);
 
 /// Errors that may happen in capability derivation tree operations.
