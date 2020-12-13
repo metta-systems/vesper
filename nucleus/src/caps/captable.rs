@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  */
 
-use {super::derivation_tree::DerivationTreeNode, crate::memory::PhysAddr, core::fmt};
+use {super::derivation_tree::DerivationTreeNode, /*crate::memory::PhysAddr,*/ core::fmt};
 
 // * Capability slots: 16 bytes of memory per slot (exactly one capability). --?
 // CapNode describes `a given number of capability slots` with `a given guard`
@@ -53,10 +53,12 @@ impl CapTableEntry {
     // @fixme this cannot work well unless we modify already allocated cap table entry in the table.
     // (otherwise Next pointer will be invalid)
     // sel4: cteInsert()
-    fn derived_from(&mut self, parent: &mut CapTableEntry) {
-        self.derivation
-            .set_prev(&parent as *const CapTableEntry as PhysAddr);
-        parent.set_next(&self as *const CapTableEntry);
+    fn derived_from(&mut self, _parent: &mut CapTableEntry) {
+        // self.derivation
+        //     .set_prev(parent as *mut CapTableEntry as PhysAddr);
+        // parent
+        //     .derivation
+        //     .set_next(self as *mut CapTableEntry as PhysAddr);
     }
 }
 
