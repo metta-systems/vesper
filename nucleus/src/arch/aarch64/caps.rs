@@ -24,6 +24,7 @@
 // deriveCap();
 
 use {
+    crate::memory::PhysAddr,
     core::{convert::TryFrom, fmt},
     paste::paste,
     register::{register_bitfields, LocalRegisterCopy},
@@ -425,7 +426,7 @@ impl UntypedCapability {
 
     /// Return start address of this untyped block.
     pub fn base(&self) -> PhysAddr {
-        self.0.read(UntypedCap::Ptr)
+        (self.0.read(UntypedCap::Ptr) as u64).into() // @todo implement TryFrom<u128> for PhysAddr
     }
 
     // #define MAX_FREE_INDEX(sizeBits) (BIT( (sizeBits) - seL4_MinUntypedBits ))
