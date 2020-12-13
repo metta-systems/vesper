@@ -612,6 +612,15 @@ impl CapTableEntry {
             derivation: DerivationTreeNode::empty(),
         }
     }
+    // We need to pass reference to the parent entry so that we can set up derivation pointers.
+    // @todo should be &mut since we need to set up Next pointer in parent also.
+    // @fixme this cannot work well unless we modify already allocated cap table entry in the table.
+    // (otherwise Next pointer will be invalid)
+    // sel4: cteInsert()
+    fn derived_from(&mut self, parent: &mut CapTableEntry) {
+        self.derivation.set_prev(&parent as *const CapTableEntry);
+        parent.set_next(&self as *const CapTableEntry);
+    }
 }
 
 /*
@@ -696,6 +705,10 @@ struct CapSpace {
 }
 //impl CapNode for CapSpace {} -- ?
 
+impl ThreadCapability {}
+impl IrqControlCapability {}
+impl IrqHandlerCapability {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,6 +739,13 @@ mod tests {
     // 3. Test capability manipulation functions - mint/clone/revoke
     // 4. Validate capability path, capability contents and capability derivation chain at each step
     // 5. Start with Untyped capabilities and implement Retype()
+    // typedef enum api_object { -- basic list of API types of objects:
+    // seL4_UntypedObject,
+    // seL4_TCBObject,
+    // seL4_EndpointObject,
+    // seL4_NotificationObject,
+    // seL4_CapTableObject,
+    // 6. Retype to TCB and implement Thread capability to run threads (in priv mode first?)
 }
 
 // @todo Use bitmatch over cap Type field?
