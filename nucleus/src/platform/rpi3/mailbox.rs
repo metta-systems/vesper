@@ -358,10 +358,10 @@ impl PreparedMailbox {
 impl Mailbox {
     /// Create a new mailbox in the DMA-able memory area.
     pub fn new(base_addr: usize) -> ::core::result::Result<Mailbox, ()> {
-        use core::alloc::AllocRef;
+        use core::alloc::Allocator;
         crate::DMA_ALLOCATOR
             .lock(|dma| {
-                dma.alloc_zeroed(
+                dma.allocate_zeroed(
                     core::alloc::Layout::from_size_align(
                         MAILBOX_ITEMS_COUNT * core::mem::size_of::<u32>(),
                         MAILBOX_ALIGNMENT,

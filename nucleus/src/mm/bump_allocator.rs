@@ -8,7 +8,7 @@
 use {
     crate::println,
     core::{
-        alloc::{AllocError, AllocRef, Layout},
+        alloc::{AllocError, Allocator, Layout},
         cell::Cell,
         ptr::NonNull,
     },
@@ -20,9 +20,9 @@ pub struct BumpAllocator {
     name: &'static str,
 }
 
-unsafe impl AllocRef for BumpAllocator {
+unsafe impl Allocator for BumpAllocator {
     /// Allocate a memory block from the pool.
-    fn alloc(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let start = crate::mm::aligned_addr_unchecked(self.next.get(), layout.align());
         let end = start + layout.size();
 
@@ -50,7 +50,7 @@ unsafe impl AllocRef for BumpAllocator {
     }
 
     /// A bump allocator doesn't care about releasing memory.
-    unsafe fn dealloc(&self, _ptr: NonNull<u8>, _layout: Layout) {}
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {}
 }
 
 impl BumpAllocator {
@@ -73,12 +73,12 @@ mod tests {
     #[test_case]
     fn test_allocates_within_init_range() {
         let allocator = BumpAllocator::new(256, 512, "Test allocator 1");
-        let result1 = allocator.alloc(unsafe { Layout::from_size_align_unchecked(128, 1) });
+        let result1 = allocator.allocate(unsafe { Layout::from_size_align_unchecked(128, 1) });
         assert!(result1.is_ok());
-        let result2 = allocator.alloc(unsafe { Layout::from_size_align_unchecked(128, 32) });
+        let result2 = allocator.allocate(unsafe { Layout::from_size_align_unchecked(128, 32) });
         println!("{:?}", result2);
         assert!(result2.is_ok());
-        let result3 = allocator.alloc(unsafe { Layout::from_size_align_unchecked(1, 1) });
+        let result3 = allocator.allocate(unsafe { Layout::from_size_align_unchecked(1, 1) });
         assert!(result3.is_err());
     }
     // Creating with end <= start sshould fail
@@ -86,7 +86,7 @@ mod tests {
     #[test_case]
     fn test_bad_allocator() {
         let bad_allocator = BumpAllocator::new(512, 256, "Test allocator 2");
-        let result1 = bad_allocator.alloc(unsafe { Layout::from_size_align_unchecked(1, 1) });
+        let result1 = bad_allocator.allocate(unsafe { Layout::from_size_align_unchecked(1, 1) });
         assert!(result1.is_err());
     }
 }
