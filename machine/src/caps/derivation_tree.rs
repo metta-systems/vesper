@@ -19,7 +19,6 @@ use {
 //field_high mdbNext 46  <-- field_high means "will need sign-extension", also value has 2 lower bits just dropped when setting
 //field mdbRevocable 1 -- second bit in word[1]
 //field mdbFirstBadged 1 -- lowest in word[1]
-//
 //field mdbPrev 64 -- enter lowest word (word[0]) in sel4
 //}
 
