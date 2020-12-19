@@ -147,7 +147,10 @@ struct CapSpace {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        super::{derivation_tree::DerivationTreeError, null_cap::NullCapability},
+        *,
+    };
 
     #[test_case]
     fn create_empty_cap_table() {
