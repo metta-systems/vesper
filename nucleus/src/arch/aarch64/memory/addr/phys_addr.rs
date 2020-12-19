@@ -29,7 +29,7 @@ pub struct PhysAddr(u64);
 /// A passed `u64` was not a valid physical address.
 ///
 /// This means that bits 52 to 64 were not all null.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysAddrNotValid(u64);
 
 impl PhysAddr {
@@ -240,12 +240,9 @@ mod tests {
 
     #[test_case]
     pub fn test_invalid_phys_addr() {
-        let result = PhysAddr::try_new(0xfafa_0123_0123_0123_3210_3210_3210_3210);
+        let result = PhysAddr::try_new(0xfafa_0123_3210_3210);
         if let Err(e) = result {
-            assert_eq!(
-                e,
-                PhysAddrNotValid(0xfafa_0123_0123_0123_3210_3210_3210_3210)
-            );
+            assert_eq!(e, PhysAddrNotValid(0xfafa_0123_3210_3210));
         } else {
             assert!(false)
         }
