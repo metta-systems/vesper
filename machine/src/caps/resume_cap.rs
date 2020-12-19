@@ -6,7 +6,7 @@ use {
     super::{CapError, Capability, TryFrom},
     crate::capdef,
     paste::paste,
-    register::{register_bitfields, LocalRegisterCopy},
+    register::{LocalRegisterCopy, register_bitfields},
 };
 
 //=====================
@@ -36,7 +36,7 @@ register_bitfields! {
     // the need for the extra system calls.
 
     ResumeCap [
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 22
         ]
     ]

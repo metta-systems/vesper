@@ -9,7 +9,7 @@ use {
     },
     core::convert::TryFrom,
     paste::paste,
-    register::{register_bitfields, LocalRegisterCopy},
+    register::{LocalRegisterCopy, register_bitfields},
 };
 
 //=====================
@@ -19,7 +19,7 @@ use {
 register_bitfields! {
     u128,
     AsidControlCap [
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 11
         ]
     ]

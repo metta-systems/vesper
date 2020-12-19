@@ -9,7 +9,7 @@ use {
     },
     core::convert::TryFrom,
     paste::paste,
-    register::{register_bitfields, LocalRegisterCopy},
+    register::{LocalRegisterCopy, register_bitfields},
 };
 
 //=====================
@@ -19,13 +19,14 @@ use {
 register_bitfields! {
     u128,
     PageUpperDirectoryCap [
-        MappedASID OFFSET(0) NUMBITS(16) [],
-        BasePtr OFFSET(16) NUMBITS(48) [], // PhysAddr
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 7
         ],
-        IsMapped OFFSET(79) NUMBITS(1) [],
-        MappedAddress OFFSET(80) NUMBITS(10) [] // VirtAddr
+        IsMapped OFFSET(6) NUMBITS(1) [],
+        BasePtr OFFSET(16) NUMBITS(48) [], // PhysAddr
+        MappedASID OFFSET(64) NUMBITS(16) [],
+        MappedAddress OFFSET(80) NUMBITS(48) [], // VirtAddr
+
     ]
 }
 

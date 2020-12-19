@@ -4,11 +4,11 @@
 
 use {
     super::{
-        captable::CapTableEntry, derivation_tree::DerivationTreeNode, CapError, Capability, TryFrom,
+        CapError, Capability, TryFrom, captable::CapTableEntry, derivation_tree::DerivationTreeNode,
     },
     crate::capdef,
     paste::paste,
-    register::{register_bitfields, LocalRegisterCopy},
+    register::{LocalRegisterCopy, register_bitfields},
 };
 
 //=====================
@@ -18,13 +18,13 @@ use {
 register_bitfields! {
     u128,
     CapNodeCap [
-        Guard OFFSET(0) NUMBITS(64) [],
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 10
         ],
-        GuardSize OFFSET(69) NUMBITS(6) [],
-        Radix OFFSET(75) NUMBITS(6) [],
-        Ptr OFFSET(81) NUMBITS(47) [],
+        GuardSize OFFSET(6) NUMBITS(6) [],
+        Radix OFFSET(12) NUMBITS(6) [],
+        Ptr OFFSET(16) NUMBITS(48) [], // FIXME: overlaps Radix!
+        Guard OFFSET(64) NUMBITS(64) [],
     ]
 }
 

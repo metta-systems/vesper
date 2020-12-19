@@ -6,7 +6,7 @@ use {
     super::{CapError, Capability, TryFrom},
     crate::capdef,
     paste::paste,
-    register::{register_bitfields, LocalRegisterCopy},
+    register::{LocalRegisterCopy, register_bitfields},
 };
 
 //=====================
@@ -16,15 +16,16 @@ use {
 register_bitfields! {
     u128,
     EndpointCap [
-        Badge OFFSET(0) NUMBITS(64) [],
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 4
         ],
-        CanGrantReply OFFSET(69) NUMBITS(1) [],
-        CanGrant OFFSET(70) NUMBITS(1) [],
-        CanReceive OFFSET(71) NUMBITS(1) [],
-        CanSend OFFSET(72) NUMBITS(1) [],
-        Ptr OFFSET(80) NUMBITS(48) [],
+        CanGrantReply OFFSET(6) NUMBITS(1) [],
+        CanGrant OFFSET(7) NUMBITS(1) [],
+        CanReceive OFFSET(8) NUMBITS(1) [],
+        CanSend OFFSET(9) NUMBITS(1) [],
+        Ptr OFFSET(16) NUMBITS(48) [],
+        // @todo Badge has 4 lower bits all-zero - why?
+        Badge OFFSET(64) NUMBITS(64) [],
     ]
 }
 

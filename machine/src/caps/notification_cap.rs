@@ -8,7 +8,7 @@ use {
     super::{CapError, Capability, TryFrom},
     crate::capdef,
     paste::paste,
-    register::{register_bitfields, LocalRegisterCopy},
+    register::{LocalRegisterCopy, register_bitfields},
 };
 
 //=====================
@@ -18,13 +18,13 @@ use {
 register_bitfields! {
     u128,
     NotificationCap [
-        Badge OFFSET(0) NUMBITS(64) [],
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 6
         ],
-        CanReceive OFFSET(69) NUMBITS(1) [],
-        CanSend OFFSET(70) NUMBITS(1) [],
-        Ptr OFFSET(80) NUMBITS(48) [],
+        CanReceive OFFSET(6) NUMBITS(1) [],
+        CanSend OFFSET(7) NUMBITS(1) [],
+        Ptr OFFSET(16) NUMBITS(48) [],
+        Badge OFFSET(64) NUMBITS(64) [],
     ]
 }
 
