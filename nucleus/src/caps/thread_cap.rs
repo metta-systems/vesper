@@ -4,7 +4,7 @@
 
 use {
     super::{CapError, Capability, TryFrom},
-    crate::capdef,
+    crate::{arch::memory::PhysAddr, capdef},
     paste::paste,
     register::{register_bitfields, LocalRegisterCopy},
 };
@@ -29,4 +29,8 @@ capdef! { Thread }
 // Cap implementation
 //=====================
 
-impl ThreadCapability {}
+impl ThreadCapability {
+    pub(crate) fn ptr(&self) -> PhysAddr {
+        0.into() // @todo
+    }
+}
