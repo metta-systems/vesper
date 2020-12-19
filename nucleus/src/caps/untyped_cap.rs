@@ -72,6 +72,9 @@ register_bitfields! {
     // -- https://github.com/seL4/seL4/blob/master/src/object/untyped.c#L196
 
     UntypedCap [
+        Type OFFSET(0) NUMBITS(6) [
+            value = 2
+        ],
         /// Index of the first unoccupied byte within this Untyped.
         /// This index is limited between MIN_UNTYPED_BITS and max bits number in BlockSizePower.
         /// To occupy less bits, the free index is shifted right by MIN_UNTYPED_BITS.
@@ -85,9 +88,6 @@ register_bitfields! {
         IsDevice OFFSET(57) NUMBITS(1) [],
         /// Untyped is 2**BlockSizePower bytes in size
         BlockSizePower OFFSET(58) NUMBITS(6) [],
-        Type OFFSET(64) NUMBITS(5) [
-            value = 2
-        ],
         /// Physical address of untyped.
         Ptr OFFSET(80) NUMBITS(48) [],
     ]

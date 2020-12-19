@@ -19,12 +19,12 @@ use {
 register_bitfields! {
     u128,
     PageGlobalDirectoryCap [
-        MappedASID OFFSET(0) NUMBITS(16) [],
-        BasePtr OFFSET(16) NUMBITS(48) [], // PhysAddr
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 9
         ],
-        IsMapped OFFSET(79) NUMBITS(1) []
+        IsMapped OFFSET(6) NUMBITS(1) [],
+        BasePtr OFFSET(16) NUMBITS(48) [], // PhysAddr
+        MappedASID OFFSET(112) NUMBITS(16) [],
     ]
 }
 

@@ -19,13 +19,13 @@ use {
 register_bitfields! {
     u128,
     PageTableCap [
-        MappedASID OFFSET(0) NUMBITS(16) [],
-        BasePtr OFFSET(16) NUMBITS(48) [], // PhysAddr
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 3
         ],
-        IsMapped OFFSET(79) NUMBITS(1) [],
-        MappedAddress OFFSET(80) NUMBITS(28) [] // VirtAddr
+        IsMapped OFFSET(6) NUMBITS(1) [],
+        BasePtr OFFSET(16) NUMBITS(48) [], // PhysAddr
+        MappedAddress OFFSET(64) NUMBITS(48) [], // VirtAddr
+        MappedASID OFFSET(112) NUMBITS(16) [],
     ],
 }
 

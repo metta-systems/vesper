@@ -16,12 +16,12 @@ use {
 register_bitfields! {
     u128,
     ReplyCap [
-        TCBPtr OFFSET(0) NUMBITS(64) [],
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 8
         ],
-        ReplyCanGrant OFFSET(126) NUMBITS(1) [],
-        ReplyMaster OFFSET(127) NUMBITS(1) [],
+        ReplyCanGrant OFFSET(62) NUMBITS(1) [],
+        ReplyMaster OFFSET(63) NUMBITS(1) [],
+        TCBPtr OFFSET(64) NUMBITS(64) [],
     ]
 }
 

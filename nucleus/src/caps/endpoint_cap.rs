@@ -16,10 +16,11 @@ use {
 register_bitfields! {
     u128,
     EndpointCap [
-        Badge OFFSET(0) NUMBITS(64) [],
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 4
         ],
+        // @todo Badge has 4 lower bits all-zero - why?
+        Badge OFFSET(0) NUMBITS(64) [],
         CanGrantReply OFFSET(69) NUMBITS(1) [],
         CanGrant OFFSET(70) NUMBITS(1) [],
         CanReceive OFFSET(71) NUMBITS(1) [],

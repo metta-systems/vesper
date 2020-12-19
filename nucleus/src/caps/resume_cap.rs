@@ -36,7 +36,7 @@ register_bitfields! {
     // the need for the extra system calls.
 
     ResumeCap [
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 22
         ]
     ]

@@ -16,10 +16,10 @@ use {
 register_bitfields! {
     u128,
     IrqHandlerCap [
-        Irq OFFSET(52) NUMBITS(12) [],
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 16
-        ]
+        ],
+        Irq OFFSET(52) NUMBITS(12) [],
     ]
 }
 

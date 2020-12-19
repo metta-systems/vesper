@@ -16,7 +16,7 @@ use {
 register_bitfields! {
     u128,
     DomainCap [
-        Type OFFSET(64) NUMBITS(5) [
+        Type OFFSET(0) NUMBITS(6) [
             value = 20
         ]
     ],
