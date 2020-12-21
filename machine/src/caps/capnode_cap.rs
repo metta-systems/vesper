@@ -6,9 +6,10 @@ use {
     super::{
         CapError, Capability, TryFrom, captable::CapTableEntry, derivation_tree::DerivationTreeNode,
     },
-    crate::capdef,
+    crate::{arch::aarch64::memory::PhysAddr, capdef},
     paste::paste,
     register::{LocalRegisterCopy, register_bitfields},
+    ux::u6,
 };
 
 //=====================
@@ -24,6 +25,7 @@ register_bitfields! {
         GuardSize OFFSET(6) NUMBITS(6) [],
         Radix OFFSET(12) NUMBITS(6) [],
         Ptr OFFSET(16) NUMBITS(48) [], // FIXME: overlaps Radix!
+        // Guard is 19 bits in seL4 arm32 (?)
         Guard OFFSET(64) NUMBITS(64) [],
     ]
 }
@@ -38,23 +40,23 @@ impl CapNodeCapability {
     /// Create a capability to CapNode.
     ///
     /// CapNode capabilities allow to address a capability node tree entry.
-    pub fn new(pptr: u64, radix: u32, guard_size: u32, guard: u64) -> CapNodeCapability {
+    pub fn new(capnode_ptr: PhysAddr, radix: u6, guard_size: u6, guard: u64) -> CapNodeCapability {
         CapNodeCapability(LocalRegisterCopy::new(u128::from(
             CapNodeCap::Type::value
                 + CapNodeCap::Radix.val(radix.into())
                 + CapNodeCap::GuardSize.val(guard_size.into())
                 + CapNodeCap::Guard.val(guard.into())
-                + CapNodeCap::Ptr.val(pptr.into()),
+                + CapNodeCap::Ptr.val(capnode_ptr.into()),
         )))
     }
 
     /// Create new root node.
-    pub fn new_root(pptr: u64) -> CapNodeCapability {
+    pub fn new_root(capnode_ptr: PhysAddr) -> CapNodeCapability {
         const CONFIG_ROOT_CAPNODE_SIZE_BITS: u32 = 12;
         const WORD_BITS: u32 = 64;
 
         CapNodeCapability::new(
-            pptr,
+            capnode_ptr,
             CONFIG_ROOT_CAPNODE_SIZE_BITS,
             WORD_BITS - CONFIG_ROOT_CAPNODE_SIZE_BITS,
             0,
