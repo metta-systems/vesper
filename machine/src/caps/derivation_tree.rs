@@ -39,7 +39,7 @@ register_bitfields! {
         // drop bottom 4 bits from it in these fields.
         Next OFFSET(4) NUMBITS(44) [], // 16-bytes-aligned, size of canonical phys address is 48 bits
         // -- 16 bits still free here --
-        // -- New word doundary --
+        // -- New word boundary --
         // -- 4 bits still free here --
         // Prev CTE node address -- per cteInsert this is address of the entire CTE slot
         Prev OFFSET(68) NUMBITS(44) []
