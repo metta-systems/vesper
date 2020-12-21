@@ -393,3 +393,18 @@ fn create_root_capnode() -> Capability // Attr(BOOT_CODE)
     cap // reference to pptr is here
 }
 */
+
+// create initial thread
+// - vspace
+// - cpace
+// - tcb
+//
+// requires:
+// - alloc_region
+// - copy_global_mappings
+// - create pt/pd caps -- this is arch-specific?
+// - root capnode with write_slot()
+//
+// init thread domain = 0
+// init thread asid = 1 (asidInvalid = 0)
+//

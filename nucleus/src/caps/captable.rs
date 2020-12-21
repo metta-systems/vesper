@@ -186,3 +186,20 @@ mod tests {
     // seL4_CapTableObject,
     // 6. Retype to TCB and implement Thread capability to run threads (in priv mode first?)
 }
+
+/* caps with fixed slot positions in the root (boot) CNode */
+// enum {
+//     seL4_CapNull = 0, /* null cap */
+//     seL4_CapInitThreadTCB = 1, /* initial thread's TCB cap */
+//     seL4_CapInitThreadCNode = 2, /* initial thread's root CNode cap */
+//     seL4_CapInitThreadVSpace = 3, /* initial thread's VSpace cap */
+//     seL4_CapIRQControl = 4, /* global IRQ controller cap */
+//     seL4_CapASIDControl = 5, /* global ASID controller cap */
+//     seL4_CapInitThreadASIDPool = 6, /* initial thread's ASID pool cap */
+//     seL4_CapIOPort = 7, /* global IO port cap (null cap if not supported) */
+//     seL4_CapIOSpace = 8, /* global IO space cap (null cap if no IOMMU support) */
+//     seL4_CapBootInfoFrame = 9, /* bootinfo frame cap */
+//     seL4_CapInitThreadIPCBuffer = 10, /* initial thread's IPC buffer frame cap */
+//     seL4_CapDomain = 11, /* global domain controller cap */
+//     seL4_NumInitialCaps = 12
+// };
