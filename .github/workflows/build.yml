@@ -140,3 +140,17 @@ jobs:
 
     - name: 'Run tests'
       run: cargo make test
+ 
+    - name: 'Publish coverage report'
+      uses: codecov/codecov-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        file: ./coverage.xml # @todo
+        files: ./coverage1.xml,./coverage2.xml # @todo
+        directory: ./coverage/reports/ # @todo
+        path_to_write_report: ./coverage/codecov_report.txt # @todo
+        flags: unittests # @todo
+        name: codecov-tests
+        env_vars: OS,PYTHON # @todo tags for cov upload
+        fail_ci_if_error: true
+        verbose: true

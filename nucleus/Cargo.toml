@@ -26,6 +26,8 @@ qemu = ["machine/qemu"]
 # Mutually exclusive features to choose a target board
 rpi3 = ["machine/rpi3"]
 rpi4 = ["machine/rpi4"]
+# Build for test coverage analysis, enables profiling_runtime and qemu cov info hooks.
+coverage = []
 
 [dependencies]
 machine = { path = "../machine" }
