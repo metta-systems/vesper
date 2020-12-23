@@ -36,6 +36,12 @@ alias = "nucleus"
 [tasks.kernel-binary]
 disabled = true
 
+# Build in debug to get better coverage information.
+[tasks.build-coverage]
+env = { "TARGET_FEATURES" = "${QEMU_COVERAGE_FEATURES}", "RUSTFLAGS" = "-Zinstrument-coverage", "CARGO_INCREMENTAL" = "0" }
+command = "cargo"
+args = ["build", "--target=${TARGET_JSON}", "--features=${TARGET_FEATURES}"]
+
 [tasks.qemu]
 clear = true
 alias = "qemu-kernel"
@@ -47,6 +53,14 @@ extend = "qemu-runner"
 [tasks.qemu-gdb]
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
+
+# Based on https://www.thanassis.space/coverage.html
+[tasks.qemu-coverage]
+extend = "qemu-runner"
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_COVERAGE_OPTS}" }
+
+[tasks.coverage]
+dependencies = ["build-coverage", "qemu-coverage"]
 
 [tasks.zellij-nucleus]
 alias = "zellij-nucleus-override"

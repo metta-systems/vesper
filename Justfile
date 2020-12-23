@@ -55,6 +55,10 @@ qemu-cb-gdb:
     # Connect to it via chainofcommand to load an actual kernel
     cargo make {{ make-opts }} qemu-cb-gdb
 
+# Run kernel tests in qemu while gathering coverage information
+coverage:
+    cargo make coverage
+
 # Build and write kernel to an SD Card
 [group("hw")]
 device:

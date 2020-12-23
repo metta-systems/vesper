@@ -77,6 +77,7 @@ PLATFORM_TARGET = "--target=${TARGET_JSON}|--features=${TARGET_FEATURES}"
 
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu,rpi3"
+QEMU_COVERAGE_FEATURES = "qemu,coverage"
 
 # Working objcopy from `brew install aarch64-elf-binutils`
 #OBJCOPY = "/opt/homebrew/Cellar/aarch64-elf-binutils/2.40/bin/aarch64-elf-objcopy"
@@ -104,8 +105,12 @@ QEMU_TESTS_OPTS = "-nographic"
 # - if this is set, MUST have gdb attached for SYS_WRITE0 to work, otherwise QEMU will crash.
 # - port 5555 used to match JLink configuration, so we can reuse the same GDB command for both QEMU and JTAG.
 QEMU_GDB_OPTS = "-gdb tcp::5555 -S"
+# For tests coverage analysis
+# - port 9976 used to match configuration from [here](https://www.thanassis.space/coverage.html) to reduce confusion.
+QEMU_COVERAGE_OPTS = "-gdb tcp::9976 -S"
 
 GDB_CONNECT_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect"
+GDB_COVERAGE_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/cov/gdb-cov-collect"
 
 KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus"
 KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
