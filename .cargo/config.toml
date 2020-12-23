@@ -2,6 +2,9 @@
 # https://internals.rust-lang.org/t/evaluating-pipelined-rustc-compilation/10199/12
 pipelining = true
 
+#[target.aarch64-vesper-metta.cfg(coverage)]
+#export RUSTFLAGS="-Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads"
+
 [target.aarch64-vesper-metta]
 rustflags = [
     "-C", "target-cpu=cortex-a53", # raspi 2 .. 3b+
