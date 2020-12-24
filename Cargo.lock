@@ -20,9 +20,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cortex-a"
-version = "5.0.0"
+version = "5.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "626fdbb0f6fa1e6be6df0e94795998894c4ad08d3221e12209a6c0b4f546a0c4"
+checksum = "dc37a4862a4f5b40df96f5e0f3bd4ce6a1bd8bb59a965cd476844673faf83896"
 dependencies = [
  "register",
 ]
