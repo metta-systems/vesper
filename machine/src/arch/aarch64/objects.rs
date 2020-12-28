@@ -60,10 +60,9 @@ enum MemoryKind {
 // Boot code reserves kernel memory and initial mapping allocations (4 pages probably - on rpi3? should be platform-dependent).
 // The rest is converted to untypeds with appropriate kind and given away to start thread.
 
-// Untyped.retype() derives cap to a typed cap (derivation tree must be maintained)
-
 trait Untyped {
     // Uses T::SIZE_BITS to properly size the resulting object
+    // (`where T: KernelObject`)
     // in some cases size_bits must be passed as argument though...
     fn retype<T: NucleusObject>(target_cap: CapNodeRootedPath, target_cap_offset: usize, num_objects: usize) -> Result<CapSlice>; // @todo return an array of caps?
 }

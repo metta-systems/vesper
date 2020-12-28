@@ -9,6 +9,7 @@ pub mod caps;
 pub mod cpu;
 pub mod exception;
 pub mod memory;
+pub mod objects;
 pub mod time;
 
 pub use caps::*;
