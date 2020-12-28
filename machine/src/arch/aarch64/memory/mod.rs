@@ -6,6 +6,7 @@
 //! Memory management functions for aarch64.
 
 mod addr;
+mod cache;
 pub mod mmu;
 
 // pub use addr::{PhysAddr, VirtAddr};
