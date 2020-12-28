@@ -2,15 +2,14 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  */
 
-use crate::arch::aarch64::memory::PhysAddr;
-use ux::u6;
 use {
     super::{
         captable::CapTableEntry, derivation_tree::DerivationTreeNode, CapError, Capability, TryFrom,
     },
-    crate::capdef,
+    crate::{arch::aarch64::memory::PhysAddr, capdef},
     paste::paste,
     register::{register_bitfields, LocalRegisterCopy},
+    ux::u6,
 };
 
 //=====================
