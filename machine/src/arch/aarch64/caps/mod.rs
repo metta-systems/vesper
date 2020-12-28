@@ -1,3 +1,7 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ */
+
 //! AArch64-specific capabilities.
 
 mod asid_control_cap;
