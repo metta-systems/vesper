@@ -228,12 +228,22 @@ enum KernelInitError {}
 
 fn map_kernel_window() {}
 
+/**
+ * This and only this function initialises the CPU.
+ * It does NOT initialise any kernel state.
+ */
 fn init_cpu() -> Result<(), KernelInitError> {
-    unimplemented!();
+    activate_global_pd();
 }
 
+/**
+ * This and only this function initialises the platform.
+ * It does NOT initialise any kernel state.
+ */
 fn init_plat() -> Result<(), KernelInitError> {
-    unimplemented!();
+    initIRQController();
+    initTimer();
+    initL2Cache();
 }
 
 fn arch_init_freemem() -> Result<(), KernelInitError> {
@@ -245,7 +255,12 @@ fn create_domain_cap() -> Result<(), KernelInitError> {
 }
 
 fn init_irqs() -> Result<(), KernelInitError> {
-    unimplemented!();
+    for (irq_t i = 0; i <= maxIRQ; i++) {
+        setIRQState(IRQInactive, i);
+    }
+    setIRQState(IRQTimer, GPT9_IRQ);
+    /* provide the IRQ control cap */
+    write_slot((((slot_ptr_t)((pptr_t)cap_get_capPtr(root_cnode_cap))) + (seL4_CapIRQControl)), cap_irq_control_cap_new());
 }
 
 fn create_bootinfo_cap() -> Result<(), KernelInitError> {
@@ -302,17 +317,34 @@ fn try_init_kernel() -> Result<(), KernelInitError> {
     map_kernel_window();
     init_cpu()?;
     init_plat()?;
-    arch_init_freemem()?;
 
-    let root_capnode_cap = create_root_capnode();
+    println!("Booting kernel");
+
+    init_free_memory()?; // arch_init_freemem()
+
+    let root_capnode_cap = create_root_capnode()?;
     create_domain_cap(root_capnode_cap);
-    init_irqs(root_capnode_cap);
+    // ...create IRQ CapNode...
+    init_irqs(root_capnode_cap)?;
 
     //fill in boot info and
+    // create bootinfo frame
+
+    // create initial address space covering init thread
+    // user image and ipc buffer and bootinfo frame
+
+    // create and map bootinfo frame cap
     create_bootinfo_cap();
 
-    let it_asid_pool_cap = create_asid_pool_for_initial_thread(root_capnode_cap);
-    create_idle_thread();
+    // create initial thread IPC buffer
+
+    // create userland image frames
+
+    // create initial thread ASID pool
+    let it_asid_pool_cap = create_asid_pool_for_initial_thread(root_capnode_cap)?;
+
+    // create the idle thread
+    create_idle_thread()?;
 
     /* Before creating the initial thread (which also switches to it)
      * we clean the cache so that any page table information written
@@ -320,19 +352,21 @@ fn try_init_kernel() -> Result<(), KernelInitError> {
      * read by the hardware page table walker */
     clean_invalidate_l1_caches();
 
-    let it = create_initial_thread(root_capnode_cap);
+    let it = create_initial_thread(root_capnode_cap)?;
 
-    init_core_state(it);
-
-    create_untypeds(root_capnode_cap);
+    /* create all of the untypeds. Both devices and kernel window memory */
+    create_untypeds(root_capnode_cap)?;
 
     finalise_bootinfo();
 
+    /* make everything written by the kernel visible to userland. Cleaning to PoC is not
+     * strictly neccessary, but performance is not critical here so clean and invalidate
+     * everything to PoC */
     clean_invalidate_l1_caches();
     invalidate_local_tlb();
 
-    // grab kernel lock before returning
-    lock_kernel_node();
+    /* Export selected CPU features for access by EL0 */
+    arch_init_user_access();
 
     Ok(())
 }
