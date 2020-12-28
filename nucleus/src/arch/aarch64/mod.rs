@@ -13,6 +13,7 @@ pub use self::caps::*;
 #[cfg(feature = "jtag")]
 pub mod jtag;
 pub mod memory;
+pub mod objects;
 pub mod traps;
 
 /// Loop forever in sleep mode.

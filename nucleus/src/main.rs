@@ -40,6 +40,7 @@ mod caps;
 mod devices;
 mod macros;
 mod mm;
+mod objects;
 mod panic;
 mod platform;
 #[cfg(feature = "qemu")]
