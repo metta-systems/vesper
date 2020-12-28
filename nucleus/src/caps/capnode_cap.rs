@@ -12,6 +12,12 @@ use {
     ux::u6,
 };
 
+/// CapNode capability points to a CapTable containing
+/// a number of CapTableEntries.
+/// While CapTable is merely a storage, CapNode capability
+/// provides information about the guard and the size
+/// of that table.
+
 //=====================
 // Cap definition
 //=====================
