@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  */
 
+use crate::caps::Capability;
 use {super::derivation_tree::DerivationTreeNode, /*crate::memory::PhysAddr,*/ core::fmt};
 
 // * Capability slots: 16 bytes of memory per slot (exactly one capability). --?
@@ -84,7 +85,7 @@ struct CapNodeRootedPath {
 //}
 
 // @note src and dest are swapped here, compared to seL4 api
-impl CapNode {
+impl CapNode { // actually an impl CapPtr
     // Derives a capability into a new, less powerful one, with potentially added Badge.
     fn mint(
         src: CapNodeRootedPath, // can be just CapNodePath since it's relative (is it?) to this CapNode.
@@ -144,6 +145,65 @@ struct CapSpace {
     // cap_space_root: CapNodePath, -- probably not a path but direct CapNode pointer??
 }
 //impl CapNode for CapSpace {} -- ?
+
+type CapPath = u64;
+
+#[derive(Debug, Snafu)]
+enum LookupFault {
+    InvalidRoot,
+    GuardMismatch,
+    DepthMismatch(usize, usize),
+    NoResolvedBits,
+}
+
+// seL4: resolveAddressBits(nodeCap, capptr, n_bits)
+pub(crate) fn resolve_address_bits(
+    node_cap: &dyn Capability,
+    capptr: CapPath, // CapPtr = u64, aka CapPath
+    n_bits: usize,
+) -> Result<(Slot, BitsRemaining), LookupFault> {
+    if node_cap.type() != CapNodeCapability {
+        return Err(LookupFault::InvalidRoot);
+    }
+    let mut n_bits = n_bits;
+    let mut node_cap = node_cap;
+    loop {
+        let radix_bits = node_cap.radixBits();
+        let guard_bits = node_cap.guardBits();
+        let level_bits = radix_bits + guard_bits;
+
+        if level_bits == 0 {
+            return Err(LookupFault::NoResolvedBits);
+        }
+
+        let cap_guard = node_cap.guard();
+        // @todo common code to extract guard_bits from an int?
+        let guard = (capptr >> std::min(n_bits - guard_bits, 63)) & ((1 << guard_bits) - 1);
+
+        if guard_bits > n_bits || guard != cap_guard {
+            return Err(LookupFault::GuardMismatch);
+        }
+
+        if level_bits > n_bits {
+            return Err(LookupFault::DepthMismatch(level_bits, n_bits));
+        }
+
+        let offset = (capptr >> (n_bits - level_bits)) & ((1 << radix_bits) - 1);
+        let slot = node_cap.getPtr() + offset; // @todo Need to turn this into CapTableEntry ptr
+
+        // actually == here since > case has errored above
+        if level_bits == n_bits {
+            return Ok((slot, 0));
+        }
+
+        n_bits -= level_bits;
+        node_cap = slot.capability;
+
+        if node_cap.type() != CapNodeCapability {
+            return Ok((slot, n_bits));
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
