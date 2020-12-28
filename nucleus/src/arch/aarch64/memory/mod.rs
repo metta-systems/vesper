@@ -11,6 +11,7 @@ use {
 };
 
 mod addr;
+mod cache;
 pub mod mmu;
 
 pub use addr::PhysAddr;
