@@ -35,3 +35,21 @@ capdef! { PageTable }
 //=====================
 // Cap implementation
 //=====================
+
+impl PageTableCapability {
+    pub(crate) fn base_address() -> PhysAddr {
+        PhysAddr::new(self.0.read(PageTableCap::BasePtr))
+    }
+
+    pub(crate) fn is_mapped() -> bool {
+        self.0.read(PageTableCap::IsMapped) == 1
+    }
+
+    pub(crate) fn mapped_address() -> VirtAddr {
+        VirtAddr::new(self.0.read(PageTableCap::MappedAddress))
+    }
+
+    pub(crate) fn mapped_asid() -> ASID {
+        self.0.read(PageTableCap::MappedASID)
+    }
+}
