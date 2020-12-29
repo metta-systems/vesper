@@ -1,5 +1,6 @@
 /*
  * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
 //! DerivationTree nodes record the tree of inheritance for caps:

@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
+
 // Syscalls (kernel API)
 trait API {
     fn send(cap: Cap, msg_info: MessageInfo);

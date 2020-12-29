@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  *
  * Based on ideas from Jorge Aparicio, Andre Richter, Phil Oppenheimer, Sergio Benitez.
- * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
 //! Low-level boot of the Raspberry's processor

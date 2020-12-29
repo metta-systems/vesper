@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
+
 use {
     super::{
         display::{Display, PixelOrder, CHARSIZE_X, CHARSIZE_Y},

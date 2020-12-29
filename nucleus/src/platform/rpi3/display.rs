@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
+
 use snafu::Snafu;
 
 /* Character cells are 8x8 */

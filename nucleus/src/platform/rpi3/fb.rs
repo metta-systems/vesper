@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
+
 use {
     super::{
         mailbox::{channel, read, write, MailboxOps, RegisterBlock, Result},
