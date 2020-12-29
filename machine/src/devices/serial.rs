@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
+
 pub trait SerialOps {
     /// Read one byte from serial without translation.
     fn read_byte(&self) -> u8;

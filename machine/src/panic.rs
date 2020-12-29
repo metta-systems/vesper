@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
+
 //! A panic handler for hardware and for QEMU.
 use core::panic::PanicInfo;
 

@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
+
 // This file contains an extract of kernel api from machine/arch/aarch64/objects.rs (didn't remove from there yet)
 
 // Syscalls (kernel API)

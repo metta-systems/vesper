@@ -2,11 +2,12 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
+
 use {
     super::{
-        display::{Display, PixelOrder, CHARSIZE_X, CHARSIZE_Y},
-        mailbox::{self, channel, response::VAL_LEN_FLAG, Mailbox, MailboxOps},
         BcmHost,
+        display::{CHARSIZE_X, CHARSIZE_Y, Display, PixelOrder},
+        mailbox::{self, Mailbox, MailboxOps, channel, response::VAL_LEN_FLAG},
     },
     crate::{platform::raspberrypi::mailbox::MailboxStorageRef, println},
     core::convert::TryInto,

@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BlueOak-1.0.0
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
+
 pub mod semihosting {
     pub fn exit_success() -> ! {
         use qemu_exit::QEMUExit;
