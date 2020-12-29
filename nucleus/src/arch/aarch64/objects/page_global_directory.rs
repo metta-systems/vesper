@@ -26,3 +26,5 @@ impl PageCacheManagement for PageGlobalDirectory {
         todo!()
     }
 }
+
+impl From<PhysAddr> for PageGlobalDirectory {}

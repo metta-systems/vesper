@@ -35,3 +35,21 @@ capdef! { PageDirectory }
 //=====================
 // Cap implementation
 //=====================
+
+impl PageDirectoryCapability {
+    pub(crate) fn base_address() -> PhysAddr {
+        PhysAddr::new(self.0.read(PageDirectoryCap::BasePtr))
+    }
+
+    pub(crate) fn is_mapped() -> bool {
+        self.0.read(PageDirectoryCap::IsMapped) == 1
+    }
+
+    pub(crate) fn mapped_address() -> VirtAddr {
+        VirtAddr::new(self.0.read(PageDirectoryCap::MappedAddress))
+    }
+
+    pub(crate) fn mapped_asid() -> ASID {
+        self.0.read(PageDirectoryCap::MappedASID)
+    }
+}
