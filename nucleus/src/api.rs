@@ -3,6 +3,11 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
+//! Syscall API for calling kernel functions.
+//!
+//! Arch-specific kernel ABI decodes syscall invocations and calls API functions to perform actual
+//! operations.
+
 // Syscalls (kernel API)
 trait API {
     fn send(cap: Cap, msg_info: MessageInfo);
