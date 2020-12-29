@@ -122,6 +122,6 @@ impl Power {
         val |= PM_PASSWORD | PM_RSTC_WRCFG_FULL_RESET;
         self.PM_RSTC.set(val);
 
-        loop {}
+        crate::endless_sleep()
     }
 }
