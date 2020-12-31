@@ -126,6 +126,13 @@ unsafe extern "C" fn default_exception_handler() -> ! {
 /// Totally unsafe in the land of the hardware.
 #[no_mangle]
 unsafe extern "C" fn current_el0_synchronous(e: &mut ExceptionContext) {
+    let cause = ESR_EL1.read(ESR_EL1::EC);
+
+    if cause == ESR_EL1::EC::SVC64.read(ESR_EL1::EC) {
+        let syscall = ESR_EL1.read(ESR_EL1::ISS);
+        return crate::api::handle_syscall(syscall);
+    }
+
     println!("[!] USER synchronous exception happened.");
     synchronous_common(e)
 }
@@ -309,8 +316,9 @@ fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
 /// Helper function to 1) display current exception, 2) skip the offending asm instruction.
 /// Not for production use!
 fn synchronous_common(e: &mut ExceptionContext) {
-    println!("      ESR_EL1: {:#010x} (syndrome)", ESR_EL1.get());
     let cause = ESR_EL1.read(ESR_EL1::EC);
+
+    println!("      ESR_EL1: {:#010x} (syndrome)", ESR_EL1.get());
     println!(
         "           EC: {:#06b} (cause) -- {}",
         cause,
