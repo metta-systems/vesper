@@ -104,6 +104,10 @@ struct ExceptionContext {
 /// Prints verbose information about the exception and then panics.
 ///
 /// Default pointer is configured in the linker script.
+///
+/// # Safety
+///
+/// Totally unsafe in the land of the hardware.
 #[unsafe(no_mangle)]
 extern "C" fn default_exception_handler(exc: &ExceptionContext) {
     panic!(
@@ -117,9 +121,24 @@ extern "C" fn default_exception_handler(exc: &ExceptionContext) {
 // Current, EL0
 //------------------------------------------------------------------------------
 
+// To implement an exception handler, override it by defining the respective
+// function below.
+// Don't forget the #[no_mangle] attribute.
+//
+/// # Safety
+///
+/// Totally unsafe in the land of the hardware.
 #[unsafe(no_mangle)]
 extern "C" fn current_el0_synchronous(_e: &mut ExceptionContext) {
-    panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
+    let cause = ESR_EL1.read(ESR_EL1::EC);
+
+    if cause == ESR_EL1::EC::SVC64.read(ESR_EL1::EC) {
+        let syscall = ESR_EL1.read(ESR_EL1::ISS);
+        return crate::api::handle_syscall(syscall);
+    }
+
+    println!("[!] USER synchronous exception happened.");
+    default_exception_handler(e)
 }
 
 #[unsafe(no_mangle)]
@@ -136,6 +155,9 @@ extern "C" fn current_el0_serror(_e: &mut ExceptionContext) {
 // Current, ELx
 //------------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Totally unsafe in the land of the hardware.
 #[unsafe(no_mangle)]
 extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
     #[cfg(feature = "test_build")]
@@ -149,6 +171,7 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
         }
     }
 
+    println!("[!] KERNEL synchronous exception happened.");
     default_exception_handler(e);
 }
 
@@ -158,9 +181,14 @@ extern "C" fn current_elx_irq(_e: &mut ExceptionContext) {
     exception::asynchronous::irq_manager().handle_pending_irqs(token);
 }
 
+/// # Safety
+///
+/// Totally unsafe in the land of the hardware.
 #[unsafe(no_mangle)]
 extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
+    println!("[!] KERNEL serror exception happened.");
     default_exception_handler(e);
+    endless_sleep()
 }
 
 //------------------------------------------------------------------------------

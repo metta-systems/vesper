@@ -113,7 +113,9 @@ type IssForDataAbort = LocalRegisterCopy<u64, ISS_DA::Register>;
 
 fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
     match iss.read_as_enum(ISS_DA::DFSC) {
-        Some(ISS_DA::DFSC::Value::AddressSizeTL0) => "Address size fault, level 0 of translation or translation table base register",
+        Some(ISS_DA::DFSC::Value::AddressSizeTL0) => {
+            "Address size fault, level 0 of translation or translation table base register"
+        }
         Some(ISS_DA::DFSC::Value::AddressSizeTL1) => "Address size fault, level 1",
         Some(ISS_DA::DFSC::Value::AddressSizeTL2) => "Address size fault, level 2",
         Some(ISS_DA::DFSC::Value::AddressSizeTL3) => "Address size fault, level 3",
@@ -127,22 +129,46 @@ fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
         Some(ISS_DA::DFSC::Value::PermissionFaultTL1) => "Permission fault, level 1",
         Some(ISS_DA::DFSC::Value::PermissionFaultTL2) => "Permission fault, level 2",
         Some(ISS_DA::DFSC::Value::PermissionFaultTL3) => "Permission fault, level 3",
-        Some(ISS_DA::DFSC::Value::SyncExternalAbort) => "Synchronous External abort, not on translation table walk or hardware update of translation table",
+        Some(ISS_DA::DFSC::Value::SyncExternalAbort) => {
+            "Synchronous External abort, not on translation table walk or hardware update of translation table"
+        }
         Some(ISS_DA::DFSC::Value::SyncTagCheckFault) => "Synchronous Tag Check Fault",
-        Some(ISS_DA::DFSC::Value::SyncAbortOnTranslationTL0) => "Synchronous External abort on translation table walk or hardware update of translation table, level 0",
-        Some(ISS_DA::DFSC::Value::SyncAbortOnTranslationTL1) => "Synchronous External abort on translation table walk or hardware update of translation table, level 1",
-        Some(ISS_DA::DFSC::Value::SyncAbortOnTranslationTL2) => "Synchronous External abort on translation table walk or hardware update of translation table, level 2",
-        Some(ISS_DA::DFSC::Value::SyncAbortOnTranslationTL3) => "Synchronous External abort on translation table walk or hardware update of translation table, level 3",
-        Some(ISS_DA::DFSC::Value::SyncParityError) => "Synchronous parity or ECC error on memory access, not on translation table walk",
-        Some(ISS_DA::DFSC::Value::SyncParityErrorOnTranslationTL0) => "Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 0",
-        Some(ISS_DA::DFSC::Value::SyncParityErrorOnTranslationTL1) => "Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 1",
-        Some(ISS_DA::DFSC::Value::SyncParityErrorOnTranslationTL2) => "Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 2",
-        Some(ISS_DA::DFSC::Value::SyncParityErrorOnTranslationTL3) => "Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 3",
+        Some(ISS_DA::DFSC::Value::SyncAbortOnTranslationTL0) => {
+            "Synchronous External abort on translation table walk or hardware update of translation table, level 0"
+        }
+        Some(ISS_DA::DFSC::Value::SyncAbortOnTranslationTL1) => {
+            "Synchronous External abort on translation table walk or hardware update of translation table, level 1"
+        }
+        Some(ISS_DA::DFSC::Value::SyncAbortOnTranslationTL2) => {
+            "Synchronous External abort on translation table walk or hardware update of translation table, level 2"
+        }
+        Some(ISS_DA::DFSC::Value::SyncAbortOnTranslationTL3) => {
+            "Synchronous External abort on translation table walk or hardware update of translation table, level 3"
+        }
+        Some(ISS_DA::DFSC::Value::SyncParityError) => {
+            "Synchronous parity or ECC error on memory access, not on translation table walk"
+        }
+        Some(ISS_DA::DFSC::Value::SyncParityErrorOnTranslationTL0) => {
+            "Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 0"
+        }
+        Some(ISS_DA::DFSC::Value::SyncParityErrorOnTranslationTL1) => {
+            "Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 1"
+        }
+        Some(ISS_DA::DFSC::Value::SyncParityErrorOnTranslationTL2) => {
+            "Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 2"
+        }
+        Some(ISS_DA::DFSC::Value::SyncParityErrorOnTranslationTL3) => {
+            "Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 3"
+        }
         Some(ISS_DA::DFSC::Value::AlignmentFault) => "Alignment fault",
         Some(ISS_DA::DFSC::Value::TlbConflictAbort) => "TLB conflict abort",
-        Some(ISS_DA::DFSC::Value::UnsupportedAtomicUpdate) => "Unsupported atomic hardware update fault",
+        Some(ISS_DA::DFSC::Value::UnsupportedAtomicUpdate) => {
+            "Unsupported atomic hardware update fault"
+        }
         Some(ISS_DA::DFSC::Value::Lockdown) => "Lockdown (IMPLEMENTATION DEFINED fault)",
-        Some(ISS_DA::DFSC::Value::UnsupportedAccess) => "Unsupported Exclusive or Atomic access (IMPLEMENTATION DEFINED fault)",
+        Some(ISS_DA::DFSC::Value::UnsupportedAccess) => {
+            "Unsupported Exclusive or Atomic access (IMPLEMENTATION DEFINED fault)"
+        }
         _ => "Unknown",
     }
 }
@@ -152,8 +178,9 @@ type SpsrCopy = LocalRegisterCopy<u64, SPSR_EL1::Register>;
 /// Helper function to 1) display current exception, 2) skip the offending asm instruction.
 /// Not for production use!
 fn synchronous_common(e: &mut ExceptionContext) {
-    println!("      ESR_EL1: {:#010x} (syndrome)", ESR_EL1.get());
     let cause = ESR_EL1.read(ESR_EL1::EC);
+
+    println!("      ESR_EL1: {:#010x} (syndrome)", ESR_EL1.get());
     println!(
         "           EC: {:#08b} (cause) -- {}",
         cause,
