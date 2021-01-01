@@ -88,8 +88,8 @@ fn handle_syscall(syscall: SysCall) -> Result<()> {
         SysCall::Yield => handle_yield(),
     }
 
-    schedule();
-    activateThread();
+    Scheduler::schedule();
+    Scheduler::activate_thread();
 
     Ok(())
 }
@@ -289,8 +289,8 @@ fn handle_interrupt_entry() -> Result<()> {
         handle_spurious_irq();
     }
 
-    schedule();
-    activate_thread();
+    Scheduler::schedule();
+    Scheduler::activate_thread();
 
     Ok(())
 }
@@ -355,6 +355,41 @@ impl TCB {
 // the rest goes through slowpath
 
 // c_handle_syscall called directly from SWI vector entry
+
+struct Scheduler;
+
+impl Scheduler {
+    /* Values of 0 and ~0 encode ResumeCurrentThread and ChooseNewThread
+     * respectively; other values encode SwitchToThread and must be valid
+     * tcb pointers */
+    //KernelSchedulerAction
+
+    fn schedule() {
+        let action = KernelSchedulerAction;
+        if action == !0 { // all ones..
+            if KernelCurrentThread.is_runnable() {
+                Scheduler::enqueue(KernelCurrentThread);
+            }
+            if KernelDomainTime == 0 {
+                next_domain();
+            }
+            Scheduler::choose_thread();
+            KernelSchedulerAction = 0;
+        } else if action != 0 {
+            if KernelCurrentThread.is_runnable() {
+                Scheduler::enqueue(KernelCurrentThread);
+            }
+            Scheduler::switch_to_thread(KernelSchedulerAction);
+            KernelSchedulerAction = 0;
+        }
+    }
+
+    fn activate_thread() {}
+
+    fn dequeue(thread: &mut TCB);
+    fn append(thread: &mut TCB);
+    fn reschedule_required();
+}
 
 struct Nucleus {}
 
