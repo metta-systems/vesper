@@ -1,12 +1,12 @@
 [workspace]
-members = ["machine", "nucleus", "bin/chainboot", "bin/chainofcommand"]
+members = ["machine", "nucleus", "vesper-user", "bin/chainboot", "bin/chainofcommand"]
 resolver = "2"
 
 [workspace.package]
 version = "0.0.1"
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
 documentation = "https://docs.metta.systems/vesper"
-homepage = "https://github.com/metta-systems/vesper"
+homepage = "https://metta.systems/products/vesper"
 repository = "https://github.com/metta-systems/vesper"
 readme = "README.md"
 license = "BlueOak-1.0.0"
