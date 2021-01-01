@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "nucleus",
+    "vesper-user",
     "crates/tock-registers"
 ]
 

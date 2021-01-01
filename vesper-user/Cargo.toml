@@ -1,0 +1,18 @@
+[package]
+name = "vesper-user"
+version = "0.0.1"
+authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
+description = "Vesper user-space interface"
+documentation = "https://docs.metta.systems/vesper-user"
+homepage = "https://metta.systems/products/vesper"
+repository = "https://github.com/metta-systems/vesper"
+readme = "README.md"
+license = "BlueOak-1.0.0"
+categories = ["no-std", "embedded", "os"]
+publish = false
+edition = "2018"
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]

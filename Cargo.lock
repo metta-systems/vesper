@@ -147,4 +147,9 @@ dependencies = [
  "snafu",
  "usize_conversions",
  "ux",
+ "vesper-user",
 ]
+
+[[package]]
+name = "vesper-user"
+version = "0.0.1"

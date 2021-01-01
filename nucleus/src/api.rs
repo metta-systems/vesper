@@ -8,6 +8,8 @@
 //! Arch-specific kernel ABI decodes syscall invocations and calls API functions to perform actual
 //! operations.
 
+use vesper_user::SysCall as SysCall;
+
 // Syscalls (kernel API)
 trait API {
     // Three below (send, nb_send, call) are "invocation" syscalls.
@@ -43,18 +45,6 @@ trait API {
     // As per Recv, but donation not possible.
     fn wait(src: Cap) -> Result<(MessageInfo, Option<&Badge>)>;
     // Plus some debugging calls...
-}
-
-// @todo This is going to be in the interface library.
-enum SysCall {
-    Send,
-    NBSend,
-    Call,
-    Recv,
-    Reply,
-    ReplyRecv,
-    NBRecv,
-    Yield,
 }
 
 fn handle_syscall(syscall: SysCall) -> Result<()> {
