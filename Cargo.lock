@@ -65,9 +65,9 @@ checksum = "bd7a31eed1591dcbc95d92ad7161908e72f4677f8fabf2a32ca49b4237cbf211"
 
 [[package]]
 name = "register"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faf386c0c48fea132b7fbbf71c32d1b1d62e7c59043bbabdd15c9ed9f254517e"
+checksum = "f4a247de29ab7cc8f5006cfe775c4a81c704f9914c5e2a79696862e643135433"
 dependencies = [
  "tock-registers",
 ]
