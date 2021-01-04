@@ -3,6 +3,8 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
+use crate::memory::{mmu::PageGlobalDirectory, VirtAddr};
+
 // L1 table
 struct PageUpperDirectory {}
 
@@ -10,7 +12,7 @@ impl PageUpperDirectory {
     fn map(
         pgd: PageGlobalDirectory, /*Cap*/
         vaddr: VirtAddr,
-        attr: VMAttributes,
+        attr: u32, //VMAttributes,
     ) -> Result<()> {
         todo!()
     }

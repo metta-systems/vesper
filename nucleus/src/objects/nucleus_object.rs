@@ -3,7 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-pub(crate) trait KernelObject {
+pub(crate) trait NucleusObject {
     fn size_bits() -> usize;
     fn invoke();
 }

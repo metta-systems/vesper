@@ -16,7 +16,8 @@
 // * _Capability spaces_ store capabilities (i.e., access rights) to kernel services along with
 //                       their book-keeping information.
 
-pub mod kernel_object;
+pub mod nucleus_object;
+pub mod thread;
 pub mod untyped;
 
-pub use kernel_object::KernelObject;
+pub(crate) use nucleus_object::NucleusObject;

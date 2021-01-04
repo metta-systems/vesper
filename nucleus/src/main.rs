@@ -36,6 +36,7 @@ use architecture_not_supported_sorry;
 #[macro_use]
 pub mod arch;
 pub use arch::*;
+mod api;
 mod caps;
 mod devices;
 mod macros;
@@ -362,5 +363,10 @@ mod main_tests {
     #[test_case]
     fn test_data_abort_trap() {
         check_data_abort_trap()
+    }
+
+    #[test_case]
+    fn test_user_thread_syscall() {
+        // To test syscall from user-space we need to construct a user-space thread and switch to it
     }
 }

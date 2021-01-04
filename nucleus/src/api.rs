@@ -8,42 +8,50 @@
 //! Arch-specific kernel ABI decodes syscall invocations and calls API functions to perform actual
 //! operations.
 
-use vesper_user::SysCall as SysCall;
+use {
+    vesper_user::SysCall as SysCall,
+    crate::println,
+    snafu::Snafu,
+    crate::arch,
+    crate::arch::memory::{PhysAddr, VirtAddr},
+    crate::objects::thread::ThreadState,
+    crate::caps::{ReplyCapability, NullCapability},
+};
 
 // Syscalls (kernel API)
 trait API {
     // Three below (send, nb_send, call) are "invocation" syscalls.
-    fn send(cap: Cap, msg_info: MessageInfo);
-    fn nb_send(dest: Cap, msg_info: MessageInfo);
-    fn call(cap: Cap, msg_info: MessageInfo) -> Result<(MessageInfo, Option<&Badge>)>;
+    // fn send(cap: Cap, msg_info: MessageInfo);
+    // fn nb_send(dest: Cap, msg_info: MessageInfo);
+    // fn call(cap: Cap, msg_info: MessageInfo) -> Result<(MessageInfo, Option<&Badge>)>;
     // Wait for message, when it is received,
     // return object Badge and block caller on `reply`.
-    fn recv(src: Cap, reply: Cap) -> Result<(MessageInfo, Option<&Badge>)>;
-    fn reply(msg_info: MessageInfo);
+    // fn recv(src: Cap, reply: Cap) -> Result<(MessageInfo, Option<&Badge>)>;
+    // fn reply(msg_info: MessageInfo);
     // As Recv but invoke `reply` first.
-    fn reply_recv(
-        src: Cap,
-        reply: Cap,
-        msg_info: MessageInfo,
-    ) -> Result<(MessageInfo, Option<&Badge>)>;
-    fn nb_recv(src: Cap) -> Result<(MessageInfo, Option<&Badge>)>;
-    fn r#yield();
+    // fn reply_recv(
+    //     src: Cap,
+    //     reply: Cap,
+    //     msg_info: MessageInfo,
+    // ) -> Result<(MessageInfo, Option<&Badge>)>;
+    // fn nb_recv(src: Cap) -> Result<(MessageInfo, Option<&Badge>)>;
+    // fn r#yield();
     // -- end of default seL4 syscall list --
     // As ReplyRecv but invoke `dest` not `reply`.
-    fn nb_send_recv(
-        dest: Cap,
-        msg_info: MessageInfo,
-        src: Cap,
-        reply: Cap,
-    ) -> Result<(MessageInfo, Options<&Badge>)>;
+    // fn nb_send_recv(
+    //     dest: Cap,
+    //     msg_info: MessageInfo,
+    //     src: Cap,
+    //     reply: Cap,
+    // ) -> Result<(MessageInfo, Options<&Badge>)>;
     // As NBSendRecv, with no reply. Donation is not possible.
-    fn nb_send_wait(
-        cap: Cap,
-        msg_info: MessageInfo,
-        src: Cap,
-    ) -> Result<(MessageInfo, Option<&Badge>)>;
+    // fn nb_send_wait(
+    //     cap: Cap,
+    //     msg_info: MessageInfo,
+    //     src: Cap,
+    // ) -> Result<(MessageInfo, Option<&Badge>)>;
     // As per Recv, but donation not possible.
-    fn wait(src: Cap) -> Result<(MessageInfo, Option<&Badge>)>;
+    // fn wait(src: Cap) -> Result<(MessageInfo, Option<&Badge>)>;
     // Plus some debugging calls...
 }
 
@@ -175,29 +183,31 @@ fn handle_invocation(is_call: bool, is_blocking: bool) -> Result<()> {
     Ok(())
 }
 
-fn handle_receive(is_blocking: bool) {
+fn handle_receive(is_blocking: bool) -> Result<()> {
     let endpoint_cap_ptr = KernelCurrentThread.get_register(capRegister);
 
     let result = KernelCurrentThread.lookup_cap(endpoint_cap_ptr);
 
     if result.is_err() {
-        KernelCurrentFault = Fault_CapFault::new(endpoint_cap_ptr, true);
+        // KernelCurrentFault = Fault_CapFault::new(endpoint_cap_ptr, true);
         handle_fault(KernelCurrentThread);
         return Ok(());
     }
 
-    match result.cap.get_type() {
-        endpoint => ,
-        notification => ,
-        _ => fault,
+    match result.capability.get_type() {
+        endpoint => Ok(()),
+        notification => Ok(()),
+        _ => Ok(()), //fault,
     }
 }
 
 fn handle_reply() {
     let caller_slot = KernelCurrentThread.get_caller_slot();
     let caller_cap = caller_slot.capability;
+    const reply_cap = ReplyCapability::Type::Type.value;
+    const null_cap = NullCapability::Type::Type.value;
     match caller_cap.get_type() {
-        ReplyCap::Type.value => {
+        reply_cap => {
             // if (cap_reply_cap_get_capReplyMaster(callerCap)) {
             //     break;
             // }
@@ -205,7 +215,7 @@ fn handle_reply() {
             // if(!(caller != ksCurThread)) _assert_fail("caller must not be the current thread", "src/api/syscall.c", 313, __FUNCTION__);
             // do_reply_transfer(ksCurThread, caller, callerSlot);
         },
-        NullCap::Type.value => {
+        null_cap => {
             println!("<<vesper[T{} \"{}\" @{}]: Attempted reply operation when no reply capability present.>>", KernelCurrentThread, KernelCurrentThread.name, KernelCurrentThread.get_restart_pc());
         },
         _ => {
@@ -293,53 +303,6 @@ fn handle_interrupt_entry() -> Result<()> {
     Ok(())
 }
 
-/* TCB: size 64 bytes + sizeof(arch_tcb_t) (aligned to nearest power of 2) */
-struct TCB {
-    arch_tcb: arch::TCB,
-    state: ThreadState, // 12 bytes?
-    /* Notification that this TCB is bound to. If this is set, when this TCB waits on
-     * any sync endpoint, it may receive a signal from a Notification object.
-     * 4 bytes*/
-    // notification_t *tcbBoundNotification;
-    fault: Fault, // 8 bytes?
-    lookup_failure: LookupFault, // 8 bytes
-    /* Domain, 1 byte (packed to 4) */
-    domain: Domain,
-    /*  maximum controlled priorioty, 1 byte (packed to 4) */
-    mcp: Priority,
-    /* Priority, 1 byte (packed to 4) */
-    priority: Priority,
-    /* Timeslice remaining, 4 bytes */
-    time_slice: u32,
-    /* Capability pointer to thread fault handler, 4 bytes */
-    fault_handler: CapPath,
-    /* userland virtual address of thread IPC buffer, 4 bytes */
-    ipc_buffer: VirtAddr,
-    /* Previous and next pointers for scheduler queues , 8 bytes */
-    sched_next: *mut TCB,
-    sched_prev: *mut TCB,
-    /* Previous and next pointers for endpoint and notification queues, 8 bytes */
-    ep_next: *mut TCB,
-    ep_prev: *mut TCB,
-    /* Use any remaining space for a thread name */
-    name: &str,
-}
-
-impl TCB {
-    fn get_register(...) {}
-    fn lookup_cap_and_slot() -> Result<()> {}
-    fn get_restart_pc() {}
-    fn lookup_ipc_buffer(some: bool) {}
-    fn lookup_extra_caps() -> Result<()> {}
-    fn get_state() -> ThreadState {}
-    fn set_state(state: ThreadState) {}
-
-    fn get_caller_slot() -> Slot {}
-    fn send_fault_ipc(&self) {}
-
-    fn replyFromKernel_success_empty() {}
-    fn replyFromKernel_error() {}
-}
 //handleSyscall(syscall) in the slowpath()
 // these are expressed in terms of
 // handleInvocation(bool isCall, bool isBlocking)
@@ -352,7 +315,7 @@ impl TCB {
 // Call and ReplyRecv have fastpath handlers
 // the rest goes through slowpath
 
-// c_handle_syscall called directly from SWI vector entry
+// c_handle_syscall called directly from SVC vector entry
 
 struct Scheduler;
 
@@ -384,13 +347,13 @@ impl Scheduler {
 
     fn activate_thread() {}
 
-    fn dequeue(thread: &mut TCB);
-    fn append(thread: &mut TCB);
-    fn reschedule_required();
+    fn dequeue(thread: &mut TCB) {}
+    fn append(thread: &mut TCB) {}
+    fn reschedule_required() {}
 }
 
 struct Nucleus {}
 
-impl API for Nucleus {
+// impl API for Nucleus {
     //...
-}
+// }

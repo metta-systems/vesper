@@ -7,9 +7,9 @@
 struct PageTable {}
 
 impl PageTable {
-    fn map(virt_space: VirtSpace /*Cap*/, vaddr: VirtAddr, attr: VMAttributes) -> Result<()> {
-        todo!()
-    }
+    // fn map_to(virt_space: VirtSpace /*Cap*/, vaddr: VirtAddr, attr: VMAttributes) -> Result<()> {
+    //     todo!()
+    // }
     fn unmap() -> Result<()> {
         todo!()
     }

@@ -3,6 +3,8 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
+use crate::memory::{mmu::PageUpperDirectory, VirtAddr};
+
 // probably just impl some Mapping trait for these "structs"?
 
 // L2 table
@@ -12,7 +14,7 @@ impl PageDirectory {
     fn map(
         pud: PageUpperDirectory, /*Cap*/
         vaddr: VirtAddr,
-        attr: VMAttributes,
+        attr: u32, //VMAttributes,
     ) -> Result<()> {
         todo!()
     }

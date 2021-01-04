@@ -4,6 +4,7 @@
  */
 
 use crate::caps::Capability;
+use snafu::Snafu;
 use {super::derivation_tree::DerivationTreeNode, /*crate::memory::PhysAddr,*/ core::fmt};
 
 // * Capability slots: 16 bytes of memory per slot (exactly one capability). --?
@@ -153,7 +154,7 @@ type CapPath = u64;
 enum LookupFault {
     InvalidRoot,
     GuardMismatch,
-    DepthMismatch(usize, usize),
+    DepthMismatch { expected: usize, actual: usize },
     NoResolvedBits,
 }
 
@@ -163,7 +164,7 @@ pub(crate) fn resolve_address_bits(
     capptr: CapPath, // CapPtr = u64, aka CapPath
     n_bits: usize,
 ) -> Result<(Slot, BitsRemaining), LookupFault> {
-    if node_cap.type() != CapNodeCapability {
+    if node_cap.get_type() != CapNodeCapability {
         return Err(LookupFault::InvalidRoot);
     }
     let mut n_bits = n_bits;
@@ -179,14 +180,17 @@ pub(crate) fn resolve_address_bits(
 
         let cap_guard = node_cap.guard();
         // @todo common code to extract guard_bits from an int?
-        let guard = (capptr >> std::min(n_bits - guard_bits, 63)) & ((1 << guard_bits) - 1);
+        let guard = (capptr >> core::min(n_bits - guard_bits, 63)) & ((1 << guard_bits) - 1);
 
         if guard_bits > n_bits || guard != cap_guard {
             return Err(LookupFault::GuardMismatch);
         }
 
         if level_bits > n_bits {
-            return Err(LookupFault::DepthMismatch(level_bits, n_bits));
+            return Err(LookupFault::DepthMismatch {
+                expected: level_bits,
+                actual: n_bits,
+            });
         }
 
         let offset = (capptr >> (n_bits - level_bits)) & ((1 << radix_bits) - 1);
@@ -200,7 +204,7 @@ pub(crate) fn resolve_address_bits(
         n_bits -= level_bits;
         node_cap = slot.capability;
 
-        if node_cap.type() != CapNodeCapability {
+        if node_cap.get_type() != CapNodeCapability {
             return Ok((slot, n_bits));
         }
     }

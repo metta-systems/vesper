@@ -16,6 +16,8 @@ pub mod memory;
 pub mod objects;
 pub mod traps;
 
+pub(crate) use objects::thread::user_stack_trace;
+
 /// Loop forever in sleep mode.
 #[inline]
 pub fn endless_sleep() -> ! {

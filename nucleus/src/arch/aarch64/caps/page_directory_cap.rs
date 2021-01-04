@@ -5,6 +5,7 @@
 
 use {
     crate::{
+        arch::memory::{PhysAddr, VirtAddr, ASID},
         capdef,
         caps::{CapError, Capability},
     },
@@ -37,19 +38,19 @@ capdef! { PageDirectory }
 //=====================
 
 impl PageDirectoryCapability {
-    pub(crate) fn base_address() -> PhysAddr {
+    pub(crate) fn base_address(&self) -> PhysAddr {
         PhysAddr::new(self.0.read(PageDirectoryCap::BasePtr))
     }
 
-    pub(crate) fn is_mapped() -> bool {
+    pub(crate) fn is_mapped(&self) -> bool {
         self.0.read(PageDirectoryCap::IsMapped) == 1
     }
 
-    pub(crate) fn mapped_address() -> VirtAddr {
+    pub(crate) fn mapped_address(&self) -> VirtAddr {
         VirtAddr::new(self.0.read(PageDirectoryCap::MappedAddress))
     }
 
-    pub(crate) fn mapped_asid() -> ASID {
+    pub(crate) fn mapped_asid(&self) -> ASID {
         self.0.read(PageDirectoryCap::MappedASID)
     }
 }

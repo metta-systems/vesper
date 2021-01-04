@@ -3,6 +3,8 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
+use crate::memory::{PhysAddr, VirtAddr};
+
 mod asid_control;
 mod asid_pool;
 mod page;
@@ -10,6 +12,7 @@ mod page_directory;
 mod page_global_directory;
 mod page_table;
 mod page_upper_directory;
+pub(crate) mod thread;
 
 // Allocation details
 
@@ -40,10 +43,21 @@ mod page_upper_directory;
 // * unmap(Page, FrameAllocator)->()
 
 trait VirtSpace {
-    fn map(virt_space: VirtSpace/*Cap*/, vaddr: VirtAddr, rights: CapRights, attr: VMAttributes) -> Result<()>; /// ??
-    fn unmap() -> Result<()>; /// ??
-    fn remap(virt_space: VirtSpace/*Cap*/, rights: CapRights, attr: VMAttributes) -> Result<()>; /// ??
-    fn get_address() -> Result<PhysAddr>;///??
+    fn map_to(
+        virt_space: VirtSpace, /*Cap*/
+        vaddr: VirtAddr,
+        rights: u32, //CapRights,
+        attr: u32,   //VMAttributes,
+    ) -> Result<()>;
+    /// ??
+    fn unmap() -> Result<()>; // ??
+    fn remap(
+        virt_space: VirtSpace, /*Cap*/
+        rights: u32,           //CapRights,
+        attr: u32,             //VMAttributes,
+    ) -> Result<()>;
+    /// ??
+    fn get_address() -> Result<PhysAddr>; //??
 }
 
 // ARM AArch64 processors have a four-level page-table structure, where the
@@ -61,7 +75,6 @@ trait VirtSpace {
 //       |  or
 //       +--PageTable (L3)
 //          +--Page<Size4KiB> -- aka Page
-
 
 /// Cache data management.
 trait PageCacheManagement {

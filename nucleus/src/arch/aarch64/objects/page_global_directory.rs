@@ -3,6 +3,8 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
+use crate::arch::{memory::PhysAddr, objects::PageCacheManagement};
+
 // L0 table
 struct PageGlobalDirectory {
     // @todo should also impl VirtSpace to be able to map shit?

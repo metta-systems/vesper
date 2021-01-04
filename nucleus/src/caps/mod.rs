@@ -34,12 +34,15 @@ mod endpoint_cap;
 mod irq_control_cap;
 mod irq_handler_cap;
 mod notification_cap;
-mod null_cap;
-mod reply_cap;
+pub mod null_cap;
+pub mod reply_cap;
 mod resume_cap;
 mod thread_cap;
 mod untyped_cap;
 mod zombie_cap;
+
+pub use null_cap::NullCapability;
+pub use reply_cap::ReplyCapability;
 
 /// Opaque capability object, manipulated by the kernel.
 pub trait Capability {
@@ -70,6 +73,9 @@ macro_rules! capdef {
         paste! {
             #[doc = "Wrapper representing `" $name "Capability`."]
             pub struct [<$name Capability>](LocalRegisterCopy<u128, [<$name Cap>]::Register>);
+            impl [<$name Capability>] {
+                type Type = [<$name Cap>]::Register;
+            }
             impl Capability for [<$name Capability>] {
                 #[inline]
                 fn as_u128(&self) -> u128 {

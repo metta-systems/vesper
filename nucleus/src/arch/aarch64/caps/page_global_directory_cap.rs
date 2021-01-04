@@ -5,6 +5,7 @@
 
 use {
     crate::{
+        arch::memory::{PhysAddr, VirtAddr, ASID},
         capdef,
         caps::{CapError, Capability},
     },
@@ -36,19 +37,18 @@ capdef! { PageGlobalDirectory }
 //=====================
 
 impl PageGlobalDirectoryCapability {
-    pub(crate) fn base_address() -> PhysAddr {
+    pub(crate) fn base_address(&self) -> PhysAddr {
         PhysAddr::new(self.0.read(PageGlobalDirectoryCap::BasePtr))
     }
 
-    pub(crate) fn is_mapped() -> bool {
+    pub(crate) fn is_mapped(&self) -> bool {
         self.0.read(PageGlobalDirectoryCap::IsMapped) == 1
     }
 
-    pub(crate) fn mapped_address() -> VirtAddr {
-        VirtAddr::new(self.0.read(PageGlobalDirectoryCap::MappedAddress))
-    }
+    // Global directory does not give access to mapped addresses,
+    // instead, it links to lower page directory levels.
 
-    pub(crate) fn mapped_asid() -> ASID {
+    pub(crate) fn mapped_asid(&self) -> ASID {
         self.0.read(PageGlobalDirectoryCap::MappedASID)
     }
 }

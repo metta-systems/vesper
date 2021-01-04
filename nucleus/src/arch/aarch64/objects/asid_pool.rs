@@ -5,5 +5,5 @@
 
 // implemented for x86 and arm
 trait ASIDPool {
-    fn assign(virt_space: VirtSpace /*Cap*/) -> Result<()>;
+    // fn assign(virt_space: VirtSpace /*Cap*/) -> Result<()>;
 }

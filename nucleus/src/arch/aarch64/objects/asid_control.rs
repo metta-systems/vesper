@@ -5,5 +5,5 @@
 
 // implemented for x86 and arm
 trait ASIDControl {
-    fn make_pool(untyped: Untyped, target_cap_space_cap: CapNodeRootedPath) -> Result<()>;
+    // fn make_pool(untyped: Untyped, target_cap_space_cap: CapNodeRootedPath) -> Result<()>;
 }
