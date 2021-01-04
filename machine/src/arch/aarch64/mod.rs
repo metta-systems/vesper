@@ -13,3 +13,4 @@ pub mod objects;
 pub mod time;
 
 pub use caps::*;
+pub(crate) use objects::thread::user_stack_trace;

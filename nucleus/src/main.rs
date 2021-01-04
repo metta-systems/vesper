@@ -40,6 +40,10 @@ use {
     machine::{arch, console::console, entry, exception, info, memory, println, time, warn},
 };
 
+mod api;
+pub mod arch;
+pub use arch::*;
+
 entry!(kernel_init);
 
 /// Kernel early init code.
@@ -340,5 +344,10 @@ mod main_tests {
     #[test_case]
     fn test_data_abort_trap() {
         check_data_abort_trap()
+    }
+
+    #[test_case]
+    fn test_user_thread_syscall() {
+        // To test syscall from user-space we need to construct a user-space thread and switch to it
     }
 }

@@ -3,6 +3,11 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
+use crate::arch::{
+    memory::{PhysAddr, VirtAddr},
+    objects::PageCacheManagement,
+};
+
 struct Page {}
 
 impl Page {
@@ -11,29 +16,29 @@ impl Page {
     fn get_address() -> Result<PhysAddr> {
         todo!()
     }
-    fn map(
-        virt_space: VirtSpace, /*Cap*/
-        vaddr: VirtAddr,
-        rights: CapRights,
-        attr: VMAttributes,
-    ) -> Result<()> {
-        todo!()
-    }
+    // fn map(
+    //     virt_space: VirtSpace, /*Cap*/
+    //     vaddr: VirtAddr,
+    //     rights: CapRights,
+    //     attr: VMAttributes,
+    // ) -> Result<()> {
+    //     todo!()
+    // }
     /// Changes the permissions of an existing mapping.
-    fn remap(
-        virt_space: VirtSpace, /*Cap*/
-        rights: CapRights,
-        attr: VMAttributes,
-    ) -> Result<()> {
-        todo!()
-    }
+    // fn remap(
+    //     virt_space: VirtSpace, /*Cap*/
+    //     rights: CapRights,
+    //     attr: VMAttributes,
+    // ) -> Result<()> {
+    //     todo!()
+    // }
     fn unmap() -> Result<()> {
         todo!()
     }
     // MMIO space.
-    fn map_io(iospace: IoSpace /*Cap*/, rights: CapRights, ioaddr: VirtAddr) -> Result<()> {
-        todo!()
-    }
+    // fn map_io(iospace: IoSpace /*Cap*/, rights: CapRights, ioaddr: VirtAddr) -> Result<()> {
+    //     todo!()
+    // }
 }
 
 impl PageCacheManagement for Page {

@@ -1,3 +1,3 @@
-pub fn syscall(number: u64) {
-    asm!("svc #1234")
+pub fn syscall(_number: u64) {
+    unsafe { asm!("svc #1234") }
 }

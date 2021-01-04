@@ -14,4 +14,4 @@
 /// Implements C ABI to easily parse passed in parameters.
 /// @todo Move this to aarch64-specific part.
 #[no_mangle]
-pub(crate) extern "C" fn syscall_entry() {}
+pub(crate) extern "C" fn syscall_entry(syscall_no: u64) {}
