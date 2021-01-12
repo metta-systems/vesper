@@ -18,6 +18,10 @@ use {
     crate::arch::memory::{PhysAddr, VirtAddr},
     crate::objects::thread::ThreadState,
     crate::caps::{ReplyCapability, NullCapability},
+    core::result::Result, // temp: use own result type here
+    crate::platform::rpi3::gic::get_active_irq, // temp: derive based on current platform
+    crate::objects::thread::TCB,
+    crate::caps::captable::CapPath,
 };
 
 // Syscalls (kernel API)
@@ -102,6 +106,20 @@ fn handle_syscall(syscall: SysCall) -> Result<()> {
     Ok(())
 }
 
+fn handle_interrupt(int: u16) -> Result<()> {
+    Ok(())
+}
+
+// some kernel globals
+static KernelCurrentThread: &TCB = Default::default(); // @todo Scheduler.CurrentThread
+static KernelCurrentFault: Fault = Fault::NoFault;
+static KernelSchedulerAction: SchedulerAction = SchedulerAction::None;
+static KernelDomainTime: usize = 100; // @todo Scheduler.DomainTime
+const msgInfoRegister: usize = 1; // @todo wip number
+const capRegister: usize = 2;
+const n_MsgRegisters: usize = 2;
+// end kernel globals
+
 fn handle_invocation(is_call: bool, is_blocking: bool) -> Result<()> {
     let thread: &TCB = KernelCurrentThread;
 
@@ -109,7 +127,7 @@ fn handle_invocation(is_call: bool, is_blocking: bool) -> Result<()> {
     let info: MessageInfo = messageInfoFromWord(infoRegister);
     let cap_ptr: CapPath = thread.get_register(capRegister);
 
-    result = thread.lookup_cap_and_slot(cap_ptr);
+    let result = thread.lookup_cap_and_slot(cap_ptr);
 
     if result.is_err() {
         println!(
@@ -236,8 +254,8 @@ fn handle_yield() {
 
 #[derive(Debug, Snafu)]
 enum Fault {
-    #[snafu(display("null fault"))]
-    Null,
+    #[snafu(display("no fault"))]
+    NoFault,
     #[snafu(display("capability fault in {} phase at address {:x}", if in_receive_phase { "receive" } else { "send" }, address))]
     Capability {
         in_receive_phase: bool,
