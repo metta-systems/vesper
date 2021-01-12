@@ -3,7 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-use crate::{arch, arch::memory::VirtAddr};
+use crate::{api::Fault, arch, arch::memory::VirtAddr, caps::captable::LookupFault};
 
 // trait Thread {
 //     // Configuration
@@ -50,15 +50,15 @@ use crate::{arch, arch::memory::VirtAddr};
 // }
 
 // impl super::KernelObject for Thread {}
-impl super::KernelObject for TCB {
+impl super::NucleusObject for TCB {
     const SIZE_BITS: usize = 12;
 }
 
 // -- from actual code parts in api.rs
 
 /* TCB: size 64 bytes + sizeof(arch_tcb_t) (aligned to nearest power of 2) */
-struct TCB {
-    arch_specific: arch::objects::TCB,
+pub(crate) struct TCB<'a> {
+    arch_specific: arch::objects::thread::TCB,
     state: ThreadState, // 12 bytes?
     /* Notification that this TCB is bound to. If this is set, when this TCB waits on
      * any sync endpoint, it may receive a signal from a Notification object.
@@ -85,7 +85,7 @@ struct TCB {
     ep_next: *mut TCB,
     ep_prev: *mut TCB,
     /* Use any remaining space for a thread name */
-    name: &str,
+    name: &'a str,
     // name_storage: [u8],// add SIZE_BITS calculations for length of storage in here somewhere
 }
 

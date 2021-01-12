@@ -27,15 +27,15 @@
 use {crate::memory::PhysAddr, core::convert::TryFrom, snafu::Snafu};
 
 mod capnode_cap;
-mod captable;
+pub(crate) mod captable;
 mod derivation_tree;
 mod domain_cap;
 mod endpoint_cap;
 mod irq_control_cap;
 mod irq_handler_cap;
 mod notification_cap;
-pub mod null_cap;
-pub mod reply_cap;
+pub(crate) mod null_cap;
+pub(crate) mod reply_cap;
 mod resume_cap;
 mod thread_cap;
 mod untyped_cap;
@@ -74,7 +74,8 @@ macro_rules! capdef {
             #[doc = "Wrapper representing `" $name "Capability`."]
             pub struct [<$name Capability>](LocalRegisterCopy<u128, [<$name Cap>]::Register>);
             impl [<$name Capability>] {
-                type Type = [<$name Cap>]::Register;
+                //@todo must be part of trait impl then? See rust-lang/rust#8995
+                // type Type = [<$name Cap>]::Register;
             }
             impl Capability for [<$name Capability>] {
                 #[inline]

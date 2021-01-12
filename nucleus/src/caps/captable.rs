@@ -151,12 +151,15 @@ struct CapSpace {
 type CapPath = u64;
 
 #[derive(Debug, Snafu)]
-enum LookupFault {
+pub(crate) enum LookupFault {
     InvalidRoot,
     GuardMismatch,
     DepthMismatch { expected: usize, actual: usize },
     NoResolvedBits,
 }
+
+type Slot = u64; // @temp
+type BitsRemaining = usize; // @temp
 
 // seL4: resolveAddressBits(nodeCap, capptr, n_bits)
 pub(crate) fn resolve_address_bits(
@@ -180,7 +183,7 @@ pub(crate) fn resolve_address_bits(
 
         let cap_guard = node_cap.guard();
         // @todo common code to extract guard_bits from an int?
-        let guard = (capptr >> core::min(n_bits - guard_bits, 63)) & ((1 << guard_bits) - 1);
+        let guard = (capptr >> core::cmp::min(n_bits - guard_bits, 63)) & ((1 << guard_bits) - 1);
 
         if guard_bits > n_bits || guard != cap_guard {
             return Err(LookupFault::GuardMismatch);

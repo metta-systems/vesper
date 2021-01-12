@@ -7,6 +7,7 @@
 
 pub mod display;
 pub mod fb;
+pub mod gic;
 pub mod gpio;
 pub mod mailbox;
 pub mod mini_uart;
