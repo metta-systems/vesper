@@ -1,5 +1,7 @@
 .idea/
 *.iml
+.nova/
+.vscode/
 target/
 kernel8*
 .gdb_history
