@@ -54,8 +54,8 @@ states! {
 pub struct Reserved<T>(T);
 
 /// The offsets for reach register.
-/// From https://wiki.osdev.org/Raspberry_Pi_Bare_Bones and
-/// https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf
+/// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
+/// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
 #[allow(non_snake_case)]
 #[repr(C)]
 pub struct RegisterBlock {

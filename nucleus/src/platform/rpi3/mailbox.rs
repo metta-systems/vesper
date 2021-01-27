@@ -478,7 +478,7 @@ impl Mailbox {
     }
 
     /// NB: Do not intermix Get/Set and Test tags in one request!
-    /// See https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
+    /// See <https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface>
     /// * It is not valid to mix Test tags with Get/Set tags in the same operation
     ///   and no tags will be returned.
     #[inline]
@@ -492,7 +492,7 @@ impl Mailbox {
     }
 
     /// NB: Do not intermix Get/Set and Test tags in one request!
-    /// See https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
+    /// See <https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface>
     /// * It is not valid to mix Test tags with Get/Set tags in the same operation
     ///   and no tags will be returned.
     #[inline]

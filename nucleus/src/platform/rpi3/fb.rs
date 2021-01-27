@@ -89,7 +89,7 @@ impl MailboxOps for FrameBuffer {
         self.base_addr as *const _
     }
 
-    /// https://github.com/raspberrypi/firmware/wiki/Accessing-mailboxes says:
+    /// <https://github.com/raspberrypi/firmware/wiki/Accessing-mailboxes> says:
     /// **With the exception of the property tags mailbox channel,**
     /// when passing memory addresses as the data part of a mailbox message,
     /// the addresses should be **bus addresses as seen from the VC.**
