@@ -3,10 +3,5 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-mod asid;
-mod phys_addr;
-mod virt_addr;
-
-pub use asid::*;
-pub use phys_addr::*;
-pub use virt_addr::*;
+#[allow(dead_code)]
+pub type ASID = u16;
