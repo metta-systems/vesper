@@ -12,6 +12,7 @@ use {
 
 mod addr;
 pub mod mmu;
+mod features;
 mod phys_frame;
 mod virt_page;
 
