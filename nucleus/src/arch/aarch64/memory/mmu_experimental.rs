@@ -332,32 +332,6 @@ impl fmt::Debug for PageTableEntry {
     }
 }*/
 
-/*
- */
-/*
- */
-/*
- */
-/*
- */
-/*
- */
-/*
- */
-/*
- */
-/*
- */
-/*
- */
-/*
- */
-
-/*
- * SPDX-License-Identifier: BSL-1.0 - todo this is from Sergio Benitez cs140e
- */
-// Abstractions for page tables.
-
 // to get L0 we must allocate a few frames from boot region allocator.
 // So, first we init the dtb, parse mem-regions from there, then init boot_info page and start mmu,
 // this part will be inited in mmu::init():
@@ -416,10 +390,3 @@ where
         self.next_table_mut(index).unwrap()
     }
 }
-
-// ORIGINAL MMU.RS CODE
-
-//static mut LVL0_TABLE: Table<PageGlobalDirectory> = Table {
-//    entries: [0; NUM_ENTRIES_4KIB],
-//    level: PhantomData,
-//};

@@ -38,10 +38,6 @@ pub trait FrameAllocator {
 
 // Identity-map things for now.
 //
-// > but more normal the simplest form is a table with 1024 32 bit entries starting at
-// a 0x4000 aligned address, where each entry describes a 1 Mb memory part.
-// On the rpi3 only the bottom 1024 entries are relevant as it has 1 Gb memory.
-
 // aarch64 granules and page sizes howto:
 // https://stackoverflow.com/questions/34269185/simultaneous-existence-of-different-sized-pages-on-aarch64
 
