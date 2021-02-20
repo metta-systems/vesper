@@ -12,6 +12,7 @@ use {
 
 mod addr;
 pub mod mmu;
+mod phys_frame;
 
 pub mod mmu_experimental;
 pub use mmu_experimental::*;
@@ -23,6 +24,7 @@ pub use mmu_experimental::*;
 
 pub use addr::PhysAddr;
 pub use addr::VirtAddr;
+pub use phys_frame::PhysFrame;
 
 use mmu_experimental::PhysFrame;
 
