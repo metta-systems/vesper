@@ -177,6 +177,13 @@ impl PageTableEntry {
     }
 }
 
+#[derive(Snafu, Debug)]
+enum PageTableError {
+    #[snafu(display("BlockDescriptor: Address is not 2 MiB aligned."))]
+    //"PageDescriptor: Address is not 4 KiB aligned."
+    NotAligned(&'static str),
+}
+
 /// A Level2 block descriptor with 2 MiB aperture.
 ///
 /// The output points to physical memory.
@@ -186,9 +193,9 @@ impl PageTableEntry {
     fn new_lvl2_block_descriptor(
         output_addr: usize,
         attribute_fields: AttributeFields,
-    ) -> Result<PageTableEntry, &'static str> {
+    ) -> Result<PageTableEntry, PageTableError> {
         if output_addr % Size2MiB::SIZE as usize != 0 {
-            return Err("BlockDescriptor: Address is not 2 MiB aligned.");
+            return Err(PageTableError::NotAligned(Size2MiB::SIZE_AS_DEBUG_STR));
         }
 
         let shifted = output_addr >> Size2MiB::SHIFT;
@@ -211,9 +218,9 @@ impl PageTableEntry {
     fn new_page_descriptor(
         output_addr: usize,
         attribute_fields: AttributeFields,
-    ) -> Result<PageTableEntry, &'static str> {
+    ) -> Result<PageTableEntry, PageTableError> {
         if output_addr % Size4KiB::SIZE as usize != 0 {
-            return Err("PageDescriptor: Address is not 4 KiB aligned.");
+            return Err(PageTableError::NotAligned(Size4KiB::SIZE_AS_DEBUG_STR));
         }
 
         let shifted = output_addr >> Size4KiB::SHIFT;
@@ -249,11 +256,17 @@ impl From<PageTableEntry> for u64 {
     }
 }
 
+// to get L0 we must allocate a few frames from boot region allocator.
+// So, first we init the dtb, parse mem-regions from there, then init boot_info page and start mmu,
+// this part will be inited in mmu::init():
+
+// @todo do NOT keep these statically, always allocate from available bump memory
 static mut LVL2_TABLE: Table<PageDirectory> = Table::<PageDirectory> {
     entries: [0; NUM_ENTRIES_4KIB as usize],
     level: PhantomData,
 };
 
+// @todo do NOT keep these statically, always allocate from available bump memory
 static mut LVL3_TABLE: Table<PageTable> = Table::<PageTable> {
     entries: [0; NUM_ENTRIES_4KIB as usize],
     level: PhantomData,

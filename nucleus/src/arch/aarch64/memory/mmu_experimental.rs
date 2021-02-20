@@ -33,6 +33,7 @@ impl PageSize for Size1GiB {
 }
 
 /// Errors from mapping layer (@todo use anyhow/snafu? thiserror?)
+#[derive(Debug, Snafu)]
 pub enum TranslationError {
     NoPage,
 }
@@ -58,13 +59,14 @@ impl ActivePageTable {
         unsafe { self.l0.as_mut() }
     }
 
-    pub fn translate(&self, virtual_address: VirtAddr) -> Result<PhysAddr, TranslationError> {
-        let offset = virtual_address % Size4KiB::SIZE as usize; // @todo use the size of the last page of course
-        self.translate_page(Page::containing_address(virtual_address))
-            .map(|frame| frame.start_address() + offset)
-    }
+    // pub fn translate(&self, virtual_address: VirtAddr) -> Result<PhysAddr, TranslationError> {
+    //     let offset = virtual_address % Size4KiB::SIZE as usize; // @todo use the size of the last page of course
+    //     self.translate_page(Page::containing_address(virtual_address))?
+    //         .map(|frame| frame.start_address() + offset)
+    // }
 
     fn translate_page(&self, page: Page) -> Result<PhysFrame, TranslationError> {
+        // @todo translate only one level of hierarchy per impl function...
         let l1 = self.l0().next_table(u64::from(page.l0_index()) as usize);
         /*
                 let huge_page = || {
@@ -138,6 +140,8 @@ impl ActivePageTable {
     where
         A: FrameAllocator,
     {
+        // @todo fail mapping if table is not allocated, causing client to allocate and restart
+        // @todo problems described in preso - chicken&egg problem of allocating first allocations
         let frame = allocator.allocate_frame().expect("out of memory");
         self.map_to(page, frame, flags, allocator)
     }
@@ -172,18 +176,19 @@ impl ActivePageTable {
         // tlb::flush(VirtAddr(page.start_address()));
         // TODO free p(1,2,3) table if empty
         //allocator.deallocate_frame(frame);
+        // @todo do NOT deallocate frames either, but need to signal client that it's unused
     }
 }
 
 // Abstractions for page table entries.
 
 /// The error returned by the `PageTableEntry::frame` method.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Snafu, Debug, Clone, Copy, PartialEq)]
 pub enum FrameError {
     /// The entry does not have the `PRESENT` flag set, so it isn't currently mapped to a frame.
     FrameNotPresent,
     /// The entry has the `HUGE_PAGE` flag set. The `frame` method has a standard 4KiB frame
-    /// as return type, so a huge frame can't be returned.
+    /// as return type, so a huge frame can't be returned. @todo
     HugeFrame,
 }
 
@@ -265,17 +270,17 @@ impl fmt::Debug for PageTableEntry {
     }
 }*/
 
-impl<L> Table<L>
+impl<Level> Table<Level>
 where
-    L: HierarchicalLevel,
+    Level: HierarchicalLevel,
 {
-    pub fn next_table_create<A>(
+    pub fn next_table_create<Alloc>(
         &mut self,
         index: usize,
-        allocator: &mut A,
-    ) -> &mut Table<L::NextLevel>
+        allocator: &mut Alloc,
+    ) -> &mut Table<Level::NextLevel>
     where
-        A: FrameAllocator,
+        Alloc: FrameAllocator,
     {
         if self.next_table(index).is_none() {
             assert!(
