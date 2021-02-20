@@ -13,6 +13,7 @@ use {
 mod addr;
 pub mod mmu;
 mod phys_frame;
+mod virt_page;
 
 pub mod mmu_experimental;
 pub use mmu_experimental::*;
