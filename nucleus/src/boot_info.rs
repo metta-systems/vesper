@@ -1,3 +1,5 @@
+use crate::{memory::PhysAddr, println, sync};
+
 #[derive(Default, Copy, Clone)]
 struct BootInfoMemRegion {
     pub start: PhysAddr,
@@ -71,13 +73,13 @@ impl BootInfo {
             let mut new_reg: BootInfoMemRegion = BootInfoMemRegion::new();
 
             /* Determine whether placing the region at the start or the end will create a bigger left over region */
-            if reg_iter.start.align_up(1u64 << size_bits) - reg_iter.start
-                < reg_iter.end - reg_iter.end.align_down(1u64 << size_bits)
+            if reg_iter.start.aligned_up(1u64 << size_bits) - reg_iter.start
+                < reg_iter.end - reg_iter.end.aligned_down(1u64 << size_bits)
             {
-                new_reg.start = reg_iter.start.align_up(1u64 << size_bits);
+                new_reg.start = reg_iter.start.aligned_up(1u64 << size_bits);
                 new_reg.end = new_reg.start + (1u64 << size_bits);
             } else {
-                new_reg.end = reg_iter.end.align_down(1u64 << size_bits);
+                new_reg.end = reg_iter.end.aligned_down(1u64 << size_bits);
                 new_reg.start = new_reg.end - (1u64 << size_bits);
             }
             if new_reg.end > new_reg.start
