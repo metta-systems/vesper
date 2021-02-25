@@ -19,10 +19,13 @@ use {
 
 /// A virtual memory page.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(C)]
 pub struct Page<S: PageSize = Size4KiB> {
     start_address: VirtAddr,
     size: PhantomData<S>,
+}
+
+enum Error {
+    NotAligned,
 }
 
 impl<S: PageSize> Page<S> {
@@ -32,11 +35,12 @@ impl<S: PageSize> Page<S> {
     /// Returns the page that starts at the given virtual address.
     ///
     /// Returns an error if the address is not correctly aligned (i.e. is not a valid page start).
-    pub fn from_start_address(address: VirtAddr) -> Result<Self, ()> {
+    pub fn from_start_address(address: VirtAddr) -> Result<Self, Error> {
         if !address.is_aligned(S::SIZE) {
-            return Err(());
+            Err(Error::NotAligned)
+        } else {
+            Ok(Page::containing_address(address))
         }
-        Ok(Page::containing_address(address))
     }
 
     /// Returns the page that contains the given virtual address.
@@ -141,6 +145,7 @@ impl<S: PageSize> fmt::Debug for Page<S> {
 
 impl<S: PageSize> Add<u64> for Page<S> {
     type Output = Self;
+    // @todo should I add pages or just bytes here?
     fn add(self, rhs: u64) -> Self::Output {
         Page::containing_address(self.start_address() + rhs * u64::from(S::SIZE))
     }
@@ -154,6 +159,7 @@ impl<S: PageSize> AddAssign<u64> for Page<S> {
 
 impl<S: PageSize> Sub<u64> for Page<S> {
     type Output = Self;
+    // @todo should I sub pages or just bytes here?
     fn sub(self, rhs: u64) -> Self::Output {
         Page::containing_address(self.start_address() - rhs * u64::from(S::SIZE))
     }
@@ -174,7 +180,6 @@ impl<S: PageSize> Sub<Self> for Page<S> {
 
 /// A range of pages with exclusive upper bound.
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
 pub struct PageRange<S: PageSize = Size4KiB> {
     /// The start of the range, inclusive.
     pub start: Page<S>,
@@ -197,7 +202,7 @@ impl<S: PageSize> Iterator for PageRange<S> {
     type Item = Page<S>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start < self.end {
+        if !self.is_empty() {
             let page = self.start.clone();
             self.start += 1;
             Some(page)
@@ -209,9 +214,11 @@ impl<S: PageSize> Iterator for PageRange<S> {
 
 impl PageRange<Size2MiB> {
     /// Converts the range of 2MiB pages to a range of 4KiB pages.
-    pub fn as_4kib_page_range(self) -> PageRange<Size4KiB> {
+    // @todo what about range of 1GiB pages?
+    pub fn as_4kib_page_range(&self) -> PageRange<Size4KiB> {
         PageRange {
             start: Page::containing_address(self.start.start_address()),
+            // @fixme end is calculated incorrectly, add test
             end: Page::containing_address(self.end.start_address()),
         }
     }
@@ -228,7 +235,6 @@ impl<S: PageSize> fmt::Debug for PageRange<S> {
 
 /// A range of pages with inclusive upper bound.
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
 pub struct PageRangeInclusive<S: PageSize = Size4KiB> {
     /// The start of the range, inclusive.
     pub start: Page<S>,
@@ -247,7 +253,7 @@ impl<S: PageSize> Iterator for PageRangeInclusive<S> {
     type Item = Page<S>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start <= self.end {
+        if !self.is_empty() {
             let page = self.start.clone();
             self.start += 1;
             Some(page)
@@ -296,5 +302,20 @@ mod tests {
             );
         }
         assert_eq!(range_inclusive.next(), None);
+    }
+
+    #[test_case]
+    fn test_page_range_conversion() {
+        let page_size = Size2MiB::SIZE;
+        let number = 10;
+
+        let start_addr = VirtAddr::new(0xdeadbeaf);
+        let start: Page = Page::containing_address(start_addr);
+        let end = start.clone() + number;
+
+        let range = Page::range(start.clone(), end.clone()).as_4kib_page_range();
+
+        // 10 2MiB pages is 512 4KiB pages
+        aseert_eq!(range.num_pages(), 512);
     }
 }
