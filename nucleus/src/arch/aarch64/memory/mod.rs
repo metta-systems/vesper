@@ -266,6 +266,7 @@ static KERNEL_VIRTUAL_LAYOUT: [Descriptor; 6] = [
             execute_never: true,
         },
     },
+    // @todo these should come from DTB and mem-map?
     Descriptor {
         name: "DMA heap pool",
         virtual_range: || RangeInclusive::new(map::virt::DMA_HEAP_START, map::virt::DMA_HEAP_END),
@@ -276,6 +277,7 @@ static KERNEL_VIRTUAL_LAYOUT: [Descriptor; 6] = [
             execute_never: true,
         },
     },
+    // @todo these should come from DTB and mem-map?
     Descriptor {
         name: "Device MMIO",
         virtual_range: || RangeInclusive::new(map::phys::VIDEOMEM_BASE, map::phys::MMIO_END),

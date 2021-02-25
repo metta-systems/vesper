@@ -57,3 +57,7 @@ For more information please re-read.
 * resolve VA to PA - resolving lets kernel access mapped process memory.
   (start from the process' virtspace root - Page Directory)
 * flush page, pd, pt, virtspace - will be important for thread switching
+* map a page table to appropriate location
+* unmap entire mapped page table
+* map a phys frame to virt location
+* unmap a mapped frame
