@@ -37,7 +37,7 @@ pub struct VirtAddr(u64);
 /// a valid sign extension and are not null either. So automatic sign extension would have
 /// overwritten possibly meaningful bits. This likely indicates a bug, for example an invalid
 /// address calculation.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VirtAddrNotValid(u64);
 
 impl VirtAddr {
