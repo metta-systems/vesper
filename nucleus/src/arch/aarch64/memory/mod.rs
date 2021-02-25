@@ -18,6 +18,7 @@ mod phys_frame;
 mod virt_page;
 
 pub mod mmu2;
+
 pub use mmu2::*;
 
 // mod area_frame_allocator;
@@ -166,6 +167,8 @@ pub use kernel_mem_range::*;
 /// Contains only special ranges, aka anything that is _not_ normal cacheable
 /// DRAM.
 static KERNEL_VIRTUAL_LAYOUT: [Descriptor; 6] = [
+    // These are part of a static linked image and used for proper kernel-space initialization.
+    // i.e. these data are subtracted from the dtb-provided memory map.
     Descriptor {
         name: "Kernel stack",
         virtual_range: || {
