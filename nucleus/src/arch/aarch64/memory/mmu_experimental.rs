@@ -1,7 +1,3 @@
-// Check largest VA supported, calculate physical_memory_offset
-//
-const PHYSICAL_MEMORY_OFFSET: u64 = 0xffff_8000_0000_0000; // Last 1GiB of VA space
-
 // AArch64:
 // Table D4-8-2021: check supported granule sizes, select alloc policy based on results.
 // TTBR_ELx is the pdbr for specific page tables

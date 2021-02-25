@@ -4,7 +4,10 @@
  */
 
 use {
-    crate::mm::{align_down, align_up},
+    crate::{
+        memory::PhysAddr,
+        mm::{align_down, align_up},
+    },
     bit_field::BitField,
     core::{
         convert::{From, Into, TryInto},
@@ -157,6 +160,13 @@ impl VirtAddr {
     /// Returns the 9-bit level 0 page table index.
     pub fn l0_index(&self) -> u9 {
         u9::new(((self.0 >> 12 >> 9 >> 9 >> 9) & 0o777).try_into().unwrap())
+    }
+
+    /// Convert kernel-space virtual address into a physical memory address.
+    pub fn kernel_to_user(&self) -> PhysAddr {
+        use super::PHYSICAL_MEMORY_OFFSET;
+        assert!(self.0 > PHYSICAL_MEMORY_OFFSET);
+        PhysAddr::new(self.0 - PHYSICAL_MEMORY_OFFSET)
     }
 }
 
