@@ -3,6 +3,18 @@
 
 // x86_64 page level numbering: P4 -> P3 -> P2 -> P1
 // armv8a page level numbering: L0 -> L1 -> L2 -> L3
+use {
+    crate::memory::{
+        page_size::{NotGiantPageSize, PageSize, Size1GiB, Size2MiB, Size4KiB},
+        VirtAddr,
+    },
+    core::{
+        fmt,
+        marker::PhantomData,
+        ops::{Add, AddAssign, Sub, SubAssign},
+    },
+    ux::u9,
+};
 
 /// A virtual memory page.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -14,7 +26,7 @@ pub struct Page<S: PageSize = Size4KiB> {
 
 impl<S: PageSize> Page<S> {
     /// The page size in bytes.
-    pub const SIZE: u64 = S::SIZE;
+    pub const SIZE: usize = S::SIZE;
 
     /// Returns the page that starts at the given virtual address.
     ///
@@ -40,7 +52,7 @@ impl<S: PageSize> Page<S> {
     }
 
     /// Returns the size the page (4KB, 2MB or 1GB).
-    pub const fn size(&self) -> u64 {
+    pub const fn size(&self) -> usize {
         S::SIZE
     }
 
@@ -173,6 +185,10 @@ impl<S: PageSize> PageRange<S> {
     /// Returns whether this range contains no pages.
     pub fn is_empty(&self) -> bool {
         self.start >= self.end
+    }
+
+    pub fn num_pages(&self) -> usize {
+        (self.end - self.start) as usize / S::SIZE
     }
 }
 

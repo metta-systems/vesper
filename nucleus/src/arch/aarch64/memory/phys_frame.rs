@@ -1,6 +1,18 @@
 // Verbatim from https://github.com/rust-osdev/x86_64/blob/aa9ae54657beb87c2a491f2ab2140b2332afa6ba/src/structures/paging/frame.rs
 // Abstractions for default-sized and huge physical memory frames.
 
+use {
+    crate::memory::{
+        page_size::{PageSize, Size4KiB},
+        PhysAddr,
+    },
+    core::{
+        fmt,
+        marker::PhantomData,
+        ops::{Add, AddAssign, Sub, SubAssign},
+    },
+};
+
 /// A physical memory frame.
 /// Frame is an addressable unit of the physical address space.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,7 +59,7 @@ impl<S: PageSize> PhysFrame<S> {
     }
 
     /// Returns the size the frame (4KB, 2MB or 1GB).
-    pub fn size(&self) -> u64 {
+    pub fn size(&self) -> usize {
         S::SIZE
     }
 

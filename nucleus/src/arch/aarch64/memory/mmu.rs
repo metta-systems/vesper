@@ -93,50 +93,6 @@ fn into_mmu_attributes(
     desc
 }
 
-/// Trait for abstracting over the possible page sizes, 4KiB, 16KiB, 2MiB, 1GiB.
-pub trait PageSize: Copy + Eq + PartialOrd + Ord {
-    /// The page size in bytes.
-    const SIZE: u64;
-
-    /// A string representation of the page size for debug output.
-    const SIZE_AS_DEBUG_STR: &'static str;
-
-    /// The page shift in bits.
-    const SHIFT: usize;
-
-    /// The page mask in bits.
-    const MASK: u64;
-}
-
-/// This trait is implemented for 4KiB, 16KiB, and 2MiB pages, but not for 1GiB pages.
-pub trait NotGiantPageSize: PageSize {} // @todo doesn't have to be pub??
-
-/// A standard 4KiB page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size4KiB {}
-
-impl PageSize for Size4KiB {
-    const SIZE: u64 = 4096;
-    const SIZE_AS_DEBUG_STR: &'static str = "4KiB";
-    const SHIFT: usize = 12;
-    const MASK: u64 = 0xfff;
-}
-
-impl NotGiantPageSize for Size4KiB {}
-
-/// A “huge” 2MiB page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size2MiB {}
-
-impl PageSize for Size2MiB {
-    const SIZE: u64 = Size4KiB::SIZE * NUM_ENTRIES_4KIB;
-    const SIZE_AS_DEBUG_STR: &'static str = "2MiB";
-    const SHIFT: usize = 21;
-    const MASK: u64 = 0x1fffff;
-}
-
-impl NotGiantPageSize for Size2MiB {}
-
 /// Type-safe enum wrapper covering Table<L>'s 64-bit entries.
 #[derive(Clone)]
 // #[repr(transparent)]

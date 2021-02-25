@@ -13,6 +13,7 @@ use {
 mod addr;
 // pub mod mmu;
 mod features;
+mod page_size;
 mod phys_frame;
 mod virt_page;
 
@@ -26,6 +27,7 @@ pub use mmu2::*;
 
 pub use addr::PhysAddr;
 pub use addr::VirtAddr;
+pub use page_size::PageSize;
 pub use phys_frame::PhysFrame;
 
 use mmu_experimental::PhysFrame;

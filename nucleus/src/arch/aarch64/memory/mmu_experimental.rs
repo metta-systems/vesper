@@ -4,30 +4,6 @@
 
 // Page 2068 actual page descriptor formats
 
-/// A standard 16KiB page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size16KiB {}
-
-impl PageSize for Size16KiB {
-    const SIZE: u64 = 16384;
-    const SIZE_AS_DEBUG_STR: &'static str = "16KiB";
-    const SHIFT: usize = 14;
-    const MASK: u64 = 0x3fff;
-}
-
-impl NotGiantPageSize for Size16KiB {}
-
-/// A “giant” 1GiB page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size1GiB {}
-
-impl PageSize for Size1GiB {
-    const SIZE: u64 = Size2MiB::SIZE * NUM_ENTRIES_4KIB;
-    const SIZE_AS_DEBUG_STR: &'static str = "1GiB";
-    const SHIFT: usize = 59; // @todo
-    const MASK: u64 = 0xfffaaaaa; // @todo
-}
-
 /// Errors from mapping layer
 #[derive(Debug, Snafu)]
 pub enum TranslationError {
