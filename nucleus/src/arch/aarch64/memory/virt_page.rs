@@ -1,8 +1,9 @@
 // Verbatim from https://github.com/rust-osdev/x86_64/blob/aa9ae54657beb87c2a491f2ab2140b2332afa6ba/src/structures/paging/page.rs
 // Abstractions for default-sized and huge virtual memory pages.
 
-// x86_64 page level numbering: P4 -> P3 -> P2 -> P1
-// armv8a page level numbering: L0 -> L1 -> L2 -> L3
+// @fixme x86_64 page level numbering: P4 -> P3 -> P2 -> P1
+// @fixme armv8a page level numbering: L0 -> L1 -> L2 -> L3
+
 use {
     crate::memory::{
         page_size::{NotGiantPageSize, PageSize, Size1GiB, Size2MiB, Size4KiB},
