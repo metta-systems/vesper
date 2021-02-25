@@ -17,7 +17,7 @@ pub trait PageSize: Copy + PartialEq + Eq + PartialOrd + Ord {
 pub trait NotGiantPageSize: PageSize {} // @todo doesn't have to be pub??
 
 /// A standard 4KiB page.
-#[derive(Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Size4KiB {}
 
 impl PageSize for Size4KiB {
@@ -31,7 +31,7 @@ impl NotGiantPageSize for Size4KiB {}
 
 /// A standard 16KiB page.
 /// Currently unused.
-#[derive(Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Size16KiB {}
 
 impl PageSize for Size16KiB {
@@ -44,7 +44,7 @@ impl PageSize for Size16KiB {
 impl NotGiantPageSize for Size16KiB {}
 
 /// A “huge” 2MiB page.
-#[derive(Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Size2MiB {}
 
 impl PageSize for Size2MiB {
@@ -57,7 +57,7 @@ impl PageSize for Size2MiB {
 impl NotGiantPageSize for Size2MiB {}
 
 /// A “giant” 1GiB page.
-#[derive(Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Size1GiB {}
 
 impl PageSize for Size1GiB {
