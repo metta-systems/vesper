@@ -28,7 +28,7 @@ impl PageSize for Size1GiB {
     const MASK: u64 = 0xfffaaaaa; // @todo
 }
 
-/// Errors from mapping layer (@todo use anyhow/snafu? thiserror?)
+/// Errors from mapping layer
 #[derive(Debug, Snafu)]
 pub enum TranslationError {
     NoPage,
