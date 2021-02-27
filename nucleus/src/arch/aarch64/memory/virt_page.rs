@@ -24,7 +24,7 @@ pub struct Page<S: PageSize = Size4KiB> {
     size: PhantomData<S>,
 }
 
-enum Error {
+pub enum Error {
     NotAligned,
 }
 
