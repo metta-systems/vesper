@@ -83,9 +83,9 @@ fn print_mmu_state_and_features() {
 }
 
 fn init_mmu() {
-    unsafe {
-        memory::mmu::init().unwrap();
-    }
+    // unsafe {
+    //     memory::mmu::init().unwrap();
+    // }
     println!("[!] MMU initialised");
     print_mmu_state_and_features();
 }
