@@ -118,7 +118,7 @@ impl BootInfo {
         /* Remove the region in question */
         self.regions[reg_index] = BootInfoMemRegion::new();
         /* Add the remaining regions in largest to smallest order */
-        self.insert_region(rem_large);
+        self.insert_region(rem_large)?;
         if self.insert_region(rem_small).is_err() {
             println!("BootInfo::alloc_region(): wasted {} bytes due to alignment, try to increase NUM_MEM_REGIONS", rem_small.size());
         }
