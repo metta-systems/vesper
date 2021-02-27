@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::{memory::PhysAddr, println, sync};
 
 #[derive(Default, Copy, Clone)]

@@ -10,6 +10,8 @@
 //! [ARMv8 ARM memory addressing](https://static.docs.arm.com/100940/0100/armv8_a_address%20translation_100940_0100_en.pdf).
 //! It includes ideas from Sergio Benitez' cs140e OSdev course material on type-safe access.
 
+#![allow(dead_code)]
+
 use crate::memory::PageSize;
 use {
     crate::memory::{

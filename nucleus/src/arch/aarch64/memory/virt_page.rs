@@ -4,6 +4,8 @@
 // @fixme x86_64 page level numbering: P4 -> P3 -> P2 -> P1
 // @fixme armv8a page level numbering: L0 -> L1 -> L2 -> L3
 
+#![allow(dead_code)]
+
 use {
     crate::memory::{
         page_size::{NotGiantPageSize, PageSize, Size1GiB, Size2MiB, Size4KiB},
