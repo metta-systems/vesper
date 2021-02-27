@@ -46,7 +46,7 @@ impl<S: PageSize> Page<S> {
     /// Returns the page that contains the given virtual address.
     pub fn containing_address(address: VirtAddr) -> Self {
         Page {
-            start_address: address.align_down(S::SIZE),
+            start_address: address.aligned_down(S::SIZE),
             size: PhantomData,
         }
     }
@@ -147,7 +147,7 @@ impl<S: PageSize> Add<u64> for Page<S> {
     type Output = Self;
     // @todo should I add pages or just bytes here?
     fn add(self, rhs: u64) -> Self::Output {
-        Page::containing_address(self.start_address() + rhs * u64::from(S::SIZE))
+        Page::containing_address(self.start_address() + rhs * S::SIZE as u64)
     }
 }
 
@@ -159,9 +159,10 @@ impl<S: PageSize> AddAssign<u64> for Page<S> {
 
 impl<S: PageSize> Sub<u64> for Page<S> {
     type Output = Self;
+    /// Subtracts `rhs` same-sized pages from the current address.
     // @todo should I sub pages or just bytes here?
     fn sub(self, rhs: u64) -> Self::Output {
-        Page::containing_address(self.start_address() - rhs * u64::from(S::SIZE))
+        Page::containing_address(self.start_address() - rhs * S::SIZE as u64)
     }
 }
 
@@ -172,9 +173,9 @@ impl<S: PageSize> SubAssign<u64> for Page<S> {
 }
 
 impl<S: PageSize> Sub<Self> for Page<S> {
-    type Output = u64;
+    type Output = usize;
     fn sub(self, rhs: Self) -> Self::Output {
-        (self.start_address - rhs.start_address) / S::SIZE
+        (self.start_address - rhs.start_address) as usize / S::SIZE
     }
 }
 

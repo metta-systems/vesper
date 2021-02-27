@@ -10,18 +10,18 @@ pub use bump_allocator::BumpAllocator;
 ///
 /// Returns the greatest x with alignment `align` so that x <= addr.
 /// The alignment must be a power of 2.
-pub fn align_down(addr: u64, align: u64) -> u64 {
+pub fn align_down(addr: u64, align: usize) -> u64 {
     assert!(align.is_power_of_two(), "`align` must be a power of two");
-    addr & !(align - 1)
+    addr & !(align as u64 - 1)
 }
 
 /// Align address upwards.
 ///
 /// Returns the smallest x with alignment `align` so that x >= addr.
 /// The alignment must be a power of 2.
-pub fn align_up(addr: u64, align: u64) -> u64 {
+pub fn align_up(addr: u64, align: usize) -> u64 {
     assert!(align.is_power_of_two(), "`align` must be a power of two");
-    let align_mask = align - 1;
+    let align_mask = align as u64 - 1;
     if addr & align_mask == 0 {
         addr // already aligned
     } else {
@@ -31,6 +31,7 @@ pub fn align_up(addr: u64, align: u64) -> u64 {
 
 /// Calculate the next possible aligned address without sanity checking the
 /// input parameters.
+// u64 for return and addr?
 #[inline]
 fn aligned_addr_unchecked(addr: usize, alignment: usize) -> usize {
     (addr + (alignment - 1)) & !(alignment - 1)

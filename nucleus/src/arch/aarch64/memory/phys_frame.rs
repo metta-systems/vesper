@@ -48,7 +48,7 @@ impl<S: PageSize> PhysFrame<S> {
     /// Returns the frame that contains the given physical address.
     pub fn containing_address(address: PhysAddr) -> Self {
         PhysFrame {
-            start_address: address.align_down(S::SIZE),
+            start_address: address.aligned_down(S::SIZE),
             size: PhantomData,
         }
     }
@@ -86,8 +86,9 @@ impl<S: PageSize> fmt::Debug for PhysFrame<S> {
 
 impl<S: PageSize> Add<u64> for PhysFrame<S> {
     type Output = Self;
+    /// Adds `rhs` same-sized frames to the current address.
     fn add(self, rhs: u64) -> Self::Output {
-        PhysFrame::containing_address(self.start_address() + rhs * u64::from(S::SIZE))
+        PhysFrame::containing_address(self.start_address() + rhs * S::SIZE as u64)
     }
 }
 
@@ -99,8 +100,10 @@ impl<S: PageSize> AddAssign<u64> for PhysFrame<S> {
 
 impl<S: PageSize> Sub<u64> for PhysFrame<S> {
     type Output = Self;
+    /// Subtracts `rhs` same-sized frames from the current address.
+    // @todo should I sub pages or just bytes here?
     fn sub(self, rhs: u64) -> Self::Output {
-        PhysFrame::containing_address(self.start_address() - rhs * u64::from(S::SIZE))
+        PhysFrame::containing_address(self.start_address() - rhs * S::SIZE as u64)
     }
 }
 
@@ -111,13 +114,14 @@ impl<S: PageSize> SubAssign<u64> for PhysFrame<S> {
 }
 
 impl<S: PageSize> Sub<PhysFrame<S>> for PhysFrame<S> {
-    type Output = u64;
+    type Output = usize;
+    /// Return number of frames between start and end addresses.
     fn sub(self, rhs: PhysFrame<S>) -> Self::Output {
-        (self.start_address - rhs.start_address) / S::SIZE
+        (self.start_address - rhs.start_address) as usize / S::SIZE
     }
 }
 
-/// An range of physical memory frames, exclusive the upper bound.
+/// A range of physical memory frames, exclusive the upper bound.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct PhysFrameRange<S: PageSize = Size4KiB> {
