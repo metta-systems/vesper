@@ -282,6 +282,7 @@ pub trait HierarchicalLevel: TableLevel {
     // fn translate() -> Directory<NextLevel>;
 }
 
+/// Specify allowed page size for each level.
 pub trait HierarchicalPageLevel: TableLevel {
     /// Size of the page that can be contained in this table level.
     type PageLevel: PageSize;
@@ -479,9 +480,11 @@ where
 /// Errors from mapping layer
 #[derive(Debug, Snafu)]
 pub enum TranslationError {
+    /// No page found. @todo
     NoPage,
 }
 
+/// Virtual address space. @todo
 pub struct VirtSpace {
     l0: Unique<Directory<L0PageGlobalDirectory>>,
 }

@@ -29,9 +29,11 @@ pub use addr::VirtAddr;
 pub use page_size::PageSize;
 pub use phys_frame::PhysFrame;
 
-// @todo ??
+/// @todo ??
 pub trait FrameAllocator {
+    /// Allocate a physical memory frame.
     fn allocate_frame(&mut self) -> Option<PhysFrame>; // @todo Result<>
+    /// Deallocate a physical frame.
     fn deallocate_frame(&mut self, frame: PhysFrame);
 }
 
