@@ -16,8 +16,10 @@ use crate::memory::PageSize;
 use {
     crate::memory::{
         page_size::{Size1GiB, Size2MiB, Size4KiB},
-        virt_page::Page,
-        PhysAddr, PhysFrame, VirtAddr,
+        //virt_page::Page,
+        PhysAddr,
+        PhysFrame,
+        VirtAddr,
     },
     core::{
         marker::PhantomData,
@@ -169,9 +171,10 @@ register_bitfields! {
     ]
 }
 
-type VaIndex = register::FieldValue<u64, VA_INDEX::Register>;
+// type VaIndex = register::FieldValue<u64, VA_INDEX::Register>;
+type VaType = register::LocalRegisterCopy<u64, VA_INDEX::Register>;
 type EntryFlags = register::FieldValue<u64, TABLE_DESCRIPTOR::Register>;
-// type EntryRegister = register::LocalRegisterCopy<u64, TABLE_DESCRIPTOR::Register>;
+type EntryRegister = register::LocalRegisterCopy<u64, TABLE_DESCRIPTOR::Register>;
 
 // Possible mappings:
 // * TTBR0 pointing to user page global directory
@@ -358,9 +361,9 @@ struct Directory<Level: TableLevel> {
 
 impl Directory<L0PageGlobalDirectory> {
     fn next(&self, address: VirtAddr) -> Option<L0Entries> {
-        let va = VaIndex::new(address.to_u64());
+        let va = VaType::new(address.as_u64());
         let index = va.read(VA_INDEX::LEVEL0);
-        match self.next_table_address(index.into()) {
+        match self.next_table_address(index as usize) {
             Some(phys_addr) => Some(L0Entries::UpperDirectoryEntry(phys_addr.user_to_kernel())),
             None => None,
         }
@@ -369,9 +372,9 @@ impl Directory<L0PageGlobalDirectory> {
 
 impl Directory<L1PageUpperDirectory> {
     fn next(&self, address: VirtAddr) -> Option<L1Entries> {
-        let va = VaIndex::new(address.to_u64());
+        let va = VaType::new(address.as_u64());
         let index = va.read(VA_INDEX::LEVEL1);
-        match self.next_table_address(index.into()) {
+        match self.next_table_address(index as usize) {
             Some(phys_addr) => Some(L1Entries::PageDirectoryEntry(phys_addr.user_to_kernel())),
             None => None, // @todo could be 1GiB frame
         }
@@ -380,9 +383,9 @@ impl Directory<L1PageUpperDirectory> {
 
 impl Directory<L2PageDirectory> {
     fn next(&self, address: VirtAddr) -> Option<L2Entries> {
-        let va = VaIndex::new(address.to_u64());
+        let va = VaType::new(address.as_u64());
         let index = va.read(VA_INDEX::LEVEL2);
-        match self.next_table_address(index.into()) {
+        match self.next_table_address(index as usize) {
             Some(phys_addr) => Some(L2Entries::PageTableEntry(phys_addr.user_to_kernel())),
             None => None, // @todo could be 2MiB frame
         }
@@ -391,13 +394,14 @@ impl Directory<L2PageDirectory> {
 
 impl Directory<L3PageTable> {
     fn next(&self, address: VirtAddr) -> Option<L3Entries> {
-        let va = VaIndex::new(address.as_u64());
-        let index = va.read(VA_INDEX::LEVEL3);
-        match self.next_table_address(index.into()) {
-            // @fixme wrong function
-            Some(phys_addr) => Some(L3Entries::PageFrame(phys_addr.user_to_kernel())),
-            None => None, // Nothing there
-        }
+        let va = VaType::new(address.as_u64());
+        let _index = va.read(VA_INDEX::LEVEL3);
+        // @fixme wrong function
+        // match self.next_table_address(index as usize) {
+        //     Some(phys_addr) => Some(L3Entries::PageFrame(phys_addr.user_to_kernel())),
+        //     None => None, // Nothing there
+        // }
+        None
     }
 }
 
@@ -454,7 +458,9 @@ where
         // If table entry has 0b11 mask set, it is a valid table entry.
         // Address of the following table may be extracted from bits 47:12
         if entry_flags.matches_all(TABLE_DESCRIPTOR::VALID::True + TABLE_DESCRIPTOR::TYPE::Table) {
-            Some(entry_flags.read(NEXT_LVL_TABLE_ADDR_4KiB) << Page4KiB::SHIFT)
+            Some(PhysAddr::new(
+                entry_flags.read(TABLE_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB) << Size4KiB::SHIFT,
+            ))
         } else {
             None
         }
@@ -462,15 +468,17 @@ where
 
     pub fn next_table(&self, index: usize) -> Option<&Directory<Level::NextLevel>> {
         self.next_table_address(index)
-            .map(|address| unsafe { &*(address.user_to_kernel() as *const _) })
+            .map(|address| unsafe { &*(address.user_to_kernel().as_ptr()) })
     }
 
     pub fn next_table_mut(&mut self, index: usize) -> Option<&mut Directory<Level::NextLevel>> {
         self.next_table_address(index)
-            .map(|address| unsafe { &mut *(address.user_to_kernel() as *mut _) })
+            .map(|address| unsafe { &mut *(address.user_to_kernel().as_mut_ptr()) })
     }
 
-    pub fn translate_levels(&self, address: VirtAddr) -> Option<Frames> {}
+    pub fn translate_levels(&self, _address: VirtAddr) -> Option<Frames> {
+        None
+    }
 }
 
 // ----
