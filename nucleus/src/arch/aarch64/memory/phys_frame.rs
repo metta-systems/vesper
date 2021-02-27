@@ -142,7 +142,7 @@ impl<S: PageSize> Iterator for PhysFrameRange<S> {
     type Item = PhysFrame<S>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start < self.end {
+        if !self.is_empty() {
             let frame = self.start.clone();
             self.start += 1;
             Some(frame)
@@ -182,7 +182,7 @@ impl<S: PageSize> Iterator for PhysFrameRangeInclusive<S> {
     type Item = PhysFrame<S>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start <= self.end {
+        if !self.is_empty() {
             let frame = self.start.clone();
             self.start += 1;
             Some(frame)
