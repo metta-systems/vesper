@@ -17,6 +17,9 @@ DEFAULT_TARGET = "aarch64-vesper-metta"
 # Pass TARGET env var if it does not match the default target above.
 TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] } }
 
+# Name of the target board "rpi3" or "rpi4"
+TARGET_BOARD = { value = "rpi3", condition = { env_not_set = ["TARGET_BOARD"] } }
+
 # AArch64 QEMU binary
 QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
 
