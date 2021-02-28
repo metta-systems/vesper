@@ -23,8 +23,9 @@ QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
 # An aarch64-enabled GDB
 GDB = { value = "/usr/local/opt/gdb-8.2.1-aarhc64/bin/aarch64-linux-elf-gdb", condition = { env_not_set = ["GDB"] } }
 
-# OpenOCD with JLink support and RTT patch from http://openocd.zylin.com/#/c/4055/11
-OPENOCD = { value = "/usr/local/openocd-aeb7b327-rtt/bin/openocd", condition = { env_not_set = ["OPENOCD"] } }
+# OpenOCD with JLink support
+# (RTT patch from http://openocd.zylin.com/#/c/4055/11 has already been merged into main line)
+OPENOCD = { value = "/usr/local/openocd-4d6519593-rtt/bin/openocd", condition = { env_not_set = ["OPENOCD"] } }
 
 # Mounted sdcard partition path
 VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }

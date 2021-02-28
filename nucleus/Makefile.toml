@@ -79,7 +79,7 @@ script = [
 script_runner = "@duckscript"
 script = [
 '''
-    writefile ${GDB_CONNECT_FILE} "target remote :5555\n"
+    writefile ${GDB_CONNECT_FILE} "target extended-remote :5555\n"
 '''
 ]
 
