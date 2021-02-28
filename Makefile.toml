@@ -21,14 +21,14 @@ TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] }
 TARGET_BOARD = { value = "rpi3", condition = { env_not_set = ["TARGET_BOARD"] } }
 
 # AArch64 QEMU binary
-QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
+QEMU = { value = "/usr/local/opt/qemu/HEAD-51db2d7cf2-mmudebug/bin/qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
 
 # An aarch64-enabled GDB
-GDB = { value = "/usr/local/opt/gdb-8.2.1-aarhc64/bin/aarch64-linux-elf-gdb", condition = { env_not_set = ["GDB"] } }
+GDB = { value = "/usr/local/opt/gdb/10.1-aarch64/bin/aarch64-linux-elf-gdb", condition = { env_not_set = ["GDB"] } }
 
 # OpenOCD with JLink support
 # (RTT patch from http://openocd.zylin.com/#/c/4055/11 has already been merged into main line)
-OPENOCD = { value = "/usr/local/openocd-4d6519593-rtt/bin/openocd", condition = { env_not_set = ["OPENOCD"] } }
+OPENOCD = { value = "/usr/local/opt/openocd/4d6519593-rtt/bin/openocd", condition = { env_not_set = ["OPENOCD"] } }
 
 # Mounted sdcard partition path
 VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
