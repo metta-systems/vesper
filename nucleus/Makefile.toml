@@ -72,7 +72,7 @@ env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_GDB_OPTS}" }
 [tasks.openocd]
 dependencies = ["build", "kernel-binary"]
 script = [
-    "${OPENOCD} -f interface/jlink.cfg -f ../doc/rpi2rpi_jtag/rpi3_target.cfg"
+    "${OPENOCD} -f interface/jlink.cfg -f ../ocd/rpi4_target.cfg"
 ]
 
 [tasks.gdb-config]
