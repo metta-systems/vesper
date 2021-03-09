@@ -53,3 +53,34 @@ No contributor can revoke this license.
 without any warranty or condition, and no contributor
 will be liable to anyone for any damages related to this
 software or this license, under any kind of legal claim.***
+
+---
+
+[Addtional restrictions](https://blog.yossarian.net/2020/06/03/You-may-not-use-my-projects-in-a-military-or-law-enforcement-context):
+
+The following terms additionally apply and override any above terms for
+applicable parties:
+
+You may not use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software in a military or law enforcement context,
+defined as follows:
+
+1. A military context is a professional context where the intended application
+of the Software is integration or use with or by military software, tools
+(software or hardware), or personnel. This includes contractors and
+subcontractors as well as research affiliates of any military organization.
+
+2. A law enforcement context is a professional context where the intended
+application of the Software is integration or use with or by law enforcement
+software, tools (software or hardware), or personnel. This includes
+contractors and subcontractors as well as research affiliates of any law
+enforcement organization.
+
+Entities that sell or license to military or law enforcement organizations
+may use the Software under the original terms, but only in contexts that do
+not assist or supplement the sold or licensed product.
+
+Students and academics who are affiliated with research institutions may use
+the Software under the original terms, but only in contexts that do not assist
+or supplement collaboration or affiliation with any military or law
+enforcement organization.
