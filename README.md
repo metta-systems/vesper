@@ -132,6 +132,10 @@ Individual files contain the following tag instead of the full license text.
 This enables machine processing of license information based on the SPDX
 License Identifiers that are here available: http://spdx.org/licenses/
 
+@todo http://copyfree.org/support/community
+-- copyfree
+-- no CoC approach of that community
+
 ----
 
 For more information please re-read.

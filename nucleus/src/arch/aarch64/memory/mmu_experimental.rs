@@ -216,17 +216,17 @@ impl From<PageTableEntry> for u64 {
 // So, first we init the dtb, parse mem-regions from there, then init boot_info page and start mmu,
 // this part will be inited in mmu::init():
 
-// @todo do NOT keep these statically, always allocate from available bump memory
-static mut LVL2_TABLE: Table<PageDirectory> = Table::<PageDirectory> {
-    entries: [0; NUM_ENTRIES_4KIB as usize],
-    level: PhantomData,
-};
-
-// @todo do NOT keep these statically, always allocate from available bump memory
-static mut LVL3_TABLE: Table<PageTable> = Table::<PageTable> {
-    entries: [0; NUM_ENTRIES_4KIB as usize],
-    level: PhantomData,
-};
+// // @todo do NOT keep these statically, always allocate from available bump memory
+// static mut LVL2_TABLE: Table<PageDirectory> = Table::<PageDirectory> {
+//     entries: [0; NUM_ENTRIES_4KIB as usize],
+//     level: PhantomData,
+// };
+//
+// // @todo do NOT keep these statically, always allocate from available bump memory
+// static mut LVL3_TABLE: Table<PageTable> = Table::<PageTable> {
+//     entries: [0; NUM_ENTRIES_4KIB as usize],
+//     level: PhantomData,
+// };
 
 trait BaseAddr {
     fn base_addr_u64(&self) -> u64;
@@ -254,10 +254,27 @@ pub unsafe fn init() -> Result<(), &'static str> {
     // Prepare the memory attribute indirection register.
     mair::set_up();
 
+    // should receive in args an obtained memory map from DT
+    let memory_map = Regions {
+        start: 0x1000,
+        size: 0x10000,
+    };
+
+    // bump-allocate page tables for entire memory
+    // also allocate phys memory to kernel space!
+    //
+    // separate regions - regular memory, device mmaps,
+    // initial thread maps ALL the memory??
+    // instead
+    // init thread may map only necessary mem
+    // boot time only map kernel physmem space, and currently loaded kernel data
+    // PROBABLY only kernel mapping TTBR1 is needed, the rest is not very useful?
+    // take over protected memory space though anyway.
+
     // Point the first 2 MiB of virtual addresses to the follow-up LVL3
     // page-table.
-    LVL2_TABLE.entries[0] =
-        PageTableEntry::new_table_descriptor(LVL3_TABLE.entries.base_addr_usize())?.into();
+    // LVL2_TABLE.entries[0] =
+    //     PageTableEntry::new_table_descriptor(LVL3_TABLE.entries.base_addr_usize())?.into();
 
     // Fill the rest of the LVL2 (2 MiB) entries as block descriptors.
     //
@@ -296,51 +313,6 @@ pub unsafe fn init() -> Result<(), &'static str> {
 
         *entry = page_desc.into();
     }
-
-    // Point to the LVL2 table base address in TTBR0.
-    TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
-
-    // TTBR1_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
-
-    // Configure various settings of stage 1 of the EL1 translation regime.
-    let ips = ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange);
-    TCR_EL1.write(
-        TCR_EL1::TBI0::Ignored // @todo TBI1 also set to Ignored??
-            + TCR_EL1::IPS.val(ips) // Intermediate Physical Address Size
-            // ttbr0 user memory addresses
-            + TCR_EL1::TG0::KiB_4 // 4 KiB granule
-            + TCR_EL1::SH0::Inner
-            + TCR_EL1::ORGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
-            + TCR_EL1::IRGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
-            + TCR_EL1::EPD0::EnableTTBR0Walks
-            + TCR_EL1::T0SZ.val(34) // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
-            // ttbr1 kernel memory addresses
-            + TCR_EL1::TG1::KiB_4 // 4 KiB granule
-            + TCR_EL1::SH1::Inner
-            + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
-            + TCR_EL1::IRGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
-            + TCR_EL1::EPD1::EnableTTBR1Walks
-            + TCR_EL1::T1SZ.val(34), // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
-    );
-
-    // Switch the MMU on.
-    //
-    // First, force all previous changes to be seen before the MMU is enabled.
-    barrier::isb(barrier::SY);
-
-    // use cortex_a::regs::RegisterReadWrite;
-    // Enable the MMU and turn on data and instruction caching.
-    SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::Cacheable + SCTLR_EL1::I::Cacheable);
-
-    // Force MMU init to complete before next instruction
-    /*
-     * Invalidate the local I-cache so that any instructions fetched
-     * speculatively from the PoC are discarded, since they may have
-     * been dynamically patched at the PoU.
-     */
-    barrier::isb(barrier::SY);
-
-    Ok(())
 }
 
 // AArch64:

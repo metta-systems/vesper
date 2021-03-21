@@ -12,10 +12,10 @@
 
 #![allow(dead_code)]
 
-use crate::memory::PageSize;
 use {
     crate::memory::{
         page_size::{Size1GiB, Size2MiB, Size4KiB},
+        PageSize,
         //virt_page::Page,
         PhysAddr,
         PhysFrame,
@@ -26,9 +26,67 @@ use {
         ops::{Index, IndexMut},
         ptr::Unique,
     },
+    cortex_a::barrier,
     register::register_bitfields,
     snafu::Snafu,
 };
+
+#[derive(Debug, Snafu)]
+enum MmuError {}
+
+pub fn init() -> Result<(), MmuError> {
+    // Prepare the memory attribute indirection register.
+    mair::set_up();
+
+    // Point to the LVL2 table base address in TTBR0.
+    TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
+
+    // TTBR1_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
+
+    // Configure various settings of stage 1 of the EL1 translation regime.
+    let ips = ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange);
+    TCR_EL1.write(
+        TCR_EL1::TBI0::Ignored // @todo TBI1 also set to Ignored??
+            + TCR_EL1::IPS.val(ips) // Intermediate Physical Address Size
+            // ttbr0 user memory addresses
+            + TCR_EL1::TG0::KiB_4 // 4 KiB granule
+            + TCR_EL1::SH0::Inner
+            + TCR_EL1::ORGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
+            + TCR_EL1::IRGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
+            + TCR_EL1::EPD0::EnableTTBR0Walks
+            + TCR_EL1::T0SZ.val(34) // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
+            // ttbr1 kernel memory addresses
+            + TCR_EL1::TG1::KiB_4 // 4 KiB granule
+            + TCR_EL1::SH1::Inner
+            + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
+            + TCR_EL1::IRGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
+            + TCR_EL1::EPD1::EnableTTBR1Walks
+            + TCR_EL1::T1SZ.val(34), // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
+    );
+
+    // Switch the MMU on.
+    //
+    // First, force all previous changes to be seen before the MMU is enabled.
+    unsafe {
+        barrier::isb(barrier::SY);
+    }
+
+    // use cortex_a::regs::RegisterReadWrite;
+    // Enable the MMU and turn on data and instruction caching.
+    SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::Cacheable + SCTLR_EL1::I::Cacheable);
+
+    // Force MMU init to complete before next instruction
+    /*
+     * Invalidate the local I-cache so that any instructions fetched
+     * speculatively from the PoC are discarded, since they may have
+     * been dynamically patched at the PoU.
+     */
+    unsafe {
+        barrier::isb(barrier::SY);
+    }
+
+    Ok(())
+}
 
 /*
  *  With 4k page granule, a virtual address is split into 4 lookup parts
