@@ -94,3 +94,58 @@ initial mapping:
     5. now kernel is able to address physical memory through it's (negative) kernel mapping.
     6. prepare init thread VSpace
         - this is more complicated wrt mapping
+
+
+// The region of the initial thread is the user image + ipcbuf and boot info.
+
+/* setup virtual memory for the kernel */
+map_kernel_window();
+
+/* Construct an initial address space with enough virtual addresses
+ * to cover the user image + ipc buffer and bootinfo frames */
+it_pd_cap = create_it_address_space(root_cnode_cap, it_v_reg);
+
+/* Create and map bootinfo frame cap */
+create_bi_frame_cap(
+root_cnode_cap,
+it_pd_cap,
+bi_frame_pptr,
+bi_frame_vptr
+);
+
+/* create the initial thread's IPC buffer */
+ipcbuf_cap = create_ipcbuf_frame(root_cnode_cap, it_pd_cap, ipcbuf_vptr);
+
+/* create all userland image frames */
+create_frames_ret =
+    create_frames_of_region(
+        root_cnode_cap,
+        it_pd_cap,
+        ui_reg,
+        true,
+        pv_offset
+    );
+ndks_boot.bi_frame->userImageFrames = create_frames_ret.region;
+
+... later ...
+
+/* create the initial thread */
+if (!create_initial_thread(
+        root_cnode_cap,
+        it_pd_cap,
+        v_entry,
+        bi_frame_vptr,
+        ipcbuf_vptr,
+        ipcbuf_cap
+    )) {
+
+
+/* create all of the untypeds. Both devices and kernel window memory */
+if (!create_untypeds(
+            root_cnode_cap,
+(region_t) {
+0xf0000000, (pptr_t)ki_boot_end
+} /* reusable boot code/data */
+        )) {
+    return false;
+}
