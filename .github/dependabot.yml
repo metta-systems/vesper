@@ -1,0 +1,21 @@
+version: 2
+updates:
+- package-ecosystem: cargo
+  directory: "/"
+  schedule:
+    interval: daily
+  open-pull-requests-limit: 10
+  ignore:
+  - dependency-name: cortex-a
+    versions:
+    - 5.1.2
+    - 5.1.3
+    - 5.1.4
+    - 5.1.5
+    - 5.1.6
+  - dependency-name: qemu-exit
+    versions:
+    - 1.0.2
+  - dependency-name: register
+    versions:
+    - 1.0.2
