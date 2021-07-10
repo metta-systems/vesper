@@ -16,8 +16,8 @@ use {
     },
     crate::{arch::loop_until, devices::ConsoleOps},
     core::ops,
-    register::{mmio::*, register_bitfields},
     snafu::Snafu,
+    tock_registers::{interfaces::*, register_bitfields, registers::*},
 };
 
 // PL011 UART registers.

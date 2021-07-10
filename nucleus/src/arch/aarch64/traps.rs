@@ -52,11 +52,14 @@
 use {
     crate::{arch::endless_sleep, println},
     cortex_a::{
-        barrier,
-        regs::{RegisterReadOnly, RegisterReadWrite, ESR_EL1, FAR_EL1, VBAR_EL1},
+        asm::barrier,
+        registers::{ESR_EL1, FAR_EL1, VBAR_EL1},
     },
-    register::{register_bitfields, LocalRegisterCopy},
     snafu::Snafu,
+    tock_registers::{
+        interfaces::{Readable, Writeable},
+        register_bitfields, LocalRegisterCopy,
+    },
 };
 
 global_asm!(include_str!("vectors.S"));

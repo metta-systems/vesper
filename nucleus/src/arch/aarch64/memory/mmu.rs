@@ -27,23 +27,23 @@ use {
         // ptr::Unique,
     },
     cortex_a::{
-        barrier,
-        regs::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1},
+        asm::barrier,
+        registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1},
     },
-    register::{
-        cpu::{RegisterReadOnly, RegisterReadWrite},
+    tock_registers::{
+        fields::FieldValue,
+        interfaces::{ReadWriteable, Readable, Writeable},
         register_bitfields,
     },
     // ux::*,
 };
 
 mod mair {
-    use cortex_a::regs::MAIR_EL1;
+    use cortex_a::registers::MAIR_EL1;
+    use tock_registers::interfaces::Writeable;
 
     /// Setup function for the MAIR_EL1 register.
     pub fn set_up() {
-        use cortex_a::regs::RegisterReadWrite;
-
         // Define the three memory types that we will map. Normal DRAM, Uncached and device.
         MAIR_EL1.write(
             // Attribute 2 -- Device Memory
@@ -296,7 +296,7 @@ register_bitfields! {
 /// attributes of the MMU.
 fn into_mmu_attributes(
     attribute_fields: AttributeFields,
-) -> register::FieldValue<u64, STAGE1_DESCRIPTOR::Register> {
+) -> FieldValue<u64, STAGE1_DESCRIPTOR::Register> {
     use super::{AccessPermissions, MemAttributes};
 
     // Memory attributes
@@ -402,7 +402,7 @@ impl PageSize for Size2MiB {
 
 impl NotGiantPageSize for Size2MiB {}
 
-type EntryFlags = register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>;
+type EntryFlags = tock_registers::fields::FieldValue<u64, STAGE1_DESCRIPTOR::Register>;
 // type EntryRegister = register::LocalRegisterCopy<u64, STAGE1_DESCRIPTOR::Register>;
 
 /// L0 table -- only pointers to L1 tables

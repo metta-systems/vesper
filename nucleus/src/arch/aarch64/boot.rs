@@ -10,7 +10,8 @@
 
 use {
     crate::endless_sleep,
-    cortex_a::{asm, regs::*},
+    cortex_a::{asm, registers::*},
+    tock_registers::interfaces::{Readable, Writeable},
 };
 
 // Stack placed before first executable instruction

@@ -19,8 +19,8 @@ use {
         ptr::NonNull,
         sync::atomic::{compiler_fence, Ordering},
     },
-    cortex_a::barrier,
-    register::{mmio::*, register_bitfields},
+    cortex_a::asm::barrier,
+    tock_registers::{interfaces::*, register_bitfields, registers::*},
 };
 
 /// Public interface to the mailbox.

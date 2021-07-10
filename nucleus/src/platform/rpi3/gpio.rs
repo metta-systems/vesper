@@ -9,9 +9,11 @@ use {
     super::BcmHost,
     crate::arch::loop_delay,
     core::{marker::PhantomData, ops},
-    register::{
-        mmio::{ReadOnly, ReadWrite, WriteOnly},
-        register_bitfields, FieldValue,
+    tock_registers::{
+        fields::FieldValue,
+        interfaces::{ReadWriteable, Readable, Writeable},
+        register_bitfields,
+        registers::{ReadOnly, ReadWrite, WriteOnly},
     },
 };
 
