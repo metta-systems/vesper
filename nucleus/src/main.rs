@@ -84,7 +84,7 @@ fn print_mmu_state_and_features() {
 
 fn init_mmu() {
     // unsafe {
-    //     memory::mmu::init().unwrap();
+    //     memory::mmu::init().expect("MMU init failed");
     // }
     println!("[!] MMU initialised");
     print_mmu_state_and_features();

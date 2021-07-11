@@ -35,8 +35,11 @@ use {
 enum MmuError {}
 
 pub fn init() -> Result<(), MmuError> {
-    // Prepare the memory attribute indirection register.
+    // Prepare the "memory attribute indirection register".
     mair::set_up();
+
+    // @todo Do not map entire RAM, map only loaded and allocated space.
+    // Also find and map framebuffer -- the user-mode framebuffer driver should be able to do that.
 
     // Point to the LVL2 table base address in TTBR0.
     TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
@@ -71,7 +74,6 @@ pub fn init() -> Result<(), MmuError> {
         barrier::isb(barrier::SY);
     }
 
-    // use cortex_a::regs::RegisterReadWrite;
     // Enable the MMU and turn on data and instruction caching.
     SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::Cacheable + SCTLR_EL1::I::Cacheable);
 
