@@ -26,14 +26,13 @@ use {
         ops::{Index, IndexMut},
         ptr::Unique,
     },
-    cortex_a::barrier,
-    register::register_bitfields,
     snafu::Snafu,
+    tock_registers::{fields, register_bitfields, LocalRegisterCopy},
 };
 
 #[derive(Debug, Snafu)]
 enum MmuError {}
-
+/*
 pub fn init() -> Result<(), MmuError> {
     // Prepare the "memory attribute indirection register".
     mair::set_up();
@@ -88,7 +87,7 @@ pub fn init() -> Result<(), MmuError> {
     }
 
     Ok(())
-}
+}*/
 
 /*
  *  With 4k page granule, a virtual address is split into 4 lookup parts
@@ -231,10 +230,10 @@ register_bitfields! {
     ]
 }
 
-// type VaIndex = register::FieldValue<u64, VA_INDEX::Register>;
-type VaType = register::LocalRegisterCopy<u64, VA_INDEX::Register>;
-type EntryFlags = register::FieldValue<u64, TABLE_DESCRIPTOR::Register>;
-type EntryRegister = register::LocalRegisterCopy<u64, TABLE_DESCRIPTOR::Register>;
+// type VaIndex = tock_registers::fields::FieldValue<u64, VA_INDEX::Register>;
+type VaType = LocalRegisterCopy<u64, VA_INDEX::Register>;
+type EntryFlags = fields::FieldValue<u64, TABLE_DESCRIPTOR::Register>;
+type EntryRegister = LocalRegisterCopy<u64, TABLE_DESCRIPTOR::Register>;
 
 // Possible mappings:
 // * TTBR0 pointing to user page global directory

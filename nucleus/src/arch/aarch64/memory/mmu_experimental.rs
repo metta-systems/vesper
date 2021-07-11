@@ -251,7 +251,7 @@ impl BaseAddr for [u64; 512] {
 /// Completely unsafe, we're in the hardware land! Incorrectly initialised tables will just
 /// restart the CPU.
 pub unsafe fn init() -> Result<(), &'static str> {
-    // Prepare the memory attribute indirection register.
+    // Prepare the "memory attribute indirection register".
     mair::set_up();
 
     // should receive in args an obtained memory map from DT
