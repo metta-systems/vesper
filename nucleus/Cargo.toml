@@ -34,3 +34,4 @@ bit_field = "0.10.1"
 bitflags = "1.2"
 cfg-if = "1.0"
 snafu = { version = "0.7.0-beta.0", default-features = false }
+static_assertions = "1.1.0"

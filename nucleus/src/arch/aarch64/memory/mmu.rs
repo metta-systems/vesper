@@ -341,7 +341,7 @@ impl HierarchicalPageLevel for L3PageTable {
 const TABLE_BITS: usize = 9;
 const INDEX_MASK: usize = (1 << TABLE_BITS) - 1;
 
-static_assert!(INDEX_MASK == 0x1ff);
+static_assertions::const_assert!(INDEX_MASK == 0x1ff);
 
 // @todo Table in mmu.rs
 /// MMU address translation table.
