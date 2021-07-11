@@ -12,7 +12,7 @@ use {
 
 mod addr;
 // pub mod mmu;
-mod features;
+pub mod features; // @todo make only pub re-export?
 mod page_size;
 mod phys_frame;
 mod virt_page;

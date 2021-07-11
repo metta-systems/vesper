@@ -79,7 +79,7 @@ static DMA_ALLOCATOR: sync::NullLock<mm::BumpAllocator> =
     ));
 
 fn print_mmu_state_and_features() {
-    memory::mmu::print_features();
+    memory::features::print_features();
 }
 
 fn init_mmu() {

@@ -1,18 +1,12 @@
-use cortex_a::{
-    asm::barrier,
-    registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1},
+use {
+    crate::println,
+    cortex_a::registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1},
+    tock_registers::interfaces::Readable,
 };
-
-// tock_registers::{
-// fields::FieldValue,
-// interfaces::{ReadWriteable, Readable, Writeable},
-// register_bitfields,
-// },
 
 /// Parse the ID_AA64MMFR0_EL1 register for runtime information about supported MMU features.
 /// Print the current state of TCR register.
 pub fn print_features() {
-    // use crate::cortex_a::regs::RegisterReadWrite;
     let sctlr = SCTLR_EL1.extract();
 
     if let Some(SCTLR_EL1::M::Value::Enable) = sctlr.read_as_enum(SCTLR_EL1::M) {
