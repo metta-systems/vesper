@@ -5,13 +5,15 @@
  * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
  */
 
+#[cfg(not(feature = "noserial"))]
+use tock_registers::interfaces::{Readable, Writeable};
 use {
     super::{gpio, BcmHost},
     crate::devices::ConsoleOps,
     cfg_if::cfg_if,
     core::{convert::From, fmt, ops},
     tock_registers::{
-        interfaces::{ReadWriteable, Readable, Writeable},
+        interfaces::ReadWriteable,
         register_bitfields,
         registers::{ReadOnly, ReadWrite, WriteOnly},
     },
