@@ -20,7 +20,11 @@ use {
         sync::atomic::{compiler_fence, Ordering},
     },
     cortex_a::asm::barrier,
-    tock_registers::{interfaces::*, register_bitfields, registers::*},
+    tock_registers::{
+        interfaces::{Readable, Writeable},
+        register_bitfields,
+        registers::{ReadOnly, WriteOnly},
+    },
 };
 
 /// Public interface to the mailbox.

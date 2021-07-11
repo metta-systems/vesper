@@ -10,7 +10,11 @@ use {
     crate::devices::ConsoleOps,
     cfg_if::cfg_if,
     core::{convert::From, fmt, ops},
-    tock_registers::{interfaces::*, register_bitfields, registers::*},
+    tock_registers::{
+        interfaces::{ReadWriteable, Readable, Writeable},
+        register_bitfields,
+        registers::{ReadOnly, ReadWrite, WriteOnly},
+    },
 };
 
 // Auxiliary mini UART registers

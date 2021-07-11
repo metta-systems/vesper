@@ -14,7 +14,10 @@ use {
     crate::arch::loop_delay,
     core::ops,
     snafu::Snafu,
-    tock_registers::{interfaces::*, registers::*},
+    tock_registers::{
+        interfaces::{Readable, Writeable},
+        registers::ReadWrite,
+    },
 };
 
 const POWER_BASE: usize = BcmHost::get_peripheral_address() + 0x0010_001C;
