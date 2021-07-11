@@ -21,6 +21,9 @@
 #![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
 #![deny(warnings)]
+#![allow(clippy::nonstandard_macro_braces)] // https://github.com/shepmaster/snafu/issues/296
+#![allow(clippy::upper_case_acronyms)]
+#![allow(clippy::enum_variant_names)]
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
