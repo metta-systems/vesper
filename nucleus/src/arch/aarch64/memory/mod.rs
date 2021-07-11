@@ -11,13 +11,13 @@ use {
 };
 
 mod addr;
-pub mod mmu;
+// pub mod mmu;
 mod features;
 mod phys_frame;
 mod virt_page;
 
-pub mod mmu_experimental;
-pub use mmu_experimental::*;
+pub mod mmu2;
+pub use mmu2::*;
 
 // mod area_frame_allocator;
 // pub use self::area_frame_allocator::AreaFrameAllocator;

@@ -1,16 +1,3 @@
-/*
- * SPDX-License-Identifier: MIT OR BlueOak-1.0.0
- * Copyright (c) 2018-2019 Andre Richter <andre.o.richter@gmail.com>
- * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
- * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
- */
-
-//! MMU initialisation.
-//!
-//! Paging is mostly based on [previous version](https://os.phil-opp.com/page-tables/) of
-//! Phil Opp's [paging guide](https://os.phil-opp.com/paging-implementation/) and
-//! [ARMv8 ARM memory addressing](https://static.docs.arm.com/100940/0100/armv8_a_address%20translation_100940_0100_en.pdf).
-
 use {
     crate::{
         arch::aarch64::memory::{
@@ -67,110 +54,6 @@ mod mair {
     }
 }
 
-register_bitfields! {
-    u64,
-    // AArch64 Reference Manual page 2150, D5-2445
-    STAGE1_DESCRIPTOR [
-        // In table descriptors
-
-        NSTable_EL3   OFFSET(63) NUMBITS(1) [],
-
-        /// Access Permissions for subsequent tables
-        APTable  OFFSET(61) NUMBITS(2) [
-            RW_EL1 = 0b00,
-            RW_EL1_EL0 = 0b01,
-            RO_EL1 = 0b10,
-            RO_EL1_EL0 = 0b11
-        ],
-
-        // User execute-never for subsequent tables
-        UXNTable OFFSET(60) NUMBITS(1) [
-            Execute = 0,
-            NeverExecute = 1
-        ],
-
-        /// Privileged execute-never for subsequent tables
-        PXNTable OFFSET(59) NUMBITS(1) [
-            Execute = 0,
-            NeverExecute = 1
-        ],
-
-        // In block descriptors
-
-        // OS-specific data
-        OSData      OFFSET(55) NUMBITS(4) [],
-
-        // User execute-never
-        UXN      OFFSET(54) NUMBITS(1) [
-            Execute = 0,
-            NeverExecute = 1
-        ],
-
-        /// Privileged execute-never
-        PXN      OFFSET(53) NUMBITS(1) [
-            Execute = 0,
-            NeverExecute = 1
-        ],
-
-        // @fixme ?? where is this described
-        CONTIGUOUS OFFSET(52) NUMBITS(1) [
-            False = 0,
-            True = 1
-        ],
-
-        // @fixme ?? where is this described
-        DIRTY OFFSET(51) NUMBITS(1) [
-            False = 0,
-            True = 1
-        ],
-
-        /// Various address fields, depending on use case
-        LVL2_OUTPUT_ADDR_4KiB    OFFSET(21) NUMBITS(27) [], // [47:21]
-        NEXT_LVL_TABLE_ADDR_4KiB OFFSET(12) NUMBITS(36) [], // [47:12]
-
-        // @fixme ?? where is this described
-        NON_GLOBAL OFFSET(11) NUMBITS(1) [
-            False = 0,
-            True = 1
-        ],
-
-        /// Access flag
-        AF       OFFSET(10) NUMBITS(1) [
-            False = 0,
-            True = 1
-        ],
-
-        /// Shareability field
-        SH       OFFSET(8) NUMBITS(2) [
-            OuterShareable = 0b10,
-            InnerShareable = 0b11
-        ],
-
-        /// Access Permissions
-        AP       OFFSET(6) NUMBITS(2) [
-            RW_EL1 = 0b00,
-            RW_EL1_EL0 = 0b01,
-            RO_EL1 = 0b10,
-            RO_EL1_EL0 = 0b11
-        ],
-
-        NS_EL3   OFFSET(5) NUMBITS(1) [],
-
-        /// Memory attributes index into the MAIR_EL1 register
-        AttrIndx OFFSET(2) NUMBITS(3) [],
-
-        TYPE     OFFSET(1) NUMBITS(1) [
-            Block = 0,
-            Table = 1
-        ],
-
-        VALID    OFFSET(0) NUMBITS(1) [
-            False = 0,
-            True = 1
-        ]
-    ]
-}
-
 /// A function that maps the generic memory range attributes to HW-specific
 /// attributes of the MMU.
 fn into_mmu_attributes(
@@ -209,33 +92,6 @@ fn into_mmu_attributes(
 
     desc
 }
-
-/*
- *  With 4k page granule, a virtual address is split into 4 lookup parts
- *  spanning 9 bits each:
- *
- *    _______________________________________________
- *   |       |       |       |       |       |       |
- *   | signx |  Lv0  |  Lv1  |  Lv2  |  Lv3  |  off  |
- *   |_______|_______|_______|_______|_______|_______|
- *     63-48   47-39   38-30   29-21   20-12   11-00
- *
- *             mask        page size
- *
- *    Lv0: FF8000000000       --
- *    Lv1:   7FC0000000       1G
- *    Lv2:     3FE00000       2M
- *    Lv3:       1FF000       4K
- *    off:          FFF
- *
- * RPi3 supports 64K and 4K granules, also 40-bit physical addresses.
- * It also can address only 1G physical memory, so these 40-bit phys addresses are a fake.
- *
- * 48-bit virtual address space; different mappings in VBAR0 (EL0) and VBAR1 (EL1+).
- */
-
-/// Number of entries in a 4KiB mmu table.
-pub const NUM_ENTRIES_4KIB: u64 = 512;
 
 /// Trait for abstracting over the possible page sizes, 4KiB, 16KiB, 2MiB, 1GiB.
 pub trait PageSize: Copy + Eq + PartialOrd + Ord {
@@ -280,87 +136,6 @@ impl PageSize for Size2MiB {
 }
 
 impl NotGiantPageSize for Size2MiB {}
-
-type EntryFlags = tock_registers::fields::FieldValue<u64, STAGE1_DESCRIPTOR::Register>;
-// type EntryRegister = register::LocalRegisterCopy<u64, STAGE1_DESCRIPTOR::Register>;
-
-/// L0 table -- only pointers to L1 tables
-pub enum PageGlobalDirectory {}
-/// L1 tables -- pointers to L2 tables or giant 1GiB pages
-pub enum PageUpperDirectory {}
-/// L2 tables -- pointers to L3 tables or huge 2MiB pages
-pub enum PageDirectory {}
-/// L3 tables -- only pointers to 4/16KiB pages
-pub enum PageTable {}
-
-/// Shared trait for specific table levels.
-pub trait TableLevel {}
-
-/// Shared trait for hierarchical table levels.
-///
-/// Specifies what is the next level of page table hierarchy.
-pub trait HierarchicalLevel: TableLevel {
-    /// Level of the next translation table below this one.
-    type NextLevel: TableLevel;
-}
-
-impl TableLevel for PageGlobalDirectory {}
-impl TableLevel for PageUpperDirectory {}
-impl TableLevel for PageDirectory {}
-impl TableLevel for PageTable {}
-
-impl HierarchicalLevel for PageGlobalDirectory {
-    type NextLevel = PageUpperDirectory;
-}
-impl HierarchicalLevel for PageUpperDirectory {
-    type NextLevel = PageDirectory;
-}
-impl HierarchicalLevel for PageDirectory {
-    type NextLevel = PageTable;
-}
-// PageTables do not have next level, therefore they are not HierarchicalLevel
-
-/// MMU address translation table.
-/// Contains just u64 internally, provides enum interface on top
-#[repr(C)]
-#[repr(align(4096))]
-pub struct Table<L: TableLevel> {
-    entries: [u64; NUM_ENTRIES_4KIB as usize],
-    level: PhantomData<L>,
-}
-
-// Implementation code shared for all levels of page tables
-impl<L> Table<L>
-where
-    L: TableLevel,
-{
-    /// Zero out entire table.
-    pub fn zero(&mut self) {
-        for entry in self.entries.iter_mut() {
-            *entry = 0;
-        }
-    }
-}
-
-impl<L> Index<usize> for Table<L>
-where
-    L: TableLevel,
-{
-    type Output = u64;
-
-    fn index(&self, index: usize) -> &u64 {
-        &self.entries[index]
-    }
-}
-
-impl<L> IndexMut<usize> for Table<L>
-where
-    L: TableLevel,
-{
-    fn index_mut(&mut self, index: usize) -> &mut u64 {
-        &mut self.entries[index]
-    }
-}
 
 /// Type-safe enum wrapper covering Table<L>'s 64-bit entries.
 #[derive(Clone)]

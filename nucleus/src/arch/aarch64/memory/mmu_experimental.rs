@@ -1,70 +1,3 @@
-// 1: use Table<Level> for sure
-// 2: in tables use typed descriptors over generic u64 entries?? how to pick right type...
-// -- TableDescriptor
-// -- Lvl2BlockDescriptor
-// -- PageDescriptor
-// Use them instead of PageTableEntry
-// 3: Use PhysFrame<Size> and Page<Size> as flexible versions of various-sized pages
-
-// Level 0 descriptors can only output the address of a Level 1 table.
-// Level 3 descriptors cannot point to another table and can only output block addresses.
-// The format of the table is therefore slightly different for Level 3.
-//
-// this means:
-// - level 0 page table can be only TableDescriptors
-// - level 1,2 page table can be TableDescriptors, Lvl2BlockDescriptors (PageDescriptors)
-// - level 3 page table can be only PageDescriptors
-
-// Level / Types | Table Descriptor | Lvl2BlockDescriptor (PageDescriptor)
-// --------------+------------------+--------------------------------------
-//   0           |        X         |            (with 4KiB granule)
-//   1           |        X         |          X (1GiB range)
-//   2           |        X         |          X (2MiB range)
-//   3           |                  |          X (4KiB range) -- called PageDescriptor
-//                                         encoding actually the same as in Table Descriptor
-
-// Translation granule affects the size of the block addressed.
-// Lets use 4KiB granule on RPi3 for simplicity.
-
-// This gives the following address format:
-//
-// Maximum OA is 48 bits.
-//
-// Level 0 descriptor cannot be block descriptor.
-// Level 0 table descriptor has Output Address in [47:12]
-//
-// Level 1 block descriptor has Output Address in [47:30]
-// Level 2 block descriptor has Output Address in [47:21]
-//
-// Level 1 table descriptor has Output Address in [47:12]
-// Level 2 table descriptor has Output Address in [47:12]
-//
-// Level 3 Page Descriptor:
-// Upper Attributes [63:51]
-// Res0 [50:48]
-// Output Address [47:12]
-// Lower Attributes [11:2]
-// 11b [1:0]
-
-// enum PageTableEntry { Page(&mut PageDescriptor), Block(&mut BlockDescriptor), Etc(&mut u64), Invalid(&mut u64) }
-// impl PageTabelEntry { fn new_from_entry_addr(&u64) }
-
-// If I have, for example, Table<Level0> I can get from it N `Table<Level1>` (via impl HierarchicalTable)
-// From Table<Level1> I can get either `Table<Level2>` (via impl HierarchicalTable) or `BlockDescriptor<Size1GiB>`
-// From Table<Level2> I can get either `Table<Level3>` (via impl HierarchicalTable) or `BlockDescriptor<Size2MiB>`
-// From Table<Level3> I can only get `PageDescriptor<Size4KiB>` (because no impl HierarchicalTable exists)
-
-// enum PageTableEntry { Page(&mut PageDescriptor), Block(&mut BlockDescriptor), Etc(&mut u64), Invalid(&mut u64) }
-// return enum PageTableEntry constructed from table bits in u64
-
-/*!
- * Paging system uses a separate address space in top kernel region (TTBR1) to access
- * entire physical memory contents.
- * This mapping is not available to user space (user space uses TTBR0).
- * Use the largest possible granule size to map physical memory since we want to use
- * the least amount of memory for these mappings.
- */
-
 // Check largest VA supported, calculate physical_memory_offset
 //
 const PHYSICAL_MEMORY_OFFSET: u64 = 0xffff_8000_0000_0000; // Last 1GiB of VA space
@@ -332,37 +265,10 @@ impl fmt::Debug for PageTableEntry {
     }
 }*/
 
-// to get L0 we must allocate a few frames from boot region allocator.
-// So, first we init the dtb, parse mem-regions from there, then init boot_info page and start mmu,
-// this part will be inited in mmu::init():
-//pub const L0: *mut Table<PageGlobalDirectory> = &mut LVL0_TABLE as *mut _; // was Table<Level0>
-// @fixme this is for recursive page tables!!
-
 impl<L> Table<L>
 where
     L: HierarchicalLevel,
 {
-    fn next_table_address(&self, index: usize) -> Option<usize> {
-        let entry_flags = EntryRegister::new(self[index]);
-        if entry_flags.matches_all(STAGE1_DESCRIPTOR::VALID::True + STAGE1_DESCRIPTOR::TYPE::Table)
-        {
-            let table_address = self as *const _ as usize;
-            Some((table_address << 9) | (index << 12))
-        } else {
-            None
-        }
-    }
-
-    pub fn next_table(&self, index: usize) -> Option<&Table<L::NextLevel>> {
-        self.next_table_address(index)
-            .map(|address| unsafe { &*(address as *const _) })
-    }
-
-    pub fn next_table_mut(&mut self, index: usize) -> Option<&mut Table<L::NextLevel>> {
-        self.next_table_address(index)
-            .map(|address| unsafe { &mut *(address as *mut _) })
-    }
-
     pub fn next_table_create<A>(
         &mut self,
         index: usize,
