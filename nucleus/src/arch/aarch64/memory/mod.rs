@@ -11,15 +11,13 @@ use {
 };
 
 mod addr;
-// pub mod mmu;
 pub mod features; // @todo make only pub re-export?
+pub mod mmu;
 mod page_size;
 mod phys_frame;
 mod virt_page;
 
-pub mod mmu2;
-
-pub use mmu2::*;
+pub use mmu::*;
 
 // mod area_frame_allocator;
 // pub use self::area_frame_allocator::AreaFrameAllocator;
@@ -30,8 +28,6 @@ pub use addr::PhysAddr;
 pub use addr::VirtAddr;
 pub use page_size::PageSize;
 pub use phys_frame::PhysFrame;
-
-use mmu_experimental::PhysFrame;
 
 // @todo ??
 pub trait FrameAllocator {
