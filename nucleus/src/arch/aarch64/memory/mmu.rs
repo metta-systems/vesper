@@ -111,6 +111,8 @@ pub fn init() -> Result<(), MmuError> {
  *
  * RPi3 supports 64K and 4K granules, also 40-bit physical addresses.
  * It also can address only 1G physical memory, so these 40-bit phys addresses are a fake.
+ * RPi4 can address more (up to 8Gb physical memory, 33 bits phys address, SoC has a so-called
+ * Full 35-bit address mode).
  *
  * 48-bit virtual address space; different mappings in VBAR0 (EL0) and VBAR1 (EL1+).
  */

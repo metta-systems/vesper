@@ -81,7 +81,7 @@ mod tests {
         let result3 = allocator.allocate(unsafe { Layout::from_size_align_unchecked(1, 1) });
         assert!(result3.is_err());
     }
-    // Creating with end <= start sshould fail
+    // Creating with end <= start should fail
     // @todo return Result<> from new?
     #[test_case]
     fn test_bad_allocator() {

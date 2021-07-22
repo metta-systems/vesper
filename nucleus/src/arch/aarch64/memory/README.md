@@ -24,10 +24,10 @@ For more information please re-read.
 
 ## Plan
 
-1. MMU tables - because we need separate memspaces for kernel and userspace
-   1a. Allocate initial page tables
-   1b. Map over available RAM sensibly
-   1c. Create kernel's own mapping (TTBR_EL1)
+- 1. MMU tables - because we need separate memspaces for kernel and userspace
+   - 1a. Allocate initial page tables
+   - 1b. Map over available RAM sensibly
+   - 1c. Create kernel's own mapping (TTBR_EL1)
 
 ## What does the kernel MMU code support?
 
@@ -40,7 +40,7 @@ For more information please re-read.
 
 ## public api
 
-    ARMMU invocations:
+    ARM_MMU invocations:
         on page directory cap
             cache maintenance (clean/invalidate/unify)
         on page table cap
@@ -69,10 +69,12 @@ For more information please re-read.
 
 ## Requirements
 
+```
 GIVEN
     A PageGlobalDirectory of process
 FIND
     A kernel-physical address of where it contains a certain leaf node.
+```
 
 ## sel4
 
@@ -101,7 +103,7 @@ Memory areas:
     - read and parse device tree data then..
 - map only init_thread and boot_info structures through TTBR0
 
-
+```
 // The region of the initial thread is the user image + ipcbuf and boot info.
 
 /* setup virtual memory for the kernel */
@@ -155,3 +157,4 @@ if (!create_untypeds(
         )) {
     return false;
 }
+```
