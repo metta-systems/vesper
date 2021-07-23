@@ -166,9 +166,19 @@ pub fn kmain() -> ! {
     #[cfg(test)]
     test_main();
 
+    dump_memory_map();
+
     command_prompt();
 
     reboot()
+}
+
+fn dump_memory_map() {
+    // Output the memory map as we could derive from FDT and information about our loaded image
+    // Use it to imagine how the memmap would look like in the end.
+    arch::memory::print_layout();
+
+
 }
 
 //------------------------------------------------------------
