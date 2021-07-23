@@ -8,6 +8,14 @@
 //! Low-level boot of the Raspberry's processor
 //! <http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf>
 
+//! Raspi kernel boot helper: https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S
+//! In particular, see dtb_ptr32
+
+//! To get memory size from DTB:
+//! 1. Find nodes with unit-names `/memory`
+//! 2. From those read reg entries, using `/#address-cells` and `/#size-cells` as units
+//! 3. Union of all these reg entries will be the available memory. Enter it as mem-regions.
+
 use {
     crate::endless_sleep,
     cortex_a::{asm, registers::*},
@@ -24,11 +32,11 @@ macro_rules! entry {
         /// # Safety
         /// Only type-checks!
         #[export_name = "main"]
-        pub unsafe fn __main() -> ! {
+        pub unsafe fn __main(dtb: u32) -> ! {
             // type check the given path
-            let f: fn() -> ! = $path;
+            let f: fn(u32) -> ! = $path;
 
-            f()
+            f(dtb)
         }
     };
 }
@@ -41,7 +49,7 @@ macro_rules! entry {
 ///
 /// Totally unsafe! We're in the hardware land.
 #[link_section = ".text.boot"]
-unsafe fn reset() -> ! {
+unsafe fn reset(dtb: u32) -> ! {
     extern "C" {
         // Boundaries of the .bss section, provided by the linker script
         static mut __BSS_START: u64;
@@ -52,10 +60,10 @@ unsafe fn reset() -> ! {
     r0::zero_bss(&mut __BSS_START, &mut __BSS_END);
 
     extern "Rust" {
-        fn main() -> !;
+        fn main(dtb: u32) -> !;
     }
 
-    main()
+    main(dtb)
 }
 
 // [ARMv6 unaligned data access restrictions](https://developer.arm.com/documentation/ddi0333/h/unaligned-and-mixed-endian-data-access-support/unaligned-access-support/armv6-unaligned-data-access-restrictions?lang=en)
@@ -108,10 +116,15 @@ fn shared_setup_and_enter_pre() {
 
 #[link_section = ".text.boot"]
 #[inline]
-fn shared_setup_and_enter_post() -> ! {
+fn shared_setup_and_enter_post(dtb: u32) -> ! {
     // Set up SP_EL1 (stack pointer), which will be used by EL1 once
     // we "return" to it.
     SP_EL1.set(STACK_START);
+
+    unsafe {
+        asm!("mov {dtb:w}, w0", dtb = in(reg) dtb);
+        // @todo How to enforce dtb being in w0 at this point? -- must be an arg to eret()
+    }
 
     // Use `eret` to "return" to EL1. This will result in execution of
     // `reset()` in EL1.
@@ -123,7 +136,7 @@ fn shared_setup_and_enter_post() -> ! {
 /// Prepare and execute transition from EL2 to EL1.
 #[link_section = ".text.boot"]
 #[inline]
-fn setup_and_enter_el1_from_el2() -> ! {
+fn setup_and_enter_el1_from_el2(dtb: u32) -> ! {
     // Set Saved Program Status Register (EL2)
     // Set up a simulated exception return.
     //
@@ -140,7 +153,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
     // Make the Exception Link Register (EL2) point to reset().
     ELR_EL2.set(reset as *const () as u64);
 
-    shared_setup_and_enter_post()
+    shared_setup_and_enter_post(dtb)
 }
 
 /// QEMU boot-up sequence.
@@ -156,7 +169,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
 #[cfg(qemu)]
 #[link_section = ".text.boot"]
 #[inline]
-fn setup_and_enter_el1_from_el3() -> ! {
+fn setup_and_enter_el1_from_el3(dtb: u32) -> ! {
     // Set Secure Configuration Register (EL3)
     SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
 
@@ -176,7 +189,7 @@ fn setup_and_enter_el1_from_el3() -> ! {
     // Make the Exception Link Register (EL3) point to reset().
     ELR_EL3.set(reset as *const () as u64);
 
-    shared_setup_and_enter_post()
+    shared_setup_and_enter_post(dtb)
 }
 
 /// Entrypoint of the processor.
@@ -192,7 +205,7 @@ fn setup_and_enter_el1_from_el3() -> ! {
 ///
 #[no_mangle]
 #[link_section = ".text.boot.entry"]
-pub unsafe extern "C" fn _boot_cores() -> ! {
+pub unsafe extern "C" fn _boot_cores(dtb: u32) -> ! {
     const CORE_0: u64 = 0;
     const CORE_MASK: u64 = 0x3;
     // Can't match values with dots in match, so use intermediate consts.
@@ -207,11 +220,14 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
     shared_setup_and_enter_pre();
 
     if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
+        // @todo On entry, w0 should contain the dtb address.
+        // For non-primary cores it however contains 0.
+
         match CurrentEL.get() {
             #[cfg(qemu)]
-            EL3 => setup_and_enter_el1_from_el3(),
-            EL2 => setup_and_enter_el1_from_el2(),
-            EL1 => reset(),
+            EL3 => setup_and_enter_el1_from_el3(dtb),
+            EL2 => setup_and_enter_el1_from_el2(dtb),
+            EL1 => reset(dtb),
             _ => endless_sleep(),
         }
     }
