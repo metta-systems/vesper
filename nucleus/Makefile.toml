@@ -57,7 +57,7 @@ args = ["build", "--target=${TARGET_JSON}", "--release", "--features=${TARGET_FE
 [tasks.qemu-runner]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
-    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${KERNEL_BIN}"
+    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET_MACHINE}.dtb -kernel ${KERNEL_BIN}"
 ]
 dependencies = ["build-qemu", "kernel-binary"]
 

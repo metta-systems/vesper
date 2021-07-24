@@ -9,6 +9,10 @@ default_to_workspace = true
 
 [env]
 DEFAULT_TARGET = "aarch64-vesper-metta"
+# Machines are listed in targets/*.dtb
+# Default is RaspberryPi 400 PC
+# Default based on the original makefile.toml qemu config: bcm2710-rpi-3-b-plus
+DEFAULT_MACHINE = "bcm2711-rpi-400"
 
 #
 # === User-configurable ===
@@ -17,8 +21,10 @@ DEFAULT_TARGET = "aarch64-vesper-metta"
 # Pass TARGET env var if it does not match the default target above.
 TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] } }
 
-# Name of the target board "rpi3" or "rpi4"
-TARGET_BOARD = { value = "rpi3", condition = { env_not_set = ["TARGET_BOARD"] } }
+TARGET_MACHINE = { value = "${DEFAULT_MACHINE}", condition = { env_not_set = ["TARGET_MACHINE"] } }
+
+# Name of the target board "rpi3" or "rpi4" - @todo see DEFAULT_MACHINE above!
+TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } }
 
 # AArch64 QEMU binary
 QEMU = { value = "/usr/local/opt/qemu/HEAD-51db2d7cf2-mmudebug/bin/qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
