@@ -175,10 +175,11 @@ impl<T: num::PrimInt, S: PageSize> SubAssign<T> for Page<S> {
     }
 }
 
-impl<S: PageSize> Sub<Self> for Page<S> {
-    type Output = usize;
+impl<S: PageSize> Sub for Page<S> {
+    type Output = usize; // @todo must be isize here?
+    /// Return number of bytes between two pages' starting addresses.
     fn sub(self, rhs: Self) -> Self::Output {
-        (self.start_address - rhs.start_address) as usize / S::SIZE
+        (self.start_address - rhs.start_address) as usize
     }
 }
 
@@ -198,7 +199,7 @@ impl<S: PageSize> PageRange<S> {
     }
 
     pub fn num_pages(&self) -> usize {
-        (self.end - self.start) as usize / S::SIZE
+        (self.end - self.start) / S::SIZE
     }
 }
 
@@ -207,8 +208,8 @@ impl<S: PageSize> Iterator for PageRange<S> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.is_empty() {
-            let page = self.start.clone();
-            self.start += 1;
+            let page = self.start;
+            self.start += S::SIZE; // @todo Destructive iterator
             Some(page)
         } else {
             None
@@ -266,8 +267,8 @@ impl<S: PageSize> Iterator for PageRangeInclusive<S> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.is_empty() {
-            let page = self.start.clone();
-            self.start += 1;
+            let page = self.start;
+            self.start += S::SIZE;
             Some(page)
         } else {
             None
@@ -294,8 +295,8 @@ mod tests {
         let number = 1000usize;
 
         let start_addr = VirtAddr::new(0xdeafbead);
-        let start: Page = Page::containing_address(start_addr);
-        let end = start + number;
+        let start: Page = Page::<Size4KiB>::containing_address(start_addr);
+        let end = start + number * page_size;
 
         let mut range = Page::range(start, end);
         for i in 0..number {
@@ -322,12 +323,15 @@ mod tests {
         let number = 10;
 
         let start_addr = VirtAddr::new(0xdeadbeaf);
-        let start: Page = Page::containing_address(start_addr);
-        let end = start + number;
+        let start = Page::<Size2MiB>::containing_address(start_addr);
+        let end = start + number * page_size;
 
-        let range = Page::range(start, end).as_4kib_page_range();
+        let range = Page::<Size2MiB>::range(start, end);
+        assert_eq!(range.num_pages(), 10);
 
-        // 10 2MiB pages is 512 4KiB pages
-        assert_eq!(range.num_pages(), 512);
+        let range = range.as_4kib_page_range();
+
+        // 10 2MiB pages is 5120 4KiB pages
+        assert_eq!(range.num_pages(), 5120);
     }
 }
