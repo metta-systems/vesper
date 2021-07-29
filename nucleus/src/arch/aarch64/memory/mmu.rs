@@ -605,6 +605,6 @@ mod tests {
         assert!(level0_table.next_table_address(0).is_some());
 
         let addr = level0_table.next_table_address(0).unwrap();
-        assert_eq!(addr, (0x424242 << 12));
+        assert_eq!(addr.as_u64(), (0x424242u64 << 12));
     }
 }
