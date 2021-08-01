@@ -260,6 +260,8 @@ impl<T: num::PrimInt> Rem<T> for VirtAddr {
 // @todo this is not very useful...
 impl<T: num::PrimInt> RemAssign<T> for VirtAddr {
     fn rem_assign(&mut self, rhs: T) {
-        *self = VirtAddr::new(num::traits::CheckedRem::checked_rem(&self.0, &num::cast(rhs).unwrap()).unwrap());
+        *self = VirtAddr::new(
+            num::traits::CheckedRem::checked_rem(&self.0, &num::cast(rhs).unwrap()).unwrap(),
+        );
     }
 }
