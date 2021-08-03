@@ -11,11 +11,6 @@
 //! Raspi kernel boot helper: https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S
 //! In particular, see dtb_ptr32
 
-//! To get memory size from DTB:
-//! 1. Find nodes with unit-names `/memory`
-//! 2. From those read reg entries, using `/#address-cells` and `/#size-cells` as units
-//! 3. Union of all these reg entries will be the available memory. Enter it as mem-regions.
-
 use {
     aarch64_cpu::registers::*,
     core::arch::global_asm,
