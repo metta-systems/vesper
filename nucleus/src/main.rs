@@ -157,6 +157,17 @@ pub fn kmain(dtb: u32) -> ! {
         .expect("Model must be a string");
     println!("Booting on {}", model);
 
+    // To init memory allocation we need to parse memory regions from dtb and add the regions to
+    // available memory regions list. Then initial BootRegionAllocator will get memory from these
+    // regions and record their usage into some OTHER structures, removing these allocations from
+    // the free regions list.
+    // memory allocation is described by reg attribute of /memory block.
+    // /#address-cells and /#size-cells specify the sizes of address and size attributes in reg.
+    // To get memory size from DTB:
+    // 1. Find nodes with unit-names `/memory`
+    // 2. From those read reg entries, using `/#address-cells` and `/#size-cells` as units
+    // 3. Union of all these reg entries will be the available memory. Enter it as mem-regions.
+
     let address_cells = device_tree
         .get_prop_by_path("/#address-cells")
         .expect("Unable to figure out #address-cells")
@@ -221,13 +232,6 @@ pub fn kmain(dtb: u32) -> ! {
         device_tree.fdt().totalsize(),
         dtb
     );
-
-    // To init memory allocation we need to parse memory regions from dtb and add the regions to
-    // available memory regions list. Then initial BootRegionAllocator will get memory from these
-    // regions and record their usage into some OTHER structures, removing these allocations from
-    // the free regions list.
-    // memory allocation is described by reg attribute of /memory block.
-    // /#address-cells and /#size-cells specify the sizes of address and size attributes in reg.
 
     // let address_cells = device_tree.try_struct_u32_value("/#address-cells");
     // let size_cells = device_tree.try_struct_u32_value("/#size-cells");
