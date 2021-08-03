@@ -79,7 +79,11 @@ impl<'a, 'i: 'a, 'dt: 'i> DeviceTreeProp<'a, 'i, 'dt> {
         Self(source)
     }
 
-    pub fn payload_pairs_iter(&'a self, address_cells: u32, size_cells: u32) -> PayloadPairsIter<'a, 'i, 'dt> {
+    pub fn payload_pairs_iter(
+        &'a self,
+        address_cells: u32,
+        size_cells: u32,
+    ) -> PayloadPairsIter<'a, 'i, 'dt> {
         PayloadPairsIter::new(&self.0, address_cells, size_cells)
     }
 }
@@ -93,7 +97,11 @@ pub struct PayloadPairsIter<'a, 'i: 'a, 'dt: 'i> {
 }
 
 impl<'a, 'i: 'a, 'dt: 'i> PayloadPairsIter<'a, 'i, 'dt> {
-    pub fn new(prop: &'a DevTreeIndexProp<'a, 'i, 'dt>, address_cells: u32, size_cells: u32) -> Self {
+    pub fn new(
+        prop: &'a DevTreeIndexProp<'a, 'i, 'dt>,
+        address_cells: u32,
+        size_cells: u32,
+    ) -> Self {
         Self {
             prop,
             total: prop.length(),
@@ -113,39 +121,39 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
             return None;
         }
         Some(match (self.address_cells, self.size_cells) {
-            (1,1) => {
+            (1, 1) => {
                 let result: Self::Item = (
                     self.prop.u32(self.offset / 8).unwrap().into(),
-                    self.prop.u32(self.offset / 8 + 1).unwrap().into()
+                    self.prop.u32(self.offset / 8 + 1).unwrap().into(),
                 );
                 self.offset += 8;
                 result
-            },
-            (1,2) => {
+            }
+            (1, 2) => {
                 let result: Self::Item = (
                     self.prop.u32(self.offset / 12).unwrap().into(),
-                    u64::from(self.prop.u32(self.offset / 12 + 1).unwrap()) << 32 |
-                        u64::from(self.prop.u32(self.offset / 12 + 2).unwrap())
+                    u64::from(self.prop.u32(self.offset / 12 + 1).unwrap()) << 32
+                        | u64::from(self.prop.u32(self.offset / 12 + 2).unwrap()),
                 );
                 self.offset += 12;
                 result
-            },
-            (2,1) => {
+            }
+            (2, 1) => {
                 let result: Self::Item = (
                     self.prop.u64(self.offset / 12).unwrap(),
-                    self.prop.u32(self.offset / 12 + 2).unwrap().into()
+                    self.prop.u32(self.offset / 12 + 2).unwrap().into(),
                 );
                 self.offset += 12;
                 result
-            },
-            (2,2) => {
+            }
+            (2, 2) => {
                 let result: Self::Item = (
                     self.prop.u64(self.offset / 16).unwrap(),
-                    self.prop.u64(self.offset / 16 + 1).unwrap()
+                    self.prop.u64(self.offset / 16 + 1).unwrap(),
                 );
                 self.offset += 16;
                 result
-            },
+            }
             _ => panic!("oooops"),
         })
     }
