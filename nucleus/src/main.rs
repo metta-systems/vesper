@@ -150,12 +150,10 @@ pub fn kmain(dtb: u32) -> ! {
     let device_tree =
         DeviceTree::new(device_tree, block).expect("Couldn't initialize indexed DeviceTree");
 
-    let model = device_tree
-        .get_prop_by_path("/model")
-        .unwrap()
-        .str()
-        .expect("Model must be a string");
-    println!("Booting on {}", model);
+    let board = device_tree.get_prop_by_path("/model").unwrap().str();
+    if board.is_ok() {
+        println!("Running on {}", board.unwrap());
+    }
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
@@ -235,11 +233,6 @@ pub fn kmain(dtb: u32) -> ! {
 
     // let address_cells = device_tree.try_struct_u32_value("/#address-cells");
     // let size_cells = device_tree.try_struct_u32_value("/#size-cells");
-    // let board = device_tree.try_struct_str_value("/model");
-
-    // if board.is_ok() {
-    //     println!("Running on {}", board.unwrap());
-    // }
 
     // println!(
     //     "Memory DTB info: address-cells {:?}, size-cells {:?}",
