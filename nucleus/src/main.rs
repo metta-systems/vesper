@@ -15,6 +15,7 @@
 #![feature(allocator_api)]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
+#![feature(default_free_fn)]
 #![feature(const_fn_trait_bound)]
 #![feature(nonnull_slice_from_raw_parts)]
 #![feature(custom_test_frameworks)]
