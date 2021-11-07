@@ -267,6 +267,7 @@ impl MiniUartInner {
 
 impl Drop for MiniUartInner {
     fn drop(&mut self) {
+        // @todo make sure this is no-op for noserial?
         self.registers
             .AUX_ENABLES
             .modify(AUX_ENABLES::MINI_UART_ENABLE::CLEAR);

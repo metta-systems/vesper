@@ -123,6 +123,8 @@ pub fn kernel_main() -> ! {
         time::time_manager().spin_for(Duration::from_secs(1));
     }
 
+    // @todo Should prepare and launch init_thread and idle_thread here.
+
     command_prompt();
 
     reboot()
@@ -163,15 +165,15 @@ fn command_prompt() {
 
 fn print_help() {
     println!("Supported console commands:");
-    println!("  mmu  - initialize MMU");
-    println!("  feats - print MMU state and supported features");
+    println!("  mmu           - initialize MMU");
+    println!("  feats         - print MMU state and supported features");
     #[cfg(not(feature = "noserial"))]
-    println!("  uart - try to reinitialize UART serial");
-    // println!("  disp - try to init VC framebuffer and draw some text");
-    println!("  trap - trigger and recover from a data abort exception");
-    println!("  map  - show kernel memory layout");
-    // println!("  led [on|off]  - change RPi LED status");
-    println!("  end  - leave console and reset board");
+    println!("  uart          - try to reinitialize UART serial");
+    println!("  disp          - try to init VC framebuffer and draw some text");
+    println!("  trap          - trigger and recover from a data abort exception");
+    println!("  map           - show kernel memory layout");
+    println!("  led [on|off]  - change RPi LED status");
+    println!("  end           - leave console and reset board");
 }
 
 // fn set_led(enable: bool) {
