@@ -65,6 +65,21 @@ dependencies = ["build-qemu", "kernel-binary"]
 extend = "qemu-runner"
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}" }
 
+[tasks.zellij-config]
+extend = "qemu-runner"
+script_runner = "@duckscript"
+env = { "ZELLIJ_CONFIG_FILE" = "../emulation/zellij-config.sh" }
+script = [
+'''
+    writefile ${ZELLIJ_CONFIG_FILE} "QEMU=${QEMU}\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_OPTS=\"${QEMU_OPTS}\"\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_RUNNER_OPTS=${QEMU_RUNNER_OPTS}\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY=${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "KERNEL_BIN=${KERNEL_BIN}\n"
+'''
+]
+install_crate = { crate_name = "zellij", binary = "zellij", test_arg = ["--help"] }
+
 [tasks.qemu-gdb]
 extend = "qemu-runner"
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_GDB_OPTS}" }
