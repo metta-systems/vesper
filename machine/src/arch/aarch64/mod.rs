@@ -39,3 +39,14 @@ pub fn loop_until<F: Fn() -> bool>(f: F) {
         asm::nop();
     }
 }
+
+/// Loop while a passed function returns `true`.
+#[inline]
+pub fn loop_while<F: Fn() -> bool>(f: F) {
+    loop {
+        if !f() {
+            break;
+        }
+        asm::nop();
+    }
+}
