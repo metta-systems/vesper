@@ -19,6 +19,8 @@
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
+#[allow(unused_imports)]
+use machine::devices::SerialOps;
 use {
     cfg_if::cfg_if,
     machine::{
@@ -96,7 +98,6 @@ fn init_uart_serial() {
     // physical wires (e.g. the Framebuffer), you don't need to do this,
     // because flush() is anyways called implicitly by replace_with(). This
     // is just a special case.
-    use machine::devices::console::ConsoleOps;
     CONSOLE.lock(|c| c.flush());
 
     match uart.prepare(mbox, &gpio) {

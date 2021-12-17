@@ -4,26 +4,51 @@
 
 #![allow(dead_code)]
 
-use {crate::platform, core::fmt};
+use {
+    crate::{devices::SerialOps, platform},
+    core::fmt,
+};
 
 /// A trait that must be implemented by devices that are candidates for the
 /// global console.
 #[allow(unused_variables)]
-pub trait ConsoleOps {
-    fn putc(&self, c: char) {}
-    fn puts(&self, string: &str) {}
-    fn getc(&self) -> char {
-        ' '
-    }
-    fn flush(&self) {}
+pub trait ConsoleOps: SerialOps {
+    /// Send a character
+    fn write_char(&self, c: char);
+    /// Display a string
+    fn write_string(&self, string: &str);
+    /// Receive a character
+    fn read_char(&self) -> char;
 }
 
 /// A dummy console that just ignores its inputs.
 pub struct NullConsole;
+
 impl Drop for NullConsole {
     fn drop(&mut self) {}
 }
-impl ConsoleOps for NullConsole {}
+
+impl ConsoleOps for NullConsole {
+    fn write_char(&self, _c: char) {}
+
+    fn write_string(&self, _string: &str) {}
+
+    fn read_char(&self) -> char {
+        ' '
+    }
+}
+
+impl SerialOps for NullConsole {
+    fn read_byte(&self) -> u8 {
+        0
+    }
+
+    fn write_byte(&self, _byte: u8) {}
+
+    fn flush(&self) {}
+
+    fn clear_rx(&self) {}
+}
 
 /// Possible outputs which the console can store.
 pub enum Output {
@@ -83,15 +108,15 @@ impl Console {
 
     /// A command prompt.
     pub fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
-        self.puts("\n$> ");
+        self.write_string("\n$> ");
 
         let mut i = 0;
         let mut input;
         loop {
-            input = self.getc();
+            input = self.read_char();
 
             if input == '\n' {
-                self.puts("\n"); // do \r\n output
+                self.write_char('\n'); // do \r\n output
                 return &buf[..i];
             } else {
                 if i < buf.len() {
@@ -101,7 +126,7 @@ impl Console {
                     return &buf[..i];
                 }
 
-                self.putc(input);
+                self.write_char(input);
             }
         }
     }
@@ -113,20 +138,31 @@ impl Drop for Console {
 
 /// Dispatch the respective function to the currently stored output device.
 impl ConsoleOps for Console {
-    fn putc(&self, c: char) {
-        self.current_ptr().putc(c);
+    fn write_char(&self, c: char) {
+        self.current_ptr().write_char(c);
     }
 
-    fn puts(&self, string: &str) {
-        self.current_ptr().puts(string);
+    fn write_string(&self, string: &str) {
+        self.current_ptr().write_string(string);
     }
 
-    fn getc(&self) -> char {
-        self.current_ptr().getc()
+    fn read_char(&self) -> char {
+        self.current_ptr().read_char()
     }
+}
 
+impl SerialOps for Console {
+    fn read_byte(&self) -> u8 {
+        self.current_ptr().read_byte()
+    }
+    fn write_byte(&self, byte: u8) {
+        self.current_ptr().write_byte(byte)
+    }
     fn flush(&self) {
         self.current_ptr().flush()
+    }
+    fn clear_rx(&self) {
+        self.current_ptr().clear_rx()
     }
 }
 
@@ -136,8 +172,7 @@ impl ConsoleOps for Console {
 /// See src/macros.rs.
 impl fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.current_ptr().puts(s);
-
+        self.current_ptr().write_string(s);
         Ok(())
     }
 }
