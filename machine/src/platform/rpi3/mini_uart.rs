@@ -216,7 +216,7 @@ impl ConsoleOps for PreparedMiniUart {
     cfg_if! {
         if #[cfg(not(feature = "noserial"))] {
             /// Send a character
-            fn putc(&self, c: char) {
+            fn write_char(&self, c: char) {
                 // wait until we can send
                 crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_EMPTY));
 
@@ -225,19 +225,19 @@ impl ConsoleOps for PreparedMiniUart {
             }
 
             /// Display a string
-            fn puts(&self, string: &str) {
+            fn write_string(&self, string: &str) {
                 for c in string.chars() {
                     // convert newline to carriage return + newline
                     if c == '\n' {
-                        self.putc('\r')
+                        self.write_char('\r')
                     }
 
-                    self.putc(c);
+                    self.write_char(c);
                 }
             }
 
             /// Receive a character
-            fn getc(&self) -> char {
+            fn read_char(&self) -> char {
                 // wait until something is in the buffer
                 crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::DATA_READY));
 
@@ -257,20 +257,29 @@ impl ConsoleOps for PreparedMiniUart {
             fn flush(&self) {
                 crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_IDLE));
             }
+
+            /// Consume input until RX FIFO is empty, aka all pending characters have been
+            /// consumed.
+            fn clear_rx(&self) {
+                crate::arch::loop_while(|| {
+                    let pending = self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::DATA_READY);
+                    if pending { self.read_char(); }
+                    pending
+                });
+            }
         } else {
-            fn putc(&self, _c: char) {}
-            fn puts(&self, _string: &str) {}
-            fn getc(&self) -> char {
+            fn write_char(&self, _c: char) {}
+            fn write_string(&self, _string: &str) {}
+            fn read_char(&self) -> char {
                 '\n'
             }
-            fn flush(&self) {}
         }
     }
 }
 
 impl fmt::Write for PreparedMiniUart {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.puts(s);
+        self.write_string(s);
         Ok(())
     }
 }

@@ -11,19 +11,29 @@ use core::fmt;
 /// global console.
 #[allow(unused_variables)]
 pub trait ConsoleOps {
-    fn putc(&self, c: char) {}
-    fn puts(&self, string: &str) {}
-    fn getc(&self) -> char {
+    /// Send a character
+    fn write_char(&self, c: char) {}
+    /// Display a string
+    fn write_string(&self, string: &str) {}
+    /// Receive a character
+    fn read_char(&self) -> char {
         ' '
     }
+    /// Wait until the TX FIFO is empty, aka all characters have been put on the
+    /// line.
     fn flush(&self) {}
+    /// Consume input until RX FIFO is empty, aka all pending characters have been
+    /// consumed.
+    fn clear_rx(&self) {}
 }
 
 /// A dummy console that just ignores its inputs.
 pub struct NullConsole;
+
 impl Drop for NullConsole {
     fn drop(&mut self) {}
 }
+
 impl ConsoleOps for NullConsole {}
 
 /// Possible outputs which the console can store.
@@ -84,15 +94,15 @@ impl Console {
 
     /// A command prompt.
     pub fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
-        self.puts("\n$> ");
+        self.write_string("\n$> ");
 
         let mut i = 0;
         let mut input;
         loop {
-            input = self.getc();
+            input = self.read_char();
 
             if input == '\n' {
-                self.puts("\n"); // do \r\n output
+                self.write_char('\n'); // do \r\n output
                 return &buf[..i];
             } else {
                 if i < buf.len() {
@@ -102,7 +112,7 @@ impl Console {
                     return &buf[..i];
                 }
 
-                self.putc(input);
+                self.write_char(input);
             }
         }
     }
@@ -114,16 +124,16 @@ impl Drop for Console {
 
 /// Dispatch the respective function to the currently stored output device.
 impl ConsoleOps for Console {
-    fn putc(&self, c: char) {
-        self.current_ptr().putc(c);
+    fn write_char(&self, c: char) {
+        self.current_ptr().write_char(c);
     }
 
-    fn puts(&self, string: &str) {
-        self.current_ptr().puts(string);
+    fn write_string(&self, string: &str) {
+        self.current_ptr().write_string(string);
     }
 
-    fn getc(&self) -> char {
-        self.current_ptr().getc()
+    fn read_char(&self) -> char {
+        self.current_ptr().read_char()
     }
 
     fn flush(&self) {
@@ -137,8 +147,7 @@ impl ConsoleOps for Console {
 /// See src/macros.rs.
 impl fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.current_ptr().puts(s);
-
+        self.current_ptr().write_string(s);
         Ok(())
     }
 }

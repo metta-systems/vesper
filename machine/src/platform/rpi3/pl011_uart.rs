@@ -239,7 +239,7 @@ impl Drop for PreparedPL011Uart {
 
 impl ConsoleOps for PreparedPL011Uart {
     /// Send a character
-    fn putc(&self, c: char) {
+    fn write_char(&self, c: char) {
         // wait until we can send
         loop_until(|| !self.0.registers.FR.is_set(FR::TXFF));
 
@@ -248,19 +248,19 @@ impl ConsoleOps for PreparedPL011Uart {
     }
 
     /// Display a string
-    fn puts(&self, string: &str) {
+    fn write_string(&self, string: &str) {
         for c in string.chars() {
             // convert newline to carriage return + newline
             if c == '\n' {
-                self.putc('\r')
+                self.write_char('\r')
             }
 
-            self.putc(c);
+            self.write_char(c);
         }
     }
 
     /// Receive a character
-    fn getc(&self) -> char {
+    fn read_char(&self) -> char {
         // wait until something is in the buffer
         loop_until(|| !self.0.registers.FR.is_set(FR::RXFE));
 
