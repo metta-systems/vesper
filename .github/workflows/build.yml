@@ -130,6 +130,7 @@ jobs:
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@v1
+    - run: sudo apt install libudev-dev
     - run: rustup toolchain install nightly
     - run: cargo install cargo-make
     - run: env CLIPPY_FEATURES=${{ matrix.features }} cargo make clippy

@@ -3,9 +3,21 @@ zellij:
     cargo make zellij-nucleus
     zellij --layout-path emulation/layout.zellij
 
+zellij-mb:
+    # Build and run microboot in QEMU with serial port emulation
+    # Connect to it via microboss to load an actual kernel
+    # TODO: actually run microboss in a zellij session too
+    cargo make zellij-mb
+    zellij --layout-path emulation/layout.zellij
+
 qemu:
     # Build and run kernel in QEMU
     cargo make qemu
+
+qemu-mb:
+    # Build and run microboot in QEMU
+    # Connect to it via microboss to load an actual kernel
+    cargo make qemu-mb
 
 qemu-gdb:
     # Build and run kernel in QEMU with GDB port enabled

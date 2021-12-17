@@ -7,20 +7,6 @@
 env = { "BINARY_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus" }
 run_task = "custom-binary"
 
-[tasks.test-binary]
-env = { "BINARY_FILE" = "${CARGO_MAKE_TASK_ARGS}" }
-run_task = "custom-binary"
-
-[tasks.test-runner]
-dependencies = ["test-binary"]
-script_runner = "@duckscript"
-script = [
-'''
-    binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
-    exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
-'''
-]
-
 [tasks.qemu-runner]
 dependencies = ["build-qemu", "kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }

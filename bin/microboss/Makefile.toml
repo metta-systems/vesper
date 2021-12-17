@@ -1,0 +1,20 @@
+[tasks.build]
+command = "cargo"
+args = ["build"]
+
+[tasks.test]
+command = "cargo"
+args = ["test"]
+
+[tasks.clippy]
+command = "cargo"
+args = ["clippy", "--", "-D", "warnings"]
+
+[tasks.hopper]
+disabled = true
+
+[tasks.zellij-nucleus]
+disabled = true
+
+[tasks.zellij-mb]
+disabled = true

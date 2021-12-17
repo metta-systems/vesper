@@ -1,0 +1,13 @@
+[tasks.kernel-binary]
+env = { "BINARY_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/microboot" }
+run_task = "custom-binary"
+
+[tasks.hopper]
+disabled = true
+
+[tasks.zellij-nucleus]
+disabled = true
+
+[tasks.zellij-mb]
+env = { "KERNEL_BIN" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/microboot.bin", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS}" } # ${QEMU_GDB_OPTS}" }
+run_task = "zellij-config"

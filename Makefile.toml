@@ -56,8 +56,8 @@ QEMU_CONTAINER_CMD = "qemu-system-aarch64"
 #
 # Could additionally use -nographic to disable GUI -- this shall be useful for automated tests.
 #
-# -d in_asm,unimp,int
 QEMU_OPTS = "-M raspi3 -d int -semihosting"
+QEMU_DISASM_OPTS = "-d in_asm,unimp,int"
 QEMU_SERIAL_OPTS = "-serial null -serial stdio"
 QEMU_TESTS_OPTS = "-nographic"
 # For gdb connection:
@@ -122,6 +122,20 @@ script = [
 '''
 ]
 install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = ["--help"] }
+
+[tasks.test-binary]
+env = { "BINARY_FILE" = "${CARGO_MAKE_TASK_ARGS}" }
+run_task = "custom-binary"
+
+[tasks.test-runner]
+dependencies = ["test-binary"]
+script_runner = "@duckscript"
+script = [
+'''
+    binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
+    exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+'''
+]
 
 [tasks.zellij-config]
 dependencies = ["build-qemu", "kernel-binary"]

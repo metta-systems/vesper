@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "nucleus",
+    "bin/microboot",
+    "bin/microboss"
 ]
 
 [profile.dev]

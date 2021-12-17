@@ -1,0 +1,18 @@
+[package]
+name = "microboss"
+version = "0.0.1"
+authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
+description = "Microboss host server for microboot"
+license = "BlueOak-1.0.0"
+categories = ["no-std", "embedded", "os"]
+publish = false
+edition = "2021"
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]
+serialport = "4.0"
+clap = "2.33"
+seahash = "4.1"
+anyhow = "1.0"
