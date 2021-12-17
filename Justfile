@@ -25,6 +25,7 @@ device-eject:
 # Build default hw kernel
 build:
     cargo make build
+    cargo make kernel-binary
 
 # Clean project
 clean:
