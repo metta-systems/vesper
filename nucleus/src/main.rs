@@ -192,7 +192,7 @@ fn reboot() -> ! {
             use machine::platform::rpi3::power::Power;
 
             println!("Bye, going to reset now");
-            Power::new().reset()
+            Power::default().reset()
         }
     }
 }

@@ -7,12 +7,12 @@
 
 use {
     super::BcmHost,
-    crate::arch::loop_delay,
-    core::{marker::PhantomData, ops},
+    crate::{arch::loop_delay, platform::MMIODerefWrapper},
+    core::marker::PhantomData,
     tock_registers::{
         fields::FieldValue,
         interfaces::{ReadWriteable, Readable, Writeable},
-        register_bitfields,
+        register_bitfields, register_structs,
         registers::{ReadOnly, ReadWrite, WriteOnly},
     },
 };
@@ -48,102 +48,107 @@ states! {
     Uninitialized, Input, Output, Alt
 }
 
-/// A wrapper type that prevents reads or writes to its value.
-///
-/// This type implements no methods. It is meant to make the inner type
-/// inaccessible to prevent accidental reads or writes.
-#[repr(C)]
-pub struct Reserved<T>(T);
-
-/// The offsets for reach register.
-/// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
-/// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
-#[allow(non_snake_case)]
-#[repr(C)]
-pub struct RegisterBlock {
-    pub FSEL: [ReadWrite<u32>; 6], // 0x00-0x14 function select
-    __reserved_0: Reserved<u32>,   // 0x18
-    pub SET: [WriteOnly<u32>; 2],  // 0x1c-0x20 set output pin
-    __reserved_1: Reserved<u32>,   // 0x24
-    pub CLR: [WriteOnly<u32>; 2],  // 0x28-0x2c clear output pin
-    __reserved_2: Reserved<u32>,   // 0x30
-    pub LEV: [ReadOnly<u32>; 2],   // 0x34-0x38 get input pin level
-    __reserved_3: Reserved<u32>,   // 0x3C
-    pub EDS: [ReadWrite<u32>; 2],  // 0x40-0x44
-    __reserved_4: Reserved<u32>,   // 0x48
-    pub REN: [ReadWrite<u32>; 2],  // 0x4c-0x50
-    __reserved_5: Reserved<u32>,   // 0x54
-    pub FEN: [ReadWrite<u32>; 2],  // 0x58-0x5c
-    __reserved_6: Reserved<u32>,   // 0x60
-    pub HEN: [ReadWrite<u32>; 2],  // 0x64-0x68
-    __reserved_7: Reserved<u32>,   // 0x6c
-    pub LEN: [ReadWrite<u32>; 2],  // 0x70-0x74
-    __reserved_8: Reserved<u32>,   // 0x78
-    pub AREN: [ReadWrite<u32>; 2], // 0x7c-0x80
-    __reserved_9: Reserved<u32>,   // 0x84
-    pub AFEN: [ReadWrite<u32>; 2], // 0x88-0x8c
-    __reserved_10: Reserved<u32>,  // 0x90
-    pub PUD: ReadWrite<u32>,       // 0x94      pull up down
-    pub PUDCLK: [ReadWrite<u32, PUDCLK0::Register>; 2], // 0x98-0x9C -- @todo remove this register
+register_structs! {
+    /// The offsets for each register.
+    /// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
+    /// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
+    #[allow(non_snake_case)]
+    RegisterBlock {
+        (0x00 => pub FSEL: [ReadWrite<u32>; 6]), // function select
+        (0x18 => __reserved_1),
+        (0x1c => pub SET: [WriteOnly<u32>; 2]), // set output pin
+        (0x24 => __reserved_2),
+        (0x28 => pub CLR: [WriteOnly<u32>; 2]), // clear output pin
+        (0x30 => __reserved_3),
+        (0x34 => pub LEV: [ReadOnly<u32>; 2]), // get input pin level
+        (0x3c => __reserved_4),
+        (0x40 => pub EDS: [ReadWrite<u32>; 2]),
+        (0x48 => __reserved_5),
+        (0x4c => pub REN: [ReadWrite<u32>; 2]),
+        (0x54 => __reserved_6),
+        (0x58 => pub FEN: [ReadWrite<u32>; 2]),
+        (0x60 => __reserved_7),
+        (0x64 => pub HEN: [ReadWrite<u32>; 2]),
+        (0x6c => __reserved_8),
+        (0x70 => pub LEN: [ReadWrite<u32>; 2]),
+        (0x78 => __reserved_9),
+        (0x7c => pub AREN: [ReadWrite<u32>; 2]),
+        (0x84 => __reserved_10),
+        (0x88 => pub AFEN: [ReadWrite<u32>; 2]),
+        (0x90 => __reserved_11),
+        (0x94 => pub PUD: ReadWrite<u32>), // pull up down
+        (0x98 => pub PUDCLK: [ReadWrite<u32, PUDCLK0::Register>; 2]), // 0x98-0x9C -- TODO: remove this register?
+        // (0xE4 => GPIO_PUP_PDN_CNTRL_REG0: ReadWrite<u32, GPIO_PUP_PDN_CNTRL_REG0::Register>), -- ??
+        (0xa0 => __reserved_12),
+        (0xE8 => @END),
+    }
 }
+
+// Hide RegisterBlock from public api.
+type Registers = MMIODerefWrapper<RegisterBlock>;
 
 /// Public interface to the GPIO MMIO area
 pub struct GPIO {
-    base_addr: usize,
+    registers: Registers,
 }
 
-/// Deref to RegisterBlock
-///
-/// Allows writing
-/// ```
-/// self.GPPUD.read()
-/// ```
-/// instead of something along the lines of
-/// ```
-/// unsafe { (*GPIO::ptr()).GPPUD.read() }
-/// ```
-impl ops::Deref for GPIO {
-    type Target = RegisterBlock;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.ptr() }
-    }
-}
+pub const GPIO_START: usize = 0x20_0000;
 
 impl Default for GPIO {
     fn default() -> GPIO {
         // Default RPi3 GPIO base address
-        const GPIO_BASE: usize = BcmHost::get_peripheral_address() + 0x20_0000;
-        GPIO::new(GPIO_BASE)
+        const GPIO_BASE: usize = BcmHost::get_peripheral_address() + GPIO_START;
+        unsafe { GPIO::new(GPIO_BASE) }
     }
 }
 
 impl GPIO {
-    pub fn new(base_addr: usize) -> GPIO {
-        GPIO { base_addr }
-    }
-
-    /// Returns a pointer to the register block
-    fn ptr(&self) -> *const RegisterBlock {
-        self.base_addr as *const _
+    /// # Safety
+    ///
+    /// Unsafe, duh!
+    pub const unsafe fn new(base_addr: usize) -> GPIO {
+        GPIO {
+            registers: Registers::new(base_addr),
+        }
     }
 
     pub fn get_pin(&self, pin: usize) -> Pin<Uninitialized> {
-        Pin::new(pin, self.base_addr)
+        unsafe { Pin::new(pin, self.registers.base_addr) }
     }
-}
 
-pub fn enable_uart_pins(gpio: &GPIO) {
-    gpio.PUD.set(0);
+    pub fn enable_uart_pins(&self) {
+        self.registers.PUD.set(0);
 
-    loop_delay(150);
+        loop_delay(2000);
 
-    // enable pins 14 and 15
-    gpio.PUDCLK[0].write(PUDCLK0::PUDCLK14::AssertClock + PUDCLK0::PUDCLK15::AssertClock);
+        // enable pins 14 and 15
+        self.registers.PUDCLK[0]
+            .write(PUDCLK0::PUDCLK14::AssertClock + PUDCLK0::PUDCLK15::AssertClock);
 
-    loop_delay(150);
+        loop_delay(2000);
 
-    gpio.PUDCLK[0].set(0);
+        self.registers.PUDCLK[0].set(0);
+    }
+
+    pub fn power_off(&self) {
+        // power off gpio pins (but not VCC pins)
+        for bank in 0..5 {
+            self.registers.FSEL[bank].set(0);
+        }
+
+        self.registers.PUD.set(0);
+
+        loop_delay(2000);
+
+        self.registers.PUDCLK[0].set(0xffff_ffff);
+        self.registers.PUDCLK[1].set(0xffff_ffff);
+
+        loop_delay(2000);
+
+        // flush GPIO setup
+        self.registers.PUDCLK[0].set(0);
+        self.registers.PUDCLK[1].set(0);
+    }
 }
 
 /// An alternative GPIO function.
@@ -174,7 +179,7 @@ impl ::core::convert::From<Function> for u32 {
 /// `into_alt` methods before it can be used.
 pub struct Pin<State> {
     pin: usize,
-    base_addr: usize,
+    registers: Registers,
     _state: PhantomData<State>,
 }
 
@@ -186,33 +191,9 @@ impl<State> Pin<State> {
     fn transition<NewState>(self) -> Pin<NewState> {
         Pin {
             pin: self.pin,
-            base_addr: self.base_addr,
+            registers: self.registers,
             _state: PhantomData,
         }
-    }
-
-    /// Returns a pointer to the register block
-    #[inline(always)]
-    fn ptr(&self) -> *const RegisterBlock {
-        self.base_addr as *const _
-    }
-}
-
-/// Deref to Pin's Registers
-///
-/// Allows writing
-/// ```
-/// self.PUD.read()
-/// ```
-/// instead of something along the lines of
-/// ```
-/// unsafe { (*Pin::ptr()).PUD.read() }
-/// ```
-impl<State> ops::Deref for Pin<State> {
-    type Target = RegisterBlock;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.ptr() }
     }
 }
 
@@ -222,13 +203,13 @@ impl Pin<Uninitialized> {
     /// # Panics
     ///
     /// Panics if `pin` > `53`.
-    fn new(pin: usize, base_addr: usize) -> Pin<Uninitialized> {
+    unsafe fn new(pin: usize, base_addr: usize) -> Pin<Uninitialized> {
         if pin > 53 {
             panic!("gpio::Pin::new(): pin {} exceeds maximum of 53", pin);
         }
 
         Pin {
-            base_addr,
+            registers: Registers::new(base_addr),
             pin,
             _state: PhantomData,
         }
@@ -239,7 +220,11 @@ impl Pin<Uninitialized> {
     pub fn into_alt(self, function: Function) -> Pin<Alt> {
         let bank = self.pin / 10;
         let off = self.pin % 10;
-        self.FSEL[bank].modify(FieldValue::<u32, ()>::new(0b111, off * 3, function.into()));
+        self.registers.FSEL[bank].modify(FieldValue::<u32, ()>::new(
+            0b111,
+            off * 3,
+            function.into(),
+        ));
         self.transition()
     }
 
@@ -262,7 +247,7 @@ impl Pin<Output> {
         // Guarantees: pin number is between [0; 53] by construction.
         let bank = self.pin / 32;
         let shift = self.pin % 32;
-        self.SET[bank].set(1 << shift);
+        self.registers.SET[bank].set(1 << shift);
     }
 
     /// Clears (turns off) this pin.
@@ -270,7 +255,7 @@ impl Pin<Output> {
         // Guarantees: pin number is between [0; 53] by construction.
         let bank = self.pin / 32;
         let shift = self.pin % 32;
-        self.CLR[bank].set(1 << shift);
+        self.registers.CLR[bank].set(1 << shift);
     }
 }
 
@@ -283,7 +268,7 @@ impl Pin<Input> {
         // Guarantees: pin number is between [0; 53] by construction.
         let bank = self.pin / 32;
         let off = self.pin % 32;
-        self.LEV[bank].matches_all(FieldValue::<u32, ()>::new(1, off, 1))
+        self.registers.LEV[bank].matches_all(FieldValue::<u32, ()>::new(1, off, 1))
     }
 }
 
@@ -294,7 +279,7 @@ mod tests {
     #[test_case]
     fn test_pin_transitions() {
         let mut reg = [0u32; 40];
-        let gpio = GPIO::new(&mut reg as *mut _ as usize);
+        let gpio = unsafe { GPIO::new(&mut reg as *mut _ as usize) };
 
         let _out = gpio.get_pin(1).into_output();
         assert_eq!(reg[0], 0b001_000);
@@ -307,7 +292,7 @@ mod tests {
     #[test_case]
     fn test_pin_outputs() {
         let mut reg = [0u32; 40];
-        let gpio = GPIO::new(&mut reg as *mut _ as usize);
+        let gpio = unsafe { GPIO::new(&mut reg as *mut _ as usize) };
 
         let pin = gpio.get_pin(1);
         let mut out = pin.into_output();
@@ -327,7 +312,7 @@ mod tests {
     #[test_case]
     fn test_pin_inputs() {
         let mut reg = [0u32; 40];
-        let gpio = GPIO::new(&mut reg as *mut _ as usize);
+        let gpio = unsafe { GPIO::new(&mut reg as *mut _ as usize) };
 
         let pin = gpio.get_pin(1);
         let inp = pin.into_input();

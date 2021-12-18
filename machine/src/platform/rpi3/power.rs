@@ -11,23 +11,24 @@ use {
         mailbox::{channel, Mailbox, MailboxOps},
         BcmHost,
     },
-    crate::arch::loop_delay,
-    core::ops,
+    crate::platform::MMIODerefWrapper,
     snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},
+        register_structs,
         registers::ReadWrite,
     },
 };
 
-const POWER_BASE: usize = BcmHost::get_peripheral_address() + 0x0010_001C;
-
-#[allow(non_snake_case)]
-#[repr(C)]
-pub struct RegisterBlock {
-    PM_RSTC: ReadWrite<u32>, // 0x1C
-    PM_RSTS: ReadWrite<u32>, // 0x20
-    PM_WDOG: ReadWrite<u32>, // 0x24
+register_structs! {
+    #[allow(non_snake_case)]
+    RegisterBlock {
+        (0x00 => __reserved_1),
+        (0x1c => PM_RSTC: ReadWrite<u32>),
+        (0x20 => PM_RSTS: ReadWrite<u32>),
+        (0x24 => PM_WDOG: ReadWrite<u32>),
+        (0x28 => @END),
+    }
 }
 
 const PM_PASSWORD: u32 = 0x5a00_0000;
@@ -50,28 +51,33 @@ pub enum PowerError {
     #[snafu(display("Power setup failed in mailbox operation"))]
     MailboxError,
 }
+
 pub type Result<T> = ::core::result::Result<T, PowerError>;
 
+type Registers = MMIODerefWrapper<RegisterBlock>;
+
+const POWER_START: usize = 0x0010_0000;
+
 /// Public interface to the Power subsystem
-pub struct Power;
+pub struct Power {
+    registers: Registers,
+}
 
-impl ops::Deref for Power {
-    type Target = RegisterBlock;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*Self::ptr() }
+impl Default for Power {
+    fn default() -> Power {
+        const POWER_BASE: usize = BcmHost::get_peripheral_address() + POWER_START;
+        unsafe { Power::new(POWER_BASE) }
     }
 }
 
 impl Power {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Power {
-        Power
-    }
-
-    /// Returns a pointer to the register block
-    fn ptr() -> *const RegisterBlock {
-        POWER_BASE as *const _
+    /// # Safety
+    ///
+    /// Unsafe, duh!
+    pub const unsafe fn new(base_addr: usize) -> Power {
+        Power {
+            registers: Registers::new(base_addr),
+        }
     }
 
     /// Shutdown the board
@@ -88,30 +94,14 @@ impl Power {
                 .map_err(|_| PowerError::MailboxError)?;
         }
 
-        // power off gpio pins (but not VCC pins)
-        for bank in 0..5 {
-            gpio.FSEL[bank].set(0);
-        }
-
-        gpio.PUD.set(0);
-
-        loop_delay(150);
-
-        gpio.PUDCLK[0].set(0xffff_ffff);
-        gpio.PUDCLK[1].set(0xffff_ffff);
-
-        loop_delay(150);
-
-        // flush GPIO setup
-        gpio.PUDCLK[0].set(0);
-        gpio.PUDCLK[1].set(0);
+        gpio.power_off();
 
         // We set the watchdog hard reset bit here to distinguish this
         // reset from the normal (full) reset. bootcode.bin will not
         // reboot after a hard reset.
-        let mut val = self.PM_RSTS.get();
+        let mut val = self.registers.PM_RSTS.get();
         val |= PM_PASSWORD | PM_RSTS_RASPBERRYPI_HALT;
-        self.PM_RSTS.set(val);
+        self.registers.PM_RSTS.set(val);
 
         // Continue with normal reset mechanism
         self.reset();
@@ -120,11 +110,11 @@ impl Power {
     /// Reboot
     pub fn reset(&self) -> ! {
         // use a timeout of 10 ticks (~150us)
-        self.PM_WDOG.set(PM_PASSWORD | 10);
-        let mut val = self.PM_RSTC.get();
+        self.registers.PM_WDOG.set(PM_PASSWORD | 10);
+        let mut val = self.registers.PM_RSTC.get();
         val &= PM_RSTC_WRCFG_CLR;
         val |= PM_PASSWORD | PM_RSTC_WRCFG_FULL_RESET;
-        self.PM_RSTC.set(val);
+        self.registers.PM_RSTC.set(val);
 
         crate::endless_sleep()
     }
