@@ -2,24 +2,21 @@ use {
     anyhow::Result,
     clap::{App, AppSettings, Arg},
     seahash::SeaHasher,
-    serialport::SerialPort,
+    serial2::SerialPort,
     std::{
         hash::Hasher,
-        io::{self, BufRead, BufReader},
-        time::Duration,
+        io::{self, BufRead, BufReader, Read},
     },
 };
 
-fn expect(port: &mut Box<dyn SerialPort>, c: u8) {
-    let mut buf = vec![0u8; 1];
-    match port.read(buf.as_mut_slice()) {
-        Err(_e) => panic!("Failed to receive from serial port"),
-        Ok(b) if b == 1 && buf[0] == c => {
-            return;
-        }
+fn expect(port: &mut SerialPort, c: u8) {
+    let mut buf = [0; 1];
+    match port.read(&mut buf) {
+        Err(e) => panic!("Failed to receive from serial port: {}", e),
+        Ok(read) if read == 1 && buf[0] == c => {}
         Ok(_) => {
             print!("{}", buf[0]);
-            while let Ok(_) = port.read(buf.as_mut_slice()) {
+            while port.read(&mut buf).is_ok() {
                 print!("{}", buf[0]);
             }
             panic!("Failed to receive expected value");
@@ -66,11 +63,9 @@ fn main() -> Result<()> {
     let kernel_size: u64 = kernel_file.metadata().unwrap().len(); // TODO: unwrap
 
     // TODO: writeln!() to the serial fd instead of println?
-    let mut port = serialport::new(port_name, baud_rate)
-        .timeout(Duration::from_millis(10))
-        .open()
-        .expect("Failed to open serial port");
-    //.context?
+    let mut port = SerialPort::open(port_name, baud_rate).expect("Failed to open serial port");
+
+    println!("[>>] Waiting for handshake");
 
     // Await for 3 consecutive \3 to start uploading
     let mut count = 0;
