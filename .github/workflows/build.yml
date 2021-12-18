@@ -45,6 +45,17 @@ jobs:
     - name: "Install build tools"
       run: cargo install cargo-make cargo-binutils
 
+    - name: "Prepare packages (Linux)"
+      run: |
+        sudo apt install software-properties-common
+        sudo add-apt-repository ppa:jacob/virtualisation
+        sudo apt update
+      if: runner.os == 'Linux'
+
+    - name: "Install dev libraries (Linux)"
+      run: sudo apt install libudev-dev
+      if: runner.os == 'Linux'
+
     - name: "Validate rust-lld"
       run: |
         which rust-lld || echo "Not found"
@@ -63,9 +74,6 @@ jobs:
 
     - name: Install QEMU (Linux)
       run: |
-        sudo apt install software-properties-common
-        sudo add-apt-repository ppa:jacob/virtualisation
-        sudo apt update
         sudo apt install qemu-system-aarch64
       if: runner.os == 'Linux'
 
