@@ -9,12 +9,12 @@
 use tock_registers::interfaces::{Readable, Writeable};
 use {
     super::{gpio, BcmHost},
-    crate::devices::ConsoleOps,
+    crate::{devices::ConsoleOps, platform::MMIODerefWrapper},
     cfg_if::cfg_if,
-    core::{convert::From, fmt, ops},
+    core::{convert::From, fmt},
     tock_registers::{
         interfaces::ReadWriteable,
-        register_bitfields,
+        register_bitfields, register_structs,
         registers::{ReadOnly, ReadWrite, WriteOnly},
     },
 };
@@ -88,33 +88,41 @@ register_bitfields! {
         ]
     ],
 
-    /// Mini Uart Baudrate
+    /// Mini Uart Baud rate
     AUX_MU_BAUD [
-        /// Mini UART baudrate counter
+        /// Mini UART baud rate counter
         RATE OFFSET(0) NUMBITS(16) []
     ]
 }
 
-#[allow(non_snake_case)]
-#[repr(C)]
-pub struct RegisterBlock {
-    __reserved_0: u32,                                  // 0x00 - AUX_IRQ?
-    AUX_ENABLES: ReadWrite<u32, AUX_ENABLES::Register>, // 0x04
-    __reserved_1: [u32; 14],                            // 0x08
-    AUX_MU_IO: ReadWrite<u32>,                          // 0x40 - Mini Uart I/O Data
-    AUX_MU_IER: WriteOnly<u32>,                         // 0x44 - Mini Uart Interrupt Enable
-    AUX_MU_IIR: WriteOnly<u32, AUX_MU_IIR::Register>,   // 0x48
-    AUX_MU_LCR: WriteOnly<u32, AUX_MU_LCR::Register>,   // 0x4C
-    AUX_MU_MCR: WriteOnly<u32>,                         // 0x50
-    AUX_MU_LSR: ReadOnly<u32, AUX_MU_LSR::Register>,    // 0x54
-    __reserved_2: [u32; 2],                             // 0x58 - AUX_MU_MSR, AUX_MU_SCRATCH
-    AUX_MU_CNTL: WriteOnly<u32, AUX_MU_CNTL::Register>, // 0x60
-    __reserved_3: u32,                                  // 0x64 - AUX_MU_STAT
-    AUX_MU_BAUD: WriteOnly<u32, AUX_MU_BAUD::Register>, // 0x68
+register_structs! {
+    #[allow(non_snake_case)]
+    RegisterBlock {
+        // 0x00 - AUX_IRQ?
+        (0x00 => __reserved_1),
+        (0x04 => AUX_ENABLES: ReadWrite<u32, AUX_ENABLES::Register>),
+        (0x08 => __reserved_2),
+        (0x40 => AUX_MU_IO: ReadWrite<u32>),//Mini Uart I/O Data
+        (0x44 => AUX_MU_IER: WriteOnly<u32>),//Mini Uart Interrupt Enable
+        (0x48 => AUX_MU_IIR: WriteOnly<u32, AUX_MU_IIR::Register>),
+        (0x4c => AUX_MU_LCR: WriteOnly<u32, AUX_MU_LCR::Register>),
+        (0x50 => AUX_MU_MCR: WriteOnly<u32>),
+        (0x54 => AUX_MU_LSR: ReadOnly<u32, AUX_MU_LSR::Register>),
+        // 0x58 - AUX_MU_MSR
+        // 0x5c - AUX_MU_SCRATCH
+        (0x58 => __reserved_3),
+        (0x60 => AUX_MU_CNTL: WriteOnly<u32, AUX_MU_CNTL::Register>),
+        // 0x64 - AUX_MU_STAT
+        (0x64 => __reserved_4),
+        (0x68 => AUX_MU_BAUD: WriteOnly<u32, AUX_MU_BAUD::Register>),
+        (0x6c => @END),
+    }
 }
 
+type Registers = MMIODerefWrapper<RegisterBlock>;
+
 pub struct MiniUart {
-    base_addr: usize,
+    registers: Registers,
 }
 
 pub struct PreparedMiniUart(MiniUart);
@@ -130,41 +138,24 @@ impl From<Rate> for u32 {
     }
 }
 
-/// Deref to RegisterBlock
-///
-/// Allows writing
-/// ```
-/// self.MU_IER.read()
-/// ```
-/// instead of something along the lines of
-/// ```
-/// unsafe { (*MiniUart::ptr()).MU_IER.read() }
-/// ```
-impl ops::Deref for MiniUart {
-    type Target = RegisterBlock;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.ptr() }
-    }
-}
-
 // [temporary] Used in mmu.rs to set up local paging
-pub const UART1_BASE: usize = BcmHost::get_peripheral_address() + 0x21_5000;
+pub const UART1_START: usize = 0x21_5000;
 
 impl Default for MiniUart {
-    fn default() -> MiniUart {
-        MiniUart::new(UART1_BASE)
+    fn default() -> Self {
+        const UART1_BASE: usize = BcmHost::get_peripheral_address() + UART1_START;
+        unsafe { MiniUart::new(UART1_BASE) }
     }
 }
 
 impl MiniUart {
-    pub fn new(base_addr: usize) -> MiniUart {
-        MiniUart { base_addr }
-    }
-
-    /// Returns a pointer to the register block
-    fn ptr(&self) -> *const RegisterBlock {
-        self.base_addr as *const _
+    /// # Safety
+    ///
+    /// Unsafe, duh!
+    pub const unsafe fn new(base_addr: usize) -> MiniUart {
+        MiniUart {
+            registers: Registers::new(base_addr),
+        }
     }
 }
 
@@ -174,14 +165,14 @@ impl MiniUart {
             /// Set baud rate and characteristics (115200 8N1) and map to GPIO
             pub fn prepare(self, gpio: &gpio::GPIO) -> PreparedMiniUart {
                 // initialize UART
-                self.AUX_ENABLES.modify(AUX_ENABLES::MINI_UART_ENABLE::SET);
-                self.AUX_MU_IER.set(0);
-                self.AUX_MU_CNTL.set(0);
-                self.AUX_MU_LCR.write(AUX_MU_LCR::DATA_SIZE::EightBit);
-                self.AUX_MU_MCR.set(0);
-                self.AUX_MU_IER.set(0);
-                self.AUX_MU_IIR.write(AUX_MU_IIR::FIFO_CLEAR::All);
-                self.AUX_MU_BAUD
+                self.registers.AUX_ENABLES.modify(AUX_ENABLES::MINI_UART_ENABLE::SET);
+                self.registers.AUX_MU_IER.set(0);
+                self.registers.AUX_MU_CNTL.set(0);
+                self.registers.AUX_MU_LCR.write(AUX_MU_LCR::DATA_SIZE::EightBit);
+                self.registers.AUX_MU_MCR.set(0);
+                self.registers.AUX_MU_IER.set(0);
+                self.registers.AUX_MU_IIR.write(AUX_MU_IIR::FIFO_CLEAR::All);
+                self.registers.AUX_MU_BAUD
                     .write(AUX_MU_BAUD::RATE.val(Rate::Baud115200.into()));
 
                 // Pin 14
@@ -193,13 +184,13 @@ impl MiniUart {
                 gpio.get_pin(14).into_alt(MINI_UART_TXD);
                 gpio.get_pin(15).into_alt(MINI_UART_RXD);
 
-                gpio::enable_uart_pins(gpio);
+                gpio.enable_uart_pins();
 
-                self.AUX_MU_CNTL
+                self.registers.AUX_MU_CNTL
                     .write(AUX_MU_CNTL::RX_EN::Enabled + AUX_MU_CNTL::TX_EN::Enabled);
 
                 // Clear FIFOs before using the device
-                self.AUX_MU_IIR.write(AUX_MU_IIR::FIFO_CLEAR::All);
+                self.registers.AUX_MU_IIR.write(AUX_MU_IIR::FIFO_CLEAR::All);
 
                 PreparedMiniUart(self)
             }
@@ -214,6 +205,7 @@ impl MiniUart {
 impl Drop for PreparedMiniUart {
     fn drop(&mut self) {
         self.0
+            .registers
             .AUX_ENABLES
             .modify(AUX_ENABLES::MINI_UART_ENABLE::CLEAR);
         // @todo disable gpio.PUD ?
@@ -226,10 +218,10 @@ impl ConsoleOps for PreparedMiniUart {
             /// Send a character
             fn putc(&self, c: char) {
                 // wait until we can send
-                crate::arch::loop_until(|| self.0.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_EMPTY));
+                crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_EMPTY));
 
                 // write the character to the buffer
-                self.0.AUX_MU_IO.set(c as u32);
+                self.0.registers.AUX_MU_IO.set(c as u32);
             }
 
             /// Display a string
@@ -247,10 +239,10 @@ impl ConsoleOps for PreparedMiniUart {
             /// Receive a character
             fn getc(&self) -> char {
                 // wait until something is in the buffer
-                crate::arch::loop_until(|| self.0.AUX_MU_LSR.is_set(AUX_MU_LSR::DATA_READY));
+                crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::DATA_READY));
 
                 // read it and return
-                let mut ret = self.0.AUX_MU_IO.get() as u8 as char;
+                let mut ret = self.0.registers.AUX_MU_IO.get() as u8 as char;
 
                 // convert carriage return to newline
                 if ret == '\r' {
@@ -263,7 +255,7 @@ impl ConsoleOps for PreparedMiniUart {
             /// Wait until the TX FIFO is empty, aka all characters have been put on the
             /// line.
             fn flush(&self) {
-                crate::arch::loop_until(|| self.0.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_IDLE));
+                crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_IDLE));
             }
         } else {
             fn putc(&self, _c: char) {}

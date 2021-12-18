@@ -14,12 +14,11 @@ use {
         mailbox::{self, MailboxOps},
         BcmHost,
     },
-    crate::{arch::loop_until, devices::ConsoleOps},
-    core::ops,
+    crate::{arch::loop_until, devices::ConsoleOps, platform::MMIODerefWrapper},
     snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},
-        register_bitfields,
+        register_bitfields, register_structs,
         registers::{ReadOnly, ReadWrite, WriteOnly},
     },
 };
@@ -111,29 +110,31 @@ register_bitfields! {
     ]
 }
 
-#[allow(non_snake_case)]
-#[repr(C)]
-pub struct RegisterBlock {
-    DR: ReadWrite<u32>,                   // 0x00
-    __reserved_0: [u32; 5],               // 0x04 (UART0_RSRECR=0x04)
-    FR: ReadOnly<u32, FR::Register>,      // 0x18
-    __reserved_1: [u32; 1],               // 0x1c
-    ILPR: u32,                            // 0x20
-    IBRD: WriteOnly<u32, IBRD::Register>, // 0x24
-    FBRD: WriteOnly<u32, FBRD::Register>, // 0x28
-    LCRH: WriteOnly<u32, LCRH::Register>, // 0x2C
-    CR: WriteOnly<u32, CR::Register>,     // 0x30
-    IFLS: u32,                            // 0x34
-    IMSC: u32,                            // 0x38
-    RIS: u32,                             // 0x3C
-    MIS: u32,                             // 0x40
-    ICR: WriteOnly<u32, ICR::Register>,   // 0x44
-    DMACR: u32,                           // 0x48
-    __reserved_2: [u32; 14],              // 0x4c-0x7c
-    ITCR: u32,                            // 0x80
-    ITIP: u32,                            // 0x84
-    ITOP: u32,                            // 0x88
-    TDR: u32,                             // 0x8C
+register_structs! {
+    #[allow(non_snake_case)]
+    RegisterBlock {
+        (0x00 => DR: ReadWrite<u32>),
+        (0x04 => __reserved_1), // (UART0_RSRECR=0x04)
+        (0x18 => FR: ReadOnly<u32, FR::Register>),
+        (0x1c => __reserved_2),
+        (0x20 => ILPR: u32),
+        (0x24 => IBRD: WriteOnly<u32, IBRD::Register>),
+        (0x28 => FBRD: WriteOnly<u32, FBRD::Register>),
+        (0x2c => LCRH: WriteOnly<u32, LCRH::Register>),
+        (0x30 => CR: WriteOnly<u32, CR::Register>),
+        (0x34 => IFLS: u32),
+        (0x38 => IMSC: u32),
+        (0x3c => RIS: u32),
+        (0x40 => MIS: u32),
+        (0x44 => ICR: WriteOnly<u32, ICR::Register>),
+        (0x48 => DMACR: u32),
+        (0x4c => __reserved_3),
+        (0x80 => ITCR: u32),
+        (0x84 => ITIP: u32),
+        (0x88 => ITOP: u32),
+        (0x8c => TDR: u32),
+        (0x90 => @END),
+    }
 }
 
 #[derive(Debug, Snafu)]
@@ -141,10 +142,13 @@ pub enum PL011UartError {
     #[snafu(display("PL011 UART setup failed in mailbox operation"))]
     MailboxError,
 }
+
 pub type Result<T> = ::core::result::Result<T, PL011UartError>;
 
+type Registers = MMIODerefWrapper<RegisterBlock>;
+
 pub struct PL011Uart {
-    base_addr: usize,
+    registers: Registers,
 }
 
 pub struct PreparedPL011Uart(PL011Uart);
@@ -160,37 +164,23 @@ impl From<Rate> for u32 {
     }
 }
 
-impl ops::Deref for PL011Uart {
-    type Target = RegisterBlock;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.ptr() }
-    }
-}
-
-impl ops::Deref for PreparedPL011Uart {
-    type Target = RegisterBlock;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.0.ptr() }
-    }
-}
+pub const UART_START: usize = 0x20_1000;
 
 impl Default for PL011Uart {
     fn default() -> Self {
-        const UART0_BASE: usize = BcmHost::get_peripheral_address() + 0x20_1000;
-        PL011Uart::new(UART0_BASE)
+        const UART0_BASE: usize = BcmHost::get_peripheral_address() + UART_START;
+        unsafe { PL011Uart::new(UART0_BASE) }
     }
 }
 
 impl PL011Uart {
-    pub fn new(base_addr: usize) -> PL011Uart {
-        PL011Uart { base_addr }
-    }
-
-    /// Returns a pointer to the register block
-    fn ptr(&self) -> *const RegisterBlock {
-        self.base_addr as *const _
+    /// # Safety
+    ///
+    /// Unsafe, duh!
+    pub const unsafe fn new(base_addr: usize) -> PL011Uart {
+        PL011Uart {
+            registers: Registers::new(base_addr),
+        }
     }
 
     /// Set baud rate and characteristics (115200 8N1) and map to GPIO
@@ -200,7 +190,7 @@ impl PL011Uart {
         gpio: &gpio::GPIO,
     ) -> Result<PreparedPL011Uart> {
         // turn off UART0
-        self.CR.set(0);
+        self.registers.CR.set(0);
 
         // set up clock for consistent divisor values
         let index = mbox.request();
@@ -220,15 +210,18 @@ impl PL011Uart {
         gpio.get_pin(14).into_alt(UART_TXD);
         gpio.get_pin(15).into_alt(UART_RXD);
 
-        gpio::enable_uart_pins(gpio);
+        gpio.enable_uart_pins();
 
-        self.ICR.write(ICR::ALL::CLEAR);
+        self.registers.ICR.write(ICR::ALL::CLEAR);
         // @todo Configure divisors more sanely
-        self.IBRD.write(IBRD::IBRD.val(Rate::Baud115200.into()));
-        self.FBRD.write(FBRD::FBRD.val(0xB)); // Results in 115200 baud
-        self.LCRH.write(LCRH::WLEN::EightBit); // 8N1
+        self.registers
+            .IBRD
+            .write(IBRD::IBRD.val(Rate::Baud115200.into()));
+        self.registers.FBRD.write(FBRD::FBRD.val(0xB)); // Results in 115200 baud
+        self.registers.LCRH.write(LCRH::WLEN::EightBit); // 8N1
 
-        self.CR
+        self.registers
+            .CR
             .write(CR::UARTEN::Enabled + CR::TXE::Enabled + CR::RXE::Enabled);
 
         Ok(PreparedPL011Uart(self))
@@ -237,7 +230,9 @@ impl PL011Uart {
 
 impl Drop for PreparedPL011Uart {
     fn drop(&mut self) {
-        self.CR
+        self.0
+            .registers
+            .CR
             .write(CR::UARTEN::Disabled + CR::TXE::Disabled + CR::RXE::Disabled);
     }
 }
@@ -246,10 +241,10 @@ impl ConsoleOps for PreparedPL011Uart {
     /// Send a character
     fn putc(&self, c: char) {
         // wait until we can send
-        loop_until(|| !self.FR.is_set(FR::TXFF));
+        loop_until(|| !self.0.registers.FR.is_set(FR::TXFF));
 
         // write the character to the buffer
-        self.DR.set(c as u32);
+        self.0.registers.DR.set(c as u32);
     }
 
     /// Display a string
@@ -267,10 +262,10 @@ impl ConsoleOps for PreparedPL011Uart {
     /// Receive a character
     fn getc(&self) -> char {
         // wait until something is in the buffer
-        loop_until(|| !self.FR.is_set(FR::RXFE));
+        loop_until(|| !self.0.registers.FR.is_set(FR::RXFE));
 
         // read it and return
-        let mut ret = self.DR.get() as u8 as char;
+        let mut ret = self.0.registers.DR.get() as u8 as char;
 
         // convert carriage return to newline
         if ret == '\r' {
