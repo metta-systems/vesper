@@ -73,6 +73,7 @@ impl PhysAddr {
     /// Aligns the physical address upwards to the given alignment.
     ///
     /// See the `align_up` function for more information.
+    #[must_use]
     pub fn aligned_up<U>(self, align: U) -> Self
     where
         U: Into<u64>,
@@ -83,6 +84,7 @@ impl PhysAddr {
     /// Aligns the physical address downwards to the given alignment.
     ///
     /// See the `align_down` function for more information.
+    #[must_use]
     pub fn aligned_down<U>(self, align: U) -> Self
     where
         U: Into<u64>,

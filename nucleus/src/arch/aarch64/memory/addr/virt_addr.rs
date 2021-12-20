@@ -108,6 +108,7 @@ impl VirtAddr {
     /// Aligns the virtual address upwards to the given alignment.
     ///
     /// See the `align_up` free function for more information.
+    #[must_use]
     pub fn aligned_up<U>(self, align: U) -> Self
     where
         U: Into<u64>,
@@ -118,6 +119,7 @@ impl VirtAddr {
     /// Aligns the virtual address downwards to the given alignment.
     ///
     /// See the `align_down` free function for more information.
+    #[must_use]
     pub fn aligned_down<U>(self, align: U) -> Self
     where
         U: Into<u64>,
