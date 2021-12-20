@@ -66,7 +66,7 @@ unsafe fn reset() -> ! {
 // #[inline]
 // fn enable_armv6_unaligned_access() {
 //     unsafe {
-//         asm!(
+//         core::arch::asm!(
 //             "mrc p15, 0, {u}, c1, c0, 0",
 //             "or {u}, {u}, {CR_U}",
 //             "mcr p15, 0, {u}, c1, c0, 0",

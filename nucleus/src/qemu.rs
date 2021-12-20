@@ -27,7 +27,7 @@ pub mod semihosting {
         // SAFETY: text must be \0-terminated!
         let cmd = 0x04;
         unsafe {
-            asm!(
+            core::arch::asm!(
                 "hlt #0xF000"
                 , in("w0") cmd
                 , in("x1") text.as_ptr() as u64

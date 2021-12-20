@@ -62,7 +62,7 @@ use {
     },
 };
 
-global_asm!(include_str!("vectors.S"));
+core::arch::global_asm!(include_str!("vectors.S"));
 
 /// Errors possibly returned from the traps module.
 #[derive(Debug, Snafu)]
