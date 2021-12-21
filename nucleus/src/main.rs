@@ -3,7 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-//! Vesper single-address-space exokernel.
+//! Vesper single-address-space nanokernel.
 //!
 //! This crate implements the kernel binary proper.
 
