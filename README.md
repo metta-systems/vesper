@@ -94,6 +94,14 @@ You need to have [Hopper](https://hopperapp.com) and hopperv4 cli helper install
 just disasm
 ```
 
+### To see other available commands
+
+```
+just
+```
+
+It will list all just commands with their short descriptions.
+
 ## Development flow
 
 `mainline`, `develop` and `released` branches:

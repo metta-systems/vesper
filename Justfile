@@ -1,62 +1,80 @@
+_default:
+    @just --list
+
+# Build and run kernel in QEMU with serial port emulation
 zellij:
-    # Build and run kernel in QEMU with serial port emulation
     cargo make zellij-config
     zellij --layout-path emulation/layout.zellij
 
+# Build and run kernel in QEMU
 qemu:
-    # Build and run kernel in QEMU
     cargo make qemu
 
+# Build and run kernel in QEMU with GDB port enabled
 qemu-gdb:
-    # Build and run kernel in QEMU with GDB port enabled
     cargo make qemu-gdb
 
+# Build and write kernel to an SD Card
 device:
-    # Build and write kernel to an SD Card
     cargo make sdcard
 
+# Build and write kernel to an SD Card, then eject the SD Card volume
+device-eject:
+    cargo make sdeject
+
+# Build default hw kernel
 build:
-    # Build default hw kernel
     cargo make build
 
+# Clean project
 clean:
-    # Clean project
     cargo make clean
-    rm -f kernel8 kernel8.img
 
+# Run clippy checks
 clippy:
-    # Run clippy checks
+    # TODO: use cargo-hack
     cargo make clippy
+    env CLIPPY_FEATURES=noserial cargo make clippy
+    env CLIPPY_FEATURES=qemu cargo make clippy
+    env CLIPPY_FEATURES=noserial,qemu cargo make clippy
+    env CLIPPY_FEATURES=jtag cargo make clippy
+    env CLIPPY_FEATURES=noserial,jtag cargo make clippy
 
+# Run tests in QEMU
 test:
-    # Run tests in QEMU
     cargo make test
 
 alias disasm := hopper
 
+# Build and disassemble kernel
 hopper:
-    # Build and disassemble kernel
     cargo make hopper
 
 alias ocd := openocd
 
+# Start openocd (by default connected via JTAG to a target device)
 openocd:
-    # Start openocd (by default connected via JTAG to a target device)
     cargo make openocd
 
+# Build and run kernel in GDB using openocd or QEMU as target (gdb port 5555)
 gdb:
-    # Build and run kernel in GDB using openocd or QEMU as target (gdb port 5555)
     cargo make gdb
 
+# Build and print all symbols in the kernel
 nm:
-    # Build and print all symbols in the kernel
     cargo make nm
 
+# Check formatting
+fmt-check:
+    cargo fmt -- --check
+
+# Run `cargo expand` on nucleus
 expand:
-    # Run `cargo expand` on modules
     cargo make expand -- nucleus
 
+# Generate and open documentation
 doc:
-    # Generate and open documentation
     cargo make docs-flow
 
+# Run CI tasks
+ci: clean build test clippy fmt-check

@@ -122,12 +122,6 @@ script = [
 '''
 ]
 
-[tasks.sdeject]
-dependencies = ["sdcard"]
-script = [
-    "diskutil unmount ${VOLUME}"
-]
-
 [tasks.clippy]
 env = { "TARGET_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
 command = "cargo"

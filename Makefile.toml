@@ -77,3 +77,9 @@ dependencies = ["kernel-binary"]
 [tasks.modules]
 command = "cargo"
 args = ["modules", "tree"]
+
+[tasks.sdeject]
+dependencies = ["sdcard"]
+script = [
+    "diskutil unmount ${VOLUME}"
+]
