@@ -27,6 +27,11 @@ clean:
 clippy:
     # Run clippy checks
     cargo make clippy
+    env CLIPPY_FEATURES=noserial cargo make clippy
+    env CLIPPY_FEATURES=qemu cargo make clippy
+    env CLIPPY_FEATURES=noserial,qemu cargo make clippy
+    env CLIPPY_FEATURES=jtag cargo make clippy
+    env CLIPPY_FEATURES=noserial,jtag cargo make clippy
 
 test:
     # Run tests in QEMU
@@ -60,3 +65,4 @@ doc:
     # Generate and open documentation
     cargo make docs-flow
 
+ci: clean build test clippy
