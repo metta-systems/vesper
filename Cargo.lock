@@ -45,6 +45,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "machine"
+version = "0.0.1"
+dependencies = [
+ "bit_field",
+ "bitflags",
+ "cfg-if",
+ "cortex-a",
+ "qemu-exit",
+ "r0",
+ "snafu",
+ "tock-registers",
+ "usize_conversions",
+ "ux",
+]
+
+[[package]]
+name = "nucleus"
+version = "0.0.1"
+dependencies = [
+ "bit_field",
+ "bitflags",
+ "cfg-if",
+ "cortex-a",
+ "machine",
+ "r0",
+ "snafu",
+ "tock-registers",
+ "usize_conversions",
+ "ux",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -136,19 +168,3 @@ name = "ux"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88dfeb711b61ce620c0cb6fd9f8e3e678622f0c971da2a63c4b3e25e88ed012f"
-
-[[package]]
-name = "vesper"
-version = "0.0.1"
-dependencies = [
- "bit_field",
- "bitflags",
- "cfg-if",
- "cortex-a",
- "qemu-exit",
- "r0",
- "snafu",
- "tock-registers",
- "usize_conversions",
- "ux",
-]

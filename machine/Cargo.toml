@@ -1,8 +1,8 @@
 [package]
-name = "nucleus"
+name = "machine"
 version = "0.0.1"
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
-description = "Vesper nanokernel binary"
+description = "Vesper nanokernel shared code library, useful also for microboot loader."
 documentation = "https://docs.metta.systems/vesper"
 homepage = "https://github.com/metta-systems/vesper"
 repository = "https://github.com/metta-systems/vesper"
@@ -16,16 +16,16 @@ edition = "2021"
 maintenance = { status = "experimental" }
 
 [features]
-noserial = ["machine/noserial"]
+noserial = []
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.
-jtag = ["machine/jtag"]
+jtag = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = ["machine/qemu"]
+qemu = []
 
 [dependencies]
-machine = { path = "../machine" }
 r0 = "1.0"
+qemu-exit = "3.0"
 cortex-a = "7.0"
 tock-registers = "0.7"
 ux = { version = "0.1.3", default-features = false }

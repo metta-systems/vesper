@@ -1,6 +1,6 @@
 zellij:
     # Build and run kernel in QEMU with serial port emulation
-    cargo make zellij-config
+    cargo make zellij-nucleus
     zellij --layout-path emulation/layout.zellij
 
 qemu:

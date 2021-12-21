@@ -361,6 +361,7 @@ impl PreparedMailbox {
 
 impl Mailbox {
     /// Create a new mailbox in the DMA-able memory area.
+    #[allow(clippy::result_unit_err)]
     pub fn new(base_addr: usize) -> ::core::result::Result<Mailbox, ()> {
         use core::alloc::Allocator;
         crate::DMA_ALLOCATOR

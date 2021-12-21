@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "nucleus"
+    "nucleus",
 ]
 
 [profile.dev]

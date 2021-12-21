@@ -8,7 +8,7 @@
 use crate::{print, println, qemu};
 
 pub trait TestFn {
-    fn run(&self) -> ();
+    fn run(&self);
 }
 
 impl<T> TestFn for T
@@ -22,7 +22,6 @@ where
     }
 }
 
-#[cfg(test)]
 pub fn test_runner(tests: &[&dyn TestFn]) {
     println!("Running {} tests", tests.len());
     for test in tests {
