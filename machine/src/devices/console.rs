@@ -4,8 +4,7 @@
 
 #![allow(dead_code)]
 
-use crate::platform;
-use core::fmt;
+use {crate::platform, core::fmt};
 
 /// A trait that must be implemented by devices that are candidates for the
 /// global console.

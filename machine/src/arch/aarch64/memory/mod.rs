@@ -13,8 +13,7 @@ use {
 mod addr;
 pub mod mmu;
 
-pub use addr::PhysAddr;
-pub use addr::VirtAddr;
+pub use addr::{PhysAddr, VirtAddr};
 
 // aarch64 granules and page sizes howto:
 // https://stackoverflow.com/questions/34269185/simultaneous-existence-of-different-sized-pages-on-aarch64

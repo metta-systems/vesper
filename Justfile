@@ -69,6 +69,9 @@ nm:
     # Build and print all symbols in the kernel
     cargo make nm
 
+fmt-check:
+    cargo fmt -- --check
+
 expand:
     # Run `cargo expand` on modules
     cargo make expand -- nucleus
@@ -77,4 +80,4 @@ doc:
     # Generate and open documentation
     cargo make docs-flow
 
-ci: clean build test clippy
+ci: clean build test clippy fmt-check

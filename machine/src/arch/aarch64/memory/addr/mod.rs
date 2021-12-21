@@ -7,6 +7,4 @@ mod asid;
 mod phys_addr;
 mod virt_addr;
 
-pub use asid::*;
-pub use phys_addr::*;
-pub use virt_addr::*;
+pub use {asid::*, phys_addr::*, virt_addr::*};
