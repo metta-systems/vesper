@@ -101,8 +101,13 @@ jobs:
     - name: 'Build kernel'
       run: cargo make build
 
-    - name: 'Run tests'
+    - name: 'Run tests (macOS)'
       run: cargo make test
+      if: runner.os == 'macOS'
+
+    - name: 'Run tests (other OSes)'
+      run: env QEMU_MACHINE=raspi3 cargo make test
+      if: runner.os != 'macOS'
 
   check_formatting:
     name: "Check Formatting"

@@ -22,6 +22,8 @@ TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } 
 
 # AArch64 QEMU binary
 QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
+# QEMU machine type, defaults to raspi3b but CI runners override it due to ancient QEMU versions they use.
+QEMU_MACHINE = { value = "raspi3b", condition = { env_not_set = ["QEMU_MACHINE"] } }
 
 # An aarch64-enabled GDB
 GDB = { value = "lldb", condition = { env_not_set = ["GDB"] } }
@@ -56,7 +58,8 @@ QEMU_CONTAINER_CMD = "qemu-system-aarch64"
 #
 # Could additionally use -nographic to disable GUI -- this shall be useful for automated tests.
 #
-QEMU_OPTS = "-M raspi3 -d int -semihosting"
+# QEMU has renamed the RasPi machines since version 6.2.0, use just `raspi3` for previous versions.
+QEMU_OPTS = "-M ${QEMU_MACHINE} -d int -semihosting"
 QEMU_DISASM_OPTS = "-d in_asm,unimp,int"
 QEMU_SERIAL_OPTS = "-serial null -serial stdio"
 QEMU_TESTS_OPTS = "-nographic"
