@@ -61,6 +61,7 @@ _start:
     ADR_REL	x0, __binary_nonzero_lma           // The address the binary got loaded to.
     ADR_ABS	x1, __binary_nonzero_vma           // The address the binary was linked to.
     ADR_ABS	x2, __binary_nonzero_vma_end_exclusive
+    sub x4, x1, x0                             // Get difference between vma and lma as max size
 
 .L_copy_loop:
     ldr	x3, [x0], #8
@@ -75,6 +76,7 @@ _start:
 
     // Jump to the relocated Rust code.
     ADR_ABS	x1, _start_rust
+    mov x0, x4
     br	x1
 
     // Infinitely wait for events (aka "park the core").

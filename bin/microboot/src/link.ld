@@ -56,6 +56,9 @@ SECTIONS
         *(.text._start_arguments) /* Constants (or statics in Rust speak) read by _start(). */
     } :segment_start_code
 
+    /* Align to 8 byte, b/c relocating the binary is done in u64 chunks */
+    . = ALIGN(8);
+
     __binary_nonzero_lma = .;
 
     /* Set the link address to 32 MiB */

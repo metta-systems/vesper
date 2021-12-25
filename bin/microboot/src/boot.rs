@@ -60,6 +60,6 @@ pub unsafe extern "C" fn _start() -> ! {
 ///
 /// The function is called from the assembly `_start` function, keep it to support "asm" feature.
 #[no_mangle]
-pub unsafe fn _start_rust() -> ! {
-    crate::kernel_init()
+pub unsafe fn _start_rust(max_kernel_size: u64) -> ! {
+    crate::kernel_init(max_kernel_size)
 }

@@ -5,7 +5,7 @@ use {
     serial2::SerialPort,
     std::{
         hash::Hasher,
-        io::{self, BufRead, BufReader, Read},
+        io::{BufRead, BufReader, Read},
     },
 };
 
@@ -25,9 +25,10 @@ fn expect(port: &mut SerialPort, c: u8) {
 }
 
 // 1. connect to given serial port, e.g. /dev/ttyUSB23234
-// 2. wait for 3 consecutive \3 chars
-// 3. send selected kernel binary with checksum to the target
-// 4. pass through the serial connection
+// 2. send 3 consecutive \3 chars
+// 3. get OK response
+// 4. send selected kernel binary with checksum to the target
+// 5. pass through the serial connection
 
 fn main() -> Result<()> {
     let matches = App::new("MicroBoss - command microboot protocol")
@@ -56,47 +57,42 @@ fn main() -> Result<()> {
     let baud_rate = matches.value_of("baud").unwrap().parse::<u32>().unwrap();
     let kernel = matches.value_of("kernel").unwrap();
 
+    println!("[>>] Loading kernel image");
+
     let kernel_file = match std::fs::File::open(kernel) {
         Ok(file) => file,
         Err(_) => panic!("Couldn't open kernel file {}", kernel),
     };
     let kernel_size: u64 = kernel_file.metadata().unwrap().len(); // TODO: unwrap
 
+    println!("[>>] .. {} ({} bytes)", kernel, kernel_size);
+
+    println!("[>>] Opening serial port");
+
     // TODO: writeln!() to the serial fd instead of println?
     let mut port = SerialPort::open(port_name, baud_rate).expect("Failed to open serial port");
 
     println!("[>>] Waiting for handshake");
 
-    // Await for 3 consecutive \3 to start uploading
-    let mut count = 0;
-    let mut buf = vec![0u8; 1];
-    loop {
-        match port.read(buf.as_mut_slice()) {
-            Ok(t) if t == 1 && buf[0] == 3 => {
-                count += 1;
-            }
-            Ok(t) => {
-                count = 0;
-                // Pass through whatever the board prints before \3\3\3
-                if t > 0 {
-                    print!("{}", buf[0]);
-                }
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
-            Err(e) => eprintln!("{:?}", e),
-        }
-        if count == 3 {
-            break;
-        }
+    // Notify `microboot` to receive the binary.
+    for _ in 0..3 {
+        port.write(&3u8.to_le_bytes())?;
     }
 
+    // Wait for OK response
+    expect(&mut port, b'O');
+    expect(&mut port, b'K');
+
     println!("[>>] Sending image size");
+
     port.write(&kernel_size.to_le_bytes())?;
 
+    // Wait for OK response
     expect(&mut port, b'O');
     expect(&mut port, b'K');
 
     println!("[>>] Sending kernel image");
+
     let mut hasher = SeaHasher::new();
     let mut reader = BufReader::new(kernel_file);
     loop {
@@ -112,7 +108,10 @@ fn main() -> Result<()> {
         reader.consume(length);
     }
     let hashed_value: u64 = hasher.finish();
+
     println!("[>>] Sending image checksum {:x}", hashed_value);
+
     port.write(&hashed_value.to_le_bytes())?;
+
     Ok(())
 }

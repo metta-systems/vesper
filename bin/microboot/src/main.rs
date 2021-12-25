@@ -25,7 +25,7 @@ mod boot;
 ///
 /// - Only a single core must be active and running this function.
 /// - The init calls in this function must appear in the correct order.
-unsafe fn kernel_init() -> ! {
+unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     let gpio = GPIO::default();
     let uart = MiniUart::default();
     let uart = uart.prepare(&gpio);
@@ -37,7 +37,7 @@ unsafe fn kernel_init() -> ! {
     // println! is usable from here on.
 
     // Transition from unsafe to safe.
-    kernel_main()
+    kernel_main(max_kernel_size)
 }
 
 // https://onlineasciitools.com/convert-text-to-ascii-art (FIGlet) with `cricket` font
@@ -65,31 +65,42 @@ fn read_u64() -> u64 {
 }
 
 /// The main function running after the early init.
-fn kernel_main() -> ! {
+fn kernel_main(max_kernel_size: u64) -> ! {
     #[cfg(test)]
     test_main();
 
     println!("{}", LOGO);
     println!("{:^37}\n", "QEMU"); // TEMP until we get some DTB
-    println!("[<<] Requesting binary");
+    println!("[<<] Awaiting boot request...");
     CONSOLE.lock(|c| c.flush());
 
     // Discard any spurious received characters before starting with the loader protocol.
     CONSOLE.lock(|c| c.clear_rx());
 
-    // Notify `microboss` to send the binary.
-    for _ in 0..3 {
-        CONSOLE.lock(|c| c.write_char(3 as char));
+    // Await for 3 consecutive \3 to start downloading
+    let mut count = 0;
+    loop {
+        let c = CONSOLE.lock(|c| c.read_char()) as u8;
+
+        if c == 3 {
+            count += 1;
+        } else {
+            count = 0;
+        }
+
+        if count == 3 {
+            break;
+        }
     }
+
+    print!("OK");
 
     // Read the binary's size.
     let size = read_u64();
 
-    // TODO: Check the size to fit RAM
-    let ok = true;
-
-    if !ok {
-        println!("ERR Kernel image too big");
+    // Check the size to fit RAM
+    if size > max_kernel_size {
+        println!("ERR Kernel image too big (over {} bytes)", max_kernel_size);
         endless_sleep();
     }
 
