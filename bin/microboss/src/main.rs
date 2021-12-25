@@ -74,7 +74,7 @@ fn main() -> Result<()> {
 
     // TODO: writeln!() to the serial fd instead of println?
     let mut port = serialport::new(port_name, baud_rate)
-        .timeout(Duration::from_millis(10))
+        .timeout(Duration::from_millis(1000))
         .open()
         .expect("Failed to open serial port");
     //.context?
