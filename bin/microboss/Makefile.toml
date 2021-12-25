@@ -13,6 +13,9 @@ args = ["clippy", "--", "-D", "warnings"]
 [tasks.hopper]
 disabled = true
 
+[tasks.kernel-binary]
+disabled = true
+
 [tasks.zellij-nucleus]
 disabled = true
 

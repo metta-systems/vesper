@@ -30,6 +30,7 @@ device:
 build:
     # Build default hw kernel
     cargo make build
+    cargo make kernel-binary
 
 clean:
     # Clean project
