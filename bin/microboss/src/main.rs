@@ -2,18 +2,21 @@ use {
     anyhow::Result,
     clap::{App, AppSettings, Arg},
     seahash::SeaHasher,
-    serial2::SerialPort,
+    serialport::SerialPort,
     std::{
         hash::Hasher,
-        io::{BufRead, BufReader, Read},
+        io::{BufRead, BufReader},
+        time::Duration,
     },
 };
 
-fn expect(port: &mut SerialPort, c: u8) {
-    let mut buf = [0; 1];
+fn expect(port: &mut Box<dyn SerialPort>, c: u8) {
+    let mut buf = [0u8; 1];
     match port.read(&mut buf) {
         Err(e) => panic!("Failed to receive from serial port: {}", e),
-        Ok(read) if read == 1 && buf[0] == c => {}
+        Ok(b) if b == 1 && buf[0] == c => {
+            return;
+        }
         Ok(_) => {
             print!("{}", buf[0]);
             while port.read(&mut buf).is_ok() {
@@ -70,7 +73,11 @@ fn main() -> Result<()> {
     println!("[>>] Opening serial port");
 
     // TODO: writeln!() to the serial fd instead of println?
-    let mut port = SerialPort::open(port_name, baud_rate).expect("Failed to open serial port");
+    let mut port = serialport::new(port_name, baud_rate)
+        .timeout(Duration::from_millis(10))
+        .open()
+        .expect("Failed to open serial port");
+    //.context?
 
     println!("[>>] Waiting for handshake");
 
