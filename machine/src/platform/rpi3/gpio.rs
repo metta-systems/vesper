@@ -35,6 +35,23 @@ register_bitfields! {
             NoEffect = 0,
             AssertClock = 1
         ]
+    ],
+
+    /// GPIO Pull-up / Pull-down Register 0
+    ///
+    /// BCM2711 only.
+    GPIO_PUP_PDN_CNTRL_REG0 [
+        /// Pin 15
+        GPIO_PUP_PDN_CNTRL15 OFFSET(30) NUMBITS(2) [
+            NoResistor = 0b00,
+            PullUp = 0b01
+        ],
+
+        /// Pin 14
+        GPIO_PUP_PDN_CNTRL14 OFFSET(28) NUMBITS(2) [
+            NoResistor = 0b00,
+            PullUp = 0b01
+        ]
     ]
 }
 
@@ -77,9 +94,10 @@ register_structs! {
         (0x88 => pub AFEN: [ReadWrite<u32>; 2]),
         (0x90 => __reserved_11),
         (0x94 => pub PUD: ReadWrite<u32>), // pull up down
-        (0x98 => pub PUDCLK: [ReadWrite<u32, PUDCLK0::Register>; 2]), // 0x98-0x9C -- TODO: remove this register?
-        // (0xE4 => GPIO_PUP_PDN_CNTRL_REG0: ReadWrite<u32, GPIO_PUP_PDN_CNTRL_REG0::Register>), -- ??
+        (0x98 => pub PUDCLK: [ReadWrite<u32, PUDCLK0::Register>; 2]),
         (0xa0 => __reserved_12),
+        // #[cfg(all(board = "raspi", chip = "bcm2711"))]
+        (0xE4 => GPIO_PUP_PDN_CNTRL_REG0: ReadWrite<u32, GPIO_PUP_PDN_CNTRL_REG0::Register>),
         (0xE8 => @END),
     }
 }
@@ -116,6 +134,8 @@ impl GPIO {
         unsafe { Pin::new(pin, self.registers.base_addr) }
     }
 
+    // RasPi3B+
+    #[cfg(all(board = "raspi", chip = "bcm2837"))]
     pub fn enable_uart_pins(&self) {
         self.registers.PUD.set(0);
 
@@ -127,7 +147,17 @@ impl GPIO {
 
         loop_delay(2000);
 
+        self.registers.PUD.set(0);
         self.registers.PUDCLK[0].set(0);
+    }
+
+    // RasPi4
+    // #[cfg(all(board = "raspi", chip = "bcm2711"))]
+    pub fn enable_uart_pins(&self) {
+        self.registers.GPIO_PUP_PDN_CNTRL_REG0.write(
+            GPIO_PUP_PDN_CNTRL_REG0::GPIO_PUP_PDN_CNTRL15::PullUp
+                + GPIO_PUP_PDN_CNTRL_REG0::GPIO_PUP_PDN_CNTRL14::PullUp,
+        );
     }
 
     pub fn power_off(&self) {
