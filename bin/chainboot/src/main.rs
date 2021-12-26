@@ -25,6 +25,7 @@ mod boot;
 ///
 /// - Only a single core must be active and running this function.
 /// - The init calls in this function must appear in the correct order.
+#[inline(always)]
 unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
@@ -66,6 +67,7 @@ fn read_u64() -> u64 {
 }
 
 /// The main function running after the early init.
+#[inline(always)]
 fn kernel_main(max_kernel_size: u64) -> ! {
     #[cfg(test)]
     test_main();
