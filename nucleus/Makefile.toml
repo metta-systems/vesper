@@ -29,12 +29,6 @@ run_task = "zellij-config"
 [tasks.zellij-mb]
 disabled = true
 
-[tasks.openocd]
-dependencies = ["build", "kernel-binary"]
-script = [
-    "${OPENOCD} -f interface/jlink.cfg -f ../ocd/${TARGET_BOARD}_target.cfg"
-]
-
 [tasks.lldb-config]
 script_runner = "@duckscript"
 script = [
