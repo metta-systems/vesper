@@ -14,7 +14,11 @@ use {
         mailbox::{self, MailboxOps},
         BcmHost,
     },
-    crate::{arch::loop_until, devices::ConsoleOps, platform::MMIODerefWrapper},
+    crate::{
+        arch::loop_until,
+        devices::{ConsoleOps, SerialOps},
+        platform::MMIODerefWrapper,
+    },
     snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},
@@ -237,14 +241,28 @@ impl Drop for PreparedPL011Uart {
     }
 }
 
-impl ConsoleOps for PreparedPL011Uart {
-    /// Send a character
-    fn write_char(&self, c: char) {
+impl SerialOps for PreparedPL011Uart {
+    fn write_byte(&self, b: u8) {
         // wait until we can send
         loop_until(|| !self.0.registers.FR.is_set(FR::TXFF));
 
         // write the character to the buffer
-        self.0.registers.DR.set(c as u32);
+        self.0.registers.DR.set(b as u32);
+    }
+
+    fn read_byte(&self) -> u8 {
+        // wait until something is in the buffer
+        loop_until(|| !self.0.registers.FR.is_set(FR::RXFE));
+
+        // read it and return
+        self.0.registers.DR.get() as u8
+    }
+}
+
+impl ConsoleOps for PreparedPL011Uart {
+    /// Send a character
+    fn write_char(&self, c: char) {
+        self.write_byte(c as u8)
     }
 
     /// Display a string
@@ -261,11 +279,7 @@ impl ConsoleOps for PreparedPL011Uart {
 
     /// Receive a character
     fn read_char(&self) -> char {
-        // wait until something is in the buffer
-        loop_until(|| !self.0.registers.FR.is_set(FR::RXFE));
-
-        // read it and return
-        let mut ret = self.0.registers.DR.get() as u8 as char;
+        let mut ret = self.read_byte() as char;
 
         // convert carriage return to newline
         if ret == '\r' {

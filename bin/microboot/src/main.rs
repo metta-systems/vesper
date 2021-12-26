@@ -9,7 +9,7 @@
 use {
     core::{hash::Hasher, panic::PanicInfo},
     machine::{
-        devices::ConsoleOps,
+        devices::SerialOps,
         endless_sleep,
         platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, BcmHost},
         print, println, CONSOLE,
@@ -51,14 +51,14 @@ const LOGO: &str = r#"
 
 fn read_u64() -> u64 {
     CONSOLE.lock(|c| {
-        let mut val: u64 = u64::from(c.read_char() as u8);
-        val |= u64::from(c.read_char() as u8) << 8;
-        val |= u64::from(c.read_char() as u8) << 16;
-        val |= u64::from(c.read_char() as u8) << 24;
-        val |= u64::from(c.read_char() as u8) << 32;
-        val |= u64::from(c.read_char() as u8) << 40;
-        val |= u64::from(c.read_char() as u8) << 48;
-        val |= u64::from(c.read_char() as u8) << 56;
+        let mut val: u64 = u64::from(c.read_byte());
+        val |= u64::from(c.read_byte()) << 8;
+        val |= u64::from(c.read_byte()) << 16;
+        val |= u64::from(c.read_byte()) << 24;
+        val |= u64::from(c.read_byte()) << 32;
+        val |= u64::from(c.read_byte()) << 40;
+        val |= u64::from(c.read_byte()) << 48;
+        val |= u64::from(c.read_byte()) << 56;
         val
     })
 }
@@ -79,7 +79,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
     // Notify `microboss` to send the binary.
     for _ in 0..3 {
-        CONSOLE.lock(|c| c.write_char(3u8 as char));
+        CONSOLE.lock(|c| c.write_byte(3u8));
     }
 
     // Read the binary's size.
@@ -99,7 +99,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
     // Read the kernel byte by byte.
     for i in 0..size {
-        let val = CONSOLE.lock(|c| c.read_char()) as u8;
+        let val = CONSOLE.lock(|c| c.read_byte());
         unsafe {
             core::ptr::write_volatile(kernel_addr.offset(i as isize), val);
         }

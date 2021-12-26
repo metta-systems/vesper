@@ -9,7 +9,10 @@
 use tock_registers::interfaces::{Readable, Writeable};
 use {
     super::{gpio, BcmHost},
-    crate::{devices::ConsoleOps, platform::MMIODerefWrapper},
+    crate::{
+        devices::{ConsoleOps, SerialOps},
+        platform::MMIODerefWrapper,
+    },
     cfg_if::cfg_if,
     core::{convert::From, fmt},
     tock_registers::{
@@ -212,44 +215,24 @@ impl Drop for PreparedMiniUart {
     }
 }
 
-impl ConsoleOps for PreparedMiniUart {
+impl SerialOps for PreparedMiniUart {
     cfg_if! {
         if #[cfg(not(feature = "noserial"))] {
-            /// Send a character
-            fn write_char(&self, c: char) {
-                // wait until we can send
-                crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_EMPTY));
-
-                // write the character to the buffer
-                self.0.registers.AUX_MU_IO.set(c as u32);
-            }
-
-            /// Display a string
-            fn write_string(&self, string: &str) {
-                for c in string.chars() {
-                    // convert newline to carriage return + newline
-                    if c == '\n' {
-                        self.write_char('\r')
-                    }
-
-                    self.write_char(c);
-                }
-            }
-
-            /// Receive a character
-            fn read_char(&self) -> char {
+            /// Receive a byte without console translation
+            fn read_byte(&self) -> u8 {
                 // wait until something is in the buffer
                 crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::DATA_READY));
 
                 // read it and return
-                let mut ret = self.0.registers.AUX_MU_IO.get() as u8 as char;
+                self.0.registers.AUX_MU_IO.get() as u8
+            }
 
-                // convert carriage return to newline
-                if ret == '\r' {
-                    ret = '\n'
-                }
+            fn write_byte(&self, b: u8) {
+                // wait until we can send
+                crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_EMPTY));
 
-                ret
+                // write the character to the buffer
+                self.0.registers.AUX_MU_IO.set(b as u32);
             }
 
             /// Wait until the TX FIFO is empty, aka all characters have been put on the
@@ -266,6 +249,43 @@ impl ConsoleOps for PreparedMiniUart {
                     if pending { self.read_char(); }
                     pending
                 });
+            }
+        } else {
+            fn read_byte(&self) -> u8 { 0 }
+        }
+    }
+}
+
+impl ConsoleOps for PreparedMiniUart {
+    cfg_if! {
+        if #[cfg(not(feature = "noserial"))] {
+            /// Send a character
+            fn write_char(&self, c: char) {
+                self.write_byte(c as u8);
+            }
+
+            /// Display a string
+            fn write_string(&self, string: &str) {
+                for c in string.chars() {
+                    // convert newline to carriage return + newline
+                    if c == '\n' {
+                        self.write_char('\r')
+                    }
+
+                    self.write_char(c);
+                }
+            }
+
+            /// Receive a character
+            fn read_char(&self) -> char {
+                let mut ret = self.read_byte() as char;
+
+                // convert carriage return to newline -- this doesn't work well for reading binaries...
+                if ret == '\r' {
+                    ret = '\n'
+                }
+
+                ret
             }
         } else {
             fn write_char(&self, _c: char) {}

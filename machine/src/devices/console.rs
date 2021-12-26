@@ -4,12 +4,15 @@
 
 #![allow(dead_code)]
 
-use {crate::platform, core::fmt};
+use {
+    crate::{devices::SerialOps, platform},
+    core::fmt,
+};
 
 /// A trait that must be implemented by devices that are candidates for the
 /// global console.
 #[allow(unused_variables)]
-pub trait ConsoleOps {
+pub trait ConsoleOps: SerialOps {
     /// Send a character
     fn write_char(&self, c: char) {}
     /// Display a string
@@ -18,12 +21,6 @@ pub trait ConsoleOps {
     fn read_char(&self) -> char {
         ' '
     }
-    /// Wait until the TX FIFO is empty, aka all characters have been put on the
-    /// line.
-    fn flush(&self) {}
-    /// Consume input until RX FIFO is empty, aka all pending characters have been
-    /// consumed.
-    fn clear_rx(&self) {}
 }
 
 /// A dummy console that just ignores its inputs.
@@ -34,6 +31,7 @@ impl Drop for NullConsole {
 }
 
 impl ConsoleOps for NullConsole {}
+impl SerialOps for NullConsole {}
 
 /// Possible outputs which the console can store.
 pub enum Output {
@@ -133,7 +131,9 @@ impl ConsoleOps for Console {
     fn read_char(&self) -> char {
         self.current_ptr().read_char()
     }
+}
 
+impl SerialOps for Console {
     fn flush(&self) {
         self.current_ptr().flush()
     }
