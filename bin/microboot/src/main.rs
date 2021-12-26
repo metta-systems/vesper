@@ -11,7 +11,7 @@ use {
     machine::{
         devices::ConsoleOps,
         endless_sleep,
-        platform::rpi3::{gpio::GPIO, mini_uart::MiniUart},
+        platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, BcmHost},
         print, println, CONSOLE,
     },
     seahash::SeaHasher,
@@ -48,8 +48,6 @@ const LOGO: &str = r#"
  |__|__|__|__|____|__| |_____|_____|_____|_____|____|
 "#;
 
-// CONSOLE.lock(|c| c.flush());
-
 fn read_u64() -> u64 {
     CONSOLE.lock(|c| {
         let mut val: u64 = u64::from(c.read_char() as u8);
@@ -70,30 +68,17 @@ fn kernel_main(max_kernel_size: u64) -> ! {
     test_main();
 
     println!("{}", LOGO);
-    println!("{:^37}\n", "QEMU"); // TEMP until we get some DTB
-    println!("[<<] Awaiting boot request...");
+    println!("for {:^49}\n", BcmHost::board_name());
+    println!("[<<] Requesting kernel image...");
     CONSOLE.lock(|c| c.flush());
 
     // Discard any spurious received characters before starting with the loader protocol.
     CONSOLE.lock(|c| c.clear_rx());
 
-    // Await for 3 consecutive \3 to start downloading
-    let mut count = 0;
-    loop {
-        let c = CONSOLE.lock(|c| c.read_char()) as u8;
-
-        if c == 3 {
-            count += 1;
-        } else {
-            count = 0;
-        }
-
-        if count == 3 {
-            break;
-        }
+    // Notify `microboss` to send the binary.
+    for _ in 0..3 {
+        CONSOLE.lock(|c| c.write_char(3u8 as char));
     }
-
-    print!("OK");
 
     // Read the binary's size.
     let size = read_u64();
@@ -106,7 +91,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
     print!("OK");
 
-    let kernel_addr: *mut u8 = machine::platform::rpi3::BcmHost::kernel_load_address() as *mut u8;
+    let kernel_addr: *mut u8 = BcmHost::kernel_load_address() as *mut u8;
     // We use seahash, simple and with no_std implementation.
     let mut hasher = SeaHasher::new();
 

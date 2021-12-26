@@ -4,8 +4,10 @@ use {
     seahash::SeaHasher,
     serialport::SerialPort,
     std::{
+        fs::File,
         hash::Hasher,
         io::{BufRead, BufReader},
+        path::Path,
         time::Duration,
     },
 };
@@ -25,6 +27,52 @@ fn expect(port: &mut Box<dyn SerialPort>, c: u8) {
             panic!("Failed to receive expected value");
         }
     }
+}
+
+fn load_kernel(kernel: &Path) -> Result<(File, u64), ()> {
+    println!("[>>] Loading kernel image");
+
+    let kernel_file = match std::fs::File::open(kernel) {
+        Ok(file) => file,
+        Err(_) => return Err(anyhow!("Couldn't open kernel file {}", kernel)),
+    };
+    let kernel_size: u64 = kernel_file.metadata()?.len();
+
+    println!("[>>] .. {} ({} bytes)", kernel, kernel_size);
+
+    Ok((kernel_file, kernel_size))
+}
+
+fn send_kernel(kernel_file: &File, kernel_size: u64) -> Result<()> {
+    println!("[>>] Sending image size");
+
+    port.write(&kernel_size.to_le_bytes())?;
+
+    // Wait for OK response
+    expect(&mut port, b'O');
+    expect(&mut port, b'K');
+
+    println!("[>>] Sending kernel image");
+
+    let mut hasher = SeaHasher::new();
+    let mut reader = BufReader::new(kernel_file);
+    loop {
+        let length = {
+            let buf = reader.fill_buf()?;
+            port.write(buf)?;
+            hasher.write(buf);
+            buf.len()
+        };
+        if length == 0 {
+            break;
+        }
+        reader.consume(length);
+    }
+    let hashed_value: u64 = hasher.finish();
+
+    println!("[>>] Sending image checksum {:x}", hashed_value);
+
+    port.write(&hashed_value.to_le_bytes())
 }
 
 // 1. connect to given serial port, e.g. /dev/ttyUSB23234
@@ -60,65 +108,44 @@ fn main() -> Result<()> {
     let baud_rate = matches.value_of("baud").unwrap().parse::<u32>().unwrap();
     let kernel = matches.value_of("kernel").unwrap();
 
-    println!("[>>] Loading kernel image");
-
-    let kernel_file = match std::fs::File::open(kernel) {
-        Ok(file) => file,
-        Err(_) => panic!("Couldn't open kernel file {}", kernel),
-    };
-    let kernel_size: u64 = kernel_file.metadata().unwrap().len(); // TODO: unwrap
-
-    println!("[>>] .. {} ({} bytes)", kernel, kernel_size);
+    let (kernel_file, kernel_size) = load_kernel(kernel)?;
 
     println!("[>>] Opening serial port");
 
-    // TODO: writeln!() to the serial fd instead of println?
     let mut port = serialport::new(port_name, baud_rate)
         .timeout(Duration::from_millis(1000))
         .open()
         .expect("Failed to open serial port");
     //.context?
 
-    println!("[>>] Waiting for handshake");
+    // Run in pass-through mode by default.
+    // Once we receive BREAK (0x3) three times, switch to kernel send mode and upload kernel,
+    // then switch back to pass-through mode.
 
-    // Notify `microboot` to receive the binary.
-    for _ in 0..3 {
-        port.write(&3u8.to_le_bytes())?;
-    }
+    // Input from STDIN should pass through to serial
+    // Input from serial should pass through to STDOUT
 
-    // Wait for OK response
-    expect(&mut port, b'O');
-    expect(&mut port, b'K');
+    println!("[>>] Waiting for handshake, pass-through");
 
-    println!("[>>] Sending image size");
-
-    port.write(&kernel_size.to_le_bytes())?;
-
-    // Wait for OK response
-    expect(&mut port, b'O');
-    expect(&mut port, b'K');
-
-    println!("[>>] Sending kernel image");
-
-    let mut hasher = SeaHasher::new();
-    let mut reader = BufReader::new(kernel_file);
+    // Await for 3 consecutive \3 to start downloading
+    let mut count = 0;
     loop {
-        let length = {
-            let buf = reader.fill_buf()?;
-            port.write(buf)?;
-            hasher.write(buf);
-            buf.len()
-        };
-        if length == 0 {
+        let c = CONSOLE.lock(|c| c.read_char()) as u8;
+
+        if c == 3 {
+            count += 1;
+        } else {
+            count = 0;
+        }
+
+        if count == 3 {
             break;
         }
-        reader.consume(length);
     }
-    let hashed_value: u64 = hasher.finish();
 
-    println!("[>>] Sending image checksum {:x}", hashed_value);
+    print!("OK");
 
-    port.write(&hashed_value.to_le_bytes())?;
+    send_kernel(&kernel_file, kernel_size)?;
 
     Ok(())
 }
