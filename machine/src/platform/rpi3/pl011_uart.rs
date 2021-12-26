@@ -164,11 +164,11 @@ impl From<Rate> for u32 {
     }
 }
 
-pub const UART_START: usize = 0x20_1000;
+pub const UART0_START: usize = 0x20_1000;
 
 impl Default for PL011Uart {
     fn default() -> Self {
-        const UART0_BASE: usize = BcmHost::get_peripheral_address() + UART_START;
+        const UART0_BASE: usize = BcmHost::get_peripheral_address() + UART0_START;
         unsafe { PL011Uart::new(UART0_BASE) }
     }
 }

@@ -74,7 +74,6 @@ impl Console {
         }
     }
 
-    #[inline(always)]
     fn current_ptr(&self) -> &dyn ConsoleOps {
         match &self.output {
             Output::None(i) => i,
