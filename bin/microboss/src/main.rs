@@ -115,7 +115,7 @@ fn main() -> Result<()> {
     println!("[>>] Opening serial port");
 
     let mut port = serialport::new(port_name, baud_rate)
-        .timeout(Duration::from_millis(1000))
+        .timeout(Duration::from_millis(1_000_000))
         .open()
         .expect("Failed to open serial port");
     //.context?
