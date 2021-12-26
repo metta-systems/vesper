@@ -1,5 +1,5 @@
 use {
-    anyhow::Result,
+    anyhow::{anyhow, Result},
     clap::{App, AppSettings, Arg},
     seahash::SeaHasher,
     serialport::SerialPort,
@@ -7,7 +7,6 @@ use {
         fs::File,
         hash::Hasher,
         io::{BufRead, BufReader},
-        path::Path,
         time::Duration,
     },
 };
@@ -29,7 +28,8 @@ fn expect(port: &mut Box<dyn SerialPort>, c: u8) {
     }
 }
 
-fn load_kernel(kernel: &Path) -> Result<(File, u64), ()> {
+// TODO: AsPath<>
+fn load_kernel(kernel: &str) -> Result<(File, u64)> {
     println!("[>>] Loading kernel image");
 
     let kernel_file = match std::fs::File::open(kernel) {
@@ -43,14 +43,14 @@ fn load_kernel(kernel: &Path) -> Result<(File, u64), ()> {
     Ok((kernel_file, kernel_size))
 }
 
-fn send_kernel(kernel_file: &File, kernel_size: u64) -> Result<()> {
+fn send_kernel(port: &mut Box<dyn SerialPort>, kernel_file: &File, kernel_size: u64) -> Result<()> {
     println!("[>>] Sending image size");
 
     port.write(&kernel_size.to_le_bytes())?;
 
     // Wait for OK response
-    expect(&mut port, b'O');
-    expect(&mut port, b'K');
+    expect(port, b'O');
+    expect(port, b'K');
 
     println!("[>>] Sending kernel image");
 
@@ -72,7 +72,9 @@ fn send_kernel(kernel_file: &File, kernel_size: u64) -> Result<()> {
 
     println!("[>>] Sending image checksum {:x}", hashed_value);
 
-    port.write(&hashed_value.to_le_bytes())
+    port.write(&hashed_value.to_le_bytes())?;
+
+    Ok(())
 }
 
 // 1. connect to given serial port, e.g. /dev/ttyUSB23234
@@ -129,13 +131,15 @@ fn main() -> Result<()> {
 
     // Await for 3 consecutive \3 to start downloading
     let mut count = 0;
+    let mut buf = [0u8; 1];
     loop {
-        let c = CONSOLE.lock(|c| c.read_char()) as u8;
+        let sz = port.read(&mut buf)?;
 
-        if c == 3 {
+        if sz == 1 && buf[0] == 3 {
             count += 1;
         } else {
             count = 0;
+            // TODO: pass-through
         }
 
         if count == 3 {
@@ -145,7 +149,7 @@ fn main() -> Result<()> {
 
     print!("OK");
 
-    send_kernel(&kernel_file, kernel_size)?;
+    send_kernel(&mut port, &kernel_file, kernel_size)?;
 
     Ok(())
 }

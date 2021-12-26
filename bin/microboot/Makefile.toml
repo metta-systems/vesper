@@ -1,5 +1,9 @@
+[env]
+MICROBOOT_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/microboot"
+MICROBOOT_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/microboot.bin"
+
 [tasks.kernel-binary]
-env = { "BINARY_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/microboot" }
+env = { "BINARY_FILE" = "${MICROBOOT_ELF}" }
 run_task = "custom-binary"
 
 [tasks.hopper]
@@ -9,5 +13,9 @@ disabled = true
 disabled = true
 
 [tasks.zellij-mb]
-env = { "KERNEL_BIN" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/microboot.bin", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS}" } # ${QEMU_GDB_OPTS}" }
+env = { "KERNEL_BIN" = "${MICROBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS}" }
+run_task = "zellij-config"
+
+[tasks.zellij-mb-gdb]
+env = { "KERNEL_BIN" = "${MICROBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_BOARD" = "raspi3", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 run_task = "zellij-config"

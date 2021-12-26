@@ -24,6 +24,7 @@ macro_rules! entry {
         /// # Safety
         /// Only type-checks!
         #[export_name = "main"]
+        #[inline(always)]
         pub unsafe fn __main() -> ! {
             // type check the given path
             let f: fn() -> ! = $path;

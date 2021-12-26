@@ -19,6 +19,8 @@ TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] }
 
 # Name of the target board "rpi3" or "rpi4"
 TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } }
+# Name of the DTB file for target board configuration, use bcm2710-rpi-3-b-plus.dtb for RasPi3B+
+TARGET_DTB = { value = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2711-rpi-4-b.dtb", condition = { env_not_set = ["TARGET_DTB"] } }
 
 # AArch64 QEMU binary
 QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
@@ -70,8 +72,8 @@ QEMU_GDB_OPTS = "-gdb tcp::5555 -S"
 
 GDB_CONNECT_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect"
 
-KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8"
-KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8.img"
+KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus"
+KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
 
 [tasks.default]
 alias = "all"

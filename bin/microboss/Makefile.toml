@@ -21,3 +21,6 @@ disabled = true
 
 [tasks.zellij-mb]
 disabled = true
+
+[tasks.zellij-mb-gdb]
+disabled = true

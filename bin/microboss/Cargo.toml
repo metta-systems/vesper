@@ -15,6 +15,7 @@ maintenance = { status = "experimental" }
 serialport = "4.0"
 clap = "2.33"
 seahash = "4.1"
-anyhow = "1.0"
+anyhow = "1.0.52"
 serial2 = "0.1.6"
 serial = "0.4.0"
+fehler = "1.0.0"
