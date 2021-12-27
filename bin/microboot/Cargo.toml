@@ -12,13 +12,13 @@ edition = "2021"
 maintenance = { status = "experimental" }
 
 [features]
-default = ["asm"]
+default = ["asm", "jtag"]
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = ["machine/qemu"]
+# Build for debugging it over JTAG/SWD connection - halts on first non-startup function start.
+jtag = ["machine/jtag"]
 # Dummy feature, ignored in this crate.
 noserial = []
-# Dummy feature, ignored in this crate.
-jtag = []
 # Startup relocation code is implemented in assembly
 asm = []
 

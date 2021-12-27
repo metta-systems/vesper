@@ -27,6 +27,9 @@ mod boot;
 /// - The init calls in this function must appear in the correct order.
 #[inline(always)]
 unsafe fn kernel_init(max_kernel_size: u64) -> ! {
+    #[cfg(feature = "jtag")]
+    machine::arch::jtag::wait_debugger();
+
     let gpio = GPIO::default();
     let uart = MiniUart::default();
     let uart = uart.prepare(&gpio);
@@ -69,7 +72,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
     #[cfg(test)]
     test_main();
 
-    print!("{}", LOGO);
+    // print!("{}", LOGO);
     println!("{:>53}\n", BcmHost::board_name());
     println!("[<<] Requesting kernel image...");
     CONSOLE.lock(|c| c.flush());
