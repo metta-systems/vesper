@@ -59,7 +59,7 @@ impl BcmHost {
 }
 
 // RasPi3B+
-#[cfg(all(board = "raspi", chip = "bcm2837"))]
+#[cfg(feature = "rpi3")]
 impl BcmHost {
     /// Name of the hardware device this BcmHost is compiled for.
     pub const fn board_name() -> &'static str {
@@ -84,7 +84,7 @@ impl BcmHost {
 }
 
 // RasPi4
-// #[cfg(all(board = "raspi", chip = "bcm2711"))]
+#[cfg(feature = "rpi4")]
 impl BcmHost {
     /// Name of the hardware device this BcmHost is compiled for.
     pub const fn board_name() -> &'static str {

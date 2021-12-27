@@ -47,7 +47,7 @@ TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
 PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES} ${RUST_LIBS}"
 
 DEVICE_FEATURES = "noserial"
-QEMU_FEATURES = "qemu"
+QEMU_FEATURES = "qemu,rpi3"
 
 OBJCOPY = "rust-objcopy" # Part of `cargo objcopy` in cargo-binutils
 OBJCOPY_PARAMS = "--strip-all -O binary"
@@ -86,7 +86,7 @@ command = "cargo"
 args = ["modules", "tree"]
 
 [tasks.build]
-env = { "TARGET_FEATURES" = "" }
+env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
 command = "cargo"
 args = ["build", "@@split(PLATFORM_TARGET, )", "--release"]
 

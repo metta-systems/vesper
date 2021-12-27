@@ -22,6 +22,9 @@ noserial = ["machine/noserial"]
 jtag = ["machine/jtag"]
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = ["machine/qemu"]
+# Mutually exclusive features to choose a target board
+rpi3 = ["machine/rpi3"]
+rpi4 = ["machine/rpi4"]
 
 [dependencies]
 machine = { path = "../machine" }

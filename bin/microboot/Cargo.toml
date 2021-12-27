@@ -21,6 +21,9 @@ jtag = ["machine/jtag"]
 noserial = []
 # Startup relocation code is implemented in assembly
 asm = []
+# Mutually exclusive features to choose a target board
+rpi3 = ["machine/rpi3"]
+rpi4 = ["machine/rpi4"]
 
 [dependencies]
 machine = { path = "../../machine" }

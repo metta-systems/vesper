@@ -135,7 +135,7 @@ impl GPIO {
     }
 
     // RasPi3B+
-    #[cfg(all(board = "raspi", chip = "bcm2837"))]
+    #[cfg(feature = "rpi3")]
     pub fn enable_uart_pins(&self) {
         self.registers.PUD.set(0);
 
@@ -152,7 +152,7 @@ impl GPIO {
     }
 
     // RasPi4
-    // #[cfg(all(board = "raspi", chip = "bcm2711"))]
+    #[cfg(feature = "rpi4")]
     pub fn enable_uart_pins(&self) {
         self.registers.GPIO_PUP_PDN_CNTRL_REG0.write(
             GPIO_PUP_PDN_CNTRL_REG0::GPIO_PUP_PDN_CNTRL15::PullUp
