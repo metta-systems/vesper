@@ -122,8 +122,12 @@ script_runner = "@duckscript"
 script = [
 '''
     binaryFile = basename ${BINARY_FILE}
-    cp ${BINARY_FILE} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.elf
-    exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${BINARY_FILE} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+    outElf = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.elf
+    outBin = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+    cp ${BINARY_FILE} ${outElf}
+    exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${BINARY_FILE} ${outBin}
+    echo Copied ${binaryFile} to ${outElf}
+    echo Converted ${binaryFile} to ${outBin}
 '''
 ]
 install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = ["--help"] }
