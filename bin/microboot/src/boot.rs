@@ -22,6 +22,8 @@ pub unsafe extern "C" fn _start() -> ! {
         endless_sleep()
     }
 
+    // These are a problem, because they are not interpreted as constants here.
+    // Subsequently, this code tries to read values from not-yet-existing data locations.
     extern "C" {
         // Boundaries of the .bss section, provided by the linker script
         static mut __bss_start: u64;

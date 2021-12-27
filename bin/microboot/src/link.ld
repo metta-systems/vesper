@@ -52,16 +52,16 @@ SECTIONS
     .text :
     {
         KEEP(*(.text._start))
-        *(text.memcpy)
-        *(.text._start_arguments) /* Constants (or statics in Rust speak) read by _start(). */
+        /* *(text.memcpy) -- only relevant for Rust relocator impl which is currently impossible */
     } :segment_start_code
 
-    /* Align to 8 byte, b/c relocating the binary is done in u64 chunks */
+    /* Align to 8 bytes, b/c relocating the binary is done in u64 chunks */
     . = ALIGN(8);
 
     __binary_nonzero_lma = .;
 
     /* Set the link address to 32 MiB */
+    /* This dictates the max size of the loadable kernel. */
     . += 0x2000000;
 
     /***********************************************************************************************
@@ -71,7 +71,7 @@ SECTIONS
     .text : AT (ADDR(.text) + SIZEOF(.text))
     {
         *(.text._start_rust)      /* The Rust entry point */
-        *(text.memcpy)
+        /* *(text.memcpy) -- only relevant for Rust relocator impl which is currently impossible */
         *(.text*)                 /* Everything else */
     } :segment_code
 
@@ -83,7 +83,7 @@ SECTIONS
     ***********************************************************************************************/
     .data : { *(.data*) } :segment_data
 
-    /* Fill up to 8 byte, b/c relocating the binary is done in u64 chunks */
+    /* Fill up to 8 bytes, b/c relocating the binary is done in u64 chunks */
     . = ALIGN(8);
     __binary_nonzero_vma_end_exclusive = .;
 

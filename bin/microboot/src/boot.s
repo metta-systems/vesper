@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Copyright (c) 2021 Andre Richter <andre.o.richter@gmail.com>
+// Modifications
+// Copyright (c) 2021- Berkus <berkus+github@metta.systems>
 
 //--------------------------------------------------------------------------------------------------
 // Definitions
@@ -74,9 +76,11 @@ _start:
     ADR_ABS	x0, __rpi_phys_binary_load_addr
     mov	sp, x0
 
+    // Pass maximum kernel size as an argument to Rust init function.
+    mov x0, x4
+
     // Jump to the relocated Rust code.
     ADR_ABS	x1, _start_rust
-    mov x0, x4
     br	x1
 
     // Infinitely wait for events (aka "park the core").
