@@ -44,9 +44,8 @@ script = [
 
 [tasks.gdb]
 dependencies = ["build", "kernel-binary", "lldb-config"]
-env = { "RUST_GDB" = "lldb" }
 script = [
-    "rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}"
+    "rust-lldb -s ${GDB_CONNECT_FILE} ${KERNEL_ELF}"
 ]
 
 [tasks.nm]

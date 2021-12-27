@@ -1,0 +1,2 @@
+command script import "~/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/etc/lldb_lookup.py"
+command source -s 0 '~/.rustup/toolchains/nightly-aarch64-apple-darwin/lib/rustlib/etc/lldb_commands'
