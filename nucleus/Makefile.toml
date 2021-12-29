@@ -56,8 +56,9 @@ dependencies = ["build", "kernel-binary"]
 script_runner = "@duckscript"
 script = [
 '''
-    kernelImage = basename ${KERNEL_BIN}
+    kernelImage = set "kernel8.img"
     cp ${KERNEL_BIN} ${VOLUME}/${kernelImage}
+    echo "Copied nucleus to ${VOLUME}/${kernelImage}"
 '''
 ]
 
