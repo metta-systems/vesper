@@ -31,6 +31,7 @@ jobs:
           "jtag",
           "noserial,jtag",
           # jtag and qemu together don't make much sense
+          # TODO add rpi4 and rpi3 features to the test matrix
         ]
     runs-on: ubuntu-latest
     timeout-minutes: 10
