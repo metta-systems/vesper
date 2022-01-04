@@ -76,9 +76,9 @@ checksum = "bd7a31eed1591dcbc95d92ad7161908e72f4677f8fabf2a32ca49b4237cbf211"
 
 [[package]]
 name = "snafu"
-version = "0.7.0-beta.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c25527526a3f0e26586508fc008e03929bc74c64fb00f34c6b22922bf39eaca"
+checksum = "2eba135d2c579aa65364522eb78590cdf703176ef71ad4c32b00f58f7afb2df5"
 dependencies = [
  "doc-comment",
  "snafu-derive",
@@ -86,9 +86,9 @@ dependencies = [
 
 [[package]]
 name = "snafu-derive"
-version = "0.7.0-beta.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6cdd4a5d0765ccc385665731d230efeb3b7e43df0770b625161da46bd5c9247"
+checksum = "7a7fe9b0669ef117c5cabc5549638528f36771f058ff977d7689deb517833a75"
 dependencies = [
  "heck",
  "proc-macro2",
