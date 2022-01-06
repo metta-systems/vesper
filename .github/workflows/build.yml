@@ -17,6 +17,8 @@ jobs:
       - run: cargo +nightly fmt -- --check
 
   clippy:
+    # TODO: use https://lib.rs/crates/cargo-hack to check combinations
+    # cargo-hack --group-features qemu,jtag --group-features rpi3,rpi4
     name: "Clippy"
     needs: check_formatting
     strategy:
