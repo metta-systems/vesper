@@ -55,9 +55,9 @@ dependencies = [
 
 [[package]]
 name = "qemu-exit"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e0fa04276d522a40ed717bf874183a3b2a8bbb3fb4c646b03a7eb874ce5d543"
+checksum = "9ff023245bfcc73fb890e1f8d5383825b3131cc920020a5c487d6f113dfc428a"
 
 [[package]]
 name = "quote"
