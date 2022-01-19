@@ -24,7 +24,7 @@ TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } 
 QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
 
 # An aarch64-enabled GDB
-GDB = { value = "/usr/local/opt/gdb-8.2.1-aarhc64/bin/aarch64-linux-elf-gdb", condition = { env_not_set = ["GDB"] } }
+GDB = { value = "/usr/local/opt/gdb/HEAD-a2c58332-aarch64/bin/aarch64-unknown-elf-gdb", condition = { env_not_set = ["GDB"] } }
 
 # OpenOCD with JLink support
 # (RTT patch from http://openocd.zylin.com/#/c/4055/11 has already been merged into main line)
@@ -134,6 +134,15 @@ script = [
 '''
     binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
     exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+'''
+]
+
+[tasks.gdb-config]
+script_runner = "@duckscript"
+script = [
+'''
+    writefile ${GDB_CONNECT_FILE} "target extended-remote :5555\n"
+    appendfile ${GDB_CONNECT_FILE} "break 0x80000\n"
 '''
 ]
 
