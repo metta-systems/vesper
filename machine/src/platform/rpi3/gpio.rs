@@ -7,36 +7,18 @@
 
 use {
     super::BcmHost,
-    crate::{arch::loop_delay, platform::MMIODerefWrapper},
+    crate::platform::MMIODerefWrapper,
     core::marker::PhantomData,
     tock_registers::{
         fields::FieldValue,
         interfaces::{ReadWriteable, Readable, Writeable},
-        register_bitfields, register_structs,
+        register_structs,
         registers::{ReadOnly, ReadWrite, WriteOnly},
     },
 };
 
 // Descriptions taken from
 // https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf
-register_bitfields! {
-    u32,
-
-    /// GPIO Pull-up/down Clock Register 0
-    PUDCLK0 [
-        /// Pin 15
-        PUDCLK15 OFFSET(15) NUMBITS(1) [
-            NoEffect = 0,
-            AssertClock = 1
-        ],
-
-        /// Pin 14
-        PUDCLK14 OFFSET(14) NUMBITS(1) [
-            NoEffect = 0,
-            AssertClock = 1
-        ]
-    ]
-}
 
 /// Generates `pub enums` with no variants for each `ident` passed in.
 macro states($($name:ident),*) {
@@ -76,11 +58,15 @@ register_structs! {
         (0x84 => __reserved_10),
         (0x88 => pub AFEN: [ReadWrite<u32>; 2]),
         (0x90 => __reserved_11),
+        #[cfg(feature = "rpi3")]
         (0x94 => pub PUD: ReadWrite<u32>), // pull up down
-        (0x98 => pub PUDCLK: [ReadWrite<u32, PUDCLK0::Register>; 2]), // 0x98-0x9C -- TODO: remove this register?
-        // (0xE4 => GPIO_PUP_PDN_CNTRL_REG0: ReadWrite<u32, GPIO_PUP_PDN_CNTRL_REG0::Register>), -- ??
+        #[cfg(feature = "rpi3")]
+        (0x98 => pub PUDCLK: [ReadWrite<u32>; 2]),
+        #[cfg(feature = "rpi3")]
         (0xa0 => __reserved_12),
-        (0xE8 => @END),
+        #[cfg(feature = "rpi4")]
+        (0xe4 => PullUpDownControl: [ReadWrite<u32>; 4]),
+        (0xf4 => @END),
     }
 }
 
@@ -116,21 +102,10 @@ impl GPIO {
         unsafe { Pin::new(pin, self.registers.base_addr) }
     }
 
-    pub fn enable_uart_pins(&self) {
-        self.registers.PUD.set(0);
-
-        loop_delay(2000);
-
-        // enable pins 14 and 15
-        self.registers.PUDCLK[0]
-            .write(PUDCLK0::PUDCLK14::AssertClock + PUDCLK0::PUDCLK15::AssertClock);
-
-        loop_delay(2000);
-
-        self.registers.PUDCLK[0].set(0);
-    }
-
+    #[cfg(feature = "rpi3")]
     pub fn power_off(&self) {
+        use crate::arch::loop_delay;
+
         // power off gpio pins (but not VCC pins)
         for bank in 0..5 {
             self.registers.FSEL[bank].set(0);
@@ -148,6 +123,11 @@ impl GPIO {
         // flush GPIO setup
         self.registers.PUDCLK[0].set(0);
         self.registers.PUDCLK[1].set(0);
+    }
+
+    #[cfg(feature = "rpi4")]
+    pub fn power_off(&self) {
+        todo!()
     }
 }
 
@@ -167,6 +147,21 @@ pub enum Function {
 impl ::core::convert::From<Function> for u32 {
     fn from(f: Function) -> Self {
         f as u32
+    }
+}
+
+/// Pull up/down resistor setup.
+#[repr(u8)]
+#[derive(PartialEq)]
+pub enum PullUpDown {
+    None = 0b00,
+    Up = 0b01,
+    Down = 0b10,
+}
+
+impl ::core::convert::From<PullUpDown> for u32 {
+    fn from(p: PullUpDown) -> Self {
+        p as u32
     }
 }
 
@@ -194,6 +189,40 @@ impl<State> Pin<State> {
             registers: self.registers,
             _state: PhantomData,
         }
+    }
+
+    #[cfg(feature = "rpi3")]
+    pub fn set_pull_up_down(&self, pull: PullUpDown) {
+        use crate::arch::loop_delay;
+
+        let bank = self.pin / 32;
+        let off = self.pin % 32;
+
+        self.registers.PUD.set(0);
+
+        loop_delay(2000);
+
+        self.registers.PUDCLK[bank].modify(FieldValue::<u32, ()>::new(
+            0b1,
+            off,
+            if pull == PullUpDown::Up { 1 } else { 0 },
+        ));
+
+        loop_delay(2000);
+
+        self.registers.PUD.set(0);
+        self.registers.PUDCLK[bank].set(0);
+    }
+
+    #[cfg(feature = "rpi4")]
+    pub fn set_pull_up_down(&self, pull: PullUpDown) {
+        let bank = self.pin / 16;
+        let off = self.pin % 16;
+        self.registers.PullUpDownControl[bank].modify(FieldValue::<u32, ()>::new(
+            0b11,
+            off * 2,
+            pull.into(),
+        ));
     }
 }
 
