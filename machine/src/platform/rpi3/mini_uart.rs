@@ -91,6 +91,28 @@ register_bitfields! {
         ]
     ],
 
+    /// Mini Uart Status
+    AUX_MU_STAT [
+        TX_DONE OFFSET(9) NUMBITS(1) [
+            No = 0,
+            Yes = 1
+        ],
+
+        /// This bit is set if the transmit FIFO can accept at least
+        /// one byte.
+        SPACE_AVAILABLE OFFSET(1) NUMBITS(1) [
+            No = 0,
+            Yes = 1
+        ],
+
+        /// This bit is set if the receive FIFO holds at least 1
+        /// symbol.
+        SYMBOL_AVAILABLE OFFSET(0) NUMBITS(1) [
+            No = 0,
+            Yes = 1
+        ]
+    ],
+
     /// Mini Uart Baud rate
     AUX_MU_BAUD [
         /// Mini UART baud rate counter
@@ -115,8 +137,7 @@ register_structs! {
         // 0x5c - AUX_MU_SCRATCH
         (0x58 => __reserved_3),
         (0x60 => AUX_MU_CNTL: WriteOnly<u32, AUX_MU_CNTL::Register>),
-        // 0x64 - AUX_MU_STAT
-        (0x64 => __reserved_4),
+        (0x64 => AUX_MU_STAT: ReadOnly<u32, AUX_MU_STAT::Register>),
         (0x68 => AUX_MU_BAUD: WriteOnly<u32, AUX_MU_BAUD::Register>),
         (0x6c => @END),
     }
@@ -167,16 +188,7 @@ impl MiniUart {
         if #[cfg(not(feature = "noserial"))] {
             /// Set baud rate and characteristics (115200 8N1) and map to GPIO
             pub fn prepare(self, gpio: &gpio::GPIO) -> PreparedMiniUart {
-                // initialize UART
-                self.registers.AUX_ENABLES.modify(AUX_ENABLES::MINI_UART_ENABLE::SET);
-                self.registers.AUX_MU_IER.set(0);
-                self.registers.AUX_MU_CNTL.set(0);
-                self.registers.AUX_MU_LCR.write(AUX_MU_LCR::DATA_SIZE::EightBit);
-                self.registers.AUX_MU_MCR.set(0);
-                self.registers.AUX_MU_IER.set(0);
-                self.registers.AUX_MU_IIR.write(AUX_MU_IIR::FIFO_CLEAR::All);
-                self.registers.AUX_MU_BAUD
-                    .write(AUX_MU_BAUD::RATE.val(Rate::Baud115200.into()));
+                // GPIO pins should be set up first before enabling the UART
 
                 // Pin 14
                 const MINI_UART_TXD: gpio::Function = gpio::Function::Alt5;
@@ -184,16 +196,24 @@ impl MiniUart {
                 const MINI_UART_RXD: gpio::Function = gpio::Function::Alt5;
 
                 // map UART1 to GPIO pins
-                gpio.get_pin(14).into_alt(MINI_UART_TXD);
-                gpio.get_pin(15).into_alt(MINI_UART_RXD);
+                gpio.get_pin(14).into_alt(MINI_UART_TXD).set_pull_up_down(gpio::PullUpDown::Up);
+                gpio.get_pin(15).into_alt(MINI_UART_RXD).set_pull_up_down(gpio::PullUpDown::Up);
 
-                gpio.enable_uart_pins();
-
-                self.registers.AUX_MU_CNTL
-                    .write(AUX_MU_CNTL::RX_EN::Enabled + AUX_MU_CNTL::TX_EN::Enabled);
+                // initialize UART
+                self.registers.AUX_ENABLES.modify(AUX_ENABLES::MINI_UART_ENABLE::SET);
+                self.registers.AUX_MU_IER.set(0);
+                self.registers.AUX_MU_CNTL.set(0);
+                self.registers.AUX_MU_LCR.write(AUX_MU_LCR::DATA_SIZE::EightBit);
+                self.registers.AUX_MU_MCR.set(0);
+                self.registers.AUX_MU_IER.set(0);
+                self.registers.AUX_MU_BAUD
+                    .write(AUX_MU_BAUD::RATE.val(Rate::Baud115200.into()));
 
                 // Clear FIFOs before using the device
                 self.registers.AUX_MU_IIR.write(AUX_MU_IIR::FIFO_CLEAR::All);
+
+                self.registers.AUX_MU_CNTL
+                    .write(AUX_MU_CNTL::RX_EN::Enabled + AUX_MU_CNTL::TX_EN::Enabled);
 
                 PreparedMiniUart(self)
             }
@@ -221,7 +241,7 @@ impl SerialOps for PreparedMiniUart {
             /// Receive a byte without console translation
             fn read_byte(&self) -> u8 {
                 // wait until something is in the buffer
-                crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::DATA_READY));
+                crate::arch::loop_until(|| self.0.registers.AUX_MU_STAT.is_set(AUX_MU_STAT::SYMBOL_AVAILABLE));
 
                 // read it and return
                 self.0.registers.AUX_MU_IO.get() as u8
@@ -229,7 +249,7 @@ impl SerialOps for PreparedMiniUart {
 
             fn write_byte(&self, b: u8) {
                 // wait until we can send
-                crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_EMPTY));
+                crate::arch::loop_until(|| self.0.registers.AUX_MU_STAT.is_set(AUX_MU_STAT::SPACE_AVAILABLE));
 
                 // write the character to the buffer
                 self.0.registers.AUX_MU_IO.set(b as u32);
@@ -238,15 +258,15 @@ impl SerialOps for PreparedMiniUart {
             /// Wait until the TX FIFO is empty, aka all characters have been put on the
             /// line.
             fn flush(&self) {
-                crate::arch::loop_until(|| self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::TX_IDLE));
+                crate::arch::loop_until(|| self.0.registers.AUX_MU_STAT.is_set(AUX_MU_STAT::TX_DONE));
             }
 
             /// Consume input until RX FIFO is empty, aka all pending characters have been
             /// consumed.
             fn clear_rx(&self) {
                 crate::arch::loop_while(|| {
-                    let pending = self.0.registers.AUX_MU_LSR.is_set(AUX_MU_LSR::DATA_READY);
-                    if pending { self.read_char(); }
+                    let pending = self.0.registers.AUX_MU_STAT.is_set(AUX_MU_STAT::SYMBOL_AVAILABLE);
+                    if pending { self.read_byte(); }
                     pending
                 });
             }
