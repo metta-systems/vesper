@@ -3,7 +3,7 @@ _default:
 
 # Build and run kernel in QEMU with serial port emulation
 zellij:
-    cargo make zellij-config
+    cargo make zellij-nucleus
     zellij --layout-path emulation/layout.zellij
 
 # Build and run kernel in QEMU

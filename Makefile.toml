@@ -38,7 +38,9 @@ VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
 #
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
+RUST_LIBS = "-Z build-std=compiler_builtins,core,alloc -Z build-std-features=compiler-builtins-mem"
 TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
+PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES} ${RUST_LIBS}"
 
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu"
@@ -65,8 +67,8 @@ QEMU_GDB_OPTS = "-gdb tcp::5555 -S"
 
 GDB_CONNECT_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect"
 
-KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8"
-KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/kernel8.img"
+KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus"
+KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
 
 [tasks.default]
 alias = "all"
@@ -77,6 +79,83 @@ dependencies = ["kernel-binary"]
 [tasks.modules]
 command = "cargo"
 args = ["modules", "tree"]
+
+[tasks.build]
+env = { "TARGET_FEATURES" = "" }
+command = "cargo"
+args = ["build", "@@split(PLATFORM_TARGET, )", "--release"]
+
+[tasks.build-qemu]
+env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+command = "cargo"
+args = ["build", "@@split(PLATFORM_TARGET, )", "--release"]
+
+[tasks.expand]
+env = { "TARGET_FEATURES" = "" }
+command = "cargo"
+args = ["expand", "@@split(PLATFORM_TARGET, )", "--release"]
+
+[tasks.test]
+env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+command = "cargo"
+args = ["test", "@@split(PLATFORM_TARGET, )"]
+
+[tasks.docs]
+env = { "TARGET_FEATURES" = "" }
+command = "cargo"
+args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET, )"]
+
+[tasks.clippy]
+env = { "TARGET_FEATURES" = "", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
+command = "cargo"
+args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "-D", "warnings"]
+
+# These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
+[tasks.custom-binary]
+env = { "BINARY_FILE" = "${BINARY_FILE}" }
+script_runner = "@duckscript"
+script = [
+'''
+    binaryFile = basename ${BINARY_FILE}
+    cp ${BINARY_FILE} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.elf
+    exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${BINARY_FILE} ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+'''
+]
+install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = ["--help"] }
+
+[tasks.test-binary]
+env = { "BINARY_FILE" = "${CARGO_MAKE_TASK_ARGS}" }
+run_task = "custom-binary"
+
+[tasks.test-runner]
+dependencies = ["test-binary"]
+script_runner = "@duckscript"
+script = [
+'''
+    binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
+    exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+'''
+]
+
+[tasks.zellij-config]
+dependencies = ["build-qemu", "kernel-binary"]
+script_runner = "@duckscript"
+env = { "ZELLIJ_CONFIG_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/emulation/zellij-config.sh" }
+script = [
+'''
+    writefile ${ZELLIJ_CONFIG_FILE} "QEMU=${QEMU}\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_OPTS=\"${QEMU_OPTS}\"\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_RUNNER_OPTS=${QEMU_RUNNER_OPTS}\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY=${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "KERNEL_BIN=${KERNEL_BIN}\n"
+'''
+]
+install_crate = { crate_name = "zellij", binary = "zellij", test_arg = ["--help"] }
+
+[tasks.openocd]
+script = [
+    "${OPENOCD} -f interface/jlink.cfg -f ../ocd/${TARGET_BOARD}_target.cfg"
+]
 
 [tasks.sdeject]
 dependencies = ["sdcard"]

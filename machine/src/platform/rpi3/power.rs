@@ -64,6 +64,7 @@ impl ops::Deref for Power {
 }
 
 impl Power {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Power {
         Power
     }

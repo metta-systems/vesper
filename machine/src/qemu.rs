@@ -12,7 +12,6 @@ pub mod semihosting {
         qemu_exit_handle.exit_success()
     }
 
-    #[cfg(test)]
     pub fn exit_failure() -> ! {
         use qemu_exit::QEMUExit;
 
@@ -22,7 +21,6 @@ pub mod semihosting {
         qemu_exit_handle.exit_failure()
     }
 
-    #[cfg(test)]
     pub fn sys_write0_call(text: &str) {
         // SAFETY: text must be \0-terminated!
         let cmd = 0x04;

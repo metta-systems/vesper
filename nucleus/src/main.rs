@@ -9,71 +9,36 @@
 
 #![no_std]
 #![no_main]
-#![feature(decl_macro)]
-#![feature(allocator_api)]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
-#![feature(nonnull_slice_from_raw_parts)]
 #![feature(custom_test_frameworks)]
-#![test_runner(crate::tests::test_runner)]
+#![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
 #![deny(warnings)]
-#![allow(clippy::nonstandard_macro_braces)] // https://github.com/shepmaster/snafu/issues/296
-#![allow(clippy::upper_case_acronyms)]
-#![allow(clippy::enum_variant_names)]
 
-#[cfg(not(target_arch = "aarch64"))]
-use architecture_not_supported_sorry;
-
-/// Architecture-specific code.
-#[macro_use]
-pub mod arch;
-pub use arch::*;
-mod devices;
-mod macros;
-mod mm;
-mod panic;
-mod platform;
-#[cfg(feature = "qemu")]
-mod qemu;
-mod sync;
-#[cfg(test)]
-mod tests;
-mod write_to;
-
+#[cfg(not(test))]
+use core::panic::PanicInfo;
 use {
-    crate::platform::rpi3::{
-        display::{Color, DrawError},
-        mailbox::{channel, Mailbox, MailboxOps},
-        vc::VC,
-    },
     cfg_if::cfg_if,
+    machine::{
+        arch, entry, memory,
+        platform::rpi3::{
+            display::{Color, DrawError},
+            mailbox::{channel, Mailbox, MailboxOps},
+            vc::VC,
+        },
+        println, CONSOLE,
+    },
 };
 
 entry!(kmain);
 
-/// The global console. Output of the kernel print! and println! macros goes here.
-static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devices::Console::new());
-
-/// The global allocator for DMA-able memory. That is, memory which is tagged
-/// non-cacheable in the page tables.
-static DMA_ALLOCATOR: sync::NullLock<mm::BumpAllocator> =
-    sync::NullLock::new(mm::BumpAllocator::new(
-        // @todo Init this after we loaded boot memory map
-        memory::map::virt::DMA_HEAP_START as usize,
-        memory::map::virt::DMA_HEAP_END as usize,
-        "Global DMA Allocator",
-        // Try the following arguments instead to see all mailbox operations
-        // fail. It will cause the allocator to use memory that are marked
-        // cacheable and therefore not DMA-safe. The answer from the VideoCore
-        // won't be received by the CPU because it reads an old cached value
-        // that resembles an error case instead.
-
-        // 0x00600000 as usize,
-        // 0x007FFFFF as usize,
-        // "Global Non-DMA Allocator",
-    ));
+#[cfg(not(test))]
+#[panic_handler]
+fn panicked(info: &PanicInfo) -> ! {
+    machine::panic::handler(info)
+}
 
 fn print_mmu_state_and_features() {
     memory::mmu::print_features();
@@ -103,7 +68,7 @@ fn init_exception_traps() {
 
 #[cfg(not(feature = "noserial"))]
 fn init_uart_serial() {
-    use crate::platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, pl011_uart::PL011Uart};
+    use machine::platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, pl011_uart::PL011Uart};
 
     let gpio = GPIO::default();
     let uart = MiniUart::default();
@@ -131,7 +96,7 @@ fn init_uart_serial() {
     // physical wires (e.g. the Framebuffer), you don't need to do this,
     // because flush() is anyways called implicitly by replace_with(). This
     // is just a special case.
-    use crate::devices::console::ConsoleOps;
+    use machine::devices::console::ConsoleOps;
     CONSOLE.lock(|c| c.flush());
 
     match uart.prepare(mbox, &gpio) {
@@ -151,7 +116,7 @@ fn init_uart_serial() {
 #[inline]
 pub fn kmain() -> ! {
     #[cfg(feature = "jtag")]
-    jtag::wait_debugger();
+    machine::arch::jtag::wait_debugger();
 
     init_mmu();
     init_exception_traps();
@@ -181,7 +146,7 @@ fn command_prompt() {
             b"uart" => init_uart_serial(),
             b"disp" => check_display_init(),
             b"trap" => check_data_abort_trap(),
-            b"map" => arch::memory::print_layout(),
+            b"map" => machine::arch::memory::print_layout(),
             b"led on" => set_led(true),
             b"led off" => set_led(false),
             b"help" => print_help(),
@@ -222,9 +187,9 @@ fn reboot() -> ! {
     cfg_if! {
         if #[cfg(feature = "qemu")] {
             println!("Bye, shutting down QEMU");
-            qemu::semihosting::exit_success()
+            machine::qemu::semihosting::exit_success()
         } else {
-            use crate::platform::rpi3::power::Power;
+            use machine::platform::rpi3::power::Power;
 
             println!("Bye, going to reset now");
             Power::new().reset()
@@ -251,7 +216,7 @@ fn display_graphics() -> Result<(), DrawError> {
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255))?;
 
         let mut buf = [0u8; 64];
-        let s = write_to::show(&mut buf, format_args!("Display width {}", display.width));
+        let s = machine::write_to::show(&mut buf, format_args!("Display width {}", display.width));
 
         if s.is_err() {
             display.draw_text(50, 150, "Error displaying", Color::red())?
@@ -280,7 +245,12 @@ fn check_data_abort_trap() {
 
 #[cfg(test)]
 mod main_tests {
-    use super::*;
+    use {super::*, core::panic::PanicInfo};
+
+    #[panic_handler]
+    fn panicked(info: &PanicInfo) -> ! {
+        machine::panic::handler_for_tests(info)
+    }
 
     #[test_case]
     fn test_data_abort_trap() {

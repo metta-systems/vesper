@@ -13,18 +13,12 @@
 
 use {
     crate::{
-        arch::aarch64::memory::{
-            get_virt_addr_properties, AttributeFields, /*FrameAllocator, PhysAddr, VirtAddr,*/
-        },
+        arch::aarch64::memory::{get_virt_addr_properties, AttributeFields},
         println,
     },
-    // bitflags::bitflags,
     core::{
-        // convert::TryInto,
-        // fmt,
         marker::PhantomData,
         ops::{Index, IndexMut},
-        // ptr::Unique,
     },
     cortex_a::{
         asm::barrier,
@@ -35,12 +29,10 @@ use {
         interfaces::{ReadWriteable, Readable, Writeable},
         register_bitfields,
     },
-    // ux::*,
 };
 
 mod mair {
-    use cortex_a::registers::MAIR_EL1;
-    use tock_registers::interfaces::Writeable;
+    use {cortex_a::registers::MAIR_EL1, tock_registers::interfaces::Writeable};
 
     /// Setup function for the MAIR_EL1 register.
     pub fn set_up() {
