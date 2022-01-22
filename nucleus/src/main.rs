@@ -85,7 +85,6 @@ fn init_uart_serial() {
     // Then immediately switch to PL011 (just as an example)
 
     let uart = PL011Uart::default();
-    let mbox = Mailbox::default();
 
     // uart.init() will reconfigure the GPIO, which causes a race against
     // the MiniUart that is still putting out characters on the physical
@@ -100,7 +99,7 @@ fn init_uart_serial() {
     // is just a special case.
     CONSOLE.lock(|c| c.flush());
 
-    match uart.prepare(mbox, &gpio) {
+    match uart.prepare(&gpio) {
         Ok(uart) => {
             CONSOLE.lock(|c| {
                 // Move uart into the global CONSOLE.

@@ -11,17 +11,17 @@
 use {
     super::{
         gpio,
-        mailbox::{self, MailboxOps},
+        mailbox::{self, Mailbox, MailboxOps},
         BcmHost,
     },
     crate::{
-        arch::loop_until,
+        arch::loop_while,
         devices::{ConsoleOps, SerialOps},
         platform::MMIODerefWrapper,
     },
     snafu::Snafu,
     tock_registers::{
-        interfaces::{Readable, Writeable},
+        interfaces::{ReadWriteable, Readable, Writeable},
         register_bitfields, register_structs,
         registers::{ReadOnly, ReadWrite, WriteOnly},
     },
@@ -36,19 +36,41 @@ register_bitfields! {
 
     /// Flag Register
     FR [
+        /// Transmit FIFO empty. The meaning of this bit depends on the
+        /// state of the FEN bit in the Line Control Register, If the
+        /// FIFO is disabled, this bit is set when the transmit holding
+        /// register is empty. If the FIFO is enabled, the TXFE bit is
+        /// set when the transmit FIFO is empty. This bit does not indicate
+        /// if there is data in the transmit shift register.
+        TXFE OFFSET(7) NUMBITS(1) [],
+
+        /// Receive FIFO full. The meaning of this bit depends on the
+        /// state of the FEN bit in the LCRH Register. If the FIFO is
+        /// disabled, this bit is set when the receive holding register
+        /// is full. If the FIFO is enabled, the RXFF bit is set when
+        /// the receive FIFO is full.
+        RXFF OFFSET(6) NUMBITS(1) [],
+
         /// Transmit FIFO full. The meaning of this bit depends on the
-        /// state of the FEN bit in the UARTLCR_ LCRH Register. If the
+        /// state of the FEN bit in the LCRH Register. If the
         /// FIFO is disabled, this bit is set when the transmit
         /// holding register is full. If the FIFO is enabled, the TXFF
         /// bit is set when the transmit FIFO is full.
         TXFF OFFSET(5) NUMBITS(1) [],
 
         /// Receive FIFO empty. The meaning of this bit depends on the
-        /// state of the FEN bit in the UARTLCR_H Register. If the
+        /// state of the FEN bit in the LCRH Register. If the
         /// FIFO is disabled, this bit is set when the receive holding
         /// register is empty. If the FIFO is enabled, the RXFE bit is
         /// set when the receive FIFO is empty.
-        RXFE OFFSET(4) NUMBITS(1) []
+        RXFE OFFSET(4) NUMBITS(1) [],
+
+        /// UART busy. If this bit is set to 1, the UART is busy
+        /// transmitting data. This bit remains set until the complete
+        /// byte, including all the stop bits, has been sent from the
+        /// shift register. This bit is set as soon as the transmit FIFO
+        /// becomes non-empty, regardless of whether the UART is enabled or not.
+        BUSY OFFSET(3) NUMBITS(1) []
     ],
 
     /// Integer Baud rate divisor
@@ -65,9 +87,25 @@ register_bitfields! {
 
     /// Line Control register
     LCRH [
+        Parity OFFSET(1) NUMBITS(1) [
+            Disabled = 0,
+            Enabled = 1
+        ],
+
+        /// Use 2 stop bits
+        Stop2 OFFSET(3) NUMBITS(1) [
+            Disabled = 0,
+            Enabled = 1
+        ],
+
+        Fifo OFFSET(4) NUMBITS(1) [
+            Disabled = 0,
+            Enabled = 1
+        ],
+
         /// Word length. These bits indicate the number of data bits
         /// transmitted or received in a frame.
-        WLEN OFFSET(5) NUMBITS(2) [
+        WordLength OFFSET(5) NUMBITS(2) [
             FiveBit = 0b00,
             SixBit = 0b01,
             SevenBit = 0b10,
@@ -111,33 +149,51 @@ register_bitfields! {
     ICR [
         /// Meta field for all pending interrupts
         ALL OFFSET(0) NUMBITS(11) []
+    ],
+
+    /// Interupt Mask Set/Clear Register
+    IMSC [
+        /// Meta field for all interrupts
+        ALL OFFSET(0) NUMBITS(11) []
+    ],
+
+    /// DMA Control Register
+    DMACR [
+        // RX DMA enabled
+        RXDMAE OFFSET(0) NUMBITS(1) [
+            Disabled = 0,
+            Enabled = 1
+        ],
+
+        // TX DMA enabled
+        TXDMAE OFFSET(0) NUMBITS(1) [
+            Disabled = 0,
+            Enabled = 1
+        ],
     ]
 }
 
+// https://developer.arm.com/documentation/ddi0183/g/programmers-model/summary-of-registers?lang=en
 register_structs! {
     #[allow(non_snake_case)]
     RegisterBlock {
-        (0x00 => DR: ReadWrite<u32>),
-        (0x04 => __reserved_1), // (UART0_RSRECR=0x04)
-        (0x18 => FR: ReadOnly<u32, FR::Register>),
+        (0x00 => Data: ReadWrite<u32>), // DR
+        (0x04 => Status: ReadWrite<u32>), // RSR/ECR
+        (0x08 => __reserved_1),
+        (0x18 => Flag: ReadOnly<u32, FR::Register>),
         (0x1c => __reserved_2),
-        (0x20 => ILPR: u32),
-        (0x24 => IBRD: WriteOnly<u32, IBRD::Register>),
-        (0x28 => FBRD: WriteOnly<u32, FBRD::Register>),
-        (0x2c => LCRH: WriteOnly<u32, LCRH::Register>),
-        (0x30 => CR: WriteOnly<u32, CR::Register>),
-        (0x34 => IFLS: u32),
-        (0x38 => IMSC: u32),
-        (0x3c => RIS: u32),
-        (0x40 => MIS: u32),
-        (0x44 => ICR: WriteOnly<u32, ICR::Register>),
-        (0x48 => DMACR: u32),
+        (0x24 => IntegerBaudRate: ReadWrite<u32, IBRD::Register>),
+        (0x28 => FractionalBaudRate: ReadWrite<u32, FBRD::Register>),
+        (0x2c => LineControl: ReadWrite<u32, LCRH::Register>),
+        (0x30 => Control: ReadWrite<u32, CR::Register>),
+        (0x34 => InterruptFifoLevelSelect: ReadWrite<u32>),
+        (0x38 => InterruptMaskSetClear: ReadWrite<u32, IMSC::Register>),
+        (0x3c => RawInterruptStatus: ReadOnly<u32>),
+        (0x40 => MaskedInterruptStatus: ReadOnly<u32>),
+        (0x44 => InterruptClear: WriteOnly<u32, ICR::Register>),
+        (0x48 => DmaControl: ReadWrite<u32, DMACR::Register>),
         (0x4c => __reserved_3),
-        (0x80 => ITCR: u32),
-        (0x84 => ITIP: u32),
-        (0x88 => ITOP: u32),
-        (0x8c => TDR: u32),
-        (0x90 => @END),
+        (0x1000 => @END),
     }
 }
 
@@ -145,6 +201,16 @@ register_structs! {
 pub enum PL011UartError {
     #[snafu(display("PL011 UART setup failed in mailbox operation"))]
     MailboxError,
+    #[snafu(display(
+        "PL011 UART setup failed due to integer baud rate divisor out of range ({})",
+        ibrd
+    ))]
+    InvalidIntegerDivisor { ibrd: u32 },
+    #[snafu(display(
+        "PL011 UART setup failed due to fractional baud rate divisor out of range ({})",
+        fbrd
+    ))]
+    InvalidFractionalDivisor { fbrd: u32 },
 }
 
 pub type Result<T> = ::core::result::Result<T, PL011UartError>;
@@ -157,22 +223,46 @@ pub struct PL011Uart {
 
 pub struct PreparedPL011Uart(PL011Uart);
 
-/// Divisor values for common baud rates
-pub enum Rate {
-    Baud115200 = 2,
+pub struct RateDivisors {
+    integer_baud_rate_divisor: u32,
+    fractional_baud_rate_divisor: u32,
 }
 
-impl From<Rate> for u32 {
-    fn from(r: Rate) -> Self {
-        r as u32
+impl RateDivisors {
+    // Set integer & fractional part of baud rate.
+    // Integer = clock/(16 * Baud)
+    // e.g. 3000000 / (16 * 115200) = 1.627 = ~1.
+    // Fraction = (Fractional part * 64) + 0.5
+    // e.g. (.627 * 64) + 0.5 = 40.6 = ~40.
+    //
+    // Use integer-only calculation based on [this page](https://krinkinmu.github.io/2020/11/29/PL011.html)
+    // Calculate 64 * clock / (16 * rate) = 4 * clock / rate, then extract 6 lowest bits for fractional part
+    // and the next 16 bits for integer part.
+    pub fn from_clock_and_rate(clock: u64, baud_rate: u32) -> Result<RateDivisors> {
+        let value = 4 * clock / baud_rate as u64;
+        let i = ((value >> 6) & 0xffff) as u32;
+        let f = (value & 0x3f) as u32;
+        // TODO: check for integer overflow, i.e. any bits set above the 0x3fffff mask.
+        // FIXME: can't happen due to calculation above
+        if i > 65535 {
+            return Err(PL011UartError::InvalidIntegerDivisor { ibrd: i });
+        }
+        // FIXME: can't happen due to calculation above
+        if f > 63 {
+            return Err(PL011UartError::InvalidFractionalDivisor { fbrd: f });
+        }
+        Ok(RateDivisors {
+            integer_baud_rate_divisor: i,
+            fractional_baud_rate_divisor: f,
+        })
     }
 }
 
-pub const UART_START: usize = 0x20_1000;
+pub const UART0_START: usize = 0x20_1000;
 
 impl Default for PL011Uart {
     fn default() -> Self {
-        const UART0_BASE: usize = BcmHost::get_peripheral_address() + UART_START;
+        const UART0_BASE: usize = BcmHost::get_peripheral_address() + UART0_START;
         unsafe { PL011Uart::new(UART0_BASE) }
     }
 }
@@ -188,20 +278,26 @@ impl PL011Uart {
     }
 
     /// Set baud rate and characteristics (115200 8N1) and map to GPIO
-    pub fn prepare(
-        self,
-        mut mbox: mailbox::Mailbox,
-        gpio: &gpio::GPIO,
-    ) -> Result<PreparedPL011Uart> {
-        // turn off UART0
-        self.registers.CR.set(0);
+    pub fn prepare(self, gpio: &gpio::GPIO) -> Result<PreparedPL011Uart> {
+        // Turn off UART
+        self.registers.Control.set(0);
+
+        // Wait for any ongoing transmissions to complete
+        self.flush_internal();
+
+        // Flush TX FIFO
+        self.registers.LineControl.modify(LCRH::Fifo::Disabled);
 
         // set up clock for consistent divisor values
-        let index = mbox.request();
-        let index = mbox.set_clock_rate(index, mailbox::clock::UART, 4_000_000 /* 4Mhz */);
-        let mbox = mbox.end(index);
+        const CLOCK: u32 = 4_000_000; // 4Mhz
+        const BAUD_RATE: u32 = 115_200;
 
-        if mbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
+        let mut mailbox = Mailbox::<9>::default();
+        let index = mailbox.request();
+        let index = mailbox.set_clock_rate(index, mailbox::clock::UART, CLOCK);
+        let mailbox = mailbox.end(index);
+
+        if mailbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
             return Err(PL011UartError::MailboxError); // Abort if UART clocks couldn't be set
         };
 
@@ -210,57 +306,99 @@ impl PL011Uart {
         // Pin 15
         const UART_RXD: gpio::Function = gpio::Function::Alt0;
 
-        // map UART0 to GPIO pins
-        gpio.get_pin(14).into_alt(UART_TXD);
-        gpio.get_pin(15).into_alt(UART_RXD);
+        // Map UART0 to GPIO pins and enable pull-ups
+        gpio.get_pin(14)
+            .into_alt(UART_TXD)
+            .set_pull_up_down(gpio::PullUpDown::Up);
+        gpio.get_pin(15)
+            .into_alt(UART_RXD)
+            .set_pull_up_down(gpio::PullUpDown::Up);
 
-        gpio.enable_uart_pins();
+        // Clear pending interrupts
+        self.registers.InterruptClear.write(ICR::ALL::SET);
 
-        self.registers.ICR.write(ICR::ALL::CLEAR);
-        // @todo Configure divisors more sanely
+        // From the PL011 Technical Reference Manual:
+        //
+        // The LCR_H, IBRD, and FBRD registers form the single 30-bit wide LCR Register that is
+        // updated on a single write strobe generated by a LCR_H write. So, to internally update the
+        // contents of IBRD or FBRD, a LCR_H write must always be performed at the end.
+        //
+        // Set the baud rate divisors, 8N1 and FIFO enabled.
+        let divisors = RateDivisors::from_clock_and_rate(CLOCK.into(), BAUD_RATE)?;
         self.registers
-            .IBRD
-            .write(IBRD::IBRD.val(Rate::Baud115200.into()));
-        self.registers.FBRD.write(FBRD::FBRD.val(0xB)); // Results in 115200 baud
-        self.registers.LCRH.write(LCRH::WLEN::EightBit); // 8N1
-
+            .IntegerBaudRate
+            .write(IBRD::IBRD.val(divisors.integer_baud_rate_divisor & 0xffff));
         self.registers
-            .CR
+            .FractionalBaudRate
+            .write(FBRD::FBRD.val(divisors.fractional_baud_rate_divisor & 0b11_1111));
+        self.registers.LineControl.write(
+            LCRH::WordLength::EightBit
+                + LCRH::Fifo::Enabled
+                + LCRH::Parity::Disabled
+                + LCRH::Stop2::Disabled,
+        );
+
+        // Mask all interrupts by setting corresponding bits to 1
+        self.registers.InterruptMaskSetClear.write(IMSC::ALL::SET);
+
+        // Disable DMA
+        self.registers
+            .DmaControl
+            .write(DMACR::RXDMAE::Disabled + DMACR::TXDMAE::Disabled);
+
+        // Turn on UART
+        self.registers
+            .Control
             .write(CR::UARTEN::Enabled + CR::TXE::Enabled + CR::RXE::Enabled);
 
         Ok(PreparedPL011Uart(self))
+    }
+
+    fn flush_internal(&self) {
+        loop_while(|| self.registers.Flag.is_set(FR::BUSY));
     }
 }
 
 impl Drop for PreparedPL011Uart {
     fn drop(&mut self) {
-        self.0
-            .registers
-            .CR
-            .write(CR::UARTEN::Disabled + CR::TXE::Disabled + CR::RXE::Disabled);
+        self.0.registers.Control.set(0);
     }
 }
 
 impl SerialOps for PreparedPL011Uart {
-    fn write_byte(&self, b: u8) {
-        // wait until we can send
-        loop_until(|| !self.0.registers.FR.is_set(FR::TXFF));
-
-        // write the character to the buffer
-        self.0.registers.DR.set(b as u32);
-    }
-
     fn read_byte(&self) -> u8 {
         // wait until something is in the buffer
-        loop_until(|| !self.0.registers.FR.is_set(FR::RXFE));
+        loop_while(|| self.0.registers.Flag.is_set(FR::RXFE));
 
         // read it and return
-        self.0.registers.DR.get() as u8
+        self.0.registers.Data.get() as u8
     }
 
-    fn flush(&self) {}
+    fn write_byte(&self, b: u8) {
+        // wait until we can send
+        loop_while(|| self.0.registers.Flag.is_set(FR::TXFF));
 
-    fn clear_rx(&self) {}
+        // write the character to the buffer
+        self.0.registers.Data.set(b as u32);
+    }
+
+    /// Wait until the TX FIFO is empty, aka all characters have been put on the
+    /// line.
+    fn flush(&self) {
+        self.0.flush_internal();
+    }
+
+    /// Consume input until RX FIFO is empty, aka all pending characters have been
+    /// consumed.
+    fn clear_rx(&self) {
+        loop_while(|| {
+            let pending = !self.0.registers.Flag.is_set(FR::RXFE);
+            if pending {
+                self.read_byte();
+            }
+            pending
+        });
+    }
 }
 
 impl ConsoleOps for PreparedPL011Uart {
@@ -291,5 +429,20 @@ impl ConsoleOps for PreparedPL011Uart {
         }
 
         ret
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_case]
+    fn test_divisors() {
+        const CLOCK: u64 = 3_000_000;
+        const BAUD_RATE: u32 = 115_200;
+
+        let divisors = RateDivisors::from_clock_and_rate(CLOCK, BAUD_RATE);
+        assert_eq!(divisors.integer_baud_rate_divisor, 1);
+        assert_eq!(divisors.fractional_baud_rate_divisor, 40);
     }
 }
