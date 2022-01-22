@@ -11,16 +11,16 @@ run_task = "custom-binary"
 dependencies = ["build-qemu", "kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
-    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${KERNEL_BIN}"
+    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${TARGET_DTB} -kernel ${KERNEL_BIN}"
 ]
 
 [tasks.qemu]
 extend = "qemu-runner"
-env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}" }
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 
 [tasks.qemu-gdb]
 extend = "qemu-runner"
-env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_GDB_OPTS}" }
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_GDB_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 
 [tasks.zellij-nucleus]
 env = { "KERNEL_BIN" = "${KERNEL_BIN}" }

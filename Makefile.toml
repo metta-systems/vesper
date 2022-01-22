@@ -19,6 +19,8 @@ TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] }
 
 # Name of the target board "rpi3" or "rpi4"
 TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } }
+# Name of the DTB file for target board configuration, use bcm2710-rpi-3-b-plus.dtb for RasPi3B+
+TARGET_DTB = { value = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2711-rpi-4-b.dtb", condition = { env_not_set = ["TARGET_DTB"] } }
 
 # AArch64 QEMU binary
 QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
@@ -163,6 +165,7 @@ script = [
     appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_OPTS=\"${QEMU_OPTS}\"\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_RUNNER_OPTS=${QEMU_RUNNER_OPTS}\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY=${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "TARGET_DTB=${TARGET_DTB}\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "KERNEL_BIN=${KERNEL_BIN}\n"
 '''
 ]
