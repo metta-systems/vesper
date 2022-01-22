@@ -38,6 +38,7 @@ pub static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devic
 
 /// The global allocator for DMA-able memory. That is, memory which is tagged
 /// non-cacheable in the page tables.
+#[allow(dead_code)]
 static DMA_ALLOCATOR: sync::NullLock<mm::BumpAllocator> =
     sync::NullLock::new(mm::BumpAllocator::new(
         // @todo Init this after we loaded boot memory map

@@ -55,6 +55,7 @@ unsafe impl Allocator for BumpAllocator {
 
 impl BumpAllocator {
     /// Create a named bump allocator between start and end addresses.
+    #[allow(dead_code)]
     pub const fn new(pool_start: usize, pool_end: usize, name: &'static str) -> Self {
         Self {
             next: Cell::new(pool_start),

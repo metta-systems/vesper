@@ -16,12 +16,16 @@ edition = "2021"
 maintenance = { status = "experimental" }
 
 [features]
+default = []
 noserial = []
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = []
+qemu = ["rpi3"]
+# Mutually exclusive features to choose a target board
+rpi3 = []
+rpi4 = []
 
 [dependencies]
 r0 = "1.0"

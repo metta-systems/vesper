@@ -47,7 +47,7 @@ TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
 PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES} ${RUST_LIBS}"
 
 DEVICE_FEATURES = "noserial"
-QEMU_FEATURES = "qemu"
+QEMU_FEATURES = "qemu,rpi3"
 
 OBJCOPY = "rust-objcopy" # Part of `cargo objcopy` in cargo-binutils
 OBJCOPY_PARAMS = "--strip-all -O binary"
@@ -86,7 +86,7 @@ command = "cargo"
 args = ["modules", "tree"]
 
 [tasks.build]
-env = { "TARGET_FEATURES" = "" }
+env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
 command = "cargo"
 args = ["build", "@@split(PLATFORM_TARGET, )", "--release"]
 
@@ -111,7 +111,7 @@ command = "cargo"
 args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET, )"]
 
 [tasks.clippy]
-env = { "TARGET_FEATURES" = "", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
+env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
 command = "cargo"
 args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "-D", "warnings"]
 

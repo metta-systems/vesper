@@ -44,6 +44,7 @@ macro_rules! entry {
 unsafe fn reset() -> ! {
     extern "C" {
         // Boundaries of the .bss section, provided by the linker script
+        // The type, `u64`, indicates that the memory is 8-byte aligned
         static mut __BSS_START: u64;
         static mut __BSS_END: u64;
     }

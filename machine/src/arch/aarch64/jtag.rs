@@ -1,16 +1,17 @@
 //! JTAG helper functions.
 
-use cortex_a::asm;
+use {
+    core::ptr::{read_volatile, write_volatile},
+    cortex_a::asm,
+};
 
 #[no_mangle]
 static mut WAIT_FLAG: bool = true;
 
 /// Wait for debugger to attach.
 /// Then in gdb issue `> set var *(&WAIT_FLAG) = 0`
-/// from inside this function's frame to contiue running.
+/// from inside this function's frame to continue running.
 pub fn wait_debugger() {
-    use core::ptr::{read_volatile, write_volatile};
-
     while unsafe { read_volatile(&WAIT_FLAG) } {
         asm::nop();
     }
