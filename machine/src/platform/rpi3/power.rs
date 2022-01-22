@@ -84,7 +84,7 @@ impl Power {
     pub fn off(&self, gpio: &gpio::GPIO) -> Result<()> {
         // power off devices one by one
         for dev_id in 0..16 {
-            let mut mbox = Mailbox::default();
+            let mut mbox = Mailbox::<8>::default();
             let index = mbox.request();
             let index =
                 mbox.set_device_power(index, dev_id, POWER_STATE_OFF | POWER_STATE_DO_NOT_WAIT);

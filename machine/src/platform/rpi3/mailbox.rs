@@ -13,16 +13,16 @@
 
 use {
     super::BcmHost,
-    crate::println,
+    crate::{platform::MMIODerefWrapper, println},
     core::{
-        ops::Deref,
-        ptr::NonNull,
+        result::Result as CoreResult,
         sync::atomic::{compiler_fence, Ordering},
     },
     cortex_a::asm::barrier,
+    snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},
-        register_bitfields,
+        register_bitfields, register_structs,
         registers::{ReadOnly, WriteOnly},
     },
 };
@@ -31,15 +31,16 @@ use {
 /// The address for the buffer needs to be 16-byte aligned
 /// so that the VideoCore can handle it properly.
 /// The reason is that lowest 4 bits of the address will contain the channel number.
-pub struct Mailbox {
-    // pub buffer: &'a mut [u32],
-    base_addr: usize,
-    buffer: NonNull<[u32]>,
+pub struct Mailbox<const N_SLOTS: usize, Storage = LocalMailboxStorage<N_SLOTS>> {
+    registers: Registers,
+    pub buffer: Storage,
 }
 
 /// Mailbox that is ready to be called.
 /// This prevents invalid use of the mailbox until it is fully prepared.
-pub struct PreparedMailbox(Mailbox);
+pub struct PreparedMailbox<const N_SLOTS: usize, Storage = LocalMailboxStorage<N_SLOTS>>(
+    Mailbox<N_SLOTS, Storage>,
+);
 
 const MAILBOX_ALIGNMENT: usize = 16;
 const MAILBOX_ITEMS_COUNT: usize = 36;
@@ -57,6 +58,9 @@ const CHANNEL_MASK: u32 = 0xf;
 // always for communication from VC to ARM and Mailbox 1 is for ARM to VC.
 //
 // The ARM should never write Mailbox 0 or read Mailbox 1.
+//
+// There are 32 mailboxes on the ARM, which could be used for in-processor or inter-processor comms,
+// TODO: allow using all of them.
 
 register_bitfields! {
     u32,
@@ -69,47 +73,84 @@ register_bitfields! {
     ]
 }
 
-#[allow(non_snake_case)]
-#[repr(C)]
-pub struct RegisterBlock {
-    READ: ReadOnly<u32>,    // 0x00  This is Mailbox0 read for ARM, can't write
-    __reserved_0: [u32; 5], // 0x04
-    STATUS: ReadOnly<u32, STATUS::Register>, // 0x18
-    __reserved_1: u32,      // 0x1C
-    WRITE: WriteOnly<u32>,  // 0x20  This is Mailbox1 write for ARM, can't read
-}
-
-pub enum MailboxError {
-    Response,
-    Unknown,
-    Timeout,
-}
-
-impl core::fmt::Display for MailboxError {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                MailboxError::Response => "ResponseError",
-                MailboxError::Unknown => "UnknownError",
-                MailboxError::Timeout => "Timeout",
-            }
-        )
+register_structs! {
+    #[allow(non_snake_case)]
+    pub RegisterBlock {
+        (0x00 => READ: ReadOnly<u32>), // This is Mailbox0 read for ARM, can't write
+        (0x04 => __reserved_1),
+        (0x18 => STATUS: ReadOnly<u32, STATUS::Register>),
+        (0x1c => __reserved_2),
+        (0x20 => WRITE: WriteOnly<u32>), // This is Mailbox1 write for ARM, can't read
+        (0x24 => @END),
     }
 }
 
-pub type Result<T> = ::core::result::Result<T, MailboxError>;
+// Hide RegisterBlock from public api.
+type Registers = MMIODerefWrapper<RegisterBlock>;
+
+#[derive(Snafu, Debug)]
+pub enum MailboxError {
+    #[snafu(display("ResponseError"))]
+    Response,
+    #[snafu(display("UnknownError"))]
+    Unknown,
+    #[snafu(display("Timeout"))]
+    Timeout,
+}
+
+pub type Result<T> = CoreResult<T, MailboxError>;
 
 /// Typical operations with a mailbox.
 pub trait MailboxOps {
-    /// Deref from self to a mailbox RegisterBlock. Used by Deref implementations.
-    fn ptr(&self) -> *const RegisterBlock;
     fn write(&self, channel: u32) -> Result<()>;
     fn read(&self, channel: u32) -> Result<()>;
     fn call(&self, channel: u32) -> Result<()> {
         self.write(channel)?;
         self.read(channel)
+    }
+}
+
+pub trait MailboxStorage {
+    fn new() -> Self;
+}
+
+pub trait MailboxStorageRef {
+    fn as_ref(&self) -> &[u32];
+    fn as_mut(&mut self) -> &mut [u32];
+    fn as_ptr(&self) -> *const u32;
+    fn value_at(&self, index: usize) -> u32;
+}
+
+// TODO: allow from 2 to 36 slots (2 because you need at least an End tag)
+#[repr(align(16))] // MAILBOX_ALIGNMENT
+pub struct LocalMailboxStorage<const N_SLOTS: usize> {
+    pub storage: [u32; N_SLOTS],
+}
+
+impl<const N_SLOTS: usize> MailboxStorage for LocalMailboxStorage<N_SLOTS> {
+    fn new() -> Self {
+        Self {
+            storage: [0u32; N_SLOTS],
+        }
+    }
+}
+
+impl<const N_SLOTS: usize> MailboxStorageRef for LocalMailboxStorage<N_SLOTS> {
+    fn as_ref(&self) -> &[u32] {
+        &self.storage
+    }
+
+    fn as_mut(&mut self) -> &mut [u32] {
+        &mut self.storage
+    }
+
+    fn as_ptr(&self) -> *const u32 {
+        self.storage.as_ptr()
+    }
+
+    // @todo Probably need a ResultMailbox for accessing data after call()?
+    fn value_at(&self, index: usize) -> u32 {
+        self.storage[index]
     }
 }
 
@@ -243,144 +284,39 @@ pub mod alpha_mode {
     pub const IGNORED: u32 = 2;
 }
 
-pub fn write(regs: &RegisterBlock, buf: *const u32, channel: u32) -> Result<()> {
-    let mut count: u32 = 0;
-    let buf_ptr: u32 = buf as u32;
-
-    // This address adjustment will be performed from the outside when necessary
-    // (see FrameBuffer for example).
-    // let buf_ptr = BcmHost::phys2bus(buf_ptr); not used for PropertyTags channel
-
-    println!("Mailbox::write {:#08x}/{:#x}", buf_ptr, channel);
-
-    // Insert a compiler fence that ensures that all stores to the
-    // mailbox buffer are finished before the GPU is signaled (which is
-    // done by a store operation as well).
-    compiler_fence(Ordering::Release);
-
-    while regs.STATUS.is_set(STATUS::FULL) {
-        count += 1;
-        if count > (1 << 25) {
-            return Err(MailboxError::Timeout);
-        }
-    }
-    unsafe {
-        barrier::dmb(barrier::SY);
-    }
-    regs.WRITE
-        .set((buf_ptr & !CHANNEL_MASK) | (channel & CHANNEL_MASK));
-    Ok(())
-}
-
-pub fn read(regs: &RegisterBlock, expected: u32, channel: u32) -> Result<()> {
-    loop {
-        let mut count: u32 = 0;
-        while regs.STATUS.is_set(STATUS::EMPTY) {
-            count += 1;
-            if count > (1 << 25) {
-                println!("Timed out waiting for mailbox response");
-                return Err(MailboxError::Timeout);
-            }
-        }
-
-        /* Read the data
-         * Data memory barriers as we've switched peripheral
-         */
-        unsafe {
-            barrier::dmb(barrier::SY);
-        }
-        let data: u32 = regs.READ.get();
-        unsafe {
-            barrier::dmb(barrier::SY);
-        }
-
-        println!(
-            "Received mailbox response {:#08x}, expecting {:#08x}",
-            data, expected
-        );
-
-        // is it a response to our message?
-        if ((data & CHANNEL_MASK) == channel) && ((data & !CHANNEL_MASK) == expected) {
-            // is it a valid successful response?
-            return Ok(());
-        } else {
-            // ignore invalid responses and loop again.
-            // will return Timeout above if no matching response is received.
-        }
-    }
-}
-
-/// Deref to RegisterBlock
-///
-/// Allows writing
-/// ```
-/// self.STATUS.read()
-/// ```
-/// instead of something along the lines of
-/// ```
-/// unsafe { (*Mailbox::ptr()).STATUS.read() }
-/// ```
-impl Deref for PreparedMailbox {
-    type Target = RegisterBlock;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.ptr() }
-    }
-}
-
-impl core::fmt::Debug for Mailbox {
+impl<const N_SLOTS: usize> core::fmt::Debug for Mailbox<N_SLOTS> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        let count = unsafe { self.buffer.as_ref()[0] } / 4;
-        assert_eq!(unsafe { self.buffer.as_ref()[0] }, count * 4);
+        let count = self.buffer.as_ref()[0] / 4;
+        assert_eq!(self.buffer.as_ref()[0], count * 4);
         assert!(count <= 36);
         for i in 0usize..count as usize {
-            writeln!(f, "[{:02}] {:08x}", i, unsafe { self.buffer.as_ref()[i] })?;
+            writeln!(f, "[{:02}] {:08x}", i, self.buffer.value_at(i))?;
         }
         Ok(())
     }
 }
 
-impl core::fmt::Debug for PreparedMailbox {
+impl<const N_SLOTS: usize> core::fmt::Debug for PreparedMailbox<N_SLOTS> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         self.0.fmt(f)
     }
 }
 
-impl Default for Mailbox {
+impl<const N_SLOTS: usize> Default for Mailbox<N_SLOTS> {
     fn default() -> Self {
-        Self::new(MAILBOX_BASE).expect("Couldn't allocate a default mailbox")
+        unsafe { Self::new(MAILBOX_BASE) }.expect("Couldn't allocate a default mailbox")
     }
 }
 
-// @todo Probably need a ResultMailbox for accessing data after call()?
-impl PreparedMailbox {
-    pub fn value_at(&self, index: usize) -> u32 {
-        unsafe { self.0.buffer.as_ref()[index] }
-    }
-}
-
-impl Mailbox {
-    /// Create a new mailbox in the DMA-able memory area.
-    #[allow(clippy::result_unit_err)]
-    pub fn new(base_addr: usize) -> ::core::result::Result<Mailbox, ()> {
-        use core::alloc::Allocator;
-        crate::DMA_ALLOCATOR
-            .lock(|dma| {
-                dma.allocate_zeroed(
-                    core::alloc::Layout::from_size_align(
-                        MAILBOX_ITEMS_COUNT * core::mem::size_of::<u32>(),
-                        MAILBOX_ALIGNMENT,
-                    )
-                    .unwrap(), // .map_err(|_| ())?,
-                )
-            })
-            .map(|ret| {
-                Ok(Mailbox {
-                    base_addr,
-                    buffer: ret.cast::<[u32; MAILBOX_ITEMS_COUNT]>(),
-                })
-            })
-            .map_err(|_| ())?
+impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<N_SLOTS, Storage> {
+    /// Create a new mailbox locally in an aligned stack space.
+    /// # Safety
+    /// Caller is responsible for picking the correct MMIO register base address.
+    pub unsafe fn new(base_addr: usize) -> Result<Mailbox<N_SLOTS, Storage>> {
+        Ok(Mailbox {
+            registers: Registers::new(base_addr),
+            buffer: Storage::new(),
+        })
     }
 
     // Specific mailbox functions
@@ -390,19 +326,17 @@ impl Mailbox {
     /// @returns index of the next available slot.
     #[inline]
     pub fn request(&mut self) -> usize {
-        unsafe { self.buffer.as_mut()[1] = REQUEST };
+        self.buffer.as_mut()[1] = REQUEST;
         2
     }
 
     /// Mark mailbox payload as completed.
     /// Consumes the Mailbox and returns a Preparedmailbox that can be called.
     #[inline]
-    pub fn end(mut self, index: usize) -> PreparedMailbox {
+    pub fn end(mut self, index: usize) -> PreparedMailbox<N_SLOTS, Storage> {
         // @todo return Result
-        unsafe {
-            self.buffer.as_mut()[index] = tag::End;
-            self.buffer.as_mut()[0] = (index as u32 + 1) * 4;
-        }
+        self.buffer.as_mut()[index] = tag::End;
+        self.buffer.as_mut()[0] = (index as u32 + 1) * 4;
         PreparedMailbox(self)
     }
 
@@ -410,7 +344,7 @@ impl Mailbox {
     /// @returns index of the next available slot.
     #[inline]
     pub fn set_physical_wh(&mut self, index: usize, width: u32, height: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::SetPhysicalWH;
         buf[index + 1] = 8; // Buffer size   // val buf size
         buf[index + 2] = 8; // Request size  // val size
@@ -423,7 +357,7 @@ impl Mailbox {
     /// @returns index of the next available slot.
     #[inline]
     pub fn set_virtual_wh(&mut self, index: usize, width: u32, height: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::SetVirtualWH;
         buf[index + 1] = 8; // Buffer size   // val buf size
         buf[index + 2] = 8; // Request size  // val size
@@ -436,7 +370,7 @@ impl Mailbox {
     /// @returns index of the next available slot.
     #[inline]
     pub fn set_depth(&mut self, index: usize, depth: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::SetDepth;
         buf[index + 1] = 4; // Buffer size   // val buf size
         buf[index + 2] = 4; // Request size  // val size
@@ -448,7 +382,7 @@ impl Mailbox {
     /// @returns index of the next available slot.
     #[inline]
     pub fn allocate_buffer_aligned(&mut self, index: usize, alignment: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::AllocateBuffer;
         buf[index + 1] = 8; // Buffer size   // val buf size
         buf[index + 2] = 4; // Request size  // val size
@@ -461,7 +395,7 @@ impl Mailbox {
     /// @returns index of the next available slot.
     #[inline]
     pub fn set_led_on(&mut self, index: usize, enable: bool) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::SetGpioState;
         buf[index + 1] = 8; // Buffer size   // val buf size
         buf[index + 2] = 0; // Response size  // val size
@@ -472,7 +406,7 @@ impl Mailbox {
 
     #[inline]
     pub fn set_clock_rate(&mut self, index: usize, channel: u32, rate: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::SetClockRate;
         buf[index + 1] = 12; // Buffer size   // val buf size
         buf[index + 2] = 8; // Response size  // val size
@@ -488,7 +422,7 @@ impl Mailbox {
     ///   and no tags will be returned.
     #[inline]
     pub fn set_pixel_order(&mut self, index: usize, order: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::SetPixelOrder;
         buf[index + 1] = 4; // Buffer size   // val buf size
         buf[index + 2] = 4; // Response size  // val size
@@ -502,7 +436,7 @@ impl Mailbox {
     ///   and no tags will be returned.
     #[inline]
     pub fn test_pixel_order(&mut self, index: usize, order: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::TestPixelOrder;
         buf[index + 1] = 4; // Buffer size   // val buf size
         buf[index + 2] = 4; // Response size  // val size
@@ -512,7 +446,7 @@ impl Mailbox {
 
     #[inline]
     pub fn set_alpha_mode(&mut self, index: usize, mode: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::SetAlphaMode;
         buf[index + 1] = 4; // Buffer size   // val buf size
         buf[index + 2] = 4; // Response size  // val size
@@ -522,7 +456,7 @@ impl Mailbox {
 
     #[inline]
     pub fn get_pitch(&mut self, index: usize) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::GetPitch;
         buf[index + 1] = 4; // Buffer size   // val buf size
         buf[index + 2] = 4; // Response size  // val size
@@ -532,7 +466,7 @@ impl Mailbox {
 
     #[inline]
     pub fn set_device_power(&mut self, index: usize, device_id: u32, power_flags: u32) -> usize {
-        let buf = unsafe { self.buffer.as_mut() };
+        let buf = self.buffer.as_mut();
         buf[index] = tag::SetPowerState;
         buf[index + 1] = 8; // Buffer size   // val buf size
         buf[index + 2] = 8; // Response size  // val size
@@ -540,42 +474,130 @@ impl Mailbox {
         buf[index + 4] = power_flags; // bit 0: off, bit 1: no wait
         index + 5
     }
-}
 
-impl MailboxOps for PreparedMailbox {
-    /// Returns a pointer to the register block
-    fn ptr(&self) -> *const RegisterBlock {
-        self.0.base_addr as *const _
-    }
+    // Actual work functions
 
-    fn write(&self, channel: u32) -> Result<()> {
-        write(self, self.0.buffer.as_ptr() as *const _, channel)
-    }
+    /// <https://github.com/raspberrypi/firmware/wiki/Accessing-mailboxes> says:
+    /// **With the exception of the property tags mailbox channel,**
+    /// when passing memory addresses as the data part of a mailbox message,
+    /// the addresses should be **bus addresses as seen from the VC.**
+    pub fn do_write(&self, channel: u32) -> Result<()> {
+        let buf_ptr = self.buffer.as_ptr() as *const u32 as u32;
+        let buf_ptr = if channel != channel::PropertyTagsArmToVc {
+            BcmHost::phys2bus(buf_ptr as usize) as u32
+        } else {
+            buf_ptr
+        };
 
-    // @todo read() should probably consume PreparedMailbox completely ?
-    fn read(&self, channel: u32) -> Result<()> {
-        // SAFETY: buffer is HW-mutable in the read call below!
-        read(
-            self,
-            self.0.buffer.as_ptr() as *const [u32] as *const u32 as u32,
-            channel,
-        )?;
+        let mut count: u32 = 0;
 
-        match unsafe { self.0.buffer.as_ref()[1] } {
-            response::SUCCESS => {
-                println!("\n######\nMailbox::returning SUCCESS");
-                Ok(())
-            }
-            response::ERROR => {
-                println!("\n######\nMailbox::returning ResponseError");
-                Err(MailboxError::Response)
-            }
-            _ => {
-                println!("\n######\nMailbox::returning UnknownError");
-                println!("{:x}\n######", unsafe { self.0.buffer.as_ref()[1] });
-                Err(MailboxError::Unknown)
+        println!("Mailbox::write {:#08x}/{:#x}", buf_ptr, channel);
+
+        // Insert a compiler fence that ensures that all stores to the
+        // mailbox buffer are finished before the GPU is signaled (which is
+        // done by a store operation as well).
+        compiler_fence(Ordering::Release);
+
+        while self.registers.STATUS.is_set(STATUS::FULL) {
+            count += 1;
+            if count > (1 << 25) {
+                return Err(MailboxError::Timeout);
             }
         }
+        unsafe {
+            barrier::dmb(barrier::SY);
+        }
+        self.registers
+            .WRITE
+            .set((buf_ptr & !CHANNEL_MASK) | (channel & CHANNEL_MASK));
+        Ok(())
+    }
+
+    /// Perform the mailbox read.
+    ///
+    /// # Safety
+    ///
+    /// Buffer will be mutated by the hardware before read operation is completed.
+    pub unsafe fn do_read(&self, channel: u32, expected: u32) -> Result<()> {
+        loop {
+            let mut count: u32 = 0;
+            while self.registers.STATUS.is_set(STATUS::EMPTY) {
+                count += 1;
+                if count > (1 << 25) {
+                    println!("Timed out waiting for mailbox response");
+                    return Err(MailboxError::Timeout);
+                }
+            }
+
+            /* Read the data
+             * Data memory barriers as we've switched peripheral
+             */
+            barrier::dmb(barrier::SY);
+            let data: u32 = self.registers.READ.get();
+            barrier::dmb(barrier::SY);
+
+            println!(
+                "Received mailbox response {:#08x}, expecting {:#08x}",
+                data, expected
+            );
+
+            // is it a response to our message?
+            if ((data & CHANNEL_MASK) == channel) && ((data & !CHANNEL_MASK) == expected) {
+                // is it a valid successful response?
+                return match self.buffer.value_at(1) {
+                    response::SUCCESS => {
+                        println!("\n######\nMailbox::returning SUCCESS");
+                        Ok(())
+                    }
+                    response::ERROR => {
+                        println!("\n######\nMailbox::returning ResponseError");
+                        Err(MailboxError::Response)
+                    }
+                    _ => {
+                        println!("\n######\nMailbox::returning UnknownError");
+                        println!("{:x}\n######", self.buffer.value_at(1));
+                        Err(MailboxError::Unknown)
+                    }
+                };
+            } else {
+                // ignore invalid responses and loop again.
+                // will return Timeout above if no matching response is received.
+            }
+        }
+    }
+}
+
+impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> MailboxOps
+    for PreparedMailbox<N_SLOTS, Storage>
+{
+    fn write(&self, channel: u32) -> Result<()> {
+        self.0.do_write(channel)
+    }
+
+    // @todo read() should probably consume PreparedMailbox completely - because request is overwritten with response
+    fn read(&self, channel: u32) -> Result<()> {
+        unsafe { self.0.do_read(channel, self.0.buffer.as_ptr() as u32) }
+    }
+}
+
+impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> MailboxStorageRef
+    for PreparedMailbox<N_SLOTS, Storage>
+{
+    fn as_ref(&self) -> &[u32] {
+        self.0.buffer.as_ref()
+    }
+
+    fn as_mut(&mut self) -> &mut [u32] {
+        self.0.buffer.as_mut()
+    }
+
+    fn as_ptr(&self) -> *const u32 {
+        self.0.buffer.as_ptr()
+    }
+
+    // @todo Probably need a ResultMailbox for accessing data after call()?
+    fn value_at(&self, index: usize) -> u32 {
+        self.0.buffer.value_at(index)
     }
 }
 

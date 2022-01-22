@@ -171,7 +171,7 @@ fn print_help() {
 }
 
 fn set_led(enable: bool) {
-    let mut mbox = Mailbox::default();
+    let mut mbox = Mailbox::<8>::default();
     let index = mbox.request();
     let index = mbox.set_led_on(index, enable);
     let mbox = mbox.end(index);

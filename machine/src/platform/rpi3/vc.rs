@@ -8,7 +8,7 @@ use {
         mailbox::{self, channel, response::VAL_LEN_FLAG, Mailbox, MailboxOps},
         BcmHost,
     },
-    crate::println,
+    crate::{platform::rpi3::mailbox::MailboxStorageRef, println},
     core::convert::TryInto,
     snafu::Snafu,
 };
@@ -42,7 +42,7 @@ impl VC {
          *    (if the base or size has changed) is implicitly freed.
          */
 
-        let mut mbox = Mailbox::default();
+        let mut mbox = Mailbox::<36>::default();
         let index = mbox.request();
         let index = mbox.set_physical_wh(index, w, h);
         let index = mbox.set_virtual_wh(index, w, h);
@@ -67,7 +67,7 @@ impl VC {
 
         // SetPixelOrder doesn't work in QEMU, however TestPixelOrder does.
         // Apparently, QEMU doesn't care about intermixing Get/Set and Test tags either.
-        let mut mbox = Mailbox::default();
+        let mut mbox = Mailbox::<36>::default();
         let index = mbox.request();
         #[cfg(qemu)]
         let index = mbox.test_pixel_order(index, 1);

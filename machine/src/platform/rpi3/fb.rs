@@ -1,107 +1,70 @@
-use {
-    super::{
-        mailbox::{channel, read, write, MailboxOps, RegisterBlock, Result},
-        BcmHost,
-    },
-    core::ops::Deref,
-};
+use super::mailbox::{self, LocalMailboxStorage, Mailbox, MailboxError, MailboxOps};
 
 /// FrameBuffer channel supported structure - use with mailbox::channel::FrameBuffer
 /// Must have the same alignment as the mailbox buffers.
-#[repr(C)]
-#[repr(align(16))]
+type FrameBufferData = LocalMailboxStorage<10>;
+
+mod index {
+    pub const WIDTH: usize = 0;
+    pub const HEIGHT: usize = 1;
+    pub const VIRTUAL_WIDTH: usize = 2;
+    pub const VIRTUAL_HEIGHT: usize = 3;
+    pub const PITCH: usize = 4;
+    pub const DEPTH: usize = 5;
+    pub const X_OFFSET: usize = 6;
+    pub const Y_OFFSET: usize = 7;
+    pub const POINTER: usize = 8; // FIXME: could be 4096 for the alignment restriction.
+    pub const SIZE: usize = 9;
+}
+
 pub struct FrameBuffer {
-    pub width: u32,
-    pub height: u32,
-    pub vwidth: u32,
-    pub vheight: u32,
-    pub pitch: u32,
-    pub depth: u32,
-    pub x_offset: u32,
-    pub y_offset: u32,
-    pub pointer: u32,
-    pub size: u32,
-    // Must be after HW-dictated fields to not break structure alignment.
-    base_addr: usize,
+    mailbox: Mailbox<10, FrameBufferData>,
 }
 
-// @todo rewrite in terms of using the Mailbox
-
-/// Deref to RegisterBlock
-///
-/// Allows writing
-/// ```
-/// self.STATUS.read()
-/// ```
-/// instead of something along the lines of
-/// ```
-/// unsafe { (*FrameBuffer::ptr()).STATUS.read() }
-/// ```
-impl Deref for FrameBuffer {
-    type Target = RegisterBlock; // mailbox RegisterBlock reused here
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.ptr() }
-    }
-}
-
-impl core::fmt::Debug for FrameBuffer {
+impl core::fmt::Debug for FrameBufferData {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         write!(
             f,
             "\n\n\n#### FrameBuffer({}x{}, {}x{}, d{}, --{}--, +{}x{}, {}@{:x})\n\n\n",
-            self.width,
-            self.height,
-            self.vwidth,
-            self.vheight,
-            self.depth,
-            self.pitch,
-            self.x_offset,
-            self.y_offset,
-            self.size,
-            self.pointer,
+            self.storage[index::WIDTH],
+            self.storage[index::HEIGHT],
+            self.storage[index::VIRTUAL_WIDTH],
+            self.storage[index::VIRTUAL_HEIGHT],
+            self.storage[index::HEIGHT],
+            self.storage[index::PITCH],
+            self.storage[index::X_OFFSET],
+            self.storage[index::Y_OFFSET],
+            self.storage[index::SIZE],
+            self.storage[index::POINTER],
         )
     }
 }
 
 impl FrameBuffer {
-    pub fn new(reg_base: usize, width: u32, height: u32, depth: u32) -> FrameBuffer {
-        FrameBuffer {
-            width,
-            height,
-            vwidth: width,
-            vheight: height,
-            pitch: 0,
-            depth,
-            x_offset: 0,
-            y_offset: 0,
-            pointer: 0, // could be 4096 for the alignment?
-            size: 0,
-
-            base_addr: reg_base,
-        }
+    pub fn new(
+        base_addr: usize,
+        width: u32,
+        height: u32,
+        depth: u32,
+    ) -> Result<FrameBuffer, MailboxError> {
+        let mut fb = FrameBuffer {
+            mailbox: unsafe { Mailbox::<10, FrameBufferData>::new(base_addr)? },
+        };
+        fb.mailbox.buffer.storage[index::WIDTH] = width;
+        fb.mailbox.buffer.storage[index::VIRTUAL_WIDTH] = width;
+        fb.mailbox.buffer.storage[index::HEIGHT] = height;
+        fb.mailbox.buffer.storage[index::VIRTUAL_HEIGHT] = height;
+        fb.mailbox.buffer.storage[index::DEPTH] = depth;
+        Ok(fb)
     }
 }
 
 impl MailboxOps for FrameBuffer {
-    /// Returns a pointer to the register block
-    fn ptr(&self) -> *const RegisterBlock {
-        self.base_addr as *const _
+    fn write(&self, _channel: u32) -> mailbox::Result<()> {
+        self.mailbox.do_write(mailbox::channel::FrameBuffer)
     }
 
-    /// <https://github.com/raspberrypi/firmware/wiki/Accessing-mailboxes> says:
-    /// **With the exception of the property tags mailbox channel,**
-    /// when passing memory addresses as the data part of a mailbox message,
-    /// the addresses should be **bus addresses as seen from the VC.**
-    fn write(&self, _channel: u32) -> Result<()> {
-        write(
-            self,
-            BcmHost::phys2bus(&self as *const _ as usize) as *const _,
-            channel::FrameBuffer,
-        )
-    }
-
-    fn read(&self, _channel: u32) -> Result<()> {
-        read(self, 0, channel::FrameBuffer)
+    fn read(&self, _channel: u32) -> mailbox::Result<()> {
+        unsafe { self.mailbox.do_read(mailbox::channel::FrameBuffer, 0) }
     }
 }
