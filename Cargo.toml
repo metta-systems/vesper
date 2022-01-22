@@ -1,8 +1,12 @@
 [workspace]
 members = [
     "nucleus",
-    "bin/chainboot"
+    "bin/chainboot",
+    "bin/chainofcommand"
 ]
+
+[patch.crates-io]
+serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = "macos-ENOTTY-fix" }
 
 [profile.dev]
 # See https://github.com/rust-lang/cargo/issues/7359 about why panic=abort is not working here.

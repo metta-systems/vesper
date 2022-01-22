@@ -13,6 +13,11 @@ zellij-cb:
     cargo make zellij-cb
     zellij --layout-path emulation/layout.zellij
 
+# Build chainofcommand serial loader
+chainofcommand:
+    cd bin/chainofcommand
+    cargo make build
+
 # Build and run kernel in QEMU
 qemu:
     cargo make qemu
