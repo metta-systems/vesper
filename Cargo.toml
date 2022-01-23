@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "nucleus"
+    "nucleus",
+    "bin/chainboot"
 ]
 
 [profile.dev]

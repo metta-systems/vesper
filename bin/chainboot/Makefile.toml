@@ -1,0 +1,52 @@
+[env]
+CHAINBOOT_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/chainboot"
+CHAINBOOT_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/chainboot.bin"
+
+[tasks.kernel-binary]
+env = { "BINARY_FILE" = "${CHAINBOOT_ELF}" }
+run_task = "custom-binary"
+
+[tasks.hopper]
+disabled = true
+
+[tasks.zellij-nucleus]
+disabled = true
+
+[tasks.zellij-cb]
+env = { "KERNEL_BIN" = "${CHAINBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS}" }
+run_task = "zellij-config"
+
+[tasks.zellij-cb-gdb]
+env = { "KERNEL_BIN" = "${CHAINBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_BOARD" = "rpi3", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
+run_task = "zellij-config"
+
+[tasks.qemu]
+disabled = true
+
+[tasks.qemu-cb]
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}", "KERNEL_BIN" = "${CHAINBOOT_BIN}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
+extend = "qemu-runner"
+
+[tasks.gdb]
+disabled = true
+
+[tasks.gdb-cb]
+dependencies = ["build", "kernel-binary", "gdb-config"]
+env = { "RUST_GDB" = "${GDB}" }
+script = [
+    "rust-gdb -x ${GDB_CONNECT_FILE} ${CHAINBOOT_ELF}"
+]
+
+[tasks.sdcard]
+dependencies = ["build", "kernel-binary"]
+script_runner = "@duckscript"
+script = [
+'''
+    kernelImage = set "chain_boot_rpi4.img"
+    cp ${CHAINBOOT_BIN} ${VOLUME}/${kernelImage}
+    echo "Copied chainboot to ${VOLUME}/${kernelImage}"
+'''
+]
+
+[tasks.cb-eject]
+dependencies = ["sdeject"]

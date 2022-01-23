@@ -21,6 +21,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "chainboot"
+version = "0.0.1"
+dependencies = [
+ "bit_field",
+ "bitflags",
+ "cfg-if",
+ "cortex-a",
+ "machine",
+ "r0",
+ "seahash",
+ "snafu",
+ "tock-registers",
+ "usize_conversions",
+ "ux",
+]
+
+[[package]]
 name = "cortex-a"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -105,6 +122,12 @@ name = "r0"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd7a31eed1591dcbc95d92ad7161908e72f4677f8fabf2a32ca49b4237cbf211"
+
+[[package]]
+name = "seahash"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "snafu"

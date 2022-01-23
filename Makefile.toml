@@ -95,6 +95,13 @@ env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 command = "cargo"
 args = ["build", "@@split(PLATFORM_TARGET, )", "--release"]
 
+[tasks.qemu-runner]
+dependencies = ["build-qemu", "kernel-binary"]
+env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+script = [
+    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${TARGET_DTB} -kernel ${KERNEL_BIN}"
+]
+
 [tasks.expand]
 env = { "TARGET_FEATURES" = "" }
 command = "cargo"

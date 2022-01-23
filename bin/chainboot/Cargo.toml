@@ -1,12 +1,8 @@
 [package]
-name = "machine"
+name = "chainboot"
 version = "0.0.1"
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
-description = "Vesper nanokernel shared code library, useful also for the chainboot loader."
-documentation = "https://docs.metta.systems/vesper"
-homepage = "https://github.com/metta-systems/vesper"
-repository = "https://github.com/metta-systems/vesper"
-readme = "README.md"
+description = "Chain boot loader"
 license = "BlueOak-1.0.0"
 categories = ["no-std", "embedded", "os"]
 publish = false
@@ -16,20 +12,22 @@ edition = "2021"
 maintenance = { status = "experimental" }
 
 [features]
-default = []
-noserial = []
-# Enable JTAG debugging of kernel - enable jtag helpers and
-# block waiting for JTAG probe attach at the start of kernel main.
-jtag = []
+default = ["asm"]
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = ["rpi3"]
+qemu = ["machine/qemu"]
+# Build for debugging it over JTAG/SWD connection - halts on first non-startup function start.
+jtag = ["machine/jtag"]
+# Dummy feature, ignored in this crate.
+noserial = []
+# Startup relocation code is implemented in assembly
+asm = []
 # Mutually exclusive features to choose a target board
-rpi3 = []
-rpi4 = []
+rpi3 = ["machine/rpi3"]
+rpi4 = ["machine/rpi4"]
 
 [dependencies]
+machine = { path = "../../machine" }
 r0 = "1.0"
-qemu-exit = "3.0"
 cortex-a = "7.0"
 tock-registers = "0.7"
 ux = { version = "0.1", default-features = false }
@@ -38,3 +36,4 @@ bit_field = "0.10"
 bitflags = "1.3"
 cfg-if = "1.0"
 snafu = { version = "0.7", default-features = false }
+seahash = "4.1"
