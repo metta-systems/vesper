@@ -49,12 +49,17 @@ script = [
 [tasks.gdb-cb]
 disabled = true
 
-[tasks.nm]
-dependencies = ["build", "kernel-binary"]
-script = [
-    "${NM} -- ${KERNEL_ELF} | sort"
-]
+[tasks.install-nm]
 install_crate = { crate_name = "cargo-binutils", binary = "rust-nm", test_arg = ["--help"] }
+
+[tasks.install-rustfilt]
+install_crate = { crate_name = "rustfilt", binary = "rustfilt", test_arg = ["--help"] }
+
+[tasks.nm]
+dependencies = ["build", "kernel-binary", "install-nm", "install-rustfilt"]
+script = [
+    "${NM} -- ${KERNEL_ELF} | sort -k 1 | rustfilt"
+]
 
 [tasks.sdcard]
 dependencies = ["build", "kernel-binary"]
