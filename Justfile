@@ -1,6 +1,10 @@
 _default:
     @just --list
 
+# Build default hw kernel and run chainofcommand to boot this kernel onto the board
+boot: chainofcommand
+    cargo make chainboot
+
 # Build and run kernel in QEMU with serial port emulation
 zellij:
     cargo make zellij-nucleus

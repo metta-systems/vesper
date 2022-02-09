@@ -75,6 +75,9 @@ GDB_CONNECT_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/g
 KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus"
 KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
 
+CHAINBOOT_SERIAL = "/dev/tty.SLAB_USBtoUART"
+CHAINBOOT_BAUD = 115200
+
 [tasks.default]
 alias = "all"
 
@@ -189,3 +192,8 @@ dependencies = ["sdcard"]
 script = [
     "diskutil unmount ${VOLUME}"
 ]
+
+[tasks.chainboot]
+dependencies = ["build", "kernel-binary"]
+command = "echo"
+args = ["\n***===***\n", "Run the following command in your terminal:\n", "  ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${KERNEL_BIN}\n", "***===***\n\n"]
