@@ -18,7 +18,7 @@ anyhow = "1.0"
 fehler = "1.0"
 crossterm = { version = "0.22", features = ["event-stream"] }
 tokio-serial = "5.4"
-tokio = { version = "1.15", features = ["full"] }
+tokio = { version = "1.16", features = ["full"] }
 futures = "0.3"
 defer = "0.1"
 tokio-util = { version = "0.6", features = ["codec"] }
