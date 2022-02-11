@@ -306,20 +306,20 @@ fn handle_key_event(key_event: KeyEvent) -> Option<Bytes> {
 async fn main() -> Result<()> {
     let matches = App::new("ChainOfCommand - command chainboot protocol")
         .about("Use to send freshly built kernel to chainboot-compatible boot loader")
-        .setting(AppSettings::DisableVersion)
+        .setting(AppSettings::DisableVersionFlag)
         .arg(
-            Arg::with_name("port")
+            Arg::new("port")
                 .help("The device path to a serial port, e.g. /dev/ttyUSB0")
                 .required(true),
         )
         .arg(
-            Arg::with_name("baud")
+            Arg::new("baud")
                 .help("The baud rate to connect at")
                 .use_delimiter(false)
                 .required(true), // .validator(valid_baud),
         )
         .arg(
-            Arg::with_name("kernel")
+            Arg::new("kernel")
                 .long("kernel")
                 .help("Path of the binary kernel image to send")
                 .takes_value(true)
