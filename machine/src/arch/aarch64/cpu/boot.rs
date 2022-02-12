@@ -14,7 +14,7 @@
 use {
     super::endless_sleep,
     crate::platform::cpu::BOOT_CORE_ID,
-    aarch64_cpu::{asm, registers::*},
+    aarch64_cpu::registers::*,
     core::{
         arch::global_asm,
         cell::UnsafeCell,
@@ -131,14 +131,13 @@ fn shared_setup_and_enter_post(dtb: u32) -> ! {
         SP_EL1.set(__STACK_TOP.get() as u64);
     }
 
-    unsafe {
-        asm!("mov {dtb:w}, w0", dtb = in(reg) dtb);
-        // @todo How to enforce dtb being in w0 at this point? -- must be an arg to eret()
-    }
-
     // Use `eret` to "return" to EL1. This will result in execution of
     // `reset()` in EL1.
-    asm::eret()
+    // Load DTB address into w0 prior to eret.
+    unsafe {
+        core::arch::asm!("eret", in("w0") dtb);
+        core::hint::unreachable_unchecked()
+    }
 }
 
 /// Real hardware boot-up sequence.
