@@ -128,7 +128,11 @@ fn shared_setup_and_enter_pre() {
 //     }
 //     // Use `eret` to "return" to EL2. This will result in execution of
 //     // `reset()` in EL2.
-//     asm::eret(dtb)
+//     // Load DTB address into w0 prior to eret.
+//     unsafe {
+//         core::arch::asm!("eret", in("w0") dtb);
+//         core::hint::unreachable_unchecked()
+//     }
 // }
 
 // FIXME: This will be called by init_thread later.
@@ -195,7 +199,7 @@ fn setup_and_enter_el2_from_el3(dtb: u32) -> ! {
     // Make the Exception Link Register (EL3) point to reset().
     ELR_EL3.set(reset as *const () as u64);
 
-    shared_setup_and_enter_post()
+    shared_setup_and_enter_post(dtb)
 }
 
 // Enter Rust code in EL2.
