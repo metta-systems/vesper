@@ -33,6 +33,7 @@ use {
         },
         println, CONSOLE,
     },
+    fdt_rs::base::DevTree,
 };
 
 entry!(kmain);
@@ -133,12 +134,11 @@ pub fn kmain(dtb: u32) -> ! {
     println!("DTB loaded at {:x}", dtb);
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
-    let device_tree = crate::device_tree::DeadTree::new(unsafe {
-        dtb::Reader::read_from_address(dtb as usize).expect("DeviceTree not found")
-    });
+    let device_tree =
+        unsafe { DevTree::from_raw_pointer(dtb as *const _).expect("DeviceTree failed to read") };
 
     // List unusable memory, and remove it from the memory regions for the allocator.
-    for entry in device_tree.reserved_mem_entries() {
+    for entry in device_tree.compatible_nodes("memory") {
         println!("reserved: {:?} bytes at {:?}", entry.size, entry.address);
     }
     // Also, remove the DTB memory region.
