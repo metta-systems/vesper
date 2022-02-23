@@ -3,7 +3,7 @@
 use {
     anyhow::{anyhow, Result},
     bytes::Bytes,
-    clap::{App, AppSettings, Arg},
+    clap::{Arg, Command},
     crossterm::{
         cursor,
         event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
@@ -304,9 +304,9 @@ fn handle_key_event(key_event: KeyEvent) -> Option<Bytes> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let matches = App::new("ChainOfCommand - command chainboot protocol")
+    let matches = Command::new("ChainOfCommand - command chainboot protocol")
         .about("Use to send freshly built kernel to chainboot-compatible boot loader")
-        .setting(AppSettings::DisableVersionFlag)
+        .disable_version_flag(true)
         .arg(
             Arg::new("port")
                 .help("The device path to a serial port, e.g. /dev/ttyUSB0")
@@ -315,7 +315,7 @@ async fn main() -> Result<()> {
         .arg(
             Arg::new("baud")
                 .help("The baud rate to connect at")
-                .use_delimiter(false)
+                .use_value_delimiter(false)
                 .required(true), // .validator(valid_baud),
         )
         .arg(
