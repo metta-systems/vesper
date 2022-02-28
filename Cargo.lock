@@ -627,7 +627,7 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 [[package]]
 name = "serialport"
 version = "4.0.1"
-source = "git+https://github.com/metta-systems/serialport-rs?branch=macos-ENOTTY-fix#91ee1f740ee7d7c9506df8af082860a478656e18"
+source = "git+https://github.com/metta-systems/serialport-rs?branch=macos-ENOTTY-fix#7fec572529ec35b82bd4e3636d897fe2f1c2233f"
 dependencies = [
  "CoreFoundation-sys",
  "IOKit-sys",
