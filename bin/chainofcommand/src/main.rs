@@ -33,13 +33,23 @@ async fn expect(
     m: &str,
 ) -> Result<()> {
     if let Some(buf) = from_serial.recv().await {
-        if buf.len() == m.len() && String::from_utf8_lossy(buf.as_ref()) == m {
+        if buf.len() >= m.len() && String::from_utf8_lossy(&buf[..m.len()]) == m {
+            if buf.len() > m.len() {
+                to_console2.send(buf[m.len()..].to_vec()).await?;
+            }
             return Ok(());
         }
-        to_console2.send(buf).await?;
-        return Err(anyhow!("Failed to receive expected value"));
+        to_console2.send(buf.clone()).await?;
+        return Err(anyhow!(
+            "Failed to receive expected value {:?}: got {:?}",
+            m,
+            buf
+        ));
     }
-    Err(anyhow!("Failed to receive expected value"))
+    Err(anyhow!(
+        "Failed to receive expected value {:?}: got empty buf",
+        m,
+    ))
 }
 
 async fn load_kernel<P>(to_console2: &mpsc::Sender<Vec<u8>>, kernel: P) -> Result<(File, u64)>
