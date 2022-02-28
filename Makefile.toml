@@ -124,7 +124,7 @@ args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET, )"]
 [tasks.clippy]
 env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
 command = "cargo"
-args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "-D", "warnings"]
+args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "--deny", "warnings", "--allow", "deprecated"]
 
 # These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
 [tasks.custom-binary]
