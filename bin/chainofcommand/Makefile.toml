@@ -2,6 +2,9 @@
 command = "cargo"
 args = ["build"]
 
+[tasks.chainofcommand]
+dependencies = ["build"]
+
 [tasks.test]
 command = "cargo"
 args = ["test"]

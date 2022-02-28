@@ -1,0 +1,7 @@
+char device redirected to /dev/ttys003 (label serial1)
+nucleus version 0.0.1Booting on: Raspberry Pi 3+Current privilege level: EL1Exception handling state:      Debug:  Masked      SError: Masked      IRQ:    Unmasked      FIQ:    MaskedArchitectural timer resolution: 16 nsDrivers loaded:      1. BCM PL011 UART
+      2. BCM GPIO
+      3. BCM Interrupt Controller
+Registered IRQ handlers:      Peripheral handler:             57. BCM PL011 UARTSpinning for 1 secondSpinning for 1 secondSpinning for 1 second
+$> end
+Bye, going to reset now

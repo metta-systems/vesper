@@ -6,6 +6,9 @@ CHAINBOOT_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/chainboot.bin"
 env = { "BINARY_FILE" = "${CHAINBOOT_ELF}" }
 run_task = "custom-binary"
 
+[tasks.chainofcommand]
+disabled = true
+
 [tasks.hopper]
 disabled = true
 
