@@ -51,9 +51,8 @@ GDB = { value = "aarch64-elf-gdb", condition = { env_not_set = [
 # @todo: Replace it with probe-rs.. which can be installed by `cargo make`!
 # OpenOCD with JLink support
 # (RTT patch from http://openocd.zylin.com/#/c/4055/11 has already been merged into main line)
-OPENOCD = { value = "/usr/local/opt/openocd/4d6519593-rtt/bin/openocd", condition = { env_not_set = [
-    "OPENOCD",
-] } }
+# Installed via `brew install --HEAD openocd`
+OPENOCD = { value = "openocd", condition = { env_not_set = ["OPENOCD"] } }
 
 # Mounted sdcard partition path
 VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
