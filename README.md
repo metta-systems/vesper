@@ -30,7 +30,9 @@ Vesper has been influenced by the kernels in L4 family, notably seL4. Fawn and N
 
 ## Build instructions
 
-Use at least rustc nightly 2020-09-30 with cargo nightly of the same or later date. It adds support for `cargo build --build-std` feature (since 2020-07-15) and support for compiler_builtins memory operations ([since 2020-09-30](https://github.com/rust-lang/rust/pull/77284)).
+MSRV: 1.61.0
+
+We require `cargo build --build-std` feature (since 2020-07-15), compiler_builtins memory operations ([since 2020-09-30](https://github.com/rust-lang/rust/pull/77284)) and `const_fn_fn_ptr_basics` feature (stable since Rust 1.61.0).
 
 * Install tools: `cargo install just cargo-make`.
 * Install qemu (at least version 4.1.1): `brew install qemu`.
