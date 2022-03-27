@@ -3,7 +3,6 @@
 #![feature(decl_macro)]
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
-#![feature(const_fn_fn_ptr_basics)]
 #![feature(nonnull_slice_from_raw_parts)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
