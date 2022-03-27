@@ -30,7 +30,7 @@ rpi4 = []
 [dependencies]
 r0 = "1.0"
 qemu-exit = "3.0"
-cortex-a = "7.0"
+cortex-a = "7.2"
 tock-registers = "0.7"
 ux = { version = "0.1", default-features = false }
 usize_conversions = "0.2"
