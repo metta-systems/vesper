@@ -7,8 +7,18 @@ on:
   pull_request:
 
 jobs:
+  check_formatting:
+    name: "Check Formatting"
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v1
+      - run: rustup toolchain install nightly --profile minimal --component rustfmt
+      - run: cargo +nightly fmt -- --check
+
   test:
     name: Test
+    needs: check_formatting
 
     strategy:
       matrix:
@@ -118,17 +128,9 @@ jobs:
       run: env QEMU_MACHINE=raspi3 cargo make test
       if: runner.os != 'macOS'
 
-  check_formatting:
-    name: "Check Formatting"
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-    - uses: actions/checkout@v1
-    - run: rustup toolchain install nightly --profile minimal --component rustfmt
-    - run: cargo +nightly fmt -- --check
-
   clippy:
     name: "Clippy"
+    needs: check_formatting
     strategy:
       matrix:
         features: [
