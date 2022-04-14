@@ -308,6 +308,11 @@ alias = "empty"
 command = "cargo"
 args = ["clean"]
 
+[tasks.miri]
+env = { "TARGET_FEATURES" = "rpi3" }
+command = "cargo"
+args = ["miri", "test", "@@split(PLATFORM_TARGET, )"]
+
 #
 # Per-workspace commands, disabled in the root by efault.
 # TODO: defined only in sub-modules with workspace = false
