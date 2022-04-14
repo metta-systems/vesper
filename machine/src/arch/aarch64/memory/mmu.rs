@@ -249,8 +249,8 @@ register_bitfields! {
 
         /// Access flag
         AF       OFFSET(10) NUMBITS(1) [
-            False = 0,
-            True = 1
+            NotAccessed = 0,
+            Accessed = 1
         ],
 
         /// Shareability field
@@ -533,7 +533,7 @@ impl PageTableEntry {
 
         Ok(PageTableEntry::Lvl2BlockDescriptor(
             STAGE1_DESCRIPTOR::VALID::True
-                + STAGE1_DESCRIPTOR::AF::True
+                + STAGE1_DESCRIPTOR::AF::Accessed
                 + into_mmu_attributes(attribute_fields)
                 + STAGE1_DESCRIPTOR::TYPE::Block
                 + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(shifted as u64),
@@ -558,7 +558,7 @@ impl PageTableEntry {
 
         Ok(PageTableEntry::PageDescriptor(
             STAGE1_DESCRIPTOR::VALID::True
-                + STAGE1_DESCRIPTOR::AF::True
+                + STAGE1_DESCRIPTOR::AF::Accessed
                 + into_mmu_attributes(attribute_fields)
                 + STAGE1_DESCRIPTOR::TYPE::Table
                 + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64),
