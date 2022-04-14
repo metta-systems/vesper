@@ -52,7 +52,7 @@ GDB = { value = "aarch64-elf-gdb", condition = { env_not_set = [
 # OpenOCD with JLink support
 # (RTT patch from http://openocd.zylin.com/#/c/4055/11 has already been merged into main line)
 # Installed via `brew install --HEAD openocd`
-OPENOCD = { value = "openocd", condition = { env_not_set = ["OPENOCD"] } }
+OPENOCD = { value = "/opt/homebrew/Cellar/open-ocd/HEAD-8b740af/bin/openocd", condition = { env_not_set = ["OPENOCD"] } }
 
 # Mounted sdcard partition path
 VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
