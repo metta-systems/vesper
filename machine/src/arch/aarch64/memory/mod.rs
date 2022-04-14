@@ -7,7 +7,7 @@
 
 use {
     crate::println,
-    core::{fmt, ops::RangeInclusive},
+    core::{fmt, fmt::Formatter, ops::RangeInclusive},
 };
 
 mod addr;
@@ -289,6 +289,26 @@ pub fn get_virt_addr_properties(
     Ok((virt_addr, AttributeFields::default()))
 }
 
+/// Human-readable output of AttributeFields
+impl fmt::Display for AttributeFields {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let attr = match self.mem_attributes {
+            MemAttributes::CacheableDRAM => "C",
+            MemAttributes::NonCacheableDRAM => "NC",
+            MemAttributes::Device => "Dev",
+        };
+
+        let acc_p = match self.acc_perms {
+            AccessPermissions::ReadOnly => "RO",
+            AccessPermissions::ReadWrite => "RW",
+        };
+
+        let xn = if self.execute_never { "PXN" } else { "PX" };
+
+        write!(f, "{: <3} {} {: <3}", attr, acc_p, xn)
+    }
+}
+
 /// Human-readable output of a Descriptor.
 impl fmt::Display for Descriptor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -312,27 +332,10 @@ impl fmt::Display for Descriptor {
             (size, "Byte")
         };
 
-        let attr = match self.attribute_fields.mem_attributes {
-            MemAttributes::CacheableDRAM => "C",
-            MemAttributes::NonCacheableDRAM => "NC",
-            MemAttributes::Device => "Dev",
-        };
-
-        let acc_p = match self.attribute_fields.acc_perms {
-            AccessPermissions::ReadOnly => "RO",
-            AccessPermissions::ReadWrite => "RW",
-        };
-
-        let xn = if self.attribute_fields.execute_never {
-            "PXN"
-        } else {
-            "PX"
-        };
-
         write!(
             f,
-            "      {:#010X} - {:#010X} | {: >3} {} | {: <3} {} {: <3} | {}",
-            start, end, size, unit, attr, acc_p, xn, self.name
+            "      {:#010x} - {:#010x} | {: >3} {} | {} | {}",
+            start, end, size, unit, self.attribute_fields, self.name
         )
     }
 }
