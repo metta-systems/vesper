@@ -138,6 +138,10 @@ gdb-cb:
 nm:
     cargo make {{ make-opts }} xtool-nm
 
+# Check for undefined behavior
+miri: clean
+    cargo make miri
+
 # Run `cargo expand` on nucleus
 [group("maintenance")]
 expand:
