@@ -84,16 +84,14 @@ where
 {
     let (kernel_file, kernel_size) = load_kernel(to_console2, kernel).await?;
 
-    to_console2.send("[>>] Sending image size\n".into()).await?;
+    to_console2.send("⏩ Sending image size\n".into()).await?;
 
     to_serial.send(kernel_size.to_le_bytes().into()).await?;
 
     // Wait for OK response
     expect(to_console2, from_serial, "OK").await?;
 
-    to_console2
-        .send("[>>] Sending kernel image\n".into())
-        .await?;
+    to_console2.send("⏩ Sending kernel image\n".into()).await?;
 
     let mut hasher = SeaHasher::new();
     let mut reader = BufReader::with_capacity(1, kernel_file);
@@ -112,7 +110,7 @@ where
     let hashed_value: u64 = hasher.finish();
 
     to_console2
-        .send(format!("[>>] Sending image checksum {:x}\n", hashed_value).into())
+        .send(format!("⏩ Sending image checksum {:x}\n", hashed_value).into())
         .await?;
 
     to_serial.send(hashed_value.to_le_bytes().into()).await?;
@@ -203,7 +201,7 @@ where
                             // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received 3 BREAKs"), cursor::MoveToNextLine(1))?;
                             breaks = 0;
                             send_kernel(&to_console2, &to_serial, &mut from_serial, kernel.clone()).await?;
-                            to_console2.send("[>>] Send successful, pass-through\n".into()).await?;
+                            to_console2.send("🦀 Send successful, pass-through\n".into()).await?;
                         }
                     } else {
                         while breaks > 0 {
@@ -379,7 +377,7 @@ async fn main() -> Result<()> {
                     stdout,
                     cursor::RestorePosition,
                     style::Print(format!(
-                        "[>>] Waiting for serial port {}\r",
+                        "⏳ Waiting for serial port {}\r",
                         if serial_toggle { "# " } else { " #" }
                     ))
                 )?;
@@ -401,7 +399,7 @@ async fn main() -> Result<()> {
 
         execute!(
             stdout,
-            style::Print("\n[>>] Waiting for handshake, pass-through"),
+            style::Print("\n✅ Waiting for handshake, pass-through. 🔌 Power the target now."),
         )?;
         stdout.flush()?;
 
