@@ -74,7 +74,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
     print!("{}", LOGO);
     println!("{:>51}\n", BcmHost::board_name());
-    println!("[<<] Requesting kernel image...");
+    println!("⏪ Requesting kernel image...");
 
     let kernel_addr: *mut u8 = BcmHost::kernel_load_address() as *mut u8;
 
@@ -94,7 +94,10 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
         // Check the size to fit RAM
         if size > max_kernel_size {
-            println!("ERR Kernel image too big (over {} bytes)", max_kernel_size);
+            println!(
+                "ERR ❌ Kernel image too big (over {} bytes)",
+                max_kernel_size
+            );
             continue;
         }
 
@@ -118,7 +121,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
         let valid = hasher.finish() == checksum;
         if !valid {
-            println!("ERR Kernel image checksum mismatch");
+            println!("ERR ❌ Kernel image checksum mismatch");
             continue;
         }
 
@@ -127,7 +130,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
     }
 
     println!(
-        "[<<] Loaded! Executing the payload now from {:p}\n",
+        "⏪ Loaded! Executing the payload now from {:p}\n",
         kernel_addr
     );
     CONSOLE.lock(|c| c.flush());
