@@ -53,7 +53,7 @@ use {
     crate::{arch::endless_sleep, println},
     cortex_a::{
         asm::barrier,
-        registers::{ESR_EL1, FAR_EL1, VBAR_EL1},
+        registers::{ESR_EL1, FAR_EL1, SPSR_EL1, VBAR_EL1},
     },
     snafu::Snafu,
     tock_registers::{
@@ -309,13 +309,15 @@ fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
 // unsafe extern "C" fn lower_aarch32_irq(e: &mut ExceptionContext);
 // unsafe extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext);
 
+type SpsrCopy = LocalRegisterCopy<u64, SPSR_EL1::Register>;
+
 /// Helper function to 1) display current exception, 2) skip the offending asm instruction.
 /// Not for production use!
 fn synchronous_common(e: &mut ExceptionContext) {
     println!("      ESR_EL1: {:#010x} (syndrome)", ESR_EL1.get());
     let cause = ESR_EL1.read(ESR_EL1::EC);
     println!(
-        "           EC: {:#06b} (cause) -- {}",
+        "           EC: {:#08b} (cause) -- {}",
         cause,
         cause_to_string(cause)
     );
@@ -350,10 +352,25 @@ fn synchronous_common(e: &mut ExceptionContext) {
         );
         println!("               Specific fault: {}", iss_dfsc_to_string(iss));
     } else {
-        println!("      FAR_EL1: {:#016x} (location)", FAR_EL1.get());
-        println!("        Stack: {:#016x}", e.spsr_el1);
+        #[rustfmt::skip]
+        {
+            println!("      FAR_EL1: {:#016x} (location)", FAR_EL1.get());
+            println!("     SPSR_EL1: {:#016x} (state)", e.spsr_el1);
+            let spsr = SpsrCopy::new(e.spsr_el1);
+            println!("               N: {} (negative condition)", spsr.read(SPSR_EL1::N));
+            println!("               Z: {} (zero condition)", spsr.read(SPSR_EL1::Z));
+            println!("               C: {} (carry condition)", spsr.read(SPSR_EL1::C));
+            println!("               V: {} (overflow condition)", spsr.read(SPSR_EL1::V));
+            println!("               SS: {} (software step)", spsr.read(SPSR_EL1::SS));
+            println!("               IL: {} (illegal execution state)", spsr.read(SPSR_EL1::IL));
+            println!("               D: {} (debug masked)", spsr.read(SPSR_EL1::D));
+            println!("               A: {} (serror masked)", spsr.read(SPSR_EL1::A));
+            println!("               I: {} (irq masked)", spsr.read(SPSR_EL1::I));
+            println!("               F: {} (fiq masked)", spsr.read(SPSR_EL1::F));
+            println!("               M: {:#06b} (machine state)", spsr.read(SPSR_EL1::M));
+        }
     }
-    println!("      ELR_EL1: {:#010x}", e.elr_el1);
+    println!("      ELR_EL1: {:#010x} (return to)", e.elr_el1);
 
     println!("      x00: 0000000000000000    x01: {:016x}", e.gpr.x[0]);
 
@@ -374,6 +391,6 @@ fn synchronous_common(e: &mut ExceptionContext) {
 
     e.elr_el1 += 4;
 
-    println!("      ELR_EL1 modified: {:#010x}", e.elr_el1);
+    println!("      ELR_EL1 modified: {:#010x} (return to)", e.elr_el1);
     println!("      Returning from exception...\n");
 }
