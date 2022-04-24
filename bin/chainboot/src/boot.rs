@@ -9,6 +9,7 @@ core::arch::global_asm!(include_str!("boot.s"));
 #[cfg(not(feature = "asm"))]
 pub unsafe extern "C" fn _start() -> ! {
     use {
+        core::cell::UnsafeCell,
         cortex_a::registers::{MPIDR_EL1, SP},
         machine::endless_sleep,
         tock_registers::interfaces::{Readable, Writeable},
@@ -24,31 +25,30 @@ pub unsafe extern "C" fn _start() -> ! {
 
     // These are a problem, because they are not interpreted as constants here.
     // Subsequently, this code tries to read values from not-yet-existing data locations.
-    extern "C" {
+    extern "Rust" {
         // Boundaries of the .bss section, provided by the linker script
-        static mut __bss_start: u64;
-        static mut __bss_end_exclusive: u64;
+        static __bss_start: UnsafeCell<()>;
+        static __bss_end_exclusive: UnsafeCell<()>;
         // Load address of the kernel binary
-        static mut __binary_nonzero_lma: u64;
+        static __binary_nonzero_lma: UnsafeCell<()>;
         // Address to relocate to and image size
-        static mut __binary_nonzero_vma: u64;
-        static mut __binary_nonzero_vma_end_exclusive: u64;
+        static __binary_nonzero_vma: UnsafeCell<()>;
+        static __binary_nonzero_vma_end_exclusive: UnsafeCell<()>;
         // Stack top
-        static mut __boot_core_stack_end_exclusive: u64;
+        static __boot_core_stack_end_exclusive: UnsafeCell<()>;
     }
 
     // Set stack pointer.
-    SP.set(&mut __boot_core_stack_end_exclusive as *mut u64 as u64);
+    SP.set(__boot_core_stack_end_exclusive.get() as u64);
 
     // Zeroes the .bss section
-    r0::zero_bss(&mut __bss_start, &mut __bss_end_exclusive);
+    r0::zero_bss(__bss_start.get() as u64, __bss_end_exclusive.get() as u64);
 
     // Relocate the code
     core::ptr::copy_nonoverlapping(
-        &mut __binary_nonzero_lma as *const u64,
-        &mut __binary_nonzero_vma as *mut u64,
-        (&mut __binary_nonzero_vma_end_exclusive as *mut u64 as u64
-            - &mut __binary_nonzero_vma as *mut u64 as u64) as usize,
+        __binary_nonzero_lma.get() as *const u64,
+        __binary_nonzero_vma.get() as *mut u64,
+        (__binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize),
     );
 
     _start_rust();

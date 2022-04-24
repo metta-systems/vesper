@@ -23,6 +23,7 @@ use core::panic::PanicInfo;
 use machine::devices::SerialOps;
 use {
     cfg_if::cfg_if,
+    core::cell::UnsafeCell,
     machine::{
         arch, entry, memory,
         platform::rpi3::{
@@ -55,14 +56,12 @@ fn init_mmu() {
 }
 
 fn init_exception_traps() {
-    extern "C" {
-        static __exception_vectors_start: u64;
+    extern "Rust" {
+        static __exception_vectors_start: UnsafeCell<()>;
     }
 
     unsafe {
-        let exception_vectors_start: u64 = &__exception_vectors_start as *const _ as u64;
-
-        arch::traps::set_vbar_el1_checked(exception_vectors_start)
+        arch::traps::set_vbar_el1_checked(__exception_vectors_start.get() as u64)
             .expect("Vector table properly aligned!");
     }
     println!("[!] Exception traps set up");
