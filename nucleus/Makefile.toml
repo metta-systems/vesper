@@ -61,7 +61,7 @@ install_crate = { crate_name = "rustfilt", binary = "rustfilt", test_arg = ["--h
 [tasks.nm]
 dependencies = ["build", "kernel-binary", "install-nm", "install-rustfilt"]
 script = [
-    "${NM} -- ${KERNEL_ELF} | sort -k 1 | rustfilt"
+    "${NM} ${KERNEL_ELF} | sort -k 1 | rustfilt"
 ]
 
 [tasks.sdcard]
