@@ -23,6 +23,9 @@ run_task = "zellij-config"
 env = { "KERNEL_BIN" = "${CHAINBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_BOARD" = "rpi3", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 run_task = "zellij-config"
 
+[tasks.nm]
+disabled = true
+
 [tasks.qemu]
 disabled = true
 

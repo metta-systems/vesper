@@ -28,6 +28,9 @@ disabled = true
 [tasks.zellij-cb-gdb]
 disabled = true
 
+[tasks.nm]
+disabled = true
+
 [tasks.qemu]
 disabled = true
 
