@@ -13,8 +13,11 @@
 
 use {
     super::BcmHost,
-    crate::{platform::MMIODerefWrapper, println},
+    crate::{platform::MMIODerefWrapper, println, DMA_ALLOCATOR},
     core::{
+        alloc::{AllocError, Allocator, Layout},
+        mem,
+        ptr::NonNull,
         result::Result as CoreResult,
         sync::atomic::{compiler_fence, Ordering},
     },
@@ -31,14 +34,14 @@ use {
 /// The address for the buffer needs to be 16-byte aligned
 /// so that the VideoCore can handle it properly.
 /// The reason is that lowest 4 bits of the address will contain the channel number.
-pub struct Mailbox<const N_SLOTS: usize, Storage = LocalMailboxStorage<N_SLOTS>> {
+pub struct Mailbox<const N_SLOTS: usize, Storage = DmaBackedMailboxStorage<N_SLOTS>> {
     registers: Registers,
     pub buffer: Storage,
 }
 
 /// Mailbox that is ready to be called.
 /// This prevents invalid use of the mailbox until it is fully prepared.
-pub struct PreparedMailbox<const N_SLOTS: usize, Storage = LocalMailboxStorage<N_SLOTS>>(
+pub struct PreparedMailbox<const N_SLOTS: usize, Storage = DmaBackedMailboxStorage<N_SLOTS>>(
     Mailbox<N_SLOTS, Storage>,
 );
 
@@ -96,6 +99,8 @@ pub enum MailboxError {
     Unknown,
     #[snafu(display("Timeout"))]
     Timeout,
+    #[snafu(display("AllocError"))]
+    Alloc,
 }
 
 pub type Result<T> = CoreResult<T, MailboxError>;
@@ -111,7 +116,9 @@ pub trait MailboxOps {
 }
 
 pub trait MailboxStorage {
-    fn new() -> Self;
+    fn new() -> Result<Self>
+    where
+        Self: Sized;
 }
 
 pub trait MailboxStorageRef {
@@ -127,11 +134,45 @@ pub struct LocalMailboxStorage<const N_SLOTS: usize> {
     pub storage: [u32; N_SLOTS],
 }
 
+pub struct DmaBackedMailboxStorage<const N_SLOTS: usize> {
+    pub storage: *mut u32,
+}
+
 impl<const N_SLOTS: usize> MailboxStorage for LocalMailboxStorage<N_SLOTS> {
-    fn new() -> Self {
-        Self {
+    fn new() -> Result<Self> {
+        Ok(Self {
             storage: [0u32; N_SLOTS],
-        }
+        })
+    }
+}
+
+impl<const N_SLOTS: usize> MailboxStorage for DmaBackedMailboxStorage<N_SLOTS> {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            storage: DMA_ALLOCATOR
+                .lock(|a| {
+                    a.allocate(
+                        Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
+                            .map_err(|_| AllocError)?,
+                    )
+                })
+                .map_err(|_| MailboxError::Alloc)?
+                .as_mut_ptr() as *mut u32,
+        })
+    }
+}
+
+impl<const N_SLOTS: usize> Drop for DmaBackedMailboxStorage<N_SLOTS> {
+    fn drop(&mut self) {
+        DMA_ALLOCATOR
+            .lock::<_, Result<()>>(|a| unsafe {
+                Ok(a.deallocate(
+                    NonNull::new_unchecked(self.storage as *mut u8),
+                    Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
+                        .map_err(|_| MailboxError::Alloc)?,
+                ))
+            })
+            .unwrap_or(())
     }
 }
 
@@ -151,6 +192,25 @@ impl<const N_SLOTS: usize> MailboxStorageRef for LocalMailboxStorage<N_SLOTS> {
     // @todo Probably need a ResultMailbox for accessing data after call()?
     fn value_at(&self, index: usize) -> u32 {
         self.storage[index]
+    }
+}
+
+impl<const N_SLOTS: usize> MailboxStorageRef for DmaBackedMailboxStorage<N_SLOTS> {
+    fn as_ref(&self) -> &[u32] {
+        unsafe { core::slice::from_raw_parts(self.storage.cast(), N_SLOTS) }
+    }
+
+    fn as_mut(&mut self) -> &mut [u32] {
+        unsafe { core::slice::from_raw_parts_mut(self.storage.cast(), N_SLOTS) }
+    }
+
+    fn as_ptr(&self) -> *const u32 {
+        self.storage.cast()
+    }
+
+    // @todo Probably need a ResultMailbox for accessing data after call()?
+    fn value_at(&self, index: usize) -> u32 {
+        self.as_ref()[index]
     }
 }
 
@@ -315,7 +375,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
     pub unsafe fn new(base_addr: usize) -> Result<Mailbox<N_SLOTS, Storage>> {
         Ok(Mailbox {
             registers: Registers::new(base_addr),
-            buffer: Storage::new(),
+            buffer: Storage::new()?,
         })
     }
 
