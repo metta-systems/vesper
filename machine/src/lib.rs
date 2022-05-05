@@ -5,6 +5,7 @@
 #![feature(format_args_nl)]
 #![feature(core_intrinsics)]
 #![feature(stmt_expr_attributes)]
+#![feature(slice_ptr_get)]
 #![feature(nonnull_slice_from_raw_parts)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
@@ -17,6 +18,12 @@
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
+
+use {
+    buddy_alloc::{BuddyAlloc, BuddyAllocParam},
+    once_cell::unsync::Lazy,
+    platform::memory::map::virt::{DMA_HEAP_END, DMA_HEAP_START},
+};
 
 /// Architecture-specific code.
 #[macro_use]
@@ -41,19 +48,20 @@ pub static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devic
 /// The global allocator for DMA-able memory. That is, memory which is tagged
 /// non-cacheable in the page tables.
 #[allow(dead_code)]
-static DMA_ALLOCATOR: sync::NullLock<mm::BumpAllocator> =
-    sync::NullLock::new(mm::BumpAllocator::new(
-        // @todo Init this after we loaded boot memory map
-        platform::memory::map::virt::DMA_HEAP_START as usize,
-        platform::memory::map::virt::DMA_HEAP_END as usize,
-        "Global DMA Allocator",
-        // Try the following arguments instead to see all mailbox operations
-        // fail. It will cause the allocator to use memory that are marked
-        // cacheable and therefore not DMA-safe. The answer from the VideoCore
-        // won't be received by the CPU because it reads an old cached value
-        // that resembles an error case instead.
+static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
+    sync::NullLock::new(Lazy::new(|| unsafe {
+        BuddyAlloc::new(BuddyAllocParam::new(
+            // @todo Init this after we loaded boot memory map
+            DMA_HEAP_START as *const u8,
+            DMA_HEAP_END - DMA_HEAP_START,
+            64,
+        ))
+    }));
+// Try the following arguments instead to see all mailbox operations
+// fail. It will cause the allocator to use memory that are marked
+// cacheable and therefore not DMA-safe. The answer from the VideoCore
+// won't be received by the CPU because it reads an old cached value
+// that resembles an error case instead.
 
-        // 0x00600000 as usize,
-        // 0x007FFFFF as usize,
-        // "Global Non-DMA Allocator",
-    ));
+// 0x00600000 as usize,
+// 0x007FFFFF as usize,
