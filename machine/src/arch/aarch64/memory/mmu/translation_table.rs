@@ -265,6 +265,47 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
     ///
     /// - Modifies a `static mut`. Ensure it only happens from here.
     pub unsafe fn populate_translation_table_entries(&mut self) -> Result<(), &'static str> {
+        // Point the first 1GiB to the level 2 table.
+        // LVL1_TABLE.entries[0] =
+        //     PageTableEntry::new_table_descriptor(LVL2_TABLE.entries.base_addr_usize())?.into();
+        // The remaining memory space (1GiB .. 2-8Gib) is yet unmapped.
+
+        // Point the first 2 MiB of virtual addresses to the follow-up LVL3
+        // page-table.
+        // LVL2_TABLE.entries[0] =
+        //     PageTableEntry::new_table_descriptor(LVL3_TABLE.entries.base_addr_usize())?.into();
+
+        // Fill the rest of the LVL2 (2 MiB) entries as block descriptors.
+        //
+        // Notice the skip(1) which makes the iteration start at the second 2 MiB
+        // block (0x20_0000).
+        // for (block_descriptor_nr, entry) in LVL2_TABLE.entries.iter_mut().enumerate().skip(1) {
+        //     let virt_addr = block_descriptor_nr << Size2MiB::SHIFT;
+        //     let (output_addr, attribute_fields) = get_virt_addr_properties(virt_addr)?;
+        //
+        //     println!(
+        //         "Block Descriptor {:4} at {:#010x} -> {:#010x}, {}",
+        //         block_descriptor_nr, virt_addr, output_addr, attribute_fields
+        //     );
+        //
+        //     let block_desc = PageTableEntry::new_lvl2_block_descriptor(output_addr, attribute_fields)?;
+        //     *entry = block_desc.into();
+        // }
+
+        // Finally, fill the single LVL3 table (4 KiB granule).
+        // for (page_descriptor_nr, entry) in LVL3_TABLE.entries.iter_mut().enumerate() {
+        //     let virt_addr = page_descriptor_nr << Size4KiB::SHIFT;
+        //     let (output_addr, attribute_fields) = get_virt_addr_properties(virt_addr)?;
+        //
+        //     println!(
+        //         "Page Descriptor {:4} at {:#010x} -> {:#010x}, {}",
+        //         page_descriptor_nr, virt_addr, output_addr, attribute_fields
+        //     );
+        //
+        //     let page_desc = PageTableEntry::new_page_descriptor(output_addr, attribute_fields)?;
+        //     *entry = page_desc.into();
+        // }
+
         for (l2_nr, l2_entry) in self.lvl2.iter_mut().enumerate() {
             *l2_entry =
                 TableDescriptor::from_next_lvl_table_addr(self.lvl3[l2_nr].base_addr_usize());
