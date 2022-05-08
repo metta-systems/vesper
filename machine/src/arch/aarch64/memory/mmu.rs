@@ -101,10 +101,26 @@ impl MemoryManagementUnit {
 
     /// Configure various settings of stage 1 of the EL1 translation regime.
     fn configure_translation_control(&self) {
+        // TCR_EL1.{SH0, ORGN0, IRGN0, SH1, ORGN1, IRGN1} fields define memory region attributes for the
+        // translation table walk, for each of TTBR0_EL1 and TTBR1_EL1.
+        // For the Secure and Non-secure EL1&0 stage 1 translations, each of TTBR0_EL1 and TTBR1_EL1
+        // contains an ASID field, and the TCR_EL1.A1 field selects which ASID to use.
+
+        // Two-level tables with a 4Kb granule size may address ONLY 1Gb of virtual addresses.
+        // This seems to be not enough for RPi4? Try using tables from level 1 (TxSZ=below 34 bits), up to 512Gb
+
         // Configure various settings of stage 1 of the EL1 translation regime.
+        // PARange is 4 bits, ips is 3 bits @todo validate the range is acceptable.
         let ips = ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange);
+
+        // Maximum 8Gb user VA
+        let user_va_bits = 33; // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 1
+
+        // Maximum 8Gb kernel VA
+        let kernel_va_bits = 33; // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 1
+
         TCR_EL1.write(
-            TCR_EL1::TBI0::Ignored // Top byte ignored
+            TCR_EL1::TBI0::Ignored // Top byte ignored, can be used for tagging.
                 + TCR_EL1::IPS.val(ips) // Intermediate Physical Address Size
                 // ttbr0 user memory addresses
                 + TCR_EL1::TG0::KiB_4 // 4 KiB granule
@@ -112,15 +128,15 @@ impl MemoryManagementUnit {
                 + TCR_EL1::ORGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
                 + TCR_EL1::IRGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
                 + TCR_EL1::EPD0::EnableTTBR0Walks
-                + TCR_EL1::T0SZ.val(34) // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
+                + TCR_EL1::T0SZ.val(64 - user_va_bits)
                 // ttbr1 kernel memory addresses
-                + TCR_EL1::TBI1::Ignored
+                + TCR_EL1::TBI1::Ignored // Top byte ignored, can be used for tagging. @todo remove!
                 + TCR_EL1::TG1::KiB_4 // 4 KiB granule
                 + TCR_EL1::SH1::Inner
                 + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
                 + TCR_EL1::IRGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
-                + TCR_EL1::EPD1::EnableTTBR1Walks
-                + TCR_EL1::T1SZ.val(34), // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
+                + TCR_EL1::EPD1::DisableTTBR1Walks // @fixme disabled for now
+                + TCR_EL1::T1SZ.val(64 - kernel_va_bits),
         );
     }
 }
@@ -172,11 +188,12 @@ impl interface::MMU for MemoryManagementUnit {
         // (this should be set to share the TLBs across cores.)
 
         // Point to the LVL2 table base address in TTBR0.
-        TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
-        TTBR1_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
+        TTBR0_EL1.set_baddr(LVL1_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
+        TTBR0_EL1.modify(TTBR0_EL1::CnP.val(1));
 
-        // lower half, user space
-        // asm volatile ("msr ttbr0_el1, %0" : : "r" ((unsigned long)&_end + TTBR_CNP));
+        // TTBR1_EL1.set_baddr(LVL1_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
+        // TTBR1_EL1.modify(TTBR1_EL1::CnP.val(1));
+
         // upper half, kernel space
         // asm volatile ("msr ttbr1_el1, %0" : : "r" ((unsigned long)&_end + TTBR_CNP + PAGESIZE));
 
@@ -185,8 +202,14 @@ impl interface::MMU for MemoryManagementUnit {
         // Switch the MMU on.
         //
         // First, force all previous changes to be seen before the MMU is enabled.
-        barrier::dsb(barrier::ISH); // dsb ishst?
-        barrier::isb(barrier::SY);
+        // See [ARM ARM](https://developer.arm.com/documentation/den0024/a/The-Memory-Management-Unit/The-Translation-Lookaside-Buffer).
+        barrier::dsb(barrier::ISHST); // ensure write has completed
+
+        // core::arch::asm!("tlbi alle1"); // invalidate all TLB entries -- must do it from EL2/EL3
+
+        barrier::dsb(barrier::ISH); // ensure completion of TLB invalidation
+        barrier::isb(barrier::SY); // synchronize context and ensure that no instructions are
+                                   // fetched using the old translation
 
         // use cortex_a::regs::RegisterReadWrite;
         // Enable the MMU and turn on data and instruction caching.
@@ -203,9 +226,9 @@ impl interface::MMU for MemoryManagementUnit {
                 + SCTLR_EL1::NTWE::Trap // WFE/WFET instruction trap
                 + SCTLR_EL1::NTWI::Trap // WFI/WFIT instruction trap
                 + SCTLR_EL1::DZE::Trap // DC ZVA/GVA/GZVA instructions trap
-                + SCTLR_EL1::C::Cacheable // No caching at all
-                + SCTLR_EL1::I::Cacheable // No instruction cache
-                + SCTLR_EL1::M::Disable,
+                + SCTLR_EL1::C::Cacheable
+                + SCTLR_EL1::I::Cacheable
+                + SCTLR_EL1::M::Enable,
         );
 
         // from https://forums.raspberrypi.com/viewtopic.php?t=320120#p1917769
@@ -221,7 +244,11 @@ impl interface::MMU for MemoryManagementUnit {
          * speculatively from the PoC are discarded, since they may have
          * been dynamically patched at the PoU.
          */
-        barrier::isb(barrier::SY);
+        // core::arch::asm!("tlbi alle1"); // invalidate all TLB entries -- must do it from EL2/EL3
+
+        barrier::dsb(barrier::ISH); // ensure completion of TLB invalidation
+        barrier::isb(barrier::SY); // synchronize context and ensure that no instructions are
+                                   // fetched using the old translation
 
         println!("MMU activated");
 

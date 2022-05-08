@@ -259,6 +259,8 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
 
     /// Iterates over all static translation table entries and fills them at once.
     ///
+    /// See also: https://armv8-ref.codingbelief.com/en/chapter_d4/d4_the_aarch64_virtual_memory_system_archi.html
+    ///
     /// # Safety
     ///
     /// - Modifies a `static mut`. Ensure it only happens from here.
