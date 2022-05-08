@@ -13,13 +13,13 @@
 
 use {
     crate::{
-        Address, Physical,
-        mmu::{AddressSpace, MMUEnableError, TranslationGranule, interface},
-        platform,
+        mmu::{interface, AddressSpace, MMUEnableError, TranslationGranule},
+        platform, Address, Physical,
     },
     aarch64_cpu::{
+        asm,
         asm::barrier,
-        registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1},
+        registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
     },
     core::intrinsics::unlikely,
     liblog::println,
@@ -94,19 +94,42 @@ impl MemoryManagementUnit {
 
     /// Configure various settings of stage 1 of the EL1 translation regime.
     fn configure_translation_control() {
-        let t0sz = (64 - platform::memory::mmu::KernelVirtAddrSpace::SIZE_SHIFT) as u64;
+        // TCR_EL1.{SH0, ORGN0, IRGN0, SH1, ORGN1, IRGN1} fields define memory region attributes for the
+        // translation table walk, for each of TTBR0_EL1 and TTBR1_EL1.
+        // For the Secure and Non-secure EL1&0 stage 1 translations, each of TTBR0_EL1 and TTBR1_EL1
+        // contains an ASID field, and the TCR_EL1.A1 field selects which ASID to use.
+
+        // Two-level tables with a 4Kb granule size may address ONLY 1Gb of virtual addresses.
+        // This seems to be not enough for RPi4? Try using tables from level 1 (TxSZ=below 34 bits), up to 512Gb
+
+        // Configure various settings of stage 1 of the EL1 translation regime.
+        // PARange is 4 bits, ips is 3 bits @todo validate the range is acceptable.
+        let ips = ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange);
+
+        // Maximum 8Gb user VA
+        let user_va_bits = 33; // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 1
+
+        // Maximum 8Gb kernel VA
+        let kernel_va_bits = 33; // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 1
 
         TCR_EL1.write(
-            TCR_EL1::TBI0::Used
-                + TCR_EL1::IPS::Bits_40
-                + TCR_EL1::TG0::KiB_64
+            TCR_EL1::TBI0::Ignored // Top byte ignored, can be used for tagging.
+                + TCR_EL1::IPS.val(ips) // Intermediate Physical Address Size
+                // ttbr0 user memory addresses
+                + TCR_EL1::TG0::KiB_4 // 4 KiB granule
                 + TCR_EL1::SH0::Inner
                 + TCR_EL1::ORGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
                 + TCR_EL1::IRGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
-                + TCR_EL1::EPD0::EnableTTBR0Walks
-                + TCR_EL1::A1::TTBR0 // TTBR0 defines the ASID
-                + TCR_EL1::T0SZ.val(t0sz)
-                + TCR_EL1::EPD1::DisableTTBR1Walks,
+                + TCR_EL1::EPD0::EnableTTBR0Walks,
+                + TCR_EL1::T0SZ.val(64 - user_va_bits) // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
+                // ttbr1 kernel memory addresses
+                + TCR_EL1::TBI1::Ignored // Top byte ignored, can be used for tagging. @todo remove!
+                + TCR_EL1::TG1::KiB_4 // 4 KiB granule
+                + TCR_EL1::SH1::Inner
+                + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
+                + TCR_EL1::IRGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
+                + TCR_EL1::EPD1::DisableTTBR1Walks // @fixme disabled for now
+                + TCR_EL1::T1SZ.val(64 - kernel_va_bits), // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
         );
     }
 }
@@ -148,21 +171,84 @@ impl interface::MMU for MemoryManagementUnit {
         //     .populate_translation_table_entries()
         //     .map_err(|err| MMUEnableError::Other { err })?;
 
-        // Set the "Translation Table Base Register".
-        TTBR0_EL1.set_baddr(phys_tables_base_addr.as_usize() as u64);
+        // from https://lore.kernel.org/all/db9612a7-9354-2357-9083-1d923b4d11e1@linaro.org/T/
+        // The ARMv8.2-TTCNP extension allows an implementation to optimize by
+        // sharing TLB entries between multiple cores, provided that software
+        // declares that it's ready to deal with this by setting a CnP bit in
+        // the TTBRn_ELx.  It is mandatory from ARMv8.2 onward.
+
+        // support feature flag is in ID_AA64MMFR2
+        // https://developer.arm.com/documentation/ddi0601/2022-03/AArch64-Registers/ID-AA64MMFR2-EL1--AArch64-Memory-Model-Feature-Register-2?lang=en
+        // CnP bits 3:0
+        // From Armv8.2, the only permitted value is 0b0001.
+        // (this should be set to share the TLBs across cores.)
+
+        // Point to the LVL2 table base address in TTBR0.
+        TTBR0_EL1.set_baddr(LVL1_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
+        TTBR0_EL1.modify(TTBR0_EL1::CnP.val(1));
+
+        // TTBR1_EL1.set_baddr(LVL1_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
+        // TTBR1_EL1.modify(TTBR1_EL1::CnP.val(1));
+
+        // upper half, kernel space
+        // asm volatile ("msr ttbr1_el1, %0" : : "r" ((unsigned long)&_end + TTBR_CNP + PAGESIZE));
 
         Self::configure_translation_control();
 
         // Switch the MMU on.
         //
         // First, force all previous changes to be seen before the MMU is enabled.
-        barrier::isb(barrier::SY);
+        // See [ARM ARM](https://developer.arm.com/documentation/den0024/a/The-Memory-Management-Unit/The-Translation-Lookaside-Buffer).
+        barrier::dsb(barrier::ISHST); // ensure write has completed
 
+        // core::arch::asm!("tlbi alle1"); // invalidate all TLB entries -- must do it from EL2/EL3
+
+        barrier::dsb(barrier::ISH); // ensure completion of TLB invalidation
+        barrier::isb(barrier::SY); // synchronize context and ensure that no instructions are
+        // fetched using the old translation
+
+        // use cortex_a::regs::RegisterReadWrite;
         // Enable the MMU and turn on data and instruction caching.
-        SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::Cacheable + SCTLR_EL1::I::Cacheable);
 
-        // Force MMU init to complete before next instruction.
-        barrier::isb(barrier::SY);
+        SCTLR_EL1.modify(
+            SCTLR_EL1::EE::LittleEndian // Endianness select in EL1
+                + SCTLR_EL1::E0E::LittleEndian // Endianness select in EL0
+                + SCTLR_EL1::WXN::Disable // Writable means Execute Never
+                + SCTLR_EL1::SA::Disable // SP Alignment check in EL1, 16 byte align
+                + SCTLR_EL1::SA0::Disable // SP Alignment check in EL0, 16 byte align
+                + SCTLR_EL1::A::Disable // No alignment checks
+                + SCTLR_EL1::UCI::Trap // Unified Cache instructions trap
+                + SCTLR_EL1::UCT::Trap // CTR_EL0 instructions trap
+                + SCTLR_EL1::UMA::Trap // User Mask Access, trap on DAIF access
+                + SCTLR_EL1::NTWE::Trap // WFE/WFET instruction trap
+                + SCTLR_EL1::NTWI::Trap // WFI/WFIT instruction trap
+                + SCTLR_EL1::DZE::Trap // DC ZVA/GVA/GZVA instructions trap
+                + SCTLR_EL1::C::Cacheable
+                + SCTLR_EL1::I::Cacheable
+                + SCTLR_EL1::M::Enable,
+        );
+
+        // from https://forums.raspberrypi.com/viewtopic.php?t=320120#p1917769
+        // Another hint: once the MMU has been activated you should let 2 CPU cycles pass and then call
+        // `tlbi alle2` to ensure the MMU related cache will be invalidated and the new settings are picked up.
+
+        asm::nop();
+        asm::nop();
+        //TODO: tlbi
+
+        // Force MMU init to complete before next instruction
+        /*
+         * Invalidate the local I-cache so that any instructions fetched
+         * speculatively from the PoC are discarded, since they may have
+         * been dynamically patched at the PoU.
+         */
+        // core::arch::asm!("tlbi alle1"); // invalidate all TLB entries -- must do it from EL2/EL3
+
+        // FIXME compiler happily inserts an instruction before this one... perhaps a compiler_fence()?
+        barrier::dsb(barrier::ISH); // ensure completion of TLB invalidation
+        barrier::isb(barrier::SY); // synchronize context and ensure that no instructions are fetched using the old translation
+
+        println!("MMU activated");
 
         Ok(())
     }
