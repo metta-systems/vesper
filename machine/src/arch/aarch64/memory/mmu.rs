@@ -246,6 +246,7 @@ impl interface::MMU for MemoryManagementUnit {
          */
         // core::arch::asm!("tlbi alle1"); // invalidate all TLB entries -- must do it from EL2/EL3
 
+        // FIXME compiler happily inserts an instruction before this one...
         barrier::dsb(barrier::ISH); // ensure completion of TLB invalidation
         barrier::isb(barrier::SY); // synchronize context and ensure that no instructions are
                                    // fetched using the old translation
