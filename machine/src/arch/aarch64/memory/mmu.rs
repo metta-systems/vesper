@@ -21,8 +21,9 @@ use {
     },
     core::intrinsics::unlikely,
     cortex_a::{
+        asm,
         asm::barrier,
-        registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1},
+        registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
     },
     tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
 };
@@ -100,19 +101,25 @@ impl MemoryManagementUnit {
 
     /// Configure various settings of stage 1 of the EL1 translation regime.
     fn configure_translation_control(&self) {
-        let t0sz = (64 - platform::memory::mmu::KernelAddrSpace::SIZE_SHIFT) as u64;
-
+        // Configure various settings of stage 1 of the EL1 translation regime.
+        let ips = ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange);
         TCR_EL1.write(
-            TCR_EL1::TBI0::Used
-                + TCR_EL1::IPS::Bits_40
-                + TCR_EL1::TG0::KiB_64
+            TCR_EL1::TBI0::Ignored // @todo TBI1 also set to Ignored??
+                + TCR_EL1::IPS.val(ips) // Intermediate Physical Address Size
+                // ttbr0 user memory addresses
+                + TCR_EL1::TG0::KiB_4 // 4 KiB granule
                 + TCR_EL1::SH0::Inner
                 + TCR_EL1::ORGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
                 + TCR_EL1::IRGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
                 + TCR_EL1::EPD0::EnableTTBR0Walks
-                + TCR_EL1::A1::TTBR0 // TTBR0 defines the ASID
-                + TCR_EL1::T0SZ.val(t0sz)
-                + TCR_EL1::EPD1::DisableTTBR1Walks,
+                + TCR_EL1::T0SZ.val(34) // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
+                // ttbr1 kernel memory addresses
+                + TCR_EL1::TG1::KiB_4 // 4 KiB granule
+                + TCR_EL1::SH1::Inner
+                + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
+                + TCR_EL1::IRGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
+                + TCR_EL1::EPD1::EnableTTBR1Walks
+                + TCR_EL1::T1SZ.val(34), // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
         );
     }
 }
@@ -151,21 +158,54 @@ impl interface::MMU for MemoryManagementUnit {
             .populate_translation_table_entries()
             .map_err(MMUEnableError::Other)?;
 
-        // Set the "Translation Table Base Register".
-        TTBR0_EL1.set_baddr(KERNEL_TABLES.phys_base_address());
+        // Point to the LVL2 table base address in TTBR0.
+        TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
+        TTBR1_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
 
         self.configure_translation_control();
 
         // Switch the MMU on.
         //
         // First, force all previous changes to be seen before the MMU is enabled.
+        barrier::dsb(barrier::ISH); // dsb ishst?
         barrier::isb(barrier::SY);
 
+        // use cortex_a::regs::RegisterReadWrite;
         // Enable the MMU and turn on data and instruction caching.
-        SCTLR_EL1.modify(SCTLR_EL1::M::Enable + SCTLR_EL1::C::Cacheable + SCTLR_EL1::I::Cacheable);
+        SCTLR_EL1.modify(
+            SCTLR_EL1::EE::LittleEndian // Endianness select in EL1
+                + SCTLR_EL1::E0E::LittleEndian // Endianness select in EL0
+                + SCTLR_EL1::WXN::Disable // Writable means Execute Never
+                + SCTLR_EL1::SA::Disable // SP Alignment check in EL1, 16 byte align
+                + SCTLR_EL1::SA0::Disable // SP Alignment check in EL0, 16 byte align
+                + SCTLR_EL1::A::Disable // No alignment checks
+                + SCTLR_EL1::UCI::Trap // Unified Cache instructions trap
+                + SCTLR_EL1::UCT::Trap // CTR_EL0 instructions trap
+                + SCTLR_EL1::UMA::Trap // User Mask Access, trap on DAIF access
+                + SCTLR_EL1::NTWE::Trap // WFE/WFET instruction trap
+                + SCTLR_EL1::NTWI::Trap // WFI/WFIT instruction trap
+                + SCTLR_EL1::DZE::Trap // DC ZVA/GVA/GZVA instructions trap
+                + SCTLR_EL1::C::Cacheable // No caching at all
+                + SCTLR_EL1::I::Cacheable // No instruction cache
+                + SCTLR_EL1::M::Disable,
+        );
 
-        // Force MMU init to complete before next instruction.
+        // from https://forums.raspberrypi.com/viewtopic.php?t=320120#p1917769
+        // Another hint: once the MMU has been activated you should let 2 CPU cycles pass and then call
+        // `tlbi alle2` to ensure the MMU related cache will be invalidated and the new settings are picked up.
+
+        asm::nop();
+        asm::nop();
+
+        // Force MMU init to complete before next instruction
+        /*
+         * Invalidate the local I-cache so that any instructions fetched
+         * speculatively from the PoC are discarded, since they may have
+         * been dynamically patched at the PoU.
+         */
         barrier::isb(barrier::SY);
+
+        println!("MMU activated");
 
         Ok(())
     }
