@@ -287,3 +287,287 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
         self.lvl2.base_addr_u64()
     }
 }
+
+//--------------------------------------------------------------------------------------------------
+// wait: my extended code
+//--------------------------------------------------------------------------------------------------
+
+/*
+ *  With 4k page granule, a virtual address is split into 4 lookup parts
+ *  spanning 9 bits each:
+ *
+ *    _______________________________________________
+ *   |       |       |       |       |       |       |
+ *   | signx |  Lv0  |  Lv1  |  Lv2  |  Lv3  |  off  |
+ *   |_______|_______|_______|_______|_______|_______|
+ *     63-48   47-39   38-30   29-21   20-12   11-00
+ *
+ *             mask        page size
+ *
+ *    Lv0: FF8000000000       --
+ *    Lv1:   7FC0000000       1G
+ *    Lv2:     3FE00000       2M
+ *    Lv3:       1FF000       4K
+ *    off:          FFF
+ *
+ * RPi3 supports 64K and 4K granules, also 40-bit physical addresses.
+ * It also can address only 1G physical memory, so these 40-bit phys addresses are a fake.
+ *
+ * 48-bit virtual address space; different mappings in VBAR0 (EL0) and VBAR1 (EL1+).
+ */
+
+/// Number of entries in a 4KiB mmu table.
+pub const NUM_ENTRIES_4KIB: u64 = 512;
+
+/// Trait for abstracting over the possible page sizes, 4KiB, 16KiB, 2MiB, 1GiB.
+pub trait PageSize: Copy + Eq + PartialOrd + Ord {
+    /// The page size in bytes.
+    const SIZE: u64;
+
+    /// A string representation of the page size for debug output.
+    const SIZE_AS_DEBUG_STR: &'static str;
+
+    /// The page shift in bits.
+    const SHIFT: usize;
+
+    /// The page mask in bits.
+    const MASK: u64;
+}
+
+/// This trait is implemented for 4KiB, 16KiB, and 2MiB pages, but not for 1GiB pages.
+pub trait NotGiantPageSize: PageSize {} // @todo doesn't have to be pub??
+
+/// A standard 4KiB page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Size4KiB {}
+
+impl PageSize for Size4KiB {
+    const SIZE: u64 = 4096;
+    const SIZE_AS_DEBUG_STR: &'static str = "4KiB";
+    const SHIFT: usize = 12;
+    const MASK: u64 = 0xfff;
+}
+
+impl NotGiantPageSize for Size4KiB {}
+
+/// A “huge” 2MiB page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Size2MiB {}
+
+impl PageSize for Size2MiB {
+    const SIZE: u64 = Size4KiB::SIZE * NUM_ENTRIES_4KIB;
+    const SIZE_AS_DEBUG_STR: &'static str = "2MiB";
+    const SHIFT: usize = 21;
+    const MASK: u64 = 0x1fffff;
+}
+
+impl NotGiantPageSize for Size2MiB {}
+
+type EntryFlags = tock_registers::fields::FieldValue<u64, STAGE1_DESCRIPTOR::Register>;
+// type EntryRegister = register::LocalRegisterCopy<u64, STAGE1_DESCRIPTOR::Register>;
+
+/// L0 table -- only pointers to L1 tables
+pub enum PageGlobalDirectory {}
+/// L1 tables -- pointers to L2 tables or giant 1GiB pages
+pub enum PageUpperDirectory {}
+/// L2 tables -- pointers to L3 tables or huge 2MiB pages
+pub enum PageDirectory {}
+/// L3 tables -- only pointers to 4/16KiB pages
+pub enum PageTable {}
+
+/// Shared trait for specific table levels.
+pub trait TableLevel {}
+
+/// Shared trait for hierarchical table levels.
+///
+/// Specifies what is the next level of page table hierarchy.
+pub trait HierarchicalLevel: TableLevel {
+    /// Level of the next translation table below this one.
+    type NextLevel: TableLevel;
+}
+
+impl TableLevel for PageGlobalDirectory {}
+impl TableLevel for PageUpperDirectory {}
+impl TableLevel for PageDirectory {}
+impl TableLevel for PageTable {}
+
+impl HierarchicalLevel for PageGlobalDirectory {
+    type NextLevel = PageUpperDirectory;
+}
+impl HierarchicalLevel for PageUpperDirectory {
+    type NextLevel = PageDirectory;
+}
+impl HierarchicalLevel for PageDirectory {
+    type NextLevel = PageTable;
+}
+// PageTables do not have next level, therefore they are not HierarchicalLevel
+
+/// MMU address translation table.
+/// Contains just u64 internally, provides enum interface on top
+#[repr(C)]
+#[repr(align(4096))]
+pub struct Table<L: TableLevel> {
+    entries: [u64; NUM_ENTRIES_4KIB as usize],
+    level: PhantomData<L>,
+}
+
+// Implementation code shared for all levels of page tables
+impl<L> Table<L>
+where
+    L: TableLevel,
+{
+    /// Zero out entire table.
+    pub fn zero(&mut self) {
+        for entry in self.entries.iter_mut() {
+            *entry = 0;
+        }
+    }
+}
+
+impl<L> Index<usize> for Table<L>
+where
+    L: TableLevel,
+{
+    type Output = u64;
+
+    fn index(&self, index: usize) -> &u64 {
+        &self.entries[index]
+    }
+}
+
+impl<L> IndexMut<usize> for Table<L>
+where
+    L: TableLevel,
+{
+    fn index_mut(&mut self, index: usize) -> &mut u64 {
+        &mut self.entries[index]
+    }
+}
+
+/// Type-safe enum wrapper covering Table<L>'s 64-bit entries.
+#[derive(Clone)]
+// #[repr(transparent)]
+enum PageTableEntry {
+    /// Empty page table entry.
+    Invalid,
+    /// Table descriptor is a L0, L1 or L2 table pointing to another table.
+    /// L0 tables can only point to L1 tables.
+    /// A descriptor pointing to the next page table.
+    TableDescriptor(EntryFlags),
+    /// A Level2 block descriptor with 2 MiB aperture.
+    ///
+    /// The output points to physical memory.
+    Lvl2BlockDescriptor(EntryFlags),
+    /// A page PageTableEntry::descriptor with 4 KiB aperture.
+    ///
+    /// The output points to physical memory.
+    PageDescriptor(EntryFlags),
+}
+
+/// A descriptor pointing to the next page table. (within PageTableEntry enum)
+// struct TableDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
+
+impl PageTableEntry {
+    fn new_table_descriptor(next_lvl_table_addr: usize) -> Result<PageTableEntry, &'static str> {
+        if next_lvl_table_addr % Size4KiB::SIZE as usize != 0 {
+            // @todo SIZE must be usize
+            return Err("TableDescriptor: Address is not 4 KiB aligned.");
+        }
+
+        let shifted = next_lvl_table_addr >> Size4KiB::SHIFT;
+
+        Ok(PageTableEntry::TableDescriptor(
+            STAGE1_DESCRIPTOR::VALID::True
+                + STAGE1_DESCRIPTOR::AF::Enabled
+                + STAGE1_DESCRIPTOR::TYPE::Table
+                + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64),
+        ))
+    }
+}
+
+/// A Level2 block descriptor with 2 MiB aperture.
+///
+/// The output points to physical memory.
+// struct Lvl2BlockDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
+
+impl PageTableEntry {
+    fn new_lvl2_block_descriptor(
+        output_addr: usize,
+        attribute_fields: AttributeFields,
+    ) -> Result<PageTableEntry, &'static str> {
+        if output_addr % Size2MiB::SIZE as usize != 0 {
+            return Err("BlockDescriptor: Address is not 2 MiB aligned.");
+        }
+
+        let shifted = output_addr >> Size2MiB::SHIFT;
+
+        Ok(PageTableEntry::Lvl2BlockDescriptor(
+            STAGE1_DESCRIPTOR::VALID::True
+                + STAGE1_DESCRIPTOR::AF::Enabled
+                + STAGE1_DESCRIPTOR::TYPE::Block
+                + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(shifted as u64)
+                + attribute_fields.into(),
+        ))
+    }
+}
+
+/// A page descriptor with 4 KiB aperture.
+///
+/// The output points to physical memory.
+
+impl PageTableEntry {
+    fn new_page_descriptor(
+        output_addr: usize,
+        attribute_fields: AttributeFields,
+    ) -> Result<PageTableEntry, &'static str> {
+        if output_addr % Size4KiB::SIZE as usize != 0 {
+            return Err("PageDescriptor: Address is not 4 KiB aligned.");
+        }
+
+        let shifted = output_addr >> Size4KiB::SHIFT;
+
+        Ok(PageTableEntry::PageDescriptor(
+            STAGE1_DESCRIPTOR::VALID::True
+                + STAGE1_DESCRIPTOR::AF::Enabled
+                + STAGE1_DESCRIPTOR::TYPE::Table
+                + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64)
+                + attribute_fields.into(),
+        ))
+    }
+}
+
+impl From<u64> for PageTableEntry {
+    fn from(_val: u64) -> PageTableEntry {
+        // xx00 -> Invalid
+        // xx10 -> Block Entry in L1 and L2
+        // xx11 -> TableDescriptor in L0, L1 and L2
+        // xx11 -> PageDescriptor in L3
+        PageTableEntry::Invalid
+    }
+}
+
+impl From<PageTableEntry> for u64 {
+    fn from(val: PageTableEntry) -> u64 {
+        match val {
+            PageTableEntry::Invalid => 0,
+            PageTableEntry::TableDescriptor(x)
+            | PageTableEntry::Lvl2BlockDescriptor(x)
+            | PageTableEntry::PageDescriptor(x) => x.value,
+        }
+    }
+}
+
+static mut LVL1_TABLE: Table<PageUpperDirectory> = Table::<PageUpperDirectory> {
+    entries: [0; NUM_ENTRIES_4KIB as usize],
+    level: PhantomData,
+};
+
+static mut LVL2_TABLE: Table<PageDirectory> = Table::<PageDirectory> {
+    entries: [0; NUM_ENTRIES_4KIB as usize],
+    level: PhantomData,
+};
+
+static mut LVL3_TABLE: Table<PageTable> = Table::<PageTable> {
+    entries: [0; NUM_ENTRIES_4KIB as usize],
+    level: PhantomData,
+};
