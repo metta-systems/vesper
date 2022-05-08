@@ -166,6 +166,7 @@ impl<const N_SLOTS: usize> Drop for DmaBackedMailboxStorage<N_SLOTS> {
     fn drop(&mut self) {
         DMA_ALLOCATOR
             .lock::<_, Result<()>>(|a| unsafe {
+                #[allow(clippy::unit_arg)]
                 Ok(a.deallocate(
                     NonNull::new_unchecked(self.storage as *mut u8),
                     Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
