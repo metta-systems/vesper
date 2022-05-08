@@ -159,9 +159,26 @@ impl interface::MMU for MemoryManagementUnit {
             .populate_translation_table_entries()
             .map_err(MMUEnableError::Other)?;
 
+        // from https://lore.kernel.org/all/db9612a7-9354-2357-9083-1d923b4d11e1@linaro.org/T/
+        // The ARMv8.2-TTCNP extension allows an implementation to optimize by
+        // sharing TLB entries between multiple cores, provided that software
+        // declares that it's ready to deal with this by setting a CnP bit in
+        // the TTBRn_ELx.  It is mandatory from ARMv8.2 onward.
+
+        // support feature flag is in ID_AA64MMFR2
+        // https://developer.arm.com/documentation/ddi0601/2022-03/AArch64-Registers/ID-AA64MMFR2-EL1--AArch64-Memory-Model-Feature-Register-2?lang=en
+        // CnP bits 3:0
+        // From Armv8.2, the only permitted value is 0b0001.
+        // (this should be set to share the TLBs across cores.)
+
         // Point to the LVL2 table base address in TTBR0.
         TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
         TTBR1_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
+
+        // lower half, user space
+        // asm volatile ("msr ttbr0_el1, %0" : : "r" ((unsigned long)&_end + TTBR_CNP));
+        // upper half, kernel space
+        // asm volatile ("msr ttbr1_el1, %0" : : "r" ((unsigned long)&_end + TTBR_CNP + PAGESIZE));
 
         self.configure_translation_control();
 
