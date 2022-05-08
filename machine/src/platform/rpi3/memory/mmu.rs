@@ -7,7 +7,7 @@ use {super::map as memory_map, crate::memory::mmu::*, core::ops::RangeInclusive}
 /// The kernel's address space defined by this BSP.
 pub type KernelAddrSpace = AddressSpace<{ memory_map::END_INCLUSIVE + 1 }>;
 
-const NUM_MEM_RANGES: usize = 5;
+const NUM_MEM_RANGES: usize = 6;
 
 /// The virtual memory layout that is agnostic of the paging granularity that the
 /// hardware MMU will use.
@@ -65,6 +65,21 @@ pub static LAYOUT: KernelVirtualLayout<NUM_MEM_RANGES> = KernelVirtualLayout::ne
             physical_range_translation: Translation::Identity,
             attribute_fields: AttributeFields {
                 mem_attributes: MemAttributes::NonCacheableDRAM,
+                acc_perms: AccessPermissions::ReadWrite,
+                execute_never: true,
+            },
+        },
+        TranslationDescriptor {
+            name: "Framebuffer area (static for now)",
+            virtual_range: || {
+                RangeInclusive::new(
+                    memory_map::phys::VIDEOMEM_BASE,
+                    memory_map::phys::MMIO_BASE - 1,
+                )
+            },
+            physical_range_translation: Translation::Identity,
+            attribute_fields: AttributeFields {
+                mem_attributes: MemAttributes::Device,
                 acc_perms: AccessPermissions::ReadWrite,
                 execute_never: true,
             },
