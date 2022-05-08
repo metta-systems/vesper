@@ -9,6 +9,7 @@ pub mod display;
 pub mod fb;
 pub mod gpio;
 pub mod mailbox;
+pub mod memory;
 pub mod mini_uart;
 pub mod pl011_uart;
 pub mod power;

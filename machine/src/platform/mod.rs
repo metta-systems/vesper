@@ -10,6 +10,9 @@ use core::{marker::PhantomData, ops};
 
 pub mod rpi3;
 
+#[cfg(any(feature = "rpi3", feature = "rpi4"))]
+pub use rpi3::*;
+
 pub struct MMIODerefWrapper<T> {
     base_addr: usize,
     phantom: PhantomData<fn() -> T>,

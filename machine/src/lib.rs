@@ -3,6 +3,7 @@
 #![feature(decl_macro)]
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
+#![feature(core_intrinsics)]
 #![feature(stmt_expr_attributes)]
 #![feature(nonnull_slice_from_raw_parts)]
 #![feature(custom_test_frameworks)]
@@ -25,6 +26,7 @@ pub use arch::*;
 
 pub mod devices;
 pub mod macros;
+pub mod memory;
 mod mm;
 pub mod panic;
 pub mod platform;
@@ -42,8 +44,8 @@ pub static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devic
 static DMA_ALLOCATOR: sync::NullLock<mm::BumpAllocator> =
     sync::NullLock::new(mm::BumpAllocator::new(
         // @todo Init this after we loaded boot memory map
-        memory::map::virt::DMA_HEAP_START as usize,
-        memory::map::virt::DMA_HEAP_END as usize,
+        platform::memory::map::virt::DMA_HEAP_START as usize,
+        platform::memory::map::virt::DMA_HEAP_END as usize,
         "Global DMA Allocator",
         // Try the following arguments instead to see all mailbox operations
         // fail. It will cause the allocator to use memory that are marked

@@ -44,12 +44,16 @@ fn panicked(info: &PanicInfo) -> ! {
 }
 
 fn print_mmu_state_and_features() {
-    memory::mmu::print_features();
+    use machine::memory::mmu::interface::MMU;
+    memory::mmu::mmu().print_features();
 }
 
 fn init_mmu() {
     unsafe {
-        memory::mmu::init().unwrap();
+        use machine::memory::mmu::interface::MMU;
+        if let Err(e) = memory::mmu::mmu().enable_mmu_and_caching() {
+            panic!("MMU: {}", e);
+        }
     }
     println!("[!] MMU initialised");
     print_mmu_state_and_features();
@@ -117,11 +121,11 @@ pub fn kmain() -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
 
-    init_mmu();
-    init_exception_traps();
-
     #[cfg(not(feature = "noserial"))]
     init_uart_serial();
+
+    init_exception_traps();
+    init_mmu();
 
     #[cfg(test)]
     test_main();
@@ -145,7 +149,7 @@ fn command_prompt() {
             b"uart" => init_uart_serial(),
             b"disp" => check_display_init(),
             b"trap" => check_data_abort_trap(),
-            b"map" => machine::arch::memory::print_layout(),
+            b"map" => machine::platform::memory::mmu::virt_mem_layout().print_layout(),
             b"led on" => set_led(true),
             b"led off" => set_led(false),
             b"help" => print_help(),

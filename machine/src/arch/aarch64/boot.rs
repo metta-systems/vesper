@@ -106,6 +106,7 @@ fn shared_setup_and_enter_pre() {
     // Set EL1 execution state to AArch64
     // @todo Explain the SWIO bit (SWIO hardwired on Pi3)
     HCR_EL2.write(HCR_EL2::RW::EL1IsAarch64 + HCR_EL2::SWIO::SET);
+    // @todo disable VM bit to prevent stage 2 MMU translations
 }
 
 #[link_section = ".text.boot"]
