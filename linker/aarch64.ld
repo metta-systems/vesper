@@ -7,6 +7,8 @@
 
 ENTRY(_boot_cores);
 
+PAGE_SIZE = 65536;
+
 /* Symbols between __BOOT_START and __BOOT_END should be dropped after init is complete.
    Symbols between __RO_START and __RO_END are the kernel code.
    Symbols between __BSS_START and __BSS_END must be initialized to zero by r0 code in kernel.
@@ -20,9 +22,9 @@ SECTIONS
     {
         KEEP(*(.text.boot.entry)) // Entry point must go first
         *(.text.boot)
-        . = ALIGN(4096);
+        //. = ALIGN(PAGE_SIZE);
         *(.data.boot)
-        . = ALIGN(4096); /* Here boot code ends */
+        . = ALIGN(PAGE_SIZE); /* Here boot code ends */
         __BOOT_END = .; // __BOOT_END must be 4KiB aligned
         __RO_START = .;
         *(.text .text.*)
@@ -38,7 +40,7 @@ SECTIONS
         *(.rodata .rodata.*)
         FILL(0x00)
     }
-    . = ALIGN(4096); /* Fill up to 4KiB */
+    . = ALIGN(PAGE_SIZE); /* Fill up to page size */
     __RO_END = .; /* __RO_END must be 4KiB aligned */
     __DATA_START = .; /* __DATA_START must be 4KiB aligned */
 
@@ -55,7 +57,7 @@ SECTIONS
         __BSS_START = .;
         *(.bss .bss.*)
         *(COMMON)
-        . = ALIGN(4096); /* Align up to 4KiB */
+        . = ALIGN(PAGE_SIZE); /* Align up to page size */
         __BSS_END = .;
     }
 
