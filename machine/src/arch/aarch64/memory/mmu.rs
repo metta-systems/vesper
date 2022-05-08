@@ -104,7 +104,7 @@ impl MemoryManagementUnit {
         // Configure various settings of stage 1 of the EL1 translation regime.
         let ips = ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange);
         TCR_EL1.write(
-            TCR_EL1::TBI0::Ignored // @todo TBI1 also set to Ignored??
+            TCR_EL1::TBI0::Ignored // Top byte ignored
                 + TCR_EL1::IPS.val(ips) // Intermediate Physical Address Size
                 // ttbr0 user memory addresses
                 + TCR_EL1::TG0::KiB_4 // 4 KiB granule
@@ -114,6 +114,7 @@ impl MemoryManagementUnit {
                 + TCR_EL1::EPD0::EnableTTBR0Walks
                 + TCR_EL1::T0SZ.val(34) // ARMv8ARM Table D5-11 minimum TxSZ for starting table level 2
                 // ttbr1 kernel memory addresses
+                + TCR_EL1::TBI1::Ignored
                 + TCR_EL1::TG1::KiB_4 // 4 KiB granule
                 + TCR_EL1::SH1::Inner
                 + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
