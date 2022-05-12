@@ -8,6 +8,9 @@
 //! Low-level boot of the ARMv8-A processor.
 //! <http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf>
 
+//! Raspi kernel boot helper: https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S
+//! In particular, see dtb_ptr32
+
 use {
     aarch64_cpu::registers::*,
     core::arch::global_asm,
@@ -24,11 +27,11 @@ macro_rules! entry {
         /// Only type-checks!
         #[unsafe(export_name = "main")]
         #[inline(always)]
-        pub unsafe fn __main() -> ! {
+        pub unsafe fn __main(dtb: u32) -> ! {
             // type check the given path
-            let f: unsafe fn() -> ! = $path;
+            let f: unsafe fn(u32) -> ! = $path;
 
-            unsafe { f() }
+            unsafe { f(dtb) }
         }
     };
 }
@@ -55,7 +58,10 @@ global_asm!(
 /// We assume that no statics are accessed before transition to this fn.
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.boot")]
-pub unsafe extern "C" fn _startup_in_rust() -> ! {
+pub unsafe extern "C" fn _startup_in_rust(dtb: u32) -> ! {
+    // On entry, w0 should contain the dtb address.
+    // For non-primary cores it contains 0.
+
     // Can't match values with dots in match, so use intermediate consts.
     #[cfg(feature = "qemu")]
     const EL3: u64 = CurrentEL::EL::EL3.value;
@@ -66,9 +72,9 @@ pub unsafe extern "C" fn _startup_in_rust() -> ! {
 
     match CurrentEL.get() {
         #[cfg(feature = "qemu")]
-        EL3 => setup_and_enter_el2_from_el3(),
-        EL2 => setup_and_enter_el2_from_el2(),
-        EL1 => reset(), // Cannot configure memory mappings here properly, fail instead!
+        EL3 => setup_and_enter_el2_from_el3(dtb),
+        EL2 => setup_and_enter_el2_from_el2(dtb),
+        EL1 => reset(dtb), // Cannot configure memory mappings here properly, fail instead!
         // if not core0 or not EL3/EL2, infinitely wait for events
         _ => endless_sleep(),
     }
@@ -109,7 +115,7 @@ fn shared_setup_and_enter_pre() {
 
 // #[unsafe(link_section = ".text.boot")]
 // #[inline]
-// fn shared_setup_and_enter_post() -> ! {
+// fn shared_setup_and_enter_post(dtb: u32) -> ! {
 //     unsafe extern "Rust" {
 //         // Stack top
 //         static __STACK_TOP: UnsafeCell<()>;
@@ -122,7 +128,11 @@ fn shared_setup_and_enter_pre() {
 //     }
 //     // Use `eret` to "return" to EL2. This will result in execution of
 //     // `reset()` in EL2.
-//     asm::eret()
+//     // Load DTB address into w0 prior to eret.
+//     unsafe {
+//         core::arch::asm!("eret", in("w0") dtb);
+//         core::hint::unreachable_unchecked()
+//     }
 // }
 
 // FIXME: This will be called by init_thread later.
@@ -131,7 +141,7 @@ fn shared_setup_and_enter_pre() {
 /// Prepare and execute transition from EL2 to EL1.
 // #[unsafe(link_section = ".text.boot")]
 // #[inline]
-// fn setup_and_enter_el1_from_el2() -> ! {
+// fn setup_and_enter_el1_from_el2(dtb: u32) -> ! {
 //     // Set Saved Program Status Register (EL2)
 //     // Set up a simulated exception return.
 //     //
@@ -147,13 +157,13 @@ fn shared_setup_and_enter_pre() {
 //     // Make the Exception Link Register (EL2) point to reset().
 //     #[allow(clippy::fn_to_numeric_cast_any)]
 //     ELR_EL2.set(reset as *const () as u64);
-//     shared_setup_and_enter_post()
+//     shared_setup_and_enter_post(dtb)
 // }
 
 #[unsafe(link_section = ".text.boot")]
 #[inline]
-fn setup_and_enter_el2_from_el2() -> ! {
-    reset();
+fn setup_and_enter_el2_from_el2(dtb: u32) -> ! {
+    reset(dtb);
 }
 
 /// QEMU boot-up sequence.
@@ -169,7 +179,7 @@ fn setup_and_enter_el2_from_el2() -> ! {
 #[cfg(feature = "qemu")]
 #[unsafe(link_section = ".text.boot")]
 #[inline]
-fn setup_and_enter_el2_from_el3() -> ! {
+fn setup_and_enter_el2_from_el3(dtb: u32) -> ! {
     // Set Secure Configuration Register (EL3)
     SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
 
@@ -189,16 +199,16 @@ fn setup_and_enter_el2_from_el3() -> ! {
     // Make the Exception Link Register (EL3) point to reset().
     ELR_EL3.set(reset as *const () as u64);
 
-    shared_setup_and_enter_post()
+    shared_setup_and_enter_post(dtb)
 }
 
 // Enter Rust code in EL2.
 #[unsafe(link_section = ".text.boot")]
-fn reset() -> ! {
+fn reset(dtb: u32) -> ! {
     unsafe extern "Rust" {
-        fn main() -> !;
+        fn main(dtb: u32) -> !;
     }
 
     // SAFETY: We're getting to more safety right here!
-    unsafe { main() }
+    unsafe { main(dtb) }
 }
