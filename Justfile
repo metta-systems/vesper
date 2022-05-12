@@ -160,7 +160,7 @@ fmt-check:
 
 # Run lint tasks
 [group("maintenance")]
-lint: clippy fmt-check
+lint: fmt-check clippy
 
 # Run pre-push local checks
 [group("ci")]
@@ -168,7 +168,7 @@ pre-push: fmt-check clippy-pre-push test
 
 # Run CI tasks
 [group("ci")]
-ci: clean build test lint
+ci: clean lint build test
 
 # Prepare local dev tools and set-up git hooks
 [group("maintenance")]
