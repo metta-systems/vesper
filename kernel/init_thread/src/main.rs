@@ -104,7 +104,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
 
     let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
 
-    let mut block = allocator
+    let block = allocator
         .alloc(layout.size)
         .expect("Couldn't allocate DeviceTree index");
 
@@ -146,12 +146,11 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
         size_cells
     );
 
-    let mem_prop = device_tree
+    let res: Result<_, DevTreeError> = device_tree
         .props()
-        .find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"))
-        .unwrap()
-        .expect("Unable to find memory node.");
-    let mem_node = mem_prop.node();
+        .try_find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"));
+    let mem_prop = res.unwrap().expect("Unable to find memory node.");
+    let _mem_node = mem_prop.node();
     // let parent_node = mem_node.parent_node();
 
     let reg_prop = device_tree
