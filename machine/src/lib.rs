@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(try_find)] // For DeviceTree iterators
 #![feature(decl_macro)]
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
@@ -31,6 +32,7 @@ pub mod arch;
 
 pub use arch::*;
 
+pub mod device_tree;
 pub mod devices;
 pub mod macros;
 pub mod memory;

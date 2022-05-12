@@ -457,6 +457,7 @@ dependencies = [
  "bitflags",
  "cfg-if",
  "cortex-a",
+ "fdt-rs",
  "machine",
  "r0",
  "snafu",

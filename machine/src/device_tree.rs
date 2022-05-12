@@ -1,16 +1,17 @@
+#![allow(dead_code)]
+
 use {
     core::alloc::Layout,
     fdt_rs::{
         base::DevTree,
         error::DevTreeError,
-        index::{
-            iters::DevTreeIndexNodeSiblingIter,
-            {DevTreeIndex, DevTreeIndexNode, DevTreeIndexProp},
-        },
-        prelude::{FallibleIterator, PropReader},
+        index::{DevTreeIndex, DevTreeIndexNode, DevTreeIndexProp},
+        prelude::PropReader,
     },
     shrinkwraprs::Shrinkwrap,
 };
+//iters::DevTreeIndexNodeSiblingIter,
+//FallibleIterator,
 
 /// Uses DevTreeIndex implementation for simpler navigation.
 /// This requires allocation of a single buffer, which is done at boot time via bump allocator.
@@ -20,7 +21,7 @@ pub struct DeviceTree<'a>(DevTreeIndex<'a, 'a>);
 
 impl<'a> DeviceTree<'a> {
     pub fn layout(tree: DevTree<'a>) -> Result<Layout, DevTreeError> {
-        Ok(DevTreeIndex::get_layout(&tree)?)
+        DevTreeIndex::get_layout(&tree)
     }
 
     pub fn new(tree: DevTree<'a>, raw_slice: &'a mut [u8]) -> Result<Self, DevTreeError> {
@@ -38,8 +39,9 @@ impl<'a> DeviceTree<'a> {
             path.move_next();
         }
         while !path.is_finished() {
-            node = node_iter
-                .try_find::<_, _, DevTreeError>(|node| Ok(node.name()? == path.component()))?;
+            let res: Result<_, DevTreeError> =
+                node_iter.try_find(|node| Ok(node.name()? == path.component()));
+            node = res?;
             if node.is_none() {
                 return Err(DevTreeError::InvalidParameter("Invalid path")); // @todo
             }
@@ -49,8 +51,9 @@ impl<'a> DeviceTree<'a> {
         assert!(path.is_finished()); // tbd
         assert!(node.is_some());
         let mut prop_iter = node.unwrap().props();
-        let prop = prop_iter
-            .try_find::<_, _, DevTreeError>(|prop| Ok(prop.name()? == path.component()))?;
+        let res: Result<_, DevTreeError> =
+            prop_iter.try_find(|prop| Ok(prop.name()? == path.component()));
+        let prop = res?;
         if prop.is_none() {
             return Err(DevTreeError::InvalidParameter("Invalid path")); // @todo
         }
@@ -170,8 +173,8 @@ struct PathSplit<'a> {
 
 impl<'a> PathSplit<'a> {
     pub fn new(path: &'a str) -> PathSplit<'a> {
-        let path = if path.ends_with('/') {
-            &path[..path.len() - 1]
+        let path = if let Some(p) = path.strip_suffix('/') {
+            p
         } else {
             path
         };
