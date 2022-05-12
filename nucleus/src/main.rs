@@ -25,7 +25,7 @@ use machine::devices::SerialOps;
 use {
     cfg_if::cfg_if,
     core::{alloc::Allocator, cell::UnsafeCell},
-    device_tree::DeviceTree,
+    device_tree::{DeviceTree, DeviceTreeProp},
     fdt_rs::{
         base::DevTree,
         prelude::{FallibleIterator, PropReader},
@@ -193,10 +193,12 @@ pub fn kmain(dtb: u32) -> ! {
         reg_prop.length()
     );
 
-    let mem_addr = reg_prop.u32(0).expect("Oops");
-    let mem_size = reg_prop.u32(1).expect("Oops");
+    let reg_prop = DeviceTreeProp::new(reg_prop);
+    let mut mem_iter = reg_prop.payload_pairs_iter(address_cells, size_cells);
 
-    println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+    while let Some((mem_addr, mem_size)) = mem_iter.next() {
+        println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+    }
 
     // List unusable memory, and remove it from the memory regions for the allocator.
     let mut iter = device_tree.fdt().reserved_entries();
