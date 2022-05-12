@@ -44,7 +44,10 @@ mod syscall_test;
 
 use {
     core::{panic::PanicInfo, ptr::write_bytes},
-    fdt_rs::base::DevTree,
+    fdt_rs::{
+        base::DevTree,
+        prelude::{FallibleIterator, PropReader},
+    },
     libcpu::endless_sleep,
     libqemu::semi_println,
     memory::{BootAllocator, PhysAddr},
@@ -87,14 +90,65 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     semi_println!("Parsing device tree...");
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
-    let device_tree =
-        unsafe { DevTree::from_raw_pointer(dtb as *const _).expect("DeviceTree failed to read") };
+    let device_tree = unsafe {
+        DevTree::from_raw_pointer(dtb_ptr as *const _).expect("DeviceTree failed to read")
+    };
+
+    let address_cells = device_tree
+        .props()
+        .find(|p| Ok(p.name()? == "#address-cells"))
+        .unwrap()
+        .expect("Unable to figure out #address-cells")
+        .u32(0)
+        .expect("Invalid format for #address-cells");
+
+    let size_cells = device_tree
+        .props()
+        .find(|p| Ok(p.name()? == "#size-cells"))
+        .unwrap()
+        .expect("Unable to figure out #size-cells")
+        .u32(0)
+        .expect("Invalid format for #size-cells");
+
+    // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
+    semi_println!(
+        "Address cells: {}, size cells {}",
+        address_cells,
+        size_cells
+    );
+
+    let mem_prop = device_tree
+        .props()
+        .find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"))
+        .unwrap()
+        .expect("Unable to find memory node.");
+    let mem_node = mem_prop.node();
+    // let parent_node = mem_node.parent_node();
+
+    let reg_prop = mem_node
+        .props()
+        .find(|p| Ok(p.name()? == "reg"))
+        .unwrap()
+        .expect("Device tree memory node missing 'reg' prop.");
+
+    semi_println!("Found memnode with reg prop: {:?}", reg_prop.name());
+
+    let mem_addr = reg_prop.u64(0).expect("Oops");
+    let mem_size = reg_prop.u32(2).expect("Oops");
+
+    semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
 
     // List unusable memory, and remove it from the memory regions for the allocator.
-    for entry in device_tree.compatible_nodes("memory") {
-        semi_println!("reserved: {:?} bytes at {:?}", entry.size, entry.address);
+    let mut iter = device_tree.compatible_nodes("arm,pl011");
+    while let Some(entry) = iter.next().unwrap() {
+        semi_println!(
+            "reserved: {:?} (bytes at ?)",
+            entry.name() /*, entry.address*/
+        );
     }
+
     // Also, remove the DTB memory region.
+    println!("DTB region: {} bytes at {:x}", device_tree.totalsize(), dtb);
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
@@ -103,19 +157,19 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     // memory allocation is described by reg attribute of /memory block.
     // /#address-cells and /#size-cells specify the sizes of address and size attributes in reg.
 
-    let address_cells = device_tree.try_struct_u32_value("/#address-cells");
-    let size_cells = device_tree.try_struct_u32_value("/#size-cells");
-    let board = device_tree.try_struct_str_value("/model");
+    // let address_cells = device_tree.try_struct_u32_value("/#address-cells");
+    // let size_cells = device_tree.try_struct_u32_value("/#size-cells");
+    // let board = device_tree.try_struct_str_value("/model");
 
-    if board.is_ok() {
-        semi_println!("Running on {}", board.unwrap());
-    }
+    // if board.is_ok() {
+    //     semi_println!("Running on {}", board.unwrap());
+    // }
 
-    semi_println!(
-        "Memory DTB info: address-cells {:?}, size-cells {:?}",
-        address_cells,
-        size_cells
-    );
+    // semi_println!(
+    //     "Memory DTB info: address-cells {:?}, size-cells {:?}",
+    //     address_cells,
+    //     size_cells
+    // );
 
     dump_memory_map();
 

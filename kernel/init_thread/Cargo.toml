@@ -60,6 +60,7 @@ shrinkwraprs = { version = "0.3", default-features = false }
 # fdt-rs latest 0.4.3 Jul 2021 by Sean Wilson -- interface is more basic than in dtb
 # @todo Added from_raw_pointer() finally
 fdt-rs = { version = "0.4", default-features = false }
+num = { version = "0.4", default-features = false }
 
 [dev-dependencies]
 libexception = { workspace = true, features = ["test_build"] }
