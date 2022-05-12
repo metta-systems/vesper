@@ -10,11 +10,12 @@
 #![no_std]
 #![no_main]
 #![feature(decl_macro)]
+#![feature(try_find)] // For DeviceTree iterators
 #![feature(allocator_api)]
+#![feature(ptr_internals)]
 #![feature(format_args_nl)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
-#![feature(try_find)] // For DeviceTree iterators
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
@@ -33,12 +34,13 @@ use machine::devices::serial::SerialOps;
 use {
     cfg_if::cfg_if,
     core::{alloc::Allocator, cell::UnsafeCell, time::Duration},
-    device_tree::{DeviceTree, DeviceTreeProp},
-    fdt_rs::{
-        base::DevTree,
-        prelude::{FallibleIterator, PropReader},
+    fdt_rs::{base::DevTree, error::DevTreeError, prelude::PropReader},
+    machine::{
+        arch,
+        console::console,
+        device_tree::{DeviceTree, DeviceTreeProp},
+        entry, exception, info, memory, println, time, warn,
     },
-    machine::{arch, console::console, entry, exception, info, memory, println, time, warn},
 };
 
 entry!(kernel_init);
@@ -140,7 +142,7 @@ pub fn kernel_main(dtb: u32) -> ! {
 
     let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
 
-    let mut block = crate::DMA_ALLOCATOR
+    let block = machine::DMA_ALLOCATOR
         .lock(|dma| dma.allocate_zeroed(layout))
         .map(|mut ret| unsafe { ret.as_mut() })
         .map_err(|_| ())
@@ -183,12 +185,11 @@ pub fn kernel_main(dtb: u32) -> ! {
         address_cells, size_cells
     );
 
-    let mem_prop = device_tree
+    let res: Result<_, DevTreeError> = device_tree
         .props()
-        .find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"))
-        .unwrap()
-        .expect("Unable to find memory node.");
-    let mem_node = mem_prop.node();
+        .try_find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"));
+    let mem_prop = res.unwrap().expect("Unable to find memory node.");
+    let _mem_node = mem_prop.node();
     // let parent_node = mem_node.parent_node();
 
     let reg_prop = device_tree

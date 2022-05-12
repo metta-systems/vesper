@@ -561,6 +561,7 @@ dependencies = [
  "bit_field",
  "bitflags 2.9.4",
  "cfg-if",
+ "fdt-rs",
  "machine",
  "snafu",
  "tock-registers",

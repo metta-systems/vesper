@@ -7,6 +7,7 @@
 #![feature(linkage)]
 #![feature(step_trait)]
 #![feature(trait_alias)]
+#![feature(try_find)] // For DeviceTree iterators
 #![feature(decl_macro)]
 #![feature(allocator_api)]
 #![feature(stmt_expr_attributes)]
@@ -34,6 +35,7 @@ pub mod arch;
 pub mod console;
 pub mod cpu;
 pub mod debug;
+pub mod device_tree;
 pub mod devices;
 pub mod drivers;
 pub mod exception;
