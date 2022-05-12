@@ -174,7 +174,7 @@ impl From<Rate> for u32 {
 }
 
 // [temporary] Used in mmu.rs to set up local paging
-pub const UART1_BASE: usize = BcmHost::get_peripheral_address() + 0x21_5000;
+pub const UART1_BASE: usize = BcmHost::get_peripheral_address() + 0x21_5000; // DTB says 0x7e215040
 
 impl crate::drivers::interface::DeviceDriver for MiniUart {
     type IRQNumberType = IRQNumber;
