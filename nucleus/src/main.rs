@@ -47,7 +47,7 @@ entry!(kernel_init);
 ///     - MMU + Data caching must be activated at the earliest. Without it, any atomic operations,
 ///       e.g. the yet-to-be-introduced spinlocks in the device drivers (which currently employ
 ///       IRQSafeNullLocks instead of spinlocks), will fail to work (properly) on the RPi SoCs.
-pub unsafe fn kernel_init() -> ! {
+pub unsafe fn kernel_init(dtb: u32) -> ! {
     #[cfg(feature = "jtag")]
     machine::debug::jtag::wait_debugger();
 
@@ -78,13 +78,13 @@ pub unsafe fn kernel_init() -> ! {
     machine::state::state_manager().transition_to_single_core_main();
 
     // Transition from unsafe to safe.
-    kernel_main()
+    kernel_main(dtb)
 }
 
 /// Safe kernel code.
 // #[inline]
 #[cfg(not(test))]
-pub fn kernel_main() -> ! {
+pub fn kernel_main(dtb: u32) -> ! {
     // info!("{}", libkernel::version());
     // info!("Booting on: {}", bsp::board_name());
 
@@ -122,6 +122,41 @@ pub fn kernel_main() -> ! {
         info!("Spinning for 1 second");
         time::time_manager().spin_for(Duration::from_secs(1));
     }
+
+    println!("DTB loaded at {:x}", dtb);
+
+    // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
+    let device_tree = crate::device_tree::DeadTree::new(unsafe {
+        dtb::Reader::read_from_address(dtb as usize).expect("DeviceTree not found")
+    });
+
+    // List unusable memory, and remove it from the memory regions for the allocator.
+    for entry in device_tree.reserved_mem_entries() {
+        println!("reserved: {:?} bytes at {:?}", entry.size, entry.address);
+    }
+    // Also, remove the DTB memory region.
+
+    // To init memory allocation we need to parse memory regions from dtb and add the regions to
+    // available memory regions list. Then initial BootRegionAllocator will get memory from these
+    // regions and record their usage into some OTHER structures, removing these allocations from
+    // the free regions list.
+    // memory allocation is described by reg attribute of /memory block.
+    // /#address-cells and /#size-cells specify the sizes of address and size attributes in reg.
+
+    let address_cells = device_tree.try_struct_u32_value("/#address-cells");
+    let size_cells = device_tree.try_struct_u32_value("/#size-cells");
+    let board = device_tree.try_struct_str_value("/model");
+
+    if board.is_ok() {
+        println!("Running on {}", board.unwrap());
+    }
+
+    println!(
+        "Memory DTB info: address-cells {:?}, size-cells {:?}",
+        address_cells, size_cells
+    );
+
+    dump_memory_map();
 
     command_prompt();
 
@@ -250,7 +285,7 @@ fn check_data_abort_trap() {
 }
 
 #[cfg(test)]
-pub fn kernel_main() -> ! {
+pub fn kernel_main(_dtb: u32) -> ! {
     test_main()
 }
 
