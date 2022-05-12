@@ -163,7 +163,7 @@ impl From<Rate> for u32 {
 }
 
 // [temporary] Used in mmu.rs to set up local paging
-pub const UART1_START: usize = 0x21_5000;
+pub const UART1_START: usize = 0x21_5000; // DTB says 0x7e215040
 
 impl Default for MiniUart {
     fn default() -> Self {

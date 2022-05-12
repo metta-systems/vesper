@@ -24,6 +24,10 @@ use machine::devices::SerialOps;
 use {
     cfg_if::cfg_if,
     core::cell::UnsafeCell,
+    fdt_rs::{
+        base::DevTree,
+        prelude::{FallibleIterator, PropReader},
+    },
     machine::{
         arch, entry, memory,
         platform::rpi3::{
@@ -33,7 +37,6 @@ use {
         },
         println, CONSOLE,
     },
-    fdt_rs::base::DevTree,
 };
 
 entry!(kmain);
@@ -137,11 +140,60 @@ pub fn kmain(dtb: u32) -> ! {
     let device_tree =
         unsafe { DevTree::from_raw_pointer(dtb as *const _).expect("DeviceTree failed to read") };
 
+    let address_cells = device_tree
+        .props()
+        .find(|p| Ok(p.name()? == "#address-cells"))
+        .unwrap()
+        .expect("Unable to figure out #address-cells")
+        .u32(0)
+        .expect("Invalid format for #address-cells");
+
+    let size_cells = device_tree
+        .props()
+        .find(|p| Ok(p.name()? == "#size-cells"))
+        .unwrap()
+        .expect("Unable to figure out #size-cells")
+        .u32(0)
+        .expect("Invalid format for #size-cells");
+
+    // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
+    println!(
+        "Address cells: {}, size cells {}",
+        address_cells, size_cells
+    );
+
+    let mem_prop = device_tree
+        .props()
+        .find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"))
+        .unwrap()
+        .expect("Unable to find memory node.");
+    let mem_node = mem_prop.node();
+    // let parent_node = mem_node.parent_node();
+
+    let reg_prop = mem_node
+        .props()
+        .find(|p| Ok(p.name()? == "reg"))
+        .unwrap()
+        .expect("Device tree memory node missing 'reg' prop.");
+
+    println!("Found memnode with reg prop: {:?}", reg_prop.name());
+
+    let mem_addr = reg_prop.u64(0).expect("Oops");
+    let mem_size = reg_prop.u32(2).expect("Oops");
+
+    println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+
     // List unusable memory, and remove it from the memory regions for the allocator.
-    for entry in device_tree.compatible_nodes("memory") {
-        println!("reserved: {:?} bytes at {:?}", entry.size, entry.address);
+    let mut iter = device_tree.compatible_nodes("arm,pl011");
+    while let Some(entry) = iter.next().unwrap() {
+        println!(
+            "reserved: {:?} (bytes at ?)",
+            entry.name() /*, entry.address*/
+        );
     }
+
     // Also, remove the DTB memory region.
+    println!("DTB region: {} bytes at {:x}", device_tree.totalsize(), dtb);
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
@@ -150,18 +202,18 @@ pub fn kmain(dtb: u32) -> ! {
     // memory allocation is described by reg attribute of /memory block.
     // /#address-cells and /#size-cells specify the sizes of address and size attributes in reg.
 
-    let address_cells = device_tree.try_struct_u32_value("/#address-cells");
-    let size_cells = device_tree.try_struct_u32_value("/#size-cells");
-    let board = device_tree.try_struct_str_value("/model");
+    // let address_cells = device_tree.try_struct_u32_value("/#address-cells");
+    // let size_cells = device_tree.try_struct_u32_value("/#size-cells");
+    // let board = device_tree.try_struct_str_value("/model");
 
-    if board.is_ok() {
-        println!("Running on {}", board.unwrap());
-    }
+    // if board.is_ok() {
+    //     println!("Running on {}", board.unwrap());
+    // }
 
-    println!(
-        "Memory DTB info: address-cells {:?}, size-cells {:?}",
-        address_cells, size_cells
-    );
+    // println!(
+    //     "Memory DTB info: address-cells {:?}, size-cells {:?}",
+    //     address_cells, size_cells
+    // );
 
     dump_memory_map();
 

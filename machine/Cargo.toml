@@ -47,6 +47,6 @@ shrinkwraprs = { version = "0.3", default-features = false }
 #dtb = "0.2" # Dec 2019 by Simon Prikhodko
 # Alternatives to dtb to look at:
 #device_tree = "1.1.0" # Jun 2016 by Marc Brinkmann
-# fdt-rs latest 0.4.3 Jul 2021 by Sean Wilson -- interface is more basic than in dtb
-fdt-rs = { version = "0.4", default-features = false }
-# @todo Added from_raw_pointer() finally
+# fdt-rs latest 0.4.3 Jul 2021 by Sean Wilson -- interface is more basic than in dtb, but more akin actual spec
+fdt-rs = { version = "0.4", default-features = false } # @todo Added from_raw_pointer() finally
+num = { version = "0.4", default-features = false }
