@@ -42,16 +42,20 @@ pub unsafe extern "C" fn _start() -> ! {
     SP.set(__boot_core_stack_end_exclusive.get() as u64);
 
     // Zeroes the .bss section
-    r0::zero_bss(__bss_start.get() as u64, __bss_end_exclusive.get() as u64);
+    r0::zero_bss(
+        __bss_start.get() as *mut u64,
+        __bss_end_exclusive.get() as *mut u64,
+    );
 
     // Relocate the code
     core::ptr::copy_nonoverlapping(
         __binary_nonzero_lma.get() as *const u64,
         __binary_nonzero_vma.get() as *mut u64,
-        (__binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize),
+        __binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize,
     );
 
-    _start_rust();
+    let max_kernel_size = __binary_nonzero_vma.get() as u64 - __binary_nonzero_lma.get() as u64;
+    _start_rust(max_kernel_size);
 }
 
 //--------------------------------------------------------------------------------------------------
