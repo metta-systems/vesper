@@ -36,7 +36,7 @@ script_runner = "@duckscript"
 script = [
 '''
     writefile ${GDB_CONNECT_FILE} "target extended-remote :5555\n"
-    appendfile ${GDB_CONNECT_FILE} "break 0x80000\n"
+    appendfile ${GDB_CONNECT_FILE} "break *0x80000\n"
     appendfile ${GDB_CONNECT_FILE} "continue\n"
 '''
 ]
