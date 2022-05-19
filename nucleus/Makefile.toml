@@ -44,12 +44,11 @@ script = [
 '''
 ]
 
-# Problem: this eats STDIN! need to run in subshell or sth
 [tasks.gdb]
 dependencies = ["build", "kernel-binary", "gdb-config"]
 env = { "RUST_GDB" = "${GDB}" }
 script = [
-    "rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}"
+    "exec < /dev/tty && rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}"
 ]
 
 [tasks.gdb-cb]

@@ -44,7 +44,7 @@ disabled = true
 dependencies = ["build", "kernel-binary", "gdb-config"]
 env = { "RUST_GDB" = "${GDB}" }
 script = [
-    "rust-gdb -x ${GDB_CONNECT_FILE} ${CHAINBOOT_ELF}"
+    "exec < /dev/tty && rust-gdb -x ${GDB_CONNECT_FILE} ${CHAINBOOT_ELF}"
 ]
 
 [tasks.sdcard]
