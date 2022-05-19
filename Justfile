@@ -35,6 +35,11 @@ qemu-cb:
     # Connect to it via chainofcommand to load an actual kernel
     cargo make qemu-cb
 
+# Build and run chainboot in QEMU with GDB port enabled
+qemu-cb-gdb:
+    # Connect to it via chainofcommand to load an actual kernel
+    cargo make qemu-cb-gdb
+
 # Build and write kernel to an SD Card
 device:
     cargo make sdcard
