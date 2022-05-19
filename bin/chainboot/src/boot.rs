@@ -1,16 +1,33 @@
-use core::cell::UnsafeCell;
+//--------------------------------------------------------------------------------------------------
+// Asm boot
+//--------------------------------------------------------------------------------------------------
+
 // Assembly counterpart to this file.
 #[cfg(feature = "asm")]
 core::arch::global_asm!(include_str!("boot.s"));
+
+/// The Rust entry of the `kernel` binary.
+///
+/// The function is called from the assembly `_start` function.
+#[cfg(feature = "asm")]
+#[no_mangle]
+#[inline]
+pub unsafe fn _start_rust(max_kernel_size: u64) -> ! {
+    crate::kernel_init(max_kernel_size)
+}
+
+//--------------------------------------------------------------------------------------------------
+// Rust boot
+//--------------------------------------------------------------------------------------------------
 
 // This is quite impossible - the linker constants are resolved to fully constant offsets in asm
 // version, but are image-relative symbols in rust, and I see no way to force it otherwise.
 #[no_mangle]
 #[link_section = ".text._start"]
 #[cfg(not(feature = "asm"))]
-#[optimize(size)]
 pub unsafe extern "C" fn _start() -> ! {
     use {
+        core::cell::UnsafeCell,
         cortex_a::registers::{MPIDR_EL1, SP},
         machine::endless_sleep,
         tock_registers::interfaces::{Readable, Writeable},
@@ -35,9 +52,11 @@ pub unsafe extern "C" fn _start() -> ! {
     endless_sleep()
 }
 
-#[inline]
 #[cfg(not(feature = "asm"))]
+#[link_section = ".text._start"]
+#[inline]
 unsafe fn prepare_and_relocate() -> ! {
+    use core::cell::UnsafeCell;
     // These are a problem, because they are not interpreted as constants here.
     // Subsequently, this code tries to read values from not-yet-existing data locations.
     extern "Rust" {
@@ -58,25 +77,22 @@ unsafe fn prepare_and_relocate() -> ! {
     );
 
     // Relocate the code
-    core::ptr::copy_nonoverlapping(
+    // Avoid calling memcpy here becaues it will be linked at a different address.
+    my_copy(
         __binary_nonzero_lma.get() as *const u64,
         __binary_nonzero_vma.get() as *mut u64,
-        __binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize,
+        __binary_nonzero_vma_end_exclusive.get() as *mut u64,
     );
 
     let max_kernel_size = __binary_nonzero_vma.get() as u64 - __binary_nonzero_lma.get() as u64;
-    _start_rust(max_kernel_size);
+    crate::kernel_init(max_kernel_size)
 }
 
-//--------------------------------------------------------------------------------------------------
-// Public Code
-//--------------------------------------------------------------------------------------------------
-
-/// The Rust entry of the `kernel` binary.
-///
-/// The function is called from the assembly `_start` function, keep it to support "asm" feature.
-#[no_mangle]
-#[inline]
-pub unsafe fn _start_rust(max_kernel_size: u64) -> ! {
-    crate::kernel_init(max_kernel_size)
+#[link_section = ".text._start"]
+unsafe fn my_copy<T>(mut src: *const T, mut dest: *mut T, dest_end: *mut T) {
+    while dest < dest_end {
+        core::ptr::write(dest, core::ptr::read(src));
+        dest = dest.offset(1);
+        src = src.offset(1);
+    }
 }

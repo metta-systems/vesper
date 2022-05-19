@@ -1,10 +1,14 @@
 // Based on miniload by @andre-richter
 #![feature(format_args_nl)]
 #![feature(custom_test_frameworks)]
+#![feature(const_intrinsic_copy)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![no_main]
 #![no_std]
+// We use copy_overlapping in relocation code which should not call into a relocated version
+// of memcpy, hence require generating this code inline.
+#![no_builtins]
 
 use {
     core::{hash::Hasher, panic::PanicInfo},
