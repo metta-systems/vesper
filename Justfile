@@ -1,6 +1,10 @@
 _default:
     @just --list
 
+# Update all dependencies
+deps-up:
+    cargo update
+
 # Build default hw kernel and run chainofcommand to boot this kernel onto the board
 boot: chainofcommand
     cargo make chainboot
