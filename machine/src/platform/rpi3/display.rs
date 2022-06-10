@@ -43,7 +43,7 @@ impl Color {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum PixelOrder {
     BGR,
     RGB,

@@ -152,7 +152,7 @@ impl ::core::convert::From<Function> for u32 {
 
 /// Pull up/down resistor setup.
 #[repr(u8)]
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum PullUpDown {
     None = 0b00,
     Up = 0b01,
