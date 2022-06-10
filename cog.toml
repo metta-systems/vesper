@@ -1,0 +1,2 @@
+[commit_types]
+wip = { changelog_title = "Work in progress (should not be in changelog!)" }
