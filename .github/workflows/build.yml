@@ -16,9 +16,33 @@ jobs:
       - run: rustup toolchain install nightly --profile minimal --component rustfmt
       - run: cargo +nightly fmt -- --check
 
+  clippy:
+    name: "Clippy"
+    needs: check_formatting
+    strategy:
+      matrix:
+        features: [
+          "",
+          "noserial",
+          "qemu",
+          "noserial,qemu",
+          "jtag",
+          "noserial,jtag",
+          # jtag and qemu together don't make much sense
+        ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v1
+      - run: sudo apt update
+      - run: sudo apt install libudev-dev
+      - run: rustup toolchain install nightly
+      - run: cargo install cargo-make
+      - run: env CLIPPY_FEATURES=${{ matrix.features }} cargo make clippy
+
   test:
     name: Test
-    needs: check_formatting
+    needs: clippy
 
     strategy:
       matrix:
@@ -127,27 +151,3 @@ jobs:
     - name: 'Run tests (other OSes)'
       run: env QEMU_MACHINE=raspi3 cargo make test
       if: runner.os != 'macOS'
-
-  clippy:
-    name: "Clippy"
-    needs: check_formatting
-    strategy:
-      matrix:
-        features: [
-          "",
-          "noserial",
-          "qemu",
-          "noserial,qemu",
-          "jtag",
-          "noserial,jtag",
-          # jtag and qemu together don't make much sense
-        ]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-    - uses: actions/checkout@v1
-    - run: sudo apt update
-    - run: sudo apt install libudev-dev
-    - run: rustup toolchain install nightly
-    - run: cargo install cargo-make
-    - run: env CLIPPY_FEATURES=${{ matrix.features }} cargo make clippy
