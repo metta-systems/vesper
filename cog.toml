@@ -1,3 +1,4 @@
+tag_prefix = "R"
 ignore_merge_commits = true
 
 [commit_types]
