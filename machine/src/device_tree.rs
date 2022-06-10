@@ -1,10 +1,77 @@
-use shrinkwraprs::Shrinkwrap;
-use fdt_rs::base::{DevTree, DevTreeProp};
+use {
+    core::alloc::Layout,
+    fdt_rs::{
+        base::DevTree,
+        error::DevTreeError,
+        index::{
+            iters::DevTreeIndexNodeSiblingIter,
+            {DevTreeIndex, DevTreeIndexNode, DevTreeIndexProp},
+        },
+        prelude::{FallibleIterator, PropReader},
+    },
+    shrinkwraprs::Shrinkwrap,
+};
 
+/// Uses DevTreeIndex implementation for simpler navigation.
+/// This requires allocation of a single buffer, which is done at boot time via bump allocator.
+/// This means we can only parse the tree after bump allocator is initialized.
 #[derive(Shrinkwrap)]
-pub struct DeadTree<'a>(DevTree<'a>);
+pub struct DeviceTree<'a>(DevTreeIndex<'a, 'a>);
 
-// This is based on lib.rs/dtb implementation.
+impl<'a> DeviceTree<'a> {
+    pub fn layout(tree: DevTree<'a>) -> Result<Layout, DevTreeError> {
+        Ok(DevTreeIndex::get_layout(&tree)?)
+    }
+
+    pub fn new(tree: DevTree<'a>, raw_slice: &'a mut [u8]) -> Result<Self, DevTreeError> {
+        Ok(Self(DevTreeIndex::new(tree, raw_slice)?))
+    }
+
+    // @todo drop all the wrapper shenanigans and just export this one fn
+    /// Iterate path separated by / starting from the root "/" and find props one by one.
+    pub fn get_prop_by_path(&self, path: &str) -> Result<DevTreeIndexProp, DevTreeError> {
+        let mut path = PathSplit::new(path);
+        let mut node_iter = self.0.root().children();
+        let mut node: Option<DevTreeIndexNode> = Some(self.0.root());
+        if path.component().is_empty() {
+            // Root "/"
+            path.move_next();
+        }
+        while !path.is_finished() {
+            node = node_iter
+                .try_find::<_, _, DevTreeError>(|node| Ok(node.name()? == path.component()))?;
+            if node.is_none() {
+                return Err(DevTreeError::InvalidParameter("Invalid path")); // @todo
+            }
+            node_iter = node.as_ref().unwrap().children();
+            path.move_next();
+        }
+        assert!(path.is_finished()); // tbd
+        assert!(node.is_some());
+        let mut prop_iter = node.unwrap().props();
+        let prop = prop_iter
+            .try_find::<_, _, DevTreeError>(|prop| Ok(prop.name()? == path.component()))?;
+        if prop.is_none() {
+            return Err(DevTreeError::InvalidParameter("Invalid path")); // @todo
+        }
+        Ok(prop.unwrap())
+    }
+
+    // // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
+    // println!("Address cells: {}, size cells {}", address_cells, size_cells);
+    //
+    // let mem_prop = device_tree -- node
+    // .props()
+    // -- node with property named "device_type" and value "memory"
+    // .find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"))
+    // .unwrap()
+    // .expect("Unable to find memory node.");
+    // let mem_node = mem_prop.node();
+    // // let parent_node = mem_node.parent_node();
+}
+
+// See "2.2.3 Path Names" in DTSpec v0.3
+// This is based on https://lib.rs/dtb implementation (c) Simon Prykhodko, MIT license.
 struct PathSplit<'a> {
     path: &'a str,
     path_component: &'a str,
@@ -116,43 +183,4 @@ mod tests {
 
         assert_eq!(path.move_next(), false);
     }
-}
-
-impl<'a> DeadTree<'a> {
-    #[allow(unused)]
-    pub fn new(reader: DevTree<'a>) -> Self {
-        Self(reader)
-    }
-
-    pub fn find_prop_by_path(&self, path: &str) -> Result<bool, ()> {
-        // iterate path separated by / starting from root "/" and find props one by one
-        let path = PathSplit::new(path);
-        while !path.is_finished() {
-            self.0.nodes();
-            // "/#address-cells" - is a prop inside root node
-        }
-        Ok(false)
-    }
-
-    // pub fn try_struct_u32_value<'s, P: Into<&'s str>>(&self, path: P) -> Result<u32, dtb::Error> {
-    //     let mut buf = [0u8; 4];
-    //     Ok(self
-    //         .0
-    //         .struct_items()
-    //         .path_struct_items(path.into())
-    //         .next()
-    //         .ok_or(dtb::Error::BadPropertyName)?
-    //         .0
-    //         .value_u32_list(&mut buf)?[0])
-    // }
-    //
-    // pub fn try_struct_str_value<'s, P: Into<&'s str>>(&self, path: P) -> Result<&str, dtb::Error> {
-    //     self.0
-    //         .struct_items()
-    //         .path_struct_items(path.into())
-    //         .next()
-    //         .ok_or(dtb::Error::BadPropertyName)?
-    //         .0
-    //         .value_str()
-    // }
 }

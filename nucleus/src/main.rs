@@ -11,6 +11,7 @@
 #![no_main]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
+#![feature(try_find)] // For DeviceTree iterators
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
@@ -23,7 +24,8 @@ use core::panic::PanicInfo;
 use machine::devices::SerialOps;
 use {
     cfg_if::cfg_if,
-    core::cell::UnsafeCell,
+    core::{alloc::Allocator, cell::UnsafeCell},
+    device_tree::DeviceTree,
     fdt_rs::{
         base::DevTree,
         prelude::{FallibleIterator, PropReader},
@@ -131,27 +133,38 @@ pub fn kmain(dtb: u32) -> ! {
     init_exception_traps();
     init_mmu();
 
-    #[cfg(test)]
-    test_main();
-
     println!("DTB loaded at {:x}", dtb);
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
     let device_tree =
         unsafe { DevTree::from_raw_pointer(dtb as *const _).expect("DeviceTree failed to read") };
 
-    let address_cells = device_tree
-        .props()
-        .find(|p| Ok(p.name()? == "#address-cells"))
+    let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
+
+    let mut block = crate::DMA_ALLOCATOR
+        .lock(|dma| dma.allocate_zeroed(layout))
+        .map(|mut ret| unsafe { ret.as_mut() })
+        .map_err(|_| ())
+        .expect("Couldn't allocate DeviceTree index");
+
+    let device_tree =
+        DeviceTree::new(device_tree, block).expect("Couldn't initialize indexed DeviceTree");
+
+    let model = device_tree
+        .get_prop_by_path("/model")
         .unwrap()
+        .str()
+        .expect("Model must be a string");
+    println!("Booting on {}", model);
+
+    let address_cells = device_tree
+        .get_prop_by_path("/#address-cells")
         .expect("Unable to figure out #address-cells")
         .u32(0)
         .expect("Invalid format for #address-cells");
 
     let size_cells = device_tree
-        .props()
-        .find(|p| Ok(p.name()? == "#size-cells"))
-        .unwrap()
+        .get_prop_by_path("/#size-cells")
         .expect("Unable to figure out #size-cells")
         .u32(0)
         .expect("Invalid format for #size-cells");
@@ -170,30 +183,42 @@ pub fn kmain(dtb: u32) -> ! {
     let mem_node = mem_prop.node();
     // let parent_node = mem_node.parent_node();
 
-    let reg_prop = mem_node
-        .props()
-        .find(|p| Ok(p.name()? == "reg"))
-        .unwrap()
-        .expect("Device tree memory node missing 'reg' prop.");
+    let reg_prop = device_tree
+        .get_prop_by_path("/memory@0/reg")
+        .expect("Unable to figure out memory-reg");
 
-    println!("Found memnode with reg prop: {:?}", reg_prop.name());
+    println!(
+        "Found memnode with reg prop: name {:?}, size {}",
+        reg_prop.name(),
+        reg_prop.length()
+    );
 
-    let mem_addr = reg_prop.u64(0).expect("Oops");
-    let mem_size = reg_prop.u32(2).expect("Oops");
+    let mem_addr = reg_prop.u32(0).expect("Oops");
+    let mem_size = reg_prop.u32(1).expect("Oops");
 
     println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
 
     // List unusable memory, and remove it from the memory regions for the allocator.
-    let mut iter = device_tree.compatible_nodes("arm,pl011");
-    while let Some(entry) = iter.next().unwrap() {
+    let mut iter = device_tree.fdt().reserved_entries();
+    while let Some(entry) = iter.next() {
         println!(
-            "reserved: {:?} (bytes at ?)",
-            entry.name() /*, entry.address*/
+            "Reserved memory: {:?} bytes at {:?}",
+            entry.size, entry.address
         );
     }
 
-    // Also, remove the DTB memory region.
-    println!("DTB region: {} bytes at {:x}", device_tree.totalsize(), dtb);
+    // Iterate compatible nodes (example):
+    // let mut iter = device_tree.compatible_nodes("arm,pl011");
+    // while let Some(entry) = iter.next() {
+    //     println!("reserved: {:?} (bytes at ?)", entry.name()/*, entry.address*/);
+    // }
+
+    // Also, remove the DTB memory region + index
+    println!(
+        "DTB region: {} bytes at {:x}",
+        device_tree.fdt().totalsize(),
+        dtb
+    );
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
@@ -217,9 +242,18 @@ pub fn kmain(dtb: u32) -> ! {
 
     dump_memory_map();
 
+    #[cfg(test)]
+    test_main();
+
     command_prompt();
 
     reboot()
+}
+
+fn dump_memory_map() {
+    // Output the memory map as we could derive from FDT and information about our loaded image
+    // Use it to imagine how the memmap would look like in the end.
+    arch::memory::print_layout();
 }
 
 //------------------------------------------------------------
