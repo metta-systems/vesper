@@ -17,7 +17,10 @@ use {
     crate::{
         arch::loop_while,
         devices::{ConsoleOps, SerialOps},
-        platform::MMIODerefWrapper,
+        platform::{
+            mailbox::{MailboxStorage, MailboxStorageRef},
+            MMIODerefWrapper,
+        },
     },
     snafu::Snafu,
     tock_registers::{
@@ -278,7 +281,10 @@ impl PL011Uart {
     }
 
     /// Set baud rate and characteristics (115200 8N1) and map to GPIO
-    pub fn prepare(self, gpio: &gpio::GPIO) -> Result<PreparedPL011Uart> {
+    pub fn prepare<Storage: MailboxStorage + MailboxStorageRef>(
+        self,
+        gpio: &gpio::GPIO,
+    ) -> Result<PreparedPL011Uart> {
         // Turn off UART
         self.registers.Control.set(0);
 
@@ -292,7 +298,7 @@ impl PL011Uart {
         const CLOCK: u32 = 4_000_000; // 4Mhz
         const BAUD_RATE: u32 = 115_200;
 
-        let mut mailbox = Mailbox::<9>::default();
+        let mut mailbox = Mailbox::<9, Storage>::default();
         let index = mailbox.request();
         let index = mailbox.set_clock_rate(index, mailbox::clock::UART, CLOCK);
         let mailbox = mailbox.end(index);

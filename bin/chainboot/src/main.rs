@@ -15,7 +15,10 @@ use {
     cortex_a::asm::barrier,
     machine::{
         devices::SerialOps,
-        platform::rpi3::{gpio::GPIO, pl011_uart::PL011Uart, BcmHost},
+        platform::{
+            mailbox::LocalMailboxStorage,
+            rpi3::{gpio::GPIO, pl011_uart::PL011Uart, BcmHost},
+        },
         print, println, CONSOLE,
     },
     seahash::SeaHasher,
@@ -36,7 +39,9 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
 
     let gpio = GPIO::default();
     let uart = PL011Uart::default();
-    let uart = uart.prepare(&gpio).expect("What could go wrong?");
+    let uart = uart
+        .prepare::<LocalMailboxStorage>(&gpio)
+        .expect("What could go wrong?");
     CONSOLE.lock(|c| {
         // Move uart into the global CONSOLE.
         c.replace_with(uart.into());

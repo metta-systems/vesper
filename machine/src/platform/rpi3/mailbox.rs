@@ -30,6 +30,10 @@ use {
     },
 };
 
+trait Mailboxer<const N_SLOTS: usize> {
+    type Storage: MailboxStorage<N_SLOTS>;
+}
+
 /// Public interface to the mailbox.
 /// The address for the buffer needs to be 16-byte aligned
 /// so that the VideoCore can handle it properly.
@@ -115,13 +119,11 @@ pub trait MailboxOps {
     }
 }
 
-pub trait MailboxStorage {
+pub trait MailboxStorage<const N_SLOTS: usize> {
     fn new() -> Result<Self>
     where
         Self: Sized;
-}
 
-pub trait MailboxStorageRef {
     fn as_ref(&self) -> &[u32];
     fn as_mut(&mut self) -> &mut [u32];
     fn as_ptr(&self) -> *const u32;
@@ -138,46 +140,13 @@ pub struct DmaBackedMailboxStorage<const N_SLOTS: usize> {
     pub storage: *mut u32,
 }
 
-impl<const N_SLOTS: usize> MailboxStorage for LocalMailboxStorage<N_SLOTS> {
+impl<const N_SLOTS: usize> MailboxStorage<N_SLOTS> for LocalMailboxStorage<N_SLOTS> {
     fn new() -> Result<Self> {
         Ok(Self {
             storage: [0u32; N_SLOTS],
         })
     }
-}
 
-impl<const N_SLOTS: usize> MailboxStorage for DmaBackedMailboxStorage<N_SLOTS> {
-    fn new() -> Result<Self> {
-        Ok(Self {
-            storage: DMA_ALLOCATOR
-                .lock(|a| {
-                    a.allocate(
-                        Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
-                            .map_err(|_| AllocError)?,
-                    )
-                })
-                .map_err(|_| MailboxError::Alloc)?
-                .as_mut_ptr() as *mut u32,
-        })
-    }
-}
-
-impl<const N_SLOTS: usize> Drop for DmaBackedMailboxStorage<N_SLOTS> {
-    fn drop(&mut self) {
-        DMA_ALLOCATOR
-            .lock::<_, Result<()>>(|a| unsafe {
-                #[allow(clippy::unit_arg)]
-                Ok(a.deallocate(
-                    NonNull::new_unchecked(self.storage as *mut u8),
-                    Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
-                        .map_err(|_| MailboxError::Alloc)?,
-                ))
-            })
-            .unwrap_or(())
-    }
-}
-
-impl<const N_SLOTS: usize> MailboxStorageRef for LocalMailboxStorage<N_SLOTS> {
     fn as_ref(&self) -> &[u32] {
         &self.storage
     }
@@ -196,7 +165,21 @@ impl<const N_SLOTS: usize> MailboxStorageRef for LocalMailboxStorage<N_SLOTS> {
     }
 }
 
-impl<const N_SLOTS: usize> MailboxStorageRef for DmaBackedMailboxStorage<N_SLOTS> {
+impl<const N_SLOTS: usize> MailboxStorage<N_SLOTS> for DmaBackedMailboxStorage<N_SLOTS> {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            storage: DMA_ALLOCATOR
+                .lock(|a| {
+                    a.allocate(
+                        Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
+                            .map_err(|_| AllocError)?,
+                    )
+                })
+                .map_err(|_| MailboxError::Alloc)?
+                .as_mut_ptr() as *mut u32,
+        })
+    }
+
     fn as_ref(&self) -> &[u32] {
         unsafe { core::slice::from_raw_parts(self.storage.cast(), N_SLOTS) }
     }
@@ -212,6 +195,21 @@ impl<const N_SLOTS: usize> MailboxStorageRef for DmaBackedMailboxStorage<N_SLOTS
     // @todo Probably need a ResultMailbox for accessing data after call()?
     fn value_at(&self, index: usize) -> u32 {
         self.as_ref()[index]
+    }
+}
+
+impl<const N_SLOTS: usize> Drop for DmaBackedMailboxStorage<N_SLOTS> {
+    fn drop(&mut self) {
+        DMA_ALLOCATOR
+            .lock::<_, Result<()>>(|a| unsafe {
+                #[allow(clippy::unit_arg)]
+                Ok(a.deallocate(
+                    NonNull::new_unchecked(self.storage as *mut u8),
+                    Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
+                        .map_err(|_| MailboxError::Alloc)?,
+                ))
+            })
+            .unwrap_or(())
     }
 }
 
@@ -369,7 +367,7 @@ impl<const N_SLOTS: usize> Default for Mailbox<N_SLOTS> {
     }
 }
 
-impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<N_SLOTS, Storage> {
+impl<const N_SLOTS: usize> Mailbox<N_SLOTS, Storage> {
     /// Create a new mailbox locally in an aligned stack space.
     /// # Safety
     /// Caller is responsible for picking the correct MMIO register base address.
@@ -628,9 +626,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
     }
 }
 
-impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> MailboxOps
-    for PreparedMailbox<N_SLOTS, Storage>
-{
+impl<const N_SLOTS: usize> MailboxOps for PreparedMailbox<N_SLOTS, Storage> {
     fn write(&self, channel: u32) -> Result<()> {
         self.0.do_write(channel)
     }
@@ -641,9 +637,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> MailboxO
     }
 }
 
-impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> MailboxStorageRef
-    for PreparedMailbox<N_SLOTS, Storage>
-{
+impl<const N_SLOTS: usize> MailboxStorageRef for PreparedMailbox<N_SLOTS, Storage> {
     fn as_ref(&self) -> &[u32] {
         self.0.buffer.as_ref()
     }
