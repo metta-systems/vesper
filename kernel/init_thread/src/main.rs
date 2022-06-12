@@ -164,15 +164,13 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     );
 
     let reg_prop = DeviceTreeProp::new(reg_prop);
-    let mut mem_iter = reg_prop.payload_pairs_iter(address_cells, size_cells);
 
-    while let Some((mem_addr, mem_size)) = mem_iter.next() {
+    for (mem_addr, mem_size) in reg_prop.payload_pairs_iter(address_cells, size_cells) {
         semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
     }
 
     // List unusable memory, and remove it from the memory regions for the allocator.
-    let mut iter = device_tree.fdt().reserved_entries();
-    while let Some(entry) = iter.next() {
+    for entry in device_tree.fdt().reserved_entries() {
         semi_println!(
             "Reserved memory: {:?} bytes at {:?}",
             entry.size,
@@ -181,8 +179,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     }
 
     // Iterate compatible nodes (example):
-    // let mut iter = device_tree.compatible_nodes("arm,pl011");
-    // while let Some(entry) = iter.next() {
+    // for entry in device_tree.compatible_nodes("arm,pl011") {
     //     semi_println!("reserved: {:?} (bytes at ?)", entry.name()/*, entry.address*/);
     // }
 
