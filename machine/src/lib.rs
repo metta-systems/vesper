@@ -19,6 +19,10 @@
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
+use core::{
+    alloc::{AllocError, Allocator, Layout},
+    ptr::NonNull,
+};
 
 use {
     buddy_alloc::{BuddyAlloc, BuddyAllocParam},
@@ -67,3 +71,16 @@ static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
 
 // 0x00600000 as usize,
 // 0x007FFFFF as usize,
+
+pub fn dma_allocate(layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    DMA_ALLOCATOR.lock(|a| a.allocate(layout))
+}
+
+pub fn dma_deallocate(ptr: NonNull<u8>, layout: Layout) {
+    DMA_ALLOCATOR.lock(|a| unsafe { a.deallocate(ptr, layout) })
+}
+
+// Temporarily allocate out of DMA region until we have proper alloc arena
+pub fn allocate_zeroed(layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    DMA_ALLOCATOR.lock(|dma| dma.allocate_zeroed(layout))
+}

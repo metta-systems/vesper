@@ -25,16 +25,19 @@ use core::panic::PanicInfo;
 use machine::devices::SerialOps;
 use {
     cfg_if::cfg_if,
-    core::{alloc::Allocator, cell::UnsafeCell},
+    core::cell::UnsafeCell,
     fdt_rs::{base::DevTree, error::DevTreeError, prelude::PropReader},
     machine::{
         arch,
         device_tree::{DeviceTree, DeviceTreeProp},
         entry, memory,
-        platform::rpi3::{
-            display::{Color, DrawError},
-            mailbox::{channel, Mailbox, MailboxOps},
-            vc::VC,
+        platform::{
+            memory::mmu::virt_mem_layout,
+            rpi3::{
+                display::{Color, DrawError},
+                mailbox::{channel, Mailbox, MailboxOps},
+                vc::VC,
+            },
         },
         println, CONSOLE,
     },
@@ -140,10 +143,9 @@ pub fn kmain(dtb: u32) -> ! {
 
     let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
 
-    let block = machine::DMA_ALLOCATOR
-        .lock(|dma| dma.allocate_zeroed(layout))
+    let block = machine::allocate_zeroed(layout)
         .map(|mut ret| unsafe { ret.as_mut() })
-        .map_err(|_| ())
+        // .map_err(|_| ())
         .expect("Couldn't allocate DeviceTree index");
 
     let device_tree =
@@ -250,7 +252,7 @@ pub fn kmain(dtb: u32) -> ! {
 fn dump_memory_map() {
     // Output the memory map as we could derive from FDT and information about our loaded image
     // Use it to imagine how the memmap would look like in the end.
-    arch::memory::print_layout();
+    virt_mem_layout().print_layout();
 }
 
 //------------------------------------------------------------
