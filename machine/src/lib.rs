@@ -28,6 +28,10 @@
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
+use core::{
+    alloc::{AllocError, Allocator, Layout},
+    ptr::NonNull,
+};
 
 /// Architecture-specific code.
 #[macro_use]
@@ -62,16 +66,16 @@ pub fn version() -> &'static str {
 
 // The global allocator for DMA-able memory. That is, memory which is tagged
 // non-cacheable in the page tables.
-// #[allow(dead_code)]
-// static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
-//     sync::NullLock::new(Lazy::new(|| unsafe {
-//         BuddyAlloc::new(BuddyAllocParam::new(
-//             // @todo Init this after we loaded boot memory map
-//             DMA_HEAP_START as *const u8,
-//             DMA_HEAP_END - DMA_HEAP_START,
-//             64,
-//         ))
-//     }));
+#[allow(dead_code)]
+static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
+    sync::NullLock::new(Lazy::new(|| unsafe {
+        BuddyAlloc::new(BuddyAllocParam::new(
+            // @todo Init this after we loaded boot memory map
+            DMA_HEAP_START as *const u8,
+            DMA_HEAP_END - DMA_HEAP_START,
+            64,
+        ))
+    }));
 // Try the following arguments instead to see all mailbox operations
 // fail. It will cause the allocator to use memory that is marked
 // cacheable and therefore not DMA-safe. The answer from the VideoCore
@@ -80,6 +84,19 @@ pub fn version() -> &'static str {
 
 // 0x00600000 as usize,
 // 0x007FFFFF as usize,
+
+pub fn dma_allocate(layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    DMA_ALLOCATOR.lock(|a| a.allocate(layout))
+}
+
+pub fn dma_deallocate(ptr: NonNull<u8>, layout: Layout) {
+    DMA_ALLOCATOR.lock(|a| unsafe { a.deallocate(ptr, layout) })
+}
+
+// Temporarily allocate out of DMA region until we have proper alloc arena
+pub fn allocate_zeroed(layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    DMA_ALLOCATOR.lock(|dma| dma.allocate_zeroed(layout))
+}
 
 #[cfg(test)]
 mod lib_tests {

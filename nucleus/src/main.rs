@@ -33,13 +33,14 @@ use core::panic::PanicInfo;
 use machine::devices::serial::SerialOps;
 use {
     cfg_if::cfg_if,
-    core::{alloc::Allocator, cell::UnsafeCell, time::Duration},
+    core::{cell::UnsafeCell, time::Duration},
     fdt_rs::{base::DevTree, error::DevTreeError, prelude::PropReader},
     machine::{
-        arch,
         console::console,
         device_tree::{DeviceTree, DeviceTreeProp},
-        entry, exception, info, memory, println, time, warn,
+        entry, exception, info, memory,
+        platform::memory::mmu::virt_mem_layout,
+        println, time, warn,
     },
 };
 
@@ -142,10 +143,9 @@ pub fn kernel_main(dtb: u32) -> ! {
 
     let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
 
-    let block = machine::DMA_ALLOCATOR
-        .lock(|dma| dma.allocate_zeroed(layout))
+    let block = machine::allocate_zeroed(layout)
         .map(|mut ret| unsafe { ret.as_mut() })
-        .map_err(|_| ())
+        // .map_err(|_| ())
         .expect("Couldn't allocate DeviceTree index");
 
     let device_tree =
@@ -260,7 +260,7 @@ fn print_mmu_state_and_features() {
 fn dump_memory_map() {
     // Output the memory map as we could derive from FDT and information about our loaded image
     // Use it to imagine how the memmap would look like in the end.
-    arch::memory::print_layout();
+    virt_mem_layout().print_layout();
 }
 
 //------------------------------------------------------------

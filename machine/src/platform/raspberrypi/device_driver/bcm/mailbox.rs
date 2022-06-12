@@ -12,21 +12,22 @@
 
 #![allow(dead_code)]
 
-use crate::synchronization::IRQSafeNullLock;
 use {
     super::BcmHost,
     crate::{
+        dma_allocate, dma_deallocate,
         memory::{Address, Virtual},
-        platform::device_driver::common::MMIODerefWrapper,
+        platform::{MMIODerefWrapper, device_driver::common::MMIODerefWrapper},
         println,
-    }, //DMA_ALLOCATOR
+        synchronization::IRQSafeNullLock,
+    },
     aarch64_cpu::asm::barrier,
     core::{
-        alloc::{AllocError, Allocator, Layout},
+        alloc::Layout,
         mem,
         ptr::NonNull,
         result::Result as CoreResult,
-        sync::atomic::{compiler_fence, Ordering},
+        sync::atomic::{Ordering, compiler_fence},
     },
     snafu::Snafu,
     tock_registers::{
@@ -123,9 +124,9 @@ pub trait MailboxOps {
     fn write(&self, channel: u32) -> Result<()>;
     fn read(&self, channel: u32) -> Result<()>;
     fn call(&self, channel: u32) -> Result<()>; //{
-                                                //     self.write(channel)?;
-                                                //     self.read(channel)
-                                                // }
+    //     self.write(channel)?;
+    //     self.read(channel)
+    // }
 }
 
 pub trait MailboxStorage {
@@ -164,33 +165,27 @@ impl<const N_SLOTS: usize> MailboxStorage for DmaBackedMailboxStorage<N_SLOTS> {
         use crate::platform::memory::map::virt::DMA_HEAP_START;
 
         Ok(Self {
-            storage: DMA_HEAP_START
-                // storage: DMA_ALLOCATOR
-                //     .lock(|a| {
-                //         a.allocate(
-                //             Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
-                //                 .map_err(|_| AllocError)?,
-                //         )
-                //     })
-                //     .map_err(|_| MailboxError::Alloc)?
-                // .as_mut_ptr()
-                as *mut u32,
+            storage: dma_allocate(
+                Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
+                    .map_err(|_| MailboxError::Alloc)?,
+            )
+            .map_err(|_| MailboxError::Alloc)?
+            .as_mut_ptr() as *mut u32,
         })
     }
 }
 
 impl<const N_SLOTS: usize> Drop for DmaBackedMailboxStorage<N_SLOTS> {
     fn drop(&mut self) {
-        // DMA_ALLOCATOR
-        //     .lock::<_, Result<()>>(|a| unsafe {
-        //         #[allow(clippy::unit_arg)]
-        //         Ok(a.deallocate(
-        //             NonNull::new_unchecked(self.storage as *mut u8),
-        //             Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
-        //                 .map_err(|_| MailboxError::Alloc)?,
-        //         ))
-        //     })
-        //     .unwrap_or(())
+        let layout = Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16);
+        if layout.is_err() {
+            return;
+        }
+
+        dma_deallocate(
+            unsafe { NonNull::new_unchecked(self.storage as *mut u8) },
+            layout.unwrap(),
+        )
     }
 }
 
