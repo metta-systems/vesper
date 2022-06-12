@@ -20,7 +20,7 @@ use {
 /// - Only a single core must be active and running this function.
 /// - The init calls in this function must appear in the correct order.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn kernel_init(_dtb: u32, max_kernel_size: u64) -> ! {
+unsafe extern "C" fn kernel_init(dtb: u32, max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
@@ -38,7 +38,7 @@ unsafe extern "C" fn kernel_init(_dtb: u32, max_kernel_size: u64) -> ! {
     // println! is usable from here on.
 
     // Transition from unsafe to safe.
-    kernel_main(max_kernel_size)
+    kernel_main(dtb, max_kernel_size)
 }
 
 // https://onlineasciitools.com/convert-text-to-ascii-art (FIGlet) with `cricket` font
@@ -63,9 +63,13 @@ fn read_u64() -> u64 {
 
 /// The main function running after the early init.
 #[inline(always)]
-fn kernel_main(max_kernel_size: u64) -> ! {
+fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
+    #[cfg(test)]
+    test_main();
+
     print!("{}", LOGO);
     println!("{:>51}\n", BcmHost::board_name());
+    println!("Preserving DTB at {:8x}", dtb);
     println!("⏪ Requesting kernel image...");
 
     let kernel_addr: *mut u8 = BcmHost::kernel_load_address() as *mut u8;
@@ -136,13 +140,13 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
     // Use black magic to create a function pointer.
     // SAFETY: We're getting to safety soon!
-    let kernel: fn() -> ! = unsafe { core::mem::transmute(kernel_addr) };
+    let kernel: fn(u32) -> ! = unsafe { core::mem::transmute(kernel_addr) };
 
     // Force everything to complete before we jump.
     barrier::isb(barrier::SY);
 
     // Jump to loaded kernel!
-    kernel()
+    kernel(dtb)
 }
 
 #[panic_handler]
