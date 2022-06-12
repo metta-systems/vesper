@@ -39,7 +39,7 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     let gpio = GPIO::default();
     let uart = PL011Uart::default();
     let uart = uart
-        .prepare::<LocalMailboxStorage>(&gpio)
+        .prepare::<LocalMailboxStorage<9>>(&gpio) // fixme: ouch!
         .expect("What could go wrong?");
     CONSOLE.lock(|c| {
         // Move uart into the global CONSOLE.
