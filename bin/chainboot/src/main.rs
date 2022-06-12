@@ -1,7 +1,6 @@
 // Based on miniload by @andre-richter
 #![feature(format_args_nl)]
 #![feature(custom_test_frameworks)]
-#![feature(const_intrinsic_copy)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![no_main]
