@@ -363,7 +363,9 @@ impl<const N_SLOTS: usize> core::fmt::Debug for PreparedMailbox<N_SLOTS> {
     }
 }
 
-impl<const N_SLOTS: usize> Default for Mailbox<N_SLOTS> {
+impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Default
+    for Mailbox<N_SLOTS, Storage>
+{
     fn default() -> Self {
         unsafe { Self::new(MAILBOX_BASE) }.expect("Couldn't allocate a default mailbox")
     }
