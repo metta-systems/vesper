@@ -10,7 +10,7 @@
 
 use {
     crate::endless_sleep,
-    cortex_a::registers::*,
+    cortex_a::{asm, registers::*},
     tock_registers::interfaces::{Readable, Writeable},
 };
 
@@ -118,11 +118,7 @@ fn shared_setup_and_enter_post() -> ! {
 
     // Use `eret` to "return" to EL1. This will result in execution of
     // `reset()` in EL1.
-    // Load DTB address into w0 prior to eret.
-    unsafe {
-        core::arch::asm!("eret", in("w0") dtb);
-        core::hint::unreachable_unchecked()
-    }
+    asm::eret()
 }
 
 /// Real hardware boot-up sequence.
