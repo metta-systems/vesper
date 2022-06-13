@@ -127,25 +127,6 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     // 2. From those read reg entries, using `/#address-cells` and `/#size-cells` as units
     // 3. Union of all these reg entries will be the available memory. Enter it as mem-regions.
 
-    let address_cells = device_tree
-        .get_prop_by_path("/#address-cells")
-        .expect("Unable to figure out #address-cells")
-        .u32(0)
-        .expect("Invalid format for #address-cells");
-
-    let size_cells = device_tree
-        .get_prop_by_path("/#size-cells")
-        .expect("Unable to figure out #size-cells")
-        .u32(0)
-        .expect("Invalid format for #size-cells");
-
-    // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
-    semi_println!(
-        "Address cells: {}, size cells {}",
-        address_cells,
-        size_cells
-    );
-
     let res: Result<_, DevTreeError> = device_tree
         .props()
         .try_find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"));
@@ -165,7 +146,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
 
     let reg_prop = DeviceTreeProp::new(reg_prop);
 
-    for (mem_addr, mem_size) in reg_prop.payload_pairs_iter(address_cells, size_cells) {
+    for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
         semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
     }
 
@@ -190,23 +171,9 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
         dtb
     );
 
-    // let address_cells = device_tree.try_struct_u32_value("/#address-cells");
-    // let size_cells = device_tree.try_struct_u32_value("/#size-cells");
-
-    // semi_println!(
-    //     "Memory DTB info: address-cells {:?}, size-cells {:?}",
-    //     address_cells,
-    //     size_cells
-    // );
-
     dump_memory_map();
 
     // Next step: parse DTB!
-    // let dtb = unsafe {
-    //     // Direct physical access - MMU off
-    //     DeviceTree::from_phys(PhysAddr::new(dtb_phys)).expect("Invalid DTB")
-    // };
-
     // unsafe {
     //     BOOT_INFO.dtb_size = dtb.total_size();
 
