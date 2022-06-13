@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use {
+    crate::println,
     core::alloc::Layout,
     fdt_rs::{
         base::DevTree,
@@ -10,8 +11,44 @@ use {
     },
     shrinkwraprs::Shrinkwrap,
 };
-//iters::DevTreeIndexNodeSiblingIter,
-//FallibleIterator,
+
+fn get_size_cell_tree_value<'a, 'i: 'a, 'dt: 'i>(
+    node: DevTreeIndexNode<'a, 'i, 'dt>,
+    name: &str,
+) -> u32 {
+    const DEFAULT: u32 = 1;
+
+    let res: Result<_, DevTreeError> = node.props().try_find(|prop| Ok(prop.name()? == name));
+
+    if !res.is_err() {
+        if let Some(res) = res.unwrap() {
+            return res.u32(0).unwrap_or(DEFAULT);
+        }
+    }
+
+    while let Some(node) = node.parent() {
+        let res: Result<_, DevTreeError> = node.props().try_find(|prop| Ok(prop.name()? == name));
+
+        if res.is_err() {
+            // @todo abort on error? because it's not a None, but an actual read error..
+            continue;
+        }
+
+        if let Some(res) = res.unwrap() {
+            return res.u32(0).unwrap_or(DEFAULT);
+        }
+    }
+
+    DEFAULT
+}
+
+pub fn get_address_cells<'a, 'i: 'a, 'dt: 'i>(node: DevTreeIndexNode<'a, 'i, 'dt>) -> u32 {
+    get_size_cell_tree_value(node, "#address-cells")
+}
+
+pub fn get_size_cells<'a, 'i: 'a, 'dt: 'i>(node: DevTreeIndexNode<'a, 'i, 'dt>) -> u32 {
+    get_size_cell_tree_value(node, "#size-cells")
+}
 
 /// Uses DevTreeIndex implementation for simpler navigation.
 /// This requires allocation of a single buffer, which is done at boot time via bump allocator.
@@ -59,21 +96,9 @@ impl<'a> DeviceTree<'a> {
         }
         Ok(prop.unwrap())
     }
-
-    // // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
-    // println!("Address cells: {}, size cells {}", address_cells, size_cells);
-    //
-    // let mem_prop = device_tree -- node
-    // .props()
-    // -- node with property named "device_type" and value "memory"
-    // .find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"))
-    // .unwrap()
-    // .expect("Unable to find memory node.");
-    // let mem_node = mem_prop.node();
-    // // let parent_node = mem_node.parent_node();
 }
 
-/// Augment DevTreeIndexProp with set of pairs accessor.
+/// Augment DevTreeIndexProp with a set of pairs accessor.
 #[derive(Shrinkwrap)]
 pub struct DeviceTreeProp<'a, 'i: 'a, 'dt: 'i>(DevTreeIndexProp<'a, 'i, 'dt>);
 
@@ -82,11 +107,16 @@ impl<'a, 'i: 'a, 'dt: 'i> DeviceTreeProp<'a, 'i, 'dt> {
         Self(source)
     }
 
-    pub fn payload_pairs_iter(
-        &'a self,
-        address_cells: u32,
-        size_cells: u32,
-    ) -> PayloadPairsIter<'a, 'i, 'dt> {
+    pub fn payload_pairs_iter(&'a self) -> PayloadPairsIter<'a, 'i, 'dt> {
+        let address_cells = get_address_cells(self.node());
+        let size_cells = get_size_cells(self.node());
+
+        // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
+        println!(
+            "Address cells: {}, size cells {}",
+            address_cells, size_cells
+        );
+
         PayloadPairsIter::new(&self.0, address_cells, size_cells)
     }
 }
