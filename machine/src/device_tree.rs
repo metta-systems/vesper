@@ -153,6 +153,7 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
             // @todo check for sufficient space for the following read or the reads below may fail!
             return None;
         }
+        // @todo get rid of unwrap()s here
         Some(match (self.address_cells, self.size_cells) {
             (1, 1) => {
                 let result: Self::Item = (
