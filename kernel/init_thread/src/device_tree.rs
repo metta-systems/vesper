@@ -56,6 +56,13 @@ pub fn get_size_cells<'a, 'i: 'a, 'dt: 'i>(node: DevTreeIndexNode<'a, 'i, 'dt>) 
 pub struct DeviceTree<'a>(DevTreeIndex<'a, 'a>);
 
 impl<'a> DeviceTree<'a> {
+    pub fn dumper(&'a self, indent: usize) -> FdtDumper<'a> {
+        FdtDumper {
+            index: &self.0,
+            indent,
+        }
+    }
+
     pub fn layout(tree: DevTree<'a>) -> Result<Layout, DevTreeError> {
         DevTreeIndex::get_layout(&tree)
     }
@@ -149,6 +156,7 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
     /// Return a pair of (address, size) values on each iteration.
     type Item = (u64, u64);
     fn next(&mut self) -> Option<Self::Item> {
+        libqemu::semi_println!("Offset {}, total {}", self.offset, self.total);
         if self.offset >= self.total {
             // @todo check for sufficient space for the following read or the reads below may fail!
             return None;
@@ -353,5 +361,134 @@ mod tests {
         assert_eq!(path.component(), "#address-cells");
 
         assert_eq!(path.move_next(), false);
+    }
+}
+
+//=================================================================================================
+// Dump the entire FDT
+// From https://github.com/rs-embedded/fdtdump/blob/master/src/main.rs
+//=================================================================================================
+
+fn are_printable_strings(mut prop_iter: StringPropIter) -> bool {
+    loop {
+        match prop_iter.next() {
+            Ok(Some(s_ref)) => {
+                if s_ref.is_empty() {
+                    return false;
+                }
+            }
+            Ok(None) => return true,
+            Err(_) => return false,
+        }
+    }
+}
+
+pub struct FdtDumper<'a> {
+    index: &'a DevTreeIndex,
+    indent: usize,
+}
+
+impl<'i, 'dt> FdtDumper {
+    fn push_indent(&mut self) {
+        for _ in 0..self.indent {
+            libqemu::semi_print!("  ");
+        }
+    }
+
+    fn dump_node_name(&mut self, name: &str) {
+        self.push_indent();
+        libqemu::semi_println!("{name} {{");
+    }
+
+    fn dump_node(&mut self, node: &DevTreeIndexNode) -> DevTreeResult<()> {
+        let mut name = node.name()?;
+        if name.is_empty() {
+            name = "/";
+        } else {
+            name = node.name()?;
+        }
+        self.dump_node_name(name);
+        Ok(())
+    }
+
+    fn dump_property(&mut self, prop: DevTreeIndexProp) -> DevTreeResult<()> {
+        self.push_indent();
+
+        libqemu::semi_print!("{}", prop.name()?);
+
+        if prop.length() == 0 {
+            libqemu::semi_println!(";");
+            return Ok(());
+        }
+        libqemu::semi_print!(" = ");
+
+        // Unsafe Ok - we're reinterpreting the data as expected.
+        unsafe {
+            // First try to parse as an array of strings
+            if are_printable_strings(prop.iter_str()) {
+                let mut iter = prop.iter_str();
+                while let Some(s) = iter.next()? {
+                    libqemu::semi_print!("\"{}\", ", s);
+                }
+                // let _ = self.dump.pop();
+                // let _ = self.dump.pop();
+            } else if prop.propbuf().len() % size_of::<u32>() == 0 {
+                libqemu::semi_print!("<");
+                for val in prop.propbuf().chunks_exact(size_of::<u32>()) {
+                    // We use read_unaligned
+                    #[allow(clippy::cast_ptr_alignment)]
+                    let v = read_unaligned::<u32>(val.as_ptr() as *const u32);
+                    let v = u32::from_be(v);
+                    libqemu::semi_print!("{:#010x} ", v);
+                }
+                // let _ = self.dump.pop(); // Pop off extra space
+                libqemu::semi_print!(">");
+            } else {
+                libqemu::semi_print!("[");
+                for val in prop.propbuf() {
+                    libqemu::semi_print!("{:02x} ", val);
+                }
+                // let _ = self.dump.pop(); // Pop off extra space
+                libqemu::semi_print!("]");
+            }
+        }
+
+        libqemu::semi_println!(";");
+        Ok(())
+    }
+
+    pub fn dump_level(&mut self, node: &DevTreeIndexNode) -> DevTreeResult<()> {
+        self.dump_node(node)?;
+        self.indent += 1;
+        for prop in node.props() {
+            let _ = self.dump_property(prop)?;
+        }
+        for child in node.children() {
+            let _ = self.dump_level(&child)?;
+        }
+        self.indent -= 1;
+        self.push_indent();
+        libqemu::semi_println!("}};");
+        Ok(())
+    }
+
+    pub fn dump_root(&mut self) -> DevTreeResult<()> {
+        self.dump_level(self.index.root())
+    }
+
+    pub fn dump_metadata(&mut self) {
+        let fdt = self.index.fdt();
+        libqemu::semi_println!("// magic:\t\t{:#x}", fdt.magic());
+        let s = fdt.totalsize();
+        libqemu::semi_println!("// totalsize:\t\t{:#x} ({})", s, s);
+        libqemu::semi_println!("// off_dt_struct:\t{:#x}", fdt.off_dt_struct());
+        libqemu::semi_println!("// off_dt_strings:\t{:#x}", fdt.off_dt_strings());
+        libqemu::semi_println!("// off_mem_rsvmap:\t{:#x}", fdt.off_mem_rsvmap());
+        libqemu::semi_println!("// version:\t\t{:}", fdt.version());
+        libqemu::semi_println!("// last_comp_version:\t{:}", fdt.last_comp_version());
+        libqemu::semi_println!("// boot_cpuid_phys:\t{:#x}", fdt.boot_cpuid_phys());
+        libqemu::semi_println!("// size_dt_strings:\t{:#x}", fdt.size_dt_strings());
+        libqemu::semi_println!("// size_dt_struct:\t{:#x}", fdt.size_dt_struct());
+        libqemu::semi_println!();
     }
 }
