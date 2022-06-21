@@ -39,6 +39,7 @@
 //------------------------------------------------------------------------------
 // fn _start()
 //------------------------------------------------------------------------------
+// x0 contains DTB address on entry, preserve it until the call to Rust.
 _start:
     // Only proceed on the boot core. Park it otherwise.
     mrs	x1, MPIDR_EL1
