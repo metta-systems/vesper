@@ -1,13 +1,13 @@
 #![allow(dead_code)]
 
 use {
-    crate::println,
-    core::alloc::Layout,
+    crate::{print, println},
+    core::{alloc::Layout, mem::size_of, ptr::read_unaligned},
     fdt_rs::{
-        base::DevTree,
-        error::DevTreeError,
+        base::{iters::StringPropIter, DevTree},
+        error::{DevTreeError, Result as DevTreeResult},
         index::{DevTreeIndex, DevTreeIndexNode, DevTreeIndexProp},
-        prelude::PropReader,
+        prelude::{PropReader, *},
     },
     shrinkwraprs::Shrinkwrap,
 };
@@ -54,7 +54,7 @@ pub fn get_size_cells<'a, 'i: 'a, 'dt: 'i>(node: DevTreeIndexNode<'a, 'i, 'dt>) 
 /// This requires allocation of a single buffer, which is done at boot time via bump allocator.
 /// This means we can only parse the tree after bump allocator is initialized.
 #[derive(Shrinkwrap)]
-pub struct DeviceTree<'a>(DevTreeIndex<'a, 'a>);
+pub struct DeviceTree<'a>(pub DevTreeIndex<'a, 'a>);
 
 impl<'a> DeviceTree<'a> {
     pub fn layout(tree: DevTree<'a>) -> Result<Layout, DevTreeError> {
@@ -149,6 +149,7 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
     /// Return a pair of (address, size) values on each iteration.
     type Item = (u64, u64);
     fn next(&mut self) -> Option<Self::Item> {
+        println!("Offset {}, total {}", self.offset, self.total);
         if self.offset >= self.total {
             return None;
         }
@@ -352,5 +353,130 @@ mod tests {
         assert_eq!(path.component(), "#address-cells");
 
         assert_eq!(path.move_next(), false);
+    }
+}
+
+//=================================================================================================
+// Dump the entire FDT
+// From https://github.com/rs-embedded/fdtdump/blob/master/src/main.rs
+//=================================================================================================
+
+fn are_printable_strings(mut prop_iter: StringPropIter) -> bool {
+    loop {
+        match prop_iter.next() {
+            Ok(Some(s_ref)) => {
+                if s_ref.is_empty() {
+                    return false;
+                }
+            }
+            Ok(None) => return true,
+            Err(_) => return false,
+        }
+    }
+}
+
+pub struct FdtDumper {
+    pub indent: usize,
+}
+
+impl<'i, 'dt> FdtDumper {
+    fn push_indent(&mut self) {
+        for _ in 0..self.indent {
+            print!("  ");
+        }
+    }
+
+    fn dump_node_name(&mut self, name: &str) {
+        self.push_indent();
+        print!("{}", name);
+        println!(" {{");
+    }
+
+    fn dump_node(&mut self, node: &DevTreeIndexNode) -> DevTreeResult<()> {
+        let mut name = node.name()?;
+        if name.is_empty() {
+            name = "/";
+        } else {
+            name = node.name()?;
+        }
+        self.dump_node_name(name);
+        Ok(())
+    }
+
+    fn dump_property(&mut self, prop: DevTreeIndexProp) -> DevTreeResult<()> {
+        self.push_indent();
+
+        print!("{}", prop.name()?);
+
+        if prop.length() == 0 {
+            println!(";");
+            return Ok(());
+        }
+        print!(" = ");
+
+        // Unsafe Ok - we're reinterpreting the data as expected.
+        unsafe {
+            // First try to parse as an array of strings
+            if are_printable_strings(prop.iter_str()) {
+                let mut iter = prop.iter_str();
+                while let Some(s) = iter.next()? {
+                    print!("\"{}\", ", s);
+                }
+                // let _ = self.dump.pop();
+                // let _ = self.dump.pop();
+            } else if prop.propbuf().len() % size_of::<u32>() == 0 {
+                print!("<");
+                for val in prop.propbuf().chunks_exact(size_of::<u32>()) {
+                    // We use read_unaligned
+                    #[allow(clippy::cast_ptr_alignment)]
+                    let v = read_unaligned::<u32>(val.as_ptr() as *const u32);
+                    let v = u32::from_be(v);
+                    print!("{:#010x} ", v);
+                }
+                // let _ = self.dump.pop(); // Pop off extra space
+                print!(">");
+            } else {
+                print!("[");
+                for val in prop.propbuf() {
+                    print!("{:02x} ", val);
+                }
+                // let _ = self.dump.pop(); // Pop off extra space
+                print!("]");
+            }
+        }
+
+        println!(";");
+        Ok(())
+    }
+
+    pub fn dump_level(&mut self, node: &DevTreeIndexNode) -> DevTreeResult<()> {
+        self.dump_node(node)?;
+        self.indent += 1;
+        for prop in node.props() {
+            let _ = self.dump_property(prop)?;
+        }
+        for child in node.children() {
+            let _ = self.dump_level(&child)?;
+        }
+        self.indent -= 1;
+        self.push_indent();
+        println!("}};");
+        Ok(())
+    }
+
+    pub fn dump_metadata(&mut self, index: &DevTreeIndex) {
+        let fdt = index.fdt();
+        println!("// magic:\t\t{:#x}", fdt.magic());
+        let s = fdt.totalsize();
+        println!("// totalsize:\t\t{:#x} ({})", s, s);
+        println!("// off_dt_struct:\t{:#x}", fdt.off_dt_struct());
+        println!("// off_dt_strings:\t{:#x}", fdt.off_dt_strings());
+        println!("// off_mem_rsvmap:\t{:#x}", fdt.off_mem_rsvmap());
+        println!("// version:\t\t{:}", fdt.version());
+        println!("// last_comp_version:\t{:}", fdt.last_comp_version());
+        println!("// boot_cpuid_phys:\t{:#x}", fdt.boot_cpuid_phys());
+        println!("// size_dt_strings:\t{:#x}", fdt.size_dt_strings());
+        println!("// size_dt_struct:\t{:#x}", fdt.size_dt_struct());
+        println!();
     }
 }

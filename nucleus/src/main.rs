@@ -155,6 +155,11 @@ pub fn kmain(dtb: u32) -> ! {
         println!("Running on {}", board_name);
     }
 
+    let mut dumper = machine::device_tree::FdtDumper { indent: 0 };
+
+    dumper.dump_metadata(&device_tree.0);
+    dumper.dump_level(&device_tree.root()).expect("oof");
+
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
     // regions and record their usage into some OTHER structures, removing these allocations from
