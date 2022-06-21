@@ -112,8 +112,8 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
         DeviceTree::new(device_tree, block).expect("Couldn't initialize indexed DeviceTree");
 
     let board = device_tree.get_prop_by_path("/model").unwrap().str();
-    if board.is_ok() {
-        semi_println!("Running on {}", board.unwrap());
+    if let Ok(board_name) = board {
+        semi_println!("Running on {board_name}");
     }
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
