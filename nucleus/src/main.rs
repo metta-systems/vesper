@@ -145,15 +145,14 @@ pub fn kmain(dtb: u32) -> ! {
 
     let block = machine::allocate_zeroed(layout)
         .map(|mut ret| unsafe { ret.as_mut() })
-        // .map_err(|_| ())
         .expect("Couldn't allocate DeviceTree index");
 
     let device_tree =
         DeviceTree::new(device_tree, block).expect("Couldn't initialize indexed DeviceTree");
 
     let board = device_tree.get_prop_by_path("/model").unwrap().str();
-    if board.is_ok() {
-        println!("Running on {}", board.unwrap());
+    if let Ok(board_name) = board {
+        println!("Running on {}", board_name);
     }
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
