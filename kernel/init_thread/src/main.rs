@@ -44,10 +44,11 @@ mod paging;
 mod syscall_test;
 
 use {
-    core::{alloc::Allocator, panic::PanicInfo, ptr::write_bytes},
+    core::{panic::PanicInfo, ptr::write_bytes, slice},
     device_tree::{DeviceTree, DeviceTreeProp},
     fdt_rs::{
         base::DevTree,
+        error::DevTreeError,
         prelude::{FallibleIterator, PropReader},
     },
     libcpu::endless_sleep,
@@ -71,7 +72,7 @@ fn panic(info: &PanicInfo) -> ! {
 fn dump_memory_map() {
     // Output the memory map as we could derive from FDT and information about our loaded image
     // Use it to imagine how the memmap would look like in the end.
-    arch::memory::print_layout();
+    // arch::memory::print_layout();
 }
 
 #[unsafe(no_mangle)]
@@ -92,6 +93,22 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     semi_println!("DTB at physical: {:#016X}", dtb_ptr as u64);
 
     // ─────────────────────────────────────────────────────────────────────
+    // Start bump allocator
+    // ─────────────────────────────────────────────────────────────────────
+
+    let init_start = unsafe { &__init_start as *const u8 as u64 };
+    let init_end = unsafe { &__init_end as *const u8 as u64 };
+    let free_start = unsafe { &__free_memory_start as *const u8 as u64 };
+
+    let memory_size = 256 * 1024 * 1024;
+    let mut allocator = BootAllocator::new(PhysAddr::new(free_start), memory_size);
+    let memory_end = allocator.end();
+    semi_println!(
+        "init_main: Created BootAllocator {memory_size} @ {:#016X}",
+        free_start
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
     // Parse Device Tree
     // ─────────────────────────────────────────────────────────────────────
 
@@ -105,16 +122,22 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
 
     let block = allocator
-        .alloc(layout.size)
+        .alloc_aligned(layout.size(), layout.align())
         .expect("Couldn't allocate DeviceTree index");
+    let raw_slice = unsafe { core::slice::from_raw_parts_mut(block.0 as *mut u8, layout.size()) };
 
     let device_tree =
-        DeviceTree::new(device_tree, block).expect("Couldn't initialize indexed DeviceTree");
+        DeviceTree::new(device_tree, raw_slice).expect("Couldn't initialize indexed DeviceTree");
 
     let board = device_tree.get_prop_by_path("/model").unwrap().str();
     if let Ok(board_name) = board {
         semi_println!("Running on {board_name}");
     }
+
+    let mut dumper = device_tree.dumper(0);
+
+    dumper.dump_metadata();
+    dumper.dump_root().expect("oof");
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
@@ -170,7 +193,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     semi_println!(
         "DTB region: {} bytes at {:x}",
         device_tree.fdt().totalsize(),
-        dtb
+        dtb_ptr as usize
     );
 
     dump_memory_map();
@@ -214,22 +237,6 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     //         }
     //     }
     // }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Further init
-    // ─────────────────────────────────────────────────────────────────────
-
-    let init_start = unsafe { &__init_start as *const u8 as u64 };
-    let init_end = unsafe { &__init_end as *const u8 as u64 };
-    let free_start = unsafe { &__free_memory_start as *const u8 as u64 };
-
-    let memory_size = 256 * 1024 * 1024;
-    let mut allocator = BootAllocator::new(PhysAddr::new(free_start), memory_size);
-    let memory_end = allocator.end();
-    semi_println!(
-        "init_main: Created BootAllocator {memory_size} @ {:#016X}",
-        free_start
-    );
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 1: Load kernel
