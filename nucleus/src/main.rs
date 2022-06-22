@@ -192,10 +192,9 @@ pub fn kmain(dtb: u32) -> ! {
 
     // List unusable memory, and remove it from the memory regions for the allocator.
     for entry in device_tree.fdt().reserved_entries() {
-        println!(
-            "Reserved memory: {:?} bytes at {:?}",
-            entry.size, entry.address
-        );
+        let size: u64 = entry.size.into();
+        let address: u64 = entry.address.into();
+        println!("Reserved memory: {:?} bytes at {:?}", size, address);
     }
 
     // Iterate compatible nodes (example):
