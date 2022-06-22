@@ -152,11 +152,9 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
 
     // List unusable memory, and remove it from the memory regions for the allocator.
     for entry in device_tree.fdt().reserved_entries() {
-        semi_println!(
-            "Reserved memory: {:?} bytes at {:?}",
-            entry.size,
-            entry.address
-        );
+        let size: u64 = entry.size.into();
+        let address: u64 = entry.address.into();
+        semi_println!("Reserved memory: {size:?} bytes at {address:?}");
     }
 
     // Iterate compatible nodes (example):
