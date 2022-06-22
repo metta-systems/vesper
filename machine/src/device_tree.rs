@@ -143,6 +143,36 @@ impl<'a, 'i: 'a, 'dt: 'i> PayloadPairsIter<'a, 'i, 'dt> {
             size_cells,
         }
     }
+
+    // @todo get rid of unwrap()s here
+    fn prop_u32(&mut self, index: usize) -> u64 {
+        self.prop.u32(index).unwrap().into()
+    }
+
+    // @todo get rid of unwrap()s here
+    fn prop_u64(&mut self, index: usize) -> u64 {
+        u64::from(self.prop.u32(index).unwrap()) << 32
+            | u64::from(self.prop.u32(index + 1).unwrap())
+    }
+
+    fn read_pair(
+        &mut self,
+        size: usize,
+        read_first: impl Fn(&mut Self, usize) -> u64,
+        first_index: usize,
+        read_second: impl Fn(&mut Self, usize) -> u64,
+        second_index: usize,
+    ) -> Option<(u64, u64)> {
+        if self.offset + size > self.total {
+            return None;
+        }
+        let result: (u64, u64) = (
+            read_first(self, first_index),
+            read_second(self, second_index),
+        );
+        self.offset += size;
+        Some(result)
+    }
 }
 
 impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
@@ -153,64 +183,50 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
         if self.offset >= self.total {
             return None;
         }
-        // @todo get rid of unwrap()s here
-        Some(match (self.address_cells, self.size_cells) {
+        const STEP: usize = size_of::<u32>();
+        match (self.address_cells, self.size_cells) {
             (1, 1) => {
                 const SIZE: usize = 8;
-                const STEP: usize = size_of::<u32>();
-                if self.offset + SIZE > self.total {
-                    return None;
-                }
-                let result: Self::Item = (
-                    self.prop.u32(self.offset / STEP).unwrap().into(),
-                    self.prop.u32(self.offset / STEP + 1).unwrap().into(),
-                );
-                self.offset += SIZE;
-                result
+                self.read_pair(
+                    SIZE,
+                    Self::prop_u32,
+                    self.offset / STEP,
+                    Self::prop_u32,
+                    self.offset / STEP + 1,
+                )
             }
             (1, 2) => {
                 const SIZE: usize = 12;
-                const STEP: usize = size_of::<u32>();
-                if self.offset + SIZE > self.total {
-                    return None;
-                }
-                let result: Self::Item = (
-                    self.prop.u32(self.offset / STEP).unwrap().into(),
-                    u64::from(self.prop.u32(self.offset / STEP + 1).unwrap()) << 32
-                        | u64::from(self.prop.u32(self.offset / STEP + 2).unwrap()),
-                );
-                self.offset += SIZE;
-                result
+                self.read_pair(
+                    SIZE,
+                    Self::prop_u32,
+                    self.offset / STEP,
+                    Self::prop_u64,
+                    self.offset / STEP + 1,
+                )
             }
             (2, 1) => {
                 const SIZE: usize = 12;
-                const STEP: usize = size_of::<u32>();
-                if self.offset + SIZE > self.total {
-                    return None;
-                }
-                let result: Self::Item = (
-                    u64::from(self.prop.u32(self.offset / STEP).unwrap()) << 32
-                        | u64::from(self.prop.u32(self.offset / STEP + 1).unwrap()),
-                    self.prop.u32(self.offset / STEP + 2).unwrap().into(),
-                );
-                self.offset += SIZE;
-                result
+                self.read_pair(
+                    SIZE,
+                    Self::prop_u64,
+                    self.offset / STEP,
+                    Self::prop_u32,
+                    self.offset / STEP + 2,
+                )
             }
             (2, 2) => {
                 const SIZE: usize = 16;
-                const STEP: usize = size_of::<u64>();
-                if self.offset + SIZE > self.total {
-                    return None;
-                }
-                let result: Self::Item = (
-                    self.prop.u64(self.offset / STEP).unwrap(),
-                    self.prop.u64(self.offset / STEP + 1).unwrap(),
-                );
-                self.offset += SIZE;
-                result
+                self.read_pair(
+                    SIZE,
+                    Self::prop_u64,
+                    self.offset / STEP,
+                    Self::prop_u64,
+                    self.offset / STEP + 2,
+                )
             }
             _ => panic!("oooops"),
-        })
+        }
     }
 }
 
