@@ -73,14 +73,14 @@ impl BootInfo {
             let mut new_reg: BootInfoMemRegion = BootInfoMemRegion::new();
 
             /* Determine whether placing the region at the start or the end will create a bigger left over region */
-            if reg_iter.start.aligned_up(1u64 << size_bits) - reg_iter.start
-                < reg_iter.end - reg_iter.end.aligned_down(1u64 << size_bits)
+            if reg_iter.start.aligned_up(1usize << size_bits) - reg_iter.start
+                < reg_iter.end - reg_iter.end.aligned_down(1usize << size_bits)
             {
-                new_reg.start = reg_iter.start.aligned_up(1u64 << size_bits);
-                new_reg.end = new_reg.start + (1u64 << size_bits);
+                new_reg.start = reg_iter.start.aligned_up(1usize << size_bits);
+                new_reg.end = new_reg.start + (1usize << size_bits);
             } else {
-                new_reg.end = reg_iter.end.aligned_down(1u64 << size_bits);
-                new_reg.start = new_reg.end - (1u64 << size_bits);
+                new_reg.end = reg_iter.end.aligned_down(1usize << size_bits);
+                new_reg.start = new_reg.end - (1usize << size_bits);
             }
             if new_reg.end > new_reg.start
                 && new_reg.start >= reg_iter.start
@@ -120,7 +120,10 @@ impl BootInfo {
         /* Add the remaining regions in largest to smallest order */
         self.insert_region(rem_large)?;
         if self.insert_region(rem_small).is_err() {
-            println!("BootInfo::alloc_region(): wasted {} bytes due to alignment, try to increase NUM_MEM_REGIONS", rem_small.size());
+            println!(
+                "BootInfo::alloc_region(): wasted {} bytes due to alignment, try to increase NUM_MEM_REGIONS",
+                rem_small.size()
+            );
         }
         Ok(reg.start)
     }
