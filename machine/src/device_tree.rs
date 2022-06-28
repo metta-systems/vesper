@@ -178,6 +178,7 @@ impl<'a, 'i: 'a, 'dt: 'i> PayloadPairsIter<'a, 'i, 'dt> {
 impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
     /// Return a pair of (address, size) values on each iteration.
     type Item = (u64, u64);
+
     fn next(&mut self) -> Option<Self::Item> {
         println!("Offset {}, total {}", self.offset, self.total);
         if self.offset >= self.total {
