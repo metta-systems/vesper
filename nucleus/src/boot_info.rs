@@ -268,4 +268,4 @@ impl BootInfo {
 }
 
 #[link_section = ".data.boot"] // @todo put zero-initialized stuff to .bss.boot!
-static BOOT_INFO: sync::NullLock<BootInfo> = sync::NullLock::new(BootInfo::new());
+pub static BOOT_INFO: sync::NullLock<BootInfo> = sync::NullLock::new(BootInfo::new());

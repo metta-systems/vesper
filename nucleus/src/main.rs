@@ -192,6 +192,13 @@ pub fn kmain(dtb: u32) -> ! {
 
     for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
         println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+        BOOT_INFO.lock(|bi| {
+            bi.insert_region(BootInfoMemRegion {
+                start: PhysAddr::new(mem_addr),
+                end: PhysAddr::new(mem_addr + mem_size),
+                attributes: default(),
+            })
+        });
     }
 
     // 4. List unusable memory, and remove it from the memory regions for the allocator.
@@ -199,6 +206,13 @@ pub fn kmain(dtb: u32) -> ! {
         let size: u64 = entry.size.into();
         let address: u64 = entry.address.into();
         println!("Reserved memory: {:?} bytes at {:?}", size, address);
+        BOOT_INFO.lock(|bi| {
+            bi.remove_region(BootInfoMemRegion::at(
+                PhysAddr::new(entry.address.into()),
+                PhysAddr::new(u64::from(entry.address) + u64::from(entry.size)),
+                false,
+            ))
+        });
     }
 
     // 5. Also list memreserve entries, and remove then from allocator regions?
@@ -216,6 +230,13 @@ pub fn kmain(dtb: u32) -> ! {
         device_tree.fdt().totalsize(),
         dtb
     );
+    BOOT_INFO.lock(|bi| {
+        bi.remove_region(BootInfoMemRegion::at(
+            PhysAddr::new(dtb.into()),
+            PhysAddr::new(dtb as u64 + device_tree.fdt().totalsize() as u64),
+            false,
+        ))
+    });
 
     dump_memory_map();
 
@@ -230,7 +251,7 @@ pub fn kmain(dtb: u32) -> ! {
 fn dump_memory_map() {
     // Output the memory map as we could derive from FDT and information about our loaded image
     // Use it to imagine how the memmap would look like in the end.
-    virt_mem_layout().print_layout();
+    virt_mem_layout().print_layout(); // TODO print bi.regions instead
 }
 
 //------------------------------------------------------------
