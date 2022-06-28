@@ -1,4 +1,5 @@
 use crate::{memory::PhysAddr, println, sync};
+use core::fmt;
 
 // @todo These are copied from memory/mod.rs Descriptor helper structs:
 
@@ -62,11 +63,48 @@ impl AttributeFields {
     }
 }
 
+impl fmt::Debug for MemAttributes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let attr = match self {
+            MemAttributes::CacheableDRAM => "C",
+            MemAttributes::NonCacheableDRAM => "NC",
+            MemAttributes::Device => "Dev",
+        };
+        write!(f, "{: <3}", attr);
+        Ok(())
+    }
+}
+
+impl fmt::Debug for AccessPermissions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let acc_p = match self {
+            AccessPermissions::ReadOnly => "RO",
+            AccessPermissions::ReadWrite => "RW",
+        };
+        write!(f, "{}", acc_p);
+        Ok(())
+    }
+}
+
+impl fmt::Debug for AttributeFields {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AttributeFields")
+            .field("mem_attributes", &self.mem_attributes)
+            .field("acc_perms", &self.acc_perms)
+            .field("execute_never", &self.execute_never)
+            .field("free", &self.free)
+            .finish();
+        Ok(())
+    }
+}
+
 /// Memory region .
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct BootInfoMemRegion {
-    pub start: PhysAddr, // start is inclusive
-    pub end: PhysAddr,   // end is exclusive
+    pub start: PhysAddr,
+    // start is inclusive
+    pub end: PhysAddr,
+    // end is exclusive
     pub attributes: AttributeFields,
 }
 
@@ -103,6 +141,55 @@ impl BootInfoMemRegion {
     pub fn intersects(&self, other: &BootInfoMemRegion) -> bool {
         // https://eli.thegreenplace.net/2008/08/15/intersection-of-1d-segments/
         self.end >= other.start && other.end >= self.start
+    }
+}
+
+impl fmt::Display for BootInfoMemRegion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // log2(1024)
+        const KIB_RSHIFT: u32 = 10;
+
+        // log2(1024 * 1024)
+        const MIB_RSHIFT: u32 = 20;
+
+        let size = self.end - self.start;
+
+        let (size, unit) = if (size >> MIB_RSHIFT) > 0 {
+            (size >> MIB_RSHIFT, "MiB")
+        } else if (size >> KIB_RSHIFT) > 0 {
+            (size >> KIB_RSHIFT, "KiB")
+        } else {
+            (size, "Bytes")
+        };
+
+        let attr = match self.attributes.mem_attributes {
+            MemAttributes::CacheableDRAM => "C",
+            MemAttributes::NonCacheableDRAM => "NC",
+            MemAttributes::Device => "Dev",
+        };
+
+        let acc_p = match self.attributes.acc_perms {
+            AccessPermissions::ReadOnly => "RO",
+            AccessPermissions::ReadWrite => "RW",
+        };
+
+        let xn = if self.attributes.execute_never {
+            "PXN"
+        } else {
+            "PX"
+        };
+
+        write!(
+            f,
+            "      {:#010X} - {:#010X} | {: >3} {} | {: <3} {} {: <3}", // | {}",
+            self.start,
+            self.end,
+            size,
+            unit,
+            attr,
+            acc_p,
+            xn, //self.name
+        )
     }
 }
 
@@ -152,27 +239,33 @@ impl BootInfo {
         return Err(BootInfoError::NoFreeMemRegions);
     }
 
-    // Remove a free memory region, turning it into allocated one.
+    // Remove a free memory region, turning it into an allocated one.
     // Different from alloc_region() in that we have a specific address and size to remove.
     pub fn remove_region(&mut self, reg: BootInfoMemRegion) -> Result<(), BootInfoError> {
         // Find intersection with existing regions.
         // Subtracted region may intersect zero or more regions.
         // Regions are not sorted in the list, so it may overlap any region at any point.
-        for (i, reg_iter) in self.regions.iter().enumerate() {
+        for reg_iter in self.regions.iter_mut() {
             if reg_iter.start == reg.start {
                 // it may either cut off a piece from the start or completely eat the region
+                if reg.end >= reg_iter.end {
+                    reg_iter.empty();
+                } else {
+                    reg_iter.start = reg.end;
+                    return Ok(());
+                }
             } else if reg.intersects(reg_iter) {
                 // they have common points, which must be resolved
                 /// it may intersect over the beginning of the region
                 if reg.start <= reg_iter.start && reg.end < reg_iter.end {
-                    self.regions[i].start = reg.end; // end inclusive here?
+                    reg_iter.start = reg.end; // end inclusive here?
                 }
                 /// it may intersect entirely inside the region, in which case we stop iterating
                 if reg.start > reg_iter.start && reg.end < reg_iter.end {
                     // split current region in two parts
                     let mut first_region = BootInfoMemRegion::at(reg_iter.start, reg.start, true);
                     let mut second_region = BootInfoMemRegion::at(reg.end, reg_iter.end, true);
-                    self.regions[i].empty();
+                    reg_iter.empty();
                     if first_region.size() > second_region.size() {
                         self.insert_region(first_region);
                         return self.insert_region(second_region);
@@ -182,12 +275,12 @@ impl BootInfo {
                     }
                 }
                 /// it may intersect over the end of the region
-                if reg.start > reg_iter.start && reg.end > reg_iter.end {
-                    self.regions[i].end = reg.start;
+                if reg.start > reg_iter.start && reg.end >= reg_iter.end {
+                    reg_iter.end = reg.start;
                 }
                 /// or it may entirely subsume the reg_iter
                 if reg.start <= reg_iter.start && reg.end >= reg_iter.end {
-                    self.regions[i].empty();
+                    reg_iter.empty();
                     // it could also touch adjacent regions, so continue.
                 }
             } else {

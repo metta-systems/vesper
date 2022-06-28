@@ -240,6 +240,14 @@ pub fn kmain(dtb: u32) -> ! {
 
     dump_memory_map();
 
+    BOOT_INFO.lock(|bi| {
+        for x in bi.regions {
+            if !x.is_empty() {
+                println!("{}", x);
+            }
+        }
+    });
+
     #[cfg(test)]
     test_main();
 
