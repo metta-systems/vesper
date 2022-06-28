@@ -69,11 +69,12 @@ fn panic(info: &PanicInfo) -> ! {
     libqemu::semihosting::exit_failure()
 }
 
-// fn dump_memory_map() {
-// Output the memory map as we could derive from FDT and information about our loaded image
-// Use it to imagine how the memmap would look like in the end.
-// arch::memory::print_layout();
-// }
+fn dump_memory_map() {
+    // Output the memory map as we could derive from FDT and information about our loaded image
+    // Use it to imagine how the memmap would look like in the end.
+    // virt_mem_layout().print_layout();
+    // TODO print bi.regions instead
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
@@ -171,6 +172,13 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
 
     for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
         semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+        BOOT_INFO.lock(|bi| {
+            bi.insert_region(BootInfoMemRegion {
+                start: PhysAddr::new(mem_addr),
+                end: PhysAddr::new(mem_addr + mem_size),
+                attributes: default(),
+            })
+        });
     }
 
     // 4. List unusable memory, and remove it from the memory regions for the allocator.
@@ -178,6 +186,13 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
         let size: u64 = entry.size.into();
         let address: u64 = entry.address.into();
         semi_println!("Reserved memory: {size:?} bytes at {address:?}");
+        BOOT_INFO.lock(|bi| {
+            bi.remove_region(BootInfoMemRegion::at(
+                PhysAddr::new(entry.address.into()),
+                PhysAddr::new(u64::from(entry.address) + u64::from(entry.size)),
+                false,
+            ))
+        });
     }
 
     // 5. Also list memreserve entries, and remove then from allocator regions?
@@ -195,8 +210,15 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
         device_tree.fdt().totalsize(),
         dtb_ptr as usize
     ); // also include the raw_slice allocated bit
+    BOOT_INFO.lock(|bi| {
+        bi.remove_region(BootInfoMemRegion::at(
+            PhysAddr::new(dtb.into()),
+            PhysAddr::new(dtb as u64 + device_tree.fdt().totalsize() as u64),
+            false,
+        ))
+    });
 
-    // dump_memory_map();
+    dump_memory_map();
 
     // Next step: parse DTB!
     // unsafe {
