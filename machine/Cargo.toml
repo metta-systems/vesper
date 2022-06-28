@@ -40,3 +40,13 @@ cfg-if = "1.0"
 snafu = { version = "0.7", default-features = false }
 buddy-alloc = { git = "https://github.com/metta-systems/buddy-alloc", version = "0.5.0", branch = "feature/allocator-api" }
 once_cell = { version = "1.10.0", default-features = false, features = ["unstable"] }
+static_assertions = "1.1.0"
+#enum_dispatch = "0.3"
+#tap = "1.0" -- check no_std?
+shrinkwraprs = { version = "0.3", default-features = false }
+#dtb = "0.2" # Dec 2019 by Simon Prikhodko
+# Alternatives to dtb to look at:
+#device_tree = "1.1.0" # Jun 2016 by Marc Brinkmann
+# fdt-rs latest 0.4.3 Jul 2021 by Sean Wilson -- interface is more basic than in dtb, but more akin actual spec
+fdt-rs = { version = "0.4", default-features = false } # @todo Added from_raw_pointer() finally
+num = { version = "0.4", default-features = false }

@@ -13,9 +13,9 @@
 
 use {
     super::BcmHost,
-    crate::{platform::MMIODerefWrapper, println, DMA_ALLOCATOR},
+    crate::{dma_allocate, dma_deallocate, platform::MMIODerefWrapper, println},
     core::{
-        alloc::{AllocError, Allocator, Layout},
+        alloc::Layout,
         mem,
         ptr::NonNull,
         result::Result as CoreResult,
@@ -149,31 +149,27 @@ impl<const N_SLOTS: usize> MailboxStorage for LocalMailboxStorage<N_SLOTS> {
 impl<const N_SLOTS: usize> MailboxStorage for DmaBackedMailboxStorage<N_SLOTS> {
     fn new() -> Result<Self> {
         Ok(Self {
-            storage: DMA_ALLOCATOR
-                .lock(|a| {
-                    a.allocate(
-                        Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
-                            .map_err(|_| AllocError)?,
-                    )
-                })
-                .map_err(|_| MailboxError::Alloc)?
-                .as_mut_ptr() as *mut u32,
+            storage: dma_allocate(
+                Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
+                    .map_err(|_| MailboxError::Alloc)?,
+            )
+            .map_err(|_| MailboxError::Alloc)?
+            .as_mut_ptr() as *mut u32,
         })
     }
 }
 
 impl<const N_SLOTS: usize> Drop for DmaBackedMailboxStorage<N_SLOTS> {
     fn drop(&mut self) {
-        DMA_ALLOCATOR
-            .lock::<_, Result<()>>(|a| unsafe {
-                #[allow(clippy::unit_arg)]
-                Ok(a.deallocate(
-                    NonNull::new_unchecked(self.storage as *mut u8),
-                    Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
-                        .map_err(|_| MailboxError::Alloc)?,
-                ))
-            })
-            .unwrap_or(())
+        let layout = Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16);
+        if layout.is_err() {
+            return;
+        }
+
+        dma_deallocate(
+            unsafe { NonNull::new_unchecked(self.storage as *mut u8) },
+            layout.unwrap(),
+        )
     }
 }
 

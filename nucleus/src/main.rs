@@ -9,6 +9,8 @@
 
 #![no_std]
 #![no_main]
+#![feature(try_find)] // For DeviceTree iterators
+#![feature(allocator_api)]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
 #![feature(custom_test_frameworks)]
@@ -24,12 +26,18 @@ use machine::devices::SerialOps;
 use {
     cfg_if::cfg_if,
     core::cell::UnsafeCell,
+    fdt_rs::{base::DevTree, error::DevTreeError, prelude::PropReader},
     machine::{
-        arch, entry, memory,
-        platform::rpi3::{
-            display::{Color, DrawError},
-            mailbox::{channel, Mailbox, MailboxOps},
-            vc::VC,
+        arch,
+        device_tree::{DeviceTree, DeviceTreeProp},
+        entry, memory,
+        platform::{
+            memory::mmu::virt_mem_layout,
+            rpi3::{
+                display::{Color, DrawError},
+                mailbox::{channel, Mailbox, MailboxOps},
+                vc::VC,
+            },
         },
         println, CONSOLE,
     },
@@ -117,7 +125,7 @@ fn init_uart_serial() {
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
 #[inline]
-pub fn kmain() -> ! {
+pub fn kmain(dtb: u32) -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
 
@@ -127,12 +135,102 @@ pub fn kmain() -> ! {
     init_exception_traps();
     init_mmu();
 
+    println!("DTB loaded at {:x}", dtb);
+
+    // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
+    let device_tree =
+        unsafe { DevTree::from_raw_pointer(dtb as *const _).expect("DeviceTree failed to read") };
+
+    let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
+
+    let block = machine::allocate_zeroed(layout)
+        .map(|mut ret| unsafe { ret.as_mut() })
+        .expect("Couldn't allocate DeviceTree index");
+
+    let device_tree =
+        DeviceTree::new(device_tree, block).expect("Couldn't initialize indexed DeviceTree");
+
+    let board = device_tree.get_prop_by_path("/model").unwrap().str();
+    if let Ok(board_name) = board {
+        println!("Running on {}", board_name);
+    }
+
+    let mut dumper = machine::device_tree::FdtDumper { indent: 0 };
+
+    dumper.dump_metadata(&device_tree.0);
+    dumper.dump_level(&device_tree.root()).expect("oof");
+
+    // To init memory allocation we need to parse memory regions from dtb and add the regions to
+    // available memory regions list. Then initial BootRegionAllocator will get memory from these
+    // regions and record their usage into some OTHER structures, removing these allocations from
+    // the free regions list.
+    // memory allocation is described by reg attribute of /memory block.
+    // /#address-cells and /#size-cells specify the sizes of address and size attributes in reg.
+    // To get memory size from DTB:
+    // 1. Find nodes with unit-names `/memory`
+    // 2. From those read reg entries, using `/#address-cells` and `/#size-cells` as units
+    // 3. Union of all these reg entries will be the available memory. Enter it as mem-regions.
+
+    let res: Result<_, DevTreeError> = device_tree
+        .props()
+        .try_find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"));
+    let mem_prop = res.unwrap().expect("Unable to find memory node.");
+    let _mem_node = mem_prop.node();
+    // let parent_node = mem_node.parent_node();
+
+    let reg_prop = device_tree
+        .get_prop_by_path("/memory@0/reg")
+        .expect("Unable to figure out memory-reg");
+
+    println!(
+        "Found memnode with reg prop: name {:?}, size {}",
+        reg_prop.name(),
+        reg_prop.length()
+    );
+
+    let reg_prop = DeviceTreeProp::new(reg_prop);
+
+    for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
+        println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+    }
+
+    // 4. List unusable memory, and remove it from the memory regions for the allocator.
+    for entry in device_tree.fdt().reserved_entries() {
+        let size: u64 = entry.size.into();
+        let address: u64 = entry.address.into();
+        println!("Reserved memory: {:?} bytes at {:?}", size, address);
+    }
+
+    // 5. Also list memreserve entries, and remove then from allocator regions?
+    // From FDT dump:
+    //   memreserve = <0x3b400000 0x04c00000 >;
+
+    // Iterate compatible nodes (example):
+    // for entry in device_tree.compatible_nodes("arm,pl011") {
+    //     println!("reserved: {:?} (bytes at ?)", entry.name()/*, entry.address*/);
+    // }
+
+    // 6. Also, remove the DTB memory region + index
+    println!(
+        "DTB region: {} bytes at {:x}",
+        device_tree.fdt().totalsize(),
+        dtb
+    );
+
+    dump_memory_map();
+
     #[cfg(test)]
     test_main();
 
     command_prompt();
 
     reboot()
+}
+
+fn dump_memory_map() {
+    // Output the memory map as we could derive from FDT and information about our loaded image
+    // Use it to imagine how the memmap would look like in the end.
+    virt_mem_layout().print_layout();
 }
 
 //------------------------------------------------------------

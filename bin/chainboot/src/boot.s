@@ -39,6 +39,7 @@
 //------------------------------------------------------------------------------
 // fn _start()
 //------------------------------------------------------------------------------
+// x0 contains DTB address on entry, preserve it until the call to Rust.
 _start:
     // Only proceed on the boot core. Park it otherwise.
     mrs	x1, MPIDR_EL1
@@ -49,39 +50,40 @@ _start:
     // If execution reaches here, it is the boot core.
 
     // Initialize bss.
-    ADR_ABS	x0, __bss_start
-    ADR_ABS x1, __bss_end_exclusive
+    ADR_ABS	x1, __bss_start
+    ADR_ABS x2, __bss_end_exclusive
 
 .L_bss_init_loop:
-    cmp	x0, x1
+    cmp	x1, x2
     b.eq	.L_relocate_binary
-    stp	xzr, xzr, [x0], #16
+    stp	xzr, xzr, [x1], #16
     b	.L_bss_init_loop
 
     // Next, relocate the binary.
 .L_relocate_binary:
-    ADR_REL	x0, __binary_nonzero_lma           // The address the binary got loaded to.
-    ADR_ABS	x1, __binary_nonzero_vma           // The address the binary was linked to.
-    ADR_ABS	x2, __binary_nonzero_vma_end_exclusive
-    sub x4, x1, x0                             // Get difference between vma and lma as max size
+    ADR_REL	x1, __binary_nonzero_lma           // The address the binary got loaded to.
+    ADR_ABS	x2, __binary_nonzero_vma           // The address the binary was linked to.
+    ADR_ABS	x3, __binary_nonzero_vma_end_exclusive
+    sub x4, x2, x1                             // Get difference between vma and lma as max size
 
 .L_copy_loop:
-    ldr	x3, [x0], #8
-    str	x3, [x1], #8
-    cmp	x1, x2
+    ldr	x5, [x1], #8
+    str	x5, [x2], #8
+    cmp	x2, x3
     b.lo	.L_copy_loop
 
     // Prepare the jump to Rust code.
     // Set the stack pointer.
-    ADR_ABS	x0, __rpi_phys_binary_load_addr
-    mov	sp, x0
+    ADR_ABS	x1, __rpi_phys_binary_load_addr
+    mov	sp, x1
 
-    // Pass maximum kernel size as an argument to Rust init function.
-    mov x0, x4
+    // Pass DTB location in x0 to Rust init function.
+    // Pass maximum kernel size as an argument in x1 to Rust init function.
+    mov x1, x4
 
     // Jump to the relocated Rust code.
-    ADR_ABS	x1, _start_rust
-    br	x1
+    ADR_ABS	x2, _start_rust
+    br	x2
 
     // Infinitely wait for events (aka "park the core").
 .L_parking_loop:
