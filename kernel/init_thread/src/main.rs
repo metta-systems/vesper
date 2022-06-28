@@ -220,6 +220,14 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
 
     dump_memory_map();
 
+    BOOT_INFO.lock(|bi| {
+        for x in bi.regions {
+            if !x.is_empty() {
+                println!("{}", x);
+            }
+        }
+    });
+
     // Next step: parse DTB!
     // unsafe {
     //     BOOT_INFO.dtb_size = dtb.total_size();
