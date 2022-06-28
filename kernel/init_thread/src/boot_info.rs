@@ -271,4 +271,4 @@ impl BootInfo {
 }
 
 // Should go to BSS
-static BOOT_INFO: sync::NullLock<BootInfo> = sync::NullLock::new(BootInfo::new());
+pub static BOOT_INFO: sync::NullLock<BootInfo> = sync::NullLock::new(BootInfo::new());
