@@ -1,6 +1,7 @@
 use {
-    crate::{memory::PhysAddr, println, sync},
+    crate::{arch::memory::PhysAddr, println, sync},
     core::fmt,
+    snafu::Snafu,
 };
 
 // @todo These are copied from memory/mod.rs Descriptor helper structs:
@@ -23,16 +24,6 @@ pub enum AccessPermissions {
     ReadOnly,
     /// Read-write access
     ReadWrite,
-}
-
-/// Memory region translation.
-#[allow(dead_code)]
-#[derive(Copy, Clone)]
-pub enum Translation {
-    /// One-to-one address mapping
-    Identity,
-    /// Mapping with a specified offset
-    Offset(usize),
 }
 
 /// Summary structure of memory region properties.
@@ -72,8 +63,7 @@ impl fmt::Debug for MemAttributes {
             MemAttributes::NonCacheableDRAM => "NC",
             MemAttributes::Device => "Dev",
         };
-        write!(f, "{: <3}", attr);
-        Ok(())
+        write!(f, "{: <3}", attr)
     }
 }
 
@@ -83,8 +73,7 @@ impl fmt::Debug for AccessPermissions {
             AccessPermissions::ReadOnly => "RO",
             AccessPermissions::ReadWrite => "RW",
         };
-        write!(f, "{}", acc_p);
-        Ok(())
+        write!(f, "{}", acc_p)
     }
 }
 
@@ -95,12 +84,11 @@ impl fmt::Debug for AttributeFields {
             .field("acc_perms", &self.acc_perms)
             .field("execute_never", &self.execute_never)
             .field("free", &self.free)
-            .finish();
-        Ok(())
+            .finish()
     }
 }
 
-/// Memory region .
+/// Memory region.
 #[derive(Default, Copy, Clone, Debug)]
 pub struct BootInfoMemRegion {
     pub start: PhysAddr, // start is inclusive
@@ -181,7 +169,7 @@ impl fmt::Display for BootInfoMemRegion {
 
         write!(
             f,
-            "      {:#010x} - {:#010x} | {: >3} {} | {: <3} {} {: <3}", // | {}",
+            "      {:#010X} - {:#010X} | {: >3} {} | {: <3} {} {: <3}", // | {}",
             self.start,
             self.end,
             size,
@@ -195,6 +183,7 @@ impl fmt::Display for BootInfoMemRegion {
 
 const NUM_MEM_REGIONS: usize = 256;
 
+#[derive(Snafu, Debug)]
 pub enum BootInfoError {
     NoFreeMemRegions,
 }
@@ -256,29 +245,29 @@ impl BootInfo {
                 }
             } else if reg.intersects(reg_iter) {
                 // they have common points, which must be resolved
-                /// it may intersect over the beginning of the region
+                // it may intersect over the beginning of the region
                 if reg.start <= reg_iter.start && reg.end < reg_iter.end {
                     reg_iter.start = reg.end; // end inclusive here?
                 }
-                /// it may intersect entirely inside the region, in which case we stop iterating
+                // it may intersect entirely inside the region, in which case we stop iterating
                 if reg.start > reg_iter.start && reg.end < reg_iter.end {
                     // split current region in two parts
-                    let mut first_region = BootInfoMemRegion::at(reg_iter.start, reg.start, true);
-                    let mut second_region = BootInfoMemRegion::at(reg.end, reg_iter.end, true);
+                    let first_region = BootInfoMemRegion::at(reg_iter.start, reg.start, true);
+                    let second_region = BootInfoMemRegion::at(reg.end, reg_iter.end, true);
                     reg_iter.empty();
                     if first_region.size() > second_region.size() {
-                        self.insert_region(first_region);
+                        self.insert_region(first_region)?;
                         return self.insert_region(second_region);
                     } else {
-                        self.insert_region(second_region);
+                        self.insert_region(second_region)?;
                         return self.insert_region(first_region);
                     }
                 }
-                /// it may intersect over the end of the region
+                // it may intersect over the end of the region
                 if reg.start > reg_iter.start && reg.end >= reg_iter.end {
                     reg_iter.end = reg.start;
                 }
-                /// or it may entirely subsume the reg_iter
+                // or it may entirely subsume the reg_iter
                 if reg.start <= reg_iter.start && reg.end >= reg_iter.end {
                     reg_iter.empty();
                     // it could also touch adjacent regions, so continue.
@@ -307,14 +296,14 @@ impl BootInfo {
             let mut new_reg: BootInfoMemRegion = BootInfoMemRegion::new();
 
             /* Determine whether placing the region at the start or the end will create a bigger left over region */
-            if reg_iter.start.aligned_up(1usize << size_bits) - reg_iter.start
-                < reg_iter.end - reg_iter.end.aligned_down(1usize << size_bits)
+            if reg_iter.start.aligned_up(1u64 << size_bits) - reg_iter.start
+                < reg_iter.end - reg_iter.end.aligned_down(1u64 << size_bits)
             {
-                new_reg.start = reg_iter.start.aligned_up(1usize << size_bits);
-                new_reg.end = new_reg.start + (1usize << size_bits);
+                new_reg.start = reg_iter.start.aligned_up(1u64 << size_bits);
+                new_reg.end = new_reg.start + (1u64 << size_bits);
             } else {
-                new_reg.end = reg_iter.end.aligned_down(1usize << size_bits);
-                new_reg.start = new_reg.end - (1usize << size_bits);
+                new_reg.end = reg_iter.end.aligned_down(1u64 << size_bits);
+                new_reg.start = new_reg.end - (1u64 << size_bits);
             }
             if new_reg.end > new_reg.start
                 && new_reg.start >= reg_iter.start
@@ -350,7 +339,7 @@ impl BootInfo {
             panic!("Kernel init failed: not enough memory\n");
         }
         /* Remove the region in question */
-        self.regions[reg_index].empty();
+        self.regions[reg_index] = BootInfoMemRegion::new();
         /* Add the remaining regions in largest to smallest order */
         self.insert_region(rem_large)?;
         if self.insert_region(rem_small).is_err() {

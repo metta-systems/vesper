@@ -2,6 +2,16 @@
 
 use crate::loader::LoadableSection;
 
+/// Memory region translation.
+// #[allow(dead_code)]
+// #[derive(Copy, Clone)]
+// pub enum Translation {
+//     /// One-to-one address mapping
+//     Identity,
+//     /// Mapping with a specified offset
+//     Offset(usize),
+// }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct PhysAddr(pub u64);
