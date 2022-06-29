@@ -14,6 +14,7 @@
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
 #![feature(custom_test_frameworks)]
+#![feature(default_free_fn)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
@@ -24,8 +25,9 @@ use core::panic::PanicInfo;
 #[allow(unused_imports)]
 use machine::devices::SerialOps;
 use {
+    crate::arch::memory::PhysAddr,
     cfg_if::cfg_if,
-    core::cell::UnsafeCell,
+    core::{cell::UnsafeCell, default::default},
     fdt_rs::{base::DevTree, error::DevTreeError, prelude::PropReader},
     machine::{
         arch,

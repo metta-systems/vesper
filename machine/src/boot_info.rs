@@ -1,5 +1,7 @@
-use crate::{memory::PhysAddr, println, sync};
-use core::fmt;
+use {
+    crate::{arch::memory::PhysAddr, println, sync},
+    core::fmt,
+};
 
 // @todo These are copied from memory/mod.rs Descriptor helper structs:
 
@@ -256,11 +258,11 @@ impl BootInfo {
                 }
             } else if reg.intersects(reg_iter) {
                 // they have common points, which must be resolved
-                /// it may intersect over the beginning of the region
+                // it may intersect over the beginning of the region
                 if reg.start <= reg_iter.start && reg.end < reg_iter.end {
                     reg_iter.start = reg.end; // end inclusive here?
                 }
-                /// it may intersect entirely inside the region, in which case we stop iterating
+                // it may intersect entirely inside the region, in which case we stop iterating
                 if reg.start > reg_iter.start && reg.end < reg_iter.end {
                     // split current region in two parts
                     let mut first_region = BootInfoMemRegion::at(reg_iter.start, reg.start, true);
@@ -274,11 +276,11 @@ impl BootInfo {
                         return self.insert_region(first_region);
                     }
                 }
-                /// it may intersect over the end of the region
+                // it may intersect over the end of the region
                 if reg.start > reg_iter.start && reg.end >= reg_iter.end {
                     reg_iter.end = reg.start;
                 }
-                /// or it may entirely subsume the reg_iter
+                // or it may entirely subsume the reg_iter
                 if reg.start <= reg_iter.start && reg.end >= reg_iter.end {
                     reg_iter.empty();
                     // it could also touch adjacent regions, so continue.
