@@ -35,6 +35,7 @@
 // - scheduler (invokes process upcall key)
 
 mod boot;
+mod boot_info;
 mod device_tree;
 mod el_switch;
 mod embed;
@@ -178,6 +179,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
                 end: PhysAddr::new(mem_addr + mem_size),
                 attributes: default(),
             })
+            .expect("tough luck");
         });
     }
 
@@ -192,6 +194,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
                 PhysAddr::new(u64::from(entry.address) + u64::from(entry.size)),
                 false,
             ))
+            .expect("tough luck");
         });
     }
 
@@ -216,6 +219,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
             PhysAddr::new(dtb as u64 + device_tree.fdt().totalsize() as u64),
             false,
         ))
+        .expect("tough luck");
     });
 
     dump_memory_map();
