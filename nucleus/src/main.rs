@@ -31,6 +31,7 @@ use {
     fdt_rs::{base::DevTree, error::DevTreeError, prelude::PropReader},
     machine::{
         arch,
+        boot_info::{BootInfoMemRegion, BOOT_INFO},
         device_tree::{DeviceTree, DeviceTreeProp},
         entry, memory,
         platform::{
@@ -200,6 +201,7 @@ pub fn kmain(dtb: u32) -> ! {
                 end: PhysAddr::new(mem_addr + mem_size),
                 attributes: default(),
             })
+            .expect("tough luck");
         });
     }
 
@@ -214,6 +216,7 @@ pub fn kmain(dtb: u32) -> ! {
                 PhysAddr::new(u64::from(entry.address) + u64::from(entry.size)),
                 false,
             ))
+            .expect("tough luck");
         });
     }
 
@@ -238,6 +241,7 @@ pub fn kmain(dtb: u32) -> ! {
             PhysAddr::new(dtb as u64 + device_tree.fdt().totalsize() as u64),
             false,
         ))
+        .expect("tough luck");
     });
 
     dump_memory_map();
