@@ -1,6 +1,7 @@
 use {
     crate::{arch::memory::PhysAddr, println, sync},
     core::fmt,
+    once_cell::unsync::Lazy,
     snafu::Snafu,
 };
 
@@ -353,4 +354,5 @@ impl BootInfo {
 }
 
 // Should go to BSS
-pub static BOOT_INFO: sync::NullLock<BootInfo> = sync::NullLock::new(BootInfo::new());
+pub static BOOT_INFO: sync::NullLock<Lazy<BootInfo>> =
+    sync::NullLock::new(Lazy::new(|| BootInfo::new()));
