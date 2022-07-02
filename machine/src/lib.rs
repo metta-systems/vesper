@@ -20,13 +20,13 @@
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
-use core::{
-    alloc::{AllocError, Allocator, Layout},
-    ptr::NonNull,
-};
 
 use {
     buddy_alloc::{BuddyAlloc, BuddyAllocParam},
+    core::{
+        alloc::{AllocError, Allocator, Layout},
+        ptr::NonNull,
+    },
     once_cell::unsync::Lazy,
     platform::memory::map::virt::{DMA_HEAP_END, DMA_HEAP_START},
 };
