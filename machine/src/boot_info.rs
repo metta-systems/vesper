@@ -1,6 +1,7 @@
 use {
     crate::{arch::memory::PhysAddr, println, sync},
     core::fmt,
+    once_cell::unsync::Lazy,
     snafu::Snafu,
 };
 
@@ -362,4 +363,5 @@ impl BootInfo {
 }
 
 #[link_section = ".data.boot"] // @todo put zero-initialized stuff to .bss.boot!
-pub static BOOT_INFO: sync::NullLock<BootInfo> = sync::NullLock::new(BootInfo::new());
+pub static BOOT_INFO: sync::NullLock<Lazy<BootInfo>> =
+    sync::NullLock::new(Lazy::new(|| BootInfo::new()));
