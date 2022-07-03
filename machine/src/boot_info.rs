@@ -199,6 +199,7 @@ const NUM_MEM_REGIONS: usize = 256;
 #[derive(Snafu, Debug)]
 pub enum BootInfoError {
     NoFreeMemRegions,
+    InvalidRegion,
 }
 
 pub struct BootInfo {
@@ -231,7 +232,9 @@ impl BootInfo {
         if reg.is_empty() {
             return Ok(());
         }
-        assert!(reg.start <= reg.end);
+        if reg.start > reg.end {
+            return Err(BootInfoError::InvalidRegion);
+        }
         for region in self.regions.iter_mut() {
             if region.is_empty() {
                 *region = reg;
