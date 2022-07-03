@@ -21,10 +21,10 @@ pub enum MemAttributes {
 /// Memory region access permissions.
 #[derive(Copy, Clone)]
 pub enum AccessPermissions {
-    /// Read-only access
-    ReadOnly,
     /// Read-write access
     ReadWrite,
+    /// Read-only access
+    ReadOnly,
 }
 
 /// Summary structure of memory region properties.
@@ -34,10 +34,10 @@ pub struct AttributeFields {
     pub mem_attributes: MemAttributes,
     /// Permissions
     pub acc_perms: AccessPermissions,
-    /// Disable executable code in this region
-    pub execute_never: bool,
-    /// This memory region is free
-    pub free: bool,
+    /// Allow executable code in this region
+    pub executable: bool,
+    /// This memory region is occupied
+    pub occupied: bool,
 }
 
 impl Default for AttributeFields {
@@ -51,8 +51,8 @@ impl AttributeFields {
         Self {
             mem_attributes: MemAttributes::CacheableDRAM,
             acc_perms: AccessPermissions::ReadWrite,
-            execute_never: true,
-            free: true,
+            executable: false,
+            occupied: false,
         }
     }
 }
@@ -83,8 +83,8 @@ impl fmt::Debug for AttributeFields {
         f.debug_struct("AttributeFields")
             .field("mem_attributes", &self.mem_attributes)
             .field("acc_perms", &self.acc_perms)
-            .field("execute_never", &self.execute_never)
-            .field("free", &self.free)
+            .field("executable", &self.executable)
+            .field("occupied", &self.occupied)
             .finish()
     }
 }
@@ -111,7 +111,10 @@ impl BootInfoMemRegion {
         Self {
             start,
             end,
-            attributes: AttributeFields { free, ..default() },
+            attributes: AttributeFields {
+                occupied: !free,
+                ..default()
+            },
         }
     }
 
@@ -162,10 +165,10 @@ impl fmt::Display for BootInfoMemRegion {
             AccessPermissions::ReadWrite => "RW",
         };
 
-        let xn = if self.attributes.execute_never {
-            "PXN"
-        } else {
+        let xn = if self.attributes.executable {
             "PX"
+        } else {
+            "PXN"
         };
 
         write!(
