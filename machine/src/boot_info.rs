@@ -21,10 +21,10 @@ pub enum MemAttributes {
 /// Memory region access permissions.
 #[derive(Copy, Clone)]
 pub enum AccessPermissions {
-    /// Read-only access
-    ReadOnly,
     /// Read-write access
     ReadWrite,
+    /// Read-only access
+    ReadOnly,
 }
 
 /// Memory region translation.
@@ -61,8 +61,8 @@ impl AttributeFields {
         Self {
             mem_attributes: MemAttributes::CacheableDRAM,
             acc_perms: AccessPermissions::ReadWrite,
-            execute_never: true,
-            free: true,
+            execute_never: true, // executable: false \ then it all goes into BSS!
+            free: true,          // occupied: false   /
         }
     }
 }
