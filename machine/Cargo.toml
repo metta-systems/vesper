@@ -26,7 +26,6 @@ qemu = ["rpi3"]
 # Mutually exclusive features to choose a target board
 rpi3 = []
 rpi4 = []
-test = []
 
 [dependencies]
 r0 = "1.0"

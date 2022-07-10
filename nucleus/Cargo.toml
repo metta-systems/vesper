@@ -25,7 +25,6 @@ qemu = ["machine/qemu"]
 # Mutually exclusive features to choose a target board
 rpi3 = ["machine/rpi3"]
 rpi4 = ["machine/rpi4"]
-test = ["machine/test"]
 
 [dependencies]
 machine = { path = "../machine" }
