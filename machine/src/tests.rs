@@ -23,7 +23,7 @@ where
 }
 
 pub fn test_runner(tests: &[&dyn TestFn]) {
-    println!("Running {} tests", tests.len());
+    println!("*TESTING* Running {} tests", tests.len());
     for test in tests {
         test.run();
     }

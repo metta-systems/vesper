@@ -371,3 +371,17 @@ impl BootInfo {
 // #[link_section = ".bss.boot"]
 pub static BOOT_INFO: sync::NullLock<Lazy<BootInfo>> =
     sync::NullLock::new(Lazy::new(|| BootInfo::new()));
+
+#[cfg(test)]
+mod boot_info_tests {
+    use super::*;
+
+    #[test_case]
+    fn test_add_invalid_region() {
+        let mut bi = BootInfo::new();
+        let region = BootInfoMemRegion::at(0x2000.into(), 0x0.into(), true);
+        let res = bi.insert_region(region);
+        assert!(res.is_err());
+        assert_eq!(res.err(), Some(BootInfoError::InvalidRegion));
+    }
+}

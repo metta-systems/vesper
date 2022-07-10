@@ -138,6 +138,9 @@ pub fn kmain(dtb: u32) -> ! {
     init_exception_traps();
     init_mmu();
 
+    #[cfg(test)]
+    test_main();
+
     println!("DTB loaded at {:x}", dtb);
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
@@ -253,9 +256,6 @@ pub fn kmain(dtb: u32) -> ! {
             }
         }
     });
-
-    #[cfg(test)]
-    test_main();
 
     command_prompt();
 
