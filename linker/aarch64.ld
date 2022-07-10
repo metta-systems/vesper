@@ -59,6 +59,10 @@ SECTIONS
         *(COMMON)
         . = ALIGN(PAGE_SIZE); /* Align up to page size */
         __BSS_END = .;
+        /* Bootstrap BSS area after the kernel bss, so it could be dropped easily after init is completed. */
+        *(.bss.boot)
+        . = ALIGN(PAGE_SIZE); /* Align up to page size */
+        __BOOT_BSS_END = .;
     }
 
     /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) }
