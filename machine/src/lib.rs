@@ -10,8 +10,6 @@
 #![feature(nonnull_slice_from_raw_parts)]
 #![feature(custom_test_frameworks)]
 #![feature(default_free_fn)]
-#![test_runner(crate::tests::test_runner)]
-#![reexport_test_harness_main = "test_main"]
 #![allow(clippy::upper_case_acronyms)]
 #![allow(clippy::enum_variant_names)]
 #![allow(clippy::nonstandard_macro_braces)] // https://github.com/shepmaster/snafu/issues/296
