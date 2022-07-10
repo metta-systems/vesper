@@ -231,33 +231,6 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::PayloadPairsIter;
-
-    const BUF: [u32; 4] = [0x0000_0000, 0x2000_0000, 0x4000_0000, 0x8000_0000];
-
-    #[test_case]
-    fn parse_1_1_prop_correctly() {
-        PayloadPairsIter
-    }
-
-    #[test_case]
-    fn parse_1_2_prop_correctly() {
-        PayloadPairsIter
-    }
-
-    #[test_case]
-    fn parse_2_1_prop_correctly() {
-        PayloadPairsIter
-    }
-
-    #[test_case]
-    fn parse_2_2_prop_correctly() {
-        PayloadPairsIter
-    }
-}
-
 // See "2.2.3 Path Names" in DTSpec v0.3
 // This is based on https://lib.rs/dtb implementation (c) Simon Prykhodko, MIT license.
 struct PathSplit<'a> {
@@ -326,7 +299,33 @@ impl<'a> PathSplit<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::PathSplit;
+    use super::{PathSplit, PayloadPairsIter};
+
+    // PayloadPairsIter tests
+
+    const BUF: [u32; 4] = [0x0000_0000, 0x2000_0000, 0x4000_0000, 0x8000_0000];
+
+    #[test_case]
+    fn parse_1_1_prop_correctly() {
+        PayloadPairsIter
+    }
+
+    #[test_case]
+    fn parse_1_2_prop_correctly() {
+        PayloadPairsIter
+    }
+
+    #[test_case]
+    fn parse_2_1_prop_correctly() {
+        PayloadPairsIter
+    }
+
+    #[test_case]
+    fn parse_2_2_prop_correctly() {
+        PayloadPairsIter
+    }
+
+    // PathSplit tests
 
     #[test_case]
     fn test_single_level_path_split() {
