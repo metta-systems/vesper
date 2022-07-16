@@ -175,8 +175,8 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
         semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
         BOOT_INFO.lock(|bi| {
             bi.insert_region(BootInfoMemRegion {
-                start: PhysAddr::new(mem_addr),
-                end: PhysAddr::new(mem_addr + mem_size),
+                start_inclusive: PhysAddr::new(mem_addr),
+                end_exclusive: PhysAddr::new(mem_addr + mem_size),
                 attributes: default(),
             })
             .expect("tough luck");
