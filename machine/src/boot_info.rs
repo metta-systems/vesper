@@ -306,16 +306,13 @@ impl BootInfo {
     }
 
     /// Add a free memory region.
-    pub fn insert_region(&mut self, reg: BootInfoMemRegion) -> Result<(), BootInfoError> {
-        if reg.is_empty() {
+    pub fn insert_region(&mut self, new_region: BootInfoMemRegion) -> Result<(), BootInfoError> {
+        if new_region.is_empty() {
             return Ok(());
-        }
-        if reg.start_inclusive > reg.end_exclusive {
-            return Err(BootInfoError::InvalidRegion);
         }
         for region in self.regions.iter_mut() {
             if region.is_empty() {
-                *region = reg;
+                *region = new_region;
                 return Ok(());
             }
         }
@@ -362,13 +359,13 @@ impl BootInfo {
                         true,
                     );
                     iterated_region.clear();
-                    if first_region.size() > second_region.size() {
+                    return if first_region.size() > second_region.size() {
                         self.insert_region(first_region)?;
-                        return self.insert_region(second_region);
+                        self.insert_region(second_region)
                     } else {
                         self.insert_region(second_region)?;
-                        return self.insert_region(first_region);
-                    }
+                        self.insert_region(first_region)
+                    };
                 }
                 // it may intersect over the end of the region
                 if remove_region.start_inclusive > iterated_region.start_inclusive
@@ -390,34 +387,34 @@ impl BootInfo {
         Ok(())
     }
 
-    // this method assumes all non-empty regions in BootInfo represent free memory
+    /// Allocate a region of given `size_bits` size.
+    ///
+    /// Search for a free mem region that will be the best fit for an allocation. We favour allocations
+    /// that are aligned to either end of the region. If an allocation must split a region we favour
+    /// an unbalanced split. In both cases we attempt to use the smallest region possible. In general
+    /// this means we aim to make the size of the smallest remaining region smaller (ideally zero)
+    /// followed by making the size of the largest remaining region smaller.
+    ///
+    // @fixme this method assumes all non-empty regions in BootInfo represent free memory
     pub fn alloc_region(&mut self, size_bits: usize) -> Result<PhysAddr, BootInfoError> {
         let mut reg_index: usize = 0;
         let mut reg: BootInfoMemRegion = BootInfoMemRegion::new();
         let mut rem_small: BootInfoMemRegion = BootInfoMemRegion::new();
         let mut rem_large: BootInfoMemRegion = BootInfoMemRegion::new();
-        /*
-         * Search for a free mem region that will be the best fit for an allocation. We favour allocations
-         * that are aligned to either end of the region. If an allocation must split a region we favour
-         * an unbalanced split. In both cases we attempt to use the smallest region possible. In general
-         * this means we aim to make the size of the smallest remaining region smaller (ideally zero)
-         * followed by making the size of the largest remaining region smaller.
-         */
-        for (i, reg_iter) in self.regions.iter().enumerate() {
-            let mut new_reg: BootInfoMemRegion = BootInfoMemRegion::new();
 
-            /* Determine whether placing the region at the start or the end will create a bigger left over region */
-            if reg_iter.start_inclusive.aligned_up(1u64 << size_bits) - reg_iter.start_inclusive
-                < reg_iter.end_exclusive - reg_iter.end_exclusive.aligned_down(1u64 << size_bits)
+        for (i, reg_iter) in self.regions.iter().enumerate() {
+            // Determine whether placing the region at the start or the end will create a bigger left over region.
+            let aligned_start = reg_iter.start_inclusive.aligned_up(1u64 << size_bits);
+            let aligned_end = reg_iter.end_exclusive.aligned_down(1u64 << size_bits);
+            let new_reg = if aligned_start - reg_iter.start_inclusive
+                < reg_iter.end_exclusive - aligned_end
             {
-                new_reg.start_inclusive = reg_iter.start_inclusive.aligned_up(1u64 << size_bits);
-                new_reg.end_exclusive = new_reg.start_inclusive + (1u64 << size_bits);
+                BootInfoMemRegion::at(aligned_start, aligned_start + (1u64 << size_bits), false)
             } else {
-                new_reg.end_exclusive = reg_iter.end_exclusive.aligned_down(1u64 << size_bits);
-                new_reg.start_inclusive = new_reg.end_exclusive - (1u64 << size_bits);
-            }
-            if new_reg.end_exclusive > new_reg.start_inclusive
-                && new_reg.start_inclusive >= reg_iter.start_inclusive
+                BootInfoMemRegion::at(aligned_end - (1u64 << size_bits), aligned_end, false)
+            };
+
+            if new_reg.start_inclusive >= reg_iter.start_inclusive
                 && new_reg.end_exclusive <= reg_iter.end_exclusive
             {
                 let mut new_rem_small: BootInfoMemRegion = BootInfoMemRegion::new();
@@ -436,6 +433,7 @@ impl BootInfo {
                     new_rem_small.start_inclusive = new_reg.end_exclusive;
                     new_rem_small.end_exclusive = reg_iter.end_exclusive;
                 }
+                // Find better fit.
                 if reg.is_empty()
                     || (new_rem_small.size() < rem_small.size())
                     || (new_rem_small.size() == rem_small.size()
@@ -449,6 +447,7 @@ impl BootInfo {
             }
         }
         if reg.is_empty() {
+            // @fixme just return error!
             panic!("Kernel init failed: not enough memory\n");
         }
         /* Remove the region in question */
@@ -476,6 +475,6 @@ mod boot_info_tests {
         let region = BootInfoMemRegion::at(0x2000.into(), 0x0.into(), true);
         let res = bi.insert_region(region);
         assert!(res.is_err());
-        assert_eq!(res.err(), Some(BootInfoError::InvalidRegion));
+        assert_eq!(res.err(), Some(BootInfoError::InvalidRegion)); // @fixme not thrown anymore
     }
 }
