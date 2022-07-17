@@ -145,32 +145,33 @@ impl<S: PageSize> fmt::Debug for Page<S> {
     }
 }
 
-impl<S: PageSize> Add<u64> for Page<S> {
+impl<T: num::PrimInt, S: PageSize> Add<T> for Page<S> {
     type Output = Self;
-    // @todo should I add pages or just bytes here?
-    fn add(self, rhs: u64) -> Self::Output {
-        Page::containing_address(self.start_address() + rhs * S::SIZE as u64)
+    /// Add a number of bytes to the current page and find the next page with the same size
+    /// containing the resulting address.
+    fn add(self, rhs: T) -> Self::Output {
+        Page::containing_address(self.start_address() + rhs)
     }
 }
 
-impl<S: PageSize> AddAssign<u64> for Page<S> {
-    fn add_assign(&mut self, rhs: u64) {
-        *self = self.clone() + rhs;
+impl<T: num::PrimInt, S: PageSize> AddAssign<T> for Page<S> {
+    fn add_assign(&mut self, rhs: T) {
+        *self = *self + rhs;
     }
 }
 
-impl<S: PageSize> Sub<u64> for Page<S> {
+impl<T: num::PrimInt, S: PageSize> Sub<T> for Page<S> {
     type Output = Self;
-    /// Subtracts `rhs` same-sized pages from the current address.
-    // @todo should I sub pages or just bytes here?
-    fn sub(self, rhs: u64) -> Self::Output {
-        Page::containing_address(self.start_address() - rhs * S::SIZE as u64)
+    /// Subtract a number of bytes from the current page start address and find
+    /// the next page with the same size containing the resulting address.
+    fn sub(self, rhs: T) -> Self::Output {
+        Page::containing_address(self.start_address() - rhs)
     }
 }
 
-impl<S: PageSize> SubAssign<u64> for Page<S> {
-    fn sub_assign(&mut self, rhs: u64) {
-        *self = self.clone() - rhs;
+impl<T: num::PrimInt, S: PageSize> SubAssign<T> for Page<S> {
+    fn sub_assign(&mut self, rhs: T) {
+        *self = *self - rhs;
     }
 }
 
@@ -212,6 +213,14 @@ impl<S: PageSize> Iterator for PageRange<S> {
         } else {
             None
         }
+    }
+}
+
+impl PageRange<Size4KiB> {
+    /// Converts the range of 4KiB pages to a range of 4KiB pages (identity operation).
+    #[inline(always)]
+    pub fn as_4kib_page_range(&self) -> PageRange<Size4KiB> {
+        *self
     }
 }
 
@@ -282,13 +291,13 @@ mod tests {
     #[test_case]
     pub fn test_page_ranges() {
         let page_size = Size4KiB::SIZE;
-        let number = 1000;
+        let number = 1000usize;
 
-        let start_addr = VirtAddr::new(0xdeadbeaf);
+        let start_addr = VirtAddr::new(0xdeafbead);
         let start: Page = Page::containing_address(start_addr);
-        let end = start.clone() + number;
+        let end = start + number;
 
-        let mut range = Page::range(start.clone(), end.clone());
+        let mut range = Page::range(start, end);
         for i in 0..number {
             assert_eq!(
                 range.next(),
@@ -314,11 +323,11 @@ mod tests {
 
         let start_addr = VirtAddr::new(0xdeadbeaf);
         let start: Page = Page::containing_address(start_addr);
-        let end = start.clone() + number;
+        let end = start + number;
 
-        let range = Page::range(start.clone(), end.clone()).as_4kib_page_range();
+        let range = Page::range(start, end).as_4kib_page_range();
 
         // 10 2MiB pages is 512 4KiB pages
-        aseert_eq!(range.num_pages(), 512);
+        assert_eq!(range.num_pages(), 512);
     }
 }

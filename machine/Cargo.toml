@@ -41,3 +41,4 @@ static_assertions = "1.1.0"
 #tap = "1.0" -- check no_std?
 shrinkwraprs = { version = "0.3", default-features = false }
 dtb = "0.2"
+num = { version = "0.4", default-features = false }

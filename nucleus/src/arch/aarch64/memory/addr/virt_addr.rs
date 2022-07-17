@@ -212,92 +212,54 @@ impl From<VirtAddr> for u64 {
     }
 }
 
-impl Add<u64> for VirtAddr {
+impl<T: num::PrimInt + num::ToPrimitive> Add<T> for VirtAddr {
     type Output = Self;
-    fn add(self, rhs: u64) -> Self::Output {
-        VirtAddr::new(self.0 + rhs)
+    /// Add a given offset to the current virtual address. Never wraps.
+    fn add(self, rhs: T) -> Self::Output {
+        // @todo runtime cost of unwrap() here
+        VirtAddr::new(self.0.saturating_add(num::cast(rhs).unwrap()))
     }
 }
 
-impl AddAssign<u64> for VirtAddr {
-    fn add_assign(&mut self, rhs: u64) {
+impl<T: num::PrimInt> AddAssign<T> for VirtAddr {
+    fn add_assign(&mut self, rhs: T) {
         *self = *self + rhs;
     }
 }
 
-impl Add<usize> for VirtAddr
-where
-    u64: FromUsize,
-{
+impl<T: num::PrimInt> Sub<T> for VirtAddr {
     type Output = Self;
-    fn add(self, rhs: usize) -> Self::Output {
-        self + u64::from_usize(rhs)
+    /// Subtract a given offset from the current virtual address. Never wraps.
+    fn sub(self, rhs: T) -> Self::Output {
+        // @todo runtime cost of unwrap() here
+        VirtAddr::new(self.0.saturating_sub(num::cast(rhs).unwrap()))
     }
 }
 
-impl AddAssign<usize> for VirtAddr
-where
-    u64: FromUsize,
-{
-    fn add_assign(&mut self, rhs: usize) {
-        self.add_assign(u64::from_usize(rhs))
-    }
-}
-
-impl Sub<u64> for VirtAddr {
-    type Output = Self;
-    fn sub(self, rhs: u64) -> Self::Output {
-        VirtAddr::new(self.0.checked_sub(rhs).unwrap())
-    }
-}
-
-impl SubAssign<u64> for VirtAddr {
-    fn sub_assign(&mut self, rhs: u64) {
+impl<T: num::PrimInt> SubAssign<T> for VirtAddr {
+    fn sub_assign(&mut self, rhs: T) {
         *self = *self - rhs;
     }
 }
 
-impl Sub<usize> for VirtAddr
-where
-    u64: FromUsize,
-{
-    type Output = Self;
-    fn sub(self, rhs: usize) -> Self::Output {
-        self - u64::from_usize(rhs)
-    }
-}
-
-impl SubAssign<usize> for VirtAddr
-where
-    u64: FromUsize,
-{
-    fn sub_assign(&mut self, rhs: usize) {
-        self.sub_assign(u64::from_usize(rhs))
-    }
-}
-
-impl Sub<VirtAddr> for VirtAddr {
+impl Sub for VirtAddr {
     type Output = u64;
+    /// Produce a difference between two virtual addresses.
     fn sub(self, rhs: VirtAddr) -> Self::Output {
-        self.as_u64().checked_sub(rhs.as_u64()).unwrap()
+        self.as_u64().checked_sub(rhs.as_u64()).unwrap() // @todo use i64?
     }
 }
 
-impl Rem<usize> for VirtAddr
-where
-    u64: FromUsize,
-{
+impl<T: num::PrimInt> Rem<T> for VirtAddr {
     type Output = u64;
-    fn rem(self, rhs: usize) -> Self::Output {
-        self.0 % u64::from_usize(rhs)
+    fn rem(self, rhs: T) -> Self::Output {
+        num::traits::CheckedRem::checked_rem(&self.0, &num::cast(rhs).unwrap()).unwrap()
     }
 }
 
-impl RemAssign<usize> for VirtAddr
-where
-    u64: FromUsize,
-{
-    fn rem_assign(&mut self, rhs: usize) {
-        *self = VirtAddr::new(self.0 % u64::from_usize(rhs));
+// @todo this is not very useful...
+impl<T: num::PrimInt> RemAssign<T> for VirtAddr {
+    fn rem_assign(&mut self, rhs: T) {
+        *self = VirtAddr::new(num::traits::CheckedRem::checked_rem(&self.0, &num::cast(rhs).unwrap()).unwrap());
     }
 }
