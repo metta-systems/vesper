@@ -22,4 +22,4 @@ tokio = { version = "1.17", features = ["full"] }
 futures = "0.3"
 defer = "0.1"
 tokio-util = { version = "0.7", features = ["codec"] }
-bytes = "1.1"
+bytes = "1.2"
