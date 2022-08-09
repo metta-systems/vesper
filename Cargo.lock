@@ -809,9 +809,9 @@ checksum = "f70329e2cbe45d6c97a5112daad40c34cd9a4e18edb5a2a18fefeb584d8d25e5"
 
 [[package]]
 name = "ux"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5efdcf885b33bb81bc9336e66cebc10d503288449466c0e43e51250ddc93a3d8"
+checksum = "2cb3ff47e36907a6267572c1e398ff32ef78ac5131de8aa272e53846592c207e"
 
 [[package]]
 name = "wasi"
