@@ -385,7 +385,10 @@ async fn main() -> Result<()> {
                 serial_toggle = !serial_toggle;
 
                 if crossterm::event::poll(Duration::from_millis(1000))? {
-                    if let Event::Key(KeyEvent { code, modifiers }) = crossterm::event::read()? {
+                    if let Event::Key(KeyEvent {
+                        code, modifiers, ..
+                    }) = crossterm::event::read()?
+                    {
                         if code == KeyCode::Char('c') && modifiers == KeyModifiers::CONTROL {
                             return Ok(());
                         }
