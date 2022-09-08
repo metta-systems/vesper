@@ -154,6 +154,7 @@ script_runner = "@duckscript"
 script = [
 '''
     binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
+    echo Run QEMU %{QEMU_OPTS} %{QEMU_TESTS_OPTS} with target/${binaryFile}.bin
     exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
 '''
 ]
