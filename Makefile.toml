@@ -64,7 +64,8 @@ QEMU_CONTAINER_CMD = "qemu-system-aarch64"
 QEMU_OPTS = "-M ${QEMU_MACHINE} -d int -semihosting"
 QEMU_DISASM_OPTS = "-d in_asm,unimp,int"
 QEMU_SERIAL_OPTS = "-serial pty -serial stdio"
-QEMU_TESTS_OPTS = "-nographic"
+QEMU_TESTS_OPTS = "-nographic" #-chardev file,id=char0,mux=on,path=debug.log -mon chardev=char0,mode=readline -semihosting-config chardev=char0 -D error.log"
+
 # For gdb connection:
 # - if this is set, MUST have gdb attached for SYS_WRITE0 to work, otherwise QEMU will crash.
 # - port 5555 used to match JLink configuration, so we can reuse the same GDB command for both QEMU and JTAG.
