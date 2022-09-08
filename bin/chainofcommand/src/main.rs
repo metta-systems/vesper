@@ -416,15 +416,9 @@ async fn main() -> Result<()> {
             execute!(stdout, style::Print(format!("\nError: {:?}\n", e)))?;
             stdout.flush()?;
 
-            let cont = match e.downcast_ref::<std::io::Error>() {
-                Some(e)
-                    if e.kind() == std::io::ErrorKind::NotFound
-                        || e.kind() == std::io::ErrorKind::PermissionDenied =>
-                {
-                    true
-                }
-                _ => false,
-            } || matches!(e.downcast_ref::<tokio_serial::Error>(), Some(e) if e.kind == tokio_serial::ErrorKind::NoDevice)
+            let cont = matches!(e.downcast_ref::<std::io::Error>(),
+                Some(e) if e.kind() == std::io::ErrorKind::NotFound || e.kind() == std::io::ErrorKind::PermissionDenied)
+                || matches!(e.downcast_ref::<tokio_serial::Error>(), Some(e) if e.kind == tokio_serial::ErrorKind::NoDevice)
                 || matches!(
                     e.downcast_ref::<tokio::sync::mpsc::error::SendError<Vec<u8>>>(),
                     Some(_)
