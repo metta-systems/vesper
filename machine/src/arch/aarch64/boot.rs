@@ -46,6 +46,7 @@ macro_rules! entry {
 /// # Safety
 ///
 /// Totally unsafe! We're in the hardware land.
+/// We assume that no statics are accessed before transition to main from this function.
 #[link_section = ".text.boot"]
 unsafe fn reset() -> ! {
     extern "Rust" {
@@ -216,6 +217,10 @@ fn setup_and_enter_el1_from_el3() -> ! {
 /// Dissection of various RPi core boot stubs is available
 /// [here](https://leiradel.github.io/2019/01/20/Raspberry-Pi-Stubs.html).
 ///
+/// # Safety
+///
+/// Totally unsafe! We're in the hardware land.
+/// We assume that no statics are accessed before transition to main from reset() function.
 #[no_mangle]
 #[link_section = ".text.boot.entry"]
 pub unsafe extern "C" fn _boot_cores() -> ! {
