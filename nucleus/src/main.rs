@@ -11,6 +11,7 @@
 #![no_main]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
+// #![feature(strict_provenance)]
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
