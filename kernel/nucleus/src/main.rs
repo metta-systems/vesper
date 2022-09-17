@@ -13,6 +13,7 @@
 #![feature(format_args_nl)]
 #![feature(likely_unlikely)]
 #![feature(stmt_expr_attributes)]
+#![feature(strict_provenance)]
 #![feature(slice_ptr_get)]
 #![deny(missing_docs)]
 #![deny(warnings)]
