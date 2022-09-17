@@ -27,7 +27,6 @@ rpi4 = ["machine/rpi4"]
 
 [dependencies]
 machine = { path = "../../machine" }
-r0 = "1.0"
 cortex-a = "7.5"
 tock-registers = "0.7"
 ux = { version = "0.1", default-features = false }
