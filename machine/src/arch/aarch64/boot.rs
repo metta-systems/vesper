@@ -10,6 +10,11 @@
 
 use {
     crate::endless_sleep,
+    core::{
+        cell::UnsafeCell,
+        slice,
+        sync::atomic::{self, Ordering},
+    },
     cortex_a::{asm, registers::*},
     tock_registers::interfaces::{Readable, Writeable},
 };
@@ -43,15 +48,33 @@ macro_rules! entry {
 /// Totally unsafe! We're in the hardware land.
 #[link_section = ".text.boot"]
 unsafe fn reset() -> ! {
-    extern "C" {
-        // Boundaries of the .bss section, provided by the linker script
-        // The type, `u64`, indicates that the memory is 8-byte aligned
-        static mut __BSS_START: u64;
-        static mut __BSS_END: u64;
+    extern "Rust" {
+        // Boundaries of the .bss section, provided by the linker script.
+        static __BSS_START: UnsafeCell<()>;
+        static __BSS_SIZE: UnsafeCell<()>;
     }
 
     // Zeroes the .bss section
-    r0::zero_bss(&mut __BSS_START, &mut __BSS_END);
+    // Based on https://gist.github.com/skoe/dbd3add2fc3baa600e9ebc995ddf0302 and discussions
+    // on pointer provenance in closing r0 issues (https://github.com/rust-embedded/cortex-m-rt/issues/300)
+
+    // NB: https://doc.rust-lang.org/nightly/core/ptr/index.html#provenance
+    // Importing pointers like `__BSS_START` and `__BSS_END` and performing pointer
+    // arithmetic on them directly may lead to Undefined Behavior, because the
+    // compiler may assume they come from different allocations and thus performing
+    // undesirable optimizations on them.
+    // So we use a painter-and-a-size as described in provenance section.
+
+    let bss = slice::from_raw_parts_mut(__BSS_START.get() as *mut u8, __BSS_SIZE.get() as usize);
+    for i in bss {
+        *i = 0;
+    }
+
+    // Don't cross this line with loads and stores. The initializations
+    // done above could be "invisible" to the compiler, because we write to the
+    // same memory location that is used by statics after this point.
+    // Additionally, we assume that no statics are accessed before this point.
+    atomic::compiler_fence(Ordering::SeqCst);
 
     extern "Rust" {
         fn main() -> !;

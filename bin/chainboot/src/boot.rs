@@ -28,7 +28,7 @@ pub unsafe extern "C" fn _start() -> ! {
     extern "Rust" {
         // Boundaries of the .bss section, provided by the linker script
         static __bss_start: UnsafeCell<()>;
-        static __bss_end_exclusive: UnsafeCell<()>;
+        static __bss_size: UnsafeCell<()>;
         // Load address of the kernel binary
         static __binary_nonzero_lma: UnsafeCell<()>;
         // Address to relocate to and image size
@@ -42,7 +42,11 @@ pub unsafe extern "C" fn _start() -> ! {
     SP.set(__boot_core_stack_end_exclusive.get() as u64);
 
     // Zeroes the .bss section
-    r0::zero_bss(__bss_start.get() as u64, __bss_end_exclusive.get() as u64);
+    let bss =
+        core::slice::from_raw_parts_mut(__bss_start.get() as *mut u8, __bss_size.get() as usize);
+    for i in bss {
+        *i = 0;
+    }
 
     // Relocate the code
     core::ptr::copy_nonoverlapping(
