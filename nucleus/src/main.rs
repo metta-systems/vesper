@@ -81,7 +81,7 @@ fn init_uart_serial() {
     let uart = uart.prepare(&gpio);
     CONSOLE.lock(|c| {
         // Move uart into the global CONSOLE.
-        c.replace_with(uart.into());
+        c.replace_with(uart.into()); // this crashes with Prefetch Abort on virtual method call
     });
 
     println!("[0] MiniUART is live!");
