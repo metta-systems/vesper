@@ -5,3 +5,4 @@
 target/
 kernel8*
 .gdb_history
+qemu.log
