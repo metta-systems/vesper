@@ -93,6 +93,6 @@ SECTIONS
         __bss_start = .;
         *(.bss*);
         . = ALIGN(16);
-        __bss_end_exclusive = .;
+        __bss_size = . - __bss_start;
     } :segment_data
 }

@@ -11,11 +11,14 @@
 #![no_main]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
+#![feature(strict_provenance)]
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
 #![deny(warnings)]
+#![deny(unused)]
+#![feature(allocator_api)]
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;

@@ -50,7 +50,8 @@ _start:
 
     // Initialize bss.
     ADR_ABS	x0, __bss_start
-    ADR_ABS x1, __bss_end_exclusive
+    ADR_ABS	x1, __bss_size
+    add x1, x0, x1
 
 .L_bss_init_loop:
     cmp	x0, x1
