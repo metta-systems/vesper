@@ -4,6 +4,7 @@
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
 #![feature(core_intrinsics)]
+#![feature(strict_provenance)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
 #![feature(nonnull_slice_from_raw_parts)]
