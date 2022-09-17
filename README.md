@@ -80,7 +80,7 @@ just ocd
 just gdb
 ```
 
-If you launch OpenOCD or QEMU before, then gdb shall connect to it and allow you to load the kernel binary directly into memory. Type `load` in gdb to do that.
+If you launch OpenOCD or QEMU before (for example, via `just qemu-gdb`), then gdb shall connect to it and allow you to load the kernel binary directly into memory. Type `load` in gdb to do that.
 
 ### To see kernel symbols and their values
 
