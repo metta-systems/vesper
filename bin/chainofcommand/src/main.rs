@@ -3,7 +3,7 @@
 use {
     anyhow::{anyhow, Result},
     bytes::Bytes,
-    clap::{Arg, Command},
+    clap::{value_parser, Arg, ArgAction, Command},
     crossterm::{
         cursor,
         event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
@@ -324,19 +324,27 @@ async fn main() -> Result<()> {
             Arg::new("baud")
                 .help("The baud rate to connect at")
                 .use_value_delimiter(false)
+                .action(ArgAction::Set)
+                .value_parser(value_parser!(u32))
                 .required(true), // .validator(valid_baud),
         )
         .arg(
             Arg::new("kernel")
                 .long("kernel")
                 .help("Path of the binary kernel image to send")
-                .takes_value(true)
                 .default_value("kernel8.img"),
         )
         .get_matches();
-    let port_name = matches.value_of("port").unwrap();
-    let baud_rate = matches.value_of("baud").unwrap().parse::<u32>().unwrap();
-    let kernel = matches.value_of("kernel").unwrap().to_owned();
+    let port_name = matches
+        .get_one::<String>("port")
+        .expect("port must be specified");
+    let baud_rate = matches
+        .get_one("baud")
+        .copied()
+        .expect("baud rate must be an integer");
+    let kernel = matches
+        .get_one::<String>("kernel")
+        .expect("kernel file must be specified");
 
     // Check that STDIN is a proper tty
     if !std::io::stdin().is_tty() {
