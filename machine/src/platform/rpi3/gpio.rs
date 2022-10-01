@@ -30,41 +30,57 @@ states! {
     Uninitialized, Input, Output, Alt
 }
 
+#[cfg(feature = "rpi3")]
 register_structs! {
     /// The offsets for each register.
     /// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
     /// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
     #[allow(non_snake_case)]
     RegisterBlock {
-        (0x00 => pub FSEL: [ReadWrite<u32>; 6]), // function select
+        (0x00 => pub FunctionSelect: [ReadWrite<u32>; 6]), // function select
         (0x18 => __reserved_1),
-        (0x1c => pub SET: [WriteOnly<u32>; 2]), // set output pin
+        (0x1c => pub SetPin: [WriteOnly<u32>; 2]), // set output pin
         (0x24 => __reserved_2),
-        (0x28 => pub CLR: [WriteOnly<u32>; 2]), // clear output pin
+        (0x28 => pub ClearPin: [WriteOnly<u32>; 2]), // clear output pin
         (0x30 => __reserved_3),
-        (0x34 => pub LEV: [ReadOnly<u32>; 2]), // get input pin level
+        (0x34 => pub PinLevel: [ReadOnly<u32>; 2]), // get input pin level
         (0x3c => __reserved_4),
-        (0x40 => pub EDS: [ReadWrite<u32>; 2]),
-        (0x48 => __reserved_5),
-        (0x4c => pub REN: [ReadWrite<u32>; 2]),
-        (0x54 => __reserved_6),
-        (0x58 => pub FEN: [ReadWrite<u32>; 2]),
-        (0x60 => __reserved_7),
-        (0x64 => pub HEN: [ReadWrite<u32>; 2]),
-        (0x6c => __reserved_8),
-        (0x70 => pub LEN: [ReadWrite<u32>; 2]),
-        (0x78 => __reserved_9),
-        (0x7c => pub AREN: [ReadWrite<u32>; 2]),
-        (0x84 => __reserved_10),
-        (0x88 => pub AFEN: [ReadWrite<u32>; 2]),
-        (0x90 => __reserved_11),
-        #[cfg(feature = "rpi3")]
-        (0x94 => pub PUD: ReadWrite<u32>), // pull up down
-        #[cfg(feature = "rpi3")]
+        // Everything below is unused atm!
+        // (0x40 => pub EDS: [ReadWrite<u32>; 2]),
+        // (0x48 => __reserved_5),
+        // (0x4c => pub REN: [ReadWrite<u32>; 2]),
+        // (0x54 => __reserved_6),
+        // (0x58 => pub FEN: [ReadWrite<u32>; 2]),
+        // (0x60 => __reserved_7),
+        // (0x64 => pub HEN: [ReadWrite<u32>; 2]),
+        // (0x6c => __reserved_8),
+        // (0x70 => pub LEN: [ReadWrite<u32>; 2]),
+        // (0x78 => __reserved_9),
+        // (0x7c => pub AREN: [ReadWrite<u32>; 2]),
+        // (0x84 => __reserved_10),
+        // (0x88 => pub AFEN: [ReadWrite<u32>; 2]),
+        // (0x90 => __reserved_11),
+        (0x94 => pub PullUpDown: ReadWrite<u32>), // pull up down
         (0x98 => pub PUDCLK: [ReadWrite<u32>; 2]),
-        #[cfg(feature = "rpi3")]
-        (0xa0 => __reserved_12),
-        #[cfg(feature = "rpi4")]
+        (0xa0 => @END),
+    }
+}
+
+#[cfg(feature = "rpi4")]
+register_structs! {
+    /// The offsets for each register.
+    /// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
+    /// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
+    #[allow(non_snake_case)]
+    RegisterBlock {
+        (0x00 => pub FunctionSelect: [ReadWrite<u32>; 6]), // function select
+        (0x18 => __reserved_1),
+        (0x1c => pub SetPin: [WriteOnly<u32>; 2]), // set output pin
+        (0x24 => __reserved_2),
+        (0x28 => pub ClearPin: [WriteOnly<u32>; 2]), // clear output pin
+        (0x30 => __reserved_3),
+        (0x34 => pub PinLevel: [ReadOnly<u32>; 2]), // get input pin level
+        (0x3c => __reserved_4),
         (0xe4 => PullUpDownControl: [ReadWrite<u32>; 4]),
         (0xf4 => @END),
     }
@@ -108,10 +124,10 @@ impl GPIO {
 
         // power off gpio pins (but not VCC pins)
         for bank in 0..5 {
-            self.registers.FSEL[bank].set(0);
+            self.registers.FunctionSelect[bank].set(0);
         }
 
-        self.registers.PUD.set(0);
+        self.registers.PullUpDown.set(0);
 
         loop_delay(2000);
 
@@ -198,7 +214,7 @@ impl<State> Pin<State> {
         let bank = self.pin / 32;
         let off = self.pin % 32;
 
-        self.registers.PUD.set(0);
+        self.registers.PullUpDown.set(0);
 
         loop_delay(2000);
 
@@ -210,7 +226,7 @@ impl<State> Pin<State> {
 
         loop_delay(2000);
 
-        self.registers.PUD.set(0);
+        self.registers.PullUpDown.set(0);
         self.registers.PUDCLK[bank].set(0);
     }
 
@@ -249,7 +265,7 @@ impl Pin<Uninitialized> {
     pub fn into_alt(self, function: Function) -> Pin<Alt> {
         let bank = self.pin / 10;
         let off = self.pin % 10;
-        self.registers.FSEL[bank].modify(FieldValue::<u32, ()>::new(
+        self.registers.FunctionSelect[bank].modify(FieldValue::<u32, ()>::new(
             0b111,
             off * 3,
             function.into(),
@@ -276,7 +292,7 @@ impl Pin<Output> {
         // Guarantees: pin number is between [0; 53] by construction.
         let bank = self.pin / 32;
         let shift = self.pin % 32;
-        self.registers.SET[bank].set(1 << shift);
+        self.registers.SetPin[bank].set(1 << shift);
     }
 
     /// Clears (turns off) this pin.
@@ -284,7 +300,7 @@ impl Pin<Output> {
         // Guarantees: pin number is between [0; 53] by construction.
         let bank = self.pin / 32;
         let shift = self.pin % 32;
-        self.registers.CLR[bank].set(1 << shift);
+        self.registers.ClearPin[bank].set(1 << shift);
     }
 }
 
@@ -297,7 +313,7 @@ impl Pin<Input> {
         // Guarantees: pin number is between [0; 53] by construction.
         let bank = self.pin / 32;
         let off = self.pin % 32;
-        self.registers.LEV[bank].matches_all(FieldValue::<u32, ()>::new(1, off, 1))
+        self.registers.PinLevel[bank].matches_all(FieldValue::<u32, ()>::new(1, off, 1))
     }
 }
 
