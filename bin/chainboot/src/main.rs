@@ -139,7 +139,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
     let kernel: fn() -> ! = unsafe { core::mem::transmute(kernel_addr) };
 
     // Force everything to complete before we jump.
-    unsafe { barrier::isb(barrier::SY) };
+    barrier::isb(barrier::SY);
 
     // Jump to loaded kernel!
     kernel()

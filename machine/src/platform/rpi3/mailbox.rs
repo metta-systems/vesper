@@ -565,9 +565,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
                 return Err(MailboxError::Timeout);
             }
         }
-        unsafe {
-            barrier::dmb(barrier::SY);
-        }
+        barrier::dmb(barrier::SY);
         self.registers
             .WRITE
             .set((buf_ptr & !CHANNEL_MASK) | (channel & CHANNEL_MASK));
