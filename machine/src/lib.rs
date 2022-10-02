@@ -59,7 +59,7 @@ static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
         ))
     }));
 // Try the following arguments instead to see all mailbox operations
-// fail. It will cause the allocator to use memory that are marked
+// fail. It will cause the allocator to use memory that is marked
 // cacheable and therefore not DMA-safe. The answer from the VideoCore
 // won't be received by the CPU because it reads an old cached value
 // that resembles an error case instead.

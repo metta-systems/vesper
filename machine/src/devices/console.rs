@@ -98,7 +98,7 @@ impl Console {
     }
 
     /// Overwrite the current output. The old output will go out of scope and
-    /// it's Drop function will be called.
+    /// its Drop function will be called.
     pub fn replace_with(&mut self, x: Output) {
         self.current_ptr().flush();
 
