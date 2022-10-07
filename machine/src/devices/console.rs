@@ -76,14 +76,12 @@ pub struct Console {
 
 impl Default for Console {
     fn default() -> Self {
-        Console {
-            output: (NullConsole {}).into(),
-        }
+        Self::new()
     }
 }
 
 impl Console {
-    pub const fn new() -> Console {
+    pub const fn new() -> Self {
         Console {
             output: Output::None(NullConsole {}),
         }
@@ -99,10 +97,10 @@ impl Console {
 
     /// Overwrite the current output. The old output will go out of scope and
     /// its Drop function will be called.
-    pub fn replace_with(&mut self, x: Output) {
+    pub fn replace_with(&mut self, new_output: Output) {
         self.current_ptr().flush();
 
-        self.output = x;
+        self.output = new_output;
     }
 
     /// A command prompt.
