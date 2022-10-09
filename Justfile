@@ -12,14 +12,14 @@ boot: chainofcommand
 # Build and run kernel in QEMU with serial port emulation
 zellij:
     cargo make zellij-nucleus
-    zellij --layout-path emulation/layout.zellij
+    zellij --layout emulation/layout.zellij
 
 # Build and run chainboot in QEMU with serial port emulation
 zellij-cb:
     # Connect to it via chainofcommand to load an actual kernel
     # TODO: actually run chainofcommand in a zellij session too
     cargo make zellij-cb
-    zellij --layout-path emulation/layout.zellij
+    zellij --layout emulation/layout.zellij
 
 # Build chainofcommand serial loader
 chainofcommand:
