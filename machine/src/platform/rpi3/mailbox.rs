@@ -461,7 +461,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
         buf[index + 1] = 8; // Buffer size   // val buf size
         buf[index + 2] = 0; // Response size  // val size
         buf[index + 3] = 130; // Pin Number
-        buf[index + 4] = if enable { 1 } else { 0 };
+        buf[index + 4] = enable.into();
         index + 5
     }
 
