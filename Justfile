@@ -116,5 +116,8 @@ expand:
 doc:
     cargo make docs-flow
 
+# Run lint tasks
+lint: clippy fmt-check
+
 # Run CI tasks
-ci: clean build test clippy fmt-check
+ci: clean build test lint
