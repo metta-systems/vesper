@@ -221,7 +221,7 @@ impl<State> Pin<State> {
         self.registers.PUDCLK[bank].modify(FieldValue::<u32, ()>::new(
             0b1,
             off,
-            if pull == PullUpDown::Up { 1 } else { 0 },
+            (pull == PullUpDown::Up).into(),
         ));
 
         loop_delay(2000);
