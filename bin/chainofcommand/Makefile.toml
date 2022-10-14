@@ -5,6 +5,9 @@ args = ["build"]
 [tasks.chainofcommand]
 dependencies = ["build"]
 
+[tasks.build-device]
+disabled = true
+
 [tasks.test]
 command = "cargo"
 args = ["test"]
