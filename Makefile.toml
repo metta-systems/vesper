@@ -42,9 +42,10 @@ VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
 #
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
-RUST_LIBS = "-Z build-std=compiler_builtins,core,alloc -Z build-std-features=compiler-builtins-mem"
+RUST_STD = "-Zbuild-std=compiler_builtins,core,alloc"
+RUST_STD_FEATURES = "-Zbuild-std-features=compiler-builtins-mem"
 TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
-PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES} ${RUST_LIBS}"
+PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES}"
 
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu,rpi3,noserial"
@@ -89,15 +90,17 @@ dependencies = ["kernel-binary"]
 command = "cargo"
 args = ["modules", "tree"]
 
+[tasks.do-build]
+command = "cargo"
+args = ["build", "@@split(PLATFORM_TARGET, )", "@@remove-empty(RUST_STD)", "@@remove-empty(RUST_STD_FEATURES)", "--release"]
+
 [tasks.build]
 env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
-command = "cargo"
-args = ["build", "@@split(PLATFORM_TARGET, )", "--release"]
+run_task = "do-build"
 
 [tasks.build-qemu]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
-command = "cargo"
-args = ["build", "@@split(PLATFORM_TARGET, )", "--release"]
+run_task = "do-build"
 
 [tasks.qemu-runner]
 dependencies = ["build-qemu", "kernel-binary"]
@@ -116,7 +119,7 @@ args = ["expand", "@@split(PLATFORM_TARGET, )", "--release"]
 [tasks.test]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 command = "cargo"
-args = ["test", "@@split(PLATFORM_TARGET, )"]
+args = ["test", "@@split(PLATFORM_TARGET, )", "@@remove-empty(RUST_STD)", "@@remove-empty(RUST_STD_FEATURES)"]
 
 [tasks.docs]
 env = { "TARGET_FEATURES" = "" }
@@ -129,6 +132,8 @@ command = "cargo"
 args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "--deny", "warnings", "--allow", "deprecated"]
 
 # These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
+
+## Copy and prepare a given ELF file. Convert to binary output format.
 [tasks.custom-binary]
 env = { "BINARY_FILE" = "${BINARY_FILE}" }
 script_runner = "@duckscript"
@@ -145,10 +150,12 @@ script = [
 ]
 install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = ["--help"] }
 
+## Copy and prepare binary with tests.
 [tasks.test-binary]
 env = { "BINARY_FILE" = "${CARGO_MAKE_TASK_ARGS}" }
 run_task = "custom-binary"
 
+## Run binary with tests in QEMU.
 [tasks.test-runner]
 dependencies = ["test-binary"]
 script_runner = "@duckscript"
@@ -160,6 +167,7 @@ script = [
 '''
 ]
 
+## Generate GDB startup configuration file.
 [tasks.gdb-config]
 script_runner = "@duckscript"
 script = [
@@ -169,6 +177,7 @@ script = [
 '''
 ]
 
+## Generate zellij configuration file.
 [tasks.zellij-config]
 dependencies = ["build-qemu", "kernel-binary"]
 script_runner = "@duckscript"

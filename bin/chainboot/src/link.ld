@@ -52,7 +52,7 @@ SECTIONS
     .text :
     {
         KEEP(*(.text._start))
-        /* *(text.memcpy) -- only relevant for Rust relocator impl which is currently impossible */
+        *(.text.stdmem)
     } :segment_start_code
 
     /* Align to 8 bytes, b/c relocating the binary is done in u64 chunks */
