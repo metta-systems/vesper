@@ -95,6 +95,9 @@ command = "cargo"
 args = ["build", "@@split(PLATFORM_TARGET, )", "@@remove-empty(RUST_STD)", "@@remove-empty(RUST_STD_FEATURES)", "--release"]
 
 [tasks.build]
+disabled = true
+
+[tasks.build-device]
 env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
 run_task = "do-build"
 
@@ -206,6 +209,6 @@ script = [
 ]
 
 [tasks.chainboot]
-dependencies = ["build", "kernel-binary"]
+dependencies = ["build-device", "kernel-binary"]
 command = "echo"
 args = ["\n***===***\n", "Run the following command in your terminal:\n", "  ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${KERNEL_BIN}\n", "***===***\n\n"]
