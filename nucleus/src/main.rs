@@ -74,17 +74,17 @@ fn init_exception_traps() {
 
 #[cfg(not(feature = "noserial"))]
 fn init_uart_serial() {
-    use machine::platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, pl011_uart::PL011Uart};
+    use machine::platform::rpi3::{gpio::GPIO, pl011_uart::PL011Uart};
 
     let gpio = GPIO::default();
-    let uart = MiniUart::default();
-    let uart = uart.prepare(&gpio);
-    CONSOLE.lock(|c| {
-        // Move uart into the global CONSOLE.
-        c.replace_with(uart.into()); // this crashes with Prefetch Abort on virtual method call
-    });
-
-    println!("[0] MiniUART is live!");
+    // let uart = MiniUart::default();
+    // let uart = uart.prepare(&gpio);
+    // CONSOLE.lock(|c| {
+    //     // Move uart into the global CONSOLE.
+    //     c.replace_with(uart.into()); // this crashes with Prefetch Abort on virtual method call
+    // });
+    //
+    // println!("[0] MiniUART is live!");
 
     // Then immediately switch to PL011 (just as an example)
 
@@ -101,7 +101,7 @@ fn init_uart_serial() {
     // physical wires (e.g. the Framebuffer), you don't need to do this,
     // because flush() is anyways called implicitly by replace_with(). This
     // is just a special case.
-    CONSOLE.lock(|c| c.flush());
+    // CONSOLE.lock(|c| c.flush());
 
     match uart.prepare(&gpio) {
         Ok(uart) => {
@@ -117,15 +117,16 @@ fn init_uart_serial() {
 
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
-#[inline]
+// #[inline]
 pub fn kmain() -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
 
+    init_exception_traps();
+
     #[cfg(not(feature = "noserial"))]
     init_uart_serial();
 
-    init_exception_traps();
     init_mmu();
 
     #[cfg(test)]
