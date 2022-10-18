@@ -7,7 +7,7 @@
 #![no_std]
 
 use {
-    core::{hash::Hasher, panic::PanicInfo},
+    core::hash::Hasher,
     cortex_a::asm::barrier,
     machine::{
         devices::SerialOps,
@@ -148,12 +148,25 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
 #[cfg(not(test))]
 #[panic_handler]
-fn panicked(info: &PanicInfo) -> ! {
+fn panicked(info: &core::panic::PanicInfo) -> ! {
     machine::panic::handler(info)
 }
 
-#[cfg(test)]
 #[panic_handler]
-fn panicked(info: &PanicInfo) -> ! {
+#[cfg(test)]
+fn panicked(info: &core::panic::PanicInfo) -> ! {
     machine::panic::handler_for_tests(info)
 }
+
+// #[cfg(test)]
+// mod chainboot_tests {
+//     #[panic_handler]
+//     fn panicked(info: &core::panic::PanicInfo) -> ! {
+//         machine::panic::handler_for_tests(info)
+//     }
+//
+//     #[test_case]
+//     fn nothing() {
+//         assert_eq!(2 + 2, 4);
+//     }
+// }
