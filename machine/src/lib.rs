@@ -66,3 +66,18 @@ static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
 
 // 0x00600000 as usize,
 // 0x007FFFFF as usize,
+
+#[cfg(test)]
+mod lib_tests {
+    #[panic_handler]
+    fn panicked(info: &core::panic::PanicInfo) -> ! {
+        crate::panic::handler_for_tests(info)
+    }
+
+    /// Main for running tests.
+    #[no_mangle]
+    pub unsafe fn main() -> ! {
+        crate::test_main();
+        crate::qemu::semihosting::exit_success()
+    }
+}

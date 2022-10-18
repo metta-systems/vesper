@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "nucleus",
+    "machine",
     "bin/chainboot",
     "bin/chainofcommand"
 ]

@@ -669,7 +669,7 @@ mod tests {
     // by the end() fn.
     #[test_case]
     fn test_prepare_mailbox() {
-        let mut mailbox = Mailbox::default();
+        let mut mailbox = Mailbox::<8>::default();
         let index = mailbox.request();
         let index = mailbox.set_led_on(index, true);
         let mailbox = mailbox.end(index);
