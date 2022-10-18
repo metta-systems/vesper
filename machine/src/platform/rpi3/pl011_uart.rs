@@ -442,6 +442,8 @@ mod tests {
         const BAUD_RATE: u32 = 115_200;
 
         let divisors = RateDivisors::from_clock_and_rate(CLOCK, BAUD_RATE);
+        assert!(divisors.is_ok());
+        let divisors = divisors.unwrap();
         assert_eq!(divisors.integer_baud_rate_divisor, 1);
         assert_eq!(divisors.fractional_baud_rate_divisor, 40);
     }
