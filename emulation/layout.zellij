@@ -1,39 +1,23 @@
----
-template:
-  direction: Horizontal
-  parts:
-    - direction: Vertical
-      borderless: true
-      split_size:
-        Fixed: 1
-      run:
-        plugin:
-          location: "zellij:tab-bar"
-    - direction: Vertical
-      body: true
-
-tabs:
-  - direction: Vertical
-    parts:
-      - direction: Horizontal
-        borderless: true
-        run:
-          command:
-            cmd: "bash"
-            args: ["-c", "bash emulation/qemu_multi_uart.sh"]
-      - direction: Horizontal
-        parts:
-          - direction: Vertical
-            split_size:
-              Percent: 30
-            run:
-              command:
-                cmd: "bash"
-                args: ["-c", "clear; echo -e \"\\033]0;MiniUart\\007\"; bash /dev/ptmx FIRST=1"]
-          - direction: Vertical
-            split_size:
-              Percent: 70
-            run:
-              command:
-                cmd: "bash"
-                args: ["-c", "clear; echo -e \"\\033]0;PL011 Uart\\007\"; bash /dev/ptmx SECOND=1"]
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+        children
+    }
+    tab split_direction="Vertical" {
+        pane split_direction="Vertical" {
+            pane command="bash" borderless=true close_on_exit=true {
+                args "-c" "bash emulation/qemu_multi_uart.sh"
+            }
+            pane split_direction="Horizontal" {
+                pane command="bash" size="30%" close_on_exit=true {
+                    args "-c" "clear; echo -e \"\\033]0;MiniUart\\007\"; bash /dev/ptmx FIRST=1"
+                }
+                pane command="bash" size="70%" close_on_exit=true {
+                    args "-c" "clear; echo -e \"\\033]0;PL011 Uart\\007\"; bash /dev/ptmx SECOND=1"
+                }
+            }
+        }
+    }
+}
