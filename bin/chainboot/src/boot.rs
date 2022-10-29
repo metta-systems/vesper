@@ -1,7 +1,7 @@
 // Make first function small enough so that compiler doesn't try
 // to crate a huge stack frame before we have a chance to set SP.
 #[no_mangle]
-#[link_section = ".text._start"]
+#[link_section = ".text.chainboot.entry"]
 pub unsafe extern "C" fn _start() -> ! {
     use {
         core::cell::UnsafeCell,
@@ -29,7 +29,7 @@ pub unsafe extern "C" fn _start() -> ! {
 }
 
 #[no_mangle]
-#[link_section = ".text._start"]
+#[link_section = ".text.chainboot"]
 pub unsafe extern "C" fn reset() -> ! {
     use core::{
         cell::UnsafeCell,
@@ -91,7 +91,7 @@ pub unsafe extern "C" fn reset() -> ! {
 }
 
 #[inline(always)]
-#[link_section = ".text.boot"]
+#[link_section = ".text.chainboot"]
 unsafe fn local_memcpy(mut dest: *mut u8, mut src: *const u8, n: usize) {
     let dest_end = dest.add(n);
     while dest < dest_end {

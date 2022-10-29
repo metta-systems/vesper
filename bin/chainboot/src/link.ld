@@ -51,8 +51,8 @@ SECTIONS
 
     .text :
     {
-        KEEP(*(.text._start))
-        *(.text.stdmem)
+        KEEP(*(.text.chainboot.entry))
+        *(.text.chainboot)
     } :segment_start_code
 
     /* Align to 8 bytes, b/c relocating the binary is done in u64 chunks */
@@ -70,9 +70,7 @@ SECTIONS
     __binary_nonzero_vma = .;
     .text : AT (ADDR(.text) + SIZEOF(.text))
     {
-        *(.text._start_rust)      /* The Rust entry point */
-        /* *(text.memcpy) -- only relevant for Rust relocator impl which is currently impossible */
-        *(.text*)                 /* Everything else */
+        *(.text*)                 /* The Rust entry point and everything else */
     } :segment_code
 
     .rodata : ALIGN(8) { *(.rodata*) } :segment_code
@@ -95,4 +93,6 @@ SECTIONS
         . = ALIGN(16);
         __bss_size = . - __bss_start;
     } :segment_data
+
+    /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.boot*)}
 }

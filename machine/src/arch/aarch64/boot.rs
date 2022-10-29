@@ -52,7 +52,7 @@ macro_rules! entry {
 /// Totally unsafe! We're in the hardware land.
 /// We assume that no statics are accessed before transition to main from reset() function.
 #[no_mangle]
-#[link_section = ".text.boot.entry"]
+#[link_section = ".text.main.entry"]
 pub unsafe extern "C" fn _boot_cores() -> ! {
     const CORE_0: u64 = 0;
     const CORE_MASK: u64 = 0x3;

@@ -20,7 +20,7 @@ SECTIONS
     __BOOT_START = .;
     .text :
     {
-        KEEP(*(.text.boot.entry)) // Entry point must go first
+        KEEP(*(.text.main.entry)) // Entry point must go first
         *(.text.boot)
         //. = ALIGN(PAGE_SIZE);
         *(.data.boot)
@@ -62,7 +62,7 @@ SECTIONS
         /* __BSS_END = .; unused */
     }
 
-    /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) }
+    /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.chainboot*) }
 }
 
 PROVIDE(current_el0_synchronous   = default_exception_handler);
