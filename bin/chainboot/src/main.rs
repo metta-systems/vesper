@@ -18,8 +18,6 @@ use {
 };
 
 mod boot;
-#[cfg(not(feature = "asm"))]
-mod stdmem;
 
 /// Early init code.
 ///

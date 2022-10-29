@@ -1,12 +1,7 @@
-// Assembly counterpart to this file.
-#[cfg(feature = "asm")]
-core::arch::global_asm!(include_str!("boot.s"));
-
 // Make first function small enough so that compiler doesn't try
 // to crate a huge stack frame before we have a chance to set SP.
 #[no_mangle]
 #[link_section = ".text._start"]
-#[cfg(not(feature = "asm"))]
 pub unsafe extern "C" fn _start() -> ! {
     use {
         core::cell::UnsafeCell,
@@ -35,7 +30,6 @@ pub unsafe extern "C" fn _start() -> ! {
 
 #[no_mangle]
 #[link_section = ".text._start"]
-#[cfg(not(feature = "asm"))]
 pub unsafe extern "C" fn reset() -> ! {
     use core::{
         cell::UnsafeCell,
@@ -66,10 +60,12 @@ pub unsafe extern "C" fn reset() -> ! {
     //     __binary_nonzero_vma.get() as *mut u64,
     //     __binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize,
     // );
-    crate::stdmem::local_memcpy(
+    let binary_size =
+        __binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize;
+    local_memcpy(
         __binary_nonzero_vma.get() as *mut u8,
         __binary_nonzero_lma.get() as *const u8,
-        __binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize,
+        binary_size,
     );
 
     // This tries to call memset() at a wrong linked address - the function is in relocated area!
@@ -89,17 +85,18 @@ pub unsafe extern "C" fn reset() -> ! {
     // Additionally, we assume that no statics are accessed before this point.
     atomic::compiler_fence(Ordering::SeqCst);
 
-    _start_rust(__binary_nonzero_vma.get() as u64 - __boot_core_stack_end_exclusive.get() as u64);
+    let max_kernel_size =
+        __binary_nonzero_vma.get() as u64 - __boot_core_stack_end_exclusive.get() as u64;
+    crate::kernel_init(max_kernel_size)
 }
 
-//--------------------------------------------------------------------------------------------------
-// Public Code
-//--------------------------------------------------------------------------------------------------
-
-/// The Rust entry of the `kernel` binary.
-///
-/// The function is called from the assembly `_start` function, keep it to support "asm" feature.
-#[no_mangle]
-pub unsafe fn _start_rust(max_kernel_size: u64) -> ! {
-    crate::kernel_init(max_kernel_size)
+#[inline(always)]
+#[link_section = ".text.boot"]
+unsafe fn local_memcpy(mut dest: *mut u8, mut src: *const u8, n: usize) {
+    let dest_end = dest.add(n);
+    while dest < dest_end {
+        *dest = *src;
+        dest = dest.add(1);
+        src = src.add(1);
+    }
 }
