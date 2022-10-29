@@ -156,15 +156,10 @@ fn panicked(info: &core::panic::PanicInfo) -> ! {
     machine::panic::handler_for_tests(info)
 }
 
-// #[cfg(test)]
-// mod chainboot_tests {
-//     #[panic_handler]
-//     fn panicked(info: &core::panic::PanicInfo) -> ! {
-//         machine::panic::handler_for_tests(info)
-//     }
-//
-//     #[test_case]
-//     fn nothing() {
-//         assert_eq!(2 + 2, 4);
-//     }
-// }
+#[cfg(test)]
+mod chainboot_tests {
+    #[test_case]
+    fn nothing() {
+        assert_eq!(2 + 2, 4);
+    }
+}
