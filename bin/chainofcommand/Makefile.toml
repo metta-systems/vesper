@@ -1,12 +1,11 @@
+# Disable building everything except the chainofcommand binary.
+
 [tasks.build]
 command = "cargo"
 args = ["build"]
 
 [tasks.chainofcommand]
 dependencies = ["build"]
-
-[tasks.build-device]
-disabled = true
 
 [tasks.test]
 command = "cargo"
@@ -15,6 +14,9 @@ args = ["test"]
 [tasks.clippy]
 command = "cargo"
 args = ["clippy", "--", "-D", "warnings"]
+
+[tasks.build-device]
+disabled = true
 
 [tasks.hopper]
 disabled = true

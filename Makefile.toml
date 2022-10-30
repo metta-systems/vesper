@@ -8,19 +8,34 @@ min_version = "0.32.0"
 default_to_workspace = true
 
 [env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
 DEFAULT_TARGET = "aarch64-vesper-metta"
 
-#
-# === User-configurable ===
-#
+#===================
+# User-configurable
+#===================
 
+#-----------------------
+# Target configuration.
+#-----------------------
+
+# Target triple.
 # Pass TARGET env var if it does not match the default target above.
 TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] } }
 
-# Name of the target board "rpi3" or "rpi4"
+# Name of the target board.
+# Currently supported: "rpi3" or "rpi4"
 TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } }
-# Name of the DTB file for target board configuration, use bcm2710-rpi-3-b-plus.dtb for RasPi3B+
+
+# Name of the DTB file for target board configuration.
+# Use bcm2710-rpi-3-b-plus.dtb for RasPi3B+.
 TARGET_DTB = { value = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2711-rpi-4-b.dtb", condition = { env_not_set = ["TARGET_DTB"] } }
+
+#------------------------
+# Tooling configuration.
+# (AArch64 targets for now)
+#------------------------
 
 # AArch64 QEMU binary
 QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
@@ -34,30 +49,56 @@ GDB = { value = "/usr/local/opt/gdb/HEAD-a2c58332-aarch64/bin/aarch64-unknown-el
 # (RTT patch from http://openocd.zylin.com/#/c/4055/11 has already been merged into main line)
 OPENOCD = { value = "/usr/local/opt/openocd/4d6519593-rtt/bin/openocd", condition = { env_not_set = ["OPENOCD"] } }
 
-# Mounted sdcard partition path
+# Path to a mounted sdcard partition to copy binaries to.
 VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
 
-#
-# === Automatic ===
-#
-CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+#==================================
+# Automatic.
+# Nothing user-configurable below.
+#==================================
 
 RUST_STD = "-Zbuild-std=compiler_builtins,core,alloc"
 RUST_STD_FEATURES = "-Zbuild-std-features=compiler-builtins-mem"
-TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
-PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES}"
 
-DEVICE_FEATURES = "noserial"
-QEMU_FEATURES = "qemu,rpi3" #,noserial"
+# Kernel binary paths.
+KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus"
+KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
+
+# Chain bootloader configuration.
+CHAINBOOT_SERIAL = "/dev/tty.SLAB_USBtoUART"
+CHAINBOOT_BAUD = 115200
+
+#==========
+# Commands
+#==========
 
 OBJCOPY = "rust-objcopy" # Part of `cargo objcopy` in cargo-binutils
 OBJCOPY_PARAMS = "--strip-all -O binary"
 NM = "rust-nm" # Part of `cargo nm` in cargo-binutils
 
+# Containerised commands
 UTILS_CONTAINER = "andrerichter/raspi3-utils"
 DOCKER_CMD = "docker run -it --rm -v ${PWD}:/work -w /work -p 5900:5900"
 QEMU_CONTAINER_CMD = "qemu-system-aarch64"
 
+#================================================================
+# Target settings
+# Build requires "release" flag to properly optimize the binary.
+#================================================================
+
+TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
+PLATFORM_TARGET="--release --target=${TARGET_JSON} --features=${TARGET_FEATURES}"
+
+#=================
+# Target features
+#=================
+
+DEVICE_FEATURES = "noserial"
+QEMU_FEATURES = "qemu,rpi3" #,noserial"
+
+#===================
+# Emulation options
+#===================
 #
 # Could additionally use -nographic to disable GUI -- this shall be useful for automated tests.
 #
@@ -67,18 +108,22 @@ QEMU_DISASM_OPTS = "-d in_asm,unimp,int"
 QEMU_SERIAL_OPTS = "-serial pty -serial stdio"
 QEMU_TESTS_OPTS = "-nographic" #-chardev file,id=char0,mux=on,path=debug.log -mon chardev=char0,mode=readline -semihosting-config chardev=char0 -D error.log"
 
+#================
+# Debug options.
+#================
+
 # For gdb connection:
 # - if this is set, MUST have gdb attached for SYS_WRITE0 to work, otherwise QEMU will crash.
-# - port 5555 used to match JLink configuration, so we can reuse the same GDB command for both QEMU and JTAG.
+# - port 5555 is used to match the JLink configuration, so that we could reuse the same
+#   GDB command for both QEMU and JTAG.
 QEMU_GDB_OPTS = "-gdb tcp::5555 -S"
 
+# GDB startup configuration.
 GDB_CONNECT_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect"
 
-KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus"
-KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
-
-CHAINBOOT_SERIAL = "/dev/tty.SLAB_USBtoUART"
-CHAINBOOT_BAUD = 115200
+#============
+# Make Tasks
+#============
 
 [tasks.default]
 alias = "all"
@@ -92,7 +137,7 @@ args = ["modules", "tree"]
 
 [tasks.do-build]
 command = "cargo"
-args = ["build", "@@split(PLATFORM_TARGET, )", "@@remove-empty(RUST_STD)", "@@remove-empty(RUST_STD_FEATURES)", "--release"]
+args = ["build", "@@split(PLATFORM_TARGET, )", "@@remove-empty(RUST_STD)", "@@remove-empty(RUST_STD_FEATURES)"]
 
 [tasks.build]
 disabled = true
@@ -117,7 +162,7 @@ script = [
 [tasks.expand]
 env = { "TARGET_FEATURES" = "" }
 command = "cargo"
-args = ["expand", "@@split(PLATFORM_TARGET, )", "--release"]
+args = ["expand", "@@split(PLATFORM_TARGET, )"]
 
 [tasks.test]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
