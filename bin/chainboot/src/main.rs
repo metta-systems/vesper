@@ -68,7 +68,7 @@ fn read_u64() -> u64 {
 /// The main function running after the early init.
 #[inline(always)]
 fn kernel_main(max_kernel_size: u64) -> ! {
-    #[cfg(test)]
+    #[cfg(test)] // @todo make a separate kernel_main for testing
     test_main();
 
     print!("{}", LOGO);
