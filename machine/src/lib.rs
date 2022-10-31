@@ -47,7 +47,6 @@ pub static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devic
 
 /// The global allocator for DMA-able memory. That is, memory which is tagged
 /// non-cacheable in the page tables.
-#[allow(dead_code)]
 static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
     sync::NullLock::new(Lazy::new(|| unsafe {
         BuddyAlloc::new(BuddyAllocParam::new(
@@ -57,6 +56,7 @@ static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
             64,
         ))
     }));
+
 // Try the following arguments instead to see all mailbox operations
 // fail. It will cause the allocator to use memory that are marked
 // cacheable and therefore not DMA-safe. The answer from the VideoCore

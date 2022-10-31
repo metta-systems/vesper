@@ -51,11 +51,11 @@ SECTIONS
 
     .text :
     {
-        KEEP(*(.text.chainboot.entry))
+        KEEP(*(.text.chainboot.entry)) /* Boot up and relocation routine */
         *(.text.chainboot)
     } :segment_start_code
 
-    /* Align to 8 bytes, b/c relocating the binary is done in u64 chunks */
+    /* Align to 8 bytes, machine word size */
     . = ALIGN(8);
 
     __binary_nonzero_lma = .;
@@ -70,27 +70,30 @@ SECTIONS
     __binary_nonzero_vma = .;
     .text : AT (ADDR(.text) + SIZEOF(.text))
     {
-        *(.text*)                 /* The Rust entry point and everything else */
+        *(.text .text.*)                 /* The chain loader entry point and everything else */
     } :segment_code
 
-    .rodata : ALIGN(8) { *(.rodata*) } :segment_code
-    .got    : ALIGN(8) { *(.got)     } :segment_code
+    .rodata : ALIGN(8) { *(.rodata .rodata.*) } :segment_code
+    .got    : ALIGN(8) { *(.got    .got.*)    } :segment_code
 
     /***********************************************************************************************
     * Data + BSS
     ***********************************************************************************************/
-    .data : { *(.data*) } :segment_data
+    .data : {
+        *(.data .data.*)
+        /* Fill up to 8 bytes, machine word size */
+        FILL(0x0)
+        . = ALIGN(8);
+    } :segment_data
 
-    /* Fill up to 8 bytes, b/c relocating the binary is done in u64 chunks */
-    . = ALIGN(8);
     __binary_nonzero_vma_end_exclusive = .;
 
-    /* Section is zeroed in pairs of u64. Align start and end to 16 bytes */
-    .bss (NOLOAD) : ALIGN(16)
+    .bss (NOLOAD) : ALIGN(8)
     {
         __bss_start = .;
-        *(.bss*);
-        . = ALIGN(16);
+        *(.bss .bss.*)
+        *(COMMON)
+        . = ALIGN(8);
         __bss_size = . - __bss_start;
     } :segment_data
 

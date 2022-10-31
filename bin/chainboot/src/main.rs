@@ -145,10 +145,16 @@ fn kernel_main(max_kernel_size: u64) -> ! {
     kernel()
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(qemu)))]
 #[panic_handler]
-fn panicked(info: &core::panic::PanicInfo) -> ! {
+fn hw_panicked(info: &core::panic::PanicInfo) -> ! {
     machine::panic::handler(info)
+}
+
+#[cfg(all(not(test), qemu))]
+#[panic_handler]
+fn semihosting_panic(_info: &core::panic::PanicInfo) -> ! {
+    machine::qemu::semihosting::exit_failure()
 }
 
 #[panic_handler]
