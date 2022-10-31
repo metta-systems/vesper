@@ -5,6 +5,7 @@
 #![reexport_test_harness_main = "test_main"]
 #![no_main]
 #![no_std]
+#![no_builtins]
 
 use {
     core::hash::Hasher,
