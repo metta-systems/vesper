@@ -9,11 +9,7 @@
  */
 
 use {
-    super::{
-        gpio,
-        mailbox::{self, Mailbox, MailboxOps},
-        BcmHost,
-    },
+    super::{gpio, BcmHost},
     crate::{
         arch::loop_while,
         devices::{ConsoleOps, SerialOps},
@@ -292,14 +288,15 @@ impl PL011Uart {
         const CLOCK: u32 = 4_000_000; // 4Mhz
         const BAUD_RATE: u32 = 115_200;
 
-        let mut mailbox = Mailbox::<9>::default();
-        let index = mailbox.request();
-        let index = mailbox.set_clock_rate(index, mailbox::clock::UART, CLOCK);
-        let mailbox = mailbox.end(index);
-
-        if mailbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
-            return Err(PL011UartError::MailboxError); // Abort if UART clocks couldn't be set
-        };
+        // use super::mailbox::{self, Mailbox, MailboxOps};
+        // let mut mailbox = Mailbox::<9>::default();
+        // let index = mailbox.request();
+        // let index = mailbox.set_clock_rate(index, mailbox::clock::UART, CLOCK);
+        // let mailbox = mailbox.end(index);
+        //
+        // if mailbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
+        //     return Err(PL011UartError::MailboxError); // Abort if UART clocks couldn't be set
+        // };
 
         // Pin 14
         const UART_TXD: gpio::Function = gpio::Function::Alt0;
