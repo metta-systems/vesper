@@ -97,3 +97,5 @@ SECTIONS
 
     /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.boot*)}
 }
+
+INCLUDE linker/aarch64-exceptions.ld
