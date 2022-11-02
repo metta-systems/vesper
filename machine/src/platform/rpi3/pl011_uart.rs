@@ -398,10 +398,11 @@ impl SerialOps for PreparedPL011Uart {
     }
 }
 
+// @todo Seems like a blanket implementation of ConsoleOps is in order..
 impl ConsoleOps for PreparedPL011Uart {
     /// Send a character
     fn write_char(&self, c: char) {
-        self.write_byte(c as u8)
+        self.write_byte(c as u8) // @fixme write all chars of a unicode scalar value here!!
     }
 
     /// Display a string
