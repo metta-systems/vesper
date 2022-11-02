@@ -27,10 +27,13 @@ use {
     core::cell::UnsafeCell,
     machine::{
         arch, entry, memory,
-        platform::rpi3::{
-            display::{Color, DrawError},
-            mailbox::{channel, Mailbox, MailboxOps},
-            vc::VC,
+        platform::{
+            mini_uart::MiniUart,
+            rpi3::{
+                display::{Color, DrawError},
+                mailbox::{channel, Mailbox, MailboxOps},
+                vc::VC,
+            },
         },
         println, CONSOLE,
     },
@@ -77,14 +80,14 @@ fn init_uart_serial() {
     use machine::platform::rpi3::{gpio::GPIO, pl011_uart::PL011Uart};
 
     let gpio = GPIO::default();
-    // let uart = MiniUart::default();
-    // let uart = uart.prepare(&gpio);
-    // CONSOLE.lock(|c| {
-    //     // Move uart into the global CONSOLE.
-    //     c.replace_with(uart.into()); // this crashes with Prefetch Abort on virtual method call
-    // });
-    //
-    // println!("[0] MiniUART is live!");
+    let uart = MiniUart::default();
+    let uart = uart.prepare(&gpio);
+    CONSOLE.lock(|c| {
+        // Move uart into the global CONSOLE.
+        c.replace_with(uart.into()); // this crashes with Prefetch Abort on virtual method call
+    });
+
+    println!("[0] MiniUART is live!");
 
     // Then immediately switch to PL011 (just as an example)
 
