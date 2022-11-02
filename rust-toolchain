@@ -1,6 +1,6 @@
 [toolchain]
-# 2022-08-12 works
-# 2022-08-13 doesn't
-channel = "nightly-2022-11-01"
+# 08-12 works
+# 08-13 doesn't
+channel = "nightly-2022-08-12"
 components = ["clippy", "llvm-tools-preview", "rust-src", "rustfmt"]
 targets = ["aarch64-unknown-none-softfloat"]
