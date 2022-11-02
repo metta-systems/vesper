@@ -28,6 +28,12 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     machine::debug::jtag::wait_debugger();
 
+    // let mair = MAIR_EL1.get();
+    let con = machine::qemu::QemuConsole {};
+    con.write_string("Testing QEMU output");
+
+    // endless_sleep();
+
     if let Err(x) = unsafe { machine::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
