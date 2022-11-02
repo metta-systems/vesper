@@ -11,7 +11,8 @@ use {
     core::hash::Hasher,
     cortex_a::asm::barrier,
     machine::{
-        devices::SerialOps,
+        devices::{ConsoleOps, SerialOps},
+        endless_sleep,
         platform::rpi3::{gpio::GPIO, pl011_uart::PL011Uart, BcmHost},
         print, println, CONSOLE,
     },
@@ -29,6 +30,12 @@ mod boot;
 unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
+
+    // let mair = MAIR_EL1.get();
+    let con = machine::qemu::QemuConsole {};
+    con.write_string("Testing QEMU output");
+
+    // endless_sleep();
 
     let gpio = GPIO::default();
     let uart = PL011Uart::default();
