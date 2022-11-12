@@ -5,7 +5,7 @@
 
 //! Implementation of aarch64 kernel functions.
 
-use cortex_a::asm;
+use aarch64_cpu::asm;
 
 mod boot;
 #[cfg(feature = "jtag")]

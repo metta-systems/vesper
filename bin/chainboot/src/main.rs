@@ -8,8 +8,8 @@
 #![no_builtins]
 
 use {
+    aarch64_cpu::asm::barrier,
     core::hash::Hasher,
-    cortex_a::asm::barrier,
     machine::{
         devices::SerialOps,
         platform::rpi3::{gpio::GPIO, pl011_uart::PL011Uart, BcmHost},
