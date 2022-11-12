@@ -209,7 +209,7 @@ unsafe fn reset() -> ! {
     extern "Rust" {
         // Boundaries of the .bss section, provided by the linker script.
         static __BSS_START: UnsafeCell<()>;
-        static __BSS_SIZE: UnsafeCell<()>;
+        static __BSS_SIZE_U64S: UnsafeCell<()>;
     }
 
     // Zeroes the .bss section
@@ -223,7 +223,10 @@ unsafe fn reset() -> ! {
     // undesirable optimizations on them.
     // So we use a painter-and-a-size as described in provenance section.
 
-    let bss = slice::from_raw_parts_mut(__BSS_START.get() as *mut u8, __BSS_SIZE.get() as usize);
+    let bss = slice::from_raw_parts_mut(
+        __BSS_START.get() as *mut u64,
+        __BSS_SIZE_U64S.get() as usize,
+    );
     for i in bss {
         *i = 0;
     }

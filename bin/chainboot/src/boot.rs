@@ -40,8 +40,8 @@ pub unsafe extern "C" fn reset() -> ! {
     // Subsequently, this code tries to read values from not-yet-existing data locations.
     extern "Rust" {
         // Boundaries of the .bss section, provided by the linker script
-        static __bss_start: UnsafeCell<()>;
-        static __bss_size: UnsafeCell<()>;
+        static __BSS_START: UnsafeCell<()>;
+        static __BSS_SIZE_U64S: UnsafeCell<()>;
         // Load address of the kernel binary
         static __binary_nonzero_lma: UnsafeCell<()>;
         // Address to relocate to and image size
@@ -73,8 +73,10 @@ pub unsafe extern "C" fn reset() -> ! {
     // Zeroes the .bss section
     // Emulate
     // crate::stdmem::local_memset(__bss_start.get() as *mut u8, 0u8, __bss_size.get() as usize);
-    let bss =
-        core::slice::from_raw_parts_mut(__bss_start.get() as *mut u8, __bss_size.get() as usize);
+    let bss = core::slice::from_raw_parts_mut(
+        __BSS_START.get() as *mut u64,
+        __BSS_SIZE_U64S.get() as usize,
+    );
     for i in bss {
         *i = 0;
     }

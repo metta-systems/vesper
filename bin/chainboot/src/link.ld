@@ -90,11 +90,11 @@ SECTIONS
 
     .bss (NOLOAD) : ALIGN(8)
     {
-        __bss_start = .;
+        __BSS_START = .;
         *(.bss .bss.*)
         *(COMMON)
         . = ALIGN(8);
-        __bss_size = . - __bss_start;
+        __BSS_SIZE_U64S = (. - __BSS_START) / 8;
     } :segment_data
 
     /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.boot*)}
