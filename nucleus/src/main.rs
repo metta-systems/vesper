@@ -39,7 +39,7 @@ use {
     },
 };
 
-entry!(kmain);
+entry!(kernel_main);
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -121,7 +121,7 @@ fn init_uart_serial() {
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
 // #[inline]
-pub fn kmain() -> ! {
+pub fn kernel_main() -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
 
