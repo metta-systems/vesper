@@ -14,6 +14,7 @@
 use {
     super::BcmHost,
     crate::{platform::MMIODerefWrapper, println, DMA_ALLOCATOR},
+    aarch64_cpu::asm::barrier,
     core::{
         alloc::{AllocError, Allocator, Layout},
         mem,
@@ -21,7 +22,6 @@ use {
         result::Result as CoreResult,
         sync::atomic::{compiler_fence, Ordering},
     },
-    cortex_a::asm::barrier,
     snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},

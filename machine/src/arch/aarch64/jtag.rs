@@ -1,8 +1,8 @@
 //! JTAG helper functions.
 
 use {
+    aarch64_cpu::asm,
     core::ptr::{read_volatile, write_volatile},
-    cortex_a::asm,
 };
 
 #[no_mangle]

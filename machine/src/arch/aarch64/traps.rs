@@ -51,7 +51,7 @@
 
 use {
     crate::{arch::endless_sleep, println},
-    cortex_a::{
+    aarch64_cpu::{
         asm::barrier,
         registers::{ESR_EL1, FAR_EL1, SPSR_EL1, VBAR_EL1},
     },

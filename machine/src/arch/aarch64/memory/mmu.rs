@@ -20,7 +20,7 @@ use {
         platform, println,
     },
     core::intrinsics::unlikely,
-    cortex_a::{
+    aarch64_cpu::{
         asm::barrier,
         registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1},
     },
@@ -84,7 +84,7 @@ impl<const AS_SIZE: usize> AddressSpace<AS_SIZE> {
 impl MemoryManagementUnit {
     /// Setup function for the MAIR_EL1 register.
     fn set_up_mair(&self) {
-        use cortex_a::registers::MAIR_EL1;
+        use aarch64_cpu::registers::MAIR_EL1;
         // Define the three memory types that we will map: Normal DRAM, Uncached and device.
         MAIR_EL1.write(
             // Attribute 2 -- Device Memory

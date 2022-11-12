@@ -10,12 +10,12 @@
 
 use {
     crate::endless_sleep,
+    aarch64_cpu::{asm, registers::*},
     core::{
         cell::UnsafeCell,
         slice,
         sync::atomic::{self, Ordering},
     },
-    cortex_a::{asm, registers::*},
     tock_registers::interfaces::{Readable, Writeable},
 };
 

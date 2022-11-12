@@ -4,8 +4,8 @@
 #[link_section = ".text.chainboot.entry"]
 pub unsafe extern "C" fn _start() -> ! {
     use {
+        aarch64_cpu::registers::{MPIDR_EL1, SP},
         core::cell::UnsafeCell,
-        cortex_a::registers::{MPIDR_EL1, SP},
         machine::endless_sleep,
         tock_registers::interfaces::{Readable, Writeable},
     };
