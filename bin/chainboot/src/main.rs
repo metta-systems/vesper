@@ -8,8 +8,8 @@
 #![no_builtins]
 
 use {
+    aarch64_cpu::asm::barrier,
     core::hash::Hasher,
-    cortex_a::asm::barrier,
     machine::{
         devices::{ConsoleOps, SerialOps},
         endless_sleep,

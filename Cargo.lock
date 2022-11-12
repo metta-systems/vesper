@@ -24,6 +24,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aarch64-cpu"
+version = "9.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3aceb88e55ba626a5479279268d009a92d9d00eacce0de1b8c236c7ad31b7225"
+dependencies = [
+ "tock-registers",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -94,10 +103,10 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "chainboot"
 version = "0.0.1"
 dependencies = [
+ "aarch64-cpu",
  "bit_field",
  "bitflags",
  "cfg-if",
- "cortex-a",
  "machine",
  "seahash",
  "snafu",
@@ -143,15 +152,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d4198f73e42b4936b35b5bb248d81d2b595ecb170da0bac7655c54eedfa8da8"
 dependencies = [
  "os_str_bytes",
-]
-
-[[package]]
-name = "cortex-a"
-version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cd4524931a4e0ec50ae91f0d55f571f31ffe11dd9ce2f9905b8343c018c25bb"
-dependencies = [
- "tock-registers",
 ]
 
 [[package]]
@@ -363,11 +363,11 @@ dependencies = [
 name = "machine"
 version = "0.0.1"
 dependencies = [
+ "aarch64-cpu",
  "bit_field",
  "bitflags",
  "buddy-alloc",
  "cfg-if",
- "cortex-a",
  "once_cell",
  "qemu-exit",
  "snafu",
@@ -433,10 +433,10 @@ dependencies = [
 name = "nucleus"
 version = "0.0.1"
 dependencies = [
+ "aarch64-cpu",
  "bit_field",
  "bitflags",
  "cfg-if",
- "cortex-a",
  "machine",
  "snafu",
  "tock-registers",
