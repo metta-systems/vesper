@@ -19,16 +19,6 @@ extend = "qemu-runner"
 env = { "KERNEL_BIN" = "${KERNEL_BIN}" }
 run_task = "zellij-config"
 
-[tasks.gdb-config]
-script_runner = "@duckscript"
-script = [
-'''
-    writefile ${GDB_CONNECT_FILE} "target extended-remote :5555\n"
-    appendfile ${GDB_CONNECT_FILE} "break *0x80000\n"
-    appendfile ${GDB_CONNECT_FILE} "continue\n"
-'''
-]
-
 [tasks.gdb]
 dependencies = ["build", "kernel-binary", "gdb-config"]
 env = { "RUST_GDB" = "${GDB}" }
