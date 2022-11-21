@@ -13,7 +13,10 @@ use {
     machine::{
         devices::{ConsoleOps, SerialOps},
         endless_sleep,
-        platform::rpi3::{gpio::GPIO, pl011_uart::PL011Uart, BcmHost},
+        platform::{
+            mini_uart::MiniUart,
+            rpi3::{gpio::GPIO, pl011_uart::PL011Uart, BcmHost},
+        },
         print, println, CONSOLE,
     },
     seahash::SeaHasher,
@@ -38,6 +41,12 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     // endless_sleep();
 
     let gpio = GPIO::default();
+    let uart = MiniUart::default().prepare(&gpio);
+    CONSOLE.lock(|c| {
+        // Move uart into the global CONSOLE.
+        c.replace_with(uart.into());
+    });
+
     let uart = PL011Uart::default();
     let uart = uart.prepare(&gpio).expect("What could go wrong?");
     CONSOLE.lock(|c| {
