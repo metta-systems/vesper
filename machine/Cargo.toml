@@ -43,3 +43,5 @@ once_cell = { version = "1.16", default-features = false, features = ["unstable"
 [lib]
 name = "machine"
 test = true
+
+# TODO: for proper testing we need to build libmachine with test_runner as a binary!
