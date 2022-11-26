@@ -48,6 +48,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98161a4e3e2184da77bb14f02184cdd111e83bbbcc9979dfee3c44b9a85f5602"
 
 [[package]]
+name = "armv8a_panic_semihosting"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd0544340353e49541c854e053c43cfc1853755d36366aaee230c8b7652bd39f"
+dependencies = [
+ "armv8a_semihosting",
+]
+
+[[package]]
+name = "armv8a_semihosting"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1dc113b2901e50b2974fa59cb0302291520c7b31aa2c285277e69d43b5d9a367"
+
+[[package]]
 name = "atty"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -434,6 +449,7 @@ name = "nucleus"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
+ "armv8a_panic_semihosting",
  "bit_field",
  "bitflags",
  "cfg-if",
