@@ -30,6 +30,8 @@ rpi4 = ["machine/rpi4"]
 [dependencies]
 machine = { path = "../machine" }
 aarch64-cpu.workspace = true
+armv8a_semihosting = { git = "https://github.com/metta-systems/armv8a-semihosting", version = "0.0", branch = "fix/int-drop" }
+armv8a_panic_semihosting = { version = "0.0", features = ["info"] }
 bit_field.workspace = true
 bitflags.workspace = true
 cfg-if.workspace = true
