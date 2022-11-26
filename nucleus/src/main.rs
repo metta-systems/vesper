@@ -72,7 +72,7 @@ fn init_exception_traps() {
         arch::traps::set_vbar_el1_checked(__exception_vectors_start.get() as u64)
             .expect("Vector table properly aligned!");
     }
-    println!("[!] Exception traps set up");
+    // println!("[!] Exception traps set up");
 }
 
 #[cfg(not(feature = "noserial"))]
