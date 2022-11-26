@@ -48,7 +48,7 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     });
 
     let uart = PL011Uart::default();
-    let uart = uart.prepare(&gpio).expect("What could go wrong?");
+    let uart = uart.prepare(&gpio).expect("What could go wrong?"); // prepare fails
     CONSOLE.lock(|c| {
         // Move uart into the global CONSOLE.
         c.replace_with(uart.into());
