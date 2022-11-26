@@ -14,6 +14,7 @@ use {
         arch::loop_while,
         devices::{ConsoleOps, SerialOps},
         platform::MMIODerefWrapper,
+        qemu::QemuConsole,
     },
     snafu::Snafu,
     tock_registers::{
@@ -296,6 +297,8 @@ impl PL011Uart {
         let mailbox = mailbox.end(index);
 
         if mailbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
+            let con = QemuConsole {};
+            con.write_string("mailbox call failed!");
             return Err(PL011UartError::MailboxError); // Abort if UART clocks couldn't be set
         };
         //====================================================================================
