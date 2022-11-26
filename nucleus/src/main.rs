@@ -25,8 +25,11 @@
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 
+use armv8a_panic_semihosting as _;
+
 #[cfg(not(test))]
 use core::panic::PanicInfo;
+
 #[allow(unused_imports)]
 use machine::devices::serial::SerialOps;
 use {
@@ -50,6 +53,13 @@ entry!(kernel_init);
 pub unsafe fn kernel_init() -> ! {
     #[cfg(feature = "jtag")]
     machine::debug::jtag::wait_debugger();
+
+    if armv8a_semihosting::hprintln!("Lets go!").is_err() {
+        // opening semihosting stdout fails!
+        armv8a_semihosting::debug::exit(armv8a_semihosting::debug::EXIT_FAILURE);
+    }
+
+    panic!("Off you go!");
 
     exception::handling_init();
 
@@ -128,11 +138,11 @@ pub fn kernel_main() -> ! {
     reboot()
 }
 
-#[cfg(not(test))]
-#[panic_handler]
-fn panicked(info: &PanicInfo) -> ! {
-    machine::panic::handler(info)
-}
+// #[cfg(not(test))]
+// #[panic_handler]
+// fn panicked(info: &PanicInfo) -> ! {
+//     machine::panic::handler(info)
+// }
 
 fn print_mmu_state_and_features() {
     // use machine::memory::mmu::interface::MMU;
