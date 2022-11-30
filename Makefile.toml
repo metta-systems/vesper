@@ -108,6 +108,212 @@ QEMU_DISASM_OPTS = "-d in_asm,unimp,int"
 QEMU_SERIAL_OPTS = "-serial pty -serial stdio"
 QEMU_TESTS_OPTS = "-nographic" #-chardev file,id=char0,mux=on,path=debug.log -mon chardev=char0,mode=readline -semihosting-config chardev=char0 -D error.log"
 
+# For -d trace:
+# E.g. -d trace:arm*,bcm2835_*,gic*,memory_*,pl011_*
+
+# Also, try -d exec,nochain,out_asm for a full runtime dump?
+
+#134   │ arm_gt_cntvoff_write
+#135   │ arm_gt_ctl_write
+#136   │ arm_gt_cval_write
+#137   │ arm_gt_imask_toggle
+#138   │ arm_gt_recalc
+#139   │ arm_gt_recalc_disabled
+#140   │ arm_gt_tval_write
+#141   │ armsse_cpu_pwrctrl_read
+#142   │ armsse_cpu_pwrctrl_write
+#143   │ armsse_cpuid_read
+#144   │ armsse_cpuid_write
+#145   │ armsse_mhu_read
+#146   │ armsse_mhu_write
+
+#224   │ bcm2835_cprman_read
+#225   │ bcm2835_cprman_write
+#226   │ bcm2835_cprman_write_invalid_magic
+#227   │ bcm2835_ic_set_cpu_irq
+#228   │ bcm2835_ic_set_gpu_irq
+#229   │ bcm2835_mbox_irq
+#230   │ bcm2835_mbox_property
+#231   │ bcm2835_mbox_read
+#232   │ bcm2835_mbox_write
+#233   │ bcm2835_sdhost_edm_change
+#234   │ bcm2835_sdhost_read
+#235   │ bcm2835_sdhost_update_irq
+#236   │ bcm2835_sdhost_write
+#237   │ bcm2835_systmr_irq_ack
+#238   │ bcm2835_systmr_read
+#239   │ bcm2835_systmr_run
+#240   │ bcm2835_systmr_timer_expired
+#241   │ bcm2835_systmr_write
+
+#782   │ gic_acknowledge_irq
+#783   │ gic_cpu_read
+#784   │ gic_cpu_write
+#785   │ gic_disable_irq
+#786   │ gic_dist_read
+#787   │ gic_dist_write
+#788   │ gic_enable_irq
+#789   │ gic_hyp_read
+#790   │ gic_hyp_write
+#791   │ gic_lr_entry
+#792   │ gic_set_irq
+#793   │ gic_update_bestirq
+#794   │ gic_update_maintenance_irq
+#795   │ gic_update_set_irq
+
+#796   │ gicv3_cpuif_set_irqs
+#797   │ gicv3_cpuif_update
+#798   │ gicv3_cpuif_virt_set_irqs
+#799   │ gicv3_cpuif_virt_set_maint_irq
+#800   │ gicv3_cpuif_virt_update
+#801   │ gicv3_dist_badread
+#802   │ gicv3_dist_badwrite
+#803   │ gicv3_dist_read
+#804   │ gicv3_dist_set_irq
+#805   │ gicv3_dist_write
+#806   │ gicv3_icc_ap_read
+#807   │ gicv3_icc_ap_write
+#808   │ gicv3_icc_bpr_read
+#809   │ gicv3_icc_bpr_write
+#810   │ gicv3_icc_ctlr_el3_read
+#811   │ gicv3_icc_ctlr_el3_write
+#812   │ gicv3_icc_ctlr_read
+#813   │ gicv3_icc_ctlr_write
+#814   │ gicv3_icc_dir_write
+#815   │ gicv3_icc_eoir_write
+#816   │ gicv3_icc_generate_sgi
+#817   │ gicv3_icc_hppir0_read
+#818   │ gicv3_icc_hppir1_read
+#819   │ gicv3_icc_iar0_read
+#820   │ gicv3_icc_iar1_read
+#821   │ gicv3_icc_igrpen1_el3_read
+#822   │ gicv3_icc_igrpen1_el3_write
+#823   │ gicv3_icc_igrpen_read
+#824   │ gicv3_icc_igrpen_write
+#825   │ gicv3_icc_pmr_read
+#826   │ gicv3_icc_pmr_write
+#827   │ gicv3_icc_rpr_read
+#828   │ gicv3_ich_ap_read
+#829   │ gicv3_ich_ap_write
+#830   │ gicv3_ich_eisr_read
+#831   │ gicv3_ich_elrsr_read
+#832   │ gicv3_ich_hcr_read
+#833   │ gicv3_ich_hcr_write
+#834   │ gicv3_ich_lr32_read
+#835   │ gicv3_ich_lr32_write
+#836   │ gicv3_ich_lr_read
+#837   │ gicv3_ich_lr_write
+#838   │ gicv3_ich_lrc_read
+#839   │ gicv3_ich_lrc_write
+#840   │ gicv3_ich_misr_read
+#841   │ gicv3_ich_vmcr_read
+#842   │ gicv3_ich_vmcr_write
+#843   │ gicv3_ich_vtr_read
+#844   │ gicv3_icv_ap_read
+#845   │ gicv3_icv_ap_write
+#846   │ gicv3_icv_bpr_read
+#847   │ gicv3_icv_bpr_write
+#848   │ gicv3_icv_ctlr_read
+#849   │ gicv3_icv_ctlr_write
+#850   │ gicv3_icv_dir_write
+#851   │ gicv3_icv_eoir_write
+#852   │ gicv3_icv_hppir_read
+#853   │ gicv3_icv_iar_read
+#854   │ gicv3_icv_igrpen_read
+#855   │ gicv3_icv_igrpen_write
+#856   │ gicv3_icv_pmr_read
+#857   │ gicv3_icv_pmr_write
+#858   │ gicv3_icv_rpr_read
+#859   │ gicv3_its_badread
+#860   │ gicv3_its_badwrite
+#861   │ gicv3_its_cmd_clear
+#862   │ gicv3_its_cmd_discard
+#863   │ gicv3_its_cmd_int
+#864   │ gicv3_its_cmd_inv
+#865   │ gicv3_its_cmd_invall
+#866   │ gicv3_its_cmd_mapc
+#867   │ gicv3_its_cmd_mapd
+#868   │ gicv3_its_cmd_mapi
+#869   │ gicv3_its_cmd_mapti
+#870   │ gicv3_its_cmd_movall
+#871   │ gicv3_its_cmd_movi
+#872   │ gicv3_its_cmd_sync
+#873   │ gicv3_its_cmd_unknown
+#874   │ gicv3_its_cmd_vinvall
+#875   │ gicv3_its_cmd_vmapi
+#876   │ gicv3_its_cmd_vmapp
+#877   │ gicv3_its_cmd_vmapti
+#878   │ gicv3_its_cmd_vmovi
+#879   │ gicv3_its_cmd_vmovp
+#880   │ gicv3_its_cmd_vsync
+#881   │ gicv3_its_cte_read
+#882   │ gicv3_its_cte_read_fault
+#883   │ gicv3_its_cte_write
+#884   │ gicv3_its_dte_read
+#885   │ gicv3_its_dte_read_fault
+#886   │ gicv3_its_dte_write
+#887   │ gicv3_its_ite_read
+#888   │ gicv3_its_ite_read_fault
+#889   │ gicv3_its_ite_write
+#890   │ gicv3_its_process_command
+#891   │ gicv3_its_read
+#892   │ gicv3_its_translation_write
+#893   │ gicv3_its_vte_read
+#894   │ gicv3_its_vte_read_fault
+#895   │ gicv3_its_vte_write
+#896   │ gicv3_its_write
+#897   │ gicv3_redist_badread
+#898   │ gicv3_redist_badwrite
+#899   │ gicv3_redist_read
+#900   │ gicv3_redist_send_sgi
+#901   │ gicv3_redist_set_irq
+#902   │ gicv3_redist_write
+
+#979   │ i2c_ack
+#980   │ i2c_event
+#981   │ i2c_recv
+#982   │ i2c_send
+#983   │ i2c_send_async
+
+#1313   │ memory_region_ops_read
+#1314   │ memory_region_ops_write
+#1315   │ memory_region_ram_device_read
+#1316   │ memory_region_ram_device_write
+#1317   │ memory_region_subpage_read
+#1318   │ memory_region_subpage_write
+#1319   │ memory_region_sync_dirty
+
+#1988   │ pl011_baudrate_change
+#1989   │ pl011_can_receive
+#1990   │ pl011_irq_state
+#1991   │ pl011_put_fifo
+#1992   │ pl011_put_fifo_full
+#1993   │ pl011_read
+#1994   │ pl011_read_fifo
+#1995   │ pl011_write
+
+#3038   │ sdcard_app_command
+#3039   │ sdcard_ejected
+#3040   │ sdcard_erase
+#3041   │ sdcard_inquiry_cmd41
+#3042   │ sdcard_inserted
+#3043   │ sdcard_lock
+#3044   │ sdcard_normal_command
+#3045   │ sdcard_powerup
+#3046   │ sdcard_read_block
+#3047   │ sdcard_read_data
+#3048   │ sdcard_reset
+#3049   │ sdcard_response
+#3050   │ sdcard_set_blocklen
+#3051   │ sdcard_set_voltage
+#3052   │ sdcard_unlock
+#3053   │ sdcard_write_block
+#3054   │ sdcard_write_data
+
+# Bunch of USB stuff from line 3497 till line 3812
+
+
+
 #================
 # Debug options.
 #================
