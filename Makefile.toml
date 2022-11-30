@@ -103,9 +103,9 @@ QEMU_FEATURES = "qemu,rpi3" #,noserial"
 # Could additionally use -nographic to disable GUI -- this shall be useful for automated tests.
 #
 # QEMU has renamed the RasPi machines since version 6.2.0, use just `raspi3` for previous versions.
-QEMU_OPTS = "-M ${QEMU_MACHINE} -semihosting-config enable=on,target=native"
-QEMU_DISASM_OPTS = "-d in_asm,unimp,int,mmu,cpu_reset,guest_errors"
-QEMU_SERIAL_OPTS = "-monitor none -serial stdio"  #-serial pty -serial stdio"
+QEMU_OPTS = "-M ${QEMU_MACHINE} -semihosting"
+QEMU_DISASM_OPTS = "-d in_asm,unimp,int"
+QEMU_SERIAL_OPTS = "-serial pty -serial stdio"
 QEMU_TESTS_OPTS = "-nographic" #-chardev file,id=char0,mux=on,path=debug.log -mon chardev=char0,mode=readline -semihosting-config chardev=char0 -D error.log"
 
 # For -d trace:
