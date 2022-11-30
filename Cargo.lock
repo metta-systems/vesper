@@ -450,6 +450,7 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "armv8a_panic_semihosting",
+ "armv8a_semihosting",
  "bit_field",
  "bitflags",
  "cfg-if",

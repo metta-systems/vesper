@@ -36,7 +36,8 @@ bit_field = "0.10"
 bitflags = "1.3"
 cfg-if = "1.0"
 snafu = { version = "0.7", default-features = false }
-armv8a_panic_semihosting = { version = "0.0" }
+armv8a_semihosting = { version = "0.0" }
+armv8a_panic_semihosting = { version = "0.0", features = ["info"] }
 
 [[bin]]
 name = "nucleus"

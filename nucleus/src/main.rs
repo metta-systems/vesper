@@ -17,9 +17,12 @@
 #![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
 #![deny(warnings)]
+#![allow(unused)]
 
-#[cfg(not(test))]
-use core::panic::PanicInfo;
+use armv8a_panic_semihosting as _;
+
+// #[cfg(not(test))]
+// use core::panic::PanicInfo;
 #[allow(unused_imports)]
 use machine::devices::SerialOps;
 use {
@@ -41,11 +44,11 @@ use {
 
 entry!(kernel_main);
 
-#[cfg(not(test))]
-#[panic_handler]
-fn panicked(info: &PanicInfo) -> ! {
-    machine::panic::handler(info)
-}
+// #[cfg(not(test))]
+// #[panic_handler]
+// fn panicked(info: &PanicInfo) -> ! {
+//     machine::panic::handler(info)
+// }
 
 fn print_mmu_state_and_features() {
     use machine::memory::mmu::interface::MMU;
@@ -122,22 +125,28 @@ fn init_uart_serial() {
 /// `arch` crate is responsible for calling it.
 // #[inline]
 pub fn kernel_main() -> ! {
-    #[cfg(feature = "jtag")]
-    machine::arch::jtag::wait_debugger();
+    if armv8a_semihosting::hprintln!("Lets go!").is_err() {
+        // opening semihosting stdout fails!
+        armv8a_semihosting::debug::exit(armv8a_semihosting::debug::EXIT_FAILURE);
+    }
 
-    init_exception_traps();
-
-    #[cfg(not(feature = "noserial"))]
-    init_uart_serial();
-
-    init_mmu();
-
-    #[cfg(test)]
-    test_main();
-
-    command_prompt();
-
-    reboot()
+    panic!("Off you go!");
+    // #[cfg(feature = "jtag")]
+    // machine::arch::jtag::wait_debugger();
+    //
+    // init_exception_traps();
+    //
+    // #[cfg(not(feature = "noserial"))]
+    // init_uart_serial();
+    //
+    // init_mmu();
+    //
+    // #[cfg(test)]
+    // test_main();
+    //
+    // command_prompt();
+    //
+    // reboot()
 }
 
 //------------------------------------------------------------
