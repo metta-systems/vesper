@@ -7,14 +7,14 @@ layout {
     }
     tab split_direction="Vertical" {
         pane split_direction="Vertical" {
-            pane command="bash" borderless=true {
+            pane command="bash" borderless=true close_on_exit=true {
                 args "-c" "bash emulation/qemu_multi_uart.sh"
             }
             pane split_direction="Horizontal" {
-                pane command="bash" size="30%" {
+                pane command="bash" size="30%" close_on_exit=true {
                     args "-c" "clear; echo -e \"\\033]0;MiniUart\\007\"; bash /dev/ptmx FIRST=1"
                 }
-                pane command="bash" size="70%" {
+                pane command="bash" size="70%" close_on_exit=true {
                     args "-c" "clear; echo -e \"\\033]0;PL011 Uart\\007\"; bash /dev/ptmx SECOND=1"
                 }
             }
