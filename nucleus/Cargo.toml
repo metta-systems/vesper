@@ -38,6 +38,8 @@ cfg-if = "1.0"
 snafu = { version = "0.7", default-features = false }
 armv8a_semihosting = { version = "0.0" }
 armv8a_panic_semihosting = { version = "0.0", features = ["info"] }
+buddy-alloc = { git = "https://github.com/metta-systems/buddy-alloc", version = "0.6.0", branch = "feature/allocator-api" }
+once_cell = { version = "1.16", default-features = false, features = ["unstable"] }
 
 [[bin]]
 name = "nucleus"

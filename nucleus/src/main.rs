@@ -15,7 +15,7 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
-#![deny(missing_docs)]
+#![allow(missing_docs)]
 #![deny(warnings)]
 #![allow(unused)]
 
@@ -23,13 +23,45 @@ use armv8a_panic_semihosting as _;
 
 use {
     aarch64_cpu::{asm, registers::*},
+    buddy_alloc::{BuddyAlloc, BuddyAllocParam},
     core::{
         cell::UnsafeCell,
         slice,
         sync::atomic::{self, Ordering},
     },
+    once_cell::unsync::Lazy,
     tock_registers::interfaces::{Readable, Writeable},
 };
+
+pub struct NullLock<T> {
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T> Sync for NullLock<T> {}
+
+impl<T> NullLock<T> {
+    pub const fn new(data: T) -> NullLock<T> {
+        NullLock {
+            data: UnsafeCell::new(data),
+        }
+    }
+}
+
+impl<T> NullLock<T> {
+    pub fn lock<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        // In a real lock, there would be code around this line that ensures
+        // that this mutable reference will ever only be given out to one thread
+        // at a time.
+        f(unsafe { &mut *self.data.get() })
+    }
+}
+
+static DMA_ALLOCATOR: NullLock<Lazy<BuddyAlloc>> = NullLock::new(Lazy::new(|| unsafe {
+    BuddyAlloc::new(BuddyAllocParam::new(0xb800 as *const u8, 0xb800, 64))
+}));
 
 /// Loop forever in sleep mode.
 #[inline]
