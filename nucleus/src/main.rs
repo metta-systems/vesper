@@ -21,105 +21,250 @@
 
 use armv8a_panic_semihosting as _;
 
-// #[cfg(not(test))]
-// use core::panic::PanicInfo;
-#[allow(unused_imports)]
-use machine::devices::SerialOps;
 use {
-    cfg_if::cfg_if,
-    core::cell::UnsafeCell,
-    machine::{
-        arch, entry, memory,
-        platform::{
-            mini_uart::MiniUart,
-            rpi3::{
-                display::{Color, DrawError},
-                mailbox::{channel, Mailbox, MailboxOps},
-                vc::VC,
-            },
-        },
-        println, CONSOLE,
+    aarch64_cpu::{asm, registers::*},
+    core::{
+        cell::UnsafeCell,
+        slice,
+        sync::atomic::{self, Ordering},
     },
+    tock_registers::interfaces::{Readable, Writeable},
 };
 
-entry!(kernel_main);
-
-// #[cfg(not(test))]
-// #[panic_handler]
-// fn panicked(info: &PanicInfo) -> ! {
-//     machine::panic::handler(info)
-// }
-
-fn print_mmu_state_and_features() {
-    use machine::memory::mmu::interface::MMU;
-    memory::mmu::mmu().print_features();
-}
-
-fn init_mmu() {
-    unsafe {
-        use machine::memory::mmu::interface::MMU;
-        if let Err(e) = memory::mmu::mmu().enable_mmu_and_caching() {
-            panic!("MMU: {}", e);
-        }
+/// Loop forever in sleep mode.
+#[inline]
+pub fn endless_sleep() -> ! {
+    loop {
+        asm::wfe();
     }
-    println!("[!] MMU initialised");
-    print_mmu_state_and_features();
 }
 
-fn init_exception_traps() {
+/// Type check the user-supplied entry function.
+#[macro_export]
+macro_rules! entry {
+    ($path:path) => {
+        /// # Safety
+        /// Only type-checks!
+        #[export_name = "main"]
+        #[inline(always)]
+        pub unsafe fn __main() -> ! {
+            // type check the given path
+            let f: fn() -> ! = $path;
+
+            f()
+        }
+    };
+}
+
+/// Entrypoint of the processor.
+///
+/// Parks all cores except core0 and checks if we started in EL2/EL3. If
+/// so, proceeds with setting up EL1.
+///
+/// This is invoked from the linker script, does arch-specific init
+/// and passes control to the kernel boot function reset().
+///
+/// Dissection of various RPi core boot stubs is available
+/// [here](https://leiradel.github.io/2019/01/20/Raspberry-Pi-Stubs.html).
+///
+/// # Safety
+///
+/// Totally unsafe! We're in the hardware land.
+/// We assume that no statics are accessed before transition to main from reset() function.
+#[no_mangle]
+#[link_section = ".text.main.entry"]
+pub unsafe extern "C" fn _boot_cores() -> ! {
+    const CORE_0: u64 = 0;
+    const CORE_MASK: u64 = 0x3;
+    // Can't match values with dots in match, so use intermediate consts.
+    #[cfg(qemu)]
+    const EL3: u64 = CurrentEL::EL::EL3.value;
+    const EL2: u64 = CurrentEL::EL::EL2.value;
+    const EL1: u64 = CurrentEL::EL::EL1.value;
+
     extern "Rust" {
-        static __exception_vectors_start: UnsafeCell<()>;
+        // Stack top
+        // Stack placed before first executable instruction
+        static __STACK_START: UnsafeCell<()>;
     }
+    // Set stack pointer. Used in case we started in EL1.
+    SP.set(__STACK_START.get() as u64);
 
-    unsafe {
-        arch::traps::set_vbar_el1_checked(__exception_vectors_start.get() as u64)
-            .expect("Vector table properly aligned!");
-    }
-    // println!("[!] Exception traps set up");
-}
+    shared_setup_and_enter_pre();
 
-#[cfg(not(feature = "noserial"))]
-fn init_uart_serial() {
-    use machine::platform::rpi3::{gpio::GPIO, pl011_uart::PL011Uart};
-
-    let gpio = GPIO::default();
-    let uart = MiniUart::default();
-    let uart = uart.prepare(&gpio);
-    CONSOLE.lock(|c| {
-        // Move uart into the global CONSOLE.
-        c.replace_with(uart.into()); // this crashes with Prefetch Abort on virtual method call
-    });
-
-    println!("[0] MiniUART is live!");
-
-    // Then immediately switch to PL011 (just as an example)
-
-    let uart = PL011Uart::default();
-
-    // uart.init() will reconfigure the GPIO, which causes a race against
-    // the MiniUart that is still putting out characters on the physical
-    // line that are already buffered in its TX FIFO.
-    //
-    // To ensure the CPU doesn't rewire the GPIO before the MiniUart has put
-    // its last character, explicitly flush it before rewiring.
-    //
-    // If you switch to an output that happens to not use the same pair of
-    // physical wires (e.g. the Framebuffer), you don't need to do this,
-    // because flush() is anyways called implicitly by replace_with(). This
-    // is just a special case.
-    // CONSOLE.lock(|c| c.flush());
-
-    match uart.prepare(&gpio) {
-        Ok(uart) => {
-            CONSOLE.lock(|c| {
-                // Move uart into the global CONSOLE.
-                c.replace_with(uart.into());
-            });
-            println!("[0] UART0 is live!");
+    if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
+        match CurrentEL.get() {
+            #[cfg(qemu)]
+            EL3 => setup_and_enter_el1_from_el3(),
+            EL2 => setup_and_enter_el1_from_el2(),
+            EL1 => reset(),
+            _ => endless_sleep(),
         }
-        Err(_) => println!("[0] Error switching to PL011 UART, continue with MiniUART"),
     }
+
+    // if not core0 or not EL3/EL2/EL1, infinitely wait for events
+    endless_sleep()
 }
+
+#[link_section = ".text.boot"]
+#[inline(always)]
+fn shared_setup_and_enter_pre() {
+    // Enable timer counter registers for EL1
+    CNTHCTL_EL2.write(CNTHCTL_EL2::EL1PCEN::SET + CNTHCTL_EL2::EL1PCTEN::SET);
+
+    // No virtual offset for reading the counters
+    CNTVOFF_EL2.set(0);
+
+    // Set System Control Register (EL1)
+    // Make memory non-cacheable and disable MMU mapping.
+    // Disable alignment checks, because Rust fmt module uses a little optimization
+    // that happily reads and writes half-words (ldrh/strh) from/to unaligned addresses.
+    SCTLR_EL1.write(
+        SCTLR_EL1::I::NonCacheable
+            + SCTLR_EL1::C::NonCacheable
+            + SCTLR_EL1::M::Disable
+            + SCTLR_EL1::A::Disable
+            + SCTLR_EL1::SA::Disable
+            + SCTLR_EL1::SA0::Disable,
+    );
+
+    // enable_armv6_unaligned_access();
+
+    // Set Hypervisor Configuration Register (EL2)
+    // Set EL1 execution state to AArch64
+    // @todo Explain the SWIO bit (SWIO hardwired on Pi3)
+    HCR_EL2.write(HCR_EL2::RW::EL1IsAarch64 + HCR_EL2::SWIO::SET);
+    // @todo disable VM bit to prevent stage 2 MMU translations
+}
+
+#[link_section = ".text.boot"]
+#[inline]
+fn shared_setup_and_enter_post() -> ! {
+    extern "Rust" {
+        // Stack top
+        static __STACK_START: UnsafeCell<()>;
+    }
+    // Set up SP_EL1 (stack pointer), which will be used by EL1 once
+    // we "return" to it.
+    unsafe {
+        SP_EL1.set(__STACK_START.get() as u64);
+    }
+
+    // Use `eret` to "return" to EL1. This will result in execution of
+    // `reset()` in EL1.
+    asm::eret()
+}
+
+/// Real hardware boot-up sequence.
+///
+/// Prepare and execute transition from EL2 to EL1.
+#[link_section = ".text.boot"]
+#[inline]
+fn setup_and_enter_el1_from_el2() -> ! {
+    // Set Saved Program Status Register (EL2)
+    // Set up a simulated exception return.
+    //
+    // Fake a saved program status, where all interrupts were
+    // masked and SP_EL1 was used as a stack pointer.
+    SPSR_EL2.write(
+        SPSR_EL2::D::Masked
+            + SPSR_EL2::A::Masked
+            + SPSR_EL2::I::Masked
+            + SPSR_EL2::F::Masked
+            + SPSR_EL2::M::EL1h, // Use SP_EL1
+    );
+
+    // Make the Exception Link Register (EL2) point to reset().
+    ELR_EL2.set(reset as *const () as u64);
+
+    shared_setup_and_enter_post()
+}
+
+/// QEMU boot-up sequence.
+///
+/// Processors enter EL3 after reset.
+/// ref: http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf
+/// section: 5.5.1
+/// However, GPU init code must be switching it down to EL2.
+/// QEMU can't emulate Raspberry Pi properly (no VC boot code), so it starts in EL3.
+///
+/// Prepare and execute transition from EL3 to EL1.
+/// (from https://github.com/s-matyukevich/raspberry-pi-os/blob/master/docs/lesson02/rpi-os.md)
+#[cfg(qemu)]
+#[link_section = ".text.boot"]
+#[inline]
+fn setup_and_enter_el1_from_el3() -> ! {
+    // Set Secure Configuration Register (EL3)
+    SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
+
+    // Set Saved Program Status Register (EL3)
+    // Set up a simulated exception return.
+    //
+    // Fake a saved program status, where all interrupts were
+    // masked and SP_EL1 was used as a stack pointer.
+    SPSR_EL3.write(
+        SPSR_EL3::D::Masked
+            + SPSR_EL3::A::Masked
+            + SPSR_EL3::I::Masked
+            + SPSR_EL3::F::Masked
+            + SPSR_EL3::M::EL1h, // Use SP_EL1
+    );
+
+    // Make the Exception Link Register (EL3) point to reset().
+    ELR_EL3.set(reset as *const () as u64);
+
+    shared_setup_and_enter_post()
+}
+
+/// Reset function.
+///
+/// Initializes the bss section before calling into the user's `main()`.
+///
+/// # Safety
+///
+/// Totally unsafe! We're in the hardware land.
+/// We assume that no statics are accessed before transition to main from this function.
+#[link_section = ".text.boot"]
+unsafe fn reset() -> ! {
+    extern "Rust" {
+        // Boundaries of the .bss section, provided by the linker script.
+        static __BSS_START: UnsafeCell<()>;
+        static __BSS_SIZE_U64S: UnsafeCell<()>;
+    }
+
+    // Zeroes the .bss section
+    // Based on https://gist.github.com/skoe/dbd3add2fc3baa600e9ebc995ddf0302 and discussions
+    // on pointer provenance in closing r0 issues (https://github.com/rust-embedded/cortex-m-rt/issues/300)
+
+    // NB: https://doc.rust-lang.org/nightly/core/ptr/index.html#provenance
+    // Importing pointers like `__BSS_START` and `__BSS_END` and performing pointer
+    // arithmetic on them directly may lead to Undefined Behavior, because the
+    // compiler may assume they come from different allocations and thus performing
+    // undesirable optimizations on them.
+    // So we use a painter-and-a-size as described in provenance section.
+
+    let bss = slice::from_raw_parts_mut(
+        __BSS_START.get() as *mut u64,
+        __BSS_SIZE_U64S.get() as usize,
+    );
+    for i in bss {
+        *i = 0;
+    }
+
+    // Don't cross this line with loads and stores. The initializations
+    // done above could be "invisible" to the compiler, because we write to the
+    // same memory location that is used by statics after this point.
+    // Additionally, we assume that no statics are accessed before this point.
+    atomic::compiler_fence(Ordering::SeqCst);
+
+    extern "Rust" {
+        fn main() -> !;
+    }
+
+    main()
+}
+
+entry!(kernel_main);
 
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
@@ -131,146 +276,4 @@ pub fn kernel_main() -> ! {
     }
 
     panic!("Off you go!");
-    // #[cfg(feature = "jtag")]
-    // machine::arch::jtag::wait_debugger();
-    //
-    // init_exception_traps();
-    //
-    // #[cfg(not(feature = "noserial"))]
-    // init_uart_serial();
-    //
-    // init_mmu();
-    //
-    // #[cfg(test)]
-    // test_main();
-    //
-    // command_prompt();
-    //
-    // reboot()
-}
-
-//------------------------------------------------------------
-// Start a command prompt
-//------------------------------------------------------------
-fn command_prompt() {
-    'cmd_loop: loop {
-        let mut buf = [0u8; 64];
-
-        match CONSOLE.lock(|c| c.command_prompt(&mut buf)) {
-            b"mmu" => init_mmu(),
-            b"feats" => print_mmu_state_and_features(),
-            #[cfg(not(feature = "noserial"))]
-            b"uart" => init_uart_serial(),
-            b"disp" => check_display_init(),
-            b"trap" => check_data_abort_trap(),
-            b"map" => machine::platform::memory::mmu::virt_mem_layout().print_layout(),
-            b"led on" => set_led(true),
-            b"led off" => set_led(false),
-            b"help" => print_help(),
-            b"end" => break 'cmd_loop,
-            x => println!("[!] Unknown command {:?}, try 'help'", x),
-        }
-    }
-}
-
-fn print_help() {
-    println!("Supported console commands:");
-    println!("  mmu  - initialize MMU");
-    println!("  feats - print MMU state and supported features");
-    #[cfg(not(feature = "noserial"))]
-    println!("  uart - try to reinitialize UART serial");
-    println!("  disp - try to init VC framebuffer and draw some text");
-    println!("  trap - trigger and recover from a data abort exception");
-    println!("  map  - show kernel memory layout");
-    println!("  led [on|off]  - change RPi LED status");
-    println!("  end  - leave console and reset board");
-}
-
-fn set_led(enable: bool) {
-    let mut mbox = Mailbox::<8>::default();
-    let index = mbox.request();
-    let index = mbox.set_led_on(index, enable);
-    let mbox = mbox.end(index);
-
-    mbox.call(channel::PropertyTagsArmToVc)
-        .map_err(|e| {
-            println!("Mailbox call returned error {}", e);
-            println!("Mailbox contents: {:?}", mbox);
-        })
-        .ok();
-}
-
-fn reboot() -> ! {
-    cfg_if! {
-        if #[cfg(feature = "qemu")] {
-            println!("Bye, shutting down QEMU");
-            machine::qemu::semihosting::exit_success()
-        } else {
-            use machine::platform::rpi3::power::Power;
-
-            println!("Bye, going to reset now");
-            Power::default().reset()
-        }
-    }
-}
-
-fn check_display_init() {
-    display_graphics()
-        .map_err(|e| {
-            println!("Error in display: {}", e);
-        })
-        .ok();
-}
-
-fn display_graphics() -> Result<(), DrawError> {
-    if let Ok(mut display) = VC::init_fb(800, 600, 32) {
-        println!("Display created");
-
-        display.clear(Color::black());
-        println!("Display cleared");
-
-        display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
-        display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255))?;
-
-        let mut buf = [0u8; 64];
-        let s = machine::write_to::show(&mut buf, format_args!("Display width {}", display.width));
-
-        if s.is_err() {
-            display.draw_text(50, 150, "Error displaying", Color::red())?
-        } else {
-            display.draw_text(50, 150, s.unwrap(), Color::white())?
-        }
-
-        display.draw_text(150, 50, "RED", Color::red())?;
-        display.draw_text(160, 60, "GREEN", Color::green())?;
-        display.draw_text(170, 70, "BLUE", Color::blue())?;
-    }
-    Ok(())
-}
-
-fn check_data_abort_trap() {
-    // Cause an exception by accessing a virtual address for which no
-    // address translations have been set up.
-    //
-    // This line of code accesses the address 3 GiB, but page tables are
-    // only set up for the range [0..1) GiB.
-    let big_addr: u64 = 3 * 1024 * 1024 * 1024;
-    unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
-
-    println!("[i] Whoa! We recovered from an exception.");
-}
-
-#[cfg(test)]
-mod main_tests {
-    use {super::*, core::panic::PanicInfo};
-
-    #[panic_handler]
-    fn panicked(info: &PanicInfo) -> ! {
-        machine::panic::handler_for_tests(info)
-    }
-
-    #[test_case]
-    fn test_data_abort_trap() {
-        check_data_abort_trap()
-    }
 }

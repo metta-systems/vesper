@@ -16,18 +16,18 @@ edition = "2021"
 maintenance = { status = "experimental" }
 
 [features]
-noserial = ["machine/noserial"]
+noserial = []
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.
-jtag = ["machine/jtag"]
+jtag = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = ["machine/qemu"]
+qemu = []
 # Mutually exclusive features to choose a target board
-rpi3 = ["machine/rpi3"]
-rpi4 = ["machine/rpi4"]
+rpi3 = []
+rpi4 = []
 
 [dependencies]
-machine = { path = "../machine" }
+#machine = { path = "../machine" }
 aarch64-cpu = "9.0"
 tock-registers = "0.8.1"
 ux = { version = "0.1", default-features = false }
