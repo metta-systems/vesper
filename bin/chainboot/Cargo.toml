@@ -14,17 +14,17 @@ maintenance = { status = "experimental" }
 [features]
 default = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = ["machine/qemu"]
+qemu = ["nucleus/qemu"]
 # Build for debugging it over JTAG/SWD connection - halts on first non-startup function start.
-jtag = ["machine/jtag"]
+jtag = ["nucleus/jtag"]
 # Dummy feature, ignored in this crate.
 noserial = []
 # Mutually exclusive features to choose a target board
-rpi3 = ["machine/rpi3"]
-rpi4 = ["machine/rpi4"]
+rpi3 = ["nucleus/rpi3"]
+rpi4 = ["nucleus/rpi4"]
 
 [dependencies]
-machine = { path = "../../machine" }
+nucleus = { path = "../../nucleus" }
 aarch64-cpu = "9.0"
 tock-registers = "0.8.1"
 ux = { version = "0.1", default-features = false }

@@ -122,7 +122,7 @@ dependencies = [
  "bit_field",
  "bitflags",
  "cfg-if",
- "machine",
+ "nucleus",
  "seahash",
  "snafu",
  "tock-registers",
@@ -375,23 +375,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "machine"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "bit_field",
- "bitflags",
- "buddy-alloc",
- "cfg-if",
- "once_cell",
- "qemu-exit",
- "snafu",
- "tock-registers",
- "usize_conversions",
- "ux",
-]
-
-[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -453,8 +436,10 @@ dependencies = [
  "armv8a_semihosting",
  "bit_field",
  "bitflags",
+ "buddy-alloc",
  "cfg-if",
- "machine",
+ "once_cell",
+ "qemu-exit",
  "snafu",
  "tock-registers",
  "usize_conversions",
