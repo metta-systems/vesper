@@ -104,9 +104,9 @@ QEMU_FEATURES = "qemu,rpi3" #,noserial"
 #
 # QEMU has renamed the RasPi machines since version 6.2.0, use just `raspi3` for previous versions.
 QEMU_OPTS = "-M ${QEMU_MACHINE} -semihosting"
-QEMU_DISASM_OPTS = "-d in_asm,unimp,int"
-QEMU_SERIAL_OPTS = "-serial pty -serial stdio"
-QEMU_TESTS_OPTS = "-nographic" #-chardev file,id=char0,mux=on,path=debug.log -mon chardev=char0,mode=readline -semihosting-config chardev=char0 -D error.log"
+QEMU_DISASM_OPTS = "-d unimp,int,mmu,cpu_reset,guest_errors" # --preconfig -singlestep
+QEMU_SERIAL_OPTS = "" #-serial file:qemu.out -serial file:qemu.out2" #-serial pty -serial stdio"
+QEMU_TESTS_OPTS = "-nographic" # -chardev file,id=char0,mux=on,path=debug.log -mon chardev=char0,mode=readline -semihosting-config chardev=char0" # -D error.log"
 
 # For -d trace:
 # E.g. -d trace:arm*,bcm2835_*,gic*,memory_*,pl011_*
