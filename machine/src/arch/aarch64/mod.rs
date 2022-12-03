@@ -8,10 +8,10 @@
 use aarch64_cpu::asm;
 
 mod boot;
-#[cfg(feature = "jtag")]
-pub mod jtag;
-pub mod memory;
-pub mod traps;
+// #[cfg(feature = "jtag")]
+// pub mod jtag;
+// pub mod memory;
+// pub mod traps;
 
 /// Loop forever in sleep mode.
 #[inline]
