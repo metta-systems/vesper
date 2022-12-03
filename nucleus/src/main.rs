@@ -18,6 +18,7 @@
 #![allow(missing_docs)]
 #![deny(warnings)]
 #![allow(unused)]
+#![feature(allocator_api)]
 
 use armv8a_panic_semihosting as _;
 
@@ -306,6 +307,12 @@ pub fn kernel_main() -> ! {
         // opening semihosting stdout fails!
         armv8a_semihosting::debug::exit(armv8a_semihosting::debug::EXIT_FAILURE);
     }
+
+    use core::alloc::{Allocator, Layout};
+
+    DMA_ALLOCATOR
+        .lock(|a| unsafe { a.allocate(Layout::from_size_align(1024, 16).unwrap()) })
+        .unwrap();
 
     panic!("Off you go!");
 }
