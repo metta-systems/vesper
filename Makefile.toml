@@ -107,6 +107,15 @@ QEMU_OPTS = "-M ${QEMU_MACHINE} -semihosting"
 QEMU_DISASM_OPTS = "-d unimp,int,mmu,cpu_reset,guest_errors" # --preconfig -singlestep
 QEMU_SERIAL_OPTS = "" #-serial file:qemu.out -serial file:qemu.out2" #-serial pty -serial stdio"
 QEMU_TESTS_OPTS = "-nographic" # -chardev file,id=char0,mux=on,path=debug.log -mon chardev=char0,mode=readline -semihosting-config chardev=char0" # -D error.log"
+#Note that some other command line options may implicitly create multiplexed character backends;
+#for instance -serial mon:stdio creates a multiplexed stdio backend connected to the serial port
+#and the QEMU monitor, and -nographic also multiplexes the console and the monitor to stdio.
+
+
+# Mon commands
+# https://qemu-project.gitlab.io/qemu/system/monitor.html
+#info qtree
+#   Show device tree.
 
 # For -d trace:
 # E.g. -d trace:arm*,bcm2835_*,gic*,memory_*,pl011_*
