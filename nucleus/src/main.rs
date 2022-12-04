@@ -11,13 +11,13 @@
 #![no_main]
 #![feature(ptr_internals)]
 #![feature(format_args_nl)]
-// #![feature(strict_provenance)]
+#![feature(strict_provenance)]
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![allow(missing_docs)]
 #![deny(warnings)]
-#![allow(unused)]
+#![deny(unused)]
 #![feature(allocator_api)]
 
 use armv8a_panic_semihosting as _;
