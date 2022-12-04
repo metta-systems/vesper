@@ -22,7 +22,7 @@
 
 use armv8a_panic_semihosting as _;
 
-use machine::{entry, DMA_ALLOCATOR};
+use machine::entry; //, DMA_ALLOCATOR};
 
 entry!(kernel_main);
 
@@ -35,12 +35,11 @@ pub fn kernel_main() -> ! {
         armv8a_semihosting::debug::exit(armv8a_semihosting::debug::EXIT_FAILURE);
     }
 
-    use core::alloc::{Allocator, Layout};
+    // use core::alloc::{Allocator, Layout};
 
-    // extrcat allocator to machine crate now
-    DMA_ALLOCATOR
-        .lock(|a| unsafe { a.allocate(Layout::from_size_align(1024, 16).unwrap()) })
-        .unwrap();
+    // DMA_ALLOCATOR
+    //     .lock(|a| a.allocate(Layout::from_size_align(1024, 16).unwrap()))
+    //     .unwrap();
 
     panic!("Off you go!");
 }
