@@ -58,7 +58,8 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
         . = ALIGN(PAGE_SIZE); /* Align up to page size */
-        __BSS_SIZE_U64S = (. - __BSS_START) / 8;
+        __BSS_END = .;
+        __BSS_SIZE_U64S = (__BSS_END - __BSS_START) / 8;
     }
 
     /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.chainboot*) }

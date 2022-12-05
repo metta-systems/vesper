@@ -224,13 +224,13 @@ unsafe fn reset() -> ! {
     // undesirable optimizations on them.
     // So we use a painter-and-a-size as described in provenance section.
 
-    // let bss = slice::from_raw_parts_mut(
-    //     __BSS_START.get() as *mut u64,
-    //     __BSS_SIZE_U64S.get() as usize,
-    // );
-    // for i in bss {
-    //     *i = 0;
-    // }
+    let bss = core::slice::from_raw_parts_mut(
+        __BSS_START.get() as *mut u64,
+        __BSS_SIZE_U64S.get() as usize,
+    );
+    for i in bss {
+        *i = 0;
+    }
 
     // Don't cross this line with loads and stores. The initializations
     // done above could be "invisible" to the compiler, because we write to the
