@@ -369,7 +369,7 @@ run_task = "do-build"
 dependencies = ["build-qemu", "kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
-    "echo Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} with ${KERNEL_BIN}",
+    "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} with ${KERNEL_BIN}",
     "rm -f qemu.log",
     "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${TARGET_DTB} -kernel ${KERNEL_BIN} 2>&1 | tee qemu.log"
 ]
@@ -407,8 +407,8 @@ script = [
     outBin = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
     cp ${BINARY_FILE} ${outElf}
     exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${BINARY_FILE} ${outBin}
-    echo Copied ${binaryFile} to ${outElf}
-    echo Converted ${binaryFile} to ${outBin}
+    echo 🔄 Copied ${binaryFile} to ${outElf}
+    echo 💫 Converted ${binaryFile} to ${outBin}
 '''
 ]
 install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = ["--help"] }
@@ -425,7 +425,7 @@ script_runner = "@duckscript"
 script = [
 '''
     binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
-    echo Run QEMU %{QEMU_OPTS} %{QEMU_TESTS_OPTS} with target/${binaryFile}.bin
+    echo 🏎️ Run QEMU %{QEMU_OPTS} %{QEMU_TESTS_OPTS} with target/${binaryFile}.bin
     exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
 '''
 ]
@@ -438,7 +438,7 @@ script = [
     writefile ${GDB_CONNECT_FILE} "target extended-remote :5555\n"
     appendfile ${GDB_CONNECT_FILE} "break *0x80000\n"
     appendfile ${GDB_CONNECT_FILE} "break kernel_main\n"
-    echo Generated GDB config file
+    echo 🖌️ Generated GDB config file
 '''
 ]
 #appendfile ${GDB_CONNECT_FILE} "continue\n"
@@ -474,4 +474,4 @@ script = [
 [tasks.chainboot]
 dependencies = ["build-device", "kernel-binary"]
 command = "echo"
-args = ["\n***===***\n", "Run the following command in your terminal:\n", "  ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${KERNEL_BIN}\n", "***===***\n\n"]
+args = ["\n***===***\n", "🏎️ Run the following command in your terminal:\n", "🏎️   ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${KERNEL_BIN}\n", "***===***\n\n"]
