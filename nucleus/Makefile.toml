@@ -23,7 +23,7 @@ run_task = "zellij-config"
 dependencies = ["build", "kernel-binary", "gdb-config"]
 env = { "RUST_GDB" = "${GDB}" }
 script = [
-    "exec < /dev/tty && rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}"
+    "exec < /dev/tty && pipx run gdbgui -g \"rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}\""
 ]
 
 [tasks.install-nm]
