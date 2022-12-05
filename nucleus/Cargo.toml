@@ -8,7 +8,7 @@ homepage = "https://github.com/metta-systems/vesper"
 repository = "https://github.com/metta-systems/vesper"
 readme = "README.md"
 license = "BlueOak-1.0.0"
-categories = ["no-std", "embedded", "os"]
+categories = ["no-std", "os"]
 publish = false
 edition = "2021"
 
@@ -28,7 +28,6 @@ rpi3 = []
 rpi4 = []
 
 [dependencies]
-qemu-exit = "3.0"
 aarch64-cpu = "9.0"
 tock-registers = "0.8.1"
 ux = { version = "0.1", default-features = false }
@@ -39,7 +38,9 @@ cfg-if = "1.0"
 snafu = { version = "0.7", default-features = false }
 buddy-alloc = { git = "https://github.com/metta-systems/buddy-alloc", version = "0.6.0", branch = "feature/allocator-api" }
 once_cell = { version = "1.16", default-features = false, features = ["unstable"] }
-armv8a_semihosting = { version = "0.0" }
+
+qemu-exit = "3.0"
+armv8a_semihosting = { git = "https://github.com/metta-systems/armv8a-semihosting", version = "0.0", branch = "fix/int-drop" }
 armv8a_panic_semihosting = { version = "0.0", features = ["info"] }
 
 [[bin]]
