@@ -203,6 +203,8 @@ fn setup_and_enter_el1_from_el3() -> ! {
 ///
 /// Totally unsafe! We're in the hardware land.
 /// We assume that no statics are accessed before transition to main from this function.
+///
+/// We are guaranteed to be in EL1 non-secure mode here.
 #[link_section = ".text.boot"]
 unsafe fn reset() -> ! {
     extern "Rust" {
