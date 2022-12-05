@@ -5,9 +5,5 @@ pipelining = true
 [target.aarch64-vesper-metta]
 rustflags = [
     "-C", "target-cpu=cortex-a53", # raspi 2 .. 3b+
-    #"-C", "target-cpu=cortex-a73", # raspi 4
-    # ^^ how to set this dynamicall depending on the features??
-    "-C", "embed-bitcode=yes",
-    "-Z", "macro-backtrace",
 ]
 runner = "cargo make test-runner"

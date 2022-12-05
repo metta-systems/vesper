@@ -18,23 +18,6 @@ use {
     tock_registers::interfaces::{Readable, Writeable},
 };
 
-/// Type check the user-supplied entry function.
-#[macro_export]
-macro_rules! entry {
-    ($path:path) => {
-        /// # Safety
-        /// Only type-checks!
-        #[export_name = "main"]
-        #[inline(always)]
-        pub unsafe fn __main() -> ! {
-            // type check the given path
-            let f: fn() -> ! = $path;
-
-            f()
-        }
-    };
-}
-
 /// Entrypoint of the processor.
 ///
 /// Parks all cores except core0 and checks if we started in EL2/EL3. If
