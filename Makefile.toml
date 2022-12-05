@@ -369,9 +369,10 @@ run_task = "do-build"
 dependencies = ["build-qemu", "kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
-    "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} with ${KERNEL_BIN}",
+    "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} with ${KERNEL_BIN}\n\n\n",
     "rm -f qemu.log",
-    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${TARGET_DTB} -kernel ${KERNEL_BIN} 2>&1 | tee qemu.log"
+    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${TARGET_DTB} -kernel ${KERNEL_BIN} 2>&1 | tee qemu.log",
+    "echo \n\n"
 ]
 
 [tasks.expand]
