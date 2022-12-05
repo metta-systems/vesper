@@ -28,10 +28,10 @@ machine::entry!(kernel_main);
 /// `arch` crate is responsible for calling it.
 // #[inline]
 pub fn kernel_main() -> ! {
-    armv8a_semihosting::hprintln!("Lets go!").unwrap(); // {
-                                                        //     // opening semihosting stdout fails!
-                                                        //     armv8a_semihosting::debug::exit(armv8a_semihosting::debug::EXIT_FAILURE);
-                                                        // }
+    armv8a_semihosting::hprintln!("Letsgo!").ok();
+    // armv8a_semihosting::hprintln!("Lets {}!", "go").ok();
+    // let r = armv8a_semihosting::hprintln!("Lets {}!", "go");
+    // armv8a_semihosting::hprintln!("{:?}", r).ok();
 
     use {
         core::alloc::{Allocator, Layout},
