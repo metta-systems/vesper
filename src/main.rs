@@ -26,6 +26,8 @@ pub unsafe fn __main() -> ! {
 pub fn kernel_main() -> ! {
     armv8a_semihosting::hprintln!("Letsgo!").ok();
 
+    // if you don't comment it out, it works on 08-12 and breaks on 08-13.
+    // if you comment this line out on 08-13 everything else starts to work.
     armv8a_semihosting::hprintln!("Lets {}!", "go").ok(); // culprit
 
     armv8a_semihosting::hprintln!("Lets go 2!").ok();
