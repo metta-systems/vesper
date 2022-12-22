@@ -7,17 +7,11 @@ edition = "2021"
 
 [features]
 default = []
-# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = []
+rpi4 = []
 
 [dependencies]
 aarch64-cpu = "9.2"
 tock-registers = "0.8.1"
-armv8a_semihosting = { git = "https://github.com/metta-systems/armv8a-semihosting", version = "0.0", branch = "fix/int-drop" }
-armv8a_panic_semihosting = { version = "0.0", features = ["info"] }
-
-[patch.crates-io]
-armv8a_semihosting = { git = "https://github.com/metta-systems/armv8a-semihosting", branch = "fix/int-drop" }
 
 [profile.dev]
 opt-level = 's' # otherwise boot code will be mangled

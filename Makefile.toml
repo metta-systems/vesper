@@ -130,6 +130,10 @@ args = ["build", "@@split(PLATFORM_TARGET, )", "@@remove-empty(RUST_STD)", "@@re
 [tasks.build]
 disabled = true
 
+[tasks.build-device]
+env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
+run_task = "do-build"
+
 [tasks.build-qemu]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 run_task = "do-build"

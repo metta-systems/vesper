@@ -12,26 +12,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "armv8a_panic_semihosting"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd0544340353e49541c854e053c43cfc1853755d36366aaee230c8b7652bd39f"
-dependencies = [
- "armv8a_semihosting",
-]
-
-[[package]]
-name = "armv8a_semihosting"
-version = "0.0.1"
-source = "git+https://github.com/metta-systems/armv8a-semihosting?branch=fix/int-drop#a0226b5477e19c20819e6ca0b5e5c28bf25e54a0"
-
-[[package]]
 name = "nucleus"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
- "armv8a_panic_semihosting",
- "armv8a_semihosting",
  "tock-registers",
 ]
 

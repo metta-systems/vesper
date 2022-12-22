@@ -4,6 +4,6 @@ pipelining = true
 
 [target.aarch64-vesper-metta]
 rustflags = [
-    "-C", "target-cpu=cortex-a53", # raspi 2 .. 3b+
+    "-C", "target-cpu=cortex-a73", # raspi 4
 ]
 runner = "cargo make test-runner"
