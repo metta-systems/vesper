@@ -2,6 +2,7 @@
 
 use {
     anyhow::{anyhow, Result},
+    async_utf8_decoder::Utf8Decoder,
     bytes::Bytes,
     clap::{Arg, Command},
     crossterm::{
@@ -11,7 +12,7 @@ use {
         tty::IsTty,
     },
     defer::defer,
-    futures::{future::FutureExt, StreamExt},
+    futures::{channel::mpsc, future::FutureExt, AsyncRead, SinkExt, StreamExt, TryStreamExt},
     seahash::SeaHasher,
     std::{
         fs::File,
@@ -20,45 +21,48 @@ use {
         path::Path,
         time::Duration,
     },
-    tokio::{io::AsyncReadExt, sync::mpsc},
+    tokio::io::AsyncReadExt,
     tokio_serial::{SerialPortBuilderExt, SerialStream},
 };
 
 trait Writable = std::io::Write + Send;
 trait ThePath = AsRef<Path> + std::fmt::Display + Clone + Sync + Send + 'static;
 
-async fn expect(
+async fn expect<R>(
     to_console2: &mpsc::Sender<Vec<u8>>,
-    from_serial: &mut mpsc::Receiver<Vec<u8>>,
+    from_serial: &mut Utf8Decoder<R>,
     m: &str,
-) -> Result<()> {
-    if let Some(buf) = from_serial.recv().await {
-        if buf.len() >= m.len() && String::from_utf8_lossy(&buf[..m.len()]) == m {
-            if buf.len() > m.len() {
-                to_console2.send(buf[m.len()..].to_vec()).await?;
-            }
-            return Ok(());
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+{
+    for x in m.chars() {
+        let next_char = from_serial.next().await;
+        // to_console2.send(next_char).await?;
+
+        if next_char.is_none() {
+            return Err(anyhow!(
+                "Failed to receive expected value {:?}: got empty buf",
+                m,
+            ));
         }
-        to_console2.send(buf.clone()).await?;
-        return Err(anyhow!(
-            "Failed to receive expected value {:?}: got {:?}",
-            m,
-            buf
-        ));
+
+        if Some(next_char) != x {
+            return Err(anyhow!(
+                "Failed to receive expected value {:?}: got {:?}",
+                m,
+                next_char
+            ));
+        }
     }
-    Err(anyhow!(
-        "Failed to receive expected value {:?}: got empty buf",
-        m,
-    ))
+    Ok(())
 }
 
 async fn load_kernel<P>(to_console2: &mpsc::Sender<Vec<u8>>, kernel: P) -> Result<(File, u64)>
 where
     P: ThePath,
 {
-    to_console2
-        .send("[>>] Loading kernel image\n".into())
-        .await?;
+    to_console2.send("⏩ Loading kernel image\n".into()).await?;
 
     let kernel_file = match std::fs::File::open(kernel.clone()) {
         Ok(file) => file,
@@ -67,20 +71,21 @@ where
     let kernel_size: u64 = kernel_file.metadata()?.len();
 
     to_console2
-        .send(format!("[>>] .. {} ({} bytes)\n", kernel, kernel_size).into())
+        .send(format!("⏩ .. {} ({} bytes)\n", kernel, kernel_size).into())
         .await?;
 
     Ok((kernel_file, kernel_size))
 }
 
-async fn send_kernel<P>(
+async fn send_kernel<P, R>(
     to_console2: &mpsc::Sender<Vec<u8>>,
-    to_serial: &mpsc::Sender<Vec<u8>>,
-    from_serial: &mut mpsc::Receiver<Vec<u8>>,
+    to_serial: &mpsc::Sender<Vec<u8>>, // Utf8Encoder??
+    from_serial: &mut Utf8Decoder<R>,
     kernel: P,
 ) -> Result<()>
 where
     P: ThePath,
+    R: AsyncRead + Unpin,
 {
     let (kernel_file, kernel_size) = load_kernel(to_console2, kernel).await?;
 
@@ -178,6 +183,9 @@ where
 
     let mut event_reader = EventStream::new();
 
+    let mut from_internal = Utf8Decoder::with_capacity(16, from_internal.into_async_read());
+    let mut from_serial = Utf8Decoder::with_capacity(16, from_serial.into_async_read());
+
     loop {
         tokio::select! {
             biased;
@@ -190,7 +198,7 @@ where
             }
 
             Some(received) = from_serial.recv() => {
-                // execute!(w, cursor::MoveToNextLine(1), style::Print(format!("[>>] Received {} bytes from serial", from_serial.len())), cursor::MoveToNextLine(1))?;
+                execute!(w, cursor::MoveToNextLine(1), style::Print(format!("[>>] Received {} bytes from serial", from_serial.len())), cursor::MoveToNextLine(1))?;
 
                 for &x in &received[..] {
                     if x == 0x3 {
@@ -356,7 +364,7 @@ async fn main() -> Result<()> {
         execute!(
             stdout,
             cursor::RestorePosition,
-            style::Print("[>>] Opening serial port       ")
+            style::Print("⏩ Opening serial port       ")
         )?;
 
         // tokio_serial::new() creates a builder with 8N1 setup without flow control by default.
