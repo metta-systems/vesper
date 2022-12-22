@@ -284,7 +284,11 @@ impl PreparedMiniUart {
 impl PreparedMiniUart {
     /// Send a character
     fn write_char(&self, c: char) {
-        self.write_byte(c as u8);
+        let mut b = [0u8; 4];
+        let _ = c.encode_utf8(&mut b);
+        for x in 0..c.len_utf8() {
+            self.write_byte(b[x]);
+        }
     }
 
     /// Display a string
