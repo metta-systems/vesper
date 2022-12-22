@@ -1,4 +1,5 @@
 #![feature(trait_alias)]
+#![feature(let_else)]
 
 use {
     anyhow::{anyhow, Result},
@@ -36,29 +37,31 @@ async fn expect<R>(
 where
     R: AsyncRead + Unpin,
 {
+    let mut s = String::new();
     for x in m.chars() {
         let next_char = from_serial.next().await;
         // to_console2.send(next_char).await?;
 
-        if next_char.is_none() {
+        let Some(Ok(c)) = next_char else {
             return Err(anyhow!(
                 "Failed to receive expected value {:?}: got empty buf",
                 m,
             ));
-        }
+        };
 
-        if Some(next_char) != x {
-            return Err(anyhow!(
-                "Failed to receive expected value {:?}: got {:?}",
-                m,
-                next_char
-            ));
-        }
+        s.push_str(&c);
+    }
+    if s != m {
+        return Err(anyhow!(
+            "Failed to receive expected value {:?}: got {:?}",
+            m,
+            s
+        ));
     }
     Ok(())
 }
 
-async fn load_kernel<P>(to_console2: &mpsc::Sender<Vec<u8>>, kernel: P) -> Result<(File, u64)>
+async fn load_kernel<P>(to_console2: &mut mpsc::Sender<Vec<u8>>, kernel: P) -> Result<(File, u64)>
 where
     P: ThePath,
 {
@@ -78,8 +81,8 @@ where
 }
 
 async fn send_kernel<P, R>(
-    to_console2: &mpsc::Sender<Vec<u8>>,
-    to_serial: &mpsc::Sender<Vec<u8>>, // Utf8Encoder??
+    to_console2: &mut mpsc::Sender<Vec<u8>>,
+    to_serial: &mut mpsc::Sender<Vec<u8>>, // Utf8Encoder??
     from_serial: &mut Utf8Decoder<R>,
     kernel: P,
 ) -> Result<()>
