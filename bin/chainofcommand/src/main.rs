@@ -1,9 +1,11 @@
 #![feature(trait_alias)]
-#![feature(let_else)]
+// #![feature(let_else)] // stabilised in 1.65.0
+#![feature(slice_take)]
+#![feature(utf8_chunks)]
 
 use {
+    crate::utf8_codec::Utf8Codec,
     anyhow::{anyhow, Result},
-    async_utf8_decoder::Utf8Decoder,
     bytes::Bytes,
     clap::{Arg, Command},
     crossterm::{
@@ -13,7 +15,7 @@ use {
         tty::IsTty,
     },
     defer::defer,
-    futures::{channel::mpsc, future::FutureExt, AsyncRead, SinkExt, StreamExt, TryStreamExt},
+    futures::{future::FutureExt, Stream, StreamExt},
     seahash::SeaHasher,
     std::{
         fs::File,
@@ -22,32 +24,43 @@ use {
         path::Path,
         time::Duration,
     },
-    tokio::io::AsyncReadExt,
+    tokio::{
+        io::{AsyncRead, AsyncReadExt},
+        sync::mpsc,
+    },
     tokio_serial::{SerialPortBuilderExt, SerialStream},
+    tokio_stream::wrappers::ReceiverStream,
+    tokio_util::{codec::FramedRead, io::StreamReader},
 };
+
+mod utf8_codec;
 
 trait Writable = std::io::Write + Send;
 trait ThePath = AsRef<Path> + std::fmt::Display + Clone + Sync + Send + 'static;
+trait SerialFramedReceiver = AsyncRead + Unpin;
+type Sender = mpsc::Sender<Result<Message>>;
+type Receiver = mpsc::Receiver<Result<Message>>;
 
-async fn expect<R>(
-    to_console2: &mpsc::Sender<Vec<u8>>,
-    from_serial: &mut Utf8Decoder<R>,
+async fn expect<FromStream>(
+    to_console2: &Sender,
+    from_serial: &mut FromStream,
     m: &str,
 ) -> Result<()>
 where
-    R: AsyncRead + Unpin,
+    FromStream: Stream<Item = String> + Unpin,
 {
     let mut s = String::new();
     for x in m.chars() {
         let next_char = from_serial.next().await;
-        // to_console2.send(next_char).await?;
 
-        let Some(Ok(c)) = next_char else {
+        let Some(c) = next_char else {
             return Err(anyhow!(
                 "Failed to receive expected value {:?}: got empty buf",
                 m,
             ));
         };
+
+        to_console2.send(Ok(Message::Text(c.clone()))).await?;
 
         s.push_str(&c);
     }
@@ -61,11 +74,13 @@ where
     Ok(())
 }
 
-async fn load_kernel<P>(to_console2: &mut mpsc::Sender<Vec<u8>>, kernel: P) -> Result<(File, u64)>
+async fn load_kernel<P>(to_console2: &Sender, kernel: P) -> Result<(File, u64)>
 where
     P: ThePath,
 {
-    to_console2.send("⏩ Loading kernel image\n".into()).await?;
+    to_console2
+        .send(Ok(Message::Text("⏩ Loading kernel image\n".into())))
+        .await?;
 
     let kernel_file = match std::fs::File::open(kernel.clone()) {
         Ok(file) => file,
@@ -74,32 +89,37 @@ where
     let kernel_size: u64 = kernel_file.metadata()?.len();
 
     to_console2
-        .send(format!("⏩ .. {} ({} bytes)\n", kernel, kernel_size).into())
+        .send(Ok(Message::Text(
+            format!("⏩ .. {} ({} bytes)\n", kernel, kernel_size).into(),
+        )))
         .await?;
 
     Ok((kernel_file, kernel_size))
 }
 
-async fn send_kernel<P, R>(
-    to_console2: &mut mpsc::Sender<Vec<u8>>,
-    to_serial: &mut mpsc::Sender<Vec<u8>>, // Utf8Encoder??
-    from_serial: &mut Utf8Decoder<R>,
+async fn send_kernel<P>(
+    to_console2: &Sender,
+    to_serial: &mpsc::Sender<Vec<u8>>, // Utf8Encoder??
+    from_serial: &mut (impl Stream<Item = String> + Unpin),
     kernel: P,
 ) -> Result<()>
 where
     P: ThePath,
-    R: AsyncRead + Unpin,
 {
     let (kernel_file, kernel_size) = load_kernel(to_console2, kernel).await?;
 
-    to_console2.send("⏩ Sending image size\n".into()).await?;
+    to_console2
+        .send(Ok(Message::Text("⏩ Sending image size\n".into())))
+        .await?;
 
     to_serial.send(kernel_size.to_le_bytes().into()).await?;
 
     // Wait for OK response
     expect(to_console2, from_serial, "OK").await?;
 
-    to_console2.send("⏩ Sending kernel image\n".into()).await?;
+    to_console2
+        .send(Ok(Message::Text("⏩ Sending kernel image\n".into())))
+        .await?;
 
     let mut hasher = SeaHasher::new();
     let mut reader = BufReader::with_capacity(1, kernel_file);
@@ -118,7 +138,9 @@ where
     let hashed_value: u64 = hasher.finish();
 
     to_console2
-        .send(format!("⏩ Sending image checksum {:x}\n", hashed_value).into())
+        .send(Ok(Message::Text(
+            format!("⏩ Sending image checksum {:x}\n", hashed_value).into(),
+        )))
         .await?;
 
     to_serial.send(hashed_value.to_le_bytes().into()).await?;
@@ -132,8 +154,8 @@ where
 
 async fn serial_loop(
     mut port: tokio_serial::SerialStream,
-    to_console: mpsc::Sender<Vec<u8>>,
-    mut from_console: mpsc::Receiver<Vec<u8>>,
+    to_console: Sender,
+    mut from_console: Receiver,
 ) -> Result<()> {
     let mut buf = [0; 256];
     loop {
@@ -142,7 +164,12 @@ async fn serial_loop(
 
             Some(msg) = from_console.recv() => {
                 // debug!("serial write {} bytes", msg.len());
-                tokio::io::AsyncWriteExt::write_all(&mut port, msg.as_ref()).await?;
+                match msg.unwrap() {
+                    Message::Text(s) => {
+                        tokio::io::AsyncWriteExt::write_all(&mut port, s.as_bytes()).await?;
+                    },
+                    Message::Binary(b) => tokio::io::AsyncWriteExt::write_all(&mut port, b.as_ref()).await?,
+                }
             }
 
             res = port.read(&mut buf) => {
@@ -153,7 +180,9 @@ async fn serial_loop(
                     }
                     Ok(n) => {
                         // debug!("Serial read {n} bytes.");
-                        to_console.send(buf[0..n].to_owned()).await?;
+                        // let codec = Utf8Codec::new(buf);
+                        let s = String::from_utf8_lossy(&buf[0..n]);
+                        to_console.send(Ok(Message::Text(s.to_string()))).await?;
                     }
                     Err(e) => {
             //             if e.kind() == ErrorKind::TimedOut {
@@ -170,11 +199,20 @@ async fn serial_loop(
     }
 }
 
+// Always send Binary() to serial
+// Convert Text() to bytes and send in serial_loop
+// Receive and convert bytes to Text() in serial_loop
+#[derive(Clone, Debug)]
+enum Message {
+    Binary(Bytes),
+    Text(String),
+}
+
 async fn console_loop<P>(
-    to_console2: mpsc::Sender<Vec<u8>>,
-    mut from_internal: mpsc::Receiver<Vec<u8>>,
-    to_serial: mpsc::Sender<Vec<u8>>,
-    mut from_serial: mpsc::Receiver<Vec<u8>>,
+    to_console2: Sender,
+    mut from_internal: Receiver,
+    to_serial: Sender,
+    mut from_serial: &dyn SerialFramedReceiver,
     kernel: P,
 ) -> Result<()>
 where
@@ -186,25 +224,25 @@ where
 
     let mut event_reader = EventStream::new();
 
-    let mut from_internal = Utf8Decoder::with_capacity(16, from_internal.into_async_read());
-    let mut from_serial = Utf8Decoder::with_capacity(16, from_serial.into_async_read());
+    // from_internal.
+
+    // let mut from_internal = Utf8Decoder::with_capacity(16, from_internal.into_async_read());
+    // let mut from_serial = Utf8Decoder::with_capacity(16, from_serial); //.into_async_read()
 
     loop {
         tokio::select! {
             biased;
 
             Some(received) = from_internal.recv() => {
-                for &x in &received[..] {
-                    execute!(w, style::Print(format!("{}", x as char)))?;
-                }
+                execute!(w, style::Print(received));
                 w.flush()?;
             }
 
-            Some(received) = from_serial.recv() => {
-                execute!(w, cursor::MoveToNextLine(1), style::Print(format!("[>>] Received {} bytes from serial", from_serial.len())), cursor::MoveToNextLine(1))?;
+            Some(received) = from_serial.next() => { // returns Vec<char>
+                execute!(w, cursor::MoveToNextLine(1), style::Print(format!("[>>] Received {} bytes from serial", received.len())), cursor::MoveToNextLine(1))?;
 
-                for &x in &received[..] {
-                    if x == 0x3 {
+                for x in received.chars() {
+                    if x == 0x3 as char {
                         // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received a BREAK"), cursor::MoveToNextLine(1))?;
                         breaks += 1;
                         // Await for 3 consecutive \3 to start downloading
@@ -219,7 +257,8 @@ where
                             execute!(w, style::Print(format!("{}", 3 as char)))?;
                             breaks -= 1;
                         }
-                        execute!(w, style::Print(format!("{}", x as char)))?;
+                        // TODO decode buf with Utf8Codec here?
+                        execute!(w, style::Print(format!("{}", x)))?;
                         w.flush()?;
                     }
                 }
@@ -250,13 +289,24 @@ where
     }
 }
 
+#[cfg_attr(doc, aquamarine::aquamarine)]
+//```mermaid
+//```
 async fn main_loop<P>(port: SerialStream, kernel: P) -> Result<()>
 where
     P: ThePath,
 {
+    // to_console==>from_serial ----\           -- bytes to chars
+    // to_console2==>from_internal --> console  -- plain chars
+    // to_serial==>from_console --> serial port -- plain bytes
+
     // read from serial -> to_console==>from_serial -> output to console
-    let (to_console, from_serial) = mpsc::channel(256);
-    let (to_console2, from_internal) = mpsc::channel(256);
+    let (to_console, from_serial) = mpsc::channel::<Result<Message>>(256);
+    let (to_console2, from_internal) = mpsc::channel::<Result<Message>>(256);
+
+    let stream = ReceiverStream::new(from_serial);
+    let async_stream = StreamReader::new(stream);
+    let from_serial = FramedRead::new(async_stream, Utf8Codec::new());
 
     // read from console -> to_serial==>from_console -> output to serial
     let (to_serial, from_console) = mpsc::channel(256);
@@ -270,8 +320,8 @@ where
     // app -> serial_writer -> serial_consumer -> (poll_send to drive) -> serial_sink -> tx_device
     // let (rx_device, tx_device) = split(port);
 
-    // let mut serial_reader = FramedRead::new(rx_device, BytesCodec::new());
-    // let serial_sink = FramedWrite::new(tx_device, BytesCodec::new());
+    // let mut serial_reader = FramedRead::new(rx_device, Utf8Codec::new());
+    // let serial_sink = FramedWrite::new(tx_device, Utf8Codec::new());
     //
     // let (serial_writer, serial_consumer) = mpsc::unbounded::<Bytes>();
     // let mut poll_send = serial_consumer.map(Ok).forward(serial_sink);
