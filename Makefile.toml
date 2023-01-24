@@ -185,7 +185,7 @@ install_crate = { crate_name = "zellij", binary = "zellij", test_arg = ["--help"
 
 [tasks.openocd]
 script = [
-    "${OPENOCD} -f interface/jlink.cfg -f ../ocd/${TARGET_BOARD}_target.cfg"
+    "${OPENOCD} -f interface/cmsis-dap.cfg -f ../ocd/${TARGET_BOARD}_target.cfg"
 ]
 
 [tasks.sdeject]
