@@ -37,23 +37,20 @@ mod utf8_codec;
 
 trait Writable = std::io::Write + Send;
 trait ThePath = AsRef<Path> + std::fmt::Display + Clone + Sync + Send + 'static;
-trait SerialFramedReceiver = AsyncRead + Unpin;
+type SerialFramedReceiver = FramedRead<Result<Message>, Utf8Codec>;
 type Sender = mpsc::Sender<Result<Message>>;
 type Receiver = mpsc::Receiver<Result<Message>>;
 
-async fn expect<FromStream>(
+async fn expect(
     to_console2: &Sender,
-    from_serial: &mut FromStream,
+    from_serial: &mut SerialFramedReceiver,
     m: &str,
-) -> Result<()>
-where
-    FromStream: Stream<Item = String> + Unpin,
-{
+) -> Result<()> {
     let mut s = String::new();
     for x in m.chars() {
         let next_char = from_serial.next().await;
 
-        let Some(c) = next_char else {
+        let Some(Ok(c)) = next_char else {
             return Err(anyhow!(
                 "Failed to receive expected value {:?}: got empty buf",
                 m,
@@ -100,7 +97,7 @@ where
 async fn send_kernel<P>(
     to_console2: &Sender,
     to_serial: &mpsc::Sender<Vec<u8>>, // Utf8Encoder??
-    from_serial: &mut (impl Stream<Item = String> + Unpin),
+    from_serial: &mut SerialFramedReceiver,
     kernel: P,
 ) -> Result<()>
 where
@@ -212,7 +209,7 @@ async fn console_loop<P>(
     to_console2: Sender,
     mut from_internal: Receiver,
     to_serial: Sender,
-    mut from_serial: &dyn SerialFramedReceiver,
+    mut from_serial: SerialFramedReceiver,
     kernel: P,
 ) -> Result<()>
 where
@@ -239,27 +236,29 @@ where
             }
 
             Some(received) = from_serial.next() => { // returns Vec<char>
-                execute!(w, cursor::MoveToNextLine(1), style::Print(format!("[>>] Received {} bytes from serial", received.len())), cursor::MoveToNextLine(1))?;
+                if let Ok(received) = received {
+                    execute!(w, cursor::MoveToNextLine(1), style::Print(format!("[>>] Received {} bytes from serial", received.len())), cursor::MoveToNextLine(1))?;
 
-                for x in received.chars() {
-                    if x == 0x3 as char {
-                        // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received a BREAK"), cursor::MoveToNextLine(1))?;
-                        breaks += 1;
-                        // Await for 3 consecutive \3 to start downloading
-                        if breaks == 3 {
-                            // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received 3 BREAKs"), cursor::MoveToNextLine(1))?;
-                            breaks = 0;
-                            send_kernel(&to_console2, &to_serial, &mut from_serial, kernel.clone()).await?;
-                            to_console2.send("🦀 Send successful, pass-through\n".into()).await?;
+                    for x in received.chars() {
+                        if x == 0x3 as char {
+                            // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received a BREAK"), cursor::MoveToNextLine(1))?;
+                            breaks += 1;
+                            // Await for 3 consecutive \3 to start downloading
+                            if breaks == 3 {
+                                // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received 3 BREAKs"), cursor::MoveToNextLine(1))?;
+                                breaks = 0;
+                                send_kernel(&to_console2, &to_serial, &mut from_serial, kernel.clone()).await?;
+                                to_console2.send("🦀 Send successful, pass-through\n".into()).await?;
+                            }
+                        } else {
+                            while breaks > 0 {
+                                execute!(w, style::Print(format!("{}", 3 as char)))?;
+                                breaks -= 1;
+                            }
+                            // TODO decode buf with Utf8Codec here?
+                            execute!(w, style::Print(format!("{}", x)))?;
+                            w.flush()?;
                         }
-                    } else {
-                        while breaks > 0 {
-                            execute!(w, style::Print(format!("{}", 3 as char)))?;
-                            breaks -= 1;
-                        }
-                        // TODO decode buf with Utf8Codec here?
-                        execute!(w, style::Print(format!("{}", x)))?;
-                        w.flush()?;
                     }
                 }
             }
@@ -289,9 +288,9 @@ where
     }
 }
 
-#[cfg_attr(doc, aquamarine::aquamarine)]
-//```mermaid
-//```
+// #[cfg_attr(doc, aquamarine::aquamarine)]
+// //```mermaid
+// //```
 async fn main_loop<P>(port: SerialStream, kernel: P) -> Result<()>
 where
     P: ThePath,
