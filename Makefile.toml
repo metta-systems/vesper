@@ -204,7 +204,7 @@ script = [
 [tasks.sdeject]
 dependencies = ["sdcard"]
 script = [
-    "diskutil unmount ${VOLUME}"
+    "diskutil ejectAll ${VOLUME}"
 ]
 
 [tasks.chainboot]
