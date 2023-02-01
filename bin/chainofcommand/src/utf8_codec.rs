@@ -64,7 +64,7 @@ mod tests {
     fn fully_decode_correct_utf8() {
         let correct = vec![0x7a, 0xc2, 0xa7, 0xf0, 0x9f, 0xa4, 0xa3];
         // Shall yield 3 valid points from the stream
-        let mut decoder = Utf8Codec::default();
+        let mut decoder = Utf8Codec::new();
         let mut buf = BytesMut::from(&correct[..]);
         assert_eq!(decoder.decode(&mut buf).unwrap(), Some('z'));
         assert_eq!(decoder.decode(&mut buf).unwrap(), Some('§'));
@@ -74,7 +74,7 @@ mod tests {
     fn decode_incorrect_utf8() {
         let incorrect = vec![0x7a, 0xc2, 0xa7, 0xf0, 0xf0, 0xf0, 0xf0];
         // Shall yield 2 valid points and then 4 replacement chars
-        let mut decoder = Utf8Codec::default();
+        let mut decoder = Utf8Codec::new();
         let mut buf = BytesMut::from(&incorrect[..]);
         assert_eq!(decoder.decode(&mut buf).unwrap(), Some('z'));
         assert_eq!(decoder.decode(&mut buf).unwrap(), Some('§'));
@@ -100,7 +100,7 @@ mod tests {
     fn recover_after_incorrect_utf8() {
         let incorrect = vec![0x7a, 0xc2, 0xa7, 0xf0, 0xf0, 0x7a];
         // Shall yield 2 valid points, then two replacement chars then another valid point
-        let mut decoder = Utf8Codec::default();
+        let mut decoder = Utf8Codec::new();
         let mut buf = BytesMut::from(&incorrect[..]);
         assert_eq!(decoder.decode(&mut buf).unwrap(), Some('z'));
         assert_eq!(decoder.decode(&mut buf).unwrap(), Some('§'));
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn partially_decode_correct_utf8() {
         let incomplete = vec![0x7a, 0xc2];
-        let mut decoder = Utf8Codec::default();
+        let mut decoder = Utf8Codec::new();
         let mut buf = BytesMut::from(&incomplete[..]);
         assert_eq!(decoder.decode(&mut buf).unwrap(), Some('z'));
         assert_eq!(decoder.decode(&mut buf).unwrap(), None); // incomplete
@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn partially_decode_incorrect_utf8() {
         let incomplete_invalid = vec![0x7a, 0xf0, 0xf0];
-        let mut decoder = Utf8Codec::default();
+        let mut decoder = Utf8Codec::new();
         let mut buf = BytesMut::from(&incomplete_invalid[..]);
         assert_eq!(decoder.decode(&mut buf).unwrap(), Some('z'));
         assert_eq!(decoder.decode(&mut buf).unwrap(), None); // incomplete

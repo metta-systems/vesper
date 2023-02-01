@@ -1,12 +1,11 @@
 #![feature(trait_alias)]
-// #![feature(let_else)] // stabilised in 1.65.0
+#![feature(let_else)] // stabilised in 1.65.0
 #![feature(slice_take)]
-#![feature(utf8_chunks)]
+// #![feature(utf8_chunks)]
 
 use {
-    crate::utf8_codec::Utf8Codec,
     anyhow::{anyhow, Result},
-    bytes::{Buf, Bytes},
+    bytes::Bytes,
     clap::{Arg, Command},
     crossterm::{
         cursor,
@@ -15,40 +14,35 @@ use {
         tty::IsTty,
     },
     defer::defer,
-    futures::{future::FutureExt, Stream, StreamExt},
+    futures::{future::FutureExt, Stream},
     seahash::SeaHasher,
     std::{
+        fmt::Formatter,
         fs::File,
         hash::Hasher,
         io::{BufRead, BufReader},
         path::Path,
         time::Duration,
     },
-    tokio::{
-        io::{AsyncRead, AsyncReadExt},
-        sync::mpsc,
-    },
+    tokio::{io::AsyncReadExt, sync::mpsc},
     tokio_serial::{SerialPortBuilderExt, SerialStream},
-    tokio_stream::wrappers::ReceiverStream,
-    tokio_util::{codec::FramedRead, io::StreamReader},
+    tokio_stream::StreamExt,
 };
 
-mod utf8_codec;
+// mod utf8_codec;
 
 trait Writable = std::io::Write + Send;
 trait ThePath = AsRef<Path> + std::fmt::Display + Clone + Sync + Send + 'static;
-type SerialFramedReceiver = FramedRead<Result<Message>, Utf8Codec>;
+
+trait FramedStream = Stream<Item = Result<Message, anyhow::Error>> + Unpin;
+
 type Sender = mpsc::Sender<Result<Message>>;
 type Receiver = mpsc::Receiver<Result<Message>>;
 
-async fn expect(
-    to_console2: &Sender,
-    from_serial: &mut SerialFramedReceiver,
-    m: &str,
-) -> Result<()> {
+async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Result<()> {
     let mut s = String::new();
-    for x in m.chars() {
-        let next_char = from_serial.next().await;
+    for _x in m.chars() {
+        let next_char = from_serial.recv().await;
 
         let Some(Ok(c)) = next_char else {
             return Err(anyhow!(
@@ -57,9 +51,13 @@ async fn expect(
             ));
         };
 
-        to_console2.send(Ok(Message::Text(c.clone()))).await?;
-
-        s.push_str(&c);
+        match c {
+            Message::Text(payload) => {
+                s.push_str(&payload);
+                to_console2.send(Ok(Message::Text(payload))).await?;
+            }
+            _ => unreachable!(),
+        }
     }
     if s != m {
         return Err(anyhow!(
@@ -96,8 +94,8 @@ where
 
 async fn send_kernel<P>(
     to_console2: &Sender,
-    to_serial: &mpsc::Sender<Vec<u8>>, // Utf8Encoder??
-    from_serial: &mut SerialFramedReceiver,
+    to_serial: &Sender,
+    from_serial: &mut Receiver,
     kernel: P,
 ) -> Result<()>
 where
@@ -109,7 +107,11 @@ where
         .send(Ok(Message::Text("⏩ Sending image size\n".into())))
         .await?;
 
-    to_serial.send(kernel_size.to_le_bytes().into()).await?;
+    to_serial
+        .send(Ok(Message::Binary(Bytes::copy_from_slice(
+            &kernel_size.to_le_bytes(),
+        ))))
+        .await?;
 
     // Wait for OK response
     expect(to_console2, from_serial, "OK").await?;
@@ -123,7 +125,9 @@ where
     loop {
         let length = {
             let buf = reader.fill_buf()?;
-            to_serial.send(buf.into()).await?;
+            to_serial
+                .send(Ok(Message::Binary(Bytes::copy_from_slice(buf))))
+                .await?;
             hasher.write(buf);
             buf.len()
         };
@@ -140,7 +144,11 @@ where
         )))
         .await?;
 
-    to_serial.send(hashed_value.to_le_bytes().into()).await?;
+    to_serial
+        .send(Ok(Message::Binary(Bytes::copy_from_slice(
+            &hashed_value.to_le_bytes(),
+        ))))
+        .await?;
 
     expect(to_console2, from_serial, "OK").await?;
 
@@ -205,25 +213,48 @@ enum Message {
     Text(String),
 }
 
-impl Buf for Message {
-    fn remaining(&self) -> usize {
-        todo!()
-    }
+// impl Message {
+//     pub fn len(&self) -> usize {
+//         match self {
+//             Message::Binary(b) => b.len(),
+//             Message::Text(s) => s.len(),
+//         }
+//     }
+// }
 
-    fn chunk(&self) -> &[u8] {
-        todo!()
-    }
-
-    fn advance(&mut self, cnt: usize) {
-        todo!()
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Message::Binary(b) => {
+                for c in b {
+                    write!(f, "{})", c)?;
+                }
+                Ok(())
+            }
+            Message::Text(s) => write!(f, "{}", s),
+        }
     }
 }
+
+// impl Buf for Message {
+//     fn remaining(&self) -> usize {
+//         todo!()
+//     }
+//
+//     fn chunk(&self) -> &[u8] {
+//         todo!()
+//     }
+//
+//     fn advance(&mut self, cnt: usize) {
+//         todo!()
+//     }
+// }
 
 async fn console_loop<P>(
     to_console2: Sender,
     mut from_internal: Receiver,
     to_serial: Sender,
-    mut from_serial: SerialFramedReceiver,
+    mut from_serial: Receiver,
     kernel: P,
 ) -> Result<()>
 where
@@ -245,12 +276,17 @@ where
             biased;
 
             Some(received) = from_internal.recv() => {
-                execute!(w, style::Print(received));
-                w.flush()?;
+                if let Ok(message) = received {
+                    execute!(w, style::Print(message))?;
+                    w.flush()?;
+                }
             }
 
-            Some(received) = from_serial.next() => { // returns Vec<char>
+            Some(received) = from_serial.recv() => { // returns Vec<char>
                 if let Ok(received) = received {
+                    let Message::Text(received) = received else {
+                        unreachable!();
+                    };
                     execute!(w, cursor::MoveToNextLine(1), style::Print(format!("[>>] Received {} bytes from serial", received.len())), cursor::MoveToNextLine(1))?;
 
                     for x in received.chars() {
@@ -262,7 +298,7 @@ where
                                 // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received 3 BREAKs"), cursor::MoveToNextLine(1))?;
                                 breaks = 0;
                                 send_kernel(&to_console2, &to_serial, &mut from_serial, kernel.clone()).await?;
-                                to_console2.send("🦀 Send successful, pass-through\n".into()).await?;
+                                to_console2.send(Ok(Message::Text("🦀 Send successful, pass-through\n".into()))).await?;
                             }
                         } else {
                             while breaks > 0 {
@@ -284,7 +320,7 @@ where
                             return Ok(());
                         }
                         if let Some(key) = handle_key_event(key_event) {
-                            to_serial.send(key.to_vec()).await?;
+                            to_serial.send(Ok(Message::Binary(Bytes::copy_from_slice(&key)))).await?;
                             // Local echo
                             execute!(w, style::Print(format!("{:?}", key)))?;
                             w.flush()?;
@@ -317,9 +353,12 @@ where
     let (to_console, from_serial) = mpsc::channel::<Result<Message>>(256);
     let (to_console2, from_internal) = mpsc::channel::<Result<Message>>(256);
 
-    let stream = ReceiverStream::new(from_serial);
-    let async_stream = StreamReader::new(stream);
-    let from_serial = FramedRead::new(async_stream, Utf8Codec::new());
+    // Make a Stream from Receiver
+    // let stream = ReceiverStream::new(from_serial);
+    // // Make AsyncRead from Stream
+    // let async_stream = StreamReader::new(stream);
+    // // Make FramedRead (Stream+Sink) from AsyncRead
+    // let from_serial = FramedRead::new(async_stream, Utf8Codec::new());
 
     // read from console -> to_serial==>from_console -> output to serial
     let (to_serial, from_console) = mpsc::channel(256);
