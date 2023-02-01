@@ -6,7 +6,7 @@
 use {
     crate::utf8_codec::Utf8Codec,
     anyhow::{anyhow, Result},
-    bytes::Bytes,
+    bytes::{Buf, Bytes},
     clap::{Arg, Command},
     crossterm::{
         cursor,
@@ -203,6 +203,20 @@ async fn serial_loop(
 enum Message {
     Binary(Bytes),
     Text(String),
+}
+
+impl Buf for Message {
+    fn remaining(&self) -> usize {
+        todo!()
+    }
+
+    fn chunk(&self) -> &[u8] {
+        todo!()
+    }
+
+    fn advance(&mut self, cnt: usize) {
+        todo!()
+    }
 }
 
 async fn console_loop<P>(
