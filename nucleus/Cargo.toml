@@ -30,7 +30,7 @@ rpi4 = ["machine/rpi4"]
 machine = { path = "../machine" }
 r0 = "1.0"
 cortex-a = "7.2"
-tock-registers = "0.7"
+tock-registers = "0.8"
 ux = { version = "0.1", default-features = false }
 usize_conversions = "0.2"
 bit_field = "0.10"

@@ -102,7 +102,7 @@ dependencies = [
  "r0",
  "seahash",
  "snafu",
- "tock-registers",
+ "tock-registers 0.8.1",
  "usize_conversions",
  "ux",
 ]
@@ -154,7 +154,7 @@ version = "7.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccdecab196d8cc1753b637e2e0f4a427247a2781f7a2cdf438a03fa6488a1b54"
 dependencies = [
- "tock-registers",
+ "tock-registers 0.7.0",
 ]
 
 [[package]]
@@ -391,7 +391,7 @@ dependencies = [
  "qemu-exit",
  "r0",
  "snafu",
- "tock-registers",
+ "tock-registers 0.7.0",
  "usize_conversions",
  "ux",
 ]
@@ -460,7 +460,7 @@ dependencies = [
  "machine",
  "r0",
  "snafu",
- "tock-registers",
+ "tock-registers 0.8.1",
  "usize_conversions",
  "ux",
 ]
@@ -716,6 +716,12 @@ name = "tock-registers"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ee8fba06c1f4d0b396ef61a54530bb6b28f0dc61c38bc8bc5a5a48161e6282e"
+
+[[package]]
+name = "tock-registers"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "696941a0aee7e276a165a978b37918fd5d22c55c3d6bda197813070ca9c0f21c"
 
 [[package]]
 name = "tokio"
