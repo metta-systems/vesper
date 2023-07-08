@@ -1,6 +1,18 @@
 [toolchain]
-# 08-12 works
-# 08-13 doesn't
-channel = "nightly-2022-08-12"
-components = ["rust-src"]
+# channel=nightly-2022-08-12 "rustc 1.65.0-nightly (20ffea693 2022-08-11)" works
+# channel=nightly-2022-08-13 "rustc 1.65.0-nightly (f22819bcc 2022-08-12)" doesn't
+# channel=nightly-2023-01-10 "rustc 1.68.0-nightly (3020239de 2023-01-09)" doesn't
+# channel=nightly-2023-02-15 "rustc 1.69.0-nightly (0416b1a6f 2023-02-14)" doesn't
+# channel=nightly-2023-03-15 "rustc 1.70.0-nightly (171693274 2023-03-14)" doesn't
+# channel=nightly-2023-03-25 "rustc 1.70.0-nightly (8be3c2bda 2023-03-24)" doesn't
+# channel=nightly-2023-03-26 "rustc 1.70.0-nightly (0c61c7a97 2023-03-25)" works
+# channel=nightly-2023-03-27 "rustc 1.70.0-nightly (db0cbc48d 2023-03-26)" works
+# channel=nightly-2023-03-30 "rustc 1.70.0-nightly (17c116721 2023-03-29)" works
+# channel=nightly-2023-04-10 "rustc 1.70.0-nightly (84dd17b56 2023-04-14)" works
+# channel=nightly-2023-07-07 "rustc 1.72.0-nightly (cb80ff132 2023-07-07)" works
+#channel = "nightly"
+channel = "nightly-2023-03-26"
+#channel = "nightly-2022-08-12"
+#channel = "nightly-2022-08-13"
+components = ["rust-src", "llvm-tools-preview"]
 targets = ["aarch64-unknown-none-softfloat"]
