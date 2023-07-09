@@ -19,9 +19,6 @@ use {
     tock_registers::interfaces::{Readable, Writeable},
 };
 
-// Stack placed before first executable instruction
-const STACK_START: u64 = 0x0008_0000; // Keep in sync with linker script
-
 /// Type check the user-supplied entry function.
 #[macro_export]
 macro_rules! entry {
@@ -39,71 +36,58 @@ macro_rules! entry {
     };
 }
 
-/// Reset function.
+/// Entrypoint of the processor.
 ///
-/// Initializes the bss section before calling into the user's `main()`.
+/// Parks all cores except core0 and checks if we started in EL2/EL3. If
+/// so, proceeds with setting up EL1.
+///
+/// This is invoked from the linker script, does arch-specific init
+/// and passes control to the kernel boot function reset().
+///
+/// Dissection of various RPi core boot stubs is available
+/// [here](https://leiradel.github.io/2019/01/20/Raspberry-Pi-Stubs.html).
 ///
 /// # Safety
 ///
 /// Totally unsafe! We're in the hardware land.
-/// We assume that no statics are accessed before transition to main from this function.
-#[link_section = ".text.boot"]
-unsafe fn reset() -> ! {
-    extern "Rust" {
-        // Boundaries of the .bss section, provided by the linker script.
-        static __BSS_START: UnsafeCell<()>;
-        static __BSS_SIZE: UnsafeCell<()>;
-    }
-
-    // Zeroes the .bss section
-    // Based on https://gist.github.com/skoe/dbd3add2fc3baa600e9ebc995ddf0302 and discussions
-    // on pointer provenance in closing r0 issues (https://github.com/rust-embedded/cortex-m-rt/issues/300)
-
-    // NB: https://doc.rust-lang.org/nightly/core/ptr/index.html#provenance
-    // Importing pointers like `__BSS_START` and `__BSS_END` and performing pointer
-    // arithmetic on them directly may lead to Undefined Behavior, because the
-    // compiler may assume they come from different allocations and thus performing
-    // undesirable optimizations on them.
-    // So we use a painter-and-a-size as described in provenance section.
-
-    let bss = slice::from_raw_parts_mut(__BSS_START.get() as *mut u8, __BSS_SIZE.get() as usize);
-    for i in bss {
-        *i = 0;
-    }
-
-    // Don't cross this line with loads and stores. The initializations
-    // done above could be "invisible" to the compiler, because we write to the
-    // same memory location that is used by statics after this point.
-    // Additionally, we assume that no statics are accessed before this point.
-    atomic::compiler_fence(Ordering::SeqCst);
+/// We assume that no statics are accessed before transition to main from reset() function.
+#[no_mangle]
+#[link_section = ".text.main.entry"]
+pub unsafe extern "C" fn _boot_cores() -> ! {
+    const CORE_0: u64 = 0;
+    const CORE_MASK: u64 = 0x3;
+    // Can't match values with dots in match, so use intermediate consts.
+    #[cfg(qemu)]
+    const EL3: u64 = CurrentEL::EL::EL3.value;
+    const EL2: u64 = CurrentEL::EL::EL2.value;
+    const EL1: u64 = CurrentEL::EL::EL1.value;
 
     extern "Rust" {
-        fn main() -> !;
+        // Stack top
+        // Stack placed before first executable instruction
+        static __STACK_START: UnsafeCell<()>;
+    }
+    // Set stack pointer. Used in case we started in EL1.
+    SP.set(__STACK_START.get() as u64);
+
+    shared_setup_and_enter_pre();
+
+    if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
+        match CurrentEL.get() {
+            #[cfg(qemu)]
+            EL3 => setup_and_enter_el1_from_el3(),
+            EL2 => setup_and_enter_el1_from_el2(),
+            EL1 => reset(),
+            _ => endless_sleep(),
+        }
     }
 
-    main()
+    // if not core0 or not EL3/EL2/EL1, infinitely wait for events
+    endless_sleep()
 }
 
-// [ARMv6 unaligned data access restrictions](https://developer.arm.com/documentation/ddi0333/h/unaligned-and-mixed-endian-data-access-support/unaligned-access-support/armv6-unaligned-data-access-restrictions?lang=en)
-// dictates that compatibility bit U in CP15 must be set to 1 to allow Unaligned accesses while MMU is off.
-// (In addition to SCTLR_EL1.A being 0)
-// See also [CP15 C1 docs](https://developer.arm.com/documentation/ddi0290/g/system-control-coprocessor/system-control-processor-registers/c1--control-register).
-// #[link_section = ".text.boot"]
-// #[inline]
-// fn enable_armv6_unaligned_access() {
-//     unsafe {
-//         core::arch::asm!(
-//             "mrc p15, 0, {u}, c1, c0, 0",
-//             "or {u}, {u}, {CR_U}",
-//             "mcr p15, 0, {u}, c1, c0, 0",
-//             u = out(reg) _,
-//             CR_U = const 1 << 22
-//         );
-//     }
-// }
-
 #[link_section = ".text.boot"]
-#[inline]
+#[inline(always)]
 fn shared_setup_and_enter_pre() {
     // Enable timer counter registers for EL1
     CNTHCTL_EL2.write(CNTHCTL_EL2::EL1PCEN::SET + CNTHCTL_EL2::EL1PCTEN::SET);
@@ -136,9 +120,15 @@ fn shared_setup_and_enter_pre() {
 #[link_section = ".text.boot"]
 #[inline]
 fn shared_setup_and_enter_post() -> ! {
+    extern "Rust" {
+        // Stack top
+        static __STACK_START: UnsafeCell<()>;
+    }
     // Set up SP_EL1 (stack pointer), which will be used by EL1 once
     // we "return" to it.
-    SP_EL1.set(STACK_START);
+    unsafe {
+        SP_EL1.set(__STACK_START.get() as u64);
+    }
 
     // Use `eret` to "return" to EL1. This will result in execution of
     // `reset()` in EL1.
@@ -206,47 +196,52 @@ fn setup_and_enter_el1_from_el3() -> ! {
     shared_setup_and_enter_post()
 }
 
-/// Entrypoint of the processor.
+/// Reset function.
 ///
-/// Parks all cores except core0 and checks if we started in EL2/EL3. If
-/// so, proceeds with setting up EL1.
-///
-/// This is invoked from the linker script, does arch-specific init
-/// and passes control to the kernel boot function reset().
-///
-/// Dissection of various RPi core boot stubs is available
-/// [here](https://leiradel.github.io/2019/01/20/Raspberry-Pi-Stubs.html).
+/// Initializes the bss section before calling into the user's `main()`.
 ///
 /// # Safety
 ///
 /// Totally unsafe! We're in the hardware land.
-/// We assume that no statics are accessed before transition to main from reset() function.
-#[no_mangle]
-#[link_section = ".text.boot.entry"]
-pub unsafe extern "C" fn _boot_cores() -> ! {
-    const CORE_0: u64 = 0;
-    const CORE_MASK: u64 = 0x3;
-    // Can't match values with dots in match, so use intermediate consts.
-    #[cfg(qemu)]
-    const EL3: u64 = CurrentEL::EL::EL3.value;
-    const EL2: u64 = CurrentEL::EL::EL2.value;
-    const EL1: u64 = CurrentEL::EL::EL1.value;
-
-    // Set stack pointer. Used in case we started in EL1.
-    SP.set(STACK_START);
-
-    shared_setup_and_enter_pre();
-
-    if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
-        match CurrentEL.get() {
-            #[cfg(qemu)]
-            EL3 => setup_and_enter_el1_from_el3(),
-            EL2 => setup_and_enter_el1_from_el2(),
-            EL1 => reset(),
-            _ => endless_sleep(),
-        }
+/// We assume that no statics are accessed before transition to main from this function.
+///
+/// We are guaranteed to be in EL1 non-secure mode here.
+#[link_section = ".text.boot"]
+unsafe fn reset() -> ! {
+    extern "Rust" {
+        // Boundaries of the .bss section, provided by the linker script.
+        static __BSS_START: UnsafeCell<()>;
+        static __BSS_SIZE_U64S: UnsafeCell<()>;
     }
 
-    // if not core0 or not EL3/EL2/EL1, infinitely wait for events
-    endless_sleep()
+    // Zeroes the .bss section
+    // Based on https://gist.github.com/skoe/dbd3add2fc3baa600e9ebc995ddf0302 and discussions
+    // on pointer provenance in closing r0 issues (https://github.com/rust-embedded/cortex-m-rt/issues/300)
+
+    // NB: https://doc.rust-lang.org/nightly/core/ptr/index.html#provenance
+    // Importing pointers like `__BSS_START` and `__BSS_END` and performing pointer
+    // arithmetic on them directly may lead to Undefined Behavior, because the
+    // compiler may assume they come from different allocations and thus performing
+    // undesirable optimizations on them.
+    // So we use a painter-and-a-size as described in provenance section.
+
+    let bss = slice::from_raw_parts_mut(
+        __BSS_START.get() as *mut u64,
+        __BSS_SIZE_U64S.get() as usize,
+    );
+    for i in bss {
+        *i = 0;
+    }
+
+    // Don't cross this line with loads and stores. The initializations
+    // done above could be "invisible" to the compiler, because we write to the
+    // same memory location that is used by statics after this point.
+    // Additionally, we assume that no statics are accessed before this point.
+    atomic::compiler_fence(Ordering::SeqCst);
+
+    extern "Rust" {
+        fn main() -> !;
+    }
+
+    main()
 }
