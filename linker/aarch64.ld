@@ -11,7 +11,7 @@ PAGE_SIZE = 65536;
 
 /* Symbols between __BOOT_START and __BOOT_END should be dropped after init is complete.
    Symbols between __RO_START and __RO_END are the kernel code.
-   Symbols between __BSS_START and __BSS_END must be initialized to zero by r0 code in kernel.
+   Symbols between __BSS_START and __BSS_END must be initialized to zero by startup code in the kernel.
 */
 SECTIONS
 {
@@ -20,12 +20,12 @@ SECTIONS
     __BOOT_START = .;
     .text :
     {
-        KEEP(*(.text.boot.entry)) // Entry point must go first
+        KEEP(*(.text.main.entry)) // Entry point must go first
         *(.text.boot)
         //. = ALIGN(PAGE_SIZE);
         *(.data.boot)
-        . = ALIGN(PAGE_SIZE); /* Here boot code ends */
-        __BOOT_END = .; // __BOOT_END must be 4KiB aligned
+        . = ALIGN(PAGE_SIZE); /* Here the boot code ends */
+        __BOOT_END = .; // __BOOT_END must be PAGE_SIZE aligned
         __RO_START = .;
         *(.text .text.*)
     }
@@ -41,8 +41,8 @@ SECTIONS
         FILL(0x00)
     }
     . = ALIGN(PAGE_SIZE); /* Fill up to page size */
-    __RO_END = .; /* __RO_END must be 4KiB aligned */
-    __DATA_START = .; /* __DATA_START must be 4KiB aligned */
+    __RO_END = .; /* __RO_END must be PAGE_SIZE aligned */
+    __DATA_START = .; /* __DATA_START must be PAGE_SIZE aligned */
 
     .data : /* @todo align data to 4K -- it's already aligned up to __RO_END marker now */
     {
@@ -58,11 +58,11 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
         . = ALIGN(PAGE_SIZE); /* Align up to page size */
-        __BSS_SIZE = . - __BSS_START;
-        /* __BSS_END = .; unused */
+        __BSS_END = .;
+        __BSS_SIZE_U64S = (__BSS_END - __BSS_START) / 8;
     }
 
-    /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) }
+    /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.chainboot*) }
 }
 
 PROVIDE(current_el0_synchronous   = default_exception_handler);
