@@ -5,6 +5,7 @@ members = [
     "bin/chainboot",
     "bin/chainofcommand"
 ]
+resolver = "2"
 
 [patch.crates-io]
 serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = "macos-ENOTTY-fix" }
