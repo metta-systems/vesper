@@ -10,6 +10,7 @@ run_task = "custom-binary"
 [tasks.qemu]
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
+disabled = false
 
 [tasks.qemu-cb]
 disabled = true
