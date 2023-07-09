@@ -114,6 +114,9 @@ script = [
     "echo \n\n"
 ]
 
+[tasks.qemu]
+disabled = true
+
 [tasks.expand]
 env = { "TARGET_FEATURES" = "" }
 command = "cargo"
