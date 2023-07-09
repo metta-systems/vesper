@@ -17,9 +17,11 @@ seahash = "4.1"
 anyhow = "1.0"
 fehler = "1.0"
 crossterm = { version = "0.25", features = ["event-stream"] }
-tokio-serial = "5.4"
-tokio = { version = "1.21", features = ["full"] }
 futures = "0.3"
+futures-util = { version = "0.3", features = ["io"] }
+tokio = { version = "1.21", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "codec", "io"] }
+tokio-stream = { version = "0.1" }
+tokio-serial = "5.4"
 defer = "0.1"
-tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1.2"
