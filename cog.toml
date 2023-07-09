@@ -2,4 +2,5 @@ tag_prefix = "R"
 ignore_merge_commits = true
 
 [commit_types]
-wip = { changelog_title = "Work in progress (should not be in changelog!)" }
+wip = { changelog_title = "Work in progress", omit_from_changelog = true }
+sq = { changelog_title = "Squash me later!", omit_from_changelog = true }
