@@ -124,10 +124,11 @@ pub fn kmain() -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
 
+    init_exception_traps();
+
     #[cfg(not(feature = "noserial"))]
     init_uart_serial();
 
-    init_exception_traps();
     init_mmu();
 
     #[cfg(test)]
