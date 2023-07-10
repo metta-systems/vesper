@@ -1,0 +1,3 @@
+[tasks.qemu-gdb]
+disabled = true
+
