@@ -37,6 +37,9 @@ disabled = true
 [tasks.qemu]
 disabled = true
 
+[tasks.qemu-gdb]
+disabled = true
+
 [tasks.qemu-cb]
 disabled = true
 
