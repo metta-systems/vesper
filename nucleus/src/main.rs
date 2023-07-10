@@ -40,6 +40,28 @@ use {
 
 entry!(kernel_main);
 
+/// Kernel entry point.
+/// `arch` crate is responsible for calling it.
+// #[inline]
+pub fn kernel_main() -> ! {
+    #[cfg(feature = "jtag")]
+    machine::arch::jtag::wait_debugger();
+
+    init_exception_traps();
+
+    #[cfg(not(feature = "noserial"))]
+    init_uart_serial();
+
+    init_mmu();
+
+    #[cfg(test)]
+    test_main();
+
+    command_prompt();
+
+    reboot()
+}
+
 #[cfg(not(test))]
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
@@ -115,28 +137,6 @@ fn init_uart_serial() {
         }
         Err(_) => println!("[0] Error switching to PL011 UART, continue with MiniUART"),
     }
-}
-
-/// Kernel entry point.
-/// `arch` crate is responsible for calling it.
-// #[inline]
-pub fn kernel_main() -> ! {
-    #[cfg(feature = "jtag")]
-    machine::arch::jtag::wait_debugger();
-
-    init_exception_traps();
-
-    #[cfg(not(feature = "noserial"))]
-    init_uart_serial();
-
-    init_mmu();
-
-    #[cfg(test)]
-    test_main();
-
-    command_prompt();
-
-    reboot()
 }
 
 //------------------------------------------------------------
