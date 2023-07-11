@@ -32,6 +32,7 @@ SECTIONS
 
     .vectors ALIGN(2048):
     {
+        __EXCEPTION_VECTORS_START = .;
         KEEP(*(.vectors))
     }
 

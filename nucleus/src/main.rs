@@ -86,11 +86,11 @@ fn init_mmu() {
 
 fn init_exception_traps() {
     extern "Rust" {
-        static __exception_vectors_start: UnsafeCell<()>;
+        static __EXCEPTION_VECTORS_START: UnsafeCell<()>;
     }
 
     unsafe {
-        arch::traps::set_vbar_el1_checked(__exception_vectors_start.get() as u64)
+        arch::traps::set_vbar_el1_checked(__EXCEPTION_VECTORS_START.get() as u64)
             .expect("Vector table properly aligned!");
     }
     println!("[!] Exception traps set up");
