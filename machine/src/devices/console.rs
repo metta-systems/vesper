@@ -1,110 +1,112 @@
-/*
- * SPDX-License-Identifier: BlueOak-1.0.0
- */
-
-#![allow(dead_code)]
-
 use {
-    crate::{devices::SerialOps, platform},
+    crate::{
+        console::interface,
+        devices::{null_console::NullConsole, SerialOps},
+        platform::rpi3::{mini_uart::PreparedMiniUart, pl011_uart::PreparedPL011Uart},
+        sync::NullLock,
+    },
     core::fmt,
 };
 
-/// A trait that must be implemented by devices that are candidates for the
-/// global console.
-#[allow(unused_variables)]
-pub trait ConsoleOps: SerialOps {
-    /// Send a character
-    fn write_char(&self, c: char);
-    /// Display a string
-    fn write_string(&self, string: &str);
-    /// Receive a character
-    fn read_char(&self) -> char;
-}
+//--------------------------------------------------------------------------------------------------
+// Private Definitions
+//--------------------------------------------------------------------------------------------------
 
-/// A dummy console that just ignores its inputs.
-pub struct NullConsole;
-
-impl Drop for NullConsole {
-    fn drop(&mut self) {}
-}
-
-impl ConsoleOps for NullConsole {
-    fn write_char(&self, _c: char) {}
-
-    fn write_string(&self, _string: &str) {}
-
-    fn read_char(&self) -> char {
-        ' '
-    }
-}
-
-impl SerialOps for NullConsole {
-    fn read_byte(&self) -> u8 {
-        0
-    }
-
-    fn write_byte(&self, _byte: u8) {}
-
-    fn flush(&self) {}
-
-    fn clear_rx(&self) {}
-}
-
-/// Possible outputs which the console can store.
-pub enum Output {
-    None(NullConsole),
-    MiniUart(platform::rpi3::mini_uart::PreparedMiniUart),
-    Uart(platform::rpi3::pl011_uart::PreparedPL011Uart),
-}
-
-/// Generate boilerplate for converting into one of Output enum values
-macro output_from($name:ty, $optname:ident) {
-    impl From<$name> for Output {
-        fn from(instance: $name) -> Self {
-            Output::$optname(instance)
-        }
-    }
-}
-
-output_from!(NullConsole, None);
-output_from!(platform::rpi3::mini_uart::PreparedMiniUart, MiniUart);
-output_from!(platform::rpi3::pl011_uart::PreparedPL011Uart, Uart);
-
-pub struct Console {
+/// The mutex protected part.
+struct ConsoleInner {
     output: Output,
 }
 
-impl Default for Console {
-    fn default() -> Self {
-        Self::new()
-    }
+//--------------------------------------------------------------------------------------------------
+// Public Definitions
+//--------------------------------------------------------------------------------------------------
+
+/// The main struct.
+pub struct Console {
+    inner: NullLock<ConsoleInner>,
 }
 
-impl Console {
+//--------------------------------------------------------------------------------------------------
+// Global instances
+//--------------------------------------------------------------------------------------------------
+
+static CONSOLE: Console = Console::new();
+
+//--------------------------------------------------------------------------------------------------
+// Private Code
+//--------------------------------------------------------------------------------------------------
+
+impl ConsoleInner {
     pub const fn new() -> Self {
-        Console {
+        Self {
             output: Output::None(NullConsole {}),
         }
     }
 
-    fn current_ptr(&self) -> &dyn ConsoleOps {
+    fn current_ptr(&self) -> &dyn interface::ConsoleOps {
         match &self.output {
-            Output::None(i) => i,
-            Output::MiniUart(i) => i,
-            Output::Uart(i) => i,
+            Output::None(inner) => inner,
+            Output::MiniUart(inner) => inner,
+            Output::Uart(inner) => inner,
         }
     }
 
     /// Overwrite the current output. The old output will go out of scope and
     /// its Drop function will be called.
     pub fn replace_with(&mut self, new_output: Output) {
-        self.current_ptr().flush();
+        self.current_ptr().flush(); // crashed here with Data Abort
+                                    // ...with ESR 0x25/0x96000000
+                                    // ...with FAR 0x984f800000028
+                                    // ...with ELR 0x946a8
 
         self.output = new_output;
     }
+}
 
+/// Implementing `core::fmt::Write` enables usage of the `format_args!` macros, which in turn are
+/// used to implement the `kernel`'s `print!` and `println!` macros. By implementing `write_str()`,
+/// we get `write_fmt()` automatically.
+/// See src/macros.rs.
+///
+/// The function takes an `&mut self`, so it must be implemented for the inner struct.
+impl fmt::Write for ConsoleInner {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.current_ptr().write_string(s);
+        // for c in s.chars() {
+        //     // Convert newline to carrige return + newline.
+        //     if c == '\n' {
+        //         self.write_char('\r')
+        //     }
+        //
+        //     self.write_char(c);
+        // }
+
+        Ok(())
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Public Code
+//--------------------------------------------------------------------------------------------------
+
+impl Console {
+    /// Create a new instance.
+    pub const fn new() -> Console {
+        Console {
+            inner: NullLock::new(ConsoleInner::new()),
+        }
+    }
+
+    pub fn replace_with(&mut self, new_output: Output) {
+        self.inner.lock(|inner| inner.replace_with(new_output));
+    }
+}
+
+impl interface::ConsoleTools for Console {
     /// A command prompt.
-    pub fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
+    fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
+        use interface::ConsoleOps;
+
         self.write_string("\n$> ");
 
         let mut i = 0;
@@ -129,47 +131,89 @@ impl Console {
     }
 }
 
-impl Drop for Console {
-    fn drop(&mut self) {}
+/// The global console. Output of the kernel print! and println! macros goes here.
+pub fn console() -> &'static dyn crate::console::interface::All {
+    &CONSOLE
+}
+
+//------------------------------------------------------------------------------
+// OS Interface Code
+//------------------------------------------------------------------------------
+use crate::sync::interface::Mutex;
+
+/// Passthrough of `args` to the `core::fmt::Write` implementation, but guarded by a Mutex to
+/// serialize access.
+impl interface::Write for Console {
+    fn write_fmt(&self, args: core::fmt::Arguments) -> fmt::Result {
+        self.inner.lock(|inner| fmt::Write::write_fmt(inner, args))
+    }
 }
 
 /// Dispatch the respective function to the currently stored output device.
-impl ConsoleOps for Console {
+impl interface::ConsoleOps for Console {
+    // @todo implement utf8 serialization here!
     fn write_char(&self, c: char) {
-        self.current_ptr().write_char(c);
+        self.inner.lock(|con| con.current_ptr().write_char(c));
     }
 
     fn write_string(&self, string: &str) {
-        self.current_ptr().write_string(string);
+        self.inner
+            .lock(|con| con.current_ptr().write_string(string));
     }
 
+    // @todo implement utf8 deserialization here!
     fn read_char(&self) -> char {
-        self.current_ptr().read_char()
+        self.inner.lock(|con| con.current_ptr().read_char())
     }
 }
 
 impl SerialOps for Console {
     fn read_byte(&self) -> u8 {
-        self.current_ptr().read_byte()
+        self.inner.lock(|con| con.current_ptr().read_byte())
     }
     fn write_byte(&self, byte: u8) {
-        self.current_ptr().write_byte(byte)
+        self.inner.lock(|con| con.current_ptr().write_byte(byte))
     }
     fn flush(&self) {
-        self.current_ptr().flush()
+        self.inner.lock(|con| con.current_ptr().flush())
     }
     fn clear_rx(&self) {
-        self.current_ptr().clear_rx()
+        self.inner.lock(|con| con.current_ptr().clear_rx())
     }
 }
 
-/// Implementing this trait enables usage of the format_args! macros, which in
-/// turn are used to implement the kernel's print! and println! macros.
-///
-/// See src/macros.rs.
-impl fmt::Write for Console {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.current_ptr().write_string(s);
-        Ok(())
+impl interface::All for Console {}
+
+impl Default for Console {
+    fn default() -> Self {
+        Self::new()
     }
 }
+
+impl Drop for Console {
+    fn drop(&mut self) {}
+}
+
+//------------------------------------------------------------------------------
+// Device Interface Code
+//------------------------------------------------------------------------------
+
+/// Possible outputs which the console can store.
+enum Output {
+    None(NullConsole),
+    MiniUart(PreparedMiniUart),
+    Uart(PreparedPL011Uart),
+}
+
+/// Generate boilerplate for converting into one of Output enum values
+macro make_from($optname:ident, $name:ty) {
+    impl From<$name> for Output {
+        fn from(instance: $name) -> Self {
+            Output::$optname(instance)
+        }
+    }
+}
+
+make_from!(None, NullConsole);
+make_from!(MiniUart, PreparedMiniUart);
+make_from!(Uart, PreparedPL011Uart);

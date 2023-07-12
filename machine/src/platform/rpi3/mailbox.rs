@@ -13,7 +13,7 @@
 
 use {
     super::BcmHost,
-    crate::{platform::MMIODerefWrapper, println, DMA_ALLOCATOR},
+    crate::{mmio_deref_wrapper::MMIODerefWrapper, println}, //DMA_ALLOCATOR
     aarch64_cpu::asm::barrier,
     core::{
         alloc::{AllocError, Allocator, Layout},
@@ -148,32 +148,36 @@ impl<const N_SLOTS: usize> MailboxStorage for LocalMailboxStorage<N_SLOTS> {
 
 impl<const N_SLOTS: usize> MailboxStorage for DmaBackedMailboxStorage<N_SLOTS> {
     fn new() -> Result<Self> {
+        use crate::platform::memory::map::virt::DMA_HEAP_START;
+
         Ok(Self {
-            storage: DMA_ALLOCATOR
-                .lock(|a| {
-                    a.allocate(
-                        Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
-                            .map_err(|_| AllocError)?,
-                    )
-                })
-                .map_err(|_| MailboxError::Alloc)?
-                .as_mut_ptr() as *mut u32,
+            storage: DMA_HEAP_START
+                // storage: DMA_ALLOCATOR
+                //     .lock(|a| {
+                //         a.allocate(
+                //             Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
+                //                 .map_err(|_| AllocError)?,
+                //         )
+                //     })
+                //     .map_err(|_| MailboxError::Alloc)?
+                // .as_mut_ptr()
+                as *mut u32,
         })
     }
 }
 
 impl<const N_SLOTS: usize> Drop for DmaBackedMailboxStorage<N_SLOTS> {
     fn drop(&mut self) {
-        DMA_ALLOCATOR
-            .lock::<_, Result<()>>(|a| unsafe {
-                #[allow(clippy::unit_arg)]
-                Ok(a.deallocate(
-                    NonNull::new_unchecked(self.storage as *mut u8),
-                    Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
-                        .map_err(|_| MailboxError::Alloc)?,
-                ))
-            })
-            .unwrap_or(())
+        // DMA_ALLOCATOR
+        //     .lock::<_, Result<()>>(|a| unsafe {
+        //         #[allow(clippy::unit_arg)]
+        //         Ok(a.deallocate(
+        //             NonNull::new_unchecked(self.storage as *mut u8),
+        //             Layout::from_size_align(N_SLOTS * mem::size_of::<u32>(), 16)
+        //                 .map_err(|_| MailboxError::Alloc)?,
+        //         ))
+        //     })
+        //     .unwrap_or(())
     }
 }
 

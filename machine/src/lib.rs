@@ -16,15 +16,10 @@
 #![allow(clippy::nonstandard_macro_braces)] // https://github.com/shepmaster/snafu/issues/296
 #![allow(missing_docs)] // Temp: switch to deny
 #![deny(warnings)]
+#![allow(unused)]
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
-
-use {
-    buddy_alloc::{BuddyAlloc, BuddyAllocParam},
-    once_cell::unsync::Lazy,
-    platform::memory::map::virt::{DMA_HEAP_END, DMA_HEAP_START},
-};
 
 /// Architecture-specific code.
 #[macro_use]
@@ -32,10 +27,13 @@ pub mod arch;
 
 pub use arch::*;
 
+pub mod console;
 pub mod devices;
+pub mod drivers;
 pub mod macros;
 pub mod memory;
 mod mm;
+pub mod mmio_deref_wrapper;
 pub mod panic;
 pub mod platform;
 pub mod qemu;
@@ -43,21 +41,18 @@ mod sync;
 pub mod tests;
 pub mod write_to;
 
-/// The global console. Output of the kernel print! and println! macros goes here.
-pub static CONSOLE: sync::NullLock<devices::Console> = sync::NullLock::new(devices::Console::new());
-
-/// The global allocator for DMA-able memory. That is, memory which is tagged
-/// non-cacheable in the page tables.
-#[allow(dead_code)]
-static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
-    sync::NullLock::new(Lazy::new(|| unsafe {
-        BuddyAlloc::new(BuddyAllocParam::new(
-            // @todo Init this after we loaded boot memory map
-            DMA_HEAP_START as *const u8,
-            DMA_HEAP_END - DMA_HEAP_START,
-            64,
-        ))
-    }));
+// The global allocator for DMA-able memory. That is, memory which is tagged
+// non-cacheable in the page tables.
+// #[allow(dead_code)]
+// static DMA_ALLOCATOR: sync::NullLock<Lazy<BuddyAlloc>> =
+//     sync::NullLock::new(Lazy::new(|| unsafe {
+//         BuddyAlloc::new(BuddyAllocParam::new(
+//             // @todo Init this after we loaded boot memory map
+//             DMA_HEAP_START as *const u8,
+//             DMA_HEAP_END - DMA_HEAP_START,
+//             64,
+//         ))
+//     }));
 // Try the following arguments instead to see all mailbox operations
 // fail. It will cause the allocator to use memory that is marked
 // cacheable and therefore not DMA-safe. The answer from the VideoCore
