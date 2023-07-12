@@ -29,7 +29,7 @@ macro_rules! entry {
         #[inline(always)]
         pub unsafe fn __main() -> ! {
             // type check the given path
-            let f: fn() -> ! = $path;
+            let f: unsafe fn() -> ! = $path;
 
             f()
         }

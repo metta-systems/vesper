@@ -6,8 +6,7 @@
  */
 
 use {
-    super::BcmHost,
-    crate::platform::MMIODerefWrapper,
+    crate::{mmio_deref_wrapper::MMIODerefWrapper, platform::BcmHost},
     core::marker::PhantomData,
     tock_registers::{
         fields::FieldValue,
@@ -94,17 +93,17 @@ pub struct GPIO {
     registers: Registers,
 }
 
-pub const GPIO_START: usize = 0x20_0000;
+pub const GPIO_BASE: usize = BcmHost::get_peripheral_address() + 0x20_0000;
 
-impl Default for GPIO {
-    fn default() -> GPIO {
-        // Default RPi3 GPIO base address
-        const GPIO_BASE: usize = BcmHost::get_peripheral_address() + GPIO_START;
-        unsafe { GPIO::new(GPIO_BASE) }
+impl crate::drivers::interface::DeviceDriver for GPIO {
+    fn compatible(&self) -> &'static str {
+        Self::COMPATIBLE
     }
 }
 
 impl GPIO {
+    pub const COMPATIBLE: &'static str = "BCM GPIO";
+
     /// # Safety
     ///
     /// Unsafe, duh!

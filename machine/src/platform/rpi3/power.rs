@@ -7,11 +7,11 @@
 
 use {
     super::{
-        gpio,
+        device_driver::gpio,
         mailbox::{channel, Mailbox, MailboxOps},
         BcmHost,
     },
-    crate::platform::MMIODerefWrapper,
+    crate::mmio_deref_wrapper::MMIODerefWrapper,
     snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},

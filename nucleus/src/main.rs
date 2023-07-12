@@ -17,7 +17,7 @@
 #![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
 #![deny(warnings)]
-#![deny(unused)]
+#![allow(unused)]
 #![feature(allocator_api)]
 
 #[cfg(not(test))]
@@ -28,32 +28,43 @@ use {
     cfg_if::cfg_if,
     core::cell::UnsafeCell,
     machine::{
-        arch, entry, memory,
+        arch,
+        console::console,
+        entry, memory,
         platform::rpi3::{
             display::{Color, DrawError},
             mailbox::{channel, Mailbox, MailboxOps},
             vc::VC,
         },
-        println, CONSOLE,
+        println,
     },
 };
 
-entry!(kernel_main);
+entry!(kernel_init);
 
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
-// #[inline]
-pub fn kernel_main() -> ! {
+pub unsafe fn kernel_init() -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
 
-    init_exception_traps();
+    if let Err(x) = machine::platform::drivers::init() {
+        panic!("Error initializing platform drivers: {}", x);
+    }
 
-    #[cfg(not(feature = "noserial"))]
-    init_uart_serial();
+    // Initialize all device drivers.
+    machine::drivers::driver_manager().init_drivers();
 
-    init_mmu();
+    init_exception_traps(); // @todo
 
+    init_mmu(); // @todo
+
+    kernel_main()
+}
+
+/// Safe kernel code.
+// #[inline]
+pub fn kernel_main() -> ! {
     #[cfg(test)]
     test_main();
 
@@ -96,48 +107,44 @@ fn init_exception_traps() {
     println!("[!] Exception traps set up");
 }
 
-#[cfg(not(feature = "noserial"))]
-fn init_uart_serial() {
-    use machine::platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, pl011_uart::PL011Uart};
+// fn init_uart_serial() {
+//     use machine::platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, pl011_uart::PL011Uart};
+//
+//     let gpio = GPIO::default();
+//     let uart = MiniUart::default();
+//     let uart = uart.prepare(&gpio);
+//     // console::replace_with(uart.into());
+//
+//     println!("[0] MiniUART is live!");
 
-    let gpio = GPIO::default();
-    let uart = MiniUart::default();
-    let uart = uart.prepare(&gpio);
-    CONSOLE.lock(|c| {
-        // Move uart into the global CONSOLE.
-        c.replace_with(uart.into());
-    });
+// Then immediately switch to PL011 (just as an example)
 
-    println!("[0] MiniUART is live!");
+// let uart = PL011Uart::default();
 
-    // Then immediately switch to PL011 (just as an example)
+// uart.init() will reconfigure the GPIO, which causes a race against
+// the MiniUart that is still putting out characters on the physical
+// line that are already buffered in its TX FIFO.
+//
+// To ensure the CPU doesn't rewire the GPIO before the MiniUart has put
+// its last character, explicitly flush it before rewiring.
+//
+// If you switch to an output that happens to not use the same pair of
+// physical wires (e.g. the Framebuffer), you don't need to do this,
+// because flush() is anyways called implicitly by replace_with(). This
+// is just a special case.
+// CONSOLE.lock(|c| c.flush());
 
-    let uart = PL011Uart::default();
-
-    // uart.init() will reconfigure the GPIO, which causes a race against
-    // the MiniUart that is still putting out characters on the physical
-    // line that are already buffered in its TX FIFO.
-    //
-    // To ensure the CPU doesn't rewire the GPIO before the MiniUart has put
-    // its last character, explicitly flush it before rewiring.
-    //
-    // If you switch to an output that happens to not use the same pair of
-    // physical wires (e.g. the Framebuffer), you don't need to do this,
-    // because flush() is anyways called implicitly by replace_with(). This
-    // is just a special case.
-    CONSOLE.lock(|c| c.flush());
-
-    match uart.prepare(&gpio) {
-        Ok(uart) => {
-            CONSOLE.lock(|c| {
-                // Move uart into the global CONSOLE.
-                c.replace_with(uart.into());
-            });
-            println!("[0] UART0 is live!");
-        }
-        Err(_) => println!("[0] Error switching to PL011 UART, continue with MiniUART"),
-    }
-}
+// match uart.prepare(&gpio) {
+//     Ok(uart) => {
+//         CONSOLE.lock(|c| {
+//             // Move uart into the global CONSOLE.
+//             c.replace_with(uart.into());
+//         });
+//         println!("[0] UART0 is live!");
+//     }
+//     Err(_) => println!("[0] Error switching to PL011 UART, continue with MiniUART"),
+// }
+// }
 
 //------------------------------------------------------------
 // Start a command prompt
@@ -146,11 +153,9 @@ fn command_prompt() {
     'cmd_loop: loop {
         let mut buf = [0u8; 64];
 
-        match CONSOLE.lock(|c| c.command_prompt(&mut buf)) {
+        match console().command_prompt(&mut buf) {
             b"mmu" => init_mmu(),
             b"feats" => print_mmu_state_and_features(),
-            #[cfg(not(feature = "noserial"))]
-            b"uart" => init_uart_serial(),
             b"disp" => check_display_init(),
             b"trap" => check_data_abort_trap(),
             b"map" => machine::platform::memory::mmu::virt_mem_layout().print_layout(),

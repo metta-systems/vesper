@@ -9,15 +9,16 @@
  */
 
 use {
-    super::{
-        gpio,
-        mailbox::{self, Mailbox, MailboxOps},
-        BcmHost,
-    },
     crate::{
         arch::loop_while,
-        devices::{ConsoleOps, SerialOps},
-        platform::MMIODerefWrapper,
+        console::interface::ConsoleOps,
+        devices::SerialOps,
+        mmio_deref_wrapper::MMIODerefWrapper,
+        platform::{
+            device_driver::gpio,
+            mailbox::{self, Mailbox, MailboxOps},
+            BcmHost,
+        },
     },
     snafu::Snafu,
     tock_registers::{

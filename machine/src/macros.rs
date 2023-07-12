@@ -23,11 +23,8 @@ macro_rules! println {
 #[doc(hidden)]
 #[cfg(not(any(test, qemu)))]
 pub fn _print(args: core::fmt::Arguments) {
-    use core::fmt::Write;
-
-    crate::CONSOLE.lock(|c| {
-        c.write_fmt(args).unwrap();
-    })
+    use {crate::console::console, core::fmt::Write};
+    console().write_fmt(args).unwrap();
 }
 
 /// qemu-based tests use semihosting write0 syscall.

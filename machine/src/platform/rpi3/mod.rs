@@ -5,13 +5,12 @@
 
 #![allow(dead_code)]
 
+pub mod device_driver;
 pub mod display;
+pub mod drivers;
 pub mod fb;
-pub mod gpio;
 pub mod mailbox;
 pub mod memory;
-pub mod mini_uart;
-pub mod pl011_uart;
 pub mod power;
 pub mod vc;
 
