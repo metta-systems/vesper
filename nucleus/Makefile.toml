@@ -8,7 +8,7 @@ env = { "BINARY_FILE" = "${KERNEL_ELF}" }
 run_task = "custom-binary"
 
 [tasks.qemu]
-env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_DISASM_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
 disabled = false
 
@@ -16,7 +16,7 @@ disabled = false
 disabled = true
 
 [tasks.qemu-gdb]
-env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_GDB_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
 
 [tasks.qemu-cb-gdb]
