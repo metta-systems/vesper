@@ -59,14 +59,16 @@ SECTIONS
         *(.text*)
     } :segment_code
 
-    .vectors ALIGN(2048):
+    .vectors :
     {
+        . = ALIGN(2048);
         __EXCEPTION_VECTORS_START = .;
         KEEP(*(.vectors))
     } :segment_code
 
-    .rodata ALIGN(4):
+    .rodata :
     {
+        . = ALIGN(4);
         *(.rodata*)
         FILL(0x00)
         . = ALIGN(PAGE_SIZE); /* Fill up to page size */
@@ -84,8 +86,9 @@ SECTIONS
         FILL(0x00)
     } :segment_data
 
-    .bss ALIGN(PAGE_SIZE) (NOLOAD):
+    .bss (NOLOAD):
     {
+        . = ALIGN(PAGE_SIZE);
         __BSS_START = .;
         *(.bss*)
         . = ALIGN(PAGE_SIZE); /* Align up to page size */
