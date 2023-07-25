@@ -50,7 +50,7 @@ PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES}"
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu,rpi3"
 
-OBJCOPY = "rust-objcopy" # Part of `cargo objcopy` in cargo-binutils
+OBJCOPY = "/opt/homebrew/Cellar/aarch64-elf-binutils/2.40/bin/aarch64-elf-objcopy" # Part of `cargo objcopy` in cargo-binutils
 OBJCOPY_PARAMS = "--strip-all -O binary"
 NM = "rust-nm" # Part of `cargo nm` in cargo-binutils
 
