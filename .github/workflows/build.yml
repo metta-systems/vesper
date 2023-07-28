@@ -79,13 +79,6 @@ jobs:
     - name: "Install build tools"
       run: cargo install cargo-make cargo-binutils
 
-    - name: "Prepare packages (Linux)"
-      run: |
-        sudo apt install software-properties-common
-        sudo add-apt-repository ppa:jacob/virtualisation
-        sudo apt update
-      if: runner.os == 'Linux'
-
     - name: "Install dev libraries (Linux)"
       run: sudo apt install libudev-dev
       if: runner.os == 'Linux'
@@ -127,14 +120,14 @@ jobs:
       if: runner.os == 'Windows'
       shell: pwsh
 
-    - name: Add custom Scoop bucket (Windows)
+    - name: Add custom Scoop bucket for QEMU (Windows)
       run: |
         scoop bucket add scoop-for-ci https://github.com/metta-systems/scoop-for-ci
       if: runner.os == 'Windows'
       shell: pwsh
 
     - name: Install QEMU (Windows)
-      run: scoop install qemu-510
+      run: scoop install qemu-810
       if: runner.os == 'Windows'
       shell: pwsh
 
@@ -144,10 +137,5 @@ jobs:
     - name: 'Build kernel'
       run: cargo make build
 
-    - name: 'Run tests (macOS)'
+    - name: 'Run tests'
       run: cargo make test
-      if: runner.os == 'macOS'
-
-    - name: 'Run tests (other OSes)'
-      run: env QEMU_MACHINE=raspi3 cargo make test
-      if: runner.os != 'macOS'
