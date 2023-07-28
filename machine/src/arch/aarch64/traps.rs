@@ -117,7 +117,10 @@ pub struct ExceptionContext {
 unsafe extern "C" fn default_exception_handler() -> ! {
     println!("Unexpected exception. Halting CPU.");
 
-    endless_sleep()
+    #[cfg(not(qemu))]
+    endless_sleep();
+    #[cfg(qemu)]
+    qemu::semihosting::exit_failure()
 }
 
 // To implement an exception handler, override it by defining the respective
@@ -141,7 +144,7 @@ unsafe extern "C" fn current_el0_synchronous(e: &mut ExceptionContext) {
 #[no_mangle]
 unsafe extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
     println!("[!] KERNEL synchronous exception happened.");
-    synchronous_common(e);
+    synchronous_common(e)
 }
 
 // unsafe extern "C" fn current_elx_irq(e: &mut ExceptionContext);
@@ -152,7 +155,11 @@ unsafe extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
 unsafe extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
     println!("[!] KERNEL serror exception happened.");
     synchronous_common(e);
-    endless_sleep()
+
+    #[cfg(not(qemu))]
+    endless_sleep();
+    #[cfg(qemu)]
+    qemu::semihosting::exit_failure()
 }
 
 fn cause_to_string(cause: u64) -> &'static str {

@@ -7,6 +7,7 @@
 #![feature(strict_provenance)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
+#![feature(panic_info_message)]
 #![feature(nonnull_slice_from_raw_parts)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
