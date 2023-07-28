@@ -9,16 +9,25 @@
 
 #![no_std]
 #![no_main]
+#![allow(stable_features)]
+#![feature(asm_const)]
+#![feature(lazy_cell)]
+#![feature(decl_macro)]
 #![feature(ptr_internals)]
+#![feature(allocator_api)]
 #![feature(format_args_nl)]
+#![feature(core_intrinsics)]
 #![feature(strict_provenance)]
+#![feature(stmt_expr_attributes)]
+#![feature(slice_ptr_get)]
+#![feature(panic_info_message)]
+#![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.71 nightly
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
 #![deny(warnings)]
 #![allow(unused)]
-#![feature(allocator_api)]
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
