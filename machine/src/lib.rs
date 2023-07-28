@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
+#![allow(stable_features)]
 #![feature(decl_macro)]
+#![feature(ptr_internals)]
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
 #![feature(core_intrinsics)]
@@ -8,7 +10,7 @@
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
 #![feature(panic_info_message)]
-#![feature(nonnull_slice_from_raw_parts)]
+#![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.71 nightly
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
