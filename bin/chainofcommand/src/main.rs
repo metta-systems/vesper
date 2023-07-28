@@ -84,9 +84,10 @@ where
     let kernel_size: u64 = kernel_file.metadata()?.len();
 
     to_console2
-        .send(Ok(Message::Text(
-            format!("⏩ .. {} ({} bytes)\n", kernel, kernel_size).into(),
-        )))
+        .send(Ok(Message::Text(format!(
+            "⏩ .. {} ({} bytes)\n",
+            kernel, kernel_size
+        ))))
         .await?;
 
     Ok((kernel_file, kernel_size))
@@ -135,9 +136,10 @@ async fn send_kernel<P: ThePath>(
     let hashed_value: u64 = hasher.finish();
 
     to_console2
-        .send(Ok(Message::Text(
-            format!("⏩ Sending image checksum {:x}\n", hashed_value).into(),
-        )))
+        .send(Ok(Message::Text(format!(
+            "⏩ Sending image checksum {:x}\n",
+            hashed_value
+        ))))
         .await?;
 
     to_serial
@@ -383,7 +385,7 @@ fn handle_key_event(key_event: KeyEvent) -> Option<Bytes> {
         KeyCode::Char(ch) => {
             if key_event.modifiers & KeyModifiers::CONTROL == KeyModifiers::CONTROL {
                 buf[0] = ch as u8;
-                if ('a'..='z').contains(&ch) || (ch == ' ') {
+                if ch.is_ascii_lowercase() || (ch == ' ') {
                     buf[0] &= 0x1f;
                     Some(&buf[0..1])
                 } else if ('4'..='7').contains(&ch) {
@@ -527,10 +529,8 @@ async fn main() -> Result<()> {
             let cont = matches!(e.downcast_ref::<std::io::Error>(),
                 Some(e) if e.kind() == std::io::ErrorKind::NotFound || e.kind() == std::io::ErrorKind::PermissionDenied)
                 || matches!(e.downcast_ref::<tokio_serial::Error>(), Some(e) if e.kind == tokio_serial::ErrorKind::NoDevice)
-                || matches!(
-                    e.downcast_ref::<tokio::sync::mpsc::error::SendError<Vec<u8>>>(),
-                    Some(_)
-                );
+                || e.downcast_ref::<tokio::sync::mpsc::error::SendError<Vec<u8>>>()
+                    .is_some();
 
             if !cont {
                 break;

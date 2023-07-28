@@ -406,10 +406,10 @@ impl SerialOps for PreparedPL011Uart {
 impl ConsoleOps for PreparedPL011Uart {
     /// Send a character
     fn write_char(&self, c: char) {
-        let mut b = [0u8; 4];
-        let _ = c.encode_utf8(&mut b);
-        for x in 0..c.len_utf8() {
-            self.write_byte(b[x]);
+        let mut bytes = [0u8; 4];
+        let _ = c.encode_utf8(&mut bytes);
+        for &b in bytes.iter().take(c.len_utf8()) {
+            self.write_byte(b);
         }
     }
 

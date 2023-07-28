@@ -10,11 +10,7 @@
 use {
     aarch64_cpu::asm::barrier,
     core::hash::Hasher,
-    machine::{
-        devices::SerialOps,
-        platform::rpi3::{gpio::GPIO, pl011_uart::PL011Uart, BcmHost},
-        print, println, CONSOLE,
-    },
+    machine::{console::console, platform::rpi3::BcmHost, print, println},
     seahash::SeaHasher,
 };
 
@@ -30,13 +26,12 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
 
-    let gpio = GPIO::default();
-    let uart = PL011Uart::default();
-    let uart = uart.prepare(&gpio).expect("What could go wrong?");
-    CONSOLE.lock(|c| {
-        // Move uart into the global CONSOLE.
-        c.replace_with(uart.into());
-    });
+    if let Err(x) = machine::platform::drivers::init() {
+        panic!("Error initializing platform drivers: {}", x);
+    }
+
+    // Initialize all device drivers.
+    machine::drivers::driver_manager().init_drivers();
 
     // println! is usable from here on.
 
@@ -53,17 +48,15 @@ const LOGO: &str = r#"
 "#;
 
 fn read_u64() -> u64 {
-    CONSOLE.lock(|c| {
-        let mut val: u64 = u64::from(c.read_byte());
-        val |= u64::from(c.read_byte()) << 8;
-        val |= u64::from(c.read_byte()) << 16;
-        val |= u64::from(c.read_byte()) << 24;
-        val |= u64::from(c.read_byte()) << 32;
-        val |= u64::from(c.read_byte()) << 40;
-        val |= u64::from(c.read_byte()) << 48;
-        val |= u64::from(c.read_byte()) << 56;
-        val
-    })
+    let mut val: u64 = u64::from(console().read_byte());
+    val |= u64::from(console().read_byte()) << 8;
+    val |= u64::from(console().read_byte()) << 16;
+    val |= u64::from(console().read_byte()) << 24;
+    val |= u64::from(console().read_byte()) << 32;
+    val |= u64::from(console().read_byte()) << 40;
+    val |= u64::from(console().read_byte()) << 48;
+    val |= u64::from(console().read_byte()) << 56;
+    val
 }
 
 /// The main function running after the early init.
@@ -79,14 +72,14 @@ fn kernel_main(max_kernel_size: u64) -> ! {
     let kernel_addr: *mut u8 = BcmHost::kernel_load_address() as *mut u8;
 
     loop {
-        CONSOLE.lock(|c| c.flush());
+        console().flush();
 
         // Discard any spurious received characters before starting with the loader protocol.
-        CONSOLE.lock(|c| c.clear_rx());
+        console().clear_rx();
 
         // Notify `chainofcommand` to send the binary.
         for _ in 0..3 {
-            CONSOLE.lock(|c| c.write_byte(3u8));
+            console().write_byte(3u8);
         }
 
         // Read the binary's size.
@@ -108,7 +101,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
         // Read the kernel byte by byte.
         for i in 0..size {
-            let val = CONSOLE.lock(|c| c.read_byte());
+            let val = console().read_byte();
             unsafe {
                 core::ptr::write_volatile(kernel_addr.offset(i as isize), val);
             }
@@ -133,7 +126,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
         "⏪ Loaded! Executing the payload now from {:p}\n",
         kernel_addr
     );
-    CONSOLE.lock(|c| c.flush());
+    console().flush();
 
     // Use black magic to create a function pointer.
     let kernel: fn() -> ! = unsafe { core::mem::transmute(kernel_addr) };
