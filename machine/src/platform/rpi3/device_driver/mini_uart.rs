@@ -231,6 +231,7 @@ impl MiniUartInner {
 impl MiniUartInner {
     /// Set baud rate and characteristics (115200 8N1) and map to GPIO
     pub fn prepare(&self) -> Result<(), &'static str> {
+        use tock_registers::interfaces::Writeable;
         // initialize UART
         self.registers
             .AUX_ENABLES
@@ -269,6 +270,7 @@ impl Drop for MiniUartInner {
 impl SerialOps for MiniUartInner {
     /// Receive a byte without console translation
     fn read_byte(&self) -> u8 {
+        use tock_registers::interfaces::Readable;
         // wait until something is in the buffer
         crate::arch::loop_until(|| {
             self.registers
@@ -281,6 +283,7 @@ impl SerialOps for MiniUartInner {
     }
 
     fn write_byte(&self, b: u8) {
+        use tock_registers::interfaces::{Readable, Writeable};
         // wait until we can send
         crate::arch::loop_until(|| {
             self.registers
@@ -295,12 +298,14 @@ impl SerialOps for MiniUartInner {
     /// Wait until the TX FIFO is empty, aka all characters have been put on the
     /// line.
     fn flush(&self) {
+        use tock_registers::interfaces::Readable;
         crate::arch::loop_until(|| self.registers.AUX_MU_STAT.is_set(AUX_MU_STAT::TX_DONE));
     }
 
     /// Consume input until RX FIFO is empty, aka all pending characters have been
     /// consumed.
     fn clear_rx(&self) {
+        use tock_registers::interfaces::Readable;
         crate::arch::loop_while(|| {
             let pending = self
                 .registers
@@ -317,10 +322,10 @@ impl SerialOps for MiniUartInner {
 impl interface::ConsoleOps for MiniUartInner {
     /// Send a character
     fn write_char(&self, c: char) {
-        let mut b = [0u8; 4];
-        let _ = c.encode_utf8(&mut b);
-        for x in 0..c.len_utf8() {
-            self.write_byte(b[x]);
+        let mut bytes = [0u8; 4];
+        let _ = c.encode_utf8(&mut bytes);
+        for &b in bytes.iter().take(c.len_utf8()) {
+            self.write_byte(b);
         }
     }
 

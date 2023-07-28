@@ -547,11 +547,11 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
     /// when passing memory addresses as the data part of a mailbox message,
     /// the addresses should be **bus addresses as seen from the VC.**
     pub fn do_write(&self, channel: u32) -> Result<()> {
-        let buf_ptr = self.buffer.as_ptr() as *const u32 as u32;
+        let buf_ptr = self.buffer.as_ptr();
         let buf_ptr = if channel != channel::PropertyTagsArmToVc {
             BcmHost::phys2bus(buf_ptr as usize) as u32
         } else {
-            buf_ptr
+            buf_ptr as u32
         };
 
         let mut count: u32 = 0;

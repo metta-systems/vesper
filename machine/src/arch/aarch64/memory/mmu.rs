@@ -19,11 +19,11 @@ use {
         },
         platform, println,
     },
-    core::intrinsics::unlikely,
     aarch64_cpu::{
         asm::barrier,
         registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1},
     },
+    core::intrinsics::unlikely,
     tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
 };
 

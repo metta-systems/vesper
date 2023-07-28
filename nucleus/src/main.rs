@@ -53,6 +53,11 @@ entry!(kernel_init);
 
 /// Kernel entry point.
 /// `arch` crate is responsible for calling it.
+///
+/// # Safety
+///
+/// - Only a single core must be active and running this function.
+/// - The init calls in this function must appear in the correct order.
 pub unsafe fn kernel_init() -> ! {
     #[cfg(feature = "jtag")]
     machine::arch::jtag::wait_debugger();
