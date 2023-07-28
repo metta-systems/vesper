@@ -42,8 +42,7 @@ VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
 #
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
-RUST_STD = "-Zbuild-std=compiler_builtins,core,alloc"
-RUST_STD_FEATURES = "-Zbuild-std-features=compiler-builtins-mem"
+RUST_STD = "-Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem"
 TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
 PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES}"
 
@@ -97,7 +96,7 @@ args = ["modules", "tree"]
 
 [tasks.do-build]
 command = "cargo"
-args = ["build", "@@split(PLATFORM_TARGET, )", "@@remove-empty(RUST_STD)", "@@remove-empty(RUST_STD_FEATURES)", "--release"]
+args = ["build", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "--release"]
 
 [tasks.build]
 disabled = true
@@ -131,7 +130,7 @@ args = ["expand", "@@split(PLATFORM_TARGET, )", "--release"]
 [tasks.test]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 command = "cargo"
-args = ["test", "@@split(PLATFORM_TARGET, )", "@@remove-empty(RUST_STD)", "@@remove-empty(RUST_STD_FEATURES)"]
+args = ["test", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )"]
 
 [tasks.docs]
 env = { "TARGET_FEATURES" = "" }
@@ -141,7 +140,7 @@ args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET, )"]
 [tasks.clippy]
 env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
 command = "cargo"
-args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "--deny", "warnings", "--allow", "deprecated"]
+args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "--deny", "warnings", "--allow", "deprecated"]
 
 # These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
 
