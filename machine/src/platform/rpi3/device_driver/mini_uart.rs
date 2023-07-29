@@ -401,10 +401,4 @@ impl interface::ConsoleOps for MiniUart {
     }
 }
 
-impl interface::ConsoleTools for MiniUart {
-    fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
-        todo!()
-    }
-}
-
 impl interface::All for MiniUart {}
