@@ -34,12 +34,8 @@ pub mod interface {
         fn read_char(&self) -> char;
     }
 
-    pub trait ConsoleTools {
-        fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8];
-    }
-
     /// Trait alias for a full-fledged console.
-    pub trait All: Write + ConsoleOps + ConsoleTools {}
+    pub trait All: Write + ConsoleOps {}
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -65,4 +61,31 @@ pub fn register_console(new_console: &'static (dyn interface::All + Sync)) {
 /// This is the global console used by all printing macros.
 pub fn console() -> &'static dyn interface::All {
     CONSOLE.lock(|con| *con)
+}
+
+/// A command prompt.
+pub fn command_prompt(buf: &mut [u8]) -> &[u8] {
+    use interface::ConsoleOps;
+
+    console().write_string("\n$> ");
+
+    let mut i = 0;
+    let mut input;
+    loop {
+        input = console().read_char();
+
+        if input == '\n' {
+            console().write_char('\n'); // do \r\n output
+            return &buf[..i];
+        } else {
+            if i < buf.len() {
+                buf[i] = input as u8;
+                i += 1;
+            } else {
+                return &buf[..i];
+            }
+
+            console().write_char(input);
+        }
+    }
 }

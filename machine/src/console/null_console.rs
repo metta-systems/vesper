@@ -45,10 +45,4 @@ impl SerialOps for NullConsole {
     fn clear_rx(&self) {}
 }
 
-impl interface::ConsoleTools for NullConsole {
-    fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
-        buf
-    }
-}
-
 impl interface::All for NullConsole {}
