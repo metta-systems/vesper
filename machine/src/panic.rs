@@ -1,22 +1,38 @@
 //! A panic handler for hardware and for QEMU.
 use core::panic::PanicInfo;
 
+fn print_panic_info(info: &PanicInfo) {
+    let (location, line, column) = match info.location() {
+        Some(loc) => (loc.file(), loc.line(), loc.column()),
+        _ => ("???", 0, 0),
+    };
+
+    // @todo This may fail to print if the panic message is too long for local print buffer.
+    crate::info!(
+        "Kernel panic!\n\n\
+        Panic location:\n      File '{}', line {}, column {}\n\n\
+        {}",
+        location,
+        line,
+        column,
+        info.message().unwrap_or(&format_args!("")),
+    );
+}
+
 pub fn handler(info: &PanicInfo) -> ! {
     // Protect against panic infinite loops if any of the following code panics itself.
     panic_prevent_reenter();
-    // @todo This may fail to print if the panic message is too long for local print buffer.
-    crate::println!("\nPanic: {}\n", info);
+    print_panic_info(info);
     crate::endless_sleep()
 }
 
 /// We have two separate handlers because other crates may use machine crate as a dependency for
 /// running their tests, and this means machine could be compiled with different features.
-pub fn handler_for_tests(info: &core::panic::PanicInfo) -> ! {
+pub fn handler_for_tests(info: &PanicInfo) -> ! {
     crate::println!("\n[failed]\n");
     // Protect against panic infinite loops if any of the following code panics itself.
     panic_prevent_reenter();
-    // @todo This may fail to print if the panic message is too long for local print buffer.
-    crate::println!("\nPanic: {}\n", info);
+    print_panic_info(info);
     crate::qemu::semihosting::exit_failure()
 }
 
