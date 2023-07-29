@@ -35,7 +35,7 @@ use core::panic::PanicInfo;
 use machine::devices::SerialOps;
 use {
     cfg_if::cfg_if,
-    core::cell::UnsafeCell,
+    core::{cell::UnsafeCell, time::Duration},
     machine::{
         arch,
         console::console,
@@ -45,7 +45,7 @@ use {
             mailbox::{channel, Mailbox, MailboxOps},
             vc::VC,
         },
-        println, warn,
+        println, time, warn,
     },
 };
 
@@ -82,9 +82,31 @@ pub fn kernel_main() -> ! {
     #[cfg(test)]
     test_main();
 
-    command_prompt();
+    info!(
+        "{} version {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    );
+    info!("Booting on: {}", machine::platform::BcmHost::board_name());
 
-    reboot()
+    info!(
+        "Architectural timer resolution: {} ns",
+        time::time_manager().resolution().as_nanos()
+    );
+
+    info!("Drivers loaded:");
+    machine::drivers::driver_manager().enumerate();
+
+    // Test a failing timer case.
+    time::time_manager().spin_for(Duration::from_nanos(1));
+
+    loop {
+        info!("Spinning for 1 second");
+        time::time_manager().spin_for(Duration::from_secs(1));
+    }
+    // command_prompt();
+    //
+    // reboot()
 }
 
 #[cfg(not(test))]
