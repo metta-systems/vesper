@@ -6,8 +6,8 @@
  */
 
 use {
-    crate::{mmio_deref_wrapper::MMIODerefWrapper, platform::BcmHost},
-    core::marker::PhantomData,
+    crate::{mmio_deref_wrapper::MMIODerefWrapper, platform::BcmHost, time},
+    core::{marker::PhantomData, time::Duration},
     tock_registers::{
         fields::FieldValue,
         interfaces::{ReadWriteable, Readable, Writeable},
@@ -119,8 +119,6 @@ impl GPIO {
 
     #[cfg(feature = "rpi3")]
     pub fn power_off(&self) {
-        use crate::arch::loop_delay;
-
         // power off gpio pins (but not VCC pins)
         for bank in 0..5 {
             self.registers.FunctionSelect[bank].set(0);
@@ -128,12 +126,15 @@ impl GPIO {
 
         self.registers.PullUpDown.set(0);
 
-        loop_delay(2000);
+        // The Linux 2837 GPIO driver waits 1 µs between the steps.
+        const DELAY: Duration = Duration::from_micros(1);
+
+        time::time_manager().spin_for(DELAY);
 
         self.registers.PullUpDownEnableClock[0].set(0xffff_ffff);
         self.registers.PullUpDownEnableClock[1].set(0xffff_ffff);
 
-        loop_delay(2000);
+        time::time_manager().spin_for(DELAY);
 
         // flush GPIO setup
         self.registers.PullUpDownEnableClock[0].set(0);
@@ -208,14 +209,15 @@ impl<State> Pin<State> {
 
     #[cfg(feature = "rpi3")]
     pub fn set_pull_up_down(&self, pull: PullUpDown) {
-        use crate::arch::loop_delay;
-
         let bank = self.pin / 32;
         let off = self.pin % 32;
 
         self.registers.PullUpDown.set(0);
 
-        loop_delay(2000);
+        // The Linux 2837 GPIO driver waits 1 µs between the steps.
+        const DELAY: Duration = Duration::from_micros(1);
+
+        time::time_manager().spin_for(DELAY);
 
         self.registers.PullUpDownEnableClock[bank].modify(FieldValue::<u32, ()>::new(
             0b1,
@@ -223,7 +225,7 @@ impl<State> Pin<State> {
             (pull == PullUpDown::Up).into(),
         ));
 
-        loop_delay(2000);
+        time::time_manager().spin_for(DELAY);
 
         self.registers.PullUpDown.set(0);
         self.registers.PullUpDownEnableClock[bank].set(0);
