@@ -143,45 +143,6 @@ fn init_exception_traps() {
     info!("[!] Exception traps set up");
 }
 
-// fn init_uart_serial() {
-//     use machine::platform::rpi3::{gpio::GPIO, mini_uart::MiniUart, pl011_uart::PL011Uart};
-//
-//     let gpio = GPIO::default();
-//     let uart = MiniUart::default();
-//     let uart = uart.prepare(&gpio);
-//     // console::replace_with(uart.into());
-//
-//     println!("[0] MiniUART is live!");
-
-// Then immediately switch to PL011 (just as an example)
-
-// let uart = PL011Uart::default();
-
-// uart.init() will reconfigure the GPIO, which causes a race against
-// the MiniUart that is still putting out characters on the physical
-// line that are already buffered in its TX FIFO.
-//
-// To ensure the CPU doesn't rewire the GPIO before the MiniUart has put
-// its last character, explicitly flush it before rewiring.
-//
-// If you switch to an output that happens to not use the same pair of
-// physical wires (e.g. the Framebuffer), you don't need to do this,
-// because flush() is anyways called implicitly by replace_with(). This
-// is just a special case.
-// CONSOLE.lock(|c| c.flush());
-
-// match uart.prepare(&gpio) {
-//     Ok(uart) => {
-//         CONSOLE.lock(|c| {
-//             // Move uart into the global CONSOLE.
-//             c.replace_with(uart.into());
-//         });
-//         println!("[0] UART0 is live!");
-//     }
-//     Err(_) => println!("[0] Error switching to PL011 UART, continue with MiniUART"),
-// }
-// }
-
 //------------------------------------------------------------
 // Start a command prompt
 //------------------------------------------------------------
