@@ -11,6 +11,7 @@ mod boot;
 #[cfg(feature = "jtag")]
 pub mod jtag;
 pub mod memory;
+pub mod time;
 pub mod traps;
 
 /// Loop forever in sleep mode.

@@ -36,3 +36,54 @@ pub fn _print(args: core::fmt::Arguments) {
     let mut buf = [0u8; 2048]; // Increase this buffer size to allow dumping larger panic texts.
     qemu::semihosting::sys_write0_call(write_to::c_show(&mut buf, args).unwrap());
 }
+
+//--------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------
+
+/// Prints info text, with a newline.
+#[macro_export]
+macro_rules! info {
+    ($string:expr) => ({
+        let timestamp = $crate::time::time_manager().uptime();
+
+        $crate::macros::_print(format_args_nl!(
+            concat!("[  {:>3}.{:06}] ", $string),
+            timestamp.as_secs(),
+            timestamp.subsec_micros(),
+        ));
+    });
+    ($format_string:expr, $($arg:tt)*) => ({
+        let timestamp = $crate::time::time_manager().uptime();
+
+        $crate::macros::_print(format_args_nl!(
+            concat!("[  {:>3}.{:06}] ", $format_string),
+            timestamp.as_secs(),
+            timestamp.subsec_micros(),
+            $($arg)*
+        ));
+    })
+}
+
+/// Prints warning text, with a newline.
+#[macro_export]
+macro_rules! warn {
+    ($string:expr) => ({
+        let timestamp = $crate::time::time_manager().uptime();
+
+        $crate::macros::_print(format_args_nl!(
+            concat!("[W {:>3}.{:06}] ", $string),
+            timestamp.as_secs(),
+            timestamp.subsec_micros(),
+        ));
+    });
+    ($format_string:expr, $($arg:tt)*) => ({
+        let timestamp = $crate::time::time_manager().uptime();
+
+        $crate::macros::_print(format_args_nl!(
+            concat!("[W {:>3}.{:06}] ", $format_string),
+            timestamp.as_secs(),
+            timestamp.subsec_micros(),
+            $($arg)*
+        ));
+    })
+}

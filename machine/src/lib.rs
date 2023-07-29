@@ -6,11 +6,13 @@
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
 #![feature(core_intrinsics)]
+#![feature(const_option)]
 #![feature(strict_provenance)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
 #![feature(panic_info_message)]
 #![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.71 nightly
+#![feature(unchecked_math)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
@@ -42,6 +44,7 @@ pub mod platform;
 pub mod qemu;
 mod sync;
 pub mod tests;
+pub mod time;
 pub mod write_to;
 
 // The global allocator for DMA-able memory. That is, memory which is tagged
