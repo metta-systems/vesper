@@ -102,35 +102,6 @@ impl Console {
     }
 }
 
-impl interface::ConsoleTools for Console {
-    /// A command prompt.
-    fn command_prompt<'a>(&self, buf: &'a mut [u8]) -> &'a [u8] {
-        use interface::ConsoleOps;
-
-        self.write_string("\n$> ");
-
-        let mut i = 0;
-        let mut input;
-        loop {
-            input = self.read_char();
-
-            if input == '\n' {
-                self.write_char('\n'); // do \r\n output
-                return &buf[..i];
-            } else {
-                if i < buf.len() {
-                    buf[i] = input as u8;
-                    i += 1;
-                } else {
-                    return &buf[..i];
-                }
-
-                self.write_char(input);
-            }
-        }
-    }
-}
-
 /// The global console. Output of the kernel print! and println! macros goes here.
 pub fn console() -> &'static dyn crate::console::interface::All {
     &CONSOLE
