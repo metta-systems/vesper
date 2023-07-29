@@ -69,7 +69,7 @@ QEMU_ARM_TRACE_OPTS = "arm_gt_cntvoff_write,arm_gt_ctl_write,arm_gt_cval_write,a
 QEMU_BCM_TRACE_OPTS = "bcm2835_cprman_read,bcm2835_cprman_write,bcm2835_cprman_write_invalid_magic,bcm2835_ic_set_cpu_irq,bcm2835_ic_set_gpu_irq,bcm2835_mbox_irq,bcm2835_mbox_property,bcm2835_mbox_read,bcm2835_mbox_write,bcm2835_sdhost_edm_change,bcm2835_sdhost_read,bcm2835_sdhost_update_irq,bcm2835_sdhost_write,bcm2835_systmr_irq_ack,bcm2835_systmr_read,bcm2835_systmr_run,bcm2835_systmr_timer_expired,bcm2835_systmr_write"
 QEMU_TRACE_OPTS = "trace:${QEMU_ARM_TRACE_OPTS},${QEMU_BCM_TRACE_OPTS}" # @todo trace: prefix for each opt
 QEMU_DISASM_OPTS = "-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin"
-QEMU_SERIAL_OPTS = "-serial pty -serial stdio"
+QEMU_SERIAL_OPTS = "-serial stdio -serial pty"
 QEMU_TESTS_OPTS = "-nographic"
 # For gdb connection:
 # - if this is set, MUST have gdb attached for SYS_WRITE0 to work, otherwise QEMU will crash.
