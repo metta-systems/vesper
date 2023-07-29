@@ -59,8 +59,8 @@ register_structs! {
         // (0x84 => __reserved_10),
         // (0x88 => pub AFEN: [ReadWrite<u32>; 2]),
         // (0x90 => __reserved_11),
-        (0x94 => pub PullUpDown: ReadWrite<u32>), // pull up down
-        (0x98 => pub PUDCLK: [ReadWrite<u32>; 2]),
+        (0x94 => pub PullUpDown: ReadWrite<u32>),
+        (0x98 => pub PullUpDownEnableClock: [ReadWrite<u32>; 2]),
         (0xa0 => @END),
     }
 }
@@ -130,14 +130,14 @@ impl GPIO {
 
         loop_delay(2000);
 
-        self.registers.PUDCLK[0].set(0xffff_ffff);
-        self.registers.PUDCLK[1].set(0xffff_ffff);
+        self.registers.PullUpDownEnableClock[0].set(0xffff_ffff);
+        self.registers.PullUpDownEnableClock[1].set(0xffff_ffff);
 
         loop_delay(2000);
 
         // flush GPIO setup
-        self.registers.PUDCLK[0].set(0);
-        self.registers.PUDCLK[1].set(0);
+        self.registers.PullUpDownEnableClock[0].set(0);
+        self.registers.PullUpDownEnableClock[1].set(0);
     }
 
     #[cfg(feature = "rpi4")]
@@ -217,7 +217,7 @@ impl<State> Pin<State> {
 
         loop_delay(2000);
 
-        self.registers.PUDCLK[bank].modify(FieldValue::<u32, ()>::new(
+        self.registers.PullUpDownEnableClock[bank].modify(FieldValue::<u32, ()>::new(
             0b1,
             off,
             (pull == PullUpDown::Up).into(),
@@ -226,7 +226,7 @@ impl<State> Pin<State> {
         loop_delay(2000);
 
         self.registers.PullUpDown.set(0);
-        self.registers.PUDCLK[bank].set(0);
+        self.registers.PullUpDownEnableClock[bank].set(0);
     }
 
     #[cfg(feature = "rpi4")]
