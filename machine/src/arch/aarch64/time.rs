@@ -12,13 +12,14 @@
 //! crate::time::arch_time
 
 use {
-    crate::warn,
+    crate::{sync, warn},
     aarch64_cpu::{asm::barrier, registers::*},
     core::{
         num::{NonZeroU128, NonZeroU32, NonZeroU64},
         ops::{Add, Div},
         time::Duration,
     },
+    once_cell::unsync::Lazy,
     tock_registers::interfaces::Readable,
 };
 
@@ -35,22 +36,18 @@ struct GenericTimerCounterValue(u64);
 // Global instances
 //--------------------------------------------------------------------------------------------------
 
-/// Boot assembly code overwrites this value with the value of CNTFRQ_EL0 before any Rust code is
-/// executed. This given value here is just a (safe) dummy.
-#[no_mangle]
-static ARCH_TIMER_COUNTER_FREQUENCY: NonZeroU32 = NonZeroU32::MIN;
+static ARCH_TIMER_COUNTER_FREQUENCY: sync::NullLock<Lazy<NonZeroU32>> =
+    sync::NullLock::new(Lazy::new(|| {
+        NonZeroU32::try_from(CNTFRQ_EL0.get() as u32).unwrap()
+    }));
 
 //--------------------------------------------------------------------------------------------------
 // Private Code
 //--------------------------------------------------------------------------------------------------
 
 fn arch_timer_counter_frequency() -> NonZeroU32 {
-    // Read volatile is needed here to prevent the compiler from optimizing
-    // ARCH_TIMER_COUNTER_FREQUENCY away.
-    //
-    // This is safe, because all the safety requirements as stated in read_volatile()'s
-    // documentation are fulfilled.
-    unsafe { core::ptr::read_volatile(&ARCH_TIMER_COUNTER_FREQUENCY) }
+    use crate::sync::interface::Mutex;
+    ARCH_TIMER_COUNTER_FREQUENCY.lock(|inner| **inner)
 }
 
 impl GenericTimerCounterValue {
