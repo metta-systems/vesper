@@ -39,13 +39,13 @@ use {
     machine::{
         arch,
         console::console,
-        entry, memory,
+        entry, info, memory,
         platform::rpi3::{
             display::{Color, DrawError},
             mailbox::{channel, Mailbox, MailboxOps},
             vc::VC,
         },
-        println,
+        println, warn,
     },
 };
 
@@ -105,7 +105,7 @@ fn init_mmu() {
             panic!("MMU: {}", e);
         }
     }
-    println!("[!] MMU initialised");
+    info!("[!] MMU initialised");
     print_mmu_state_and_features();
 }
 
@@ -118,7 +118,7 @@ fn init_exception_traps() {
         arch::traps::set_vbar_el1_checked(__EXCEPTION_VECTORS_START.get() as u64)
             .expect("Vector table properly aligned!");
     }
-    println!("[!] Exception traps set up");
+    info!("[!] Exception traps set up");
 }
 
 // fn init_uart_serial() {
@@ -167,7 +167,7 @@ fn command_prompt() {
     'cmd_loop: loop {
         let mut buf = [0u8; 64];
 
-        match console().command_prompt(&mut buf) {
+        match machine::console::command_prompt(&mut buf) {
             b"mmu" => init_mmu(),
             b"feats" => print_mmu_state_and_features(),
             b"disp" => check_display_init(),
@@ -177,7 +177,7 @@ fn command_prompt() {
             b"led off" => set_led(false),
             b"help" => print_help(),
             b"end" => break 'cmd_loop,
-            x => println!("[!] Unknown command {:?}, try 'help'", x),
+            x => warn!("[!] Unknown command {:?}, try 'help'", x),
         }
     }
 }
@@ -203,8 +203,8 @@ fn set_led(enable: bool) {
 
     mbox.call(channel::PropertyTagsArmToVc)
         .map_err(|e| {
-            println!("Mailbox call returned error {}", e);
-            println!("Mailbox contents: {:?}", mbox);
+            warn!("Mailbox call returned error {}", e);
+            warn!("Mailbox contents: {:?}", mbox);
         })
         .ok();
 }
@@ -212,12 +212,12 @@ fn set_led(enable: bool) {
 fn reboot() -> ! {
     cfg_if! {
         if #[cfg(feature = "qemu")] {
-            println!("Bye, shutting down QEMU");
+            info!("Bye, shutting down QEMU");
             machine::qemu::semihosting::exit_success()
         } else {
             use machine::platform::rpi3::power::Power;
 
-            println!("Bye, going to reset now");
+            info!("Bye, going to reset now");
             Power::default().reset()
         }
     }
@@ -226,17 +226,17 @@ fn reboot() -> ! {
 fn check_display_init() {
     display_graphics()
         .map_err(|e| {
-            println!("Error in display: {}", e);
+            warn!("Error in display: {}", e);
         })
         .ok();
 }
 
 fn display_graphics() -> Result<(), DrawError> {
     if let Ok(mut display) = VC::init_fb(800, 600, 32) {
-        println!("Display created");
+        info!("Display created");
 
         display.clear(Color::black());
-        println!("Display cleared");
+        info!("Display cleared");
 
         display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255))?;
@@ -266,7 +266,7 @@ fn check_data_abort_trap() {
     let big_addr: u64 = 3 * 1024 * 1024 * 1024;
     unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
 
-    println!("[i] Whoa! We recovered from an exception.");
+    info!("[i] Whoa! We recovered from an exception.");
 }
 
 #[cfg(test)]
