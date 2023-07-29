@@ -11,7 +11,7 @@
 use {
     crate::{
         arch::loop_while,
-        console::interface::ConsoleOps,
+        console::interface,
         devices::SerialOps,
         mmio_deref_wrapper::MMIODerefWrapper,
         platform::{
@@ -19,7 +19,9 @@ use {
             mailbox::{self, Mailbox, MailboxOps},
             BcmHost,
         },
+        sync::{interface::Mutex, NullLock},
     },
+    core::fmt::{self, Arguments},
     snafu::Snafu,
     tock_registers::{
         interfaces::{ReadWriteable, Readable, Writeable},
@@ -27,6 +29,10 @@ use {
         registers::{ReadOnly, ReadWrite, WriteOnly},
     },
 };
+
+//--------------------------------------------------------------------------------------------------
+// Private Definitions
+//--------------------------------------------------------------------------------------------------
 
 // PL011 UART registers.
 //
@@ -77,18 +83,27 @@ register_bitfields! {
     /// Integer Baud rate divisor
     IBRD [
         /// Integer Baud rate divisor
-        IBRD OFFSET(0) NUMBITS(16) []
+        BAUD_DIVINT OFFSET(0) NUMBITS(16) []
     ],
 
     /// Fractional Baud rate divisor
     FBRD [
         /// Fractional Baud rate divisor
-        FBRD OFFSET(0) NUMBITS(6) []
+        BAUD_DIVFRAC OFFSET(0) NUMBITS(6) []
     ],
 
     /// Line Control register
-    LCRH [
-        Parity OFFSET(1) NUMBITS(1) [
+    LCR_H [
+        /// Word length. These bits indicate the number of data bits
+        /// transmitted or received in a frame.
+        WordLength OFFSET(5) NUMBITS(2) [
+            FiveBit = 0b00,
+            SixBit = 0b01,
+            SevenBit = 0b10,
+            EightBit = 0b11
+        ],
+
+        Fifos OFFSET(4) NUMBITS(1) [
             Disabled = 0,
             Enabled = 1
         ],
@@ -99,19 +114,10 @@ register_bitfields! {
             Enabled = 1
         ],
 
-        Fifo OFFSET(4) NUMBITS(1) [
+        Parity OFFSET(1) NUMBITS(1) [
             Disabled = 0,
             Enabled = 1
         ],
-
-        /// Word length. These bits indicate the number of data bits
-        /// transmitted or received in a frame.
-        WordLength OFFSET(5) NUMBITS(2) [
-            FiveBit = 0b00,
-            SixBit = 0b01,
-            SevenBit = 0b10,
-            EightBit = 0b11
-        ]
     ],
 
     /// Control Register
@@ -183,46 +189,52 @@ register_structs! {
         (0x08 => __reserved_1),
         (0x18 => Flag: ReadOnly<u32, FR::Register>),
         (0x1c => __reserved_2),
-        (0x24 => IntegerBaudRate: ReadWrite<u32, IBRD::Register>),
-        (0x28 => FractionalBaudRate: ReadWrite<u32, FBRD::Register>),
-        (0x2c => LineControl: ReadWrite<u32, LCRH::Register>),
-        (0x30 => Control: ReadWrite<u32, CR::Register>),
+        (0x24 => IntegerBaudRate: WriteOnly<u32, IBRD::Register>),
+        (0x28 => FractionalBaudRate: WriteOnly<u32, FBRD::Register>),
+        (0x2c => LineControl: ReadWrite<u32, LCR_H::Register>), // @todo write-only?
+        (0x30 => Control: WriteOnly<u32, CR::Register>),
         (0x34 => InterruptFifoLevelSelect: ReadWrite<u32>),
         (0x38 => InterruptMaskSetClear: ReadWrite<u32, IMSC::Register>),
         (0x3c => RawInterruptStatus: ReadOnly<u32>),
         (0x40 => MaskedInterruptStatus: ReadOnly<u32>),
         (0x44 => InterruptClear: WriteOnly<u32, ICR::Register>),
-        (0x48 => DmaControl: ReadWrite<u32, DMACR::Register>),
+        (0x48 => DmaControl: WriteOnly<u32, DMACR::Register>),
         (0x4c => __reserved_3),
         (0x1000 => @END),
     }
 }
 
-#[derive(Debug, Snafu)]
-pub enum PL011UartError {
-    #[snafu(display("PL011 UART setup failed in mailbox operation"))]
-    MailboxError,
-    #[snafu(display(
-        "PL011 UART setup failed due to integer baud rate divisor out of range ({})",
-        ibrd
-    ))]
-    InvalidIntegerDivisor { ibrd: u32 },
-    #[snafu(display(
-        "PL011 UART setup failed due to fractional baud rate divisor out of range ({})",
-        fbrd
-    ))]
-    InvalidFractionalDivisor { fbrd: u32 },
-}
-
-pub type Result<T> = ::core::result::Result<T, PL011UartError>;
+// #[derive(Debug, Snafu)]
+// pub enum PL011UartError {
+//     #[snafu(display("PL011 UART setup failed in mailbox operation"))]
+//     MailboxError,
+//     #[snafu(display(
+//         "PL011 UART setup failed due to integer baud rate divisor out of range ({})",
+//         ibrd
+//     ))]
+//     InvalidIntegerDivisor { ibrd: u32 },
+//     #[snafu(display(
+//         "PL011 UART setup failed due to fractional baud rate divisor out of range ({})",
+//         fbrd
+//     ))]
+//     InvalidFractionalDivisor { fbrd: u32 },
+// }
+//
+// pub type Result<T> = ::core::result::Result<T, PL011UartError>;
 
 type Registers = MMIODerefWrapper<RegisterBlock>;
 
-pub struct PL011Uart {
+struct PL011UartInner {
     registers: Registers,
 }
 
-pub struct PreparedPL011Uart(PL011Uart);
+//--------------------------------------------------------------------------------------------------
+// Public Definitions
+//--------------------------------------------------------------------------------------------------
+
+pub struct PL011Uart {
+    inner: NullLock<PL011UartInner>,
+}
 
 pub struct RateDivisors {
     integer_baud_rate_divisor: u32,
@@ -239,18 +251,20 @@ impl RateDivisors {
     // Use integer-only calculation based on [this page](https://krinkinmu.github.io/2020/11/29/PL011.html)
     // Calculate 64 * clock / (16 * rate) = 4 * clock / rate, then extract 6 lowest bits for fractional part
     // and the next 16 bits for integer part.
-    pub fn from_clock_and_rate(clock: u64, baud_rate: u32) -> Result<RateDivisors> {
+    pub fn from_clock_and_rate(clock: u64, baud_rate: u32) -> Result<RateDivisors, &'static str> {
         let value = 4 * clock / baud_rate as u64;
         let i = ((value >> 6) & 0xffff) as u32;
         let f = (value & 0x3f) as u32;
         // TODO: check for integer overflow, i.e. any bits set above the 0x3fffff mask.
         // FIXME: can't happen due to calculation above
         if i > 65535 {
-            return Err(PL011UartError::InvalidIntegerDivisor { ibrd: i });
+            return Err("PL011 UART setup failed due to integer baud rate divisor out of range");
+            // return Err(PL011UartError::InvalidIntegerDivisor { ibrd: i });
         }
         // FIXME: can't happen due to calculation above
         if f > 63 {
-            return Err(PL011UartError::InvalidFractionalDivisor { fbrd: f });
+            return Err("PL011 UART setup failed due to fractional baud rate divisor out of range");
+            // return Err(PL011UartError::InvalidFractionalDivisor { fbrd: f });
         }
         Ok(RateDivisors {
             integer_baud_rate_divisor: i,
@@ -259,49 +273,29 @@ impl RateDivisors {
     }
 }
 
-pub const UART0_START: usize = 0x20_1000;
+// [temporary] Used in mmu.rs to set up local paging
+pub const UART0_BASE: usize = BcmHost::get_peripheral_address() + 0x20_1000;
 
-impl Default for PL011Uart {
-    fn default() -> Self {
-        const UART0_BASE: usize = BcmHost::get_peripheral_address() + UART0_START;
-        unsafe { PL011Uart::new(UART0_BASE) }
-    }
-}
+//--------------------------------------------------------------------------------------------------
+// Public Code
+//--------------------------------------------------------------------------------------------------
 
 impl PL011Uart {
+    pub const COMPATIBLE: &'static str = "BCM PL011 UART";
+
+    /// Create an instance.
+    ///
     /// # Safety
     ///
-    /// Unsafe, duh!
-    pub const unsafe fn new(base_addr: usize) -> PL011Uart {
-        PL011Uart {
-            registers: Registers::new(base_addr),
+    /// - The user must ensure to provide a correct MMIO start address.
+    pub const unsafe fn new(base_addr: usize) -> Self {
+        Self {
+            inner: NullLock::new(PL011UartInner::new(base_addr)),
         }
     }
 
-    /// Set baud rate and characteristics (115200 8N1) and map to GPIO
-    pub fn prepare(self, gpio: &gpio::GPIO) -> Result<PreparedPL011Uart> {
-        // Turn off UART
-        self.registers.Control.set(0);
-
-        // Wait for any ongoing transmissions to complete
-        self.flush_internal();
-
-        // Flush TX FIFO
-        self.registers.LineControl.modify(LCRH::Fifo::Disabled);
-
-        // set up clock for consistent divisor values
-        const CLOCK: u32 = 4_000_000; // 4Mhz
-        const BAUD_RATE: u32 = 115_200;
-
-        let mut mailbox = Mailbox::<9>::default();
-        let index = mailbox.request();
-        let index = mailbox.set_clock_rate(index, mailbox::clock::UART, CLOCK);
-        let mailbox = mailbox.end(index);
-
-        if mailbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
-            return Err(PL011UartError::MailboxError); // Abort if UART clocks couldn't be set
-        };
-
+    /// GPIO pins should be set up first before enabling the UART
+    pub fn prepare_gpio(gpio: &gpio::GPIO) {
         // Pin 14
         const UART_TXD: gpio::Function = gpio::Function::Alt0;
         // Pin 15
@@ -314,9 +308,54 @@ impl PL011Uart {
         gpio.get_pin(15)
             .into_alt(UART_RXD)
             .set_pull_up_down(gpio::PullUpDown::Up);
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Private Code
+//--------------------------------------------------------------------------------------------------
+
+impl PL011UartInner {
+    /// Create an instance.
+    ///
+    /// # Safety
+    ///
+    /// - The user must ensure to provide a correct MMIO start address.
+    pub const unsafe fn new(base_addr: usize) -> Self {
+        Self {
+            registers: Registers::new(base_addr),
+        }
+    }
+
+    /// Set baud rate and characteristics (115200 8N1) and map to GPIO
+    pub fn prepare(&self) -> core::result::Result<(), &'static str> {
+        use tock_registers::interfaces::Writeable;
+
+        // Turn off UART
+        self.registers.Control.set(0);
+
+        // Wait for any ongoing transmissions to complete
+        self.flush_internal();
+
+        // Flush TX FIFO
+        self.registers.LineControl.modify(LCR_H::Fifos::Disabled);
 
         // Clear pending interrupts
         self.registers.InterruptClear.write(ICR::ALL::SET);
+
+        // set up clock for consistent divisor values
+        const CLOCK: u32 = 4_000_000; // 4Mhz
+        const BAUD_RATE: u32 = 115_200;
+
+        let mut mailbox = Mailbox::<9>::default();
+        let index = mailbox.request();
+        let index = mailbox.set_clock_rate(index, mailbox::clock::UART, CLOCK);
+        let mailbox = mailbox.end(index);
+
+        if mailbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
+            return Err("PL011 UART setup failed in mailbox operation");
+            // return Err(PL011UartError::MailboxError); // Abort if UART clocks couldn't be set
+        };
 
         // From the PL011 Technical Reference Manual:
         //
@@ -328,15 +367,15 @@ impl PL011Uart {
         let divisors = RateDivisors::from_clock_and_rate(CLOCK.into(), BAUD_RATE)?;
         self.registers
             .IntegerBaudRate
-            .write(IBRD::IBRD.val(divisors.integer_baud_rate_divisor & 0xffff));
+            .write(IBRD::BAUD_DIVINT.val(divisors.integer_baud_rate_divisor & 0xffff));
         self.registers
             .FractionalBaudRate
-            .write(FBRD::FBRD.val(divisors.fractional_baud_rate_divisor & 0b11_1111));
+            .write(FBRD::BAUD_DIVFRAC.val(divisors.fractional_baud_rate_divisor & 0b11_1111));
         self.registers.LineControl.write(
-            LCRH::WordLength::EightBit
-                + LCRH::Fifo::Enabled
-                + LCRH::Parity::Disabled
-                + LCRH::Stop2::Disabled,
+            LCR_H::WordLength::EightBit
+                + LCR_H::Fifos::Enabled
+                + LCR_H::Parity::Disabled
+                + LCR_H::Stop2::Disabled,
         );
 
         // Mask all interrupts by setting corresponding bits to 1
@@ -352,7 +391,7 @@ impl PL011Uart {
             .Control
             .write(CR::UARTEN::Enabled + CR::TXE::Enabled + CR::RXE::Enabled);
 
-        Ok(PreparedPL011Uart(self))
+        Ok(())
     }
 
     fn flush_internal(&self) {
@@ -360,40 +399,40 @@ impl PL011Uart {
     }
 }
 
-impl Drop for PreparedPL011Uart {
+impl Drop for PL011UartInner {
     fn drop(&mut self) {
-        self.0.registers.Control.set(0);
+        self.registers.Control.set(0);
     }
 }
 
-impl SerialOps for PreparedPL011Uart {
+impl SerialOps for PL011UartInner {
     fn read_byte(&self) -> u8 {
         // wait until something is in the buffer
-        loop_while(|| self.0.registers.Flag.is_set(FR::RXFE));
+        loop_while(|| self.registers.Flag.is_set(FR::RXFE));
 
         // read it and return
-        self.0.registers.Data.get() as u8
+        self.registers.Data.get() as u8
     }
 
     fn write_byte(&self, b: u8) {
         // wait until we can send
-        loop_while(|| self.0.registers.Flag.is_set(FR::TXFF));
+        loop_while(|| self.registers.Flag.is_set(FR::TXFF));
 
         // write the character to the buffer
-        self.0.registers.Data.set(b as u32);
+        self.registers.Data.set(b as u32);
     }
 
     /// Wait until the TX FIFO is empty, aka all characters have been put on the
     /// line.
     fn flush(&self) {
-        self.0.flush_internal();
+        self.flush_internal();
     }
 
     /// Consume input until RX FIFO is empty, aka all pending characters have been
     /// consumed.
     fn clear_rx(&self) {
         loop_while(|| {
-            let pending = !self.0.registers.Flag.is_set(FR::RXFE);
+            let pending = !self.registers.Flag.is_set(FR::RXFE);
             if pending {
                 self.read_byte();
             }
@@ -402,41 +441,73 @@ impl SerialOps for PreparedPL011Uart {
     }
 }
 
-// @todo Seems like a blanket implementation of ConsoleOps is in order..
-impl ConsoleOps for PreparedPL011Uart {
-    /// Send a character
-    fn write_char(&self, c: char) {
-        let mut bytes = [0u8; 4];
-        let _ = c.encode_utf8(&mut bytes);
-        for &b in bytes.iter().take(c.len_utf8()) {
-            self.write_byte(b);
-        }
-    }
+impl interface::ConsoleOps for PL011UartInner {}
 
-    /// Display a string
-    fn write_string(&self, string: &str) {
-        for c in string.chars() {
-            // convert newline to carriage return + newline
-            if c == '\n' {
-                self.write_char('\r')
-            }
-
-            self.write_char(c);
-        }
-    }
-
-    /// Receive a character -- FIXME: needs a state machine to read UTF-8 chars!
-    fn read_char(&self) -> char {
-        let mut ret = self.read_byte() as char;
-
-        // convert carriage return to newline
-        if ret == '\r' {
-            ret = '\n'
-        }
-
-        ret
+impl fmt::Write for PL011UartInner {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        use interface::ConsoleOps;
+        self.write_string(s);
+        Ok(())
     }
 }
+
+impl interface::Write for PL011Uart {
+    fn write_fmt(&self, args: Arguments) -> fmt::Result {
+        self.inner.lock(|inner| fmt::Write::write_fmt(inner, args))
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// OS Interface Code
+//--------------------------------------------------------------------------------------------------
+
+impl crate::drivers::interface::DeviceDriver for PL011Uart {
+    fn compatible(&self) -> &'static str {
+        Self::COMPATIBLE
+    }
+
+    unsafe fn init(&self) -> core::result::Result<(), &'static str> {
+        self.inner.lock(|inner| inner.prepare())
+    }
+}
+
+impl SerialOps for PL011Uart {
+    fn read_byte(&self) -> u8 {
+        self.inner.lock(|inner| inner.read_byte())
+    }
+
+    fn write_byte(&self, byte: u8) {
+        self.inner.lock(|inner| inner.write_byte(byte))
+    }
+
+    fn flush(&self) {
+        self.inner.lock(|inner| inner.flush())
+    }
+
+    fn clear_rx(&self) {
+        self.inner.lock(|inner| inner.clear_rx())
+    }
+}
+
+impl interface::ConsoleOps for PL011Uart {
+    fn write_char(&self, c: char) {
+        self.inner.lock(|inner| inner.write_char(c))
+    }
+
+    fn write_string(&self, string: &str) {
+        self.inner.lock(|inner| inner.write_string(string))
+    }
+
+    fn read_char(&self) -> char {
+        self.inner.lock(|inner| inner.read_char())
+    }
+}
+
+impl interface::All for PL011Uart {}
+
+//--------------------------------------------------------------------------------------------------
+// Testing
+//--------------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
