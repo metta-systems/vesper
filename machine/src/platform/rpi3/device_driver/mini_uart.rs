@@ -184,9 +184,7 @@ impl crate::drivers::interface::DeviceDriver for MiniUart {
 
 impl MiniUart {
     pub const COMPATIBLE: &'static str = "BCM MINI UART";
-}
 
-impl MiniUart {
     /// Create an instance.
     ///
     /// # Safety
@@ -226,9 +224,7 @@ impl MiniUartInner {
             registers: Registers::new(base_addr),
         }
     }
-}
 
-impl MiniUartInner {
     /// Set baud rate and characteristics (115200 8N1) and map to GPIO
     pub fn prepare(&self) -> Result<(), &'static str> {
         use tock_registers::interfaces::Writeable;
@@ -255,6 +251,11 @@ impl MiniUartInner {
             .write(AUX_MU_CNTL::RX_EN::Enabled + AUX_MU_CNTL::TX_EN::Enabled);
 
         Ok(())
+    }
+
+    fn flush_internal(&self) {
+        use tock_registers::interfaces::Readable;
+        crate::arch::loop_until(|| self.registers.AUX_MU_STAT.is_set(AUX_MU_STAT::TX_DONE));
     }
 }
 
@@ -298,8 +299,7 @@ impl SerialOps for MiniUartInner {
     /// Wait until the TX FIFO is empty, aka all characters have been put on the
     /// line.
     fn flush(&self) {
-        use tock_registers::interfaces::Readable;
-        crate::arch::loop_until(|| self.registers.AUX_MU_STAT.is_set(AUX_MU_STAT::TX_DONE));
+        self.flush_internal();
     }
 
     /// Consume input until RX FIFO is empty, aka all pending characters have been
