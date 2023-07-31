@@ -319,40 +319,7 @@ impl SerialOps for MiniUartInner {
     }
 }
 
-impl interface::ConsoleOps for MiniUartInner {
-    /// Send a character
-    fn write_char(&self, c: char) {
-        let mut bytes = [0u8; 4];
-        let _ = c.encode_utf8(&mut bytes);
-        for &b in bytes.iter().take(c.len_utf8()) {
-            self.write_byte(b);
-        }
-    }
-
-    /// Display a string
-    fn write_string(&self, string: &str) {
-        for c in string.chars() {
-            // convert newline to carriage return + newline
-            if c == '\n' {
-                self.write_char('\r')
-            }
-
-            self.write_char(c);
-        }
-    }
-
-    /// Receive a character -- FIXME: needs a state machine to read UTF-8 chars!
-    fn read_char(&self) -> char {
-        let mut ret = self.read_byte() as char;
-
-        // convert carriage return to newline -- this doesn't work well for reading binaries...
-        if ret == '\r' {
-            ret = '\n'
-        }
-
-        ret
-    }
-}
+impl interface::ConsoleOps for MiniUartInner {}
 
 impl fmt::Write for MiniUartInner {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -386,7 +353,6 @@ impl SerialOps for MiniUart {
     }
 }
 
-// ??
 impl interface::ConsoleOps for MiniUart {
     fn write_char(&self, c: char) {
         self.inner.lock(|inner| inner.write_char(c))
