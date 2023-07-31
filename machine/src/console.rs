@@ -27,11 +27,35 @@ pub mod interface {
     #[allow(unused_variables)]
     pub trait ConsoleOps: SerialOps {
         /// Send a character
-        fn write_char(&self, c: char);
+        fn write_char(&self, c: char) {
+            let mut bytes = [0u8; 4];
+            let _ = c.encode_utf8(&mut bytes);
+            for &b in bytes.iter().take(c.len_utf8()) {
+                self.write_byte(b);
+            }
+        }
         /// Display a string
-        fn write_string(&self, string: &str);
-        /// Receive a character
-        fn read_char(&self) -> char;
+        fn write_string(&self, string: &str) {
+            for c in string.chars() {
+                // convert newline to carriage return + newline
+                if c == '\n' {
+                    self.write_char('\r')
+                }
+
+                self.write_char(c);
+            }
+        }
+        /// Receive a character -- FIXME: needs a state machine to read UTF-8 chars!
+        fn read_char(&self) -> char {
+            let mut ret = self.read_byte() as char;
+
+            // convert carriage return to newline
+            if ret == '\r' {
+                ret = '\n'
+            }
+
+            ret
+        }
     }
 
     /// Trait alias for a full-fledged console.
