@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![allow(stable_features)]
+#![feature(asm_const)]
 #![feature(decl_macro)]
 #![feature(ptr_internals)]
 #![feature(allocator_api)]
