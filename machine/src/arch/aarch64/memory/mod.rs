@@ -6,7 +6,7 @@
 //! Memory management functions for aarch64.
 
 mod addr;
-// pub mod mmu; included directly as arch_mmu from main memory.rs module
+pub mod mmu;
 
 pub use addr::{PhysAddr, VirtAddr};
 

@@ -1,4 +1,4 @@
-use crate::{console::interface, devices::SerialOps};
+use crate::{console::interface, devices::serial::SerialOps};
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions

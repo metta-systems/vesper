@@ -29,23 +29,32 @@ use architecture_not_supported_sorry;
 /// Architecture-specific code.
 #[macro_use]
 pub mod arch;
-
-pub use arch::*;
-
 pub mod console;
+pub mod cpu;
+pub mod debug;
 pub mod devices;
 pub mod drivers;
+pub mod exception;
 pub mod macros;
 pub mod memory;
 mod mm;
-pub mod mmio_deref_wrapper;
 pub mod panic;
 pub mod platform;
 pub mod qemu;
-mod sync;
+pub mod state;
+mod synchronization;
 pub mod tests;
 pub mod time;
 pub mod write_to;
+
+/// Version string.
+pub fn version() -> &'static str {
+    concat!(
+        env!("CARGO_PKG_NAME"),
+        " version ",
+        env!("CARGO_PKG_VERSION")
+    )
+}
 
 // The global allocator for DMA-able memory. That is, memory which is tagged
 // non-cacheable in the page tables.
@@ -78,6 +87,8 @@ mod lib_tests {
     /// Main for running tests.
     #[no_mangle]
     pub unsafe fn main() -> ! {
+        crate::exception::handling_init();
+        crate::platform::drivers::qemu_bring_up_console();
         crate::test_main();
         crate::qemu::semihosting::exit_success()
     }
