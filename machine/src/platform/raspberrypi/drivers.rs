@@ -1,6 +1,8 @@
 use {
+    super::exception,
     crate::{
         console, drivers,
+        exception::{self as generic_exception},
         platform::{device_driver, memory::map::mmio},
     },
     core::sync::atomic::{AtomicBool, Ordering},
@@ -35,6 +37,7 @@ pub unsafe fn init() -> Result<(), &'static str> {
     driver_gpio()?;
     #[cfg(not(feature = "noserial"))]
     driver_uart()?;
+    driver_interrupt_controller()?;
 
     INIT_DONE.store(true, Ordering::Relaxed);
     Ok(())
@@ -90,13 +93,23 @@ fn post_init_gpio() -> Result<(), &'static str> {
     Ok(())
 }
 
+/// This must be called only after successful init of the interrupt controller driver.
+fn post_init_interrupt_controller() -> Result<(), &'static str> {
+    generic_exception::asynchronous::register_irq_manager(&INTERRUPT_CONTROLLER);
+
+    Ok(())
+}
+
 fn driver_uart() -> Result<(), &'static str> {
     // let uart_descriptor =
     //     drivers::DeviceDriverDescriptor::new(&MINI_UART, Some(post_init_mini_uart));
     // drivers::driver_manager().register_driver(uart_descriptor);
 
-    let uart_descriptor =
-        drivers::DeviceDriverDescriptor::new(&PL011_UART, Some(post_init_pl011_uart), None);
+    let uart_descriptor = drivers::DeviceDriverDescriptor::new(
+        &PL011_UART,
+        Some(post_init_pl011_uart),
+        Some(exception::asynchronous::irq_map::PL011_UART),
+    );
     drivers::driver_manager().register_driver(uart_descriptor);
 
     Ok(())
@@ -105,6 +118,17 @@ fn driver_uart() -> Result<(), &'static str> {
 fn driver_gpio() -> Result<(), &'static str> {
     let gpio_descriptor = drivers::DeviceDriverDescriptor::new(&GPIO, Some(post_init_gpio), None);
     drivers::driver_manager().register_driver(gpio_descriptor);
+
+    Ok(())
+}
+
+fn driver_interrupt_controller() -> Result<(), &'static str> {
+    let interrupt_controller_descriptor = drivers::DeviceDriverDescriptor::new(
+        &INTERRUPT_CONTROLLER,
+        Some(post_init_interrupt_controller),
+        None,
+    );
+    drivers::driver_manager().register_driver(interrupt_controller_descriptor);
 
     Ok(())
 }
