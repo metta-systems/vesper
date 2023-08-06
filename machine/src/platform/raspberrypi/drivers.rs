@@ -51,8 +51,8 @@ pub fn qemu_bring_up_console() {
 // Global instances
 //--------------------------------------------------------------------------------------------------
 
-static MINI_UART: device_driver::MiniUart =
-    unsafe { device_driver::MiniUart::new(device_driver::UART1_BASE) };
+// static MINI_UART: device_driver::MiniUart =
+//     unsafe { device_driver::MiniUart::new(device_driver::UART1_BASE) };
 static PL011_UART: device_driver::PL011Uart =
     unsafe { device_driver::PL011Uart::new(device_driver::UART0_BASE) };
 static GPIO: device_driver::GPIO = unsafe { device_driver::GPIO::new(device_driver::GPIO_BASE) };
@@ -70,11 +70,11 @@ static INTERRUPT_CONTROLLER: device_driver::GICv2 =
 //--------------------------------------------------------------------------------------------------
 
 /// This must be called only after successful init of the Mini UART driver.
-fn post_init_mini_uart() -> Result<(), &'static str> {
-    console::register_console(&MINI_UART);
-    crate::info!("[0] MiniUART is live!");
-    Ok(())
-}
+// fn post_init_mini_uart() -> Result<(), &'static str> {
+//     console::register_console(&MINI_UART);
+//     crate::info!("[0] MiniUART is live!");
+//     Ok(())
+// }
 
 /// This must be called only after successful init of the PL011 UART driver.
 fn post_init_pl011_uart() -> Result<(), &'static str> {
