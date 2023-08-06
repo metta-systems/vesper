@@ -1,4 +1,15 @@
+#[cfg(target_arch = "aarch64")]
+use crate::arch::aarch64::exception::asynchronous as arch_asynchronous;
+
 mod null_irq_manager;
+
+//--------------------------------------------------------------------------------------------------
+// Architectural Public Reexports
+//--------------------------------------------------------------------------------------------------
+pub use arch_asynchronous::{
+    is_local_irq_masked, local_irq_mask, local_irq_mask_save, local_irq_restore, local_irq_unmask,
+    print_state,
+};
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
