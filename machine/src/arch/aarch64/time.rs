@@ -12,7 +12,7 @@
 //! crate::time::arch_time
 
 use {
-    crate::{sync, warn},
+    crate::{synchronization, warn},
     aarch64_cpu::{asm::barrier, registers::*},
     core::{
         num::{NonZeroU128, NonZeroU32, NonZeroU64},
@@ -36,8 +36,9 @@ struct GenericTimerCounterValue(u64);
 // Global instances
 //--------------------------------------------------------------------------------------------------
 
-static ARCH_TIMER_COUNTER_FREQUENCY: sync::NullLock<Lazy<NonZeroU32>> =
-    sync::NullLock::new(Lazy::new(|| {
+// @todo use InitStateLock here
+static ARCH_TIMER_COUNTER_FREQUENCY: synchronization::IRQSafeNullLock<Lazy<NonZeroU32>> =
+    synchronization::IRQSafeNullLock::new(Lazy::new(|| {
         NonZeroU32::try_from(CNTFRQ_EL0.get() as u32).unwrap()
     }));
 
@@ -46,7 +47,7 @@ static ARCH_TIMER_COUNTER_FREQUENCY: sync::NullLock<Lazy<NonZeroU32>> =
 //--------------------------------------------------------------------------------------------------
 
 fn arch_timer_counter_frequency() -> NonZeroU32 {
-    use crate::sync::interface::Mutex;
+    use crate::synchronization::interface::Mutex;
     ARCH_TIMER_COUNTER_FREQUENCY.lock(|inner| **inner)
 }
 

@@ -6,7 +6,7 @@ pub unsafe extern "C" fn _start() -> ! {
     use {
         aarch64_cpu::registers::{MPIDR_EL1, SP},
         core::cell::UnsafeCell,
-        machine::endless_sleep,
+        machine::cpu::endless_sleep,
         tock_registers::interfaces::{Readable, Writeable},
     };
 
