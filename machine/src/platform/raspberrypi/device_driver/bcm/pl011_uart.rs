@@ -13,6 +13,7 @@ use {
         console::interface,
         cpu::loop_while,
         devices::serial::SerialOps,
+        exception,
         platform::{
             device_driver::{common::MMIODerefWrapper, gpio, IRQNumber},
             mailbox::{self, Mailbox, MailboxOps},
@@ -151,15 +152,56 @@ register_bitfields! {
         ]
     ],
 
-    /// Interupt Clear Register
-    ICR [
-        /// Meta field for all pending interrupts
-        ALL OFFSET(0) NUMBITS(11) []
+    /// Interrupt FIFO Level Select Register.
+    IFLS [
+        /// Receive interrupt FIFO level select.
+        /// The trigger points for the receive interrupt are as follows.
+        RXIFLSEL OFFSET(3) NUMBITS(5) [
+            OneEigth = 0b000,
+            OneQuarter = 0b001,
+            OneHalf = 0b010,
+            ThreeQuarters = 0b011,
+            SevenEights = 0b100
+        ]
     ],
 
-    /// Interupt Mask Set/Clear Register
+    /// Interrupt Mask Set/Clear Register.
     IMSC [
-        /// Meta field for all interrupts
+        /// Receive timeout interrupt mask. A read returns the current mask for the UARTRTINTR
+        /// interrupt.
+        ///
+        /// - On a write of 1, the mask of the UARTRTINTR interrupt is set.
+        /// - A write of 0 clears the mask.
+        RTIM OFFSET(6) NUMBITS(1) [
+            Disabled = 0,
+            Enabled = 1
+        ],
+
+        /// Receive interrupt mask. A read returns the current mask for the UARTRXINTR interrupt.
+        ///
+        /// - On a write of 1, the mask of the UARTRXINTR interrupt is set.
+        /// - A write of 0 clears the mask.
+        RXIM OFFSET(4) NUMBITS(1) [
+            Disabled = 0,
+            Enabled = 1
+        ]
+    ],
+
+    /// Masked Interrupt Status Register.
+    MIS [
+        /// Receive timeout masked interrupt status. Returns the masked interrupt state of the
+        /// UARTRTINTR interrupt.
+        RTMIS OFFSET(6) NUMBITS(1) [],
+
+        /// Receive masked interrupt status. Returns the masked interrupt state of the UARTRXINTR
+        /// interrupt.
+        RXMIS OFFSET(4) NUMBITS(1) []
+    ],
+
+    /// Interrupt Clear Register
+    ICR [
+        /// Meta field for all pending interrupts
+        /// On a write of 1, the corresponding interrupt is cleared. A write of 0 has no effect.
         ALL OFFSET(0) NUMBITS(11) []
     ],
 
@@ -192,10 +234,10 @@ register_structs! {
         (0x28 => FractionalBaudRate: WriteOnly<u32, FBRD::Register>),
         (0x2c => LineControl: ReadWrite<u32, LCR_H::Register>), // @todo write-only?
         (0x30 => Control: WriteOnly<u32, CR::Register>),
-        (0x34 => InterruptFifoLevelSelect: ReadWrite<u32>),
+        (0x34 => InterruptFifoLevelSelect: ReadWrite<u32, IFLS::Register>),
         (0x38 => InterruptMaskSetClear: ReadWrite<u32, IMSC::Register>),
         (0x3c => RawInterruptStatus: ReadOnly<u32>),
-        (0x40 => MaskedInterruptStatus: ReadOnly<u32>),
+        (0x40 => MaskedInterruptStatus: ReadOnly<u32, MIS::Register>),
         (0x44 => InterruptClear: WriteOnly<u32, ICR::Register>),
         (0x48 => DmaControl: WriteOnly<u32, DMACR::Register>),
         (0x4c => __reserved_3),
@@ -240,6 +282,13 @@ pub struct RateDivisors {
     fractional_baud_rate_divisor: u32,
 }
 
+// [temporary] Used in mmu.rs to set up local paging
+pub const UART0_BASE: usize = BcmHost::get_peripheral_address() + 0x20_1000;
+
+//--------------------------------------------------------------------------------------------------
+// Public Code
+//--------------------------------------------------------------------------------------------------
+
 impl RateDivisors {
     // Set integer & fractional part of baud rate.
     // Integer = clock/(16 * Baud)
@@ -271,13 +320,6 @@ impl RateDivisors {
         })
     }
 }
-
-// [temporary] Used in mmu.rs to set up local paging
-pub const UART0_BASE: usize = BcmHost::get_peripheral_address() + 0x20_1000;
-
-//--------------------------------------------------------------------------------------------------
-// Public Code
-//--------------------------------------------------------------------------------------------------
 
 impl PL011Uart {
     pub const COMPATIBLE: &'static str = "BCM PL011 UART";
@@ -377,8 +419,15 @@ impl PL011UartInner {
                 + LCR_H::Stop2::Disabled,
         );
 
-        // Mask all interrupts by setting corresponding bits to 1
-        self.registers.InterruptMaskSetClear.write(IMSC::ALL::SET);
+        // Set RX FIFO fill level at 1/8.
+        self.registers
+            .InterruptFifoLevelSelect
+            .write(IFLS::RXIFLSEL::OneEigth);
+
+        // Enable RX IRQ + RX timeout IRQ.
+        self.registers
+            .InterruptMaskSetClear
+            .write(IMSC::RXIM::Enabled + IMSC::RTIM::Enabled);
 
         // Disable DMA
         self.registers
@@ -470,6 +519,20 @@ impl crate::drivers::interface::DeviceDriver for PL011Uart {
     unsafe fn init(&self) -> core::result::Result<(), &'static str> {
         self.inner.lock(|inner| inner.prepare())
     }
+
+    fn register_and_enable_irq_handler(
+        &'static self,
+        irq_number: &Self::IRQNumberType,
+    ) -> Result<(), &'static str> {
+        use exception::asynchronous::{irq_manager, IRQHandlerDescriptor};
+
+        let descriptor = IRQHandlerDescriptor::new(*irq_number, Self::COMPATIBLE, self);
+
+        irq_manager().register_handler(descriptor)?;
+        irq_manager().enable(irq_number);
+
+        Ok(())
+    }
 }
 
 impl SerialOps for PL011Uart {
@@ -505,6 +568,29 @@ impl interface::ConsoleOps for PL011Uart {
 }
 
 impl interface::All for PL011Uart {}
+
+impl exception::asynchronous::interface::IRQHandler for PL011Uart {
+    fn handle(&self) -> Result<(), &'static str> {
+        use interface::ConsoleOps;
+
+        self.inner.lock(|inner| {
+            let pending = inner.registers.MaskedInterruptStatus.extract();
+
+            // Clear all pending IRQs.
+            inner.registers.InterruptClear.write(ICR::ALL::SET);
+
+            // Check for any kind of RX interrupt.
+            if pending.matches_any(MIS::RXMIS::SET + MIS::RTMIS::SET) {
+                // Echo any received characters.
+                // while let Some(c) = inner.read_char() {
+                //     inner.write_char(c)
+                // }
+            }
+        });
+
+        Ok(())
+    }
+}
 
 //--------------------------------------------------------------------------------------------------
 // Testing
