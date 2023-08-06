@@ -20,10 +20,11 @@ fn print_panic_info(info: &PanicInfo) {
 }
 
 pub fn handler(info: &PanicInfo) -> ! {
+    crate::exception::asynchronous::local_irq_mask();
     // Protect against panic infinite loops if any of the following code panics itself.
     panic_prevent_reenter();
     print_panic_info(info);
-    crate::endless_sleep()
+    crate::cpu::endless_sleep()
 }
 
 /// We have two separate handlers because other crates may use machine crate as a dependency for
@@ -69,5 +70,5 @@ fn panic_prevent_reenter() {
     #[cfg(qemu)]
     crate::qemu::semihosting::exit_failure();
     #[cfg(not(qemu))]
-    crate::endless_sleep()
+    crate::cpu::endless_sleep()
 }

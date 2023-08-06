@@ -50,7 +50,7 @@
 //! to explicitly re-enable interrupts
 
 use {
-    crate::{arch::endless_sleep, println},
+    crate::{cpu::endless_sleep, println},
     aarch64_cpu::{
         asm::barrier,
         registers::{ESR_EL1, FAR_EL1, SPSR_EL1, VBAR_EL1},
@@ -118,7 +118,7 @@ unsafe extern "C" fn default_exception_handler() -> ! {
     println!("Unexpected exception. Halting CPU.");
 
     #[cfg(not(qemu))]
-    endless_sleep();
+    super::cpu::endless_sleep();
     #[cfg(qemu)]
     qemu::semihosting::exit_failure()
 }

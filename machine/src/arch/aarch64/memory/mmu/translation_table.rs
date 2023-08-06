@@ -1,9 +1,7 @@
 use {
+    super::{mair, Granule512MiB, Granule64KiB},
     crate::{
-        memory::mmu::{
-            arch_mmu::{mair, Granule512MiB, Granule64KiB},
-            AccessPermissions, AttributeFields, MemAttributes,
-        },
+        memory::mmu::{AccessPermissions, AttributeFields, MemAttributes},
         platform,
     },
     core::convert,

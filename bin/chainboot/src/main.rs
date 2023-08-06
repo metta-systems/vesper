@@ -10,7 +10,7 @@
 use {
     aarch64_cpu::asm::barrier,
     core::hash::Hasher,
-    machine::{console::console, platform::rpi3::BcmHost, print, println},
+    machine::{console::console, platform::raspberrypi::BcmHost, print, println},
     seahash::SeaHasher,
 };
 
@@ -24,14 +24,14 @@ mod boot;
 /// - The init calls in this function must appear in the correct order.
 unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
-    machine::arch::jtag::wait_debugger();
+    machine::debug::jtag::wait_debugger();
 
     if let Err(x) = machine::platform::drivers::init() {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
-    machine::drivers::driver_manager().init_drivers();
+    machine::drivers::driver_manager().init_drivers_and_irqs();
 
     // println! is usable from here on.
 

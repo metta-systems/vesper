@@ -5,49 +5,8 @@
 
 //! Implementation of aarch64 kernel functions.
 
-use aarch64_cpu::asm;
-
-mod boot;
-#[cfg(feature = "jtag")]
-pub mod jtag;
+pub mod cpu;
+pub mod exception;
 pub mod memory;
 pub mod time;
 pub mod traps;
-
-/// Loop forever in sleep mode.
-#[inline]
-pub fn endless_sleep() -> ! {
-    loop {
-        asm::wfe();
-    }
-}
-
-/// Loop for a given number of `nop` instructions.
-#[inline]
-pub fn loop_delay(rounds: u32) {
-    for _ in 0..rounds {
-        asm::nop();
-    }
-}
-
-/// Loop until a passed function returns `true`.
-#[inline]
-pub fn loop_until<F: Fn() -> bool>(f: F) {
-    loop {
-        if f() {
-            break;
-        }
-        asm::nop();
-    }
-}
-
-/// Loop while a passed function returns `true`.
-#[inline]
-pub fn loop_while<F: Fn() -> bool>(f: F) {
-    loop {
-        if !f() {
-            break;
-        }
-        asm::nop();
-    }
-}

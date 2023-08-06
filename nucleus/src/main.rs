@@ -40,7 +40,7 @@ use {
         arch,
         console::console,
         entry, info, memory,
-        platform::rpi3::{
+        platform::raspberrypi::{
             display::{Color, DrawError},
             mailbox::{channel, Mailbox, MailboxOps},
             vc::VC,
@@ -51,28 +51,43 @@ use {
 
 entry!(kernel_init);
 
-/// Kernel entry point.
+/// Kernel early init code.
 /// `arch` crate is responsible for calling it.
 ///
 /// # Safety
 ///
 /// - Only a single core must be active and running this function.
-/// - The init calls in this function must appear in the correct order.
+/// - The init calls in this function must appear in the correct order:
+///     - MMU + Data caching must be activated at the earliest. Without it, any atomic operations,
+///       e.g. the yet-to-be-introduced spinlocks in the device drivers (which currently employ
+///       IRQSafeNullLocks instead of spinlocks), will fail to work (properly) on the RPi SoCs.
 pub unsafe fn kernel_init() -> ! {
     #[cfg(feature = "jtag")]
-    machine::arch::jtag::wait_debugger();
+    machine::debug::jtag::wait_debugger();
+
+    // init_exception_traps(); // @todo
+    //
+    // init_mmu(); // @todo
+    exception::handling_init();
+
+    if let Err(string) = memory::mmu::mmu().enable_mmu_and_caching() {
+        panic!("MMU: {}", string);
+    }
 
     if let Err(x) = machine::platform::drivers::init() {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
-    machine::drivers::driver_manager().init_drivers();
+    machine::drivers::driver_manager().init_drivers_and_irqs();
 
-    init_exception_traps(); // @todo
+    // Unmask interrupts on the boot CPU core.
+    exception::asynchronous::local_irq_unmask();
 
-    init_mmu(); // @todo
+    // Announce conclusion of the kernel_init() phase.
+    state::state_manager().transition_to_single_core_main();
 
+    // Transition from unsafe to safe.
     kernel_main()
 }
 
@@ -82,12 +97,24 @@ pub fn kernel_main() -> ! {
     #[cfg(test)]
     test_main();
 
+    // info!("{}", libkernel::version());
+    // info!("Booting on: {}", bsp::board_name());
+
     info!(
         "{} version {}",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION")
     );
     info!("Booting on: {}", machine::platform::BcmHost::board_name());
+
+    info!("MMU online. Special regions:");
+    bsp::memory::mmu::virt_mem_layout().print_layout();
+
+    let (_, privilege_level) = exception::current_privilege_level();
+    info!("Current privilege level: {}", privilege_level);
+
+    info!("Exception handling state:");
+    exception::asynchronous::print_state();
 
     info!(
         "Architectural timer resolution: {} ns",
@@ -96,6 +123,9 @@ pub fn kernel_main() -> ! {
 
     info!("Drivers loaded:");
     machine::drivers::driver_manager().enumerate();
+
+    info!("Registered IRQ handlers:");
+    exception::asynchronous::irq_manager().print_handler();
 
     // Test a failing timer case.
     time::time_manager().spin_for(Duration::from_nanos(1));
@@ -129,18 +159,6 @@ fn init_mmu() {
     }
     info!("[!] MMU initialised");
     print_mmu_state_and_features();
-}
-
-fn init_exception_traps() {
-    extern "Rust" {
-        static __EXCEPTION_VECTORS_START: UnsafeCell<()>;
-    }
-
-    unsafe {
-        arch::traps::set_vbar_el1_checked(__EXCEPTION_VECTORS_START.get() as u64)
-            .expect("Vector table properly aligned!");
-    }
-    info!("[!] Exception traps set up");
 }
 
 //------------------------------------------------------------
@@ -198,7 +216,7 @@ fn reboot() -> ! {
             info!("Bye, shutting down QEMU");
             machine::qemu::semihosting::exit_success()
         } else {
-            use machine::platform::rpi3::power::Power;
+            use machine::platform::raspberrypi::power::Power;
 
             info!("Bye, going to reset now");
             Power::default().reset()
