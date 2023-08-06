@@ -32,14 +32,14 @@
 #[cfg(not(test))]
 use core::panic::PanicInfo;
 #[allow(unused_imports)]
-use machine::devices::SerialOps;
+use machine::devices::serial::SerialOps;
 use {
     cfg_if::cfg_if,
     core::{cell::UnsafeCell, time::Duration},
     machine::{
         arch,
         console::console,
-        entry, info, memory,
+        entry, exception, info, memory,
         platform::raspberrypi::{
             display::{Color, DrawError},
             mailbox::{channel, Mailbox, MailboxOps},
@@ -70,6 +70,8 @@ pub unsafe fn kernel_init() -> ! {
     // init_mmu(); // @todo
     exception::handling_init();
 
+    use machine::memory::mmu::interface::MMU;
+
     if let Err(string) = memory::mmu::mmu().enable_mmu_and_caching() {
         panic!("MMU: {}", string);
     }
@@ -82,10 +84,10 @@ pub unsafe fn kernel_init() -> ! {
     machine::drivers::driver_manager().init_drivers_and_irqs();
 
     // Unmask interrupts on the boot CPU core.
-    exception::asynchronous::local_irq_unmask();
+    machine::exception::asynchronous::local_irq_unmask();
 
     // Announce conclusion of the kernel_init() phase.
-    state::state_manager().transition_to_single_core_main();
+    machine::state::state_manager().transition_to_single_core_main();
 
     // Transition from unsafe to safe.
     kernel_main()
@@ -108,7 +110,7 @@ pub fn kernel_main() -> ! {
     info!("Booting on: {}", machine::platform::BcmHost::board_name());
 
     info!("MMU online. Special regions:");
-    bsp::memory::mmu::virt_mem_layout().print_layout();
+    machine::platform::memory::mmu::virt_mem_layout().print_layout();
 
     let (_, privilege_level) = exception::current_privilege_level();
     info!("Current privilege level: {}", privilege_level);
@@ -150,17 +152,6 @@ fn print_mmu_state_and_features() {
     memory::mmu::mmu().print_features();
 }
 
-fn init_mmu() {
-    unsafe {
-        use machine::memory::mmu::interface::MMU;
-        if let Err(e) = memory::mmu::mmu().enable_mmu_and_caching() {
-            panic!("MMU: {}", e);
-        }
-    }
-    info!("[!] MMU initialised");
-    print_mmu_state_and_features();
-}
-
 //------------------------------------------------------------
 // Start a command prompt
 //------------------------------------------------------------
@@ -169,7 +160,7 @@ fn command_prompt() {
         let mut buf = [0u8; 64];
 
         match machine::console::command_prompt(&mut buf) {
-            b"mmu" => init_mmu(),
+            // b"mmu" => init_mmu(),
             b"feats" => print_mmu_state_and_features(),
             b"disp" => check_display_init(),
             b"trap" => check_data_abort_trap(),
