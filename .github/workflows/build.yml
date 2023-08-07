@@ -101,7 +101,8 @@ jobs:
 
     - name: Install QEMU (Linux)
       run: |
-        sudo apt install qemu-system-aarch64
+        sudo apt-get update
+        sudo apt-get install --fix-missing qemu-system-aarch64
       if: runner.os == 'Linux'
 
     - name: Install QEMU (macOS)
