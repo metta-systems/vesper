@@ -4,7 +4,5 @@
  */
 
 mod asid;
-mod phys_addr;
-mod virt_addr;
 
-pub use {asid::*, phys_addr::*, virt_addr::*};
+pub use asid::*;

@@ -3,29 +3,62 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-pub mod bump_allocator;
+mod bump_allocator;
 pub use bump_allocator::BumpAllocator;
 
 /// Align address downwards.
 ///
 /// Returns the greatest x with alignment `align` so that x <= addr.
 /// The alignment must be a power of 2.
-pub fn align_down(addr: u64, align: u64) -> u64 {
-    assert!(align.is_power_of_two(), "`align` must be a power of two");
-    addr & !(align - 1)
+#[inline(always)]
+pub const fn align_down(addr: usize, alignment: usize) -> usize {
+    assert!(
+        alignment.is_power_of_two(),
+        "`alignment` must be a power of two"
+    );
+    addr & !(alignment - 1)
 }
 
 /// Align address upwards.
 ///
 /// Returns the smallest x with alignment `align` so that x >= addr.
 /// The alignment must be a power of 2.
-pub fn align_up(addr: u64, align: u64) -> u64 {
-    assert!(align.is_power_of_two(), "`align` must be a power of two");
-    let align_mask = align - 1;
-    if addr & align_mask == 0 {
-        addr // already aligned
+#[inline(always)]
+pub const fn align_up(value: usize, alignment: usize) -> usize {
+    assert!(
+        alignment.is_power_of_two(),
+        "`alignment` must be a power of two"
+    );
+
+    (value + alignment - 1) & !(alignment - 1)
+}
+
+/// Check if a value is aligned to a given alignment.
+/// The alignment must be a power of 2.
+#[inline(always)]
+pub const fn is_aligned(value: usize, alignment: usize) -> bool {
+    assert!(
+        alignment.is_power_of_two(),
+        "`alignment` must be a power of two"
+    );
+
+    (value & (alignment - 1)) == 0
+}
+
+/// Convert a size into human readable format.
+pub const fn size_human_readable_ceil(size: usize) -> (usize, &'static str) {
+    const KIB: usize = 1024;
+    const MIB: usize = 1024 * 1024;
+    const GIB: usize = 1024 * 1024 * 1024;
+
+    if (size / GIB) > 0 {
+        (size.div_ceil(GIB), "GiB")
+    } else if (size / MIB) > 0 {
+        (size.div_ceil(MIB), "MiB")
+    } else if (size / KIB) > 0 {
+        (size.div_ceil(KIB), "KiB")
     } else {
-        (addr | align_mask) + 1
+        (size, "Byte")
     }
 }
 

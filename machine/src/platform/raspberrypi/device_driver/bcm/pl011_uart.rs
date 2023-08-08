@@ -14,6 +14,7 @@ use {
         cpu::loop_while,
         devices::serial::SerialOps,
         exception,
+        memory::{Address, Virtual},
         platform::{
             device_driver::{common::MMIODerefWrapper, gpio, IRQNumber},
             mailbox::{self, Mailbox, MailboxOps},
@@ -282,9 +283,6 @@ pub struct RateDivisors {
     fractional_baud_rate_divisor: u32,
 }
 
-// [temporary] Used in mmu.rs to set up local paging
-pub const UART0_BASE: usize = BcmHost::get_peripheral_address() + 0x20_1000;
-
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
@@ -329,9 +327,9 @@ impl PL011Uart {
     /// # Safety
     ///
     /// - The user must ensure to provide a correct MMIO start address.
-    pub const unsafe fn new(base_addr: usize) -> Self {
+    pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            inner: IRQSafeNullLock::new(PL011UartInner::new(base_addr)),
+            inner: IRQSafeNullLock::new(PL011UartInner::new(mmio_base_addr)),
         }
     }
 
@@ -362,9 +360,9 @@ impl PL011UartInner {
     /// # Safety
     ///
     /// - The user must ensure to provide a correct MMIO start address.
-    pub const unsafe fn new(base_addr: usize) -> Self {
+    pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            registers: Registers::new(base_addr),
+            registers: Registers::new(mmio_base_addr),
         }
     }
 

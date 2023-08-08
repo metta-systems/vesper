@@ -11,7 +11,10 @@ use {
         mailbox::{channel, Mailbox, MailboxOps},
         BcmHost,
     },
-    crate::platform::device_driver::common::MMIODerefWrapper,
+    crate::{
+        memory::{Address, Virtual},
+        platform::device_driver::common::MMIODerefWrapper,
+    },
     snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},
@@ -74,9 +77,9 @@ impl Power {
     /// # Safety
     ///
     /// Unsafe, duh!
-    pub const unsafe fn new(base_addr: usize) -> Power {
+    pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Power {
         Power {
-            registers: Registers::new(base_addr),
+            registers: Registers::new(mmio_base_addr),
         }
     }
 
