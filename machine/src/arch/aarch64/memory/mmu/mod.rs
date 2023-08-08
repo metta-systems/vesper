@@ -13,9 +13,9 @@
 
 use {
     crate::{
-        memory::mmu::{
-            interface, interface::MMU, translation_table::KernelTranslationTable, AddressSpace,
-            MMUEnableError, TranslationGranule,
+        memory::{
+            mmu::{interface, interface::MMU, AddressSpace, MMUEnableError, TranslationGranule},
+            Address, Physical,
         },
         platform, println,
     },
@@ -58,13 +58,6 @@ pub mod mair {
 // Global instances
 //--------------------------------------------------------------------------------------------------
 
-/// The kernel translation tables.
-///
-/// # Safety
-///
-/// - Supposed to land in `.bss`. Therefore, ensure that all initial member values boil down to "0".
-static mut KERNEL_TABLES: KernelTranslationTable = KernelTranslationTable::new();
-
 static MMU: MemoryManagementUnit = MemoryManagementUnit;
 
 //--------------------------------------------------------------------------------------------------
@@ -75,7 +68,7 @@ impl<const AS_SIZE: usize> AddressSpace<AS_SIZE> {
     /// Checks for architectural restrictions.
     pub const fn arch_address_space_size_sanity_checks() {
         // Size must be at least one full 512 MiB table.
-        assert!((AS_SIZE % Granule512MiB::SIZE) == 0);
+        assert!((AS_SIZE % Granule512MiB::SIZE) == 0); // assert!() is const-friendly
 
         // Check for 48 bit virtual address size as maximum, which is supported by any ARMv8
         // version.
@@ -102,7 +95,7 @@ impl MemoryManagementUnit {
 
     /// Configure various settings of stage 1 of the EL1 translation regime.
     fn configure_translation_control(&self) {
-        let t0sz = (64 - platform::memory::mmu::KernelAddrSpace::SIZE_SHIFT) as u64;
+        let t0sz = (64 - platform::memory::mmu::KernelVirtAddrSpace::SIZE_SHIFT) as u64;
 
         TCR_EL1.write(
             TCR_EL1::TBI0::Used
@@ -124,7 +117,7 @@ impl MemoryManagementUnit {
 //--------------------------------------------------------------------------------------------------
 
 /// Return a reference to the MMU instance.
-pub fn mmu() -> &'static impl MMU {
+pub fn mmu() -> &'static impl interface::MMU {
     &MMU
 }
 
@@ -133,7 +126,10 @@ pub fn mmu() -> &'static impl MMU {
 //------------------------------------------------------------------------------
 
 impl interface::MMU for MemoryManagementUnit {
-    unsafe fn enable_mmu_and_caching(&self) -> Result<(), MMUEnableError> {
+    unsafe fn enable_mmu_and_caching(
+        &self,
+        phys_tables_base_addr: Address<Physical>,
+    ) -> Result<(), MMUEnableError> {
         if unlikely(self.is_enabled()) {
             return Err(MMUEnableError::AlreadyEnabled);
         }
@@ -141,20 +137,20 @@ impl interface::MMU for MemoryManagementUnit {
         // Fail early if translation granule is not supported.
         if unlikely(!ID_AA64MMFR0_EL1.matches_all(ID_AA64MMFR0_EL1::TGran64::Supported)) {
             return Err(MMUEnableError::Other {
-                err: "Translation granule not supported in HW",
+                err: "Translation granule not supported by hardware",
             });
         }
 
         // Prepare the memory attribute indirection register.
         self.set_up_mair();
 
-        // Populate translation tables.
-        KERNEL_TABLES
-            .populate_translation_table_entries()
-            .map_err(|err| MMUEnableError::Other { err })?;
+        // // Populate translation tables.
+        // KERNEL_TABLES
+        //     .populate_translation_table_entries()
+        //     .map_err(|err| MMUEnableError::Other { err })?;
 
         // Set the "Translation Table Base Register".
-        TTBR0_EL1.set_baddr(KERNEL_TABLES.phys_base_address());
+        TTBR0_EL1.set_baddr(phys_tables_base_addr.as_usize() as u64);
 
         self.configure_translation_control();
 

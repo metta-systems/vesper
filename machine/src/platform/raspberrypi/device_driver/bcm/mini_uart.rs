@@ -12,6 +12,7 @@ use {
         console::interface,
         devices::serial::SerialOps,
         exception::asynchronous::IRQNumber,
+        memory::{Address, Virtual},
         platform::{
             device_driver::{common::MMIODerefWrapper, gpio},
             BcmHost,
@@ -195,9 +196,9 @@ impl MiniUart {
     /// # Safety
     ///
     /// - The user must ensure to provide a correct MMIO start address.
-    pub const unsafe fn new(base_addr: usize) -> Self {
+    pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            inner: IRQSafeNullLock::new(MiniUartInner::new(base_addr)),
+            inner: IRQSafeNullLock::new(MiniUartInner::new(mmio_base_addr)),
         }
     }
 
@@ -224,9 +225,9 @@ impl MiniUartInner {
     /// # Safety
     ///
     /// - The user must ensure to provide a correct MMIO start address.
-    pub const unsafe fn new(base_addr: usize) -> Self {
+    pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            registers: Registers::new(base_addr),
+            registers: Registers::new(mmio_base_addr),
         }
     }
 
