@@ -80,17 +80,19 @@ pub fn version() -> &'static str {
 
 #[cfg(test)]
 mod lib_tests {
+    use super::*;
+
     #[panic_handler]
     fn panicked(info: &core::panic::PanicInfo) -> ! {
-        crate::panic::handler_for_tests(info)
+        panic::handler_for_tests(info)
     }
 
     /// Main for running tests.
     #[no_mangle]
     pub unsafe fn main() -> ! {
-        crate::exception::handling_init();
-        crate::platform::drivers::qemu_bring_up_console();
-        crate::test_main();
-        crate::qemu::semihosting::exit_success()
+        exception::handling_init();
+        platform::drivers::qemu_bring_up_console();
+        test_main();
+        qemu::semihosting::exit_success()
     }
 }
