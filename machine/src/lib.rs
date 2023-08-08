@@ -1,19 +1,27 @@
 #![no_std]
 #![no_main]
 #![allow(stable_features)]
+#![allow(incomplete_features)]
 #![feature(asm_const)]
+#![feature(const_option)]
+#![feature(core_intrinsics)]
+#![feature(format_args_nl)]
+#![feature(generic_const_exprs)]
+#![feature(int_roundings)]
+#![feature(is_sorted)]
+#![feature(linkage)]
+#![feature(nonzero_min_max)]
+#![feature(panic_info_message)]
+#![feature(step_trait)]
+#![feature(trait_alias)]
+#![feature(unchecked_math)]
 #![feature(decl_macro)]
 #![feature(ptr_internals)]
 #![feature(allocator_api)]
-#![feature(format_args_nl)]
-#![feature(core_intrinsics)]
-#![feature(const_option)]
 #![feature(strict_provenance)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
-#![feature(panic_info_message)]
 #![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.71 nightly
-#![feature(unchecked_math)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
@@ -91,8 +99,21 @@ mod lib_tests {
     #[no_mangle]
     pub unsafe fn main() -> ! {
         exception::handling_init();
+
+        let phys_kernel_tables_base_addr = match memory::mmu::kernel_map_binary() {
+            Err(string) => panic!("Error mapping kernel binary: {}", string),
+            Ok(addr) => addr,
+        };
+
+        if let Err(e) = memory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) {
+            panic!("Enabling MMU failed: {}", e);
+        }
+
+        memory::mmu::post_enable_init();
         platform::drivers::qemu_bring_up_console();
+
         test_main();
+
         qemu::semihosting::exit_success()
     }
 }

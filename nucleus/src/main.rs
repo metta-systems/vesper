@@ -36,17 +36,7 @@ use machine::devices::serial::SerialOps;
 use {
     cfg_if::cfg_if,
     core::{cell::UnsafeCell, time::Duration},
-    machine::{
-        arch,
-        console::console,
-        entry, exception, info, memory,
-        platform::raspberrypi::{
-            display::{Color, DrawError},
-            mailbox::{channel, Mailbox, MailboxOps},
-            vc::VC,
-        },
-        println, time, warn,
-    },
+    machine::{arch, console::console, entry, exception, info, memory, println, time, warn},
 };
 
 entry!(kernel_init);
@@ -65,16 +55,18 @@ pub unsafe fn kernel_init() -> ! {
     #[cfg(feature = "jtag")]
     machine::debug::jtag::wait_debugger();
 
-    // init_exception_traps(); // @todo
-    //
-    // init_mmu(); // @todo
     exception::handling_init();
 
-    use machine::memory::mmu::interface::MMU;
+    let phys_kernel_tables_base_addr = match memory::mmu::kernel_map_binary() {
+        Err(string) => panic!("Error mapping kernel binary: {}", string),
+        Ok(addr) => addr,
+    };
 
-    if let Err(string) = memory::mmu::mmu().enable_mmu_and_caching() {
-        panic!("MMU: {}", string);
+    if let Err(e) = memory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) {
+        panic!("Enabling MMU failed: {}", e);
     }
+
+    memory::mmu::post_enable_init();
 
     if let Err(x) = machine::platform::drivers::init() {
         panic!("Error initializing platform drivers: {}", x);
@@ -95,10 +87,8 @@ pub unsafe fn kernel_init() -> ! {
 
 /// Safe kernel code.
 // #[inline]
+#[cfg(not(test))]
 pub fn kernel_main() -> ! {
-    #[cfg(test)]
-    test_main();
-
     // info!("{}", libkernel::version());
     // info!("Booting on: {}", bsp::board_name());
 
@@ -109,8 +99,8 @@ pub fn kernel_main() -> ! {
     );
     info!("Booting on: {}", machine::platform::BcmHost::board_name());
 
-    info!("MMU online. Special regions:");
-    machine::platform::memory::mmu::virt_mem_layout().print_layout();
+    // info!("MMU online. Special regions:");
+    // machine::platform::memory::mmu::virt_mem_layout().print_layout();
 
     let (_, privilege_level) = exception::current_privilege_level();
     info!("Current privilege level: {}", privilege_level);
@@ -148,8 +138,8 @@ fn panicked(info: &PanicInfo) -> ! {
 }
 
 fn print_mmu_state_and_features() {
-    use machine::memory::mmu::interface::MMU;
-    memory::mmu::mmu().print_features();
+    // use machine::memory::mmu::interface::MMU;
+    // memory::mmu::mmu().print_features();
 }
 
 //------------------------------------------------------------
@@ -162,11 +152,11 @@ fn command_prompt() {
         match machine::console::command_prompt(&mut buf) {
             // b"mmu" => init_mmu(),
             b"feats" => print_mmu_state_and_features(),
-            b"disp" => check_display_init(),
+            // b"disp" => check_display_init(),
             b"trap" => check_data_abort_trap(),
-            b"map" => machine::platform::memory::mmu::virt_mem_layout().print_layout(),
-            b"led on" => set_led(true),
-            b"led off" => set_led(false),
+            // b"map" => machine::platform::memory::mmu::virt_mem_layout().print_layout(),
+            // b"led on" => set_led(true),
+            // b"led off" => set_led(false),
             b"help" => print_help(),
             b"end" => break 'cmd_loop,
             x => warn!("[!] Unknown command {:?}, try 'help'", x),
@@ -180,26 +170,26 @@ fn print_help() {
     println!("  feats - print MMU state and supported features");
     #[cfg(not(feature = "noserial"))]
     println!("  uart - try to reinitialize UART serial");
-    println!("  disp - try to init VC framebuffer and draw some text");
+    // println!("  disp - try to init VC framebuffer and draw some text");
     println!("  trap - trigger and recover from a data abort exception");
     println!("  map  - show kernel memory layout");
-    println!("  led [on|off]  - change RPi LED status");
+    // println!("  led [on|off]  - change RPi LED status");
     println!("  end  - leave console and reset board");
 }
 
-fn set_led(enable: bool) {
-    let mut mbox = Mailbox::<8>::default();
-    let index = mbox.request();
-    let index = mbox.set_led_on(index, enable);
-    let mbox = mbox.end(index);
-
-    mbox.call(channel::PropertyTagsArmToVc)
-        .map_err(|e| {
-            warn!("Mailbox call returned error {}", e);
-            warn!("Mailbox contents: {:?}", mbox);
-        })
-        .ok();
-}
+// fn set_led(enable: bool) {
+//     let mut mbox = Mailbox::<8>::default();
+//     let index = mbox.request();
+//     let index = mbox.set_led_on(index, enable);
+//     let mbox = mbox.end(index);
+//
+//     mbox.call(channel::PropertyTagsArmToVc)
+//         .map_err(|e| {
+//             warn!("Mailbox call returned error {}", e);
+//             warn!("Mailbox contents: {:?}", mbox);
+//         })
+//         .ok();
+// }
 
 fn reboot() -> ! {
     cfg_if! {
@@ -207,47 +197,48 @@ fn reboot() -> ! {
             info!("Bye, shutting down QEMU");
             machine::qemu::semihosting::exit_success()
         } else {
-            use machine::platform::raspberrypi::power::Power;
+            // use machine::platform::raspberrypi::power::Power;
 
             info!("Bye, going to reset now");
-            Power::default().reset()
+            // Power::default().reset()
+            machine::cpu::endless_sleep()
         }
     }
 }
 
-fn check_display_init() {
-    display_graphics()
-        .map_err(|e| {
-            warn!("Error in display: {}", e);
-        })
-        .ok();
-}
-
-fn display_graphics() -> Result<(), DrawError> {
-    if let Ok(mut display) = VC::init_fb(800, 600, 32) {
-        info!("Display created");
-
-        display.clear(Color::black());
-        info!("Display cleared");
-
-        display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
-        display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255))?;
-
-        let mut buf = [0u8; 64];
-        let s = machine::write_to::show(&mut buf, format_args!("Display width {}", display.width));
-
-        if s.is_err() {
-            display.draw_text(50, 150, "Error displaying", Color::red())?
-        } else {
-            display.draw_text(50, 150, s.unwrap(), Color::white())?
-        }
-
-        display.draw_text(150, 50, "RED", Color::red())?;
-        display.draw_text(160, 60, "GREEN", Color::green())?;
-        display.draw_text(170, 70, "BLUE", Color::blue())?;
-    }
-    Ok(())
-}
+// fn check_display_init() {
+//     display_graphics()
+//         .map_err(|e| {
+//             warn!("Error in display: {}", e);
+//         })
+//         .ok();
+// }
+//
+// fn display_graphics() -> Result<(), DrawError> {
+//     if let Ok(mut display) = VC::init_fb(800, 600, 32) {
+//         info!("Display created");
+//
+//         display.clear(Color::black());
+//         info!("Display cleared");
+//
+//         display.rect(10, 10, 250, 250, Color::rgb(32, 96, 64));
+//         display.draw_text(50, 50, "Hello there!", Color::rgb(128, 192, 255))?;
+//
+//         let mut buf = [0u8; 64];
+//         let s = machine::write_to::show(&mut buf, format_args!("Display width {}", display.width));
+//
+//         if s.is_err() {
+//             display.draw_text(50, 150, "Error displaying", Color::red())?
+//         } else {
+//             display.draw_text(50, 150, s.unwrap(), Color::white())?
+//         }
+//
+//         display.draw_text(150, 50, "RED", Color::red())?;
+//         display.draw_text(160, 60, "GREEN", Color::green())?;
+//         display.draw_text(170, 70, "BLUE", Color::blue())?;
+//     }
+//     Ok(())
+// }
 
 fn check_data_abort_trap() {
     // Cause an exception by accessing a virtual address for which no
@@ -259,6 +250,11 @@ fn check_data_abort_trap() {
     unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
 
     info!("[i] Whoa! We recovered from an exception.");
+}
+
+#[cfg(test)]
+pub fn kernel_main() -> ! {
+    test_main()
 }
 
 #[cfg(test)]

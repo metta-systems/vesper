@@ -81,7 +81,7 @@ impl PeripheralIC {
     /// # Safety
     ///
     /// - The user must ensure to provide a correct MMIO start address.
-    pub const unsafe fn new(mmio_start_addr: usize) -> Self {
+    pub const unsafe fn new(mmio_start_addr: Address<Virtual>) -> Self {
         Self {
             wo_registers: IRQSafeNullLock::new(WriteOnlyRegisters::new(mmio_start_addr)),
             ro_registers: ReadOnlyRegisters::new(mmio_start_addr),
@@ -101,7 +101,10 @@ impl PeripheralIC {
 //------------------------------------------------------------------------------
 // OS Interface Code
 //------------------------------------------------------------------------------
-use synchronization::interface::{Mutex, ReadWriteEx};
+use {
+    crate::memory::{Address, Virtual},
+    synchronization::interface::{Mutex, ReadWriteEx},
+};
 
 impl exception::asynchronous::interface::IRQManager for PeripheralIC {
     type IRQNumberType = PeripheralIRQ;
