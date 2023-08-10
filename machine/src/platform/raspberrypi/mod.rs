@@ -9,10 +9,9 @@ pub mod device_driver;
 pub mod display;
 pub mod drivers;
 pub mod exception;
-pub mod fb;
-pub mod mailbox;
+// pub mod fb;
 pub mod memory;
-pub mod vc;
+// pub mod vc;
 
 /// See BCM2835-ARM-Peripherals.pdf
 /// See <https://www.raspberrypi.org/forums/viewtopic.php?t=186090> for more details.
