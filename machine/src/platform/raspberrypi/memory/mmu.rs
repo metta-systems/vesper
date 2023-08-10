@@ -288,14 +288,14 @@ mod tests {
     #[test_case]
     fn kernel_tables_in_bss() {
         extern "Rust" {
-            static __bss_start: UnsafeCell<u64>;
-            static __bss_end_exclusive: UnsafeCell<u64>;
+            static __BSS_START: UnsafeCell<u64>;
+            static __BSS_END: UnsafeCell<u64>;
         }
 
         let bss_range = unsafe {
             Range {
-                start: __bss_start.get(),
-                end: __bss_end_exclusive.get(),
+                start: __BSS_START.get(),
+                end: __BSS_END.get(),
             }
         };
         let kernel_tables_addr = &KERNEL_TABLES as *const _ as usize as *mut u64;
