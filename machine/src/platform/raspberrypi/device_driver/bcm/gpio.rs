@@ -7,10 +7,12 @@
 
 use {
     crate::{
+        memory::{Address, Virtual},
         platform::{
             device_driver::{common::MMIODerefWrapper, IRQNumber},
             BcmHost,
         },
+        synchronization::{interface::Mutex, IRQSafeNullLock},
         time,
     },
     core::{marker::PhantomData, time::Duration},
@@ -94,35 +96,20 @@ register_structs! {
 // Hide RegisterBlock from public api.
 type Registers = MMIODerefWrapper<RegisterBlock>;
 
-/// Public interface to the GPIO MMIO area
-pub struct GPIO {
+struct GPIOInner {
     registers: Registers,
 }
 
-pub const GPIO_BASE: usize = BcmHost::get_peripheral_address() + 0x20_0000;
-
-impl crate::drivers::interface::DeviceDriver for GPIO {
-    type IRQNumberType = IRQNumber;
-
-    fn compatible(&self) -> &'static str {
-        Self::COMPATIBLE
-    }
+/// Public interface to the GPIO MMIO area
+pub struct GPIO {
+    inner: IRQSafeNullLock<GPIOInner>,
 }
 
-impl GPIO {
-    pub const COMPATIBLE: &'static str = "BCM GPIO";
-
-    /// # Safety
-    ///
-    /// Unsafe, duh!
-    pub const unsafe fn new(base_addr: usize) -> GPIO {
-        GPIO {
-            registers: Registers::new(base_addr),
+impl GPIOInner {
+    pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
+        Self {
+            registers: Registers::new(mmio_base_addr),
         }
-    }
-
-    pub fn get_pin(&self, pin: usize) -> Pin<Uninitialized> {
-        unsafe { Pin::new(pin, self.registers.base_addr) }
     }
 
     #[cfg(feature = "rpi3")]
@@ -152,6 +139,95 @@ impl GPIO {
     #[cfg(feature = "rpi4")]
     pub fn power_off(&self) {
         todo!()
+    }
+
+    #[cfg(feature = "rpi3")]
+    pub fn set_pull_up_down(&self, pin: usize, pull: PullUpDown) {
+        let bank = pin / 32;
+        let off = pin % 32;
+
+        self.registers.PullUpDown.set(0);
+
+        // The Linux 2837 GPIO driver waits 1 µs between the steps.
+        const DELAY: Duration = Duration::from_micros(1);
+
+        time::time_manager().spin_for(DELAY);
+
+        self.registers.PullUpDownEnableClock[bank].modify(FieldValue::<u32, ()>::new(
+            0b1,
+            off,
+            (pull == PullUpDown::Up).into(),
+        ));
+
+        time::time_manager().spin_for(DELAY);
+
+        self.registers.PullUpDown.set(0);
+        self.registers.PullUpDownEnableClock[bank].set(0);
+    }
+
+    #[cfg(feature = "rpi4")]
+    pub fn set_pull_up_down(&self, pin: usize, pull: PullUpDown) {
+        let bank = pin / 16;
+        let off = pin % 16;
+
+        self.registers.PullUpDownControl[bank].modify(FieldValue::<u32, ()>::new(
+            0b11,
+            off * 2,
+            pull.into(),
+        ));
+    }
+
+    pub fn to_alt(&self, pin: usize, function: Function) {
+        let bank = pin / 10;
+        let off = pin % 10;
+
+        self.registers.FunctionSelect[bank].modify(FieldValue::<u32, ()>::new(
+            0b111,
+            off * 3,
+            function.into(),
+        ));
+    }
+
+    pub fn set_pin(&mut self, pin: usize) {
+        // Guarantees: pin number is between [0; 53] by construction.
+        let bank = pin / 32;
+        let shift = pin % 32;
+        self.registers.SetPin[bank].set(1 << shift);
+    }
+
+    pub fn clear_pin(&mut self, pin: usize) {
+        // Guarantees: pin number is between [0; 53] by construction.
+        let bank = pin / 32;
+        let shift = pin % 32;
+        self.registers.ClearPin[bank].set(1 << shift);
+    }
+
+    pub fn get_level(&self, pin: usize) -> Level {
+        // Guarantees: pin number is between [0; 53] by construction.
+        let bank = pin / 32;
+        let off = pin % 32;
+        self.registers.PinLevel[bank].matches_all(FieldValue::<u32, ()>::new(1, off, 1))
+    }
+}
+
+impl GPIO {
+    pub const COMPATIBLE: &'static str = "BCM GPIO";
+
+    /// # Safety
+    ///
+    /// Unsafe, duh!
+    pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
+        Self {
+            inner: IRQSafeNullLock::new(GPIOInner::new(mmio_base_addr)),
+        }
+    }
+
+    pub fn get_pin(&self, pin: usize) -> Pin<Uninitialized> {
+        unsafe { Pin::new(pin, &self.inner) } // todo: expose only inner to avoid unlocked access
+    }
+
+    pub fn power_off(&self) {
+        self.inner.lock(|inner| inner.power_off());
     }
 }
 
@@ -196,74 +272,47 @@ impl ::core::convert::From<PullUpDown> for u32 {
 /// structure starts in the `Uninitialized` state and must be transitioned into
 /// one of `Input`, `Output`, or `Alt` via the `into_input`, `into_output`, and
 /// `into_alt` methods before it can be used.
-pub struct Pin<State> {
+pub struct Pin<'outer, State> {
     pin: usize,
-    registers: Registers,
+    inner: &'outer IRQSafeNullLock<GPIOInner>,
     _state: PhantomData<State>,
 }
 
-impl<State> Pin<State> {
+impl<'outer, State> Pin<'outer, State> {
     /// Transitions `self` to state `NewState`, consuming `self` and returning a new
     /// `Pin` instance in state `NewState`. This method should _never_ be exposed to
     /// the public!
     #[inline(always)]
-    fn transition<NewState>(self) -> Pin<NewState> {
+    fn transition<NewState>(self) -> Pin<'outer, NewState> {
         Pin {
             pin: self.pin,
-            registers: self.registers,
+            inner: self.inner,
             _state: PhantomData,
         }
     }
 
-    #[cfg(feature = "rpi3")]
     pub fn set_pull_up_down(&self, pull: PullUpDown) {
-        let bank = self.pin / 32;
-        let off = self.pin % 32;
-
-        self.registers.PullUpDown.set(0);
-
-        // The Linux 2837 GPIO driver waits 1 µs between the steps.
-        const DELAY: Duration = Duration::from_micros(1);
-
-        time::time_manager().spin_for(DELAY);
-
-        self.registers.PullUpDownEnableClock[bank].modify(FieldValue::<u32, ()>::new(
-            0b1,
-            off,
-            (pull == PullUpDown::Up).into(),
-        ));
-
-        time::time_manager().spin_for(DELAY);
-
-        self.registers.PullUpDown.set(0);
-        self.registers.PullUpDownEnableClock[bank].set(0);
-    }
-
-    #[cfg(feature = "rpi4")]
-    pub fn set_pull_up_down(&self, pull: PullUpDown) {
-        let bank = self.pin / 16;
-        let off = self.pin % 16;
-        self.registers.PullUpDownControl[bank].modify(FieldValue::<u32, ()>::new(
-            0b11,
-            off * 2,
-            pull.into(),
-        ));
+        self.inner
+            .lock(|inner| inner.set_pull_up_down(self.pin, pull))
     }
 }
 
-impl Pin<Uninitialized> {
+impl<'outer> Pin<'outer, Uninitialized> {
     /// Returns a new GPIO `Pin` structure for pin number `pin`.
     ///
     /// # Panics
     ///
     /// Panics if `pin` > `53`.
-    unsafe fn new(pin: usize, base_addr: usize) -> Pin<Uninitialized> {
+    unsafe fn new(
+        pin: usize,
+        inner: &'outer IRQSafeNullLock<GPIOInner>,
+    ) -> Pin<'outer, Uninitialized> {
         if pin > 53 {
-            panic!("gpio::Pin::new(): pin {} exceeds maximum of 53", pin);
+            panic!("gpio::Pin::new(): pin {pin} exceeds maximum of 53");
         }
 
         Pin {
-            registers: Registers::new(base_addr),
+            inner,
             pin,
             _state: PhantomData,
         }
@@ -271,60 +320,61 @@ impl Pin<Uninitialized> {
 
     /// Enables the alternative function `function` for `self`. Consumes self
     /// and returns a `Pin` structure in the `Alt` state.
-    pub fn into_alt(self, function: Function) -> Pin<Alt> {
-        let bank = self.pin / 10;
-        let off = self.pin % 10;
-        self.registers.FunctionSelect[bank].modify(FieldValue::<u32, ()>::new(
-            0b111,
-            off * 3,
-            function.into(),
-        ));
+    pub fn into_alt(self, function: Function) -> Pin<'outer, Alt> {
+        self.inner.lock(|inner| inner.to_alt(self.pin, function));
         self.transition()
     }
 
     /// Sets this pin to be an _output_ pin. Consumes self and returns a `Pin`
     /// structure in the `Output` state.
-    pub fn into_output(self) -> Pin<Output> {
+    pub fn into_output(self) -> Pin<'outer, Output> {
         self.into_alt(Function::Output).transition()
     }
 
     /// Sets this pin to be an _input_ pin. Consumes self and returns a `Pin`
     /// structure in the `Input` state.
-    pub fn into_input(self) -> Pin<Input> {
+    pub fn into_input(self) -> Pin<'outer, Input> {
         self.into_alt(Function::Input).transition()
     }
 }
 
-impl Pin<Output> {
+impl<'outer> Pin<'outer, Output> {
     /// Sets (turns on) this pin.
     pub fn set(&mut self) {
-        // Guarantees: pin number is between [0; 53] by construction.
-        let bank = self.pin / 32;
-        let shift = self.pin % 32;
-        self.registers.SetPin[bank].set(1 << shift);
+        self.inner.lock(|inner| inner.set_pin(self.pin));
     }
 
     /// Clears (turns off) this pin.
     pub fn clear(&mut self) {
-        // Guarantees: pin number is between [0; 53] by construction.
-        let bank = self.pin / 32;
-        let shift = self.pin % 32;
-        self.registers.ClearPin[bank].set(1 << shift);
+        self.inner.lock(|inner| inner.clear_pin(self.pin));
     }
 }
 
 pub type Level = bool;
 
-impl Pin<Input> {
+impl<'outer> Pin<'outer, Input> {
     /// Reads the pin's value. Returns `true` if the level is high and `false`
     /// if the level is low.
     pub fn level(&self) -> Level {
-        // Guarantees: pin number is between [0; 53] by construction.
-        let bank = self.pin / 32;
-        let off = self.pin % 32;
-        self.registers.PinLevel[bank].matches_all(FieldValue::<u32, ()>::new(1, off, 1))
+        self.inner.lock(|inner| inner.get_level(self.pin))
     }
 }
+
+//--------------------------------------------------------------------------------------------------
+// OS Interface Code
+//--------------------------------------------------------------------------------------------------
+
+impl crate::drivers::interface::DeviceDriver for GPIO {
+    type IRQNumberType = IRQNumber;
+
+    fn compatible(&self) -> &'static str {
+        Self::COMPATIBLE
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Testing
+//--------------------------------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -333,7 +383,8 @@ mod tests {
     #[test_case]
     fn test_pin_transitions() {
         let mut reg = [0u32; 40];
-        let gpio = unsafe { GPIO::new(&mut reg as *mut _ as usize) };
+        let mmio_base_addr = Address::<Virtual>::new(&mut reg as *mut _ as usize);
+        let gpio = unsafe { GPIO::new(mmio_base_addr) };
 
         let _out = gpio.get_pin(1).into_output();
         assert_eq!(reg[0], 0b001_000);
@@ -346,7 +397,8 @@ mod tests {
     #[test_case]
     fn test_pin_outputs() {
         let mut reg = [0u32; 40];
-        let gpio = unsafe { GPIO::new(&mut reg as *mut _ as usize) };
+        let mmio_base_addr = Address::<Virtual>::new(&mut reg as *mut _ as usize);
+        let gpio = unsafe { GPIO::new(mmio_base_addr) };
 
         let pin = gpio.get_pin(1);
         let mut out = pin.into_output();
@@ -366,7 +418,8 @@ mod tests {
     #[test_case]
     fn test_pin_inputs() {
         let mut reg = [0u32; 40];
-        let gpio = unsafe { GPIO::new(&mut reg as *mut _ as usize) };
+        let mmio_base_addr = Address::<Virtual>::new(&mut reg as *mut _ as usize);
+        let gpio = unsafe { GPIO::new(mmio_base_addr) };
 
         let pin = gpio.get_pin(1);
         let inp = pin.into_input();
