@@ -7,13 +7,19 @@
  */
 
 //! Broadcom mailbox interface between the VideoCore and the ARM Core.
-//!
+//! Mailbox is controlled by two parts: a MAILBOX driver that drives the MMIO registers and
+//! a MailboxCommand, that incorporates a command buffer and concurrency controls.
 
 #![allow(dead_code)]
 
+use crate::synchronization::IRQSafeNullLock;
 use {
     super::BcmHost,
-    crate::{platform::device_driver::common::MMIODerefWrapper, println}, //DMA_ALLOCATOR
+    crate::{
+        memory::{Address, Virtual},
+        platform::device_driver::common::MMIODerefWrapper,
+        println,
+    }, //DMA_ALLOCATOR
     aarch64_cpu::asm::barrier,
     core::{
         alloc::{AllocError, Allocator, Layout},
@@ -30,26 +36,33 @@ use {
     },
 };
 
+/// Mailbox MMIO registers access.
+struct MailboxInner {
+    registers: Registers,
+}
+
+/// Mailbox driver
+pub struct Mailbox {
+    inner: IRQSafeNullLock<MailboxInner>,
+}
+
 /// Public interface to the mailbox.
 /// The address for the buffer needs to be 16-byte aligned
 /// so that the VideoCore can handle it properly.
 /// The reason is that lowest 4 bits of the address will contain the channel number.
-pub struct Mailbox<const N_SLOTS: usize, Storage = DmaBackedMailboxStorage<N_SLOTS>> {
-    registers: Registers,
+pub struct MailboxCommand<const N_SLOTS: usize, Storage = DmaBackedMailboxStorage<N_SLOTS>> {
     pub buffer: Storage,
 }
 
-/// Mailbox that is ready to be called.
-/// This prevents invalid use of the mailbox until it is fully prepared.
-pub struct PreparedMailbox<const N_SLOTS: usize, Storage = DmaBackedMailboxStorage<N_SLOTS>>(
-    Mailbox<N_SLOTS, Storage>,
+/// Mailbox command that is ready to be called.
+/// This prevents invalid use of the mailbox command until it is fully prepared.
+pub struct PreparedMailboxCommand<const N_SLOTS: usize, Storage = DmaBackedMailboxStorage<N_SLOTS>>(
+    MailboxCommand<N_SLOTS, Storage>,
 );
 
 const MAILBOX_ALIGNMENT: usize = 16;
 const MAILBOX_ITEMS_COUNT: usize = 36;
 
-/// We've identity mapped the MMIO register region on kernel start.
-const MAILBOX_BASE: usize = BcmHost::get_peripheral_address() + 0xb880;
 /// Lowest 4-bits are channel ID.
 const CHANNEL_MASK: u32 = 0xf;
 
@@ -109,10 +122,10 @@ pub type Result<T> = CoreResult<T, MailboxError>;
 pub trait MailboxOps {
     fn write(&self, channel: u32) -> Result<()>;
     fn read(&self, channel: u32) -> Result<()>;
-    fn call(&self, channel: u32) -> Result<()> {
-        self.write(channel)?;
-        self.read(channel)
-    }
+    fn call(&self, channel: u32) -> Result<()>; //{
+                                                //     self.write(channel)?;
+                                                //     self.read(channel)
+                                                // }
 }
 
 pub trait MailboxStorage {
@@ -367,19 +380,13 @@ impl<const N_SLOTS: usize> core::fmt::Debug for PreparedMailbox<N_SLOTS> {
     }
 }
 
-impl<const N_SLOTS: usize> Default for Mailbox<N_SLOTS> {
-    fn default() -> Self {
-        unsafe { Self::new(MAILBOX_BASE) }.expect("Couldn't allocate a default mailbox")
-    }
-}
-
 impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<N_SLOTS, Storage> {
-    /// Create a new mailbox locally in an aligned stack space.
+    /// Create a new mailbox locally in an aligned storage space.
     /// # Safety
     /// Caller is responsible for picking the correct MMIO register base address.
-    pub unsafe fn new(base_addr: usize) -> Result<Mailbox<N_SLOTS, Storage>> {
+    pub unsafe fn new(mmio_base_addr: Address<Virtual>) -> Result<Mailbox<N_SLOTS, Storage>> {
         Ok(Mailbox {
-            registers: Registers::new(base_addr),
+            registers: Registers::new(mmio_base_addr),
             buffer: Storage::new()?,
         })
     }

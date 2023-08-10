@@ -15,11 +15,7 @@ use {
         devices::serial::SerialOps,
         exception,
         memory::{Address, Virtual},
-        platform::{
-            device_driver::{common::MMIODerefWrapper, gpio, IRQNumber},
-            mailbox::{self, Mailbox, MailboxOps},
-            BcmHost,
-        },
+        platform::device_driver::{common::MMIODerefWrapper, gpio, IRQNumber},
         synchronization::{interface::Mutex, IRQSafeNullLock},
     },
     core::fmt::{self, Arguments},
@@ -386,15 +382,17 @@ impl PL011UartInner {
         const CLOCK: u32 = 4_000_000; // 4Mhz
         const BAUD_RATE: u32 = 115_200;
 
-        let mut mailbox = Mailbox::<9>::default();
-        let index = mailbox.request();
-        let index = mailbox.set_clock_rate(index, mailbox::clock::UART, CLOCK);
-        let mailbox = mailbox.end(index);
-
-        if mailbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
-            return Err("PL011 UART setup failed in mailbox operation");
-            // return Err(PL011UartError::MailboxError); // Abort if UART clocks couldn't be set
-        };
+        // // Should have a MailboxCommand with ref to a command buffer, and access to global MAILBOX
+        // // driver to run those commands atomically..
+        // let mut mailbox = Mailbox::<9>::default();
+        // let index = mailbox.request();
+        // let index = mailbox.set_clock_rate(index, mailbox::clock::UART, CLOCK);
+        // let mailbox = mailbox.end(index);
+        //
+        // if mailbox.call(mailbox::channel::PropertyTagsArmToVc).is_err() {
+        //     return Err("PL011 UART setup failed in mailbox operation");
+        //     // return Err(PL011UartError::MailboxError); // Abort if UART clocks couldn't be set
+        // };
 
         // From the PL011 Technical Reference Manual:
         //
