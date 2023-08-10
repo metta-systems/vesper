@@ -65,10 +65,10 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
     extern "Rust" {
         // Stack top
         // Stack placed before first executable instruction
-        static __STACK_START: UnsafeCell<()>;
+        static __STACK_TOP: UnsafeCell<()>;
     }
     // Set stack pointer. Used in case we started in EL1.
-    SP.set(__STACK_START.get() as u64);
+    SP.set(__STACK_TOP.get() as u64);
 
     shared_setup_and_enter_pre();
 
@@ -122,12 +122,12 @@ fn shared_setup_and_enter_pre() {
 fn shared_setup_and_enter_post() -> ! {
     extern "Rust" {
         // Stack top
-        static __STACK_START: UnsafeCell<()>;
+        static __STACK_TOP: UnsafeCell<()>;
     }
     // Set up SP_EL1 (stack pointer), which will be used by EL1 once
     // we "return" to it.
     unsafe {
-        SP_EL1.set(__STACK_START.get() as u64);
+        SP_EL1.set(__STACK_TOP.get() as u64);
     }
 
     // Use `eret` to "return" to EL1. This will result in execution of
