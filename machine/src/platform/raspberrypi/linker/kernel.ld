@@ -5,10 +5,13 @@
  * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
  */
 
+PAGE_SIZE = 64K;
+PAGE_MASK = PAGE_SIZE - 1;
+
+__phys_mem_start = 0x0;
+
 __phys_load_addr = 0x80000;
 ENTRY(__phys_load_addr);
-
-PAGE_SIZE = 65536;
 
 /* Flags:
  *     4 == R
@@ -26,13 +29,26 @@ PHDRS
 }
 
 /* Symbols between __BOOT_START and __BOOT_END should be dropped after init is complete.
-   Symbols between __RO_START and __RO_END are the kernel code.
+   Symbols between __CODE_START and __CODE_END are the kernel code.
    Symbols between __BSS_START and __BSS_END must be initialized to zero by startup code in the kernel.
 */
 SECTIONS
 {
-    __STACK_START = __phys_load_addr; /* Stack grows from here towards 0x0. */
-    . = __phys_load_addr; /* AArch64 boot address is 0x80000, 4K-aligned */
+    . = __phys_mem_start;
+
+    /***********************************************************************************************
+    * Boot Core Stack
+    ***********************************************************************************************/
+    .boot_core_stack (NOLOAD) :
+    {
+         __STACK_BOTTOM = .;                 /*   ^             */
+                                             /*   | stack       */
+        . = __phys_load_addr;                /*   | growth      AArch64 boot address is 0x80000, 4K-aligned */
+                                             /*   | direction   */
+        __STACK_TOP = .;                     /*   | Stack grows from here towards 0x0. */
+    } :segment_boot_core_stack
+
+    ASSERT((. & PAGE_MASK) == 0, "End of boot core stack is not page aligned")
 
     /***********************************************************************************************
     * Code + RO Data
@@ -43,19 +59,19 @@ SECTIONS
         /*******************************************************************************************
         * Boot Code + Boot Data
         *******************************************************************************************/
-
         __BOOT_START = .;
         KEEP(*(.text.main.entry))
         *(.text.boot)
         *(.data.boot)
-        . = ALIGN(PAGE_SIZE); /* Here the boot code ends */
-        __BOOT_END = .; // __BOOT_END must be PAGE_SIZE aligned
+        . = ALIGN(PAGE_SIZE);
+        __BOOT_END = .; /* Here the boot code ends */
+        ASSERT((__BOOT_END & PAGE_MASK) == 0, "End of boot code is not page aligned")
 
         /*******************************************************************************************
         * Regular Kernel Code
         *******************************************************************************************/
 
-        __RO_START = .;
+        __CODE_START = .;
         *(.text*)
     } :segment_code
 
@@ -72,7 +88,8 @@ SECTIONS
         *(.rodata*)
         FILL(0x00)
         . = ALIGN(PAGE_SIZE); /* Fill up to page size */
-        __RO_END = .; /* __RO_END must be PAGE_SIZE aligned */
+        __CODE_END = .;
+        ASSERT((__CODE_END & PAGE_MASK) == 0, "End of kernel code is not page aligned")
     } :segment_code
 
     /***********************************************************************************************
@@ -81,7 +98,8 @@ SECTIONS
 
     .data :
     {
-        __DATA_START = .; /* __DATA_START must be PAGE_SIZE aligned */
+        __DATA_START = .;
+        ASSERT((__DATA_START & PAGE_MASK) == 0, "Start of kernel data is not page aligned")
         *(.data*)
         FILL(0x00)
     } :segment_data
@@ -96,6 +114,17 @@ SECTIONS
         __BSS_SIZE_U64S = (__BSS_END - __BSS_START) / 8;
     } :segment_data
 
+    __DATA_END = .;
+
+    /***********************************************************************************************
+    * MMIO Remap Reserved
+    ***********************************************************************************************/
+    __MMIO_REMAP_START = .;
+    . += 8 * 1024 * 1024;
+    __MMIO_REMAP_END = .;
+
+    ASSERT((. & PAGE_MASK) == 0, "MMIO remap reservation is not page aligned")
+
     /***********************************************************************************************
     * Misc
     ***********************************************************************************************/
@@ -106,4 +135,4 @@ SECTIONS
     /DISCARD/ : { *(.comment*) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.chainboot*) }
 }
 
-INCLUDE linker/aarch64-exceptions.ld
+INCLUDE machine/src/arch/aarch64/linker/aarch64-exceptions.ld

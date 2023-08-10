@@ -93,26 +93,32 @@ extern "Rust" {
     //
     // The inclusive start of the read-only area, aka the address of the
     // first byte of the area.
-    static __RO_START: UnsafeCell<()>;
+    static __CODE_START: UnsafeCell<()>;
     // The exclusive end of the read-only area, aka the address of
     // the first byte _after_ the RO area.
-    static __RO_END: UnsafeCell<()>;
-}
+    static __CODE_END: UnsafeCell<()>;
 
-// Symbols from the linker script.
-// extern "Rust" {
-//     static __code_start: UnsafeCell<()>; // __RO_START
-//     static __code_end_exclusive: UnsafeCell<()>; // __RO_END
-//
-//     static __data_start: UnsafeCell<()>;
-//     static __data_end_exclusive: UnsafeCell<()>;
-//
-//     static __mmio_remap_start: UnsafeCell<()>;
-//     static __mmio_remap_end_exclusive: UnsafeCell<()>;
-//
-//     static __boot_core_stack_start: UnsafeCell<()>;
-//     static __boot_core_stack_end_exclusive: UnsafeCell<()>;
-// }
+    // The inclusive start of the kernel data/BSS area, aka the address of the
+    // first byte of the area.
+    static __DATA_START: UnsafeCell<()>;
+    // The exclusive end of the kernel data/BSS area, aka the address of
+    // the first byte _after_ the data/BSS area.
+    static __DATA_END: UnsafeCell<()>;
+
+    // The inclusive start of the kernel data/BSS area, aka the address of the
+    // first byte of the area.
+    static __STACK_BOTTOM: UnsafeCell<()>;
+    // The exclusive end of the kernel data/BSS area, aka the address of
+    // the first byte _after_ the data/BSS area.
+    static __STACK_TOP: UnsafeCell<()>;
+
+    // The inclusive start of the kernel MMIO remap area, aka the address of the
+    // first byte of the area.
+    static __MMIO_REMAP_START: UnsafeCell<()>;
+    // The exclusive end of the kernel MMIO remap area, aka the address of
+    // the first byte _after_ the MMIO remap area.
+    static __MMIO_REMAP_END: UnsafeCell<()>;
+}
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
@@ -254,7 +260,7 @@ fn boot_end_exclusive() -> usize {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn code_start() -> usize {
-    unsafe { __RO_START.get() as usize }
+    unsafe { __CODE_START.get() as usize }
 }
 
 /// Start page address of the code segment.
@@ -264,7 +270,7 @@ fn code_start() -> usize {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn virt_code_start() -> PageAddress<Virtual> {
-    PageAddress::from(unsafe { __RO_START.get() as usize })
+    PageAddress::from(unsafe { __CODE_START.get() as usize })
 }
 
 /// Size of the code segment.
@@ -274,7 +280,7 @@ fn virt_code_start() -> PageAddress<Virtual> {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn code_size() -> usize {
-    unsafe { (__RO_END.get() as usize) - (__RO_START.get() as usize) }
+    unsafe { (__CODE_END.get() as usize) - (__CODE_START.get() as usize) }
 }
 
 /// Exclusive end page address of the code segment.
@@ -289,7 +295,7 @@ fn code_size() -> usize {
 /// Start page address of the data segment.
 #[inline(always)]
 fn virt_data_start() -> PageAddress<Virtual> {
-    PageAddress::from(unsafe { __data_start.get() as usize })
+    PageAddress::from(unsafe { __DATA_START.get() as usize })
 }
 
 /// Size of the data segment.
@@ -299,7 +305,7 @@ fn virt_data_start() -> PageAddress<Virtual> {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn data_size() -> usize {
-    unsafe { (__data_end_exclusive.get() as usize) - (__data_start.get() as usize) }
+    unsafe { (__DATA_END.get() as usize) - (__DATA_START.get() as usize) }
 }
 
 /// Start page address of the MMIO remap reservation.
@@ -309,7 +315,7 @@ fn data_size() -> usize {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn virt_mmio_remap_start() -> PageAddress<Virtual> {
-    PageAddress::from(unsafe { __mmio_remap_start.get() as usize })
+    PageAddress::from(unsafe { __MMIO_REMAP_START.get() as usize })
 }
 
 /// Size of the MMIO remap reservation.
@@ -319,21 +325,19 @@ fn virt_mmio_remap_start() -> PageAddress<Virtual> {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn mmio_remap_size() -> usize {
-    unsafe { (__mmio_remap_end_exclusive.get() as usize) - (__mmio_remap_start.get() as usize) }
+    unsafe { (__MMIO_REMAP_END.get() as usize) - (__MMIO_REMAP_START.get() as usize) }
 }
 
 /// Start page address of the boot core's stack.
 #[inline(always)]
 fn virt_boot_core_stack_start() -> PageAddress<Virtual> {
-    PageAddress::from(unsafe { __boot_core_stack_start.get() as usize })
+    PageAddress::from(unsafe { __STACK_BOTTOM.get() as usize })
 }
 
 /// Size of the boot core's stack.
 #[inline(always)]
 fn boot_core_stack_size() -> usize {
-    unsafe {
-        (__boot_core_stack_end_exclusive.get() as usize) - (__boot_core_stack_start.get() as usize)
-    }
+    unsafe { (__STACK_TOP.get() as usize) - (__STACK_BOTTOM.get() as usize) }
 }
 
 //--------------------------------------------------------------------------------------------------
