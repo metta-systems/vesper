@@ -12,7 +12,6 @@ pub mod exception;
 pub mod fb;
 pub mod mailbox;
 pub mod memory;
-pub mod power;
 pub mod vc;
 
 /// See BCM2835-ARM-Peripherals.pdf

@@ -59,18 +59,9 @@ pub type Result<T> = ::core::result::Result<T, PowerError>;
 
 type Registers = MMIODerefWrapper<RegisterBlock>;
 
-const POWER_START: usize = 0x0010_0000;
-
 /// Public interface to the Power subsystem
 pub struct Power {
     registers: Registers,
-}
-
-impl Default for Power {
-    fn default() -> Power {
-        const POWER_BASE: usize = BcmHost::get_peripheral_address() + POWER_START;
-        unsafe { Power::new(POWER_BASE) }
-    }
 }
 
 impl Power {
