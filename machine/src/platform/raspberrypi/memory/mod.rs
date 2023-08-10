@@ -143,6 +143,7 @@ pub(super) mod map {
     }
 
     pub const VIDEOCORE_MBOX_OFFSET: usize = 0x0000_B880;
+    pub const POWER_OFFSET:          usize = 0x0010_0000;
     pub const GPIO_OFFSET:           usize = 0x0020_0000;
     pub const UART_OFFSET:           usize = 0x0020_1000;
     pub const MINIUART_OFFSET:       usize = 0x0021_5000;
@@ -161,6 +162,9 @@ pub(super) mod map {
 
         /// Base address of ARM<->VC mailbox area.
         pub const VIDEOCORE_MBOX_BASE: Address<Physical> = Address::new(MMIO_BASE + VIDEOCORE_MBOX_OFFSET);
+
+        /// Board power control.
+        pub const POWER_BASE:          Address<Physical> = Address::new(MMIO_BASE + POWER_OFFSET);
 
         /// Base address of GPIO registers.
         pub const GPIO_BASE:           Address<Physical> = Address::new(MMIO_BASE + GPIO_OFFSET);
