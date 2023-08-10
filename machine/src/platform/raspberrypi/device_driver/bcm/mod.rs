@@ -9,6 +9,7 @@ pub mod gpio;
 pub mod interrupt_controller;
 pub mod mini_uart;
 pub mod pl011_uart;
+// pub mod power;
 
 #[cfg(feature = "rpi3")]
 pub use interrupt_controller::*;
