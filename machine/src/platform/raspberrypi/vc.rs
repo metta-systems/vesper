@@ -42,6 +42,7 @@ impl VC {
          *    (if the base or size has changed) is implicitly freed.
          */
 
+        // control: MailboxCommand<10, FrameBufferData>
         let mut mbox = Mailbox::<36>::default();
         let index = mbox.request();
         let index = mbox.set_physical_wh(index, w, h);

@@ -1,4 +1,7 @@
-use super::mailbox::{self, LocalMailboxStorage, Mailbox, MailboxError, MailboxOps};
+use {
+    super::mailbox::{self, LocalMailboxStorage, Mailbox, MailboxError, MailboxOps},
+    crate::memory::{Address, Virtual},
+};
 
 /// FrameBuffer channel supported structure - use with mailbox::channel::FrameBuffer
 /// Must have the same alignment as the mailbox buffers.
@@ -13,10 +16,11 @@ mod index {
     pub const DEPTH: usize = 5;
     pub const X_OFFSET: usize = 6;
     pub const Y_OFFSET: usize = 7;
-    pub const POINTER: usize = 8; // FIXME: could be 4096 for the alignment restriction.
+    pub const POINTER: usize = 8; // FIXME: Value could be 4096 for the alignment restriction.
     pub const SIZE: usize = 9;
 }
 
+// control: MailboxCommand<10, FrameBufferData>
 pub struct FrameBuffer {
     mailbox: Mailbox<10, FrameBufferData>,
 }
@@ -42,13 +46,13 @@ impl core::fmt::Debug for FrameBufferData {
 
 impl FrameBuffer {
     pub fn new(
-        base_addr: usize,
+        mmio_base_addr: Address<Virtual>, // skip this, use MAILBOX driver
         width: u32,
         height: u32,
         depth: u32,
     ) -> Result<FrameBuffer, MailboxError> {
         let mut fb = FrameBuffer {
-            mailbox: unsafe { Mailbox::<10, FrameBufferData>::new(base_addr)? },
+            mailbox: unsafe { Mailbox::<10, FrameBufferData>::new(mmio_base_addr)? },
         };
         fb.mailbox.buffer.storage[index::WIDTH] = width;
         fb.mailbox.buffer.storage[index::VIRTUAL_WIDTH] = width;
