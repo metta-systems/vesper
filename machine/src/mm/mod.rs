@@ -30,7 +30,12 @@ pub const fn align_up(value: usize, alignment: usize) -> usize {
         "`alignment` must be a power of two"
     );
 
-    (value + alignment - 1) & !(alignment - 1)
+    let align_mask = alignment - 1;
+    if value & align_mask == 0 {
+        value // already aligned
+    } else {
+        (value | align_mask) + 1
+    }
 }
 
 /// Check if a value is aligned to a given alignment.
