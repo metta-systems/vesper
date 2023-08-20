@@ -16,7 +16,7 @@ clap = "4.3.19"
 seahash = "4.1"
 anyhow = "1.0"
 fehler = "1.0"
-crossterm = { version = "0.26", features = ["event-stream"] }
+crossterm = { version = "0.27", features = ["event-stream"] }
 futures = "0.3"
 futures-util = { version = "0.3", features = ["io"] }
 tokio = { version = "1.29", features = ["full"] }
