@@ -1,0 +1,56 @@
+[tasks.build]
+command = "cargo"
+args = ["build"]
+
+[tasks.chainofcommand]
+dependencies = ["build"]
+
+[tasks.build-device]
+disabled = true
+
+[tasks.test]
+command = "cargo"
+args = ["test"]
+
+[tasks.clippy]
+command = "cargo"
+args = ["clippy", "--", "-D", "warnings"]
+
+[tasks.hopper]
+disabled = true
+
+[tasks.kernel-binary]
+disabled = true
+
+[tasks.zellij-nucleus]
+disabled = true
+
+[tasks.zellij-cb]
+disabled = true
+
+[tasks.zellij-cb-gdb]
+disabled = true
+
+[tasks.nm]
+disabled = true
+
+[tasks.qemu]
+disabled = true
+
+[tasks.qemu-gdb]
+disabled = true
+
+[tasks.qemu-cb]
+disabled = true
+
+[tasks.sdcard]
+disabled = true
+
+[tasks.cb-eject]
+disabled = true
+
+[tasks.gdb]
+disabled = true
+
+[tasks.gdb-cb]
+disabled = true

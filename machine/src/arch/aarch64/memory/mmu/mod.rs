@@ -27,7 +27,7 @@ use {
     tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
 };
 
-pub(crate) mod translation_table;
+pub mod translation_table;
 
 //--------------------------------------------------------------------------------------------------
 // Private Definitions

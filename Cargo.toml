@@ -3,7 +3,8 @@ members = [
     "nucleus",
     "machine",
     "bin/chainboot",
-    "bin/chainofcommand"
+    "bin/chainofcommand",
+    "tools/ttt"
 ]
 resolver = "2"
 

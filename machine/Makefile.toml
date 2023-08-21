@@ -6,3 +6,6 @@ disabled = true
 
 [tasks.hopper]
 disabled = true
+
+[tasks.kernel-binary]
+disabled = true
