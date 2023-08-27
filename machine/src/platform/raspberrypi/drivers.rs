@@ -89,7 +89,7 @@ unsafe fn instantiate_uart() -> Result<(), &'static str> {
 /// This must be called only after successful init of the PL011 UART driver.
 unsafe fn post_init_pl011_uart() -> Result<(), &'static str> {
     console::register_console(PL011_UART.assume_init_ref());
-    crate::info!("[0] UART0 is live!");
+    crate::info!("UART0 is live!");
     Ok(())
 }
 
