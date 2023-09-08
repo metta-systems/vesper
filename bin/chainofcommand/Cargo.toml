@@ -24,4 +24,4 @@ tokio-util = { version = "0.7", features = ["io", "codec", "io"] }
 tokio-stream = { version = "0.1" }
 tokio-serial = "5.4"
 defer = "0.1"
-bytes = "1.4"
+bytes = "1.5"
