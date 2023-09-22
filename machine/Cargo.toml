@@ -29,7 +29,7 @@ rpi4 = []
 
 [dependencies]
 qemu-exit = "3.0"
-aarch64-cpu = "9.3"
+aarch64-cpu = "9.4"
 tock-registers = "0.8.1"
 ux = { version = "0.1", default-features = false }
 usize_conversions = "0.2"
