@@ -12,7 +12,7 @@ edition = "2021"
 maintenance = { status = "experimental" }
 
 [dependencies]
-clap = "4.3.19"
+clap = "4.4.7"
 seahash = "4.1"
 anyhow = "1.0"
 fehler = "1.0"
