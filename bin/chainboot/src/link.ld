@@ -91,11 +91,11 @@ SECTIONS
         __BSS_START = .;
         *(.bss .bss.*)
         *(COMMON)
-        . = ALIGN(PAGE_SIZE); /* Align up to page size */
+        . = ALIGN(16);
         __BSS_SIZE_U64S = (. - __BSS_START) / 8;
     } :segment_data
 
     /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.boot*)}
 }
 
-INCLUDE linker/aarch64-exceptions.ld
+INCLUDE machine/src/arch/aarch64/linker/aarch64-exceptions.ld
