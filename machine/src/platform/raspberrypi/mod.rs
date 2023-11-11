@@ -5,6 +5,7 @@
 
 #![allow(dead_code)]
 
+pub mod cpu;
 pub mod device_driver;
 pub mod display;
 pub mod drivers;
