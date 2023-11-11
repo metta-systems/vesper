@@ -80,8 +80,8 @@ mod gicc;
 mod gicd;
 
 use crate::{
-    bsp::{self, device_driver::common::BoundedUsize},
-    cpu, driver, exception,
+    bsp::{self, cpu::BOOT_CORE_ID, device_driver::common::BoundedUsize},
+    cpu, drivers, exception,
     synchronization::{self, InitStateLock},
 };
 
@@ -147,7 +147,7 @@ impl driver::interface::DeviceDriver for GICv2 {
     }
 
     unsafe fn init(&self) -> Result<(), &'static str> {
-        if bsp::cpu::BOOT_CORE_ID == cpu::smp::core_id() {
+        if BOOT_CORE_ID == cpu::smp::core_id() {
             self.gicd.boot_core_init();
         }
 
