@@ -81,6 +81,7 @@ mod gicd;
 
 use crate::{
     cpu, drivers, exception,
+    memory::{Address, Virtual},
     platform::{self, cpu::BOOT_CORE_ID, device_driver::common::BoundedUsize},
     synchronization::{self, InitStateLock},
 };
@@ -125,7 +126,10 @@ impl GICv2 {
     /// # Safety
     ///
     /// - The user must ensure to provide a correct MMIO start address.
-    pub const unsafe fn new(gicd_mmio_start_addr: usize, gicc_mmio_start_addr: usize) -> Self {
+    pub const unsafe fn new(
+        gicd_mmio_start_addr: Address<Virtual>,
+        gicc_mmio_start_addr: Address<Virtual>,
+    ) -> Self {
         Self {
             gicd: gicd::GICD::new(gicd_mmio_start_addr),
             gicc: gicc::GICC::new(gicc_mmio_start_addr),
