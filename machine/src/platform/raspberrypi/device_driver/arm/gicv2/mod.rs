@@ -80,8 +80,8 @@ mod gicc;
 mod gicd;
 
 use crate::{
-    bsp::{self, cpu::BOOT_CORE_ID, device_driver::common::BoundedUsize},
     cpu, drivers, exception,
+    platform::{self, cpu::BOOT_CORE_ID, device_driver::common::BoundedUsize},
     synchronization::{self, InitStateLock},
 };
 
@@ -139,7 +139,7 @@ impl GICv2 {
 //------------------------------------------------------------------------------
 use synchronization::interface::ReadWriteEx;
 
-impl driver::interface::DeviceDriver for GICv2 {
+impl drivers::interface::DeviceDriver for GICv2 {
     type IRQNumberType = IRQNumber;
 
     fn compatible(&self) -> &'static str {

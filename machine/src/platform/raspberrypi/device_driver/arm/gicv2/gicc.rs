@@ -5,7 +5,7 @@
 //! GICC Driver - GIC CPU interface.
 
 use {
-    crate::{bsp::device_driver::common::MMIODerefWrapper, exception},
+    crate::{exception, platform::device_driver::common::MMIODerefWrapper},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields, register_structs,

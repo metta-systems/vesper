@@ -9,7 +9,7 @@
 
 use {
     crate::{
-        bsp::device_driver::common::MMIODerefWrapper,
+        platform::device_driver::common::MMIODerefWrapper,
         state,
         synchronization::{self, IRQSafeNullLock},
     },
