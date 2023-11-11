@@ -10,6 +10,7 @@
 
 use {
     super::endless_sleep,
+    crate::platform::cpu::BOOT_CORE_ID,
     aarch64_cpu::{asm, registers::*},
     core::{
         cell::UnsafeCell,
@@ -54,8 +55,6 @@ macro_rules! entry {
 #[no_mangle]
 #[link_section = ".text.main.entry"]
 pub unsafe extern "C" fn _boot_cores() -> ! {
-    const CORE_0: u64 = 0;
-    const CORE_MASK: u64 = 0x3;
     // Can't match values with dots in match, so use intermediate consts.
     #[cfg(qemu)]
     const EL3: u64 = CurrentEL::EL::EL3.value;
@@ -72,7 +71,7 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
 
     shared_setup_and_enter_pre();
 
-    if CORE_0 == MPIDR_EL1.get() & CORE_MASK {
+    if BOOT_CORE_ID == super::smp::core_id() {
         match CurrentEL.get() {
             #[cfg(qemu)]
             EL3 => setup_and_enter_el1_from_el3(),
