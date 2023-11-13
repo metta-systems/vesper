@@ -3,6 +3,8 @@
 #
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
+# Global workspace configuration
+#
 [config]
 min_version = "0.32.0"
 default_to_workspace = true
@@ -84,30 +86,36 @@ KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
 CHAINBOOT_SERIAL = "/dev/tty.SLAB_USBtoUART"
 CHAINBOOT_BAUD = 115200
 
+#
+# === Base reusable commands ===
+#
 [tasks.default]
 alias = "all"
 
 [tasks.all]
-dependencies = ["kernel-binary"]
+dependencies = ["kernel-binary", "chainboot", "chainofcommand", "ttt"]
 
 [tasks.modules]
 command = "cargo"
 args = ["modules", "tree"]
 
-[tasks.do-build]
+# Disable build in the root by default.
+[tasks.build]
+clear = true
+alias = "empty"
+
+# Run a target build with current platform configuration.
+[tasks.build-target] # do-build
 command = "cargo"
 args = ["build", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "--release"]
 
-[tasks.build]
-disabled = true
-
 [tasks.build-device]
 env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
-run_task = "do-build"
+run_task = "build-target"
 
 [tasks.build-qemu]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
-run_task = "do-build"
+run_task = "build-target"
 
 [tasks.qemu-runner]
 dependencies = ["build-qemu", "kernel-binary"]
@@ -120,8 +128,9 @@ script = [
 ]
 
 [tasks.qemu]
-disabled = true
+alias = "empty"
 
+# @todo Should be expand-target (since it's not for a host platform)
 [tasks.expand]
 env = { "TARGET_FEATURES" = "" }
 command = "cargo"
@@ -145,7 +154,7 @@ args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "@@remove
 # These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
 
 ## Copy and prepare a given ELF file. Convert to binary output format.
-[tasks.custom-binary]
+[tasks.build-custom-binary]
 env = { "BINARY_FILE" = "${BINARY_FILE}" }
 script_runner = "@duckscript"
 script = [
@@ -223,7 +232,26 @@ script = [
     "diskutil ejectAll ${VOLUME}"
 ]
 
+#
+# Per-workspace commands, disabled in the root by efault.
+#
+# Tasks for chainboot
 [tasks.chainboot]
 dependencies = ["build-device", "kernel-binary"]
 command = "echo"
 args = ["\n***===***\n", "🏎️ Run the following command in your terminal:\n", "🏎️   ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${KERNEL_BIN}\n", "***===***\n\n"]
+
+[tasks.cb-eject]
+alias = "empty"
+
+# Tasks for chainofcommand
+[tasks.chainofcommand]
+alias = "empty"
+
+# Tasks for ttt
+[tasks.ttt]
+alias = "empty"
+
+# Tasks for nucleus
+[tasks.hopper]
+alias = "empty"

@@ -1,11 +1,8 @@
-[tasks.qemu-gdb]
-disabled = true
-
-[tasks.gdb]
-disabled = true
-
-[tasks.hopper]
-disabled = true
-
-[tasks.kernel-binary]
-disabled = true
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Build nucleus library
+#
+# No special configuration needed.

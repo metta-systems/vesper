@@ -1,12 +1,22 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Build ttt tool
+#
 [tasks.build]
+clear = true
+alias = "ttt"
+
+[tasks.ttt]
+clear = true
+alias = "ttt-binary"
+
+[tasks.ttt-binary]
+env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
 command = "cargo"
-args = ["build"]
-
-[tasks.chainofcommand]
-dependencies = ["build"]
-
-[tasks.build-device]
-disabled = true
+args = ["build", "--features=${TARGET_FEATURES}"]
 
 [tasks.test]
 command = "cargo"
@@ -16,41 +26,5 @@ args = ["test"]
 command = "cargo"
 args = ["clippy", "--", "-D", "warnings"]
 
-[tasks.hopper]
-disabled = true
-
-[tasks.kernel-binary]
-disabled = true
-
-[tasks.zellij-nucleus]
-disabled = true
-
-[tasks.zellij-cb]
-disabled = true
-
-[tasks.zellij-cb-gdb]
-disabled = true
-
-[tasks.nm]
-disabled = true
-
-[tasks.qemu]
-disabled = true
-
-[tasks.qemu-gdb]
-disabled = true
-
-[tasks.qemu-cb]
-disabled = true
-
-[tasks.sdcard]
-disabled = true
-
-[tasks.cb-eject]
-disabled = true
-
-[tasks.gdb]
-disabled = true
-
-[tasks.gdb-cb]
-disabled = true
+#[tasks.build-kernel-binary] #  Invert this, kernel binary shall depend on ttt-binary availability
+#dependencies = ["build"]

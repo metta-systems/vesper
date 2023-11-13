@@ -3,47 +3,34 @@
 #
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
-[tasks.kernel-binary]
+# Build nucleus
+#
+[tasks.build-kernel-binary]
 env = { "BINARY_FILE" = "${KERNEL_ELF}" }
-run_task = "custom-binary"
+run_task = "build-custom-binary"
 
 [tasks.qemu]
+clear = true
+alias = "qemu-kernel"
+
+[tasks.qemu-kernel]
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
-disabled = false
-
-[tasks.qemu-cb]
-disabled = true
 
 [tasks.qemu-gdb]
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
 
-[tasks.qemu-cb-gdb]
-disabled = true
-
-[tasks.chainofcommand]
-disabled = true
-
 [tasks.zellij-nucleus]
 env = { "KERNEL_BIN" = "${KERNEL_BIN}" }
 run_task = "zellij-config"
 
-[tasks.zellij-cb]
-disabled = true
-
-[tasks.zellij-cb-gdb]
-disabled = true
-
 [tasks.gdb]
-dependencies = ["build", "kernel-binary", "gdb-config"]
+dependencies = ["build", "build-kernel-binary", "gdb-config"]
 env = { "RUST_GDB" = "${GDB}" }
 script = [
     "exec < /dev/tty && pipx run gdbgui -g \"rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}\""
 ]
-
-[tasks.gdb-cb]
-disabled = true
 
 [tasks.install-nm]
 install_crate = { crate_name = "cargo-binutils", binary = "rust-nm", test_arg = ["--help"] }
@@ -57,22 +44,23 @@ script = [
     "${NM} ${KERNEL_ELF} | sort -k 1 | rustfilt"
 ]
 
-[tasks.sdcard]
-dependencies = ["build", "kernel-binary"]
+[tasks.sdcard] # kernel-sdcard ?
+dependencies = ["build", "build-kernel-binary"]
 script_runner = "@duckscript"
 script = [
 '''
     kernelImage = set "kernel8.img"
     cp ${KERNEL_BIN} ${VOLUME}/${kernelImage}
-    echo "Copied nucleus to ${VOLUME}/${kernelImage}"
+    echo "Copied nucleus to ${VOLUME}/${kernelImage}" # TODO add emoji
 '''
 ]
 
-[tasks.cb-eject]
-disabled = true
-
 [tasks.hopper]
-dependencies = ["build", "kernel-binary"]
+clear = true
+alias = "kernel-hopper"
+
+[tasks.kernel-hopper]
+dependencies = ["build", "build-kernel-binary"]
 # The cmd line below causes a bug in hopper, see https://www.dropbox.com/s/zyw5mfx0bepcjb1/hopperv4-RAW-bug.mov?dl=0
 #"hopperv4 --loader RAW --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --plugin arm --cpu aarch64 --variant generic --contains-code true --executable ${KERNEL_BIN}"
 script = [
