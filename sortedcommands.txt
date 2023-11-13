@@ -1,0 +1,46 @@
+all commands:
+
+default
+all
+build
+build-custom-binary
+build-device
+build-kernel-binary
+build-qemu
+build-target
+cb-eject  #sdeject-cb <- just use sdeject?
+chainboot
+chainofcommand
+docs
+gdb
+gdb-cb
+gdb-config
+install-nm
+install-rustfilt
+openocd
+qemu
+qemu-gdb
+qemu-cb
+qemu-cb-gdb
+qemu-runner
+sdcard
+sdeject
+test
+test-binary
+test-runner
+ttt
+xtool-clippy
+xtool-expand
+xtool-hopper
+xtool-modules
+xtool-nm
+zellij-cb
+zellij-cb-gdb
+zellij-config
+zellij-nucleus
+
+# Target dependencies:
+kernel-binary
+chainboot-binary
+chainofcommand-binary
+ttt-binary

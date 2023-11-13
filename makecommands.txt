@@ -1,0 +1,131 @@
+Root makefile:
+
+# define non-default task names to be reused from workspace members
+default -> all
+all -> kernel-binary
+modules -> cmd
+do-build -> cmd
+qemu-runner -> cmd
+qemu -x
+expand -> cmd
+test -> cmd
+docs -> cmd
+clippy -> cmd
+custom-binary -> cmd
+test-binary -> custom-binary
+test-runner -> cmd
+gdb-config -> cmd
+zellij-config -> cmd
+openocd -> cmd
+sdeject -> cmd
+
+# targets
+build -x
+build-device -> cmd
+build-qemu -> cmd
+chainboot -> cmd
+chainofcommand -x
+ttt -x
+
+
+chainboot makefile:
+
+hopper -x
+zellij-nucleus -x
+zellij-cb -> zellij-config
+zellij-cb-gdb -> zellij-config
+nm -x
+qemu -x
+qemu-gdb -x
+qemu-cb -> qemu-runner
+qemu-cb-gdb -> qemu-runner
+gdb -x
+gdb-cb -> cmd
+sdcard -> cmd
+cb-eject -> sdeject
+
+# targets
+kernel-binary -> custom-binary
+ttt -x
+
+
+chainofcommand makefile:
+
+test -> cmd
+clippy -> cmd
+hopper -x
+zellij-nucleus -x
+zellij-cb -x
+zellij-cb-gdb -x
+nm -x
+qemu -x
+qemu-gdb -x
+qemu-cb -x
+sdcard -x
+cb-eject -x
+gdb -x
+gdb-cb -x
+
+# targets
+build -> cmd
+build-device -x
+chainofcommand -> build
+kernel-binary -x
+ttt -x
+
+machine makefile:
+
+qemu-gdb -x
+gdb -x
+hopper -x
+
+# targets
+kernel-binary -x
+ttt -x
+
+nucleus makefile:
+
+qemu -> qemu-runner
+qemu-cb -x
+qemu-gdb -> qemu-runner
+qemu-cb-gdb -x
+zellij-nucleus -> zellij-config
+zellij-cb -x
+zellij-cb-gdb -x
+gdb -> cmd
+gdb-cb -x
+install-nm -> cmd
+install-rustfilt -> cmd
+nm -> cmd
+sdcard -> cmd
+cb-eject -x
+hopper -> cmd
+
+# targets
+chainofcommand -x
+kernel-binary -> custom-binary
+ttt -x
+
+tools makefile:
+
+test -> cmd
+clippy -> cmd
+hopper -x
+zellij-nucleus -x
+zellij-cb -x
+zellij-cb-gdb -x
+nm -x
+qemu -x
+qemu-gdb -x
+qemu-cb -x
+sdcard -x
+cb-eject -x
+gdb -x
+gdb-cb -x
+
+# targets
+build -> cmd
+ttt -> build
+chainofcommand -x
+build-device -x
+kernel-binary -> build
