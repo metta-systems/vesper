@@ -51,7 +51,7 @@ script = [
 '''
     kernelImage = set "kernel8.img"
     cp ${KERNEL_BIN} ${VOLUME}/${kernelImage}
-    echo "Copied nucleus to ${VOLUME}/${kernelImage}" # TODO add emoji
+    echo 🔄 Copied nucleus to ${VOLUME}/${kernelImage}
 '''
 ]
 

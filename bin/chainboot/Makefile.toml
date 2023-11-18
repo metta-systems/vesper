@@ -43,7 +43,7 @@ script = [
 '''
     kernelImage = set "chain_boot_rpi4.img"
     cp ${CHAINBOOT_BIN} ${VOLUME}/${kernelImage}
-    echo "Copied chainboot to ${VOLUME}/${kernelImage}"
+    echo 🔄 Copied chainboot to ${VOLUME}/${kernelImage}
 '''
 ]
 
