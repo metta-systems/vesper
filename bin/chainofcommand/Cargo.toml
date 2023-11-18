@@ -15,7 +15,6 @@ maintenance = { status = "experimental" }
 clap = "4.4"
 seahash = "4.1"
 anyhow = "1.0"
-fehler = "1.0"
 crossterm = { version = "0.27", features = ["event-stream"] }
 futures = "0.3"
 futures-util = { version = "0.3", features = ["io"] }

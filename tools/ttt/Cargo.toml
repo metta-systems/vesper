@@ -22,5 +22,4 @@ colored = "2"
 prettytable-rs = "0.10"
 goblin = { version = "0.7", default-features = false, features = ["std", "alloc", "elf32", "elf64"] }
 anyhow = "1.0"
-fehler = "1.0"
 bytes = "1.5"
