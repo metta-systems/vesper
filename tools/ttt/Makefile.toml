@@ -22,7 +22,7 @@ args = ["build", "--features=${TARGET_FEATURES}"]
 command = "cargo"
 args = ["test"]
 
-[tasks.clippy]
+[tasks.xtool-clippy]
 command = "cargo"
 args = ["clippy", "--", "-D", "warnings"]
 

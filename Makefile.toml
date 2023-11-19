@@ -95,7 +95,7 @@ alias = "all"
 [tasks.all]
 dependencies = ["kernel-binary", "chainboot", "chainofcommand", "ttt"]
 
-[tasks.modules]
+[tasks.xtool-modules]
 command = "cargo"
 args = ["modules", "tree"]
 
@@ -105,7 +105,7 @@ clear = true
 alias = "empty"
 
 # Run a target build with current platform configuration.
-[tasks.build-target] # do-build
+[tasks.build-target]
 command = "cargo"
 args = ["build", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "--release"]
 
@@ -127,11 +127,7 @@ script = [
     "echo \n\n"
 ]
 
-[tasks.qemu]
-alias = "empty"
-
-# @todo Should be expand-target (since it's not for a host platform)
-[tasks.expand]
+[tasks.xtool-expand-target]
 env = { "TARGET_FEATURES" = "" }
 command = "cargo"
 args = ["expand", "@@split(PLATFORM_TARGET, )", "--release"]
@@ -146,7 +142,7 @@ env = { "TARGET_FEATURES" = "" }
 command = "cargo"
 args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET, )"]
 
-[tasks.clippy]
+[tasks.xtool-clippy]
 env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
 command = "cargo"
 args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "--deny", "warnings", "--allow", "deprecated"]
@@ -232,17 +228,27 @@ script = [
     "diskutil ejectAll ${VOLUME}"
 ]
 
+[tasks.qemu]
+alias = "empty"
+
 #
 # Per-workspace commands, disabled in the root by efault.
 #
-# Tasks for chainboot
-[tasks.chainboot]
-dependencies = ["build-device", "kernel-binary"]
-command = "echo"
-args = ["\n***===***\n", "🏎️ Run the following command in your terminal:\n", "🏎️   ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${KERNEL_BIN}\n", "***===***\n\n"]
-
-[tasks.cb-eject]
+# Tasks for nucleus
+[tasks.build-kernel-binary]
 alias = "empty"
+
+[tasks.kernel]
+alias = "empty"
+
+# Tasks for chainboot
+
+[tasks.chainboot]
+alias = "empty"
+
+# sdeject
+#[tasks.cb-eject]
+#alias = "empty"
 
 # Tasks for chainofcommand
 [tasks.chainofcommand]
@@ -252,6 +258,49 @@ alias = "empty"
 [tasks.ttt]
 alias = "empty"
 
-# Tasks for nucleus
-[tasks.hopper]
+# Other tasks
+[tasks.gdb]
+alias = "empty"
+
+[tasks.gdb-cb]
+alias = "empty"
+
+[tasks.sdcard]
+alias = "empty"
+
+[tasks.qemu-gdb]
+alias = "empty"
+
+[tasks.qemu-cb]
+alias = "empty"
+
+[tasks.qemu-cb-gdb]
+alias = "empty"
+
+[tasks.xtool-hopper]
+alias = "empty"
+
+[tasks.xtool-nm]
+alias = "empty"
+
+[tasks.zellij-cb]
+alias = "empty"
+
+[tasks.zellij-cb-gdb]
+alias = "empty"
+
+[tasks.zellij-nucleus]
+alias = "empty"
+
+## Target dependencies:
+[tasks.kernel-binary]
+alias = "empty"
+
+[tasks.chainboot-binary]
+alias = "empty"
+
+[tasks.chainofcommand-binary]
+alias = "empty"
+
+[tasks.ttt-binary]
 alias = "empty"

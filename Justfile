@@ -1,13 +1,17 @@
 _default:
     @just --list
 
+# Clean project
+clean:
+    cargo make clean
+
 # Update all dependencies
 deps-up:
     cargo update
 
 # Build default hw kernel and run chainofcommand to boot this kernel onto the board
 boot: chainofcommand
-    cargo make chainboot
+    cargo make chainboot # make boot-kernel ?
 
 # Build and run kernel in QEMU with serial port emulation
 zellij:
@@ -24,7 +28,7 @@ zellij-cb:
 # Build chainofcommand serial loader
 chainofcommand:
     cd bin/chainofcommand
-    cargo make build
+    cargo make build # --workspace=bin/chainofcommand
 
 # Build and run kernel in QEMU
 qemu:
@@ -60,21 +64,17 @@ cb-eject:
 # Build default hw kernel
 build:
     cargo make build-device
-    cargo make kernel-binary
-
-# Clean project
-clean:
-    cargo make clean
+    cargo make kernel-binary # Should be only one command to do that, not two!
 
 # Run clippy checks
 clippy:
     # TODO: use cargo-hack
-    cargo make clippy
-    env CLIPPY_FEATURES=noserial cargo make clippy
-    env CLIPPY_FEATURES=qemu cargo make clippy
-    env CLIPPY_FEATURES=noserial,qemu cargo make clippy
-    env CLIPPY_FEATURES=jtag cargo make clippy
-    env CLIPPY_FEATURES=noserial,jtag cargo make clippy
+    cargo make xtool-clippy
+    env CLIPPY_FEATURES=noserial cargo make xtool-clippy
+    env CLIPPY_FEATURES=qemu cargo make xtool-clippy
+    env CLIPPY_FEATURES=noserial,qemu cargo make xtool-clippy
+    env CLIPPY_FEATURES=jtag cargo make xtool-clippy
+    env CLIPPY_FEATURES=noserial,jtag cargo make xtool-clippy
 
 # Run tests in QEMU
 test:
@@ -84,7 +84,7 @@ alias disasm := hopper
 
 # Build and disassemble kernel
 hopper:
-    cargo make hopper
+    cargo make xtool-hopper
 
 alias ocd := openocd
 
@@ -102,19 +102,23 @@ gdb-cb:
 
 # Build and print all symbols in the kernel
 nm:
-    cargo make nm
-
-# Check formatting
-fmt-check:
-    cargo fmt -- --check
+    cargo make xtool-nm
 
 # Run `cargo expand` on nucleus
 expand:
-    cargo make expand -- nucleus
+    cargo make xtool-expand-target -- nucleus
+
+# Render modules dependency tree
+modules:
+    cargo make xtool-modules
 
 # Generate and open documentation
 doc:
     cargo make docs-flow
+
+# Check formatting
+fmt-check:
+    cargo fmt -- --check
 
 # Run lint tasks
 lint: clippy fmt-check

@@ -9,6 +9,14 @@
 env = { "BINARY_FILE" = "${KERNEL_ELF}" }
 run_task = "build-custom-binary"
 
+[tasks.kernel]
+clear = true
+alias = "build-kernel-binary"
+
+[tasks.build]
+clear = true
+alias = "build-kernel-binary"
+
 [tasks.qemu]
 clear = true
 alias = "qemu-kernel"

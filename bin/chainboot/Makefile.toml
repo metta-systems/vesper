@@ -9,6 +9,11 @@
 CHAINBOOT_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/chainboot"
 CHAINBOOT_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/chainboot.bin"
 
+[tasks.chainboot]
+dependencies = ["build-device", "build-kernel-binary"]
+command = "echo"
+args = ["\n***===***\n", "🏎️ Run the following command in your terminal:\n", "🏎️   ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${KERNEL_BIN}\n", "***===***\n\n"]
+
 [tasks.build-kernel-binary]
 env = { "BINARY_FILE" = "${CHAINBOOT_ELF}" }
 run_task = "build-custom-binary"
@@ -37,6 +42,10 @@ script = [
 ]
 
 [tasks.sdcard]
+clear = true
+alias = "sdcard-cb"
+
+[tasks.sdcard-cb]
 dependencies = ["build", "build-kernel-binary"]
 script_runner = "@duckscript"
 script = [
@@ -47,9 +56,10 @@ script = [
 '''
 ]
 
-[tasks.cb-eject]
-clean = true
-alias = "cb-eject-chainboot"
-
-[tasks.cb-eject-chainboot]
-dependencies = ["sdeject"]
+# Just use sdeject
+#[tasks.cb-eject]
+#clean = true
+#alias = "cb-eject-chainboot"
+#
+#[tasks.cb-eject-chainboot]
+#dependencies = ["sdeject"]

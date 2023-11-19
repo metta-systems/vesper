@@ -6,16 +6,24 @@
 # Build chainofcommand tool
 #
 [tasks.build]
+clear = true
+alias = "build-coc"
+
+[tasks.build-device]
+clear = true
+alias = "empty"
+
+[tasks.build-coc]
 command = "cargo"
 args = ["build"]
 
 [tasks.chainofcommand]
-alias = "build"
+alias = "build-coc"
 
 [tasks.test]
 command = "cargo"
 args = ["test"]
 
-[tasks.clippy]
+[tasks.xtool-clippy]
 command = "cargo"
 args = ["clippy", "--", "-D", "warnings"]
