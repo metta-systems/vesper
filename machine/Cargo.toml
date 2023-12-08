@@ -38,7 +38,7 @@ bitflags = "2.4"
 cfg-if = "1.0"
 snafu = { version = "0.7", default-features = false, features = ["unstable-core-error"] }
 buddy-alloc = { git = "https://github.com/metta-systems/buddy-alloc", version = "0.6.0", branch = "feature/allocator-api" }
-once_cell = { version = "1.18", default-features = false, features = ["unstable"] }
+once_cell = { version = "1.19", default-features = false, features = ["unstable"] }
 
 [lib]
 name = "machine"
