@@ -10,6 +10,9 @@ CHAINBOOT_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/rele
 CHAINBOOT_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/chainboot.bin"
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
+[tasks.build]
+alias = "chainboot"
+
 [tasks.chainboot]
 workspace = false
 dependencies = ["build-device", "build-kernel-binary"]
