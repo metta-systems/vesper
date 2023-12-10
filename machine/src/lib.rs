@@ -2,6 +2,7 @@
 #![no_main]
 #![allow(stable_features)]
 #![allow(incomplete_features)]
+#![allow(internal_features)]
 #![feature(asm_const)]
 #![feature(const_option)]
 #![feature(core_intrinsics)]

@@ -5,15 +5,22 @@
 #
 # Build ttt tool
 #
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
 [tasks.build]
-clear = true
-alias = "ttt"
+disabled = true
+alias = "ttt-binary"
+
+[tasks.build-device]
+alias = "ttt-binary"
 
 [tasks.ttt]
-clear = true
+workspace = false
 alias = "ttt-binary"
 
 [tasks.ttt-binary]
+workspace = false
 env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
 command = "cargo"
 args = ["build", "--features=${TARGET_FEATURES}"]

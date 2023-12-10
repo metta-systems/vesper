@@ -8,33 +8,41 @@
 [env]
 CHAINBOOT_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/chainboot"
 CHAINBOOT_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/chainboot.bin"
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
 [tasks.chainboot]
+workspace = false
 dependencies = ["build-device", "build-kernel-binary"]
 command = "echo"
 args = ["\n***===***\n", "🏎️ Run the following command in your terminal:\n", "🏎️   ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${KERNEL_BIN}\n", "***===***\n\n"]
 
 [tasks.build-kernel-binary]
+workspace = false
 env = { "BINARY_FILE" = "${CHAINBOOT_ELF}" }
 run_task = "build-custom-binary"
 
 [tasks.zellij-cb]
+workspace = false
 env = { "KERNEL_BIN" = "${CHAINBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS}" }
 run_task = "zellij-config"
 
 [tasks.zellij-cb-gdb]
+workspace = false
 env = { "KERNEL_BIN" = "${CHAINBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_BOARD" = "rpi3", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 run_task = "zellij-config"
 
 [tasks.qemu-cb]
+workspace = false
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_DISASM_OPTS} -serial pty", "KERNEL_BIN" = "${CHAINBOOT_BIN}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
 
 [tasks.qemu-cb-gdb]
+workspace = false
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS} -serial pty", "KERNEL_BIN" = "${CHAINBOOT_BIN}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
 
 [tasks.gdb-cb]
+workspace = false
 dependencies = ["build", "build-kernel-binary", "gdb-config"]
 env = { "RUST_GDB" = "${GDB}" }
 script = [
@@ -42,10 +50,10 @@ script = [
 ]
 
 [tasks.sdcard]
-clear = true
 alias = "sdcard-cb"
 
 [tasks.sdcard-cb]
+workspace = false
 dependencies = ["build", "build-kernel-binary"]
 script_runner = "@duckscript"
 script = [

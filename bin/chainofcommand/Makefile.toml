@@ -5,25 +5,28 @@
 #
 # Build chainofcommand tool
 #
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
 [tasks.build]
-clear = true
 alias = "build-coc"
 
 [tasks.build-device]
-clear = true
 alias = "empty"
 
 [tasks.build-coc]
+workspace = false
 command = "cargo"
 args = ["build"]
 
 [tasks.chainofcommand]
+workspace = false
 alias = "build-coc"
 
 [tasks.test]
 command = "cargo"
 args = ["test"]
 
-[tasks.xtool-clippy]
+[tasks.xtool-clippy] # todo this should be modules-specific? or just "clippy" for workspace cmd
 command = "cargo"
 args = ["clippy", "--", "-D", "warnings"]

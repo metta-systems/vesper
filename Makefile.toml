@@ -8,6 +8,7 @@
 [config]
 min_version = "0.32.0"
 default_to_workspace = true
+skip_core_tasks = true
 
 [env]
 DEFAULT_TARGET = "aarch64-vesper-metta"
@@ -96,28 +97,33 @@ alias = "all"
 dependencies = ["kernel-binary", "chainboot", "chainofcommand", "ttt"]
 
 [tasks.xtool-modules]
+workspace = false
 command = "cargo"
 args = ["modules", "tree"]
 
 # Disable build in the root by default.
 [tasks.build]
-clear = true
+workspace = false
 alias = "empty"
 
 # Run a target build with current platform configuration.
 [tasks.build-target]
+workspace = false
 command = "cargo"
 args = ["build", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "--release"]
 
 [tasks.build-device]
+workspace = false
 env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
 run_task = "build-target"
 
 [tasks.build-qemu]
+workspace = false
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 run_task = "build-target"
 
 [tasks.qemu-runner]
+workspace = false
 dependencies = ["build-qemu", "kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
@@ -128,6 +134,7 @@ script = [
 ]
 
 [tasks.xtool-expand-target]
+workspace = false
 env = { "TARGET_FEATURES" = "" }
 command = "cargo"
 args = ["expand", "@@split(PLATFORM_TARGET, )", "--release"]
@@ -143,6 +150,7 @@ command = "cargo"
 args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET, )"]
 
 [tasks.xtool-clippy]
+workspace = false
 env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
 command = "cargo"
 args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "--deny", "warnings", "--allow", "deprecated"]
@@ -151,6 +159,7 @@ args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "@@remove
 
 ## Copy and prepare a given ELF file. Convert to binary output format.
 [tasks.build-custom-binary]
+workspace = false
 env = { "BINARY_FILE" = "${BINARY_FILE}" }
 script_runner = "@duckscript"
 script = [
@@ -171,11 +180,13 @@ install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_a
 
 ## Copy and prepare binary with tests.
 [tasks.test-binary]
+workspace = false
 env = { "BINARY_FILE" = "${CARGO_MAKE_TASK_ARGS}" }
 run_task = "custom-binary"
 
 ## Run binary with tests in QEMU.
 [tasks.test-runner]
+workspace = false
 dependencies = ["test-binary"]
 script_runner = "@duckscript"
 script = [
@@ -188,6 +199,7 @@ script = [
 
 ## Generate GDB startup configuration file.
 [tasks.gdb-config]
+workspace = false
 script_runner = "@duckscript"
 script = [
 '''
@@ -202,6 +214,7 @@ script = [
 
 ## Generate zellij configuration file.
 [tasks.zellij-config]
+workspace = false
 dependencies = ["build-qemu", "kernel-binary"]
 script_runner = "@duckscript"
 env = { "ZELLIJ_CONFIG_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/emulation/zellij-config.sh" }
@@ -218,11 +231,13 @@ script = [
 install_crate = { crate_name = "zellij", binary = "zellij", test_arg = ["--help"] }
 
 [tasks.openocd]
+workspace = false
 script = [
     "${OPENOCD} -f interface/jlink.cfg -f ../ocd/${TARGET_BOARD}_target.cfg"
 ]
 
 [tasks.sdeject]
+workspace = false
 dependencies = ["sdcard"]
 script = [
     "diskutil ejectAll ${VOLUME}"
@@ -233,74 +248,72 @@ alias = "empty"
 
 #
 # Per-workspace commands, disabled in the root by efault.
+# TODO: defined only in sub-modules with workspace = false
 #
 # Tasks for nucleus
-[tasks.build-kernel-binary]
-alias = "empty"
-
-[tasks.kernel]
-alias = "empty"
+#[tasks.build-kernel-binary]
+#alias = "empty"
 
 # Tasks for chainboot
 
-[tasks.chainboot]
-alias = "empty"
+#[tasks.chainboot]
+#alias = "empty"
 
 # sdeject
 #[tasks.cb-eject]
 #alias = "empty"
 
 # Tasks for chainofcommand
-[tasks.chainofcommand]
-alias = "empty"
+#[tasks.chainofcommand]
+#alias = "empty"
 
 # Tasks for ttt
-[tasks.ttt]
-alias = "empty"
+#[tasks.ttt]
+#alias = "empty"
 
 # Other tasks
-[tasks.gdb]
-alias = "empty"
+#[tasks.gdb]
+#alias = "empty"
 
-[tasks.gdb-cb]
-alias = "empty"
+#[tasks.gdb-cb]
+#alias = "empty"
 
-[tasks.sdcard]
-alias = "empty"
+#[tasks.sdcard]
+#alias = "empty"
 
-[tasks.qemu-gdb]
-alias = "empty"
+#[tasks.qemu-gdb]
+#alias = "empty"
 
-[tasks.qemu-cb]
-alias = "empty"
+#[tasks.qemu-cb]
+#alias = "empty"
 
-[tasks.qemu-cb-gdb]
-alias = "empty"
+#[tasks.qemu-cb-gdb]
+#alias = "empty"
 
-[tasks.xtool-hopper]
-alias = "empty"
+#[tasks.xtool-hopper]
+#alias = "empty"
+#
+#[tasks.xtool-nm]
+#alias = "empty"
 
-[tasks.xtool-nm]
-alias = "empty"
+#[tasks.zellij-cb]
+#alias = "empty"
 
-[tasks.zellij-cb]
-alias = "empty"
+#[tasks.zellij-cb-gdb]
+#alias = "empty"
 
-[tasks.zellij-cb-gdb]
-alias = "empty"
-
-[tasks.zellij-nucleus]
-alias = "empty"
+#[tasks.zellij-nucleus]
+#alias = "empty"
 
 ## Target dependencies:
-[tasks.kernel-binary]
-alias = "empty"
+#[tasks.kernel-binary]
+#alias = "empty"
 
-[tasks.chainboot-binary]
-alias = "empty"
+#[tasks.chainboot-binary]
+#alias = "empty"
+#
+#[tasks.chainofcommand-binary]
+#alias = "empty"
 
-[tasks.chainofcommand-binary]
-alias = "empty"
-
-[tasks.ttt-binary]
-alias = "empty"
+#[tasks.ttt-binary]
+#alias = "empty"

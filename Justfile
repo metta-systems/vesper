@@ -63,8 +63,7 @@ cb-eject:
 
 # Build default hw kernel
 build:
-    cargo make build-device
-    cargo make kernel-binary # Should be only one command to do that, not two!
+    cargo make build
 
 # Run clippy checks
 clippy:

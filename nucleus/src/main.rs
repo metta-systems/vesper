@@ -10,6 +10,7 @@
 #![no_std]
 #![no_main]
 #![allow(stable_features)]
+#![allow(internal_features)]
 #![feature(asm_const)]
 #![feature(lazy_cell)]
 #![feature(decl_macro)]

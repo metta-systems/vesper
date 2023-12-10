@@ -5,16 +5,19 @@
 #
 # Build nucleus
 #
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
 [tasks.build-kernel-binary]
+workspace = false
+dependencies = ["build-device"]
 env = { "BINARY_FILE" = "${KERNEL_ELF}" }
 run_task = "build-custom-binary"
 
 [tasks.kernel]
-clear = true
 alias = "build-kernel-binary"
 
 [tasks.build]
-clear = true
 alias = "build-kernel-binary"
 
 [tasks.qemu]
