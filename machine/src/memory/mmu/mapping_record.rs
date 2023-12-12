@@ -124,6 +124,18 @@ impl MappingRecord {
             })
     }
 
+    /// Adds a new mapping to the mapping record.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the entity that owns the mapping.
+    /// * `virt_region` - The virtual memory region being mapped.
+    /// * `phys_region` - The physical memory region being mapped.
+    /// * `attr` - The memory attributes of the mapping.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success, or a string error message on failure.
     pub fn add(
         &mut self,
         name: &'static str,
