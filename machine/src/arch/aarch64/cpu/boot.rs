@@ -222,7 +222,7 @@ unsafe fn reset() -> ! {
     // arithmetic on them directly may lead to Undefined Behavior, because the
     // compiler may assume they come from different allocations and thus performing
     // undesirable optimizations on them.
-    // So we use a painter-and-a-size as described in provenance section.
+    // So we use a pointer-and-a-size as described in provenance section.
 
     let bss = slice::from_raw_parts_mut(
         __BSS_START.get() as *mut u64,
