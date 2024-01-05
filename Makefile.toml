@@ -18,24 +18,36 @@ DEFAULT_TARGET = "aarch64-vesper-metta"
 #
 
 # Pass TARGET env var if it does not match the default target above.
-TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] } }
+TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = [
+    "TARGET",
+] } }
 
 # Name of the target board "rpi3" or "rpi4"
-TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } }
+TARGET_BOARD = { value = "rpi4", condition = { env_not_set = [
+    "TARGET_BOARD",
+] } }
 # Name of the DTB file for target board configuration, use bcm2710-rpi-3-b-plus.dtb for RasPi3B+
-TARGET_DTB = { value = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2711-rpi-4-b.dtb", condition = { env_not_set = ["TARGET_DTB"] } }
+TARGET_DTB = { value = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2711-rpi-4-b.dtb", condition = { env_not_set = [
+    "TARGET_DTB",
+] } }
 
 # AArch64 QEMU binary
 QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
 # QEMU machine type, defaults to raspi3b but CI runners override it due to ancient QEMU versions they use.
-QEMU_MACHINE = { value = "raspi3b", condition = { env_not_set = ["QEMU_MACHINE"] } }
+QEMU_MACHINE = { value = "raspi3b", condition = { env_not_set = [
+    "QEMU_MACHINE",
+] } }
 
 # An aarch64-enabled GDB
-GDB = { value = "/usr/local/opt/gdb/HEAD-a2c58332-aarch64/bin/aarch64-unknown-elf-gdb", condition = { env_not_set = ["GDB"] } }
+GDB = { value = "/usr/local/opt/gdb/HEAD-a2c58332-aarch64/bin/aarch64-unknown-elf-gdb", condition = { env_not_set = [
+    "GDB",
+] } }
 
 # OpenOCD with JLink support
 # (RTT patch from http://openocd.zylin.com/#/c/4055/11 has already been merged into main line)
-OPENOCD = { value = "/usr/local/opt/openocd/4d6519593-rtt/bin/openocd", condition = { env_not_set = ["OPENOCD"] } }
+OPENOCD = { value = "/usr/local/opt/openocd/4d6519593-rtt/bin/openocd", condition = { env_not_set = [
+    "OPENOCD",
+] } }
 
 # Mounted sdcard partition path
 VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
@@ -47,7 +59,7 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
 RUST_STD = "-Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem"
 TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
-PLATFORM_TARGET="--target=${TARGET_JSON} --features=${TARGET_FEATURES}"
+PLATFORM_TARGET = "--target=${TARGET_JSON} --features=${TARGET_FEATURES}"
 
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu,rpi3"
@@ -55,9 +67,9 @@ QEMU_FEATURES = "qemu,rpi3"
 # Working objcopy from `brew install aarch64-elf-binutils`
 #OBJCOPY = "/opt/homebrew/Cellar/aarch64-elf-binutils/2.40/bin/aarch64-elf-objcopy" # Part of `cargo objcopy` in cargo-binutils
 # LLVM's objcopy, usually full of bugs like https://github.com/llvm/llvm-project/issues/58407
-OBJCOPY = "rust-objcopy" # Part of `cargo objcopy` in cargo-binutils
+OBJCOPY = "rust-objcopy"                 # Part of `cargo objcopy` in cargo-binutils
 OBJCOPY_PARAMS = "--strip-all -O binary"
-NM = "rust-nm" # Part of `cargo nm` in cargo-binutils
+NM = "rust-nm"                           # Part of `cargo nm` in cargo-binutils
 
 UTILS_CONTAINER = "andrerichter/raspi3-utils"
 DOCKER_CMD = "docker run -it --rm -v ${PWD}:/work -w /work -p 5900:5900"
@@ -70,7 +82,7 @@ QEMU_CONTAINER_CMD = "qemu-system-aarch64"
 QEMU_OPTS = "-M ${QEMU_MACHINE} -semihosting"
 QEMU_ARM_TRACE_OPTS = "arm_gt_cntvoff_write,arm_gt_ctl_write,arm_gt_cval_write,arm_gt_imask_toggle,arm_gt_recalc,arm_gt_recalc_disabled,arm_gt_tval_write,armsse_cpu_pwrctrl_read,armsse_cpu_pwrctrl_write,armsse_cpuid_read,armsse_cpuid_write,armsse_mhu_read,armsse_mhu_write"
 QEMU_BCM_TRACE_OPTS = "bcm2835_cprman_read,bcm2835_cprman_write,bcm2835_cprman_write_invalid_magic,bcm2835_ic_set_cpu_irq,bcm2835_ic_set_gpu_irq,bcm2835_mbox_irq,bcm2835_mbox_property,bcm2835_mbox_read,bcm2835_mbox_write,bcm2835_sdhost_edm_change,bcm2835_sdhost_read,bcm2835_sdhost_update_irq,bcm2835_sdhost_write,bcm2835_systmr_irq_ack,bcm2835_systmr_read,bcm2835_systmr_run,bcm2835_systmr_timer_expired,bcm2835_systmr_write"
-QEMU_TRACE_OPTS = "trace:${QEMU_ARM_TRACE_OPTS},${QEMU_BCM_TRACE_OPTS}" # @todo trace: prefix for each opt
+QEMU_TRACE_OPTS = "trace:${QEMU_ARM_TRACE_OPTS},${QEMU_BCM_TRACE_OPTS}"                                                                                                                                                                                                                                                                                                                                                                    # @todo trace: prefix for each opt
 QEMU_DISASM_OPTS = "-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin"
 QEMU_SERIAL_OPTS = "-serial stdio -serial pty"
 QEMU_TESTS_OPTS = "-nographic"
@@ -110,7 +122,12 @@ alias = "empty"
 [tasks.build-target]
 workspace = false
 command = "cargo"
-args = ["build", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "--release"]
+args = [
+    "build",
+    "@@split(PLATFORM_TARGET, )",
+    "@@split(RUST_STD, )",
+    "--release",
+]
 
 [tasks.build-device]
 workspace = false
@@ -130,7 +147,7 @@ script = [
     "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} with ${KERNEL_BIN}\n\n\n",
     "rm -f qemu.log",
     "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${TARGET_DTB} -kernel ${KERNEL_BIN} 2>&1 | tee qemu.log",
-    "echo \n\n"
+    "echo \n\n",
 ]
 
 [tasks.xtool-expand-target]
@@ -151,9 +168,21 @@ args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET, )"]
 
 [tasks.xtool-clippy]
 workspace = false
-env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = ["CLIPPY_FEATURES"] } } }
+env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = [
+    "CLIPPY_FEATURES",
+] } } }
 command = "cargo"
-args = ["clippy", "@@split(PLATFORM_TARGET, )", "@@split(RUST_STD, )", "@@remove-empty(CLIPPY_FEATURES)", "--", "--deny", "warnings", "--allow", "deprecated"]
+args = [
+    "clippy",
+    "@@split(PLATFORM_TARGET, )",
+    "@@split(RUST_STD, )",
+    "@@remove-empty(CLIPPY_FEATURES)",
+    "--",
+    "--deny",
+    "warnings",
+    "--allow",
+    "deprecated",
+]
 
 # These tasks are written in cargo-make's own script to make it portable across platforms (no `basename` on Windows)
 
@@ -163,7 +192,7 @@ workspace = false
 env = { "BINARY_FILE" = "${BINARY_FILE}" }
 script_runner = "@duckscript"
 script = [
-'''
+    '''
     binaryFile = basename ${BINARY_FILE}
     outElf = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.elf
     outBin = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
@@ -174,9 +203,11 @@ script = [
     echo 🔄 Processing ${BINARY_FILE}:
     echo 🔄 Copied ${binaryFile} to ${outElf} (${elfSize} bytes)
     echo 💫 Converted ${binaryFile} to ${outBin} (${binSize} bytes)
-'''
+''',
 ]
-install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = ["--help"] }
+install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = [
+    "--help",
+] }
 
 ## Copy and prepare binary with tests.
 [tasks.test-binary]
@@ -190,26 +221,24 @@ workspace = false
 dependencies = ["test-binary"]
 script_runner = "@duckscript"
 script = [
-'''
+    '''
     binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
     echo 🏎️ Run QEMU %{QEMU_OPTS} %{QEMU_TESTS_OPTS} with target/${binaryFile}.bin
     exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
-'''
+''',
 ]
 
 ## Generate GDB startup configuration file.
 [tasks.gdb-config]
 workspace = false
 script_runner = "@duckscript"
-script = [
-'''
+script = ['''
     writefile ${GDB_CONNECT_FILE} "target extended-remote :5555\n"
     appendfile ${GDB_CONNECT_FILE} "break *0x80000\n"
     appendfile ${GDB_CONNECT_FILE} "break kernel_init\n"
     appendfile ${GDB_CONNECT_FILE} "break kernel_main\n"
     echo 🖌️ Generated GDB config file
-'''
-]
+''']
 #appendfile ${GDB_CONNECT_FILE} "continue\n"
 
 ## Generate zellij configuration file.
@@ -219,29 +248,27 @@ dependencies = ["build-qemu", "kernel-binary"]
 script_runner = "@duckscript"
 env = { "ZELLIJ_CONFIG_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/emulation/zellij-config.sh" }
 script = [
-'''
+    '''
     writefile ${ZELLIJ_CONFIG_FILE} "QEMU=${QEMU}\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_OPTS=\"${QEMU_OPTS}\"\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_RUNNER_OPTS=${QEMU_RUNNER_OPTS}\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY=${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "TARGET_DTB=${TARGET_DTB}\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "KERNEL_BIN=${KERNEL_BIN}\n"
-'''
+''',
 ]
-install_crate = { crate_name = "zellij", binary = "zellij", test_arg = ["--help"] }
+install_crate = { crate_name = "zellij", binary = "zellij", test_arg = [
+    "--help",
+] }
 
 [tasks.openocd]
 workspace = false
-script = [
-    "${OPENOCD} -f interface/jlink.cfg -f ../ocd/${TARGET_BOARD}_target.cfg"
-]
+script = ["${OPENOCD} -f interface/jlink.cfg -f ocd/${TARGET_BOARD}_target.cfg"]
 
 [tasks.sdeject]
 workspace = false
 dependencies = ["sdcard"]
-script = [
-    "diskutil ejectAll ${VOLUME}"
-]
+script = ["diskutil ejectAll ${VOLUME}"]
 
 [tasks.qemu]
 alias = "empty"

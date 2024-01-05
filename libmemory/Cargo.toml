@@ -1,8 +1,8 @@
 [package]
-name = "machine"
+name = "libmemory"
 version = "0.0.1"
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
-description = "Vesper nanokernel shared code library, useful also for the chainboot loader."
+description = "Vesper nanokernel Memory Descriptors shared code library, useful also for the ttt tool."
 documentation = "https://docs.metta.systems/vesper"
 homepage = "https://github.com/metta-systems/vesper"
 repository = "https://github.com/metta-systems/vesper"
@@ -28,8 +28,6 @@ rpi3 = []
 rpi4 = []
 
 [dependencies]
-libmemory = { path = "../libmemory" }
-qemu-exit = "3.0"
 aarch64-cpu = "9.4"
 tock-registers = "0.9"
 ux = { version = "0.1", default-features = false }
@@ -46,7 +44,7 @@ once_cell = { version = "1.18", default-features = false, features = [
 ] }
 
 [lib]
-name = "machine"
+name = "libmemory"
 test = true
 
-# For proper testing in libmachine, we build it as a test_runner binary!
+# For proper testing in libmemory, we build it as a test_runner binary!

@@ -3,8 +3,6 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-//! Implementation of aarch64 kernel functions.
+//! Implementation of aarch64 kernel memory structures.
 
-pub mod cpu;
-pub mod exception;
-pub mod time;
+pub mod memory;

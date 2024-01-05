@@ -3,8 +3,6 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-//! Implementation of aarch64 kernel functions.
-
-pub mod cpu;
-pub mod exception;
-pub mod time;
+#[cfg(target_arch = "aarch64")]
+#[macro_use]
+pub mod aarch64;

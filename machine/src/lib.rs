@@ -46,7 +46,6 @@ pub mod devices;
 pub mod drivers;
 pub mod exception;
 pub mod macros;
-pub mod memory;
 mod mm;
 pub mod panic;
 pub mod platform;

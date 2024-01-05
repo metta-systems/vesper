@@ -1,0 +1,11 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Build nucleus helper library (memory)
+#
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
+# No special configuration needed.

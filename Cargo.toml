@@ -1,10 +1,11 @@
 [workspace]
 members = [
+    "libmemory",
     "machine",
     "nucleus",
     "bin/chainboot",
     "bin/chainofcommand",
-    "tools/ttt"
+    "tools/ttt",
 ]
 resolver = "2"
 

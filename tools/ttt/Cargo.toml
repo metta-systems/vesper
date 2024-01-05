@@ -12,14 +12,19 @@ edition = "2021"
 maintenance = { status = "experimental" }
 
 [features]
-rpi3 = ["machine/rpi3"]
-rpi4 = ["machine/rpi4"]
+rpi3 = ["libmemory/rpi3"]
+rpi4 = ["libmemory/rpi4"]
 
 [dependencies]
-machine = { path = "../../machine" }
+libmemory = { path = "../../libmemory" }
 clap = "4.4"
 colored = "2"
 prettytable-rs = "0.10"
-goblin = { version = "0.7", default-features = false, features = ["std", "alloc", "elf32", "elf64"] }
+goblin = { version = "0.8", default-features = false, features = [
+    "std",
+    "alloc",
+    "elf32",
+    "elf64",
+] }
 anyhow = "1.0"
 bytes = "1.5"
