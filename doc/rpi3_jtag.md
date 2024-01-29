@@ -260,7 +260,10 @@ Rebuild openocd from git and voila, it works with
 
 ### Run with probe-rs
 
-To be written when probe-rs starts supporting RPi3/4.
+`probe-rs info` shall detect J-Link and the RasPi
+
+`probe-rs --chip RaspberryPi4B`
+
 
 ## Andre Richter's tutorials
 
