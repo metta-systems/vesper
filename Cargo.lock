@@ -302,9 +302,9 @@ dependencies = [
 
 [[package]]
 name = "defer"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "647605a6345d5e89c3950a36a638c56478af9b414c55c6f2477c73b115f9acde"
+checksum = "691de0e0ca2670e1e8eaae019c2d28c356e49083dfceefd502bcc94698c06192"
 
 [[package]]
 name = "dirs-next"

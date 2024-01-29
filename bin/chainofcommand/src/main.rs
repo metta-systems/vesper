@@ -452,7 +452,7 @@ async fn main() -> Result<()> {
 
     // Disable line buffering, local echo, etc.
     terminal::enable_raw_mode()?;
-    defer(|| terminal::disable_raw_mode().unwrap_or(()));
+    defer!(terminal::disable_raw_mode().unwrap_or(()));
 
     let mut serial_toggle = false;
     let mut stdout = std::io::stdout();
