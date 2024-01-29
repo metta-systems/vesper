@@ -18,7 +18,9 @@ UART0
 RPi Func  |  RPi GPIO  |  PIN #  |  MODE  | CP2104 Pin | Wire color
 ----------+------------+---------+--------+------------+------------
 RXD0      | GPIO15     |   10    |  Alt0  | TXD        | Red
-TXD0      | GPIO14     |    8    |  Alt0  | RXD        | Brown
+TXD0      | GPIO14     |    8    |  Alt0  | RXD        | Green
+GND       | GND        |   14    |        | GND        | Brown
+5V        | 5V         |    2    |        | 5V         | Yellow
 ```
 
 ```
@@ -27,6 +29,6 @@ MiniUart (UART1)
 RPi Func  |  RPi GPIO  |  PIN #  |  MODE  | CP2104 Pin | Wire color
 ----------+------------+---------+--------+------------+------------
 RXD1      | GPIO15     |   10    |  Alt5  | TXD        | Red
-TXD1      | GPIO14     |    8    |  Alt5  | RXD        | Brown
-GND       | GND        |    6    |        | GND        | Green
+TXD1      | GPIO14     |    8    |  Alt5  | RXD        | Green
+GND       | GND        |    6    |        | GND        | Brown
 ```
