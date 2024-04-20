@@ -10,14 +10,9 @@
 
 use {
     super::endless_sleep,
-    crate::platform::cpu::BOOT_CORE_ID,
     aarch64_cpu::{asm, registers::*},
-    core::{
-        arch::global_asm,
-        cell::UnsafeCell,
-        slice,
-        sync::atomic::{self, Ordering},
-    },
+    core::{arch::global_asm, cell::UnsafeCell},
+    libplatform::cpu::BOOT_CORE_ID,
     tock_registers::interfaces::{Readable, Writeable},
 };
 
@@ -195,5 +190,6 @@ fn reset() -> ! {
     unsafe extern "Rust" {
         fn main() -> !;
     }
+
     unsafe { main() }
 }

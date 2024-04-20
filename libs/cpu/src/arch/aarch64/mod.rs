@@ -3,7 +3,6 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-//! Implementation of aarch64 kernel functions.
+//! Implementation of aarch64 CPU functions.
 
 pub mod cpu;
-// pub mod traps;
