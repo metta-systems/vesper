@@ -6,6 +6,7 @@ members = [
   "bin/chainofcommand",
   # Libraries
   "libs/console",
+  "libs/cpu",
   "libs/exception",
   "libs/kernel-state",
   "libs/local-irq",
@@ -41,6 +42,7 @@ bitflags = { version = "2.9" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
 libconsole = { path = "libs/console" }
+libcpu = { path = "libs/cpu" }
 libexception = { path = "libs/exception" }
 libkernel-state = { path = "libs/kernel-state" }
 liblocal-irq = { path = "libs/local-irq" }
