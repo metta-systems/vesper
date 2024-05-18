@@ -19,21 +19,21 @@ use {
     liblocking::interface::Mutex,
     liblog::println,
     libmemory::{
+        arch::mmu::translation_table::{PageDescriptor, TableDescriptor},
+        mm::{align_up, BumpAllocator},
+        mmu::{
+            kernel_map_at, page_alloc,
+            translation_table::{interface::TranslationTable, FixedSizeTranslationTable},
+            AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress,
+        },
+        phys_addr::{PhysAddr, PhysAddrNotValid},
+        platform::memory::mmu::{
+            virt_boot_core_stack_region, virt_code_region, virt_data_region, KERNEL_TABLES,
+        },
+        platform::KernelGranule, //memory::mmu::KernelGranule},
         Address,
         Physical,
         Virtual,
-        arch::mmu::translation_table::{PageDescriptor, TableDescriptor},
-        mm::{BumpAllocator, align_up},
-        mmu::{
-            AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress,
-            kernel_map_at, page_alloc,
-            translation_table::{FixedSizeTranslationTable, interface::TranslationTable},
-        },
-        phys_addr::{PhysAddr, PhysAddrNotValid},
-        platform::KernelGranule, //memory::mmu::KernelGranule},
-        platform::memory::mmu::{
-            KERNEL_TABLES, virt_boot_core_stack_region, virt_code_region, virt_data_region,
-        },
     },
 };
 
@@ -87,7 +87,7 @@ fn test_allocates_within_init_range() {
     assert!(result3.is_err());
 }
 
-// Creating with end <= start sshould fail
+// Creating with end <= start should fail
 // @todo return Result<> from new?
 #[test_case]
 fn test_bad_allocator() {

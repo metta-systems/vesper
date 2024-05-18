@@ -63,6 +63,7 @@ libtime = { path = "libs/time" }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 qemu-exit = { version = "3.0" }
 snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
+static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
 ux = { version = "0.1", default-features = false }
