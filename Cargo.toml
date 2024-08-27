@@ -21,6 +21,12 @@ panic = "abort"
 opt-level = 's'
 debug = true
 lto = true
+codegen-units = 1
+
+[profile.release-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
 
 [profile.test]
 opt-level = 's'
