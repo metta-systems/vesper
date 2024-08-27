@@ -1290,3 +1290,9 @@ _exports mod:
 [group("modules")]
 orphans mod:
     cargo modules orphans -p {{ mod }}
+
+# Experiments
+
+# Memory tables experiment #1
+memtab:
+    cargo play play/memtab.rs
