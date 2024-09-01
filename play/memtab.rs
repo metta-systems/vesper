@@ -2,7 +2,13 @@
 // Explore memory table abstractions
 //
 //
-use {core::marker::PhantomData, snafu::Snafu};
+use {
+    core::{
+        marker::PhantomData,
+        ops::{Index, IndexMut},
+    },
+    snafu::Snafu,
+};
 
 fn main() {
     println!("Hello, play");
@@ -15,11 +21,22 @@ fn main() {
     // Using Granule64k:
 }
 
+// impl indexing stages by virtual address only,
+// so l0[virt][virt][virt][virt] will go through all levels of translation
+//
+
+impl<G: GranuleSize> Index<Virtual> for Stage1<G> {
+    type Output = Self::NextStage;
+
+    fn index(&self, index: Virtual) -> Self::NextStage {}
+}
+
 type Physical = u64;
 type Virtual = u64;
 
 trait Stage {
     type G: Granule;
+    type NextStage;
 }
 
 trait Descriptor {
