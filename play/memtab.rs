@@ -10,15 +10,36 @@ use {
     snafu::Snafu,
 };
 
+struct PageAllocator {}
+
+impl PageAllocator {
+    fn grab_page<G: Granule>(&self) -> G::Page {}
+}
+
 fn main() {
     println!("Hello, play");
 
     // Build page table hierarchy from Stage1 down to Stage4.
+    let allocator = PageAllocator::new();
+
     // Using Granule4k:
+    let l0_table = 0;
+
     // Using Granule16k:
     let l0_table = 0;
 
     // Using Granule64k:
+    let l0_table = Stage1::<G = Granule64k>::new();
+    let arena = allocator.grab_page::<Granule64k>(); // give parent table here, to extract granule
+    let l1_table = l0_table.allocate_page_from(arena);
+    let arena = allocator.grab_page::<Granule64k>();
+    let l2_table = l1_table.allocate_page_from(arena);
+
+    // Access the table using virtual addresses (each stage consumes more bits of the address).
+    let l0_table = sys_l0_table;
+    let l1 = l0_table[virt_addr];
+    let l2 = l1_table[virt_addr];
+    let phys = l2_table[virt_addr];
 }
 
 // impl indexing stages by virtual address only,
