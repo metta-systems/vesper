@@ -2,6 +2,7 @@
 // Explore memory table abstractions
 //
 //
+#[allow(unused_imports)]
 use {
     core::{
         marker::PhantomData,
@@ -10,17 +11,40 @@ use {
     snafu::Snafu,
 };
 
-struct PageAllocator {}
+struct FrameAllocator {
+    counter: usize;
+}
 
-impl PageAllocator {
-    fn grab_page<G: Granule>(&self) -> G::Page {}
+impl FrameAllocator {
+    fn new() -> Self {
+        Self {counter:0}
+    }
+    // Return a frame allocated from physical memory.
+    // Frame physical address is mapped to kernel space.
+    fn grab_frame<G: Granule>(&mut self) -> G::Frame {
+        let phys_base = self.allocate_phys_frame();
+        Frame::new(phys_base.phys_to_kernel())
+    }
+
+    fn allocate_phys_frame<G: Granule>(&mut self) -> usize {
+        self.counter += 1;
+        self.counter * G::Size
+    }
+}
+
+struct Frame(usize);
+
+impl Frame {
+    pub fn new(base: usize) -> Self {
+        Self(base)
+    }
 }
 
 fn main() {
     println!("Hello, play");
 
     // Build page table hierarchy from Stage1 down to Stage4.
-    let allocator = PageAllocator::new();
+    let allocator = FrameAllocator::new();
 
     // Using Granule4k:
     let l0_table = 0;
@@ -29,17 +53,52 @@ fn main() {
     let l0_table = 0;
 
     // Using Granule64k:
-    let l0_table = Stage1::<G = Granule64k>::new();
-    let arena = allocator.grab_page::<Granule64k>(); // give parent table here, to extract granule
+    let l0_table = Stage1::<Granule64k>::new();
+    let arena = allocator.grab_frame::<Granule64k>(); // give parent table here, to extract granule
     let l1_table = l0_table.allocate_page_from(arena);
-    let arena = allocator.grab_page::<Granule64k>();
+    let arena = allocator.grab_frame::<Granule64k>();
     let l2_table = l1_table.allocate_page_from(arena);
+
+    //=================
+    // TRAVERSE TABLES
+    //=================
+
+    let base_addr = 124467000usize; // this comes from TTBRx register or some table base variable for each process.
+
+    // everything starts with a translation table base address
+    let sys_l0_table = base_addr as *const Stage1;
 
     // Access the table using virtual addresses (each stage consumes more bits of the address).
     let l0_table = sys_l0_table;
     let l1 = l0_table[virt_addr];
     let l2 = l1_table[virt_addr];
     let phys = l2_table[virt_addr];
+
+    // to access physical memory from kernel
+    let phys = 123456usize;
+    let kern_phys = phys.phys_to_kernel();
+}
+
+trait PhysicalKernelMapping {
+    type PhysAddr;
+    fn phys_to_kernel(&self) -> Self::PhysAddr;
+    fn kernel_to_phys(&self) -> Self::PhysAddr;
+}
+
+const KERNEL_PHYS_MAP_BASE: usize = 0xffff_fff0_0000_0000; // Not const, but defined by available RAM size
+
+impl PhysicalKernelMapping for usize {
+    type PhysAddr = usize;
+    #[inline(always)]
+    fn phys_to_kernel(&self) -> usize {
+        self.checked_add(KERNEL_PHYS_MAP_BASE)
+            .expect("Physical to kernel mapping overflowed")
+    }
+    #[inline(always)]
+    fn kernel_to_phys(&self) -> usize {
+        self.checked_sub(KERNEL_PHYS_MAP_BASE)
+            .expect("Kernel to physical mapping underflowed")
+    }
 }
 
 // impl indexing stages by virtual address only,
@@ -132,6 +191,14 @@ struct Stage3<G: GranuleSize> {
 }
 struct Stage4<G: GranuleSize> {
     _granule: PhantomData<G>,
+}
+
+impl<G: GranuleSize> Stage1<G> {
+    pub fn new() -> Self {
+        Self {
+            _granule: PhantomData,
+        }
+    }
 }
 
 trait NextStage {
@@ -242,6 +309,55 @@ impl NextStage for Stage4<Granule64k> {
 // impl NextLevelDescriptor for Stage3 {}
 
 // impl LeafDescriptor for Stage4 {}
+
+type TraverseResult<T> = Result<T, TraverseError>;
+enum Output<T> {
+    Table(TableDescriptor<T>), // duh need to put next table type in here ...
+    Block(BlockDescriptor),
+}
+
+type ulog2 = usize;
+
+struct BlockDescriptor {
+    base_addr: PhysAddr,
+    size: ulog2, // should give a mask to combine with block offset from virt_addr
+}
+
+trait TableOnly {
+    type NextTable;
+    fn next_table(&self, virt: VirtAddr) -> Self::NextTable;
+}
+
+trait BlockOnly {
+    type Block;
+    fn block(&self, virt: VirtAddr) -> Self::Block;
+}
+
+trait TableOrBlock: TableOnly, BlockOnly {}
+
+impl TableOnly for Stage1<G: Granule> {
+    type NextTable = TraverseResult<Stage2>;
+    fn next_table(&self, virt: VirtAddr) -> Self::NextTable {
+        Err(TraverseError::NotPresent)
+    }
+}
+
+impl TableOnly for Stage2<G: Granule> {
+    type NextTable = TraverseResult<Stage3>;
+    fn next_table(&self, virt: VirtAddr) -> Self::NextTable {
+        Err(TraverseError::NotPresent)
+    }
+}
+
+impl BlockOnly for Stage2<G: Granule> {
+    type Block = TraverseResult<Page1Gb>;
+    fn block(&self, virt: VirtAddr) -> Self::Block {
+        let index = virt >> Self::SHIFT & (1 << Self::MASK_BITS) - 1;
+        Err(TraverseError::NotPresent)
+    }
+}
+
+impl TableOrBlock for Stage2<G: Granule> {}
 
 //
 // Probably implement it as Granules vs Stages?
@@ -373,10 +489,31 @@ impl NotGiantPageSize for Size512MiB {}
 
 /// The error returned by the `PageTableEntry::frame` method.
 #[derive(Snafu, Debug, Clone, Copy, PartialEq)]
-pub enum FrameError {
+pub enum TraverseError {
     /// The entry does not have the `PRESENT` flag set, so it isn't currently mapped to a frame.
-    FrameNotPresent,
-    /// The entry has the `HUGE_PAGE` flag set. The `frame` method has a standard 4KiB frame
-    /// as return type, so a huge frame can't be returned. @todo
-    HugeFrame,
+    NotPresent,
 }
+
+// maestro:
+// Calls `alloc` with order `order`.
+//
+// The allocated frame is in the kernel zone.
+//
+// The function returns the *virtual* address, not the physical one.
+// pub fn alloc_kernel(order: FrameOrder) -> AllocResult<NonNull<c_void>> {
+// 	let ptr = alloc(order, FLAG_ZONE_TYPE_KERNEL)?;
+// 	let virt_ptr = memory::kern_to_virt(ptr.as_ptr()) as _;
+// 	debug_assert!(virt_ptr as *const _ >= memory::PROCESS_END);
+// 	NonNull::new(virt_ptr).ok_or(AllocError)
+// }
+
+// Allocates a paging object and returns its virtual address.
+//
+// If the allocation fails, the function returns an error.
+// fn alloc_obj() -> AllocResult<*mut u32> {
+// 	let mut ptr = buddy::alloc_kernel(0)?.cast::<u8>();
+// 	// Zero memory
+// 	let slice = unsafe { slice::from_raw_parts_mut(ptr.as_mut(), buddy::get_frame_size(0)) };
+// 	slice.fill(0);
+// 	Ok(ptr.as_ptr() as _)
+// }
