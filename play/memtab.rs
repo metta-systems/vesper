@@ -66,7 +66,7 @@ fn main() {
     let base_addr = 124467000usize; // this comes from TTBRx register or some table base variable for each process.
 
     // everything starts with a translation table base address
-    let sys_l0_table = base_addr as *const Stage1;
+    let sys_l0_table = base_addr as *const Stage1<G>;
 
     // Access the table using virtual addresses (each stage consumes more bits of the address).
     let l0_table = sys_l0_table;
@@ -333,7 +333,7 @@ trait BlockOnly {
     fn block(&self, virt: VirtAddr) -> Self::Block;
 }
 
-trait TableOrBlock: TableOnly, BlockOnly {}
+trait TableOrBlock: TableOnly + BlockOnly {}
 
 impl TableOnly for Stage1<G: Granule> {
     type NextTable = TraverseResult<Stage2>;
