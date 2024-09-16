@@ -7,6 +7,9 @@ make-opts := '--time-summary --hide-uninteresting'
 memtab:
     cargo play play/memtab.rs
 
+memtab2:
+    cargo play play/memtab2.rs
+
 # Update all dependencies
 [group("maintenance")]
 deps-up:
