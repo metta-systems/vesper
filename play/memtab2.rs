@@ -1,59 +1,94 @@
+//# snafu = "*"
+//
+// Explore memory table abstractions
+//
+// #![feature(decl_macro)]
+use core::marker::PhantomData;
+
+/// Provides means to extract the next table level index or the block address.
 trait TableIndex {
     // Mask and shift to extract entry index from virt address
     const MASK_BITS: usize;
     const MASK: u64 = 1 << Self::MASK_BITS - 1;
     const SHIFT: usize;
-    fn extract(address: VirtAddr) -> usize {
+    fn extract_from(address: VirtAddr) -> usize {
         return ((address >> Self::SHIFT) & Self::MASK)
             .try_into()
             .expect("Arithmetics gone mad");
     }
 }
 
+enum TableError {
+    NotPresent,
+}
+
 trait TableOnly {
     type NextTable;
-    fn<T: TableIndex> next_table<T>(&self, virt: VirtAddr) -> Self::NextTable;
+    fn next_table<T: TableIndex>(&self, virt: VirtAddr) -> Result<Self::NextTable, TableError>;
+}
+
+enum BlockError {
+    NotPresent,
 }
 
 trait BlockOnly {
     type Block;
-    fn<T: TableIndex> block<T>(&self, virt: VirtAddr) -> Self::Block;
+    fn block<T: TableIndex>(&self, virt: VirtAddr) -> Result<Self::Block, BlockError>;
 }
 
 trait TableOrBlock: TableOnly + BlockOnly {}
 
-
+// Higher-level wrapper struct for Stages
 struct PageTable<Stage, TableIndex> {
     _marker1: PhantomData<Stage>,
     _marker2: PhantomData<TableIndex>,
 }
 
-impl<Stage, TableIndex> PageTable<Stage, TableIndex> where Stage: TableOnly {
-    fn next_table(virt: VirtAddr) -> Result<Stage::NextTable> {
-        Stage::next_table<TableIndex>(virt)
+impl<Stage, TI: TableIndex> PageTable<Stage, TI> where Stage: TableOnly {
+    fn next_table(virt: VirtAddr) -> Result<Stage::NextTable, TableError> {
+        Stage::next_table<TI>(virt)
     }
 }
 
-impl<Stage, TableIndex> PageTable<Stage, TableIndex> where Stage: BlockOnly {
-    fn block(virt: VirtAddr) -> Result<Stage::Block> {
-        Stage::block<TableIndex>(virt)
+impl<Stage, TI: TableIndex> PageTable<Stage, TI> where Stage: BlockOnly {
+    fn block(virt: VirtAddr) -> Result<Stage::Block, BlockError> {
+        Stage::block<TI>(virt)
     }
 }
 
-// TableIndex is external and is controlled by the MMU mode (or granule).
-impl TableOnly for Stage0 {
-    type NextTable = PageTable<Stage1,TableIndex=??>;
-    fn<TI: TableIndex> next_table<TI>(virt: VirtAddr) -> Result<Self::NextTable> {
-        TI::extract(virt)
-        // convert to Result<NextTable>
+// Specific table structures:
+struct Stage0_Gran4k {}
+struct Stage1_Gran4k {}
+struct Stage2_Gran4k {}
+struct Stage3_Gran4k {}
+
+macro_rules! impl_table_only {
+    { $stage:ty, $next_stage:ty, $table_index:ty } => {
+        impl TableOnly for $stage {
+            type NextTable = PageTable::<$next_stage,TableIndex=??>;
+            fn next_table<$table_index>(&self, virt: VirtAddr) -> Result<Self::NextTable> {
+                let index = $table_index::extract_from(virt);
+                let entry = self.table[index];
+                if !bit_set(entry, P) {
+                    return Err(NotPresent);
+                }
+                let base = ??::extract_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
+                let next_table = base as *mut Self::NextTable .. ?;
+                Ok(next_table)
+            }
+        }
     }
 }
 
-impl BlockOnly for Stage3 {
-    type Block = Frame<Size4K>; // we will get a block of given size at this stage
-    fn<TI: TableIndex> block<TI>(virt: VirtAddr) -> Result<Self::Block> {
-        TI::extract(virt)
-        // convert to Result<Block>
+macro_rules! impl_block_only {
+    { $stage:ty, $block:ty, $table_index:ty } => {
+        impl BlockOnly for Stage3 {
+            type Block = Frame<Size4K>; // we will get a block of given size at this stage
+            fn<TI: TableIndex> block<TI>(virt: VirtAddr) -> Result<Self::Block> {
+                TI::extract(virt)
+                // convert to Result<Block>
+            }
+        }
     }
 }
 
