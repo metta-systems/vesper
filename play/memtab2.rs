@@ -62,11 +62,10 @@ trait NextStage {
 }
 
 // Higher-level wrapper struct for Stages
-struct PageTable<Stage, TableIndex> {
-    _marker1: PhantomData<Stage>,
-    _marker2: PhantomData<TableIndex>,
-    entries: [u64; 1 << TableIndex::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
+// struct PageTable<Stage, TableIndex> {
+//     _marker1: PhantomData<Stage>,
+//     _marker2: PhantomData<TableIndex>,
+// }
 
 // impl<Stage, TI: TableIndex> PageTable<Stage, TI>
 // where
@@ -91,10 +90,18 @@ struct PageTable<Stage, TableIndex> {
 // These stage tables (or PageTable<Stage> really) can be implemented in terms of TableIndex::MASK_BITS
 // e.g. struct Stage<I: TableIndex> { pub entries: [u64; 1 << I::MASK_BITS]; }
 // Specific table structures:
-struct Stage1_Gran4k {}
-struct Stage2_Gran4k {}
-struct Stage3_Gran4k {}
-struct Stage4_Gran4k {}
+struct Stage1_Gran4k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+struct Stage2_Gran4k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+struct Stage3_Gran4k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+struct Stage4_Gran4k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 
 struct Stage1_Gran16k {}
 struct Stage2_Gran16k {}
@@ -125,23 +132,23 @@ impl_table_index!(Stage2_Gran4k, index = 9@30, table = 36@12, block = 18@30);
 impl_table_index!(Stage3_Gran4k, index = 9@21, table = 36@12, block = 27@21);
 impl_table_index!(Stage4_Gran4k, index = 9@12, table = 36@12, block = 36@12);
 
-impl_table_index!(Stage1_Gran16k, index = 1@47);
-impl_table_index!(Stage2_Gran16k, index = 11@36);
-impl_table_index!(Stage3_Gran16k, index = 11@25);
-impl_table_index!(Stage4_Gran16k, index = 11@14);
+impl_table_index!(Stage1_Gran16k, index = 1@47, table = 34@14, block = 0@0);
+impl_table_index!(Stage2_Gran16k, index = 11@36, table = 34@14, block = 12@36);
+impl_table_index!(Stage3_Gran16k, index = 11@25, table = 34@14, block = 23@25);
+impl_table_index!(Stage4_Gran16k, index = 11@14, table = 34@14, block = 34@14);
 
-impl_table_index!(Stage1_Gran64k, index = 5@42);
-impl_table_index!(Stage2_Gran64k, index = 13@29);
-impl_table_index!(Stage3_Gran64k, index = 13@16);
+impl_table_index!(Stage1_Gran64k, index = 5@42, table = 32@16, block = 5@42); // 4TiB block!
+impl_table_index!(Stage2_Gran64k, index = 13@29, table = 32@16, block = 19@29);
+impl_table_index!(Stage3_Gran64k, index = 13@16, table = 32@16, block = 32@16);
 // impl_table_index!(Stage4_Gran64k, index = 0@0); // N/A
 
 macro_rules! impl_table_only {
     { $stage:ty, $next_stage:ty } => {
         paste! {
-            impl TableOnly for $stage {
-                type NextTable = PageTable::<$next_stage, [< TableIndex_ $next_stage >] >;
+            impl TableOnly for $stage where $stage: TableIndex {
+                type NextTable = $next_stage;
                 fn next_table(&self, virt: VirtAddr) -> Result<Self::NextTable> {
-                    let index = [< TableIndex_ $stage >]::extract_index(virt);
+                    let index = $stage::extract_index(virt);
                     let entry = self.entries[index];
                     if !bit_set(entry, P) {
                         return Err(NotPresent);
@@ -150,21 +157,25 @@ macro_rules! impl_table_only {
                     let next_table = base as *mut Self::NextTable as &mut Self::NextTable;
                     Ok(next_table)
                 }
-                fn extract_table_base(entry: u64) -> PhysAddr {
-                    [< TableIndex_ $stage >]::extract_base(entry)
-                }
             }
         }
     }
 }
 
+// temp:
+const P: usize = 0x0;
+
+fn bit_set(field: u64, bit: usize) -> bool {
+    field & (1 << bit) != 0
+}
+
 macro_rules! impl_block_only {
     { $stage:ty, $block_size:ty } => {
         paste! {
-            impl BlockOnly for $stage {
+            impl BlockOnly for $stage where $stage: TableIndex {
                 type Block = Frame<$block_size>; // we will get a block of given size at this stage
-                fn block<[< TableIndex_ $stage >]>(virt: VirtAddr) -> Result<Self::Block, BlockError> {
-                    let index = [< TableIndex_ $stage >]::extract_index(virt)
+                fn block(virt: VirtAddr) -> Result<Self::Block, BlockError> {
+                    let index = $stage::extract_index(virt);
                     let entry = self.entries[index];
                     if !bit_set(entry, P) {
                         return Err(NotPresent);
@@ -178,12 +189,12 @@ macro_rules! impl_block_only {
     }
 }
 
-impl_table_only!(Stage0_Gran4k, Stage1_Gran4k);
 impl_table_only!(Stage1_Gran4k, Stage2_Gran4k);
-impl_block_only!(Stage1_Gran4k, Size1GiB);
 impl_table_only!(Stage2_Gran4k, Stage3_Gran4k);
-impl_block_only!(Stage2_Gran4k, Size2MiB);
-impl_block_only!(Stage3_Gran4k, Size4KiB);
+impl_block_only!(Stage2_Gran4k, Size1GiB);
+impl_table_only!(Stage3_Gran4k, Stage4_Gran4k);
+impl_block_only!(Stage3_Gran4k, Size2MiB);
+impl_block_only!(Stage4_Gran4k, Size4KiB);
 
 // now for the TableOnly+BlockOnly combination we need to also provide a resolution method that returns either
 impl_next_level!(Stage1_Gran4k, Stage2_Gran4k, Size1GiB); // this provides next() -> Either<Table,Block>
@@ -305,6 +316,14 @@ impl PageSize for Size512MiB {
     const SHIFT: usize = 29;
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Size4TiB {}
+
+impl PageSize for Size4TiB {
+    const SIZE_AS_DEBUG_STR: &'static str = "4TiB";
+    const SHIFT: usize = 42;
+}
+
 /// Physical page frame.
 struct Frame<P: PageSize> {
     base: usize,
@@ -312,6 +331,7 @@ struct Frame<P: PageSize> {
 }
 
 impl<P: PageSize> Frame<P> {
+    // @todo Check base is aligned to _page_size::SHIFT
     pub fn new(base: usize) -> Self {
         Self {
             base,
