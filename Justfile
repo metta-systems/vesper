@@ -1296,3 +1296,6 @@ orphans mod:
 # Memory tables experiment #1
 memtab:
     cargo play play/memtab.rs
+
+memtab2:
+    cargo play play/memtab2.rs
