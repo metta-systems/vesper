@@ -4,7 +4,12 @@
 // Explore memory table abstractions
 //
 // #![feature(decl_macro)]
-use {core::marker::PhantomData, either::*, paste::paste};
+#[allow(unused)]
+#[allow(unused_imports)]
+use {core::marker::PhantomData, either::*, snafu::Snafu};
+
+type VirtAddr = u64;
+type PhysAddr = u64;
 
 /// Provides means to extract the next table level index or the block address.
 trait TableIndex {
@@ -31,7 +36,7 @@ trait TableIndex {
 
 // pub enum TraverseError {
 
-#[derive(Snafu, Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)] // Snafu
 enum TableError {
     /// The entry does not have the `PRESENT` flag set, so it isn't currently mapped to a frame.
     NotPresent,
@@ -39,10 +44,10 @@ enum TableError {
 
 trait TableOnly {
     type NextTable;
-    fn next_table(&self, virt: VirtAddr) -> Result<Self::NextTable, TableError>;
+    fn next_table(&self, virt: VirtAddr) -> Result<&mut Self::NextTable, TableError>;
 }
 
-#[derive(Snafu, Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)] // Snafu
 enum BlockError {
     /// The entry does not have the `PRESENT` flag set, so it isn't currently mapped to a frame.
     NotPresent,
@@ -55,45 +60,60 @@ trait BlockOnly {
 
 trait TableOrBlock: TableOnly + BlockOnly {} // ? is it necessary (only if to apply NextStage trait automatically?)
 
-trait NextStage {
-    fn next(&self) -> Either<dyn TableOnly, dyn BlockOnly>;
-}
+// @todo next() should also take a VirtAddr?
+// trait NextStage: TableOrBlock {
+//     fn next(
+//         &self,
+//     ) -> Either<dyn TableOnly<NextTable = Self::NextTable>, dyn BlockOnly<Block = Self::Block>>;
+// }
 
 // As you can see, the Stage structures are repeated, as the granules (masks), so we need to be able to parameterize them both somehow
 // e.g. mask depends on both stage and granule
 // These stage tables (or PageTable<Stage> really) can be implemented in terms of TableIndex::MASK_BITS
 // e.g. struct Stage<I: TableIndex> { pub entries: [u64; 1 << I::MASK_BITS]; }
 // Specific table structures:
+#[allow(non_camel_case_types)]
 struct Stage1_Gran4k {
     entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
 }
+#[allow(non_camel_case_types)]
 struct Stage2_Gran4k {
     entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
 }
+#[allow(non_camel_case_types)]
 struct Stage3_Gran4k {
     entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
 }
+#[allow(non_camel_case_types)]
 struct Stage4_Gran4k {
     entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
 }
 
+#[allow(non_camel_case_types)]
 struct Stage1_Gran16k {}
+#[allow(non_camel_case_types)]
 struct Stage2_Gran16k {}
+#[allow(non_camel_case_types)]
 struct Stage3_Gran16k {}
+#[allow(non_camel_case_types)]
 struct Stage4_Gran16k {}
 
+#[allow(non_camel_case_types)]
 struct Stage1_Gran64k {}
+#[allow(non_camel_case_types)]
 struct Stage2_Gran64k {}
+#[allow(non_camel_case_types)]
 struct Stage3_Gran64k {}
+#[allow(non_camel_case_types)]
 struct Stage4_Gran64k {}
 
 macro_rules! impl_table_index {
-    { $stage:ty, index = $mask_bits:usize @ $shift:usize, table = $table_bits:usize @ $table_shift:usize, block = $block_bits:usize @ $block_shift:usize } => {
+    { $stage:ty, index = $mask_bits:literal @ $shift:literal, table = $table_bits:literal @ $table_shift:literal, block = $block_bits:literal @ $block_shift:literal } => {
         impl TableIndex for $stage {
             const MASK_BITS: usize = $mask_bits;
             const SHIFT: usize = $shift;
-            const BLOCK_ADDR_MASK: u64 = (1 << $block_bits - 1) << $block_shift;
-            const TABLE_ADDR_MASK: u64 = (1 << $table_bits - 1) << $table_shift;
+            const BLOCK_ADDR_MASK: u64 = ((1 << $block_bits) - 1) << $block_shift;
+            const TABLE_ADDR_MASK: u64 = ((1 << $table_bits) - 1) << $table_shift;
         }
     }
 }
@@ -117,14 +137,15 @@ macro_rules! impl_table_only {
     { $stage:ty, $next_stage:ty } => {
         impl TableOnly for $stage where $stage: TableIndex {
             type NextTable = $next_stage;
-            fn next_table(&self, virt: VirtAddr) -> Result<Self::NextTable> {
-                let index = $stage::extract_index(virt);
+            fn next_table(&self, virt: VirtAddr) -> Result<&mut Self::NextTable, TableError> {
+                let index = <$stage>::extract_index(virt);
                 let entry = self.entries[index];
                 if !bit_set(entry, P) {
-                    return Err(NotPresent);
+                    return Err(TableError::NotPresent);
                 }
-                let base = $stage::extract_table_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
-                let next_table = base as *mut Self::NextTable as &mut Self::NextTable;
+                let base = <$stage>::extract_table_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
+                let next_table = base as *mut Self::NextTable; // ptr.cast<>?
+                let next_table = unsafe { &mut *next_table };
                 Ok(next_table)
             }
         }
@@ -142,14 +163,14 @@ macro_rules! impl_block_only {
     { $stage:ty, $block_size:ty } => {
         impl BlockOnly for $stage where $stage: TableIndex {
             type Block = Frame<$block_size>; // we will get a block of given size at this stage
-            fn block(virt: VirtAddr) -> Result<Self::Block, BlockError> {
-                let index = $stage::extract_index(virt);
+            fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError> {
+                let index = <$stage>::extract_index(virt);
                 let entry = self.entries[index];
                 if !bit_set(entry, P) {
-                    return Err(NotPresent);
+                    return Err(BlockError::NotPresent);
                 }
-                let phys_base = $stage::extract_block_base(entry);
-                let block = phys_base as *mut Self::Block as &mut Self::Block;
+                let phys_base = <$stage>::extract_block_base(entry);
+                let block = Frame::new(phys_base.try_into().expect("It fits fine!"));
                 Ok(block)
             }
         }
@@ -163,9 +184,13 @@ impl_table_only!(Stage3_Gran4k, Stage4_Gran4k);
 impl_block_only!(Stage3_Gran4k, Size2MiB);
 impl_block_only!(Stage4_Gran4k, Size4KiB);
 
+macro_rules! impl_next_stage {
+    { $stage:ty, $next_stage:ty, $block:ty } => {}
+}
+
 // now for the TableOnly+BlockOnly combination we need to also provide a resolution method that returns either
-impl_next_level!(Stage1_Gran4k, Stage2_Gran4k, Size1GiB); // this provides next() -> Either<Table,Block>
-impl_next_level!(Stage2_Gran4k, Stage3_Gran4k, Size2MiB);
+impl_next_stage!(Stage1_Gran4k, Stage2_Gran4k, Size1GiB); // this provides next() -> Either<Table,Block>
+impl_next_stage!(Stage2_Gran4k, Stage3_Gran4k, Size2MiB);
 
 // @todo need to also provide next() for TableOnly and for BlockOnly types separately, without Either?
 
@@ -306,3 +331,5 @@ impl<P: PageSize> Frame<P> {
         }
     }
 }
+
+fn main() {}
