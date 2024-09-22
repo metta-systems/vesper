@@ -1,11 +1,21 @@
 //# snafu = "*"
-//# paste = "*"
 //# either = "*"
 //
 // Explore memory table abstractions
 //
 // #![feature(decl_macro)]
-use {core::marker::PhantomData, either::*, paste::paste};
+#![feature(allocator_api)]
+#![allow(unused)]
+#![allow(unused_imports)]
+use {
+    core::marker::PhantomData,
+    either::*,
+    snafu::{ResultExt, Snafu},
+    std::alloc::{alloc_zeroed, dealloc, Layout},
+};
+
+type VirtAddr = u64;
+type PhysAddr = u64;
 
 /// Provides means to extract the next table level index or the block address.
 trait TableIndex {
@@ -21,18 +31,18 @@ trait TableIndex {
             .expect("Arithmetics gone mad");
     }
     // Extract address of a block with appropriate size (used by BlockOnly)
-    fn extract_block_base(entry: u64) {
+    fn extract_block_base(entry: u64) -> u64 {
         entry & Self::BLOCK_ADDR_MASK
     }
     // Extract address of the next table (use by TableOnly) -- aligned to the granule size for VMSAv8
-    fn extract_table_base(entry: u64) {
+    fn extract_table_base(entry: u64) -> u64 {
         entry & Self::TABLE_ADDR_MASK
     }
 }
 
 // pub enum TraverseError {
 
-#[derive(Snafu, Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)] // Snafu
 enum TableError {
     /// The entry does not have the `PRESENT` flag set, so it isn't currently mapped to a frame.
     NotPresent,
@@ -40,11 +50,10 @@ enum TableError {
 
 trait TableOnly {
     type NextTable;
-    fn next_table(&self, virt: VirtAddr) -> Result<Self::NextTable, TableError>;
-    fn extract_table_base(entry: u64) -> PhysAddr; // Extract address of NextTable from this table's entry
+    fn next_table(&self, virt: VirtAddr) -> Result<&mut Self::NextTable, TableError>;
 }
 
-#[derive(Snafu, Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)] // Snafu
 enum BlockError {
     /// The entry does not have the `PRESENT` flag set, so it isn't currently mapped to a frame.
     NotPresent,
@@ -55,35 +64,13 @@ trait BlockOnly {
     fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError>;
 }
 
-trait TableOrBlock: TableOnly + BlockOnly {}
+trait TableOrBlock: TableOnly + BlockOnly {} // ? is it necessary (only if to apply NextStage trait automatically?)
 
-trait NextStage {
-    fn next(&self) -> Either<dyn TableOnly, dyn BlockOnly>;
-}
-
-// Higher-level wrapper struct for Stages
-struct PageTable<Stage, TableIndex> {
-    _marker1: PhantomData<Stage>,
-    _marker2: PhantomData<TableIndex>,
-    entries: [u64; 1 << TableIndex::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-
-// impl<Stage, TI: TableIndex> PageTable<Stage, TI>
-// where
-//     Stage: TableOnly,
-// {
-//     fn next_table(virt: VirtAddr) -> Result<Stage::NextTable, TableError> {
-//         Stage::next_table(virt)
-//     }
-// }
-
-// impl<Stage, TI: TableIndex> PageTable<Stage, TI>
-// where
-//     Stage: BlockOnly,
-// {
-//     fn block(virt: VirtAddr) -> Result<Stage::Block, BlockError> {
-//         Stage::block(virt)
-//     }
+// @todo next() should also take a VirtAddr?
+// trait NextStage: TableOrBlock {
+//     fn next(
+//         &self,
+//     ) -> Either<dyn TableOnly<NextTable = Self::NextTable>, dyn BlockOnly<Block = Self::Block>>;
 // }
 
 // As you can see, the Stage structures are repeated, as the granules (masks), so we need to be able to parameterize them both somehow
@@ -91,31 +78,64 @@ struct PageTable<Stage, TableIndex> {
 // These stage tables (or PageTable<Stage> really) can be implemented in terms of TableIndex::MASK_BITS
 // e.g. struct Stage<I: TableIndex> { pub entries: [u64; 1 << I::MASK_BITS]; }
 // Specific table structures:
-struct Stage1_Gran4k {}
-struct Stage2_Gran4k {}
-struct Stage3_Gran4k {}
-struct Stage4_Gran4k {}
+#[allow(non_camel_case_types)]
+struct Stage1_Gran4k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage2_Gran4k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage3_Gran4k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage4_Gran4k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 
-struct Stage1_Gran16k {}
-struct Stage2_Gran16k {}
-struct Stage3_Gran16k {}
-struct Stage4_Gran16k {}
+#[allow(non_camel_case_types)]
+struct Stage1_Gran16k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage2_Gran16k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage3_Gran16k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage4_Gran16k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 
-struct Stage1_Gran64k {}
-struct Stage2_Gran64k {}
-struct Stage3_Gran64k {}
-struct Stage4_Gran64k {}
+#[allow(non_camel_case_types)]
+struct Stage1_Gran64k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage2_Gran64k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage3_Gran64k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
+#[allow(non_camel_case_types)]
+struct Stage4_Gran64k {
+    // entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 
 macro_rules! impl_table_index {
-    { $stage:ty, index = $mask_bits:usize @ $shift:usize, table = $table_bits:usize @ $table_shift:usize, block = $block_bits:usize @ $block_shift:usize } => {
-        paste! {
-            // struct [< TableIndex_ $stage >];
-            impl TableIndex for $stage { //[< TableIndex_ $stage >]
-                const MASK_BITS: usize = $mask_bits;
-                const SHIFT: usize = $shift;
-                const BLOCK_ADDR_MASK: u64 = (1 << $block_bits - 1) << $block_shift;
-                const TABLE_ADDR_MASK: u64 = (1 << $table_bits - 1) << $table_shift;
-            }
+    { $stage:ty, index = $mask_bits:literal @ $shift:literal, table = $table_bits:literal @ $table_shift:literal, block = $block_bits:literal @ $block_shift:literal } => {
+        impl TableIndex for $stage {
+            const MASK_BITS: usize = $mask_bits;
+            const SHIFT: usize = $shift;
+            const BLOCK_ADDR_MASK: u64 = ((1 << $block_bits) - 1) << $block_shift;
+            const TABLE_ADDR_MASK: u64 = ((1 << $table_bits) - 1) << $table_shift;
         }
     }
 }
@@ -125,69 +145,74 @@ impl_table_index!(Stage2_Gran4k, index = 9@30, table = 36@12, block = 18@30);
 impl_table_index!(Stage3_Gran4k, index = 9@21, table = 36@12, block = 27@21);
 impl_table_index!(Stage4_Gran4k, index = 9@12, table = 36@12, block = 36@12);
 
-impl_table_index!(Stage1_Gran16k, index = 1@47);
-impl_table_index!(Stage2_Gran16k, index = 11@36);
-impl_table_index!(Stage3_Gran16k, index = 11@25);
-impl_table_index!(Stage4_Gran16k, index = 11@14);
+impl_table_index!(Stage1_Gran16k, index = 1@47, table = 34@14, block = 0@0);
+impl_table_index!(Stage2_Gran16k, index = 11@36, table = 34@14, block = 12@36);
+impl_table_index!(Stage3_Gran16k, index = 11@25, table = 34@14, block = 23@25);
+impl_table_index!(Stage4_Gran16k, index = 11@14, table = 34@14, block = 34@14);
 
-impl_table_index!(Stage1_Gran64k, index = 5@42);
-impl_table_index!(Stage2_Gran64k, index = 13@29);
-impl_table_index!(Stage3_Gran64k, index = 13@16);
+impl_table_index!(Stage1_Gran64k, index = 5@42, table = 32@16, block = 5@42); // 4TiB block!
+impl_table_index!(Stage2_Gran64k, index = 13@29, table = 32@16, block = 19@29);
+impl_table_index!(Stage3_Gran64k, index = 13@16, table = 32@16, block = 32@16);
 // impl_table_index!(Stage4_Gran64k, index = 0@0); // N/A
 
 macro_rules! impl_table_only {
     { $stage:ty, $next_stage:ty } => {
-        paste! {
-            impl TableOnly for $stage {
-                type NextTable = PageTable::<$next_stage, [< TableIndex_ $next_stage >] >;
-                fn next_table(&self, virt: VirtAddr) -> Result<Self::NextTable> {
-                    let index = [< TableIndex_ $stage >]::extract_index(virt);
-                    let entry = self.entries[index];
-                    if !bit_set(entry, P) {
-                        return Err(NotPresent);
-                    }
-                    let base = $stage::extract_table_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
-                    let next_table = base as *mut Self::NextTable as &mut Self::NextTable;
-                    Ok(next_table)
+        impl TableOnly for $stage where $stage: TableIndex {
+            type NextTable = $next_stage;
+            fn next_table(&self, virt: VirtAddr) -> Result<&mut Self::NextTable, TableError> {
+                let index = <$stage>::extract_index(virt);
+                let entry = self.entries[index];
+                if !bit_set(entry, P) {
+                    return Err(TableError::NotPresent);
                 }
-                fn extract_table_base(entry: u64) -> PhysAddr {
-                    [< TableIndex_ $stage >]::extract_base(entry)
-                }
+                let base = <$stage>::extract_table_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
+                let next_table = base as *mut Self::NextTable; // ptr.cast<>?
+                let next_table = unsafe { &mut *next_table };
+                Ok(next_table)
             }
         }
     }
+}
+
+// temp:
+const P: usize = 0x0;
+
+fn bit_set(field: u64, bit: usize) -> bool {
+    field & (1 << bit) != 0
 }
 
 macro_rules! impl_block_only {
     { $stage:ty, $block_size:ty } => {
-        paste! {
-            impl BlockOnly for $stage {
-                type Block = Frame<$block_size>; // we will get a block of given size at this stage
-                fn block<[< TableIndex_ $stage >]>(virt: VirtAddr) -> Result<Self::Block, BlockError> {
-                    let index = [< TableIndex_ $stage >]::extract_index(virt)
-                    let entry = self.entries[index];
-                    if !bit_set(entry, P) {
-                        return Err(NotPresent);
-                    }
-                    let phys_base = $stage::extract_block_base(entry);
-                    let block = phys_base as *mut Self::Block as &mut Self::Block;
-                    Ok(block)
+        impl BlockOnly for $stage where $stage: TableIndex {
+            type Block = Frame<$block_size>; // we will get a block of given size from this stage
+            fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError> {
+                let index = <$stage>::extract_index(virt);
+                let entry = self.entries[index];
+                if !bit_set(entry, P) {
+                    return Err(BlockError::NotPresent);
                 }
+                let phys_base = <$stage>::extract_block_base(entry);
+                let block = Frame::new(phys_base.try_into().expect("It fits fine!"));
+                Ok(block)
             }
         }
     }
 }
 
-impl_table_only!(Stage0_Gran4k, Stage1_Gran4k);
 impl_table_only!(Stage1_Gran4k, Stage2_Gran4k);
-impl_block_only!(Stage1_Gran4k, Size1GiB);
 impl_table_only!(Stage2_Gran4k, Stage3_Gran4k);
-impl_block_only!(Stage2_Gran4k, Size2MiB);
-impl_block_only!(Stage3_Gran4k, Size4KiB);
+impl_block_only!(Stage2_Gran4k, Size1GiB);
+impl_table_only!(Stage3_Gran4k, Stage4_Gran4k);
+impl_block_only!(Stage3_Gran4k, Size2MiB);
+impl_block_only!(Stage4_Gran4k, Size4KiB);
+
+macro_rules! impl_next_stage {
+    { $stage:ty, $next_stage:ty, $block:ty } => {}
+}
 
 // now for the TableOnly+BlockOnly combination we need to also provide a resolution method that returns either
-impl_next_level!(Stage1_Gran4k, Stage2_Gran4k, Size1GiB); // this provides next() -> Either<Table,Block>
-impl_next_level!(Stage2_Gran4k, Stage3_Gran4k, Size2MiB);
+impl_next_stage!(Stage1_Gran4k, Stage2_Gran4k, Size1GiB); // this provides next() -> Either<Table,Block>
+impl_next_stage!(Stage2_Gran4k, Stage3_Gran4k, Size2MiB);
 
 // @todo need to also provide next() for TableOnly and for BlockOnly types separately, without Either?
 
@@ -220,90 +245,62 @@ pub trait PageSize: Copy + PartialEq + Eq + PartialOrd + Ord {
     }
 }
 
+macro_rules! make_page {
+    { $name:ident, $debug_str:literal, $shift:literal } => {
+        #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum $name {}
+
+        impl PageSize for $name {
+            const SIZE_AS_DEBUG_STR: &'static str = $debug_str;
+            const SHIFT: usize = $shift;
+        }
+    }
+}
+
 //------------------------
 // Page: with 4kb granule
 //------------------------
 
-/// A standard 4KiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size4KiB {}
-
-impl PageSize for Size4KiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "4KiB";
-    const SHIFT: usize = 12;
-}
+// A standard 4KiB page.
+make_page!(Size4KiB, "4KiB", 12);
 
 //-------------------------
 // Page: with 16kb granule
 //-------------------------
 
-/// A standard 16KiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size16KiB {}
-
-impl PageSize for Size16KiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "16KiB";
-    const SHIFT: usize = 14;
-}
+// A standard 16KiB page.
+make_page!(Size16KiB, "16KiB", 14);
 
 //-------------------------
 // Page: with 64kb granule
 //-------------------------
 
-/// A standard 64KiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size64KiB {}
-
-impl PageSize for Size64KiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "64KiB";
-    const SHIFT: usize = 16;
-}
+// A standard 64KiB page.
+make_page!(Size64KiB, "64KiB", 16);
 
 //--------------------------
 // Blocks: with 4kb granule
 //--------------------------
 
-/// A “huge” 2MiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size2MiB {}
+// A “huge” 2MiB page.
+make_page!(Size2MiB, "2MiB", 21);
 
-impl PageSize for Size2MiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "2MiB";
-    const SHIFT: usize = 21;
-}
-
-/// A “giant” 1GiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size1GiB {}
-
-impl PageSize for Size1GiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "1GiB";
-    const SHIFT: usize = 30;
-}
+// A “giant” 1GiB page.
+make_page!(Size1GiB, "1GiB", 30);
 
 //---------------------------
 // Blocks: with 16kb granule
 //---------------------------
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size32MiB {}
-
-impl PageSize for Size32MiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "32MiB";
-    const SHIFT: usize = 25;
-}
+make_page!(Size32MiB, "32MiB", 25);
 
 //---------------------------
 // Blocks: with 64kb granule
 //---------------------------
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size512MiB {}
+make_page!(Size512MiB, "512MiB", 29);
 
-impl PageSize for Size512MiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "512MiB";
-    const SHIFT: usize = 29;
-}
+make_page!(Size4TiB, "4TiB", 42);
 
 /// Physical page frame.
 struct Frame<P: PageSize> {
@@ -312,10 +309,117 @@ struct Frame<P: PageSize> {
 }
 
 impl<P: PageSize> Frame<P> {
+    // @todo Check base is aligned to _page_size::SHIFT
     pub fn new(base: usize) -> Self {
         Self {
             base,
             _page_size: PhantomData,
         }
     }
+}
+
+struct PageTableAllocator;
+struct FrameAllocator;
+
+#[derive(Debug, Snafu)]
+enum AllocError {
+    InvalidLayout { source: std::alloc::LayoutError },
+}
+
+impl PageTableAllocator {
+    fn alloc<T: TableIndex>() -> Result<*mut T, AllocError> {
+        let size = (1 << T::MASK_BITS) * core::mem::size_of::<u64>();
+        let layout = Layout::from_size_align(size, size).context(InvalidLayoutSnafu)?;
+        println!(
+            "Allocating page table: size {}, align {}",
+            layout.size(),
+            layout.align()
+        );
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert_ne!(ptr as usize, 0);
+        Ok(ptr as *mut T)
+    }
+    fn dealloc<T: TableIndex>(ptr: *mut T) -> Result<(), AllocError> {
+        let size = (1 << T::MASK_BITS) * core::mem::size_of::<u64>();
+        let layout = Layout::from_size_align(size, size).context(InvalidLayoutSnafu)?;
+        unsafe { dealloc(ptr as *mut u8, layout) };
+        Ok(())
+    }
+}
+
+impl FrameAllocator {
+    fn alloc<P: PageSize>() -> Result<Frame<P>, AllocError> {
+        let layout =
+            Layout::from_size_align(1 << P::SHIFT, 1 << P::SHIFT).context(InvalidLayoutSnafu)?;
+        println!(
+            "Allocating frame: size {}, align {}",
+            layout.size(),
+            layout.align()
+        );
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert_ne!(ptr as usize, 0);
+        Ok(Frame::new(ptr as usize))
+    }
+    fn dealloc<P: PageSize>(ptr: Frame<P>) -> Result<(), AllocError> {
+        let layout =
+            Layout::from_size_align(1 << P::SHIFT, 1 << P::SHIFT).context(InvalidLayoutSnafu)?;
+        unsafe { dealloc(ptr.base as *mut u8, layout) };
+        Ok(())
+    }
+}
+
+fn main() {
+    println!("Hello, play");
+
+    println!("Stage1_Gran4k {}", core::mem::size_of::<Stage1_Gran4k>());
+    println!("Stage2_Gran4k {}", core::mem::size_of::<Stage2_Gran4k>());
+    println!("Stage3_Gran4k {}", core::mem::size_of::<Stage3_Gran4k>());
+    println!("Stage4_Gran4k {}", core::mem::size_of::<Stage4_Gran4k>());
+
+    println!("Stage1_Gran16k {}", core::mem::size_of::<Stage1_Gran16k>());
+    println!("Stage2_Gran16k {}", core::mem::size_of::<Stage2_Gran16k>());
+    println!("Stage3_Gran16k {}", core::mem::size_of::<Stage3_Gran16k>());
+    println!("Stage4_Gran16k {}", core::mem::size_of::<Stage4_Gran16k>());
+
+    println!("Stage1_Gran64k {}", core::mem::size_of::<Stage1_Gran64k>());
+    println!("Stage2_Gran64k {}", core::mem::size_of::<Stage2_Gran64k>());
+    println!("Stage3_Gran64k {}", core::mem::size_of::<Stage3_Gran64k>());
+    println!("Stage4_Gran64k {}", core::mem::size_of::<Stage4_Gran64k>());
+
+    // // Build page table hierarchy from Stage1 down to Stage4.
+
+    // Using Granule4k:
+    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran4k>();
+    let _leaf = FrameAllocator::alloc::<Size4KiB>();
+
+    // // Using Granule16k:
+    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran16k>();
+    let _leaf = FrameAllocator::alloc::<Size16KiB>();
+
+    // // Using Granule64k:
+    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran64k>();
+    // let arena = allocator.grab_frame::<Granule64k>(); // give parent table here, to extract granule
+    // let s2_table = s1_table.allocate_page_from(arena);
+    // let arena = allocator.grab_frame::<Granule64k>();
+    // let s3_table = s2_table.allocate_page_from(arena);
+    let _leaf = FrameAllocator::alloc::<Size64KiB>();
+
+    //=================
+    // TRAVERSE TABLES
+    //=================
+
+    // let base_addr = 124467000usize; // this comes from TTBRx register or some table base variable for each process.
+
+    // // everything starts with a translation table base address
+    // let sys_l0_table = base_addr as *const Stage1<G>;
+
+    // // Access the table using virtual addresses (each stage consumes more bits of the address).
+    // let l0_table = sys_l0_table;
+    // let l1 = l0_table[virt_addr];
+    // let l2 = l1_table[virt_addr];
+    // let phys = l2_table[virt_addr];
+
+    // // to access physical memory from kernel
+    // let phys = 123456usize;
+    // let kern_phys = phys.phys_to_kernel();
 }
