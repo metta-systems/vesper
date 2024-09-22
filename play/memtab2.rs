@@ -1,5 +1,4 @@
 //# snafu = "*"
-//# paste = "*"
 //# either = "*"
 //
 // Explore memory table abstractions
@@ -21,11 +20,11 @@ trait TableIndex {
             .expect("Arithmetics gone mad");
     }
     // Extract address of a block with appropriate size (used by BlockOnly)
-    fn extract_block_base(entry: u64) {
+    fn extract_block_base(entry: u64) -> u64 {
         entry & Self::BLOCK_ADDR_MASK
     }
     // Extract address of the next table (use by TableOnly) -- aligned to the granule size for VMSAv8
-    fn extract_table_base(entry: u64) {
+    fn extract_table_base(entry: u64) -> u64 {
         entry & Self::TABLE_ADDR_MASK
     }
 }
@@ -41,7 +40,6 @@ enum TableError {
 trait TableOnly {
     type NextTable;
     fn next_table(&self, virt: VirtAddr) -> Result<Self::NextTable, TableError>;
-    fn extract_table_base(entry: u64) -> PhysAddr; // Extract address of NextTable from this table's entry
 }
 
 #[derive(Snafu, Debug, Clone, Copy, PartialEq)]
@@ -55,35 +53,11 @@ trait BlockOnly {
     fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError>;
 }
 
-trait TableOrBlock: TableOnly + BlockOnly {}
+trait TableOrBlock: TableOnly + BlockOnly {} // ? is it necessary (only if to apply NextStage trait automatically?)
 
 trait NextStage {
     fn next(&self) -> Either<dyn TableOnly, dyn BlockOnly>;
 }
-
-// Higher-level wrapper struct for Stages
-// struct PageTable<Stage, TableIndex> {
-//     _marker1: PhantomData<Stage>,
-//     _marker2: PhantomData<TableIndex>,
-// }
-
-// impl<Stage, TI: TableIndex> PageTable<Stage, TI>
-// where
-//     Stage: TableOnly,
-// {
-//     fn next_table(virt: VirtAddr) -> Result<Stage::NextTable, TableError> {
-//         Stage::next_table(virt)
-//     }
-// }
-
-// impl<Stage, TI: TableIndex> PageTable<Stage, TI>
-// where
-//     Stage: BlockOnly,
-// {
-//     fn block(virt: VirtAddr) -> Result<Stage::Block, BlockError> {
-//         Stage::block(virt)
-//     }
-// }
 
 // As you can see, the Stage structures are repeated, as the granules (masks), so we need to be able to parameterize them both somehow
 // e.g. mask depends on both stage and granule
@@ -115,14 +89,11 @@ struct Stage4_Gran64k {}
 
 macro_rules! impl_table_index {
     { $stage:ty, index = $mask_bits:usize @ $shift:usize, table = $table_bits:usize @ $table_shift:usize, block = $block_bits:usize @ $block_shift:usize } => {
-        paste! {
-            // struct [< TableIndex_ $stage >];
-            impl TableIndex for $stage { //[< TableIndex_ $stage >]
-                const MASK_BITS: usize = $mask_bits;
-                const SHIFT: usize = $shift;
-                const BLOCK_ADDR_MASK: u64 = (1 << $block_bits - 1) << $block_shift;
-                const TABLE_ADDR_MASK: u64 = (1 << $table_bits - 1) << $table_shift;
-            }
+        impl TableIndex for $stage {
+            const MASK_BITS: usize = $mask_bits;
+            const SHIFT: usize = $shift;
+            const BLOCK_ADDR_MASK: u64 = (1 << $block_bits - 1) << $block_shift;
+            const TABLE_ADDR_MASK: u64 = (1 << $table_bits - 1) << $table_shift;
         }
     }
 }
@@ -144,19 +115,17 @@ impl_table_index!(Stage3_Gran64k, index = 13@16, table = 32@16, block = 32@16);
 
 macro_rules! impl_table_only {
     { $stage:ty, $next_stage:ty } => {
-        paste! {
-            impl TableOnly for $stage where $stage: TableIndex {
-                type NextTable = $next_stage;
-                fn next_table(&self, virt: VirtAddr) -> Result<Self::NextTable> {
-                    let index = $stage::extract_index(virt);
-                    let entry = self.entries[index];
-                    if !bit_set(entry, P) {
-                        return Err(NotPresent);
-                    }
-                    let base = $stage::extract_table_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
-                    let next_table = base as *mut Self::NextTable as &mut Self::NextTable;
-                    Ok(next_table)
+        impl TableOnly for $stage where $stage: TableIndex {
+            type NextTable = $next_stage;
+            fn next_table(&self, virt: VirtAddr) -> Result<Self::NextTable> {
+                let index = $stage::extract_index(virt);
+                let entry = self.entries[index];
+                if !bit_set(entry, P) {
+                    return Err(NotPresent);
                 }
+                let base = $stage::extract_table_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
+                let next_table = base as *mut Self::NextTable as &mut Self::NextTable;
+                Ok(next_table)
             }
         }
     }
@@ -171,19 +140,17 @@ fn bit_set(field: u64, bit: usize) -> bool {
 
 macro_rules! impl_block_only {
     { $stage:ty, $block_size:ty } => {
-        paste! {
-            impl BlockOnly for $stage where $stage: TableIndex {
-                type Block = Frame<$block_size>; // we will get a block of given size at this stage
-                fn block(virt: VirtAddr) -> Result<Self::Block, BlockError> {
-                    let index = $stage::extract_index(virt);
-                    let entry = self.entries[index];
-                    if !bit_set(entry, P) {
-                        return Err(NotPresent);
-                    }
-                    let phys_base = $stage::extract_block_base(entry);
-                    let block = phys_base as *mut Self::Block as &mut Self::Block;
-                    Ok(block)
+        impl BlockOnly for $stage where $stage: TableIndex {
+            type Block = Frame<$block_size>; // we will get a block of given size at this stage
+            fn block(virt: VirtAddr) -> Result<Self::Block, BlockError> {
+                let index = $stage::extract_index(virt);
+                let entry = self.entries[index];
+                if !bit_set(entry, P) {
+                    return Err(NotPresent);
                 }
+                let phys_base = $stage::extract_block_base(entry);
+                let block = phys_base as *mut Self::Block as &mut Self::Block;
+                Ok(block)
             }
         }
     }
