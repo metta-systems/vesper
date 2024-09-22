@@ -147,18 +147,19 @@ trait Granule {
 }
 
 /// Abstract over the possible page sizes, 4KiB, 16KiB, 2MiB, 1GiB.
+/// ... .arch independent page sizes actually, so not linked to granules or anything...
 /// Page sizes depend on stage and granule size - could be auto-derived?
 pub trait PageSize: Copy + PartialEq + Eq + PartialOrd + Ord {
-    /// The page size in bytes.
-    const SIZE: usize = 1 << Self::SHIFT;
-
     /// A string representation of the page size for debug output.
     const SIZE_AS_DEBUG_STR: &'static str;
 
     /// The page shift in bits.
     const SHIFT: usize;
 
-    /// The page mask in bits.
+    /// The page size in bytes.
+    const SIZE: usize = 1 << Self::SHIFT;
+
+    /// The page size mask in bits.
     const MASK: u64 = 1 << Self::SHIFT - 1;
 
     fn alignment() -> usize {
