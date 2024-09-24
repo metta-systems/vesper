@@ -8,7 +8,10 @@
 #![allow(unused)]
 #![allow(unused_imports)]
 use {
-    core::marker::PhantomData,
+    core::{
+        marker::PhantomData,
+        ops::{Index, IndexMut},
+    },
     either::*,
     snafu::{ResultExt, Snafu},
     std::alloc::{alloc_zeroed, dealloc, Layout},
@@ -64,7 +67,12 @@ trait BlockOnly {
     fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError>;
 }
 
-trait TableOrBlock: TableOnly + BlockOnly {} // ? is it necessary (only if to apply NextStage trait automatically?)
+trait TableOrBlock {
+    type NextTable;
+    fn next_table(&self, virt: VirtAddr) -> Result<&mut Self::NextTable, TableError>;
+    type Block;
+    fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError>;
+}
 
 // @todo next() should also take a VirtAddr?
 // trait NextStage: TableOrBlock {
@@ -73,61 +81,35 @@ trait TableOrBlock: TableOnly + BlockOnly {} // ? is it necessary (only if to ap
 //     ) -> Either<dyn TableOnly<NextTable = Self::NextTable>, dyn BlockOnly<Block = Self::Block>>;
 // }
 
-// As you can see, the Stage structures are repeated, as the granules (masks), so we need to be able to parameterize them both somehow
+macro_rules! make_stage {
+    { name:$ident } => {
+        #[allow(non_camel_case_types)]
+        struct $name {
+            entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+        }
+    }
+}
+
+// As you can see, the Stage structures are repeated, as are the granules (masks),
+// so we need to be able to parameterize them both somehow
 // e.g. mask depends on both stage and granule
 // These stage tables (or PageTable<Stage> really) can be implemented in terms of TableIndex::MASK_BITS
 // e.g. struct Stage<I: TableIndex> { pub entries: [u64; 1 << I::MASK_BITS]; }
 // Specific table structures:
-#[allow(non_camel_case_types)]
-struct Stage1_Gran4k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage2_Gran4k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage3_Gran4k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage4_Gran4k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
 
-#[allow(non_camel_case_types)]
-struct Stage1_Gran16k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage2_Gran16k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage3_Gran16k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage4_Gran16k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
+make_stage!(Stage1_Gran4k);
+make_stage!(Stage2_Gran4k);
+make_stage!(Stage3_Gran4k);
+make_stage!(Stage4_Gran4k);
 
-#[allow(non_camel_case_types)]
-struct Stage1_Gran64k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage2_Gran64k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage3_Gran64k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage4_Gran64k {
-    // entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
+make_stage!(Stage1_Gran16k);
+make_stage!(Stage2_Gran16k);
+make_stage!(Stage3_Gran16k);
+make_stage!(Stage4_Gran16k);
+
+make_stage!(Stage1_Gran64k);
+make_stage!(Stage2_Gran64k);
+make_stage!(Stage3_Gran64k);
 
 macro_rules! impl_table_index {
     { $stage:ty, index = $mask_bits:literal @ $shift:literal, table = $table_bits:literal @ $table_shift:literal, block = $block_bits:literal @ $block_shift:literal } => {
@@ -155,16 +137,22 @@ impl_table_index!(Stage2_Gran64k, index = 13@29, table = 32@16, block = 19@29);
 impl_table_index!(Stage3_Gran64k, index = 13@16, table = 32@16, block = 32@16);
 // impl_table_index!(Stage4_Gran64k, index = 0@0); // N/A
 
+unsafe fn next_level(virt: VirtAddr) -> Result<PhysAddr, TableError> {
+    let index = <$stage>::extract_index(virt);
+    let entry = self.entries[index];
+    if !bit_set(entry, P) {
+        return Err(TableError::NotPresent);
+    }
+    Ok(base)
+}
+
 macro_rules! impl_table_only {
     { $stage:ty, $next_stage:ty } => {
         impl TableOnly for $stage where $stage: TableIndex {
             type NextTable = $next_stage;
+
             fn next_table(&self, virt: VirtAddr) -> Result<&mut Self::NextTable, TableError> {
-                let index = <$stage>::extract_index(virt);
-                let entry = self.entries[index];
-                if !bit_set(entry, P) {
-                    return Err(TableError::NotPresent);
-                }
+                let entry = next_level(virt);
                 let base = <$stage>::extract_table_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
                 let next_table = base as *mut Self::NextTable; // ptr.cast<>?
                 let next_table = unsafe { &mut *next_table };
@@ -185,12 +173,9 @@ macro_rules! impl_block_only {
     { $stage:ty, $block_size:ty } => {
         impl BlockOnly for $stage where $stage: TableIndex {
             type Block = Frame<$block_size>; // we will get a block of given size from this stage
+
             fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError> {
-                let index = <$stage>::extract_index(virt);
-                let entry = self.entries[index];
-                if !bit_set(entry, P) {
-                    return Err(BlockError::NotPresent);
-                }
+                let entry = next_level(virt);
                 let phys_base = <$stage>::extract_block_base(entry);
                 let block = Frame::new(phys_base.try_into().expect("It fits fine!"));
                 Ok(block)
@@ -199,15 +184,98 @@ macro_rules! impl_block_only {
     }
 }
 
+// Granularity 4KiB
 impl_table_only!(Stage1_Gran4k, Stage2_Gran4k);
+
 impl_table_only!(Stage2_Gran4k, Stage3_Gran4k);
 impl_block_only!(Stage2_Gran4k, Size1GiB);
+
 impl_table_only!(Stage3_Gran4k, Stage4_Gran4k);
 impl_block_only!(Stage3_Gran4k, Size2MiB);
+
 impl_block_only!(Stage4_Gran4k, Size4KiB);
 
+// Granularity 16KiB
+impl_table_only!(Stage1_Gran16k, Stage2_Gran16k);
+
+impl_table_only!(Stage2_Gran16k, Stage3_Gran16k);
+impl_block_only!(Stage2_Gran16k, Size1GiB);
+
+impl_table_only!(Stage3_Gran16k, Stage4_Gran16k);
+impl_block_only!(Stage3_Gran16k, Size2MiB);
+
+impl_block_only!(Stage4_Gran16k, Size4KiB);
+
+// Granularity 64KiB
+impl_table_only!(Stage1_Gran64k, Stage2_Gran64k);
+impl_block_only!(Stage1_Gran64k, Size4TiB);
+
+impl_table_only!(Stage2_Gran64k, Stage3_Gran64k);
+impl_block_only!(Stage2_Gran64k, Size512MiB);
+
+impl_block_only!(Stage3_Gran64k, Size64KiB);
+
 macro_rules! impl_next_stage {
-    { $stage:ty, $next_stage:ty, $block:ty } => {}
+    { $stage:ty, $next_stage:ty, $block:ty } => {
+        // @todo: Index for slicerange (restricted range! must maintain alignments)
+        // or range to fill in sequential table blocks on aarch64
+        // e.g. stage4[0..15] = compound_large_segment; <- not using the VirtAddr here..
+        impl Index<VirtAddr> for $stage
+        where
+             $stage: TableOnly,
+        {
+            type Output = Self::NextTable;
+
+            fn index(&self, virt: VirtAddr) -> &Self::Output {
+                let tbl = <$stage as TableOnly>::next_table(virt);
+                &*tbl
+            }
+        }
+
+        impl IndexMut<VirtAddr> for &mut $stage
+        where
+             $stage: TableOnly,
+        {
+            fn index_mut(&mut self, virt: VirtAddr) -> &mut Self::Output {
+                let index = Self::extract_index(virt);
+                Self::extract_table_base(self.entries[index])
+            }
+        }
+
+        impl Index<VirtAddr> for &$stage
+        where
+            $stage: BlockOnly,
+        {
+            type Output = <Self as BlockOnly>::Block;
+
+            fn index(&self, virt: VirtAddr) -> &Self::Output {
+                let index = Self::extract_index(virt);
+                Self::extract_block_base(self.entries[index])
+            }
+        }
+
+        impl IndexMut<VirtAddr> for &mut $stage
+        where
+            $stage: BlockOnly,
+        {
+            // Should only return a mutable reference to entries[index] so that we
+            // could replace it.
+            fn index_mut(&mut self, virt: VirtAddr) -> &mut Self::Output {
+                let index = Self::extract_index(virt);
+                &mut self.entries[index] // but can't be just &mut u64, we need a proper table type? probably need to overload assignments too?
+            }
+        }
+
+        // impl<T> Index<VirtAddr> for T
+        // where
+        //     T: TableIndex + TableOrBlock,
+        // {
+        //     type Output = Either<T::NextTable, T::Block>;
+        //     fn index(&self, index: VirtAddr) -> &Self::Output {
+        //         self.entries[index]
+        //     }
+        // }
+    }
 }
 
 // now for the TableOnly+BlockOnly combination we need to also provide a resolution method that returns either
@@ -327,7 +395,7 @@ enum AllocError {
 }
 
 impl PageTableAllocator {
-    fn alloc<T: TableIndex>() -> Result<*mut T, AllocError> {
+    fn alloc<T: TableIndex>() -> Result<&mut T, AllocError> {
         let size = (1 << T::MASK_BITS) * core::mem::size_of::<u64>();
         let layout = Layout::from_size_align(size, size).context(InvalidLayoutSnafu)?;
         println!(
@@ -368,7 +436,7 @@ impl FrameAllocator {
     }
 }
 
-fn main() {
+fn main() -> Result<(), AllocError> {
     println!("Hello, play");
 
     println!("Stage1_Gran4k {}", core::mem::size_of::<Stage1_Gran4k>());
@@ -386,29 +454,55 @@ fn main() {
     println!("Stage3_Gran64k {}", core::mem::size_of::<Stage3_Gran64k>());
     println!("Stage4_Gran64k {}", core::mem::size_of::<Stage4_Gran64k>());
 
-    // // Build page table hierarchy from Stage1 down to Stage4.
+    // Build page table hierarchy from Stage1 down to Stage4.
+    let virt: VirtAddr = 0xdead_beef;
 
     // Using Granule4k:
-    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran4k>();
-    let _leaf = FrameAllocator::alloc::<Size4KiB>();
+    let s1_table = PageTableAllocator::alloc::<Stage1_Gran4k>()?;
+    let s2_table = PageTableAllocator::alloc::<Stage2_Gran4k>()?;
+    s1_table[virt] = s2_table;
+    let s3_table = PageTableAllocator::alloc::<Stage3_Gran4k>()?;
+    s2_table[virt] = s3_table;
+    let s4_table = PageTableAllocator::alloc::<Stage4_Gran4k>()?;
+    s3_table[virt] = s4_table;
+    let leaf = FrameAllocator::alloc::<Size4KiB>()?;
+    s4_table[virt] = leaf;
 
-    // // Using Granule16k:
-    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran16k>();
-    let _leaf = FrameAllocator::alloc::<Size16KiB>();
+    // Using Granule16k:
+    let mut s1_table = PageTableAllocator::alloc::<Stage1_Gran16k>()?;
+    let mut s2_table = PageTableAllocator::alloc::<Stage2_Gran16k>()?;
+    s1_table[virt] = s2_table;
+    let mut s3_table = PageTableAllocator::alloc::<Stage3_Gran16k>()?;
+    s2_table[virt] = s3_table;
+    let mut s4_table = PageTableAllocator::alloc::<Stage4_Gran16k>()?;
+    s3_table[virt] = s4_table;
+    let leaf = FrameAllocator::alloc::<Size16KiB>()?;
+    s4_table[virt] = leaf;
+
+    // This should fail to compile (accidentally wrong stage granule)
+    let mut s3_table = PageTableAllocator::alloc::<Stage3_Gran4k>()?;
+    s2_table[virt] = s3_table;
+
+    // This too (accidentally wrong table level)
+    let s3_table = PageTableAllocator::alloc::<Stage4_Gran16k>()?;
+    s2_table[virt] = s3_table;
 
     // // Using Granule64k:
-    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran64k>();
-    // let arena = allocator.grab_frame::<Granule64k>(); // give parent table here, to extract granule
-    // let s2_table = s1_table.allocate_page_from(arena);
-    // let arena = allocator.grab_frame::<Granule64k>();
-    // let s3_table = s2_table.allocate_page_from(arena);
-    let _leaf = FrameAllocator::alloc::<Size64KiB>();
+    let s1_table = PageTableAllocator::alloc::<Stage1_Gran64k>()?;
+    let s2_table = PageTableAllocator::alloc::<Stage2_Gran64k>()?;
+    s1_table[virt] = s2_table;
+    let s3_table = PageTableAllocator::alloc::<Stage3_Gran64k>()?;
+    s2_table[virt] = s3_table;
+    let leaf = FrameAllocator::alloc::<Size64KiB>()?;
+    s3_table[virt] = leaf;
 
     //=================
     // TRAVERSE TABLES
     //=================
 
-    // let base_addr = 124467000usize; // this comes from TTBRx register or some table base variable for each process.
+    let virt: VirtAddr = 0xdead_beef;
+
+    // let tt_base_addr = 124467000usize; // this comes from TTBRx register or some table base variable for each process.
 
     // // everything starts with a translation table base address
     // let sys_l0_table = base_addr as *const Stage1<G>;
@@ -422,4 +516,5 @@ fn main() {
     // // to access physical memory from kernel
     // let phys = 123456usize;
     // let kern_phys = phys.phys_to_kernel();
+    Ok(())
 }
