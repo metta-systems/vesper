@@ -368,7 +368,7 @@ impl FrameAllocator {
     }
 }
 
-fn main() {
+fn main() -> Result<(), AllocError> {
     println!("Hello, play");
 
     println!("Stage1_Gran4k {}", core::mem::size_of::<Stage1_Gran4k>());
@@ -386,29 +386,55 @@ fn main() {
     println!("Stage3_Gran64k {}", core::mem::size_of::<Stage3_Gran64k>());
     println!("Stage4_Gran64k {}", core::mem::size_of::<Stage4_Gran64k>());
 
-    // // Build page table hierarchy from Stage1 down to Stage4.
+    // Build page table hierarchy from Stage1 down to Stage4.
+    let virt: VirtAddr = 0xdead_beef;
 
     // Using Granule4k:
-    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran4k>();
-    let _leaf = FrameAllocator::alloc::<Size4KiB>();
+    let s1_table = PageTableAllocator::alloc::<Stage1_Gran4k>()?;
+    let s2_table = PageTableAllocator::alloc::<Stage2_Gran4k>()?;
+    s1_table[virt] = s2_table;
+    let s3_table = PageTableAllocator::alloc::<Stage3_Gran4k>()?;
+    s2_table[virt] = s3_table;
+    let s4_table = PageTableAllocator::alloc::<Stage4_Gran4k>()?;
+    s3_table[virt] = s4_table;
+    let leaf = FrameAllocator::alloc::<Size4KiB>()?;
+    s4_table[virt] = leaf;
 
-    // // Using Granule16k:
-    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran16k>();
-    let _leaf = FrameAllocator::alloc::<Size16KiB>();
+    // Using Granule16k:
+    let s1_table = PageTableAllocator::alloc::<Stage1_Gran16k>()?;
+    let s2_table = PageTableAllocator::alloc::<Stage2_Gran16k>()?;
+    s1_table[virt] = s2_table;
+    let s3_table = PageTableAllocator::alloc::<Stage3_Gran16k>()?;
+    s2_table[virt] = s3_table;
+    let s4_table = PageTableAllocator::alloc::<Stage4_Gran16k>()?;
+    s3_table[virt] = s4_table;
+    let leaf = FrameAllocator::alloc::<Size16KiB>()?;
+    s4_table[virt] = leaf;
+
+    // This should fail to compile (accidentally wrong stage granule)
+    let s3_table = PageTableAllocator::alloc::<Stage3_Gran4k>()?;
+    s2_table[virt] = s3_table;
+
+    // This too (accidentally wrong table level)
+    let s3_table = PageTableAllocator::alloc::<Stage4_Gran16k>()?;
+    s2_table[virt] = s3_table;
 
     // // Using Granule64k:
-    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran64k>();
-    // let arena = allocator.grab_frame::<Granule64k>(); // give parent table here, to extract granule
-    // let s2_table = s1_table.allocate_page_from(arena);
-    // let arena = allocator.grab_frame::<Granule64k>();
-    // let s3_table = s2_table.allocate_page_from(arena);
-    let _leaf = FrameAllocator::alloc::<Size64KiB>();
+    let s1_table = PageTableAllocator::alloc::<Stage1_Gran64k>()?;
+    let s2_table = PageTableAllocator::alloc::<Stage2_Gran64k>()?;
+    s1_table[virt] = s2_table;
+    let s3_table = PageTableAllocator::alloc::<Stage3_Gran64k>()?;
+    s2_table[virt] = s3_table;
+    let leaf = FrameAllocator::alloc::<Size64KiB>()?;
+    s3_table[virt] = leaf;
 
     //=================
     // TRAVERSE TABLES
     //=================
 
-    // let base_addr = 124467000usize; // this comes from TTBRx register or some table base variable for each process.
+    let virt: VirtAddr = 0xdead_beef;
+
+    // let tt_base_addr = 124467000usize; // this comes from TTBRx register or some table base variable for each process.
 
     // // everything starts with a translation table base address
     // let sys_l0_table = base_addr as *const Stage1<G>;
@@ -422,4 +448,5 @@ fn main() {
     // // to access physical memory from kernel
     // let phys = 123456usize;
     // let kern_phys = phys.phys_to_kernel();
+    Ok(())
 }
