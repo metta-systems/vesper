@@ -4,9 +4,15 @@
 // Explore memory table abstractions
 //
 // #![feature(decl_macro)]
-#[allow(unused)]
-#[allow(unused_imports)]
-use {core::marker::PhantomData, either::*, snafu::Snafu};
+#![feature(allocator_api)]
+#![allow(unused)]
+#![allow(unused_imports)]
+use {
+    core::marker::PhantomData,
+    either::*,
+    snafu::{ResultExt, Snafu},
+    std::alloc::{alloc_zeroed, dealloc, Layout},
+};
 
 type VirtAddr = u64;
 type PhysAddr = u64;
@@ -90,22 +96,38 @@ struct Stage4_Gran4k {
 }
 
 #[allow(non_camel_case_types)]
-struct Stage1_Gran16k {}
+struct Stage1_Gran16k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 #[allow(non_camel_case_types)]
-struct Stage2_Gran16k {}
+struct Stage2_Gran16k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 #[allow(non_camel_case_types)]
-struct Stage3_Gran16k {}
+struct Stage3_Gran16k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 #[allow(non_camel_case_types)]
-struct Stage4_Gran16k {}
+struct Stage4_Gran16k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 
 #[allow(non_camel_case_types)]
-struct Stage1_Gran64k {}
+struct Stage1_Gran64k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 #[allow(non_camel_case_types)]
-struct Stage2_Gran64k {}
+struct Stage2_Gran64k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 #[allow(non_camel_case_types)]
-struct Stage3_Gran64k {}
+struct Stage3_Gran64k {
+    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 #[allow(non_camel_case_types)]
-struct Stage4_Gran64k {}
+struct Stage4_Gran64k {
+    // entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+}
 
 macro_rules! impl_table_index {
     { $stage:ty, index = $mask_bits:literal @ $shift:literal, table = $table_bits:literal @ $table_shift:literal, block = $block_bits:literal @ $block_shift:literal } => {
@@ -162,7 +184,7 @@ fn bit_set(field: u64, bit: usize) -> bool {
 macro_rules! impl_block_only {
     { $stage:ty, $block_size:ty } => {
         impl BlockOnly for $stage where $stage: TableIndex {
-            type Block = Frame<$block_size>; // we will get a block of given size at this stage
+            type Block = Frame<$block_size>; // we will get a block of given size from this stage
             fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError> {
                 let index = <$stage>::extract_index(virt);
                 let entry = self.entries[index];
@@ -223,98 +245,62 @@ pub trait PageSize: Copy + PartialEq + Eq + PartialOrd + Ord {
     }
 }
 
+macro_rules! make_page {
+    { $name:ident, $debug_str:literal, $shift:literal } => {
+        #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+        pub enum $name {}
+
+        impl PageSize for $name {
+            const SIZE_AS_DEBUG_STR: &'static str = $debug_str;
+            const SHIFT: usize = $shift;
+        }
+    }
+}
+
 //------------------------
 // Page: with 4kb granule
 //------------------------
 
-/// A standard 4KiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size4KiB {}
-
-impl PageSize for Size4KiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "4KiB";
-    const SHIFT: usize = 12;
-}
+// A standard 4KiB page.
+make_page!(Size4KiB, "4KiB", 12);
 
 //-------------------------
 // Page: with 16kb granule
 //-------------------------
 
-/// A standard 16KiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size16KiB {}
-
-impl PageSize for Size16KiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "16KiB";
-    const SHIFT: usize = 14;
-}
+// A standard 16KiB page.
+make_page!(Size16KiB, "16KiB", 14);
 
 //-------------------------
 // Page: with 64kb granule
 //-------------------------
 
-/// A standard 64KiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size64KiB {}
-
-impl PageSize for Size64KiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "64KiB";
-    const SHIFT: usize = 16;
-}
+// A standard 64KiB page.
+make_page!(Size64KiB, "64KiB", 16);
 
 //--------------------------
 // Blocks: with 4kb granule
 //--------------------------
 
-/// A “huge” 2MiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size2MiB {}
+// A “huge” 2MiB page.
+make_page!(Size2MiB, "2MiB", 21);
 
-impl PageSize for Size2MiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "2MiB";
-    const SHIFT: usize = 21;
-}
-
-/// A “giant” 1GiB page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size1GiB {}
-
-impl PageSize for Size1GiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "1GiB";
-    const SHIFT: usize = 30;
-}
+// A “giant” 1GiB page.
+make_page!(Size1GiB, "1GiB", 30);
 
 //---------------------------
 // Blocks: with 16kb granule
 //---------------------------
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size32MiB {}
-
-impl PageSize for Size32MiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "32MiB";
-    const SHIFT: usize = 25;
-}
+make_page!(Size32MiB, "32MiB", 25);
 
 //---------------------------
 // Blocks: with 64kb granule
 //---------------------------
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size512MiB {}
+make_page!(Size512MiB, "512MiB", 29);
 
-impl PageSize for Size512MiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "512MiB";
-    const SHIFT: usize = 29;
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Size4TiB {}
-
-impl PageSize for Size4TiB {
-    const SIZE_AS_DEBUG_STR: &'static str = "4TiB";
-    const SHIFT: usize = 42;
-}
+make_page!(Size4TiB, "4TiB", 42);
 
 /// Physical page frame.
 struct Frame<P: PageSize> {
@@ -332,4 +318,108 @@ impl<P: PageSize> Frame<P> {
     }
 }
 
-fn main() {}
+struct PageTableAllocator;
+struct FrameAllocator;
+
+#[derive(Debug, Snafu)]
+enum AllocError {
+    InvalidLayout { source: std::alloc::LayoutError },
+}
+
+impl PageTableAllocator {
+    fn alloc<T: TableIndex>() -> Result<*mut T, AllocError> {
+        let size = (1 << T::MASK_BITS) * core::mem::size_of::<u64>();
+        let layout = Layout::from_size_align(size, size).context(InvalidLayoutSnafu)?;
+        println!(
+            "Allocating page table: size {}, align {}",
+            layout.size(),
+            layout.align()
+        );
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert_ne!(ptr as usize, 0);
+        Ok(ptr as *mut T)
+    }
+    fn dealloc<T: TableIndex>(ptr: *mut T) -> Result<(), AllocError> {
+        let size = (1 << T::MASK_BITS) * core::mem::size_of::<u64>();
+        let layout = Layout::from_size_align(size, size).context(InvalidLayoutSnafu)?;
+        unsafe { dealloc(ptr as *mut u8, layout) };
+        Ok(())
+    }
+}
+
+impl FrameAllocator {
+    fn alloc<P: PageSize>() -> Result<Frame<P>, AllocError> {
+        let layout =
+            Layout::from_size_align(1 << P::SHIFT, 1 << P::SHIFT).context(InvalidLayoutSnafu)?;
+        println!(
+            "Allocating frame: size {}, align {}",
+            layout.size(),
+            layout.align()
+        );
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert_ne!(ptr as usize, 0);
+        Ok(Frame::new(ptr as usize))
+    }
+    fn dealloc<P: PageSize>(ptr: Frame<P>) -> Result<(), AllocError> {
+        let layout =
+            Layout::from_size_align(1 << P::SHIFT, 1 << P::SHIFT).context(InvalidLayoutSnafu)?;
+        unsafe { dealloc(ptr.base as *mut u8, layout) };
+        Ok(())
+    }
+}
+
+fn main() {
+    println!("Hello, play");
+
+    println!("Stage1_Gran4k {}", core::mem::size_of::<Stage1_Gran4k>());
+    println!("Stage2_Gran4k {}", core::mem::size_of::<Stage2_Gran4k>());
+    println!("Stage3_Gran4k {}", core::mem::size_of::<Stage3_Gran4k>());
+    println!("Stage4_Gran4k {}", core::mem::size_of::<Stage4_Gran4k>());
+
+    println!("Stage1_Gran16k {}", core::mem::size_of::<Stage1_Gran16k>());
+    println!("Stage2_Gran16k {}", core::mem::size_of::<Stage2_Gran16k>());
+    println!("Stage3_Gran16k {}", core::mem::size_of::<Stage3_Gran16k>());
+    println!("Stage4_Gran16k {}", core::mem::size_of::<Stage4_Gran16k>());
+
+    println!("Stage1_Gran64k {}", core::mem::size_of::<Stage1_Gran64k>());
+    println!("Stage2_Gran64k {}", core::mem::size_of::<Stage2_Gran64k>());
+    println!("Stage3_Gran64k {}", core::mem::size_of::<Stage3_Gran64k>());
+    println!("Stage4_Gran64k {}", core::mem::size_of::<Stage4_Gran64k>());
+
+    // // Build page table hierarchy from Stage1 down to Stage4.
+
+    // Using Granule4k:
+    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran4k>();
+    let _leaf = FrameAllocator::alloc::<Size4KiB>();
+
+    // // Using Granule16k:
+    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran16k>();
+    let _leaf = FrameAllocator::alloc::<Size16KiB>();
+
+    // // Using Granule64k:
+    let _s1_table = PageTableAllocator::alloc::<Stage1_Gran64k>();
+    // let arena = allocator.grab_frame::<Granule64k>(); // give parent table here, to extract granule
+    // let s2_table = s1_table.allocate_page_from(arena);
+    // let arena = allocator.grab_frame::<Granule64k>();
+    // let s3_table = s2_table.allocate_page_from(arena);
+    let _leaf = FrameAllocator::alloc::<Size64KiB>();
+
+    //=================
+    // TRAVERSE TABLES
+    //=================
+
+    // let base_addr = 124467000usize; // this comes from TTBRx register or some table base variable for each process.
+
+    // // everything starts with a translation table base address
+    // let sys_l0_table = base_addr as *const Stage1<G>;
+
+    // // Access the table using virtual addresses (each stage consumes more bits of the address).
+    // let l0_table = sys_l0_table;
+    // let l1 = l0_table[virt_addr];
+    // let l2 = l1_table[virt_addr];
+    // let phys = l2_table[virt_addr];
+
+    // // to access physical memory from kernel
+    // let phys = 123456usize;
+    // let kern_phys = phys.phys_to_kernel();
+}
