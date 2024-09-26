@@ -8,7 +8,7 @@
 #![allow(unused)]
 #![allow(unused_imports)]
 use {
-    core::marker::PhantomData,
+    core::{marker::PhantomData, ops::Index},
     either::*,
     snafu::{ResultExt, Snafu},
     std::alloc::{alloc_zeroed, dealloc, Layout},
@@ -64,7 +64,12 @@ trait BlockOnly {
     fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError>;
 }
 
-trait TableOrBlock: TableOnly + BlockOnly {} // ? is it necessary (only if to apply NextStage trait automatically?)
+trait TableOrBlock {
+    type NextTable;
+    fn next_table(&self, virt: VirtAddr) -> Result<&mut Self::NextTable, TableError>;
+    type Block;
+    fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError>;
+}
 
 // @todo next() should also take a VirtAddr?
 // trait NextStage: TableOrBlock {
@@ -73,7 +78,8 @@ trait TableOrBlock: TableOnly + BlockOnly {} // ? is it necessary (only if to ap
 //     ) -> Either<dyn TableOnly<NextTable = Self::NextTable>, dyn BlockOnly<Block = Self::Block>>;
 // }
 
-// As you can see, the Stage structures are repeated, as the granules (masks), so we need to be able to parameterize them both somehow
+// As you can see, the Stage structures are repeated, as are the granules (masks),
+// so we need to be able to parameterize them both somehow
 // e.g. mask depends on both stage and granule
 // These stage tables (or PageTable<Stage> really) can be implemented in terms of TableIndex::MASK_BITS
 // e.g. struct Stage<I: TableIndex> { pub entries: [u64; 1 << I::MASK_BITS]; }
@@ -207,7 +213,43 @@ impl_block_only!(Stage3_Gran4k, Size2MiB);
 impl_block_only!(Stage4_Gran4k, Size4KiB);
 
 macro_rules! impl_next_stage {
-    { $stage:ty, $next_stage:ty, $block:ty } => {}
+    { $stage:ty, $next_stage:ty, $block:ty } => {
+        // @todo: Index for slicerange or range to fill in sequential table blocks on aarch64
+        // e.g. stage4[0..15] = compound_large_segment; <- not using the VirtAddr here..
+        impl Index<VirtAddr> for $stage
+        where
+             $stage: TableOnly,
+        {
+            type Output = Self::NextTable;
+
+            fn index(&self, virt: VirtAddr) -> &Self::Output {
+                let index = Self::extract_index(virt);
+                Self::extract_table_base(self.entries[index])
+            }
+        }
+
+        impl Index<VirtAddr> for $stage
+        where
+            $stage: BlockOnly,
+        {
+            type Output = Self::Block;
+
+            fn index(&self, virt: VirtAddr) -> &Self::Output {
+                let index = Self::extract_index(virt);
+                Self::extract_block_base(self.entries[index])
+            }
+        }
+
+        // impl<T> Index<VirtAddr> for T
+        // where
+        //     T: TableIndex + TableOrBlock,
+        // {
+        //     type Output = Either<T::NextTable, T::Block>;
+        //     fn index(&self, index: VirtAddr) -> &Self::Output {
+        //         self.entries[index]
+        //     }
+        // }
+    }
 }
 
 // now for the TableOnly+BlockOnly combination we need to also provide a resolution method that returns either
@@ -401,18 +443,18 @@ fn main() -> Result<(), AllocError> {
     s4_table[virt] = leaf;
 
     // Using Granule16k:
-    let s1_table = PageTableAllocator::alloc::<Stage1_Gran16k>()?;
-    let s2_table = PageTableAllocator::alloc::<Stage2_Gran16k>()?;
+    let mut s1_table = PageTableAllocator::alloc::<Stage1_Gran16k>()?;
+    let mut s2_table = PageTableAllocator::alloc::<Stage2_Gran16k>()?;
     s1_table[virt] = s2_table;
-    let s3_table = PageTableAllocator::alloc::<Stage3_Gran16k>()?;
+    let mut s3_table = PageTableAllocator::alloc::<Stage3_Gran16k>()?;
     s2_table[virt] = s3_table;
-    let s4_table = PageTableAllocator::alloc::<Stage4_Gran16k>()?;
+    let mut s4_table = PageTableAllocator::alloc::<Stage4_Gran16k>()?;
     s3_table[virt] = s4_table;
     let leaf = FrameAllocator::alloc::<Size16KiB>()?;
     s4_table[virt] = leaf;
 
     // This should fail to compile (accidentally wrong stage granule)
-    let s3_table = PageTableAllocator::alloc::<Stage3_Gran4k>()?;
+    let mut s3_table = PageTableAllocator::alloc::<Stage3_Gran4k>()?;
     s2_table[virt] = s3_table;
 
     // This too (accidentally wrong table level)
