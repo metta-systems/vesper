@@ -8,7 +8,10 @@
 #![allow(unused)]
 #![allow(unused_imports)]
 use {
-    core::{marker::PhantomData, ops::Index},
+    core::{
+        marker::PhantomData,
+        ops::{Index, IndexMut},
+    },
     either::*,
     snafu::{ResultExt, Snafu},
     std::alloc::{alloc_zeroed, dealloc, Layout},
@@ -216,7 +219,7 @@ macro_rules! impl_next_stage {
     { $stage:ty, $next_stage:ty, $block:ty } => {
         // @todo: Index for slicerange or range to fill in sequential table blocks on aarch64
         // e.g. stage4[0..15] = compound_large_segment; <- not using the VirtAddr here..
-        impl Index<VirtAddr> for $stage
+        impl Index<VirtAddr> for &$stage
         where
              $stage: TableOnly,
         {
@@ -228,13 +231,33 @@ macro_rules! impl_next_stage {
             }
         }
 
-        impl Index<VirtAddr> for $stage
+        impl IndexMut<VirtAddr> for &mut $stage
+        where
+             $stage: TableOnly,
+        {
+            fn index_mut(&self, virt: VirtAddr) -> &mut Self::Output {
+                let index = Self::extract_index(virt);
+                Self::extract_table_base(self.entries[index])
+            }
+        }
+
+        impl Index<VirtAddr> for &$stage
         where
             $stage: BlockOnly,
         {
-            type Output = Self::Block;
+            type Output = <Self as BlockOnly>::Block;
 
             fn index(&self, virt: VirtAddr) -> &Self::Output {
+                let index = Self::extract_index(virt);
+                Self::extract_block_base(self.entries[index])
+            }
+        }
+
+        impl IndexMut<VirtAddr> for &mut $stage
+        where
+            $stage: BlockOnly,
+        {
+            fn index_mut(&self, virt: VirtAddr) -> &mut Self::Output {
                 let index = Self::extract_index(virt);
                 Self::extract_block_base(self.entries[index])
             }
@@ -369,7 +392,7 @@ enum AllocError {
 }
 
 impl PageTableAllocator {
-    fn alloc<T: TableIndex>() -> Result<*mut T, AllocError> {
+    fn alloc<T: TableIndex>() -> Result<&mut T, AllocError> {
         let size = (1 << T::MASK_BITS) * core::mem::size_of::<u64>();
         let layout = Layout::from_size_align(size, size).context(InvalidLayoutSnafu)?;
         println!(
