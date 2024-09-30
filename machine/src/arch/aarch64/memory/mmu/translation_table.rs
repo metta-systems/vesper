@@ -276,6 +276,12 @@ where
     type TableStartFromBottom = FixedSizeTranslationTable<{ Self::SIZE >> Granule512MiB::SHIFT }>;
 }
 
+impl<const NUM_TABLES: usize> Default for FixedSizeTranslationTable<NUM_TABLES> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
     /// Create an instance.
     #[allow(clippy::assertions_on_constants)]

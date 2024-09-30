@@ -31,6 +31,12 @@ pub fn time_manager() -> &'static TimeManager {
     &TIME_MANAGER
 }
 
+impl Default for TimeManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TimeManager {
     /// Create an instance.
     pub const fn new() -> Self {
