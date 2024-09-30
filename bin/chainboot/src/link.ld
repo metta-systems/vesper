@@ -65,12 +65,19 @@ SECTIONS
     . += 0x2000000;
 
     /***********************************************************************************************
-    * Code + RO Data + Global Offset Table
+    * Code + Exception Vectors + RO Data + Global Offset Table
     ***********************************************************************************************/
     __binary_nonzero_vma = .;
     .text : AT (ADDR(.text) + SIZEOF(.text))
     {
         *(.text*)                 /* The Rust entry point and everything else */
+    } :segment_code
+
+    .vectors :
+    {
+        . = ALIGN(2048);
+        __EXCEPTION_VECTORS_START = .;
+        KEEP(*(.vectors))
     } :segment_code
 
     .rodata : ALIGN(8) { *(.rodata*) } :segment_code
