@@ -26,10 +26,9 @@ dependencies = [
 [[package]]
 name = "aarch64-cpu"
 version = "9.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac42a04a61c19fc8196dd728022a784baecc5d63d7e256c01ad1b3fbfab26287"
+source = "git+https://github.com/rust-embedded/aarch64-cpu?branch=main#ae8199e2337cd455985265e9bedcf1a89804e9bb"
 dependencies = [
- "tock-registers 0.8.1",
+ "tock-registers",
 ]
 
 [[package]]
@@ -187,7 +186,7 @@ dependencies = [
  "machine",
  "seahash",
  "snafu",
- "tock-registers 0.9.0",
+ "tock-registers",
  "usize_conversions",
  "ux",
 ]
@@ -477,7 +476,7 @@ dependencies = [
  "once_cell",
  "qemu-exit",
  "snafu",
- "tock-registers 0.9.0",
+ "tock-registers",
  "usize_conversions",
  "ux",
 ]
@@ -589,7 +588,7 @@ dependencies = [
  "cfg-if",
  "machine",
  "snafu",
- "tock-registers 0.9.0",
+ "tock-registers",
  "usize_conversions",
  "ux",
 ]
@@ -861,12 +860,6 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
-
-[[package]]
-name = "tock-registers"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "696941a0aee7e276a165a978b37918fd5d22c55c3d6bda197813070ca9c0f21c"
 
 [[package]]
 name = "tock-registers"

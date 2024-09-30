@@ -26,19 +26,24 @@ qemu = ["rpi3"]
 # Mutually exclusive features to choose a target board
 rpi3 = []
 rpi4 = []
+test_build = []
 
 [dependencies]
 qemu-exit = "3.0"
-aarch64-cpu = "9.4"
+aarch64-cpu = { version = "9.4.0", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
 tock-registers = "0.9"
 ux = { version = "0.1", default-features = false }
 usize_conversions = "0.2"
 bit_field = "0.10"
 bitflags = "2.6"
 cfg-if = "1.0"
-snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
+snafu = { version = "0.8", default-features = false, features = [
+    "unstable-core-error",
+] }
 buddy-alloc = { git = "https://github.com/metta-systems/buddy-alloc", version = "0.6.0", branch = "feature/allocator-api" }
-once_cell = { version = "1.20", default-features = false, features = ["unstable"] }
+once_cell = { version = "1.20", default-features = false, features = [
+    "unstable",
+] }
 
 [lib]
 name = "machine"
