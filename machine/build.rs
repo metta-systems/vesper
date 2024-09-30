@@ -1,4 +1,4 @@
-/// This build script is used to create lib tests.
+//! This build script is used to create lib tests.
 
 const LINKER_SCRIPT: &str = "machine/src/platform/raspberrypi/linker/kernel.ld";
 const LINKER_SCRIPT_AUX: &str = "machine/src/arch/aarch64/linker/aarch64-exceptions.ld";

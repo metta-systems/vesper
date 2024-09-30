@@ -287,10 +287,10 @@ fn code_size() -> usize {
     unsafe { (__CODE_END.get() as usize) - (__CODE_START.get() as usize) }
 }
 
-/// Exclusive end page address of the code segment.
-/// # Safety
-///
-/// - Value is provided by the linker script and must be trusted as-is.
+// Exclusive end page address of the code segment.
+// # Safety
+//
+// - Value is provided by the linker script and must be trusted as-is.
 // #[inline(always)]
 // fn code_end_exclusive() -> usize {
 //     unsafe { __RO_END.get() as usize }
