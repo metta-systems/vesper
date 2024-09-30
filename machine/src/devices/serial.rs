@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 pub trait SerialOps {
     /// Read one byte from serial without translation.
     fn read_byte(&self) -> u8;

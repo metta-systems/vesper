@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 core::arch::global_asm!(
     include_str!("boot.s"),
     CONST_BOOT_CORE_ID = const 0,

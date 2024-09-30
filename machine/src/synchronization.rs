@@ -1,8 +1,8 @@
-/*
- * SPDX-License-Identifier: MIT OR BlueOak-1.0.0
- * Copyright (c) 2019 Andre Richter <andre.o.richter@gmail.com>
- * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
- */
+// Copyright (c) 2019 Andre Richter <andre.o.richter@gmail.com>
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+//
+// SPDX-License-Identifier: MIT OR BlueOak-1.0.0
 
 use core::cell::UnsafeCell;
 

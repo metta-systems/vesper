@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 #[inline(always)]
 pub fn core_id() -> u64 {
     use aarch64_cpu::registers::{MPIDR_EL1, Readable};

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 //! A panic handler for hardware and for QEMU.
 use core::panic::PanicInfo;
 

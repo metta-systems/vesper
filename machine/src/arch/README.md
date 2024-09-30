@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+SPDX-FileContributor: Berkus
+-->
+
 # Architecture-specific code
 
 This directory contains code specific to a certain architecture.
