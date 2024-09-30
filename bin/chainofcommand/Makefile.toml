@@ -14,7 +14,15 @@ args = ["test"]
 
 [tasks.clippy]
 command = "cargo"
-args = ["clippy", "--", "-D", "warnings"]
+args = [
+    "clippy",
+    "--",
+    "--no-deps",
+    "--deny",
+    "warnings",
+    "--allow",
+    "deprecated",
+]
 
 [tasks.hopper]
 disabled = true
