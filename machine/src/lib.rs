@@ -4,7 +4,6 @@
 #![allow(incomplete_features)]
 #![feature(asm_const)]
 #![feature(const_option)]
-#![feature(core_intrinsics)]
 #![feature(format_args_nl)]
 #![feature(generic_const_exprs)]
 #![feature(int_roundings)]
@@ -16,7 +15,6 @@
 #![feature(trait_alias)]
 #![feature(unchecked_math)]
 #![feature(decl_macro)]
-#![feature(ptr_internals)]
 #![feature(allocator_api)]
 #![feature(strict_provenance)]
 #![feature(stmt_expr_attributes)]
@@ -31,6 +29,9 @@
 #![allow(missing_docs)] // Temp: switch to deny
 #![deny(warnings)]
 #![allow(unused)]
+#![allow(internal_features)]
+#![feature(core_intrinsics)]
+#![feature(ptr_internals)]
 
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
