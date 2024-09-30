@@ -25,6 +25,9 @@
 #![feature(core_intrinsics)]
 #![feature(ptr_internals)]
 
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
 
