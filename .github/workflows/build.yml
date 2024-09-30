@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - '*'
+      - "*"
   pull_request:
 
 jobs:
@@ -46,11 +46,7 @@ jobs:
 
     strategy:
       matrix:
-        platform: [
-          ubuntu-latest,
-          macos-latest,
-          windows-latest
-        ]
+        platform: [ubuntu-latest, macos-latest, windows-latest]
 
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
@@ -132,11 +128,11 @@ jobs:
       if: runner.os == 'Windows'
       shell: pwsh
 
-    - name: "Print QEMU Version"
-      run: qemu-system-aarch64 --version
+      - name: "Print QEMU Version"
+        run: qemu-system-aarch64 --version
 
-    - name: 'Build kernel'
-      run: cargo make build
+      - name: "Build kernel"
+        run: cargo make build
 
-    - name: 'Run tests'
-      run: cargo make test
+      - name: "Run tests"
+        run: cargo make test
