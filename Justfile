@@ -62,6 +62,8 @@ build:
     cargo make build-device
     cargo make kernel-binary
 
+alias b := build
+
 # Clean project
 clean:
     cargo make clean
