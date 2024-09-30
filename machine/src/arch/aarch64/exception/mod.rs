@@ -104,7 +104,8 @@ struct ExceptionContext {
 /// Prints verbose information about the exception and then panics.
 ///
 /// Default pointer is configured in the linker script.
-fn default_exception_handler(exc: &ExceptionContext) {
+#[no_mangle]
+extern "C" fn default_exception_handler(exc: &ExceptionContext) {
     panic!(
         "Unexpected CPU Exception!\n\n\
         {}",
