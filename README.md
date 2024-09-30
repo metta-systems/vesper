@@ -1,5 +1,9 @@
 # Vesper
 
+## Badges
+
+[![justforfunnoreally.dev badge](https://img.shields.io/badge/justforfunnoreally-dev-9ff)](https://justforfunnoreally.dev) [![Built with cargo-make](https://sagiegurari.github.io/cargo-make/assets/badges/cargo-make.svg)](https://sagiegurari.github.io/cargo-make) ![Build](https://github.com/metta-systems/vesper/workflows/Build/badge.svg) ![License](https://raster.shields.io/badge/license-BlueOak%20with%20restrictions-blue.png) [![Dependency Status](https://deps.rs/repo/github/metta-systems/vesper/status.svg)](https://deps.rs/repo/github/metta-systems/vesper) [![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/metta-systems/vesper)
+
 ## About kernel
 
 Vesper is a capability-based single-address-space nanokernel, it tries to remain small and secure. To achieve this, kernel functionality is extremely limited - it provides only address space isolation and IPC, after bootup kernel does not allocate any memory itself.
@@ -120,18 +124,6 @@ which are in turn based on [Raspi3 tutorials by bzt](https://github.com/bztsrc/r
 Various references from [OSDev Wiki](https://wiki.osdev.org/Raspberry_Pi_Bare_Bones) and [RaspberryPi.org manuals](https://www.raspberrypi.org/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf).
 
 [Debug with JTAG](doc/rpi3_jtag.md).
-
-## Badges
-
-[![Built with cargo-make](https://sagiegurari.github.io/cargo-make/assets/badges/cargo-make.svg)](https://sagiegurari.github.io/cargo-make)
-
-![Build](https://github.com/metta-systems/vesper/workflows/Build/badge.svg)
-
-![License](https://raster.shields.io/badge/license-BlueOak%20with%20restrictions-blue.png)
-
-[![Dependency Status](https://deps.rs/repo/github/metta-systems/vesper/status.svg)](https://deps.rs/repo/github/metta-systems/vesper)
-
-[![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/metta-systems/vesper)
 
 ### License scan
 
