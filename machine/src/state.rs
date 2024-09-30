@@ -47,6 +47,12 @@ pub fn state_manager() -> &'static StateManager {
     &STATE_MANAGER
 }
 
+impl Default for StateManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StateManager {
     const INIT: u8 = 0;
     const SINGLE_CORE_MAIN: u8 = 1;
