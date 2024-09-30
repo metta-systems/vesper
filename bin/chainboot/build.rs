@@ -1,4 +1,4 @@
-/// This build script is used to create chainboot binary.
+//! This build script is used to create chainboot binary.
 
 const LINKER_SCRIPT: &str = "bin/chainboot/src/link.ld";
 const LINKER_SCRIPT_AUX: &str = "machine/src/arch/aarch64/linker/aarch64-exceptions.ld";

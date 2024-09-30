@@ -16,16 +16,15 @@ pub mod memory;
 
 /// See BCM2835-ARM-Peripherals.pdf
 /// See <https://www.raspberrypi.org/forums/viewtopic.php?t=186090> for more details.
-
 pub struct BcmHost;
 
 // Per <https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#peripheral-addresses>:
 //
-// SoC     Peripheral Address	Peripheral Size	SDRAM Address	Source
-// BCM2835 0x20000000           0x01000000      0x40000000      <https://github.com/raspberrypi/linux/blob/7f465f823c2ecbade5877b8bbcb2093a8060cb0e/arch/arm/boot/dts/bcm2835.dtsi#L21>
-// BCM2836 0x3f000000           0x01000000      0xc0000000      <https://github.com/raspberrypi/linux/blob/7f465f823c2ecbade5877b8bbcb2093a8060cb0e/arch/arm/boot/dts/bcm2836.dtsi#L10>
-// BCM2837 0x3f000000           0x01000000      0xc0000000      <https://github.com/raspberrypi/linux/blob/7f465f823c2ecbade5877b8bbcb2093a8060cb0e/arch/arm/boot/dts/bcm2837.dtsi#L9>
-// BCM2711 0xfe000000           0x01800000      0xc0000000      <https://github.com/raspberrypi/linux/blob/7f465f823c2ecbade5877b8bbcb2093a8060cb0e/arch/arm/boot/dts/bcm2711.dtsi#L41>
+// SoC     Peripheral Address   Peripheral Size  SDRAM Address  Source
+// BCM2835 0x20000000           0x01000000      0x40000000     <https://github.com/raspberrypi/linux/blob/7f465f823c2ecbade5877b8bbcb2093a8060cb0e/arch/arm/boot/dts/bcm2835.dtsi#L21>
+// BCM2836 0x3f000000           0x01000000      0xc0000000     <https://github.com/raspberrypi/linux/blob/7f465f823c2ecbade5877b8bbcb2093a8060cb0e/arch/arm/boot/dts/bcm2836.dtsi#L10>
+// BCM2837 0x3f000000           0x01000000      0xc0000000     <https://github.com/raspberrypi/linux/blob/7f465f823c2ecbade5877b8bbcb2093a8060cb0e/arch/arm/boot/dts/bcm2837.dtsi#L9>
+// BCM2711 0xfe000000           0x01800000      0xc0000000     <https://github.com/raspberrypi/linux/blob/7f465f823c2ecbade5877b8bbcb2093a8060cb0e/arch/arm/boot/dts/bcm2711.dtsi#L41>
 
 // <https://www.raspberrypi.com/documentation/computers/processors.html>
 // The BCM2835 is the Broadcom chip used in the Raspberry Pi Model A, B, B+, the Compute Module, and the Raspberry Pi Zero.
@@ -41,6 +40,7 @@ pub struct BcmHost;
 // raspi3b+  raspi  bcm2837
 // raspi4    raspi  bcm2711
 
+/// Shared BcmHost implementation.
 impl BcmHost {
     /// At which address to load the kernel binary.
     pub const fn kernel_load_address() -> u64 {
@@ -58,7 +58,7 @@ impl BcmHost {
     }
 }
 
-// RasPi3B+
+/// RasPi3B+
 #[cfg(feature = "rpi3")]
 impl BcmHost {
     /// Name of the hardware device this BcmHost is compiled for.
@@ -83,7 +83,7 @@ impl BcmHost {
     }
 }
 
-// RasPi4
+/// RasPi4
 #[cfg(feature = "rpi4")]
 impl BcmHost {
     /// Name of the hardware device this BcmHost is compiled for.

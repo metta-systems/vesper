@@ -67,6 +67,9 @@ where
 // Public Code
 //--------------------------------------------------------------------------------------------------
 
+unsafe impl<T> Send for IRQSafeNullLock<T> where T: ?Sized + Send {}
+unsafe impl<T> Sync for IRQSafeNullLock<T> where T: ?Sized + Send {}
+
 /// Since we are instantiating this struct as a static variable, which could
 /// potentially be shared between different threads, we need to tell the compiler
 /// that sharing of this struct is safe by marking it with the Sync trait.
@@ -78,10 +81,6 @@ where
 /// Literature:
 /// * <https://doc.rust-lang.org/beta/nomicon/send-and-sync.html>
 /// * <https://doc.rust-lang.org/book/ch16-04-extensible-concurrency-sync-and-send.html>
-
-unsafe impl<T> Send for IRQSafeNullLock<T> where T: ?Sized + Send {}
-unsafe impl<T> Sync for IRQSafeNullLock<T> where T: ?Sized + Send {}
-
 impl<T> IRQSafeNullLock<T> {
     /// Create an instance.
     pub const fn new(data: T) -> Self {
