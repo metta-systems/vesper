@@ -67,8 +67,8 @@ fn panic_prevent_reenter() {
         return;
     }
 
-    #[cfg(qemu)]
+    #[cfg(feature = "qemu")]
     crate::qemu::semihosting::exit_failure();
-    #[cfg(not(qemu))]
+    #[cfg(not(feature = "qemu"))]
     crate::cpu::endless_sleep()
 }

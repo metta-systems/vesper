@@ -21,7 +21,7 @@ macro_rules! println {
 }
 
 #[doc(hidden)]
-#[cfg(not(any(test, qemu)))]
+#[cfg(not(any(test, feature = "qemu")))]
 pub fn _print(args: core::fmt::Arguments) {
     use {crate::console::console, core::fmt::Write};
     console().write_fmt(args).unwrap();
@@ -29,7 +29,7 @@ pub fn _print(args: core::fmt::Arguments) {
 
 /// qemu-based tests use semihosting write0 syscall.
 #[doc(hidden)]
-#[cfg(any(test, qemu))] // qemu feature not enabled here?? we pass --features=qemu to cargo test
+#[cfg(any(test, feature = "qemu"))] // qemu feature not enabled here?? we pass --features=qemu to cargo test
 pub fn _print(args: core::fmt::Arguments) {
     use crate::{qemu, write_to};
 
