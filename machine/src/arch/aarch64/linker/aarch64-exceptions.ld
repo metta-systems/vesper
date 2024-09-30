@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 PROVIDE(current_el0_synchronous   = current_el0_synchronous);
 PROVIDE(current_el0_irq           = current_el0_irq);
 PROVIDE(current_el0_fiq           = default_exception_handler);

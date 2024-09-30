@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 #[cfg(target_arch = "aarch64")]
 use crate::arch::aarch64::exception::asynchronous as arch_asynchronous;
 

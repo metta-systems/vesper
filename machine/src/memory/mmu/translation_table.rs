@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 //! Translation table.
 
 #[cfg(target_arch = "aarch64")]

@@ -1,7 +1,8 @@
-/*
- * SPDX-License-Identifier: BlueOak-1.0.0
- * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
- */
+// Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+//
+// SPDX-License-Identifier: BlueOak-1.0.0
 
 /// Macro similar to [std](https://doc.rust-lang.org/src/std/macros.rs.html)
 /// but for writing into kernel-specific output (UART or QEMU console).

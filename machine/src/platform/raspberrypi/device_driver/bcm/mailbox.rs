@@ -1,10 +1,8 @@
-/*
- * SPDX-License-Identifier: BlueOak-1.0.0
- * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
- *
- * Based on https://github.com/rust-embedded/rust-raspi3-tutorial/blob/master/04_mailboxes/src/mbox.rs
- * by Andre Richter of Tock OS.
- */
+// Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+//
+// SPDX-License-Identifier: BlueOak-1.0.0
 
 //! Broadcom mailbox interface between the VideoCore and the ARM Core.
 //! Mailbox is controlled by two parts: a MAILBOX driver that drives the MMIO registers and

@@ -1,8 +1,9 @@
-/* SPDX-License-Identifier: MIT OR Apache-2.0
- *
- * Copyright (c) 2018-2021 Andre Richter <andre.o.richter@gmail.com>
- * Copyright (c) 2021- Berkus <berkus+github@metta.systems>
- */
+// Copyright (c) 2018-2021 Andre Richter <andre.o.richter@gmail.com>
+// Copyright (c) 2021- Berkus <berkus+github@metta.systems>
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 /*
  * Information from:

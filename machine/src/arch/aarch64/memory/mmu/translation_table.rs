@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 use {
     super::{Granule64KiB, Granule512MiB, mair},
     crate::{

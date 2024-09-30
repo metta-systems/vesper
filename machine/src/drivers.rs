@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 use crate::{
     exception, println,
     synchronization::{IRQSafeNullLock, InitStateLock, interface::ReadWriteEx},

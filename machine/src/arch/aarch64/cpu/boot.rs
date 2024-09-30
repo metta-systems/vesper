@@ -1,9 +1,8 @@
-/*
- * SPDX-License-Identifier: BlueOak-1.0.0
- *
- * Based on ideas from Jorge Aparicio, Andre Richter, Phil Oppenheimer, Sergio Benitez.
- * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
- */
+// Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+//
+// SPDX-License-Identifier: BlueOak-1.0.0
 
 //! Low-level boot of the ARMv8-A processor.
 //! <http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf>

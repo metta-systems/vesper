@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 // Based on miniload by @andre-richter
 #![feature(format_args_nl)]
 #![feature(custom_test_frameworks)]

@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+SPDX-FileContributor: Berkus
+-->
+
 # Memory Configuration
 
 The types VirtAddr and PhysAddr are representing the addresses before and after the mapping in the MMU.

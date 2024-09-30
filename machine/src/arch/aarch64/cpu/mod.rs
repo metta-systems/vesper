@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 use aarch64_cpu::asm;
 
 #[cfg(not(feature = "no_boot"))] // Move this to nucleus??

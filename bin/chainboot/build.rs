@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 //! This build script is used to create chainboot binary.
 
 const LINKER_SCRIPT: &str = "bin/chainboot/src/link.ld";

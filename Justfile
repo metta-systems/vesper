@@ -177,3 +177,9 @@ setup-local-dev:
     commit-emoji -i
     # Run local shortened clippy before pushing to remote
     cp .hooks/pre-push .git/hooks/pre-push
+
+license-reuse:
+    pipx run reuse lint
+
+apply-license dir:
+    pipx run reuse annotate {{ dir }} --contributor "Berkus" --copyright "Metta Systems OÜ" --recursive

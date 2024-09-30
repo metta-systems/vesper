@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+# SPDX-FileContributor: Berkus
+
 /*
  * SPDX-License-Identifier: MIT OR BlueOak-1.0.0
  * Copyright (c) 2018-2019 Andre Richter <andre.o.richter@gmail.com>
