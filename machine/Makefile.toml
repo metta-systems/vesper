@@ -1,3 +1,6 @@
+[tasks.kernel-binary]
+disabled = true
+
 [tasks.qemu-gdb]
 disabled = true
 
