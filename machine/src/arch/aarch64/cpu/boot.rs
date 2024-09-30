@@ -56,7 +56,7 @@ macro_rules! entry {
 #[link_section = ".text.main.entry"]
 pub unsafe extern "C" fn _boot_cores() -> ! {
     // Can't match values with dots in match, so use intermediate consts.
-    #[cfg(qemu)]
+    #[cfg(feature = "qemu")]
     const EL3: u64 = CurrentEL::EL::EL3.value;
     const EL2: u64 = CurrentEL::EL::EL2.value;
     const EL1: u64 = CurrentEL::EL::EL1.value;
@@ -73,7 +73,7 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
 
     if BOOT_CORE_ID == super::smp::core_id() {
         match CurrentEL.get() {
-            #[cfg(qemu)]
+            #[cfg(feature = "qemu")]
             EL3 => setup_and_enter_el1_from_el3(),
             EL2 => setup_and_enter_el1_from_el2(),
             EL1 => reset(),
@@ -169,7 +169,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
 ///
 /// Prepare and execute transition from EL3 to EL1.
 /// (from https://github.com/s-matyukevich/raspberry-pi-os/blob/master/docs/lesson02/rpi-os.md)
-#[cfg(qemu)]
+#[cfg(feature = "qemu")]
 #[link_section = ".text.boot"]
 #[inline]
 fn setup_and_enter_el1_from_el3() -> ! {
