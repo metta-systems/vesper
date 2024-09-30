@@ -123,6 +123,15 @@ impl<T> DeviceDriverDescriptor<T> {
     }
 }
 
+impl<T> Default for DriverManager<T>
+where
+    T: core::fmt::Display + Copy,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> DriverManager<T>
 where
     T: core::fmt::Display + Copy,
