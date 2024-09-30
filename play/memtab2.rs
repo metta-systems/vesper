@@ -81,62 +81,35 @@ trait TableOrBlock {
 //     ) -> Either<dyn TableOnly<NextTable = Self::NextTable>, dyn BlockOnly<Block = Self::Block>>;
 // }
 
+macro_rules! make_stage {
+    { name:$ident } => {
+        #[allow(non_camel_case_types)]
+        struct $name {
+            entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
+        }
+    }
+}
+
 // As you can see, the Stage structures are repeated, as are the granules (masks),
 // so we need to be able to parameterize them both somehow
 // e.g. mask depends on both stage and granule
 // These stage tables (or PageTable<Stage> really) can be implemented in terms of TableIndex::MASK_BITS
 // e.g. struct Stage<I: TableIndex> { pub entries: [u64; 1 << I::MASK_BITS]; }
 // Specific table structures:
-#[allow(non_camel_case_types)]
-struct Stage1_Gran4k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage2_Gran4k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage3_Gran4k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage4_Gran4k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
 
-#[allow(non_camel_case_types)]
-struct Stage1_Gran16k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage2_Gran16k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage3_Gran16k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage4_Gran16k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
+make_stage!(Stage1_Gran4k);
+make_stage!(Stage2_Gran4k);
+make_stage!(Stage3_Gran4k);
+make_stage!(Stage4_Gran4k);
 
-#[allow(non_camel_case_types)]
-struct Stage1_Gran64k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage2_Gran64k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage3_Gran64k {
-    entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
-#[allow(non_camel_case_types)]
-struct Stage4_Gran64k {
-    // entries: [u64; 1 << Self::MASK_BITS], // u64 must be more flexible type EntryT for other arch's
-}
+make_stage!(Stage1_Gran16k);
+make_stage!(Stage2_Gran16k);
+make_stage!(Stage3_Gran16k);
+make_stage!(Stage4_Gran16k);
+
+make_stage!(Stage1_Gran64k);
+make_stage!(Stage2_Gran64k);
+make_stage!(Stage3_Gran64k);
 
 macro_rules! impl_table_index {
     { $stage:ty, index = $mask_bits:literal @ $shift:literal, table = $table_bits:literal @ $table_shift:literal, block = $block_bits:literal @ $block_shift:literal } => {
@@ -164,16 +137,22 @@ impl_table_index!(Stage2_Gran64k, index = 13@29, table = 32@16, block = 19@29);
 impl_table_index!(Stage3_Gran64k, index = 13@16, table = 32@16, block = 32@16);
 // impl_table_index!(Stage4_Gran64k, index = 0@0); // N/A
 
+unsafe fn next_level(virt: VirtAddr) -> Result<PhysAddr, TableError> {
+    let index = <$stage>::extract_index(virt);
+    let entry = self.entries[index];
+    if !bit_set(entry, P) {
+        return Err(TableError::NotPresent);
+    }
+    Ok(base)
+}
+
 macro_rules! impl_table_only {
     { $stage:ty, $next_stage:ty } => {
         impl TableOnly for $stage where $stage: TableIndex {
             type NextTable = $next_stage;
+
             fn next_table(&self, virt: VirtAddr) -> Result<&mut Self::NextTable, TableError> {
-                let index = <$stage>::extract_index(virt);
-                let entry = self.entries[index];
-                if !bit_set(entry, P) {
-                    return Err(TableError::NotPresent);
-                }
+                let entry = next_level(virt);
                 let base = <$stage>::extract_table_base(entry); // This involves some stage-dependent shenanigans, e.g. for RISC-V the PN[x] entries must be combined depending on the stage.
                 let next_table = base as *mut Self::NextTable; // ptr.cast<>?
                 let next_table = unsafe { &mut *next_table };
@@ -194,12 +173,9 @@ macro_rules! impl_block_only {
     { $stage:ty, $block_size:ty } => {
         impl BlockOnly for $stage where $stage: TableIndex {
             type Block = Frame<$block_size>; // we will get a block of given size from this stage
+
             fn block(&self, virt: VirtAddr) -> Result<Self::Block, BlockError> {
-                let index = <$stage>::extract_index(virt);
-                let entry = self.entries[index];
-                if !bit_set(entry, P) {
-                    return Err(BlockError::NotPresent);
-                }
+                let entry = next_level(virt);
                 let phys_base = <$stage>::extract_block_base(entry);
                 let block = Frame::new(phys_base.try_into().expect("It fits fine!"));
                 Ok(block)
@@ -208,26 +184,51 @@ macro_rules! impl_block_only {
     }
 }
 
+// Granularity 4KiB
 impl_table_only!(Stage1_Gran4k, Stage2_Gran4k);
+
 impl_table_only!(Stage2_Gran4k, Stage3_Gran4k);
 impl_block_only!(Stage2_Gran4k, Size1GiB);
+
 impl_table_only!(Stage3_Gran4k, Stage4_Gran4k);
 impl_block_only!(Stage3_Gran4k, Size2MiB);
+
 impl_block_only!(Stage4_Gran4k, Size4KiB);
+
+// Granularity 16KiB
+impl_table_only!(Stage1_Gran16k, Stage2_Gran16k);
+
+impl_table_only!(Stage2_Gran16k, Stage3_Gran16k);
+impl_block_only!(Stage2_Gran16k, Size1GiB);
+
+impl_table_only!(Stage3_Gran16k, Stage4_Gran16k);
+impl_block_only!(Stage3_Gran16k, Size2MiB);
+
+impl_block_only!(Stage4_Gran16k, Size4KiB);
+
+// Granularity 64KiB
+impl_table_only!(Stage1_Gran64k, Stage2_Gran64k);
+impl_block_only!(Stage1_Gran64k, Size4TiB);
+
+impl_table_only!(Stage2_Gran64k, Stage3_Gran64k);
+impl_block_only!(Stage2_Gran64k, Size512MiB);
+
+impl_block_only!(Stage3_Gran64k, Size64KiB);
 
 macro_rules! impl_next_stage {
     { $stage:ty, $next_stage:ty, $block:ty } => {
-        // @todo: Index for slicerange or range to fill in sequential table blocks on aarch64
+        // @todo: Index for slicerange (restricted range! must maintain alignments)
+        // or range to fill in sequential table blocks on aarch64
         // e.g. stage4[0..15] = compound_large_segment; <- not using the VirtAddr here..
-        impl Index<VirtAddr> for &$stage
+        impl Index<VirtAddr> for $stage
         where
              $stage: TableOnly,
         {
             type Output = Self::NextTable;
 
             fn index(&self, virt: VirtAddr) -> &Self::Output {
-                let index = Self::extract_index(virt);
-                Self::extract_table_base(self.entries[index])
+                let tbl = <$stage as TableOnly>::next_table(virt);
+                &*tbl
             }
         }
 
@@ -235,7 +236,7 @@ macro_rules! impl_next_stage {
         where
              $stage: TableOnly,
         {
-            fn index_mut(&self, virt: VirtAddr) -> &mut Self::Output {
+            fn index_mut(&mut self, virt: VirtAddr) -> &mut Self::Output {
                 let index = Self::extract_index(virt);
                 Self::extract_table_base(self.entries[index])
             }
@@ -257,9 +258,11 @@ macro_rules! impl_next_stage {
         where
             $stage: BlockOnly,
         {
-            fn index_mut(&self, virt: VirtAddr) -> &mut Self::Output {
+            // Should only return a mutable reference to entries[index] so that we
+            // could replace it.
+            fn index_mut(&mut self, virt: VirtAddr) -> &mut Self::Output {
                 let index = Self::extract_index(virt);
-                Self::extract_block_base(self.entries[index])
+                &mut self.entries[index] // but can't be just &mut u64, we need a proper table type? probably need to overload assignments too?
             }
         }
 
