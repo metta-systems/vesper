@@ -1,6 +1,6 @@
 {
   "llvm-target": "aarch64-unknown-none",
-  "data-layout": "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128",
+  "data-layout": "e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32",
   "arch": "aarch64",
   "features": "+strict-align,-neon,-fp-armv8",
   "os": "vesper",
@@ -11,9 +11,7 @@
   "linker": "rust-lld",
   "linker-flavor": "ld.lld",
   "pre-link-args": {
-    "ld.lld": [
-      "--print-gc-sections"
-    ]
+    "ld.lld": ["--print-gc-sections"]
   },
   "disable-redzone": true,
   "relocation-model": "static",
