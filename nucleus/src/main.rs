@@ -13,10 +13,8 @@
 #![feature(asm_const)]
 #![feature(lazy_cell)]
 #![feature(decl_macro)]
-#![feature(ptr_internals)]
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
-#![feature(core_intrinsics)]
 #![feature(strict_provenance)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
@@ -28,6 +26,9 @@
 #![deny(missing_docs)]
 #![deny(warnings)]
 #![allow(unused)]
+#![allow(internal_features)]
+#![feature(ptr_internals)]
+#![feature(core_intrinsics)]
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
