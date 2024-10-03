@@ -7,7 +7,7 @@ deps-up:
 
 # Build default hw kernel and run chainofcommand to boot this kernel onto the board
 boot: chainofcommand
-    cargo make chainboot
+    cargo make chainboot # make boot-kernel ?
 
 # Build and run kernel in QEMU with serial port emulation
 zellij:
@@ -24,7 +24,7 @@ zellij-cb:
 # Build chainofcommand serial loader
 chainofcommand:
     cd bin/chainofcommand
-    cargo make build
+    cargo make build # --workspace=bin/chainofcommand
 
 # Build and run kernel in QEMU
 qemu:
@@ -59,8 +59,11 @@ cb-eject:
 
 # Build default hw kernel
 build:
-    cargo make build-device
-    cargo make kernel-binary
+    cargo make build
+
+# Build default hw kernel (quietly)
+qbuild:
+    cargo make build
 
 alias b := build
 
@@ -86,7 +89,7 @@ alias disasm := hopper
 
 # Build and disassemble kernel
 hopper:
-    cargo make hopper
+    cargo make xtool-hopper
 
 alias ocd := openocd
 
@@ -104,19 +107,23 @@ gdb-cb:
 
 # Build and print all symbols in the kernel
 nm:
-    cargo make nm
-
-# Check formatting
-fmt-check:
-    cargo fmt -- --check
+    cargo make xtool-nm
 
 # Run `cargo expand` on nucleus
 expand:
-    cargo make expand -- nucleus
+    cargo make xtool-expand-target -- nucleus
+
+# Render modules dependency tree
+modules:
+    cargo make xtool-modules
 
 # Generate and open documentation
 doc:
     cargo make docs-flow
+
+# Check formatting
+fmt-check:
+    cargo fmt -- --check
 
 # Run lint tasks
 lint: clippy fmt-check
