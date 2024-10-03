@@ -1,65 +1,85 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Build chainboot binary
+#
 [env]
 CHAINBOOT_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/chainboot"
 CHAINBOOT_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/chainboot.bin"
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
-[tasks.kernel-binary]
+[tasks.build]
+alias = "chainboot"
+
+[tasks.chainboot]
+workspace = false
+dependencies = ["build-device", "build-kernel-binary"]
+script_runner = "@duckscript"
+script = [
+    '''
+    shortBinary = replace ${KERNEL_BIN} "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/" ""
+
+    echo
+    echo 🎠 Run the following command in your terminal:
+    echo 🎠 target/debug/chainofcommand ${CHAINBOOT_SERIAL} ${CHAINBOOT_BAUD} --kernel ${shortBinary}
+    echo
+''',
+]
+
+[tasks.build-kernel-binary]
+workspace = false
 env = { "BINARY_FILE" = "${CHAINBOOT_ELF}" }
-run_task = "custom-binary"
-
-[tasks.chainofcommand]
-disabled = true
-
-[tasks.hopper]
-disabled = true
-
-[tasks.zellij-nucleus]
-disabled = true
+run_task = "build-custom-binary"
 
 [tasks.zellij-cb]
+workspace = false
 env = { "KERNEL_BIN" = "${CHAINBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS}" }
 run_task = "zellij-config"
 
 [tasks.zellij-cb-gdb]
+workspace = false
 env = { "KERNEL_BIN" = "${CHAINBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_BOARD" = "rpi3", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 run_task = "zellij-config"
 
-[tasks.nm]
-disabled = true
-
-[tasks.qemu]
-disabled = true
-
-[tasks.qemu-gdb]
-disabled = true
-
 [tasks.qemu-cb]
+workspace = false
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_DISASM_OPTS} -serial pty", "KERNEL_BIN" = "${CHAINBOOT_BIN}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
 
 [tasks.qemu-cb-gdb]
+workspace = false
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS} -serial pty", "KERNEL_BIN" = "${CHAINBOOT_BIN}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 extend = "qemu-runner"
 
-[tasks.gdb]
-disabled = true
-
 [tasks.gdb-cb]
-dependencies = ["build", "kernel-binary", "gdb-config"]
+workspace = false
+dependencies = ["build", "build-kernel-binary", "gdb-config"]
 env = { "RUST_GDB" = "${GDB}" }
-script = [
-    "exec < /dev/tty && rust-gdb -x ${GDB_CONNECT_FILE} ${CHAINBOOT_ELF}"
-]
+script = ["exec < /dev/tty && rust-gdb -x ${GDB_CONNECT_FILE} ${CHAINBOOT_ELF}"]
 
 [tasks.sdcard]
-dependencies = ["build", "kernel-binary"]
+alias = "sdcard-cb"
+
+[tasks.sdcard-cb]
+workspace = false
+dependencies = ["build", "build-kernel-binary"]
 script_runner = "@duckscript"
-script = [
-'''
+script = ['''
     kernelImage = set "chain_boot_rpi4.img"
     cp ${CHAINBOOT_BIN} ${VOLUME}/${kernelImage}
-    echo "Copied chainboot to ${VOLUME}/${kernelImage}"
-'''
-]
+    echo 🔄 Copied chainboot to ${VOLUME}/${kernelImage}
+''']
 
-[tasks.cb-eject]
-dependencies = ["sdeject"]
+# Just use sdeject
+#[tasks.cb-eject]
+#clean = true
+#alias = "cb-eject-chainboot"
+#
+#[tasks.cb-eject-chainboot]
+#dependencies = ["sdeject"]
+
+[tasks.clippy]
+workspace = false
+dependencies = ["xtool-clippy"]

@@ -1,11 +1,13 @@
-[tasks.kernel-binary]
-disabled = true
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Build nucleus library (machine)
+#
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
-[tasks.qemu-gdb]
-disabled = true
-
-[tasks.gdb]
-disabled = true
-
-[tasks.hopper]
-disabled = true
+[tasks.clippy]
+workspace = false
+dependencies = ["xtool-clippy"]
