@@ -1,12 +1,12 @@
 [package]
 name = "chainboot"
-version = "0.0.1"
-authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
 description = "Chain boot loader"
-license = "BlueOak-1.0.0"
-categories = ["no-std", "embedded", "os"]
-publish = false
-edition = "2021"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+version.workspace = true
 
 [badges]
 maintenance = { status = "experimental" }
@@ -25,15 +25,15 @@ rpi4 = ["machine/rpi4"]
 
 [dependencies]
 machine = { path = "../../machine" }
-aarch64-cpu = { version = "9.4.0", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
-tock-registers = "0.9"
-ux = { version = "0.1", default-features = false }
-usize_conversions = "0.2"
-bit_field = "0.10"
-bitflags = "2.6"
-cfg-if = "1.0"
-snafu = { version = "0.8", default-features = false }
-seahash = "4.1"
+aarch64-cpu.workspace = true
+bit_field.workspace = true
+bitflags.workspace = true
+cfg-if.workspace = true
+seahash.workspace = true
+snafu.workspace = true
+tock-registers.workspace = true
+usize_conversions.workspace = true
+ux.workspace = true
 
 [[bin]]
 name = "chainboot"
