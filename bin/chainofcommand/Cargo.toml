@@ -1,29 +1,29 @@
 [package]
 name = "chainofcommand"
-version = "0.0.1"
-authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
 description = "Host server for chainboot"
-license = "BlueOak-1.0.0"
-categories = ["no-std", "embedded", "os"]
-publish = false
-edition = "2021"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+version.workspace = true
 
 [badges]
 maintenance = { status = "experimental" }
 
 [dependencies]
-clap = "4.5"
-seahash = "4.1"
 anyhow = "1.0"
+bytes = "1.7"
+clap = "4.5"
 crossterm = { version = "0.28", features = ["event-stream"] }
+defer = "0.2"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["io"] }
+seahash.workspace = true
 tokio = { version = "1.40", features = ["full"] }
-tokio-util = { version = "0.7", features = ["io", "codec", "io"] }
-tokio-stream = { version = "0.1" }
 tokio-serial = "5.4"
-defer = "0.2"
-bytes = "1.7"
+tokio-stream = { version = "0.1" }
+tokio-util = { version = "0.7", features = ["io", "codec", "io"] }
 
 [lints.clippy]
 needless_return = "allow" # clippy hallucinates like chatgpt
