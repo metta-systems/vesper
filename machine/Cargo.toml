@@ -1,16 +1,16 @@
 [package]
 name = "machine"
-version = "0.0.1"
-authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
 description = "Vesper nanokernel shared code library, useful also for the chainboot loader."
-documentation = "https://docs.metta.systems/vesper"
-homepage = "https://github.com/metta-systems/vesper"
-repository = "https://github.com/metta-systems/vesper"
-readme = "README.md"
-license = "BlueOak-1.0.0"
-categories = ["no-std", "embedded", "os"]
-publish = false
-edition = "2021"
+authors.workspace = true
+categories.workspace = true
+documentation.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+publish.workspace = true
+readme.workspace = true
+repository.workspace = true
+version.workspace = true
 
 [badges]
 maintenance = { status = "experimental" }
@@ -29,21 +29,17 @@ rpi4 = []
 test_build = []
 
 [dependencies]
-qemu-exit = "3.0"
-aarch64-cpu = { version = "9.4.0", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
-tock-registers = "0.9"
-ux = { version = "0.1", default-features = false }
-usize_conversions = "0.2"
-bit_field = "0.10"
-bitflags = "2.6"
-cfg-if = "1.0"
-snafu = { version = "0.8", default-features = false, features = [
-    "unstable-core-error",
-] }
-buddy-alloc = { git = "https://github.com/metta-systems/buddy-alloc", version = "0.6.0", branch = "feature/allocator-api" }
-once_cell = { version = "1.20", default-features = false, features = [
-    "unstable",
-] }
+aarch64-cpu.workspace = true
+bit_field.workspace = true
+bitflags.workspace = true
+buddy-alloc.workspace = true
+cfg-if.workspace = true
+once_cell.workspace = true
+qemu-exit.workspace = true
+snafu.workspace = true
+tock-registers.workspace = true
+usize_conversions.workspace = true
+ux.workspace = true
 
 [lib]
 name = "machine"
