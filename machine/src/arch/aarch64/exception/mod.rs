@@ -104,7 +104,7 @@ struct ExceptionContext {
 /// Prints verbose information about the exception and then panics.
 ///
 /// Default pointer is configured in the linker script.
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn default_exception_handler(exc: &ExceptionContext) {
     panic!(
         "Unexpected CPU Exception!\n\n\
@@ -117,17 +117,17 @@ extern "C" fn default_exception_handler(exc: &ExceptionContext) {
 // Current, EL0
 //------------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn current_el0_synchronous(_e: &mut ExceptionContext) {
     panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn current_el0_irq(_e: &mut ExceptionContext) {
     panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn current_el0_serror(_e: &mut ExceptionContext) {
     panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
 }
@@ -136,7 +136,7 @@ extern "C" fn current_el0_serror(_e: &mut ExceptionContext) {
 // Current, ELx
 //------------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
     #[cfg(feature = "test_build")]
     {
@@ -152,13 +152,13 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn current_elx_irq(_e: &mut ExceptionContext) {
     let token = unsafe { &exception::asynchronous::IRQContext::new() };
     exception::asynchronous::irq_manager().handle_pending_irqs(token);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
@@ -167,17 +167,17 @@ extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
 // Lower, AArch64
 //------------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_irq(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_serror(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
@@ -186,17 +186,17 @@ extern "C" fn lower_aarch64_serror(e: &mut ExceptionContext) {
 // Lower, AArch32
 //------------------------------------------------------------------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn lower_aarch32_synchronous(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn lower_aarch32_irq(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
@@ -354,8 +354,8 @@ pub fn current_privilege_level() -> (PrivilegeLevel, &'static str) {
 ///   adhere to the alignment and size constraints demanded by the ARMv8-A Architecture Reference
 ///   Manual.
 pub fn handling_init() {
-    // Provided by vectors.S.
-    extern "Rust" {
+    // SAFETY: Provided by vectors.S.
+    unsafe extern "Rust" {
         static __EXCEPTION_VECTORS_START: UnsafeCell<()>;
     }
 

@@ -26,12 +26,12 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     machine::debug::jtag::wait_debugger();
 
-    if let Err(x) = machine::platform::drivers::init() {
+    if let Err(x) = unsafe { machine::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
-    machine::drivers::driver_manager().init_drivers_and_irqs();
+    unsafe { machine::drivers::driver_manager().init_drivers_and_irqs() };
 
     // println! is usable from here on.
 
@@ -41,8 +41,8 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
 
 // https://onlineasciitools.com/convert-text-to-ascii-art (FIGlet) with `cricket` font
 const LOGO: &str = r#"
-       __          __       __                __   
- .----|  |--.---.-|__.-----|  |--.-----.-----|  |_ 
+       __          __       __                __
+ .----|  |--.---.-|__.-----|  |--.-----.-----|  |_
  |  __|     |  _  |  |     |  _  |  _  |  _  |   _|
  |____|__|__|___._|__|__|__|_____|_____|_____|____|
 "#;

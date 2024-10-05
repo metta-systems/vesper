@@ -97,16 +97,17 @@ mod lib_tests {
     }
 
     /// Main for running tests.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe fn main() -> ! {
         exception::handling_init();
 
-        let phys_kernel_tables_base_addr = match memory::mmu::kernel_map_binary() {
+        let phys_kernel_tables_base_addr = match unsafe { memory::mmu::kernel_map_binary() } {
             Err(string) => panic!("Error mapping kernel binary: {}", string),
             Ok(addr) => addr,
         };
 
-        if let Err(e) = memory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) {
+        if let Err(e) = unsafe { memory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) }
+        {
             panic!("Enabling MMU failed: {}", e);
         }
 

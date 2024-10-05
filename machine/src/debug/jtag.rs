@@ -5,7 +5,7 @@ use {
     core::ptr::{read_volatile, write_volatile},
 };
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 static mut WAIT_FLAG: bool = true;
 
 /// Wait for debugger to attach.
