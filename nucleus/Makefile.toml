@@ -12,7 +12,7 @@ KERNEL_LINK = "libs/platform/src/platform/raspberrypi/linker/kernel.ld"
 
 [tasks.build]
 clear = true
-dependencies = ["build-target-nucleus", "convert-kernel-binary"]
+dependencies = ["build-target-nucleus", "patch-kernel-tables", "convert-kernel-binary"]
 script_runner = "@duckscript"
 script = '''
   echo
@@ -23,6 +23,13 @@ script = '''
 [tasks.build-target-nucleus]
 env = { TARGET_BOARD = "rpi4", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}", BOARD_RUSTFLAGS = "${BOARD_rpi4_RUSTFLAGS}" }
 run_task = "build-target"
+
+[tasks.patch-kernel-tables]
+command = "${CARGO_MAKE_WORKING_DIRECTORY}/../target/ttt"
+args = [
+  "--kernel",
+  "${KERNEL_ELF}",
+]
 
 # Generate a bootable binary file from KERNEL_ELF
 [tasks.convert-kernel-binary]

@@ -3,6 +3,7 @@ members = [
   "nucleus",
   "bin/chainboot",
   "bin/chainofcommand",
+  "tools/ttt",
   # Libraries
   "libs/boot",
   "libs/console",

@@ -133,6 +133,7 @@ dependencies = ["x-build-nucleus", "x-build-bin-chainboot", "x-build-bin-chainof
 # ttt-binary too
 
 [tasks.x-build-nucleus]
+dependencies = ["build-ttt"]
 command = "cargo"
 # Have to use args to support env vars across platforms, regular scripts don't work on Windows
 args = [
@@ -142,6 +143,18 @@ args = [
   "--cwd",
   "nucleus",
   "build",
+]
+
+[tasks.build-ttt]
+command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+    "make",
+    "--makefile",
+    "${CARGO_MAKE_WORKING_DIRECTORY}/tools/ttt/Makefile.toml",
+    "--cwd",
+    "tools/ttt",
+    "ttt",
 ]
 
 [tasks.x-build-bin-chainboot]
