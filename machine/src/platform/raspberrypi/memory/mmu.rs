@@ -180,16 +180,18 @@ pub fn virt_mmio_remap_region() -> MemoryRegion<Virtual> {
 ///
 /// - Any miscalculation or attribute error will likely be fatal. Needs careful manual checking.
 pub unsafe fn kernel_map_binary() -> Result<(), &'static str> {
-    generic_mmu::kernel_map_at(
-        "Kernel boot-core stack",
-        &virt_boot_core_stack_region(),
-        &kernel_virt_to_phys_region(virt_boot_core_stack_region()),
-        &AttributeFields {
-            mem_attributes: MemAttributes::CacheableDRAM,
-            acc_perms: AccessPermissions::ReadWrite,
-            execute_never: true,
-        },
-    )?;
+    unsafe {
+        generic_mmu::kernel_map_at(
+            "Kernel boot-core stack",
+            &virt_boot_core_stack_region(),
+            &kernel_virt_to_phys_region(virt_boot_core_stack_region()),
+            &AttributeFields {
+                mem_attributes: MemAttributes::CacheableDRAM,
+                acc_perms: AccessPermissions::ReadWrite,
+                execute_never: true,
+            },
+        )?
+    };
 
     //         TranslationDescriptor {
     //             name: "Boot code and data",
@@ -213,27 +215,31 @@ pub unsafe fn kernel_map_binary() -> Result<(), &'static str> {
     //             },
     //         },
 
-    generic_mmu::kernel_map_at(
-        "Kernel code and RO data",
-        &virt_code_region(),
-        &kernel_virt_to_phys_region(virt_code_region()),
-        &AttributeFields {
-            mem_attributes: MemAttributes::CacheableDRAM,
-            acc_perms: AccessPermissions::ReadOnly,
-            execute_never: false,
-        },
-    )?;
+    unsafe {
+        generic_mmu::kernel_map_at(
+            "Kernel code and RO data",
+            &virt_code_region(),
+            &kernel_virt_to_phys_region(virt_code_region()),
+            &AttributeFields {
+                mem_attributes: MemAttributes::CacheableDRAM,
+                acc_perms: AccessPermissions::ReadOnly,
+                execute_never: false,
+            },
+        )?
+    };
 
-    generic_mmu::kernel_map_at(
-        "Kernel data and bss",
-        &virt_data_region(),
-        &kernel_virt_to_phys_region(virt_data_region()),
-        &AttributeFields {
-            mem_attributes: MemAttributes::CacheableDRAM,
-            acc_perms: AccessPermissions::ReadWrite,
-            execute_never: true,
-        },
-    )?;
+    unsafe {
+        generic_mmu::kernel_map_at(
+            "Kernel data and bss",
+            &virt_data_region(),
+            &kernel_virt_to_phys_region(virt_data_region()),
+            &AttributeFields {
+                mem_attributes: MemAttributes::CacheableDRAM,
+                acc_perms: AccessPermissions::ReadWrite,
+                execute_never: true,
+            },
+        )?
+    };
 
     Ok(())
 }
@@ -287,15 +293,15 @@ mod tests {
     /// Check if KERNEL_TABLES is in .bss.
     #[test_case]
     fn kernel_tables_in_bss() {
-        extern "Rust" {
+        unsafe extern "Rust" {
             static __BSS_START: UnsafeCell<u64>;
             static __BSS_END: UnsafeCell<u64>;
         }
 
         let bss_range = unsafe {
             Range {
-                start: __BSS_START.get(),
-                end: __BSS_END.get(),
+                start: unsafe { __BSS_START.get() },
+                end: unsafe { __BSS_END.get() },
             }
         };
         let kernel_tables_addr = &KERNEL_TABLES as *const _ as usize as *mut u64;

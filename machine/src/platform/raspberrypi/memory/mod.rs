@@ -68,7 +68,7 @@ use {
 };
 
 // Symbols from the linker script.
-extern "Rust" {
+unsafe extern "Rust" {
     // Boot code.
     //
     // Using the linker script, we ensure that the boot area is consecutive and 4

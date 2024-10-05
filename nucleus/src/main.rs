@@ -58,23 +58,23 @@ pub unsafe fn kernel_init() -> ! {
 
     exception::handling_init();
 
-    let phys_kernel_tables_base_addr = match memory::mmu::kernel_map_binary() {
+    let phys_kernel_tables_base_addr = match unsafe { memory::mmu::kernel_map_binary() } {
         Err(string) => panic!("Error mapping kernel binary: {}", string),
         Ok(addr) => addr,
     };
 
-    if let Err(e) = memory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) {
+    if let Err(e) = unsafe { memory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) } {
         panic!("Enabling MMU failed: {}", e);
     }
 
     memory::mmu::post_enable_init();
 
-    if let Err(x) = machine::platform::drivers::init() {
+    if let Err(x) = unsafe { machine::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
-    machine::drivers::driver_manager().init_drivers_and_irqs();
+    unsafe { machine::drivers::driver_manager().init_drivers_and_irqs() };
 
     // Unmask interrupts on the boot CPU core.
     machine::exception::asynchronous::local_irq_unmask();

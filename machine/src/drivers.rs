@@ -170,7 +170,7 @@ where
     pub unsafe fn init_drivers_and_irqs(&self) {
         self.for_each_descriptor(|descriptor| {
             // 1. Initialize driver.
-            if let Err(x) = descriptor.device_driver.init() {
+            if let Err(x) = unsafe { descriptor.device_driver.init() } {
                 panic!(
                     "Error initializing driver: {}: {}",
                     descriptor.device_driver.compatible(),
@@ -180,7 +180,7 @@ where
 
             // 2. Call corresponding post init callback.
             if let Some(callback) = &descriptor.post_init_callback {
-                if let Err(x) = callback() {
+                if let Err(x) = unsafe { callback() } {
                     panic!(
                         "Error during driver post-init callback: {}: {}",
                         descriptor.device_driver.compatible(),

@@ -26,7 +26,7 @@ macro_rules! entry {
     ($path:path) => {
         /// # Safety
         /// Only type-checks!
-        #[export_name = "main"]
+        #[unsafe(export_name = "main")]
         #[inline(always)]
         pub unsafe fn __main() -> ! {
             // type check the given path
@@ -52,8 +52,8 @@ macro_rules! entry {
 ///
 /// Totally unsafe! We're in the hardware land.
 /// We assume that no statics are accessed before transition to main from reset() function.
-#[no_mangle]
-#[link_section = ".text.main.entry"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.main.entry")]
 pub unsafe extern "C" fn _boot_cores() -> ! {
     // Can't match values with dots in match, so use intermediate consts.
     #[cfg(feature = "qemu")]
@@ -61,13 +61,13 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
     const EL2: u64 = CurrentEL::EL::EL2.value;
     const EL1: u64 = CurrentEL::EL::EL1.value;
 
-    extern "Rust" {
+    unsafe extern "Rust" {
         // Stack top
         // Stack placed before first executable instruction
         static __STACK_TOP: UnsafeCell<()>;
     }
     // Set stack pointer. Used in case we started in EL1.
-    SP.set(__STACK_TOP.get() as u64);
+    SP.set(unsafe { __STACK_TOP.get() } as u64);
 
     shared_setup_and_enter_pre();
 
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
             #[cfg(feature = "qemu")]
             EL3 => setup_and_enter_el1_from_el3(),
             EL2 => setup_and_enter_el1_from_el2(),
-            EL1 => reset(),
+            EL1 => unsafe { reset() },
             _ => endless_sleep(),
         }
     }
@@ -85,7 +85,7 @@ pub unsafe extern "C" fn _boot_cores() -> ! {
     endless_sleep()
 }
 
-#[link_section = ".text.boot"]
+#[unsafe(link_section = ".text.boot")]
 #[inline(always)]
 fn shared_setup_and_enter_pre() {
     // Enable timer counter registers for EL1
@@ -116,10 +116,10 @@ fn shared_setup_and_enter_pre() {
     // @todo disable VM bit to prevent stage 2 MMU translations
 }
 
-#[link_section = ".text.boot"]
+#[unsafe(link_section = ".text.boot")]
 #[inline]
 fn shared_setup_and_enter_post() -> ! {
-    extern "Rust" {
+    unsafe extern "Rust" {
         // Stack top
         static __STACK_TOP: UnsafeCell<()>;
     }
@@ -137,7 +137,7 @@ fn shared_setup_and_enter_post() -> ! {
 /// Real hardware boot-up sequence.
 ///
 /// Prepare and execute transition from EL2 to EL1.
-#[link_section = ".text.boot"]
+#[unsafe(link_section = ".text.boot")]
 #[inline]
 fn setup_and_enter_el1_from_el2() -> ! {
     // Set Saved Program Status Register (EL2)
@@ -170,7 +170,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
 /// Prepare and execute transition from EL3 to EL1.
 /// (from https://github.com/s-matyukevich/raspberry-pi-os/blob/master/docs/lesson02/rpi-os.md)
 #[cfg(feature = "qemu")]
-#[link_section = ".text.boot"]
+#[unsafe(link_section = ".text.boot")]
 #[inline]
 fn setup_and_enter_el1_from_el3() -> ! {
     // Set Secure Configuration Register (EL3)
@@ -205,9 +205,9 @@ fn setup_and_enter_el1_from_el3() -> ! {
 /// We assume that no statics are accessed before transition to main from this function.
 ///
 /// We are guaranteed to be in EL1 non-secure mode here.
-#[link_section = ".text.boot"]
+#[unsafe(link_section = ".text.boot")]
 unsafe fn reset() -> ! {
-    extern "Rust" {
+    unsafe extern "Rust" {
         // Boundaries of the .bss section, provided by the linker script.
         static __BSS_START: UnsafeCell<()>;
         static __BSS_SIZE_U64S: UnsafeCell<()>;
@@ -224,10 +224,12 @@ unsafe fn reset() -> ! {
     // undesirable optimizations on them.
     // So we use a pointer-and-a-size as described in provenance section.
 
-    let bss = slice::from_raw_parts_mut(
-        __BSS_START.get() as *mut u64,
-        __BSS_SIZE_U64S.get() as usize,
-    );
+    let bss = unsafe {
+        slice::from_raw_parts_mut(
+            __BSS_START.get() as *mut u64,
+            __BSS_SIZE_U64S.get() as usize,
+        )
+    };
     for i in bss {
         *i = 0;
     }
@@ -238,9 +240,9 @@ unsafe fn reset() -> ! {
     // Additionally, we assume that no statics are accessed before this point.
     atomic::compiler_fence(Ordering::SeqCst);
 
-    extern "Rust" {
+    unsafe extern "Rust" {
         fn main() -> !;
     }
 
-    main()
+    unsafe { main() }
 }

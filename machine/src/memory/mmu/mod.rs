@@ -107,7 +107,7 @@ unsafe fn kernel_map_at_unchecked(
     attr: &AttributeFields,
 ) -> Result<(), &'static str> {
     platform::memory::mmu::kernel_translation_tables()
-        .write(|tables| tables.map_at(virt_region, phys_region, attr))?;
+        .write(|tables| unsafe { tables.map_at(virt_region, phys_region, attr) })?;
 
     if let Err(x) = mapping_record::kernel_add(name, virt_region, phys_region, attr) {
         warn!("{}", x);
@@ -176,7 +176,7 @@ pub unsafe fn kernel_map_at(
         return Err("Attempt to manually map into MMIO region");
     }
 
-    kernel_map_at_unchecked(name, virt_region, phys_region, attr)?;
+    unsafe { kernel_map_at_unchecked(name, virt_region, phys_region, attr)? };
 
     Ok(())
 }
@@ -210,16 +210,18 @@ pub unsafe fn kernel_map_mmio(
         let virt_region =
             page_alloc::kernel_mmio_va_allocator().lock(|allocator| allocator.alloc(num_pages))?;
 
-        kernel_map_at_unchecked(
-            name,
-            &virt_region,
-            &phys_region,
-            &AttributeFields {
-                mem_attributes: MemAttributes::Device,
-                acc_perms: AccessPermissions::ReadWrite,
-                execute_never: true,
-            },
-        )?;
+        unsafe {
+            kernel_map_at_unchecked(
+                name,
+                &virt_region,
+                &phys_region,
+                &AttributeFields {
+                    mem_attributes: MemAttributes::Device,
+                    acc_perms: AccessPermissions::ReadWrite,
+                    execute_never: true,
+                },
+            )?
+        };
 
         virt_region.start_addr()
     };
@@ -239,7 +241,7 @@ pub unsafe fn kernel_map_binary() -> Result<Address<Physical>, &'static str> {
             tables.phys_base_address()
         });
 
-    platform::memory::mmu::kernel_map_binary()?;
+    unsafe { platform::memory::mmu::kernel_map_binary()? };
 
     Ok(phys_kernel_tables_base_addr)
 }
@@ -253,7 +255,7 @@ pub unsafe fn kernel_map_binary() -> Result<Address<Physical>, &'static str> {
 pub unsafe fn enable_mmu_and_caching(
     phys_tables_base_addr: Address<Physical>,
 ) -> Result<(), MMUEnableError> {
-    arch_mmu::mmu().enable_mmu_and_caching(phys_tables_base_addr)
+    unsafe { arch_mmu::mmu().enable_mmu_and_caching(phys_tables_base_addr) }
 }
 
 /// Finish initialization of the MMU subsystem.

@@ -39,9 +39,11 @@ pub unsafe fn init() -> Result<(), &'static str> {
     }
 
     #[cfg(not(feature = "noserial"))]
-    driver_uart()?;
-    driver_gpio()?;
-    driver_interrupt_controller()?;
+    unsafe {
+        driver_uart()?
+    };
+    unsafe { driver_gpio()? };
+    unsafe { driver_interrupt_controller()? };
 
     INIT_DONE.store(true, Ordering::Relaxed);
     Ok(())
@@ -79,11 +81,14 @@ static mut INTERRUPT_CONTROLLER: MaybeUninit<device_driver::GICv2> = MaybeUninit
 /// This must be called only after successful init of the memory subsystem.
 unsafe fn instantiate_uart() -> Result<(), &'static str> {
     let mmio_descriptor = MMIODescriptor::new(mmio::PL011_UART_BASE, mmio::PL011_UART_SIZE);
-    let virt_addr =
-        memory::mmu::kernel_map_mmio(device_driver::PL011Uart::COMPATIBLE, &mmio_descriptor)?;
+    let virt_addr = unsafe {
+        memory::mmu::kernel_map_mmio(device_driver::PL011Uart::COMPATIBLE, &mmio_descriptor)?
+    };
 
     #[allow(static_mut_refs)]
-    PL011_UART.write(device_driver::PL011Uart::new(virt_addr));
+    unsafe {
+        PL011_UART.write(device_driver::PL011Uart::new(virt_addr))
+    };
 
     Ok(())
 }
@@ -91,7 +96,7 @@ unsafe fn instantiate_uart() -> Result<(), &'static str> {
 /// This must be called only after successful init of the PL011 UART driver.
 unsafe fn post_init_pl011_uart() -> Result<(), &'static str> {
     #[allow(static_mut_refs)]
-    console::register_console(PL011_UART.assume_init_ref());
+    console::register_console(unsafe { PL011_UART.assume_init_ref() });
     crate::info!("UART0 is live!");
     Ok(())
 }
@@ -100,10 +105,12 @@ unsafe fn post_init_pl011_uart() -> Result<(), &'static str> {
 unsafe fn instantiate_gpio() -> Result<(), &'static str> {
     let mmio_descriptor = MMIODescriptor::new(mmio::GPIO_BASE, mmio::GPIO_SIZE);
     let virt_addr =
-        memory::mmu::kernel_map_mmio(device_driver::GPIO::COMPATIBLE, &mmio_descriptor)?;
+        unsafe { memory::mmu::kernel_map_mmio(device_driver::GPIO::COMPATIBLE, &mmio_descriptor)? };
 
     #[allow(static_mut_refs)]
-    GPIO.write(device_driver::GPIO::new(virt_addr));
+    unsafe {
+        GPIO.write(device_driver::GPIO::new(virt_addr))
+    };
 
     Ok(())
 }
@@ -111,7 +118,7 @@ unsafe fn instantiate_gpio() -> Result<(), &'static str> {
 /// This must be called only after successful init of the GPIO driver.
 unsafe fn post_init_gpio() -> Result<(), &'static str> {
     #[allow(static_mut_refs)]
-    device_driver::PL011Uart::prepare_gpio(GPIO.assume_init_ref());
+    device_driver::PL011Uart::prepare_gpio(unsafe { GPIO.assume_init_ref() });
     Ok(())
 }
 
@@ -120,13 +127,17 @@ unsafe fn post_init_gpio() -> Result<(), &'static str> {
 unsafe fn instantiate_interrupt_controller() -> Result<(), &'static str> {
     let periph_mmio_descriptor =
         MMIODescriptor::new(mmio::PERIPHERAL_IC_BASE, mmio::PERIPHERAL_IC_SIZE);
-    let periph_virt_addr = memory::mmu::kernel_map_mmio(
-        device_driver::InterruptController::COMPATIBLE,
-        &periph_mmio_descriptor,
-    )?;
+    let periph_virt_addr = unsafe {
+        memory::mmu::kernel_map_mmio(
+            device_driver::InterruptController::COMPATIBLE,
+            &periph_mmio_descriptor,
+        )?
+    };
 
     #[allow(static_mut_refs)]
-    INTERRUPT_CONTROLLER.write(device_driver::InterruptController::new(periph_virt_addr));
+    unsafe {
+        INTERRUPT_CONTROLLER.write(device_driver::InterruptController::new(periph_virt_addr));
+    }
 
     Ok(())
 }
@@ -135,13 +146,17 @@ unsafe fn instantiate_interrupt_controller() -> Result<(), &'static str> {
 #[cfg(feature = "rpi4")]
 unsafe fn instantiate_interrupt_controller() -> Result<(), &'static str> {
     let gicd_mmio_descriptor = MMIODescriptor::new(mmio::GICD_BASE, mmio::GICD_SIZE);
-    let gicd_virt_addr = memory::mmu::kernel_map_mmio("GICv2 GICD", &gicd_mmio_descriptor)?;
+    let gicd_virt_addr =
+        unsafe { memory::mmu::kernel_map_mmio("GICv2 GICD", &gicd_mmio_descriptor)? };
 
     let gicc_mmio_descriptor = MMIODescriptor::new(mmio::GICC_BASE, mmio::GICC_SIZE);
-    let gicc_virt_addr = memory::mmu::kernel_map_mmio("GICV2 GICC", &gicc_mmio_descriptor)?;
+    let gicc_virt_addr =
+        unsafe { memory::mmu::kernel_map_mmio("GICV2 GICC", &gicc_mmio_descriptor)? };
 
     #[allow(static_mut_refs)]
-    INTERRUPT_CONTROLLER.write(device_driver::GICv2::new(gicd_virt_addr, gicc_virt_addr));
+    unsafe {
+        INTERRUPT_CONTROLLER.write(device_driver::GICv2::new(gicd_virt_addr, gicc_virt_addr))
+    };
 
     Ok(())
 }
@@ -149,18 +164,22 @@ unsafe fn instantiate_interrupt_controller() -> Result<(), &'static str> {
 /// This must be called only after successful init of the interrupt controller driver.
 unsafe fn post_init_interrupt_controller() -> Result<(), &'static str> {
     #[allow(static_mut_refs)]
-    generic_exception::asynchronous::register_irq_manager(INTERRUPT_CONTROLLER.assume_init_ref());
+    generic_exception::asynchronous::register_irq_manager(unsafe {
+        INTERRUPT_CONTROLLER.assume_init_ref()
+    });
 
     Ok(())
 }
 
 /// Function needs to ensure that driver registration happens only after correct instantiation.
 unsafe fn driver_uart() -> Result<(), &'static str> {
-    instantiate_uart()?;
+    unsafe { instantiate_uart()? };
 
     let uart_descriptor = drivers::DeviceDriverDescriptor::new(
         #[allow(static_mut_refs)]
-        PL011_UART.assume_init_ref(),
+        unsafe {
+            PL011_UART.assume_init_ref()
+        },
         Some(post_init_pl011_uart),
         Some(exception::asynchronous::irq_map::PL011_UART),
     );
@@ -171,11 +190,16 @@ unsafe fn driver_uart() -> Result<(), &'static str> {
 
 /// Function needs to ensure that driver registration happens only after correct instantiation.
 unsafe fn driver_gpio() -> Result<(), &'static str> {
-    instantiate_gpio()?;
+    unsafe { instantiate_gpio()? };
 
-    #[allow(static_mut_refs)]
-    let gpio_descriptor =
-        drivers::DeviceDriverDescriptor::new(GPIO.assume_init_ref(), Some(post_init_gpio), None);
+    let gpio_descriptor = drivers::DeviceDriverDescriptor::new(
+        #[allow(static_mut_refs)]
+        unsafe {
+            GPIO.assume_init_ref()
+        },
+        Some(post_init_gpio),
+        None,
+    );
     drivers::driver_manager().register_driver(gpio_descriptor);
 
     Ok(())
@@ -183,11 +207,13 @@ unsafe fn driver_gpio() -> Result<(), &'static str> {
 
 /// Function needs to ensure that driver registration happens only after correct instantiation.
 unsafe fn driver_interrupt_controller() -> Result<(), &'static str> {
-    instantiate_interrupt_controller()?;
+    unsafe { instantiate_interrupt_controller()? };
 
     let interrupt_controller_descriptor = drivers::DeviceDriverDescriptor::new(
         #[allow(static_mut_refs)]
-        INTERRUPT_CONTROLLER.assume_init_ref(),
+        unsafe {
+            INTERRUPT_CONTROLLER.assume_init_ref()
+        },
         Some(post_init_interrupt_controller),
         None,
     );

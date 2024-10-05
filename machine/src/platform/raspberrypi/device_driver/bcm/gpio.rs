@@ -218,7 +218,7 @@ impl GPIO {
     /// Unsafe, duh!
     pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            inner: IRQSafeNullLock::new(GPIOInner::new(mmio_base_addr)),
+            inner: IRQSafeNullLock::new(unsafe { GPIOInner::new(mmio_base_addr) }),
         }
     }
 
