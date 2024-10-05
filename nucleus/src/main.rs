@@ -63,12 +63,12 @@ pub unsafe fn kernel_init() -> ! {
 
     libmemory::mmu::post_enable_init();
 
-    if let Err(x) = unsafe { machine::platform::drivers::init() } {
+    if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
-    unsafe { machine::drivers::driver_manager().init_drivers_and_irqs() };
+    unsafe { libplatform::platform::drivers::driver_manager().init_drivers_and_irqs() };
 
     // Unmask interrupts on the boot CPU core.
     libexception::exception::asynchronous::local_irq_unmask();
@@ -93,7 +93,10 @@ pub fn kernel_main() -> ! {
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION")
     );
-    info!("Booting on: {}", machine::platform::BcmHost::board_name());
+    info!(
+        "Booting on: {}",
+        libplatform::platform::BcmHost::board_name()
+    );
 
     // info!("MMU online. Special regions:");
     // machine::platform::memory::mmu::virt_mem_layout().print_layout();
@@ -110,10 +113,10 @@ pub fn kernel_main() -> ! {
     );
 
     info!("Drivers loaded:");
-    machine::drivers::driver_manager().enumerate();
+    libplatform::platform::drivers::driver_manager().enumerate();
 
     info!("Registered IRQ handlers:");
-    machine::platform::exception::asynchronous::irq_manager().print_handler();
+    libplatform::platform::exception::asynchronous::irq_manager().print_handler();
 
     // Test a failing timer case.
     libtime::time::time_manager().spin_for(Duration::from_nanos(1));
