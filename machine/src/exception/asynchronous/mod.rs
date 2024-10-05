@@ -136,7 +136,7 @@ where
     }
 }
 
-impl<'irq_context> IRQContext<'irq_context> {
+impl IRQContext<'_> {
     /// Creates an IRQContext token.
     ///
     /// # Safety
