@@ -4,6 +4,9 @@ _default:
 make-opts := '--time-summary --hide-uninteresting'
 # make-opts := '--quiet'
 
+memtab:
+    cargo play play/memtab.rs
+
 # Update all dependencies
 [group("maintenance")]
 deps-up:
