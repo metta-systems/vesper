@@ -137,6 +137,7 @@ alias = "empty"
 [tasks.build-target]
 workspace = false
 command = "cargo"
+env = { RUSTFLAGS = "-D warnings" }
 args = [
     "build",
     "@@split(PLATFORM_TARGET,|)",
