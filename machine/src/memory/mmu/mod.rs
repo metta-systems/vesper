@@ -211,16 +211,11 @@ pub unsafe fn kernel_map_mmio(
             page_alloc::kernel_mmio_va_allocator().lock(|allocator| allocator.alloc(num_pages))?;
 
         unsafe {
-            kernel_map_at_unchecked(
-                name,
-                &virt_region,
-                &phys_region,
-                &AttributeFields {
-                    mem_attributes: MemAttributes::Device,
-                    acc_perms: AccessPermissions::ReadWrite,
-                    execute_never: true,
-                },
-            )?
+            kernel_map_at_unchecked(name, &virt_region, &phys_region, &AttributeFields {
+                mem_attributes: MemAttributes::Device,
+                acc_perms: AccessPermissions::ReadWrite,
+                execute_never: true,
+            })?
         };
 
         virt_region.start_addr()

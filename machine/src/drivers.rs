@@ -1,6 +1,6 @@
 use crate::{
     exception, println,
-    synchronization::{interface::ReadWriteEx, IRQSafeNullLock, InitStateLock},
+    synchronization::{IRQSafeNullLock, InitStateLock, interface::ReadWriteEx},
 };
 
 //--------------------------------------------------------------------------------------------------

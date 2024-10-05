@@ -4,7 +4,7 @@
 
 //! Null IRQ Manager.
 
-use super::{interface, IRQContext, IRQHandlerDescriptor};
+use super::{IRQContext, IRQHandlerDescriptor, interface};
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions

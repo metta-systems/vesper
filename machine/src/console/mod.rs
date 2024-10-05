@@ -71,7 +71,7 @@ static CONSOLE: InitStateLock<&'static (dyn interface::All + Sync)> =
 // Public Code
 //--------------------------------------------------------------------------------------------------
 
-use crate::synchronization::{interface::ReadWriteEx, InitStateLock};
+use crate::synchronization::{InitStateLock, interface::ReadWriteEx};
 
 /// Register a new console.
 pub fn register_console(new_console: &'static (dyn interface::All + Sync)) {

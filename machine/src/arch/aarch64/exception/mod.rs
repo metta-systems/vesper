@@ -313,13 +313,7 @@ impl fmt::Display for ExceptionContext {
         writeln!(f)?;
         writeln!(f, "General purpose register:")?;
 
-        let alternating = |x| -> _ {
-            if x % 2 == 0 {
-                "   "
-            } else {
-                "\n"
-            }
-        };
+        let alternating = |x| -> _ { if x % 2 == 0 { "   " } else { "\n" } };
 
         // Print two registers per line.
         for (i, reg) in self.gpr.iter().enumerate() {

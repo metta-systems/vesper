@@ -15,8 +15,8 @@ use {
         devices::serial::SerialOps,
         exception,
         memory::{Address, Virtual},
-        platform::device_driver::{common::MMIODerefWrapper, gpio, IRQNumber},
-        synchronization::{interface::Mutex, IRQSafeNullLock},
+        platform::device_driver::{IRQNumber, common::MMIODerefWrapper, gpio},
+        synchronization::{IRQSafeNullLock, interface::Mutex},
     },
     core::fmt::{self, Arguments},
     snafu::Snafu,
@@ -520,7 +520,7 @@ impl crate::drivers::interface::DeviceDriver for PL011Uart {
         &'static self,
         irq_number: &Self::IRQNumberType,
     ) -> Result<(), &'static str> {
-        use exception::asynchronous::{irq_manager, IRQHandlerDescriptor};
+        use exception::asynchronous::{IRQHandlerDescriptor, irq_manager};
 
         let descriptor = IRQHandlerDescriptor::new(*irq_number, Self::COMPATIBLE, self);
 
