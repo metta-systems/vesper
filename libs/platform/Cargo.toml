@@ -1,0 +1,65 @@
+[package]
+name = "libplatform"
+
+description = "Vesper nanokernel platform code."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[package.metadata.layer]
+deps = []
+description = ""
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+default = []
+noserial = []
+# Enable JTAG debugging of kernel - enable jtag helpers and
+# block waiting for JTAG probe attach at the start of kernel main.
+jtag = []
+# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
+qemu = []
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+bit_field = { workspace = true }
+bitflags = { workspace = true }
+buddy-alloc = { workspace = true }
+cfg-if = { workspace = true }
+libconsole = { workspace = true }
+libexception = { workspace = true }
+libkernel-state = { workspace = true }
+liblocal-irq = { workspace = true }
+liblocking = { workspace = true }
+liblog = { workspace = true }
+libmemory = { workspace = true }
+libprimitives = { workspace = true }
+once_cell = { workspace = true }
+qemu-exit = { workspace = true }
+snafu = { workspace = true }
+tock-registers = { workspace = true }
+usize_conversions = { workspace = true }
+ux = { workspace = true }
+
+[dev-dependencies]
+libtest = { workspace = true }
+
+[lib]
+name = "machine"
+test = true
+
+# For proper testing in libmachine, we build it as a test_runner binary!
+
+[lints]
+workspace = true

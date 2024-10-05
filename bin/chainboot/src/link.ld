@@ -9,6 +9,9 @@
  * [Output Section Address](https://sourceware.org/binutils/docs/ld/Output-Section-Address.html)
  * [Output Section LMA](https://sourceware.org/binutils/docs/ld/Output-Section-LMA.html)
  * [Output Section Attributes](https://sourceware.org/binutils/docs/ld/Output-Section-Attributes.html#Output-Section-Attributes)
+ *
+ * Symbols referenced from Rust code are __IN_CAPS, following rust conventions, symbols that are used only in linker script
+ * and from assembly code __are_in_lowercase.
  */
 
 /* The physical address at which the the kernel binary will be loaded by the Raspberry's firmware */
@@ -18,19 +21,19 @@ __rpi_phys_binary_load_addr = 0x80000;
 ENTRY(__rpi_phys_binary_load_addr)
 
 /* Flags:
- *     4 == R
- *     5 == RX
- *     6 == RW
+ * R = 4
+ * RX = 5
+ * RW = 6
  *
  * Segments are marked PT_LOAD below so that the ELF file provides virtual and physical addresses.
  * It doesn't mean all of them need actually be loaded.
  */
 PHDRS
 {
-    segment_boot_core_stack PT_LOAD FLAGS(6);
-    segment_start_code      PT_LOAD FLAGS(5);
-    segment_code            PT_LOAD FLAGS(5);
-    segment_data            PT_LOAD FLAGS(6);
+    segment_boot_core_stack PT_LOAD FLAGS(6); /* RW */
+    segment_start_code      PT_LOAD FLAGS(5); /* RX */
+    segment_code            PT_LOAD FLAGS(5); /* RX */
+    segment_data            PT_LOAD FLAGS(6); /* RW */
 }
 
 SECTIONS
@@ -48,17 +51,16 @@ SECTIONS
     } :segment_boot_core_stack
 
     . = __rpi_phys_binary_load_addr;
-
     .text :
     {
         /* .text.chainboot.entry is an assembly piece linked at 0x80000 which */
         /* relocates the rest of the code to the address above 32Mb */
         KEEP(*(.text.chainboot.entry))
+        /* Align to 16 bytes, b/c relocating the binary is done in u128 chunks */
+        . = ALIGN(16);
     } :segment_start_code
 
-    /* Align to 16 bytes, b/c relocating the binary is done in u128 chunks */
-    . = ALIGN(16);
-
+    /* Physical code location in file */
     __binary_nonzero_lma = .;
 
     /* Set the link address to 32 MiB */
@@ -68,15 +70,17 @@ SECTIONS
     /***********************************************************************************************
     * Code + Exception Vectors + RO Data + Global Offset Table
     ***********************************************************************************************/
+    /* Logical code location in memory */
     __binary_nonzero_vma = .;
-    .text : AT (ADDR(.text) + SIZEOF(.text))
+    .text : AT (ADDR(.text) + SIZEOF(.text)) ALIGN(16)
     {
         *(.text*)                 /* The Rust entry point and everything else */
     } :segment_code
 
-    .vectors :
+    . = ALIGN(2048);
+
+    .vectors : ALIGN(2048)
     {
-        . = ALIGN(2048);
         __EXCEPTION_VECTORS_START = .;
         KEEP(*(.vectors))
     } :segment_code
@@ -89,11 +93,11 @@ SECTIONS
     ***********************************************************************************************/
     .data : { *(.data*) } :segment_data
 
-    /* Fill up to 16 bytes, b/c relocating the binary is done in u128 chunks */
+    /* Align to 16 bytes, b/c relocating the binary is done in u128 chunks */
     . = ALIGN(16);
     __binary_nonzero_vma_end_exclusive = .;
 
-    /* Section is zeroed in pairs of u64. Align start and end to 16 bytes at least */
+    /* Align to 16 bytes, b/c BSS section is zeroed in u1238 chunks. */
     .bss (NOLOAD) : ALIGN(16)
     {
         __BSS_START = .;

@@ -13,6 +13,7 @@ members = [
   "libs/locking",
   "libs/log",
   "libs/memory",
+  "libs/platform",
   "libs/primitives",
   "libs/qemu",
   "libs/test",
@@ -46,6 +47,7 @@ liblocal-irq = { path = "libs/local-irq" }
 liblocking = { path = "libs/locking" }
 liblog = { path = "libs/log" }
 libmemory = { path = "libs/memory" }
+libplatform = { path = "libs/platform" }
 libprimitives = { path = "libs/primitives" }
 libqemu = { path = "libs/qemu" }
 libtest = { path = "libs/test" }
