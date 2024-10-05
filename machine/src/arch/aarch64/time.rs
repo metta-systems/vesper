@@ -15,7 +15,7 @@ use {
     crate::{synchronization, warn},
     aarch64_cpu::{asm::barrier, registers::*},
     core::{
-        num::{NonZeroU128, NonZeroU32, NonZeroU64},
+        num::{NonZeroU32, NonZeroU64, NonZeroU128},
         ops::{Add, Div},
         time::Duration,
     },

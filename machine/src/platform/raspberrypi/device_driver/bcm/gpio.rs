@@ -9,10 +9,10 @@ use {
     crate::{
         memory::{Address, Virtual},
         platform::{
-            device_driver::{common::MMIODerefWrapper, IRQNumber},
             BcmHost,
+            device_driver::{IRQNumber, common::MMIODerefWrapper},
         },
-        synchronization::{interface::Mutex, IRQSafeNullLock},
+        synchronization::{IRQSafeNullLock, interface::Mutex},
         time,
     },
     core::{marker::PhantomData, time::Duration},

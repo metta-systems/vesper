@@ -101,7 +101,7 @@ use core::marker::PhantomData;
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
-use crate::synchronization::{interface::ReadWriteEx, InitStateLock};
+use crate::synchronization::{InitStateLock, interface::ReadWriteEx};
 
 impl<T> IRQHandlerDescriptor<T>
 where

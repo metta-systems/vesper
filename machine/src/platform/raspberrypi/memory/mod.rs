@@ -63,7 +63,7 @@ pub mod mmu;
 //--------------------------------------------------------------------------------------------------
 
 use {
-    crate::memory::{mmu::PageAddress, Address, Physical, Virtual},
+    crate::memory::{Address, Physical, Virtual, mmu::PageAddress},
     core::cell::UnsafeCell,
 };
 

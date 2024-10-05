@@ -1,10 +1,9 @@
 use {
-    super::{mair, Granule512MiB, Granule64KiB},
+    super::{Granule64KiB, Granule512MiB, mair},
     crate::{
         memory::{
-            self,
+            self, Address, Physical, Virtual,
             mmu::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
-            Address, Physical, Virtual,
         },
         platform,
     },
