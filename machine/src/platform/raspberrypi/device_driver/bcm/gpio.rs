@@ -338,7 +338,7 @@ impl<'outer> Pin<'outer, Uninitialized> {
     }
 }
 
-impl<'outer> Pin<'outer, Output> {
+impl Pin<'_, Output> {
     /// Sets (turns on) this pin.
     pub fn set(&mut self) {
         self.inner.lock(|inner| inner.set_pin(self.pin));
@@ -352,7 +352,7 @@ impl<'outer> Pin<'outer, Output> {
 
 pub type Level = bool;
 
-impl<'outer> Pin<'outer, Input> {
+impl Pin<'_, Input> {
     /// Reads the pin's value. Returns `true` if the level is high and `false`
     /// if the level is low.
     pub fn level(&self) -> Level {
