@@ -14,8 +14,11 @@
 use {
     crate::{
         memory::{
-            mmu::{interface, interface::MMU, AddressSpace, MMUEnableError, TranslationGranule},
             Address, Physical,
+            mmu::{
+                AddressSpace, MMUEnableError, TranslationGranule,
+                interface::{self, MMU},
+            },
         },
         platform, println,
     },

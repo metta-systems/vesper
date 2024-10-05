@@ -4,9 +4,9 @@
 #![feature(slice_take)]
 
 use {
-    anyhow::{anyhow, Result},
+    anyhow::{Result, anyhow},
     bytes::Bytes,
-    clap::{value_parser, Arg, ArgAction, Command},
+    clap::{Arg, ArgAction, Command, value_parser},
     crossterm::{
         cursor,
         event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
@@ -14,7 +14,7 @@ use {
         tty::IsTty,
     },
     defer::defer,
-    futures::{future::FutureExt, Stream},
+    futures::{Stream, future::FutureExt},
     seahash::SeaHasher,
     std::{
         fmt::Formatter,

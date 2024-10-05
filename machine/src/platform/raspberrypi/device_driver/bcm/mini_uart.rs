@@ -14,10 +14,10 @@ use {
         exception::asynchronous::IRQNumber,
         memory::{Address, Virtual},
         platform::{
-            device_driver::{common::MMIODerefWrapper, gpio},
             BcmHost,
+            device_driver::{common::MMIODerefWrapper, gpio},
         },
-        synchronization::{interface::Mutex, IRQSafeNullLock},
+        synchronization::{IRQSafeNullLock, interface::Mutex},
     },
     cfg_if::cfg_if,
     core::{
