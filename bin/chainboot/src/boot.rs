@@ -1,7 +1,7 @@
 // Make first function small enough so that compiler doesn't try
 // to crate a huge stack frame before we have a chance to set SP.
-#[no_mangle]
-#[link_section = ".text.chainboot.entry"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.chainboot.entry")]
 pub unsafe extern "C" fn _start() -> ! {
     use {
         aarch64_cpu::registers::{MPIDR_EL1, SP},
@@ -18,18 +18,18 @@ pub unsafe extern "C" fn _start() -> ! {
         endless_sleep()
     }
 
-    extern "Rust" {
+    unsafe extern "Rust" {
         // Stack top
         static __boot_core_stack_end_exclusive: UnsafeCell<()>;
     }
     // Set stack pointer.
-    SP.set(__boot_core_stack_end_exclusive.get() as u64);
+    SP.set(unsafe { __boot_core_stack_end_exclusive.get() } as u64);
 
-    reset();
+    unsafe { reset() };
 }
 
-#[no_mangle]
-#[link_section = ".text.chainboot"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.chainboot")]
 pub unsafe extern "C" fn reset() -> ! {
     use core::{
         cell::UnsafeCell,
@@ -38,7 +38,7 @@ pub unsafe extern "C" fn reset() -> ! {
 
     // These are a problem, because they are not interpreted as constants here.
     // Subsequently, this code tries to read values from not-yet-existing data locations.
-    extern "Rust" {
+    unsafe extern "Rust" {
         // Boundaries of the .bss section, provided by the linker script
         static __BSS_START: UnsafeCell<()>;
         static __BSS_SIZE_U64S: UnsafeCell<()>;
@@ -60,23 +60,27 @@ pub unsafe extern "C" fn reset() -> ! {
     //     __binary_nonzero_vma.get() as *mut u64,
     //     __binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize,
     // );
-    let binary_size =
-        __binary_nonzero_vma_end_exclusive.get() as usize - __binary_nonzero_vma.get() as usize;
-    local_memcpy(
-        __binary_nonzero_vma.get() as *mut u8,
-        __binary_nonzero_lma.get() as *const u8,
-        binary_size,
-    );
+    let binary_size = unsafe { __binary_nonzero_vma_end_exclusive.get() } as usize
+        - unsafe { __binary_nonzero_vma.get() } as usize;
+    unsafe {
+        local_memcpy(
+            __binary_nonzero_vma.get() as *mut u8,
+            __binary_nonzero_lma.get() as *const u8,
+            binary_size,
+        )
+    };
 
     // This tries to call memset() at a wrong linked address - the function is in relocated area!
 
     // Zeroes the .bss section
     // Emulate
     // crate::stdmem::local_memset(__bss_start.get() as *mut u8, 0u8, __bss_size.get() as usize);
-    let bss = core::slice::from_raw_parts_mut(
-        __BSS_START.get() as *mut u64,
-        __BSS_SIZE_U64S.get() as usize,
-    );
+    let bss = unsafe {
+        core::slice::from_raw_parts_mut(
+            __BSS_START.get() as *mut u64,
+            __BSS_SIZE_U64S.get() as usize,
+        )
+    };
     for i in bss {
         *i = 0;
     }
@@ -87,18 +91,18 @@ pub unsafe extern "C" fn reset() -> ! {
     // Additionally, we assume that no statics are accessed before this point.
     atomic::compiler_fence(Ordering::SeqCst);
 
-    let max_kernel_size =
-        __binary_nonzero_vma.get() as u64 - __boot_core_stack_end_exclusive.get() as u64;
-    crate::kernel_init(max_kernel_size)
+    let max_kernel_size = unsafe { __binary_nonzero_vma.get() } as u64
+        - unsafe { __boot_core_stack_end_exclusive.get() } as u64;
+    unsafe { crate::kernel_init(max_kernel_size) }
 }
 
 #[inline(always)]
-#[link_section = ".text.chainboot"]
+#[unsafe(link_section = ".text.chainboot")]
 unsafe fn local_memcpy(mut dest: *mut u8, mut src: *const u8, n: usize) {
-    let dest_end = dest.add(n);
+    let dest_end = unsafe { dest.add(n) };
     while dest < dest_end {
-        *dest = *src;
-        dest = dest.add(1);
-        src = src.add(1);
+        unsafe { *dest = *src };
+        dest = unsafe { dest.add(1) };
+        src = unsafe { src.add(1) };
     }
 }

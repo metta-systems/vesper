@@ -12,7 +12,7 @@ readme = "README.md"
 license = "BlueOak-1.0.0"
 categories = ["no-std", "embedded", "os"]
 publish = false
-edition = "2021"
+edition = "2024"
 
 [workspace.dependencies]
 qemu-exit = "3.0"
