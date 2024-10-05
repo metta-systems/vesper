@@ -14,7 +14,7 @@ maintenance = { status = "experimental" }
 [features]
 default = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = ["libconsole/qemu", "machine/qemu"]
+qemu = ["libconsole/qemu", "libplatform/qemu", "machine/qemu"]
 # Build for debugging it over JTAG/SWD connection - halts on first non-startup function start.
 jtag = ["machine/jtag"]
 # Dummy feature, ignored in this crate.
@@ -27,6 +27,7 @@ bitflags = { workspace = true }
 cfg-if = { workspace = true }
 libconsole = { workspace = true }
 liblog = { workspace = true }
+libplatform = { workspace = true }
 machine = { path = "../../machine", features = ["no_boot"] }
 seahash = { workspace = true }
 snafu = { workspace = true }
