@@ -22,7 +22,7 @@ defer = "0.2"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["io"] }
 seahash.workspace = true
-tokio = { version = "1.40", features = ["full"] }
+tokio = { version = "1.41", features = ["full"] }
 tokio-serial = "5.4"
 tokio-stream = { version = "0.1" }
 tokio-util = { version = "0.7", features = ["io", "codec", "io"] }
