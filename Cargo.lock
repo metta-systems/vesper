@@ -26,7 +26,7 @@ dependencies = [
 [[package]]
 name = "aarch64-cpu"
 version = "9.4.0"
-source = "git+https://github.com/rust-embedded/aarch64-cpu?branch=main#ae8199e2337cd455985265e9bedcf1a89804e9bb"
+source = "git+https://github.com/rust-embedded/aarch64-cpu?branch=main#e4c1f1a07789c77b2ddbd2762701da4c691f6b4e"
 dependencies = [
  "tock-registers",
 ]
