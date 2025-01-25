@@ -1,5 +1,3 @@
-cargo-features = ["edition2024"]
-
 [package]
 name = "chainofcommand"
 description = "Host server for chainboot"
