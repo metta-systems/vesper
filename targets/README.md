@@ -20,9 +20,15 @@ To generate a target specification json template, run
 rustc +nightly -Z unstable-options --target=<your target name> --print target-spec-json
 ```
 
+### Erratums
+
+- [fix-cortex-a53-843419](https://reviews.llvm.org/D36749) implemented in LLD
+
 ### To do
 
 "panic-strategy": "abort" is ok for baremetal targets, but not for -metta, right? Will rework for userspace targets when we have unwinding.
+
+
 
 ----
 
