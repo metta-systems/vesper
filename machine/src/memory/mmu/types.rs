@@ -124,13 +124,14 @@ impl<ATYPE: AddressType> From<Address<ATYPE>> for PageAddress<ATYPE> {
 }
 
 impl<ATYPE: AddressType> Step for PageAddress<ATYPE> {
-    fn steps_between(start: &Self, end: &Self) -> Option<usize> {
+    fn steps_between(start: &Self, end: &Self) -> (usize, Option<usize>) {
         if start > end {
-            return None;
+            return (0, None);
         }
 
         // Since start <= end, do unchecked arithmetic.
-        Some((end.inner.as_usize() - start.inner.as_usize()) >> KernelGranule::SHIFT)
+        let steps = (end.inner.as_usize() - start.inner.as_usize()) >> KernelGranule::SHIFT;
+        (steps, Some(steps))
     }
 
     fn forward_checked(start: Self, count: usize) -> Option<Self> {
@@ -196,7 +197,7 @@ impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
 
     /// Returns the number of pages contained in this region.
     pub fn num_pages(&self) -> usize {
-        PageAddress::steps_between(&self.start, &self.end_exclusive).unwrap()
+        PageAddress::steps_between(&self.start, &self.end_exclusive).0
     }
 
     /// Returns the size in bytes of this region.
@@ -367,7 +368,7 @@ mod tests {
 
         let zero = PageAddress::<Virtual>::from(0);
         let three = PageAddress::<Virtual>::from(KernelGranule::SIZE * 3);
-        assert_eq!(PageAddress::steps_between(&zero, &three), Some(3));
+        assert_eq!(PageAddress::steps_between(&zero, &three), (3, Some(3)));
     }
 
     /// Sanity of [MemoryRegion] methods.
