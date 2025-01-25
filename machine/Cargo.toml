@@ -1,5 +1,3 @@
-cargo-features = ["edition2024"]
-
 [package]
 name = "machine"
 description = "Vesper nanokernel shared code library, useful also for the chainboot loader."
