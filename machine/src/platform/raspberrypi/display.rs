@@ -19,7 +19,7 @@ impl Color {
     pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
         // @todo use u32::from(g) when it's declared const
         // (see https://doc.rust-lang.org/src/core/convert/num.rs.html#49-54)
-        Color((b as u32) << 16 | (g as u32) << 8 | (r as u32))
+        Color(((b as u32) << 16) | ((g as u32) << 8) | (r as u32))
     }
 
     pub const fn black() -> Color {
