@@ -28,6 +28,7 @@
 #![allow(clippy::nonstandard_macro_braces)] // https://github.com/shepmaster/snafu/issues/296
 #![allow(missing_docs)] // Temp: switch to deny
 #![deny(warnings)]
+#![allow(linker_messages)]
 #![allow(unused)]
 #![allow(internal_features)]
 #![feature(core_intrinsics)]

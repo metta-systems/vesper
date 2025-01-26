@@ -27,6 +27,7 @@
 #![deny(warnings)]
 #![allow(unused)]
 #![allow(internal_features)]
+#![allow(linker_messages)]
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 

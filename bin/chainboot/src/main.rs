@@ -3,6 +3,7 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+#![allow(linker_messages)]
 #![no_main]
 #![no_std]
 #![no_builtins]
