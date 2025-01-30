@@ -51,12 +51,13 @@ SECTIONS
 
     .text :
     {
+        /* .text.chainboot.entry is an assembly piece linked at 0x80000 which */
+        /* relocates the rest of the code to the address above 32Mb */
         KEEP(*(.text.chainboot.entry))
-        *(.text.chainboot)
     } :segment_start_code
 
-    /* Align to 8 bytes, b/c relocating the binary is done in u64 chunks */
-    . = ALIGN(8);
+    /* Align to 16 bytes, b/c relocating the binary is done in u128 chunks */
+    . = ALIGN(16);
 
     __binary_nonzero_lma = .;
 
@@ -88,8 +89,8 @@ SECTIONS
     ***********************************************************************************************/
     .data : { *(.data*) } :segment_data
 
-    /* Fill up to 8 bytes, b/c relocating the binary is done in u64 chunks */
-    . = ALIGN(8);
+    /* Fill up to 16 bytes, b/c relocating the binary is done in u128 chunks */
+    . = ALIGN(16);
     __binary_nonzero_vma_end_exclusive = .;
 
     /* Section is zeroed in pairs of u64. Align start and end to 16 bytes at least */
@@ -99,7 +100,7 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
         . = ALIGN(16);
-        __BSS_SIZE_U64S = (. - __BSS_START) / 8;
+        __BSS_END = .;
     } :segment_data
 
     /DISCARD/ : { *(.comment) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.boot*)}
