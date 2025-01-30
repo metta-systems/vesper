@@ -1,5 +1,6 @@
 use aarch64_cpu::asm;
 
+#[cfg(not(feature = "no_boot"))] // Move this to nucleus??
 pub mod boot;
 pub mod smp;
 
