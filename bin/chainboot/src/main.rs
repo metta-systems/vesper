@@ -23,6 +23,7 @@ mod boot;
 ///
 /// - Only a single core must be active and running this function.
 /// - The init calls in this function must appear in the correct order.
+#[unsafe(no_mangle)]
 unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     machine::debug::jtag::wait_debugger();

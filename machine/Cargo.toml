@@ -18,6 +18,7 @@ maintenance = { status = "experimental" }
 [features]
 default = []
 noserial = []
+no_boot = []
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = []
