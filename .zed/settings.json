@@ -1,0 +1,14 @@
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "cargo": {
+          "target": "targets/aarch64-vesper-metta.json"
+        },
+        "rustfmt": {
+          "extraArgs": ["+nightly"]
+        }
+      }
+    }
+  }
+}
