@@ -9,17 +9,17 @@
 
 #![no_std]
 #![no_main]
-#![allow(stable_features)]
-#![feature(asm_const)]
-#![feature(lazy_cell)]
+// #![allow(stable_features)]
+// #![feature(asm_const)] // stabilised in 1.82.0
+// #![feature(lazy_cell)] // stabilised in 1.80.0
+// #![feature(strict_provenance)] // stabilised in 1.84.0
+// #![feature(panic_info_message)] // stabilised in 1.81.0
+// #![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.70.0
 #![feature(decl_macro)]
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
-#![feature(strict_provenance)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
-#![feature(panic_info_message)]
-#![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.71 nightly
 #![feature(custom_test_frameworks)]
 #![test_runner(machine::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]

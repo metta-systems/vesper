@@ -1,25 +1,25 @@
 #![no_std]
 #![no_main]
-#![allow(stable_features)]
+// #![allow(stable_features)]
+// #![feature(asm_const)] // stabilised in 1.82.0
+// #![feature(const_option)] // stabilised in 1.83.0
+// #![feature(is_sorted)] // stabilised in 1.82.0
+// #![feature(nonzero_min_max)] // stabilised in 1.70.0
+// #![feature(panic_info_message)] // stabilised in 1.81.0
+// #![feature(unchecked_math)] // stabilised in 1.79.0
+// #![feature(strict_provenance)] // stabilised in 1.84.0
+// #![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.70.0
 #![allow(incomplete_features)]
-#![feature(asm_const)]
-#![feature(const_option)]
+#![feature(generic_const_exprs)] // incomplete_features
 #![feature(format_args_nl)]
-#![feature(generic_const_exprs)]
 #![feature(int_roundings)]
-#![feature(is_sorted)]
 #![feature(linkage)]
-#![feature(nonzero_min_max)]
-#![feature(panic_info_message)]
 #![feature(step_trait)]
 #![feature(trait_alias)]
-#![feature(unchecked_math)]
 #![feature(decl_macro)]
 #![feature(allocator_api)]
-#![feature(strict_provenance)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
-#![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.71 nightly
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::tests::test_runner)]
 #![reexport_test_harness_main = "test_main"]
