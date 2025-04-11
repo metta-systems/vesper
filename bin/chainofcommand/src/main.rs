@@ -1,7 +1,6 @@
 #![feature(trait_alias)]
-#![allow(stable_features)]
-#![feature(let_else)] // stabilised in 1.65.0
-#![feature(slice_take)]
+// #![feature(let_else)] // stabilised in 1.65.0
+// #![feature(slice_take)] // stabilised in 1.87.0
 
 use {
     anyhow::{Result, anyhow},
