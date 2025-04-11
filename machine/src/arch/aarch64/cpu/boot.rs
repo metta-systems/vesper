@@ -33,7 +33,7 @@ macro_rules! entry {
             // type check the given path
             let f: unsafe fn() -> ! = $path;
 
-            f()
+            unsafe { f() }
         }
     };
 }
