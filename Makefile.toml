@@ -189,6 +189,7 @@ command = "cargo"
 args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET,|)"]
 
 [tasks.xtool-clippy]
+# cargo hack clippy --workspace --all-targets --feature-powerset --depth 3 --locked --partition 1/1
 workspace = false
 env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = [
     "CLIPPY_FEATURES",
