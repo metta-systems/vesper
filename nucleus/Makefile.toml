@@ -8,21 +8,33 @@
 [env]
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
+[tasks.build]
+alias = "nucleus"
+
+[tasks.nucleus]
+workspace = false
+dependencies = ["build-device", "build-kernel-binary"]
+script_runner = "@duckscript"
+script = [
+    '''
+    echo ✅ nucleus built for hw.
+    echo
+''',
+]
+
+# Generate a bootable binary file from KERNEL_ELF
 [tasks.build-kernel-binary]
 workspace = false
-dependencies = ["build-device"]
 env = { "BINARY_FILE" = "${KERNEL_ELF}" }
 run_task = "build-custom-binary"
 
+# TODO: remove?
 [tasks.kernel]
-alias = "build-kernel-binary"
+alias = "nucleus"
 
 # Temporarily during refactoring
 [tasks.kernel-binary]
 disabled = true
-
-[tasks.build]
-alias = "build-kernel-binary"
 
 [tasks.qemu]
 clear = true
@@ -44,7 +56,7 @@ env = { "KERNEL_BIN" = "${KERNEL_BIN}", "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS
 run_task = "zellij-config"
 
 [tasks.gdb]
-dependencies = ["build", "build-kernel-binary", "gdb-config"]
+dependencies = ["build", "gdb-config"]
 env = { "RUST_GDB" = "${GDB}" }
 script = [
     "exec < /dev/tty && pipx run gdbgui -g \"rust-gdb -x ${GDB_CONNECT_FILE} ${KERNEL_ELF}\"",
@@ -61,11 +73,11 @@ install_crate = { crate_name = "rustfilt", binary = "rustfilt", test_arg = [
 ] }
 
 [tasks.xtool-nm]
-dependencies = ["build", "kernel-binary", "install-nm", "install-rustfilt"]
+dependencies = ["build", "install-nm", "install-rustfilt"]
 script = ["${NM} ${KERNEL_ELF} | sort -k 1 | rustfilt"]
 
 [tasks.sdcard] # kernel-sdcard ?
-dependencies = ["build", "build-kernel-binary"]
+dependencies = ["build"]
 script_runner = "@duckscript"
 script = ['''
     kernelImage = set "kernel8.img"
@@ -78,7 +90,7 @@ clear = true
 alias = "kernel-hopper"
 
 [tasks.kernel-hopper]
-dependencies = ["build", "build-kernel-binary"]
+dependencies = ["build"]
 # The cmd line below causes a bug in hopper, see https://www.dropbox.com/s/zyw5mfx0bepcjb1/hopperv4-RAW-bug.mov?dl=0
 #"hopperv4 --loader RAW --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --plugin arm --cpu aarch64 --variant generic --contains-code true --executable ${KERNEL_BIN}"
 script = ["hopperv4 --loader ELF --executable ${KERNEL_ELF}"]
