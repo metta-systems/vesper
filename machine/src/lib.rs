@@ -1,14 +1,5 @@
 #![no_std]
 #![no_main]
-// #![allow(stable_features)]
-// #![feature(asm_const)] // stabilised in 1.82.0
-// #![feature(const_option)] // stabilised in 1.83.0
-// #![feature(is_sorted)] // stabilised in 1.82.0
-// #![feature(nonzero_min_max)] // stabilised in 1.70.0
-// #![feature(panic_info_message)] // stabilised in 1.81.0
-// #![feature(unchecked_math)] // stabilised in 1.79.0
-// #![feature(strict_provenance)] // stabilised in 1.84.0
-// #![feature(nonnull_slice_from_raw_parts)] // stabilised in 1.70.0
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)] // incomplete_features
 #![feature(format_args_nl)]
