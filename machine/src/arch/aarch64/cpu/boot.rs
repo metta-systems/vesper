@@ -13,6 +13,7 @@ use {
     crate::platform::cpu::BOOT_CORE_ID,
     aarch64_cpu::{asm, registers::*},
     core::{
+        arch::global_asm,
         cell::UnsafeCell,
         slice,
         sync::atomic::{self, Ordering},
@@ -37,12 +38,17 @@ macro_rules! entry {
     };
 }
 
-/// Entrypoint of the processor.
+global_asm!(
+    include_str!("boot.s"),
+    CONST_CORE_ID_MASK = const 0b11,
+    CONST_BOOT_CORE_ID = const BOOT_CORE_ID,
+);
+
+/// Entrypoint of the Rust code.
 ///
-/// Parks all cores except core0 and checks if we started in EL2/EL3. If
-/// so, proceeds with setting up EL1.
+/// Checks if we started in EL2/EL3. If so, proceeds with setting up EL1.
 ///
-/// This is invoked from the linker script, does arch-specific init
+/// This is invoked from the boot.s asm _boot_cores fn, does arch-specific init
 /// and passes control to the kernel boot function reset().
 ///
 /// Dissection of various RPi core boot stubs is available
@@ -53,32 +59,22 @@ macro_rules! entry {
 /// Totally unsafe! We're in the hardware land.
 /// We assume that no statics are accessed before transition to main from reset() function.
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.main.entry")]
-pub unsafe extern "C" fn _boot_cores() -> ! {
+#[unsafe(link_section = ".text.boot")]
+pub unsafe extern "C" fn _startup_in_rust() -> ! {
     // Can't match values with dots in match, so use intermediate consts.
     #[cfg(feature = "qemu")]
     const EL3: u64 = CurrentEL::EL::EL3.value;
     const EL2: u64 = CurrentEL::EL::EL2.value;
     const EL1: u64 = CurrentEL::EL::EL1.value;
 
-    unsafe extern "Rust" {
-        // Stack top
-        // Stack placed before first executable instruction
-        static __STACK_TOP: UnsafeCell<()>;
-    }
-    // Set stack pointer. Used in case we started in EL1.
-    SP.set(unsafe { __STACK_TOP.get() } as u64);
-
     shared_setup_and_enter_pre();
 
-    if BOOT_CORE_ID == super::smp::core_id() {
-        match CurrentEL.get() {
-            #[cfg(feature = "qemu")]
-            EL3 => setup_and_enter_el1_from_el3(),
-            EL2 => setup_and_enter_el1_from_el2(),
-            EL1 => unsafe { reset() },
-            _ => endless_sleep(),
-        }
+    match CurrentEL.get() {
+        #[cfg(feature = "qemu")]
+        EL3 => setup_and_enter_el1_from_el3(),
+        EL2 => setup_and_enter_el1_from_el2(),
+        EL1 => unsafe { reset() },
+        _ => endless_sleep(),
     }
 
     // if not core0 or not EL3/EL2/EL1, infinitely wait for events
@@ -195,54 +191,9 @@ fn setup_and_enter_el1_from_el3() -> ! {
     shared_setup_and_enter_post()
 }
 
-/// Reset function.
-///
-/// Initializes the bss section before calling into the user's `main()`.
-///
-/// # Safety
-///
-/// Totally unsafe! We're in the hardware land.
-/// We assume that no statics are accessed before transition to main from this function.
-///
-/// We are guaranteed to be in EL1 non-secure mode here.
-#[unsafe(link_section = ".text.boot")]
-unsafe fn reset() -> ! {
-    unsafe extern "Rust" {
-        // Boundaries of the .bss section, provided by the linker script.
-        static __BSS_START: UnsafeCell<()>;
-        static __BSS_SIZE_U64S: UnsafeCell<()>;
-    }
-
-    // Zeroes the .bss section
-    // Based on https://gist.github.com/skoe/dbd3add2fc3baa600e9ebc995ddf0302 and discussions
-    // on pointer provenance in closing r0 issues (https://github.com/rust-embedded/cortex-m-rt/issues/300)
-
-    // NB: https://doc.rust-lang.org/nightly/core/ptr/index.html#provenance
-    // Importing pointers like `__BSS_START` and `__BSS_END` and performing pointer
-    // arithmetic on them directly may lead to Undefined Behavior, because the
-    // compiler may assume they come from different allocations and thus performing
-    // undesirable optimizations on them.
-    // So we use a pointer-and-a-size as described in provenance section.
-
-    let bss = unsafe {
-        slice::from_raw_parts_mut(
-            __BSS_START.get() as *mut u64,
-            __BSS_SIZE_U64S.get() as usize,
-        )
-    };
-    for i in bss {
-        *i = 0;
-    }
-
-    // Don't cross this line with loads and stores. The initializations
-    // done above could be "invisible" to the compiler, because we write to the
-    // same memory location that is used by statics after this point.
-    // Additionally, we assume that no statics are accessed before this point.
-    atomic::compiler_fence(Ordering::SeqCst);
-
+fn reset() -> ! {
     unsafe extern "Rust" {
         fn main() -> !;
     }
-
     unsafe { main() }
 }

@@ -111,7 +111,6 @@ SECTIONS
         *(.bss*)
         . = ALIGN(PAGE_SIZE); /* Align up to page size */
         __BSS_END = .;
-        __BSS_SIZE_U64S = (__BSS_END - __BSS_START) / 8;
     } :segment_data
 
     __DATA_END = .;
