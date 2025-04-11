@@ -28,6 +28,7 @@ script = [
 ''',
 ]
 
+# Generate a bootable binary file from CHAINBOOT_ELF
 [tasks.build-kernel-binary]
 workspace = false
 env = { "BINARY_FILE" = "${CHAINBOOT_ELF}" }
