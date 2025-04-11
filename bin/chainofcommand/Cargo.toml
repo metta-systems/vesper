@@ -13,8 +13,8 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 anyhow = "1.0"
+argh = "0.1"
 bytes = "1.9"
-clap = "4.5"
 crossterm = { version = "0.28", features = ["event-stream"] }
 defer = "0.2"
 futures = "0.3"

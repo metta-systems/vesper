@@ -6,7 +6,6 @@
 use {
     anyhow::{Result, anyhow},
     bytes::Bytes,
-    clap::{Arg, ArgAction, Command, value_parser},
     crossterm::{
         cursor,
         event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
@@ -409,41 +408,25 @@ fn handle_key_event(key_event: KeyEvent) -> Option<Bytes> {
 // 3. send selected kernel binary with checksum to the target
 // 4. go to 2
 
+/// ChainOfCommand - command chainboot protocol
+///
+/// Use to send freshly built kernel to chainboot-compatible boot loader.
+#[derive(argh::FromArgs)]
+struct Args {
+    /// device path to a serial port, e.g. /dev/ttyUSB0
+    #[argh(positional)]
+    port: String,
+    /// baud rate to connect at
+    #[argh(positional)]
+    baud: u32,
+    /// path of the binary kernel image to send
+    #[argh(positional, default = "String::from(\"kernel8.img\")")]
+    kernel: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let matches = Command::new("ChainOfCommand - command chainboot protocol")
-        .about("Use to send freshly built kernel to chainboot-compatible boot loader")
-        .disable_version_flag(true)
-        .arg(
-            Arg::new("port")
-                .help("The device path to a serial port, e.g. /dev/ttyUSB0")
-                .required(true),
-        )
-        .arg(
-            Arg::new("baud")
-                .help("The baud rate to connect at")
-                .use_value_delimiter(false)
-                .action(ArgAction::Set)
-                .value_parser(value_parser!(u32))
-                .required(true), // .validator(valid_baud),
-        )
-        .arg(
-            Arg::new("kernel")
-                .long("kernel")
-                .help("Path of the binary kernel image to send")
-                .default_value("kernel8.img"),
-        )
-        .get_matches();
-    let port_name = matches
-        .get_one::<String>("port")
-        .expect("port must be specified");
-    let baud_rate = matches
-        .get_one("baud")
-        .copied()
-        .expect("baud rate must be an integer");
-    let kernel = matches
-        .get_one::<String>("kernel")
-        .expect("kernel file must be specified");
+    let args: Args = argh::from_env();
 
     // Check that STDIN is a proper tty
     if !std::io::stdin().is_tty() {
@@ -467,7 +450,7 @@ async fn main() -> Result<()> {
         )?;
 
         // tokio_serial::new() creates a builder with 8N1 setup without flow control by default.
-        let port = tokio_serial::new(port_name, baud_rate).open_native_async();
+        let port = tokio_serial::new(args.port.clone(), args.baud).open_native_async();
         if let Err(e) = port {
             let cont = match e.kind {
                 tokio_serial::ErrorKind::NoDevice => true,
@@ -522,7 +505,7 @@ async fn main() -> Result<()> {
 
         let port = port?;
 
-        if let Err(e) = main_loop(port, kernel.clone()).await {
+        if let Err(e) = main_loop(port, args.kernel.clone()).await {
             execute!(stdout, style::Print(format!("\nError: {:?}\n", e)))?;
             stdout.flush()?;
 
