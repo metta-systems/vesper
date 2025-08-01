@@ -24,8 +24,8 @@
   "stack-probes": {
     "kind": "inline"
   },
-  "target-c-int-width": "32",
-  "target-pointer-width": "64",
+  "target-c-int-width": 32,
+  "target-pointer-width": 64,
   "target-endian": "little",
   "vendor": "metta"
 }
