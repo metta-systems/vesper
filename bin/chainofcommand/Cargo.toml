@@ -14,13 +14,13 @@ maintenance = { status = "experimental" }
 [dependencies]
 anyhow = "1.0"
 argh = "0.1"
-bytes = "1.9"
+bytes = "1.10"
 crossterm = { version = "0.28", features = ["event-stream"] }
 defer = "0.2"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["io"] }
 seahash.workspace = true
-tokio = { version = "1.43", features = ["full"] }
+tokio = { version = "1.47", features = ["full"] }
 tokio-serial = "5.4"
 tokio-stream = { version = "0.1" }
 tokio-util = { version = "0.7", features = ["io", "codec", "io"] }
