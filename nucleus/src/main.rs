@@ -118,13 +118,14 @@ pub fn kernel_main() -> ! {
     // Test a failing timer case.
     time::time_manager().spin_for(Duration::from_nanos(1));
 
-    loop {
+    for _ in 0..3 {
         info!("Spinning for 1 second");
         time::time_manager().spin_for(Duration::from_secs(1));
     }
-    // command_prompt();
-    //
-    // reboot()
+
+    command_prompt();
+
+    reboot()
 }
 
 #[cfg(not(test))]
