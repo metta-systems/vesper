@@ -157,13 +157,18 @@ run_task = "build-target"
 
 [tasks.qemu-runner]
 workspace = false
-dependencies = ["build-qemu", "kernel-binary"]
+dependencies = ["build-qemu", "build-kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
-    "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} with ${KERNEL_BIN}\n\n\n",
+    "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS}",
+    "echo 🚜 .. with ${KERNEL_BIN}",
+    "echo 🚜 .. on ${TARGET_DTB}",
+    "echo",
+    "echo",
     "rm -f qemu.log",
-    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${TARGET_DTB} -kernel ${KERNEL_BIN} 2>&1 | tee qemu.log",
-    "echo \n\n",
+    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb \"${TARGET_DTB}\" -kernel \"${KERNEL_BIN}\" 2>&1 | tee qemu.log",
+    "echo",
+    "echo",
 ]
 
 [tasks.xtool-expand-target]
@@ -244,7 +249,9 @@ script_runner = "@duckscript"
 script = [
     '''
     binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
-    echo 🏎️ Run QEMU %{QEMU_OPTS} %{QEMU_TESTS_OPTS} with target/${binaryFile}.bin
+    echo 🚜 Run QEMU %{QEMU_OPTS} %{QEMU_TESTS_OPTS}
+    echo 🚜 .. with target/${binaryFile}.bin
+    echo 🚜 .. and targets/bcm2710-rpi-3-b-plus.dtb
     exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
 ''',
 ]
@@ -338,8 +345,8 @@ args = ["clean"]
 #[tasks.qemu-gdb]
 #alias = "empty"
 
-#[tasks.qemu-cb]
-#alias = "empty"
+[tasks.qemu-cb]
+script = "echo ❌ not running qemu-cb"
 
 #[tasks.qemu-cb-gdb]
 #alias = "empty"
