@@ -43,6 +43,10 @@ workspace = false
 env = { "KERNEL_BIN" = "${CHAINBOOT_BIN}", "QEMU_OPTS" = "${QEMU_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_BOARD" = "rpi3", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
 run_task = "zellij-config"
 
+# FIXME: we should not have to spell this out here
+[tasks.zellij-nucleus]
+disabled = true
+
 [tasks.qemu-cb]
 workspace = false
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_DISASM_OPTS} -serial pty", "KERNEL_BIN" = "${CHAINBOOT_BIN}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
