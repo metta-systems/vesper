@@ -15,3 +15,11 @@ dependencies = ["xtool-clippy"]
 # FIXME: we should not have to spell this out here
 [tasks.zellij-nucleus]
 disabled = true
+
+# FIXME: we should not have to spell this out here
+[tasks.gdb]
+disabled = true
+
+# FIXME: we should not have to spell this out here
+[tasks.qemu-gdb]
+disabled = true
