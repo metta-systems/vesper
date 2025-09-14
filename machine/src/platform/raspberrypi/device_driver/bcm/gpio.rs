@@ -222,7 +222,7 @@ impl GPIO {
         }
     }
 
-    pub fn get_pin(&self, pin: usize) -> Pin<Uninitialized> {
+    pub fn get_pin(&self, pin: usize) -> Pin<'_, Uninitialized> {
         unsafe { Pin::new(pin, &self.inner) } // todo: expose only inner to avoid unlocked access
     }
 
