@@ -11,3 +11,7 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 [tasks.clippy]
 workspace = false
 dependencies = ["xtool-clippy"]
+
+# FIXME: we should not have to spell this out here
+[tasks.zellij-nucleus]
+disabled = true
