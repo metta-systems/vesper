@@ -43,7 +43,8 @@ QEMU_MACHINE = { value = "raspi3b", condition = { env_not_set = [
 ] } }
 
 # An aarch64-enabled GDB
-GDB = { value = "/usr/local/opt/gdb/HEAD-a2c58332-aarch64/bin/aarch64-unknown-elf-gdb", condition = { env_not_set = [
+# brew install aarch64-elf-gdb
+GDB = { value = "aarch64-elf-gdb", condition = { env_not_set = [
     "GDB",
 ] } }
 
