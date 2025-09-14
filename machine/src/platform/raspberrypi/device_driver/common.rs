@@ -39,11 +39,11 @@ impl<T> MMIODerefWrapper<T> {
 // Deref to RegisterBlock
 ///
 /// Allows writing
-/// ```
+/// ```ignore
 /// self.GPPUD.read()
 /// ```
 /// instead of something along the lines of
-/// ```
+/// ```ignore
 /// unsafe { (*GPIO::ptr()).GPPUD.read() }
 /// ```
 impl<T> ops::Deref for MMIODerefWrapper<T> {
