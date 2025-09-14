@@ -32,4 +32,4 @@ trap cleanup EXIT
 
 echo "=== Running QEMU with MiniUart ${FIRST_TTY} and PL011 Uart ${SECOND_TTY} ==="
 
-${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${KERNEL_BIN} -serial /dev/tty${SECOND_TTY} -serial /dev/tty${FIRST_TTY}
+${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb "${TARGET_DTB}" -kernel "${KERNEL_BIN}" -serial /dev/tty${SECOND_TTY} -serial /dev/tty${FIRST_TTY}
