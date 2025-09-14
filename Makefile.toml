@@ -277,12 +277,12 @@ script_runner = "@duckscript"
 env = { "ZELLIJ_CONFIG_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/emulation/zellij-config.sh" }
 script = [
     '''
-    writefile ${ZELLIJ_CONFIG_FILE} "QEMU=${QEMU}\n"
+    writefile ${ZELLIJ_CONFIG_FILE} "QEMU=\"${QEMU}\"\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_OPTS=\"${QEMU_OPTS}\"\n"
-    appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_RUNNER_OPTS=${QEMU_RUNNER_OPTS}\n"
-    appendfile ${ZELLIJ_CONFIG_FILE} "CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY=${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}\n"
-    appendfile ${ZELLIJ_CONFIG_FILE} "TARGET_DTB=${TARGET_DTB}\n"
-    appendfile ${ZELLIJ_CONFIG_FILE} "KERNEL_BIN=${KERNEL_BIN}\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_RUNNER_OPTS=\"${QEMU_RUNNER_OPTS}\"\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY=\"${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}\"\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "TARGET_DTB=\"${TARGET_DTB}\"\n"
+    appendfile ${ZELLIJ_CONFIG_FILE} "KERNEL_BIN=\"${KERNEL_BIN}\"\n"
 ''',
 ]
 install_crate = { crate_name = "zellij", binary = "zellij", test_arg = [
@@ -363,8 +363,8 @@ script = "echo ❌ not running qemu-cb"
 #[tasks.zellij-cb-gdb]
 #alias = "empty"
 
-#[tasks.zellij-nucleus]
-#alias = "empty"
+[tasks.zellij-nucleus]
+script = "echo ❌ not running zellij-nucleus"
 
 ## Target dependencies:
 #[tasks.kernel-binary]
