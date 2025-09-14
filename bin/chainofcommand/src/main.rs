@@ -471,15 +471,14 @@ async fn main() -> Result<()> {
                 stdout.flush()?;
                 serial_toggle = !serial_toggle;
 
-                if crossterm::event::poll(Duration::from_millis(1000))? {
-                    if let Event::Key(KeyEvent {
+                if crossterm::event::poll(Duration::from_millis(1000))?
+                    && let Event::Key(KeyEvent {
                         code, modifiers, ..
                     }) = crossterm::event::read()?
-                    {
-                        if code == KeyCode::Char('c') && modifiers == KeyModifiers::CONTROL {
-                            return Ok(());
-                        }
-                    }
+                    && code == KeyCode::Char('c')
+                    && modifiers == KeyModifiers::CONTROL
+                {
+                    return Ok(());
                 }
 
                 continue;
