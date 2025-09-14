@@ -60,7 +60,7 @@ install_crate = { crate_name = "rustfilt", binary = "rustfilt", test_arg = [
     "--help",
 ] }
 
-[tasks.nm]
+[tasks.xtool-nm]
 dependencies = ["build", "kernel-binary", "install-nm", "install-rustfilt"]
 script = ["${NM} ${KERNEL_ELF} | sort -k 1 | rustfilt"]
 

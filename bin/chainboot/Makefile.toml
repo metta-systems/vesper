@@ -87,3 +87,7 @@ script = ['''
 [tasks.clippy]
 workspace = false
 dependencies = ["xtool-clippy"]
+
+# FIXME: we should not have to spell this out here
+[tasks.xtool-nm]
+disabled = true
