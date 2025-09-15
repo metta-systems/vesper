@@ -15,7 +15,7 @@ maintenance = { status = "experimental" }
 anyhow = "1.0"
 argh = "0.1"
 bytes = "1.10"
-crossterm = { version = "0.28", features = ["event-stream"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
 defer = "0.2"
 futures = "0.3"
 futures-util = { version = "0.3", features = ["io"] }
