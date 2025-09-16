@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 //! Platform memory Management.
 //!
 //! The physical memory layout.

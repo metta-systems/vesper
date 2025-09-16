@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 // use {
 //     crate::{
 //         console::{interface, null_console::NullConsole},

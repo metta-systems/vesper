@@ -1,5 +1,8 @@
 #![feature(trait_alias)]
 
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 use {
     anyhow::{Result, anyhow},
     bytes::Bytes,

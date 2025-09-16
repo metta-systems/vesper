@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 //! This build script is used to create lib tests.
 
 const LINKER_SCRIPT: &str = "machine/src/platform/raspberrypi/linker/kernel.ld";

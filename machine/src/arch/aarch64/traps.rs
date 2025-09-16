@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+
 // @todo this file must be moved to exception/mod.rs
 // @todo finish porting the exception printing part...
 

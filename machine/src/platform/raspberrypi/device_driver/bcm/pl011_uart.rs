@@ -1,12 +1,9 @@
-/*
- * SPDX-License-Identifier: MIT OR BlueOak-1.0.0
- * Copyright (c) 2018-2019 Andre Richter <andre.o.richter@gmail.com>
- * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
- * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
- *
- * http://infocenter.arm.com/help/topic/com.arm.doc.ddi0183g/DDI0183G_uart_pl011_r1p5_trm.pdf
- * https://docs.rs/embedded-serial/0.5.0/embedded_serial/
- */
+// Copyright (c) 2018-2019 Andre Richter <andre.o.richter@gmail.com>
+// Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+// SPDX-FileCopyrightText: 2024 Metta Systems OÜ
+// SPDX-FileContributor: Berkus
+//
+// SPDX-License-Identifier: MIT OR BlueOak-1.0.0
 
 use {
     crate::{
