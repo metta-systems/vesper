@@ -1,8 +1,7 @@
 use {
     super::exception,
     crate::{
-        console, drivers,
-        exception::{self as generic_exception},
+        drivers,
         memory::{self, mmu::MMIODescriptor},
         platform::{device_driver, memory::map::mmio},
     },
@@ -54,9 +53,9 @@ pub unsafe fn init() -> Result<(), &'static str> {
 #[cfg(test)]
 pub fn qemu_bring_up_console() {
     unsafe {
-        instantiate_uart().unwrap_or_else(|_| crate::qemu::semihosting::exit_failure());
+        instantiate_uart().unwrap_or_else(|_| libqemu::semihosting::exit_failure());
         #[allow(static_mut_refs)]
-        console::register_console(PL011_UART.assume_init_ref());
+        libconsole::console::register_console(PL011_UART.assume_init_ref());
     };
 }
 
@@ -96,8 +95,8 @@ unsafe fn instantiate_uart() -> Result<(), &'static str> {
 /// This must be called only after successful init of the PL011 UART driver.
 unsafe fn post_init_pl011_uart() -> Result<(), &'static str> {
     #[allow(static_mut_refs)]
-    console::register_console(unsafe { PL011_UART.assume_init_ref() });
-    crate::info!("UART0 is live!");
+    libconsole::console::register_console(unsafe { PL011_UART.assume_init_ref() });
+    liblog::info!("UART0 is live!");
     Ok(())
 }
 
@@ -164,7 +163,7 @@ unsafe fn instantiate_interrupt_controller() -> Result<(), &'static str> {
 /// This must be called only after successful init of the interrupt controller driver.
 unsafe fn post_init_interrupt_controller() -> Result<(), &'static str> {
     #[allow(static_mut_refs)]
-    generic_exception::asynchronous::register_irq_manager(unsafe {
+    crate::platform::exception::asynchronous::register_irq_manager(unsafe {
         INTERRUPT_CONTROLLER.assume_init_ref()
     });
 

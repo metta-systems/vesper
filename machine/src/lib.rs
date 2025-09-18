@@ -12,7 +12,7 @@
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
 #![feature(custom_test_frameworks)]
-#![test_runner(crate::tests::test_runner)]
+#![test_runner(libtest::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![allow(clippy::upper_case_acronyms)]
 #![allow(clippy::enum_variant_names)]
@@ -31,23 +31,13 @@ use architecture_not_supported_sorry;
 /// Architecture-specific code.
 #[macro_use]
 pub mod arch;
-pub mod console;
 pub mod cpu;
 pub mod debug;
-pub mod devices;
 pub mod drivers;
-pub mod exception;
-pub mod macros;
 pub mod memory;
 mod mm;
 pub mod panic;
 pub mod platform;
-pub mod qemu;
-pub mod state;
-mod synchronization;
-pub mod tests;
-pub mod time;
-pub mod write_to;
 
 /// Version string.
 pub fn version() -> &'static str {
@@ -85,13 +75,13 @@ mod lib_tests {
 
     #[panic_handler]
     fn panicked(info: &core::panic::PanicInfo) -> ! {
-        panic::handler_for_tests(info)
+        libtest::panic::handler_for_tests(info)
     }
 
     /// Main for running tests.
     #[unsafe(no_mangle)]
     pub unsafe fn main() -> ! {
-        exception::handling_init();
+        libexception::exception::handling_init();
 
         let phys_kernel_tables_base_addr = match unsafe { memory::mmu::kernel_map_binary() } {
             Err(string) => panic!("Error mapping kernel binary: {}", string),
@@ -108,6 +98,6 @@ mod lib_tests {
 
         test_main();
 
-        qemu::semihosting::exit_success()
+        libqemu::semihosting::exit_success()
     }
 }

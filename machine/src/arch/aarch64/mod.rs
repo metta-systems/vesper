@@ -6,6 +6,4 @@
 //! Implementation of aarch64 kernel functions.
 
 pub mod cpu;
-pub mod exception;
 pub mod memory;
-pub mod time;

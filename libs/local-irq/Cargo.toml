@@ -1,0 +1,27 @@
+[package]
+name = "liblocal-irq"
+
+description = "Local IRQ management."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+liblog = { workspace = true }
+tock-registers = { workspace = true }
+
+[lints]
+workspace = true

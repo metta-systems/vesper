@@ -1,7 +1,7 @@
 // Based on miniload by @andre-richter
 #![feature(format_args_nl)]
 #![feature(custom_test_frameworks)]
-#![test_runner(machine::tests::test_runner)]
+#![test_runner(libtest::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![allow(linker_messages)]
 #![no_main]
@@ -11,7 +11,9 @@
 use {
     aarch64_cpu::asm::barrier,
     core::hash::Hasher,
-    machine::{console::console, platform::raspberrypi::BcmHost, print, println},
+    libconsole::console::console,
+    liblog::{print, println},
+    machine::platform::raspberrypi::BcmHost,
     seahash::SeaHasher,
 };
 
@@ -149,7 +151,7 @@ fn panicked(info: &core::panic::PanicInfo) -> ! {
 #[panic_handler]
 #[cfg(test)]
 fn panicked(info: &core::panic::PanicInfo) -> ! {
-    machine::panic::handler_for_tests(info)
+    libtest::panic::handler_for_tests(info)
 }
 
 #[cfg(test)]

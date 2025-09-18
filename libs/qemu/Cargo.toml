@@ -1,0 +1,25 @@
+[package]
+name = "libqemu"
+
+description = "QEMU implementations"
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]
+qemu-exit = { workspace = true }
+
+[lints]
+workspace = true

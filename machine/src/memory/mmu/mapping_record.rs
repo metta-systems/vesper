@@ -9,11 +9,9 @@ use {
         Address, Physical, Virtual,
         types::{AccessPermissions, AttributeFields, MMIODescriptor, MemAttributes, MemoryRegion},
     },
-    crate::{
-        info, mm, platform,
-        synchronization::{self, InitStateLock},
-        warn,
-    },
+    crate::{mm, platform},
+    liblocking::{self, InitStateLock},
+    liblog::{info, warn},
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -216,7 +214,7 @@ impl MappingRecord {
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
-use synchronization::interface::ReadWriteEx;
+use liblocking::interface::ReadWriteEx;
 
 /// Add an entry to the mapping info record.
 pub fn kernel_add(

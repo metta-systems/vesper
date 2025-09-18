@@ -11,9 +11,8 @@ use {
     crate::{
         memory::{Address, Virtual},
         platform::device_driver::common::MMIODerefWrapper,
-        state,
-        synchronization::{self, IRQSafeNullLock},
     },
+    liblocking::{self, IRQSafeNullLock},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields, register_structs,
@@ -124,7 +123,7 @@ impl SharedRegisters {
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
-use synchronization::interface::Mutex;
+use liblocking::interface::Mutex;
 
 impl GICD {
     /// Create an instance.
@@ -152,7 +151,7 @@ impl GICD {
     /// Route all SPIs to the boot core and enable the distributor.
     pub fn boot_core_init(&self) {
         assert!(
-            state::state_manager().is_init(),
+            libkernel_state::state_manager().is_init(),
             "Only allowed during kernel init phase"
         );
 

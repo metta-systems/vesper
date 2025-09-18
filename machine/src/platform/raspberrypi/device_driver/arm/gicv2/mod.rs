@@ -79,19 +79,25 @@
 mod gicc;
 mod gicd;
 
-use crate::{
-    cpu, drivers, exception,
-    memory::{Address, Virtual},
-    platform::{self, cpu::BOOT_CORE_ID, device_driver::common::BoundedUsize},
-    synchronization::{self, InitStateLock},
+use {
+    crate::{
+        cpu, drivers,
+        memory::{Address, Virtual},
+        platform::{self, cpu::BOOT_CORE_ID},
+    },
+    libexception::exception::asynchronous::{
+        IRQContext, IRQHandlerDescriptor, interface::IRQManager,
+    },
+    liblocal_irq::exception,
+    liblocking::{self, InitStateLock},
+    libprimitives::BoundedUsize,
 };
 
 //--------------------------------------------------------------------------------------------------
 // Private Definitions
 //--------------------------------------------------------------------------------------------------
 
-type HandlerTable = [Option<exception::asynchronous::IRQHandlerDescriptor<IRQNumber>>;
-    IRQNumber::MAX_INCLUSIVE + 1];
+type HandlerTable = [Option<IRQHandlerDescriptor<IRQNumber>>; IRQNumber::MAX_INCLUSIVE + 1];
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
@@ -141,7 +147,7 @@ impl GICv2 {
 //------------------------------------------------------------------------------
 // OS Interface Code
 //------------------------------------------------------------------------------
-use synchronization::interface::ReadWriteEx;
+use liblocking::interface::ReadWriteEx;
 
 impl drivers::interface::DeviceDriver for GICv2 {
     type IRQNumberType = IRQNumber;
@@ -162,12 +168,12 @@ impl drivers::interface::DeviceDriver for GICv2 {
     }
 }
 
-impl exception::asynchronous::interface::IRQManager for GICv2 {
+impl IRQManager for GICv2 {
     type IRQNumberType = IRQNumber;
 
     fn register_handler(
         &self,
-        irq_handler_descriptor: exception::asynchronous::IRQHandlerDescriptor<Self::IRQNumberType>,
+        irq_handler_descriptor: IRQHandlerDescriptor<Self::IRQNumberType>,
     ) -> Result<(), &'static str> {
         self.handler_table.write(|table| {
             let irq_number = irq_handler_descriptor.number().get();
@@ -186,10 +192,7 @@ impl exception::asynchronous::interface::IRQManager for GICv2 {
         self.gicd.enable(irq_number);
     }
 
-    fn handle_pending_irqs<'irq_context>(
-        &'irq_context self,
-        ic: &exception::asynchronous::IRQContext<'irq_context>,
-    ) {
+    fn handle_pending_irqs<'irq_context>(&'irq_context self, ic: &IRQContext<'irq_context>) {
         // Extract the highest priority pending IRQ number from the Interrupt Acknowledge Register
         // (IAR).
         let irq_number = self.gicc.pending_irq_number(ic);
@@ -215,7 +218,7 @@ impl exception::asynchronous::interface::IRQManager for GICv2 {
     }
 
     fn print_handler(&self) {
-        use crate::info;
+        use liblog::info;
 
         info!("      Peripheral handler:");
 
