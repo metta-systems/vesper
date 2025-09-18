@@ -1,13 +1,14 @@
 use {
     crate::{
         memory::{Address, Physical, Virtual},
-        platform, println, synchronization, warn,
+        platform,
     },
     core::{
         fmt::{self, Formatter},
         num::NonZeroUsize,
         ops::RangeInclusive,
     },
+    liblog::{println, warn},
     snafu::Snafu,
 };
 
@@ -80,9 +81,7 @@ pub trait AssociatedTranslationTable {
 //--------------------------------------------------------------------------------------------------
 // Private Code
 //--------------------------------------------------------------------------------------------------
-use {
-    interface::MMU, synchronization::interface::*, translation_table::interface::TranslationTable,
-};
+use {interface::MMU, liblocking::interface::*, translation_table::interface::TranslationTable};
 
 /// Query the platform for the reserved virtual addresses for MMIO remapping
 /// and initialize the kernel's MMIO VA allocator with it.

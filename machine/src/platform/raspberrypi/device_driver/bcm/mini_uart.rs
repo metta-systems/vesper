@@ -9,21 +9,19 @@
 use tock_registers::interfaces::{Readable, Writeable};
 use {
     crate::{
-        console::interface,
-        devices::serial::SerialOps,
-        exception::asynchronous::IRQNumber,
         memory::{Address, Virtual},
         platform::{
             BcmHost,
-            device_driver::{common::MMIODerefWrapper, gpio},
+            device_driver::{IRQNumber, common::MMIODerefWrapper, gpio},
         },
-        synchronization::{IRQSafeNullLock, interface::Mutex},
     },
     cfg_if::cfg_if,
     core::{
         convert::From,
         fmt::{self, Arguments},
     },
+    libconsole::{SerialOps, console::interface},
+    liblocking::{IRQSafeNullLock, interface::Mutex},
     tock_registers::{
         interfaces::ReadWriteable,
         register_bitfields, register_structs,

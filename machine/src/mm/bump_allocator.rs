@@ -6,12 +6,12 @@
 // @todo Use alloc-fmt crate for logging in allocators
 
 use {
-    crate::println,
     core::{
         alloc::{AllocError, Allocator, Layout},
         cell::Cell,
         ptr::NonNull,
     },
+    liblog::println,
 };
 
 pub struct BumpAllocator {

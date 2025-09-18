@@ -9,11 +9,11 @@ mod peripheral_ic;
 use {
     crate::{
         drivers,
-        exception::{self, asynchronous::IRQHandlerDescriptor},
         memory::{Address, Virtual},
-        platform::device_driver::common::BoundedUsize,
     },
     core::fmt,
+    libexception::exception::{self, asynchronous::IRQHandlerDescriptor},
+    libprimitives::BoundedUsize,
 };
 
 //--------------------------------------------------------------------------------------------------

@@ -1,6 +1,8 @@
-use crate::{
-    exception, println,
-    synchronization::{IRQSafeNullLock, InitStateLock, interface::ReadWriteEx},
+use {
+    crate::platform::exception::asynchronous::IRQNumber,
+    liblocal_irq::exception, //?
+    liblocking::{IRQSafeNullLock, InitStateLock, interface::ReadWriteEx},
+    liblog::println,
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -82,7 +84,7 @@ where
 // Global instances
 //--------------------------------------------------------------------------------------------------
 
-static DRIVER_MANAGER: DriverManager<exception::asynchronous::IRQNumber> = DriverManager::new();
+static DRIVER_MANAGER: DriverManager<IRQNumber> = DriverManager::new();
 
 //--------------------------------------------------------------------------------------------------
 // Private Code
@@ -105,7 +107,7 @@ where
 //--------------------------------------------------------------------------------------------------
 
 /// Return a reference to the global DriverManager.
-pub fn driver_manager() -> &'static DriverManager<exception::asynchronous::IRQNumber> {
+pub fn driver_manager() -> &'static DriverManager<IRQNumber> {
     &DRIVER_MANAGER
 }
 

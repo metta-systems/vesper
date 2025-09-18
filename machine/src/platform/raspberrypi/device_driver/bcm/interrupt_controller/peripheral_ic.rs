@@ -10,11 +10,11 @@
 
 use {
     super::{PendingIRQs, PeripheralIRQ},
-    crate::{
-        exception,
-        platform::device_driver::common::MMIODerefWrapper,
-        synchronization::{self, IRQSafeNullLock, InitStateLock},
+    crate::platform::device_driver::common::MMIODerefWrapper,
+    libexception::exception::asynchronous::{
+        IRQContext, IRQHandlerDescriptor, interface::IRQManager,
     },
+    liblocking::{self, IRQSafeNullLock, InitStateLock},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_structs,
@@ -52,8 +52,7 @@ type WriteOnlyRegisters = MMIODerefWrapper<WORegisterBlock>;
 /// Abstraction for the ReadOnly parts of the associated MMIO registers.
 type ReadOnlyRegisters = MMIODerefWrapper<RORegisterBlock>;
 
-type HandlerTable = [Option<exception::asynchronous::IRQHandlerDescriptor<PeripheralIRQ>>;
-    PeripheralIRQ::MAX_INCLUSIVE + 1];
+type HandlerTable = [Option<IRQHandlerDescriptor<PeripheralIRQ>>; PeripheralIRQ::MAX_INCLUSIVE + 1];
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
@@ -103,15 +102,15 @@ impl PeripheralIC {
 //------------------------------------------------------------------------------
 use {
     crate::memory::{Address, Virtual},
-    synchronization::interface::{Mutex, ReadWriteEx},
+    liblocking::interface::{Mutex, ReadWriteEx},
 };
 
-impl exception::asynchronous::interface::IRQManager for PeripheralIC {
+impl IRQManager for PeripheralIC {
     type IRQNumberType = PeripheralIRQ;
 
     fn register_handler(
         &self,
-        irq_handler_descriptor: exception::asynchronous::IRQHandlerDescriptor<Self::IRQNumberType>,
+        irq_handler_descriptor: IRQHandlerDescriptor<Self::IRQNumberType>,
     ) -> Result<(), &'static str> {
         self.handler_table.write(|table| {
             let irq_number = irq_handler_descriptor.number().get();
@@ -142,10 +141,7 @@ impl exception::asynchronous::interface::IRQManager for PeripheralIC {
         });
     }
 
-    fn handle_pending_irqs<'irq_context>(
-        &'irq_context self,
-        _ic: &exception::asynchronous::IRQContext<'irq_context>,
-    ) {
+    fn handle_pending_irqs<'irq_context>(&'irq_context self, _ic: &IRQContext<'irq_context>) {
         self.handler_table.read(|table| {
             for irq_number in self.pending_irqs() {
                 match table[irq_number] {
@@ -160,7 +156,7 @@ impl exception::asynchronous::interface::IRQManager for PeripheralIC {
     }
 
     fn print_handler(&self) {
-        use crate::info;
+        use liblog::info;
 
         info!("      Peripheral handler:");
 
