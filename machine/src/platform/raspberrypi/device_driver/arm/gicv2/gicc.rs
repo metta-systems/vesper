@@ -6,10 +6,10 @@
 
 use {
     crate::{
-        exception,
         memory::{Address, Virtual},
         platform::device_driver::common::MMIODerefWrapper,
     },
+    liblocal_irq::exception, //?
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields, register_structs,
@@ -121,7 +121,7 @@ impl GICC {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn pending_irq_number<'irq_context>(
         &self,
-        _ic: &exception::asynchronous::IRQContext<'irq_context>,
+        _ic: &libexception::exception::asynchronous::IRQContext<'irq_context>,
     ) -> usize {
         self.registers.IAR.read(IAR::InterruptID) as usize
     }
@@ -140,7 +140,7 @@ impl GICC {
     pub fn mark_comleted<'irq_context>(
         &self,
         irq_number: u32,
-        _ic: &exception::asynchronous::IRQContext<'irq_context>,
+        _ic: &libexception::exception::asynchronous::IRQContext<'irq_context>,
     ) {
         self.registers.EOIR.write(EOIR::EOIINTID.val(irq_number));
     }

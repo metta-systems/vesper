@@ -10,15 +10,14 @@
 
 use {
     crate::{
-        console::interface,
         cpu::loop_while,
-        devices::serial::SerialOps,
-        exception,
         memory::{Address, Virtual},
         platform::device_driver::{IRQNumber, common::MMIODerefWrapper, gpio},
-        synchronization::{IRQSafeNullLock, interface::Mutex},
     },
     core::fmt::{self, Arguments},
+    libconsole::{SerialOps, console::interface},
+    liblocal_irq::exception, //?
+    liblocking::{IRQSafeNullLock, interface::Mutex},
     snafu::Snafu,
     tock_registers::{
         interfaces::{ReadWriteable, Readable, Writeable},
@@ -520,7 +519,10 @@ impl crate::drivers::interface::DeviceDriver for PL011Uart {
         &'static self,
         irq_number: &Self::IRQNumberType,
     ) -> Result<(), &'static str> {
-        use exception::asynchronous::{IRQHandlerDescriptor, irq_manager};
+        use {
+            crate::platform::exception::asynchronous::irq_manager,
+            libexception::exception::asynchronous::IRQHandlerDescriptor,
+        };
 
         let descriptor = IRQHandlerDescriptor::new(*irq_number, Self::COMPATIBLE, self);
 
@@ -565,7 +567,7 @@ impl interface::ConsoleOps for PL011Uart {
 
 impl interface::All for PL011Uart {}
 
-impl exception::asynchronous::interface::IRQHandler for PL011Uart {
+impl libexception::exception::asynchronous::interface::IRQHandler for PL011Uart {
     fn handle(&self) -> Result<(), &'static str> {
         use interface::ConsoleOps;
 

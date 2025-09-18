@@ -35,12 +35,23 @@ bit_field.workspace = true
 bitflags.workspace = true
 buddy-alloc.workspace = true
 cfg-if.workspace = true
+libconsole = { workspace = true }
+liblocal-irq = { workspace = true }
+liblog = { workspace = true }
+libqemu = { workspace = true }
+liblocking = { workspace = true }
+libexception = { workspace = true }
+libkernel-state = { workspace = true }
+libprimitives = { workspace = true }
+libtime = { workspace = true }
 once_cell.workspace = true
-qemu-exit.workspace = true
 snafu.workspace = true
-tock-registers.workspace = true
+tock-registers = { workspace = true }
 usize_conversions.workspace = true
 ux.workspace = true
+
+[dev-dependencies]
+libtest = { workspace = true }
 
 [lib]
 name = "machine"

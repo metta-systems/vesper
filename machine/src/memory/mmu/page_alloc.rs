@@ -6,12 +6,10 @@
 
 use {
     super::MemoryRegion,
-    crate::{
-        memory::{AddressType, Virtual},
-        synchronization::IRQSafeNullLock,
-        warn,
-    },
+    crate::memory::{AddressType, Virtual},
     core::num::NonZeroUsize,
+    liblocking::IRQSafeNullLock,
+    liblog::warn,
 };
 
 //--------------------------------------------------------------------------------------------------

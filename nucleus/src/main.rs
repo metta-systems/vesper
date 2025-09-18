@@ -14,9 +14,6 @@
 #![feature(format_args_nl)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
-#![feature(custom_test_frameworks)]
-#![test_runner(machine::tests::test_runner)]
-#![reexport_test_harness_main = "test_main"]
 #![deny(missing_docs)]
 #![deny(warnings)]
 #![allow(unused)]
@@ -25,17 +22,19 @@
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 
-#[cfg(not(test))]
 use core::panic::PanicInfo;
 #[allow(unused_imports)]
-use machine::devices::serial::SerialOps;
+use libconsole::{SerialOps, console::console};
 use {
     cfg_if::cfg_if,
     core::{cell::UnsafeCell, time::Duration},
-    machine::{arch, console::console, entry, exception, info, memory, println, time, warn},
+    liblog::{info, println, warn},
+    machine::{arch, entry, memory},
+    // exception,
+    // , time
 };
 
-entry!(kernel_init);
+libboot::entry!(kernel_init);
 
 /// Kernel early init code.
 /// `arch` crate is responsible for calling it.
@@ -51,7 +50,7 @@ pub unsafe fn kernel_init() -> ! {
     #[cfg(feature = "jtag")]
     machine::debug::jtag::wait_debugger();
 
-    exception::handling_init();
+    libexception::exception::handling_init();
 
     let phys_kernel_tables_base_addr = match unsafe { memory::mmu::kernel_map_binary() } {
         Err(string) => panic!("Error mapping kernel binary: {}", string),
@@ -72,10 +71,12 @@ pub unsafe fn kernel_init() -> ! {
     unsafe { machine::drivers::driver_manager().init_drivers_and_irqs() };
 
     // Unmask interrupts on the boot CPU core.
-    machine::exception::asynchronous::local_irq_unmask();
+    libexception::exception::asynchronous::local_irq_unmask();
 
     // Announce conclusion of the kernel_init() phase.
-    machine::state::state_manager().transition_to_single_core_main();
+    libkernel_state::state_manager().transition_to_single_core_main();
+
+    libconsole::init_logger();
 
     // Transition from unsafe to safe.
     kernel_main()
@@ -83,7 +84,6 @@ pub unsafe fn kernel_init() -> ! {
 
 /// Safe kernel code.
 // #[inline]
-#[cfg(not(test))]
 pub fn kernel_main() -> ! {
     // info!("{}", libkernel::version());
     // info!("Booting on: {}", bsp::board_name());
@@ -98,29 +98,29 @@ pub fn kernel_main() -> ! {
     // info!("MMU online. Special regions:");
     // machine::platform::memory::mmu::virt_mem_layout().print_layout();
 
-    let (_, privilege_level) = exception::current_privilege_level();
+    let (_, privilege_level) = libexception::exception::current_privilege_level();
     info!("Current privilege level: {}", privilege_level);
 
     info!("Exception handling state:");
-    exception::asynchronous::print_state();
+    libexception::exception::asynchronous::print_state();
 
     info!(
         "Architectural timer resolution: {} ns",
-        time::time_manager().resolution().as_nanos()
+        libtime::time::time_manager().resolution().as_nanos()
     );
 
     info!("Drivers loaded:");
     machine::drivers::driver_manager().enumerate();
 
     info!("Registered IRQ handlers:");
-    exception::asynchronous::irq_manager().print_handler();
+    machine::platform::exception::asynchronous::irq_manager().print_handler();
 
     // Test a failing timer case.
-    time::time_manager().spin_for(Duration::from_nanos(1));
+    libtime::time::time_manager().spin_for(Duration::from_nanos(1));
 
     for _ in 0..3 {
         info!("Spinning for 1 second");
-        time::time_manager().spin_for(Duration::from_secs(1));
+        libtime::time::time_manager().spin_for(Duration::from_secs(1));
     }
 
     command_prompt();
@@ -128,7 +128,6 @@ pub fn kernel_main() -> ! {
     reboot()
 }
 
-#[cfg(not(test))]
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
     machine::panic::handler(info)
@@ -146,11 +145,11 @@ fn command_prompt() {
     'cmd_loop: loop {
         let mut buf = [0u8; 64];
 
-        match machine::console::command_prompt(&mut buf) {
+        match libconsole::console::command_prompt(&mut buf) {
             // b"mmu" => init_mmu(),
             b"feats" => print_mmu_state_and_features(),
             // b"disp" => check_display_init(),
-            b"trap" => check_data_abort_trap(),
+            // b"trap" => check_data_abort_trap(),
             // b"map" => machine::platform::memory::mmu::virt_mem_layout().print_layout(),
             // b"led on" => set_led(true),
             // b"led off" => set_led(false),
@@ -192,7 +191,7 @@ fn reboot() -> ! {
     cfg_if! {
         if #[cfg(feature = "qemu")] {
             info!("Bye, shutting down QEMU");
-            machine::qemu::semihosting::exit_success()
+            libqemu::semihosting::exit_success()
         } else {
             // use machine::platform::raspberrypi::power::Power;
 
@@ -236,35 +235,3 @@ fn reboot() -> ! {
 //     }
 //     Ok(())
 // }
-
-fn check_data_abort_trap() {
-    // Cause an exception by accessing a virtual address for which no
-    // address translations have been set up.
-    //
-    // This line of code accesses the address 3 GiB, but page tables are
-    // only set up for the range [0..1) GiB.
-    let big_addr: u64 = 3 * 1024 * 1024 * 1024;
-    unsafe { core::ptr::read_volatile(big_addr as *mut u64) };
-
-    info!("[i] Whoa! We recovered from an exception.");
-}
-
-#[cfg(test)]
-pub fn kernel_main() -> ! {
-    test_main()
-}
-
-#[cfg(test)]
-mod main_tests {
-    use {super::*, core::panic::PanicInfo};
-
-    #[panic_handler]
-    fn panicked(info: &PanicInfo) -> ! {
-        machine::panic::handler_for_tests(info)
-    }
-
-    #[test_case]
-    fn test_data_abort_trap() {
-        check_data_abort_trap()
-    }
-}

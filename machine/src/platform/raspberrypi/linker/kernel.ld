@@ -134,4 +134,4 @@ SECTIONS
     /DISCARD/ : { *(.comment*) *(.gnu*) *(.note*) *(.eh_frame*) *(.text.chainboot*) }
 }
 
-INCLUDE machine/src/arch/aarch64/linker/aarch64-exceptions.ld
+INCLUDE libs/exception/src/arch/aarch64/linker/aarch64-exceptions.ld

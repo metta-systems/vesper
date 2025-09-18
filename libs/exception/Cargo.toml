@@ -1,0 +1,36 @@
+[package]
+name = "libexception"
+
+description = "Exceptions handling"
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+default = []
+qemu = []
+test_build = []
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+liblocal-irq = { workspace = true }
+liblocking = { workspace = true }
+liblog = { workspace = true }
+libprimitives = { workspace = true }
+snafu = { workspace = true }
+tock-registers = { workspace = true }
+
+[lints]
+workspace = true

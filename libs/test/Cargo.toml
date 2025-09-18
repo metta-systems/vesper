@@ -1,0 +1,26 @@
+[package]
+name = "libtest"
+
+description = "Test runner"
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]
+liblog = { workspace = true }
+libqemu = { workspace = true }
+
+[lints]
+workspace = true

@@ -14,7 +14,7 @@ maintenance = { status = "experimental" }
 [features]
 default = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = ["machine/qemu"]
+qemu = ["libconsole/qemu", "machine/qemu"]
 # Build for debugging it over JTAG/SWD connection - halts on first non-startup function start.
 jtag = ["machine/jtag"]
 # Dummy feature, ignored in this crate.
@@ -25,12 +25,18 @@ aarch64-cpu = { workspace = true }
 bit_field = { workspace = true }
 bitflags = { workspace = true }
 cfg-if = { workspace = true }
+libconsole = { workspace = true }
+liblog = { workspace = true }
 machine = { path = "../../machine", features = ["no_boot"] }
 seahash = { workspace = true }
 snafu = { workspace = true }
 tock-registers = { workspace = true }
 usize_conversions = { workspace = true }
 ux = { workspace = true }
+
+[dev-dependencies]
+libqemu = { workspace = true }
+libtest = { workspace = true }
 
 [[bin]]
 name = "chainboot"
