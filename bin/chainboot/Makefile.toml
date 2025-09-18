@@ -5,16 +5,17 @@
 #
 # Build chainboot binary
 #
+extend = "../../Makefile.toml"
+
 [env]
 CHAINBOOT_LINK = "bin/chainboot/src/link.ld"
 CHAINBOOT_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/chainboot"
 CHAINBOOT_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/chainboot.bin"
-CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 
-[tasks.build]
-alias = "chainboot"
+[tasks.kernel-binary]
+disabled = true
 
-[tasks.chainboot]
+[tasks.chainboot-binary]
 workspace = false
 dependencies = ["build-target-chainboot", "convert-kernel-binary"]
 script_runner = "@duckscript"

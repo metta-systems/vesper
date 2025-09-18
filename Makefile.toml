@@ -1,3 +1,6 @@
+# @todo: replace this with xtask?
+# - Kinda tired of the maintenance pains here.
+
 #
 # SPDX-License-Identifier: BlueOak-1.0.0
 #
@@ -9,7 +12,7 @@
 #
 [config]
 min_version = "0.37.0"
-default_to_workspace = true
+default_to_workspace = false
 skip_core_tasks = true
 
 [env]
@@ -24,7 +27,7 @@ TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] }
 TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } }
 # Name of the DTB file for target board configuration, use bcm2710-rpi-3-b-plus.dtb for RasPi3B+
 TARGET_DTB = { value = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2711-rpi-4-b.dtb", condition = { env_not_set = [
-    "TARGET_DTB",
+  "TARGET_DTB",
 ] } }
 #
 # === RUSTFLAGS ===
@@ -52,7 +55,7 @@ GDB = { value = "aarch64-elf-gdb", condition = { env_not_set = ["GDB"] } }
 # OpenOCD with JLink support
 # (RTT patch from http://openocd.zylin.com/#/c/4055/11 has already been merged into main line)
 OPENOCD = { value = "/usr/local/opt/openocd/4d6519593-rtt/bin/openocd", condition = { env_not_set = [
-    "OPENOCD",
+  "OPENOCD",
 ] } }
 # Mounted sdcard partition path
 VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
@@ -171,10 +174,10 @@ args = [
 env = { RUSTFLAGS = "${FIXED_RUSTFLAGS} ${BOARD_RUSTFLAGS} ${TARGET_LINK_RUSTFLAGS}" }
 command = "cargo"
 args = [
-    "build",
-    "@@split(PLATFORM_TARGET,|)",
-    "@@split(RUST_STD, )",
-    "--release",
+  "build",
+  "@@split(PLATFORM_TARGET,|)",
+  "@@split(RUST_STD, )",
+  "--release",
 ]
 
 [tasks.build-qemu]
@@ -185,15 +188,15 @@ run_task = "build-target"
 dependencies = ["build-qemu", "convert-kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
-    "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS}",
-    "echo 🚜 .. with ${KERNEL_BIN}",
-    "echo 🚜 .. on ${TARGET_DTB}",
-    "echo",
-    "echo",
-    "rm -f qemu.log",
-    "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb \"${TARGET_DTB}\" -kernel \"${KERNEL_BIN}\" 2>&1 | tee qemu.log",
-    "echo",
-    "echo",
+  "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS}",
+  "echo 🚜 .. with ${KERNEL_BIN}",
+  "echo 🚜 .. on ${TARGET_DTB}",
+  "echo",
+  "echo",
+  "rm -f qemu.log",
+  "${QEMU} ${QEMU_OPTS} ${QEMU_RUNNER_OPTS} -dtb \"${TARGET_DTB}\" -kernel \"${KERNEL_BIN}\" 2>&1 | tee qemu.log",
+  "echo",
+  "echo",
 ]
 
 [tasks.test]
@@ -315,7 +318,7 @@ script = '''
     echo
 '''
 install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = [
-    "--help",
+  "--help",
 ] }
 
 # #Copy and prepare binary with tests.
@@ -329,7 +332,7 @@ extend = "convert-custom-binary"
 dependencies = ["test-binary"]
 script_runner = "@duckscript"
 script = [
-    '''
+  '''
     binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
     echo 🚜 Run QEMU %{QEMU_OPTS} %{QEMU_TESTS_OPTS}
     echo 🚜 .. with target/${binaryFile}.bin
@@ -360,7 +363,7 @@ dependencies = ["build-qemu", "kernel-binary"]
 script_runner = "@duckscript"
 env = { "ZELLIJ_CONFIG_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/emulation/zellij-config.sh" }
 script = [
-    '''
+  '''
     writefile ${ZELLIJ_CONFIG_FILE} "QEMU=\"${QEMU}\"\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_OPTS=\"${QEMU_OPTS}\"\n"
     appendfile ${ZELLIJ_CONFIG_FILE} "QEMU_RUNNER_OPTS=\"${QEMU_RUNNER_OPTS}\"\n"
@@ -370,12 +373,12 @@ script = [
 ''',
 ]
 install_crate = { crate_name = "zellij", binary = "zellij", test_arg = [
-    "--help",
+  "--help",
 ] }
 
 [tasks.openocd]
 script = [
-    "${OPENOCD} -f interface/jlink.cfg -f ../ocd/${TARGET_BOARD}_target.cfg",
+  "${OPENOCD} -f interface/jlink.cfg -f ../ocd/${TARGET_BOARD}_target.cfg",
 ]
 
 [tasks.sdeject]

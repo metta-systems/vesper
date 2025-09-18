@@ -12,10 +12,9 @@ use {
             BcmHost,
             device_driver::{IRQNumber, common::MMIODerefWrapper},
         },
-        synchronization::{IRQSafeNullLock, interface::Mutex},
-        time,
     },
     core::{marker::PhantomData, time::Duration},
+    liblocking::{IRQSafeNullLock, interface::Mutex},
     tock_registers::{
         fields::FieldValue,
         interfaces::{ReadWriteable, Readable, Writeable},
@@ -124,12 +123,12 @@ impl GPIOInner {
         // The Linux 2837 GPIO driver waits 1 µs between the steps.
         const DELAY: Duration = Duration::from_micros(1);
 
-        time::time_manager().spin_for(DELAY);
+        libtime::time::time_manager().spin_for(DELAY);
 
         self.registers.PullUpDownEnableClock[0].set(0xffff_ffff);
         self.registers.PullUpDownEnableClock[1].set(0xffff_ffff);
 
-        time::time_manager().spin_for(DELAY);
+        libtime::time::time_manager().spin_for(DELAY);
 
         // flush GPIO setup
         self.registers.PullUpDownEnableClock[0].set(0);
@@ -151,7 +150,7 @@ impl GPIOInner {
         // The Linux 2837 GPIO driver waits 1 µs between the steps.
         const DELAY: Duration = Duration::from_micros(1);
 
-        time::time_manager().spin_for(DELAY);
+        libtime::time::time_manager().spin_for(DELAY);
 
         self.registers.PullUpDownEnableClock[bank].modify(FieldValue::<u32, ()>::new(
             0b1,
@@ -159,7 +158,7 @@ impl GPIOInner {
             (pull == PullUpDown::Up).into(),
         ));
 
-        time::time_manager().spin_for(DELAY);
+        libtime::time::time_manager().spin_for(DELAY);
 
         self.registers.PullUpDown.set(0);
         self.registers.PullUpDownEnableClock[bank].set(0);

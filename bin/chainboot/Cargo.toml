@@ -25,6 +25,8 @@ aarch64-cpu = { workspace = true }
 bit_field = { workspace = true }
 bitflags = { workspace = true }
 cfg-if = { workspace = true }
+libconsole = { workspace = true }
+liblog = { workspace = true }
 machine = { path = "../../machine", features = ["no_boot"] }
 seahash = { workspace = true }
 snafu = { workspace = true }

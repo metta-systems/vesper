@@ -8,7 +8,7 @@ fn print_panic_info(info: &PanicInfo) {
     };
 
     // @todo This may fail to print if the panic message is too long for local print buffer.
-    crate::info!(
+    liblog::info!(
         "Kernel panic!\n\n\
         Panic location:\n      File '{}', line {}, column {}\n\n\
         {}",
@@ -20,21 +20,11 @@ fn print_panic_info(info: &PanicInfo) {
 }
 
 pub fn handler(info: &PanicInfo) -> ! {
-    crate::exception::asynchronous::local_irq_mask();
+    liblocal_irq::exception::asynchronous::local_irq_mask();
     // Protect against panic infinite loops if any of the following code panics itself.
     panic_prevent_reenter();
     print_panic_info(info);
     crate::cpu::endless_sleep()
-}
-
-/// We have two separate handlers because other crates may use machine crate as a dependency for
-/// running their tests, and this means machine could be compiled with different features.
-pub fn handler_for_tests(info: &PanicInfo) -> ! {
-    crate::println!("\n[failed]\n");
-    // Protect against panic infinite loops if any of the following code panics itself.
-    panic_prevent_reenter();
-    print_panic_info(info);
-    crate::qemu::semihosting::exit_failure()
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -68,7 +58,7 @@ fn panic_prevent_reenter() {
     }
 
     #[cfg(feature = "qemu")]
-    crate::qemu::semihosting::exit_failure();
+    libqemu::semihosting::exit_failure();
     #[cfg(not(feature = "qemu"))]
     crate::cpu::endless_sleep()
 }

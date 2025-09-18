@@ -80,12 +80,12 @@ cb-eject:
 # Build default hw kernel
 [group("hw")]
 build:
-    cargo make {{ make-opts }} build
+    cargo make {{ make-opts }} all
 
 # Build default hw kernel (quietly)
 [group("hw")]
 qbuild:
-    cargo make {{ make-opts }} build
+    cargo make {{ make-opts }} all
 
 alias b := build
 

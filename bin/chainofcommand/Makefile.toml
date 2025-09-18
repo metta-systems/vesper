@@ -15,10 +15,6 @@ workspace = false
 command = "cargo"
 args = ["build"]
 
-[tasks.chainofcommand]
-workspace = false
-alias = "build-coc"
-
 [tasks.test]
 clear = true
 command = "cargo"
