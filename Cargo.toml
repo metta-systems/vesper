@@ -1,6 +1,5 @@
 [workspace]
 members = [
-  "machine",
   "nucleus",
   "bin/chainboot",
   "bin/chainofcommand",
@@ -12,6 +11,7 @@ members = [
   "libs/local-irq",
   "libs/locking",
   "libs/log",
+  "libs/machine",
   "libs/memory",
   "libs/platform",
   "libs/primitives",
@@ -49,6 +49,7 @@ libkernel-state = { path = "libs/kernel-state" }
 liblocal-irq = { path = "libs/local-irq" }
 liblocking = { path = "libs/locking" }
 liblog = { path = "libs/log" }
+libmachine = { path = "libs/machine" }
 libmemory = { path = "libs/memory" }
 libplatform = { path = "libs/platform" }
 libprimitives = { path = "libs/primitives" }

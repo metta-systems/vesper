@@ -1,8 +1,8 @@
 //! JTAG helper functions.
 
 use {
-    crate::cpu::nop,
     core::ptr::{read_volatile, write_volatile},
+    libcpu::nop,
 };
 
 #[unsafe(no_mangle)]
