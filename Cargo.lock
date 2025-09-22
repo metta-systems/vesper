@@ -174,7 +174,12 @@ dependencies = [
  "bit_field",
  "bitflags 2.9.4",
  "cfg-if",
- "machine",
+ "libconsole",
+ "liblog",
+ "libmachine",
+ "libplatform",
+ "libqemu",
+ "libtest",
  "seahash",
  "snafu",
  "tock-registers",
@@ -408,6 +413,174 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a82ae493e598baaea5209805c49bbf2ea7de956d50d7da0da1164f9c6d28543"
 
 [[package]]
+name = "libconsole"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "liblocking",
+ "liblog",
+ "libqemu",
+ "libtime",
+]
+
+[[package]]
+name = "libcpu"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "bit_field",
+ "bitflags 2.9.4",
+ "cfg-if",
+ "libplatform",
+ "once_cell",
+ "snafu",
+ "tock-registers",
+ "usize_conversions",
+ "ux",
+]
+
+[[package]]
+name = "libexception"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "liblocal-irq",
+ "liblocking",
+ "liblog",
+ "libprimitives",
+ "snafu",
+ "tock-registers",
+]
+
+[[package]]
+name = "libkernel-state"
+version = "0.0.1"
+
+[[package]]
+name = "liblocal-irq"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "liblog",
+ "tock-registers",
+]
+
+[[package]]
+name = "liblocking"
+version = "0.0.1"
+dependencies = [
+ "libkernel-state",
+ "liblocal-irq",
+]
+
+[[package]]
+name = "liblog"
+version = "0.0.1"
+
+[[package]]
+name = "libmachine"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "bit_field",
+ "bitflags 2.9.4",
+ "buddy-alloc",
+ "cfg-if",
+ "libconsole",
+ "libcpu",
+ "libexception",
+ "libkernel-state",
+ "liblocal-irq",
+ "liblocking",
+ "liblog",
+ "libmemory",
+ "libplatform",
+ "libprimitives",
+ "libqemu",
+ "libtime",
+ "once_cell",
+ "snafu",
+ "tock-registers",
+ "usize_conversions",
+ "ux",
+]
+
+[[package]]
+name = "libmemory"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "bit_field",
+ "bitflags 2.9.4",
+ "buddy-alloc",
+ "cfg-if",
+ "liblocking",
+ "liblog",
+ "once_cell",
+ "snafu",
+ "tock-registers",
+ "usize_conversions",
+ "ux",
+]
+
+[[package]]
+name = "libplatform"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "bit_field",
+ "bitflags 2.9.4",
+ "buddy-alloc",
+ "cfg-if",
+ "libconsole",
+ "libexception",
+ "libkernel-state",
+ "liblocal-irq",
+ "liblocking",
+ "liblog",
+ "libmemory",
+ "libprimitives",
+ "libtest",
+ "libtime",
+ "once_cell",
+ "qemu-exit",
+ "snafu",
+ "tock-registers",
+ "usize_conversions",
+ "ux",
+]
+
+[[package]]
+name = "libprimitives"
+version = "0.0.1"
+
+[[package]]
+name = "libqemu"
+version = "0.0.1"
+dependencies = [
+ "qemu-exit",
+]
+
+[[package]]
+name = "libtest"
+version = "0.0.1"
+dependencies = [
+ "liblog",
+ "libqemu",
+]
+
+[[package]]
+name = "libtime"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "liblocking",
+ "liblog",
+ "once_cell",
+ "tock-registers",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -451,23 +624,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86dd2487cdfea56def77b88438a2c915fb45113c5319bfe7e14306ca4cd0b0e1"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "machine"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "bit_field",
- "bitflags 2.9.4",
- "buddy-alloc",
- "cfg-if",
- "once_cell",
- "qemu-exit",
- "snafu",
- "tock-registers",
- "usize_conversions",
- "ux",
 ]
 
 [[package]]
@@ -552,7 +708,18 @@ dependencies = [
  "bit_field",
  "bitflags 2.9.4",
  "cfg-if",
- "machine",
+ "libconsole",
+ "libcpu",
+ "libexception",
+ "libkernel-state",
+ "liblocking",
+ "liblog",
+ "libmachine",
+ "libmemory",
+ "libplatform",
+ "libqemu",
+ "libtest",
+ "libtime",
  "snafu",
  "tock-registers",
  "usize_conversions",
