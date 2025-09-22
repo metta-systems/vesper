@@ -8,7 +8,7 @@ fn print_panic_info(info: &PanicInfo) {
     };
 
     // @todo This may fail to print if the panic message is too long for local print buffer.
-    liblog::info!(
+    liblog::println!(
         "Kernel panic!\n\n\
         Panic location:\n      File '{}', line {}, column {}\n\n\
         {}",
@@ -24,7 +24,7 @@ pub fn handler(info: &PanicInfo) -> ! {
     // Protect against panic infinite loops if any of the following code panics itself.
     panic_prevent_reenter();
     print_panic_info(info);
-    crate::cpu::endless_sleep()
+    libcpu::endless_sleep()
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -60,5 +60,5 @@ fn panic_prevent_reenter() {
     #[cfg(feature = "qemu")]
     libqemu::semihosting::exit_failure();
     #[cfg(not(feature = "qemu"))]
-    crate::cpu::endless_sleep()
+    libcpu::endless_sleep()
 }

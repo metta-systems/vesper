@@ -28,14 +28,9 @@
 #[cfg(not(target_arch = "aarch64"))]
 use architecture_not_supported_sorry;
 
-/// Architecture-specific code.
-#[macro_use]
-pub mod arch;
-pub mod cpu;
 pub mod debug;
 pub mod drivers;
 pub mod panic;
-pub mod platform;
 
 /// Version string.
 pub fn version() -> &'static str {

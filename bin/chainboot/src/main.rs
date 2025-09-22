@@ -28,7 +28,7 @@ mod boot;
 #[unsafe(no_mangle)]
 unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
-    machine::debug::jtag::wait_debugger();
+    libmachine::debug::jtag::wait_debugger();
 
     if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
@@ -145,7 +145,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 #[cfg(not(test))]
 #[panic_handler]
 fn panicked(info: &core::panic::PanicInfo) -> ! {
-    machine::panic::handler(info)
+    libmachine::panic::handler(info)
 }
 
 #[panic_handler]
