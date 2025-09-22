@@ -3,7 +3,11 @@
     "rust-analyzer": {
       "initialization_options": {
         "cargo": {
-          "target": "targets/aarch64-vesper-metta.json"
+          "target": "/Users/berkus/Projects/Metta/vesper/targets/aarch64-metta-none-eabi.json", // $ZED_WORKTREE_ROOT
+          "extraArgs": [
+            "-Zbuild-std=compiler_builtins,core,alloc",
+            "-Zbuild-std-features=compiler-builtins-mem"
+          ]
         },
         "rustfmt": {
           "extraArgs": ["+nightly"]
