@@ -1,0 +1,56 @@
+[package]
+name = "libmachine"
+
+description = "Vesper nanokernel shared code library, useful also for the chainboot loader."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+default = []
+# Enable JTAG debugging of kernel - enable jtag helpers and
+# block waiting for JTAG probe attach at the start of kernel main.
+jtag = []
+# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
+qemu = []
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+bit_field = { workspace = true }
+bitflags = { workspace = true }
+buddy-alloc = { workspace = true }
+cfg-if = { workspace = true }
+libconsole = { workspace = true }
+libcpu = { workspace = true }
+libexception = { workspace = true }
+libkernel-state = { workspace = true }
+liblocal-irq = { workspace = true }
+liblocking = { workspace = true }
+liblog = { workspace = true }
+libmemory = { workspace = true }
+libplatform = { workspace = true }
+libprimitives = { workspace = true }
+libqemu = { workspace = true }
+libtime = { workspace = true }
+once_cell = { workspace = true }
+snafu = { workspace = true }
+tock-registers = { workspace = true }
+usize_conversions = { workspace = true }
+ux = { workspace = true }
+
+[lib]
+test = false
+
+[lints]
+workspace = true

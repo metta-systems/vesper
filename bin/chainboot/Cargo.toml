@@ -27,7 +27,7 @@ bitflags = { workspace = true }
 cfg-if = { workspace = true }
 libconsole = { workspace = true }
 liblog = { workspace = true }
-machine = { path = "../../machine", features = ["no_boot"] }
+libmachine = { workspace = true, features = ["no_boot"] }
 seahash = { workspace = true }
 snafu = { workspace = true }
 tock-registers = { workspace = true }

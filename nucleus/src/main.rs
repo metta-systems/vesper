@@ -48,7 +48,7 @@ libboot::entry!(kernel_init);
 ///       IRQSafeNullLocks instead of spinlocks), will fail to work (properly) on the RPi SoCs.
 pub unsafe fn kernel_init() -> ! {
     #[cfg(feature = "jtag")]
-    machine::debug::jtag::wait_debugger();
+    libmachine::debug::jtag::wait_debugger();
 
     libexception::exception::handling_init();
 
@@ -130,7 +130,7 @@ pub fn kernel_main() -> ! {
 
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
-    machine::panic::handler(info)
+    libmachine::panic::handler(info)
 }
 
 fn print_mmu_state_and_features() {
