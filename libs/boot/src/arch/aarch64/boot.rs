@@ -9,10 +9,10 @@
 //! <http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf>
 
 use {
-    super::endless_sleep,
     aarch64_cpu::{asm, registers::*},
     core::{arch::global_asm, cell::UnsafeCell},
-    libplatform::cpu::BOOT_CORE_ID,
+    libcpu::endless_sleep,
+    libplatform::platform::cpu::BOOT_CORE_ID,
     tock_registers::interfaces::{Readable, Writeable},
 };
 
@@ -68,12 +68,10 @@ pub unsafe extern "C" fn _startup_in_rust() -> ! {
         #[cfg(feature = "qemu")]
         EL3 => setup_and_enter_el1_from_el3(),
         EL2 => setup_and_enter_el1_from_el2(),
-        EL1 => unsafe { reset() },
+        EL1 => reset(),
+        // if not core0 or not EL3/EL2/EL1, infinitely wait for events
         _ => endless_sleep(),
     }
-
-    // if not core0 or not EL3/EL2/EL1, infinitely wait for events
-    endless_sleep()
 }
 
 #[unsafe(link_section = ".text.boot")]

@@ -29,7 +29,7 @@ use {
     cfg_if::cfg_if,
     core::{cell::UnsafeCell, time::Duration},
     liblog::{info, println, warn},
-    machine::{arch, entry, memory},
+    // machine::{arch, entry, memory},
     // exception,
     // , time
 };
@@ -52,12 +52,13 @@ pub unsafe fn kernel_init() -> ! {
 
     libexception::exception::handling_init();
 
-    let phys_kernel_tables_base_addr = match unsafe { memory::mmu::kernel_map_binary() } {
+    let phys_kernel_tables_base_addr = match unsafe { libmemory::mmu::kernel_map_binary() } {
         Err(string) => panic!("Error mapping kernel binary: {}", string),
         Ok(addr) => addr,
     };
 
-    if let Err(e) = unsafe { memory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) } {
+    if let Err(e) = unsafe { libmemory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) }
+    {
         panic!("Enabling MMU failed: {}", e);
     }
 
@@ -200,7 +201,7 @@ fn reboot() -> ! {
 
             info!("Bye, going to reset now");
             // Power::default().reset()
-            machine::cpu::endless_sleep()
+            libcpu::endless_sleep()
         }
     }
 }
