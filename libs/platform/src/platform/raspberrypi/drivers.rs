@@ -1,16 +1,22 @@
 use {
     super::exception, // @todo
-    crate::platform::{device_driver, drivers},
+    crate::platform::{device_driver, exception::asynchronous::IRQNumber},
     core::{
         mem::MaybeUninit,
         sync::atomic::{AtomicBool, Ordering},
     },
+    libdriver::drivers::DriverManager,
     libmemory::{mmu::MMIODescriptor, platform::memory::map::mmio},
 };
 
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
+
+/// Return a reference to the global DriverManager.
+pub fn driver_manager() -> &'static DriverManager<IRQNumber> {
+    &DRIVER_MANAGER
+}
 
 /// Initialize the driver subsystem.
 ///
@@ -69,6 +75,8 @@ static mut INTERRUPT_CONTROLLER: MaybeUninit<device_driver::InterruptController>
 
 #[cfg(board_rpi4)]
 static mut INTERRUPT_CONTROLLER: MaybeUninit<device_driver::GICv2> = MaybeUninit::uninit();
+
+static DRIVER_MANAGER: DriverManager<IRQNumber> = DriverManager::new();
 
 //--------------------------------------------------------------------------------------------------
 // Private Code
@@ -172,7 +180,7 @@ unsafe fn post_init_interrupt_controller() -> Result<(), &'static str> {
 unsafe fn driver_uart() -> Result<(), &'static str> {
     unsafe { instantiate_uart()? };
 
-    let uart_descriptor = drivers::DeviceDriverDescriptor::new(
+    let uart_descriptor = libdriver::drivers::DeviceDriverDescriptor::new(
         #[allow(static_mut_refs)]
         unsafe {
             PL011_UART.assume_init_ref()
@@ -180,7 +188,7 @@ unsafe fn driver_uart() -> Result<(), &'static str> {
         Some(post_init_pl011_uart),
         Some(exception::asynchronous::irq_map::PL011_UART),
     );
-    drivers::driver_manager().register_driver(uart_descriptor);
+    driver_manager().register_driver(uart_descriptor);
 
     Ok(())
 }
@@ -189,7 +197,7 @@ unsafe fn driver_uart() -> Result<(), &'static str> {
 unsafe fn driver_gpio() -> Result<(), &'static str> {
     unsafe { instantiate_gpio()? };
 
-    let gpio_descriptor = drivers::DeviceDriverDescriptor::new(
+    let gpio_descriptor = libdriver::drivers::DeviceDriverDescriptor::new(
         #[allow(static_mut_refs)]
         unsafe {
             GPIO.assume_init_ref()
@@ -197,7 +205,7 @@ unsafe fn driver_gpio() -> Result<(), &'static str> {
         Some(post_init_gpio),
         None,
     );
-    drivers::driver_manager().register_driver(gpio_descriptor);
+    driver_manager().register_driver(gpio_descriptor);
 
     Ok(())
 }
@@ -206,7 +214,7 @@ unsafe fn driver_gpio() -> Result<(), &'static str> {
 unsafe fn driver_interrupt_controller() -> Result<(), &'static str> {
     unsafe { instantiate_interrupt_controller()? };
 
-    let interrupt_controller_descriptor = drivers::DeviceDriverDescriptor::new(
+    let interrupt_controller_descriptor = libdriver::drivers::DeviceDriverDescriptor::new(
         #[allow(static_mut_refs)]
         unsafe {
             INTERRUPT_CONTROLLER.assume_init_ref()
@@ -214,7 +222,7 @@ unsafe fn driver_interrupt_controller() -> Result<(), &'static str> {
         Some(post_init_interrupt_controller),
         None,
     );
-    drivers::driver_manager().register_driver(interrupt_controller_descriptor);
+    driver_manager().register_driver(interrupt_controller_descriptor);
 
     Ok(())
 }
