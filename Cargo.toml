@@ -6,6 +6,7 @@ members = [
   # Libraries
   "libs/console",
   "libs/cpu",
+  "libs/driver",
   "libs/exception",
   "libs/kernel-state",
   "libs/local-irq",
@@ -44,6 +45,7 @@ buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy
 cfg-if = { version = "1.0" }
 libconsole = { path = "libs/console" }
 libcpu = { path = "libs/cpu" }
+libdriver = { path = "libs/driver" }
 libexception = { path = "libs/exception" }
 libkernel-state = { path = "libs/kernel-state" }
 liblocal-irq = { path = "libs/local-irq" }

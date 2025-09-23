@@ -26,10 +26,9 @@
 #![feature(ptr_internals)]
 
 #[cfg(not(target_arch = "aarch64"))]
-use architecture_not_supported_sorry;
+compile_error!("Architecture not supported, sorry!");
 
 pub mod debug;
-pub mod drivers;
 pub mod panic;
 
 /// Version string.

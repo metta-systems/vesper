@@ -55,6 +55,7 @@ impl IRQManager for NullIRQManager {
 pub fn register_irq_manager(
     new_manager: &'static (dyn IRQManager<IRQNumberType = IRQNumber> + Sync),
 ) {
+    use liblocking::interface::ReadWriteEx;
     IRQ_MANAGER.write(|manager| *manager = new_manager);
 }
 
@@ -62,6 +63,7 @@ pub fn register_irq_manager(
 ///
 /// This is the IRQ manager used by the architectural interrupt handling code.
 pub fn irq_manager() -> &'static dyn IRQManager<IRQNumberType = IRQNumber> {
+    use liblocking::interface::ReadWriteEx;
     IRQ_MANAGER.read(|manager| *manager)
 }
 

@@ -23,7 +23,7 @@ use core::{
 pub mod arch;
 pub mod mm;
 pub mod mmu;
-mod platform;
+pub mod platform;
 
 pub mod phys_addr; // merge with Address<Physical>?
 pub mod virt_addr; // merge with Address<Virtual>?

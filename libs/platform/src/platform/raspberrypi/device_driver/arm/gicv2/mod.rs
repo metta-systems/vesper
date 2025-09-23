@@ -80,7 +80,7 @@ mod gicc;
 mod gicd;
 
 use {
-    crate::platform::{cpu::BOOT_CORE_ID, drivers},
+    crate::platform::cpu::BOOT_CORE_ID,
     libexception::exception::asynchronous::{
         IRQContext, IRQHandlerDescriptor, interface::IRQManager,
     },
@@ -145,7 +145,7 @@ impl GICv2 {
 //------------------------------------------------------------------------------
 use liblocking::interface::ReadWriteEx;
 
-impl drivers::interface::DeviceDriver for GICv2 {
+impl libdriver::drivers::interface::DeviceDriver for GICv2 {
     type IRQNumberType = IRQNumber;
 
     fn compatible(&self) -> &'static str {

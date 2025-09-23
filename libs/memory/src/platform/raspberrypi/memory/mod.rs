@@ -128,7 +128,7 @@ unsafe extern "Rust" {
 /// This is a fixed memory map for Raspberry Pi,
 /// @todo we need to infer the memory map from the provided DTB instead.
 #[rustfmt::skip]
-pub(super) mod map {
+pub mod map {
     use super::*;
 
     /// Beginning of memory.

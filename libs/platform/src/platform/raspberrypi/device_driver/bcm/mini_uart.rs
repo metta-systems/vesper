@@ -5,8 +5,8 @@
  * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
  */
 
-#[cfg(not(feature = "noserial"))]
-use tock_registers::interfaces::{Readable, Writeable};
+// #[cfg(not(feature = "noserial"))]
+// use tock_registers::interfaces::{Readable, Writeable};
 use {
     crate::platform::{
         BcmHost,
@@ -172,7 +172,7 @@ impl From<Rate> for u32 {
 // [temporary] Used in mmu.rs to set up local paging
 pub const UART1_BASE: usize = BcmHost::get_peripheral_address() + 0x21_5000;
 
-impl crate::platform::drivers::interface::DeviceDriver for MiniUart {
+impl libdriver::drivers::interface::DeviceDriver for MiniUart {
     type IRQNumberType = IRQNumber;
 
     fn compatible(&self) -> &'static str {
