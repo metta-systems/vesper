@@ -5,4 +5,17 @@
 
 //! Implementation of aarch64 CPU functions.
 
-pub mod cpu;
+use aarch64_cpu::asm;
+
+pub mod smp;
+
+/// Expose CPU-specific no-op opcode.
+pub use asm::nop;
+
+/// Loop forever in sleep mode.
+#[inline]
+pub fn endless_sleep() -> ! {
+    loop {
+        asm::wfe();
+    }
+}

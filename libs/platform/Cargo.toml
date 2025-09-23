@@ -38,6 +38,7 @@ bitflags = { workspace = true }
 buddy-alloc = { workspace = true }
 cfg-if = { workspace = true }
 libconsole = { workspace = true }
+libcpu = { workspace = true }
 libexception = { workspace = true }
 libkernel-state = { workspace = true }
 liblocal-irq = { workspace = true }
@@ -56,11 +57,9 @@ ux = { workspace = true }
 [dev-dependencies]
 libtest = { workspace = true }
 
-[lib]
-name = "machine"
-test = true
-
 # For proper testing in libmachine, we build it as a test_runner binary!
+[lib]
+test = true
 
 [lints]
 workspace = true
