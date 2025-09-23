@@ -1,8 +1,6 @@
 use {
-    liblocal_irq::exception, //?
-    liblocking::{IRQSafeNullLock, InitStateLock, interface::ReadWriteEx},
+    liblocking::{InitStateLock, interface::ReadWriteEx},
     liblog::println,
-    libplatform::exception::asynchronous::IRQNumber,
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -81,12 +79,6 @@ where
 }
 
 //--------------------------------------------------------------------------------------------------
-// Global instances
-//--------------------------------------------------------------------------------------------------
-
-static DRIVER_MANAGER: DriverManager<IRQNumber> = DriverManager::new();
-
-//--------------------------------------------------------------------------------------------------
 // Private Code
 //--------------------------------------------------------------------------------------------------
 
@@ -105,11 +97,6 @@ where
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
-
-/// Return a reference to the global DriverManager.
-pub fn driver_manager() -> &'static DriverManager<IRQNumber> {
-    &DRIVER_MANAGER
-}
 
 impl<T> DeviceDriverDescriptor<T> {
     pub fn new(

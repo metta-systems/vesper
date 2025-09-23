@@ -362,7 +362,7 @@ impl Pin<'_, Input> {
 // OS Interface Code
 //--------------------------------------------------------------------------------------------------
 
-impl crate::platform::drivers::interface::DeviceDriver for GPIO {
+impl libdriver::drivers::interface::DeviceDriver for GPIO {
     type IRQNumberType = IRQNumber;
 
     fn compatible(&self) -> &'static str {

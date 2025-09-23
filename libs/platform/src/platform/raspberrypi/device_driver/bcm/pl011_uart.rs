@@ -501,7 +501,7 @@ impl interface::Write for PL011Uart {
 // OS Interface Code
 //--------------------------------------------------------------------------------------------------
 
-impl crate::platform::drivers::interface::DeviceDriver for PL011Uart {
+impl libdriver::drivers::interface::DeviceDriver for PL011Uart {
     type IRQNumberType = IRQNumber;
 
     fn compatible(&self) -> &'static str {
