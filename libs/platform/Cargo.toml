@@ -33,6 +33,7 @@ bitflags = { workspace = true }
 buddy-alloc = { workspace = true }
 cfg-if = { workspace = true }
 libconsole = { workspace = true }
+libcpu = { workspace = true }
 libexception = { workspace = true }
 libkernel-state = { workspace = true }
 liblocal-irq = { workspace = true }
