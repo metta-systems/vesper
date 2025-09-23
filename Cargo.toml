@@ -4,6 +4,7 @@ members = [
   "bin/chainboot",
   "bin/chainofcommand",
   # Libraries
+  "libs/boot",
   "libs/console",
   "libs/cpu",
   "libs/driver",
@@ -43,6 +44,7 @@ bit_field = { version = "0.10" }
 bitflags = { version = "2.9" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
+libboot = { path = "libs/boot" }
 libconsole = { path = "libs/console" }
 libcpu = { path = "libs/cpu" }
 libdriver = { path = "libs/driver" }
