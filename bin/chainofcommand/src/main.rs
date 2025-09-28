@@ -488,7 +488,7 @@ async fn main() -> Result<()> {
 
         execute!(
             stdout,
-            style::Print("\n✅ Waiting for handshake, pass-through. 🔌 Power the target now."),
+            style::Print("\r\n✅ Waiting for handshake, pass-through. 🔌 Power on the target now."),
         )?;
         stdout.flush()?;
 
