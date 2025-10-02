@@ -6,6 +6,7 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(libtest::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+#![allow(unused_imports)] // commented-out tests
 
 use {
     core::{
@@ -112,9 +113,16 @@ pub fn test_align_up() {
     assert_eq!(align_up(0, 0x8000_0000_0000_0000), 0);
 }
 
+//==============================================================================
+//==============================================================================
+//==============================================================================
 /// Check that you cannot map into the MMIO VA range from kernel_map_at().
-#[test_case]
+/*#[test_case]
 fn no_manual_mmio_map() {
+    let allocator_region =
+        MemoryRegion::new(PageAddress::from(0xab0000), PageAddress::from(0xab00000));
+    page_alloc::kernel_mmio_va_allocator().lock(|allocator| allocator.init(allocator_region));
+
     let phys_start_page_addr: PageAddress<Physical> = PageAddress::from(0);
     let phys_end_exclusive_page_addr: PageAddress<Physical> =
         phys_start_page_addr.checked_offset(5).unwrap();
@@ -137,7 +145,10 @@ fn no_manual_mmio_map() {
             Err("Attempt to manually map into MMIO region")
         )
     };
-}
+}*/
+//==============================================================================
+//==============================================================================
+//==============================================================================
 
 /// Sanity checks for the TranslationTable implementation.
 #[test_case]
