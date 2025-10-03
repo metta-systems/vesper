@@ -92,8 +92,8 @@ alias = "kernel-hopper"
 [tasks.kernel-hopper]
 dependencies = ["build"]
 # The cmd line below causes a bug in hopper, see https://www.dropbox.com/s/zyw5mfx0bepcjb1/hopperv4-RAW-bug.mov?dl=0
-#"hopperv4 --loader RAW --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --plugin arm --cpu aarch64 --variant generic --contains-code true --executable ${KERNEL_BIN}"
-script = ["hopperv4 --loader ELF --executable ${KERNEL_ELF}"]
+# "hopper --loader RAW --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --plugin arm --cpu aarch64 --variant generic --contains-code true --executable ${KERNEL_BIN}"
+script = ["hopper --loader ELF --executable ${KERNEL_ELF}"]
 
 [tasks.clippy]
 workspace = false

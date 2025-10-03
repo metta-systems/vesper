@@ -94,7 +94,7 @@ just nm
 
 ### To see kernel disassembly
 
-You need to have [Hopper](https://hopperapp.com) and hopperv4 cli helper installed.
+You need to have [Hopper](https://hopperapp.com) and hopper cli helper installed.
 
 ```
 just disasm
