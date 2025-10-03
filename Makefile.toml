@@ -11,8 +11,7 @@ default_to_workspace = true
 skip_core_tasks = true
 
 [env]
-DEFAULT_TARGET = "aarch64-vesper-metta"
-
+DEFAULT_TARGET = "aarch64-metta-none-eabi"
 #
 # === User-configurable ===
 #
