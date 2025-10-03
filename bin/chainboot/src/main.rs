@@ -1,12 +1,8 @@
 // Based on miniload by @andre-richter
-#![feature(format_args_nl)]
-#![feature(custom_test_frameworks)]
-#![test_runner(libtest::test_runner)]
-#![reexport_test_harness_main = "test_main"]
-#![allow(linker_messages)]
 #![no_main]
 #![no_std]
 #![no_builtins]
+#![feature(format_args_nl)]
 
 use {
     aarch64_cpu::asm::barrier,
@@ -16,8 +12,6 @@ use {
     libplatform::platform::raspberrypi::BcmHost,
     seahash::SeaHasher,
 };
-
-mod boot;
 
 /// Early init code.
 ///
@@ -66,9 +60,6 @@ fn read_u64() -> u64 {
 /// The main function running after the early init.
 #[inline(always)]
 fn kernel_main(max_kernel_size: u64) -> ! {
-    #[cfg(test)]
-    test_main();
-
     print!("{}", LOGO);
     println!("{:>51}\n", BcmHost::board_name());
     println!("⏪ Requesting kernel image...");
@@ -142,22 +133,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
     kernel()
 }
 
-#[cfg(not(test))]
 #[panic_handler]
 fn panicked(info: &core::panic::PanicInfo) -> ! {
     libmachine::panic::handler(info)
-}
-
-#[panic_handler]
-#[cfg(test)]
-fn panicked(info: &core::panic::PanicInfo) -> ! {
-    libtest::panic::handler_for_tests(info)
-}
-
-#[cfg(test)]
-mod chainboot_tests {
-    #[test_case]
-    fn nothing() {
-        assert_eq!(2 + 2, 4);
-    }
 }
