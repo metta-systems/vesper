@@ -1,12 +1,12 @@
 [package]
 name = "chainboot"
 description = "Chain boot loader"
-authors.workspace = true
-categories.workspace = true
-edition.workspace = true
-license.workspace = true
-publish.workspace = true
-version.workspace = true
+authors = { workspace = true }
+categories = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+version = { workspace = true }
 
 [badges]
 maintenance = { status = "experimental" }
@@ -21,17 +21,20 @@ jtag = ["machine/jtag"]
 noserial = []
 
 [dependencies]
+aarch64-cpu = { workspace = true }
+bit_field = { workspace = true }
+bitflags = { workspace = true }
+cfg-if = { workspace = true }
 machine = { path = "../../machine", features = ["no_boot"] }
-aarch64-cpu.workspace = true
-bit_field.workspace = true
-bitflags.workspace = true
-cfg-if.workspace = true
-seahash.workspace = true
-snafu.workspace = true
-tock-registers.workspace = true
-usize_conversions.workspace = true
-ux.workspace = true
+seahash = { workspace = true }
+snafu = { workspace = true }
+tock-registers = { workspace = true }
+usize_conversions = { workspace = true }
+ux = { workspace = true }
 
 [[bin]]
 name = "chainboot"
 test = false
+
+[lints]
+workspace = true
