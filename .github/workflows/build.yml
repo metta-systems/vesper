@@ -128,7 +128,7 @@ jobs:
       shell: pwsh
 
     - name: Install QEMU (Windows)
-      run: scoop install qemu-810
+      run: scoop install qemu-1010
       if: runner.os == 'Windows'
       shell: pwsh
 
