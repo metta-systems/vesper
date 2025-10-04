@@ -3,34 +3,50 @@ members = ["machine", "nucleus", "bin/chainboot", "bin/chainofcommand"]
 resolver = "2"
 
 [workspace.package]
-version = "0.0.1"
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
+categories = ["embedded", "no-std", "os"]
 documentation = "https://docs.metta.systems/vesper"
-homepage = "https://github.com/metta-systems/vesper"
-repository = "https://github.com/metta-systems/vesper"
-readme = "README.md"
-license = "BlueOak-1.0.0"
-categories = ["no-std", "embedded", "os"]
-publish = false
 edition = "2024"
+homepage = "https://github.com/metta-systems/vesper"
+license = "BlueOak-1.0.0"
+publish = false
+readme = "README.md"
+repository = "https://github.com/metta-systems/vesper"
+version = "0.0.1"
 
 [workspace.dependencies]
-qemu-exit = "3.0"
+#========
+# target
+#========
 aarch64-cpu = { version = "10.0" }
-tock-registers = "0.9"
+bit_field = { version = "0.10" }
+bitflags = { version = "2.9" }
+buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
+cfg-if = { version = "1.0" }
+once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
+qemu-exit = { version = "3.0" }
+snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
+tock-registers = { version = "0.9" }
+usize_conversions = { version = "0.2" }
 ux = { version = "0.1", default-features = false }
-usize_conversions = "0.2"
-bit_field = "0.10"
-bitflags = "2.9"
-cfg-if = "1.0"
-snafu = { version = "0.8", default-features = false, features = [
-    "unstable-core-error",
-] }
-buddy-alloc = { git = "https://github.com/metta-systems/buddy-alloc", version = "0.6.0", branch = "feature/allocator-api" }
-once_cell = { version = "1.21", default-features = false, features = [
-    "unstable",
-] }
-seahash = "4.1"
+#======
+# host
+#======
+anyhow = { version = "1.0" }
+argh = { version = "0.1" }
+bytes = { version = "1.10" }
+crossterm = { version = "0.29", features = ["event-stream"] }
+defer = { version = "0.2" }
+futures = { version = "0.3" }
+futures-util = { version = "0.3", features = ["io"] }
+tokio = { version = "1.47", features = ["full"] }
+tokio-serial = { version = "5.4" }
+tokio-stream = { version = "0.1" }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+#=======
+# mixed
+#=======
+seahash = { version = "4.1" }
 
 [patch.crates-io]
 serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = "macos-ENOTTY-fix" }
@@ -42,17 +58,20 @@ serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = 
 opt-level = 's' # otherwise boot code will be mangled
 
 [profile.release]
-panic = "abort"
-opt-level = 's'
+codegen-units = 1
 debug = true
 lto = true
-codegen-units = 1
+opt-level = 's'
+panic = "abort"
 
 [profile.release-fast]
+codegen-units = 16
 inherits = "release"
 lto = "thin"
-codegen-units = 16
 
 [profile.test]
-opt-level = 's'
 debug = true
+opt-level = 's'
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(board_rpi3)', 'cfg(board_rpi4)'] }
