@@ -1,12 +1,12 @@
 [package]
 name = "chainboot"
 description = "Chain boot loader"
-authors.workspace = true
-categories.workspace = true
-edition.workspace = true
-license.workspace = true
-publish.workspace = true
-version.workspace = true
+authors = { workspace = true }
+categories = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+version = { workspace = true }
 
 [badges]
 maintenance = { status = "experimental" }
@@ -14,27 +14,27 @@ maintenance = { status = "experimental" }
 [features]
 default = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = ["machine/qemu"]
+qemu = ["libmachine/qemu"]
 # Build for debugging it over JTAG/SWD connection - halts on first non-startup function start.
-jtag = ["machine/jtag"]
+jtag = ["libmachine/jtag"]
 # Dummy feature, ignored in this crate.
 noserial = []
-# Mutually exclusive features to choose a target board
-rpi3 = ["machine/rpi3"]
-rpi4 = ["machine/rpi4"]
 
 [dependencies]
+aarch64-cpu = { workspace = true }
+bit_field = { workspace = true }
+bitflags = { workspace = true }
+cfg-if = { workspace = true }
 machine = { path = "../../machine", features = ["no_boot"] }
-aarch64-cpu.workspace = true
-bit_field.workspace = true
-bitflags.workspace = true
-cfg-if.workspace = true
-seahash.workspace = true
-snafu.workspace = true
-tock-registers.workspace = true
-usize_conversions.workspace = true
-ux.workspace = true
+seahash = { workspace = true }
+snafu = { workspace = true }
+tock-registers = { workspace = true }
+usize_conversions = { workspace = true }
+ux = { workspace = true }
 
 [[bin]]
 name = "chainboot"
 test = false
+
+[lints]
+workspace = true

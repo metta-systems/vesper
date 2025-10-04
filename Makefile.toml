@@ -3,6 +3,8 @@
 #
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
+
+#
 # Global workspace configuration
 #
 [config]
@@ -11,26 +13,28 @@ default_to_workspace = true
 skip_core_tasks = true
 
 [env]
-DEFAULT_TARGET = "aarch64-vesper-metta"
-
+DEFAULT_TARGET = "aarch64-metta-none-eabi"
 #
 # === User-configurable ===
 #
-
 # Pass TARGET env var if it does not match the default target above.
-TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = [
-    "TARGET",
-] } }
-
+TARGET = { value = "${DEFAULT_TARGET}", condition = { env_not_set = ["TARGET"] } }
 # Name of the target board "rpi3" or "rpi4"
-TARGET_BOARD = { value = "rpi4", condition = { env_not_set = [
-    "TARGET_BOARD",
-] } }
+# Will be converted by nucleus/build.rs into a board configuration flag like board_rpi3.
+TARGET_BOARD = { value = "rpi4", condition = { env_not_set = ["TARGET_BOARD"] } }
 # Name of the DTB file for target board configuration, use bcm2710-rpi-3-b-plus.dtb for RasPi3B+
 TARGET_DTB = { value = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2711-rpi-4-b.dtb", condition = { env_not_set = [
     "TARGET_DTB",
 ] } }
-
+#
+# === RUSTFLAGS ===
+#
+FIXED_RUSTFLAGS = "-D warnings -Z macro-backtrace"
+BOARD_rpi3_RUSTFLAGS = "-C target-cpu=cortex-a53 --cfg board_rpi3"
+BOARD_rpi4_RUSTFLAGS = "-C target-cpu=cortex-a73 --cfg board_rpi4"
+#
+# === QEMU ===
+#
 # AArch64 QEMU binary
 QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
 # QEMU machine type, defaults to raspi3b but CI runners override it due to ancient QEMU versions they use.
@@ -38,15 +42,11 @@ QEMU = { value = "qemu-system-aarch64", condition = { env_not_set = ["QEMU"] } }
 # raspi3ap             Raspberry Pi 3A+ (revision 1.0)
 # raspi3b              Raspberry Pi 3B (revision 1.2)
 # raspi4b              Raspberry Pi 4B (revision 1.5)
-QEMU_MACHINE = { value = "raspi3b", condition = { env_not_set = [
-    "QEMU_MACHINE",
-] } }
+QEMU_MACHINE = { value = "raspi3b", condition = { env_not_set = ["QEMU_MACHINE"] } }
 
 # An aarch64-enabled GDB
 # brew install aarch64-elf-gdb
-GDB = { value = "aarch64-elf-gdb", condition = { env_not_set = [
-    "GDB",
-] } }
+GDB = { value = "aarch64-elf-gdb", condition = { env_not_set = ["GDB"] } }
 
 # @todo: Replace it with probe-rs.. which can be installed by `cargo make`!
 # OpenOCD with JLink support
@@ -54,10 +54,8 @@ GDB = { value = "aarch64-elf-gdb", condition = { env_not_set = [
 OPENOCD = { value = "/usr/local/opt/openocd/4d6519593-rtt/bin/openocd", condition = { env_not_set = [
     "OPENOCD",
 ] } }
-
 # Mounted sdcard partition path
 VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
-
 #
 # === Automatic ===
 #
@@ -69,26 +67,22 @@ VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
 # Flows that start directly in the member crate, must manually extend the workspace
 # level makefile using the `extend` keyword.
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
-
 # Build rust stdlib locally
 RUST_STD = "-Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem"
 TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
 PLATFORM_TARGET = "--target=${TARGET_JSON}|--features=${TARGET_FEATURES}"
-
 DEVICE_FEATURES = "noserial"
-QEMU_FEATURES = "qemu,rpi3"
-
+QEMU_FEATURES = "qemu"
+TARGET_FEATURES = ""
 # Working objcopy from `brew install aarch64-elf-binutils`
-#OBJCOPY = "/opt/homebrew/Cellar/aarch64-elf-binutils/2.40/bin/aarch64-elf-objcopy"
+# OBJCOPY = "/opt/homebrew/Cellar/aarch64-elf-binutils/2.40/bin/aarch64-elf-objcopy"
 # LLVM's objcopy, usually full of bugs like https://github.com/llvm/llvm-project/issues/58407
-OBJCOPY = "rust-objcopy"                 # Part of `cargo objcopy` in cargo-binutils
+OBJCOPY = "rust-objcopy"  # Part of `cargo objcopy` in cargo-binutils
 OBJCOPY_PARAMS = "--strip-all -O binary"
-NM = "rust-nm"                           # Part of `cargo nm` in cargo-binutils
-
+NM = "rust-nm"  # Part of `cargo nm` in cargo-binutils
 UTILS_CONTAINER = "andrerichter/raspi3-utils"
 DOCKER_CMD = "docker run -it --rm -v ${PWD}:/work -w /work -p 5900:5900"
 QEMU_CONTAINER_CMD = "qemu-system-aarch64"
-
 #
 # Could additionally use -nographic to disable GUI -- this shall be useful for automated tests.
 #
@@ -96,7 +90,7 @@ QEMU_CONTAINER_CMD = "qemu-system-aarch64"
 QEMU_OPTS = "-M ${QEMU_MACHINE} -semihosting"
 QEMU_ARM_TRACE_OPTS = "arm_gt_cntvoff_write,arm_gt_ctl_write,arm_gt_cval_write,arm_gt_imask_toggle,arm_gt_recalc,arm_gt_recalc_disabled,arm_gt_tval_write,armsse_cpu_pwrctrl_read,armsse_cpu_pwrctrl_write,armsse_cpuid_read,armsse_cpuid_write,armsse_mhu_read,armsse_mhu_write"
 QEMU_BCM_TRACE_OPTS = "bcm2835_cprman_read,bcm2835_cprman_write,bcm2835_cprman_write_invalid_magic,bcm2835_ic_set_cpu_irq,bcm2835_ic_set_gpu_irq,bcm2835_mbox_irq,bcm2835_mbox_property,bcm2835_mbox_read,bcm2835_mbox_write,bcm2835_sdhost_edm_change,bcm2835_sdhost_read,bcm2835_sdhost_update_irq,bcm2835_sdhost_write,bcm2835_systmr_irq_ack,bcm2835_systmr_read,bcm2835_systmr_run,bcm2835_systmr_timer_expired,bcm2835_systmr_write"
-QEMU_TRACE_OPTS = "trace:${QEMU_ARM_TRACE_OPTS},${QEMU_BCM_TRACE_OPTS}"                                                                                                                                                                                                                                                                                                                                                                    # @todo trace: prefix for each opt
+QEMU_TRACE_OPTS = "trace:${QEMU_ARM_TRACE_OPTS},${QEMU_BCM_TRACE_OPTS}"  # @todo trace: prefix for each opt
 QEMU_DISASM_OPTS = "-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin"
 QEMU_SERIAL_OPTS = "-serial stdio -serial pty"
 QEMU_TESTS_OPTS = "-nographic"
@@ -104,41 +98,78 @@ QEMU_TESTS_OPTS = "-nographic"
 # - if this is set, MUST have gdb attached for SYS_WRITE0 to work, otherwise QEMU will crash.
 # - port 5555 used to match JLink configuration, so we can reuse the same GDB command for both QEMU and JTAG.
 QEMU_GDB_OPTS = "-gdb tcp::5555 -S"
-
 GDB_CONNECT_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect"
-
 KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus"
 KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
-
 CHAINBOOT_SERIAL = "/dev/tty.SLAB_USBtoUART"
 CHAINBOOT_BAUD = 115200
 
 #
 # === Base reusable commands ===
 #
+
+# #Target dependencies:
+# [tasks.kernel-binary] -- in nucleus
+# alias = "empty"
+#
+# [tasks.chainboot-binary] -- in bin/chainboot
+# alias = "empty"
+#
+# [tasks.chainofcommand-binary] -- in bin/chainofcommand
+# alias = "empty"
+#
+# [tasks.ttt-binary] -- in tools/ttt
+# alias = "empty"
+
 # By default, build everything.
 [tasks.default]
-alias = "all"
+alias = "build"
 
 # All primary dependencies to build.
-[tasks.all]
-dependencies = ["kernel-binary", "chainboot", "chainofcommand"]
-
-[tasks.xtool-modules]
-workspace = false
-command = "cargo"
-args = ["modules", "tree"]
-
-# Disable build in the root by default.
 [tasks.build]
-workspace = false
-alias = "empty"
+dependencies = ["x-build-nucleus", "x-build-bin-chainboot", "x-build-bin-chainofcommand"]
+# ttt-binary too
+
+[tasks.x-build-nucleus]
+command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus/Makefile.toml",
+  "--cwd",
+  "nucleus",
+  "build",
+]
+
+[tasks.x-build-bin-chainboot]
+command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/bin/chainboot/Makefile.toml",
+  "--cwd",
+  "bin/chainboot",
+  "build",
+]
+
+[tasks.x-build-bin-chainofcommand]
+command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/bin/chainofcommand/Makefile.toml",
+  "--cwd",
+  "bin/chainofcommand",
+  "build",
+]
 
 # Run a target build with current platform configuration.
 [tasks.build-target]
-workspace = false
+env = { RUSTFLAGS = "${FIXED_RUSTFLAGS} ${BOARD_RUSTFLAGS} ${TARGET_LINK_RUSTFLAGS}" }
 command = "cargo"
-env = { RUSTFLAGS = "-D warnings" }
 args = [
     "build",
     "@@split(PLATFORM_TARGET,|)",
@@ -146,19 +177,12 @@ args = [
     "--release",
 ]
 
-[tasks.build-device]
-workspace = false
-env = { "TARGET_FEATURES" = "${TARGET_BOARD}" }
-run_task = "build-target"
-
 [tasks.build-qemu]
-workspace = false
-env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+env = { "TARGET_FEATURES" = "${QEMU_FEATURES}", "TARGET_BOARD" = "rpi3", "BOARD_RUSTFLAGS" = "${BOARD_rpi3_RUSTFLAGS}" }
 run_task = "build-target"
 
 [tasks.qemu-runner]
-workspace = false
-dependencies = ["build-qemu", "build-kernel-binary"]
+dependencies = ["build-qemu", "convert-kernel-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
     "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS}",
@@ -172,49 +196,108 @@ script = [
     "echo",
 ]
 
-[tasks.xtool-expand-target]
-workspace = false
-env = { "TARGET_FEATURES" = "" }
-command = "cargo"
-args = ["expand", "@@split(PLATFORM_TARGET,|)", "--release"]
-
 [tasks.test]
-env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+dependencies = ["x-test-nucleus", "x-test-bin-chainboot", "x-test-bin-chainofcommand"]
+
+[tasks.x-test-nucleus]
 command = "cargo"
-args = ["test", "@@split(PLATFORM_TARGET,|)", "@@split(RUST_STD, )"]
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus/Makefile.toml",
+  "--cwd",
+  "nucleus",
+  "test-nucleus",
+]
+
+[tasks.x-test-bin-chainboot]
+command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/bin/chainboot/Makefile.toml",
+  "--cwd",
+  "bin/chainboot",
+  "test-chainboot",
+]
+
+[tasks.x-test-bin-chainofcommand]
+command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/bin/chainofcommand/Makefile.toml",
+  "--cwd",
+  "bin/chainofcommand",
+  "test",
+]
+
+[tasks.test-on-rpi3-qemu]
+env = { TARGET_FEATURES = "${QEMU_FEATURES}", TARGET_BOARD = "rpi3", RUSTFLAGS = "${FIXED_RUSTFLAGS} ${BOARD_rpi3_RUSTFLAGS} ${TARGET_LINK_RUSTFLAGS}" }
+command = "cargo"
+args = [
+  "test",
+  "@@split(PLATFORM_TARGET,|)",
+  "@@split(RUST_STD, )",
+]
+
+# @todo add [tasks.test-on-rpi4-qemu]
 
 [tasks.docs]
-env = { "TARGET_FEATURES" = "" }
+# env = { "TARGET_FEATURES" = "" }
 command = "cargo"
 args = ["doc", "--open", "--no-deps", "@@split(PLATFORM_TARGET,|)"]
 
-[tasks.xtool-clippy]
-workspace = false
-env = { "TARGET_FEATURES" = "rpi3", "CLIPPY_FEATURES" = { value = "--features=${CLIPPY_FEATURES}", condition = { env_set = [
-    "CLIPPY_FEATURES",
-] } } }
+# Run xtool-clippy in all subprojects
+[tasks.clippy]
+dependencies = ["x-clippy-nucleus", "x-clippy-bin-chainboot", "x-clippy-bin-chainofcommand"]
+
+[tasks.x-clippy-nucleus]
 command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
 args = [
-    "clippy",
-    "@@split(PLATFORM_TARGET,|)",
-    "@@split(RUST_STD, )",
-    "@@remove-empty(CLIPPY_FEATURES)",
-    "--",
-    "--deny",
-    "warnings",
-    "--allow",
-    "deprecated",
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus/Makefile.toml",
+  "--cwd",
+  "nucleus",
+  "clippy",
+]
+
+[tasks.x-clippy-bin-chainboot]
+command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/bin/chainboot/Makefile.toml",
+  "--cwd",
+  "bin/chainboot",
+  "clippy",
+]
+
+[tasks.x-clippy-bin-chainofcommand]
+command = "cargo"
+# Have to use args to support env vars across platforms, regular scripts don't work on Windows
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/bin/chainofcommand/Makefile.toml",
+  "--cwd",
+  "bin/chainofcommand",
+  "clippy",
 ]
 
 # These tasks are written in cargo-make's own script to make them portable across platforms (no `basename` on Windows)
 
-## Copy and prepare a given ELF file. Convert to binary output format.
-[tasks.build-custom-binary]
-workspace = false
+# #Copy and prepare a given ELF file. Convert to binary output format.
+[tasks.convert-custom-binary]
 env = { "BINARY_FILE" = "${BINARY_FILE}" }
 script_runner = "@duckscript"
-script = [
-    '''
+script = '''
     binaryFile = basename ${BINARY_FILE}
     outElf = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.elf
     outBin = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
@@ -230,21 +313,19 @@ script = [
     echo 🔄 Copied ${binaryFile} to ${shortOutElf} (${elfSize} bytes)
     echo 💫 Converted ${binaryFile} to ${shortOutBin} (${binSize} bytes)
     echo
-''',
-]
+'''
 install_crate = { crate_name = "cargo-binutils", binary = "rust-objcopy", test_arg = [
     "--help",
 ] }
 
-## Copy and prepare binary with tests.
+# #Copy and prepare binary with tests.
 [tasks.test-binary]
-workspace = false
 env = { "BINARY_FILE" = "${CARGO_MAKE_TASK_ARGS}" }
-run_task = "build-custom-binary"
+extend = "convert-custom-binary"
 
-## Run binary with tests in QEMU.
-[tasks.test-runner]
-workspace = false
+# #Run binary with tests in QEMU.
+# This target is invoked by runner in .cargo/config.toml to run test binary.
+[tasks.qemu-test-runner]
 dependencies = ["test-binary"]
 script_runner = "@duckscript"
 script = [
@@ -252,27 +333,29 @@ script = [
     binaryFile = basename ${CARGO_MAKE_TASK_ARGS}
     echo 🚜 Run QEMU %{QEMU_OPTS} %{QEMU_TESTS_OPTS}
     echo 🚜 .. with target/${binaryFile}.bin
-    echo 🚜 .. and targets/bcm2710-rpi-3-b-plus.dtb
+    # echo 🚜 .. and targets/bcm2710-rpi-3-b-plus.dtb
+    # echo ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+    echo ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
     exec --fail-on-error ${QEMU} %{QEMU_OPTS} %{QEMU_TESTS_OPTS} -dtb ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb -kernel ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
 ''',
 ]
 
-## Generate GDB startup configuration file.
-[tasks.gdb-config]
-workspace = false
+# #Generate GDB startup configuration file.
+[tasks.generate-gdb-config]
 script_runner = "@duckscript"
-script = ['''
+script = [
+  '''
     writefile ${GDB_CONNECT_FILE} "target extended-remote :5555\n"
     appendfile ${GDB_CONNECT_FILE} "break *0x80000\n"
     appendfile ${GDB_CONNECT_FILE} "break kernel_init\n"
     appendfile ${GDB_CONNECT_FILE} "break kernel_main\n"
     echo 🖌️ Generated GDB config file
-''']
-#appendfile ${GDB_CONNECT_FILE} "continue\n"
+''',
+]
+# appendfile ${GDB_CONNECT_FILE} "continue\n"
 
-## Generate zellij configuration file.
-[tasks.zellij-config]
-workspace = false
+# #Generate zellij configuration file.
+[tasks.generate-zellij-config]
 dependencies = ["build-qemu", "kernel-binary"]
 script_runner = "@duckscript"
 env = { "ZELLIJ_CONFIG_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/emulation/zellij-config.sh" }
@@ -291,91 +374,34 @@ install_crate = { crate_name = "zellij", binary = "zellij", test_arg = [
 ] }
 
 [tasks.openocd]
-workspace = false
 script = [
     "${OPENOCD} -f interface/jlink.cfg -f ../ocd/${TARGET_BOARD}_target.cfg",
 ]
 
 [tasks.sdeject]
-workspace = false
 dependencies = ["sdcard"]
 script = ["diskutil ejectAll ${VOLUME}"]
-
-[tasks.qemu]
-workspace = false
-alias = "empty"
 
 [tasks.clean]
 command = "cargo"
 args = ["clean"]
 
 #
-# Per-workspace commands, disabled in the root by efault.
-# TODO: defined only in sub-modules with workspace = false
+# === Other commands ===
 #
-# Tasks for nucleus
-#[tasks.build-kernel-binary]
-#alias = "empty"
 
-# Tasks for chainboot
-#[tasks.chainboot]
-#alias = "empty"
+[tasks.xtool-modules]
+command = "cargo"
+args = ["modules", "tree"]
 
-# sdeject
-#[tasks.cb-eject]
-#alias = "empty"
+[tasks.xtool-expand-target]
+# env = { "TARGET_FEATURES" = "" }
+command = "cargo"
+args = ["expand", "@@split(PLATFORM_TARGET,|)", "--release"]
 
-# Tasks for chainofcommand
-#[tasks.chainofcommand]
-#alias = "empty"
-
-# Tasks for ttt
-#[tasks.ttt]
-#alias = "empty"
-
-# Other tasks
-#[tasks.gdb]
-#alias = "empty"
-
-#[tasks.gdb-cb]
-#alias = "empty"
-
-#[tasks.sdcard]
-#alias = "empty"
-
-#[tasks.qemu-gdb]
-#alias = "empty"
-
-[tasks.qemu-cb]
-script = "echo ❌ not running qemu-cb"
-
-#[tasks.qemu-cb-gdb]
-#alias = "empty"
-
-#[tasks.xtool-hopper]
-#alias = "empty"
-#
-#[tasks.xtool-nm]
-#alias = "empty"
-
-#[tasks.zellij-cb]
-#alias = "empty"
-
-#[tasks.zellij-cb-gdb]
-#alias = "empty"
-
-[tasks.zellij-nucleus]
-script = "echo ❌ not running zellij-nucleus"
-
-## Target dependencies:
-#[tasks.kernel-binary]
-#alias = "empty"
-
-#[tasks.chainboot-binary]
-#alias = "empty"
-#
-#[tasks.chainofcommand-binary]
-#alias = "empty"
-
-#[tasks.ttt-binary]
-#alias = "empty"
+[tasks.xtool-clippy]
+env = { RUSTFLAGS = "${FIXED_RUSTFLAGS} ${BOARD_RUSTFLAGS} ${TARGET_LINK_RUSTFLAGS}" }
+script = '''
+  export RUSTFLAGS="${RUSTFLAGS}"
+  cargo clippy --target=${TARGET_JSON} --features=${CLIPPY_FEATURES} ${RUST_STD} -- --deny warnings --allow deprecated
+'''

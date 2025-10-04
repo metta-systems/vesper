@@ -15,22 +15,22 @@ publish = false
 edition = "2024"
 
 [workspace.dependencies]
-qemu-exit = "3.0"
 aarch64-cpu = { version = "10.0" }
-tock-registers = "0.9"
-ux = { version = "0.1", default-features = false }
-usize_conversions = "0.2"
 bit_field = "0.10"
 bitflags = "2.9"
-cfg-if = "1.0"
-snafu = { version = "0.8", default-features = false, features = [
-    "unstable-core-error",
-] }
 buddy-alloc = { git = "https://github.com/metta-systems/buddy-alloc", version = "0.6.0", branch = "feature/allocator-api" }
+cfg-if = "1.0"
 once_cell = { version = "1.21", default-features = false, features = [
-    "unstable",
+  "unstable",
 ] }
+qemu-exit = "3.0"
 seahash = "4.1"
+snafu = { version = "0.8", default-features = false, features = [
+  "unstable-core-error",
+] }
+tock-registers = "0.9"
+usize_conversions = "0.2"
+ux = { version = "0.1", default-features = false }
 
 [patch.crates-io]
 serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = "macos-ENOTTY-fix" }
@@ -42,17 +42,20 @@ serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = 
 opt-level = 's' # otherwise boot code will be mangled
 
 [profile.release]
-panic = "abort"
-opt-level = 's'
+codegen-units = 1
 debug = true
 lto = true
-codegen-units = 1
+opt-level = 's'
+panic = "abort"
 
 [profile.release-fast]
+codegen-units = 16
 inherits = "release"
 lto = "thin"
-codegen-units = 16
 
 [profile.test]
-opt-level = 's'
 debug = true
+opt-level = 's'
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(board_rpi3)', 'cfg(board_rpi4)'] }
