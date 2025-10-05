@@ -13,7 +13,7 @@ use {
     core::hash::Hasher,
     libconsole::console::console,
     liblog::{print, println},
-    machine::platform::raspberrypi::BcmHost,
+    libplatform::platform::raspberrypi::BcmHost,
     seahash::SeaHasher,
 };
 
@@ -30,12 +30,12 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
-    if let Err(x) = unsafe { machine::platform::drivers::init() } {
+    if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
-    unsafe { machine::drivers::driver_manager().init_drivers_and_irqs() };
+    unsafe { libplatform::platform::drivers::driver_manager().init_drivers_and_irqs() };
 
     // println! is usable from here on.
 

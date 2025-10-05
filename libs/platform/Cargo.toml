@@ -25,11 +25,9 @@ maintenance = { status = "experimental" }
 [features]
 default = []
 noserial = []
-# Enable JTAG debugging of kernel - enable jtag helpers and
-# block waiting for JTAG probe attach at the start of kernel main.
-jtag = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = []
+test_build = []
 
 [dependencies]
 aarch64-cpu = { workspace = true }
@@ -47,6 +45,7 @@ liblog = { workspace = true }
 libmemory = { workspace = true }
 libdriver = { workspace = true }
 libprimitives = { workspace = true }
+libtime = { workspace = true }
 once_cell = { workspace = true }
 qemu-exit = { workspace = true }
 snafu = { workspace = true }
@@ -54,12 +53,8 @@ tock-registers = { workspace = true }
 usize_conversions = { workspace = true }
 ux = { workspace = true }
 
-[dev-dependencies]
-libtest = { workspace = true }
-
-# For proper testing in libmachine, we build it as a test_runner binary!
 [lib]
-test = true
+test = false
 
 [lints]
 workspace = true
