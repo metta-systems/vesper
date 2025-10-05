@@ -1,0 +1,2 @@
+absolute-paths-allowed-crates = ["core"]
+absolute-paths-max-segments = 6

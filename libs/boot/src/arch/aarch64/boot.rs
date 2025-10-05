@@ -28,7 +28,7 @@ macro_rules! entry {
             // type check the given path
             let f: unsafe fn() -> ! = $path;
 
-            f()
+            unsafe { f() }
         }
     };
 }
@@ -43,16 +43,16 @@ global_asm!(
 ///
 /// Checks if we started in EL2/EL3. If so, proceeds with setting up EL1.
 ///
-/// This is invoked from the boot.s asm _boot_cores fn, does arch-specific init
-/// and passes control to the kernel boot function reset().
+/// This is invoked from the boot.s asm `_boot_cores` fn, does arch-specific init
+/// and passes control to the kernel boot function `reset()`.
 ///
-/// Dissection of various RPi core boot stubs is available
+/// Dissection of various `RPi` core boot stubs is available
 /// [here](https://leiradel.github.io/2019/01/20/Raspberry-Pi-Stubs.html).
 ///
 /// # Safety
 ///
 /// Totally unsafe! We're in the hardware land.
-/// We assume that no statics are accessed before transition to main from reset() function.
+/// We assume that no statics are accessed before transition to main from `reset()` function.
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.boot")]
 pub unsafe extern "C" fn _startup_in_rust() -> ! {
@@ -114,6 +114,7 @@ fn shared_setup_and_enter_post() -> ! {
     }
     // Set up SP_EL1 (stack pointer), which will be used by EL1 once
     // we "return" to it.
+    // SAFETY: Pure asm.
     unsafe {
         SP_EL1.set(__STACK_TOP.get() as u64);
     }
@@ -143,6 +144,7 @@ fn setup_and_enter_el1_from_el2() -> ! {
     );
 
     // Make the Exception Link Register (EL2) point to reset().
+    #[allow(clippy::fn_to_numeric_cast_any)]
     ELR_EL2.set(reset as *const () as u64);
 
     shared_setup_and_enter_post()
@@ -189,5 +191,6 @@ fn reset() -> ! {
         fn main() -> !;
     }
 
+    // SAFETY: We're getting to more safety right here!
     unsafe { main() }
 }

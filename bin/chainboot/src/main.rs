@@ -20,16 +20,20 @@ use {
 /// - Only a single core must be active and running this function.
 /// - The init calls in this function must appear in the correct order.
 #[unsafe(no_mangle)]
-unsafe fn kernel_init(max_kernel_size: u64) -> ! {
+unsafe extern "C" fn kernel_init(max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
+    // SAFETY: VERY SAFE
     if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
-    unsafe { libplatform::platform::drivers::driver_manager().init_drivers_and_irqs() };
+    // SAFETY: Relatively safe.
+    unsafe {
+        libplatform::platform::drivers::driver_manager().init_drivers_and_irqs();
+    }
 
     // println! is usable from here on.
 
@@ -38,12 +42,12 @@ unsafe fn kernel_init(max_kernel_size: u64) -> ! {
 }
 
 // https://onlineasciitools.com/convert-text-to-ascii-art (FIGlet) with `cricket` font
-const LOGO: &str = r#"
+const LOGO: &str = r"
        __          __       __                __
  .----|  |--.---.-|__.-----|  |--.-----.-----|  |_
  |  __|     |  _  |  |     |  _  |  _  |  _  |   _|
  |____|__|__|___._|__|__|__|_____|_____|_____|____|
-"#;
+";
 
 fn read_u64() -> u64 {
     let mut val: u64 = u64::from(console().read_byte());
@@ -74,7 +78,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
 
         // Notify `chainofcommand` to send the binary.
         for _ in 0..3 {
-            console().write_byte(3u8);
+            console().write_byte(3_u8);
         }
 
         // Read the binary's size.
@@ -97,10 +101,17 @@ fn kernel_main(max_kernel_size: u64) -> ! {
         // Read the kernel byte by byte.
         for i in 0..size {
             let val = console().read_byte();
+            // SAFETY: Could be unsafe.
             unsafe {
-                core::ptr::write_volatile(kernel_addr.offset(i as isize), val);
+                core::ptr::write_volatile(
+                    kernel_addr.offset(i.cast_signed().try_into().unwrap()),
+                    val,
+                );
             }
-            let written = unsafe { core::ptr::read_volatile(kernel_addr.offset(i as isize)) };
+            // SAFETY: Writing things can be unsafe.
+            let written = unsafe {
+                core::ptr::read_volatile(kernel_addr.offset(i.cast_signed().try_into().unwrap()))
+            };
             hasher.write_u8(written);
         }
 
@@ -124,6 +135,7 @@ fn kernel_main(max_kernel_size: u64) -> ! {
     console().flush();
 
     // Use black magic to create a function pointer.
+    // SAFETY: We're getting to safety soon!
     let kernel: fn() -> ! = unsafe { core::mem::transmute(kernel_addr) };
 
     // Force everything to complete before we jump.

@@ -48,7 +48,7 @@ static STATE_MANAGER: StateManager = StateManager::new();
 // Public Code
 //--------------------------------------------------------------------------------------------------
 
-/// Return a reference to the global StateManager.
+/// Return a reference to the global `StateManager`.
 pub fn state_manager() -> &'static StateManager {
     &STATE_MANAGER
 }
@@ -86,7 +86,7 @@ impl StateManager {
         self.state() == State::Init
     }
 
-    /// Transition from Init to SingleCoreMain.
+    /// Transition from Init to `SingleCoreMain`.
     pub fn transition_to_single_core_main(&self) {
         if self
             .0

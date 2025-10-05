@@ -2,28 +2,28 @@
 //!
 //! The physical memory layout.
 //!
-//! The Raspberry's firmware copies the kernel binary to 0x8_0000. The preceding region will be used
+//! The Raspberry's firmware copies the kernel binary to `0x8_0000`. The preceding region will be used
 //! as the boot core's stack.
 //!
 //! +---------------------------------------+
-//! |                                       | boot_core_stack_start @ 0x0
+//! |                                       | `boot_core_stack_start` @ 0x0
 //! |                                       |                                ^
 //! | Boot-core Stack                       |                                | stack
 //! |                                       |                                | growth
 //! |                                       |                                | direction
 //! +---------------------------------------+
-//! |                                       | code_start @ 0x8_0000 == boot_core_stack_end_exclusive
+//! |                                       | `code_start` @ `0x8_0000` == `boot_core_stack_end_exclusive`
 //! | .text                                 |
 //! | .rodata                               |
 //! | .got                                  |
 //! |                                       |
 //! +---------------------------------------+
-//! |                                       | data_start == code_end_exclusive
+//! |                                       | `data_start` == `code_end_exclusive`
 //! | .data                                 |
 //! | .bss                                  |
 //! |                                       |
 //! +---------------------------------------+
-//! |                                       | data_end_exclusive
+//! |                                       | `data_end_exclusive`
 //! |                                       |
 //!
 //!
@@ -33,28 +33,28 @@
 //! The virtual memory layout is as follows:
 //!
 //! +---------------------------------------+
-//! |                                       | boot_core_stack_start @ 0x0
+//! |                                       | `boot_core_stack_start` @ 0x0
 //! |                                       |                                ^
 //! | Boot-core Stack                       |                                | stack
 //! |                                       |                                | growth
 //! |                                       |                                | direction
 //! +---------------------------------------+
-//! |                                       | code_start @ 0x8_0000 == boot_core_stack_end_exclusive
+//! |                                       | `code_start` @ `0x8_0000` == `boot_core_stack_end_exclusive`
 //! | .text                                 |
 //! | .rodata                               |
 //! | .got                                  |
 //! |                                       |
 //! +---------------------------------------+
-//! |                                       | data_start == code_end_exclusive
+//! |                                       | `data_start` == `code_end_exclusive`
 //! | .data                                 |
 //! | .bss                                  |
 //! |                                       |
 //! +---------------------------------------+
-//! |                                       |  mmio_remap_start == data_end_exclusive
+//! |                                       |  `mmio_remap_start` == `data_end_exclusive`
 //! | VA region for MMIO remapping          |
 //! |                                       |
 //! +---------------------------------------+
-//! |                                       |  mmio_remap_end_exclusive
+//! |                                       |  `mmio_remap_end_exclusive`
 //! |                                       |
 pub mod mmu;
 
@@ -133,7 +133,7 @@ pub mod map {
 
     /// Beginning of memory.
     pub const START:                   usize =             0x0000_0000;
-    /// End of memory - 8Gb RPi4
+    /// End of memory - 8Gb `RPi4`
     pub const END_INCLUSIVE:           usize =             0x1_FFFF_FFFF;
 
     /// Physical RAM addresses.
@@ -173,7 +173,7 @@ pub mod map {
         pub const PL011_UART_BASE:     Address<Physical> = Address::new(MMIO_BASE + UART_OFFSET);
         pub const PL011_UART_SIZE:     usize             =              0x48;
 
-        /// Base address of MiniUART.
+        /// Base address of `MiniUART`.
         pub const MINI_UART_BASE:      Address<Physical> = Address::new(MMIO_BASE + MINIUART_OFFSET);
 
         /// End of MMIO memory region.
@@ -196,7 +196,7 @@ pub mod map {
         pub const PL011_UART_BASE:  Address<Physical> = Address::new(MMIO_BASE + UART_OFFSET);
         pub const PL011_UART_SIZE:  usize             =              0x48;
 
-        /// Base address of MiniUART.
+        /// Base address of `MiniUART`.
         pub const MINI_UART_BASE:   Address<Physical> = Address::new(MMIO_BASE + MINIUART_OFFSET);
 
         /// Interrupt controller
@@ -227,7 +227,7 @@ pub mod map {
     pub mod virt {
         /// Start (top) of kernel stack.
         pub const KERN_STACK_START:    usize =             super::START;
-        /// End (bottom) of kernel stack. SP starts at KERN_STACK_END + 1.
+        /// End (bottom) of kernel stack. SP starts at `KERN_STACK_END` + 1.
         pub const KERN_STACK_END:      usize =             0x0007_FFFF;
 
         /// Location of DMA-able memory region (in the second 2 MiB block).
@@ -248,6 +248,7 @@ pub mod map {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn boot_start() -> usize {
+    // SAFETY: The linker script ensures the boot code section has a sensible start address.
     unsafe { __BOOT_START.get() as usize }
 }
 
@@ -257,6 +258,7 @@ fn boot_start() -> usize {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn boot_end_exclusive() -> usize {
+    // SAFETY: The linker script ensures the boot code section has a sensible end address.
     unsafe { __BOOT_END.get() as usize }
 }
 
@@ -267,6 +269,7 @@ fn boot_end_exclusive() -> usize {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn code_start() -> usize {
+    // SAFETY: The linker script ensures the code section has a sensible start address.
     unsafe { __CODE_START.get() as usize }
 }
 
@@ -277,6 +280,7 @@ fn code_start() -> usize {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn virt_code_start() -> PageAddress<Virtual> {
+    // SAFETY: The linker script ensures the code section has a sensible start address.
     PageAddress::from(unsafe { __CODE_START.get() as usize })
 }
 
@@ -287,6 +291,7 @@ fn virt_code_start() -> PageAddress<Virtual> {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn code_size() -> usize {
+    // SAFETY: The linker script ensures the code section has a sensible size.
     unsafe { (__CODE_END.get() as usize) - (__CODE_START.get() as usize) }
 }
 
@@ -302,6 +307,7 @@ fn code_size() -> usize {
 /// Start page address of the data segment.
 #[inline(always)]
 fn virt_data_start() -> PageAddress<Virtual> {
+    // SAFETY: The linker script ensures the data section has a sensible start address.
     PageAddress::from(unsafe { __DATA_START.get() as usize })
 }
 
@@ -312,6 +318,7 @@ fn virt_data_start() -> PageAddress<Virtual> {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn data_size() -> usize {
+    // SAFETY: The linker script ensures the data section has a sensible size.
     unsafe { (__DATA_END.get() as usize) - (__DATA_START.get() as usize) }
 }
 
@@ -322,6 +329,7 @@ fn data_size() -> usize {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn virt_mmio_remap_start() -> PageAddress<Virtual> {
+    // SAFETY: The linker script ensures the MMIO area has a sensible start address.
     PageAddress::from(unsafe { __MMIO_REMAP_START.get() as usize })
 }
 
@@ -332,18 +340,21 @@ fn virt_mmio_remap_start() -> PageAddress<Virtual> {
 /// - Value is provided by the linker script and must be trusted as-is.
 #[inline(always)]
 fn mmio_remap_size() -> usize {
+    // SAFETY: The linker script ensures the MMIO area has a sensible size.
     unsafe { (__MMIO_REMAP_END.get() as usize) - (__MMIO_REMAP_START.get() as usize) }
 }
 
 /// Start page address of the boot core's stack.
 #[inline(always)]
 fn virt_boot_core_stack_start() -> PageAddress<Virtual> {
+    // SAFETY: The linker script ensures the stack bottom has a sensible address.
     PageAddress::from(unsafe { __STACK_BOTTOM.get() as usize })
 }
 
 /// Size of the boot core's stack.
 #[inline(always)]
 fn boot_core_stack_size() -> usize {
+    // SAFETY: The linker script ensures the stack has a sensible size.
     unsafe { (__STACK_TOP.get() as usize) - (__STACK_BOTTOM.get() as usize) }
 }
 

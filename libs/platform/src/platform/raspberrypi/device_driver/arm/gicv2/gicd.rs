@@ -139,9 +139,9 @@ impl GICD {
 
     /// Use a banked ITARGETSR to retrieve the executing core's GIC target mask.
     ///
-    /// Quoting the GICv2 Architecture Specification:
+    /// Quoting the `GICv2` Architecture Specification:
     ///
-    ///   "GICD_ITARGETSR0 to GICD_ITARGETSR7 are read-only, and each field returns a value that
+    ///   "`GICD_ITARGETSR0` to `GICD_ITARGETSR7` are read-only, and each field returns a value that
     ///    corresponds only to the processor reading the register."
     fn local_gic_target_mask(&self) -> u32 {
         self.banked_registers.ITARGETSR[0].read(ITARGETSR::Offset0)
@@ -158,7 +158,7 @@ impl GICD {
         let mask = self.local_gic_target_mask();
 
         self.shared_registers.lock(|regs| {
-            for i in regs.implemented_itargets_slice().iter() {
+            for i in regs.implemented_itargets_slice() {
                 i.write(
                     ITARGETSR::Offset3.val(mask)
                         + ITARGETSR::Offset2.val(mask)
@@ -172,13 +172,13 @@ impl GICD {
     }
 
     /// Enable an interrupt.
-    pub fn enable(&self, irq_num: &super::IRQNumber) {
+    pub fn enable(&self, irq_num: super::IRQNumber) {
         let irq_num = irq_num.get();
 
         // Each bit in the u32 enable register corresponds to one IRQ number. Shift right by 5
         // (division by 32) and arrive at the index for the respective ISENABLER[i].
         let enable_reg_index = irq_num >> 5;
-        let enable_bit: u32 = 1u32 << (irq_num % 32);
+        let enable_bit: u32 = 1_u32 << (irq_num % 32);
 
         // Check if we are handling a private or shared IRQ.
         match irq_num {

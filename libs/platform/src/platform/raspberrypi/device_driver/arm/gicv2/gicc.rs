@@ -85,9 +85,9 @@ impl GICC {
 
     /// Accept interrupts of any priority.
     ///
-    /// Quoting the GICv2 Architecture Specification:
+    /// Quoting the `GICv2` Architecture Specification:
     ///
-    ///   "Writing 255 to the GICC_PMR always sets it to the largest supported priority field
+    ///   "Writing 255 to the `GICC_PMR` always sets it to the largest supported priority field
     ///    value."
     ///
     /// # Safety
@@ -135,7 +135,7 @@ impl GICC {
     /// - GICC MMIO registers are banked per CPU core. It is therefore safe to have `&self` instead
     ///   of `&mut self`.
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn mark_comleted<'irq_context>(
+    pub fn mark_completed<'irq_context>(
         &self,
         irq_number: u32,
         _ic: &libexception::exception::asynchronous::IRQContext<'irq_context>,

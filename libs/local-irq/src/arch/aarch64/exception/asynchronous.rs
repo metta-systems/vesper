@@ -80,6 +80,7 @@ pub fn is_local_irq_masked() -> bool {
 /// synchronization."
 #[inline(always)]
 pub fn local_irq_unmask() {
+    // SAFETY: Pure assembly, may blow!
     unsafe {
         asm!(
         "msr DAIFClr, {arg}",
@@ -92,6 +93,7 @@ pub fn local_irq_unmask() {
 /// Mask IRQs on the executing core.
 #[inline(always)]
 pub fn local_irq_mask() {
+    // SAFETY: Pure assembly, may blow!
     unsafe {
         asm!(
         "msr DAIFSet, {arg}",
@@ -133,7 +135,7 @@ pub fn exec_with_irq_masked<T>(f: impl FnOnce() -> T) -> T {
     ret
 }
 
-/// Print the AArch64 exceptions status.
+/// Print the `AArch64` exceptions status.
 #[rustfmt::skip]
 pub fn print_state() {
     use liblog::info;

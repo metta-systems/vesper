@@ -42,7 +42,7 @@ impl IRQManager for NullIRQManager {
         panic!("No IRQ Manager registered yet");
     }
 
-    fn enable(&self, _irq_number: &Self::IRQNumberType) {
+    fn enable(&self, _irq_number: Self::IRQNumberType) {
         panic!("No IRQ Manager registered yet");
     }
 

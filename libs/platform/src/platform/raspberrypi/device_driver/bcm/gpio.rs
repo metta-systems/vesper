@@ -37,6 +37,7 @@ register_structs! {
     /// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
     /// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
     #[allow(non_snake_case)]
+    #[allow(clippy::partial_pub_fields)]
     RegisterBlock {
         (0x00 => pub FunctionSelect: [ReadWrite<u32>; 6]), // function select
         (0x18 => __reserved_1),
@@ -73,6 +74,7 @@ register_structs! {
     /// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
     /// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
     #[allow(non_snake_case)]
+    #[allow(clippy::partial_pub_fields)]
     RegisterBlock {
         (0x00 => pub FunctionSelect: [ReadWrite<u32>; 6]), // function select
         (0x18 => __reserved_1),
@@ -110,15 +112,15 @@ impl GPIOInner {
     pub fn power_off(&self) {
         use core::time::Duration;
 
+        // The Linux 2837 GPIO driver waits 1 µs between the steps.
+        const DELAY: Duration = Duration::from_micros(1);
+
         // power off gpio pins (but not VCC pins)
         for bank in 0..5 {
             self.registers.FunctionSelect[bank].set(0);
         }
 
         self.registers.PullUpDown.set(0);
-
-        // The Linux 2837 GPIO driver waits 1 µs between the steps.
-        const DELAY: Duration = Duration::from_micros(1);
 
         libtime::time::time_manager().spin_for(DELAY);
 
@@ -141,13 +143,13 @@ impl GPIOInner {
     pub fn set_pull_up_down(&self, pin: usize, pull: PullUpDown) {
         use core::time::Duration;
 
+        // The Linux 2837 GPIO driver waits 1 µs between the steps.
+        const DELAY: Duration = Duration::from_micros(1);
+
         let bank = pin / 32;
         let off = pin % 32;
 
         self.registers.PullUpDown.set(0);
-
-        // The Linux 2837 GPIO driver waits 1 µs between the steps.
-        const DELAY: Duration = Duration::from_micros(1);
 
         libtime::time::time_manager().spin_for(DELAY);
 
@@ -216,11 +218,15 @@ impl GPIO {
     /// Unsafe, duh!
     pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            inner: IRQSafeNullLock::new(unsafe { GPIOInner::new(mmio_base_addr) }),
+            inner: IRQSafeNullLock::new(
+                // SAFETY: Unsafe!
+                unsafe { GPIOInner::new(mmio_base_addr) },
+            ),
         }
     }
 
     pub fn get_pin(&self, pin: usize) -> Pin<'_, Uninitialized> {
+        // SAFETY: Not safe yet
         unsafe { Pin::new(pin, &self.inner) } // todo: expose only inner to avoid unlocked access
     }
 
@@ -250,7 +256,7 @@ impl ::core::convert::From<Function> for u32 {
 
 /// Pull up/down resistor setup.
 #[repr(u8)]
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Copy, Clone)]
 pub enum PullUpDown {
     None = 0b00,
     Up = 0b01,
@@ -270,6 +276,7 @@ impl ::core::convert::From<PullUpDown> for u32 {
 /// structure starts in the `Uninitialized` state and must be transitioned into
 /// one of `Input`, `Output`, or `Alt` via the `into_input`, `into_output`, and
 /// `into_alt` methods before it can be used.
+#[allow(clippy::struct_field_names)]
 pub struct Pin<'outer, State> {
     pin: usize,
     inner: &'outer IRQSafeNullLock<GPIOInner>,
@@ -291,7 +298,7 @@ impl<'outer, State> Pin<'outer, State> {
 
     pub fn set_pull_up_down(&self, pull: PullUpDown) {
         self.inner
-            .lock(|inner| inner.set_pull_up_down(self.pin, pull))
+            .lock(|inner| inner.set_pull_up_down(self.pin, pull));
     }
 }
 
@@ -305,9 +312,10 @@ impl<'outer> Pin<'outer, Uninitialized> {
         pin: usize,
         inner: &'outer IRQSafeNullLock<GPIOInner>,
     ) -> Pin<'outer, Uninitialized> {
-        if pin > 53 {
-            panic!("gpio::Pin::new(): pin {pin} exceeds maximum of 53");
-        }
+        assert!(
+            pin <= 53,
+            "gpio::Pin::new(): pin {pin} exceeds maximum of 53"
+        );
 
         Pin {
             inner,

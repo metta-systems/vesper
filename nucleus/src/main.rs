@@ -45,18 +45,20 @@ libboot::entry!(kernel_init);
 /// - The init calls in this function must appear in the correct order:
 ///     - MMU + Data caching must be activated at the earliest. Without it, any atomic operations,
 ///       e.g. the yet-to-be-introduced spinlocks in the device drivers (which currently employ
-///       IRQSafeNullLocks instead of spinlocks), will fail to work (properly) on the RPi SoCs.
+///       `IRQSafeNullLocks` instead of spinlocks), will fail to work (properly) on the `RPi` `SoCs`.
 pub unsafe fn kernel_init() -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
     libexception::exception::handling_init();
 
+    // SAFETY: Not safe!
     let phys_kernel_tables_base_addr = match unsafe { libmemory::mmu::kernel_map_binary() } {
         Err(string) => panic!("Error mapping kernel binary: {}", string),
         Ok(addr) => addr,
     };
 
+    // SAFETY: Not safe!
     if let Err(e) = unsafe { libmemory::mmu::enable_mmu_and_caching(phys_kernel_tables_base_addr) }
     {
         panic!("Enabling MMU failed: {}", e);
@@ -64,12 +66,16 @@ pub unsafe fn kernel_init() -> ! {
 
     libmemory::mmu::post_enable_init();
 
+    // SAFETY: Not safe!
     if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
-    unsafe { libplatform::platform::drivers::driver_manager().init_drivers_and_irqs() };
+    // SAFETY: Not safe!
+    unsafe {
+        libplatform::platform::drivers::driver_manager().init_drivers_and_irqs();
+    }
 
     // Unmask interrupts on the boot CPU core.
     libexception::exception::asynchronous::local_irq_unmask();
@@ -103,7 +109,7 @@ pub fn kernel_main() -> ! {
     // machine::platform::memory::mmu::virt_mem_layout().print_layout();
 
     let (_, privilege_level) = libexception::exception::current_privilege_level();
-    info!("Current privilege level: {}", privilege_level);
+    info!("Current privilege level: {privilege_level}");
 
     info!("Exception handling state:");
     libexception::exception::asynchronous::print_state();
@@ -147,7 +153,7 @@ fn print_mmu_state_and_features() {
 //------------------------------------------------------------
 fn command_prompt() {
     'cmd_loop: loop {
-        let mut buf = [0u8; 64];
+        let mut buf = [0_u8; 64];
 
         match libconsole::console::command_prompt(&mut buf) {
             // b"mmu" => init_mmu(),
@@ -159,7 +165,7 @@ fn command_prompt() {
             // b"led off" => set_led(false),
             b"help" => print_help(),
             b"end" => break 'cmd_loop,
-            x => warn!("[!] Unknown command {:?}, try 'help'", x),
+            x => warn!("[!] Unknown command {x:?}, try 'help'"),
         }
     }
 }

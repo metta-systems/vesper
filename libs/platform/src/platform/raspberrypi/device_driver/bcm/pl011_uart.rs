@@ -290,7 +290,7 @@ impl RateDivisors {
     // Calculate 64 * clock / (16 * rate) = 4 * clock / rate, then extract 6 lowest bits for fractional part
     // and the next 16 bits for integer part.
     pub fn from_clock_and_rate(clock: u64, baud_rate: u32) -> Result<RateDivisors, &'static str> {
-        let value = 4 * clock / baud_rate as u64;
+        let value = 4 * clock / u64::from(baud_rate);
         let i = ((value >> 6) & 0xffff) as u32;
         let f = (value & 0x3f) as u32;
         // TODO: check for integer overflow, i.e. any bits set above the 0x3fffff mask.
@@ -321,7 +321,10 @@ impl PL011Uart {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            inner: IRQSafeNullLock::new(unsafe { PL011UartInner::new(mmio_base_addr) }),
+            inner: IRQSafeNullLock::new(
+                // SAFETY: Not safe.
+                unsafe { PL011UartInner::new(mmio_base_addr) },
+            ),
         }
     }
 
@@ -362,6 +365,10 @@ impl PL011UartInner {
     pub fn prepare(&self) -> core::result::Result<(), &'static str> {
         use tock_registers::interfaces::Writeable;
 
+        // set up clock for consistent divisor values
+        const CLOCK: u32 = 4_000_000; // 4Mhz
+        const BAUD_RATE: u32 = 115_200;
+
         // Turn off UART
         self.registers.Control.set(0);
 
@@ -373,10 +380,6 @@ impl PL011UartInner {
 
         // Clear pending interrupts
         self.registers.InterruptClear.write(ICR::ALL::SET);
-
-        // set up clock for consistent divisor values
-        const CLOCK: u32 = 4_000_000; // 4Mhz
-        const BAUD_RATE: u32 = 115_200;
 
         // // Should have a MailboxCommand with ref to a command buffer, and access to global MAILBOX
         // // driver to run those commands atomically..
@@ -451,7 +454,7 @@ impl SerialOps for PL011UartInner {
         loop_while(|| self.registers.Flag.is_set(FR::RXFE));
 
         // read it and return
-        self.registers.Data.get() as u8
+        u8::try_from(self.registers.Data.get() & 0xff).unwrap()
     }
 
     fn write_byte(&self, b: u8) {
@@ -459,7 +462,7 @@ impl SerialOps for PL011UartInner {
         loop_while(|| self.registers.Flag.is_set(FR::TXFF));
 
         // write the character to the buffer
-        self.registers.Data.set(b as u32);
+        self.registers.Data.set(u32::from(b));
     }
 
     /// Wait until the TX FIFO is empty, aka all characters have been put on the
@@ -514,14 +517,14 @@ impl libdriver::drivers::interface::DeviceDriver for PL011Uart {
 
     fn register_and_enable_irq_handler(
         &'static self,
-        irq_number: &Self::IRQNumberType,
+        irq_number: Self::IRQNumberType,
     ) -> Result<(), &'static str> {
         use {
             crate::platform::exception::asynchronous::irq_manager,
             libexception::exception::asynchronous::IRQHandlerDescriptor,
         };
 
-        let descriptor = IRQHandlerDescriptor::new(*irq_number, Self::COMPATIBLE, self);
+        let descriptor = IRQHandlerDescriptor::new(irq_number, Self::COMPATIBLE, self);
 
         irq_manager().register_handler(descriptor)?;
         irq_manager().enable(irq_number);
@@ -536,25 +539,25 @@ impl SerialOps for PL011Uart {
     }
 
     fn write_byte(&self, byte: u8) {
-        self.inner.lock(|inner| inner.write_byte(byte))
+        self.inner.lock(|inner| inner.write_byte(byte));
     }
 
     fn flush(&self) {
-        self.inner.lock(|inner| inner.flush())
+        self.inner.lock(|inner| inner.flush());
     }
 
     fn clear_rx(&self) {
-        self.inner.lock(|inner| inner.clear_rx())
+        self.inner.lock(|inner| inner.clear_rx());
     }
 }
 
 impl interface::ConsoleOps for PL011Uart {
     fn write_char(&self, c: char) {
-        self.inner.lock(|inner| inner.write_char(c))
+        self.inner.lock(|inner| inner.write_char(c));
     }
 
     fn write_string(&self, string: &str) {
-        self.inner.lock(|inner| inner.write_string(string))
+        self.inner.lock(|inner| inner.write_string(string));
     }
 
     fn read_char(&self) -> char {

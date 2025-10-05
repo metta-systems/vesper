@@ -124,19 +124,21 @@ impl<ATYPE: AddressType> Sub<Address<ATYPE>> for Address<ATYPE> {
 
 impl fmt::Display for Address<Physical> {
     // Don't expect to see physical addresses greater than 40 bit.
+    #[allow(clippy::cast_possible_truncation)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let q3: u8 = ((self.value >> 32) & 0xff) as u8;
         let q2: u16 = ((self.value >> 16) & 0xffff) as u16;
         let q1: u16 = (self.value & 0xffff) as u16;
 
         write!(f, "0x")?;
-        write!(f, "{:02x}_", q3)?;
-        write!(f, "{:04x}_", q2)?;
-        write!(f, "{:04x}", q1)
+        write!(f, "{q3:02x}_")?;
+        write!(f, "{q2:04x}_")?;
+        write!(f, "{q1:04x}")
     }
 }
 
 impl fmt::Display for Address<Virtual> {
+    #[allow(clippy::cast_possible_truncation)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let q4: u16 = ((self.value >> 48) & 0xffff) as u16;
         let q3: u16 = ((self.value >> 32) & 0xffff) as u16;
@@ -144,9 +146,9 @@ impl fmt::Display for Address<Virtual> {
         let q1: u16 = (self.value & 0xffff) as u16;
 
         write!(f, "0x")?;
-        write!(f, "{:04x}_", q4)?;
-        write!(f, "{:04x}_", q3)?;
-        write!(f, "{:04x}_", q2)?;
-        write!(f, "{:04x}", q1)
+        write!(f, "{q4:04x}_")?;
+        write!(f, "{q3:04x}_")?;
+        write!(f, "{q2:04x}_")?;
+        write!(f, "{q1:04x}")
     }
 }

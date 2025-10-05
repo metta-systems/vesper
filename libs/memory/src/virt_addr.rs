@@ -102,7 +102,7 @@ impl VirtAddr {
     /// Converts the address to a mutable raw pointer.
     #[cfg(target_pointer_width = "64")]
     pub fn as_mut_ptr<T>(self) -> *mut T {
-        self.as_ptr::<T>() as *mut T
+        self.as_ptr::<T>().cast_mut()
     }
 
     /// Aligns the virtual address upwards to the given alignment.
@@ -231,7 +231,7 @@ where
     u64: FromUsize,
 {
     fn add_assign(&mut self, rhs: usize) {
-        self.add_assign(u64::from_usize(rhs))
+        self.add_assign(u64::from_usize(rhs));
     }
 }
 
@@ -263,7 +263,7 @@ where
     u64: FromUsize,
 {
     fn sub_assign(&mut self, rhs: usize) {
-        self.sub_assign(u64::from_usize(rhs))
+        self.sub_assign(u64::from_usize(rhs));
     }
 }
 

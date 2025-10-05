@@ -14,6 +14,7 @@ use {
 // Public Definitions
 //--------------------------------------------------------------------------------------------------
 
+#[allow(clippy::partial_pub_fields)]
 pub struct MMIODerefWrapper<T> {
     pub base_addr: Address<Virtual>, // @todo unmake public, GPIO::Pin uses it
     phantom: PhantomData<fn() -> T>,
@@ -47,6 +48,7 @@ impl<T> ops::Deref for MMIODerefWrapper<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        // SAFETY: Not safe.
         unsafe { &*(self.base_addr.as_usize() as *const _) }
     }
 }

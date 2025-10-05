@@ -24,7 +24,7 @@ where
 pub mod interface {
     pub trait DeviceDriver {
         /// Different interrupt controllers might use different types for IRQ number.
-        type IRQNumberType: core::fmt::Display;
+        type IRQNumberType: core::fmt::Display + Copy;
 
         /// Return a compatibility string for identifying the driver.
         fn compatible(&self) -> &'static str;
@@ -45,7 +45,7 @@ pub mod interface {
         /// itself has static lifetime.
         fn register_and_enable_irq_handler(
             &'static self,
-            irq_number: &Self::IRQNumberType,
+            irq_number: Self::IRQNumberType,
         ) -> Result<(), &'static str> {
             panic!(
                 "Attempt to enable IRQ {} for device {}, but driver does not support this",
@@ -56,7 +56,7 @@ pub mod interface {
     }
 }
 
-/// Type to be used as an optional callback after a driver's init() has run.
+/// Type to be used as an optional callback after a driver's `init()` has run.
 pub type DeviceDriverPostInitCallback = unsafe fn() -> Result<(), &'static str>;
 
 /// A descriptor for device drivers.
@@ -134,10 +134,16 @@ where
     /// Register a device driver with the kernel.
     pub fn register_driver(&self, descriptor: DeviceDriverDescriptor<T>) {
         self.inner.write(|inner| {
-            assert!(inner.next_index < NUM_DRIVERS);
-            inner.descriptors[inner.next_index] = Some(descriptor);
-            inner.next_index += 1;
-        })
+            if let Some(slot) = inner.descriptors.get_mut(inner.next_index) {
+                *slot = Some(descriptor);
+                inner.next_index = inner.next_index.wrapping_add(1);
+            } else {
+                panic!(
+                    "Driver registry full - cannot register more than {} drivers",
+                    NUM_DRIVERS
+                );
+            }
+        });
     }
 
     /// Helper for iterating over registered drivers.
@@ -147,8 +153,8 @@ where
                 .descriptors
                 .iter()
                 .filter_map(|x| x.as_ref())
-                .for_each(f)
-        })
+                .for_each(f);
+        });
     }
 
     /// Fully initialize all drivers.
@@ -159,6 +165,7 @@ where
     pub unsafe fn init_drivers_and_irqs(&self) {
         self.for_each_descriptor(|descriptor| {
             // 1. Initialize driver.
+            // Safety: Driver init is called during system initialization phase when it's safe to do so
             if let Err(x) = unsafe { descriptor.device_driver.init() } {
                 panic!(
                     "Error initializing driver: {}: {}",
@@ -169,6 +176,7 @@ where
 
             // 2. Call corresponding post init callback.
             if let Some(callback) = &descriptor.post_init_callback
+                // Safety: Post-init callback is called during controlled initialization phase
                 && let Err(x) = unsafe { callback() }
             {
                 panic!(
@@ -182,7 +190,7 @@ where
         // 3. After all post-init callbacks were done, the interrupt controller should be
         //    registered and functional. So let drivers register with it now.
         self.for_each_descriptor(|descriptor| {
-            if let Some(irq_number) = &descriptor.irq_number
+            if let Some(irq_number) = descriptor.irq_number
                 && let Err(x) = descriptor
                     .device_driver
                     .register_and_enable_irq_handler(irq_number)
@@ -202,7 +210,7 @@ where
         self.for_each_descriptor(|descriptor| {
             println!("      {}. {}", i, descriptor.device_driver.compatible());
 
-            i += 1;
+            i = i.wrapping_add(1);
         });
     }
 }

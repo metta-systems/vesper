@@ -78,7 +78,7 @@ impl<ATYPE: AddressType> PageAddress<ATYPE> {
 
     /// Calculates the offset from the page address.
     ///
-    /// `count` is in units of [PageAddress]. For example, a count of 2 means `result = self + 2 *
+    /// `count` is in units of [`PageAddress`]. For example, a count of 2 means `result = self + 2 *
     /// page_size`.
     pub fn checked_offset(self, count: isize) -> Option<Self> {
         if count == 0 {
@@ -131,11 +131,11 @@ impl<ATYPE: AddressType> Step for PageAddress<ATYPE> {
     }
 
     fn forward_checked(start: Self, count: usize) -> Option<Self> {
-        start.checked_offset(count as isize)
+        start.checked_offset(count.cast_signed())
     }
 
     fn backward_checked(start: Self, count: usize) -> Option<Self> {
-        start.checked_offset(-(count as isize))
+        start.checked_offset(-(count.cast_signed()))
     }
 }
 
@@ -205,27 +205,26 @@ impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
         end_exclusive - start
     }
 
-    /// Splits the MemoryRegion like:
+    /// Splits the `MemoryRegion` like:
     ///
     /// --------------------------------------------------------------------------------
     /// |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
     /// --------------------------------------------------------------------------------
     ///   ^                               ^                                       ^
     ///   |                               |                                       |
-    ///   left_start     left_end_exclusive                                       |
+    ///  `left_start`   `left_end_exclusive`                                      |
     ///                                                                           |
     ///                                   ^                                       |
     ///                                   |                                       |
-    ///                                   right_start           right_end_exclusive
+    ///                                  `right_start`          `right_end_exclusive`
     ///
     /// Left region is returned to the caller. Right region is the new region for this struct.
     pub fn take_first_n_pages(&mut self, num_pages: NonZeroUsize) -> Result<Self, &'static str> {
         let count: usize = num_pages.into();
 
-        let left_end_exclusive = self.start.checked_offset(count as isize);
-        let left_end_exclusive = match left_end_exclusive {
-            None => return Err("Overflow while calculating left_end_exclusive"),
-            Some(x) => x,
+        let left_end_exclusive = self.start.checked_offset(count.cast_signed());
+        let Some(left_end_exclusive) = left_end_exclusive else {
+            return Err("Overflow while calculating left_end_exclusive");
         };
 
         if left_end_exclusive > self.end_exclusive {
@@ -307,7 +306,7 @@ impl Default for AttributeFields {
     }
 }
 
-/// Human-readable output of AttributeFields
+/// Human-readable output of `AttributeFields`
 impl fmt::Display for AttributeFields {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let attr = match self.mem_attributes {
@@ -323,6 +322,6 @@ impl fmt::Display for AttributeFields {
 
         let xn = if self.execute_never { "PXN" } else { "PX" };
 
-        write!(f, "{: <3} {} {: <3}", attr, acc_p, xn)
+        write!(f, "{attr: <3} {acc_p} {xn: <3}")
     }
 }

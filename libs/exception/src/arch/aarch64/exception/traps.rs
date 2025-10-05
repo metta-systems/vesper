@@ -199,7 +199,7 @@ pub fn synchronous_common(e: &mut super::ExceptionContext) -> bool {
         if iss.is_set(ISS_DA::ISV) {
             println!(
                 "               Access size: {} bytes ({}signed) to {}{}",
-                2u64.pow(iss.read(ISS_DA::SAS) as u32),
+                2_u64.pow(u32::try_from(iss.read(ISS_DA::SAS)).unwrap_or(0)),
                 if iss.is_set(ISS_DA::SSE) { "" } else { "un" },
                 if iss.is_set(ISS_DA::SF) { "x" } else { "r" },
                 iss.read(ISS_DA::SRT)
