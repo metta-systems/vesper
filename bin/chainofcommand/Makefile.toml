@@ -5,14 +5,10 @@
 #
 # Build chainofcommand tool
 #
-[env]
-CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+extend = "../../Makefile.toml"
 
 [tasks.build]
 alias = "build-coc"
-
-[tasks.build-device]
-alias = "empty"
 
 [tasks.build-coc]
 workspace = false
@@ -24,60 +20,19 @@ workspace = false
 alias = "build-coc"
 
 [tasks.test]
+clear = true
 command = "cargo"
 args = ["test"]
 
 [tasks.clippy]
-workspace = false
-dependencies = ["xtool-clippy"]
-
-[tasks.xtool-clippy] # todo this should be modules-specific? or just "clippy" for workspace cmd
+clear = true
 command = "cargo"
 args = [
-    "clippy",
-    "--",
-    "--no-deps",
-    "--deny",
-    "warnings",
-    "--allow",
-    "deprecated",
+  "clippy",
+  "--",
+  "--no-deps",
+  "--deny",
+  "warnings",
+  "--allow",
+  "deprecated",
 ]
-
-[tasks.hopper]
-disabled = true
-
-[tasks.kernel-binary]
-disabled = true
-
-[tasks.zellij-nucleus]
-disabled = true
-
-[tasks.zellij-cb]
-disabled = true
-
-[tasks.zellij-cb-gdb]
-disabled = true
-
-[tasks.nm]
-disabled = true
-
-[tasks.qemu]
-disabled = true
-
-[tasks.qemu-gdb]
-disabled = true
-
-[tasks.qemu-cb]
-disabled = true
-
-[tasks.sdcard]
-disabled = true
-
-[tasks.cb-eject]
-disabled = true
-
-[tasks.gdb]
-disabled = true
-
-[tasks.gdb-cb]
-disabled = true

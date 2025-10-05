@@ -2,11 +2,5 @@
 # https://internals.rust-lang.org/t/evaluating-pipelined-rustc-compilation/10199/12
 pipelining = true
 
-[target.aarch64-vesper-metta]
-rustflags = [
-    "-C", "target-cpu=cortex-a53", # raspi 2 .. 3b+
-    #"-C", "target-cpu=cortex-a73", # raspi 4
-    # ^^ how to set this dynamicall depending on the features??
-    "-Z", "macro-backtrace",
-]
-runner = "cargo make test-runner"
+[target.aarch64-metta-none-eabi]
+runner = "cargo make qemu-test-runner"

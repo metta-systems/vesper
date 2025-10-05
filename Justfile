@@ -2,6 +2,7 @@ _default:
     @just --list
 
 make-opts := '--time-summary --hide-uninteresting'
+# make-opts := '--quiet'
 
 # Update all dependencies
 [group("maintenance")]
@@ -16,44 +17,50 @@ boot: chainofcommand
 # Build and run kernel in QEMU with serial port emulation
 [group("emu")]
 zellij:
-    cargo make {{ make-opts }} zellij-nucleus
+    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus zellij-nucleus
     zellij --layout emulation/layout.zellij
 
 # Build and run chainboot in QEMU with serial port emulation
 [group("emu")]
-zellij-cb:
+cb-zellij:
     # Connect to it via chainofcommand to load an actual kernel
     # TODO: actually run chainofcommand in a zellij session too
-    cargo make {{ make-opts }} zellij-cb
+    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot zellij
+    zellij --layout emulation/layout.zellij
+
+# Run chainboot with GDB in zellij window
+cb-zellij-gdb:
+    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot zellij-gdb
     zellij --layout emulation/layout.zellij
 
 # Build chainofcommand serial loader
 [group("hw")]
 chainofcommand:
-    cd bin/chainofcommand
-    cargo make {{ make-opts }} build # --workspace=bin/chainofcommand
+    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainofcommand/Makefile.toml --cwd bin/chainofcommand build
+
+alias coc := chainofcommand
 
 # Build and run kernel in QEMU
 [group("emu")]
 qemu:
-    cargo make {{ make-opts }} qemu
+    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus qemu
 
 # Build and run kernel in QEMU with GDB port enabled
 [group("emu")]
 qemu-gdb:
-    cargo make {{ make-opts }} qemu-gdb
+    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus qemu-gdb
 
 # Build and run chainboot in QEMU
 [group("emu")]
-qemu-cb:
+cb-qemu:
     # Connect to it via chainofcommand to load an actual kernel
-    cargo make {{ make-opts }} qemu-cb
+    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot qemu
 
 # Build and run chainboot in QEMU with GDB port enabled
 [group("emu")]
-qemu-cb-gdb:
+cb-qemu-gdb:
     # Connect to it via chainofcommand to load an actual kernel
-    cargo make {{ make-opts }} qemu-cb-gdb
+    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot qemu-gdb
 
 # Build and write kernel to an SD Card
 [group("hw")]
@@ -68,8 +75,7 @@ device-eject:
 # Build and write chainboot to an SD Card, then eject the SD Card volume
 [group("hw")]
 cb-eject:
-    cd bin/chainboot
-    cargo make {{ make-opts }} cb-eject
+    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot sdeject
 
 # Build default hw kernel
 [group("hw")]
@@ -126,12 +132,12 @@ openocd:
 # Build and run kernel in GDB using openocd or QEMU as target (gdb port 5555)
 [group("debug")]
 gdb:
-    cargo make {{ make-opts }} gdb
+    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus gdb
 
 # Build and run chainboot in GDB using openocd or QEMU as target (gdb port 5555)
 [group("debug")]
-gdb-cb:
-    cargo make {{ make-opts }} gdb-cb
+cb-gdb:
+    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot gdb
 
 # Build and print all symbols in the kernel
 [group("maintenance")]
