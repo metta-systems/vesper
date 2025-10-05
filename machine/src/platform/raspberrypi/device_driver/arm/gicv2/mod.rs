@@ -82,7 +82,6 @@ mod gicd;
 use {
     crate::{
         cpu, drivers,
-        memory::{Address, Virtual},
         platform::{self, cpu::BOOT_CORE_ID},
     },
     libexception::exception::asynchronous::{
@@ -90,6 +89,7 @@ use {
     },
     liblocal_irq::exception,
     liblocking::{self, InitStateLock},
+    libmemory::{Address, Virtual},
     libprimitives::BoundedUsize,
 };
 

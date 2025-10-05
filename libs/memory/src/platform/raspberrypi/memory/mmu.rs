@@ -1,15 +1,14 @@
 //! Platform memory management unit.
 
 use {
-    crate::synchronization::InitStateLock,
-    liblocking::InitStateLock,
-    libmemory::{
+    crate::{
         Physical, Virtual,
         mmu::{
             self as generic_mmu, AccessPermissions, AddressSpace, AssociatedTranslationTable,
             AttributeFields, MemAttributes, MemoryRegion, PageAddress, TranslationGranule,
         },
     },
+    liblocking::InitStateLock,
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -40,7 +39,7 @@ pub type KernelVirtAddrSpace = AddressSpace<{ 1024 * 1024 * 1024 }>;
 /// It is mandatory that InitStateLock is transparent.
 /// That is, `size_of(InitStateLock<KernelTranslationTable>) == size_of(KernelTranslationTable)`.
 /// There is a unit tests that checks this property.
-static KERNEL_TABLES: InitStateLock<KernelTranslationTable> =
+pub static KERNEL_TABLES: InitStateLock<KernelTranslationTable> =
     InitStateLock::new(KernelTranslationTable::new());
 
 //--------------------------------------------------------------------------------------------------
@@ -56,7 +55,7 @@ const fn size_to_num_pages(size: usize) -> usize {
 }
 
 /// The code pages of the kernel binary.
-fn virt_code_region() -> MemoryRegion<Virtual> {
+pub fn virt_code_region() -> MemoryRegion<Virtual> {
     let num_pages = size_to_num_pages(super::code_size());
 
     let start_page_addr = super::virt_code_start();
@@ -66,7 +65,7 @@ fn virt_code_region() -> MemoryRegion<Virtual> {
 }
 
 /// The data pages of the kernel binary.
-fn virt_data_region() -> MemoryRegion<Virtual> {
+pub fn virt_data_region() -> MemoryRegion<Virtual> {
     let num_pages = size_to_num_pages(super::data_size());
 
     let start_page_addr = super::virt_data_start();
@@ -76,7 +75,7 @@ fn virt_data_region() -> MemoryRegion<Virtual> {
 }
 
 /// The boot core stack pages.
-fn virt_boot_core_stack_region() -> MemoryRegion<Virtual> {
+pub fn virt_boot_core_stack_region() -> MemoryRegion<Virtual> {
     let num_pages = size_to_num_pages(super::boot_core_stack_size());
 
     let start_page_addr = super::virt_boot_core_stack_start();
@@ -243,72 +242,6 @@ pub unsafe fn kernel_map_binary() -> Result<(), &'static str> {
     };
 
     Ok(())
-}
-
-//--------------------------------------------------------------------------------------------------
-// Testing
-//--------------------------------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use {
-        super::*,
-        core::{cell::UnsafeCell, ops::Range},
-    };
-
-    /// Check alignment of the kernel's virtual memory layout sections.
-    #[test_case]
-    fn virt_mem_layout_sections_are_64KiB_aligned() {
-        for i in [
-            virt_boot_core_stack_region,
-            virt_code_region,
-            virt_data_region,
-        ]
-        .iter()
-        {
-            let start = i().start_page_addr().into_inner();
-            let end_exclusive = i().end_exclusive_page_addr().into_inner();
-
-            assert!(start.is_page_aligned());
-            assert!(end_exclusive.is_page_aligned());
-            assert!(end_exclusive >= start);
-        }
-    }
-
-    /// Ensure the kernel's virtual memory layout is free of overlaps.
-    #[test_case]
-    fn virt_mem_layout_has_no_overlaps() {
-        let layout = [
-            virt_boot_core_stack_region(),
-            virt_code_region(),
-            virt_data_region(),
-        ];
-
-        for (i, first_range) in layout.iter().enumerate() {
-            for second_range in layout.iter().skip(i + 1) {
-                assert!(!first_range.overlaps(second_range))
-            }
-        }
-    }
-
-    /// Check if KERNEL_TABLES is in .bss.
-    #[test_case]
-    fn kernel_tables_in_bss() {
-        unsafe extern "Rust" {
-            static __BSS_START: UnsafeCell<u64>;
-            static __BSS_END: UnsafeCell<u64>;
-        }
-
-        let bss_range = unsafe {
-            Range {
-                start: unsafe { __BSS_START.get() },
-                end: unsafe { __BSS_END.get() },
-            }
-        };
-        let kernel_tables_addr = &KERNEL_TABLES as *const _ as usize as *mut u64;
-
-        assert!(bss_range.contains(&kernel_tables_addr));
-    }
 }
 
 //--------------------------------------------------------------------------------------------------

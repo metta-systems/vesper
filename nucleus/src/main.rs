@@ -61,7 +61,7 @@ pub unsafe fn kernel_init() -> ! {
         panic!("Enabling MMU failed: {}", e);
     }
 
-    memory::mmu::post_enable_init();
+    libmemory::mmu::post_enable_init();
 
     if let Err(x) = unsafe { machine::platform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);

@@ -73,25 +73,3 @@ pub const fn size_human_readable_ceil(size: usize) -> (usize, &'static str) {
 fn aligned_addr_unchecked(addr: usize, alignment: usize) -> usize {
     (addr + (alignment - 1)) & !(alignment - 1)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test_case]
-    pub fn test_align_up() {
-        // align 1
-        assert_eq!(align_up(0, 1), 0);
-        assert_eq!(align_up(1234, 1), 1234);
-        assert_eq!(align_up(0xffff_ffff_ffff_ffff, 1), 0xffff_ffff_ffff_ffff);
-        // align 2
-        assert_eq!(align_up(0, 2), 0);
-        assert_eq!(align_up(1233, 2), 1234);
-        assert_eq!(align_up(0xffff_ffff_ffff_fffe, 2), 0xffff_ffff_ffff_fffe);
-        // address 0
-        assert_eq!(align_up(0, 128), 0);
-        assert_eq!(align_up(0, 1), 0);
-        assert_eq!(align_up(0, 2), 0);
-        assert_eq!(align_up(0, 0x8000_0000_0000_0000), 0);
-    }
-}

@@ -7,11 +7,11 @@ use {
     crate::mm::{align_down, align_up},
     bit_field::BitField,
     core::{
-        convert::{From, Into, TryInto},
+        convert::{From, TryInto},
         fmt,
         ops::{Add, AddAssign, Rem, RemAssign, Sub, SubAssign},
     },
-    usize_conversions::{usize_from, FromUsize},
+    usize_conversions::{FromUsize, usize_from},
     ux::*,
 };
 
@@ -109,29 +109,28 @@ impl VirtAddr {
     ///
     /// See the `align_up` free function for more information.
     #[must_use]
-    pub fn aligned_up<U>(self, align: U) -> Self
-    where
-        U: Into<u64>,
-    {
-        VirtAddr(align_up(self.0, align.into()))
+    pub fn aligned_up(self, align: usize) -> Self {
+        VirtAddr(
+            align_up(self.0.try_into().unwrap(), align)
+                .try_into()
+                .unwrap(),
+        )
     }
 
     /// Aligns the virtual address downwards to the given alignment.
     ///
     /// See the `align_down` free function for more information.
     #[must_use]
-    pub fn aligned_down<U>(self, align: U) -> Self
-    where
-        U: Into<u64>,
-    {
-        VirtAddr(align_down(self.0, align.into()))
+    pub fn aligned_down(self, align: usize) -> Self {
+        VirtAddr(
+            align_down(self.0.try_into().unwrap(), align)
+                .try_into()
+                .unwrap(),
+        )
     }
 
     /// Checks whether the virtual address has the demanded alignment.
-    pub fn is_aligned<U>(self, align: U) -> bool
-    where
-        U: Into<u64>,
-    {
+    pub fn is_aligned(self, align: usize) -> bool {
         self.aligned_down(align) == self
     }
 

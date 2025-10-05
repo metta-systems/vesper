@@ -11,13 +11,13 @@
 use {
     crate::{
         cpu::loop_while,
-        memory::{Address, Virtual},
         platform::device_driver::{IRQNumber, common::MMIODerefWrapper, gpio},
     },
     core::fmt::{self, Arguments},
     libconsole::{SerialOps, console::interface},
     liblocal_irq::exception, //?
     liblocking::{IRQSafeNullLock, interface::Mutex},
+    libmemory::{Address, Virtual},
     snafu::Snafu,
     tock_registers::{
         interfaces::{ReadWriteable, Readable, Writeable},

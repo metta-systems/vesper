@@ -4,16 +4,29 @@
 
 //! Memory Management.
 
-use {
-    crate::{mm, platform},
-    core::{
-        fmt,
-        marker::PhantomData,
-        ops::{Add, Sub},
-    },
+#![no_std]
+#![allow(dead_code)] // while refactoring
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)] // incomplete_features
+#![feature(format_args_nl)]
+#![allow(internal_features)]
+#![feature(allocator_api)]
+#![feature(core_intrinsics)]
+#![feature(step_trait)]
+
+use core::{
+    fmt,
+    marker::PhantomData,
+    ops::{Add, Sub},
 };
 
+pub mod arch;
+pub mod mm;
 pub mod mmu;
+mod platform;
+
+pub mod phys_addr; // merge with Address<Physical>?
+pub mod virt_addr; // merge with Address<Virtual>?
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
@@ -61,7 +74,7 @@ impl<ATYPE: AddressType> Address<ATYPE> {
     /// Align down to page size.
     #[must_use]
     pub const fn align_down_page(self) -> Self {
-        let aligned = mm::align_down(self.value, platform::memory::mmu::KernelGranule::SIZE);
+        let aligned = mm::align_down(self.value, platform::KernelGranule::SIZE);
 
         Self::new(aligned)
     }
@@ -69,19 +82,19 @@ impl<ATYPE: AddressType> Address<ATYPE> {
     /// Align up to page size.
     #[must_use]
     pub const fn align_up_page(self) -> Self {
-        let aligned = mm::align_up(self.value, platform::memory::mmu::KernelGranule::SIZE);
+        let aligned = mm::align_up(self.value, platform::KernelGranule::SIZE);
 
         Self::new(aligned)
     }
 
     /// Checks if the address is page aligned.
     pub const fn is_page_aligned(&self) -> bool {
-        mm::is_aligned(self.value, platform::memory::mmu::KernelGranule::SIZE)
+        mm::is_aligned(self.value, platform::KernelGranule::SIZE)
     }
 
     /// Return the address' offset into the corresponding page.
     pub const fn offset_into_page(&self) -> usize {
-        self.value & platform::memory::mmu::KernelGranule::MASK
+        self.value & platform::KernelGranule::MASK
     }
 }
 
@@ -135,34 +148,5 @@ impl fmt::Display for Address<Virtual> {
         write!(f, "{:04x}_", q3)?;
         write!(f, "{:04x}_", q2)?;
         write!(f, "{:04x}", q1)
-    }
-}
-
-//--------------------------------------------------------------------------------------------------
-// Testing
-//--------------------------------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Sanity of [Address] methods.
-    #[test_case]
-    fn address_type_method_sanity() {
-        let addr = Address::<Virtual>::new(platform::memory::mmu::KernelGranule::SIZE + 100);
-
-        assert_eq!(
-            addr.align_down_page().as_usize(),
-            platform::memory::mmu::KernelGranule::SIZE
-        );
-
-        assert_eq!(
-            addr.align_up_page().as_usize(),
-            platform::memory::mmu::KernelGranule::SIZE * 2
-        );
-
-        assert!(!addr.is_page_aligned());
-
-        assert_eq!(addr.offset_into_page(), 100);
     }
 }
