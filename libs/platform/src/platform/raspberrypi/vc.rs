@@ -83,7 +83,7 @@ impl VC {
         // let index = mbox.test_pixel_order(index, 1);
 
         mbox.call(channel::PropertyTagsArmToVc)
-            .map_err(|_| VcError::MailboxError)?;
+            .map_err(|_ignored| VcError::MailboxError)?;
 
         if (mbox.value_at(4) & VAL_LEN_FLAG) == 0 {
             return Err(VcError::MailboxResponseError {

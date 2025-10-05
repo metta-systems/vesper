@@ -151,15 +151,15 @@ pub struct FixedSizeTranslationTable<const NUM_TABLES: usize> {
 impl<T, const N: usize> BaseAddr for [T; N] {
     // The binary is still identity mapped, so we don't need to convert here.
     fn phys_start_addr(&self) -> Address<Physical> {
-        Address::new(self as *const _ as usize)
+        Address::new(core::ptr::from_ref(self) as usize)
     }
 
     fn base_addr_u64(&self) -> u64 {
-        self as *const T as u64
+        core::ptr::from_ref(self) as u64
     }
 
     fn base_addr_usize(&self) -> usize {
-        self as *const T as usize
+        core::ptr::from_ref(self) as usize
     }
 }
 
@@ -197,7 +197,7 @@ impl PageDescriptor {
     /// Create an instance.
     pub fn from_output_page_addr(
         phys_output_page_addr: PageAddress<Physical>,
-        attribute_fields: &AttributeFields,
+        attribute_fields: AttributeFields,
     ) -> Self {
         let val = InMemoryRegister::<u64, STAGE1_PAGE_DESCRIPTOR::Register>::new(0);
 
@@ -207,14 +207,14 @@ impl PageDescriptor {
                 + STAGE1_PAGE_DESCRIPTOR::AF::Accessed
                 + STAGE1_PAGE_DESCRIPTOR::TYPE::Page
                 + STAGE1_PAGE_DESCRIPTOR::VALID::True
-                + (*attribute_fields).into(),
+                + attribute_fields.into(),
         );
 
         Self { value: val.get() }
     }
 
     /// Returns the valid bit.
-    fn is_valid(&self) -> bool {
+    fn is_valid(self) -> bool {
         InMemoryRegister::<u64, STAGE1_PAGE_DESCRIPTOR::Register>::new(self.value)
             .is_set(STAGE1_PAGE_DESCRIPTOR::VALID)
     }
@@ -289,6 +289,7 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
         assert!(NUM_TABLES > 0);
 
         Self {
+            #[allow(clippy::large_stack_arrays)]
             lvl3: [[PageDescriptor::new_zeroed(); 8192]; NUM_TABLES],
             lvl2: [TableDescriptor::new_zeroed(); NUM_TABLES],
             initialized: false,
@@ -298,37 +299,40 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
     /// Helper to calculate the lvl2 and lvl3 indices from an address.
     #[inline(always)]
     fn lvl2_lvl3_index_from_page_addr(
-        &self,
         virt_page_addr: PageAddress<Virtual>,
     ) -> Result<(usize, usize), &'static str> {
         let addr = virt_page_addr.into_inner().as_usize();
         let lvl2_index = addr >> Granule512MiB::SHIFT;
         let lvl3_index = (addr & Granule512MiB::MASK) >> Granule64KiB::SHIFT;
 
-        if lvl2_index > (NUM_TABLES - 1) {
+        if lvl2_index >= NUM_TABLES {
             return Err("Virtual page is out of bounds of translation table");
         }
 
         Ok((lvl2_index, lvl3_index))
     }
 
-    /// Sets the PageDescriptor corresponding to the supplied page address.
+    /// Sets the `PageDescriptor` corresponding to the supplied page address.
     ///
     /// Doesn't allow overriding an already valid page.
     #[inline(always)]
     fn set_page_descriptor_from_page_addr(
         &mut self,
         virt_page_addr: PageAddress<Virtual>,
-        new_desc: &PageDescriptor,
+        new_desc: PageDescriptor,
     ) -> Result<(), &'static str> {
-        let (lvl2_index, lvl3_index) = self.lvl2_lvl3_index_from_page_addr(virt_page_addr)?;
-        let desc = &mut self.lvl3[lvl2_index][lvl3_index];
+        let (lvl2_index, lvl3_index) = Self::lvl2_lvl3_index_from_page_addr(virt_page_addr)?;
+        let desc = self
+            .lvl3
+            .get_mut(lvl2_index)
+            .and_then(|lvl3_table: &mut [PageDescriptor; 8192]| lvl3_table.get_mut(lvl3_index))
+            .ok_or("Invalid page address for translation table")?;
 
         if desc.is_valid() {
             return Err("Virtual page is already mapped");
         }
 
-        *desc = *new_desc;
+        *desc = new_desc;
         Ok(())
     }
 }
@@ -362,20 +366,25 @@ impl<const NUM_TABLES: usize> crate::mmu::translation_table::interface::Translat
     //
     //     Ok(())
     // }
-    fn init(&mut self) {
+    fn init(&mut self) -> Result<(), &'static str> {
         if self.initialized {
-            return;
+            return Ok(());
         }
 
         // Populate the l2 entries.
         for (lvl2_nr, lvl2_entry) in self.lvl2.iter_mut().enumerate() {
-            let phys_table_addr = self.lvl3[lvl2_nr].phys_start_addr();
+            let phys_table_addr = self
+                .lvl3
+                .get(lvl2_nr)
+                .ok_or("Invalid lvl2 index")?
+                .phys_start_addr();
 
             let new_desc = TableDescriptor::from_next_lvl_table_addr(phys_table_addr);
             *lvl2_entry = new_desc;
         }
 
         self.initialized = true;
+        Ok(())
     }
 
     fn phys_base_address(&self) -> Address<Physical> {
@@ -386,7 +395,7 @@ impl<const NUM_TABLES: usize> crate::mmu::translation_table::interface::Translat
         &mut self,
         virt_region: &MemoryRegion<Virtual>,
         phys_region: &MemoryRegion<Physical>,
-        attr: &AttributeFields,
+        attr: AttributeFields,
     ) -> Result<(), &'static str> {
         assert!(self.initialized, "Translation tables not initialized");
 
@@ -406,7 +415,7 @@ impl<const NUM_TABLES: usize> crate::mmu::translation_table::interface::Translat
             let new_desc = PageDescriptor::from_output_page_addr(phys_page_addr, attr);
             let virt_page = virt_page_addr;
 
-            self.set_page_descriptor_from_page_addr(virt_page, &new_desc)?;
+            self.set_page_descriptor_from_page_addr(virt_page, new_desc)?;
         }
 
         Ok(())

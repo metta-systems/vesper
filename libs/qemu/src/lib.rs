@@ -29,8 +29,8 @@ pub mod semihosting {
     }
 
     pub fn sys_write0_call(text: &str) {
-        // SAFETY: text must be \0-terminated!
         let cmd = 0x04;
+        // SAFETY: text must be \0-terminated!
         unsafe {
             core::arch::asm!(
                 "hlt #0xF000"

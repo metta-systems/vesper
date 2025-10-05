@@ -26,11 +26,11 @@ impl Log for GlobalLogger {
     }
 
     fn log(&self, record: &Record) {
-        logger().log(record)
+        logger().log(record);
     }
 
     fn flush(&self) {
-        logger().flush()
+        logger().flush();
     }
 }
 
@@ -44,7 +44,7 @@ fn log_impl<L: Log>(logger: L, args: Arguments, level: Level) {
 }
 
 pub fn log<L: Log>(logger: L, args: Arguments, level: Level) {
-    log_impl(logger, args, level)
+    log_impl(logger, args, level);
 }
 
 pub fn enabled<L: Log>(logger: L, level: Level) -> bool {

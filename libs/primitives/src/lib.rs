@@ -27,7 +27,7 @@ pub struct BoundedUsize<const MAX_INCLUSIVE: usize>(usize);
 impl<const MAX_INCLUSIVE: usize> BoundedUsize<{ MAX_INCLUSIVE }> {
     pub const MAX_INCLUSIVE: usize = MAX_INCLUSIVE;
 
-    /// Creates a new instance if number <= MAX_INCLUSIVE.
+    /// Creates a new instance if number <= `MAX_INCLUSIVE`.
     pub const fn new(number: usize) -> Self {
         assert!(number <= MAX_INCLUSIVE);
 

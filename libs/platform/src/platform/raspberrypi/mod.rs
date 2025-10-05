@@ -39,7 +39,7 @@ pub struct BcmHost;
 // raspi3b+  raspi  bcm2837
 // raspi4    raspi  bcm2711
 
-/// Shared BcmHost implementation.
+/// Shared `BcmHost` implementation.
 impl BcmHost {
     /// At which address to load the kernel binary.
     pub const fn kernel_load_address() -> u64 {
@@ -57,10 +57,10 @@ impl BcmHost {
     }
 }
 
-/// RasPi3B+
+/// `RasPi3B`+
 #[cfg(board_rpi3)]
 impl BcmHost {
-    /// Name of the hardware device this BcmHost is compiled for.
+    /// Name of the hardware device this `BcmHost` is compiled for.
     pub const fn board_name() -> &'static str {
         "Raspberry Pi 3+"
     }
@@ -82,10 +82,10 @@ impl BcmHost {
     }
 }
 
-/// RasPi4
+/// `RasPi4`
 #[cfg(board_rpi4)]
 impl BcmHost {
-    /// Name of the hardware device this BcmHost is compiled for.
+    /// Name of the hardware device this `BcmHost` is compiled for.
     pub const fn board_name() -> &'static str {
         "Raspberry Pi 4+"
     }

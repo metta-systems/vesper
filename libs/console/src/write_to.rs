@@ -3,7 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-/// No-alloc write!() implementation from https://stackoverflow.com/a/50201632/145434
+/// No-alloc write!() implementation from <https://stackoverflow.com/a/50201632/145434>
 /// Requires you to allocate a buffer somewhere manually.
 // @todo Try to use arrayvec::ArrayString here instead?
 use core::{cmp::min, fmt};
@@ -23,22 +23,18 @@ impl<'a> WriteTo<'a> {
 
     #[allow(unused)]
     pub fn into_str(self) -> Option<&'a str> {
-        if self.used <= self.buffer.len() {
-            // only successful concats of str - must be a valid str.
-            Some(unsafe { core::str::from_utf8_unchecked(&self.buffer[..self.used]) })
-        } else {
-            None
-        }
+        (self.used <= self.buffer.len()).then(||
+            // SAFETY: only successful concats of str - must be a valid str.
+            unsafe { core::str::from_utf8_unchecked(&self.buffer[..self.used]) })
     }
 
     #[allow(unused)]
     pub fn into_cstr(self) -> Option<&'a str> {
-        if self.used < self.buffer.len() {
+        (self.used < self.buffer.len()).then(|| {
             self.buffer[self.used] = 0; // Terminate the string
-            Some(unsafe { core::str::from_utf8_unchecked(&self.buffer[..=self.used]) })
-        } else {
-            None
-        }
+            // SAFETY: only successful concats of str - must be a valid str.
+            unsafe { core::str::from_utf8_unchecked(&self.buffer[..=self.used]) }
+        })
     }
 }
 

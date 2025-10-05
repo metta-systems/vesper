@@ -26,8 +26,8 @@ pub mod interface {
     pub trait ConsoleOps: SerialOps {
         /// Send a character
         fn write_char(&self, c: char) {
-            let mut bytes = [0u8; 4];
-            let _ = c.encode_utf8(&mut bytes);
+            let mut bytes = [0_u8; 4];
+            let _: &str = c.encode_utf8(&mut bytes);
             for &b in bytes.iter().take(c.len_utf8()) {
                 self.write_byte(b);
             }
@@ -37,7 +37,7 @@ pub mod interface {
             for c in string.chars() {
                 // convert newline to carriage return + newline
                 if c == '\n' {
-                    self.write_char('\r')
+                    self.write_char('\r');
                 }
 
                 self.write_char(c);
@@ -49,7 +49,7 @@ pub mod interface {
 
             // convert carriage return to newline
             if ret == '\r' {
-                ret = '\n'
+                ret = '\n';
             }
 
             ret
@@ -98,16 +98,15 @@ pub fn command_prompt(buf: &mut [u8]) -> &[u8] {
 
         if input == '\n' {
             console().write_char('\n'); // do \r\n output
-            return &buf[..i];
-        } else {
-            if i < buf.len() {
-                buf[i] = input as u8;
-                i += 1;
-            } else {
-                return &buf[..i];
-            }
-
-            console().write_char(input);
+            return buf.get(..i).unwrap_or(&[]);
         }
+        if let Some(slot) = buf.get_mut(i) {
+            *slot = input as u8;
+            i = i.wrapping_add(1);
+        } else {
+            return buf.get(..i).unwrap_or(&[]);
+        }
+
+        console().write_char(input);
     }
 }

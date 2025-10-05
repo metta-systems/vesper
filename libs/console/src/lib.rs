@@ -35,7 +35,7 @@ impl liblog::Log for ConsoleLogger {
         {
             use crate::write_to;
 
-            let mut buf = [0u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
+            let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
             libqemu::semihosting::sys_write0_call(
                 write_to::c_show(&mut buf, *record.args()).unwrap(),
             );
