@@ -63,8 +63,8 @@ pub mod mmu;
 //--------------------------------------------------------------------------------------------------
 
 use {
+    crate::{Address, Physical, Virtual, mmu::PageAddress},
     core::cell::UnsafeCell,
-    libmemory::{Address, Physical, Virtual, mmu::PageAddress},
 };
 
 // Symbols from the linker script.
@@ -149,7 +149,7 @@ pub(super) mod map {
     pub const MINIUART_OFFSET:       usize = 0x0021_5000;
 
     /// Physical devices.
-    #[cfg(feature = "rpi3")]
+    #[cfg(board_rpi3)]
     pub mod mmio {
         use super::*;
 
@@ -181,7 +181,7 @@ pub(super) mod map {
     }
 
     /// Physical devices.
-    #[cfg(feature = "rpi4")]
+    #[cfg(board_rpi4)]
     pub mod mmio {
         use super::*;
 
@@ -212,6 +212,9 @@ pub(super) mod map {
         /// End of MMIO memory region.
         pub const END:              Address<Physical> = Address::new(0xFF85_0000);
     }
+
+    #[cfg(not(any(board_rpi3, board_rpi4)))]
+    compile_error!("No platform selected - specify TARGET_BOARD in configuration");
 
     ///  End address of mapped memory.
     pub const END: Address<Physical> = mmio::END;

@@ -13,13 +13,8 @@
 
 use {
     crate::{
-        memory::{
-            Address, Physical,
-            mmu::{
-                AddressSpace, MMUEnableError, TranslationGranule,
-                interface::{self, MMU},
-            },
-        },
+        Address, Physical,
+        mmu::{AddressSpace, MMUEnableError, TranslationGranule, interface},
         platform,
     },
     aarch64_cpu::{
@@ -31,7 +26,7 @@ use {
     tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
 };
 
-pub(crate) mod translation_table;
+pub mod translation_table;
 
 //--------------------------------------------------------------------------------------------------
 // Private Definitions

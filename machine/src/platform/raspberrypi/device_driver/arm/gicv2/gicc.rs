@@ -5,11 +5,9 @@
 //! GICC Driver - GIC CPU interface.
 
 use {
-    crate::{
-        memory::{Address, Virtual},
-        platform::device_driver::common::MMIODerefWrapper,
-    },
+    crate::platform::device_driver::common::MMIODerefWrapper,
     liblocal_irq::exception, //?
+    libmemory::{Address, Virtual},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields, register_structs,

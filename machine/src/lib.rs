@@ -34,8 +34,6 @@ pub mod arch;
 pub mod cpu;
 pub mod debug;
 pub mod drivers;
-pub mod memory;
-mod mm;
 pub mod panic;
 pub mod platform;
 

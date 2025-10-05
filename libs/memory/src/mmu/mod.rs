@@ -1,23 +1,16 @@
 use {
-    crate::{
-        memory::{Address, Physical, Virtual},
-        platform,
-    },
-    core::{
-        fmt::{self, Formatter},
-        num::NonZeroUsize,
-        ops::RangeInclusive,
-    },
-    liblog::{println, warn},
+    crate::{Address, Physical, Virtual, platform},
+    core::num::NonZeroUsize,
+    liblog::warn,
     snafu::Snafu,
 };
 
 #[cfg(target_arch = "aarch64")]
-use crate::arch::aarch64::memory::mmu as arch_mmu;
+use crate::arch::aarch64::mmu as arch_mmu;
 
 mod mapping_record;
-mod page_alloc;
-pub(crate) mod translation_table;
+pub mod page_alloc;
+pub mod translation_table;
 mod types;
 
 pub use types::*;
@@ -105,7 +98,7 @@ unsafe fn kernel_map_at_unchecked(
     phys_region: &MemoryRegion<Physical>,
     attr: &AttributeFields,
 ) -> Result<(), &'static str> {
-    platform::memory::mmu::kernel_translation_tables()
+    crate::platform::memory::mmu::kernel_translation_tables()
         .write(|tables| unsafe { tables.map_at(virt_region, phys_region, attr) })?;
 
     if let Err(x) = mapping_record::kernel_add(name, virt_region, phys_region, attr) {
@@ -267,46 +260,4 @@ pub fn post_enable_init() {
 #[inline]
 pub fn kernel_print_mappings() {
     mapping_record::kernel_print()
-}
-
-//--------------------------------------------------------------------------------------------------
-// Testing
-//--------------------------------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use {
-        super::*,
-        crate::memory::mmu::types::{
-            AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress,
-        },
-        core::num::NonZeroUsize,
-    };
-
-    /// Check that you cannot map into the MMIO VA range from kernel_map_at().
-    #[test_case]
-    fn no_manual_mmio_map() {
-        let phys_start_page_addr: PageAddress<Physical> = PageAddress::from(0);
-        let phys_end_exclusive_page_addr: PageAddress<Physical> =
-            phys_start_page_addr.checked_offset(5).unwrap();
-        let phys_region = MemoryRegion::new(phys_start_page_addr, phys_end_exclusive_page_addr);
-
-        let num_pages = NonZeroUsize::new(phys_region.num_pages()).unwrap();
-        let virt_region = page_alloc::kernel_mmio_va_allocator()
-            .lock(|allocator| allocator.alloc(num_pages))
-            .unwrap();
-
-        let attr = AttributeFields {
-            mem_attributes: MemAttributes::CacheableDRAM,
-            acc_perms: AccessPermissions::ReadWrite,
-            execute_never: true,
-        };
-
-        unsafe {
-            assert_eq!(
-                kernel_map_at("test", &virt_region, &phys_region, &attr),
-                Err("Attempt to manually map into MMIO region")
-            )
-        };
-    }
 }

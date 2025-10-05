@@ -6,15 +6,13 @@
  */
 
 use {
-    crate::{
-        memory::{Address, Virtual},
-        platform::{
-            BcmHost,
-            device_driver::{IRQNumber, common::MMIODerefWrapper},
-        },
+    crate::platform::{
+        BcmHost,
+        device_driver::{IRQNumber, common::MMIODerefWrapper},
     },
     core::{marker::PhantomData, time::Duration},
     liblocking::{IRQSafeNullLock, interface::Mutex},
+    libmemory::{Address, Virtual},
     tock_registers::{
         fields::FieldValue,
         interfaces::{ReadWriteable, Readable, Writeable},

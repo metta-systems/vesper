@@ -2,13 +2,14 @@ use {
     super::exception,
     crate::{
         drivers,
-        memory::{self, mmu::MMIODescriptor},
+        exception::{self as generic_exception},
         platform::{device_driver, memory::map::mmio},
     },
     core::{
         mem::MaybeUninit,
         sync::atomic::{AtomicBool, Ordering},
     },
+    libmemory::{self, mmu::MMIODescriptor},
 };
 
 //--------------------------------------------------------------------------------------------------
