@@ -40,6 +40,7 @@ liblocal-irq = { workspace = true }
 liblog = { workspace = true }
 libqemu = { workspace = true }
 liblocking = { workspace = true }
+libmemory = { workspace = true }
 libexception = { workspace = true }
 libkernel-state = { workspace = true }
 libprimitives = { workspace = true }

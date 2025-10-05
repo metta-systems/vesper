@@ -6,8 +6,8 @@
 // @todo: Move to libprimitive or libdriver or sth?
 
 use {
-    crate::memory::{Address, Virtual},
     core::{fmt, marker::PhantomData, ops},
+    libmemory::{Address, Virtual},
 };
 
 //--------------------------------------------------------------------------------------------------

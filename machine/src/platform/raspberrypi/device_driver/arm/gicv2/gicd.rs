@@ -8,11 +8,9 @@
 //!   - SPI - Shared Peripheral Interrupt.
 
 use {
-    crate::{
-        memory::{Address, Virtual},
-        platform::device_driver::common::MMIODerefWrapper,
-    },
+    crate::platform::device_driver::common::MMIODerefWrapper,
     liblocking::{self, IRQSafeNullLock},
+    libmemory::{Address, Virtual},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields, register_structs,

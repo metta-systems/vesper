@@ -4,4 +4,4 @@
  */
 
 #[allow(dead_code)]
-pub type ASID = u16;
+pub type Asid = u16;

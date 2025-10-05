@@ -1,10 +1,8 @@
 use {
     super::{Granule64KiB, Granule512MiB, mair},
     crate::{
-        memory::{
-            self, Address, Physical, Virtual,
-            mmu::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
-        },
+        Address, Physical, Virtual,
+        mmu::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
         platform,
     },
     core::convert,
@@ -103,7 +101,7 @@ register_bitfields! {
 /// The output points to the next table.
 #[derive(Copy, Clone)]
 #[repr(C)]
-struct TableDescriptor {
+pub struct TableDescriptor {
     value: u64,
 }
 
@@ -112,11 +110,11 @@ struct TableDescriptor {
 /// The output points to physical memory.
 #[derive(Copy, Clone)]
 #[repr(C)]
-struct PageDescriptor {
+pub struct PageDescriptor {
     value: u64,
 }
 
-trait BaseAddr {
+pub trait BaseAddr {
     fn phys_start_addr(&self) -> Address<Physical>;
     fn base_addr_u64(&self) -> u64;
     fn base_addr_usize(&self) -> usize;
@@ -266,9 +264,9 @@ impl convert::From<AttributeFields>
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
+use crate::mmu::{AddressSpace, AssociatedTranslationTable};
 
-impl<const AS_SIZE: usize> memory::mmu::AssociatedTranslationTable
-    for memory::mmu::AddressSpace<AS_SIZE>
+impl<const AS_SIZE: usize> AssociatedTranslationTable for AddressSpace<AS_SIZE>
 where
     [u8; Self::SIZE >> Granule512MiB::SHIFT]: Sized,
 {
@@ -339,7 +337,7 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
 // OS Interface Code
 //------------------------------------------------------------------------------
 
-impl<const NUM_TABLES: usize> memory::mmu::translation_table::interface::TranslationTable
+impl<const NUM_TABLES: usize> crate::mmu::translation_table::interface::TranslationTable
     for FixedSizeTranslationTable<NUM_TABLES>
 {
     /// Iterates over all static translation table entries and fills them at once.
@@ -397,7 +395,7 @@ impl<const NUM_TABLES: usize> memory::mmu::translation_table::interface::Transla
         }
 
         if phys_region.end_exclusive_page_addr()
-            > platform::memory::phys_addr_space_end_exclusive_addr()
+            > crate::platform::memory::phys_addr_space_end_exclusive_addr()
         {
             return Err("Tried to map outside of physical address space");
         }
@@ -412,35 +410,5 @@ impl<const NUM_TABLES: usize> memory::mmu::translation_table::interface::Transla
         }
 
         Ok(())
-    }
-}
-
-//--------------------------------------------------------------------------------------------------
-// Testing
-//--------------------------------------------------------------------------------------------------
-
-#[cfg(test)]
-pub type MinSizeTranslationTable = FixedSizeTranslationTable<1>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Check if the size of `struct TableDescriptor` is as expected.
-    #[test_case]
-    fn size_of_tabledescriptor_equals_64_bit() {
-        assert_eq!(
-            core::mem::size_of::<TableDescriptor>(),
-            core::mem::size_of::<u64>()
-        );
-    }
-
-    /// Check if the size of `struct PageDescriptor` is as expected.
-    #[test_case]
-    fn size_of_pagedescriptor_equals_64_bit() {
-        assert_eq!(
-            core::mem::size_of::<PageDescriptor>(),
-            core::mem::size_of::<u64>()
-        );
     }
 }

@@ -156,7 +156,7 @@ impl MappingRecord {
         );
 
         for i in self.inner.iter().flatten() {
-            let size = i.num_pages * platform::memory::mmu::KernelGranule::SIZE;
+            let size = i.num_pages * platform::KernelGranule::SIZE;
             let virt_start = i.virt_start_addr;
             let virt_end_inclusive = virt_start + (size - 1);
             let phys_start = i.phys_start_addr;
