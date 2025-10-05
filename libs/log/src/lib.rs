@@ -16,6 +16,7 @@
 #![reexport_test_harness_main = "test_main"]
 
 use core::{
+    error::Error,
     fmt,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -77,7 +78,7 @@ impl Level {
 
     /// Returns the most verbose logging level.
     #[inline]
-    pub fn max() -> Level {
+    pub fn max_level() -> Level {
         Level::Trace
     }
 
@@ -85,7 +86,7 @@ impl Level {
     ///
     /// This returns the same string as the `fmt::Display` implementation.
     pub fn as_str(&self) -> &'static str {
-        LOG_LEVEL_NAMES[*self as usize]
+        LOG_LEVEL_NAMES.get(*self as usize).map_or("", |v| v)
     }
 
     /// Iterate through all supported logging levels.
@@ -122,9 +123,10 @@ impl Level {
     /// assert_eq!(Level::Trace, level.increment_severity().increment_severity());
     /// assert_eq!(Level::Trace, level.increment_severity().increment_severity().increment_severity()); // max level
     /// ```
+    #[must_use]
     pub fn increment_severity(&self) -> Self {
-        let current = *self as usize;
-        Self::from_usize(current + 1).unwrap_or(*self)
+        let next = (*self as usize).saturating_add(1);
+        Self::from_usize(next).unwrap_or(*self)
     }
 
     /// Get the next-lowest `Level` from this one.
@@ -143,9 +145,10 @@ impl Level {
     /// assert_eq!(Level::Error, level.decrement_severity().decrement_severity());
     /// assert_eq!(Level::Error, level.decrement_severity().decrement_severity().decrement_severity()); // min level
     /// ```
+    #[must_use]
     pub fn decrement_severity(&self) -> Self {
-        let current = *self as usize;
-        Self::from_usize(current.saturating_sub(1)).unwrap_or(*self)
+        let next = (*self as usize).saturating_sub(1);
+        Self::from_usize(next).unwrap_or(*self)
     }
 }
 
@@ -346,6 +349,7 @@ pub fn max_level() -> Level {
     // Since `MAX_LOG_LEVEL_FILTER` is private, the only time it's set
     // is by `set_max_level` above, i.e. by casting a `LevelFilter` to `usize`.
     // So any usize stored in `MAX_LOG_LEVEL_FILTER` is a valid discriminant.
+    // SAFETY: We stored a value from the `Level` enum.
     unsafe { core::mem::transmute(MAX_LOG_LEVEL_FILTER.load(Ordering::Relaxed)) }
 }
 
@@ -419,6 +423,7 @@ where
         Ordering::Relaxed,
     ) {
         Ok(UNINITIALIZED) => {
+            // SAFETY: We're single threaded and protected by an atomic, initialize away.
             unsafe {
                 LOGGER = make_logger();
             }
@@ -457,6 +462,7 @@ where
 pub unsafe fn set_logger_racy(logger: &'static dyn Log) -> Result<(), SetLoggerError> {
     match STATE.load(Ordering::Acquire) {
         UNINITIALIZED => {
+            // SAFETY: It's a racy method, we could race!
             unsafe {
                 LOGGER = logger;
             }
@@ -479,12 +485,12 @@ pub unsafe fn set_logger_racy(logger: &'static dyn Log) -> Result<(), SetLoggerE
 pub struct SetLoggerError;
 
 impl fmt::Display for SetLoggerError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(SET_LOGGER_ERROR)
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(SET_LOGGER_ERROR)
     }
 }
 
-impl core::error::Error for SetLoggerError {}
+impl Error for SetLoggerError {}
 
 /// The type returned by [`from_str`] when the string doesn't match any of the log levels.
 ///
@@ -494,12 +500,12 @@ impl core::error::Error for SetLoggerError {}
 pub struct ParseLevelError;
 
 impl fmt::Display for ParseLevelError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.write_str(LEVEL_PARSE_ERROR)
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(LEVEL_PARSE_ERROR)
     }
 }
 
-impl core::error::Error for ParseLevelError {}
+impl Error for ParseLevelError {}
 
 /// Returns a reference to the logger.
 ///
@@ -513,10 +519,11 @@ pub fn logger() -> &'static dyn Log {
     // initialized, observing it after `Acquire` load here makes both
     // write to the `LOGGER` static and initialization of the logger
     // internal state synchronized with current thread.
-    if STATE.load(Ordering::Acquire) != INITIALIZED {
+    if STATE.load(Ordering::Acquire) == INITIALIZED {
+        // SAFETY: We're initialized.
+        unsafe { LOGGER }
+    } else {
         static NOP: NopLogger = NopLogger;
         &NOP
-    } else {
-        unsafe { LOGGER }
     }
 }

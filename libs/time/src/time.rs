@@ -26,7 +26,7 @@ static TIME_MANAGER: TimeManager = TimeManager::new();
 // Public Code
 //--------------------------------------------------------------------------------------------------
 
-/// Return a reference to the global TimeManager.
+/// Return a reference to the global `TimeManager`.
 pub fn time_manager() -> &'static TimeManager {
     &TIME_MANAGER
 }
@@ -57,6 +57,6 @@ impl TimeManager {
 
     /// Spin for a given duration.
     pub fn spin_for(&self, duration: Duration) {
-        arch_time::spin_for(duration)
+        arch_time::spin_for(duration);
     }
 }

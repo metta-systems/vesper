@@ -73,8 +73,8 @@ impl Iterator for PendingIRQs {
 impl fmt::Display for IRQNumber {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Local(number) => write!(f, "Local({})", number),
-            Self::Peripheral(number) => write!(f, "Peripheral({})", number),
+            Self::Local(number) => write!(f, "Local({number})"),
+            Self::Peripheral(number) => write!(f, "Peripheral({number})"),
         }
     }
 }
@@ -93,6 +93,7 @@ impl InterruptController {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(periph_mmio_start_addr: Address<Virtual>) -> Self {
         Self {
+            // SAFETY: Depends on MMIO correctness.
             periph: unsafe { peripheral_ic::PeripheralIC::new(periph_mmio_start_addr) },
         }
     }
@@ -131,8 +132,9 @@ impl exception::asynchronous::interface::IRQManager for InterruptController {
         }
     }
 
-    fn enable(&self, irq: &Self::IRQNumberType) {
+    fn enable(&self, irq: Self::IRQNumberType) {
         match irq {
+            #[allow(clippy::unimplemented)]
             IRQNumber::Local(_) => unimplemented!("Local IRQ controller not implemented."),
             IRQNumber::Peripheral(pirq) => self.periph.enable(pirq),
         }
@@ -143,7 +145,7 @@ impl exception::asynchronous::interface::IRQManager for InterruptController {
         ic: &exception::asynchronous::IRQContext<'irq_context>,
     ) {
         // It can only be a peripheral IRQ pending because enable() does not support local IRQs yet.
-        self.periph.handle_pending_irqs(ic)
+        self.periph.handle_pending_irqs(ic);
     }
 
     fn print_handler(&self) {

@@ -194,7 +194,10 @@ impl MiniUart {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            inner: IRQSafeNullLock::new(unsafe { MiniUartInner::new(mmio_base_addr) }),
+            inner: IRQSafeNullLock::new(
+                // SAFETY: Not safe.
+                unsafe { MiniUartInner::new(mmio_base_addr) },
+            ),
         }
     }
 
@@ -228,6 +231,7 @@ impl MiniUartInner {
     }
 
     /// Set baud rate and characteristics (115200 8N1) and map to GPIO
+    #[allow(clippy::unnecessary_wraps)]
     pub fn prepare(&self) -> Result<(), &'static str> {
         use tock_registers::interfaces::Writeable;
         // initialize UART
@@ -282,7 +286,7 @@ impl SerialOps for MiniUartInner {
         });
 
         // read it and return
-        self.registers.AUX_MU_IO.get() as u8
+        (self.registers.AUX_MU_IO.get() & 0xff) as u8
     }
 
     fn write_byte(&self, b: u8) {
@@ -295,7 +299,7 @@ impl SerialOps for MiniUartInner {
         });
 
         // write the character to the buffer
-        self.registers.AUX_MU_IO.set(b as u32);
+        self.registers.AUX_MU_IO.set(u32::from(b));
     }
 
     /// Wait until the TX FIFO is empty, aka all characters have been put on the
@@ -344,25 +348,25 @@ impl SerialOps for MiniUart {
     }
 
     fn write_byte(&self, byte: u8) {
-        self.inner.lock(|inner| inner.write_byte(byte))
+        self.inner.lock(|inner| inner.write_byte(byte));
     }
 
     fn flush(&self) {
-        self.inner.lock(|inner| inner.flush())
+        self.inner.lock(|inner| inner.flush());
     }
 
     fn clear_rx(&self) {
-        self.inner.lock(|inner| inner.clear_rx())
+        self.inner.lock(|inner| inner.clear_rx());
     }
 }
 
 impl interface::ConsoleOps for MiniUart {
     fn write_char(&self, c: char) {
-        self.inner.lock(|inner| inner.write_char(c))
+        self.inner.lock(|inner| inner.write_char(c));
     }
 
     fn write_string(&self, string: &str) {
-        self.inner.lock(|inner| inner.write_string(string))
+        self.inner.lock(|inner| inner.write_string(string));
     }
 
     fn read_char(&self) -> char {

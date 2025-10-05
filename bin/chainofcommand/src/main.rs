@@ -42,8 +42,7 @@ async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Re
 
         let Some(Ok(c)) = next_char else {
             return Err(anyhow!(
-                "Failed to receive expected value {:?}: got empty buf",
-                m,
+                "Failed to receive expected value {m:?}: got empty buf"
             ));
         };
 
@@ -52,15 +51,11 @@ async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Re
                 s.push_str(&payload);
                 to_console2.send(Ok(Message::Text(payload))).await?;
             }
-            _ => unreachable!(),
+            Message::Binary(_) => unreachable!(),
         }
     }
     if s != m {
-        return Err(anyhow!(
-            "Failed to receive expected value {:?}: got {:?}",
-            m,
-            s
-        ));
+        return Err(anyhow!("Failed to receive expected value {m:?}: got {s:?}"));
     }
     Ok(())
 }
@@ -73,16 +68,14 @@ where
         .send(Ok(Message::Text("⏩ Loading kernel image\n".into())))
         .await?;
 
-    let kernel_file = match std::fs::File::open(kernel.clone()) {
-        Ok(file) => file,
-        Err(_) => return Err(anyhow!("Couldn't open kernel file {}", kernel)),
+    let Ok(kernel_file) = std::fs::File::open(kernel.clone()) else {
+        return Err(anyhow!("Couldn't open kernel file {kernel}"));
     };
-    let kernel_size: u64 = kernel_file.metadata()?.len();
+    let kernel_size = kernel_file.metadata()?.len();
 
     to_console2
         .send(Ok(Message::Text(format!(
-            "⏩ .. {} ({} bytes)\n",
-            kernel, kernel_size
+            "⏩ .. {kernel} ({kernel_size} bytes)\n"
         ))))
         .await?;
 
@@ -133,8 +126,7 @@ async fn send_kernel<P: ThePath>(
 
     to_console2
         .send(Ok(Message::Text(format!(
-            "⏩ Sending image checksum {:x}\n",
-            hashed_value
+            "⏩ Sending image checksum {hashed_value:x}\n"
         ))))
         .await?;
 
@@ -221,11 +213,11 @@ impl std::fmt::Display for Message {
         match self {
             Message::Binary(b) => {
                 for c in b {
-                    write!(f, "{})", c)?;
+                    write!(f, "{c})")?;
                 }
                 Ok(())
             }
-            Message::Text(s) => write!(f, "{}", s),
+            Message::Text(s) => write!(f, "{s}"),
         }
     }
 }
@@ -295,7 +287,7 @@ where
                                 breaks -= 1;
                             }
                             // TODO decode buf with Utf8Codec here?
-                            execute!(w, style::Print(format!("{}", x)))?;
+                            execute!(w, style::Print(format!("{x}")))?;
                             w.flush()?;
                         }
                     }
@@ -311,13 +303,13 @@ where
                         if let Some(key) = handle_key_event(key_event) {
                             to_serial.send(Ok(Message::Binary(Bytes::copy_from_slice(&key)))).await?;
                             // Local echo
-                            execute!(w, style::Print(format!("{:?}", key)))?;
+                            execute!(w, style::Print(format!("{key:?}")))?;
                             w.flush()?;
                         }
                     }
                     Some(Ok(_)) => {},
                     Some(Err(e)) => {
-                        execute!(w, style::Print(format!("Console read error: {:?}\r", e)))?;
+                        execute!(w, style::Print(format!("Console read error: {e:?}\r")))?;
                         w.flush()?;
                     },
                     None => return Err(anyhow!("woops")),
@@ -405,7 +397,7 @@ fn handle_key_event(key_event: KeyEvent) -> Option<Bytes> {
 // 3. send selected kernel binary with checksum to the target
 // 4. go to 2
 
-/// ChainOfCommand - command chainboot protocol
+/// `ChainOfCommand` - command chainboot protocol
 ///
 /// Use to send freshly built kernel to chainboot-compatible boot loader.
 #[derive(argh::FromArgs)]
@@ -426,9 +418,7 @@ async fn main() -> Result<()> {
     let args: Args = argh::from_env();
 
     // Check that STDIN is a proper tty
-    if !std::io::stdin().is_tty() {
-        panic!("Must have a TTY for stdin");
-    }
+    assert!(std::io::stdin().is_tty(), "Must have a TTY for stdin");
 
     // Disable line buffering, local echo, etc.
     terminal::enable_raw_mode()?;
@@ -502,7 +492,7 @@ async fn main() -> Result<()> {
         let port = port?;
 
         if let Err(e) = main_loop(port, args.kernel.clone()).await {
-            execute!(stdout, style::Print(format!("\nError: {:?}\n", e)))?;
+            execute!(stdout, style::Print(format!("\nError: {e:?}\n")))?;
             stdout.flush()?;
 
             let cont = matches!(e.downcast_ref::<std::io::Error>(),

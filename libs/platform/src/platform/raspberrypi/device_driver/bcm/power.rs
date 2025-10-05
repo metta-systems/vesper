@@ -82,7 +82,7 @@ impl Power {
             let mbox = mbox.end(index);
 
             mbox.call(channel::PropertyTagsArmToVc)
-                .map_err(|_| PowerError::MailboxError)?;
+                .map_err(|_ignored| PowerError::MailboxError)?;
         }
 
         gpio.power_off();
