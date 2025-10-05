@@ -6,7 +6,7 @@
 
 use {
     super::MemoryRegion,
-    crate::memory::{AddressType, Virtual},
+    crate::{AddressType, Virtual},
     core::num::NonZeroUsize,
     liblocking::IRQSafeNullLock,
     liblog::warn,
@@ -35,6 +35,12 @@ static KERNEL_MMIO_VA_ALLOCATOR: IRQSafeNullLock<PageAllocator<Virtual>> =
 /// Return a reference to the kernel's MMIO virtual address allocator.
 pub fn kernel_mmio_va_allocator() -> &'static IRQSafeNullLock<PageAllocator<Virtual>> {
     &KERNEL_MMIO_VA_ALLOCATOR
+}
+
+impl<ATYPE: AddressType> Default for PageAllocator<ATYPE> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<ATYPE: AddressType> PageAllocator<ATYPE> {

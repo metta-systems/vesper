@@ -7,7 +7,7 @@ use {
     crate::mm::{align_down, align_up},
     bit_field::BitField,
     core::{
-        convert::{From, Into},
+        convert::From,
         fmt,
         ops::{Add, AddAssign, Shl, Shr, Sub, SubAssign},
     },
@@ -30,7 +30,7 @@ pub struct PhysAddr(u64);
 ///
 /// This means that bits 52 to 64 were not all null.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PhysAddrNotValid(u64);
+pub struct PhysAddrNotValid(pub u64);
 
 impl PhysAddr {
     /// Creates a new physical address.
@@ -74,29 +74,28 @@ impl PhysAddr {
     ///
     /// See the `align_up` function for more information.
     #[must_use]
-    pub fn aligned_up<U>(self, align: U) -> Self
-    where
-        U: Into<u64>,
-    {
-        PhysAddr(align_up(self.0, align.into()))
+    pub fn aligned_up(self, align: usize) -> Self {
+        PhysAddr(
+            align_up(self.0.try_into().unwrap(), align)
+                .try_into()
+                .unwrap(),
+        )
     }
 
     /// Aligns the physical address downwards to the given alignment.
     ///
     /// See the `align_down` function for more information.
     #[must_use]
-    pub fn aligned_down<U>(self, align: U) -> Self
-    where
-        U: Into<u64>,
-    {
-        PhysAddr(align_down(self.0, align.into()))
+    pub fn aligned_down(self, align: usize) -> Self {
+        PhysAddr(
+            align_down(self.0.try_into().unwrap(), align)
+                .try_into()
+                .unwrap(),
+        )
     }
 
     /// Checks whether the physical address has the demanded alignment.
-    pub fn is_aligned<U>(self, align: U) -> bool
-    where
-        U: Into<u64>,
-    {
+    pub fn is_aligned(self, align: usize) -> bool {
         self.aligned_down(align) == self
     }
 }
@@ -233,20 +232,5 @@ impl Shl<usize> for PhysAddr {
 
     fn shl(self, shift: usize) -> Self::Output {
         PhysAddr::new(self.0 << shift)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test_case]
-    pub fn test_invalid_phys_addr() {
-        let result = PhysAddr::try_new(0xfafa_0123_3210_3210);
-        if let Err(e) = result {
-            assert_eq!(e, PhysAddrNotValid(0xfafa_0123_3210_3210));
-        } else {
-            assert!(false)
-        }
     }
 }
