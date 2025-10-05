@@ -36,7 +36,7 @@ pub type KernelVirtAddrSpace = AddressSpace<{ 1024 * 1024 * 1024 }>;
 
 /// The kernel translation tables.
 ///
-/// It is mandatory that InitStateLock is transparent.
+/// It is mandatory that `InitStateLock` is transparent.
 /// That is, `size_of(InitStateLock<KernelTranslationTable>) == size_of(KernelTranslationTable)`.
 /// There is a unit tests that checks this property.
 pub static KERNEL_TABLES: InitStateLock<KernelTranslationTable> =
@@ -59,7 +59,9 @@ pub fn virt_code_region() -> MemoryRegion<Virtual> {
     let num_pages = size_to_num_pages(super::code_size());
 
     let start_page_addr = super::virt_code_start();
-    let end_exclusive_page_addr = start_page_addr.checked_offset(num_pages as isize).unwrap();
+    let end_exclusive_page_addr = start_page_addr
+        .checked_offset(num_pages.cast_signed())
+        .unwrap();
 
     MemoryRegion::new(start_page_addr, end_exclusive_page_addr)
 }
@@ -69,7 +71,9 @@ pub fn virt_data_region() -> MemoryRegion<Virtual> {
     let num_pages = size_to_num_pages(super::data_size());
 
     let start_page_addr = super::virt_data_start();
-    let end_exclusive_page_addr = start_page_addr.checked_offset(num_pages as isize).unwrap();
+    let end_exclusive_page_addr = start_page_addr
+        .checked_offset(num_pages.cast_signed())
+        .unwrap();
 
     MemoryRegion::new(start_page_addr, end_exclusive_page_addr)
 }
@@ -79,7 +83,9 @@ pub fn virt_boot_core_stack_region() -> MemoryRegion<Virtual> {
     let num_pages = size_to_num_pages(super::boot_core_stack_size());
 
     let start_page_addr = super::virt_boot_core_stack_start();
-    let end_exclusive_page_addr = start_page_addr.checked_offset(num_pages as isize).unwrap();
+    let end_exclusive_page_addr = start_page_addr
+        .checked_offset(num_pages.cast_signed())
+        .unwrap();
 
     MemoryRegion::new(start_page_addr, end_exclusive_page_addr)
 }
@@ -169,7 +175,9 @@ pub fn virt_mmio_remap_region() -> MemoryRegion<Virtual> {
     let num_pages = size_to_num_pages(super::mmio_remap_size());
 
     let start_page_addr = super::virt_mmio_remap_start();
-    let end_exclusive_page_addr = start_page_addr.checked_offset(num_pages as isize).unwrap();
+    let end_exclusive_page_addr = start_page_addr
+        .checked_offset(num_pages.cast_signed())
+        .unwrap();
 
     MemoryRegion::new(start_page_addr, end_exclusive_page_addr)
 }
@@ -180,18 +188,19 @@ pub fn virt_mmio_remap_region() -> MemoryRegion<Virtual> {
 ///
 /// - Any miscalculation or attribute error will likely be fatal. Needs careful manual checking.
 pub unsafe fn kernel_map_binary() -> Result<(), &'static str> {
+    // SAFETY: Make a mistake and you're dead, gaijin!
     unsafe {
         generic_mmu::kernel_map_at(
             "Kernel boot-core stack",
             &virt_boot_core_stack_region(),
             &kernel_virt_to_phys_region(virt_boot_core_stack_region()),
-            &AttributeFields {
+            AttributeFields {
                 mem_attributes: MemAttributes::CacheableDRAM,
                 acc_perms: AccessPermissions::ReadWrite,
                 execute_never: true,
             },
-        )?
-    };
+        )?;
+    }
 
     //         TranslationDescriptor {
     //             name: "Boot code and data",
@@ -215,31 +224,33 @@ pub unsafe fn kernel_map_binary() -> Result<(), &'static str> {
     //             },
     //         },
 
+    // SAFETY: Make a mistake and you're dead, gaijin!
     unsafe {
         generic_mmu::kernel_map_at(
             "Kernel code and RO data",
             &virt_code_region(),
             &kernel_virt_to_phys_region(virt_code_region()),
-            &AttributeFields {
+            AttributeFields {
                 mem_attributes: MemAttributes::CacheableDRAM,
                 acc_perms: AccessPermissions::ReadOnly,
                 execute_never: false,
             },
-        )?
-    };
+        )?;
+    }
 
+    // SAFETY: Make a mistake and you're dead, gaijin!
     unsafe {
         generic_mmu::kernel_map_at(
             "Kernel data and bss",
             &virt_data_region(),
             &kernel_virt_to_phys_region(virt_data_region()),
-            &AttributeFields {
+            AttributeFields {
                 mem_attributes: MemAttributes::CacheableDRAM,
                 acc_perms: AccessPermissions::ReadWrite,
                 execute_never: true,
             },
-        )?
-    };
+        )?;
+    }
 
     Ok(())
 }

@@ -21,32 +21,28 @@ pub struct BumpAllocator {
     name: &'static str,
 }
 
+// SAFETY: Allocator trait is unsafe, HERE BE POKEMONS
 unsafe impl Allocator for BumpAllocator {
     /// Allocate a memory block from the pool.
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let name = self.name;
+        let size = layout.size();
         let start = crate::mm::aligned_addr_unchecked(self.next.get(), layout.align());
         let end = start + layout.size();
 
-        println!(
-            "[i] {}:\n    Allocating Start {start:#010x} End {end:#010x}",
-            self.name,
-        );
+        println!("[i] {name}:\n    Allocating Start {start:#010x} End {end:#010x}",);
 
         if end > self.pool_end {
             return Err(AllocError);
         }
         self.next.set(end);
 
-        println!(
-            "[i] {}:\n    Allocated Addr {:#010x} Size {:#x}",
-            self.name,
-            start,
-            layout.size()
-        );
+        println!("[i] {name}:\n    Allocated Addr {start:#010x} Size {size:#x}",);
 
         Ok(NonNull::slice_from_raw_parts(
+            // SAFETY: We just pray and hope for the best.
             unsafe { NonNull::new_unchecked(start as *mut u8) },
-            layout.size(),
+            size,
         ))
     }
 

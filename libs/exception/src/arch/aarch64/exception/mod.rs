@@ -5,44 +5,44 @@
 
 //! Interrupt handling
 //!
-//! The base address is given by VBAR_ELn and each entry has a defined offset from this
+//! The base address is given by `VBAR_ELn` and each entry has a defined offset from this
 //! base address. Each table has 16 entries, with each entry being 128 bytes (32 instructions)
 //! in size. The table effectively consists of 4 sets of 4 entries.
 //!
 //! Minimal implementation to help catch MMU traps.
-//! Reads ESR_ELx to understand why trap was taken.
+//! Reads `ESR_ELx` to understand why trap was taken.
 //!
-//! VBAR_EL1, VBAR_EL2, VBAR_EL3
+//! `VBAR_EL1`, `VBAR_EL2`, `VBAR_EL3`
 //!
-//! CurrentEL with SP0: +0x0
-//!
-//! * Synchronous
-//! * IRQ/vIRQ
-//! * FIQ
-//! * SError/vSError
-//!
-//! CurrentEL with SPx: +0x200
+//! `CurrentEL` with `SP0`: +0x0
 //!
 //! * Synchronous
 //! * IRQ/vIRQ
 //! * FIQ
 //! * SError/vSError
 //!
-//! Lower EL using AArch64: +0x400
+//! `CurrentEL` with `SPx`: +0x200
 //!
 //! * Synchronous
 //! * IRQ/vIRQ
 //! * FIQ
 //! * SError/vSError
 //!
-//! Lower EL using AArch32: +0x600
+//! Lower EL using `AArch64`: +0x400
 //!
 //! * Synchronous
 //! * IRQ/vIRQ
 //! * FIQ
 //! * SError/vSError
 //!
-//! When the processor takes an exception to AArch64 execution state,
+//! Lower EL using `AArch32`: +0x600
+//!
+//! * Synchronous
+//! * IRQ/vIRQ
+//! * FIQ
+//! * SError/vSError
+//!
+//! When the processor takes an exception to `AArch64` execution state,
 //! all of the PSTATE interrupt masks is set automatically. This means
 //! that further exceptions are disabled. If software is to support
 //! nested exceptions, for example, to allow a higher priority interrupt
@@ -212,7 +212,7 @@ struct SpsrEL1(pub LocalRegisterCopy<u64, SPSR_EL1::Register>);
 // Exception syndrome register.
 struct EsrEL1(pub LocalRegisterCopy<u64, ESR_EL1::Register>);
 
-/// Human readable SPSR_EL1.
+/// Human readable `SPSR_EL1`.
 #[rustfmt::skip]
 impl fmt::Display for SpsrEL1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -258,7 +258,7 @@ impl EsrEL1 {
     }
 }
 
-/// Human readable ESR_EL1.
+/// Human readable `ESR_EL1`.
 #[rustfmt::skip]
 impl fmt::Display for EsrEL1 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -273,7 +273,7 @@ impl fmt::Display for EsrEL1 {
             Some(ESR_EL1::EC::Value::DataAbortCurrentEL) => "Data Abort, current EL",
             _ => "N/A",
         };
-        writeln!(f, " - {}", ec_translation)?;
+        writeln!(f, " - {ec_translation}")?;
 
         // Raw print of instruction specific syndrome.
         write!(f, "      Instr Specific Syndrome (ISS): {:#x}", self.0.read(ESR_EL1::ISS))
@@ -292,8 +292,11 @@ impl ExceptionContext {
     // }
 
     #[inline(always)]
-    fn fault_address_valid(&self) -> bool {
-        use ESR_EL1::EC::Value::*;
+    fn fault_address_valid() -> bool {
+        use ESR_EL1::EC::Value::{
+            DataAbortCurrentEL, DataAbortLowerEL, InstrAbortCurrentEL, InstrAbortLowerEL,
+            PCAlignmentFault, WatchpointCurrentEL, WatchpointLowerEL,
+        };
 
         let esr_el1 = EsrEL1(LocalRegisterCopy::new(ESR_EL1.get()));
 
@@ -330,8 +333,12 @@ impl fmt::Display for ExceptionContext {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // writeln!(f, "{}", self.esr_el1)?;
 
-        if self.fault_address_valid() {
-            writeln!(f, "FAR_EL1: {:#018x}", FAR_EL1.get() as usize)?;
+        if Self::fault_address_valid() {
+            writeln!(
+                f,
+                "FAR_EL1: {:#018x}",
+                usize::try_from(FAR_EL1.get()).unwrap_or(0)
+            )?;
         }
 
         writeln!(f, "{}", self.spsr_el1)?;
@@ -360,18 +367,17 @@ pub fn current_privilege_level() -> (PrivilegeLevel, &'static str) {
 
 /// Init exception handling by setting the exception vector base address register.
 ///
-/// # Safety
-///
 /// - Changes the HW state of the executing core.
 /// - The vector table and the symbol `__EXCEPTION_VECTORS_START` from the linker script must
 ///   adhere to the alignment and size constraints demanded by the ARMv8-A Architecture Reference
 ///   Manual.
 pub fn handling_init() {
-    // SAFETY: Provided by vectors.S.
     unsafe extern "Rust" {
         static __EXCEPTION_VECTORS_START: UnsafeCell<()>;
     }
 
+    // Safety: __EXCEPTION_VECTORS_START is a valid pointer to exception vector table
+    // that is properly aligned and accessible during system initialization
     unsafe {
         set_vbar_el1_checked(__EXCEPTION_VECTORS_START.get() as u64)
             .expect("Vector table properly aligned!");

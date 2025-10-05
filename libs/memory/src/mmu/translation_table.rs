@@ -26,11 +26,9 @@ pub mod interface {
     pub trait TranslationTable {
         /// Anything that needs to run before any of the other provided functions can be used.
         ///
-        /// # Safety
-        ///
         /// - Implementor must ensure that this function can run only once or is harmless if invoked
         ///   multiple times.
-        fn init(&mut self);
+        fn init(&mut self) -> Result<(), &'static str>;
 
         /// The translation table's base address to be used for programming the MMU.
         fn phys_base_address(&self) -> Address<Physical>;
@@ -48,7 +46,7 @@ pub mod interface {
             &mut self,
             virt_region: &MemoryRegion<Virtual>,
             phys_region: &MemoryRegion<Physical>,
-            attr: &AttributeFields,
+            attr: AttributeFields,
         ) -> Result<(), &'static str>;
     }
 }

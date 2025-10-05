@@ -46,10 +46,10 @@ register_structs! {
     }
 }
 
-/// Abstraction for the WriteOnly parts of the associated MMIO registers.
+/// Abstraction for the `WriteOnly` parts of the associated MMIO registers.
 type WriteOnlyRegisters = MMIODerefWrapper<WORegisterBlock>;
 
-/// Abstraction for the ReadOnly parts of the associated MMIO registers.
+/// Abstraction for the `ReadOnly` parts of the associated MMIO registers.
 type ReadOnlyRegisters = MMIODerefWrapper<RORegisterBlock>;
 
 type HandlerTable = [Option<IRQHandlerDescriptor<PeripheralIRQ>>; PeripheralIRQ::MAX_INCLUSIVE + 1];
@@ -125,7 +125,7 @@ impl IRQManager for PeripheralIC {
         })
     }
 
-    fn enable(&self, irq: &Self::IRQNumberType) {
+    fn enable(&self, irq: Self::IRQNumberType) {
         self.wo_registers.lock(|regs| {
             let enable_reg = if irq.get() <= 31 {
                 &regs.ENABLE_1
@@ -152,7 +152,7 @@ impl IRQManager for PeripheralIC {
                     }
                 }
             }
-        })
+        });
     }
 
     fn print_handler(&self) {

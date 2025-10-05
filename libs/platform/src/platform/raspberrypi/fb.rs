@@ -5,7 +5,7 @@ use {
     libmemory::{Address, Virtual},
 };
 
-/// FrameBuffer channel supported structure - use with mailbox::channel::FrameBuffer
+/// `FrameBuffer` channel supported structure - use with `mailbox::channel::FrameBuffer`
 /// Must have the same alignment as the mailbox buffers.
 type FrameBufferData = LocalMailboxStorage<10>;
 
@@ -54,6 +54,7 @@ impl FrameBuffer {
         depth: u32,
     ) -> Result<FrameBuffer, MailboxError> {
         let mut fb = FrameBuffer {
+            // SAFETY: Just pray.
             mailbox: unsafe { Mailbox::<10, FrameBufferData>::new(mmio_base_addr.as_usize())? },
         };
         fb.mailbox.buffer.storage[index::WIDTH] = width;
@@ -71,6 +72,7 @@ impl MailboxOps for FrameBuffer {
     }
 
     fn read(&self, _channel: u32) -> mailbox::Result<()> {
+        // SAFETY: You may believe praying will save you.
         unsafe { self.mailbox.do_read(mailbox::channel::FrameBuffer, 0) }
     }
 }

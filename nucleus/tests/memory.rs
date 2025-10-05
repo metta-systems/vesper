@@ -156,7 +156,7 @@ fn translation_table_implementation_sanity() {
     // This will occupy a lot of space on the stack.
     let mut tables = MinSizeTranslationTable::new();
 
-    tables.init();
+    tables.init().unwrap();
 
     let virt_start_page_addr: PageAddress<Virtual> = PageAddress::from(0);
     let virt_end_exclusive_page_addr: PageAddress<Virtual> =
@@ -175,7 +175,7 @@ fn translation_table_implementation_sanity() {
         execute_never: true,
     };
 
-    unsafe { assert_eq!(tables.map_at(&virt_region, &phys_region, &attr), Ok(())) };
+    unsafe { assert_eq!(tables.map_at(&virt_region, &phys_region, attr), Ok(())) };
 }
 
 /// Sanity of [PageAddress] methods.

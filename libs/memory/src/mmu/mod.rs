@@ -25,6 +25,7 @@ pub use types::*;
 //--------------------------------------------------------------------------------------------------
 
 /// MMU enable errors variants.
+// @todo rework error types
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 pub enum MMUEnableError {
@@ -67,7 +68,7 @@ pub struct AddressSpace<const AS_SIZE: usize>;
 pub trait AssociatedTranslationTable {
     /// A translation table whose address range is:
     ///
-    /// [AS_SIZE - 1, 0]
+    /// [`AS_SIZE` - 1, 0]
     type TableStartFromBottom;
 }
 
@@ -96,13 +97,14 @@ unsafe fn kernel_map_at_unchecked(
     name: &'static str,
     virt_region: &MemoryRegion<Virtual>,
     phys_region: &MemoryRegion<Physical>,
-    attr: &AttributeFields,
+    attr: AttributeFields,
 ) -> Result<(), &'static str> {
-    crate::platform::memory::mmu::kernel_translation_tables()
-        .write(|tables| unsafe { tables.map_at(virt_region, phys_region, attr) })?;
+    crate::platform::memory::mmu::kernel_translation_tables().write(|tables|
+            // SAFETY: Make a mistake and you're dead, gaijin!
+            unsafe { tables.map_at(virt_region, phys_region, attr) })?;
 
     if let Err(x) = mapping_record::kernel_add(name, virt_region, phys_region, attr) {
-        warn!("{}", x);
+        warn!("{x}");
     }
 
     Ok(())
@@ -162,13 +164,16 @@ pub unsafe fn kernel_map_at(
     name: &'static str,
     virt_region: &MemoryRegion<Virtual>,
     phys_region: &MemoryRegion<Physical>,
-    attr: &AttributeFields,
+    attr: AttributeFields,
 ) -> Result<(), &'static str> {
     if platform::memory::mmu::virt_mmio_remap_region().overlaps(virt_region) {
         return Err("Attempt to manually map into MMIO region");
     }
 
-    unsafe { kernel_map_at_unchecked(name, virt_region, phys_region, attr)? };
+    // SAFETY: Make a mistake and you're dead, gaijin!
+    unsafe {
+        kernel_map_at_unchecked(name, virt_region, phys_region, attr)?;
+    }
 
     Ok(())
 }
@@ -194,26 +199,26 @@ pub unsafe fn kernel_map_mmio(
         addr
         // Otherwise, allocate a new region and map it.
     } else {
-        let num_pages = match NonZeroUsize::new(phys_region.num_pages()) {
-            None => return Err("Requested 0 pages"),
-            Some(x) => x,
+        let Some(num_pages) = NonZeroUsize::new(phys_region.num_pages()) else {
+            return Err("Requested 0 pages");
         };
 
         let virt_region =
             page_alloc::kernel_mmio_va_allocator().lock(|allocator| allocator.alloc(num_pages))?;
 
+        // SAFETY: Make a mistake and you're dead, gaijin!
         unsafe {
             kernel_map_at_unchecked(
                 name,
                 &virt_region,
                 &phys_region,
-                &AttributeFields {
+                AttributeFields {
                     mem_attributes: MemAttributes::Device,
                     acc_perms: AccessPermissions::ReadWrite,
                     execute_never: true,
                 },
-            )?
-        };
+            )?;
+        }
 
         virt_region.start_addr()
     };
@@ -229,11 +234,14 @@ pub unsafe fn kernel_map_mmio(
 pub unsafe fn kernel_map_binary() -> Result<Address<Physical>, &'static str> {
     let phys_kernel_tables_base_addr =
         platform::memory::mmu::kernel_translation_tables().write(|tables| {
-            tables.init();
+            tables.init().unwrap();
             tables.phys_base_address()
         });
 
-    unsafe { platform::memory::mmu::kernel_map_binary()? };
+    // SAFETY: Make a mistake and you're dead, gaijin!
+    unsafe {
+        platform::memory::mmu::kernel_map_binary()?;
+    }
 
     Ok(phys_kernel_tables_base_addr)
 }
@@ -247,6 +255,7 @@ pub unsafe fn kernel_map_binary() -> Result<Address<Physical>, &'static str> {
 pub unsafe fn enable_mmu_and_caching(
     phys_tables_base_addr: Address<Physical>,
 ) -> Result<(), MMUEnableError> {
+    // SAFETY: Make a mistake and you're dead, gaijin!
     unsafe { arch_mmu::mmu().enable_mmu_and_caching(phys_tables_base_addr) }
 }
 
@@ -259,5 +268,5 @@ pub fn post_enable_init() {
 /// Human-readable print of all recorded kernel mappings.
 #[inline]
 pub fn kernel_print_mappings() {
-    mapping_record::kernel_print()
+    mapping_record::kernel_print();
 }

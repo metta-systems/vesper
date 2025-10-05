@@ -32,7 +32,7 @@ pub mod interface {
     /// A reader-writer exclusion type.
     ///
     /// The implementing object allows either a number of readers or at most one writer at any point
-    /// in time. (name it RwLock rather?)
+    /// in time. (name it `RwLock` rather?)
     pub trait ReadWriteEx {
         /// The type of encapsulated data.
         type Data;
@@ -73,7 +73,9 @@ where
 // Public Code
 //--------------------------------------------------------------------------------------------------
 
+// SAFETY: Unsafe!
 unsafe impl<T> Send for IRQSafeNullLock<T> where T: ?Sized + Send {}
+// SAFETY: Unsafe!
 unsafe impl<T> Sync for IRQSafeNullLock<T> where T: ?Sized + Send {}
 
 /// Since we are instantiating this struct as a static variable, which could
@@ -96,7 +98,9 @@ impl<T> IRQSafeNullLock<T> {
     }
 }
 
+// SAFETY: Unsafe!
 unsafe impl<T> Send for InitStateLock<T> where T: ?Sized + Send {}
+// SAFETY: Unsafe!
 unsafe impl<T> Sync for InitStateLock<T> where T: ?Sized + Send {}
 
 impl<T> InitStateLock<T> {
@@ -120,6 +124,7 @@ impl<T> interface::Mutex for IRQSafeNullLock<T> {
     fn lock<R>(&self, f: impl FnOnce(&mut Self::Data) -> R) -> R {
         // In a real lock, there would be code encapsulating this line that ensures that this
         // mutable reference will ever only be given out once at a time.
+        // SAFETY: This is in single-threaded context.
         let data = unsafe { &mut *self.data.get() };
 
         // Execute the closure while IRQs are masked.
@@ -140,12 +145,14 @@ impl<T> interface::ReadWriteEx for InitStateLock<T> {
             "InitStateLock::write called with IRQs unmasked"
         );
 
+        // SAFETY: This is in single-threaded context.
         let data = unsafe { &mut *self.data.get() };
 
         f(data)
     }
 
     fn read<R>(&self, f: impl FnOnce(&Self::Data) -> R) -> R {
+        // SAFETY: This is in single-threaded context.
         let data = unsafe { &*self.data.get() };
 
         f(data)

@@ -144,7 +144,7 @@ impl From<PhysAddr> for u64 {
 
 impl From<PhysAddr> for u128 {
     fn from(value: PhysAddr) -> Self {
-        value.as_u64() as u128
+        u128::from(value.as_u64())
     }
 }
 
@@ -176,7 +176,7 @@ where
     u64: FromUsize,
 {
     fn add_assign(&mut self, rhs: usize) {
-        self.add_assign(u64::from_usize(rhs))
+        self.add_assign(u64::from_usize(rhs));
     }
 }
 
@@ -208,7 +208,7 @@ where
     u64: FromUsize,
 {
     fn sub_assign(&mut self, rhs: usize) {
-        self.sub_assign(u64::from_usize(rhs))
+        self.sub_assign(u64::from_usize(rhs));
     }
 }
 

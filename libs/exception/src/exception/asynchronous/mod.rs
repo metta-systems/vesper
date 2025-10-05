@@ -33,7 +33,7 @@ where
     handler: &'static (dyn interface::IRQHandler + Sync),
 }
 
-/// IRQContext token.
+/// `IRQContext` token.
 ///
 /// An instance of this type indicates that the local core is currently executing in IRQ
 /// context, aka executing an interrupt vector or subcalls of it.
@@ -68,15 +68,15 @@ pub mod interface {
         ) -> Result<(), &'static str>;
 
         /// Enable an interrupt in the controller.
-        fn enable(&self, irq_number: &Self::IRQNumberType);
+        fn enable(&self, irq_number: Self::IRQNumberType);
 
         /// Handle pending interrupts.
         ///
-        /// This function is called directly from the CPU's IRQ exception vector. On AArch64,
+        /// This function is called directly from the CPU's IRQ exception vector. On `AArch64`,
         /// this means that the respective CPU core has disabled exception handling.
         /// This function can therefore not be preempted and runs start to finish.
         ///
-        /// Takes an IRQContext token to ensure it can only be called from IRQ context.
+        /// Takes an `IRQContext` token to ensure it can only be called from IRQ context.
         #[allow(clippy::trivially_copy_pass_by_ref)]
         fn handle_pending_irqs<'irq_context>(
             &'irq_context self,
@@ -126,7 +126,7 @@ where
 }
 
 impl IRQContext<'_> {
-    /// Creates an IRQContext token.
+    /// Creates an `IRQContext` token.
     ///
     /// # Safety
     ///

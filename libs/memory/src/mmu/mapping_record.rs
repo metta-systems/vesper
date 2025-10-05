@@ -49,14 +49,14 @@ impl MappingRecordEntry {
         name: &'static str,
         virt_region: &MemoryRegion<Virtual>,
         phys_region: &MemoryRegion<Physical>,
-        attr: &AttributeFields,
+        attr: AttributeFields,
     ) -> Self {
         Self {
             users: [Some(name), None, None, None, None],
             phys_start_addr: phys_region.start_addr(),
             virt_start_addr: virt_region.start_addr(),
             num_pages: phys_region.num_pages(),
-            attribute_fields: *attr,
+            attribute_fields: attr,
         }
     }
 
@@ -86,10 +86,10 @@ impl MappingRecord {
 
     fn sort(&mut self) {
         let upper_bound_exclusive = self.size();
-        let entries = &mut self.inner[0..upper_bound_exclusive];
+        let entries = &mut self.inner.get_mut(0..upper_bound_exclusive).unwrap();
 
         if !entries.is_sorted_by_key(|item| item.unwrap().virt_start_addr) {
-            entries.sort_unstable_by_key(|item| item.unwrap().virt_start_addr)
+            entries.sort_unstable_by_key(|item| item.unwrap().virt_start_addr);
         }
     }
 
@@ -127,7 +127,7 @@ impl MappingRecord {
         name: &'static str,
         virt_region: &MemoryRegion<Virtual>,
         phys_region: &MemoryRegion<Physical>,
-        attr: &AttributeFields,
+        attr: AttributeFields,
     ) -> Result<(), &'static str> {
         let x = self.find_next_free()?;
 
@@ -195,11 +195,10 @@ impl MappingRecord {
                 i.users[0].unwrap()
             );
 
-            for k in i.users[1..].iter() {
+            for k in &i.users[1..] {
                 if let Some(additional_user) = *k {
                     info!(
-                        "                                                                                                            | {}",
-                        additional_user
+                        "                                                                                                            | {additional_user}",
                     );
                 }
             }
@@ -221,7 +220,7 @@ pub fn kernel_add(
     name: &'static str,
     virt_region: &MemoryRegion<Virtual>,
     phys_region: &MemoryRegion<Physical>,
-    attr: &AttributeFields,
+    attr: AttributeFields,
 ) -> Result<(), &'static str> {
     KERNEL_MAPPING_RECORD.write(|mr| mr.add(name, virt_region, phys_region, attr))
 }
@@ -236,7 +235,7 @@ pub fn kernel_find_and_insert_mmio_duplicate(
         let dup = mr.find_duplicate(&phys_region)?;
 
         if let Err(x) = dup.add_user(new_user) {
-            warn!("{}", x);
+            warn!("{x}");
         }
 
         Some(dup.virt_start_addr)
@@ -245,5 +244,5 @@ pub fn kernel_find_and_insert_mmio_duplicate(
 
 /// Human-readable print of all recorded kernel mappings.
 pub fn kernel_print() {
-    KERNEL_MAPPING_RECORD.read(|mr| mr.print());
+    KERNEL_MAPPING_RECORD.read(MappingRecord::print);
 }

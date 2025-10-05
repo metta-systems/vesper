@@ -9,7 +9,7 @@
 //! Since arch modules are imported into generic modules using the path attribute, the path of this
 //! file is:
 //!
-//! crate::time::arch_time
+//! `crate::time::arch_time`
 
 use {
     aarch64_cpu::{asm::barrier, registers::*},
@@ -39,7 +39,7 @@ struct GenericTimerCounterValue(u64);
 // @todo use InitStateLock here
 static ARCH_TIMER_COUNTER_FREQUENCY: liblocking::IRQSafeNullLock<Lazy<NonZeroU32>> =
     liblocking::IRQSafeNullLock::new(Lazy::new(|| {
-        NonZeroU32::try_from(CNTFRQ_EL0.get() as u32).unwrap()
+        NonZeroU32::try_from(u32::try_from(CNTFRQ_EL0.get()).unwrap()).unwrap()
     }));
 
 //--------------------------------------------------------------------------------------------------
@@ -79,10 +79,14 @@ impl From<GenericTimerCounterValue> for Duration {
         // (sub_second_counter_value * NANOSEC_PER_SEC) cannot overflow an u64.
         //
         // The subsequent division ensures the result fits into u32, since the max result is smaller
-        // than NANOSEC_PER_SEC. Therefore, just cast it to u32 using `as`.
+        // than NANOSEC_PER_SEC. Therefore, we can safely cast it to u32.
         let sub_second_counter_value = counter_value.0 % frequency;
-        let nanos = unsafe { sub_second_counter_value.unchecked_mul(u64::from(NANOSEC_PER_SEC)) }
-            .div(frequency) as u32;
+        // Safety: sub_second_counter_value is at most (u32::MAX - 1), so multiplying by NANOSEC_PER_SEC cannot overflow u64
+        let nanos = u32::try_from(
+            unsafe { sub_second_counter_value.unchecked_mul(u64::from(NANOSEC_PER_SEC)) }
+                .div(frequency),
+        )
+        .unwrap();
 
         Duration::new(secs, nanos)
     }
@@ -104,16 +108,19 @@ impl TryFrom<Duration> for GenericTimerCounterValue {
             return Err("Conversion error. Duration too big");
         }
 
-        let frequency: u128 = u32::from(arch_timer_counter_frequency()) as u128;
-        let duration: u128 = duration.as_nanos();
+        let frequency: u128 = u128::from(u32::from(arch_timer_counter_frequency()));
+        let duration = duration.as_nanos();
 
         // This is safe, because frequency can never be greater than u32::MAX, and
         // (Duration::MAX.as_nanos() * u32::MAX) < u128::MAX.
+        // Safety: frequency is at most u32::MAX, so multiplying by duration cannot overflow u128
         let counter_value =
             unsafe { duration.unchecked_mul(frequency) }.div(NonZeroU128::from(NANOSEC_PER_SEC));
 
-        // Since we checked above that we are <= max_duration(), just cast to u64.
-        Ok(GenericTimerCounterValue(counter_value as u64))
+        // Since we checked above that we are <= max_duration(), the conversion to u64 is safe.
+        Ok(GenericTimerCounterValue(
+            u64::try_from(counter_value).unwrap(),
+        ))
     }
 }
 
@@ -148,12 +155,13 @@ pub fn spin_for(duration: Duration) {
 
     let counter_value_delta: GenericTimerCounterValue = match duration.try_into() {
         Err(msg) => {
-            warn!("spin_for: {}. Skipping", msg);
+            warn!("spin_for: {msg}. Skipping");
             return;
         }
         Ok(val) => val,
     };
-    let counter_value_target = curr_counter_value + counter_value_delta;
+    let counter_value_target = curr_counter_value.0.wrapping_add(counter_value_delta.0);
+    let counter_value_target = GenericTimerCounterValue(counter_value_target);
 
     // Busy wait.
     //

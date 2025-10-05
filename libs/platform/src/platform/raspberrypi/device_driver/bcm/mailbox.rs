@@ -6,7 +6,7 @@
  * by Andre Richter of Tock OS.
  */
 
-//! Broadcom mailbox interface between the VideoCore and the ARM Core.
+//! Broadcom mailbox interface between the `VideoCore` and the ARM Core.
 //!
 
 #![allow(dead_code)]
@@ -22,7 +22,6 @@ use {
         sync::atomic::{Ordering, compiler_fence},
     },
     // liblocking::IRQSafeNullLock,
-    liblog::println,
     // libmemory::{Address, Virtual},
     snafu::Snafu,
     tock_registers::{
@@ -34,8 +33,9 @@ use {
 
 /// Public interface to the mailbox.
 /// The address for the buffer needs to be 16-byte aligned
-/// so that the VideoCore can handle it properly.
+/// so that the `VideoCore` can handle it properly.
 /// The reason is that lowest 4 bits of the address will contain the channel number.
+#[allow(clippy::partial_pub_fields)]
 pub struct Mailbox<const N_SLOTS: usize, Storage = DmaBackedMailboxStorage<N_SLOTS>> {
     registers: Registers,
     pub buffer: Storage,
@@ -143,7 +143,7 @@ pub struct DmaBackedMailboxStorage<const N_SLOTS: usize> {
 impl<const N_SLOTS: usize> MailboxStorage for LocalMailboxStorage<N_SLOTS> {
     fn new() -> Result<Self> {
         Ok(Self {
-            storage: [0u32; N_SLOTS],
+            storage: [0_u32; N_SLOTS],
         })
     }
 }
@@ -168,6 +168,7 @@ impl<const N_SLOTS: usize> MailboxStorage for DmaBackedMailboxStorage<N_SLOTS> {
     }
 }
 
+#[expect(clippy::empty_drop, reason = "No allocator yet")]
 impl<const N_SLOTS: usize> Drop for DmaBackedMailboxStorage<N_SLOTS> {
     fn drop(&mut self) {
         // DMA_ALLOCATOR
@@ -204,10 +205,12 @@ impl<const N_SLOTS: usize> MailboxStorageRef for LocalMailboxStorage<N_SLOTS> {
 
 impl<const N_SLOTS: usize> MailboxStorageRef for DmaBackedMailboxStorage<N_SLOTS> {
     fn as_ref(&self) -> &[u32] {
+        // SAFETY: We just operate over fixed allocated block.
         unsafe { core::slice::from_raw_parts(self.storage.cast(), N_SLOTS) }
     }
 
     fn as_mut(&mut self) -> &mut [u32] {
+        // SAFETY: We just operate over fixed allocated block.
         unsafe { core::slice::from_raw_parts_mut(self.storage.cast(), N_SLOTS) }
     }
 
@@ -237,7 +240,7 @@ pub mod channel {
     // Count = 7,
     pub const PropertyTagsArmToVc: u32 = 8;
     pub const PropertyTagsVcToArm: u32 = 9;
-    /// Channel number is ignored. Use for implementations of MailboxOps that use hardcoded
+    /// Channel number is ignored. Use for implementations of `MailboxOps` that use hardcoded
     /// channel number.
     pub const Ignored: u32 = !0;
 }
@@ -249,7 +252,7 @@ pub const REQUEST: u32 = 0;
 pub mod response {
     pub const SUCCESS: u32 = 0x8000_0000;
     pub const ERROR: u32 = 0x8000_0001; // error parsing request buffer (partial response)
-    /** When responding, the VC sets this bit in val_len to indicate a response. */
+    /** When responding, the VC sets this bit in `val_len` to indicate a response. */
     /** Each tag with this bit set will contain VC response data. */
     pub const VAL_LEN_FLAG: u32 = 0x8000_0000;
 }
@@ -356,7 +359,7 @@ impl<const N_SLOTS: usize> core::fmt::Debug for Mailbox<N_SLOTS> {
         let count = self.buffer.as_ref()[0] / 4;
         assert_eq!(self.buffer.as_ref()[0], count * 4);
         assert!(count <= 36);
-        for i in 0usize..count as usize {
+        for i in 0_usize..count as usize {
             writeln!(f, "[{:02}] {:08x}", i, self.buffer.value_at(i))?;
         }
         Ok(())
@@ -371,6 +374,7 @@ impl<const N_SLOTS: usize> core::fmt::Debug for PreparedMailbox<N_SLOTS> {
 
 impl<const N_SLOTS: usize> Default for Mailbox<N_SLOTS> {
     fn default() -> Self {
+        // SAFETY: We probably don't want a Default impl for the Mailbox.
         unsafe { Self::new(MAILBOX_BASE) }.expect("Couldn't allocate a default mailbox")
     }
 }
@@ -404,7 +408,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
     pub fn end(mut self, index: usize) -> PreparedMailbox<N_SLOTS, Storage> {
         // @todo return Result
         self.buffer.as_mut()[index] = tag::End;
-        self.buffer.as_mut()[0] = (index as u32 + 1) * 4;
+        self.buffer.as_mut()[0] = (u32::try_from(index).unwrap() + 1) * 4;
         PreparedMailbox(self)
     }
 
@@ -551,15 +555,17 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
     /// the addresses should be **bus addresses as seen from the VC.**
     pub fn do_write(&self, channel: u32) -> Result<()> {
         let buf_ptr = self.buffer.as_ptr();
-        let buf_ptr = if channel != channel::PropertyTagsArmToVc {
-            BcmHost::phys2bus(buf_ptr as usize) as u32
+        let buf_ptr = if channel == channel::PropertyTagsArmToVc {
+            u32::try_from(buf_ptr as usize)
         } else {
-            buf_ptr as u32
-        };
+            u32::try_from(BcmHost::phys2bus(buf_ptr as usize))
+        }
+        .unwrap();
+        // buf_ptr must be within the low 4Gb, because WRITE register is 32 bits.
 
         let mut count: u32 = 0;
 
-        println!("Mailbox::write {:#08x}/{:#x}", buf_ptr, channel);
+        liblog::trace!("Mailbox::write {buf_ptr:#08x}/{channel:#x}");
 
         // Insert a compiler fence that ensures that all stores to the
         // mailbox buffer are finished before the GPU is signaled (which is
@@ -590,7 +596,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
             while self.registers.STATUS.is_set(STATUS::EMPTY) {
                 count += 1;
                 if count > (1 << 25) {
-                    println!("Timed out waiting for mailbox response");
+                    liblog::error!("Timed out waiting for mailbox response");
                     return Err(MailboxError::Timeout);
                 }
             }
@@ -602,33 +608,30 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
             let data: u32 = self.registers.READ.get();
             barrier::dmb(barrier::SY);
 
-            println!(
-                "Received mailbox response {:#08x}, expecting {:#08x}",
-                data, expected
-            );
+            liblog::trace!("Received mailbox response {data:#08x}, expecting {expected:#08x}");
 
             // is it a response to our message?
             if ((data & CHANNEL_MASK) == channel) && ((data & !CHANNEL_MASK) == expected) {
                 // is it a valid successful response?
                 return match self.buffer.value_at(1) {
                     response::SUCCESS => {
-                        println!("\n######\nMailbox::returning SUCCESS");
+                        liblog::trace!("\n######\nMailbox::returning SUCCESS");
                         Ok(())
                     }
                     response::ERROR => {
-                        println!("\n######\nMailbox::returning ResponseError");
+                        liblog::error!("\n######\nMailbox::returning ResponseError");
                         Err(MailboxError::Response)
                     }
                     _ => {
-                        println!("\n######\nMailbox::returning UnknownError");
-                        println!("{:x}\n######", self.buffer.value_at(1));
+                        liblog::error!("\n######\nMailbox::returning UnknownError");
+                        liblog::error!("{:x}\n######", self.buffer.value_at(1));
                         Err(MailboxError::Unknown)
                     }
                 };
-            } else {
-                // ignore invalid responses and loop again.
-                // will return Timeout above if no matching response is received.
-            }
+            } // else {
+            // ignore invalid responses and loop again.
+            // will return Timeout above if no matching response is received.
+            //}
         }
     }
 }
@@ -642,6 +645,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> MailboxO
 
     // @todo read() should probably consume PreparedMailbox completely - because request is overwritten with response
     fn read(&self, channel: u32) -> Result<()> {
+        // SAFETY: Not safe.
         unsafe { self.0.do_read(channel, self.0.buffer.as_ptr() as u32) }
     }
 }
