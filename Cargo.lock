@@ -195,7 +195,6 @@ dependencies = [
  "argh",
  "bytes",
  "crossterm",
- "defer",
  "futures",
  "futures-util",
  "seahash",
@@ -241,12 +240,6 @@ checksum = "acdd7c62a3665c7f6830a51635d9ac9b23ed385797f70a83bb8bafe9c572ab2b"
 dependencies = [
  "winapi",
 ]
-
-[[package]]
-name = "defer"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "930c7171c8df9fb1782bdf9b918ed9ed2d33d1d22300abb754f9085bc48bf8e8"
 
 [[package]]
 name = "derive_more"
