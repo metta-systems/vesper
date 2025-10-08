@@ -18,7 +18,6 @@ anyhow = { workspace = true }
 argh = { workspace = true }
 bytes = { workspace = true }
 crossterm = { workspace = true }
-defer = { workspace = true }        # todo replace with DropGuard
 futures = { workspace = true }
 futures-util = { workspace = true }
 seahash = { workspace = true }

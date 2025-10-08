@@ -1,4 +1,5 @@
 #![feature(trait_alias)]
+#![feature(drop_guard)]
 
 use {
     anyhow::{Result, anyhow},
@@ -9,7 +10,6 @@ use {
         execute, style, terminal,
         tty::IsTty,
     },
-    defer::defer,
     futures::{Stream, future::FutureExt},
     seahash::SeaHasher,
     std::{
@@ -422,7 +422,8 @@ async fn main() -> Result<()> {
 
     // Disable line buffering, local echo, etc.
     terminal::enable_raw_mode()?;
-    defer!(terminal::disable_raw_mode().unwrap_or(()));
+    let _terminal_drop_guard =
+        std::mem::DropGuard::new((), |()| terminal::disable_raw_mode().unwrap_or(()));
 
     let mut serial_toggle = false;
     let mut stdout = std::io::stdout();
