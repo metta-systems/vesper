@@ -73,7 +73,6 @@ anyhow = { version = "1.0" }
 argh = { version = "0.1" }
 bytes = { version = "1.10" }
 crossterm = { version = "0.29", features = ["event-stream"] }
-defer = { version = "0.2" }
 futures = { version = "0.3" }
 futures-util = { version = "0.3", features = ["io"] }
 tokio = { version = "1.47", features = ["full"] }
