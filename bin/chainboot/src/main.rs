@@ -20,7 +20,7 @@ use {
 /// - Only a single core must be active and running this function.
 /// - The init calls in this function must appear in the correct order.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn kernel_init(max_kernel_size: u64) -> ! {
+unsafe fn kernel_init(_dtb: u32, max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
