@@ -58,10 +58,10 @@ jobs:
         uses: actions/checkout@v1
 
       - name: Install Rustup (macOS)
+        if: runner.os == 'macOS'
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        if: runner.os == 'macOS'
 
       - name: Set Rustup profile to minimal
         run: rustup set profile minimal
@@ -78,14 +78,14 @@ jobs:
         run: cargo install cargo-make cargo-binutils
 
       - name: "Install dev libraries (Linux)"
-        run: sudo apt install libudev-dev
         if: runner.os == 'Linux'
+        run: sudo apt install libudev-dev
 
       - name: "Validate rust-lld"
+        if: runner.os == 'macOS'
         run: |
           which rust-lld || echo "Not found"
           otool -L ~/.cargo/bin/rust-lld
-        if: runner.os == 'macOS'
 
       - name: "Print Tools Version"
         run: |
@@ -98,37 +98,37 @@ jobs:
           RUSTFLAGS: "-D warnings"
 
       - name: Install QEMU (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --fix-missing qemu-system-aarch64
-        if: runner.os == 'Linux'
 
       - name: Install QEMU (macOS)
-        run: brew install qemu
         if: runner.os == 'macOS'
+        run: brew install qemu
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_BOTTLE_SOURCE_FALLBACK: 1
           HOMEBREW_NO_INSTALL_CLEANUP: 1
 
       - name: Install Scoop (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           iwr -useb get.scoop.sh -outfile 'install.ps1'
           .\install.ps1 -RunAsAdmin
           echo "$HOME\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        if: runner.os == 'Windows'
-        shell: pwsh
 
       - name: Add custom Scoop bucket for QEMU (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           scoop bucket add scoop-for-ci https://github.com/metta-systems/scoop-for-ci
-        if: runner.os == 'Windows'
-        shell: pwsh
 
       - name: Install QEMU (Windows)
-        run: scoop install qemu-1010
         if: runner.os == 'Windows'
         shell: pwsh
+        run: scoop install qemu-1010
 
       - name: "Print QEMU Version"
         run: qemu-system-aarch64 --version
