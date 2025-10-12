@@ -39,7 +39,7 @@ version = "0.0.1"
 #========
 # target
 #========
-aarch64-cpu = { version = "10.0" }
+aarch64-cpu = { version = "11.0" }
 bit_field = { version = "0.10" }
 bitflags = { version = "2.9" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
@@ -63,7 +63,7 @@ libtime = { path = "libs/time" }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 qemu-exit = { version = "3.0" }
 snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
-tock-registers = { version = "0.9" }
+tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
 ux = { version = "0.1", default-features = false }
 #======
