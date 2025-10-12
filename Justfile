@@ -149,10 +149,55 @@ nm:
 expand:
     cargo make {{ make-opts }} xtool-expand-target -- nucleus
 
+#==============================================================================
+# Modules dependency visualization
+#==============================================================================
+
 # Render modules dependency tree
-[group("maintenance")]
+[group("modules")]
 modules:
     cargo make {{ make-opts }} xtool-modules
+
+# Render modules dependency tree with versions
+[group("modules")]
+tree:
+    cargo tree
+
+[private]
+gen-deps-graph MOD:
+    cargo modules dependencies --max-depth 5 --no-sysroot --no-externs -p {{ MOD }} > target/{{ MOD }}.dot \
+    && dot -Tpng target/{{ MOD }}.dot -o target/{{ MOD }}.png
+
+# Render modules' usage graph
+[group("modules")]
+[macos]
+deps-graph MOD: (gen-deps-graph MOD)
+    open target/{{ MOD }}.png
+
+# Render modules' usage graph
+[group("modules")]
+[windows]
+deps-graph MOD: (gen-deps-graph MOD)
+    start target/{{ MOD }}.png
+
+# Render modules' usage graph
+[group("modules")]
+[linux]
+deps-graph MOD: (gen-deps-graph MOD)
+    xdg-open target/{{ MOD }}.png
+
+# Render modules symbol visibility
+[group("modules")]
+exports MOD:
+    cargo modules structure -p {{ MOD }}
+
+# Find orphan files in the module sources
+[group("modules")]
+orphans MOD:
+    cargo modules orphans -p {{ MOD }}
+
+# Modules dependency visualization end
+#==============================================================================
 
 # Generate and open documentation
 [group("maintenance")]
