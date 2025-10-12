@@ -55,20 +55,20 @@ fn test_pin_inputs() {
     let mmio_base_addr = Address::<Virtual>::new(&mut reg as *mut _ as usize);
     let gpio = unsafe { GPIO::new(mmio_base_addr) };
 
+    // Modify pin 1
     let pin = gpio.get_pin(1);
     let inp = pin.into_input();
+
     assert_eq!(inp.level(), false);
-
-    reg[13] = 0b10;
-
+    reg[13] = 0b10; // Modify "MMIO" memory
     assert_eq!(inp.level(), true);
 
+    // Modify pin 35
     let pin = gpio.get_pin(35);
     let inp = pin.into_input();
+
     assert_eq!(inp.level(), false);
-
-    reg[14] = 0b1000;
-
+    reg[14] = 0b1000; // Modify "MMIO" memory
     assert_eq!(inp.level(), true);
 }
 
