@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v1
-      - run: rustup toolchain install nightly --profile minimal --component rustfmt
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo +nightly fmt -- --check
 
   clippy:
@@ -35,15 +35,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v1
-      - run: sudo apt update
-      - run: sudo apt install libudev-dev
-      - run: rustup toolchain install nightly
-      - run: cargo install cargo-make
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
+
+      - run: cargo install cargo-make # TODO cache this tool
       - run: env CLIPPY_FEATURES=${{ matrix.features }} cargo make clippy
 
   test:
     name: Test
-    needs: clippy
+    needs: check_formatting
 
     strategy:
       fail-fast: false
@@ -57,17 +58,10 @@ jobs:
       - name: "Checkout Repository"
         uses: actions/checkout@v1
 
-      - name: Install Rustup (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Set Rustup profile to minimal
-        run: rustup set profile minimal
-
-      - name: "Switch to Rust nightly"
-        run: rustup default nightly
+      - name: "Install nightly Rust"
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ""
 
       - name: "Print Rust Version"
         run: |
@@ -75,11 +69,7 @@ jobs:
           cargo -Vv
 
       - name: "Install build tools"
-        run: cargo install cargo-make cargo-binutils
-
-      # - name: "Install dev libraries (Linux)"
-      #   if: runner.os == 'Linux'
-      #   run: sudo apt install libudev-dev
+        run: cargo install cargo-make cargo-binutils # TODO cache these tools
 
       - name: "Validate rust-lld"
         if: runner.os == 'macOS'
