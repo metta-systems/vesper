@@ -50,6 +50,7 @@ fn test_pin_outputs() {
 }
 
 #[test_case]
+#[expect(unused_assignments)]
 fn test_pin_inputs() {
     let mut reg = [0u32; 40];
     let mmio_base_addr = Address::<Virtual>::new(&mut reg as *mut _ as usize);
