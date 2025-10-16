@@ -75,7 +75,7 @@ bytes = { version = "1.10" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
 futures-util = { version = "0.3", features = ["io"] }
-tokio = { version = "1.47", features = ["full"] }
+tokio = { version = "1.48", features = ["full"] }
 tokio-serial = { version = "5.4" }
 tokio-stream = { version = "0.1" }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
