@@ -13,12 +13,10 @@
 
 use {
     crate::{
-        mmu::{interface, AddressSpace, MMUEnableError, TranslationGranule},
-        platform, Address, Physical,
+        Address, Physical, mmu::{AddressSpace, MMUEnableError, TranslationGranule, interface}, platform::{self, memory::mmu::KERNEL_TABLES}
     },
     aarch64_cpu::{
-        asm,
-        asm::barrier,
+        asm::{self, barrier},
         registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
     },
     core::intrinsics::unlikely,
@@ -184,9 +182,11 @@ impl interface::MMU for MemoryManagementUnit {
         // (this should be set to share the TLBs across cores.)
 
         // Point to the LVL2 table base address in TTBR0.
-        TTBR0_EL1.set_baddr(LVL1_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
+        // TODO: USER_TABLES, not KERNEL_TABLES here?
+        TTBR0_EL1.set_baddr(KERNEL_TABLES.entries.base_addr_u64()); // User (lo-)space addresses
         TTBR0_EL1.modify(TTBR0_EL1::CnP.val(1));
 
+        // TODO: also do kernel level tables (same mappings but at higher table addresses? need to update ttt to do it)
         // TTBR1_EL1.set_baddr(LVL1_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
         // TTBR1_EL1.modify(TTBR1_EL1::CnP.val(1));
 
@@ -209,7 +209,7 @@ impl interface::MMU for MemoryManagementUnit {
 
         // use cortex_a::regs::RegisterReadWrite;
         // Enable the MMU and turn on data and instruction caching.
-
+,
         SCTLR_EL1.modify(
             SCTLR_EL1::EE::LittleEndian // Endianness select in EL1
                 + SCTLR_EL1::E0E::LittleEndian // Endianness select in EL0
