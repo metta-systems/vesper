@@ -68,7 +68,7 @@ pub unsafe extern "C" fn _startup_in_rust() -> ! {
         #[cfg(feature = "qemu")]
         EL3 => setup_and_enter_el1_from_el3(),
         EL2 => setup_and_enter_el1_from_el2(),
-        EL1 => reset(),
+        EL1 => reset(), // Cannot configure memory mappings here properly, fail instead?
         // if not core0 or not EL3/EL2/EL1, infinitely wait for events
         _ => endless_sleep(),
     }
@@ -143,6 +143,8 @@ fn setup_and_enter_el1_from_el2() -> ! {
             + SPSR_EL2::M::EL1h, // Use SP_EL1
     );
 
+    // Set up EL1 mmu tables from precomputed KERNEL_TABLES.
+
     // Make the Exception Link Register (EL2) point to reset().
     #[allow(clippy::fn_to_numeric_cast_any)]
     ELR_EL2.set(reset as *const () as u64);
@@ -179,6 +181,9 @@ fn setup_and_enter_el1_from_el3() -> ! {
             + SPSR_EL3::F::Masked
             + SPSR_EL3::M::EL1h, // Use SP_EL1
     );
+
+    // Set up EL1 mmu tables from precomputed KERNEL_TABLES.
+    // MMU::enable_mmu_and_caching();
 
     // Make the Exception Link Register (EL3) point to reset().
     ELR_EL3.set(reset as *const () as u64);
