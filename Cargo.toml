@@ -39,7 +39,7 @@ version = "0.0.1"
 #========
 # target
 #========
-aarch64-cpu = { version = "11.0" }
+aarch64-cpu = { version = "11.1" }
 bit_field = { version = "0.10" }
 bitflags = { version = "2.10" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
