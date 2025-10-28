@@ -18,6 +18,14 @@ Steps:
   - Print init_thread covered area
   - Print init_thread mappings size
 
+- [x] build all shit together into a binary
+- [x] make separate init_thread section and start booting from init_thread
+- [x] make early_print work
+- [ ] parse dtb
+
+- START FILLING IN CAPS
+  - untypeds
+  - init_thread context and domain
 
 
 Whatever kernel links must also be located in high-mem mapping, so we cannot share this code with init_thread at all!

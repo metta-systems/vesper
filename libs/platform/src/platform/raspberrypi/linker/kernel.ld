@@ -37,7 +37,7 @@ PHDRS
 SECTIONS
 {
     . = __PHYS_MEM_START;
-    __INIT_THREAD_START = .;
+    __INIT_THREAD_UNTYPED_START = .;
 
     /***********************************************************************************************
     * Boot Core Stack
@@ -64,13 +64,16 @@ SECTIONS
         *******************************************************************************************/
 
         KEEP(*(.text.main.entry))
+        *(.init_thread.text)
+        *(.init_thread.data)
+        *(.init_thread.bss)
         *(.text.boot)
         *(.data.boot)
 
         . = ALIGN(__PAGE_SIZE);
 
-        __INIT_THREAD_END = .; /* Here the boot code ends */
-        ASSERT((__INIT_THREAD_END & __PAGE_MASK) == 0, "End of boot code is not page aligned")
+        __INIT_THREAD_UNTYPED_END = .; /* Here the boot code ends */
+        ASSERT((__INIT_THREAD_UNTYPED_END & __PAGE_MASK) == 0, "End of boot code is not page aligned")
     }
 
     /* Physical addresses */
@@ -86,6 +89,8 @@ SECTIONS
         /*******************************************************************************************
         * Regular Kernel Code
         *******************************************************************************************/
+
+        __CODE_START = .;
 
         *(.text*)
 
@@ -124,11 +129,6 @@ SECTIONS
         *(.data*)
         FILL(0x00)
 
-        . = ALIGN(__PAGE_SIZE);
-        PHYS_KERNEL_TABLES_BASE_ADDR = .;
-        KERNEL_TABLES = .;
-
-        . += 0x20000; /* Random for now */
     } :segment_data
 
     .bss (NOLOAD) : ALIGN(__PAGE_SIZE)

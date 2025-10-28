@@ -106,7 +106,6 @@ enum SyscallError {
 unsafe extern "C" fn syscall_handler() {
     core::arch::naked_asm!(
         // Save user context to kernel stack
-        // Save context (same as before, but x8 is just caller-saved now)
         "sub sp, sp, #272",
         "stp x0, x1, [sp, #0]",
         "stp x2, x3, [sp, #16]",

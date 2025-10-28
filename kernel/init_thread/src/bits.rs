@@ -1,15 +1,5 @@
 libboot::entry!(init_thread);
 
-macro_rules! early_print {
-    // early_print!("a {} event", "log")
-    ($($arg:tt)+) => {
-        let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
-        libqemu::semihosting::sys_write0_call(
-            libconsole::write_to::c_show(&mut buf, format_args!($($arg)+)).unwrap(),
-        );
-    }
-}
-
 /// Kernel early init code.
 /// `arch` crate is responsible for calling it.
 ///
