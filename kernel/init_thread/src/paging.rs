@@ -1,5 +1,21 @@
 // init_thread/src/paging.rs - Page table management with section-aware mapping
 
+/// Kernel virtual address space layout (TTBR1 region: 0xFFFF_xxxx_xxxx_xxxx)
+///
+/// ```
+/// 0xFFFF_FFFF_FFFF_FFFF  ┌─────────────────────┐
+///                        │  Kernel stacks      │  Per-CPU kernel stacks
+/// 0xFFFF_FFFF_8000_0000  ├─────────────────────┤
+///                        │  Kernel heap        │  (if any - we try to avoid)
+/// 0xFFFF_FFFF_0000_0000  ├─────────────────────┤
+///                        │  DCB shared pages   │  Read-only mapped to user too
+/// 0xFFFF_FF00_0000_0000  ├─────────────────────┤
+///                        │  Device MMIO        │  1:1 mapped device regions
+/// 0xFFFF_0080_0000_0000  ├─────────────────────┤
+///                        │  Physical memory    │  Linear map of all RAM
+///                        │  (kernel direct)    │  Kernel can access any phys through this offset
+/// 0xFFFF_0000_0000_0000  └─────────────────────┘
+/// ```
 use {
     crate::memory::{
         BootAllocator, KernelLayout, MemoryPermissions, PhysAddr, SectionMapping, VirtAddr,
@@ -7,6 +23,13 @@ use {
     core::ptr,
     libqemu::semi_println,
 };
+
+const KERNEL_BASE: u64 = 0xFFFF_0000_0000_0000;
+const KERNEL_PHYS_MAP: u64 = 0xFFFF_0000_0000_0000; // Linear map base
+const KERNEL_DEVICE_BASE: u64 = 0xFFFF_0080_0000_0000;
+const KERNEL_DCB_BASE: u64 = 0xFFFF_FF00_0000_0000;
+const KERNEL_HEAP_BASE: u64 = 0xFFFF_FFFF_0000_0000;
+const KERNEL_STACK_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 
 /// Page table entry flags for AArch64 Stage 1
 pub mod flags {
@@ -252,6 +275,44 @@ pub fn create_kernel_mapping(
     // Map BSS section
     if let Some(bss) = layout.bss_mapping() {
         map_section(setup, &bss)?;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Setup linear physical map (all RAM accessible to nucleus)
+    // TODO: exclude physical memory that covers the kernel image itself!
+    // ─────────────────────────────────────────────────────────────────
+
+    // Map all physical memory using 2MB blocks
+    for i in 0..max_ram_gb {
+        pts.l1_phys_map[i] = make_table_entry(phys_addr_of(&pts.l2_phys_map[i]));
+
+        for j in 0..512 {
+            let phys = ((i * 512 + j) as u64) << 21; // 2MB granule -- can try 1Gb granules actually?
+            pts.l2_phys_map[i][j] = make_block_entry_2mb(
+                PhysAddr::new(phys),
+                PageFlags::KERNEL_RW | PageFlags::NORMAL_CACHEABLE,
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Setup device MMIO mappings
+    // ─────────────────────────────────────────────────────────────────
+
+    // RPi4 peripherals at 0xFE00_0000 - 0xFF00_0000
+    // Map as device memory (non-cacheable, no speculation)
+    let device_base_phys = 0xFE00_0000_u64;
+    let l1_idx = 0; // First entry in l1_device
+
+    pts.l1_device[l1_idx] = make_table_entry(phys_addr_of(&pts.l2_device));
+
+    // Map 16MB of device space with 2MB blocks
+    for i in 0..8 {
+        let phys = device_base_phys + (i as u64 * 0x20_0000);
+        pts.l2_device[i] = make_block_entry_2mb(
+            PhysAddr::new(phys),
+            PageFlags::KERNEL_RW | PageFlags::DEVICE_nGnRnE,
+        );
     }
 
     Ok(())
