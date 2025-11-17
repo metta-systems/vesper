@@ -71,7 +71,7 @@ ux = { version = "0.1", default-features = false }
 #======
 anyhow = { version = "1.0" }
 argh = { version = "0.1" }
-bytes = { version = "1.10" }
+bytes = { version = "1.11" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
 futures-util = { version = "0.3", features = ["io"] }
