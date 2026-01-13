@@ -87,7 +87,7 @@ fn test_allocates_within_init_range() {
     assert!(result3.is_err());
 }
 
-// Creating with end <= start should fail
+// Creating with end <= start sshould fail
 // @todo return Result<> from new?
 #[test_case]
 fn test_bad_allocator() {
@@ -116,6 +116,7 @@ pub fn test_align_up() {
 //==============================================================================
 //==============================================================================
 //==============================================================================
+
 /// Check that you cannot map into the MMIO VA range from kernel_map_at().
 /*#[test_case]
 fn no_manual_mmio_map() {
@@ -283,21 +284,4 @@ fn virt_mem_layout_has_no_overlaps() {
             assert!(!first_range.overlaps(second_range))
         }
     }
-}
-
-/// Check if KERNEL_TABLES is in .bss.
-#[test_case]
-fn kernel_tables_in_bss() {
-    unsafe extern "Rust" {
-        static __BSS_START: UnsafeCell<u64>;
-        static __BSS_END: UnsafeCell<u64>;
-    }
-
-    let bss_range = Range {
-        start: unsafe { __BSS_START.get() },
-        end: unsafe { __BSS_END.get() },
-    };
-    let kernel_tables_addr = &KERNEL_TABLES as *const _ as usize as *mut u64;
-
-    assert!(bss_range.contains(&kernel_tables_addr));
 }

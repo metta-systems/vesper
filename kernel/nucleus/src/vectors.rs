@@ -44,7 +44,7 @@ curr_el_sp0_serror:
 
 .balign 128
 curr_el_spx_sync:
-    b       syscall_handler
+    b       syscall_handler         // SVC in EL1/EL2
 
 .balign 128
 curr_el_spx_irq:
