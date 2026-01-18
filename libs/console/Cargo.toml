@@ -27,6 +27,7 @@ aarch64-cpu = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 libqemu = { workspace = true }
+libtest = { workspace = true }
 libtime = { workspace = true }
 
 [lib]

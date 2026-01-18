@@ -1,6 +1,8 @@
 use {
     crate::{
-        Address, Physical, mmu::{AddressSpace, MMUEnableError, TranslationGranule, interface}, platform::{self, memory::mmu::KERNEL_TABLES}
+        Address, Physical,
+        mmu::{AddressSpace, MMUEnableError, TranslationGranule, interface},
+        platform::{self, memory::mmu::KERNEL_TABLES},
     },
     aarch64_cpu::{
         asm::{self, barrier},
@@ -197,7 +199,7 @@ impl interface::MMU for MemoryManagementUnit {
 
         // use cortex_a::regs::RegisterReadWrite;
         // Enable the MMU and turn on data and instruction caching.
-,
+
         SCTLR_EL1.modify(
             SCTLR_EL1::EE::LittleEndian // Endianness select in EL1
                 + SCTLR_EL1::E0E::LittleEndian // Endianness select in EL0
@@ -264,7 +266,7 @@ enum PageTableEntry {
     /// A page PageTableEntry::descriptor with 4 KiB aperture.
     ///
     /// The output points to physical memory.
-    PageDescriptor(EntryFlags),
+    PageDescriptor(PageFlags),
 }
 
 /// A descriptor pointing to the next page table. (within PageTableEntry enum)

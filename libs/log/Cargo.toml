@@ -19,6 +19,7 @@ publish = false
 maintenance = { status = "experimental" }
 
 [dependencies]
+# libtest = { workspace = true } cyclic dep
 
 [lints]
 workspace = true

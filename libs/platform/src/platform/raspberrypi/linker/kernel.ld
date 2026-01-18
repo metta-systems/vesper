@@ -35,6 +35,7 @@ PHDRS
 SECTIONS
 {
     . = __phys_mem_start;
+    __init_thread_start = .;
 
     /***********************************************************************************************
     * Boot Core Stack
@@ -71,11 +72,19 @@ SECTIONS
         __BOOT_END = .; /* Here the boot code ends */
         ASSERT((__BOOT_END & PAGE_MASK) == 0, "End of boot code is not page aligned")
 
+        __init_thread_end = .;
+
         /*******************************************************************************************
         * Regular Kernel Code
         *******************************************************************************************/
 
+        /* Physical addresses */
+        __nucleus_start = .;
         __CODE_START = .;
+        __kernel_virt_addr_space_start = .;
+
+        /* Kernel virtual address */
+        . = KERNEL_VIRT_ADDR_BASE;
 
         *(.text*)
 
@@ -115,6 +124,10 @@ SECTIONS
         FILL(0x00)
 
         . = ALIGN(PAGE_SIZE);
+        PHYS_KERNEL_TABLES_BASE_ADDR = .;
+        KERNEL_TABLES = .;
+
+        . += 0x20000; /* Random for now */
     } :segment_data
 
     .bss (NOLOAD) : ALIGN(PAGE_SIZE)
@@ -126,8 +139,10 @@ SECTIONS
         . = ALIGN(PAGE_SIZE); /* Align up to page size */
         __BSS_END = .;
         __BSS_SIZE_U64S = (__BSS_END - __BSS_START) / 8; /* TODO: remove */
+
     } :segment_data
 
+    . = ALIGN(PAGE_SIZE); /* Align up to page size */
     __DATA_END = .;
 
     /***********************************************************************************************
@@ -138,6 +153,10 @@ SECTIONS
     __MMIO_REMAP_END = .;
 
     ASSERT((. & PAGE_MASK) == 0, "MMIO remap reservation is not page aligned")
+    __kernel_virt_addr_space_size = . - __kernel_virt_addr_space_start;
+
+    /* Physical end */
+    __nucleus_end = __nucleus_start + __kernel_virt_addr_space_size;
 
     /***********************************************************************************************
     * Misc

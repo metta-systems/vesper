@@ -21,6 +21,7 @@ maintenance = { status = "experimental" }
 [dependencies]
 aarch64-cpu = { workspace = true }
 liblog = { workspace = true }
+libtest = { workspace = true }
 tock-registers = { workspace = true }
 
 [lints]

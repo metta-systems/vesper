@@ -21,6 +21,7 @@ maintenance = { status = "experimental" }
 [dependencies]
 libkernel-state = { workspace = true }
 liblocal-irq = { workspace = true }
+libtest = { workspace = true }
 
 [lints]
 workspace = true
