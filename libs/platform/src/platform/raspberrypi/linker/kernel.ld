@@ -35,7 +35,7 @@ PHDRS
 SECTIONS
 {
     . = __phys_mem_start;
-    __kernel_virt_addr_space_start = .;
+    __init_thread_start = .;
 
     /***********************************************************************************************
     * Boot Core Stack
@@ -72,11 +72,19 @@ SECTIONS
         __BOOT_END = .; /* Here the boot code ends */
         ASSERT((__BOOT_END & PAGE_MASK) == 0, "End of boot code is not page aligned")
 
+        __init_thread_end = .;
+
         /*******************************************************************************************
         * Regular Kernel Code
         *******************************************************************************************/
 
+        /* Physical addresses */
+        __nucleus_start = .;
         __CODE_START = .;
+        __kernel_virt_addr_space_start = .;
+
+        /* Kernel virtual address */
+        . = KERNEL_VIRT_ADDR_BASE;
 
         *(.text*)
 
@@ -146,6 +154,9 @@ SECTIONS
 
     ASSERT((. & PAGE_MASK) == 0, "MMIO remap reservation is not page aligned")
     __kernel_virt_addr_space_size = . - __kernel_virt_addr_space_start;
+
+    /* Physical end */
+    __nucleus_end = __nucleus_start + __kernel_virt_addr_space_size;
 
     /***********************************************************************************************
     * Misc

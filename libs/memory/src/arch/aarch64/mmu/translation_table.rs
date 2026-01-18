@@ -1,8 +1,14 @@
+use core::{
+    marker::PhantomData,
+    ops::{Index, IndexMut},
+};
+
 use {
-    super::{mair, Granule512MiB, Granule64KiB},
+    super::{Granule64KiB, Granule512MiB, mair},
     crate::{
+        Address, Physical, Virtual,
         mmu::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
-        platform, Address, Physical, Virtual,
+        platform,
     },
     core::convert,
     tock_registers::{
@@ -21,7 +27,7 @@ register_bitfields! {
 
     /// A table descriptor, as per ARMv8-A Architecture Reference Manual Figure D5-15.
     /// AArch64 Reference Manual page 2150, D5-2445
-    STAGE1_TABLE_DESCRIPTOR [
+    pub(crate) STAGE1_TABLE_DESCRIPTOR [
         /// Physical address of the next descriptor.
         NEXT_LEVEL_TABLE_ADDR_64KiB OFFSET(16) NUMBITS(32) [], // [47:16]
         NEXT_LEVEL_TABLE_ADDR_4KiB OFFSET(12) NUMBITS(36) [], // [47:12]
@@ -43,7 +49,7 @@ register_bitfields! {
 
     /// A level 3 page descriptor, as per ARMv8-A Architecture Reference Manual Figure D5-17.
     /// AArch64 Reference Manual page 2150, D5-2445
-    STAGE1_PAGE_DESCRIPTOR [
+    pub(crate) STAGE1_PAGE_DESCRIPTOR [
         /// Unprivileged execute-never.
         UXN      OFFSET(54) NUMBITS(1) [
             Execute = 0,
@@ -409,7 +415,7 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
     }
 }
 
-impl<const NUM_TABLES: usize> memory::mmu::translation_table::interface::TranslationTable
+impl<const NUM_TABLES: usize> crate::mmu::translation_table::interface::TranslationTable
     for FixedSizeTranslationTable<NUM_TABLES>
 {
     fn init(&mut self) -> Result<(), &'static str> {
@@ -543,7 +549,8 @@ impl PageSize for Size2MiB {
 
 impl NotGiantPageSize for Size2MiB {}
 
-type EntryFlags = tock_registers::fields::FieldValue<u64, STAGE1_DESCRIPTOR::Register>;
+type PageFlags = tock_registers::fields::FieldValue<u64, STAGE1_PAGE_DESCRIPTOR::Register>;
+type TableFlags = tock_registers::fields::FieldValue<u64, STAGE1_TABLE_DESCRIPTOR::Register>;
 // type EntryRegister = register::LocalRegisterCopy<u64, STAGE1_DESCRIPTOR::Register>;
 
 /// L0 table -- only pointers to L1 tables
@@ -633,18 +640,18 @@ enum PageTableEntry {
     /// Table descriptor is a L0, L1 or L2 table pointing to another table.
     /// L0 tables can only point to L1 tables.
     /// A descriptor pointing to the next page table.
-    TableDescriptor(EntryFlags),
+    TableDescriptor(TableFlags),
     /// A Level2 block descriptor with 2 MiB aperture.
     ///
     /// The output points to physical memory.
-    Lvl2BlockDescriptor(EntryFlags),
+    Lvl2BlockDescriptor(TableFlags),
     /// A page PageTableEntry::descriptor with 4 KiB aperture.
     ///
     /// The output points to physical memory.
-    PageDescriptor(EntryFlags),
+    PageDescriptor(PageFlags),
 }
 
-/// A descriptor pointing to the next page table. (within PageTableEntry enum)
+// A descriptor pointing to the next page table. (within PageTableEntry enum)
 // struct TableDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
 
 impl PageTableEntry {
@@ -657,17 +664,16 @@ impl PageTableEntry {
         let shifted = next_lvl_table_addr >> Size4KiB::SHIFT;
 
         Ok(PageTableEntry::TableDescriptor(
-            STAGE1_DESCRIPTOR::VALID::True
-                + STAGE1_DESCRIPTOR::AF::Enabled
-                + STAGE1_DESCRIPTOR::TYPE::Table
-                + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64),
+            STAGE1_TABLE_DESCRIPTOR::VALID::True
+                + STAGE1_TABLE_DESCRIPTOR::TYPE::Table
+                + STAGE1_TABLE_DESCRIPTOR::NEXT_LEVEL_TABLE_ADDR_4KiB.val(shifted as u64),
         ))
     }
 }
 
-/// A Level2 block descriptor with 2 MiB aperture.
-///
-/// The output points to physical memory.
+// A Level2 block descriptor with 2 MiB aperture.
+//
+// The output points to physical memory.
 // struct Lvl2BlockDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
 
 impl PageTableEntry {
@@ -682,18 +688,17 @@ impl PageTableEntry {
         let shifted = output_addr >> Size2MiB::SHIFT;
 
         Ok(PageTableEntry::Lvl2BlockDescriptor(
-            STAGE1_DESCRIPTOR::VALID::True
-                + STAGE1_DESCRIPTOR::AF::Enabled
-                + STAGE1_DESCRIPTOR::TYPE::Block
-                + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(shifted as u64)
+            STAGE1_TABLE_DESCRIPTOR::VALID::True
+                + STAGE1_TABLE_DESCRIPTOR::TYPE::Block
+                + STAGE1_TABLE_DESCRIPTOR::NEXT_LEVEL_TABLE_ADDR_4KiB.val(shifted as u64)
                 + attribute_fields.into(),
         ))
     }
 }
 
-/// A page descriptor with 4 KiB aperture.
-///
-/// The output points to physical memory.
+// A page descriptor with 4 KiB aperture.
+//
+// The output points to physical memory.
 
 impl PageTableEntry {
     fn new_page_descriptor(
@@ -707,10 +712,10 @@ impl PageTableEntry {
         let shifted = output_addr >> Size4KiB::SHIFT;
 
         Ok(PageTableEntry::PageDescriptor(
-            STAGE1_DESCRIPTOR::VALID::True
-                + STAGE1_DESCRIPTOR::AF::Enabled
-                + STAGE1_DESCRIPTOR::TYPE::Table
-                + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64)
+            STAGE1_PAGE_DESCRIPTOR::VALID::True
+                + STAGE1_PAGE_DESCRIPTOR::AF::Enabled
+                + STAGE1_PAGE_DESCRIPTOR::TYPE::Table
+                + STAGE1_PAGE_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64)
                 + attribute_fields.into(),
         ))
     }

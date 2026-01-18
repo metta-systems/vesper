@@ -3,3 +3,14 @@ What's needed: quick-n-dirty higher-half mappings setup and kernel physical memo
 - `__kernel_start` to `__kernel_end` map at KERNEL_HIGH_BASE
 - 0 to phys_ram_size (from DTB) map at KERNEL_PHYS_WINDOW
 - `__init_thread_start` till `__init_thread_end` identity-map (no code/data split yet?)
+
+Steps:
+- Buildable
+- Run steps by step
+  - Print DTB
+  - Print max RAM from DTB
+  - Print kernel covered area
+  - Print KERNEL_HIGH_BASE
+  - Print kernel mappings size and attribs
+  - Print init_thread covered area
+  - Print init_thread mappings size

@@ -573,6 +573,7 @@ dependencies = [
  "liblocking",
  "liblog",
  "libqemu",
+ "libtest",
  "libtime",
 ]
 
@@ -597,6 +598,7 @@ version = "0.0.1"
 dependencies = [
  "liblocking",
  "liblog",
+ "libtest",
 ]
 
 [[package]]
@@ -615,6 +617,9 @@ dependencies = [
 [[package]]
 name = "libkernel-state"
 version = "0.0.1"
+dependencies = [
+ "libtest",
+]
 
 [[package]]
 name = "liblocal-irq"
@@ -622,6 +627,7 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "liblog",
+ "libtest",
  "tock-registers",
 ]
 
@@ -631,6 +637,7 @@ version = "0.0.1"
 dependencies = [
  "libkernel-state",
  "liblocal-irq",
+ "libtest",
 ]
 
 [[package]]
