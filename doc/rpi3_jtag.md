@@ -53,15 +53,12 @@ Connecting TDI to pin 7 (GPIO4) did not work!
 In config.txt:
 
 ```
-# Set GPIO pins for JTAG debugger connection on rpi3
-gpio=22-27=a4
-```
-
-Alternatively, just specify this: (@todo verify this works with all alt4 pins)
-
-```
+# Set GPIO pins for JTAG debugger connection on all rpi models
 enable_jtag_gpio=1
 ```
+
+Quote from [official doc](https://www.raspberrypi.org/documentation/configuration/config-txt/gpio.md):
+> Setting enable_jtag_gpio=1 selects Alt4 mode for GPIO pins 22-27, and sets up some internal SoC connections, thus enabling the JTAG interface for the ARM CPU. It works on all models of Raspberry Pi.
 
 ### Wire Connection between boards
 
