@@ -152,3 +152,5 @@ impl fmt::Display for Address<Virtual> {
         write!(f, "{q1:04x}")
     }
 }
+
+pub const PHYSICAL_KERNEL_WINDOW: u64 = 0xffff_ffff_0000_0000;

@@ -9,6 +9,7 @@ PAGE_SIZE = 64K;
 PAGE_MASK = PAGE_SIZE - 1;
 
 __phys_mem_start = 0x0;
+KERNEL_VIRT_ADDR_BASE = 0xffff000000000000; /* Nucleus is mapped here */
 
 __phys_load_addr = 0x80000;
 ENTRY(__phys_load_addr);
@@ -28,9 +29,10 @@ PHDRS
     segment_data            PT_LOAD FLAGS(6);
 }
 
-/* Symbols between __BOOT_START and __BOOT_END should be dropped after init is complete.
+/* Symbols between __init_thread_start and __init_thread_end should be dropped after init is complete.
    Symbols between __CODE_START and __CODE_END are the kernel code.
    Symbols between __BSS_START and __BSS_END must be initialized to zero by startup code in the kernel.
+        TODO: have two BSSs? init_thread.bss and kernel-high.bss
 */
 SECTIONS
 {
@@ -61,30 +63,29 @@ SECTIONS
         * Boot Code + Boot Data
         *******************************************************************************************/
 
-        __BOOT_START = .;
-
         KEEP(*(.text.main.entry))
         *(.text.boot)
         *(.data.boot)
 
         . = ALIGN(PAGE_SIZE);
 
-        __BOOT_END = .; /* Here the boot code ends */
-        ASSERT((__BOOT_END & PAGE_MASK) == 0, "End of boot code is not page aligned")
+        __init_thread_end = .; /* Here the boot code ends */
+        ASSERT((__init_thread_end & PAGE_MASK) == 0, "End of boot code is not page aligned")
+    }
 
-        __init_thread_end = .;
+    /* Physical addresses */
+    __nucleus_start = .;
+    __CODE_START = .;
+    __kernel_virt_addr_space_start = .;
 
+    /* Kernel virtual address */
+    . = KERNEL_VIRT_ADDR_BASE;
+
+    .text : AT(__nucleus_start)
+    {
         /*******************************************************************************************
         * Regular Kernel Code
         *******************************************************************************************/
-
-        /* Physical addresses */
-        __nucleus_start = .;
-        __CODE_START = .;
-        __kernel_virt_addr_space_start = .;
-
-        /* Kernel virtual address */
-        . = KERNEL_VIRT_ADDR_BASE;
 
         *(.text*)
 
@@ -132,18 +133,16 @@ SECTIONS
 
     .bss (NOLOAD) : ALIGN(PAGE_SIZE)
     {
-        __BSS_START = .;
+        __BSS_START = LOADADDR(.bss); /* Physical address */
 
         *(.bss*)
 
-        . = ALIGN(PAGE_SIZE); /* Align up to page size */
-        __BSS_END = .;
-        __BSS_SIZE_U64S = (__BSS_END - __BSS_START) / 8; /* TODO: remove */
-
     } :segment_data
 
+    __BSS_END = __BSS_START + ALIGN(SIZEOF(.bss), PAGE_SIZE); /* Physical address */
+
     . = ALIGN(PAGE_SIZE); /* Align up to page size */
-    __DATA_END = .;
+    __DATA_END = .; /* Virtual address */
 
     /***********************************************************************************************
     * MMIO Remap Reserved (8Mb)

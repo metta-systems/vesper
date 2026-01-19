@@ -5,8 +5,8 @@
 
 use {
     crate::{
-        memory::VirtAddr,
         mm::{align_down, align_up},
+        virt_addr::VirtAddr,
     },
     bit_field::BitField,
     core::{
@@ -102,11 +102,11 @@ impl PhysAddr {
         self.aligned_down(align) == self
     }
 
-    /// Convert physical memory address into a kernel virtual address.
+    /// Convert physical memory address into a kernel-view virtual address for physical memory.
     pub fn user_to_kernel(&self) -> VirtAddr {
-        use super::PHYSICAL_MEMORY_OFFSET;
-        assert!(self.0 < !PHYSICAL_MEMORY_OFFSET); // Can't have phys address over 1GiB then
-        VirtAddr::new(self.0 + PHYSICAL_MEMORY_OFFSET)
+        use super::PHYSICAL_KERNEL_WINDOW;
+        assert!(self.0 < !PHYSICAL_KERNEL_WINDOW); // Can't have phys address over 1GiB then
+        VirtAddr::new(self.0 + PHYSICAL_KERNEL_WINDOW)
     }
 }
 

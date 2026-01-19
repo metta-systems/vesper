@@ -61,6 +61,7 @@ libprimitives = { path = "libs/primitives" }
 libqemu = { path = "libs/qemu" }
 libtest = { path = "libs/test" }
 libtime = { path = "libs/time" }
+num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 qemu-exit = { version = "3.0" }
 snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }

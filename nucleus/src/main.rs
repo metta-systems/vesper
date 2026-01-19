@@ -14,9 +14,6 @@
 #![feature(format_args_nl)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
-#![feature(default_free_fn)]
-#![feature(const_fn_trait_bound)]
-#![feature(nonnull_slice_from_raw_parts)]
 #![deny(missing_docs)]
 #![deny(warnings)]
 #![allow(unused)]
@@ -27,7 +24,7 @@
 
 use core::panic::PanicInfo;
 #[allow(unused_imports)]
-use libconsole::{console::console, SerialOps};
+use libconsole::{SerialOps, console::console};
 use {
     cfg_if::cfg_if,
     core::{cell::UnsafeCell, time::Duration},
@@ -37,7 +34,7 @@ use {
     // , time
 };
 
-libboot::entry!(kernel_init);
+libboot::entry!(init_thread);
 
 /// Kernel early init code.
 /// `arch` crate is responsible for calling it.
@@ -49,11 +46,23 @@ libboot::entry!(kernel_init);
 ///     - MMU + Data caching must be activated at the earliest. Without it, any atomic operations,
 ///       e.g. the yet-to-be-introduced spinlocks in the device drivers (which currently employ
 ///       `IRQSafeNullLocks` instead of spinlocks), will fail to work (properly) on the `RPi` `SoCs`.
-pub unsafe fn kernel_init() -> ! {
-    #[cfg(feature = "jtag")]
-    libmachine::debug::jtag::wait_debugger();
+pub unsafe fn init_thread() -> ! {
+    // Entered in EL2:
 
-    libexception::exception::handling_init();
+    // TODO list
+    // - Enter kernel init in EL2 - this will be needed to set up kernel mappings
+    // - Print DTB
+    // - Print max RAM from DTB
+    // - Print kernel covered area
+    // - Print KERNEL_HIGH_BASE
+    // - Print kernel mappings size and attribs
+    // - Print init_thread covered area
+    // - Print init_thread mappings size
+
+    // #[cfg(feature = "jtag")]
+    // libmachine::debug::jtag::wait_debugger();
+
+    // libexception::exception::handling_init();
 
     // SAFETY: Not safe!
     let phys_kernel_tables_base_addr = match unsafe { libmemory::mmu::kernel_map_binary() } {
@@ -69,32 +78,27 @@ pub unsafe fn kernel_init() -> ! {
 
     libmemory::mmu::post_enable_init();
 
+    // After page tables are populated and MMU is on, switch to EL1, now kernel will already be higher-half mapped.
+
     // SAFETY: Not safe!
-    if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
-        panic!("Error initializing platform drivers: {}", x);
-    }
+    // if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
+    //     panic!("Error initializing platform drivers: {}", x);
+    // }
 
     // Initialize all device drivers.
     // SAFETY: Not safe!
-    unsafe {
-        libplatform::platform::drivers::driver_manager().init_drivers_and_irqs();
-    }
+    // unsafe {
+    //     libplatform::platform::drivers::driver_manager().init_drivers_and_irqs();
+    // }
 
     // Unmask interrupts on the boot CPU core.
-    libexception::exception::asynchronous::local_irq_unmask();
+    // libexception::exception::asynchronous::local_irq_unmask();
 
     // Announce conclusion of the kernel_init() phase.
-    libkernel_state::state_manager().transition_to_single_core_main();
+    // libkernel_state::state_manager().transition_to_single_core_main();
 
-    libconsole::init_logger();
+    // libconsole::init_logger();
 
-    // Transition from unsafe to safe.
-    kernel_main()
-}
-
-/// Safe kernel code.
-// #[inline]
-pub fn kernel_main() -> ! {
     // info!("{}", libkernel::version());
     // info!("Booting on: {}", bsp::board_name());
 
@@ -149,13 +153,13 @@ fn panicked(info: &PanicInfo) -> ! {
 }
 
 fn print_mmu_state_and_features() {
-    memory::features::print_features();
+    libmemory::arch::features::print_features();
 }
 
 fn dump_memory_map() {
     // Output the memory map as we could derive from FDT and information about our loaded image
     // Use it to imagine how the memmap would look like in the end.
-    arch::memory::print_layout();
+    // arch::memory::print_layout();
 }
 
 //------------------------------------------------------------

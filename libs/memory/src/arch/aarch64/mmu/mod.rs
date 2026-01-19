@@ -1,14 +1,18 @@
 use {
     crate::{
         Address, Physical,
-        mmu::{AddressSpace, MMUEnableError, TranslationGranule, interface},
-        platform::{self, memory::mmu::KERNEL_TABLES},
+        arch::mmu::translation_table::{
+            PageFlags, PageSize, STAGE1_PAGE_DESCRIPTOR, STAGE1_TABLE_DESCRIPTOR, Size2MiB,
+            Size4KiB, TableFlags,
+        },
+        mmu::{AddressSpace, AttributeFields, MMUEnableError, TranslationGranule, interface},
     },
     aarch64_cpu::{
         asm::{self, barrier},
-        registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
+        registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1},
     },
     core::intrinsics::unlikely,
+    liblog::println,
     tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
 };
 
@@ -138,7 +142,7 @@ pub fn mmu() -> &'static impl interface::MMU {
 impl interface::MMU for MemoryManagementUnit {
     unsafe fn enable_mmu_and_caching(
         &self,
-        phys_tables_base_addr: Address<Physical>,
+        _phys_tables_base_addr: Address<Physical>,
     ) -> Result<(), MMUEnableError> {
         if unlikely(self.is_enabled()) {
             return Err(MMUEnableError::AlreadyEnabled);
@@ -173,8 +177,8 @@ impl interface::MMU for MemoryManagementUnit {
 
         // Point to the LVL2 table base address in TTBR0.
         // TODO: USER_TABLES, not KERNEL_TABLES here?
-        TTBR0_EL1.set_baddr(KERNEL_TABLES.entries.base_addr_u64()); // User (lo-)space addresses
-        TTBR0_EL1.modify(TTBR0_EL1::CnP.val(1));
+        // TTBR0_EL1.set_baddr(KERNEL_TABLES.entries.base_addr_u64()); // User (lo-)space addresses
+        // TTBR0_EL1.modify(TTBR0_EL1::CnP.val(1));
 
         // TODO: also do kernel level tables (same mappings but at higher table addresses? need to update ttt to do it)
         // TTBR1_EL1.set_baddr(LVL1_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
@@ -247,6 +251,10 @@ impl interface::MMU for MemoryManagementUnit {
     fn is_enabled(&self) -> bool {
         SCTLR_EL1.matches_all(SCTLR_EL1::M::Enable)
     }
+
+    fn print_features(&self) {
+        todo!()
+    }
 }
 
 /// Type-safe enum wrapper covering Table<L>'s 64-bit entries.
@@ -258,18 +266,18 @@ enum PageTableEntry {
     /// Table descriptor is a L0, L1 or L2 table pointing to another table.
     /// L0 tables can only point to L1 tables.
     /// A descriptor pointing to the next page table.
-    TableDescriptor(EntryFlags),
+    TableDescriptor(TableFlags),
     /// A Level2 block descriptor with 2 MiB aperture.
     ///
     /// The output points to physical memory.
-    Lvl2BlockDescriptor(EntryFlags),
+    Lvl2BlockDescriptor(TableFlags),
     /// A page PageTableEntry::descriptor with 4 KiB aperture.
     ///
     /// The output points to physical memory.
     PageDescriptor(PageFlags),
 }
 
-/// A descriptor pointing to the next page table. (within PageTableEntry enum)
+// A descriptor pointing to the next page table. (within PageTableEntry enum)
 // struct TableDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
 
 impl PageTableEntry {
@@ -282,29 +290,29 @@ impl PageTableEntry {
         let shifted = next_lvl_table_addr >> Size4KiB::SHIFT;
 
         Ok(PageTableEntry::TableDescriptor(
-            STAGE1_DESCRIPTOR::VALID::True
-                + STAGE1_DESCRIPTOR::TYPE::Table
-                + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64),
+            STAGE1_TABLE_DESCRIPTOR::VALID::True
+                + STAGE1_TABLE_DESCRIPTOR::TYPE::Table
+                + STAGE1_TABLE_DESCRIPTOR::NEXT_LEVEL_TABLE_ADDR_4KiB.val(shifted as u64),
         ))
     }
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Debug)] //Snafu,
 enum PageTableError {
-    #[snafu(display("BlockDescriptor: Address is not 2 MiB aligned."))]
+    // #[snafu(display("BlockDescriptor: Address is not 2 MiB aligned."))]
     //"PageDescriptor: Address is not 4 KiB aligned."
     NotAligned(&'static str),
 }
 
-/// A Level2 block descriptor with 2 MiB aperture.
-///
-/// The output points to physical memory.
+// A Level2 block descriptor with 2 MiB aperture.
+//
+// The output points to physical memory.
 // struct Lvl2BlockDescriptor(register::FieldValue<u64, STAGE1_DESCRIPTOR::Register>);
 
 impl PageTableEntry {
     fn new_lvl2_block_descriptor(
         output_addr: usize,
-        attribute_fields: AttributeFields,
+        _attribute_fields: AttributeFields,
     ) -> Result<PageTableEntry, PageTableError> {
         if output_addr % Size2MiB::SIZE as usize != 0 {
             return Err(PageTableError::NotAligned(Size2MiB::SIZE_AS_DEBUG_STR));
@@ -313,23 +321,23 @@ impl PageTableEntry {
         let shifted = output_addr >> Size2MiB::SHIFT;
 
         Ok(PageTableEntry::Lvl2BlockDescriptor(
-            STAGE1_DESCRIPTOR::VALID::True
-                + STAGE1_DESCRIPTOR::AF::True
-                + into_mmu_attributes(attribute_fields)
-                + STAGE1_DESCRIPTOR::TYPE::Block
-                + STAGE1_DESCRIPTOR::LVL2_OUTPUT_ADDR_4KiB.val(shifted as u64),
+            STAGE1_TABLE_DESCRIPTOR::VALID::True
+                // + STAGE1_TABLE_DESCRIPTOR::AF::Accessed
+                // + into_mmu_attributes(attribute_fields)
+                + STAGE1_TABLE_DESCRIPTOR::TYPE::Block
+                + STAGE1_TABLE_DESCRIPTOR::NEXT_LEVEL_TABLE_ADDR_4KiB.val(shifted as u64),
         ))
     }
 }
 
-/// A page descriptor with 4 KiB aperture.
-///
-/// The output points to physical memory.
+// A page descriptor with 4 KiB aperture.
+//
+// The output points to physical memory.
 
 impl PageTableEntry {
     fn new_page_descriptor(
         output_addr: usize,
-        attribute_fields: AttributeFields,
+        _attribute_fields: AttributeFields,
     ) -> Result<PageTableEntry, PageTableError> {
         if output_addr % Size4KiB::SIZE as usize != 0 {
             return Err(PageTableError::NotAligned(Size4KiB::SIZE_AS_DEBUG_STR));
@@ -338,11 +346,11 @@ impl PageTableEntry {
         let shifted = output_addr >> Size4KiB::SHIFT;
 
         Ok(PageTableEntry::PageDescriptor(
-            STAGE1_DESCRIPTOR::VALID::True
-                + STAGE1_DESCRIPTOR::AF::True
-                + into_mmu_attributes(attribute_fields)
-                + STAGE1_DESCRIPTOR::TYPE::Table
-                + STAGE1_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64),
+            STAGE1_PAGE_DESCRIPTOR::VALID::True
+                // + STAGE1_TABLE_DESCRIPTOR::AF::Accessed
+                // + into_mmu_attributes(attribute_fields)
+                + STAGE1_PAGE_DESCRIPTOR::TYPE::Page
+                + STAGE1_PAGE_DESCRIPTOR::OUTPUT_ADDR_4KiB.val(shifted as u64),
         ))
     }
 }
@@ -361,9 +369,8 @@ impl From<PageTableEntry> for u64 {
     fn from(val: PageTableEntry) -> u64 {
         match val {
             PageTableEntry::Invalid => 0,
-            PageTableEntry::TableDescriptor(x)
-            | PageTableEntry::Lvl2BlockDescriptor(x)
-            | PageTableEntry::PageDescriptor(x) => x.value,
+            PageTableEntry::TableDescriptor(x) | PageTableEntry::Lvl2BlockDescriptor(x) => x.value,
+            PageTableEntry::PageDescriptor(x) => x.value,
         }
     }
 }
@@ -408,53 +415,53 @@ impl BaseAddr for [u64; 512] {
 /// restart the CPU.
 pub unsafe fn init() -> Result<(), &'static str> {
     // Prepare the memory attribute indirection register.
-    mair::set_up();
+    // mair::set_up();
 
     // Point the first 2 MiB of virtual addresses to the follow-up LVL3
     // page-table.
-    LVL2_TABLE.entries[0] =
-        PageTableEntry::new_table_descriptor(LVL3_TABLE.entries.base_addr_usize())?.into();
+    // LVL2_TABLE.entries[0] =
+    //     PageTableEntry::new_table_descriptor(LVL3_TABLE.entries.base_addr_usize())?.into();
 
     // Fill the rest of the LVL2 (2 MiB) entries as block descriptors.
     //
     // Notice the skip(1) which makes the iteration start at the second 2 MiB
     // block (0x20_0000).
-    for (block_descriptor_nr, entry) in LVL2_TABLE.entries.iter_mut().enumerate().skip(1) {
-        let virt_addr = block_descriptor_nr << Size2MiB::SHIFT;
+    // for (block_descriptor_nr, entry) in LVL2_TABLE.entries.iter_mut().enumerate().skip(1) {
+    //     let virt_addr = block_descriptor_nr << Size2MiB::SHIFT;
 
-        let (output_addr, attribute_fields) = match get_virt_addr_properties(virt_addr) {
-            Err(s) => return Err(s),
-            Ok((a, b)) => (a, b),
-        };
+    //     let (output_addr, attribute_fields) = match get_virt_addr_properties(virt_addr) {
+    //         Err(s) => return Err(s),
+    //         Ok((a, b)) => (a, b),
+    //     };
 
-        let block_desc =
-            match PageTableEntry::new_lvl2_block_descriptor(output_addr, attribute_fields) {
-                Err(s) => return Err(s),
-                Ok(desc) => desc,
-            };
+    //     let block_desc =
+    //         match PageTableEntry::new_lvl2_block_descriptor(output_addr, attribute_fields) {
+    //             Err(s) => return Err(s),
+    //             Ok(desc) => desc,
+    //         };
 
-        *entry = block_desc.into();
-    }
+    //     *entry = block_desc.into();
+    // }
 
     // Finally, fill the single LVL3 table (4 KiB granule).
-    for (page_descriptor_nr, entry) in LVL3_TABLE.entries.iter_mut().enumerate() {
-        let virt_addr = page_descriptor_nr << Size4KiB::SHIFT;
+    // for (page_descriptor_nr, entry) in LVL3_TABLE.entries.iter_mut().enumerate() {
+    //     let virt_addr = page_descriptor_nr << Size4KiB::SHIFT;
 
-        let (output_addr, attribute_fields) = match get_virt_addr_properties(virt_addr) {
-            Err(s) => return Err(s),
-            Ok((a, b)) => (a, b),
-        };
+    //     let (output_addr, attribute_fields) = match get_virt_addr_properties(virt_addr) {
+    //         Err(s) => return Err(s),
+    //         Ok((a, b)) => (a, b),
+    //     };
 
-        let page_desc = match PageTableEntry::new_page_descriptor(output_addr, attribute_fields) {
-            Err(s) => return Err(s),
-            Ok(desc) => desc,
-        };
+    //     let page_desc = match PageTableEntry::new_page_descriptor(output_addr, attribute_fields) {
+    //         Err(s) => return Err(s),
+    //         Ok(desc) => desc,
+    //     };
 
-        *entry = page_desc.into();
-    }
+    //     *entry = page_desc.into();
+    // }
 
     // Point to the LVL2 table base address in TTBR0.
-    TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
+    // TTBR0_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // User (lo-)space addresses
 
     // TTBR1_EL1.set_baddr(LVL2_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
 
@@ -499,41 +506,41 @@ pub unsafe fn init() -> Result<(), &'static str> {
     Ok(())
 }
 
-/// A function that maps the generic memory range attributes to HW-specific
-/// attributes of the MMU.
-fn into_mmu_attributes(
-    attribute_fields: AttributeFields,
-) -> FieldValue<u64, STAGE1_DESCRIPTOR::Register> {
-    use super::{AccessPermissions, MemAttributes};
+// A function that maps the generic memory range attributes to HW-specific
+// attributes of the MMU.
+// fn into_mmu_attributes(
+//     attribute_fields: AttributeFields,
+// ) -> FieldValue<u64, STAGE1_DESCRIPTOR::Register> {
+//     use super::{AccessPermissions, MemAttributes};
 
-    // Memory attributes
-    let mut desc = match attribute_fields.mem_attributes {
-        MemAttributes::CacheableDRAM => {
-            STAGE1_DESCRIPTOR::SH::InnerShareable
-                + STAGE1_DESCRIPTOR::AttrIndx.val(mair::attr::NORMAL)
-        }
-        MemAttributes::NonCacheableDRAM => {
-            STAGE1_DESCRIPTOR::SH::InnerShareable
-                + STAGE1_DESCRIPTOR::AttrIndx.val(mair::attr::NORMAL_NON_CACHEABLE)
-        }
-        MemAttributes::Device => {
-            STAGE1_DESCRIPTOR::SH::OuterShareable
-                + STAGE1_DESCRIPTOR::AttrIndx.val(mair::attr::DEVICE_NGNRE)
-        }
-    };
+//     // Memory attributes
+//     let mut desc = match attribute_fields.mem_attributes {
+//         MemAttributes::CacheableDRAM => {
+//             STAGE1_DESCRIPTOR::SH::InnerShareable
+//                 + STAGE1_DESCRIPTOR::AttrIndx.val(mair::attr::NORMAL)
+//         }
+//         MemAttributes::NonCacheableDRAM => {
+//             STAGE1_DESCRIPTOR::SH::InnerShareable
+//                 + STAGE1_DESCRIPTOR::AttrIndx.val(mair::attr::NORMAL_NON_CACHEABLE)
+//         }
+//         MemAttributes::Device => {
+//             STAGE1_DESCRIPTOR::SH::OuterShareable
+//                 + STAGE1_DESCRIPTOR::AttrIndx.val(mair::attr::DEVICE_NGNRE)
+//         }
+//     };
 
-    // Access Permissions
-    desc += match attribute_fields.acc_perms {
-        AccessPermissions::ReadOnly => STAGE1_DESCRIPTOR::AP::RO_EL1,
-        AccessPermissions::ReadWrite => STAGE1_DESCRIPTOR::AP::RW_EL1,
-    };
+//     // Access Permissions
+//     desc += match attribute_fields.acc_perms {
+//         AccessPermissions::ReadOnly => STAGE1_DESCRIPTOR::AP::RO_EL1,
+//         AccessPermissions::ReadWrite => STAGE1_DESCRIPTOR::AP::RW_EL1,
+//     };
 
-    // Execute Never
-    desc += if attribute_fields.execute_never {
-        STAGE1_DESCRIPTOR::PXN::NeverExecute
-    } else {
-        STAGE1_DESCRIPTOR::PXN::Execute
-    };
+//     // Execute Never
+//     desc += if attribute_fields.execute_never {
+//         STAGE1_DESCRIPTOR::PXN::NeverExecute
+//     } else {
+//         STAGE1_DESCRIPTOR::PXN::Execute
+//     };
 
-    desc
-}
+//     desc
+// }

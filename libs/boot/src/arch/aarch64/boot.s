@@ -70,9 +70,9 @@ _boot_cores:
 
     // Initialize BSS - prepare to fearlessly call into Rust code.
     // Assumptions: BSS start is u128-aligned, BSS end is u128-aligned.
-    // __BSS_START and __BSS_END are defined in linker script
-    ADR_REL x1, __BSS_START
-    ADR_REL x2, __BSS_END
+    // __BSS_START and __BSS_END are defined in the linker script
+    ADR_REL x1, __BSS_START // must be physical address!!!1
+    ADR_REL x2, __BSS_END   // must be physical address!!!1
 .L__bss_init_loop:
     cmp x1, x2
     b.eq .L_setup_stack

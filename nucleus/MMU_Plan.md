@@ -7,6 +7,7 @@ What's needed: quick-n-dirty higher-half mappings setup and kernel physical memo
 Steps:
 - Buildable
 - Run steps by step
+  - Enter kernel init in EL2 - this will be needed to set up kernel mappings
   - Print DTB
   - Print max RAM from DTB
   - Print kernel covered area
