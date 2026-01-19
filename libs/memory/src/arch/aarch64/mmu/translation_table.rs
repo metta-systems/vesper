@@ -27,7 +27,7 @@ register_bitfields! {
 
     /// A table descriptor, as per ARMv8-A Architecture Reference Manual Figure D5-15.
     /// AArch64 Reference Manual page 2150, D5-2445
-    pub(crate) STAGE1_TABLE_DESCRIPTOR [
+    pub STAGE1_TABLE_DESCRIPTOR [
         /// Physical address of the next descriptor.
         NEXT_LEVEL_TABLE_ADDR_64KiB OFFSET(16) NUMBITS(32) [], // [47:16]
         NEXT_LEVEL_TABLE_ADDR_4KiB OFFSET(12) NUMBITS(36) [], // [47:12]
@@ -49,7 +49,7 @@ register_bitfields! {
 
     /// A level 3 page descriptor, as per ARMv8-A Architecture Reference Manual Figure D5-17.
     /// AArch64 Reference Manual page 2150, D5-2445
-    pub(crate) STAGE1_PAGE_DESCRIPTOR [
+    pub STAGE1_PAGE_DESCRIPTOR [
         /// Unprivileged execute-never.
         UXN      OFFSET(54) NUMBITS(1) [
             Execute = 0,
@@ -396,20 +396,20 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
         //     *entry = page_desc.into();
         // }
 
-        for (l2_nr, l2_entry) in self.lvl2.iter_mut().enumerate() {
-            *l2_entry =
-                TableDescriptor::from_next_lvl_table_addr(self.lvl3[l2_nr].base_addr_usize());
+        // for (l2_nr, l2_entry) in self.lvl2.iter_mut().enumerate() {
+        //     *l2_entry =
+        //         TableDescriptor::from_next_lvl_table_addr(self.lvl3[l2_nr].base_addr_usize());
 
-            for (l3_nr, l3_entry) in self.lvl3[l2_nr].iter_mut().enumerate() {
-                let virt_addr = (l2_nr << Granule512MiB::SHIFT) + (l3_nr << Granule64KiB::SHIFT);
+        //     for (l3_nr, l3_entry) in self.lvl3[l2_nr].iter_mut().enumerate() {
+        //         let virt_addr = (l2_nr << Granule512MiB::SHIFT) + (l3_nr << Granule64KiB::SHIFT);
 
-                let (phys_output_addr, attribute_fields) =
-                    platform::memory::mmu::unused::virt_mem_layout()
-                        .virt_addr_properties(virt_addr)?;
+        //         let (phys_output_addr, attribute_fields) =
+        //             platform::memory::mmu::unused::virt_mem_layout()
+        //                 .virt_addr_properties(virt_addr)?;
 
-                *l3_entry = PageDescriptor::from_output_addr(phys_output_addr, &attribute_fields);
-            }
-        }
+        //         *l3_entry = PageDescriptor::from_output_addr(phys_output_addr, &attribute_fields);
+        //     }
+        // }
 
         Ok(())
     }
@@ -549,8 +549,8 @@ impl PageSize for Size2MiB {
 
 impl NotGiantPageSize for Size2MiB {}
 
-type PageFlags = tock_registers::fields::FieldValue<u64, STAGE1_PAGE_DESCRIPTOR::Register>;
-type TableFlags = tock_registers::fields::FieldValue<u64, STAGE1_TABLE_DESCRIPTOR::Register>;
+pub type PageFlags = tock_registers::fields::FieldValue<u64, STAGE1_PAGE_DESCRIPTOR::Register>;
+pub type TableFlags = tock_registers::fields::FieldValue<u64, STAGE1_TABLE_DESCRIPTOR::Register>;
 // type EntryRegister = register::LocalRegisterCopy<u64, STAGE1_DESCRIPTOR::Register>;
 
 /// L0 table -- only pointers to L1 tables
@@ -679,7 +679,7 @@ impl PageTableEntry {
 impl PageTableEntry {
     fn new_lvl2_block_descriptor(
         output_addr: usize,
-        attribute_fields: AttributeFields,
+        _attribute_fields: AttributeFields,
     ) -> Result<PageTableEntry, &'static str> {
         if output_addr % Size2MiB::SIZE as usize != 0 {
             return Err("BlockDescriptor: Address is not 2 MiB aligned.");
@@ -690,8 +690,7 @@ impl PageTableEntry {
         Ok(PageTableEntry::Lvl2BlockDescriptor(
             STAGE1_TABLE_DESCRIPTOR::VALID::True
                 + STAGE1_TABLE_DESCRIPTOR::TYPE::Block
-                + STAGE1_TABLE_DESCRIPTOR::NEXT_LEVEL_TABLE_ADDR_4KiB.val(shifted as u64)
-                + attribute_fields.into(),
+                + STAGE1_TABLE_DESCRIPTOR::NEXT_LEVEL_TABLE_ADDR_4KiB.val(shifted as u64), // + attribute_fields.into(),
         ))
     }
 }
@@ -703,7 +702,7 @@ impl PageTableEntry {
 impl PageTableEntry {
     fn new_page_descriptor(
         output_addr: usize,
-        attribute_fields: AttributeFields,
+        _attribute_fields: AttributeFields,
     ) -> Result<PageTableEntry, &'static str> {
         if output_addr % Size4KiB::SIZE as usize != 0 {
             return Err("PageDescriptor: Address is not 4 KiB aligned.");
@@ -713,10 +712,9 @@ impl PageTableEntry {
 
         Ok(PageTableEntry::PageDescriptor(
             STAGE1_PAGE_DESCRIPTOR::VALID::True
-                + STAGE1_PAGE_DESCRIPTOR::AF::Enabled
-                + STAGE1_PAGE_DESCRIPTOR::TYPE::Table
-                + STAGE1_PAGE_DESCRIPTOR::NEXT_LVL_TABLE_ADDR_4KiB.val(shifted as u64)
-                + attribute_fields.into(),
+                // + STAGE1_PAGE_DESCRIPTOR::AF::Accessed
+                + STAGE1_PAGE_DESCRIPTOR::TYPE::Page
+                + STAGE1_PAGE_DESCRIPTOR::OUTPUT_ADDR_4KiB.val(shifted as u64), // + attribute_fields.into(),
         ))
     }
 }
@@ -735,9 +733,8 @@ impl From<PageTableEntry> for u64 {
     fn from(val: PageTableEntry) -> u64 {
         match val {
             PageTableEntry::Invalid => 0,
-            PageTableEntry::TableDescriptor(x)
-            | PageTableEntry::Lvl2BlockDescriptor(x)
-            | PageTableEntry::PageDescriptor(x) => x.value,
+            PageTableEntry::TableDescriptor(x) | PageTableEntry::Lvl2BlockDescriptor(x) => x.value,
+            PageTableEntry::PageDescriptor(x) => x.value,
         }
     }
 }

@@ -7,9 +7,9 @@
 #![allow(dead_code)]
 
 use {
-    crate::memory::{
-        VirtAddr,
-        page_size::{NotGiantPageSize, PageSize, Size1GiB, Size2MiB, Size4KiB},
+    crate::{
+        arch::aarch64::page_size::{NotGiantPageSize, PageSize, Size1GiB, Size2MiB, Size4KiB},
+        virt_addr::VirtAddr,
     },
     core::{
         fmt,

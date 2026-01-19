@@ -5,8 +5,8 @@
 
 use {
     crate::{
-        memory::PhysAddr,
         mm::{align_down, align_up},
+        phys_addr::PhysAddr,
     },
     bit_field::BitField,
     core::{
@@ -14,7 +14,7 @@ use {
         fmt,
         ops::{Add, AddAssign, Rem, RemAssign, Sub, SubAssign},
     },
-    usize_conversions::{usize_from, FromUsize},
+    usize_conversions::{FromUsize, usize_from},
     ux::*,
 };
 
@@ -163,11 +163,11 @@ impl VirtAddr {
         u9::new(((self.0 >> 12 >> 9 >> 9 >> 9) & 0o777).try_into().unwrap())
     }
 
-    /// Convert kernel-space virtual address into a physical memory address.
+    /// Convert kernel-view virtual address of physical memory into a physical memory address.
     pub fn kernel_to_user(&self) -> PhysAddr {
-        use super::PHYSICAL_MEMORY_OFFSET;
-        assert!(self.0 > PHYSICAL_MEMORY_OFFSET);
-        PhysAddr::new(self.0 - PHYSICAL_MEMORY_OFFSET)
+        use super::PHYSICAL_KERNEL_WINDOW;
+        assert!(self.0 > PHYSICAL_KERNEL_WINDOW);
+        PhysAddr::new(self.0 - PHYSICAL_KERNEL_WINDOW)
     }
 }
 

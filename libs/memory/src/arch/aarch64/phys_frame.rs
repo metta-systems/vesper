@@ -2,10 +2,8 @@
 // Abstractions for default-sized and huge physical memory frames.
 
 use {
-    crate::memory::{
-        PhysAddr,
-        page_size::{PageSize, Size4KiB},
-    },
+    super::page_size::{PageSize, Size4KiB},
+    crate::phys_addr::PhysAddr,
     core::{
         fmt,
         marker::PhantomData,

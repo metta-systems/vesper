@@ -1,8 +1,8 @@
 //! Print MMU suported features for debugging.
 
 use {
-    crate::println,
-    cortex_a::registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1},
+    aarch64_cpu::registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1},
+    liblog::println,
     tock_registers::interfaces::Readable,
 };
 

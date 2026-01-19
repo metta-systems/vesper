@@ -17,9 +17,6 @@
   },
   "os": "vesper",
   "panic-strategy": "abort",
-  "pre-link-args": {
-    "ld.lld": ["--print-gc-sections"]
-  },
   "relocation-model": "static",
   "stack-probes": {
     "kind": "inline"
