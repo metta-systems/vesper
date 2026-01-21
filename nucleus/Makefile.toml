@@ -10,9 +10,12 @@ extend = "../Makefile.toml"
 [env]
 KERNEL_LINK = "libs/platform/src/platform/raspberrypi/linker/kernel.ld"
 
+# [tasks.kernel-binary]
+# alias = "build"
+
 [tasks.build]
 clear = true
-dependencies = ["build-target-nucleus", "patch-kernel-tables", "convert-kernel-binary"]
+dependencies = ["build-target-nucleus", "convert-kernel-binary"]
 script_runner = "@duckscript"
 script = '''
   echo
@@ -24,12 +27,21 @@ script = '''
 env = { TARGET_BOARD = "rpi4", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}", BOARD_RUSTFLAGS = "${BOARD_rpi4_RUSTFLAGS}" }
 run_task = "build-target"
 
-[tasks.patch-kernel-tables]
-command = "${CARGO_MAKE_WORKING_DIRECTORY}/../target/ttt"
-args = [
-  "--kernel",
-  "${KERNEL_ELF}",
-]
+[tasks.build-qemu]
+# FIXME: wasn't environment supposed to be extending?
+env = { "TARGET_FEATURES" = "${QEMU_FEATURES}", "TARGET_BOARD" = "rpi3", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}", "BOARD_RUSTFLAGS" = "${BOARD_rpi3_RUSTFLAGS}" }
+
+# [tasks.build-qemu]
+# env = { "TARGET_FEATURES" = "${QEMU_FEATURES}", "TARGET_BOARD" = "rpi3", "BOARD_RUSTFLAGS" = "${BOARD_rpi3_RUSTFLAGS}" }
+# run_task = "build-target"
+
+
+# [tasks.patch-kernel-tables]
+# command = "${CARGO_MAKE_WORKING_DIRECTORY}/../target/ttt"
+# args = [
+#   "--kernel",
+#   "${KERNEL_ELF}",
+# ]
 
 # Generate a bootable binary file from KERNEL_ELF
 [tasks.convert-kernel-binary]
@@ -58,7 +70,7 @@ alias = "zellij-nucleus-override"
 
 [tasks.zellij-nucleus-override]
 env = { "KERNEL_BIN" = "${KERNEL_BIN}", "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
-extend = "zellij-config"
+run_task = "generate-zellij-config"
 
 [tasks.gdb]
 dependencies = ["nucleus", "gdb-config"]

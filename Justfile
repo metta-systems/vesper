@@ -26,6 +26,8 @@ zellij:
     cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus zellij-nucleus
     zellij --layout emulation/layout.zellij
 
+alias z-qemu := zellij
+
 # Build and run chainboot in QEMU with serial port emulation
 [group("emu")]
 cb-zellij:

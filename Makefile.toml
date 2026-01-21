@@ -377,9 +377,9 @@ script = [
 ]
 # appendfile ${GDB_CONNECT_FILE} "continue\n"
 
-# #Generate zellij configuration file.
+# Generate zellij configuration file.
 [tasks.generate-zellij-config]
-dependencies = ["build-qemu", "kernel-binary"]
+dependencies = ["build-qemu"]
 script_runner = "@duckscript"
 env = { "ZELLIJ_CONFIG_FILE" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/emulation/zellij-config.sh" }
 script = [
