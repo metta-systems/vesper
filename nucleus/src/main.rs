@@ -36,6 +36,16 @@ use {
 
 libboot::entry!(init_thread);
 
+macro_rules! early_print {
+    // early_print!("a {} event", "log")
+    ($($arg:tt)+) => {
+        let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
+        libqemu::semihosting::sys_write0_call(
+            libconsole::write_to::c_show(&mut buf, format_args!($($arg)+)).unwrap(),
+        );
+    }
+}
+
 /// Kernel early init code.
 /// `arch` crate is responsible for calling it.
 ///
@@ -49,15 +59,14 @@ libboot::entry!(init_thread);
 pub unsafe fn init_thread() -> ! {
     // Entered in EL2:
 
-    // TODO list
-    // - Enter kernel init in EL2 - this will be needed to set up kernel mappings
-    // - Print DTB
-    // - Print max RAM from DTB
-    // - Print kernel covered area
-    // - Print KERNEL_HIGH_BASE
-    // - Print kernel mappings size and attribs
-    // - Print init_thread covered area
-    // - Print init_thread mappings size
+    early_print!("Entered EL2");
+
+    early_print!("DTB at");
+    early_print!("Max RAM size is");
+    early_print!("Init thread image covers phys -:- identity mapped");
+    early_print!("Init thread mapping tables filled in as - entries");
+    early_print!("Kernel image covers phys -:- mapped to KERNEL_HIGH_BASE:-");
+    early_print!("Kernel mapping tables filled in as - for kernel, as - for phys memory");
 
     // #[cfg(feature = "jtag")]
     // libmachine::debug::jtag::wait_debugger();
