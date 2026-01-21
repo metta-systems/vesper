@@ -5,14 +5,14 @@
  * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
  */
 
-PAGE_SIZE = 64K;
-PAGE_MASK = PAGE_SIZE - 1;
+__PAGE_SIZE = 64K;
+__PAGE_MASK = __PAGE_SIZE - 1;
 
-__phys_mem_start = 0x0;
-KERNEL_VIRT_ADDR_BASE = 0xffff000000000000; /* Nucleus is mapped here */
+__PHYS_MEM_START = 0x0;
+__KERNEL_VIRT_ADDR_BASE = 0xffff000000000000; /* Nucleus is mapped here */
 
-__phys_load_addr = 0x80000;
-ENTRY(__phys_load_addr);
+__PHYS_LOAD_ADDR = 0x80000;
+ENTRY(__PHYS_LOAD_ADDR);
 
 /* Flags:
  *     4 == R
@@ -29,15 +29,15 @@ PHDRS
     segment_data            PT_LOAD FLAGS(6);
 }
 
-/* Symbols between __init_thread_start and __init_thread_end should be dropped after init is complete.
+/* Symbols between __INIT_THREAD_START and __INIT_THREAD_END should be dropped after init is complete.
    Symbols between __CODE_START and __CODE_END are the kernel code.
    Symbols between __BSS_START and __BSS_END must be initialized to zero by startup code in the kernel.
         TODO: have two BSSs? init_thread.bss and kernel-high.bss
 */
 SECTIONS
 {
-    . = __phys_mem_start;
-    __init_thread_start = .;
+    . = __PHYS_MEM_START;
+    __INIT_THREAD_START = .;
 
     /***********************************************************************************************
     * Boot Core Stack
@@ -46,18 +46,18 @@ SECTIONS
     {
          __STACK_BOTTOM = .;                 /*   ^             */
                                              /*   | stack       */
-        . = __phys_load_addr;                /*   | growth      AArch64 boot address is 0x80000, 4K-aligned */
+        . = __PHYS_LOAD_ADDR;                /*   | growth      AArch64 boot address is 0x80000, 4K-aligned */
                                              /*   | direction   */
         __STACK_TOP = .;                     /*   | Stack grows from here towards 0x0. */
     } :segment_boot_core_stack
 
-    ASSERT((__STACK_TOP & PAGE_MASK) == 0, "End of boot core stack is not page aligned")
+    ASSERT((__STACK_TOP & __PAGE_MASK) == 0, "End of boot core stack is not page aligned")
 
     /***********************************************************************************************
     * Code + RO Data
     ***********************************************************************************************/
 
-    .text : ALIGN(PAGE_SIZE)
+    .text : ALIGN(__PAGE_SIZE)
     {
         /*******************************************************************************************
         * Boot Code + Boot Data
@@ -67,10 +67,10 @@ SECTIONS
         *(.text.boot)
         *(.data.boot)
 
-        . = ALIGN(PAGE_SIZE);
+        . = ALIGN(__PAGE_SIZE);
 
-        __init_thread_end = .; /* Here the boot code ends */
-        ASSERT((__init_thread_end & PAGE_MASK) == 0, "End of boot code is not page aligned")
+        __INIT_THREAD_END = .; /* Here the boot code ends */
+        ASSERT((__INIT_THREAD_END & __PAGE_MASK) == 0, "End of boot code is not page aligned")
     }
 
     /* Physical addresses */
@@ -79,7 +79,7 @@ SECTIONS
     __kernel_virt_addr_space_start = .;
 
     /* Kernel virtual address */
-    . = KERNEL_VIRT_ADDR_BASE;
+    . = __KERNEL_VIRT_ADDR_BASE;
 
     .text : AT(__nucleus_start)
     {
@@ -106,52 +106,49 @@ SECTIONS
         *(.rodata*)
         FILL(0x00)
 
-        . = ALIGN(PAGE_SIZE); /* Fill up to page size */
+        . = ALIGN(__PAGE_SIZE); /* Fill up to page size */
 
         __CODE_END = .;
-        ASSERT((__CODE_END & PAGE_MASK) == 0, "End of kernel code is not page aligned")
+        ASSERT((__CODE_END & __PAGE_MASK) == 0, "End of kernel code is not page aligned")
     } :segment_code
 
     /***********************************************************************************************
     * Data + BSS
     ***********************************************************************************************/
 
-    .data : ALIGN(PAGE_SIZE)
+    .data : ALIGN(__PAGE_SIZE)
     {
         __DATA_START = .;
-        ASSERT((__DATA_START & PAGE_MASK) == 0, "Start of kernel data is not page aligned")
+        ASSERT((__DATA_START & __PAGE_MASK) == 0, "Start of kernel data is not page aligned")
 
         *(.data*)
         FILL(0x00)
 
-        . = ALIGN(PAGE_SIZE);
+        . = ALIGN(__PAGE_SIZE);
         PHYS_KERNEL_TABLES_BASE_ADDR = .;
         KERNEL_TABLES = .;
 
         . += 0x20000; /* Random for now */
     } :segment_data
 
-    .bss (NOLOAD) : ALIGN(PAGE_SIZE)
+    .bss (NOLOAD) : ALIGN(__PAGE_SIZE)
     {
-        __BSS_START = LOADADDR(.bss); /* Physical address */
-
+        __BSS_START = LOADADDR(.bss); /* LMA (PhysAddr) */
         *(.bss*)
-
+        . = ALIGN(__PAGE_SIZE); /* Align up to page size */
     } :segment_data
 
-    __BSS_END = __BSS_START + ALIGN(SIZEOF(.bss), PAGE_SIZE); /* Physical address */
-
-    . = ALIGN(PAGE_SIZE); /* Align up to page size */
-    __DATA_END = .; /* Virtual address */
+    __BSS_END = __BSS_START + ALIGN(SIZEOF(.bss), __PAGE_SIZE); /* LMA, Physical address */
+    __DATA_END = .; /* VMA, Virtual address */
 
     /***********************************************************************************************
     * MMIO Remap Reserved (8Mb)
     ***********************************************************************************************/
-    __MMIO_REMAP_START = .;
+    __MMIO_REMAP_START = .; /* FIXME: VMA? Must be LMA perhaps, the point is to remap this */
     . += 8 * 1024 * 1024;
-    __MMIO_REMAP_END = .;
+    __MMIO_REMAP_END = .; /* FIXME: VMA? Must be LMA perhaps, the point is to remap this */
 
-    ASSERT((. & PAGE_MASK) == 0, "MMIO remap reservation is not page aligned")
+    ASSERT((. & __PAGE_MASK) == 0, "MMIO remap reservation is not page aligned")
     __kernel_virt_addr_space_size = . - __kernel_virt_addr_space_start;
 
     /* Physical end */
