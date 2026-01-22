@@ -1,0 +1,11 @@
+[package]
+name = "init_thread"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[build-dependencies]
+goblin = "0.10"
+build-rs = "0.3"
+build-print = "1.0"
