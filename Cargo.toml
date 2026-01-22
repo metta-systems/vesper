@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "nucleus",
+  "kernel",
   "bin/chainboot",
   "bin/chainofcommand",
   "tools/ttt",

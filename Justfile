@@ -23,7 +23,7 @@ boot: chainofcommand
 # Build and run kernel in QEMU with serial port emulation
 [group("emu")]
 zellij:
-    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus zellij-nucleus
+    cargo make {{ make-opts }} --makefile $(pwd)/kernel/Makefile.toml --cwd kernel zellij-kernel
     zellij --layout emulation/layout.zellij
 
 alias z-qemu := zellij
@@ -51,12 +51,12 @@ alias coc := chainofcommand
 # Build and run kernel in QEMU
 [group("emu")]
 qemu:
-    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus qemu
+    cargo make {{ make-opts }} --makefile $(pwd)/kernel/Makefile.toml --cwd kernel qemu
 
 # Build and run kernel in QEMU with GDB port enabled
 [group("emu")]
 qemu-gdb:
-    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus qemu-gdb
+    cargo make {{ make-opts }} --makefile $(pwd)/kernel/Makefile.toml --cwd kernel qemu-gdb
 
 # Build and run chainboot in QEMU
 [group("emu")]
@@ -140,7 +140,7 @@ openocd:
 # Build and run kernel in GDB using openocd or QEMU as target (gdb port 5555)
 [group("debug")]
 gdb:
-    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus gdb
+    cargo make {{ make-opts }} --makefile $(pwd)/kernel/Makefile.toml --cwd kernel gdb
 
 # Build and run chainboot in GDB using openocd or QEMU as target (gdb port 5555)
 [group("debug")]
@@ -152,10 +152,10 @@ cb-gdb:
 nm:
     cargo make {{ make-opts }} xtool-nm
 
-# Run `cargo expand` on nucleus
+# Run `cargo expand` on kernel
 [group("maintenance")]
 expand:
-    cargo make {{ make-opts }} xtool-expand-target -- nucleus
+    cargo make {{ make-opts }} xtool-expand-target -- kernel
 
 #==============================================================================
 # Modules dependency visualization

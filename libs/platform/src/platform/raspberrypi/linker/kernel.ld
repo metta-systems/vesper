@@ -9,7 +9,7 @@ __PAGE_SIZE = 64K;
 __PAGE_MASK = __PAGE_SIZE - 1;
 
 __PHYS_MEM_START = 0x0;
-__KERNEL_VIRT_ADDR_BASE = 0xffff000000000000; /* Nucleus is mapped here */
+__KERNEL_VIRT_ADDR_BASE = 0xffff000000000000; /* Nucleus is mapped here, init_thread is identity-mapped */
 
 __PHYS_LOAD_ADDR = 0x80000;
 ENTRY(__PHYS_LOAD_ADDR);

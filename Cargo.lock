@@ -544,6 +544,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
+name = "kernel"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "bit_field",
+ "bitflags 2.10.0",
+ "cfg-if",
+ "libboot",
+ "libconsole",
+ "libcpu",
+ "libexception",
+ "libkernel-state",
+ "liblocking",
+ "liblog",
+ "libmachine",
+ "libmemory",
+ "libplatform",
+ "libqemu",
+ "libtest",
+ "libtime",
+ "snafu",
+ "static_assertions",
+ "tock-registers",
+ "usize_conversions",
+ "ux",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -868,34 +896,6 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
-]
-
-[[package]]
-name = "nucleus"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "bit_field",
- "bitflags 2.10.0",
- "cfg-if",
- "libboot",
- "libconsole",
- "libcpu",
- "libexception",
- "libkernel-state",
- "liblocking",
- "liblog",
- "libmachine",
- "libmemory",
- "libplatform",
- "libqemu",
- "libtest",
- "libtime",
- "snafu",
- "static_assertions",
- "tock-registers",
- "usize_conversions",
- "ux",
 ]
 
 [[package]]

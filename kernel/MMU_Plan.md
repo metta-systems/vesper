@@ -15,3 +15,10 @@ Steps:
   - Print kernel mappings size and attribs
   - Print init_thread covered area
   - Print init_thread mappings size
+
+
+
+Whatever kernel links must also be located in high-mem mapping, so we cannot share this code with init_thread at all!
+This means it's probably sensible to build kernel as a separate ELF file linked entirely high, then merge it with the init_thread binary through specially-named sections; there should be no symbol resolution across two binaries, so the nucleus image is solely pulled via it's PHDRS (but we need to place the BSS which will be erased by the init_thread before turning the MMU on)
+
+See gh:metta-systems/kernel-embed-prototype for an outline of this approach - copy it here and lets go.

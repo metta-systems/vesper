@@ -101,8 +101,8 @@ QEMU_TESTS_OPTS = "-nographic"
 # - port 5555 used to match JLink configuration, so we can reuse the same GDB command for both QEMU and JTAG.
 QEMU_GDB_OPTS = "-gdb tcp::5555 -S"
 GDB_CONNECT_FILE = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/gdb-connect"
-KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/nucleus"
-KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/nucleus.bin"
+KERNEL_ELF = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${TARGET}/release/kernel"
+KERNEL_BIN = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/kernel.bin"
 CHAINBOOT_SERIAL = "/dev/tty.SLAB_USBtoUART"
 CHAINBOOT_BAUD = 115200
 
@@ -111,7 +111,7 @@ CHAINBOOT_BAUD = 115200
 #
 
 # #Target dependencies:
-# [tasks.kernel-binary] -- in nucleus
+# [tasks.kernel-binary] -- in kernel
 # alias = "empty"
 #
 # [tasks.chainboot-binary] -- in bin/chainboot
@@ -129,19 +129,19 @@ alias = "build"
 
 # All primary dependencies to build.
 [tasks.build]
-dependencies = ["x-build-nucleus", "x-build-bin-chainboot", "x-build-bin-chainofcommand"]
+dependencies = ["x-build-kernel", "x-build-bin-chainboot", "x-build-bin-chainofcommand"]
 # ttt-binary too
 
-[tasks.x-build-nucleus]
+[tasks.x-build-kernel]
 dependencies = ["build-ttt"]
 command = "cargo"
 # Have to use args to support env vars across platforms, regular scripts don't work on Windows
 args = [
   "make",
   "--makefile",
-  "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus/Makefile.toml",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/kernel/Makefile.toml",
   "--cwd",
-  "nucleus",
+  "kernel",
   "build",
 ]
 
@@ -213,18 +213,18 @@ script = [
 ]
 
 [tasks.test]
-dependencies = ["x-test-nucleus", "x-test-bin-chainboot", "x-test-bin-chainofcommand"]
+dependencies = ["x-test-kernel", "x-test-bin-chainboot", "x-test-bin-chainofcommand"]
 
-[tasks.x-test-nucleus]
+[tasks.x-test-kernel]
 command = "cargo"
 # Have to use args to support env vars across platforms, regular scripts don't work on Windows
 args = [
   "make",
   "--makefile",
-  "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus/Makefile.toml",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/kernel/Makefile.toml",
   "--cwd",
-  "nucleus",
-  "test-nucleus",
+  "kernel",
+  "test-kernel",
 ]
 
 [tasks.x-test-bin-chainboot]
@@ -276,17 +276,17 @@ args = [
 
 # Run xtool-clippy in all subprojects
 [tasks.clippy]
-dependencies = ["x-clippy-nucleus", "x-clippy-bin-chainboot", "x-clippy-bin-chainofcommand"]
+dependencies = ["x-clippy-kernel", "x-clippy-bin-chainboot", "x-clippy-bin-chainofcommand"]
 
-[tasks.x-clippy-nucleus]
+[tasks.x-clippy-kernel]
 command = "cargo"
 # Have to use args to support env vars across platforms, regular scripts don't work on Windows
 args = [
   "make",
   "--makefile",
-  "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus/Makefile.toml",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/kernel/Makefile.toml",
   "--cwd",
-  "nucleus",
+  "kernel",
   "clippy",
 ]
 
