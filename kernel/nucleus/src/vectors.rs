@@ -1,4 +1,4 @@
-// kernel/src/vectors.rs - Example exception vector table for kernel
+// Exception vector table for kernel
 
 use core::arch::global_asm;
 
