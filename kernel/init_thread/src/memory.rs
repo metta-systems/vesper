@@ -53,6 +53,9 @@ impl VirtAddr {
     pub const fn is_higher_half(self) -> bool {
         self.0 >= 0xFFFF_0000_0000_0000
     }
+    pub const fn is_aligned(self, align: u64) -> bool {
+        self.0 & (align - 1) == 0
+    }
 }
 
 pub struct BootAllocator {

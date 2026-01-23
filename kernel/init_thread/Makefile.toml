@@ -1,0 +1,16 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Build kernel
+#
+extend = "../../Makefile.toml"
+
+[env]
+INIT_LINK = "${CARGO_MAKE_WORKING_DIRECTORY}/init_thread.ld"
+
+[tasks.build]
+clear = true
+env = { TARGET_BOARD = "rpi4", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${INIT_LINK}", BOARD_RUSTFLAGS = "${BOARD_rpi4_RUSTFLAGS}" }
+run_task = "build-target"

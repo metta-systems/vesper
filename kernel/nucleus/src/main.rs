@@ -34,8 +34,6 @@ use {
     // , time
 };
 
-// kernel/src/main.rs - Kernel entry points are exception handlers in mod vectors
-
 mod vectors;
 
 #[panic_handler]

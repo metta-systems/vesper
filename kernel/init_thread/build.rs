@@ -13,13 +13,13 @@ use {
 };
 
 fn main() {
-    let kernel_elf_path = "../target/aarch64-unknown-none/release/kernel"; // must be passed-in as input?
+    let kernel_elf_path = "../../target/aarch64-metta-none-eabi/release/nucleus"; // must be passed-in as input?
 
     output::rerun_if_changed(kernel_elf_path);
     output::rerun_if_changed("build.rs");
-    output::rustc_link_arg(
-        format!("--script={}/init_thread.ld", env!("CARGO_MANIFEST_DIR")).as_ref(),
-    );
+    // output::rustc_link_arg(
+    //     format!("--script={}/init_thread.ld", env!("CARGO_MANIFEST_DIR")).as_ref(),
+    // );
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir);
@@ -254,7 +254,7 @@ fn generate_rust_code(sections: &KernelSections, _elf: &Elf, out_path: &Path) {
 
 #[allow(unused)]
 use crate::{
-    loader::{BssSectionMeta, KernelImageInfo, KernelSectionMeta, LoadableSection, VectorTableMeta},
+    loader::{KernelImageInfo, KernelSectionMeta, LoadableSection, VectorTableMeta},
     memory::MemoryPermissions
 };
 
@@ -316,10 +316,12 @@ use crate::{
     // BSS metadata
     if let Some(ref bss) = sections.bss_section {
         code.push_str(&format!(
-            r#"pub const BSS_META: BssSectionMeta = BssSectionMeta {{
+            r#"pub const BSS_META: KernelSectionMeta = KernelSectionMeta {{
+    name: ".bss",
     virt_addr: 0x{:016X},
     size: 0x{:X},
     alignment: 0x{:X},
+    permissions: MemoryPermissions {{ readable: true, writable: true, executable: false }},
 }};
 
 "#,

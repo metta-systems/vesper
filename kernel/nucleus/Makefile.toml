@@ -1,0 +1,17 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+#
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Build nucleus
+#
+extend = "../../Makefile.toml"
+
+[env]
+# KERNEL_LINK = "libs/platform/src/platform/raspberrypi/linker/kernel.ld"
+KERNEL_LINK = "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus.ld"
+
+[tasks.build]
+clear = true
+env = { TARGET_BOARD = "rpi4", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}", BOARD_RUSTFLAGS = "${BOARD_rpi4_RUSTFLAGS}" }
+run_task = "build-target"

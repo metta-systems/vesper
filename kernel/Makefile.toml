@@ -8,14 +8,16 @@
 extend = "../Makefile.toml"
 
 [env]
-KERNEL_LINK = "libs/platform/src/platform/raspberrypi/linker/kernel.ld"
+# KERNEL_LINK = "libs/platform/src/platform/raspberrypi/linker/kernel.ld"
+KERNEL_LINK = "nucleus/nucleus.ld"
+INIT_LINK = "init_thread/init_thread.ld"
 
 # [tasks.kernel-binary]
 # alias = "build"
 
 [tasks.build]
 clear = true
-dependencies = ["build-target-kernel", "convert-kernel-binary"]
+dependencies = ["build-target-kernel", "build-target-init-thread", "convert-final-binary"]
 script_runner = "@duckscript"
 script = '''
   echo
@@ -24,8 +26,26 @@ script = '''
 '''
 
 [tasks.build-target-kernel]
-env = { TARGET_BOARD = "rpi4", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}", BOARD_RUSTFLAGS = "${BOARD_rpi4_RUSTFLAGS}" }
-run_task = "build-target"
+command = "cargo"
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus/Makefile.toml",
+  "--cwd",
+  "nucleus",
+  "build",
+]
+
+[tasks.build-target-init-thread]
+command = "cargo"
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/init_thread/Makefile.toml",
+  "--cwd",
+  "init_thread",
+  "build",
+]
 
 [tasks.build-qemu]
 # FIXME: wasn't environment supposed to be extending?
@@ -44,7 +64,7 @@ env = { "TARGET_FEATURES" = "${QEMU_FEATURES}", "TARGET_BOARD" = "rpi3", TARGET_
 # ]
 
 # Generate a bootable binary file from KERNEL_ELF
-[tasks.convert-kernel-binary]
+[tasks.convert-final-binary]
 workspace = false
 env = { "BINARY_FILE" = "${KERNEL_ELF}" }
 extend = "convert-custom-binary"

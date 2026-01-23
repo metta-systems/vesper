@@ -58,6 +58,9 @@ liblocking = { workspace = true }
 libqemu = { workspace = true }
 libtest = { workspace = true }
 
+[build-dependencies]
+build-rs = { workspace = true }
+
 [[bin]]
 name = "nucleus"
 test = false  # test are all concentrated in integration tests/
