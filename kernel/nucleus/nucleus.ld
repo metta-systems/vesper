@@ -1,6 +1,6 @@
-/* kernel/kernel.ld - Higher-half kernel with vector table */
+/* Higher-half kernel with vector table */
 
-ENTRY(_kernel_entry)
+/* ENTRY(_kernel_entry) */
 
 KERNEL_VIRT_BASE = 0xFFFF000000000000;
 
