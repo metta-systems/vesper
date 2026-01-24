@@ -6,6 +6,8 @@ What's needed: quick-n-dirty higher-half mappings setup and kernel physical memo
 
 Steps:
 - Buildable
+- Print that we can invoke kernel function using a syscall from the init_thread (even it if runs at the same EL for now)
+
 - Run steps by step
   - Enter kernel init in EL2 - this will be needed to set up kernel mappings
   - Print DTB

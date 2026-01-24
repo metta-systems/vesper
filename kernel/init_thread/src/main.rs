@@ -3,6 +3,7 @@
 #![no_std]
 #![no_main]
 #![allow(unused)]
+#![feature(format_args_nl)]
 
 mod boot;
 mod el_switch;
@@ -13,6 +14,7 @@ mod paging;
 
 use {
     core::panic::PanicInfo,
+    libqemu::semi_println,
     memory::{BootAllocator, PhysAddr},
 };
 
@@ -24,6 +26,8 @@ unsafe extern "C" {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init_main(_dtb_ptr: *const u8) -> ! {
+    semi_println!("init_main started");
+
     let init_start = unsafe { &__init_start as *const u8 as u64 };
     let init_end = unsafe { &__init_end as *const u8 as u64 };
     let free_start = unsafe { &__free_memory_start as *const u8 as u64 };
