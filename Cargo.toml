@@ -18,11 +18,12 @@ members = [
   "libs/memory",
   "libs/platform",
   "libs/primitives",
+  "libs/print",
   "libs/qemu",
   "libs/test",
   "libs/time",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
@@ -58,6 +59,7 @@ libmachine = { path = "libs/machine" }
 libmemory = { path = "libs/memory" }
 libplatform = { path = "libs/platform" }
 libprimitives = { path = "libs/primitives" }
+libprint = { path = "libs/print" }
 libqemu = { path = "libs/qemu" }
 libtest = { path = "libs/test" }
 libtime = { path = "libs/time" }

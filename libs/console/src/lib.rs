@@ -5,7 +5,6 @@
 #![reexport_test_harness_main = "test_main"]
 
 pub mod console;
-pub mod write_to;
 
 pub trait SerialOps {
     /// Read one byte from serial without translation.
@@ -33,11 +32,9 @@ impl liblog::Log for ConsoleLogger {
     fn log(&self, record: &Record) {
         #[cfg(any(test, feature = "qemu"))]
         {
-            use crate::write_to;
-
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
             libqemu::semihosting::sys_write0_call(
-                write_to::c_show(&mut buf, *record.args()).unwrap(),
+                libprint::format_cstr(&mut buf, *record.args()).unwrap(),
             );
         }
 

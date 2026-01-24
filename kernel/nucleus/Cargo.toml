@@ -44,6 +44,7 @@ liblog = { workspace = true }
 libmachine = { workspace = true }
 libmemory = { workspace = true }
 libplatform = { workspace = true }
+libprint = { workspace = true }
 libqemu = { workspace = true, optional = true }
 libtime = { workspace = true }
 snafu = { workspace = true }

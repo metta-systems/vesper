@@ -117,9 +117,5 @@ exception_handler_serror:
 
 exception_handler_unsupported:
     b       .
-
-syscall_handler:
-    // This is where CapInvoke syscalls arrive
-    b       .
 "#
 );

@@ -22,16 +22,12 @@
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 
-use core::panic::PanicInfo;
-#[allow(unused_imports)]
-use libconsole::{SerialOps, console::console};
 use {
     cfg_if::cfg_if,
-    core::{cell::UnsafeCell, time::Duration},
+    core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration},
+    libcpu::endless_sleep,
     liblog::{info, println, warn},
-    // machine::{arch, entry, memory},
-    // exception,
-    // , time
+    libqemu::semi_println,
 };
 
 mod vectors;
@@ -39,4 +35,21 @@ mod vectors;
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
     libmachine::panic::handler(info)
+}
+/// Syscall entry point (the only other thing nucleus does)
+#[unsafe(no_mangle)]
+pub extern "C" fn syscall_handler() -> ! {
+    semi_println!("SYSCALL happened, we're at 0x{:016X}", get_pc());
+    endless_sleep()
+}
+
+fn get_pc() -> u64 {
+    let pc: u64;
+    unsafe {
+        asm!(
+            "adr {}, .",
+            out(reg) pc,
+        );
+    }
+    pc
 }
