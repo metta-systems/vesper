@@ -1,7 +1,7 @@
 [package]
 name = "libmemory"
 
-description = "Vesper nanokernel Memory Descriptors shared code library, useful also for the ttt tool."
+description = "Vesper nanokernel Memory Descriptors shared code library."
 
 authors = { workspace = true }
 categories = { workspace = true }

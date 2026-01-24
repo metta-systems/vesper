@@ -4,7 +4,6 @@ members = [
   "kernel/init_thread",
   "bin/chainboot",
   "bin/chainofcommand",
-  "tools/ttt",
   # Libraries
   "libs/boot",
   "libs/console",

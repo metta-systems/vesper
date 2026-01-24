@@ -56,13 +56,6 @@ env = { "TARGET_FEATURES" = "${QEMU_FEATURES}", "TARGET_BOARD" = "rpi3", TARGET_
 # run_task = "build-target"
 
 
-# [tasks.patch-kernel-tables]
-# command = "${CARGO_MAKE_WORKING_DIRECTORY}/../target/ttt"
-# args = [
-#   "--kernel",
-#   "${KERNEL_ELF}",
-# ]
-
 # Generate a bootable binary file from KERNEL_ELF
 [tasks.convert-final-binary]
 workspace = false

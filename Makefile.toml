@@ -119,9 +119,6 @@ CHAINBOOT_BAUD = 115200
 #
 # [tasks.chainofcommand-binary] -- in bin/chainofcommand
 # alias = "empty"
-#
-# [tasks.ttt-binary] -- in tools/ttt
-# alias = "empty"
 
 # By default, build everything.
 [tasks.default]
@@ -130,10 +127,8 @@ alias = "build"
 # All primary dependencies to build.
 [tasks.build]
 dependencies = ["x-build-kernel", "x-build-bin-chainboot", "x-build-bin-chainofcommand"]
-# ttt-binary too
 
 [tasks.x-build-kernel]
-dependencies = ["build-ttt"]
 command = "cargo"
 # Have to use args to support env vars across platforms, regular scripts don't work on Windows
 args = [
@@ -143,18 +138,6 @@ args = [
   "--cwd",
   "kernel",
   "build",
-]
-
-[tasks.build-ttt]
-command = "cargo"
-# Have to use args to support env vars across platforms, regular scripts don't work on Windows
-args = [
-    "make",
-    "--makefile",
-    "${CARGO_MAKE_WORKING_DIRECTORY}/tools/ttt/Makefile.toml",
-    "--cwd",
-    "tools/ttt",
-    "ttt",
 ]
 
 [tasks.x-build-bin-chainboot]

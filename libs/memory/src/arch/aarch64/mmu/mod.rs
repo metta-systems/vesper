@@ -180,7 +180,6 @@ impl interface::MMU for MemoryManagementUnit {
         // TTBR0_EL1.set_baddr(KERNEL_TABLES.entries.base_addr_u64()); // User (lo-)space addresses
         // TTBR0_EL1.modify(TTBR0_EL1::CnP.val(1));
 
-        // TODO: also do kernel level tables (same mappings but at higher table addresses? need to update ttt to do it)
         // TTBR1_EL1.set_baddr(LVL1_TABLE.entries.base_addr_u64()); // Kernel (hi-)space addresses
         // TTBR1_EL1.modify(TTBR1_EL1::CnP.val(1));
 
