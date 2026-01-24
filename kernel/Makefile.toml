@@ -47,19 +47,10 @@ args = [
   "build",
 ]
 
-[tasks.build-qemu]
-# FIXME: wasn't environment supposed to be extending?
-env = { "TARGET_FEATURES" = "${QEMU_FEATURES}", "TARGET_BOARD" = "rpi3", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}", "BOARD_RUSTFLAGS" = "${BOARD_rpi3_RUSTFLAGS}" }
-
-# [tasks.build-qemu]
-# env = { "TARGET_FEATURES" = "${QEMU_FEATURES}", "TARGET_BOARD" = "rpi3", "BOARD_RUSTFLAGS" = "${BOARD_rpi3_RUSTFLAGS}" }
-# run_task = "build-target"
-
-
 # Generate a bootable binary file from KERNEL_ELF
 [tasks.convert-final-binary]
 workspace = false
-env = { "BINARY_FILE" = "${KERNEL_ELF}" }
+env = { "BINARY_FILE" = "${KERNEL_ELF}", "OUTPUT_OVERRIDE" = "${KERNEL_BIN}" }
 extend = "convert-custom-binary"
 
 [tasks.test-kernel]
@@ -67,12 +58,29 @@ env = { TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}" }
 run_task = "test-on-rpi3-qemu"
 
 [tasks.qemu]
-clear = true
-alias = "qemu-kernel"
+dependencies = ["qemu-target-kernel", "qemu-target-init-thread"]
 
-[tasks.qemu-kernel]
-env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
-run_task = "qemu-runner"
+[tasks.qemu-target-kernel]
+command = "cargo"
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus/Makefile.toml",
+  "--cwd",
+  "nucleus",
+  "qemu",
+]
+
+[tasks.qemu-target-init-thread]
+command = "cargo"
+args = [
+  "make",
+  "--makefile",
+  "${CARGO_MAKE_WORKING_DIRECTORY}/init_thread/Makefile.toml",
+  "--cwd",
+  "init_thread",
+  "qemu",
+]
 
 [tasks.qemu-gdb]
 env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS} ${QEMU_DISASM_OPTS} ${QEMU_GDB_OPTS}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }

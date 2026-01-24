@@ -5,7 +5,7 @@
 #
 # Build kernel
 #
-extend = "../../Makefile.toml"
+extend = "../Makefile.toml"
 
 [env]
 INIT_LINK = "${CARGO_MAKE_WORKING_DIRECTORY}/init_thread.ld"
@@ -14,3 +14,14 @@ INIT_LINK = "${CARGO_MAKE_WORKING_DIRECTORY}/init_thread.ld"
 clear = true
 env = { TARGET_BOARD = "rpi4", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${INIT_LINK}", BOARD_RUSTFLAGS = "${BOARD_rpi4_RUSTFLAGS}" }
 run_task = "build-target"
+
+[tasks.build-qemu]
+env = { "TARGET_BOARD" = "rpi3", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${INIT_LINK}", "BOARD_RUSTFLAGS" = "${BOARD_rpi3_RUSTFLAGS}", "TARGET_FEATURES" = "${QEMU_FEATURES}" }
+
+[tasks.qemu]
+clear = true
+alias = "qemu-kernel"
+
+[tasks.qemu-kernel]
+env = { "QEMU_RUNNER_OPTS" = "${QEMU_SERIAL_OPTS}", TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${INIT_LINK}", "TARGET_DTB" = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/bcm2710-rpi-3-b-plus.dtb" }
+run_task = "qemu-runner"

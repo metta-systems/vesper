@@ -181,7 +181,7 @@ env = { "TARGET_FEATURES" = "${QEMU_FEATURES}", "TARGET_BOARD" = "rpi3", "BOARD_
 run_task = "build-target"
 
 [tasks.qemu-runner]
-dependencies = ["build-qemu", "convert-kernel-binary"]
+dependencies = ["build-qemu", "convert-final-binary"]
 env = { "TARGET_FEATURES" = "${QEMU_FEATURES}" }
 script = [
   "echo 🚜 Run QEMU ${QEMU_OPTS} ${QEMU_RUNNER_OPTS}",
@@ -301,12 +301,16 @@ args = [
 
 # #Copy and prepare a given ELF file. Convert to binary output format.
 [tasks.convert-custom-binary]
-env = { "BINARY_FILE" = "${BINARY_FILE}" }
+env = { "BINARY_FILE" = "${BINARY_FILE}", "OUTPUT_OVERRIDE" = { value = "${OUTPUT_OVERRIDE}", condition = { env_set = ["OUTPUT_OVERRIDE"] } } }
 script_runner = "@duckscript"
 script = '''
     binaryFile = basename ${BINARY_FILE}
     outElf = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.elf
-    outBin = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+    if is_empty ${OUTPUT_OVERRIDE}
+        outBin = set ${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/target/${binaryFile}.bin
+    else
+        outBin = set ${OUTPUT_OVERRIDE}
+    end
     cp ${BINARY_FILE} ${outElf}
     exec --fail-on-error ${OBJCOPY} %{OBJCOPY_PARAMS} ${BINARY_FILE} ${outBin}
     elfSize = get_file_size ${outElf}
