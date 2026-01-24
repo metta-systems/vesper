@@ -145,9 +145,9 @@ pub struct KernelLayout {
     /// BSS size
     pub bss_size: usize,
     /// Exception vector table physical address (for VBAR_EL1)
-    pub vectors_phys: Option<PhysAddr>,
+    pub vectors_phys: PhysAddr,
     /// Exception vector table virtual address
-    pub vectors_virt: Option<VirtAddr>,
+    pub vectors_virt: VirtAddr,
 }
 
 impl KernelLayout {
@@ -160,15 +160,13 @@ impl KernelLayout {
     ///
     /// This is what the kernel would set VBAR_EL1 to after switching to
     /// higher-half addresses.
-    pub fn vbar_el1_virt(&self) -> Option<u64> {
-        self.vectors_virt.map(|virt| {
-            assert!(
-                virt.as_u64() & 0x7FF == 0,
-                "VBAR_EL1 address 0x{:016X} must be 2KB aligned",
-                virt.0
-            );
-            virt.0
-        })
+    pub fn vbar_el1_virt(&self) -> u64 {
+        assert!(
+            self.vectors_virt.as_u64() & 0x7FF == 0,
+            "VBAR_EL1 address 0x{:016X} must be 2KB aligned",
+            self.vectors_virt.0
+        );
+        self.vectors_virt.0
     }
 
     pub fn iter_sections(&self) -> impl Iterator<Item = SectionMapping> + '_ {

@@ -88,6 +88,7 @@ tokio-util = { version = "0.7", features = ["codec", "io"] }
 goblin = { version = "0.10" }
 build-rs = { version = "0.3" }
 build-print = { version = "1.0" }
+minijinja = { version = "2", features = ["loader"] }
 #=======
 # mixed
 #=======

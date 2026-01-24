@@ -10,7 +10,7 @@ use {
 
 /// Metadata for a kernel section
 #[derive(Debug, Clone, Copy)]
-pub struct KernelSectionMeta {
+pub struct SectionMeta {
     /// Section name (for debugging)
     pub name: &'static str,
     /// Virtual address in kernel's higher-half address space
@@ -23,7 +23,7 @@ pub struct KernelSectionMeta {
     pub permissions: MemoryPermissions,
 }
 
-impl KernelSectionMeta {
+impl SectionMeta {
     /// Calculate offset from kernel virtual base
     pub const fn offset_from_base(&self, virt_base: u64) -> u64 {
         self.virt_addr - virt_base
@@ -40,54 +40,20 @@ impl KernelSectionMeta {
     }
 }
 
-/// Exception vector table metadata
-///
-/// The vector table must be 2KB aligned for VBAR_EL1.
-/// It contains 16 entries × 128 bytes = 2048 bytes total.
-#[derive(Debug, Clone, Copy)]
-pub struct VectorTableMeta {
-    /// Virtual address of the vector table (higher-half)
-    pub virt_addr: u64,
-    /// Size of the vector table (typically 0x800 = 2048 bytes)
-    pub size: usize,
-    /// Alignment requirement (must be at least 2048 for VBAR)
-    pub alignment: u64,
-}
-
-impl VectorTableMeta {
-    /// Calculate offset from kernel virtual base
-    pub const fn offset_from_base(&self, virt_base: u64) -> u64 {
-        self.virt_addr - virt_base
-    }
-
-    /// Calculate physical address given kernel physical base
-    ///
-    /// This is the value to write to VBAR_EL1 before enabling MMU,
-    /// since at that point we're still using physical addresses.
-    pub const fn phys_addr(&self, kernel_phys_base: u64, kernel_virt_base: u64) -> u64 {
-        kernel_phys_base + self.offset_from_base(kernel_virt_base) // FIXME: dupe of the above same fns
-    }
-
-    /// Verify the address meets VBAR alignment requirements
-    pub const fn is_properly_aligned(&self, addr: u64) -> bool {
-        addr & 0x7FF == 0 // Must be 2KB aligned
-    }
-}
-
 /// Complete kernel image information
 #[derive(Debug)]
-pub struct KernelImageInfo {
+pub struct ImageInfo {
     /// Virtual base address (higher-half) -- FIXME: don't need this necessarily
     pub virt_base: u64,
     /// Loadable sections with their binary data
     pub sections: &'static [LoadableSection],
     /// BSS section metadata (no binary data - must be zeroed)
-    pub bss: Option<KernelSectionMeta>,
-    /// Exception vector table metadata
-    pub vectors: Option<VectorTableMeta>,
+    pub bss: SectionMeta,
+    /// Exception vector table metadata (to set up VBAR)
+    pub vectors: SectionMeta,
 }
 
-impl KernelImageInfo {
+impl ImageInfo {
     /// Total size needed for kernel in physical memory (all sections + BSS)
     pub fn total_size(&self) -> usize {
         let mut max_end: u64 = 0;
@@ -97,10 +63,8 @@ impl KernelImageInfo {
             max_end = max_end.max(end);
         }
 
-        if let Some(bss) = &self.bss {
-            let bss_end = bss.virt_addr + bss.size as u64;
-            max_end = max_end.max(bss_end);
-        }
+        let bss_end = self.bss.virt_addr + self.bss.size as u64;
+        max_end = max_end.max(bss_end);
 
         let size = (max_end - self.virt_base) as usize;
         (size + 0xFFF) & !0xFFF // FIXME: aligned to a page size
@@ -110,7 +74,7 @@ impl KernelImageInfo {
 /// A loadable section with its binary content
 #[derive(Debug)]
 pub struct LoadableSection {
-    pub meta: KernelSectionMeta,
+    pub meta: SectionMeta,
     pub data: &'static [u8], // or Option<&'static [u8]>?
 }
 
@@ -118,7 +82,7 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
     let total_size = KERNEL.total_size();
     let total_pages = total_size.div_ceil(0x1000);
 
-    // Allocate 2MB-aligned for potential huge page mapping -- FIXME: with this we can abandon the whole loaded imade and do ASLR easy
+    // Allocate 2MB-aligned for potential huge page mapping -- FIXME: with this we can abandon the whole loaded image and do ASLR easy
     let phys_base = allocator
         .alloc_aligned(total_pages * 0x1000, 2 * 1024 * 1024)
         .ok_or("Failed to allocate memory for kernel")?;
@@ -129,22 +93,22 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
     }
 
     // Zero BSS section
-    if let Some(bss) = &KERNEL.bss {
-        zero_bss(bss, phys_base)?;
-    }
+    zero_bss(&KERNEL.bss, phys_base)?;
 
     memory_barrier();
 
     // Build layout information
-    let bss_info = KERNEL.bss.map(|bss| {
-        let phys = PhysAddr::new(phys_base.as_u64() + bss.offset_from_base(KERNEL.virt_base));
-        (phys, VirtAddr::new(bss.virt_addr), bss.size)
-    });
+    let bss_info = {
+        let phys =
+            PhysAddr::new(phys_base.as_u64() + KERNEL.bss.offset_from_base(KERNEL.virt_base));
+        (phys, VirtAddr::new(KERNEL.bss.virt_addr), KERNEL.bss.size)
+    };
 
     // Calculate vector table addresses
-    let vectors_info = KERNEL.vectors.map(|v| {
-        let phys = PhysAddr::new(phys_base.as_u64() + v.offset_from_base(KERNEL.virt_base));
-        let virt = VirtAddr::new(v.virt_addr);
+    let vectors_info = {
+        let phys =
+            PhysAddr::new(phys_base.as_u64() + KERNEL.vectors.offset_from_base(KERNEL.virt_base));
+        let virt = VirtAddr::new(KERNEL.vectors.virt_addr);
 
         // Verify alignment
         if !virt.is_aligned(2048) {
@@ -155,18 +119,18 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
         }
 
         (phys, virt)
-    });
+    };
 
     Ok(KernelLayout {
         phys_base,
         virt_base: VirtAddr::new(KERNEL.virt_base),
         total_size,
         sections: KERNEL.sections,
-        bss_phys: bss_info.map(|(p, _, _)| p).unwrap_or(PhysAddr::new(0)),
-        bss_virt: bss_info.map(|(_, v, _)| v).unwrap_or(VirtAddr::new(0)),
-        bss_size: bss_info.map(|(_, _, s)| s).unwrap_or(0),
-        vectors_phys: vectors_info.map(|(p, _)| p),
-        vectors_virt: vectors_info.map(|(_, v)| v),
+        bss_phys: bss_info.0,
+        bss_virt: bss_info.1,
+        bss_size: bss_info.2,
+        vectors_phys: vectors_info.0,
+        vectors_virt: vectors_info.1,
     })
 }
 
@@ -197,7 +161,7 @@ fn load_section(section: &LoadableSection, kernel_phys_base: PhysAddr) -> Result
     Ok(())
 }
 
-fn zero_bss(bss: &KernelSectionMeta, kernel_phys_base: PhysAddr) -> Result<(), &'static str> {
+fn zero_bss(bss: &SectionMeta, kernel_phys_base: PhysAddr) -> Result<(), &'static str> {
     let offset = bss.offset_from_base(KERNEL.virt_base);
     let dest_phys = PhysAddr::new(kernel_phys_base.as_u64() + offset);
 
