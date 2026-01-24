@@ -64,9 +64,7 @@ pub extern "C" fn init_main(_dtb_ptr: *const u8) -> ! {
 
     // Get vector table virtual address for VBAR_EL1
     // VBAR is only used after MMU is enabled, so we set the virtual address directly
-    let vbar = kernel_layout
-        .vbar_el1_virt()
-        .expect("Kernel must define exception vector table (__vectors symbol)");
+    let vbar = kernel_layout.vbar_el1_virt();
 
     // Allocate EL1 stack
     let el1_stack = allocator

@@ -292,7 +292,7 @@ mod tests {
     #[test_case]
     pub fn test_page_ranges() {
         let page_size = Size4KiB::SIZE;
-        let number = 1000usize;
+        let number = 1000_usize;
 
         let start_addr = VirtAddr::new(0xdeafbead);
         let start: Page = Page::<Size4KiB>::containing_address(start_addr);

@@ -13,6 +13,7 @@
 #![feature(allocator_api)]
 #![feature(core_intrinsics)]
 #![feature(step_trait)]
+#![feature(custom_test_frameworks)]
 
 use core::{
     fmt,
