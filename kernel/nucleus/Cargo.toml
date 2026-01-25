@@ -52,6 +52,10 @@ libprint = { workspace = true }
 libqemu = { workspace = true }
 owo-colors = { workspace = true }
 tock-registers = { workspace = true }
+#enum_dispatch = "0.3"
+#tap = "1.0" -- check no_std?
+# For universal page table management,
+# see also https://github.com/arceos-org/page_table_multiarch/blob/main/page_table_multiarch/src/lib.rs
 
 [dev-dependencies]
 libboot = { workspace = true }
