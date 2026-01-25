@@ -44,7 +44,7 @@ curr_el_sp0_serror:
 
 .balign 128
 curr_el_spx_sync:
-    b       exception_handler_sync
+    b       syscall_handler
 
 .balign 128
 curr_el_spx_irq:
