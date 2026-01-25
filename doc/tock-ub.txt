@@ -1,0 +1,4 @@
+https://github.com/tock/tock-registers/issues/4
+
+possible reference-to-mmio-memory UB
+(tock-registers affected, but safe-mmio could be used instead?)
