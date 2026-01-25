@@ -88,6 +88,9 @@ impl BootAllocator {
     pub fn current(&self) -> PhysAddr {
         self.current
     }
+    pub fn end(&self) -> PhysAddr {
+        self.end
+    }
     pub fn remaining(&self) -> usize {
         (self.end.0 - self.current.0) as usize
     }
@@ -99,6 +102,18 @@ pub struct MemoryPermissions {
     pub readable: bool,
     pub writable: bool,
     pub executable: bool,
+}
+
+impl core::fmt::Display for MemoryPermissions {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}{}{}",
+            if self.readable { "R" } else { "-" },
+            if self.writable { "W" } else { "-" },
+            if self.executable { "X" } else { "-" }
+        )
+    }
 }
 
 impl MemoryPermissions {

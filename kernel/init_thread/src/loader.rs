@@ -6,6 +6,7 @@ use {
         memory::{BootAllocator, KernelLayout, MemoryPermissions, PhysAddr, VirtAddr},
     },
     core::ptr,
+    libqemu::semi_println,
 };
 
 /// Metadata for a kernel section
@@ -87,6 +88,11 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
         .alloc_aligned(total_pages * 0x1000, 2 * 1024 * 1024)
         .ok_or("Failed to allocate memory for kernel")?;
 
+    semi_println!(
+        "Nucleus is {total_pages} * 4K pages @ {:#016X}",
+        phys_base.0
+    );
+
     // Load each section
     for section in KERNEL.sections {
         load_section(section, phys_base)?;
@@ -138,6 +144,14 @@ fn load_section(section: &LoadableSection, kernel_phys_base: PhysAddr) -> Result
     let offset = section.meta.offset_from_base(KERNEL.virt_base);
     let dest_phys = PhysAddr::new(kernel_phys_base.as_u64() + offset);
 
+    semi_println!(
+        "> section {}, copy {} bytes of {} bytes total to {:#016X}",
+        section.meta.name,
+        section.data.len(),
+        section.meta.size,
+        dest_phys.0
+    );
+
     if !dest_phys.as_u64().is_multiple_of(section.meta.alignment) {
         return Err("Section alignment violated");
     }
@@ -164,6 +178,13 @@ fn load_section(section: &LoadableSection, kernel_phys_base: PhysAddr) -> Result
 fn zero_bss(bss: &SectionMeta, kernel_phys_base: PhysAddr) -> Result<(), &'static str> {
     let offset = bss.offset_from_base(KERNEL.virt_base);
     let dest_phys = PhysAddr::new(kernel_phys_base.as_u64() + offset);
+
+    semi_println!(
+        "> section {}, zero {} bytes at {:#016X}",
+        bss.name,
+        bss.size,
+        dest_phys.0
+    );
 
     if !dest_phys.as_u64().is_multiple_of(bss.alignment) {
         return Err("BSS alignment violated");

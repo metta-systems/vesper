@@ -41,8 +41,8 @@ SECTIONS
         . = ALIGN(2K);
     } :segment_code
 
-    /* TODO: rodata is currently executable, but doesn't have to... */
-    .rodata : /*AT(ADDR(.rodata) - __KERNEL_VIRT_ADDR_BASE)*/ ALIGN(4)
+    /* TODO: rodata is currently executable, but doesn't have to... also each individual section must be aligned to 4K at least for mappings to work */
+    .rodata : /*AT(ADDR(.rodata) - __KERNEL_VIRT_ADDR_BASE)*/ ALIGN(__PAGE_SIZE)
     {
         *(.rodata*)
         FILL(0x00)

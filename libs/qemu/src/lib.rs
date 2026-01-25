@@ -45,10 +45,9 @@ pub mod semihosting {
     macro_rules! semi_print {
         // early_print!("a {} event", "log")
         ($($arg:tt)+) => {
-            use core::{format_args};
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
             libqemu::semihosting::sys_write0_call(
-                libprint::format_cstr(&mut buf, format_args!($($arg)+)).unwrap(),
+                libprint::format_cstr(&mut buf, core::format_args!($($arg)+)).unwrap(),
             );
         }
     }
@@ -57,10 +56,9 @@ pub mod semihosting {
     macro_rules! semi_println {
         // early_println!("a {} event", "log")
         ($($arg:tt)+) => {
-            use core::{format_args_nl};
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
             libqemu::semihosting::sys_write0_call(
-                libprint::format_cstr(&mut buf, format_args_nl!($($arg)+)).unwrap(),
+                libprint::format_cstr(&mut buf, core::format_args_nl!($($arg)+)).unwrap(),
             );
         }
     }
