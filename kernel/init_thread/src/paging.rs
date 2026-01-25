@@ -5,6 +5,7 @@ use {
         BootAllocator, KernelLayout, MemoryPermissions, PhysAddr, SectionMapping, VirtAddr,
     },
     core::ptr,
+    libqemu::semi_println,
 };
 
 /// Page table entry flags for AArch64 Stage 1
@@ -92,7 +93,7 @@ impl<'a> MmuSetup<'a> {
         perms: MemoryPermissions,
     ) -> Result<(), &'static str> {
         let pte_flags = perms.as_pte_flags() | flags::ATTR_NORMAL;
-        self.map_page_with_flags(ttbr, virt, phys, pte_flags)
+        self.map_page_with_flags(ttbr, virt, phys, pte_flags, perms)
     }
 
     /// Map a 4KB page with raw PTE flags
@@ -102,6 +103,7 @@ impl<'a> MmuSetup<'a> {
         virt: VirtAddr,
         phys: PhysAddr,
         pte_flags: u64,
+        perms: MemoryPermissions, // Only for Display
     ) -> Result<(), &'static str> {
         let l0_phys = match ttbr {
             Ttbr::Ttbr0 => self.ttbr0_l0,
@@ -120,6 +122,17 @@ impl<'a> MmuSetup<'a> {
 
         let l3_table = unsafe { &mut *(l3_phys.as_mut_ptr::<PageTable>()) };
         l3_table.entries[l3_idx] = phys.as_u64() | flags::VALID | flags::PAGE | pte_flags;
+
+        semi_println!(
+            "Mapped 4K page {:#016X} frame {:#016X} in {} with {}",
+            virt.0,
+            phys.0,
+            match ttbr {
+                Ttbr::Ttbr0 => "TTBR0(user)",
+                Ttbr::Ttbr1 => "TTBR1(kernel)",
+            },
+            perms
+        );
 
         Ok(())
     }
@@ -153,6 +166,17 @@ impl<'a> MmuSetup<'a> {
 
         let l2_table = unsafe { &mut *(l2_phys.as_mut_ptr::<PageTable>()) };
         l2_table.entries[l2_idx] = phys.as_u64() | flags::VALID | flags::BLOCK | pte_flags;
+
+        semi_println!(
+            "Mapped 2M page {:#016X} frame {:#016X} in {} with {}",
+            virt.0,
+            phys.0,
+            match ttbr {
+                Ttbr::Ttbr0 => "TTBR0(user)",
+                Ttbr::Ttbr1 => "TTBR1(kernel)",
+            },
+            perms
+        );
 
         Ok(())
     }
@@ -235,6 +259,11 @@ pub fn create_kernel_mapping(
 
 /// Map a single section with proper permissions
 fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'static str> {
+    if !section.phys_start.is_aligned(4096) {
+        semi_println!("!! Section {} not aligned to 4K boundary!", section.name);
+        return Err("Section not aligned");
+    }
+
     // Check if we can use 2MB blocks (section must be 2MB aligned and sized)
     let can_use_2mb = section.phys_start.is_aligned(2 * 1024 * 1024)
         && section.virt_start.as_u64() % (2 * 1024 * 1024) == 0
@@ -293,7 +322,13 @@ pub fn create_device_mapping(
 
         // Use device memory attributes
         let pte_flags = perms.as_pte_flags() | flags::ATTR_DEVICE;
-        setup.map_page_with_flags(Ttbr::Ttbr1, VirtAddr::new(va), PhysAddr::new(pa), pte_flags)?;
+        setup.map_page_with_flags(
+            Ttbr::Ttbr1,
+            VirtAddr::new(va),
+            PhysAddr::new(pa),
+            pte_flags,
+            perms,
+        )?;
     }
 
     Ok(())
