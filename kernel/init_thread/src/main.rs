@@ -113,5 +113,6 @@ pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
     unsafe {
         protected_call6(0, 0, 0, 0, 0, 0, 0, 0);
     }
+    semi_println!("init_main_run: Returned from syscall");
     endless_sleep()
 }

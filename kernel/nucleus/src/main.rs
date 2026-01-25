@@ -23,10 +23,6 @@
 #![feature(core_intrinsics)]
 
 use {
-    crate::{
-        buffer::{BufferInfo, BufferOp},
-        endpoint::EndpointOp,
-    },
     cfg_if::cfg_if,
     core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration},
     libcpu::endless_sleep,
@@ -34,23 +30,12 @@ use {
     libqemu::semi_println,
 };
 
-mod api;
+// mod api;
 mod vectors;
 
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
     libmachine::panic::handler(info)
-}
-
-fn get_pc() -> u64 {
-    let pc: u64;
-    unsafe {
-        asm!(
-            "adr {}, .",
-            out(reg) pc,
-        );
-    }
-    pc
 }
 
 // Kernel API surface:
@@ -74,18 +59,32 @@ fn get_pc() -> u64 {
 // -----
 // -----
 
+// use crate::{
+//     buffer::{BufferInfo, BufferOp},
+//     endpoint::EndpointOp,
+// };
+
 struct Nucleus;
 
-// Capability types now include:
+/// Capability types now include:
 pub enum ObjectType {
+    /// No capability
     None = 0,
-    Untyped = 1, // Creates objects (including new key tables)
+    /// Creates objects (including new key tables)
+    Untyped = 1,
+    /// Protection domain
     Domain = 2,
-    KeyTable = 3, // capability table itself
+    /// capability table itself
+    KeyTable = 3,
+    /// Time capability
     Time = 4,
+    /// Endpoint capability
     Endpoint = 5,
+    /// Notification endpoint capability
     Notification = 6,
+    /// Event count endpoint capability
     EventCount = 7,
+    /// Shareable buffer capability
     Buffer = 8,
 }
 
@@ -103,6 +102,7 @@ enum SyscallError {
 // Syscall handler - exception vector for EL0 synchronous exceptions
 //  (the only other thing nucleus does)
 #[unsafe(naked)]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn syscall_handler() {
     core::arch::naked_asm!(
         // Save user context to kernel stack
@@ -157,7 +157,7 @@ unsafe extern "C" fn syscall_handler() {
 
 /// Kernel entry point
 #[unsafe(no_mangle)]
-extern "C" fn cap_invoke_handler(
+fn cap_invoke_handler(
     cap_slot: u32,
     op: u32,
     arg0: u64,
@@ -166,9 +166,9 @@ extern "C" fn cap_invoke_handler(
     arg3: u64,
     arg4: u64,
     arg5: u64,
-    frame: *mut TrapFrame,
+    frame: u64, //*mut TrapFrame,
 ) -> (u64, u64, u64) {
-    semi_println!("SYSCALL happened, we're at 0x{:016X}", get_pc());
+    semi_println!("CapInvoke SYSCALL happened, we're at 0x{:016X}", get_pc());
     return (0, 0, 0);
 
     // let cap = current_domain().keytable.lookup(cap_slot)?;
@@ -190,4 +190,15 @@ extern "C" fn cap_invoke_handler(
     //     Ok((v0, v1)) => (0, v0, v1),
     //     Err(e) => (e.code(), 0, 0),
     // }
+}
+
+fn get_pc() -> u64 {
+    let pc: u64;
+    unsafe {
+        asm!(
+            "adr {}, .",
+            out(reg) pc,
+        );
+    }
+    pc
 }
