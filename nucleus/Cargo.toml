@@ -50,6 +50,13 @@ snafu = { workspace = true }
 tock-registers = { workspace = true }
 usize_conversions = { workspace = true }
 ux = { workspace = true }
+#enum_dispatch = "0.3"
+#tap = "1.0" -- check no_std?
+# For universal page table management,
+# see also https://github.com/arceos-org/page_table_multiarch/blob/main/page_table_multiarch/src/lib.rs
+# Parsing kernel ELF to update tables (tools/ttt):
+# - https://lib.rs/crates/kernel-elf-parser
+# - https://lib.rs/crates/elf_parser_rs
 
 [dev-dependencies]
 libexception = { workspace = true, features = ["test_build"] }
