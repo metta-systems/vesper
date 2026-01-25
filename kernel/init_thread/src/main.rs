@@ -37,7 +37,7 @@ pub extern "C" fn init_main(_dtb_ptr: *const u8) -> ! {
     let mut allocator = BootAllocator::new(PhysAddr::new(free_start), memory_size);
     let memory_end = allocator.end();
     semi_println!(
-        "init_main: Created BootAllocator {memory_size} @ 0x{:016X}",
+        "init_main: Created BootAllocator {memory_size} @ {:#016X}",
         free_start
     );
 
@@ -71,7 +71,7 @@ pub extern "C" fn init_main(_dtb_ptr: *const u8) -> ! {
 
     let ttbr0 = mmu_setup.ttbr0();
     let ttbr1 = mmu_setup.ttbr1();
-    semi_println!("init_main: TTBR0_EL1 at 0x{ttbr0:016X}, TTBR1_EL1 at 0x{ttbr1:016X}");
+    semi_println!("init_main: TTBR0_EL1 at {ttbr0:#016X}, TTBR1_EL1 at {ttbr1:#016X}");
 
     // Get vector table virtual address for VBAR_EL1
     // VBAR is only used after MMU is enabled, so we set the virtual address directly
@@ -83,7 +83,7 @@ pub extern "C" fn init_main(_dtb_ptr: *const u8) -> ! {
         .expect("Failed to allocate EL1 stack");
     let el1_stack_top = el1_stack.as_u64() + 16 * 4096;
     // FIXME: stack must be identity-mapped!
-    semi_println!("init_main: EL1 stack at 0x{el1_stack_top:016X}, vbar 0x{vbar:016X}");
+    semi_println!("init_main: EL1 stack at {el1_stack_top:#016X}, vbar {vbar:#016X}");
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 4: Enable MMU and drop to EL1
@@ -101,12 +101,9 @@ pub extern "C" fn init_main(_dtb_ptr: *const u8) -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {
-        unsafe {
-            core::arch::asm!("wfe");
-        }
-    }
+fn panic(info: &PanicInfo) -> ! {
+    semi_println!("PANICKED: {info}");
+    endless_sleep()
 }
 
 #[unsafe(no_mangle)]
