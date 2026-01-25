@@ -281,40 +281,40 @@ pub fn create_kernel_mapping(
     // Setup linear physical map (all RAM accessible to nucleus)
     // TODO: exclude physical memory that covers the kernel image itself!
     // ─────────────────────────────────────────────────────────────────
+    /*
+        // Map all physical memory using 2MB blocks
+        for i in 0..max_ram_gb {
+            pts.l1_phys_map[i] = make_table_entry(phys_addr_of(&pts.l2_phys_map[i]));
 
-    // Map all physical memory using 2MB blocks
-    for i in 0..max_ram_gb {
-        pts.l1_phys_map[i] = make_table_entry(phys_addr_of(&pts.l2_phys_map[i]));
+            for j in 0..512 {
+                let phys = ((i * 512 + j) as u64) << 21; // 2MB granule -- can try 1Gb granules actually?
+                pts.l2_phys_map[i][j] = make_block_entry_2mb(
+                    PhysAddr::new(phys),
+                    PageFlags::KERNEL_RW | PageFlags::NORMAL_CACHEABLE,
+                );
+            }
+        }
 
-        for j in 0..512 {
-            let phys = ((i * 512 + j) as u64) << 21; // 2MB granule -- can try 1Gb granules actually?
-            pts.l2_phys_map[i][j] = make_block_entry_2mb(
+        // ─────────────────────────────────────────────────────────────────
+        // Setup device MMIO mappings
+        // ─────────────────────────────────────────────────────────────────
+
+        // RPi4 peripherals at 0xFE00_0000 - 0xFF00_0000
+        // Map as device memory (non-cacheable, no speculation)
+        let device_base_phys = 0xFE00_0000_u64;
+        let l1_idx = 0; // First entry in l1_device
+
+        pts.l1_device[l1_idx] = make_table_entry(phys_addr_of(&pts.l2_device));
+
+        // Map 16MB of device space with 2MB blocks
+        for i in 0..8 {
+            let phys = device_base_phys + (i as u64 * 0x20_0000);
+            pts.l2_device[i] = make_block_entry_2mb(
                 PhysAddr::new(phys),
-                PageFlags::KERNEL_RW | PageFlags::NORMAL_CACHEABLE,
+                PageFlags::KERNEL_RW | PageFlags::DEVICE_nGnRnE,
             );
         }
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Setup device MMIO mappings
-    // ─────────────────────────────────────────────────────────────────
-
-    // RPi4 peripherals at 0xFE00_0000 - 0xFF00_0000
-    // Map as device memory (non-cacheable, no speculation)
-    let device_base_phys = 0xFE00_0000_u64;
-    let l1_idx = 0; // First entry in l1_device
-
-    pts.l1_device[l1_idx] = make_table_entry(phys_addr_of(&pts.l2_device));
-
-    // Map 16MB of device space with 2MB blocks
-    for i in 0..8 {
-        let phys = device_base_phys + (i as u64 * 0x20_0000);
-        pts.l2_device[i] = make_block_entry_2mb(
-            PhysAddr::new(phys),
-            PageFlags::KERNEL_RW | PageFlags::DEVICE_nGnRnE,
-        );
-    }
-
+    */
     Ok(())
 }
 

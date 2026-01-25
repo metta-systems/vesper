@@ -55,6 +55,12 @@ unsafe extern "C" {
     static __free_memory_start: u8;
 }
 
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    semi_println!("PANICKED: {info}");
+    endless_sleep()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     semi_println!("init_main started");
@@ -70,57 +76,58 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     // Hardcoded UART address for early boot (RPi4: 0xFE201000)
     // Will be properly mapped later
     // early_uart_init(0xFE20_1000);
-    semi_println!("DTB at physical: {:#016X}", dtb_ptr);
+    semi_println!("DTB at physical: {:#016X}", dtb_ptr as u64);
 
     // ─────────────────────────────────────────────────────────────────────
     // Parse Device Tree
     // ─────────────────────────────────────────────────────────────────────
 
-    early_print!("Parsing device tree...\n");
+    semi_println!("Parsing device tree...");
 
-    let dtb = unsafe {
-        // Direct physical access - MMU off
-        DeviceTree::from_phys(PhysAddr::new(dtb_phys)).expect("Invalid DTB")
-    };
+    // Next step: parse DTB!
+    // let dtb = unsafe {
+    //     // Direct physical access - MMU off
+    //     DeviceTree::from_phys(PhysAddr::new(dtb_phys)).expect("Invalid DTB")
+    // };
 
-    unsafe {
-        BOOT_INFO.dtb_size = dtb.total_size();
+    // unsafe {
+    //     BOOT_INFO.dtb_size = dtb.total_size();
 
-        // Extract memory regions
-        for region in dtb.memory_regions() {
-            if BOOT_INFO.memory_region_count < 16 {
-                BOOT_INFO.memory_regions[BOOT_INFO.memory_region_count] = region;
-                BOOT_INFO.memory_region_count += 1;
-                early_print!(
-                    "  RAM: {:#x} - {:#x}\n",
-                    region.base.as_u64(),
-                    region.base.as_u64() + region.size as u64
-                );
-            }
-        }
+    //     // Extract memory regions
+    //     for region in dtb.memory_regions() {
+    //         if BOOT_INFO.memory_region_count < 16 {
+    //             BOOT_INFO.memory_regions[BOOT_INFO.memory_region_count] = region;
+    //             BOOT_INFO.memory_region_count += 1;
+    //             semi_println!(
+    //                 "  RAM: {:#x} - {:#x}",
+    //                 region.base.as_u64(),
+    //                 region.base.as_u64() + region.size as u64
+    //             );
+    //         }
+    //     }
 
-        // Extract reserved regions
-        for reserved in dtb.reserved_regions() {
-            if BOOT_INFO.reserved_region_count < 32 {
-                BOOT_INFO.reserved_regions[BOOT_INFO.reserved_region_count] = reserved;
-                BOOT_INFO.reserved_region_count += 1;
-            }
-        }
+    //     // Extract reserved regions
+    //     for reserved in dtb.reserved_regions() {
+    //         if BOOT_INFO.reserved_region_count < 32 {
+    //             BOOT_INFO.reserved_regions[BOOT_INFO.reserved_region_count] = reserved;
+    //             BOOT_INFO.reserved_region_count += 1;
+    //         }
+    //     }
 
-        // Extract boot modules (loaded by bootloader)
-        for module in dtb.modules() {
-            if BOOT_INFO.module_count < 8 {
-                BOOT_INFO.modules[BOOT_INFO.module_count] = module;
-                BOOT_INFO.module_count += 1;
-                early_print!(
-                    "  Module '{}': {:#x}, {} bytes\n",
-                    core::str::from_utf8(&module.name).unwrap_or("???"),
-                    module.phys_start.as_u64(),
-                    module.size
-                );
-            }
-        }
-    }
+    //     // Extract boot modules (loaded by bootloader)
+    //     for module in dtb.modules() {
+    //         if BOOT_INFO.module_count < 8 {
+    //             BOOT_INFO.modules[BOOT_INFO.module_count] = module;
+    //             BOOT_INFO.module_count += 1;
+    //             semi_println!(
+    //                 "  Module '{}': {:#x}, {} bytes",
+    //                 core::str::from_utf8(&module.name).unwrap_or("???"),
+    //                 module.phys_start.as_u64(),
+    //                 module.size
+    //             );
+    //         }
+    //     }
+    // }
 
     // ─────────────────────────────────────────────────────────────────────
     // Further init
@@ -197,12 +204,6 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     }
 }
 
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    semi_println!("PANICKED: {info}");
-    endless_sleep()
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -223,126 +224,127 @@ pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
     semi_println!("Initializing kernel subsystems...");
 
     // Initialize per-CPU data structures
-    percpu::init();
+    // percpu::init();
 
     // Initialize exception vectors
-    exceptions::init();
+    // exceptions::init();
 
     // Initialize interrupt controller (GIC on RPi4)
-    let boot_info = unsafe { &BOOT_INFO };
-    interrupts::init_gic(boot_info);
+    // let boot_info = unsafe { &BOOT_INFO };
+    // interrupts::init_gic(boot_info);
 
     // ─────────────────────────────────────────────────────────────────────
     // Build physical memory map and create Untyped caps
     // ─────────────────────────────────────────────────────────────────────
 
-    semi_println!("Building physical memory allocator...");
+    // semi_println!("Building physical memory allocator...");
 
     // Create the root untyped capability list
     // This will be delegated to init process
-    let mut untyped_list = UntypedList::new();
-    // let untyped_list = create_untyped_caps();
+    // let mut untyped_list = UntypedList::new();
+    // // let untyped_list = create_untyped_caps();
 
-    for i in 0..boot_info.memory_region_count {
-        let region = &boot_info.memory_regions[i];
+    // for i in 0..boot_info.memory_region_count {
+    //     let region = &boot_info.memory_regions[i];
 
-        // Skip reserved regions (kernel image, DTB, modules, page tables)
-        let usable_ranges = subtract_reserved_regions(region, boot_info);
+    //     // Skip reserved regions (kernel image, DTB, modules, page tables)
+    //     let usable_ranges = subtract_reserved_regions(region, boot_info);
 
-        for range in usable_ranges {
-            // Create untyped caps for each usable chunk
-            // Align to largest power-of-2 for efficient retyping
-            let untypeds = create_untyped_caps_for_range(range);
-            untyped_list.extend(untypeds);
+    //     for range in usable_ranges {
+    //         // Create untyped caps for each usable chunk
+    //         // Align to largest power-of-2 for efficient retyping
+    //         let untypeds = create_untyped_caps_for_range(range);
+    //         untyped_list.extend(untypeds);
 
-            semi_println!(
-                "  Untyped: {:#x} - {:#x} ({} caps)",
-                range.base.as_u64(),
-                range.base.as_u64() + range.size as u64,
-                untypeds.len()
-            );
-        }
-    }
+    //         semi_println!(
+    //             "  Untyped: {:#x} - {:#x} ({} caps)",
+    //             range.base.as_u64(),
+    //             range.base.as_u64() + range.size as u64,
+    //             untypeds.len()
+    //         );
+    //     }
+    // }
 
-    semi_println!("Total untyped caps: {}", untyped_list.len());
+    // semi_println!("Total untyped caps: {}", untyped_list.len());
 
     // ─────────────────────────────────────────────────────────────────────
     // Initialize DCB shared pages
     // ─────────────────────────────────────────────────────────────────────
 
-    semi_println!("Initializing DCB pages...");
+    // semi_println!("Initializing DCB pages...");
 
-    // Allocate DCB pages from a reserved untyped
-    // These are special: mapped RW in kernel, RO in all user domains
-    let dcb_pages = allocate_dcb_pages(&mut untyped_list, MAX_DOMAINS);
-    dcb::init(dcb_pages);
+    // // Allocate DCB pages from a reserved untyped
+    // // These are special: mapped RW in kernel, RO in all user domains
+    // let dcb_pages = allocate_dcb_pages(&mut untyped_list, MAX_DOMAINS);
+    // dcb::init(dcb_pages);
 
     // ─────────────────────────────────────────────────────────────────────
     // Create kernel idle domain (domain 0)
     // ─────────────────────────────────────────────────────────────────────
 
-    semi_println!("Creating idle domain...");
+    // semi_println!("Creating idle domain...");
 
-    let idle_domain = Domain::create_idle();
-    SCHEDULER.set_idle(idle_domain);
+    // let idle_domain = Domain::create_idle();
+    // SCHEDULER.set_idle(idle_domain);
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // PHASE 6: Create the init domain and its capability space
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    semi_println!("Creating init domain...");
+    // semi_println!("Creating init domain...");
 
-    let init_module = boot_info
-        .modules
-        .iter()
-        .find(|m| {
-            let name = core::str::from_utf8(&m.name).unwrap_or("");
-            name.matches("init")
-        })
-        .expect("No init module found in boot modules");
+    // let init_module = boot_info
+    //     .modules
+    //     .iter()
+    //     .find(|m| {
+    //         let name = core::str::from_utf8(&m.name).unwrap_or("");
+    //         name.matches("init")
+    //     })
+    //     .expect("No init module found in boot modules");
 
-    let init_domain = create_init_domain(init_module, &mut untyped_list);
+    // let init_domain = create_init_domain(init_module, &mut untyped_list);
 
     // ─────────────────────────────────────────────────────────────────────
     // Mark init thread memory as reclaimable
     // ─────────────────────────────────────────────────────────────────────
 
-    semi_println!("Marking init thread memory for reclamation...");
+    // semi_println!("Marking init thread memory for reclamation...");
 
-    // The init stack and any init-only code/data can now be reclaimed, the are in the Untypeds table now.
-    mark_init_memory_reclaimable(boot_info, &mut untyped_list);
+    // // The init stack and any init-only code/data can now be reclaimed, the are in the Untypeds table now.
+    // mark_init_memory_reclaimable(boot_info, &mut untyped_list);
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // PHASE 7: Delegate all resources to init domain
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    early_print!(
-        "Delegating {} untyped caps to init...",
-        untyped_list.len()
-    );
+    // semi_println!(
+    //     "Delegating {} untyped caps to init...",
+    //     untyped_list.len()
+    // );
 
-    delegate_untypeds_to_init(&init_domain, untyped_list);
+    // delegate_untypeds_to_init(&init_domain, untyped_list);
 
-    // Create module caps for other boot modules and delegate
-    delegate_module_caps_to_init(&init_domain, boot_info);
+    // // Create module caps for other boot modules and delegate
+    // delegate_module_caps_to_init(&init_domain, boot_info);
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // PHASE 8: Context switch to init domain
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    semi_println!("Switching to init domain...");
-    semi_println!("═══════════════════════════════════════════════════════════");
+    // semi_println!("Switching to init domain...");
+    // semi_println!("═══════════════════════════════════════════════════════════");
 
-    // Create initial time budget for init
-    let init_time = TimeCap::create_root(INIT_TIME_BUDGET_US);
+    // // Create initial time budget for init
+    // let init_time = TimeCap::create_root(INIT_TIME_BUDGET_US);
 
-    // Finally: switch to userspace init
-    // This replaces TTBR0 with init's page tables
-    // Kernel high map (TTBR1) is ready for when init makes syscalls
-    // This never returns
-    switch_to_domain(init_domain, init_time);
+    // // Finally: switch to userspace init
+    // // This replaces TTBR0 with init's page tables
+    // // Kernel high map (TTBR1) is ready for when init makes syscalls
+    // // This never returns
+    // switch_to_domain(init_domain, init_time);
+    endless_sleep()
 }
-
+/*
 // ─────────────────────────────────────────────────────────────────────
 // Create init domain from boot module
 // ─────────────────────────────────────────────────────────────────────
@@ -693,3 +695,4 @@ unsafe extern "C" fn context_switch_to_user(ttbr0: PhysAddr, entry: VirtAddr, sp
         options(noreturn),
     );
 }
+*/
