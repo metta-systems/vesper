@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
 use {
-    core::alloc::Layout,
+    core::{alloc::Layout, ptr::read_unaligned},
     fdt_rs::{
-        base::DevTree,
-        error::DevTreeError,
+        base::{DevTree, iters::StringPropIter},
+        error::{DevTreeError, Result as DevTreeResult},
         index::{DevTreeIndex, DevTreeIndexNode, DevTreeIndexProp},
-        prelude::PropReader,
+        prelude::{FallibleIterator, PropReader},
     },
     shrinkwraprs::Shrinkwrap,
 };
@@ -73,7 +73,10 @@ impl<'a> DeviceTree<'a> {
 
     // @todo drop all the wrapper shenanigans and just export this one fn
     /// Iterate path separated by / starting from the root "/" and find props one by one.
-    pub fn get_prop_by_path(&self, path: &str) -> Result<DevTreeIndexProp, DevTreeError> {
+    pub fn get_prop_by_path(
+        &self,
+        path: &str,
+    ) -> Result<DevTreeIndexProp<'_, '_, '_>, DevTreeError> {
         let mut path = PathSplit::new(path);
         let mut node_iter = self.0.root().children();
         let mut node: Option<DevTreeIndexNode> = Some(self.0.root());
@@ -401,11 +404,11 @@ fn are_printable_strings(mut prop_iter: StringPropIter) -> bool {
 }
 
 pub struct FdtDumper<'a> {
-    index: &'a DevTreeIndex,
+    index: &'a DevTreeIndex<'a, 'a>,
     indent: usize,
 }
 
-impl<'i, 'dt> FdtDumper {
+impl<'i, 'dt> FdtDumper<'_> {
     fn push_indent(&mut self) {
         for _ in 0..self.indent {
             libqemu::semi_print!("  ");
@@ -490,7 +493,7 @@ impl<'i, 'dt> FdtDumper {
     }
 
     pub fn dump_root(&mut self) -> DevTreeResult<()> {
-        self.dump_level(self.index.root())
+        self.dump_level(&self.index.root())
     }
 
     pub fn dump_metadata(&mut self) {
@@ -506,6 +509,6 @@ impl<'i, 'dt> FdtDumper {
         libqemu::semi_println!("// boot_cpuid_phys:\t{:#x}", fdt.boot_cpuid_phys());
         libqemu::semi_println!("// size_dt_strings:\t{:#x}", fdt.size_dt_strings());
         libqemu::semi_println!("// size_dt_struct:\t{:#x}", fdt.size_dt_struct());
-        libqemu::semi_println!();
+        libqemu::semi_println!("");
     }
 }

@@ -204,9 +204,9 @@ fn setup_and_enter_el2_from_el3(dtb: u32) -> ! {
 
 // Enter Rust code in EL2.
 #[unsafe(link_section = ".text.boot")]
-fn reset(dtb) -> ! {
+fn reset(dtb: u32) -> ! {
     unsafe extern "Rust" {
-        fn main(u32) -> !;
+        fn main(dtb: u32) -> !;
     }
 
     // SAFETY: We're getting to more safety right here!
