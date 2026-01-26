@@ -29,9 +29,9 @@ pub mod semihosting {
         qemu_exit_handle.exit_failure()
     }
 
-    pub fn sys_write0_call(text: &str) {
+    pub fn sys_write0_call(text: &core::ffi::CStr) {
         let cmd = 0x04;
-        // SAFETY: text must be \0-terminated!
+        // SAFETY: text must be \0-terminated, which CStr above shall ensure.
         unsafe {
             core::arch::asm!(
                 "hlt #0xF000"
@@ -49,17 +49,24 @@ pub mod semihosting {
             libqemu::semihosting::sys_write0_call(
                 libprint::format_cstr(&mut buf, core::format_args!($($arg)+)).unwrap(),
             );
-        }
+        };
     }
 
     #[macro_export]
     macro_rules! semi_println {
-        // early_println!("a {} event", "log")
+        // semi_println!()
+        () => {
+            let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
+            libqemu::semihosting::sys_write0_call(
+                libprint::format_cstr(&mut buf, core::format_args_nl!("")).unwrap(),
+            );
+        };
+        // semi_println!("a {} event", "log")
         ($($arg:tt)+) => {
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
             libqemu::semihosting::sys_write0_call(
                 libprint::format_cstr(&mut buf, core::format_args_nl!($($arg)+)).unwrap(),
             );
-        }
+        };
     }
 }

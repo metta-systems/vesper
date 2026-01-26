@@ -110,7 +110,7 @@ codegen-units = 1
 debug = true
 lto = true
 opt-level = 's'
-panic = "abort"
+# panic = "abort" # - debug in qemu - wanna see panics
 
 [profile.release-fast]
 codegen-units = 16

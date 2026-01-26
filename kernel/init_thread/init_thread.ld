@@ -7,7 +7,11 @@ INIT_BASE = 0x80000;
 
 SECTIONS
 {
+    /* Stack for init thread (grows down) */
+    . = 0;
+    __stack_bottom = .;
     . = INIT_BASE;
+    __stack_top = .;
 
     __init_start = .;
 
@@ -44,18 +48,6 @@ SECTIONS
 
     . = ALIGN(4K);
     __init_end = .;
-
-    /* Stack for init thread (grows down) */
-    . = ALIGN(16);
-    __stack_bottom = .;
-    . += 64K;
-    __stack_top = .;
-
-    /* Page tables - we allocate space for them here */
-    . = ALIGN(4K);
-    __page_tables_start = .;
-    . += 256K;  /* Space for page tables */
-    __page_tables_end = .;
 
     /* Free memory starts here - used for kernel placement */
     . = ALIGN(2M);  /* 2MB aligned for huge pages if desired */
