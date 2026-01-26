@@ -437,7 +437,7 @@ pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
     // // Kernel high map (TTBR1) is ready for when init makes syscalls
     // // This never returns
     // switch_to_domain(init_domain, init_time);
-    endless_sleep()
+    libqemu::semihosting::exit_success()
 }
 /*
 // ─────────────────────────────────────────────────────────────────────
