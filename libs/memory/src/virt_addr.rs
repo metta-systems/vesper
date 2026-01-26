@@ -29,7 +29,7 @@ use {
 /// are called “canonical”. This type guarantees that it always represents a canonical address.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(transparent)]
-pub struct VirtAddr(u64);
+pub struct VirtAddr(pub u64);
 
 /// A passed `u64` was not a valid virtual address.
 ///
@@ -161,6 +161,10 @@ impl VirtAddr {
     /// Returns the 9-bit level 0 page table index.
     pub fn l0_index(&self) -> u9 {
         u9::new(((self.0 >> 12 >> 9 >> 9 >> 9) & 0o777).try_into().unwrap())
+    }
+
+    pub const fn is_higher_half(self) -> bool {
+        self.0 >= 0xFFFF_0000_0000_0000
     }
 
     /// Convert kernel-view virtual address of physical memory into a physical memory address.

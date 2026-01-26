@@ -45,6 +45,7 @@ mod paging;
 mod syscall_test;
 
 use {
+    crate::boot_info::{BOOT_INFO, BootInfoMemRegion},
     core::{panic::PanicInfo, ptr::write_bytes, slice},
     device_tree::{DeviceTree, DeviceTreeProp},
     fdt_rs::{
@@ -53,8 +54,10 @@ use {
         prelude::{FallibleIterator, PropReader},
     },
     libcpu::endless_sleep,
+    liblocking::interface::Mutex,
+    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
     libqemu::semi_println,
-    memory::{BootAllocator, PhysAddr},
+    memory::BootAllocator,
     syscall_test::protected_call6,
 };
 
@@ -177,7 +180,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
             bi.insert_region(BootInfoMemRegion {
                 start_inclusive: PhysAddr::new(mem_addr),
                 end_exclusive: PhysAddr::new(mem_addr + mem_size),
-                attributes: default(),
+                attributes: boot_info::AttributeFields::default(),
             })
             .expect("tough luck");
         });
@@ -215,8 +218,8 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     ); // also include the raw_slice allocated bit
     BOOT_INFO.lock(|bi| {
         bi.remove_region(BootInfoMemRegion::at(
-            PhysAddr::new(dtb.into()),
-            PhysAddr::new(dtb as u64 + device_tree.fdt().totalsize() as u64),
+            PhysAddr::new(dtb_ptr as u64),
+            PhysAddr::new(dtb_ptr as u64 + device_tree.fdt().totalsize() as u64),
             false,
         ))
         .expect("tough luck");
@@ -227,7 +230,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     BOOT_INFO.lock(|bi| {
         for x in bi.regions {
             if !x.is_empty() {
-                println!("{}", x);
+                semi_println!("{}", x);
             }
         }
     });

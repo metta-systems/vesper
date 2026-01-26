@@ -1,6 +1,9 @@
 // Boot allocator, Section mapping, memory permissions
 
-use crate::loader::LoadableSection;
+use {
+    crate::loader::LoadableSection,
+    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+};
 
 /// Memory region translation.
 // #[allow(dead_code)]
@@ -12,72 +15,16 @@ use crate::loader::LoadableSection;
 //     Offset(usize),
 // }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct PhysAddr(pub u64);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct VirtAddr(pub u64);
-
-impl PhysAddr {
-    pub const fn new(addr: u64) -> Self {
-        Self(addr)
-    }
-    pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-    pub const fn as_ptr<T>(self) -> *const T {
-        self.0 as *const T
-    }
-    pub fn as_mut_ptr<T>(self) -> *mut T {
-        self.0 as *mut T
-    }
-    pub const fn add(self, offset: u64) -> Self {
-        Self(self.0 + offset)
-    }
-    pub const fn align_up(self, align: u64) -> Self {
-        Self((self.0 + align - 1) & !(align - 1))
-    }
-    pub const fn align_down(self, align: u64) -> Self {
-        Self(self.0 & !(align - 1))
-    }
-    pub const fn is_aligned(self, align: u64) -> bool {
-        self.0 & (align - 1) == 0
-    }
-}
-
-impl VirtAddr {
-    pub const fn new(addr: u64) -> Self {
-        Self(addr)
-    }
-    pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-    pub const fn add(self, offset: u64) -> Self {
-        Self(self.0 + offset)
-    }
-    pub const fn sub(self, other: VirtAddr) -> u64 {
-        self.0 - other.0
-    }
-    pub const fn is_higher_half(self) -> bool {
-        self.0 >= 0xFFFF_0000_0000_0000
-    }
-    pub const fn is_aligned(self, align: u64) -> bool {
-        self.0 & (align - 1) == 0
-    }
-}
-
 pub struct BootAllocator {
     current: PhysAddr,
     end: PhysAddr,
 }
 
 impl BootAllocator {
-    pub const fn new(start: PhysAddr, size: usize) -> Self {
+    pub fn new(start: PhysAddr, size: usize) -> Self {
         Self {
             current: start,
-            end: PhysAddr(start.0 + size as u64),
+            end: PhysAddr::new(start.0 + size as u64),
         }
     }
 
@@ -86,8 +33,8 @@ impl BootAllocator {
     }
 
     pub fn alloc_aligned(&mut self, size: usize, align: usize) -> Option<PhysAddr> {
-        let aligned = self.current.align_up(align as u64);
-        let new_current = PhysAddr(aligned.0 + size as u64);
+        let aligned = self.current.aligned_up(align);
+        let new_current = PhysAddr::new(aligned.0 + size as u64);
 
         libqemu::semi_println!(
             "alloc_aligned {:#016x} => {:#016x} (wrt {:#016x})",
@@ -186,7 +133,7 @@ pub struct KernelLayout {
 impl KernelLayout {
     pub fn virt_to_phys(&self, virt: VirtAddr) -> PhysAddr {
         let offset = virt.as_u64() - self.virt_base.as_u64();
-        PhysAddr(self.phys_base.as_u64() + offset)
+        PhysAddr::new(self.phys_base.as_u64() + offset)
     }
 
     /// Get the VBAR_EL1 value (virtual address for use after MMU enable)

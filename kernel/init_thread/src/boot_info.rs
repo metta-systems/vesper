@@ -2,9 +2,9 @@
 //!
 //! Define a map of memory regions used during boot allocations.
 use {
-    crate::{memory::PhysAddr, println, sync},
-    core::fmt,
-    once_cell::unsync::Lazy,
+    core::{cell::LazyCell, fmt},
+    liblocking::IRQSafeNullLock,
+    libmemory::phys_addr::PhysAddr,
     snafu::Snafu,
 };
 
@@ -126,7 +126,7 @@ impl BootInfoMemRegion {
             end_exclusive: end_exclusive.max(start_inclusive),
             attributes: AttributeFields {
                 occupied: !free,
-                ..core::default::default()
+                ..AttributeFields::default()
             },
         }
     }
@@ -195,7 +195,7 @@ impl fmt::Display for BootInfoMemRegion {
 
         write!(
             f,
-            "      [{:#010X} - {:#010X}) | {: >3} {} | {: <3} {} {: <3}", // | {}",
+            "      [{:#010x} - {:#010x}) | {: >3} {} | {: <3} {} {: <3}", // | {}",
             self.start_inclusive,
             self.end_exclusive,
             size,
@@ -394,8 +394,8 @@ impl BootInfo {
 
         for (i, reg_iter) in self.regions.iter().enumerate() {
             // Determine whether placing the region at the start or the end will create a bigger left over region.
-            let aligned_start = reg_iter.start_inclusive.aligned_up(1u64 << size_bits);
-            let aligned_end = reg_iter.end_exclusive.aligned_down(1u64 << size_bits);
+            let aligned_start = reg_iter.start_inclusive.aligned_up(1usize << size_bits);
+            let aligned_end = reg_iter.end_exclusive.aligned_down(1usize << size_bits);
             let new_reg = if aligned_start - reg_iter.start_inclusive
                 < reg_iter.end_exclusive - aligned_end
             {
@@ -446,7 +446,7 @@ impl BootInfo {
         /* Add the remaining regions in largest to smallest order */
         self.insert_region(rem_large)?;
         if self.insert_region(rem_small).is_err() {
-            println!(
+            libqemu::semi_println!(
                 "BootInfo::alloc_region(): wasted {} bytes due to alignment, try to increase NUM_MEM_REGIONS",
                 rem_small.size()
             );
@@ -456,8 +456,8 @@ impl BootInfo {
 }
 
 // Should go to BSS
-pub static BOOT_INFO: sync::NullLock<Lazy<BootInfo>> =
-    sync::NullLock::new(Lazy::new(|| BootInfo::new()));
+pub static BOOT_INFO: IRQSafeNullLock<LazyCell<BootInfo>> =
+    IRQSafeNullLock::new(LazyCell::new(|| BootInfo::new()));
 
 #[cfg(test)]
 mod boot_info_tests {
