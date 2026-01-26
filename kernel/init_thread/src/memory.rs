@@ -78,6 +78,14 @@ impl BootAllocator {
     pub fn alloc_aligned(&mut self, size: usize, align: usize) -> Option<PhysAddr> {
         let aligned = self.current.align_up(align as u64);
         let new_current = PhysAddr(aligned.0 + size as u64);
+
+        libqemu::semi_println!(
+            "alloc_aligned {:#016x} => {:#016x} (wrt {:#016x})",
+            aligned.0,
+            new_current.0,
+            self.end.0
+        );
+
         if new_current > self.end {
             return None;
         }

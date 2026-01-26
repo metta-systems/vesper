@@ -509,6 +509,6 @@ impl<'i, 'dt> FdtDumper<'_> {
         libqemu::semi_println!("// boot_cpuid_phys:\t{:#x}", fdt.boot_cpuid_phys());
         libqemu::semi_println!("// size_dt_strings:\t{:#x}", fdt.size_dt_strings());
         libqemu::semi_println!("// size_dt_struct:\t{:#x}", fdt.size_dt_struct());
-        libqemu::semi_println!("");
+        libqemu::semi_println!();
     }
 }

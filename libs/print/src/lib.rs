@@ -5,11 +5,12 @@
 
 #![no_std]
 
-/// No-alloc write!() implementation from <https://stackoverflow.com/a/50201632/145434>
-/// Requires you to allocate a buffer somewhere manually (usually, on stack).
+// No-alloc write!() implementation from <https://stackoverflow.com/a/50201632/145434>
+// Requires you to allocate a buffer somewhere manually (usually, on stack).
 // @todo Try to use arrayvec::ArrayString here instead?
 // @todo probably use defmt for comms with host?
-use core::{cmp::min, fmt};
+
+use core::{cmp::min, ffi::CStr, fmt};
 
 struct WriteTo<'a> {
     buffer: &'a mut [u8],
@@ -32,12 +33,12 @@ impl<'a> WriteTo<'a> {
     }
 
     #[allow(unused)]
-    pub fn into_cstr(self) -> Option<&'a str> {
+    pub fn into_cstr(self) -> Option<&'a CStr> {
         (self.used < self.buffer.len()).then(|| {
             // Terminate the string
             self.buffer[self.used] = 0;
             // SAFETY: only successful concats of str - must be a valid str.
-            unsafe { core::str::from_utf8_unchecked(&self.buffer[..=self.used]) }
+            unsafe { CStr::from_bytes_with_nul_unchecked(&self.buffer[..=self.used]) }
         })
     }
 }
@@ -67,7 +68,7 @@ pub fn format_str<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a 
 }
 
 // Return a zero-terminated str
-pub fn format_cstr<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a str, fmt::Error> {
+pub fn format_cstr<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a CStr, fmt::Error> {
     let mut w = WriteTo::new(buffer);
     fmt::write(&mut w, args)?;
     w.into_cstr().ok_or(fmt::Error)

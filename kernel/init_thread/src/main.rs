@@ -66,14 +66,14 @@ unsafe extern "C" {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     semi_println!("PANICKED: {info}");
-    endless_sleep()
+    libqemu::semihosting::exit_failure()
 }
 
-fn dump_memory_map() {
-    // Output the memory map as we could derive from FDT and information about our loaded image
-    // Use it to imagine how the memmap would look like in the end.
-    // arch::memory::print_layout();
-}
+// fn dump_memory_map() {
+// Output the memory map as we could derive from FDT and information about our loaded image
+// Use it to imagine how the memmap would look like in the end.
+// arch::memory::print_layout();
+// }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
@@ -90,7 +90,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     // Hardcoded UART address for early boot (RPi4: 0xFE201000)
     // Will be properly mapped later
     // early_uart_init(0xFE20_1000);
-    semi_println!("DTB at physical: {:#016X}", dtb_ptr as u64);
+    semi_println!("DTB at physical: {:#016x}", dtb_ptr as u64);
 
     // ─────────────────────────────────────────────────────────────────────
     // Start bump allocator
@@ -104,7 +104,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     let mut allocator = BootAllocator::new(PhysAddr::new(free_start), memory_size);
     let memory_end = allocator.end();
     semi_println!(
-        "init_main: Created BootAllocator {memory_size} @ {:#016X}",
+        "init_main: Created BootAllocator {memory_size} @ {:#016x}",
         free_start
     );
 
@@ -137,7 +137,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     let mut dumper = device_tree.dumper(0);
 
     dumper.dump_metadata();
-    dumper.dump_root().expect("oof");
+    // dumper.dump_root().expect("oof");
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
@@ -185,18 +185,18 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     //   memreserve = <0x3b400000 0x04c00000 >;
 
     // Iterate compatible nodes (example):
-    // for entry in device_tree.compatible_nodes("arm,pl011") {
-    //     semi_println!("reserved: {:?} (bytes at ?)", entry.name()/*, entry.address*/);
-    // }
+    for entry in device_tree.compatible_nodes("arm,pl011") {
+        semi_println!("PL011 device: {:?}", entry.name() /*, entry.address*/);
+    }
 
     // 6. Also, remove the DTB memory region + index
     semi_println!(
-        "DTB region: {} bytes at {:x}",
+        "DTB region: {} bytes at {:#016x}",
         device_tree.fdt().totalsize(),
         dtb_ptr as usize
-    );
+    ); // also include the raw_slice allocated bit
 
-    dump_memory_map();
+    // dump_memory_map();
 
     // Next step: parse DTB!
     // unsafe {
@@ -242,6 +242,8 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     // PHASE 1: Load kernel
     // ═══════════════════════════════════════════════════════════════
 
+    semi_println!("init_main: Load kernel");
+
     let kernel_layout = loader::load_kernel(&mut allocator).expect("Failed to load nucleus");
     semi_println!("init_main: Loaded nucleus image");
 
@@ -268,7 +270,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
 
     let ttbr0 = mmu_setup.ttbr0();
     let ttbr1 = mmu_setup.ttbr1();
-    semi_println!("init_main: TTBR0_EL1 at {ttbr0:#016X}, TTBR1_EL1 at {ttbr1:#016X}");
+    semi_println!("init_main: TTBR0_EL1 at {ttbr0:#016x}, TTBR1_EL1 at {ttbr1:#016x}");
 
     // Get vector table virtual address for VBAR_EL1
     // VBAR is only used after MMU is enabled, so we set the virtual address directly
@@ -280,7 +282,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
         .expect("Failed to allocate EL1 stack");
     let el1_stack_top = el1_stack.as_u64() + 16 * 4096;
     // FIXME: stack must be identity-mapped!
-    semi_println!("init_main: EL1 stack at {el1_stack_top:#016X}, vbar {vbar:#016X}");
+    semi_println!("init_main: EL1 stack at {el1_stack_top:#016x}, vbar {vbar:#016x}");
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 4: Enable MMU and drop to EL1
