@@ -137,7 +137,7 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     let mut dumper = device_tree.dumper(0);
 
     dumper.dump_metadata();
-    // dumper.dump_root().expect("oof");
+    dumper.dump_root().expect("oof");
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
