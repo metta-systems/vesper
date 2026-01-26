@@ -17,16 +17,15 @@
 /// 0xFFFF_0000_0000_0000  └─────────────────────┘
 /// ```
 use {
-    crate::memory::{
-        BootAllocator, KernelLayout, MemoryPermissions, PhysAddr, SectionMapping, VirtAddr,
-    },
+    crate::memory::{BootAllocator, KernelLayout, MemoryPermissions, SectionMapping},
     core::ptr,
+    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
     libqemu::semi_println,
 };
 
-const KERNEL_BASE: u64 = 0xFFFF_0000_0000_0000;
-const KERNEL_PHYS_MAP: u64 = 0xFFFF_0000_0000_0000; // Linear map base
-const KERNEL_DEVICE_BASE: u64 = 0xFFFF_0080_0000_0000;
+const KERNEL_BASE: u64 = 0xFFFF_8000_0000_0000;
+const KERNEL_PHYS_MAP: u64 = 0xFFFF_8000_0000_0000; // Linear map base
+const KERNEL_DEVICE_BASE: u64 = 0xFFFF_8080_0000_0000;
 const KERNEL_DCB_BASE: u64 = 0xFFFF_FF00_0000_0000;
 const KERNEL_HEAP_BASE: u64 = 0xFFFF_FFFF_0000_0000;
 const KERNEL_STACK_BASE: u64 = 0xFFFF_FFFF_8000_0000;
@@ -244,8 +243,8 @@ pub fn create_identity_mapping(
     start: PhysAddr,
     end: PhysAddr,
 ) -> Result<(), &'static str> {
-    let start_aligned = start.align_down(2 * 1024 * 1024);
-    let end_aligned = end.align_up(2 * 1024 * 1024);
+    let start_aligned = start.aligned_down(2 * 1024 * 1024);
+    let end_aligned = end.aligned_up(2 * 1024 * 1024);
 
     let perms = MemoryPermissions {
         readable: true,

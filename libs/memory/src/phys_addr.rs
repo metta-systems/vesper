@@ -27,7 +27,7 @@ use {
 /// to be zero. This type guarantees that it always represents a valid physical address.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(transparent)]
-pub struct PhysAddr(u64);
+pub struct PhysAddr(pub u64);
 
 /// A passed `u64` was not a valid physical address.
 ///
@@ -66,6 +66,14 @@ impl PhysAddr {
     /// Converts the address to an `u64`.
     pub fn as_u64(self) -> u64 {
         self.0
+    }
+
+    pub const fn as_ptr<T>(self) -> *const T {
+        self.0 as *const T
+    }
+
+    pub fn as_mut_ptr<T>(self) -> *mut T {
+        self.0 as *mut T
     }
 
     /// Convenience method for checking if a physical address is null.

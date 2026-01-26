@@ -38,6 +38,7 @@ libcpu = { workspace = true }
 libexception = { workspace = true }
 libkernel-state = { workspace = true }
 liblog = { workspace = true }
+liblocking = { workspace = true }
 libmachine = { workspace = true }
 libmemory = { workspace = true }
 libplatform = { workspace = true }

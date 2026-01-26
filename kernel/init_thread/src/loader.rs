@@ -3,9 +3,10 @@
 use {
     crate::{
         embed::KERNEL,
-        memory::{BootAllocator, KernelLayout, MemoryPermissions, PhysAddr, VirtAddr},
+        memory::{BootAllocator, KernelLayout, MemoryPermissions},
     },
     core::ptr,
+    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
     libqemu::semi_println,
 };
 
