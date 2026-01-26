@@ -2,7 +2,7 @@
 //!
 //! Define a map of memory regions used during boot allocations.
 use {
-    crate::{arch::memory::PhysAddr, println, sync},
+    crate::{memory::PhysAddr, println, sync},
     core::fmt,
     once_cell::unsync::Lazy,
     snafu::Snafu,
