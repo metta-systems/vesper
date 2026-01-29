@@ -1,67 +1,97 @@
 // ═══════════════════════════════════════════════════════════════════
-// ARCHITECTURE ABSTRACTION TRAIT
+// ARCH OBJECTS TRAIT WITH INVOKE METHODS
 // ═══════════════════════════════════════════════════════════════════
 
-/// Trait defining architecture-specific kernel object types and operations.
-///
-/// Each architecture implements this trait to provide:
-/// - Concrete types for frames, page tables, etc.
-/// - Size/alignment requirements
-/// - Retype validation
+/// Architecture abstraction trait - extended with invoke methods
 pub trait ArchObjects: Sized + 'static {
-    /// Physical memory frame type
+    // ─── Associated Types ───
     type Frame: KernelObject;
-    /// Page table type (single level)
     type PageTable: KernelObject;
-    /// Virtual address space root
     type VSpace: KernelObject;
-    /// ASID pool type
     type ASIDPool: KernelObject;
-    /// ASID type
     type ASID: KernelObject;
 
-    /// Supported frame sizes for this architecture
+    // ─── Constants ───
     const FRAME_SIZES: &'static [FrameSize];
-
-    /// Number of page table levels
     const PT_LEVELS: usize;
-
-    /// Bits per page table level
     const PT_INDEX_BITS: usize;
 
-    /// Validate that an object type can be created with given size_bits
-    fn validate_retype(obj_type: ObjectType, size_bits: u8) -> Result<usize, CapError>;
+    // ─── Validation ───
+    fn validate_retype(arch_type: ArchType, size_bits: u8) -> Result<usize, CapError>;
 
-    /// Create an architecture-specific object
+    // ─── Object Creation ───
     fn create_arch_object(
-        obj_type: ObjectType,
+        arch_type: ArchType,
         phys_addr: PhysAddr,
         size_bits: u8,
         pools: &mut ArchPools<Self>,
     ) -> Result<ObjectRef, CapError>;
-}
 
-/// Frame size enumeration (common across architectures)
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FrameSize {
-    /// 4KB (standard page)
-    Small, // 12 bits
-    /// 2MB (large page / section)
-    Large, // 21 bits
-    /// 1GB (huge page / supersection)
-    Huge, // 30 bits
-}
+    // ─── Invocation Handlers ───
+    fn invoke_frame(
+        frame: &mut Self::Frame,
+        rights: Rights,
+        op: u32,
+        args: &[u64; 6],
+        kernel: &mut Kernel<Self>,
+    ) -> Result<(u64, u64), CapError>;
 
-impl FrameSize {
-    pub const fn bits(&self) -> u8 {
-        match self {
-            FrameSize::Small => 12,
-            FrameSize::Large => 21,
-            FrameSize::Huge => 30,
-        }
+    fn invoke_page_table(
+        pt: &mut Self::PageTable,
+        rights: Rights,
+        op: u32,
+        args: &[u64; 6],
+        kernel: &mut Kernel<Self>,
+    ) -> Result<(u64, u64), CapError>;
+
+    fn invoke_vspace(
+        vspace: &mut Self::VSpace,
+        rights: Rights,
+        op: u32,
+        args: &[u64; 6],
+        kernel: &mut Kernel<Self>,
+    ) -> Result<(u64, u64), CapError>;
+
+    fn invoke_asid_pool(
+        pool: &mut Self::ASIDPool,
+        rights: Rights,
+        op: u32,
+        args: &[u64; 6],
+        kernel: &mut Kernel<Self>,
+    ) -> Result<(u64, u64), CapError>;
+
+    fn invoke_asid(
+        asid: &mut Self::ASID,
+        rights: Rights,
+        op: u32,
+        args: &[u64; 6],
+    ) -> Result<(u64, u64), CapError>;
+
+    // Optional - default implementations return UnsupportedArchType
+    fn invoke_io_space(
+        _entry: &mut KeyEntry,
+        _op: u32,
+        _args: &[u64; 6],
+        _kernel: &mut Kernel<Self>,
+    ) -> Result<(u64, u64), CapError> {
+        Err(CapError::UnsupportedArchType(ArchType::IOSpace))
     }
 
-    pub const fn size(&self) -> usize {
-        1 << self.bits()
+    fn invoke_irq_handler(
+        _entry: &mut KeyEntry,
+        _op: u32,
+        _args: &[u64; 6],
+        _kernel: &mut Kernel<Self>,
+    ) -> Result<(u64, u64), CapError> {
+        Err(CapError::UnsupportedArchType(ArchType::IRQHandler))
+    }
+
+    fn invoke_irq_control(
+        _entry: &mut KeyEntry,
+        _op: u32,
+        _args: &[u64; 6],
+        _kernel: &mut Kernel<Self>,
+    ) -> Result<(u64, u64), CapError> {
+        Err(CapError::UnsupportedArchType(ArchType::IRQControl))
     }
 }
