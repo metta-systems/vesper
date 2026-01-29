@@ -23,6 +23,9 @@
 pub struct KeyEntry {
     /// Reference to the kernel object
     object_ref: ObjectRef,
+    // FIXME: OR,
+    /// Physical address of the kernel object
+    // object_paddr: PhysAddr,
     /// Access rights for this capability
     rights: Rights,
     /// Slot of parent capability (for revocation tree)

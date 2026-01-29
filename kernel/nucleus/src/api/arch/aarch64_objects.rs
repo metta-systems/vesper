@@ -2,7 +2,8 @@
 // AARCH64 IMPLEMENTATION
 // ═══════════════════════════════════════════════════════════════════
 
-#[cfg(target_arch = "aarch64")]
+struct AArch64;
+
 impl ArchObjects for AArch64 {
     type Frame = AArch64Frame;
     type PageTable = AArch64PageTable;

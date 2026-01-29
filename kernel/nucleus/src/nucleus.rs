@@ -32,7 +32,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 /// All kernel object pools - both core and architecture-specific
-pub struct KernelPools<A: ArchObjects> {
+pub struct NucleusPools<A: ArchObjects> {
     // ─── Core Object Pools ───
     pub untypeds: ObjectPool<Untyped>,
     pub domains: ObjectPool<Domain>,
@@ -48,12 +48,12 @@ pub struct KernelPools<A: ArchObjects> {
     pub arch: ArchPools<A>,
 }
 
-/// Complete kernel state (parameterized by architecture)
+/// Complete nucleus state (parameterized by architecture)
 pub struct Nucleus<A: ArchObjects> {
     /// All object pools
-    pub pools: KernelPools<A>,
+    pub pools: NucleusPools<A>,
     /// Currently running domain
-    pub current_domain: Option<DomainId>,
+    pub current_domain: Option<DomainId>, // FIXME: not option, always something (Idle or other)
     /// DCB shared pages
     pub dcb_pages: DcbPages,
 }

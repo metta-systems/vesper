@@ -7,7 +7,7 @@
 /// A pool of kernel objects of type T, backed by untyped memory.
 ///
 /// Objects are allocated via Untyped.Retype and live until revoked.
-pub struct ObjectPool<T: KernelObject> {
+pub struct ObjectPool<T: NucleusObject> {
     /// Base address of the pool
     base: *mut T,
     /// Bitmap of allocated slots
@@ -18,7 +18,7 @@ pub struct ObjectPool<T: KernelObject> {
     capacity: u16,
 }
 
-impl<T: KernelObject> ObjectPool<T> {
+impl<T: NucleusObject> ObjectPool<T> {
     /// Create a new pool backed by untyped memory
     ///
     /// # Safety

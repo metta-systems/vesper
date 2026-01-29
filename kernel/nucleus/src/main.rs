@@ -23,12 +23,7 @@
 #![feature(core_intrinsics)]
 
 use {
-    cfg_if::cfg_if,
-    core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration},
-    libcpu::endless_sleep,
-    liblog::{info, println, warn},
-    libmemory::mmu::AccessPermissions,
-    libqemu::semi_println,
+    cfg_if::cfg_if, core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration}, libcpu::endless_sleep, liblocking::IRQSafeNullLock, liblog::{info, println, warn}, libmemory::mmu::AccessPermissions, libqemu::semi_println
 };
 
 mod api;
@@ -112,7 +107,7 @@ fn cap_invoke_handler(
         get_pc()
     );
 
-    handle_cap_invoke(NUCLEUS, cap_slot, op, args)
+    handle_cap_invoke(NUCLEUS.lock(), cap_slot, op, args)
 
     // let cap = current_domain().keytable.lookup(cap_slot)?;
     // let args = &[arg0, arg1, arg2, arg3, arg4, arg5]; // FIXME temp
@@ -135,7 +130,8 @@ fn cap_invoke_handler(
     // }
 }
 
-static mut NUCLEUS: Nucleus<AArch64>;
+/// Global kernel state, protected by The Great Kernel Lock
+static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<AArch64>>> = IRQSafeNullLock::new(LazyLock::new(|| Nucleus<AArch64>));
 
 // ═══════════════════════════════════════════════════════════════════
 // SYSCALL DISPATCH WITH ARCH OBJECTS
