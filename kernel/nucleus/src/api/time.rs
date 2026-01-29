@@ -103,3 +103,7 @@ pub fn invoke(key: &TimeKey, op: u32, args: [u64; 4]) -> SyscallResult {
         _ => Err(SyscallError::InvalidOp),
     }
 }
+
+impl KernelObject for TimeSlice {
+    const TYPE: ObjectType = ObjectType::Time;
+}

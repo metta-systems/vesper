@@ -39,177 +39,6 @@ fn panicked(info: &PanicInfo) -> ! {
     libmachine::panic::handler(info)
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// OBJECT TYPE WITH ARCH BIT
-// ═══════════════════════════════════════════════════════════════════
-
-/// Object type discriminant with architectural bit.
-///
-/// Bit 7 (high bit) indicates architecture-specific type.
-///
-/// Layout:
-///
-///   Bit 7    Bits 6-0
-///   ─────    ────────
-///     0      Core type (0-127)
-///     1      Arch type (0-127)
-///
-#[repr(transparent)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct ObjectType(u8);
-
-impl ObjectType {
-    /// Bit indicating architecture-specific capability
-    pub const ARCH_BIT: u8 = 0x80;
-
-    // ─── Core Types (0x00 - 0x7F) ───
-    pub const NULL: Self = Self(0);
-    pub const UNTYPED: Self = Self(1);
-    pub const DOMAIN: Self = Self(2);
-    pub const KEY_TABLE: Self = Self(3);
-    pub const NOTIFICATION: Self = Self(4);
-    pub const EVENT_COUNT: Self = Self(5);
-    pub const ENDPOINT: Self = Self(6);
-    pub const TIME: Self = Self(7);
-    pub const BUFFER: Self = Self(8);
-    pub const REPLY: Self = Self(9);
-    // Reserved: 10-127
-
-    // ─── Arch Types (0x80 - 0xFF) ───
-    pub const FRAME: Self = Self(Self::ARCH_BIT | 0);
-    pub const PAGE_TABLE: Self = Self(Self::ARCH_BIT | 1);
-    pub const VSPACE: Self = Self(Self::ARCH_BIT | 2);
-    pub const ASID_POOL: Self = Self(Self::ARCH_BIT | 3);
-    pub const ASID: Self = Self(Self::ARCH_BIT | 4);
-    pub const IO_SPACE: Self = Self(Self::ARCH_BIT | 5);
-    pub const IO_PORT: Self = Self(Self::ARCH_BIT | 6); // x86 only
-    pub const IRQ_HANDLER: Self = Self(Self::ARCH_BIT | 7);
-    pub const IRQ_CONTROL: Self = Self(Self::ARCH_BIT | 8);
-    // Reserved: 0x89 - 0xFF
-
-    /// Check if this is an architecture-specific type.
-    #[inline(always)]
-    pub const fn is_arch(&self) -> bool {
-        (self.0 & Self::ARCH_BIT) != 0
-    }
-
-    /// Check if this is a core type.
-    #[inline(always)]
-    pub const fn is_core(&self) -> bool {
-        (self.0 & Self::ARCH_BIT) == 0
-    }
-
-    /// Get the type index within its category (strips arch bit).
-    #[inline(always)]
-    pub const fn index(&self) -> u8 {
-        self.0 & !Self::ARCH_BIT
-    }
-
-    /// Raw value
-    #[inline(always)]
-    pub const fn as_u8(&self) -> u8 {
-        self.0
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// CORE TYPE ENUM (FOR MATCH)
-// ═══════════════════════════════════════════════════════════════════
-
-/// Core object types - used for match dispatch after arch check
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CoreType {
-    /// No capability
-    Null = 0,
-    /// Creates objects (including new key tables)
-    Untyped = 1,
-    /// Protection domain
-    Domain = 2,
-    /// capability table itself
-    KeyTable = 3,
-    /// Time capability
-    Time = 4,
-    /// Endpoint capability
-    Endpoint = 5,
-    /// Notification endpoint capability
-    Notification = 6,
-    /// Event count endpoint capability
-    EventCount = 7,
-    /// Shareable buffer capability
-    Buffer = 8,
-    Reply = 9,
-}
-
-impl TryFrom<ObjectType> for CoreType {
-    type Error = CapError;
-
-    #[inline]
-    fn try_from(ot: ObjectType) -> Result<Self, Self::Error> {
-        if ot.is_arch() {
-            return Err(CapError::NotCoreType);
-        }
-        match ot.index() {
-            0 => Ok(CoreType::Null),
-            1 => Ok(CoreType::Untyped),
-            2 => Ok(CoreType::Domain),
-            3 => Ok(CoreType::KeyTable),
-            4 => Ok(CoreType::Notification),
-            5 => Ok(CoreType::EventCount),
-            6 => Ok(CoreType::Endpoint),
-            7 => Ok(CoreType::Time),
-            8 => Ok(CoreType::Buffer),
-            9 => Ok(CoreType::Reply),
-            _ => Err(CapError::UnknownCoreType(ot.index())),
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// ARCH TYPE ENUM (ARCHITECTURE-SPECIFIC)
-// ═══════════════════════════════════════════════════════════════════
-
-/// Architecture-specific object types
-///
-/// This is defined per-architecture but the indices are the same.
-/// The actual struct types differ per architecture.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ArchType {
-    Frame = 0,
-    PageTable = 1,
-    VSpace = 2,
-    ASIDPool = 3,
-    ASID = 4,
-    IOSpace = 5,
-    IOPort = 6,
-    IRQHandler = 7,
-    IRQControl = 8,
-}
-
-impl TryFrom<ObjectType> for ArchType {
-    type Error = CapError;
-
-    #[inline]
-    fn try_from(ot: ObjectType) -> Result<Self, Self::Error> {
-        if !ot.is_arch() {
-            return Err(CapError::NotArchType);
-        }
-        match ot.index() {
-            0 => Ok(ArchType::Frame),
-            1 => Ok(ArchType::PageTable),
-            2 => Ok(ArchType::VSpace),
-            3 => Ok(ArchType::ASIDPool),
-            4 => Ok(ArchType::ASID),
-            5 => Ok(ArchType::IOSpace),
-            6 => Ok(ArchType::IOPort),
-            7 => Ok(ArchType::IRQHandler),
-            8 => Ok(ArchType::IRQControl),
-            _ => Err(CapError::UnknownArchType(ot.index())),
-        }
-    }
-}
-
 // Syscall handler - exception vector for EL0 synchronous exceptions
 //  (the only other thing nucleus does)
 #[unsafe(naked)]
@@ -282,7 +111,8 @@ fn cap_invoke_handler(
         "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at 0x{:016X}",
         get_pc()
     );
-    return (0, 0, 0);
+
+    handle_cap_invoke(NUCLEUS, cap_slot, op, args)
 
     // let cap = current_domain().keytable.lookup(cap_slot)?;
     // let args = &[arg0, arg1, arg2, arg3, arg4, arg5]; // FIXME temp
@@ -305,6 +135,8 @@ fn cap_invoke_handler(
     // }
 }
 
+static mut NUCLEUS: Nucleus<AArch64>;
+
 // ═══════════════════════════════════════════════════════════════════
 // SYSCALL DISPATCH WITH ARCH OBJECTS
 // ═══════════════════════════════════════════════════════════════════
@@ -319,29 +151,29 @@ fn cap_invoke_handler(
 /// 2. Each sub-match has fewer cases
 #[inline(never)] // Keep as separate function for branch prediction
 pub fn handle_cap_invoke<A: ArchObjects>(
-    kernel: &mut Kernel<A>,
+    nucleus: &mut Nucleus<A>,
     cap_slot: u32,
     op: u32,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
-    let domain = kernel.current_domain_mut()?;
+    let domain = nucleus.current_domain_mut()?;
     let slot = KeySlot(cap_slot as u16);
     let entry = domain.keytable.lookup_mut(slot)?;
     let obj_type = entry.object_type();
 
     if obj_type.is_arch() {
         // Architecture-specific dispatch (less common path)
-        arch_invoke::<A>(kernel, entry, obj_type, op, args)
+        arch_invoke::<A>(nucleus, entry, obj_type, op, args)
     } else {
         // Core dispatch (common path)
-        core_invoke::<A>(kernel, entry, obj_type, op, args)
+        core_invoke::<A>(nucleus, entry, obj_type, op, args)
     }
 }
 
-/// Core object dispatch - ~10 cases
+/// Core object dispatch
 #[inline(always)]
 fn core_invoke<A: ArchObjects>(
-    kernel: &mut Kernel<A>,
+    nucleus: &mut Nucleus<A>,
     entry: &mut KeyEntry,
     obj_type: ObjectType,
     op: u32,
@@ -352,57 +184,60 @@ fn core_invoke<A: ArchObjects>(
     match core_type {
         CoreType::Null => Err(CapError::NullCapability),
 
-        CoreType::Untyped => {
-            let untyped = entry.as_object_mut::<Untyped>()?;
-            api::untyped::invoke(untyped, entry.rights(), op, args, &mut kernel.pools)
-        }
+        // CoreType::Untyped => {
+        //     let untyped = entry.as_object_mut::<Untyped>()?;
+        //     // Untyped::invoke(untyped, ....)
+        //     api::untyped::invoke(untyped, entry.rights(), op, args, &mut nucleus.pools)
+        // }
+        CoreType::DebugConsole => {
+            let debug_console = entry.as_object_mut::<DebugConsole>()?;
+            DebugConsole::invoke(debug_console, parampampam)
+        } // CoreType::Domain => {
+          //     let domain = entry.as_object_mut::<Domain>()?;
+          //     api::domain::invoke(domain, entry.rights(), op, args)
+          // }
 
-        CoreType::Domain => {
-            let domain = entry.as_object_mut::<Domain>()?;
-            api::domain::invoke(domain, entry.rights(), op, args)
-        }
+          // CoreType::KeyTable => {
+          //     let kt = entry.as_object_mut::<KeyTable>()?;
+          //     api::keytable::invoke(kt, entry.rights(), op, args)
+          // }
 
-        CoreType::KeyTable => {
-            let kt = entry.as_object_mut::<KeyTable>()?;
-            api::keytable::invoke(kt, entry.rights(), op, args)
-        }
+          // CoreType::Notification => {
+          //     let notify = entry.as_object_mut::<Notification>()?;
+          //     api::notification::invoke(notify, entry.rights(), entry.badge(), op, args)
+          // }
 
-        CoreType::Notification => {
-            let notify = entry.as_object_mut::<Notification>()?;
-            api::notification::invoke(notify, entry.rights(), entry.badge(), op, args)
-        }
+          // CoreType::EventCount => {
+          //     let ec = entry.as_object_mut::<EventCount>()?;
+          //     api::event_count::invoke(ec, entry.rights(), op, args)
+          // }
 
-        CoreType::EventCount => {
-            let ec = entry.as_object_mut::<EventCount>()?;
-            api::event_count::invoke(ec, entry.rights(), op, args)
-        }
+          // CoreType::Endpoint => {
+          //     let ep = entry.as_object_mut::<Endpoint>()?;
+          //     api::endpoint::invoke(ep, entry.rights(), entry.badge(), op, args, nucleus)
+          // }
 
-        CoreType::Endpoint => {
-            let ep = entry.as_object_mut::<Endpoint>()?;
-            api::endpoint::invoke(ep, entry.rights(), entry.badge(), op, args, kernel)
-        }
+          // CoreType::Time => {
+          //     let time = entry.as_object_mut::<TimeSlice>()?;
+          //     api::time::invoke(time, entry.rights(), op, args, nucleus)
+          // }
 
-        CoreType::Time => {
-            let time = entry.as_object_mut::<TimeSlice>()?;
-            api::time::invoke(time, entry.rights(), op, args, kernel)
-        }
+          // CoreType::Buffer => {
+          //     let buf = entry.as_object_mut::<Buffer>()?;
+          //     api::buffer::invoke(buf, entry.rights(), op, args)
+          // }
 
-        CoreType::Buffer => {
-            let buf = entry.as_object_mut::<Buffer>()?;
-            api::buffer::invoke(buf, entry.rights(), op, args)
-        }
-
-        CoreType::Reply => {
-            let reply = entry.as_object_mut::<Reply>()?;
-            api::reply::invoke(reply, op, args, kernel)
-        }
+          // CoreType::Reply => {
+          //     let reply = entry.as_object_mut::<Reply>()?;
+          //     api::reply::invoke(reply, op, args, nucleus)
+          // }
     }
 }
 
 /// Architecture-specific dispatch - defined per architecture
 #[inline(always)]
 fn arch_invoke<A: ArchObjects>(
-    kernel: &mut Kernel<A>,
+    nucleus: &mut Nucleus<A>,
     entry: &mut KeyEntry,
     obj_type: ObjectType,
     op: u32,
@@ -413,22 +248,22 @@ fn arch_invoke<A: ArchObjects>(
     match arch_type {
         ArchType::Frame => {
             let frame = entry.as_object_mut::<A::Frame>()?;
-            A::invoke_frame(frame, entry.rights(), op, args, kernel) // or A::Frame::invoke()?
+            A::invoke_frame(frame, entry.rights(), op, args, nucleus) // or A::Frame::invoke()?
         }
 
         ArchType::PageTable => {
             let pt = entry.as_object_mut::<A::PageTable>()?;
-            A::invoke_page_table(pt, entry.rights(), op, args, kernel)
+            A::invoke_page_table(pt, entry.rights(), op, args, nucleus)
         }
 
         ArchType::VSpace => {
             let vspace = entry.as_object_mut::<A::VSpace>()?;
-            A::invoke_vspace(vspace, entry.rights(), op, args, kernel)
+            A::invoke_vspace(vspace, entry.rights(), op, args, nucleus)
         }
 
         ArchType::ASIDPool => {
             let pool = entry.as_object_mut::<A::ASIDPool>()?;
-            A::invoke_asid_pool(pool, entry.rights(), op, args, kernel)
+            A::invoke_asid_pool(pool, entry.rights(), op, args, nucleus)
         }
 
         ArchType::ASID => {
@@ -438,7 +273,7 @@ fn arch_invoke<A: ArchObjects>(
 
         ArchType::IOSpace => {
             // May not be supported on all architectures
-            A::invoke_io_space(entry, op, args, kernel)
+            A::invoke_io_space(entry, op, args, nucleus)
         }
 
         ArchType::IOPort => {
@@ -454,9 +289,9 @@ fn arch_invoke<A: ArchObjects>(
             }
         }
 
-        ArchType::IRQHandler => A::invoke_irq_handler(entry, op, args, kernel),
+        ArchType::IRQHandler => A::invoke_irq_handler(entry, op, args, nucleus),
 
-        ArchType::IRQControl => A::invoke_irq_control(entry, op, args, kernel),
+        ArchType::IRQControl => A::invoke_irq_control(entry, op, args, nucleus),
     }
 }
 

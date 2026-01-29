@@ -287,3 +287,7 @@ fn core_object_size(obj_type: ObjectType, size_bits: u8) -> Result<usize, CapErr
         _ => Err(CapError::InvalidObjectType),
     }
 }
+
+impl KernelObject for Untyped {
+    const TYPE: ObjectType = ObjectType::Untyped;
+}

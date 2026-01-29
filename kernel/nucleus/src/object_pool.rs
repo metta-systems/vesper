@@ -2,6 +2,8 @@
 // OBJECT POOLS
 // ═══════════════════════════════════════════════════════════════════
 
+// FIXME: allocate a whole pool (X objects of same type) via untyped retype and then get objects from pool as needed
+
 /// A pool of kernel objects of type T, backed by untyped memory.
 ///
 /// Objects are allocated via Untyped.Retype and live until revoked.

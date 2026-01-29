@@ -325,3 +325,7 @@ pub fn invoke(cap: &KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
         }
     }
 }
+
+impl KernelObject for Buffer {
+    const TYPE: ObjectType = ObjectType::Buffer;
+}

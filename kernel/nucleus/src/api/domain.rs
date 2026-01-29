@@ -357,3 +357,7 @@ pub fn invoke(cap: &Cap, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
         _ => Err(SyscallError::InvalidOp),
     }
 }
+
+impl KernelObject for Domain {
+    const TYPE: ObjectType = ObjectType::Domain;
+}
