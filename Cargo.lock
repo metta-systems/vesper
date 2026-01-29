@@ -436,6 +436,7 @@ dependencies = [
  "libplatform",
  "libprint",
  "libqemu",
+ "libsyscall",
  "libtest",
  "libtime",
  "minijinja",
@@ -645,6 +646,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsyscall"
+version = "0.0.1"
+
+[[package]]
 name = "libtest"
 version = "0.0.1"
 dependencies = [
@@ -820,6 +825,7 @@ dependencies = [
  "libplatform",
  "libprint",
  "libqemu",
+ "libsyscall",
  "libtest",
  "libtime",
  "snafu",

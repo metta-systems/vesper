@@ -20,6 +20,7 @@ members = [
   "libs/primitives",
   "libs/print",
   "libs/qemu",
+  "libs/syscall",
   "libs/test",
   "libs/time",
 ]
@@ -61,6 +62,7 @@ libplatform = { path = "libs/platform" }
 libprimitives = { path = "libs/primitives" }
 libprint = { path = "libs/print" }
 libqemu = { path = "libs/qemu" }
+libsyscall = { path = "libs/syscall" }
 libtest = { path = "libs/test" }
 libtime = { path = "libs/time" }
 num = { version = "0.4", default-features = false }

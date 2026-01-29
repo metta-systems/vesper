@@ -44,6 +44,7 @@ libmemory = { workspace = true }
 libplatform = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true, optional = true }
+libsyscall = { workspace = true }
 libtime = { workspace = true }
 snafu = { workspace = true }
 static_assertions = { workspace = true }
