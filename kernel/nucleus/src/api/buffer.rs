@@ -224,7 +224,7 @@ enum BufferOp {
 // == Syscall handler ==
 // =====================
 
-pub fn invoke(cap: &CapEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
+pub fn invoke(cap: &KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
     let buffer = cap.as_buffer()?;
     let caller = current_domain();
 

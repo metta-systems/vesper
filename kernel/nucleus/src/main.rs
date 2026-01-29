@@ -27,10 +27,11 @@ use {
     core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration},
     libcpu::endless_sleep,
     liblog::{info, println, warn},
+    libmemory::mmu::AccessPermissions,
     libqemu::semi_println,
 };
 
-// mod api;
+mod api;
 mod vectors;
 
 #[panic_handler]
@@ -64,8 +65,6 @@ fn panicked(info: &PanicInfo) -> ! {
 //     endpoint::EndpointOp,
 // };
 
-struct Nucleus;
-
 /// Capability types now include:
 pub enum ObjectType {
     /// No capability
@@ -86,17 +85,6 @@ pub enum ObjectType {
     EventCount = 7,
     /// Shareable buffer capability
     Buffer = 8,
-}
-
-type SyscallResult = Result<(u64, u64), SyscallError>;
-
-enum SyscallError {
-    PermissionDenied,
-    InvalidOp,
-    SlotOccupied,
-    AlreadyMapped,
-    NotMapped,
-    InvalidPointer,
 }
 
 // Syscall handler - exception vector for EL0 synchronous exceptions
@@ -167,7 +155,10 @@ fn cap_invoke_handler(
     arg5: u64,
     frame: u64, //*mut TrapFrame,
 ) -> (u64, u64, u64) {
-    semi_println!("CapInvoke SYSCALL happened, we're at 0x{:016X}", get_pc());
+    semi_println!(
+        "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at 0x{:016X}",
+        get_pc()
+    );
     return (0, 0, 0);
 
     // let cap = current_domain().keytable.lookup(cap_slot)?;
