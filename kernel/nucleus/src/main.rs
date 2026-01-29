@@ -182,6 +182,101 @@ fn cap_invoke_handler(
     // }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SYSCALL DISPATCH WITH ARCH OBJECTS
+// ═══════════════════════════════════════════════════════════════════
+
+/// Main capability invocation handler
+pub fn handle_cap_invoke<A: ArchObjects>(
+    kernel: &mut Kernel<A>,
+    cap_slot: u32,
+    op: u32,
+    args: &[u64; 6],
+) -> Result<(u64, u64), CapError> {
+    let domain = kernel.current_domain_mut()?;
+    let slot = KeySlot(cap_slot as u16);
+    let entry = domain.keytable.lookup_mut(slot)?;
+
+    // Dispatch based on object type
+    match entry.object_type() {
+        // ─── Core Types ───
+        ObjectType::Untyped => {
+            let untyped = entry.as_object_mut::<Untyped>()?;
+            api::untyped::invoke(untyped, entry.rights(), op, args, &mut kernel.pools)
+        }
+
+        ObjectType::Notification => {
+            let notify = entry.as_object_mut::<Notification>()?;
+            api::notification::invoke(notify, entry.rights(), entry.badge(), op, args)
+        }
+
+        ObjectType::EventCount => {
+            let ec = entry.as_object_mut::<EventCount>()?;
+            api::event_count::invoke(ec, entry.rights(), op, args)
+        }
+
+        ObjectType::Time => {
+            let time = entry.as_object_mut::<TimeSlice>()?;
+            api::time::invoke(time, entry.rights(), op, args, kernel)
+        }
+
+        ObjectType::Domain => {
+            let target = entry.as_object_mut::<Domain>()?;
+            api::domain::invoke(target, entry.rights(), op, args)
+        }
+
+        ObjectType::Endpoint => {
+            let ep = entry.as_object_mut::<Endpoint>()?;
+            api::endpoint::invoke(ep, entry.rights(), entry.badge(), op, args, kernel)
+        }
+
+        ObjectType::Buffer => {
+            let buf = entry.as_object_mut::<Buffer>()?;
+            api::buffer::invoke(buf, entry.rights(), op, args)
+        }
+
+        ObjectType::KeyTable => {
+            let kt = entry.as_object_mut::<KeyTable>()?;
+            api::keytable::invoke(kt, entry.rights(), op, args)
+        }
+
+        ObjectType::Reply => {
+            let reply = entry.as_object_mut::<Reply>()?;
+            api::reply::invoke(reply, op, args, kernel)
+        }
+
+        // ─── Architecture-Specific Types ───
+        ObjectType::Frame => {
+            let frame = entry.as_object_mut::<A::Frame>()?;
+            api::arch::frame::invoke::<A>(frame, entry.rights(), op, args)
+        }
+
+        ObjectType::PageTable => {
+            let pt = entry.as_object_mut::<A::PageTable>()?;
+            api::arch::page_table::invoke::<A>(pt, entry.rights(), op, args, kernel)
+        }
+
+        ObjectType::VSpace => {
+            let vspace = entry.as_object_mut::<A::VSpace>()?;
+            api::arch::vspace::invoke::<A>(vspace, entry.rights(), op, args, kernel)
+        }
+
+        ObjectType::ASIDPool => {
+            let pool = entry.as_object_mut::<A::ASIDPool>()?;
+            api::arch::asid_pool::invoke::<A>(pool, entry.rights(), op, args, kernel)
+        }
+
+        ObjectType::ASID => {
+            let asid = entry.as_object_mut::<A::ASID>()?;
+            api::arch::asid::invoke::<A>(asid, entry.rights(), op, args)
+        }
+
+        ObjectType::Null => Err(CapError::NullCapability),
+
+        _ => Err(CapError::UnknownObjectType(entry.object_type())),
+    }
+}
+
 fn get_pc() -> u64 {
     let pc: u64;
     unsafe {
