@@ -14,6 +14,11 @@ Steps:
 - [x] Enter kernel init in EL2 - this will be needed to set up kernel mappings
 - [x] Print DTB
 - [x] Print max RAM from DTB
+
+- [ ] Allocate a single key slot in a global domain struct
+- [ ] Fill it with capability to DebugConsole
+- [ ] Invoke DebugConsole.Write via syscall
+
 - [ ] Print kernel covered area
 - [ ] Print KERNEL_HIGH_BASE
 - [ ] Print kernel mappings size and attribs

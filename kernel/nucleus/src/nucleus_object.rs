@@ -78,107 +78,15 @@ use core::ptr::NonNull;
 // └─────────────────────────────────────────────────────────────────────┘
 
 // ═══════════════════════════════════════════════════════════════════
-// OBJECT TYPE DISCRIMINANT - EXTENDED FOR ARCH TYPES
-// ═══════════════════════════════════════════════════════════════════
-
-/// Core object types (architecture-independent)
-///
-/// These are the same across all architectures.
-/// Values 0-63 are reserved for core types.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ObjectType {
-    // ─── Core Types (0-15) ───
-    Null = 0,
-    Untyped = 1,
-    Domain = 2,
-    KeyTable = 3,
-    Notification = 4,
-    EventCount = 5,
-    Endpoint = 6,
-    Time = 7,
-    Buffer = 8,
-    Reply = 9,
-
-    // Reserved for future core types: 10-15
-
-    // ─── Architecture-Specific Types (16-63) ───
-    // These are defined per-architecture but share the enum space
-    // so we can have a single ObjectType for dispatch.
-    /// Physical memory frame (page)
-    Frame = 16,
-    /// Page table (any level)
-    PageTable = 17,
-    /// Virtual address space root
-    VSpace = 18,
-    /// ASID pool (AArch64, RISC-V)
-    ASIDPool = 19,
-    /// ASID control (AArch64, RISC-V)
-    ASID = 20,
-    /// I/O memory space (SMMU/VT-d)
-    IOSpace = 21,
-    /// I/O port range (x86 only)
-    IOPort = 22,
-    /// IRQ handler object
-    IRQHandler = 23,
-    /// IRQ control (for binding IRQs)
-    IRQControl = 24,
-    // Reserved for future arch types: 25-63
-}
-
-impl ObjectType {
-    /// Is this a core (architecture-independent) type?
-    #[inline]
-    pub const fn is_core(&self) -> bool {
-        (*self as u8) < 16
-    }
-
-    /// Is this an architecture-specific type?
-    #[inline]
-    pub const fn is_arch(&self) -> bool {
-        (*self as u8) >= 16 && (*self as u8) < 64
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
 // KERNEL OBJECT TRAIT
 // ═══════════════════════════════════════════════════════════════════
 
 /// Marker trait for kernel objects - provides type → ObjectType mapping
-pub trait KernelObject: Sized + 'static {
+pub trait NucleusObject: Sized + 'static {
     const TYPE: ObjectType;
 
     //TODO: add invoke here?
     // fn invoke(obj: &Self::TYPE, op: u32, args: &[u64]) -> SyscallResult;
-}
-
-// Implement for each kernel object type
-impl KernelObject for Untyped {
-    const TYPE: ObjectType = ObjectType::Untyped;
-}
-impl KernelObject for Domain {
-    const TYPE: ObjectType = ObjectType::Domain;
-}
-impl KernelObject for KeyTable {
-    const TYPE: ObjectType = ObjectType::KeyTable;
-}
-impl KernelObject for Notification {
-    const TYPE: ObjectType = ObjectType::Notification;
-}
-impl KernelObject for EventCount {
-    const TYPE: ObjectType = ObjectType::EventCount;
-}
-impl KernelObject for Endpoint {
-    const TYPE: ObjectType = ObjectType::Endpoint;
-}
-impl KernelObject for TimeSlice {
-    const TYPE: ObjectType = ObjectType::Time;
-}
-impl KernelObject for Buffer {
-    const TYPE: ObjectType = ObjectType::Buffer;
-}
-impl KernelObject for Reply {
-    const TYPE: ObjectType = ObjectType::Reply;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -197,7 +105,7 @@ pub struct ObjectRef {
 
 impl ObjectRef {
     /// Create a new object reference from a typed pointer
-    pub fn new<T: KernelObject>(obj: &T) -> Self {
+    pub fn new<T: NucleusObject>(obj: &T) -> Self {
         Self {
             ptr: NonNull::from(obj).cast(),
             obj_type: T::TYPE,
@@ -208,7 +116,7 @@ impl ObjectRef {
     ///
     /// # Safety
     /// Caller must ensure the pointer is valid and properly aligned
-    pub unsafe fn from_raw<T: KernelObject>(ptr: *mut T) -> Self {
+    pub unsafe fn from_raw<T: NucleusObject>(ptr: *mut T) -> Self {
         Self {
             ptr: NonNull::new_unchecked(ptr.cast()),
             obj_type: T::TYPE,
@@ -223,7 +131,7 @@ impl ObjectRef {
 
     /// Attempt to cast to a specific type (immutable)
     #[inline]
-    pub fn try_as<T: KernelObject>(&self) -> Option<&T> {
+    pub fn try_as<T: NucleusObject>(&self) -> Option<&T> {
         if self.obj_type == T::TYPE {
             // SAFETY: We verified the type matches
             Some(unsafe { self.ptr.cast::<T>().as_ref() })
@@ -234,7 +142,7 @@ impl ObjectRef {
 
     /// Attempt to cast to a specific type (mutable)
     #[inline]
-    pub fn try_as_mut<T: KernelObject>(&mut self) -> Option<&mut T> {
+    pub fn try_as_mut<T: NucleusObject>(&mut self) -> Option<&mut T> {
         if self.obj_type == T::TYPE {
             // SAFETY: We verified the type matches
             Some(unsafe { self.ptr.cast::<T>().as_mut() })
@@ -245,7 +153,7 @@ impl ObjectRef {
 
     /// Cast with error on type mismatch
     #[inline]
-    pub fn as_type<T: KernelObject>(&self) -> Result<&T, CapError> {
+    pub fn as_type<T: NucleusObject>(&self) -> Result<&T, CapError> {
         self.try_as().ok_or(CapError::TypeMismatch {
             expected: T::TYPE,
             found: self.obj_type,
@@ -254,121 +162,10 @@ impl ObjectRef {
 
     /// Cast with error on type mismatch (mutable)
     #[inline]
-    pub fn as_type_mut<T: KernelObject>(&mut self) -> Result<&mut T, CapError> {
+    pub fn as_type_mut<T: NucleusObject>(&mut self) -> Result<&mut T, CapError> {
         self.try_as_mut().ok_or(CapError::TypeMismatch {
             expected: T::TYPE,
             found: self.obj_type,
         })
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// KEY ENTRY (CAPABILITY TABLE ENTRY)
-// ═══════════════════════════════════════════════════════════════════
-
-/// A single entry in a domain's capability table (KeyTable).
-///
-/// Size: 32 bytes (fits nicely in cache)
-///
-/// ```text
-/// ┌────────────────────────────────────────┐
-/// │ object_ref: ObjectRef (16 bytes)       │
-/// │   - ptr: NonNull<()>    (8 bytes)      │
-/// │   - obj_type: ObjectType (1 byte)      │
-/// │   - padding             (7 bytes)      │
-/// ├────────────────────────────────────────┤
-/// │ rights: Rights          (2 bytes)      │
-/// │ parent_slot: u16        (2 bytes)      │
-/// │ badge: u32              (4 bytes)      │
-/// │ gen: u32                (4 bytes)      │
-/// │ padding                 (4 bytes)      │
-/// └────────────────────────────────────────┘
-/// ```
-#[repr(C)]
-pub struct KeyEntry {
-    /// Reference to the kernel object
-    object_ref: ObjectRef,
-    /// Access rights for this capability
-    rights: Rights,
-    /// Slot of parent capability (for revocation tree)
-    /// 0xFFFF = no parent (root capability)
-    parent_slot: u16,
-    /// Badge value (for endpoint discrimination, buffer offset, etc.)
-    badge: u32,
-    /// Generation counter (detect stale capabilities)
-    generation: u32,
-    _pad: u32,
-}
-
-impl KeyEntry {
-    /// Create a null/empty entry
-    pub const fn null() -> Self {
-        Self {
-            object_ref: ObjectRef {
-                ptr: NonNull::dangling(),
-                obj_type: ObjectType::Null,
-            },
-            rights: Rights::empty(),
-            parent_slot: 0xFFFF,
-            badge: 0,
-            generation: 0,
-            _pad: 0,
-        }
-    }
-
-    /// Create a new capability entry
-    pub fn new<T: KernelObject>(
-        object: &T,
-        rights: Rights,
-        badge: u32,
-        parent: Option<KeySlot>,
-    ) -> Self {
-        Self {
-            object_ref: ObjectRef::new(object),
-            rights,
-            parent_slot: parent.map(|s| s.0).unwrap_or(0xFFFF),
-            badge,
-            generation: 0,
-            _pad: 0,
-        }
-    }
-
-    /// Check if this entry is valid (not null)
-    #[inline]
-    pub fn is_valid(&self) -> bool {
-        self.object_ref.obj_type != ObjectType::Null
-    }
-
-    /// Get the object type
-    #[inline]
-    pub fn object_type(&self) -> ObjectType {
-        self.object_ref.obj_type
-    }
-
-    /// Get access rights
-    #[inline]
-    pub fn rights(&self) -> Rights {
-        self.rights
-    }
-
-    /// Get badge value
-    #[inline]
-    pub fn badge(&self) -> u32 {
-        self.badge
-    }
-
-    /// Access the underlying object with type checking
-    #[inline]
-    pub fn as_object<T: KernelObject>(&self) -> Result<&T, CapError> {
-        self.object_ref.as_type()
-    }
-
-    /// Access the underlying object mutably with type checking
-    #[inline]
-    pub fn as_object_mut<T: KernelObject>(&mut self) -> Result<&mut T, CapError> {
-        self.object_ref.as_type_mut()
-    }
-}
-
-// Verify size at compile time
-const _: () = assert!(core::mem::size_of::<KeyEntry>() == 32);

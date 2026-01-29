@@ -125,3 +125,7 @@ pub fn invoke(
         }
     }
 }
+
+impl KernelObject for Notification {
+    const TYPE: ObjectType = ObjectType::Notification;
+}
