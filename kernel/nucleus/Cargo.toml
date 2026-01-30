@@ -40,6 +40,7 @@ libconsole = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
 libkernel-state = { workspace = true }
+liblocking = { workspace = true }
 liblog = { workspace = true }
 libmachine = { workspace = true }
 libmemory = { workspace = true }

@@ -42,7 +42,6 @@ mod embed;
 mod loader;
 mod memory;
 mod paging;
-mod syscall_test;
 
 use {
     crate::boot_info::{BOOT_INFO, BootInfoMemRegion},
@@ -57,8 +56,8 @@ use {
     liblocking::interface::Mutex,
     libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
     libqemu::semi_println,
+    libsyscall::protected_call6,
     memory::BootAllocator,
-    syscall_test::protected_call6,
 };
 
 unsafe extern "C" {

@@ -1,3 +1,5 @@
+pub struct AArch64PageTable;
+
 #[repr(u8)]
 pub enum PageTableOp {
     /// Map a page table into parent table

@@ -23,11 +23,24 @@
 #![feature(core_intrinsics)]
 
 use {
-    cfg_if::cfg_if, core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration}, libcpu::endless_sleep, liblocking::IRQSafeNullLock, liblog::{info, println, warn}, libmemory::mmu::AccessPermissions, libqemu::semi_println
-};
+    cfg_if::cfg_if,
+    core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration},
+    libcpu::endless_sleep,
+    liblocking::IRQSafeNullLock,
+    liblog::{info, println, warn},
+    libmemory::mmu::AccessPermissions,
+    libqemu::semi_println
+};use core::cell::LazyCell;
+use crate::nucleus::Nucleus;
 
 mod api;
+mod objects;
+mod nucleus;
 mod vectors;
+
+/// Global kernel state, protected by The Great Kernel Lock
+static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<objects::ArchObjectsImpl>>> = IRQSafeNullLock::new(LazyCell::new(|| { Nucleus<objects::ArchObjectsImpl> {} }));
+
 
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
@@ -129,9 +142,6 @@ fn cap_invoke_handler(
     //     Err(e) => (e.code(), 0, 0),
     // }
 }
-
-/// Global kernel state, protected by The Great Kernel Lock
-static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<AArch64>>> = IRQSafeNullLock::new(LazyLock::new(|| Nucleus<AArch64>));
 
 // ═══════════════════════════════════════════════════════════════════
 // SYSCALL DISPATCH WITH ARCH OBJECTS
