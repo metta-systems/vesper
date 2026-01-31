@@ -104,6 +104,6 @@ pub fn invoke(key: &TimeKey, op: u32, args: [u64; 4]) -> SyscallResult {
     }
 }
 
-impl KernelObject for TimeSlice {
+impl NucleusObject for TimeSlice {
     const TYPE: ObjectType = ObjectType::Time;
 }

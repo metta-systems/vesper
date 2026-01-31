@@ -4,6 +4,7 @@ use {
         object_type::{ArchType, ObjectType},
     },
     libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libsyscall::CapError,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -102,70 +103,7 @@ impl ArchObjects for AArch64 {
         args: &[u64; 6],
         kernel: &mut Kernel<Self>,
     ) -> Result<(u64, u64), CapError> {
-        #[repr(u8)]
-        enum FrameOp {
-            Map = 0,
-            Unmap = 1,
-            GetAddress = 2,
-            Remap = 3,
-        }
-
-        let op = match op {
-            0 => FrameOp::Map,
-            1 => FrameOp::Unmap,
-            2 => FrameOp::GetAddress,
-            3 => FrameOp::Remap,
-            _ => return Err(CapError::InvalidOperation),
-        };
-
-        match op {
-            FrameOp::Map => {
-                // args[0] = vspace_slot
-                // args[1] = virt_addr
-                // args[2] = rights (R/W/X bits)
-                // args[3] = attrs (cacheability, etc.)
-
-                if !rights.contains(Rights::READ) {
-                    return Err(CapError::InsufficientRights);
-                }
-
-                let vspace_slot = KeySlot(args[0] as u16);
-                let virt_addr = VirtAddr::new(args[1]);
-                let map_rights = MapRights::from_bits(args[2] as u8);
-                let attrs = MemAttrs::from_bits(args[3] as u8);
-
-                // Get the VSpace from the slot
-                let domain = kernel.current_domain()?;
-                let vspace_entry = domain.keytable.lookup(vspace_slot)?;
-                let vspace = vspace_entry.as_object::<AArch64VSpace>()?;
-
-                // Perform the mapping
-                aarch64_map_frame(frame, vspace, virt_addr, map_rights, attrs, kernel)?;
-
-                Ok((0, 0))
-            }
-
-            FrameOp::Unmap => {
-                if frame.map_count == 0 {
-                    return Err(CapError::NotMapped);
-                }
-                // ... unmap logic
-                Ok((0, 0))
-            }
-
-            FrameOp::GetAddress => {
-                // Requires Grant right to expose physical address
-                if !rights.contains(Rights::GRANT) {
-                    return Err(CapError::InsufficientRights);
-                }
-                Ok((frame.phys_addr.as_u64(), frame.size.size() as u64))
-            }
-
-            FrameOp::Remap => {
-                // Change attributes on existing mapping
-                todo!("frame remap")
-            }
-        }
+        crate::api::arch::frame::invoke(frame, rights, op, args)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -179,33 +117,7 @@ impl ArchObjects for AArch64 {
         args: &[u64; 6],
         kernel: &mut Kernel<Self>,
     ) -> Result<(u64, u64), CapError> {
-        #[repr(u8)]
-        enum PageTableOp {
-            Map = 0,   // Map this PT into a parent PT or VSpace
-            Unmap = 1, // Unmap from parent
-        }
-
-        let op = match op {
-            0 => PageTableOp::Map,
-            1 => PageTableOp::Unmap,
-            _ => return Err(CapError::InvalidOperation),
-        };
-
-        match op {
-            PageTableOp::Map => {
-                // args[0] = vspace_slot
-                // args[1] = virt_addr (determines which slot in parent)
-                let vspace_slot = KeySlot(args[0] as u16);
-                let virt_addr = VirtAddr::new(args[1]);
-
-                // ... mapping logic
-                todo!("page_table map")
-            }
-
-            PageTableOp::Unmap => {
-                todo!("page_table unmap")
-            }
-        }
+        // crate::api::arch::page_table::invoke(pt, rights, op, args)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -219,38 +131,7 @@ impl ArchObjects for AArch64 {
         args: &[u64; 6],
         kernel: &mut Kernel<Self>,
     ) -> Result<(u64, u64), CapError> {
-        #[repr(u8)]
-        enum VSpaceOp {
-            AssignASID = 0,
-            GetASID = 1,
-        }
-
-        let op = match op {
-            0 => VSpaceOp::AssignASID,
-            1 => VSpaceOp::GetASID,
-            _ => return Err(CapError::InvalidOperation),
-        };
-
-        match op {
-            VSpaceOp::AssignASID => {
-                // args[0] = asid_pool_slot
-                let pool_slot = KeySlot(args[0] as u16);
-
-                let domain = kernel.current_domain_mut()?;
-                let pool_entry = domain.keytable.lookup_mut(pool_slot)?;
-                let pool = pool_entry.as_object_mut::<AArch64ASIDPool>()?;
-
-                let asid = pool.allocate().ok_or(CapError::ASIDPoolExhausted)?;
-
-                vspace.asid = Some(asid);
-                Ok((asid as u64, 0))
-            }
-
-            VSpaceOp::GetASID => {
-                let asid = vspace.asid.ok_or(CapError::NoASIDAssigned)?;
-                Ok((asid as u64, 0))
-            }
-        }
+        // crate::api::arch::vspace::invoke(vspace, rights, op, args)
     }
 
     // ─────────────────────────────────────────────────────────────────

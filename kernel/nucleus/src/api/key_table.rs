@@ -1,3 +1,5 @@
+use libsyscall::CapError;
+
 use crate::{
     SyscallError,
     api::{protected_call1, protected_call4},
@@ -36,7 +38,7 @@ impl KeyTableKey {
         )
     }
 
-    // fn activate(&self, slot: u32, object: KernelObject) -> Result<()> {
+    // fn activate(&self, slot: u32, object: NucleusObject) -> Result<()> {
     //     let captbl = self.get_captbl_mut()?;
     //     // SAFETY: User specifies slot, but kernel validates
     //     if slot >= captbl.len() {
@@ -261,6 +263,6 @@ impl KeyTable {
 }
 
 // KeyTable is itself a kernel object
-impl KernelObject for KeyTable {
+impl NucleusObject for KeyTable {
     const TYPE: ObjectType = ObjectType::KeyTable;
 }

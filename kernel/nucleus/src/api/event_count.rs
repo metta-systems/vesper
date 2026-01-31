@@ -102,6 +102,6 @@ pub fn invoke(cap: &Cap, op: u32, arg0: u64) -> SyscallResult {
     }
 }
 
-impl KernelObject for EventCount {
+impl NucleusObject for EventCount {
     const TYPE: ObjectType = ObjectType::EventCount;
 }

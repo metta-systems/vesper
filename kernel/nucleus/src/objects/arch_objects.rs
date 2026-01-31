@@ -2,14 +2,18 @@
 // ARCH OBJECTS TRAIT WITH INVOKE METHODS
 // ═══════════════════════════════════════════════════════════════════
 
+use libsyscall::CapError;
+
+use crate::objects::NucleusObject;
+
 /// Architecture abstraction trait - extended with invoke methods
 pub trait ArchObjects: Sized + 'static {
     // ─── Associated Types ───
-    type Frame: KernelObject;
-    type PageTable: KernelObject;
-    type VSpace: KernelObject;
-    type ASIDPool: KernelObject;
-    type ASID: KernelObject;
+    type Frame: NucleusObject;
+    type PageTable: NucleusObject;
+    type VSpace: NucleusObject;
+    type ASIDPool: NucleusObject;
+    type ASID: NucleusObject;
 
     // ─── Constants ───
     const FRAME_SIZES: &'static [FrameSize];

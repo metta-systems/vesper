@@ -33,30 +33,37 @@ use core::result::Result;
 // │  └─────────────────────────────────────────────────────────────────┘   │
 // └─────────────────────────────────────────────────────────────────────────┘
 
-pub type SyscallResult = Result<(u64, u64), SyscallError>;
+pub type SyscallResult = Result<(u64, u64), CapError>;
 
-pub enum SyscallError {
-    PermissionDenied,
-    InvalidOp,
-    SlotOccupied,
-    AlreadyMapped,
-    NotMapped,
-    InvalidPointer,
+// FIXME: These should not be here, they should be defined in libobject for each kernel object interface
+#[repr(u8)]
+pub enum CapError {
     Unknown,
-}
-
-impl SyscallError {
-    pub fn from(val: u64) -> SyscallError {
-        match val {
-            1 => SyscallError::PermissionDenied,
-            2 => SyscallError::InvalidOp,
-            3 => SyscallError::SlotOccupied,
-            4 => SyscallError::AlreadyMapped,
-            5 => SyscallError::NotMapped,
-            6 => SyscallError::InvalidPointer,
-            _ => SyscallError::Unknown,
-        }
-    }
+    InvalidPointer,
+    InsufficientRights,
+    NotMapped,
+    AlreadyMapped,
+    InvalidOperation,
+    ASIDPoolExhausted,
+    NoASIDAssigned,
+    InvalidSlot,  //(KeySlot),
+    EmptySlot,    //(KeySlot),
+    SlotOccupied, //(KeySlot),
+    NotCoreType,
+    UnknownCoreType,     //(u32),
+    NotArchType,         //(u32),
+    UnknownArchType,     //(u32),
+    UnsupportedArchType, //(u32),
+    InsufficientMemory,
+    PoolExhausted,
+    InvalidObjectType, //(ObjectType),
+    InvalidSize,       //(usize),
+    NullCapability,
+    InvalidFrameSize, //(usize),
+    TypeMismatch,     /*  {
+                          expected: ObjectType,
+                          found: ObjectType,
+                      },*/
 }
 
 /// Single syscall ABI
@@ -119,7 +126,7 @@ pub unsafe fn protected_call6(
     if ret == 0 {
         return Ok((val0, val1));
     } else {
-        return Err(SyscallError::from(ret));
+        return Err(CapError::try_from(ret).ok_or(CapError::Unknown));
     }
 }
 
@@ -133,7 +140,7 @@ pub fn protected_call0(cap: u32, op: u32) -> SyscallResult {
     if ret == 0 {
         return Ok((val0, val1));
     } else {
-        return Err(SyscallError::from(ret));
+        return Err(CapError::try_from(ret).ok_or(CapError::Unknown));
     }
 }
 
@@ -144,7 +151,7 @@ pub fn protected_call1(cap: u32, op: u32, a0: u64) -> SyscallResult {
     if ret == 0 {
         return Ok((val0, val1));
     } else {
-        return Err(SyscallError::from(ret));
+        return Err(CapError::try_from(ret).ok_or(CapError::Unknown));
     }
 }
 
@@ -155,7 +162,7 @@ pub fn protected_call2(cap: u32, op: u32, a0: u64, a1: u64) -> SyscallResult {
     if ret == 0 {
         return Ok((val0, val1));
     } else {
-        return Err(SyscallError::from(ret));
+        return Err(CapError::try_from(ret).ok_or(CapError::Unknown));
     }
 }
 
@@ -166,7 +173,7 @@ pub fn protected_call3(cap: u32, op: u32, a0: u64, a1: u64, a2: u64) -> SyscallR
     if ret == 0 {
         return Ok((val0, val1));
     } else {
-        return Err(SyscallError::from(ret));
+        return Err(CapError::try_from(ret).ok_or(CapError::Unknown));
     }
 }
 
@@ -177,7 +184,7 @@ pub fn protected_call4(cap: u32, op: u32, a0: u64, a1: u64, a2: u64, a3: u64) ->
     if ret == 0 {
         return Ok((val0, val1));
     } else {
-        return Err(SyscallError::from(ret));
+        return Err(CapError::try_from(ret).ok_or(CapError::Unknown));
     }
 }
 
@@ -196,6 +203,6 @@ pub fn protected_call5(
     if ret == 0 {
         return Ok((val0, val1));
     } else {
-        return Err(SyscallError::from(ret));
+        return Err(CapError::try_from(ret).ok_or(CapError::Unknown));
     }
 }

@@ -193,6 +193,6 @@ pub fn invoke(cap: &CapEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
     }
 }
 
-impl KernelObject for Reply {
+impl NucleusObject for Reply {
     const TYPE: ObjectType = ObjectType::Reply;
 }

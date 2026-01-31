@@ -8,7 +8,37 @@ pub struct UntypedKey {
     key: Key<Untyped>,
 }
 
-enum RetypeError {}
+// Errors that can occur during retype operation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RetypeError {
+    /// Invalid object type specified
+    InvalidObjectType = 1,
+    /// Requested size is invalid for object type
+    InvalidSize = 2,
+    /// Not enough memory remaining in untyped
+    InsufficientMemory = 3,
+    /// Alignment requirements not met
+    AlignmentError = 4,
+    /// Destination slot already occupied
+    SlotOccupied = 5,
+    /// Invalid destination slot
+    InvalidSlot = 6,
+    /// Untyped has already been retyped (has children)
+    AlreadyRetyped = 7,
+    /// Object type requires specific size_bits
+    SizeMismatch = 8,
+    /// Maximum number of objects reached
+    ObjectLimitReached = 9,
+    /// Internal kernel error
+    InternalError = 10,
+}
+
+impl RetypeError {
+    pub fn code(self) -> u32 {
+        self as u32
+    }
+}
 
 // ┌─────────────────────────────────────────────────────────────────┐
 // │  ALLOWED OPERATIONS ON UNTYPED                                  │
@@ -46,38 +76,6 @@ impl UntypedKey {
             )
         };
         Error::from_code(ret)
-    }
-}
-
-// Errors that can occur during retype operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum RetypeError {
-    /// Invalid object type specified
-    InvalidObjectType = 1,
-    /// Requested size is invalid for object type
-    InvalidSize = 2,
-    /// Not enough memory remaining in untyped
-    InsufficientMemory = 3,
-    /// Alignment requirements not met
-    AlignmentError = 4,
-    /// Destination slot already occupied
-    SlotOccupied = 5,
-    /// Invalid destination slot
-    InvalidSlot = 6,
-    /// Untyped has already been retyped (has children)
-    AlreadyRetyped = 7,
-    /// Object type requires specific size_bits
-    SizeMismatch = 8,
-    /// Maximum number of objects reached
-    ObjectLimitReached = 9,
-    /// Internal kernel error
-    InternalError = 10,
-}
-
-impl RetypeError {
-    pub fn code(self) -> u32 {
-        self as u32
     }
 }
 

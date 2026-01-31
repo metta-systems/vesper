@@ -126,6 +126,6 @@ pub fn invoke(
     }
 }
 
-impl KernelObject for Notification {
+impl NucleusObject for Notification {
     const TYPE: ObjectType = ObjectType::Notification;
 }

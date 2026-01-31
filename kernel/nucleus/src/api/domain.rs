@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use core::sync::atomic::Ordering;
 
 // ==================================================
 // == Public user interface, usable from userspace ==
@@ -358,6 +358,6 @@ pub fn invoke(cap: &Cap, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
     }
 }
 
-impl KernelObject for Domain {
+impl NucleusObject for Domain {
     const TYPE: ObjectType = ObjectType::Domain;
 }

@@ -1,7 +1,7 @@
 use {
-    crate::api::key::Key,
+    crate::api::{key::Key, object_type::ObjectType},
     core::slice,
-    libsyscall::{SyscallError, SyscallResult, protected_call2},
+    libsyscall::{CapError, SyscallError, SyscallResult, protected_call2},
 };
 
 // ==================================================
@@ -40,7 +40,8 @@ struct DebugConsole;
 impl DebugConsole {
     fn handle_write(ptr: u64, len: u64) -> Result<(), SyscallError> {
         let slice = unsafe { slice::from_raw_parts(ptr as *const u8, len as usize) };
-        let buf = [0u8; 4096];
+        let mut buf = [0u8; 4096];
+        // SAFETY: Need to validate user pointer is valid, need to copy via kernel physmem mapping.
         buf.copy_from_slice(slice);
         buf[slice.len()] = 0;
         let cstr = unsafe { core::ffi::CStr::from_bytes_with_nul(&buf[..=slice.len() + 1]) }
@@ -56,11 +57,14 @@ impl DebugConsole {
 
 pub fn invoke(cap: &KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
     let console = cap.as_debug_console()?;
+    let op = DebugConsoleOp::try_from(op).map_err(|_| CapError::InvalidOperation)?;
+
     match op {
         DebugConsoleOp::Write => console.handle_write(arg0, arg1),
         _ => Err(SyscallError::InvalidOp),
     }
-    Ok((0, 0))
 }
 
-impl NucleusObject for DebugConsole {}
+impl NucleusObject for DebugConsole {
+    const TYPE: ObjectType = ObjectType::DEBUG_CONSOLE;
+}

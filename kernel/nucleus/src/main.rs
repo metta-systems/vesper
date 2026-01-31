@@ -23,13 +23,7 @@
 #![feature(core_intrinsics)]
 
 use {
-    cfg_if::cfg_if,
-    core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration},
-    libcpu::endless_sleep,
-    liblocking::IRQSafeNullLock,
-    liblog::{info, println, warn},
-    libmemory::mmu::AccessPermissions,
-    libqemu::semi_println
+    crate::api::{key_table::KeySlot, object_type::ArchType}, cfg_if::cfg_if, core::{arch::asm, cell::UnsafeCell, panic::PanicInfo, time::Duration}, libcpu::endless_sleep, liblocking::IRQSafeNullLock, liblog::{info, println, warn}, libmemory::mmu::AccessPermissions, libqemu::semi_println, libsyscall::CapError
 };use core::cell::LazyCell;
 use crate::nucleus::Nucleus;
 

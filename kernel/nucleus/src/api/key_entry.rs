@@ -2,6 +2,8 @@
 // KEY ENTRY (CAPABILITY TABLE ENTRY)
 // ═══════════════════════════════════════════════════════════════════
 
+use crate::{api::key_table::KeySlot, objects::NucleusObject};
+
 /// A single entry in a domain's capability table (KeyTable).
 ///
 /// Size: 32 bytes (fits nicely in cache)
@@ -53,7 +55,7 @@ impl KeyEntry {
     }
 
     /// Create a new capability entry
-    pub fn new<T: KernelObject>(
+    pub fn new<T: NucleusObject>(
         object: &T,
         rights: Rights,
         badge: u32,
@@ -94,13 +96,13 @@ impl KeyEntry {
 
     /// Access the underlying object with type checking
     #[inline]
-    pub fn as_object<T: KernelObject>(&self) -> Result<&T, CapError> {
+    pub fn as_object<T: NucleusObject>(&self) -> Result<&T, CapError> {
         self.object_ref.as_type()
     }
 
     /// Access the underlying object mutably with type checking
     #[inline]
-    pub fn as_object_mut<T: KernelObject>(&mut self) -> Result<&mut T, CapError> {
+    pub fn as_object_mut<T: NucleusObject>(&mut self) -> Result<&mut T, CapError> {
         self.object_ref.as_type_mut()
     }
 }
