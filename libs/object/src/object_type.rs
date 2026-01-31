@@ -1,3 +1,5 @@
+use libsyscall::CapError;
+
 /// Object type discriminant with architectural bit.
 ///
 /// Bit 7 (high bit) indicates architecture-specific type.

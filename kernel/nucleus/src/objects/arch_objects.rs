@@ -1,10 +1,8 @@
+use {crate::objects::NucleusObject, libsyscall::CapError};
+
 // ═══════════════════════════════════════════════════════════════════
 // ARCH OBJECTS TRAIT WITH INVOKE METHODS
 // ═══════════════════════════════════════════════════════════════════
-
-use libsyscall::CapError;
-
-use crate::objects::NucleusObject;
 
 /// Architecture abstraction trait - extended with invoke methods
 pub trait ArchObjects: Sized + 'static {

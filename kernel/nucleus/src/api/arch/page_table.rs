@@ -1,13 +1,3 @@
-pub struct AArch64PageTable;
-
-#[repr(u8)]
-pub enum PageTableOp {
-    /// Map this page table into parent table or VSpace
-    Map = 0,
-    /// Unmap from parent
-    Unmap = 1,
-}
-
 pub fn invoke<A: ArchObjects>(
     pt: &mut A::PageTable,
     rights: Rights,

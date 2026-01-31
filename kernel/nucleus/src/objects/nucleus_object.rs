@@ -86,3 +86,5 @@ pub trait NucleusObject: Sized + 'static {
     //TODO: add invoke here?
     // fn invoke(obj: &Self::TYPE, op: u32, args: &[u64]) -> SyscallResult;
 }
+
+// Should object type live here or in libobject? Seems like here is a better place but CapErrors need to refer to object types.

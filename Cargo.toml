@@ -16,6 +16,7 @@ members = [
   "libs/log",
   "libs/machine",
   "libs/memory",
+  "libs/object",
   "libs/platform",
   "libs/primitives",
   "libs/print",
@@ -58,6 +59,7 @@ liblocking = { path = "libs/locking" }
 liblog = { path = "libs/log" }
 libmachine = { path = "libs/machine" }
 libmemory = { path = "libs/memory" }
+libobject = { path = "libs/object" }
 libplatform = { path = "libs/platform" }
 libprimitives = { path = "libs/primitives" }
 libprint = { path = "libs/print" }

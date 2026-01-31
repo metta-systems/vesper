@@ -38,6 +38,7 @@ pub struct KeyEntry {
     /// Generation counter (detect stale capabilities)
     generation: u32,
 }
+// FIXME: ^ for Untyped this should be the object itself...
 
 impl KeyEntry {
     /// Create a null/empty entry

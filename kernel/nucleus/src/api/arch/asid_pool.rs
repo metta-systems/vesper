@@ -1,9 +1,3 @@
-#[repr(u8)]
-pub enum ASIDPoolOp {
-    /// Allocate an ASID from this pool
-    Allocate = 0,
-}
-
 pub fn invoke<A: ArchObjects>(
     pool: &mut A::ASIDPool,
     rights: Rights,
