@@ -7,37 +7,29 @@ use libsyscall::{CapError, protected_call1, protected_call4};
 /// Slot index in a KeyTable
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct KeySlot(pub u16); // FIXME: u32? probably
+pub struct KeySlot(pub u32);
 
 impl KeySlot {
     pub const NULL: KeySlot = KeySlot(0);
     pub const SELF_DOMAIN: KeySlot = KeySlot(1);
     pub const PARENT_DOMAIN: KeySlot = KeySlot(2);
+    // CSpace layout with self-reference
+    pub const CAPTBL_SELF: KeySlot = KeySlot(3); // Every domain has cap to own captbl here - or rather to KeyMaster
     // ... other well-known slots
 }
 
 pub struct KeyTableKey {
-    key: Key<KeyTable>,
+    key: Key<KeyTableType>,
 }
 
+enum KeyTableType {}
+
 #[repr(u8)]
-enum KeyTableOp {
-    CopyDerive = 0, // copy cap between slots or  create derived cap with reduced rights
+pub enum KeyTableOp {
+    CopyDerive = 0, // copy cap between slots or create derived cap with reduced rights
     Move = 1,       // move cap between slots
     Delete = 2,     // delete cap at slot
     Revoke = 4,     // revoke all children of cap
-}
-
-impl KeyTableOp {
-    fn try_from(op: u32) -> Result<KeyTableOp, SyscallResult> {
-        match op {
-            0 => Ok(KeyTableOp::CopyDerive),
-            1 => Ok(KeyTableOp::Move),
-            2 => Ok(KeyTableOp::Delete),
-            3 => Ok(KeyTableOp::Revoke),
-            _ => Err(SyscallError::InvalidOp),
-        }
-    }
 }
 
 // Userspace KeyMaster must track parent→child relationships,

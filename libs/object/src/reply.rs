@@ -1,15 +1,13 @@
-//! Endpoint IPC Reply object
-
 // ==================================================
 // == Public user interface, usable from userspace ==
 // ==================================================
 
-/// Reply capability - one-shot reply to a blocked caller
+/// Reply capability - one-shot reply to a blocked caller.
 ///
 /// Created by kernel when a Call arrives, consumed when reply is sent.
 /// This is a LINEAR type - must be used exactly once (or explicitly dropped).
 ///
-/// Key insight from seL4 MCS: making reply explicit enables:
+/// Making reply explicit enables:
 /// - Async reply (store reply cap, reply later)
 /// - Delegation (pass reply cap to helper domain)
 /// - Multiple outstanding calls (each has own reply cap)
@@ -17,7 +15,7 @@ pub struct ReplyKey {
     key: Key<ReplyType>,
 }
 
-enum ReplyType {};
+enum ReplyType {}
 
 #[repr(u8)]
 pub enum ReplyOp {
@@ -34,7 +32,7 @@ impl ReplyKey {
     pub fn send(self, msg: &Message) -> Result<(), IpcError> {
         let ret = unsafe {
             protected_call4(
-                self.key.slot as u64,
+                self.key.slot(),
                 ReplyOp::Send as u64,
                 msg.label,
                 msg.data[0],
@@ -53,7 +51,7 @@ impl ReplyKey {
     pub fn send_with_key(self, msg: &Message, key: KeySlot) -> Result<(), IpcError> {
         let ret = unsafe {
             syscall_ipc_reply(
-                self.cap.slot as u64,
+                self.key.slot(),
                 ReplyOp::SendWithCap as u64,
                 msg.label,
                 msg.data[0],
@@ -61,7 +59,7 @@ impl ReplyKey {
                 msg.data[2],
                 msg.data[3],
                 msg.data[4],
-                cap as u64,
+                key as u64,
             )
         };
 
@@ -73,7 +71,7 @@ impl ReplyKey {
 }
 
 /// Dropping a ReplyKey without sending is an ERROR for the caller.
-/// The caller remains blocked forever (or until timeout/cancellation).
+/// The caller would remains blocked forever (or until timeout/cancellation).
 ///
 /// In debug builds, we panic. In release, we send an error reply.
 impl Drop for ReplyKey {
@@ -82,7 +80,7 @@ impl Drop for ReplyKey {
         // Send error reply to unblock caller
         unsafe {
             protected_call1(
-                self.cap.slot as u64,
+                self.key.slot(),
                 ReplyOp::SendError as u64,
                 IpcError::ReplyDropped as u64,
             );

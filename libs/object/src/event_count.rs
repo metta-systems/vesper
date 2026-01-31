@@ -1,17 +1,17 @@
-// Reed-Kanodia event counts
-
 // ==================================================
 // == Public user interface, usable from userspace ==
 // ==================================================
 
-/// Event count capability - monotonic counter for exact event tracking.
+/// Event count capability - monotonic Reed-Kanodia counter for exact event tracking.
 /// Best for: streaming, flow control, producer-consumer coordination.
 ///
 /// Unlike notifications, every advance() is counted - no coalescing.
 /// This lets consumers know exactly how far behind they are.
 pub struct EventCountKey {
-    key: Key<EventCount>,
+    key: Key<EventCountType>,
 }
+
+enum EventCountType {}
 
 #[repr(u8)]
 pub enum EventCountOp {

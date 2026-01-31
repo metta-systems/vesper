@@ -1,12 +1,12 @@
-use crate::{api::domain::CAPTBL_SELF, key::Key};
-
 // ==================================================
 // == Public user interface, usable from userspace ==
 // ==================================================
 
 pub struct UntypedKey {
-    key: Key<Untyped>,
+    key: Key<UntypedType>,
 }
+
+enum UntypedType {}
 
 #[repr(u8)]
 pub enum UntypedOp {
@@ -45,25 +45,25 @@ impl RetypeError {
     }
 }
 
-// ┌─────────────────────────────────────────────────────────────────┐
-// │  ALLOWED OPERATIONS ON UNTYPED                                  │
-// ├─────────────────────────────────────────────────────────────────┤
-// │  ✓ seL4_Untyped_Retype  → Create children (objects/sub-untypeds)│
-// │  ✓ seL4_CNode_Revoke    → Delete all children, reset watermark  │
-// │  ✓ seL4_CNode_Delete    → Delete this cap (if no children)      │
-// │  ✓ seL4_CNode_Move      → Move cap to different slot            │
-// ├─────────────────────────────────────────────────────────────────┤
-// │  DISALLOWED                                                     │
-// ├─────────────────────────────────────────────────────────────────┤
-// │  ✗ seL4_CNode_Copy      → Cannot duplicate                      │
-// │  ✗ seL4_CNode_Mint      → Cannot derive with reduced rights     │
-// │  ✗ seL4_CNode_Mutate    → Cannot modify                         │
-// └─────────────────────────────────────────────────────────────────┘
+// ┌────────────────────────────────────────────────────────────┐
+// │  ALLOWED OPERATIONS ON UNTYPED                             │
+// ├────────────────────────────────────────────────────────────┤
+// │  ✓ Untyped_Retype  → Create children (objects/sub-untypeds)│
+// │  ✓ CNode_Revoke    → Delete all children, reset watermark  │
+// │  ✓ CNode_Delete    → Delete this cap (if no children)      │
+// │  ✓ CNode_Move      → Move cap to different slot            │
+// ├────────────────────────────────────────────────────────────┤
+// │  DISALLOWED                                                │
+// ├────────────────────────────────────────────────────────────┤
+// │  ✗ CNode_Copy      → Cannot duplicate                      │
+// │  ✗ CNode_Mint      → Cannot derive with reduced rights     │
+// │  ✗ CNode_Mutate    → Cannot modify                         │
+// └────────────────────────────────────────────────────────────┘
 
 impl UntypedKey {
     /// Retype untyped memory into a typed nucleus object.
     ///
-    /// This is how ALL nucleus objects are created (seL4 pattern).
+    /// This is how ALL nucleus objects are created.
     /// The untyped capability is consumed/reduced by the operation.
     pub fn retype(
         &self,
@@ -72,8 +72,8 @@ impl UntypedKey {
         dest_slot: CapSlot,
     ) -> Result<(), RetypeError> {
         let ret = unsafe {
-            crate::syscall::protected_call3(
-                self.key.slot as u64,
+            libsyscall::protected_call3(
+                self.key.slot(),
                 UntypedOp::Retype,
                 object_type as u64,
                 dest_slot as u64,

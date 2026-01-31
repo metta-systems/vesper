@@ -1,12 +1,12 @@
-use libsyscall::protected_call2;
-
 // ==================================================
 // == Public user interface, usable from userspace ==
 // ==================================================
 
 pub struct DebugConsoleKey {
-    key: Key<DebugConsole>,
+    key: Key<DebugConsoleType>,
 }
+
+enum DebugConsoleType {}
 
 #[repr(u8)]
 pub enum DebugConsoleOp {
@@ -16,13 +16,15 @@ pub enum DebugConsoleOp {
 
 // Root domain gets a DebugConsoleCap, can delegate to others
 impl DebugConsoleKey {
-    pub fn write(&self, s: &str) -> Result<(), SyscallError> {
-        protected_call2(
-            self.key.slot(),
-            DebugConsoleOp::Write as u32,
-            s.as_ptr() as u64,
-            s.len() as u64,
-        )?;
+    pub fn write(&self, s: &str) -> Result<(), CapError> {
+        let (ok, _, _) = unsafe {
+            libsyscall::protected_call2(
+                self.key.slot(),
+                DebugConsoleOp::Write as u32,
+                s.as_ptr() as u64,
+                s.len() as u64,
+            );
+        };
         Ok(())
     }
 }

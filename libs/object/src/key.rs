@@ -4,11 +4,11 @@ use core::marker::PhantomData;
 // == Public user interface, usable from userspace ==
 // ==================================================
 
-/// Capability slot index - typed for safety
+/// Capability slot index - strongly typed
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Key<T> {
-    slot: u32,
+    slot: u32, // FIXME: KeySlot()
     _marker: PhantomData<T>,
 }
 

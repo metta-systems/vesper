@@ -10,22 +10,19 @@ pub enum DomainOp {
     Resume = 3,   // Resume suspended domain
 }
 
-// CSpace layout with self-reference
-pub const CAPTBL_SELF: u32 = 0; // Every domain has cap to own captbl here
-
 /// Domain capability - handle to a protection domain.
 /// State queries use shared DCB (no syscall), mutations use CapInvoke.
 pub struct DomainKey {
-    cap: Key<Domain>,
+    cap: Key<DomainType>,
     id: DomainId,
 }
 
 impl DomainKey {
     /// Create a new domain from untyped memory.
     /// Convenience wrapper around UntypedRetype.
-    pub fn create(untyped: &mut UntypedCap, dest_slot: CapSlot) -> Result<Self, Error> {
+    pub fn create(untyped: &mut UntypedCap, dest_slot: KeySlot) -> Result<Self, Error> {
         // Domains need ~4KB (12 bits) for kernel structures
-        untyped_retype(
+        untyped.retype(
             untyped.split(12)?, // Carve off 4KB
             ObjectType::Domain,
             12,

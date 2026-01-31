@@ -23,8 +23,10 @@ use {crate::key::Key, libsyscall::protected_call4};
 /// - reply is done via ReplyCap::send(), not endpoint method
 /// - reply_recv() takes a ReplyCap to consume
 pub struct EndpointKey {
-    key: Key<Endpoint>,
+    key: Key<EndpointType>,
 }
+
+enum EndpointType {}
 
 #[repr(u8)]
 pub enum EndpointOp {
@@ -228,11 +230,11 @@ impl EndpointKey {
     /// The badge is returned to the server on recv(), identifying the caller.
     /// This is how servers distinguish between clients.
     pub fn derive_client(&self, badge: u64, dest_slot: CapSlot) -> Result<EndpointKey, Error> {
-        let ret = unsafe {
-            syscall4(
+        let (ret, _, _) = unsafe {
+            protected_call4(
                 CAPTBL_SELF, // Support deriving directly into a client keytable?
                 KeyTableOp::CopyDerive,
-                self.cap.slot as u64,
+                self.key.slot() as u64,
                 dest_slot as u64,
                 Rights::CALL.bits() as u64, // Client can only Call, not Recv
                 badge,
