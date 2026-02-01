@@ -2,10 +2,14 @@
 
 pub mod debug_console;
 pub mod key;
-pub mod notification;
+pub mod key_table;
 pub mod object_type;
 
-pub use {key::Key, key_table::KeySlot, object_type::ObjectType};
+pub use {
+    key::Key,
+    key_table::KeySlot,
+    object_type::{ArchType, CoreType, ObjectType},
+};
 
 pub type SyscallResult = core::result::Result<(u64, u64), CapError>;
 
@@ -21,11 +25,11 @@ pub enum CapError {
     InvalidSlot(KeySlot),
     EmptySlot(KeySlot),
     SlotOccupied(KeySlot),
-    NotCoreType,
-    UnknownCoreType(u32),
-    NotArchType(u32),
-    UnknownArchType(u32),
-    UnsupportedArchType(u32),
+    NotCoreType(ObjectType),
+    UnknownCoreType(u8),
+    NotArchType(ObjectType),
+    UnknownArchType(u8),
+    UnsupportedArchType(u8),
     InsufficientMemory,
     PoolExhausted,
     InvalidObjectType(ObjectType),

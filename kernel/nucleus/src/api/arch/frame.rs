@@ -1,3 +1,5 @@
+use libobject::arch::frame::FrameOp;
+
 // pub trait FrameInvoke { fn invoke() }
 
 pub fn invoke<A: ArchObjects>(

@@ -202,7 +202,7 @@ pub unsafe fn protected_call0(cap: u32, op: u32) -> (u64, u64, u64) {
             "svc #0",
             inlateout("x0") cap as u64 => r0,
             inlateout("x1") op as u64 => r1,
-            out("x2") => r2,
+            out("x2") r2,
             options(nostack),
         );
     }

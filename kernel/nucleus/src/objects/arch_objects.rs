@@ -1,4 +1,4 @@
-use {crate::objects::NucleusObject, libsyscall::CapError};
+use {crate::objects::NucleusObject, libobject::ArchType, libsyscall::CapError};
 
 // ═══════════════════════════════════════════════════════════════════
 // ARCH OBJECTS TRAIT WITH INVOKE METHODS

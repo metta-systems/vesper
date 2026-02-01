@@ -1,4 +1,4 @@
-use libsyscall::CapError;
+use crate::CapError;
 
 /// Object type discriminant with architectural bit.
 ///
@@ -106,7 +106,7 @@ impl TryFrom<ObjectType> for CoreType {
     #[inline]
     fn try_from(ot: ObjectType) -> Result<Self, Self::Error> {
         if ot.is_arch() {
-            return Err(CapError::NotCoreType);
+            return Err(CapError::NotCoreType(ot));
         }
         match ot.index() {
             0 => Ok(CoreType::Null),
@@ -153,7 +153,7 @@ impl TryFrom<ObjectType> for ArchType {
     #[inline]
     fn try_from(ot: ObjectType) -> Result<Self, Self::Error> {
         if !ot.is_arch() {
-            return Err(CapError::NotArchType);
+            return Err(CapError::NotArchType(ot));
         }
         match ot.index() {
             0 => Ok(ArchType::Frame),

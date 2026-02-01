@@ -602,6 +602,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "libobject"
+version = "0.0.1"
+dependencies = [
+ "libsyscall",
+]
+
+[[package]]
 name = "libplatform"
 version = "0.0.1"
 dependencies = [
@@ -822,6 +829,7 @@ dependencies = [
  "liblog",
  "libmachine",
  "libmemory",
+ "libobject",
  "libplatform",
  "libprint",
  "libqemu",

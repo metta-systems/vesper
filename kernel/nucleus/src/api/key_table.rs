@@ -1,3 +1,5 @@
+use libobject::key_table::KeyTableOp;
+
 // =====================
 // == Syscall handler ==
 // =====================

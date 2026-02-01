@@ -1,4 +1,7 @@
-use libsyscall::{CapError, protected_call1, protected_call4};
+use {
+    crate::{CapError, Key},
+    libsyscall::{protected_call1, protected_call4},
+};
 
 // ==================================================
 // == Public user interface, usable from userspace ==
@@ -46,15 +49,18 @@ impl KeyTableKey {
         dst_captbl: &KeyTableKey, // Could be same or different!
         dst_slot: u32,
         rights: Rights,
-    ) -> Result<()> {
-        protected_call4(
-            self.key.slot(),
-            KeyTableOp::CopyDerive,
-            src_slot,
-            dst_captbl.slot(),
-            dst_slot,
-            rights.bits(),
-        )
+    ) -> Result<(), CapError> {
+        let (_ok, _, _) = unsafe {
+            protected_call4(
+                self.key.slot(),
+                KeyTableOp::CopyDerive as u32,
+                src_slot as u64,
+                dst_captbl.key.slot() as u64,
+                dst_slot as u64,
+                rights.bits(),
+            )
+        };
+        Ok(())
     }
 
     // fn activate(&self, slot: u32, object: NucleusObject) -> Result<()> {
@@ -73,25 +79,37 @@ impl KeyTableKey {
 
     fn r#move() {}
 
-    fn delete(&mut self, slot: u32) -> Result<()> {
+    fn delete(&mut self, slot: u32) -> Result<(), CapError> {
         // TODO: Must invoke on self-captbl cap
-        protected_call1(self.key.slot(), KeyTableOp::Delete, slot)
+        let (_ok, _, _) =
+            unsafe { protected_call1(self.key.slot(), KeyTableOp::Delete as u32, slot as u64) };
+        Ok(())
     }
 
     // Revoke all children of cap in slot
-    fn revoke(&self, captbl: &CaptblCap, slot: u32) -> Result<()> {
-        protected_call1(self.key.slot(), KeyTableOp::Revoke, slot)
+    fn revoke(&self, _captbl: &KeyTableKey, slot: u32) -> Result<(), CapError> {
+        let (_ok, _, _) =
+            unsafe { protected_call1(self.key.slot(), KeyTableOp::Revoke as u32, slot as u64) };
+        Ok(())
     }
 
     // User code to copy cap to another domain (if you have their captbl cap):
-    fn grant_to(my_slot: u32, their_captbl: &CaptblCap, their_slot: u32) -> Result<()> {
-        protected_call3(
-            self.key.slot(),
-            KeyTableOp::CopyDerive,
-            my_slot,
-            their_captbl.slot(),
-            their_slot,
-            same_rights,
-        )
+    fn grant_to(
+        &self,
+        my_slot: u32,
+        their_captbl: &KeyTableKey,
+        their_slot: u32,
+    ) -> Result<(), CapError> {
+        let (_ok, _, _) = unsafe {
+            protected_call4(
+                self.key.slot(),
+                KeyTableOp::CopyDerive as u32,
+                my_slot as u64,
+                their_captbl.key.slot() as u64,
+                their_slot as u64,
+                same_rights as u64,
+            )
+        };
+        Ok(())
     }
 }

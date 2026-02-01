@@ -81,7 +81,7 @@
 
 /// Marker trait for kernel objects - provides type → ObjectType mapping
 pub trait NucleusObject: Sized + 'static {
-    const TYPE: ObjectType;
+    const TYPE: libobject::ObjectType;
 
     //TODO: add invoke here?
     // fn invoke(obj: &Self::TYPE, op: u32, args: &[u64]) -> SyscallResult;

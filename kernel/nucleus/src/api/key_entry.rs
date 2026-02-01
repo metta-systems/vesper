@@ -2,7 +2,10 @@
 // KEY ENTRY (CAPABILITY TABLE ENTRY)
 // ═══════════════════════════════════════════════════════════════════
 
-use crate::{api::key_table::KeySlot, objects::NucleusObject};
+use crate::{
+    libobject::{KeySlot, ObjectType},
+    objects::{NucleusObject, ObjectRef},
+};
 
 /// A single entry in a domain's capability table (KeyTable).
 ///

@@ -2,9 +2,7 @@
 // AArch64 Frame (Physical Page)
 // ─────────────────────────────────────────────────────────────────
 
-use {libmemory::virt_addr::VirtAddr, libsyscall::CapError};
-
-use crate::api::key_table::KeySlot;
+use {crate::api::key_table::KeySlot, libmemory::virt_addr::VirtAddr, libsyscall::CapError};
 
 /// A physical memory frame on AArch64.
 ///

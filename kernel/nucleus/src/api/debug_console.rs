@@ -1,4 +1,4 @@
-use libobject::{debug_console::DebugConsoleOp, Key};
+use libobject::{CapError, Key, debug_console::DebugConsoleOp};
 
 // =====================
 // == Syscall handler ==
@@ -11,6 +11,6 @@ pub fn invoke(cap: &KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
 
     match op {
         DebugConsoleOp::Write => console.handle_write(arg0, arg1),
-        _ => Err(SyscallError::InvalidOp),
+        _ => Err(CapError::InvalidOperation),
     }
 }
