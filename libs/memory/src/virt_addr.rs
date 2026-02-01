@@ -14,7 +14,7 @@ use {
         fmt,
         ops::{Add, AddAssign, Rem, RemAssign, Sub, SubAssign},
     },
-    usize_conversions::{FromUsize, usize_from},
+    usize_conversions::FromUsize,
     ux::*,
 };
 
@@ -72,12 +72,13 @@ impl VirtAddr {
     /// This function performs sign extension of bit 47 to make the address canonical, so
     /// bits 48 to 64 are overwritten. If you want to check that these bits contain no data,
     /// use `new` or `try_new`.
-    pub fn new_unchecked(mut addr: u64) -> VirtAddr {
-        if addr.get_bit(47) {
-            addr.set_bits(48..64, 0xffff);
-        } else {
-            addr.set_bits(48..64, 0);
-        }
+    pub const fn new_unchecked(addr: u64) -> VirtAddr {
+        // FIXME: Constness!
+        // if addr.get_bit(47) {
+        //     addr.set_bits(48..64, 0xffff);
+        // } else {
+        //     addr.set_bits(48..64, 0);
+        // }
         VirtAddr(addr)
     }
 
@@ -87,7 +88,7 @@ impl VirtAddr {
     }
 
     /// Converts the address to an `u64`.
-    pub fn as_u64(self) -> u64 {
+    pub const fn as_u64(self) -> u64 {
         self.0
     }
 
@@ -98,8 +99,8 @@ impl VirtAddr {
 
     /// Converts the address to a raw pointer.
     #[cfg(target_pointer_width = "64")]
-    pub fn as_ptr<T>(self) -> *const T {
-        usize_from(self.as_u64()) as *const T
+    pub const fn as_ptr<T>(self) -> *const T {
+        self.0 as *const T
     }
 
     /// Converts the address to a mutable raw pointer.

@@ -1,6 +1,7 @@
 pub mod arch;
 pub mod arch_objects;
 pub mod debug_console;
+pub mod domain;
 pub mod nucleus;
 pub mod nucleus_object;
 pub mod object_pool;

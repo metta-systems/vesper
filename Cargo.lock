@@ -605,6 +605,7 @@ dependencies = [
 name = "libobject"
 version = "0.0.1"
 dependencies = [
+ "libmemory",
  "libsyscall",
 ]
 

@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod debug_console;
+pub mod domain;
 pub mod key;
 pub mod key_table;
 pub mod object_type;
