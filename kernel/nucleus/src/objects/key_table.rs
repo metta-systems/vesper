@@ -1,3 +1,8 @@
+use {
+    crate::{api::key_entry::KeyEntry, objects::NucleusObject},
+    libobject::{CapError, KeySlot, ObjectType, domain::DomainId},
+};
+
 // ====================
 // == Nucleus object ==
 // ====================
@@ -96,5 +101,5 @@ impl KeyTable {
 
 // KeyTable is itself a kernel object
 impl NucleusObject for KeyTable {
-    const TYPE: ObjectType = ObjectType::KeyTable;
+    const TYPE: ObjectType = ObjectType::KEY_TABLE;
 }

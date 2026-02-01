@@ -30,7 +30,9 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     op: u32,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
-    let domain = nucleus.current_domain_mut()?;
+    let domain = nucleus
+        .current_domain_mut()
+        .ok_or(CapError::InvalidDomain)?;
     let slot = KeySlot(cap_slot);
     let entry = domain.keytable.lookup_mut(slot)?;
     let obj_type = entry.object_type();

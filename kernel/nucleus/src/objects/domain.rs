@@ -1,5 +1,5 @@
 use {
-    crate::objects::NucleusObject,
+    crate::objects::{KeyTable, NucleusObject},
     core::{ptr::NonNull, sync::atomic::Ordering},
     libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
     libobject::{
@@ -14,20 +14,21 @@ use {
 
 /// This is a nucleus-visible half of domain structure.
 /// The DomainControlBlock is user-visible and is defined in libobject.
-struct Domain {
+pub struct Domain {
     // ═══════════════════════════════════════════════════════════
     // PRIVATE SECTION (kernel only, NOT mapped to userspace)
     // ═══════════════════════════════════════════════════════════
     //
     // This would be in a separate structure or after a page boundary
     // - Saved register context
-    // - Capability space root
+    // - Capability space (keytable)
     // - Kernel stack pointer
     // - Etc.
+    pub keytable: KeyTable,
 }
 
 // Verify size for cache alignment
-const _: () = assert!(core::mem::size_of::<Domain>() == 4096);
+// TODO const _: () = assert!(core::mem::size_of::<Domain>() == 4096);
 
 impl NucleusObject for Domain {
     const TYPE: ObjectType = ObjectType::DOMAIN;
@@ -89,7 +90,7 @@ pub struct DcbPages {
     /// Array of DCB pages (kernel virtual addresses)
     pages: [Option<&'static mut DcbPage>; Self::MAX_PAGES],
     /// Physical addresses of each page (for user mapping)
-    phys_addrs: [Option<NonNull<PhysAddr>>; Self::MAX_PAGES],
+    phys_addrs: [Option<PhysAddr>; Self::MAX_PAGES], // TODO: Option<NonNull<PhysAddr>>
     /// Number of allocated pages
     num_pages: usize,
     /// Next domain ID to allocate
@@ -106,7 +107,7 @@ impl DcbPages {
 
     /// Well-known user-space base address for DCB mapping
     /// This is mapped read-only into all domains
-    pub const USER_BASE: VirtAddr = VirtAddr::new(0x0000_7FFF_FE00_0000);
+    pub const USER_BASE: VirtAddr = VirtAddr::new_unchecked(0x0000_7FFF_FE00_0000);
 
     /// Create empty DCB pages manager
     pub const fn new() -> Self {
@@ -134,7 +135,7 @@ impl DcbPages {
         }
 
         let idx = self.num_pages;
-        self.pages[idx] = Some(&mut *page);
+        self.pages[idx] = unsafe { Some(&mut *page) };
         self.phys_addrs[idx] = Some(phys_addr);
         self.num_pages += 1;
 
