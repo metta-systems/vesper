@@ -49,10 +49,7 @@ impl KeyEntry {
     /// Create a null/empty entry
     pub const fn null() -> Self {
         Self {
-            object_ref: ObjectRef {
-                ptr: NonNull::dangling(),
-                obj_type: ObjectType::NULL,
-            },
+            object_ref: ObjectRef::null(),
             rights: Rights::empty(),
             parent_slot: 0xFFFF,
             badge: 0,

@@ -433,6 +433,7 @@ dependencies = [
  "liblog",
  "libmachine",
  "libmemory",
+ "libobject",
  "libplatform",
  "libprint",
  "libqemu",

@@ -8,6 +8,7 @@ pub mod object_type;
 pub mod rights;
 
 pub use {
+    debug_console::DebugConsoleKey,
     key::Key,
     key_table::KeySlot,
     object_type::{ArchType, CoreType, ObjectType},

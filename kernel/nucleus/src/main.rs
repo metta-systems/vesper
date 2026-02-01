@@ -136,6 +136,7 @@ fn cap_invoke_handler(
     );
 
     let result = unsafe {
+        #[allow(static_mut_refs)]
         NUCLEUS.lock(|nucleus| {
             api::handle_cap_invoke(nucleus, cap_slot, op, &[arg0, arg1, arg2, arg3, arg4, arg5])
         })
