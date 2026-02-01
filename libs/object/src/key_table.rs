@@ -1,5 +1,5 @@
 use {
-    crate::{CapError, Key},
+    crate::{CapError, Key, Rights},
     libsyscall::{protected_call1, protected_call4},
 };
 

@@ -4,11 +4,13 @@ pub mod debug_console;
 pub mod key;
 pub mod key_table;
 pub mod object_type;
+pub mod rights;
 
 pub use {
     key::Key,
     key_table::KeySlot,
     object_type::{ArchType, CoreType, ObjectType},
+    rights::Rights,
 };
 
 pub type SyscallResult = core::result::Result<(u64, u64), CapError>;
