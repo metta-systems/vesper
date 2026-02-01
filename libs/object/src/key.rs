@@ -1,4 +1,4 @@
-use core::marker::PhantomData;
+use {crate::KeySlot, core::marker::PhantomData};
 
 // ==================================================
 // == Public user interface, usable from userspace ==
@@ -8,12 +8,12 @@ use core::marker::PhantomData;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Key<T> {
-    slot: u32, // FIXME: KeySlot()
+    slot: KeySlot,
     _marker: PhantomData<T>,
 }
 
 impl<T> Key<T> {
-    pub const fn new(slot: u32) -> Self {
+    pub const fn new(slot: KeySlot) -> Self {
         Self {
             slot,
             _marker: PhantomData,
@@ -21,6 +21,6 @@ impl<T> Key<T> {
     }
 
     pub const fn slot(&self) -> u32 {
-        self.slot
+        self.slot.0
     }
 }

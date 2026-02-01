@@ -19,6 +19,7 @@ impl KeySlot {
     // CSpace layout with self-reference
     pub const CAPTBL_SELF: KeySlot = KeySlot(3); // Every domain has cap to own captbl here - or rather to KeyMaster
     // ... other well-known slots
+    pub const DEBUG_CONSOLE: KeySlot = KeySlot(127); // FIXME: randomly chosen for now
 }
 
 pub struct KeyTableKey {

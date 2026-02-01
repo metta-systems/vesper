@@ -1,4 +1,4 @@
-use crate::{CapError, Key};
+use crate::{CapError, Key, KeySlot};
 
 // ==================================================
 // == Public user interface, usable from userspace ==
@@ -18,6 +18,18 @@ pub enum DebugConsoleOp {
 
 // Root domain gets a DebugConsoleCap, can delegate to others
 impl DebugConsoleKey {
+    pub const fn new() -> Self {
+        Self {
+            key: Key::new(KeySlot::DEBUG_CONSOLE),
+        }
+    }
+
+    pub const fn new_slot(slot: KeySlot) -> Self {
+        Self {
+            key: Key::new(slot),
+        }
+    }
+
     pub fn write(&self, s: &str) -> Result<(), CapError> {
         let (_ok, _, _) = unsafe {
             libsyscall::protected_call2(
