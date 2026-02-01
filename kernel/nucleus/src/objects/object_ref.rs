@@ -1,6 +1,7 @@
 use {
-    super::NucleusObject, crate::api::object_type::ObjectType, core::ptr::NonNull,
-    libsyscall::CapError,
+    super::NucleusObject,
+    core::ptr::NonNull,
+    libobject::{CapError, object_type::ObjectType},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -32,7 +33,7 @@ impl ObjectRef {
     /// Caller must ensure the pointer is valid and properly aligned
     pub unsafe fn from_raw<T: NucleusObject>(ptr: *mut T) -> Self {
         Self {
-            ptr: NonNull::new_unchecked(ptr.cast()),
+            ptr: unsafe { NonNull::new_unchecked(ptr.cast()) },
             obj_type: T::TYPE,
         }
     }
@@ -77,9 +78,10 @@ impl ObjectRef {
     /// Cast with error on type mismatch (mutable)
     #[inline]
     pub fn as_type_mut<T: NucleusObject>(&mut self) -> Result<&mut T, CapError> {
+        let found = self.obj_type;
         self.try_as_mut().ok_or(CapError::TypeMismatch {
             expected: T::TYPE,
-            found: self.obj_type,
+            found,
         })
     }
 }

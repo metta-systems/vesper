@@ -17,6 +17,7 @@ pub type SyscallResult = core::result::Result<(u64, u64), CapError>;
 
 pub enum CapError {
     Unknown,
+    NullCapability,
     InvalidPointer,
     InsufficientRights,
     NotMapped,
@@ -27,19 +28,21 @@ pub enum CapError {
     InvalidSlot(KeySlot),
     EmptySlot(KeySlot),
     SlotOccupied(KeySlot),
+    // Key types
     NotCoreType(ObjectType),
     UnknownCoreType(u8),
+    UnsupportedCoreType(CoreType),
     NotArchType(ObjectType),
     UnknownArchType(u8),
-    UnsupportedArchType(u8),
-    InsufficientMemory,
-    PoolExhausted,
+    UnsupportedArchType(ArchType),
     InvalidObjectType(ObjectType),
-    InvalidSize(usize),
-    NullCapability,
-    InvalidFrameSize(usize),
     TypeMismatch {
         expected: ObjectType,
         found: ObjectType,
     },
+    // Object pools
+    InsufficientMemory,
+    PoolExhausted,
+    InvalidSize(usize),
+    InvalidFrameSize(usize),
 }

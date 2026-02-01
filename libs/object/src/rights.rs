@@ -1,4 +1,4 @@
-pub type Rights = u8;
+pub struct Rights(pub u8);
 
 impl Rights {
     pub const READ: u8 = 0x1;
@@ -9,10 +9,13 @@ impl Rights {
     pub const CALL: u8 = 0x4;
     pub const GRANT: u8 = 0x8;
 
-    pub fn empty() -> Rights {
-        0
+    pub const fn empty() -> Rights {
+        Rights(0)
     }
-    pub fn all() -> Rights {
-        0xF
+    pub const fn all() -> Rights {
+        Rights(0xF)
+    }
+    pub fn bits(&self) -> u8 {
+        self.0
     }
 }

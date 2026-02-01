@@ -23,10 +23,7 @@
 #![feature(core_intrinsics)]
 
 use {
-    crate::{
-        api::{key_table::KeySlot, object_type::ArchType},
-        nucleus::Nucleus,
-    },
+    crate::objects::nucleus::Nucleus,
     cfg_if::cfg_if,
     core::{
         arch::asm,
@@ -35,11 +32,11 @@ use {
         time::Duration,
     },
     libcpu::endless_sleep,
-    liblocking::IRQSafeNullLock,
+    liblocking::{IRQSafeNullLock, interface::Mutex},
     liblog::{info, println, warn},
     libmemory::mmu::AccessPermissions,
+    libobject::{ArchType, CapError, KeySlot},
     libqemu::semi_println,
-    libsyscall::CapError,
 };
 
 /// Syscall API - capability invocation handlers
@@ -51,7 +48,11 @@ mod vectors;
 
 /// Global kernel state, protected by The Great Kernel Lock
 static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<objects::ArchObjectsImpl>>> =
-    IRQSafeNullLock::new(LazyCell::new(|| Nucleus::<objects::ArchObjectsImpl> {}));
+    IRQSafeNullLock::new(LazyCell::new(|| Nucleus::<objects::ArchObjectsImpl> {
+        current_domain: None,
+        dcb_pages: 0,
+        pools: objects::nucleus::NucleusPools { arch: 0 },
+    }));
 
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
@@ -131,7 +132,12 @@ fn cap_invoke_handler(
         get_pc()
     );
 
-    api::handle_cap_invoke(NUCLEUS.lock(), cap_slot, op, args)
+    let result = api::handle_cap_invoke(
+        NUCLEUS.lock(),
+        cap_slot,
+        op,
+        &[arg0, arg1, arg2, arg3, arg4, arg5],
+    );
 
     // let cap = current_domain().keytable.lookup(cap_slot)?;
     // let args = &[arg0, arg1, arg2, arg3, arg4, arg5]; // FIXME temp
@@ -148,10 +154,10 @@ fn cap_invoke_handler(
     //     ObjectType::None => Err(SyscallError::InvalidSlot),
     // };
 
-    // match result {
-    //     Ok((v0, v1)) => (0, v0, v1),
-    //     Err(e) => (e.code(), 0, 0),
-    // }
+    match result {
+        Ok((v0, v1)) => (0, v0, v1),
+        Err(e) => (e.code(), 0, 0),
+    }
 }
 
 fn get_pc() -> u64 {

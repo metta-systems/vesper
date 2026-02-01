@@ -1,5 +1,8 @@
 use {
-    crate::objects::DebugConsole,
+    crate::{
+        api::key_entry::KeyEntry,
+        objects::{ArchObjects, DebugConsole, Nucleus},
+    },
     libobject::{ArchType, CapError, CoreType, KeySlot, ObjectType},
 };
 
@@ -62,7 +65,8 @@ fn core_invoke<A: ArchObjects>(
         // }
         CoreType::DebugConsole => {
             let debug_console = entry.as_object_mut::<DebugConsole>()?;
-            DebugConsole::invoke(debug_console, parampampam)
+            // DebugConsole::invoke(debug_console, entry.rights(), op, args, nucleus)
+            crate::api::debug_console::invoke(entry, op, args[0], args[1])
         } // CoreType::Domain => {
         //     let domain = entry.as_object_mut::<Domain>()?;
         //     api::domain::invoke(domain, entry.rights(), op, args)
@@ -102,7 +106,7 @@ fn core_invoke<A: ArchObjects>(
         //     let reply = entry.as_object_mut::<Reply>()?;
         //     api::reply::invoke(reply, op, args, nucleus)
         // }
-        _ => Err(CapError::UnsupportedCoreType),
+        _ => Err(CapError::UnsupportedCoreType(core_type)),
     }
 }
 

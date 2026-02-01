@@ -1,10 +1,18 @@
 use {
-    crate::api::{
-        arch::frame::AArch64Frame,
-        object_type::{ArchType, ObjectType},
+    crate::{
+        Nucleus,
+        objects::{
+            ArchObjects,
+            arch::{
+                AArch64ASID, AArch64ASIDPool, AArch64Frame, AArch64PageTable, AArch64VSpace,
+                ArchPools,
+            },
+            arch_objects::FrameSize,
+            object_ref::ObjectRef,
+        },
     },
     libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
-    libsyscall::CapError,
+    libobject::{ArchType, CapError, ObjectType, Rights},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -32,7 +40,7 @@ impl ArchObjects for AArch64 {
                 12 => Ok(4096),
                 21 => Ok(2 * 1024 * 1024),
                 30 => Ok(1024 * 1024 * 1024),
-                _ => Err(CapError::InvalidFrameSize(size_bits)),
+                _ => Err(CapError::InvalidFrameSize(size_bits as usize)),
             },
             ArchType::PageTable => {
                 if size_bits != 12 {
@@ -101,9 +109,10 @@ impl ArchObjects for AArch64 {
         rights: Rights,
         op: u32,
         args: &[u64; 6],
-        kernel: &mut Kernel<Self>,
+        nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
-        crate::api::arch::frame::invoke(frame, rights, op, args)
+        // crate::api::arch::frame::invoke(frame, rights, op, args)
+        Err(CapError::InvalidOperation)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -115,9 +124,10 @@ impl ArchObjects for AArch64 {
         rights: Rights,
         op: u32,
         args: &[u64; 6],
-        kernel: &mut Kernel<Self>,
+        nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
         // crate::api::arch::page_table::invoke(pt, rights, op, args)
+        Err(CapError::InvalidOperation)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -129,9 +139,10 @@ impl ArchObjects for AArch64 {
         rights: Rights,
         op: u32,
         args: &[u64; 6],
-        kernel: &mut Kernel<Self>,
+        nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
         // crate::api::arch::vspace::invoke(vspace, rights, op, args)
+        Err(CapError::InvalidOperation)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -143,7 +154,7 @@ impl ArchObjects for AArch64 {
         rights: Rights,
         op: u32,
         args: &[u64; 6],
-        _kernel: &mut Kernel<Self>,
+        _nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
         // Most ASID operations go through VSpace.AssignASID
         // Direct pool operations are rare

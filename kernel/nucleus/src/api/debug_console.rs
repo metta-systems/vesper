@@ -1,4 +1,7 @@
-use libobject::{CapError, Key, debug_console::DebugConsoleOp};
+use {
+    crate::{api::KeyEntry, objects::DebugConsole},
+    libobject::{CapError, Key, SyscallResult, debug_console::DebugConsoleOp},
+};
 
 // =====================
 // == Syscall handler ==
@@ -6,11 +9,14 @@ use libobject::{CapError, Key, debug_console::DebugConsoleOp};
 
 #[inline]
 pub fn invoke(cap: &KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
-    let console = cap.as_debug_console()?;
+    let console = cap.as_object_mut::<DebugConsole>()?;
     let op = DebugConsoleOp::try_from(op).map_err(|_| CapError::InvalidOperation)?;
 
     match op {
-        DebugConsoleOp::Write => console.handle_write(arg0, arg1),
+        // DebugConsoleOp::Write => console.handle_write(arg0, arg1),
+        DebugConsoleOp::Write => {
+            crate::objects::debug_console::DebugConsole::handle_write(arg0, arg1)
+        }
         _ => Err(CapError::InvalidOperation),
     }
 }

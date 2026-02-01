@@ -1,3 +1,5 @@
+use crate::objects::{ArchObjects, arch::ArchPools};
+
 // ┌─────────────────────────────────────────────────────────────────────┐
 // │                    KERNEL TYPE STRUCTURE                            │
 // ├─────────────────────────────────────────────────────────────────────┤
@@ -34,15 +36,15 @@
 /// All kernel object pools - both core and architecture-specific
 pub struct NucleusPools<A: ArchObjects> {
     // ─── Core Object Pools ───
-    pub untypeds: ObjectPool<Untyped>,
-    pub domains: ObjectPool<Domain>,
-    pub keytables: ObjectPool<KeyTable>,
-    pub notifications: ObjectPool<Notification>,
-    pub event_counts: ObjectPool<EventCount>,
-    pub endpoints: ObjectPool<Endpoint>,
-    pub time_slices: ObjectPool<TimeSlice>,
-    pub buffers: ObjectPool<Buffer>,
-    pub replies: ObjectPool<Reply>,
+    // pub untypeds: ObjectPool<Untyped>,
+    // pub domains: ObjectPool<Domain>,
+    // pub keytables: ObjectPool<KeyTable>,
+    // pub notifications: ObjectPool<Notification>,
+    // pub event_counts: ObjectPool<EventCount>,
+    // pub endpoints: ObjectPool<Endpoint>,
+    // pub time_slices: ObjectPool<TimeSlice>,
+    // pub buffers: ObjectPool<Buffer>,
+    // pub replies: ObjectPool<Reply>,
 
     // ─── Architecture-Specific Pools ───
     pub arch: ArchPools<A>,
@@ -53,7 +55,7 @@ pub struct Nucleus<A: ArchObjects> {
     /// All object pools
     pub pools: NucleusPools<A>,
     /// Currently running domain
-    pub current_domain: Option<DomainId>, // FIXME: not option, always something (Idle or other)
+    pub current_domain: Option<u32 /*DomainId*/>, // FIXME: not option, always something (Idle or other)
     /// DCB shared pages
     pub dcb_pages: DcbPages,
 }
