@@ -1,5 +1,11 @@
 use {
-    crate::objects::{ArchObjects, Domain, ObjectPool, arch::ArchPools, domain::DcbPages},
+    crate::{
+        api::key_entry::KeyEntry,
+        objects::{
+            ArchObjects, DebugConsole, Domain, KeyTable, ObjectPool, arch::ArchPools,
+            domain::DcbPages,
+        },
+    },
     core::sync::atomic::Ordering,
     libobject::{
         KeySlot,
@@ -93,6 +99,23 @@ impl<A: ArchObjects> Nucleus<A> {
         // need objects::Domain here, not DCB! or a tuple
         self.dcb_pages
             .get_mut(DomainId(self.current_domain.unwrap_or(0)))
+    }
+
+    // TODO: Testing fixture
+    pub fn create_domain(&mut self) {
+        self.pools
+            .domains
+            .allocate(Domain {
+                keytable: KeyTable::new(DomainId(0)),
+            })
+            .and_then(|dom| {
+                let _ = dom.keytable.insert(
+                    libobject::KeySlot(127),
+                    KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0, None),
+                );
+                Some(())
+            })
+            .expect("Poof")
     }
 
     /// Update DCB when domain is activated

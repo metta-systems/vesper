@@ -46,15 +46,21 @@ mod objects;
 /// Exception vectors triggering syscall handing and general IRQ routing
 mod vectors;
 
+// TODO: Split this into read-only part, that does not need locks, per-cpu mutable part that does not need locks,
+// TODO: Shared atomic counters that do not need locks and shared mutable collections that DO need locks (but should be minority)
 /// Global kernel state, protected by The Great Kernel Lock
 static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<objects::ArchObjectsImpl>>> =
-    IRQSafeNullLock::new(LazyCell::new(|| Nucleus::<objects::ArchObjectsImpl> {
-        current_domain: None,
-        dcb_pages: DcbPages::new(),
-        pools: objects::nucleus::NucleusPools {
-            domains: unsafe { ObjectPool::new(0x1000 as *mut u8, 4096) },
-            arch: unsafe { ArchPools::new() },
-        },
+    IRQSafeNullLock::new(LazyCell::new(|| {
+        let mut n = Nucleus::<objects::ArchObjectsImpl> {
+            current_domain: None,
+            dcb_pages: DcbPages::new(),
+            pools: objects::nucleus::NucleusPools {
+                domains: unsafe { ObjectPool::new(0x1000 as *mut u8, 16384) }, // TODO: proper alloc...
+                arch: unsafe { ArchPools::new() },
+            },
+        };
+        n.create_domain();
+        n
     }));
 
 #[panic_handler]
@@ -90,7 +96,7 @@ unsafe extern "C" fn syscall_handler() {
         "mrs x11, spsr_el1",
         "stp x10, x11, [sp, #248]", // ELR, SPSR
         // x0-x7 already in place for Rust function call
-        "mov x8, sp", // frame pointer for handler
+        "mov x8, sp", // frame pointer for handler -- FIXME: frame argument from below
         "bl cap_invoke_handler",
         // Return values in x0, x1, x2 are already set by handler
         // Restore context (skip x0, x1, x2 - they hold return values)
@@ -128,11 +134,12 @@ fn cap_invoke_handler(
     arg3: u64,
     arg4: u64,
     arg5: u64,
-    frame: u64, //*mut TrapFrame,
+    frame: u64, //*mut TrapFrame, x8 contains all saved registers
 ) -> (u64, u64, u64) {
     semi_println!(
-        "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at 0x{:016X}",
-        get_pc()
+        "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at PC {:#016X}, SP {:#016X}",
+        get_pc(),
+        get_sp()
     );
 
     let result = unsafe {
@@ -172,4 +179,9 @@ fn get_pc() -> u64 {
         );
     }
     pc
+}
+
+fn get_sp() -> u64 {
+    use aarch64_cpu::registers::Readable;
+    aarch64_cpu::registers::SP.get()
 }

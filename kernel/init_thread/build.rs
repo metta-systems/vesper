@@ -3,7 +3,7 @@
 use {
     build_print::info,
     build_rs::output,
-    goblin::elf::{Elf, program_header::PT_LOAD, section_header::SHT_NOBITS},
+    goblin::elf::{Elf, Sym, program_header::PT_LOAD, section_header::SHT_NOBITS},
     std::{
         env,
         fs::{self, File},
@@ -46,8 +46,11 @@ fn main() {
     // Extract section information
     let sections = extract_sections(&elf, &elf_bytes, out_path);
 
+    // Extract stack mapping information
+    let stack_virt_bottom = stack_virt_bottom(&elf);
+
     // Generate Rust code
-    generate_rust_code(&sections, out_path);
+    generate_rust_code(&sections, stack_virt_bottom, out_path);
 }
 
 /// Extracted section with all metadata needed for loading
@@ -217,39 +220,47 @@ fn extract_sections(elf: &Elf, elf_bytes: &[u8], out_path: &Path) -> KernelSecti
     }
 }
 
+fn find_symbol(elf: &Elf, symbol_name: &str) -> Option<Sym> {
+    for sym in &elf.syms {
+        if let Some(name) = elf.strtab.get_at(sym.st_name)
+            && symbol_name == name
+        {
+            return Some(sym);
+        }
+    }
+
+    None
+}
+
 /// Try to find vector table location from symbols
 fn find_vector_table_from_symbols(elf: &Elf) -> Option<VectorTableInfo> {
     // Common symbol names for exception vectors
     const VECTOR_SYMBOL: &str = "__vectors";
 
-    for sym in &elf.syms {
-        if let Some(name) = elf.strtab.get_at(sym.st_name)
-            && VECTOR_SYMBOL == name
-        {
+    if let Some(sym) = find_symbol(elf, VECTOR_SYMBOL) {
+        info!(
+            "Found vector table symbol '{}': vaddr=0x{:016X}, size=0x{:X}",
+            VECTOR_SYMBOL, sym.st_value, sym.st_size
+        );
+
+        // Verify 2KB alignment
+        if sym.st_value & 0x7FF != 0 {
             info!(
-                "Found vector table symbol '{}': vaddr=0x{:016X}, size=0x{:X}",
-                name, sym.st_value, sym.st_size
+                "Vector table symbol at 0x{:016X} is not 2KB aligned!",
+                sym.st_value
             );
-
-            // Verify 2KB alignment
-            if sym.st_value & 0x7FF != 0 {
-                info!(
-                    "Vector table symbol at 0x{:016X} is not 2KB aligned!",
-                    sym.st_value
-                );
-            }
-
-            return Some(VectorTableInfo {
-                virt_addr: sym.st_value,
-                // If size is 0, assume standard size of 0x800
-                mem_size: if sym.st_size > 0 {
-                    sym.st_size as usize
-                } else {
-                    0x800
-                },
-                alignment: 2048, // VBAR requirement
-            });
         }
+
+        return Some(VectorTableInfo {
+            virt_addr: sym.st_value,
+            // If size is 0, assume standard size of 0x800
+            mem_size: if sym.st_size > 0 {
+                sym.st_size as usize
+            } else {
+                0x800
+            },
+            alignment: 2048, // VBAR requirement
+        });
     }
 
     output::error("No vector table symbol found! Kernel must define  __vectors symbol");
@@ -257,7 +268,16 @@ fn find_vector_table_from_symbols(elf: &Elf) -> Option<VectorTableInfo> {
     None
 }
 
-fn generate_rust_code(sections: &KernelSections, out_path: &Path) {
+fn stack_virt_bottom(elf: &Elf) -> u64 {
+    const STACK_VIRT_BOTTOM: &str = "__STACK_VIRT_BOTTOM";
+    if let Some(sym) = find_symbol(elf, STACK_VIRT_BOTTOM) {
+        return sym.st_value;
+    }
+    output::error("No stack bottom symbol found! Kernel must define  __STACK_VIRT_BOTTOM symbol");
+    0
+}
+
+fn generate_rust_code(sections: &KernelSections, stack_virt_bottom: u64, out_path: &Path) {
     use minijinja::{Environment, context};
 
     let mut code = Environment::new();
@@ -319,6 +339,7 @@ fn generate_rust_code(sections: &KernelSections, out_path: &Path) {
         sections => sections_tmpl,
         bss => bss_tmpl,
         vectors => vector_tmpl,
+        stack_virt_bottom,
     };
 
     // Write generated code
