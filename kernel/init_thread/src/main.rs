@@ -174,8 +174,11 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
 
     let reg_prop = DeviceTreeProp::new(reg_prop);
 
+    let mut total_memory = 0;
+
     for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
         semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+        total_memory += mem_size;
         BOOT_INFO.lock(|bi| {
             bi.insert_region(BootInfoMemRegion {
                 start_inclusive: PhysAddr::new(mem_addr),
@@ -288,6 +291,16 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     // PHASE 2: Set up page tables
     // ═══════════════════════════════════════════════════════════════
 
+    let (el1_stack, el1_stack_size) = {
+        // Allocate EL1 stack
+        let el1_stack_size = 128; // pages
+        let el1_stack = allocator
+            .alloc_pages(el1_stack_size)
+            .expect("Failed to allocate EL1 stack");
+        let el1_stack_size = el1_stack_size * 4096; // 64KiB stack
+        (el1_stack, el1_stack_size)
+    };
+
     let mut mmu_setup = paging::MmuSetup::new(&mut allocator).expect("Failed to create MMU setup");
     semi_println!("init_main: Created MmuSetup");
 
@@ -297,8 +310,14 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     semi_println!("init_main: Identity mapped the Init_Thread");
 
     // Create kernel mapping with per-section permissions
-    paging::create_kernel_mapping(&mut mmu_setup, &kernel_layout)
-        .expect("Failed to create kernel mapping");
+    let (el1_stack_top,) = paging::create_kernel_mapping(
+        &mut mmu_setup,
+        &kernel_layout,
+        total_memory,
+        el1_stack.0,
+        el1_stack_size,
+    )
+    .expect("Failed to create kernel mapping");
     semi_println!("init_main: Higher-half mapped the nucleus");
 
     // ═══════════════════════════════════════════════════════════════
@@ -313,12 +332,6 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     // VBAR is only used after MMU is enabled, so we set the virtual address directly
     let vbar = kernel_layout.vbar_el1_virt();
 
-    // Allocate EL1 stack
-    let el1_stack = allocator
-        .alloc_pages(16)
-        .expect("Failed to allocate EL1 stack");
-    let el1_stack_top = el1_stack.as_u64() + 16 * 4096;
-    // FIXME: stack must be identity-mapped!
     semi_println!("init_main: EL1 stack at {el1_stack_top:#016x}, vbar {vbar:#016x}");
 
     // ═══════════════════════════════════════════════════════════════
@@ -343,11 +356,11 @@ pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     // Run initial thread further in EL1, seting up the capDL etc.
-    semi_println!("init_main_run dropped to EL1");
+    semi_println!("init_main_run: enabled MMU and dropped to EL1");
     unsafe {
         protected_call6(0, 0, 0, 0, 0, 0, 0, 0);
     }
-    semi_println!("init_main_run: Returned from syscall");
+    semi_println!("init_main_run: Returned from fake syscall");
 
     // ─────────────────────────────────────────────────────────────────────
     // Initialize kernel subsystems
@@ -466,10 +479,10 @@ pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
     // We have domain caps here, can use:
     let dbg = DebugConsoleKey::new();
     dbg.write(
-        "DEBCON| Debug output via capability invocation on domain's debug console capability",
+        "DEBCON| Debug output via capability invocation on domain's debug console capability\n",
     );
 
-    let err = DebugConsoleKey::new_slot(KeySlot::NULL);
+    let err = DebugConsoleKey::new_slot(KeySlot::CAPTBL_SELF);
     err.write("DEBCON| Invalid capability invocation - no output");
 
     // semi_println!("Switching to init domain...");

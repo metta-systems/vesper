@@ -118,15 +118,15 @@ pub struct KernelLayout {
     pub total_size: usize,
     /// Section metadata (for page table setup)
     pub sections: &'static [LoadableSection],
-    /// BSS physical address
+    /// BSS physical address (for zeroing)
     pub bss_phys: PhysAddr,
-    /// BSS virtual address
+    /// BSS virtual address (for kernel mapping)
     pub bss_virt: VirtAddr,
     /// BSS size
     pub bss_size: usize,
-    /// Exception vector table physical address (for VBAR_EL1)
-    pub vectors_phys: PhysAddr,
-    /// Exception vector table virtual address
+    /// Stack virtual address (for kernel mapping)
+    pub stack_virt_bottom: VirtAddr,
+    /// Exception vector table virtual address (for VBAR_EL1)
     pub vectors_virt: VirtAddr,
 }
 

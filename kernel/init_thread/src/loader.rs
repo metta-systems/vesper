@@ -51,6 +51,8 @@ pub struct ImageInfo {
     pub sections: &'static [LoadableSection],
     /// BSS section metadata (no binary data - must be zeroed)
     pub bss: SectionMeta,
+    /// BSS section metadata (no binary data - must be zeroed)
+    pub stack_virt_bottom: u64,
     /// Exception vector table metadata (to set up VBAR)
     pub vectors: SectionMeta,
 }
@@ -112,9 +114,7 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
     };
 
     // Calculate vector table addresses
-    let vectors_info = {
-        let phys =
-            PhysAddr::new(phys_base.as_u64() + KERNEL.vectors.offset_from_base(KERNEL.virt_base));
+    let vectors_virt = {
         let virt = VirtAddr::new(KERNEL.vectors.virt_addr);
 
         // Verify alignment
@@ -125,7 +125,7 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
             );
         }
 
-        (phys, virt)
+        virt
     };
 
     Ok(KernelLayout {
@@ -136,8 +136,8 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
         bss_phys: bss_info.0,
         bss_virt: bss_info.1,
         bss_size: bss_info.2,
-        vectors_phys: vectors_info.0,
-        vectors_virt: vectors_info.1,
+        stack_virt_bottom: VirtAddr::new(KERNEL.stack_virt_bottom),
+        vectors_virt: vectors_virt,
     })
 }
 

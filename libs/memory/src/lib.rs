@@ -154,4 +154,4 @@ impl fmt::Display for Address<Virtual> {
     }
 }
 
-pub const PHYSICAL_KERNEL_WINDOW: u64 = 0xffff_ffff_0000_0000;
+pub const PHYSICAL_KERNEL_WINDOW: u64 = 0xffff_f000_0000_0000;

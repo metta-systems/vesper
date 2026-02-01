@@ -265,7 +265,10 @@ pub fn create_identity_mapping(
 pub fn create_kernel_mapping(
     setup: &mut MmuSetup,
     layout: &KernelLayout,
-) -> Result<(), &'static str> {
+    max_ram_bytes: u64,
+    el1_stack: u64,
+    el1_stack_size: usize,
+) -> Result<(u64,), &'static str> {
     // Map each section with its specific permissions
     for section in layout.iter_sections() {
         map_section(setup, &section)?;
@@ -280,41 +283,47 @@ pub fn create_kernel_mapping(
     // Setup linear physical map (all RAM accessible to nucleus)
     // TODO: exclude physical memory that covers the kernel image itself!
     // ─────────────────────────────────────────────────────────────────
-    /*
-        // Map all physical memory using 2MB blocks
-        for i in 0..max_ram_gb {
-            pts.l1_phys_map[i] = make_table_entry(phys_addr_of(&pts.l2_phys_map[i]));
 
-            for j in 0..512 {
-                let phys = ((i * 512 + j) as u64) << 21; // 2MB granule -- can try 1Gb granules actually?
-                pts.l2_phys_map[i][j] = make_block_entry_2mb(
-                    PhysAddr::new(phys),
-                    PageFlags::KERNEL_RW | PageFlags::NORMAL_CACHEABLE,
-                );
-            }
-        }
+    let perms = MemoryPermissions {
+        readable: true,
+        writable: true,
+        executable: false,
+    };
 
-        // ─────────────────────────────────────────────────────────────────
-        // Setup device MMIO mappings
-        // ─────────────────────────────────────────────────────────────────
+    // Map all physical memory using 2MB blocks with a specific offset
+    // Kernel mapping for phys memory starts at
+    for i in 0..max_ram_bytes.div_ceil(2 * 1024 * 1024) {
+        setup.map_block_2mb(
+            Ttbr::Ttbr1,
+            VirtAddr::new(libmemory::PHYSICAL_KERNEL_WINDOW + i * 2 * 1024 * 1024),
+            PhysAddr::new(i * 2 * 1024 * 1024),
+            perms,
+        );
+    }
 
-        // RPi4 peripherals at 0xFE00_0000 - 0xFF00_0000
-        // Map as device memory (non-cacheable, no speculation)
-        let device_base_phys = 0xFE00_0000_u64;
-        let l1_idx = 0; // First entry in l1_device
+    // Map kernel stack
+    let stack_bottom = layout.stack_virt_bottom;
 
-        pts.l1_device[l1_idx] = make_table_entry(phys_addr_of(&pts.l2_device));
+    for i in 0..el1_stack_size.div_ceil(4 * 1024) as u64 {
+        setup.map_page(
+            Ttbr::Ttbr1,
+            VirtAddr::new(stack_bottom.0 + i * 4 * 1024),
+            PhysAddr::new(el1_stack + i * 4 * 1024),
+            perms,
+        );
+    }
 
-        // Map 16MB of device space with 2MB blocks
-        for i in 0..8 {
-            let phys = device_base_phys + (i as u64 * 0x20_0000);
-            pts.l2_device[i] = make_block_entry_2mb(
-                PhysAddr::new(phys),
-                PageFlags::KERNEL_RW | PageFlags::DEVICE_nGnRnE,
-            );
-        }
-    */
-    Ok(())
+    let stack_virt_top = stack_bottom + el1_stack_size;
+
+    // ─────────────────────────────────────────────────────────────────
+    // Setup device MMIO mappings
+    // ─────────────────────────────────────────────────────────────────
+    // RPi4 peripherals at 0xFE00_0000 - 0xFF00_0000
+    // let device_base_phys = 0xFE00_0000_u64;
+    // Map as device memory (non-cacheable, no speculation)
+    // create_device_mapping(setup, device_base_phys, VIRT_MMIO, 0x100_0000); // 16MiB
+
+    Ok((stack_virt_top.into(),))
 }
 
 /// Map a single section with proper permissions
@@ -382,6 +391,7 @@ pub fn create_device_mapping(
 
         // Use device memory attributes
         let pte_flags = perms.as_pte_flags() | flags::ATTR_DEVICE;
+        // PageFlags::KERNEL_RW | PageFlags::DEVICE_nGnRnE,
         setup.map_page_with_flags(
             Ttbr::Ttbr1,
             VirtAddr::new(va),

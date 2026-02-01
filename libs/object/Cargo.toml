@@ -20,6 +20,8 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 libmemory = { workspace = true }
+libprint = { workspace = true }
+libqemu = { workspace = true }
 libsyscall = { workspace = true }
 
 [lints]

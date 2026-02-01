@@ -65,4 +65,5 @@ pub static KERNEL: ImageInfo = ImageInfo {
     sections: LOADABLE_SECTIONS,
     bss: BSS_META,
     vectors: VECTORS_META,
+    stack_virt_bottom: {{stack_virt_bottom | address}},
 };

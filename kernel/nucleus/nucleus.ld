@@ -75,6 +75,10 @@ SECTIONS
         . = ALIGN(__PAGE_SIZE); /* Align up to page size */
     } :segment_data
 
+    . += __PAGE_SIZE; /* add guard page between BSS and stack! */
+
+    __STACK_VIRT_BOTTOM = .;
+
     /* __BSS_END = __BSS_START + ALIGN(SIZEOF(.bss), __PAGE_SIZE); *//* LMA, Physical address */
     /* __DATA_END = .; *//* VMA, Virtual address */
 
