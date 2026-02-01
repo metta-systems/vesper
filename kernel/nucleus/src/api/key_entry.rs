@@ -37,7 +37,7 @@ pub struct KeyEntry {
     rights: Rights,
     /// Slot of parent capability (for revocation tree)
     /// 0xFFFF = no parent (root capability)
-    parent_slot: u16,
+    parent_slot: u32,
     /// Badge value (for endpoint discrimination, buffer offset, etc.)
     badge: u32,
     /// Generation counter (detect stale capabilities)
@@ -49,10 +49,7 @@ impl KeyEntry {
     /// Create a null/empty entry
     pub const fn null() -> Self {
         Self {
-            object_ref: ObjectRef {
-                ptr: NonNull::dangling(),
-                obj_type: ObjectType::NULL,
-            },
+            object_ref: ObjectRef::null(),
             rights: Rights::empty(),
             parent_slot: 0xFFFF,
             badge: 0,
@@ -70,7 +67,7 @@ impl KeyEntry {
         Self {
             object_ref: ObjectRef::new(object),
             rights,
-            parent_slot: parent.map(|s| s.0).unwrap_or(0xFFFF),
+            parent_slot: parent.map(|s| s.0).unwrap_or(0xFFFF_FFFF),
             badge,
             generation: 0,
         }
@@ -79,13 +76,13 @@ impl KeyEntry {
     /// Check if this entry is valid (not null)
     #[inline]
     pub fn is_valid(&self) -> bool {
-        self.object_ref.obj_type != ObjectType::NULL
+        self.object_ref.object_type() != ObjectType::NULL
     }
 
     /// Get the object type
     #[inline]
     pub fn object_type(&self) -> ObjectType {
-        self.object_ref.obj_type
+        self.object_ref.object_type()
     }
 
     /// Get access rights

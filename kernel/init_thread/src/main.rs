@@ -55,6 +55,7 @@ use {
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
     libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libobject::{DebugConsoleKey, KeySlot},
     libqemu::semi_println,
     libsyscall::protected_call6,
     memory::BootAllocator,
@@ -468,7 +469,7 @@ pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
         "DEBCON| Debug output via capability invocation on domain's debug console capability",
     );
 
-    let err = DebugConsoleKey::new_slot(KeySlot::NULL_CAP);
+    let err = DebugConsoleKey::new_slot(KeySlot::NULL);
     err.write("DEBCON| Invalid capability invocation - no output");
 
     // semi_println!("Switching to init domain...");

@@ -1,9 +1,9 @@
 use {
-    crate::objects::{ArchObjects, arch::ArchPools, domain::DcbPages},
+    crate::objects::{ArchObjects, Domain, ObjectPool, arch::ArchPools, domain::DcbPages},
     core::sync::atomic::Ordering,
     libobject::{
         KeySlot,
-        domain::{BlockReason, DomainId, DomainState},
+        domain::{BlockReason, DomainControlBlock, DomainId, DomainState},
     },
 };
 
@@ -44,7 +44,7 @@ use {
 pub struct NucleusPools<A: ArchObjects> {
     // ─── Core Object Pools ───
     // pub untypeds: ObjectPool<Untyped>,
-    // pub domains: ObjectPool<Domain>,
+    pub domains: ObjectPool<Domain>,
     // pub keytables: ObjectPool<KeyTable>,
     // pub notifications: ObjectPool<Notification>,
     // pub event_counts: ObjectPool<EventCount>,
@@ -72,16 +72,40 @@ pub struct Nucleus<A: ArchObjects> {
 // ═══════════════════════════════════════════════════════════════════
 
 impl<A: ArchObjects> Nucleus<A> {
+    pub fn current_cpu(&self) -> usize {
+        0
+    }
+
+    pub fn current_time_ns(&self) -> u64 {
+        0
+    }
+
+    /// Nucleus-private domain data, like keytables
+    pub fn current_domain_mut(&mut self) -> Option<&mut Domain> {
+        // need objects::Domain here, not DCB! or a tuple
+        self.pools
+            .domains
+            .get_mut(self.current_domain.unwrap_or(0) as usize)
+    }
+
+    /// User-visible DCB
+    pub fn current_dcb_mut(&mut self) -> Option<&mut DomainControlBlock> {
+        // need objects::Domain here, not DCB! or a tuple
+        self.dcb_pages
+            .get_mut(DomainId(self.current_domain.unwrap_or(0)))
+    }
+
     /// Update DCB when domain is activated
     pub fn activate_domain(&mut self, id: DomainId, time_budget_ns: u64) {
+        let cpu = self.current_cpu();
+        let time = self.current_time_ns();
         if let Some(dcb) = self.dcb_pages.get_mut(id) {
             // Update time budget
             dcb.time_remaining_ns
                 .store(time_budget_ns, Ordering::Relaxed);
-            dcb.last_activated_ns
-                .store(self.current_time_ns(), Ordering::Relaxed);
+            dcb.last_activated_ns.store(time, Ordering::Relaxed);
             dcb.activation_count.fetch_add(1, Ordering::Relaxed);
-            dcb.cpu.store(self.current_cpu() as u32, Ordering::Relaxed);
+            dcb.cpu.store(cpu as u32, Ordering::Relaxed);
 
             // Set state last (Release ensures all above writes are visible)
             dcb.state
@@ -91,7 +115,7 @@ impl<A: ArchObjects> Nucleus<A> {
 
     /// Update DCB when domain yields/blocks/faults
     pub fn deactivate_domain(&mut self, id: DomainId, reason: DeactivateReason) {
-        let elapsed = self.time_since_activation(id);
+        let elapsed = 0; //self.time_since_activation(id);
 
         if let Some(dcb) = self.dcb_pages.get_mut(id) {
             // Update time accounting

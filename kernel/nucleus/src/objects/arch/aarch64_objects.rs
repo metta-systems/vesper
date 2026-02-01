@@ -44,7 +44,7 @@ impl ArchObjects for AArch64 {
             },
             ArchType::PageTable => {
                 if size_bits != 12 {
-                    Err(CapError::InvalidSize)
+                    Err(CapError::InvalidSize(size_bits as usize))
                 } else {
                     Ok(4096)
                 }
@@ -62,42 +62,44 @@ impl ArchObjects for AArch64 {
         size_bits: u8,
         pools: &mut ArchPools<Self>,
     ) -> Result<ObjectRef, CapError> {
-        match arch_type {
-            ArchType::Frame => {
-                let frame_size = FrameSize::from_bits(size_bits)?;
-                let frame = AArch64Frame::new(phys_addr, frame_size);
-                let obj = pools
-                    .frames
-                    .allocate(frame)
-                    .ok_or(CapError::PoolExhausted)?;
-                Ok(ObjectRef::new(obj))
-            }
-            ArchType::PageTable => {
-                let pt = AArch64PageTable::new(phys_addr);
-                let obj = pools
-                    .page_tables
-                    .allocate(pt)
-                    .ok_or(CapError::PoolExhausted)?;
-                Ok(ObjectRef::new(obj))
-            }
-            ArchType::VSpace => {
-                let vspace = AArch64VSpace::new();
-                let obj = pools
-                    .vspaces
-                    .allocate(vspace)
-                    .ok_or(CapError::PoolExhausted)?;
-                Ok(ObjectRef::new(obj))
-            }
-            ArchType::ASIDPool => {
-                let pool = AArch64ASIDPool::new();
-                let obj = pools
-                    .asid_pools
-                    .allocate(pool)
-                    .ok_or(CapError::PoolExhausted)?;
-                Ok(ObjectRef::new(obj))
-            }
-            _ => Err(CapError::UnsupportedArchType(arch_type)),
-        }
+        // match arch_type {
+        //     ArchType::Frame => {
+        //         let frame_size = FrameSize::from_bits(size_bits as usize)
+        //             .map_err(|_| CapError::InvalidSize(size_bits as usize))?;
+        //         let frame = AArch64Frame::new(phys_addr, frame_size);
+        //         let obj = pools
+        //             .frames
+        //             .allocate(frame)
+        //             .ok_or(CapError::PoolExhausted)?;
+        //         Ok(ObjectRef::new(obj))
+        //     }
+        //     ArchType::PageTable => {
+        //         let pt = AArch64PageTable::new(phys_addr);
+        //         let obj = pools
+        //             .page_tables
+        //             .allocate(pt)
+        //             .ok_or(CapError::PoolExhausted)?;
+        //         Ok(ObjectRef::new(obj))
+        //     }
+        //     ArchType::VSpace => {
+        //         let vspace = AArch64VSpace::new();
+        //         let obj = pools
+        //             .vspaces
+        //             .allocate(vspace)
+        //             .ok_or(CapError::PoolExhausted)?;
+        //         Ok(ObjectRef::new(obj))
+        //     }
+        //     ArchType::ASIDPool => {
+        //         let pool = AArch64ASIDPool::new();
+        //         let obj = pools
+        //             .asid_pools
+        //             .allocate(pool)
+        //             .ok_or(CapError::PoolExhausted)?;
+        //         Ok(ObjectRef::new(obj))
+        //     }
+        //     _ => Err(CapError::UnsupportedArchType(arch_type)),
+        // }
+        Err(CapError::UnsupportedArchType(arch_type))
     }
 
     // ─────────────────────────────────────────────────────────────────

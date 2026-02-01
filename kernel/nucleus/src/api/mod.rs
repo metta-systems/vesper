@@ -30,17 +30,21 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     op: u32,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
-    let domain = nucleus.current_domain_mut()?;
     let slot = KeySlot(cap_slot);
-    let entry = domain.keytable.lookup_mut(slot)?;
-    let obj_type = entry.object_type();
+    let obj_type = {
+        let domain = nucleus
+            .current_domain_mut()
+            .ok_or(CapError::InvalidDomain)?;
+        let entry = domain.keytable.lookup_mut(slot)?;
+        entry.object_type()
+    };
 
     if obj_type.is_arch() {
         // Architecture-specific dispatch (less common path)
-        arch_invoke::<A>(nucleus, entry, obj_type, op, args)
+        arch_invoke::<A>(nucleus, slot, obj_type, op, args)
     } else {
         // Core dispatch (common path)
-        core_invoke::<A>(nucleus, entry, obj_type, op, args)
+        core_invoke::<A>(nucleus, slot, obj_type, op, args)
     }
 }
 
@@ -48,12 +52,17 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 #[inline(always)]
 fn core_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
-    entry: &mut KeyEntry,
+    entry_slot: KeySlot,
     obj_type: ObjectType,
     op: u32,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     let core_type = CoreType::try_from(obj_type)?;
+
+    let domain = nucleus
+        .current_domain_mut()
+        .ok_or(CapError::InvalidDomain)?;
+    let entry = domain.keytable.lookup_mut(entry_slot)?;
 
     match core_type {
         CoreType::Null => Err(CapError::NullCapability),
@@ -114,12 +123,17 @@ fn core_invoke<A: ArchObjects>(
 #[inline(always)]
 fn arch_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
-    entry: &mut KeyEntry,
+    entry_slot: KeySlot,
     obj_type: ObjectType,
     op: u32,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     let arch_type = ArchType::try_from(obj_type)?;
+
+    let domain = nucleus
+        .current_domain_mut()
+        .ok_or(CapError::InvalidDomain)?;
+    let entry = domain.keytable.lookup_mut(entry_slot)?;
 
     match arch_type {
         // ArchType::Frame => {

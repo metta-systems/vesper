@@ -27,6 +27,13 @@ impl ObjectRef {
         }
     }
 
+    pub const fn null() -> Self {
+        Self {
+            ptr: NonNull::dangling(),
+            obj_type: ObjectType::NULL,
+        }
+    }
+
     /// Create from a mutable pointer (for objects in pools)
     ///
     /// # Safety

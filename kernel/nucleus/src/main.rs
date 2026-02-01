@@ -23,7 +23,7 @@
 #![feature(core_intrinsics)]
 
 use {
-    crate::objects::nucleus::Nucleus,
+    crate::objects::{Nucleus, ObjectPool, arch::ArchPools, domain::DcbPages},
     cfg_if::cfg_if,
     core::{
         arch::asm,
@@ -50,8 +50,11 @@ mod vectors;
 static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<objects::ArchObjectsImpl>>> =
     IRQSafeNullLock::new(LazyCell::new(|| Nucleus::<objects::ArchObjectsImpl> {
         current_domain: None,
-        dcb_pages: 0,
-        pools: objects::nucleus::NucleusPools { arch: 0 },
+        dcb_pages: DcbPages::new(),
+        pools: objects::nucleus::NucleusPools {
+            domains: unsafe { ObjectPool::new(0x1000 as *mut u8, 4096) },
+            arch: unsafe { ArchPools::new() },
+        },
     }));
 
 #[panic_handler]
@@ -132,12 +135,12 @@ fn cap_invoke_handler(
         get_pc()
     );
 
-    let result = api::handle_cap_invoke(
-        NUCLEUS.lock(),
-        cap_slot,
-        op,
-        &[arg0, arg1, arg2, arg3, arg4, arg5],
-    );
+    let result = unsafe {
+        #[allow(static_mut_refs)]
+        NUCLEUS.lock(|nucleus| {
+            api::handle_cap_invoke(nucleus, cap_slot, op, &[arg0, arg1, arg2, arg3, arg4, arg5])
+        })
+    };
 
     // let cap = current_domain().keytable.lookup(cap_slot)?;
     // let args = &[arg0, arg1, arg2, arg3, arg4, arg5]; // FIXME temp
@@ -156,7 +159,7 @@ fn cap_invoke_handler(
 
     match result {
         Ok((v0, v1)) => (0, v0, v1),
-        Err(e) => (e.code(), 0, 0),
+        Err(e) => e.code(),
     }
 }
 
