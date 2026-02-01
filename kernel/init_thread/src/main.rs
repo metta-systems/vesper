@@ -462,6 +462,15 @@ pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
     // PHASE 8: Context switch to init domain
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+    // We have domain caps here, can use:
+    let dbg = DebugConsoleKey::new();
+    dbg.write(
+        "DEBCON| Debug output via capability invocation on domain's debug console capability",
+    );
+
+    let err = DebugConsoleKey::new_slot(KeySlot::NULL_CAP);
+    err.write("DEBCON| Invalid capability invocation - no output");
+
     // semi_println!("Switching to init domain...");
     // semi_println!("═══════════════════════════════════════════════════════════");
 
