@@ -51,17 +51,20 @@ impl KeyTableKey {
         dst_slot: u32,
         rights: Rights,
     ) -> Result<(), CapError> {
-        let (_ok, _, _) = unsafe {
+        let (ok, _, _) = unsafe {
             protected_call4(
                 self.key.slot(),
                 KeyTableOp::CopyDerive as u32,
                 src_slot as u64,
                 dst_captbl.key.slot() as u64,
                 dst_slot as u64,
-                rights.bits(),
+                rights.bits() as u64,
             )
         };
-        Ok(())
+        match ok {
+            0 => Ok(()),
+            _ => Err(CapError::Unknown),
+        }
     }
 
     // fn activate(&self, slot: u32, object: NucleusObject) -> Result<()> {
@@ -78,9 +81,10 @@ impl KeyTableKey {
     //     Ok(())
     // }
 
-    fn r#move() {}
+    /// Move the key, named "transfer" to avoid clashing with Rust's reserved word.
+    pub fn transfer() {}
 
-    fn delete(&mut self, slot: u32) -> Result<(), CapError> {
+    pub fn delete(&mut self, slot: u32) -> Result<(), CapError> {
         // TODO: Must invoke on self-captbl cap
         let (_ok, _, _) =
             unsafe { protected_call1(self.key.slot(), KeyTableOp::Delete as u32, slot as u64) };
@@ -88,14 +92,14 @@ impl KeyTableKey {
     }
 
     // Revoke all children of cap in slot
-    fn revoke(&self, _captbl: &KeyTableKey, slot: u32) -> Result<(), CapError> {
+    pub fn revoke(&self, _captbl: &KeyTableKey, slot: u32) -> Result<(), CapError> {
         let (_ok, _, _) =
             unsafe { protected_call1(self.key.slot(), KeyTableOp::Revoke as u32, slot as u64) };
         Ok(())
     }
 
     // User code to copy cap to another domain (if you have their captbl cap):
-    fn grant_to(
+    pub fn grant_to(
         &self,
         my_slot: u32,
         their_captbl: &KeyTableKey,
@@ -108,7 +112,7 @@ impl KeyTableKey {
                 my_slot as u64,
                 their_captbl.key.slot() as u64,
                 their_slot as u64,
-                same_rights as u64,
+                Rights::all().bits() as u64,
             )
         };
         Ok(())

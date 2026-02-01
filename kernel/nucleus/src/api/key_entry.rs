@@ -1,10 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════
 // KEY ENTRY (CAPABILITY TABLE ENTRY)
 // ═══════════════════════════════════════════════════════════════════
+// FIXME: should be in objects?
 
-use crate::{
-    libobject::{KeySlot, ObjectType},
-    objects::{NucleusObject, ObjectRef},
+use {
+    crate::objects::{NucleusObject, object_ref::ObjectRef},
+    core::ptr::NonNull,
+    libobject::{CapError, KeySlot, ObjectType, Rights},
 };
 
 /// A single entry in a domain's capability table (KeyTable).
@@ -49,7 +51,7 @@ impl KeyEntry {
         Self {
             object_ref: ObjectRef {
                 ptr: NonNull::dangling(),
-                obj_type: ObjectType::Null,
+                obj_type: ObjectType::NULL,
             },
             rights: Rights::empty(),
             parent_slot: 0xFFFF,
@@ -77,7 +79,7 @@ impl KeyEntry {
     /// Check if this entry is valid (not null)
     #[inline]
     pub fn is_valid(&self) -> bool {
-        self.object_ref.obj_type != ObjectType::Null
+        self.object_ref.obj_type != ObjectType::NULL
     }
 
     /// Get the object type

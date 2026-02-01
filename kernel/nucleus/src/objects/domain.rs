@@ -156,7 +156,7 @@ impl DcbView {
 }
 
 // Domain scheduling support in kernel:
-impl Nucleus {
+impl Domain {
     /// Called when domain is activated (receives CPU time)
     fn activate_domain(&mut self, id: DomainId, time_budget: u64) {
         let dcb = self.dcb_mut(id);
@@ -241,5 +241,5 @@ impl Nucleus {
 //      - Then can safely read other fields with Relaxed
 
 impl NucleusObject for Domain {
-    const TYPE: ObjectType = ObjectType::Domain;
+    const TYPE: ObjectType = ObjectType::DOMAIN;
 }

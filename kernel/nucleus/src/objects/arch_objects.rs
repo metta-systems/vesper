@@ -1,8 +1,49 @@
-use {crate::objects::NucleusObject, libobject::ArchType, libsyscall::CapError};
+use {
+    crate::{
+        api::key_entry::KeyEntry,
+        objects::{NucleusObject, arch::ArchPools, nucleus::Nucleus, object_ref::ObjectRef},
+    },
+    libmemory::phys_addr::PhysAddr,
+    libobject::{ArchType, CapError, Rights},
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // ARCH OBJECTS TRAIT WITH INVOKE METHODS
 // ═══════════════════════════════════════════════════════════════════
+
+/// Frame size enumeration (common across architectures)
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FrameSize {
+    /// 4KB (standard page)
+    Small, // 12 bits
+    /// 2MB (large page / section)
+    Large, // 21 bits
+    /// 1GB (huge page / supersection)
+    Huge, // 30 bits
+}
+
+impl FrameSize {
+    pub const fn bits(&self) -> u8 {
+        match self {
+            FrameSize::Small => 12,
+            FrameSize::Large => 21,
+            FrameSize::Huge => 30,
+        }
+    }
+
+    pub fn from_bits(bits: usize) -> Result<FrameSize, ()> {
+        match bits {
+            12 => Ok(FrameSize::Small),
+            21 => Ok(FrameSize::Large),
+            30 => Ok(FrameSize::Huge),
+            _ => Err(()),
+        }
+    }
+
+    pub const fn size(&self) -> usize {
+        1 << self.bits()
+    }
+}
 
 /// Architecture abstraction trait - extended with invoke methods
 pub trait ArchObjects: Sized + 'static {
@@ -35,7 +76,7 @@ pub trait ArchObjects: Sized + 'static {
         rights: Rights,
         op: u32,
         args: &[u64; 6],
-        kernel: &mut Kernel<Self>,
+        nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError>;
 
     fn invoke_page_table(
@@ -43,7 +84,7 @@ pub trait ArchObjects: Sized + 'static {
         rights: Rights,
         op: u32,
         args: &[u64; 6],
-        kernel: &mut Kernel<Self>,
+        nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError>;
 
     fn invoke_vspace(
@@ -51,7 +92,7 @@ pub trait ArchObjects: Sized + 'static {
         rights: Rights,
         op: u32,
         args: &[u64; 6],
-        kernel: &mut Kernel<Self>,
+        nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError>;
 
     fn invoke_asid_pool(
@@ -59,7 +100,7 @@ pub trait ArchObjects: Sized + 'static {
         rights: Rights,
         op: u32,
         args: &[u64; 6],
-        kernel: &mut Kernel<Self>,
+        nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError>;
 
     fn invoke_asid(
@@ -74,7 +115,7 @@ pub trait ArchObjects: Sized + 'static {
         _entry: &mut KeyEntry,
         _op: u32,
         _args: &[u64; 6],
-        _kernel: &mut Kernel<Self>,
+        _nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
         Err(CapError::UnsupportedArchType(ArchType::IOSpace))
     }
@@ -83,7 +124,7 @@ pub trait ArchObjects: Sized + 'static {
         _entry: &mut KeyEntry,
         _op: u32,
         _args: &[u64; 6],
-        _kernel: &mut Kernel<Self>,
+        _nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
         Err(CapError::UnsupportedArchType(ArchType::IRQHandler))
     }
@@ -92,7 +133,7 @@ pub trait ArchObjects: Sized + 'static {
         _entry: &mut KeyEntry,
         _op: u32,
         _args: &[u64; 6],
-        _kernel: &mut Kernel<Self>,
+        _nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
         Err(CapError::UnsupportedArchType(ArchType::IRQControl))
     }

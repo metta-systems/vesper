@@ -2,7 +2,11 @@
 // AArch64 Frame (Physical Page)
 // ─────────────────────────────────────────────────────────────────
 
-use {crate::api::key_table::KeySlot, libmemory::virt_addr::VirtAddr, libsyscall::CapError};
+use {
+    crate::objects::{NucleusObject, arch_objects::FrameSize},
+    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libobject::{CapError, KeySlot, ObjectType},
+};
 
 /// A physical memory frame on AArch64.
 ///
@@ -46,5 +50,5 @@ impl AArch64Frame {
 }
 
 impl NucleusObject for AArch64Frame {
-    const TYPE: ObjectType = ObjectType::Frame;
+    const TYPE: ObjectType = ObjectType::FRAME;
 }

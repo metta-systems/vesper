@@ -16,6 +16,17 @@ pub enum DebugConsoleOp {
     Write = 0,
 }
 
+impl TryFrom<u32> for DebugConsoleOp {
+    type Error = CapError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(DebugConsoleOp::Write),
+            _ => Err(CapError::InvalidOperation),
+        }
+    }
+}
+
 // Root domain gets a DebugConsoleCap, can delegate to others
 impl DebugConsoleKey {
     pub const fn new() -> Self {
