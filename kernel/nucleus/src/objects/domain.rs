@@ -1,112 +1,20 @@
-use core::sync::atomic::Ordering;
+use {
+    crate::objects::NucleusObject,
+    core::{ptr::NonNull, sync::atomic::Ordering},
+    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libobject::{
+        ObjectType,
+        domain::{DcbPage, DomainControlBlock, DomainId, DomainState},
+    },
+};
 
 // ====================
 // == Nucleus object ==
 // ====================
 
-struct Domain;
-
-impl Domain {
-    // Initialize new domain's cspace
-    fn init_cspace(&mut self) {
-        // Slot 0: capability to this captbl itself
-        self.cspace[CAPTBL_SELF] = Cap::new(ObjectType::KeyTable, self.cspace_id);
-        // Now domain can manipulate its own caps
-    }
-}
-
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum DomainState {
-    /// Just created, never run
-    Inactive = 0,
-    /// Ready to receive CPU time
-    Runnable = 1,
-    /// Currently executing (only one domain per CPU)
-    Running = 2,
-    /// Waiting on notification/event/endpoint
-    Blocked = 3,
-    /// Explicitly suspended by parent
-    Suspended = 4,
-    /// Faulted, needs handler
-    Faulted = 5,
-}
-
-#[repr(u32)]
-#[derive(Copy, Clone, Debug)]
-pub enum BlockReason {
-    None = 0,
-    Notification = 1, // NotifyCap::wait()
-    EventCount = 2,   // EventCountCap::await_ge()
-    Endpoint = 3,     // EndpointCap::call() or recv()
-    TimeDonated = 4,  // Donated time, waiting for return
-}
-
-// pub enum DeactivateReason {
-//     TimeExhausted,
-//     BlockedOnEvent(EndpointCap), <-- BlockReason::Endpoint
-//     Yielded,
-//     Faulted(fault),
-// }
-
-/// Domain Control Block
-/// Our DCB structure - combining Nemesis ideas with our capability model
-///
-/// Key insight: split into kernel-private and shared sections
-#[repr(C, align(128))] // Cache-line aligned
-pub struct DomainControlBlock {
-    // ═══════════════════════════════════════════════════════════
-    // SHARED SECTION (read-only mapped to userspace)
-    // ═══════════════════════════════════════════════════════════
-    // ─── Identity ───
-    pub id: DomainId,
-    pub name: [u8; 24],
-
-    // ─── Execution State (Acquire/Release on state field) ───
-    pub state: AtomicU32,        // DomainState
-    pub block_reason: AtomicU32, // BlockReason (if blocked)
-    pub blocked_on: AtomicU32,   // Cap slot we're blocked on
-
-    // ─── Time Accounting (QoS) ───
-    /// Cumulative CPU time consumed (nanoseconds)
-    pub time_used_ns: AtomicU64,
-    /// Time remaining in current activation
-    pub time_remaining_ns: AtomicU64,
-    /// Number of times activated
-    pub activation_count: AtomicU64,
-
-    // ─── Event State ───
-    pub pending_notifications: AtomicU64, // Bitmap of pending notify caps
-    /// Number of pending events (sum across all endpoints)
-    pub pending_events: AtomicU32, // Number of event counts with data
-
-    /// Endpoint that caused last wakeup
-    pub last_event_ep: AtomicU32,
-
-    // ─── Scheduling Parameters ───
-    /// Parent scheduler domain
-    pub scheduler: DomainId,
-    /// Scheduling priority/parameters
-    pub priority: u32,
-    /// Allocation period (for periodic domains)
-    pub period_ns: u64,
-    /// CPU allocation per period
-    pub budget_ns: u64, // slice_ns
-
-    /// Scheduled deadline (absolute time)
-    pub deadline: AtomicU64,
-
-    // ─── Fault Information ───
-    /// Last fault type (if any)
-    pub fault_type: AtomicU32,
-
-    /// Fault address
-    pub fault_addr: AtomicU64,
-
-    pub fault_cap: AtomicU32, // Cap slot that caused fault
-
-    // Padding to cache line
-    _pad: [u8; 16],
+/// This is a nucleus-visible half of domain structure.
+/// The DomainControlBlock is user-visible and is defined in libobject.
+struct Domain {
     // ═══════════════════════════════════════════════════════════
     // PRIVATE SECTION (kernel only, NOT mapped to userspace)
     // ═══════════════════════════════════════════════════════════
@@ -119,108 +27,26 @@ pub struct DomainControlBlock {
 }
 
 // Verify size for cache alignment
-const _: () = assert!(core::mem::size_of::<DomainControlBlock>() == 128);
+const _: () = assert!(core::mem::size_of::<Domain>() == 4096);
 
-// 32 DCBs per 4KB page
-// Multiple pages for more domains
-
-// Userspace sees: const DCB_BASE: *const DomainControlBlock = 0xFFFF_0000_0000_0000; // FIXME: pervasives
-// Access DCB n:   &*DCB_BASE.add(n)
-
-/// Userspace view of DCB array
-/// Mapped read-only at a well-known address
-pub struct DcbView {
-    base: *const DomainControlBlock,
+impl NucleusObject for Domain {
+    const TYPE: ObjectType = ObjectType::DOMAIN;
 }
 
-impl DcbView {
-    /// Get from well-known address (set up by kernel at domain creation)
-    pub const fn new() -> Self {
-        Self {
-            base: 0xFFFF_0000_0000_0000 as *const DomainControlBlock,
-        }
-    }
-
-    /// Read any domain's state
-    #[inline(always)]
-    pub fn get(&self, id: DomainId) -> &DomainControlBlock {
-        unsafe { &*self.base.add(id.0 as usize) }
-    }
-
-    /// Get my own DCB
-    #[inline(always)]
-    pub fn myself(&self) -> &DomainControlBlock {
-        // Current domain ID stored in thread-local or well-known register
-        self.get(current_domain_id())
-    }
-}
-
-// Domain scheduling support in kernel:
 impl Domain {
-    /// Called when domain is activated (receives CPU time)
-    fn activate_domain(&mut self, id: DomainId, time_budget: u64) {
-        let dcb = self.dcb_mut(id);
-
-        dcb.state
-            .store(DomainState::Running as u32, Ordering::Release);
-        dcb.time_remaining_ns.store(time_budget, Ordering::Release);
-        dcb.deadline.store(now() + time_budget, Ordering::Release);
-    }
-
-    /// Called on every context switch FROM this domain
-    fn deactivate_domain(&mut self, id: DomainId, reason: DeactivateReason) {
-        let dcb = self.dcb_mut(id);
-        let elapsed = /* calculate from timer */0;
-
-        // Update time accounting
-        dcb.time_used_ns.fetch_add(elapsed, Ordering::Relaxed);
-        dcb.time_remaining_ns.fetch_sub(elapsed, Ordering::Relaxed);
-
-        // Update state
-        match reason {
-            DeactivateReason::TimeExhausted => {
-                dcb.state
-                    .store(DomainState::Runnable as u32, Ordering::Release);
-            }
-            DeactivateReason::BlockedOnEvent(ep) => {
-                dcb.state
-                    .store(DomainState::Blocked as u32, Ordering::Release);
-                dcb.block_reason
-                    .store(BlockReason::Event as u32, Ordering::Release);
-                dcb.last_event_ep.store(ep, Ordering::Release);
-            }
-            DeactivateReason::Yielded => {
-                dcb.state
-                    .store(DomainState::Runnable as u32, Ordering::Release);
-            }
-            DeactivateReason::Faulted(fault) => {
-                dcb.state
-                    .store(DomainState::Faulted as u32, Ordering::Release);
-                dcb.fault_type.store(fault.type_code(), Ordering::Release);
-                dcb.fault_addr.store(fault.addr(), Ordering::Release);
-            }
-        }
-    }
-
-    /// Called when event arrives for blocked domain
-    fn signal_domain(&mut self, id: DomainId) {
-        let dcb = self.dcb_mut(id);
-
-        dcb.pending_events.fetch_add(1, Ordering::Release);
-
-        // If blocked on events, make runnable
-        if dcb.state.load(Ordering::Acquire) == DomainState::Blocked as u32 {
-            dcb.state
-                .store(DomainState::Runnable as u32, Ordering::Release);
-        }
-    }
+    // Initialize new domain's cspace
+    // fn init_cspace(&mut self) {
+    //     // Slot 0: capability to this captbl itself
+    //     self.cspace[CAPTBL_SELF] = Cap::new(ObjectType::KeyTable, self.cspace_id);
+    //     // Now domain can manipulate its own caps
+    // }
 }
 
 // ## Memory Ordering Considerations
-
+//
 //      KERNEL (writer)                    USERSPACE (reader)
 //      ───────────────                    ──────────────────
-
+//
 //      // Update multiple fields
 //      dcb.time_used.store(x, Relaxed);
 //      dcb.time_remaining.store(y, Relaxed);
@@ -234,12 +60,189 @@ impl Domain {
 //                                         // all writes before the Release
 //                                         let used = dcb.time_used.load(Relaxed);
 //                                         let rem = dcb.time_remaining.load(Relaxed);
-
+//
 //      Protocol:
 //      - Kernel does Release store on state LAST
 //      - Userspace does Acquire load on state FIRST
 //      - Then can safely read other fields with Relaxed
 
-impl NucleusObject for Domain {
-    const TYPE: ObjectType = ObjectType::DOMAIN;
+// ═══════════════════════════════════════════════════════════════════
+// DCB PAGES MANAGER
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DcbError {
+    TooManyPages,
+    PageNotAllocated,
+    NoFreeDomains,
+    NotAllocated,
+    InvalidDomainId,
+}
+
+/// Manager for all DCB pages in the system.
+///
+/// Provides:
+/// - Kernel-side mutable access for state updates
+/// - Physical addresses for user-space mapping
+/// - Domain ID allocation
+pub struct DcbPages {
+    /// Array of DCB pages (kernel virtual addresses)
+    pages: [Option<&'static mut DcbPage>; Self::MAX_PAGES],
+    /// Physical addresses of each page (for user mapping)
+    phys_addrs: [Option<NonNull<PhysAddr>>; Self::MAX_PAGES],
+    /// Number of allocated pages
+    num_pages: usize,
+    /// Next domain ID to allocate
+    next_domain_id: u32,
+    /// Bitmap of allocated domain IDs
+    allocated: [u64; Self::MAX_DOMAINS / 64],
+}
+
+impl DcbPages {
+    /// Maximum number of DCB pages (supports up to 8192 domains)
+    pub const MAX_PAGES: usize = 256;
+    /// Maximum domains (256 pages × 32 DCBs/page)
+    pub const MAX_DOMAINS: usize = Self::MAX_PAGES * DcbPage::DCBS_PER_PAGE as usize;
+
+    /// Well-known user-space base address for DCB mapping
+    /// This is mapped read-only into all domains
+    pub const USER_BASE: VirtAddr = VirtAddr::new(0x0000_7FFF_FE00_0000);
+
+    /// Create empty DCB pages manager
+    pub const fn new() -> Self {
+        Self {
+            pages: [const { None }; Self::MAX_PAGES],
+            phys_addrs: [const { None }; Self::MAX_PAGES],
+            num_pages: 0,
+            next_domain_id: 0,
+            allocated: [0; Self::MAX_DOMAINS / 64],
+        }
+    }
+
+    /// Add a new DCB page (called during kernel init)
+    ///
+    /// # Safety
+    /// - `page` must be valid, aligned, and not aliased
+    /// - `phys_addr` must be the correct physical address
+    pub unsafe fn add_page(
+        &mut self,
+        page: *mut DcbPage,
+        phys_addr: PhysAddr,
+    ) -> Result<usize, DcbError> {
+        if self.num_pages >= Self::MAX_PAGES {
+            return Err(DcbError::TooManyPages);
+        }
+
+        let idx = self.num_pages;
+        self.pages[idx] = Some(&mut *page);
+        self.phys_addrs[idx] = Some(phys_addr);
+        self.num_pages += 1;
+
+        Ok(idx)
+    }
+
+    /// Allocate a new domain ID and initialize its DCB
+    pub fn allocate_domain(&mut self, scheduler_id: DomainId) -> Result<DomainId, DcbError> {
+        // Find free slot
+        let id = self.find_free_slot()?;
+
+        // Mark as allocated
+        let word = id as usize / 64;
+        let bit = id as usize % 64;
+        self.allocated[word] |= 1 << bit;
+
+        // Initialize DCB
+        let domain_id = DomainId(id);
+        let dcb = self.get_mut(domain_id).ok_or(DcbError::PageNotAllocated)?;
+        *dcb = DomainControlBlock::new(domain_id, scheduler_id);
+
+        Ok(domain_id)
+    }
+
+    /// Release a domain ID
+    pub fn release_domain(&mut self, id: DomainId) -> Result<(), DcbError> {
+        let word = id.0 as usize / 64;
+        let bit = id.0 as usize % 64;
+
+        if self.allocated[word] & (1 << bit) == 0 {
+            return Err(DcbError::NotAllocated);
+        }
+
+        // Mark as free
+        self.allocated[word] &= !(1 << bit);
+
+        // Clear DCB
+        if let Some(dcb) = self.get_mut(id) {
+            dcb.state
+                .store(DomainState::Inactive as u32, Ordering::Release);
+            dcb.id = DomainId::INVALID;
+        }
+
+        Ok(())
+    }
+
+    /// Get a DCB by domain ID (immutable)
+    #[inline]
+    pub fn get(&self, id: DomainId) -> Option<&DomainControlBlock> {
+        let page_idx = id.page_index();
+        let slot = id.slot_in_page();
+
+        self.pages.get(page_idx)?.as_ref()?.get(slot)
+    }
+
+    /// Get a DCB by domain ID (mutable) - kernel only
+    #[inline]
+    pub fn get_mut(&mut self, id: DomainId) -> Option<&mut DomainControlBlock> {
+        let page_idx = id.page_index();
+        let slot = id.slot_in_page();
+
+        self.pages.get_mut(page_idx)?.as_mut()?.get_mut(slot)
+    }
+
+    /// Get physical address of a DCB page (for user mapping)
+    pub fn page_phys_addr(&self, page_idx: usize) -> Option<PhysAddr> {
+        self.phys_addrs.get(page_idx).copied().flatten()
+    }
+
+    /// Get user-space virtual address for a domain's DCB
+    pub fn user_addr(&self, id: DomainId) -> VirtAddr {
+        VirtAddr::new(Self::USER_BASE.as_u64() + (id.0 as u64 * 128))
+    }
+
+    /// Iterate over all allocated domains
+    pub fn iter_allocated(&self) -> impl Iterator<Item = DomainId> + '_ {
+        self.allocated
+            .iter()
+            .enumerate()
+            .flat_map(|(word_idx, &word)| {
+                (0..64).filter_map(move |bit| {
+                    if word & (1 << bit) != 0 {
+                        Some(DomainId((word_idx * 64 + bit) as u32))
+                    } else {
+                        None
+                    }
+                })
+            })
+    }
+
+    /// Number of allocated domains
+    pub fn num_allocated(&self) -> usize {
+        self.allocated.iter().map(|w| w.count_ones() as usize).sum()
+    }
+
+    fn find_free_slot(&self) -> Result<u32, DcbError> {
+        let max_id = (self.num_pages * DcbPage::DCBS_PER_PAGE as usize) as u32;
+
+        for (word_idx, &word) in self.allocated.iter().enumerate() {
+            if word != !0 {
+                let bit = word.trailing_ones();
+                let id = (word_idx as u32 * 64) + bit;
+                if id < max_id {
+                    return Ok(id);
+                }
+            }
+        }
+
+        Err(DcbError::NoFreeDomains)
+    }
 }
