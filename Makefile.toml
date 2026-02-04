@@ -72,7 +72,7 @@ VOLUME = { value = "/Volumes/BOOT", condition = { env_not_set = ["VOLUME"] } }
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 # Build rust stdlib locally
 RUST_STD = "-Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem"
-TARGET_JSON = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
+TARGET_JSON = "-Zjson-target-spec --target=${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/targets/${TARGET}.json"
 DEVICE_FEATURES = "noserial"
 QEMU_FEATURES = "qemu"
 TARGET_FEATURES = ""
@@ -174,7 +174,7 @@ env = { RUSTFLAGS = "${FIXED_RUSTFLAGS} ${BOARD_RUSTFLAGS} ${TARGET_LINK_RUSTFLA
 command = "cargo"
 args = [
   "build",
-  "--target=${TARGET_JSON}",
+  "@@split(TARGET_JSON, )",
   "--features=${TARGET_FEATURES}",
   "@@split(RUST_STD, )",
   "--release",
@@ -243,7 +243,7 @@ env = { TARGET_FEATURES = "${QEMU_FEATURES}", TARGET_BOARD = "rpi3", RUSTFLAGS =
 command = "cargo"
 args = [
   "test",
-  "--target=${TARGET_JSON}",
+  "@@split(TARGET_JSON, )",
   "--features=${TARGET_FEATURES}",
   "@@split(RUST_STD, )",
 ]
@@ -257,7 +257,7 @@ args = [
   "doc",
   "--open",
   "--no-deps",
-  "--target=${TARGET_JSON}",
+  "@@split(TARGET_JSON, )",
   "--features=${TARGET_FEATURES}",
 ]
 
@@ -409,7 +409,7 @@ args = ["modules", "tree"]
 command = "cargo"
 args = [
   "expand",
-  "--target=${TARGET_JSON}",
+  "@@split(TARGET_JSON, )",
   "--features=${TARGET_FEATURES}",
   "--release"
 ]
@@ -418,5 +418,5 @@ args = [
 env = { RUSTFLAGS = "${FIXED_RUSTFLAGS} ${BOARD_RUSTFLAGS} ${TARGET_LINK_RUSTFLAGS}" }
 script = '''
   export RUSTFLAGS="${RUSTFLAGS}"
-  cargo clippy --target=${TARGET_JSON} --features=${CLIPPY_FEATURES} ${RUST_STD} -- --deny warnings --allow deprecated
+  cargo clippy ${TARGET_JSON} --features=${CLIPPY_FEATURES} ${RUST_STD} -- --deny warnings --allow deprecated
 '''
