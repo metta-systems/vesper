@@ -5,9 +5,7 @@
 //! Platform asynchronous exception handling.
 
 use {
-    libexception::exception::asynchronous::{
-        IRQContext, IRQHandlerDescriptor, interface::IRQManager,
-    },
+    libexception::asynchronous::{IRQContext, IRQHandlerDescriptor, interface::IRQManager},
     liblocking::InitStateLock,
 };
 

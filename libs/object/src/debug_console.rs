@@ -51,7 +51,7 @@ impl DebugConsoleKey {
             )
         };
         libqemu::semi_println!(
-            "Return from DebugConsoleOp::Write with result ({}, {}, {})",
+            "Userspace return from DebugConsoleOp::Write with result ({}, {}, {})",
             ok,
             r1,
             r2

@@ -521,7 +521,7 @@ impl libdriver::drivers::interface::DeviceDriver for PL011Uart {
     ) -> Result<(), &'static str> {
         use {
             crate::platform::exception::asynchronous::irq_manager,
-            libexception::exception::asynchronous::IRQHandlerDescriptor,
+            libexception::asynchronous::IRQHandlerDescriptor,
         };
 
         let descriptor = IRQHandlerDescriptor::new(irq_number, Self::COMPATIBLE, self);
@@ -567,7 +567,7 @@ impl interface::ConsoleOps for PL011Uart {
 
 impl interface::All for PL011Uart {}
 
-impl libexception::exception::asynchronous::interface::IRQHandler for PL011Uart {
+impl libexception::asynchronous::interface::IRQHandler for PL011Uart {
     fn handle(&self) -> Result<(), &'static str> {
         self.inner.lock(|inner| {
             let pending = inner.registers.MaskedInterruptStatus.extract();

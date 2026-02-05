@@ -5,8 +5,8 @@ use {
     aarch64_cpu::{
         asm,
         registers::{
-            ELR_EL2, HCR_EL2, MAIR_EL1, ReadWriteable, SCTLR_EL1, SP_EL1, SPSR_EL2, TCR_EL1,
-            TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
+            ELR_EL2, HCR_EL2, MAIR_EL1, ReadWriteable, SCTLR_EL1, SP_EL1, SPSR_EL1, SPSR_EL2,
+            TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
         },
     },
 };
@@ -115,7 +115,16 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
             + SPSR_EL2::A::Masked
             + SPSR_EL2::I::Masked
             + SPSR_EL2::F::Masked
-            + SPSR_EL2::M::EL1h, // Use SP_EL1
+            + SPSR_EL2::M::EL1h, // Use SP_EL1, Return to EL1
+    );
+
+    // TODO: Mark interrupts in EL1
+    SPSR_EL1.write(
+        SPSR_EL1::D::Masked
+            + SPSR_EL1::A::Masked
+            + SPSR_EL1::I::Masked
+            + SPSR_EL1::F::Masked
+            + SPSR_EL1::M::EL1h, // Use SP_EL1
     );
 
     // Set return address and stack

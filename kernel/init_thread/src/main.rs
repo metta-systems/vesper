@@ -45,6 +45,7 @@ mod paging;
 
 use {
     crate::boot_info::{BOOT_INFO, BootInfoMemRegion},
+    aarch64_cpu::registers::{SPSR_EL2, Writeable},
     core::{panic::PanicInfo, ptr::write_bytes, slice},
     device_tree::{DeviceTree, DeviceTreeProp},
     fdt_rs::{
@@ -82,6 +83,14 @@ fn dump_memory_map() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
+    SPSR_EL2.write(
+        SPSR_EL2::D::Masked
+            + SPSR_EL2::A::Masked
+            + SPSR_EL2::I::Masked
+            + SPSR_EL2::F::Masked
+            + SPSR_EL2::M::EL1h, // Use SP_EL1/2
+    );
+
     semi_println!("init_main started");
 
     // unsafe {
@@ -370,9 +379,6 @@ pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
 
     // Initialize per-CPU data structures
     // percpu::init();
-
-    // Initialize exception vectors
-    // exceptions::init();
 
     // Initialize interrupt controller (GIC on RPi4)
     // let boot_info = unsafe { &BOOT_INFO };
