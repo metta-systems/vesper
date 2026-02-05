@@ -11,9 +11,7 @@
 use {
     super::{PendingIRQs, PeripheralIRQ},
     crate::platform::device_driver::common::MMIODerefWrapper,
-    libexception::exception::asynchronous::{
-        IRQContext, IRQHandlerDescriptor, interface::IRQManager,
-    },
+    libexception::asynchronous::{IRQContext, IRQHandlerDescriptor, interface::IRQManager},
     liblocking::{self, IRQSafeNullLock, InitStateLock},
     tock_registers::{
         interfaces::{Readable, Writeable},

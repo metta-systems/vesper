@@ -8,7 +8,7 @@ mod peripheral_ic;
 
 use {
     core::fmt,
-    libexception::exception::{self, asynchronous::IRQHandlerDescriptor},
+    libexception::asynchronous::{IRQHandlerDescriptor, interface::IRQManager},
     libmemory::{Address, Virtual},
     libprimitives::BoundedUsize,
 };
@@ -111,12 +111,12 @@ impl libdriver::drivers::interface::DeviceDriver for InterruptController {
     }
 }
 
-impl exception::asynchronous::interface::IRQManager for InterruptController {
+impl IRQManager for InterruptController {
     type IRQNumberType = IRQNumber;
 
     fn register_handler(
         &self,
-        irq_handler_descriptor: exception::asynchronous::IRQHandlerDescriptor<Self::IRQNumberType>,
+        irq_handler_descriptor: IRQHandlerDescriptor<Self::IRQNumberType>,
     ) -> Result<(), &'static str> {
         match irq_handler_descriptor.number() {
             IRQNumber::Local(_) => unimplemented!("Local IRQ controller not implemented."),
@@ -142,7 +142,7 @@ impl exception::asynchronous::interface::IRQManager for InterruptController {
 
     fn handle_pending_irqs<'irq_context>(
         &'irq_context self,
-        ic: &exception::asynchronous::IRQContext<'irq_context>,
+        ic: &libexception::asynchronous::IRQContext<'irq_context>,
     ) {
         // It can only be a peripheral IRQ pending because enable() does not support local IRQs yet.
         self.periph.handle_pending_irqs(ic);
