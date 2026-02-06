@@ -7,7 +7,7 @@ use {
     tock_registers::{LocalRegisterCopy, interfaces::Readable, register_bitfields},
 };
 
-fn cause_to_string(cause: u64) -> &'static str {
+pub fn cause_to_string(cause: u64) -> &'static str {
     if cause == ESR_EL1::EC::DataAbortCurrentEL.read(ESR_EL1::EC) {
         "Data Alignment Check"
     } else {
@@ -115,9 +115,9 @@ register_bitfields! {
     ]
 }
 
-type IssForDataAbort = LocalRegisterCopy<u64, ISS_DA::Register>;
+pub type IssForDataAbort = LocalRegisterCopy<u64, ISS_DA::Register>;
 
-fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
+pub fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
     match iss.read_as_enum(ISS_DA::DFSC) {
         Some(ISS_DA::DFSC::Value::AddressSizeTL0) => {
             "Address size fault, level 0 of translation or translation table base register"
@@ -183,7 +183,8 @@ fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
 /// Not for production use!
 /// @todo merge this with default exception handler a bit?
 /// @returns true if we can skip the instruction and return, false if we need to continue handling the exception.
-pub fn synchronous_common(e: &mut super::ExceptionContext) -> bool {
+// #[cfg(any(test, feature = "test_build"))]
+pub fn exception_dump(e: &mut super::ExceptionContext) -> bool {
     println!("      ESR_EL1: {:#010x} (syndrome)", ESR_EL1.get());
     let cause = ESR_EL1.read(ESR_EL1::EC);
     println!(

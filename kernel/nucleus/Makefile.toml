@@ -8,8 +8,8 @@
 extend = "../Makefile.toml"
 
 [env]
-# KERNEL_LINK = "libs/platform/src/platform/raspberrypi/linker/kernel.ld"
-KERNEL_LINK = "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus.ld"
+KERNEL_LINK = "libs/platform/src/platform/raspberrypi/linker/nucleus.ld"
+# KERNEL_LINK = "${CARGO_MAKE_WORKING_DIRECTORY}/nucleus.ld"
 
 [tasks.build]
 clear = true

@@ -18,9 +18,6 @@ fn main() {
     output::rerun_if_changed(kernel_elf_path);
     output::rerun_if_changed("build.rs");
     output::rerun_if_changed("kernel_sections.template.rs");
-    // output::rustc_link_arg(
-    //     format!("--script={}/init_thread.ld", env!("CARGO_MANIFEST_DIR")).as_ref(),
-    // );
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir);
@@ -235,7 +232,7 @@ fn find_symbol(elf: &Elf, symbol_name: &str) -> Option<Sym> {
 /// Try to find vector table location from symbols
 fn find_vector_table_from_symbols(elf: &Elf) -> Option<VectorTableInfo> {
     // Common symbol names for exception vectors
-    const VECTOR_SYMBOL: &str = "__vectors";
+    const VECTOR_SYMBOL: &str = "__exception_vectors_start"; // From libexception::arch
 
     if let Some(sym) = find_symbol(elf, VECTOR_SYMBOL) {
         info!(

@@ -7,11 +7,6 @@
 #
 extend = "../Makefile.toml"
 
-[env]
-# KERNEL_LINK = "libs/platform/src/platform/raspberrypi/linker/kernel.ld"
-KERNEL_LINK = "nucleus/nucleus.ld"
-INIT_LINK = "init_thread/init_thread.ld"
-
 # [tasks.kernel-binary]
 # alias = "build"
 
@@ -53,6 +48,7 @@ workspace = false
 env = { "BINARY_FILE" = "${KERNEL_ELF}", "OUTPUT_OVERRIDE" = "${KERNEL_BIN}" }
 extend = "convert-custom-binary"
 
+# TODO: split to nucleus/init_thread
 [tasks.test-kernel]
 env = { TARGET_LINK_RUSTFLAGS = "-C link-arg=--script=${KERNEL_LINK}" }
 run_task = "test-on-rpi3-qemu"
@@ -121,9 +117,6 @@ script = [
 
 [tasks.hopper]
 clear = true
-alias = "kernel-hopper"
-
-[tasks.kernel-hopper]
 dependencies = ["build"]
 # The cmd line below causes a bug in hopper, see https://www.dropbox.com/s/zyw5mfx0bepcjb1/hopperv4-RAW-bug.mov?dl=0
 # "hopper --loader RAW --base-address 0x80000 --entrypoint 0x80000 --file-offset 0 --plugin arm --cpu aarch64 --variant generic --contains-code true --executable ${KERNEL_BIN}"
