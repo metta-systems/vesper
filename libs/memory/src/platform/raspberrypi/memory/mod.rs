@@ -63,8 +63,9 @@ pub mod mmu;
 //--------------------------------------------------------------------------------------------------
 
 use {
-    crate::{Address, Physical, Virtual, mmu::PageAddress},
+    crate::mmu::PageAddress,
     core::cell::UnsafeCell,
+    libaddress::{Address, Physical, Virtual},
 };
 
 // Symbols from the linker script.
@@ -157,24 +158,24 @@ pub mod map {
         pub const MMIO_BASE:           usize =             0x3F00_0000;
 
         /// Interrupt controller
-        pub const PERIPHERAL_IC_BASE:  Address<Physical> = Address::new(MMIO_BASE + 0x0000_B200);
+        pub const PERIPHERAL_IC_BASE:  Address<Physical> = Address::new((MMIO_BASE + 0x0000_B200) as u64);
         pub const PERIPHERAL_IC_SIZE:  usize             =              0x24;
 
         /// Base address of ARM<->VC mailbox area.
-        pub const VIDEOCORE_MBOX_BASE: Address<Physical> = Address::new(MMIO_BASE + VIDEOCORE_MBOX_OFFSET);
+        pub const VIDEOCORE_MBOX_BASE: Address<Physical> = Address::new((MMIO_BASE + VIDEOCORE_MBOX_OFFSET) as u64);
 
         /// Board power control.
-        pub const POWER_BASE:          Address<Physical> = Address::new(MMIO_BASE + POWER_OFFSET);
+        pub const POWER_BASE:          Address<Physical> = Address::new((MMIO_BASE + POWER_OFFSET) as u64);
 
         /// Base address of GPIO registers.
-        pub const GPIO_BASE:           Address<Physical> = Address::new(MMIO_BASE + GPIO_OFFSET);
+        pub const GPIO_BASE:           Address<Physical> = Address::new((MMIO_BASE + GPIO_OFFSET) as u64);
         pub const GPIO_SIZE:           usize             =              0xA0;
 
-        pub const PL011_UART_BASE:     Address<Physical> = Address::new(MMIO_BASE + UART_OFFSET);
+        pub const PL011_UART_BASE:     Address<Physical> = Address::new((MMIO_BASE + UART_OFFSET) as u64);
         pub const PL011_UART_SIZE:     usize             =              0x48;
 
         /// Base address of `MiniUART`.
-        pub const MINI_UART_BASE:      Address<Physical> = Address::new(MMIO_BASE + MINIUART_OFFSET);
+        pub const MINI_UART_BASE:      Address<Physical> = Address::new((MMIO_BASE + MINIUART_OFFSET) as u64);
 
         /// End of MMIO memory region.
         pub const END:                 Address<Physical> = Address::new(0x4001_0000);

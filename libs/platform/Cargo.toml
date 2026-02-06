@@ -32,6 +32,7 @@ bit_field = { workspace = true }
 bitflags = { workspace = true }
 buddy-alloc = { workspace = true }
 cfg-if = { workspace = true }
+libaddress = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }

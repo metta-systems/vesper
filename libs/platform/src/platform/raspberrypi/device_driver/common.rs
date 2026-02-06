@@ -7,7 +7,7 @@
 
 use {
     core::{marker::PhantomData, ops},
-    libmemory::{Address, Virtual},
+    libaddress::{Address, Virtual},
 };
 
 //--------------------------------------------------------------------------------------------------

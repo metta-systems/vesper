@@ -1,12 +1,10 @@
 //! Platform memory management unit.
 
 use {
-    crate::{
-        Physical, Virtual,
-        mmu::{
-            AddressSpace, AssociatedTranslationTable, MemoryRegion, PageAddress, TranslationGranule,
-        },
+    crate::mmu::{
+        AddressSpace, AssociatedTranslationTable, MemoryRegion, PageAddress, TranslationGranule,
     },
+    libaddress::{Physical, Virtual},
     liblocking::InitStateLock,
 };
 
@@ -59,7 +57,7 @@ pub fn virt_code_region() -> MemoryRegion<Virtual> {
 
     let start_page_addr = super::virt_code_start();
     let end_exclusive_page_addr = start_page_addr
-        .checked_offset(num_pages.cast_signed())
+        .checked_page_offset(num_pages.cast_signed())
         .unwrap();
 
     MemoryRegion::new(start_page_addr, end_exclusive_page_addr)
@@ -71,7 +69,7 @@ pub fn virt_data_region() -> MemoryRegion<Virtual> {
 
     let start_page_addr = super::virt_data_start();
     let end_exclusive_page_addr = start_page_addr
-        .checked_offset(num_pages.cast_signed())
+        .checked_page_offset(num_pages.cast_signed())
         .unwrap();
 
     MemoryRegion::new(start_page_addr, end_exclusive_page_addr)
@@ -83,7 +81,7 @@ pub fn virt_boot_core_stack_region() -> MemoryRegion<Virtual> {
 
     let start_page_addr = super::virt_boot_core_stack_start();
     let end_exclusive_page_addr = start_page_addr
-        .checked_offset(num_pages.cast_signed())
+        .checked_page_offset(num_pages.cast_signed())
         .unwrap();
 
     MemoryRegion::new(start_page_addr, end_exclusive_page_addr)
@@ -179,7 +177,7 @@ pub fn virt_mmio_remap_region() -> MemoryRegion<Virtual> {
 
     let start_page_addr = super::virt_mmio_remap_start();
     let end_exclusive_page_addr = start_page_addr
-        .checked_offset(num_pages.cast_signed())
+        .checked_page_offset(num_pages.cast_signed())
         .unwrap();
 
     MemoryRegion::new(start_page_addr, end_exclusive_page_addr)

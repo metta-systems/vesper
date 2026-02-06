@@ -7,15 +7,13 @@
 #![allow(dead_code)]
 
 use {
-    crate::{
-        arch::aarch64::page_size::{NotGiantPageSize, PageSize, Size1GiB, Size2MiB, Size4KiB},
-        virt_addr::VirtAddr,
-    },
+    crate::arch::aarch64::page_size::{NotGiantPageSize, PageSize, Size1GiB, Size2MiB, Size4KiB},
     core::{
         fmt,
         marker::PhantomData,
         ops::{Add, AddAssign, Sub, SubAssign},
     },
+    libaddress::VirtAddr,
     ux::u9,
 };
 
@@ -38,7 +36,7 @@ impl<S: PageSize> Page<S> {
     ///
     /// Returns an error if the address is not correctly aligned (i.e. is not a valid page start).
     pub fn from_start_address(address: VirtAddr) -> Result<Self, Error> {
-        if !address.is_aligned(S::SIZE) {
+        if !address.is_aligned(S::SIZE as u64) {
             Err(Error::NotAligned)
         } else {
             Ok(Page::containing_address(address))
@@ -48,7 +46,7 @@ impl<S: PageSize> Page<S> {
     /// Returns the page that contains the given virtual address.
     pub fn containing_address(address: VirtAddr) -> Self {
         Page {
-            start_address: address.aligned_down(S::SIZE),
+            start_address: address.aligned_down(S::SIZE as u64),
             size: PhantomData,
         }
     }

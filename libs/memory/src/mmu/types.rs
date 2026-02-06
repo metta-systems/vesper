@@ -3,24 +3,25 @@
 //--------------------------------------------------------------------------------------------------
 
 use {
-    crate::{Address, AddressType, Physical, mm, platform::KernelGranule},
+    crate::platform::KernelGranule,
     core::{
         fmt::{self, Formatter},
         iter::Step,
         num::NonZeroUsize,
         ops::Range,
     },
+    libaddress::{Address, AddressType, Physical},
 };
 
 /// A wrapper type around [Address] that ensures page alignment.
 #[derive(Copy, Clone, Debug, Eq, PartialOrd, PartialEq)]
-pub struct PageAddress<ATYPE: AddressType> {
+pub struct PageAddress<ATYPE: const AddressType> {
     inner: Address<ATYPE>,
 }
 
 /// A type that describes a region of memory in quantities of pages.
 #[derive(Copy, Clone, Debug, Eq, PartialOrd, PartialEq)]
-pub struct MemoryRegion<ATYPE: AddressType> {
+pub struct MemoryRegion<ATYPE: const AddressType> {
     start: PageAddress<ATYPE>,
     end_exclusive: PageAddress<ATYPE>,
 }
@@ -70,7 +71,7 @@ pub struct MMIODescriptor {
 //------------------------------------------------------------------------------
 // PageAddress
 //------------------------------------------------------------------------------
-impl<ATYPE: AddressType> PageAddress<ATYPE> {
+impl<ATYPE: const AddressType> PageAddress<ATYPE> {
     /// Unwraps the value.
     pub fn into_inner(self) -> Address<ATYPE> {
         self.inner
@@ -80,46 +81,49 @@ impl<ATYPE: AddressType> PageAddress<ATYPE> {
     ///
     /// `count` is in units of [`PageAddress`]. For example, a count of 2 means `result = self + 2 *
     /// page_size`.
-    pub fn checked_offset(self, count: isize) -> Option<Self> {
+    pub fn checked_page_offset(self, count: isize) -> Option<Self> {
         if count == 0 {
             return Some(self);
         }
 
-        let delta = count.unsigned_abs().checked_mul(KernelGranule::SIZE)?;
+        let delta = count.unsigned_abs().checked_mul(KernelGranule::SIZE)? as u64;
         let result = if count.is_positive() {
-            self.inner.as_usize().checked_add(delta)?
+            self.inner.as_u64().checked_add(delta)?
         } else {
-            self.inner.as_usize().checked_sub(delta)?
+            self.inner.as_u64().checked_sub(delta)?
         };
 
         Some(Self {
-            inner: Address::new(result),
+            inner: Address::<ATYPE>::new(result),
         })
     }
 }
 
-impl<ATYPE: AddressType> From<usize> for PageAddress<ATYPE> {
+impl<ATYPE: const AddressType> From<usize> for PageAddress<ATYPE> {
     fn from(addr: usize) -> Self {
         assert!(
-            mm::is_aligned(addr, KernelGranule::SIZE),
+            libaddress::align::is_aligned(addr as u64, KernelGranule::SIZE as u64),
             "Input usize not page aligned"
         );
 
         Self {
-            inner: Address::new(addr),
+            inner: Address::<ATYPE>::new(addr as u64),
         }
     }
 }
 
-impl<ATYPE: AddressType> From<Address<ATYPE>> for PageAddress<ATYPE> {
+impl<ATYPE: const AddressType> From<Address<ATYPE>> for PageAddress<ATYPE> {
     fn from(addr: Address<ATYPE>) -> Self {
-        assert!(addr.is_page_aligned(), "Input Address not page aligned");
+        assert!(
+            addr.is_page_aligned(&KernelGranule::SIZE), // FIXME: fixed page size
+            "Input Address not page aligned"
+        );
 
         Self { inner: addr }
     }
 }
 
-impl<ATYPE: AddressType> Step for PageAddress<ATYPE> {
+impl<ATYPE: const AddressType> Step for PageAddress<ATYPE> {
     fn steps_between(start: &Self, end: &Self) -> (usize, Option<usize>) {
         if start > end {
             return (0, None);
@@ -131,18 +135,18 @@ impl<ATYPE: AddressType> Step for PageAddress<ATYPE> {
     }
 
     fn forward_checked(start: Self, count: usize) -> Option<Self> {
-        start.checked_offset(count.cast_signed())
+        start.checked_page_offset(count.cast_signed())
     }
 
     fn backward_checked(start: Self, count: usize) -> Option<Self> {
-        start.checked_offset(-(count.cast_signed()))
+        start.checked_page_offset(-(count.cast_signed()))
     }
 }
 
 //------------------------------------------------------------------------------
 // MemoryRegion
 //------------------------------------------------------------------------------
-impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
+impl<ATYPE: const AddressType> MemoryRegion<ATYPE> {
     /// Create an instance.
     pub fn new(start: PageAddress<ATYPE>, end_exclusive: PageAddress<ATYPE>) -> Self {
         assert!(start <= end_exclusive);
@@ -174,12 +178,12 @@ impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
 
     /// Returns the exclusive end page address.
     pub fn end_inclusive_page_addr(&self) -> PageAddress<ATYPE> {
-        self.end_exclusive.checked_offset(-1).unwrap()
+        self.end_exclusive.checked_page_offset(-1).unwrap()
     }
 
     /// Checks if self contains an address.
     pub fn contains(&self, addr: Address<ATYPE>) -> bool {
-        let page_addr = PageAddress::from(addr.align_down_page());
+        let page_addr = PageAddress::from(addr.align_down_page(&KernelGranule::SIZE)); // FIXME: fixed page size
         self.as_range().contains(&page_addr)
     }
 
@@ -205,7 +209,8 @@ impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
         end_exclusive - start
     }
 
-    /// Splits the `MemoryRegion` like:
+    /// Splits the MemoryRegion like in the following diagram.
+    /// Left region is returned to the caller. Right region is the new region for this struct.
     ///
     /// --------------------------------------------------------------------------------
     /// |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
@@ -218,11 +223,10 @@ impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
     ///                                   |                                       |
     ///                                  `right_start`          `right_end_exclusive`
     ///
-    /// Left region is returned to the caller. Right region is the new region for this struct.
     pub fn take_first_n_pages(&mut self, num_pages: NonZeroUsize) -> Result<Self, &'static str> {
         let count: usize = num_pages.into();
 
-        let left_end_exclusive = self.start.checked_offset(count.cast_signed());
+        let left_end_exclusive = self.start.checked_page_offset(count.cast_signed());
         let Some(left_end_exclusive) = left_end_exclusive else {
             return Err("Overflow while calculating left_end_exclusive");
         };
@@ -241,7 +245,7 @@ impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
     }
 }
 
-impl<ATYPE: AddressType> IntoIterator for MemoryRegion<ATYPE> {
+impl<ATYPE: const AddressType> IntoIterator for MemoryRegion<ATYPE> {
     type Item = PageAddress<ATYPE>;
     type IntoIter = Range<Self::Item>;
 
@@ -255,8 +259,11 @@ impl<ATYPE: AddressType> IntoIterator for MemoryRegion<ATYPE> {
 
 impl From<MMIODescriptor> for MemoryRegion<Physical> {
     fn from(desc: MMIODescriptor) -> Self {
-        let start = PageAddress::from(desc.start_addr.align_down_page());
-        let end_exclusive = PageAddress::from(desc.end_addr_exclusive().align_up_page());
+        let start = PageAddress::from(desc.start_addr.align_down_page(&KernelGranule::SIZE)); // FIXME: fixed page size
+        let end_exclusive = PageAddress::from(
+            desc.end_addr_exclusive()
+                .align_up_page(&KernelGranule::SIZE), // FIXME: fixed page size
+        );
 
         Self {
             start,
@@ -273,7 +280,7 @@ impl MMIODescriptor {
     /// Create an instance.
     pub const fn new(start_addr: Address<Physical>, size: usize) -> Self {
         assert!(size > 0);
-        let end_addr_exclusive = Address::new(start_addr.as_usize() + size);
+        let end_addr_exclusive = Address::new(start_addr.as_u64() + size as u64);
 
         Self {
             start_addr,

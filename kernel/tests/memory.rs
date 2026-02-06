@@ -126,7 +126,7 @@ fn no_manual_mmio_map() {
 
     let phys_start_page_addr: PageAddress<Physical> = PageAddress::from(0);
     let phys_end_exclusive_page_addr: PageAddress<Physical> =
-        phys_start_page_addr.checked_offset(5).unwrap();
+        phys_start_page_addr.checked_page_offset(5).unwrap();
     let phys_region = MemoryRegion::new(phys_start_page_addr, phys_end_exclusive_page_addr);
 
     let num_pages = NonZeroUsize::new(phys_region.num_pages()).unwrap();
@@ -161,11 +161,11 @@ fn translation_table_implementation_sanity() {
 
     let virt_start_page_addr: PageAddress<Virtual> = PageAddress::from(0);
     let virt_end_exclusive_page_addr: PageAddress<Virtual> =
-        virt_start_page_addr.checked_offset(5).unwrap();
+        virt_start_page_addr.checked_page_offset(5).unwrap();
 
     let phys_start_page_addr: PageAddress<Physical> = PageAddress::from(0);
     let phys_end_exclusive_page_addr: PageAddress<Physical> =
-        phys_start_page_addr.checked_offset(5).unwrap();
+        phys_start_page_addr.checked_page_offset(5).unwrap();
 
     let virt_region = MemoryRegion::new(virt_start_page_addr, virt_end_exclusive_page_addr);
     let phys_region = MemoryRegion::new(phys_start_page_addr, phys_end_exclusive_page_addr);
@@ -185,24 +185,27 @@ fn pageaddress_type_method_sanity() {
     let page_addr: PageAddress<Virtual> = PageAddress::from(KernelGranule::SIZE * 2);
 
     assert_eq!(
-        page_addr.checked_offset(-2),
+        page_addr.checked_page_offset(-2),
         Some(PageAddress::<Virtual>::from(0))
     );
 
     assert_eq!(
-        page_addr.checked_offset(2),
+        page_addr.checked_page_offset(2),
         Some(PageAddress::<Virtual>::from(KernelGranule::SIZE * 4))
     );
 
     assert_eq!(
-        PageAddress::<Virtual>::from(0).checked_offset(0),
+        PageAddress::<Virtual>::from(0).checked_page_offset(0),
         Some(PageAddress::<Virtual>::from(0))
     );
-    assert_eq!(PageAddress::<Virtual>::from(0).checked_offset(-1), None);
+    assert_eq!(
+        PageAddress::<Virtual>::from(0).checked_page_offset(-1),
+        None
+    );
 
     let max_page_addr = Address::<Virtual>::new(usize::MAX).align_down_page();
     assert_eq!(
-        PageAddress::<Virtual>::from(max_page_addr).checked_offset(1),
+        PageAddress::<Virtual>::from(max_page_addr).checked_page_offset(1),
         None
     );
 

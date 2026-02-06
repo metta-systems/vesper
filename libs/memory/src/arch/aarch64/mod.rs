@@ -18,7 +18,7 @@ mod virt_page;
 // use self::paging::PAGE_SIZE;
 
 // pub use crate::memory::{PhysAddr, VirtAddr};
-pub use {page_size::PageSize, phys_frame::PhysFrame};
+pub use phys_frame::PhysFrame;
 
 /// @todo ??
 pub trait FrameAllocator {

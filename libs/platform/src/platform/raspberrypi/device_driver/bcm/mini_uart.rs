@@ -17,9 +17,9 @@ use {
         convert::From,
         fmt::{self, Arguments},
     },
+    libaddress::{Address, Virtual},
     libconsole::{SerialOps, console::interface},
     liblocking::{IRQSafeNullLock, interface::Mutex},
-    libmemory::{Address, Virtual},
     tock_registers::{
         interfaces::ReadWriteable,
         register_bitfields, register_structs,

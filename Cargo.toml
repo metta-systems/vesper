@@ -5,6 +5,7 @@ members = [
   "bin/chainboot",
   "bin/chainofcommand",
   # Libraries
+  "libs/address",
   "libs/boot",
   "libs/console",
   "libs/cpu",
@@ -45,9 +46,11 @@ version = "0.0.1"
 #========
 aarch64-cpu = { version = "11.2" }
 bit_field = { version = "0.10" }
+bitfield-struct = { version = "0.12" }
 bitflags = { version = "2.10" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
+libaddress = { path = "libs/address" }
 libboot = { path = "libs/boot" }
 libconsole = { path = "libs/console" }
 libcpu = { path = "libs/cpu" }

@@ -4,7 +4,7 @@
 
 use {
     crate::objects::{NucleusObject, arch_objects::FrameSize},
-    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libaddress::{PhysAddr, VirtAddr},
     libobject::{CapError, KeySlot, ObjectType},
 };
 

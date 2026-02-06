@@ -3,7 +3,7 @@ use {
         api::key_entry::KeyEntry,
         objects::{NucleusObject, arch::ArchPools, nucleus::Nucleus, object_ref::ObjectRef},
     },
-    libmemory::phys_addr::PhysAddr,
+    libaddress::PhysAddr,
     libobject::{ArchType, CapError, Rights},
 };
 

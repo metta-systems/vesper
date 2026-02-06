@@ -6,11 +6,11 @@ use core::{
 use {
     super::{Granule64KiB, Granule512MiB, mair},
     crate::{
-        Address, Physical, Virtual,
         mmu::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
         platform,
     },
     core::convert,
+    libaddress::{Address, Physical, Virtual},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields,
@@ -146,9 +146,6 @@ pub struct FixedSizeTranslationTable<const NUM_TABLES: usize> {
     initialized: bool,
 }
 
-// /// A translation table type for the kernel space.
-// pub type KernelTranslationTable = FixedSizeTranslationTable<NUM_LVL2_TABLES>;
-
 //--------------------------------------------------------------------------------------------------
 // Private Implementations
 //--------------------------------------------------------------------------------------------------
@@ -156,7 +153,7 @@ pub struct FixedSizeTranslationTable<const NUM_TABLES: usize> {
 impl<T, const N: usize> BaseAddr for [T; N] {
     // The binary is still identity mapped, so we don't need to convert here.
     fn phys_start_addr(&self) -> Address<Physical> {
-        Address::new(core::ptr::from_ref(self) as usize)
+        Address::from_ptr(core::ptr::from_ref(self))
     }
 
     fn base_addr_u64(&self) -> u64 {
@@ -172,7 +169,7 @@ impl TableDescriptor {
     /// Create an instance.
     ///
     /// Descriptor is invalid by default.
-    pub const fn new_zeroed() -> Self {
+    pub const fn zeroed() -> Self {
         Self { value: 0 }
     }
 
@@ -195,7 +192,7 @@ impl PageDescriptor {
     /// Create an instance.
     ///
     /// Descriptor is invalid by default.
-    pub const fn new_zeroed() -> Self {
+    pub const fn zeroed() -> Self {
         Self { value: 0 }
     }
 
@@ -295,8 +292,8 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
 
         Self {
             #[allow(clippy::large_stack_arrays)]
-            lvl3: [[PageDescriptor::new_zeroed(); 8192]; NUM_TABLES],
-            lvl2: [TableDescriptor::new_zeroed(); NUM_TABLES],
+            lvl3: [[PageDescriptor::zeroed(); 8192]; NUM_TABLES],
+            lvl2: [TableDescriptor::zeroed(); NUM_TABLES],
             initialized: false,
         }
     }

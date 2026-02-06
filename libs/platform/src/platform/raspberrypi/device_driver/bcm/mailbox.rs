@@ -384,7 +384,7 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> Mailbox<
     /// # Safety
     /// Caller is responsible for picking the correct MMIO register base address.
     pub unsafe fn new(base_addr: usize) -> Result<Mailbox<N_SLOTS, Storage>> {
-        let base = libmemory::Address::new(base_addr);
+        let base = libaddress::Address::new(base_addr as u64);
         Ok(Mailbox {
             registers: Registers::new(base),
             buffer: Storage::new()?,

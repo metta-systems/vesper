@@ -3,12 +3,12 @@
 
 use {
     super::page_size::{PageSize, Size4KiB},
-    crate::phys_addr::PhysAddr,
     core::{
         fmt,
         marker::PhantomData,
         ops::{Add, AddAssign, Sub, SubAssign},
     },
+    libaddress::PhysAddr,
 };
 
 /// A physical memory frame.
@@ -37,7 +37,7 @@ impl<S: PageSize> PhysFrame<S> {
     ///
     /// Returns an error if the address is not correctly aligned (i.e. is not a valid frame start).
     pub fn from_start_address(address: PhysAddr) -> Result<Self, ()> {
-        if !address.is_aligned(S::SIZE) {
+        if !address.is_aligned(S::SIZE as u64) {
             return Err(());
         }
         Ok(PhysFrame::containing_address(address))
@@ -46,7 +46,7 @@ impl<S: PageSize> PhysFrame<S> {
     /// Returns the frame that contains the given physical address.
     pub fn containing_address(address: PhysAddr) -> Self {
         PhysFrame {
-            start_address: address.aligned_down(S::SIZE),
+            start_address: address.aligned_down(S::SIZE as u64),
             size: PhantomData,
         }
     }

@@ -2,7 +2,7 @@ use {
     crate::platform::raspberrypi::device_driver::bcm::mailbox::{
         self, LocalMailboxStorage, Mailbox, MailboxError, MailboxOps,
     },
-    libmemory::{Address, Virtual},
+    libaddress::{Address, Virtual},
 };
 
 /// `FrameBuffer` channel supported structure - use with `mailbox::channel::FrameBuffer`

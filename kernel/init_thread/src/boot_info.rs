@@ -3,8 +3,8 @@
 //! Define a map of memory regions used during boot allocations.
 use {
     core::{cell::LazyCell, fmt},
+    libaddress::PhysAddr,
     liblocking::IRQSafeNullLock,
-    libmemory::phys_addr::PhysAddr,
     snafu::Snafu,
 };
 
@@ -132,7 +132,7 @@ impl BootInfoMemRegion {
     }
 
     /// Calculate region size.
-    pub fn size(&self) -> u64 {
+    pub fn size(&self) -> usize {
         self.end_exclusive - self.start_inclusive
     }
 
@@ -394,8 +394,8 @@ impl BootInfo {
 
         for (i, reg_iter) in self.regions.iter().enumerate() {
             // Determine whether placing the region at the start or the end will create a bigger left over region.
-            let aligned_start = reg_iter.start_inclusive.aligned_up(1usize << size_bits);
-            let aligned_end = reg_iter.end_exclusive.aligned_down(1usize << size_bits);
+            let aligned_start = reg_iter.start_inclusive.aligned_up(1u64 << size_bits);
+            let aligned_end = reg_iter.end_exclusive.aligned_down(1u64 << size_bits);
             let new_reg = if aligned_start - reg_iter.start_inclusive
                 < reg_iter.end_exclusive - aligned_end
             {

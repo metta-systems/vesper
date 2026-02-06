@@ -35,7 +35,7 @@ aarch64-cpu = { workspace = true }
 bit_field = { workspace = true }
 bitflags = { workspace = true }
 cfg-if = { workspace = true }
-libboot = { workspace = true }
+libaddress = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }

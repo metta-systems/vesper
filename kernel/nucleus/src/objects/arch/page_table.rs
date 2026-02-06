@@ -1,4 +1,4 @@
-use {crate::objects::NucleusObject, libmemory::phys_addr::PhysAddr, libobject::ObjectType};
+use {crate::objects::NucleusObject, libaddress::PhysAddr, libobject::ObjectType};
 
 pub struct AArch64PageTable;
 

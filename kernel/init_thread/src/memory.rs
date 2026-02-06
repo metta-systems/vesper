@@ -2,7 +2,7 @@
 
 use {
     crate::loader::LoadableSection,
-    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libaddress::{PhysAddr, VirtAddr},
 };
 
 /// Memory region translation.
@@ -24,7 +24,7 @@ impl BootAllocator {
     pub fn new(start: PhysAddr, size: usize) -> Self {
         Self {
             current: start,
-            end: PhysAddr::new(start.0 + size as u64),
+            end: PhysAddr::new(start.as_u64() + size as u64),
         }
     }
 
@@ -33,14 +33,14 @@ impl BootAllocator {
     }
 
     pub fn alloc_aligned(&mut self, size: usize, align: usize) -> Option<PhysAddr> {
-        let aligned = self.current.aligned_up(align);
-        let new_current = PhysAddr::new(aligned.0 + size as u64);
+        let aligned = self.current.aligned_up(align as u64);
+        let new_current = PhysAddr::new(aligned.as_u64() + size as u64);
 
         libqemu::semi_println!(
             "alloc_aligned {:#016x} => {:#016x} (wrt {:#016x})",
-            aligned.0,
-            new_current.0,
-            self.end.0
+            aligned.as_u64(),
+            new_current.as_u64(),
+            self.end.as_u64()
         );
 
         if new_current > self.end {
@@ -57,7 +57,7 @@ impl BootAllocator {
         self.end
     }
     pub fn remaining(&self) -> usize {
-        (self.end.0 - self.current.0) as usize
+        self.end - self.current
     }
 }
 
@@ -144,9 +144,9 @@ impl KernelLayout {
         assert!(
             self.vectors_virt.as_u64() & 0x7FF == 0,
             "VBAR_EL1 address 0x{:016X} must be 2KB aligned",
-            self.vectors_virt.0
+            self.vectors_virt.as_u64()
         );
-        self.vectors_virt.0
+        self.vectors_virt.as_u64()
     }
 
     pub fn iter_sections(&self) -> impl Iterator<Item = SectionMapping> + '_ {
