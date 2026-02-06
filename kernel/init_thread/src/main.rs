@@ -34,7 +34,6 @@
 // - threads (first version - threads are in-process, kernel has no idea)
 // - scheduler (invokes process upcall key)
 
-mod boot;
 mod boot_info;
 mod device_tree;
 mod el_switch;
@@ -46,13 +45,14 @@ mod paging;
 use {
     crate::boot_info::{BOOT_INFO, BootInfoMemRegion},
     aarch64_cpu::registers::{SPSR_EL2, Writeable},
-    core::{panic::PanicInfo, ptr::write_bytes, slice},
+    core::{cell::UnsafeCell, panic::PanicInfo, ptr::write_bytes, slice},
     device_tree::{DeviceTree, DeviceTreeProp},
     fdt_rs::{
         base::DevTree,
         error::DevTreeError,
         prelude::{FallibleIterator, PropReader},
     },
+    libboot::entry,
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
     libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
@@ -63,9 +63,9 @@ use {
 };
 
 unsafe extern "C" {
-    static __init_start: u8;
-    static __init_end: u8;
-    static __free_memory_start: u8;
+    static __INIT_START: UnsafeCell<()>;
+    static __INIT_END: UnsafeCell<()>;
+    static __FREE_MEMORY_START: UnsafeCell<()>;
 }
 
 #[panic_handler]
@@ -81,8 +81,11 @@ fn dump_memory_map() {
     // TODO print bi.regions instead
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
+entry!(init_main);
+
+pub fn init_main(dtb: u32) -> ! {
+    let dtb_ptr = dtb as *const u8;
+
     SPSR_EL2.write(
         SPSR_EL2::D::Masked
             + SPSR_EL2::A::Masked
@@ -110,9 +113,9 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     // Start bump allocator
     // ─────────────────────────────────────────────────────────────────────
 
-    let init_start = unsafe { &__init_start as *const u8 as u64 };
-    let init_end = unsafe { &__init_end as *const u8 as u64 };
-    let free_start = unsafe { &__free_memory_start as *const u8 as u64 };
+    let init_start = unsafe { __INIT_START.get() as u64 };
+    let init_end = unsafe { __INIT_END.get() as u64 };
+    let free_start = unsafe { __FREE_MEMORY_START.get() as u64 };
 
     let memory_size = 256 * 1024 * 1024;
     let mut allocator = BootAllocator::new(PhysAddr::new(free_start), memory_size);
@@ -358,8 +361,8 @@ pub extern "C" fn init_main(dtb_ptr: *const u8) -> ! {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn init_thread_run(_dtb_ptr: *const u8) -> ! {
+// DTB should be available to this code through BOOT_INFO records.
+pub fn init_thread_run() -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // PHASE 5: Initialize kernel objects and structures
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
