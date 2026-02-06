@@ -19,12 +19,14 @@ Steps:
 - [x] Fill it with capability to DebugConsole
 - [x] Invoke DebugConsole.Write via syscall
 
+- [ ] Make some caps work - Untypeds, Domains, Buffers, what else?
+- [ ] Test out syscalls from EL0
+
 - [ ] Print kernel covered area
 - [ ] Print KERNEL_HIGH_BASE
 - [ ] Print kernel mappings size and attribs
 - [ ] Print init_thread covered area
 - [ ] Print init_thread mappings size
-- [ ] Make some caps work - Untypeds, Domains, Buffers, what else?
 - START FILLING IN CAPS
   - [ ] untypeds
   - [ ] init_thread context and domain

@@ -81,9 +81,20 @@ fn dump_memory_map() {
     // TODO print bi.regions instead
 }
 
-entry!(init_main);
+entry!(init_main_el2);
 
-pub fn init_main(dtb: u32) -> ! {
+/// Kernel early init code.
+/// `arch` crate is responsible for calling it.
+///
+/// # Safety
+///
+/// - Only a single core must be active and running this function.
+/// - The init calls in this function must appear in the correct order:
+///     - MMU + Data caching must be activated at the earliest. Without it, any atomic operations,
+///       e.g. the yet-to-be-introduced spinlocks in the device drivers (which currently employ
+///       `IRQSafeNullLocks` instead of spinlocks), will fail to work (properly) on the `RPi` `SoCs`.
+
+pub fn init_main_el2(dtb: u32) -> ! {
     let dtb_ptr = dtb as *const u8;
 
     SPSR_EL2.write(
@@ -93,6 +104,9 @@ pub fn init_main(dtb: u32) -> ! {
             + SPSR_EL2::F::Masked
             + SPSR_EL2::M::EL1h, // Use SP_EL1/2
     );
+
+    #[cfg(feature = "jtag")]
+    libmachine::debug::jtag::wait_debugger();
 
     semi_println!("init_main started");
 
@@ -350,6 +364,11 @@ pub fn init_main(dtb: u32) -> ! {
     // PHASE 4: Enable MMU and drop to EL1
     // ═══════════════════════════════════════════════════════════════
 
+    semi_println!("Init thread image covers phys -:- identity mapped");
+    semi_println!("Init thread mapping tables filled in as - entries");
+    semi_println!("Kernel image covers phys -:- mapped to KERNEL_HIGH_BASE:-");
+    semi_println!("Kernel mapping tables filled in as - for kernel, as - for phys memory");
+
     unsafe {
         el_switch::enable_mmu_and_drop_to_el1(
             ttbr0,
@@ -494,6 +513,12 @@ pub fn init_thread_run() -> ! {
     let err = DebugConsoleKey::new_slot(KeySlot::CAPTBL_SELF);
     err.write("DEBCON| Invalid capability invocation - no output");
 
+    let (_, privilege_level) = libexception::current_privilege_level();
+    liblog::info!("Current privilege level: {privilege_level}");
+
+    liblog::info!("Exception handling state:");
+    libexception::asynchronous::print_state();
+
     // semi_println!("Switching to init domain...");
     // semi_println!("═══════════════════════════════════════════════════════════");
 
@@ -506,6 +531,63 @@ pub fn init_thread_run() -> ! {
     // // This never returns
     // switch_to_domain(init_domain, init_time);
     libqemu::semihosting::exit_success()
+
+    // libmemory::mmu::post_enable_init(); // kernel_init_mmio_va_allocator
+
+    // SAFETY: Not safe!
+    // if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
+    //     panic!("Error initializing platform drivers: {}", x);
+    // }
+
+    // Initialize all device drivers.
+    // SAFETY: Not safe!
+    // unsafe {
+    //     libplatform::platform::drivers::driver_manager().init_drivers_and_irqs();
+    // }
+
+    // Unmask interrupts on the boot CPU core.
+    // libexception::exception::asynchronous::local_irq_unmask();
+
+    // Announce conclusion of the kernel_init() phase.
+    // libkernel_state::state_manager().transition_to_single_core_main();
+
+    // libconsole::init_logger();
+
+    // info!("{}", libkernel::version());
+
+    // info!(
+    //     "{} version {}",
+    //     env!("CARGO_PKG_NAME"),
+    //     env!("CARGO_PKG_VERSION")
+    // );
+    // info!(
+    //     "Booting on: {}",
+    //     libplatform::platform::BcmHost::board_name()
+    // );
+
+    // info!("MMU online. Special regions:");
+    // machine::platform::memory::mmu::virt_mem_layout().print_layout();
+
+    // dump_memory_map();
+
+    // info!(
+    //     "Architectural timer resolution: {} ns",
+    //     libtime::time::time_manager().resolution().as_nanos()
+    // );
+
+    // info!("Drivers loaded:");
+    // libplatform::platform::drivers::driver_manager().enumerate();
+
+    // info!("Registered IRQ handlers:");
+    // libplatform::platform::exception::asynchronous::irq_manager().print_handler();
+
+    // // Test a failing timer case.
+    // libtime::time::time_manager().spin_for(Duration::from_nanos(1));
+
+    // for _ in 0..3 {
+    //     info!("Spinning for 1 second");
+    //     libtime::time::time_manager().spin_for(Duration::from_secs(1));
+    // }
 }
 /*
 // ─────────────────────────────────────────────────────────────────────

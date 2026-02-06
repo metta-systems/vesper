@@ -1,9 +1,9 @@
 fn print_mmu_state_and_features() {
     // use machine::memory::mmu::interface::MMU;
-    // memory::mmu::mmu().print_features();
+    libmemory::arch::features::print_features();
 }
 
-// TODO: AFTER INIT_THREAD, one of the userspace processes!
+// TODO: AFTER INIT_THREAD, one of the userspace processes
 //
 //------------------------------------------------------------
 // Start a command prompt
