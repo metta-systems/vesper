@@ -24,6 +24,7 @@ bit_field = { workspace = true }
 bitflags = { workspace = true }
 buddy-alloc = { workspace = true }
 cfg-if = { workspace = true }
+libaddress = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 num = { workspace = true }

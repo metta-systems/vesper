@@ -1,3 +1,18 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
+
+//! The arch-independent representation of a MMU and memory translation tables.
+
+// To test we need to impl this for x86_64, aarch64 and riscv64 arches
+// and provide the same interface from the arch-independent layer.
+
+// Need to be able to
+// a) create page table hierarchy at different granule size and addressing mode (user/kernel)
+// b) inspect/walk table hierarchy and resolve virtual-to-physical addresses via provided tables
+// c) modify/invalidate page hierarchy descriptors
+
 use {
     crate::{Address, Physical, Virtual, platform},
     core::num::NonZeroUsize,

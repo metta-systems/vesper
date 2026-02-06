@@ -97,7 +97,7 @@ pub unsafe extern "C" fn _startup_in_rust(dtb: u32) -> ! {
 
     // Set Hypervisor Configuration Register (EL2)
     // Set EL1 execution state to AArch64
-    // @todo Explain the SWIO bit (SWIO hardwired on Pi3)
+    // @todo Explain the SWIO bit (SWIO is hardwired on RPi3)
     HCR_EL2.write(HCR_EL2::RW::EL1IsAarch64 + HCR_EL2::SWIO::SET);
     // @todo disable VM bit to prevent stage 2 MMU translations
 
@@ -125,10 +125,10 @@ pub unsafe extern "C" fn _startup_in_rust(dtb: u32) -> ! {
 #[unsafe(link_section = ".text.boot")]
 #[inline]
 fn setup_and_enter_el2_from_el3(dtb: u32) -> ! {
-    // Set Secure Configuration Register (EL3)
+    // Set Secure Configuration Register in EL3.
     SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
 
-    // Set Saved Program Status Register (EL3)
+    // Set Saved Program Status Register in EL3.
     // Set up a simulated exception return.
     //
     // Fake a saved program status, where all interrupts were
@@ -141,7 +141,7 @@ fn setup_and_enter_el2_from_el3(dtb: u32) -> ! {
             + SPSR_EL3::M::EL2h, // Use SP_EL2
     );
 
-    // Make the Exception Link Register (EL3) point to reset().
+    // Make the Exception Link Register in EL3 point to reset().
     ELR_EL3.set(reset as *const () as u64);
 
     unsafe extern "Rust" {

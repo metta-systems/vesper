@@ -80,7 +80,7 @@ impl<ATYPE: AddressType> PageAddress<ATYPE> {
     ///
     /// `count` is in units of [`PageAddress`]. For example, a count of 2 means `result = self + 2 *
     /// page_size`.
-    pub fn checked_offset(self, count: isize) -> Option<Self> {
+    pub fn checked_page_offset(self, count: isize) -> Option<Self> {
         if count == 0 {
             return Some(self);
         }
@@ -93,7 +93,7 @@ impl<ATYPE: AddressType> PageAddress<ATYPE> {
         };
 
         Some(Self {
-            inner: Address::new(result),
+            inner: Address::<ATYPE>::new(result),
         })
     }
 }
@@ -101,7 +101,7 @@ impl<ATYPE: AddressType> PageAddress<ATYPE> {
 impl<ATYPE: AddressType> From<usize> for PageAddress<ATYPE> {
     fn from(addr: usize) -> Self {
         assert!(
-            mm::is_aligned(addr, KernelGranule::SIZE),
+            libaddress::is_aligned(addr, KernelGranule::SIZE),
             "Input usize not page aligned"
         );
 
@@ -205,7 +205,8 @@ impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
         end_exclusive - start
     }
 
-    /// Splits the `MemoryRegion` like:
+    /// Splits the MemoryRegion like in the following diagram.
+    /// Left region is returned to the caller. Right region is the new region for this struct.
     ///
     /// --------------------------------------------------------------------------------
     /// |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
@@ -218,7 +219,6 @@ impl<ATYPE: AddressType> MemoryRegion<ATYPE> {
     ///                                   |                                       |
     ///                                  `right_start`          `right_end_exclusive`
     ///
-    /// Left region is returned to the caller. Right region is the new region for this struct.
     pub fn take_first_n_pages(&mut self, num_pages: NonZeroUsize) -> Result<Self, &'static str> {
         let count: usize = num_pages.into();
 

@@ -37,6 +37,7 @@ struct MappingRecord {
 // Global instances
 //--------------------------------------------------------------------------------------------------
 
+// FIXME: global state
 static KERNEL_MAPPING_RECORD: InitStateLock<MappingRecord> =
     InitStateLock::new(MappingRecord::new());
 
@@ -110,18 +111,23 @@ impl MappingRecord {
             .filter_map(|x| x.as_mut())
             .filter(|x| x.attribute_fields.mem_attributes == MemAttributes::Device)
             .find(|x| {
-                if x.phys_start_addr != phys_region.start_addr() {
-                    return false;
-                }
-
-                if x.num_pages != phys_region.num_pages() {
-                    return false;
-                }
-
-                true
+                x.phys_start_addr == phys_region.start_addr()
+                    && x.num_pages == phys_region.num_pages()
             })
     }
 
+    /// Adds a new mapping to the mapping record.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the entity that owns the mapping.
+    /// * `virt_region` - The virtual memory region being mapped.
+    /// * `phys_region` - The physical memory region being mapped.
+    /// * `attr` - The memory attributes of the mapping.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success, or a string error message on failure.
     pub fn add(
         &mut self,
         name: &'static str,
