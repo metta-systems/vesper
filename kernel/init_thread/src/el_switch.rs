@@ -118,7 +118,11 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
             + SCTLR_EL1::M::Enable,
     );
 
-    // SPSR_EL2: EL1h with DAIF masked
+    // Set Saved Program Status Register (EL2)
+    // Set up a simulated exception return.
+    //
+    // Fake a saved program status, where all interrupts were
+    // masked and SP_EL1 was used as a stack pointer.
     SPSR_EL2.write(
         SPSR_EL2::D::Masked
             + SPSR_EL2::A::Masked
@@ -127,7 +131,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
             + SPSR_EL2::M::EL1h, // Use SP_EL1, Return to EL1
     );
 
-    // TODO: Mark interrupts in EL1
+    // TODO: Mask interrupts in EL1
     SPSR_EL1.write(
         SPSR_EL1::D::Masked
             + SPSR_EL1::A::Masked
@@ -145,7 +149,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     // ═══════════════════════════════════════════════════════════
     // STEP 5: Drop to EL1
     // ═══════════════════════════════════════════════════════════
-    asm::eret()
+    asm::eret() // FIXME this doesn't pass DTB (and we hopefully don't need it anymore)
 }
 
 /// Invalidate all TLB entries

@@ -1,57 +1,56 @@
-/* init_thread/init.ld - Identity-mapped init thread */
+/*
+ * Identity-mapped init thread.
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
 
-ENTRY(_start)
+ENTRY(_boot_cores)
 
 /* Physical load address - typical for RPi4 */
-INIT_BASE = 0x80000;
+__INIT_BASE = 0x80000;
 
 SECTIONS
 {
     /* Stack for init thread (grows down) */
-    . = 0;
-    __stack_bottom = .;
-    . = INIT_BASE;
-    __stack_top = .;
+    . = 4K;
+    __STACK_BOTTOM = .;
+    . = __INIT_BASE;
+    __STACK_TOP = .;
 
-    __init_start = .;
+    __INIT_START = .;
 
-    /* Entry point and early code */
-    .text.boot ALIGN(4K) :
+    .text : ALIGN(4K)
     {
-        *(.text.boot)
-    }
-
-    .text ALIGN(4K) :
-    {
+        *(.text.main.entry) /* Entry point and early code */
         *(.text .text.*)
     }
 
-    .rodata ALIGN(4K) :
+    .rodata : ALIGN(4K)
     {
         *(.rodata .rodata.*)
 
         /* Embedded kernel will be here via include_bytes! */
     }
 
-    .data ALIGN(4K) :
+    .data : ALIGN(4K)
     {
         *(.data .data.*)
     }
 
-    .bss ALIGN(4K) :
+    .bss : ALIGN(4K)
     {
-        __bss_start = .;
+        __BSS_START = .;
         *(.bss .bss.*)
         *(COMMON)
-        __bss_end = .;
+        __BSS_END = .;
     }
 
     . = ALIGN(4K);
-    __init_end = .;
+    __INIT_END = .;
 
     /* Free memory starts here - used for kernel placement */
     . = ALIGN(2M);  /* 2MB aligned for huge pages if desired */
-    __free_memory_start = .;
+    __FREE_MEMORY_START = .;
 
     /DISCARD/ :
     {
