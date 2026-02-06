@@ -15,9 +15,9 @@ Steps:
 - [x] Print DTB
 - [x] Print max RAM from DTB
 
-- [ ] Allocate a single key slot in a global domain struct
-- [ ] Fill it with capability to DebugConsole
-- [ ] Invoke DebugConsole.Write via syscall
+- [x] Allocate a single key slot in a global domain struct
+- [x] Fill it with capability to DebugConsole
+- [x] Invoke DebugConsole.Write via syscall
 
 - [ ] Print kernel covered area
 - [ ] Print KERNEL_HIGH_BASE
