@@ -1,6 +1,6 @@
 use {
     crate::{api::KeyEntry, objects::DebugConsole},
-    libmemory::phys_addr::PhysAddr,
+    libaddress::PhysAddr,
     libobject::{CapError, Key, SyscallResult, debug_console::DebugConsoleOp},
 };
 

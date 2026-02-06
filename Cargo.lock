@@ -435,6 +435,7 @@ dependencies = [
  "cfg-if",
  "fdt-rs",
  "goblin",
+ "libaddress",
  "libboot",
  "libconsole",
  "libcpu",
@@ -638,6 +639,7 @@ dependencies = [
 name = "libobject"
 version = "0.0.1"
 dependencies = [
+ "libaddress",
  "libmemory",
  "libprint",
  "libqemu",
@@ -653,6 +655,7 @@ dependencies = [
  "bitflags 2.10.0",
  "buddy-alloc",
  "cfg-if",
+ "libaddress",
  "libconsole",
  "libcpu",
  "libdriver",
@@ -856,7 +859,7 @@ dependencies = [
  "bitflags 2.10.0",
  "build-rs",
  "cfg-if",
- "libboot",
+ "libaddress",
  "libconsole",
  "libcpu",
  "libexception",

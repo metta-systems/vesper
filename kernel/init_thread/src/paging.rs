@@ -19,7 +19,7 @@
 use {
     crate::memory::{BootAllocator, KernelLayout, MemoryPermissions, SectionMapping},
     core::ptr,
-    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libaddress::{PhysAddr, VirtAddr},
     libqemu::semi_println,
 };
 
@@ -146,9 +146,9 @@ impl<'a> MmuSetup<'a> {
         l3_table.entries[l3_idx] = phys.as_u64() | flags::VALID | flags::PAGE | pte_flags;
 
         semi_println!(
-            "Mapped 4K page {:#016X} frame {:#016X} in {} with {}",
-            virt.0,
-            phys.0,
+            "Mapped 4K page {} frame {} in {} with {}",
+            virt,
+            phys,
             match ttbr {
                 Ttbr::Ttbr0 => "TTBR0(user)",
                 Ttbr::Ttbr1 => "TTBR1(kernel)",
@@ -190,9 +190,9 @@ impl<'a> MmuSetup<'a> {
         l2_table.entries[l2_idx] = phys.as_u64() | flags::VALID | flags::BLOCK | pte_flags;
 
         semi_println!(
-            "Mapped 2M page {:#016X} frame {:#016X} in {} with {}",
-            virt.0,
-            phys.0,
+            "Mapped 2M page {} frame {} in {} with {}",
+            virt,
+            phys,
             match ttbr {
                 Ttbr::Ttbr0 => "TTBR0(user)",
                 Ttbr::Ttbr1 => "TTBR1(kernel)",
@@ -243,8 +243,8 @@ pub fn create_identity_mapping(
     start: PhysAddr,
     end: PhysAddr,
 ) -> Result<(), &'static str> {
-    let start_aligned = start.aligned_down(2 * 1024 * 1024);
-    let end_aligned = end.aligned_up(2 * 1024 * 1024);
+    let start_aligned = start.aligned_down(2u64 * 1024 * 1024);
+    let end_aligned = end.aligned_up(2u64 * 1024 * 1024);
 
     let perms = MemoryPermissions {
         readable: true,
@@ -295,7 +295,7 @@ pub fn create_kernel_mapping(
     for i in 0..max_ram_bytes.div_ceil(2 * 1024 * 1024) {
         setup.map_block_2mb(
             Ttbr::Ttbr1,
-            VirtAddr::new(libmemory::PHYSICAL_KERNEL_WINDOW + i * 2 * 1024 * 1024),
+            VirtAddr::new(libaddress::PHYSICAL_KERNEL_WINDOW + i * 2 * 1024 * 1024),
             PhysAddr::new(i * 2 * 1024 * 1024),
             perms,
         );
@@ -307,7 +307,7 @@ pub fn create_kernel_mapping(
     for i in 0..el1_stack_size.div_ceil(4 * 1024) as u64 {
         setup.map_page(
             Ttbr::Ttbr1,
-            VirtAddr::new(stack_bottom.0 + i * 4 * 1024),
+            VirtAddr::new(stack_bottom.as_u64() + i * 4 * 1024),
             PhysAddr::new(el1_stack + i * 4 * 1024),
             perms,
         );
@@ -328,13 +328,13 @@ pub fn create_kernel_mapping(
 
 /// Map a single section with proper permissions
 fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'static str> {
-    if !section.phys_start.is_aligned(4096) {
+    if !section.phys_start.is_aligned(4096u64) {
         semi_println!("!! Section {} not aligned to 4K boundary!", section.name);
         return Err("Section not aligned");
     }
 
     // Check if we can use 2MB blocks (section must be 2MB aligned and sized)
-    let can_use_2mb = section.phys_start.is_aligned(2 * 1024 * 1024)
+    let can_use_2mb = section.phys_start.is_aligned(2u64 * 1024 * 1024)
         && section.virt_start.as_u64() % (2 * 1024 * 1024) == 0
         && section.size >= 2 * 1024 * 1024;
 

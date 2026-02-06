@@ -8,8 +8,8 @@ mod peripheral_ic;
 
 use {
     core::fmt,
+    libaddress::{Address, Virtual},
     libexception::asynchronous::{IRQHandlerDescriptor, interface::IRQManager},
-    libmemory::{Address, Virtual},
     libprimitives::BoundedUsize,
 };
 

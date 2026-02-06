@@ -99,8 +99,8 @@ impl PeripheralIC {
 // OS Interface Code
 //------------------------------------------------------------------------------
 use {
+    libaddress::{Address, Virtual},
     liblocking::interface::{Mutex, ReadWriteEx},
-    libmemory::{Address, Virtual},
 };
 
 impl IRQManager for PeripheralIC {

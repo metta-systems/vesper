@@ -9,7 +9,7 @@ use {
         Address, Physical, Virtual,
         types::{AccessPermissions, AttributeFields, MMIODescriptor, MemAttributes, MemoryRegion},
     },
-    crate::{mm, platform},
+    crate::platform,
     liblocking::{self, InitStateLock},
     liblog::{info, warn},
 };
@@ -168,7 +168,7 @@ impl MappingRecord {
             let phys_start = i.phys_start_addr;
             let phys_end_inclusive = phys_start + (size - 1);
 
-            let (size, unit) = mm::size_human_readable_ceil(size);
+            let (size, unit) = crate::size_human_readable_ceil(size);
 
             let attr = match i.attribute_fields.mem_attributes {
                 MemAttributes::CacheableDRAM => "C",

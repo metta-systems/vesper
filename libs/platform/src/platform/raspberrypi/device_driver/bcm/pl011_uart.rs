@@ -11,9 +11,9 @@
 use {
     crate::platform::device_driver::{IRQNumber, common::MMIODerefWrapper, gpio},
     core::fmt::{self, Arguments},
+    libaddress::{Address, Virtual},
     libconsole::{SerialOps, console::interface},
     liblocking::{IRQSafeNullLock, interface::Mutex},
-    libmemory::{Address, Virtual},
     libprimitives::cpu::loop_while,
     // snafu::Snafu,
     tock_registers::{

@@ -11,7 +11,7 @@ use {
             object_ref::ObjectRef,
         },
     },
-    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libaddress::{PhysAddr, VirtAddr},
     libobject::{ArchType, CapError, ObjectType, Rights},
 };
 

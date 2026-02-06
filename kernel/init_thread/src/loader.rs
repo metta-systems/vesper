@@ -6,7 +6,7 @@ use {
         memory::{BootAllocator, KernelLayout, MemoryPermissions},
     },
     core::ptr,
-    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libaddress::{PhysAddr, VirtAddr},
     libqemu::semi_println,
 };
 
@@ -93,7 +93,7 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
 
     semi_println!(
         "Nucleus is {total_pages} * 4K pages @ {:#016X}",
-        phys_base.0
+        phys_base.as_u64()
     );
 
     // Load each section
@@ -118,10 +118,10 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
         let virt = VirtAddr::new(KERNEL.vectors.virt_addr);
 
         // Verify alignment
-        if !virt.is_aligned(2048) {
+        if !virt.is_aligned(2048u64) {
             panic!(
                 "Vector table virtual address 0x{:016X} is not 2KB aligned!",
-                virt.0
+                virt.as_u64()
             );
         }
 
@@ -150,7 +150,7 @@ fn load_section(section: &LoadableSection, kernel_phys_base: PhysAddr) -> Result
         section.meta.name,
         section.data.len(),
         section.meta.size,
-        dest_phys.0
+        dest_phys.as_u64()
     );
 
     if !dest_phys.as_u64().is_multiple_of(section.meta.alignment) {
@@ -184,7 +184,7 @@ fn zero_bss(bss: &SectionMeta, kernel_phys_base: PhysAddr) -> Result<(), &'stati
         "> section {}, zero {} bytes at {:#016X}",
         bss.name,
         bss.size,
-        dest_phys.0
+        dest_phys.as_u64()
     );
 
     if !dest_phys.as_u64().is_multiple_of(bss.alignment) {

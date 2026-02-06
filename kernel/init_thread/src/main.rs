@@ -52,10 +52,10 @@ use {
         error::DevTreeError,
         prelude::{FallibleIterator, PropReader},
     },
+    libaddress::{PhysAddr, VirtAddr},
     libboot::entry,
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
-    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
     libobject::{DebugConsoleKey, KeySlot},
     libqemu::semi_println,
     libsyscall::protected_call6,
@@ -155,7 +155,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     let block = allocator
         .alloc_aligned(layout.size(), layout.align())
         .expect("Couldn't allocate DeviceTree index");
-    let raw_slice = unsafe { core::slice::from_raw_parts_mut(block.0 as *mut u8, layout.size()) };
+    let raw_slice = unsafe { core::slice::from_raw_parts_mut(block.as_mut_ptr(), layout.size()) };
 
     let device_tree =
         DeviceTree::new(device_tree, raw_slice).expect("Couldn't initialize indexed DeviceTree");
@@ -340,7 +340,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         &mut mmu_setup,
         &kernel_layout,
         total_memory,
-        el1_stack.0,
+        el1_stack.as_u64(),
         el1_stack_size,
     )
     .expect("Failed to create kernel mapping");

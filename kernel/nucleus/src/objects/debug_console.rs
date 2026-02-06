@@ -1,7 +1,7 @@
 use {
     crate::objects::NucleusObject,
     core::slice,
-    libmemory::phys_addr::PhysAddr,
+    libaddress::PhysAddr,
     libobject::{CapError, ObjectType},
 };
 

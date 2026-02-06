@@ -27,15 +27,18 @@ unsafe impl Allocator for BumpAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let name = self.name;
         let size = layout.size();
-        let start = crate::mm::aligned_addr_unchecked(self.next.get(), layout.align());
-        let end = start + layout.size();
+        let start = libaddress::align::aligned_addr_unchecked(
+            self.next.get() as u64,
+            layout.align() as u64,
+        );
+        let end = start + layout.size() as u64;
 
         println!("[i] {name}:\n    Allocating Start {start:#010x} End {end:#010x}",);
 
-        if end > self.pool_end {
+        if end > self.pool_end as u64 {
             return Err(AllocError);
         }
-        self.next.set(end);
+        self.next.set(end.try_into().unwrap());
 
         println!("[i] {name}:\n    Allocated Addr {start:#010x} Size {size:#x}",);
 

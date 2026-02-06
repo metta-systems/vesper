@@ -14,14 +14,16 @@
 // c) modify/invalidate page hierarchy descriptors
 
 use {
-    crate::{Address, Physical, Virtual, platform},
+    crate::platform,
     core::num::NonZeroUsize,
+    libaddress::{Address, Physical, Virtual},
     liblog::warn,
     snafu::Snafu,
 };
 
 #[cfg(target_arch = "aarch64")]
 use crate::arch::aarch64::mmu as arch_mmu;
+use crate::platform::memory::mmu::KernelGranule;
 
 mod mapping_record;
 pub mod page_alloc;
@@ -205,7 +207,9 @@ pub unsafe fn kernel_map_mmio(
     mmio_descriptor: &MMIODescriptor,
 ) -> Result<Address<Virtual>, &'static str> {
     let phys_region = MemoryRegion::from(*mmio_descriptor);
-    let offset_into_start_page = mmio_descriptor.start_addr().offset_into_page();
+    let offset_into_start_page = mmio_descriptor
+        .start_addr()
+        .offset_into_page(&KernelGranule::SIZE); // FIXME: fixed page size
 
     // Check if an identical region has been mapped for another driver. If so, reuse it.
     let virt_addr = if let Some(addr) =

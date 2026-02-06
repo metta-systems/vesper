@@ -1,6 +1,5 @@
 use {
     crate::{
-        Address, Physical,
         arch::mmu::translation_table::{
             PageFlags, PageSize, STAGE1_PAGE_DESCRIPTOR, STAGE1_TABLE_DESCRIPTOR, Size2MiB,
             Size4KiB, TableFlags,
@@ -12,6 +11,7 @@ use {
         registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1},
     },
     core::intrinsics::unlikely,
+    libaddress::{Address, Physical},
     liblog::println,
     tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
 };

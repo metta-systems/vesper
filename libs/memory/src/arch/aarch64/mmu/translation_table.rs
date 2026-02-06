@@ -6,11 +6,11 @@ use core::{
 use {
     super::{Granule64KiB, Granule512MiB, mair},
     crate::{
-        Address, Physical, Virtual,
         mmu::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
         platform,
     },
     core::convert,
+    libaddress::{Address, Physical, Virtual},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields,
@@ -153,7 +153,7 @@ pub struct FixedSizeTranslationTable<const NUM_TABLES: usize> {
 impl<T, const N: usize> BaseAddr for [T; N] {
     // The binary is still identity mapped, so we don't need to convert here.
     fn phys_start_addr(&self) -> Address<Physical> {
-        Address::new(core::ptr::from_ref(self) as usize)
+        Address::from_ptr(core::ptr::from_ref(self))
     }
 
     fn base_addr_u64(&self) -> u64 {

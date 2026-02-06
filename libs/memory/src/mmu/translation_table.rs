@@ -5,7 +5,7 @@ use crate::arch::aarch64::mmu::translation_table as arch_translation_table;
 
 use {
     super::{AttributeFields, MemoryRegion},
-    crate::{Address, Physical, Virtual},
+    libaddress::{Address, Physical, Virtual},
 };
 
 //--------------------------------------------------------------------------------------------------

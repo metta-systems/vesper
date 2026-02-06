@@ -3,7 +3,7 @@
 /// Returns the greatest x with alignment `align` so that x <= addr.
 /// The alignment must be a power of 2.
 #[inline(always)]
-pub const fn align_down_bits(addr: usize, alignment_bits: usize) -> usize {
+pub const fn align_down_bits(addr: u64, alignment_bits: u64) -> u64 {
     addr & !((1 << alignment_bits) - 1)
 }
 
@@ -12,7 +12,7 @@ pub const fn align_down_bits(addr: usize, alignment_bits: usize) -> usize {
 /// Returns the greatest x with alignment `align` so that x <= addr.
 /// The alignment must be a power of 2.
 #[inline(always)]
-pub const fn align_down(addr: usize, alignment: usize) -> usize {
+pub const fn align_down(addr: u64, alignment: u64) -> u64 {
     assert!(
         alignment.is_power_of_two(),
         "`alignment` must be a power of two"
@@ -25,7 +25,7 @@ pub const fn align_down(addr: usize, alignment: usize) -> usize {
 /// Returns the smallest x with alignment `align` so that x >= addr.
 /// The alignment must be a power of 2.
 #[inline(always)]
-pub const fn align_up_bits(value: usize, alignment_bits: usize) -> usize {
+pub const fn align_up_bits(value: u64, alignment_bits: u64) -> u64 {
     let align_mask = (1 << alignment_bits) - 1;
     if value & align_mask == 0 {
         value // already aligned
@@ -39,7 +39,7 @@ pub const fn align_up_bits(value: usize, alignment_bits: usize) -> usize {
 /// Returns the smallest x with alignment `align` so that x >= addr.
 /// The alignment must be a power of 2.
 #[inline(always)]
-pub const fn align_up(value: usize, alignment: usize) -> usize {
+pub const fn align_up(value: u64, alignment: u64) -> u64 {
     assert!(
         alignment.is_power_of_two(),
         "`alignment` must be a power of two"
@@ -55,14 +55,14 @@ pub const fn align_up(value: usize, alignment: usize) -> usize {
 
 /// Check if a value is aligned to a given alignment.
 #[inline(always)]
-pub const fn is_aligned_bits(value: usize, alignment_bits: usize) -> bool {
+pub const fn is_aligned_bits(value: u64, alignment_bits: u64) -> bool {
     (value & ((1 << alignment_bits) - 1)) == 0
 }
 
 /// Check if a value is aligned to a given alignment.
 /// The alignment must be a power of 2.
 #[inline(always)]
-pub const fn is_aligned(value: usize, alignment: usize) -> bool {
+pub const fn is_aligned(value: u64, alignment: u64) -> bool {
     debug_assert!(
         alignment.is_power_of_two(),
         "`alignment` must be a power of two"
@@ -74,6 +74,6 @@ pub const fn is_aligned(value: usize, alignment: usize) -> bool {
 /// Calculate the next possible aligned address without sanity checking the
 /// input parameters.
 #[inline]
-fn aligned_addr_unchecked(addr: usize, alignment: usize) -> usize {
+pub fn aligned_addr_unchecked(addr: u64, alignment: u64) -> u64 {
     (addr + (alignment - 1)) & !(alignment - 1)
 }

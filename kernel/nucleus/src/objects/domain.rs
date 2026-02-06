@@ -1,7 +1,7 @@
 use {
     crate::objects::{KeyTable, NucleusObject},
     core::{ptr::NonNull, sync::atomic::Ordering},
-    libmemory::{phys_addr::PhysAddr, virt_addr::VirtAddr},
+    libaddress::{PhysAddr, VirtAddr},
     libobject::{
         ObjectType,
         domain::{DcbPage, DomainControlBlock, DomainId, DomainState},
@@ -107,7 +107,7 @@ impl DcbPages {
 
     /// Well-known user-space base address for DCB mapping
     /// This is mapped read-only into all domains
-    pub const USER_BASE: VirtAddr = VirtAddr::new_unchecked(0x0000_7FFF_FE00_0000);
+    pub const USER_BASE: VirtAddr = unsafe { VirtAddr::new_unchecked(0x0000_7FFF_FE00_0000) };
 
     /// Create empty DCB pages manager
     pub const fn new() -> Self {

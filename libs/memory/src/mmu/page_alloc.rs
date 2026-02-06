@@ -6,8 +6,8 @@
 
 use {
     super::MemoryRegion,
-    crate::{AddressType, Virtual},
     core::num::NonZeroUsize,
+    libaddress::{AddressType, Virtual},
     liblocking::IRQSafeNullLock,
     liblog::warn,
 };
@@ -17,7 +17,7 @@ use {
 //--------------------------------------------------------------------------------------------------
 
 /// A page allocator that can be lazyily initialized.
-pub struct PageAllocator<ATYPE: AddressType> {
+pub struct PageAllocator<ATYPE: const AddressType> {
     pool: Option<MemoryRegion<ATYPE>>,
 }
 
@@ -37,13 +37,13 @@ pub fn kernel_mmio_va_allocator() -> &'static IRQSafeNullLock<PageAllocator<Virt
     &KERNEL_MMIO_VA_ALLOCATOR
 }
 
-impl<ATYPE: AddressType> Default for PageAllocator<ATYPE> {
+impl<ATYPE: const AddressType> Default for PageAllocator<ATYPE> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<ATYPE: AddressType> PageAllocator<ATYPE> {
+impl<ATYPE: const AddressType> PageAllocator<ATYPE> {
     /// Create an instance.
     pub const fn new() -> Self {
         Self { pool: None }

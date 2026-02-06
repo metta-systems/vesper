@@ -8,6 +8,7 @@
 #![allow(dead_code)] // while refactoring
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)] // incomplete_features
+#![feature(const_trait_impl)]
 #![feature(format_args_nl)]
 #![allow(internal_features)]
 #![feature(allocator_api)]

@@ -1,7 +1,7 @@
 use {
     crate::{CapError, Key, KeySlot},
     core::sync::atomic::{AtomicU32, AtomicU64, Ordering},
-    libmemory::virt_addr::VirtAddr,
+    libaddress::VirtAddr,
     libsyscall::{protected_call0, protected_call2},
 };
 
@@ -393,7 +393,7 @@ impl DcbView {
     /// Must only be called after kernel has set up the mapping
     pub const unsafe fn from_user_mapping() -> Self {
         // FIXME: Duplicate DcbPages::USER_BASE const from nucleus/objects/domain.rs here, keep in sync!
-        const USER_BASE: VirtAddr = VirtAddr::new_unchecked(0x0000_7FFF_FE00_0000);
+        const USER_BASE: VirtAddr = unsafe { VirtAddr::new_unchecked(0x0000_7FFF_FE00_0000) };
         Self {
             base: USER_BASE.as_ptr() as *const DomainControlBlock,
         }
