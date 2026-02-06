@@ -3,7 +3,7 @@
 use {
     crate::loader::memory_barrier,
     aarch64_cpu::{
-        asm,
+        asm::{self, barrier},
         registers::{
             ELR_EL2, HCR_EL2, MAIR_EL1, ReadWriteable, SCTLR_EL1, SP_EL1, SPSR_EL1, SPSR_EL2,
             TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
@@ -51,11 +51,20 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     // STEP 2: Set up VBAR_EL1 (Exception Vector Base Address)
     // ═══════════════════════════════════════════════════════════
 
+    if vbar.trailing_zeros() < 11 {
+        panic!("Vector table NOT properly aligned!");
+    }
+
     // The address must be 2KB aligned (bits [10:0] must be 0).
     // We set the virtual address here since VBAR_EL1 is only
     // used after MMU is enabled (exceptions before ERET would
     // be taken at EL2, not EL1).
     VBAR_EL1.set(vbar);
+
+    // Force VBAR update to complete before next instruction.
+    barrier::isb(barrier::SY);
+
+    liblog::info!("[!] Exception traps set up");
 
     // ═══════════════════════════════════════════════════════════
     // STEP 3: Configure EL1 MMU settings

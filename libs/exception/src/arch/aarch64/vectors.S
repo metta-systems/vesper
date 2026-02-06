@@ -43,25 +43,45 @@
     b      1b
 .endm
 
-// The vector definitions
+// Exception vector table must be 2KB aligned
+// 16 entries × 128 bytes each = 2048 bytes total
+//
+// The table is organized as:
+//   - 4 entries for exceptions from current EL with SP_EL0
+//   - 4 entries for exceptions from current EL with SP_ELx
+//   - 4 entries for exceptions from lower EL (AArch64)
+//   - 4 entries for exceptions from lower EL (AArch32)
 .section .vectors, "ax"
+.balign 2048
 .global __exception_vectors_start
 __exception_vectors_start:
+    // ═══════════════════════════════════════════════════════════════
+    // Current EL with SP_EL0 (not used, we use SP_EL1)
+    // ═══════════════════════════════════════════════════════════════
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE current_el0_synchronous   // 0x000
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE current_el0_irq           // 0x080
     FIQ_DUMMY                                                       // 0x100
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE current_el0_serror        // 0x180
 
-    SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE current_elx_synchronous   // 0x200
+    // ═══════════════════════════════════════════════════════════════
+    // Current EL with SP_ELx (kernel exceptions)
+    // ═══════════════════════════════════════════════════════════════
+    SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE current_elx_synchronous   // 0x200 - SVC syscall in EL1/EL2
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE current_elx_irq           // 0x280
     FIQ_DUMMY                                                       // 0x300
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE current_elx_serror        // 0x380
 
-    SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE lower_aarch64_synchronous // 0x400
+    // ═══════════════════════════════════════════════════════════════
+    // Lower EL using AArch64 (user-space syscalls and exceptions)
+    // ═══════════════════════════════════════════════════════════════
+    SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE lower_aarch64_synchronous // 0x400 - SVC syscall from user space
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE lower_aarch64_irq         // 0x480
     FIQ_DUMMY                                                       // 0x500
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE lower_aarch64_serror      // 0x580
 
+    // ═══════════════════════════════════════════════════════════════
+    // Lower EL using AArch32 (not supported)
+    // ═══════════════════════════════════════════════════════════════
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE lower_aarch32_synchronous // 0x600
     SAVE_CONTEXT_CALL_HANDLER_AND_RESTORE lower_aarch32_irq         // 0x680
     FIQ_DUMMY                                                       // 0x700

@@ -44,8 +44,6 @@ use {
 mod api;
 /// Nucleus objects implementations
 mod objects;
-/// Exception vectors triggering syscall handing and general IRQ routing
-mod vectors;
 
 // TODO: Split this into read-only part, that does not need locks, per-cpu mutable part that does not need locks,
 // TODO: Shared atomic counters that do not need locks and shared mutable collections that DO need locks (but should be minority)
@@ -69,82 +67,135 @@ fn panicked(info: &PanicInfo) -> ! {
     libmachine::panic::handler(info)
 }
 
-// Syscall handler - exception vector for EL0 synchronous exceptions
-//  (the only other thing nucleus does)
-#[unsafe(naked)]
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+// Exception handlers
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+
+/// The default exception handler, invoked for every exception type unless the handler
+/// is overridden.
+/// Prints verbose information about the exception and then panics.
+///
+/// Default pointer is configured in the linker script.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn syscall_handler() {
-    core::arch::naked_asm!(
-        // Save user context to kernel stack
-        "sub    sp,  sp,  #16 * 17",
-        "",
-        "stp    x0,  x1,  [sp, #16 * 0]",
-        "stp    x2,  x3,  [sp, #16 * 1]",
-        "stp    x4,  x5,  [sp, #16 * 2]",
-        "stp    x6,  x7,  [sp, #16 * 3]",
-        "stp    x8,  x9,  [sp, #16 * 4]",
-        "stp    x10, x11, [sp, #16 * 5]",
-        "stp    x12, x13, [sp, #16 * 6]",
-        "stp    x14, x15, [sp, #16 * 7]",
-        "stp    x16, x17, [sp, #16 * 8]",
-        "stp    x18, x19, [sp, #16 * 9]",
-        "stp    x20, x21, [sp, #16 * 10]",
-        "stp    x22, x23, [sp, #16 * 11]",
-        "stp    x24, x25, [sp, #16 * 12]",
-        "stp    x26, x27, [sp, #16 * 13]",
-        "stp    x28, x29, [sp, #16 * 14]",
-        "",
-        "mrs    x10, SPSR_EL1",
-        "mrs    x11, ELR_EL1",
-        "",
-        "stp    x30, x10, [sp, #16 * 15]",
-        "str    x11,      [sp, #16 * 16]",
-        // x0-x7 already in place for Rust function call
-        "mov    x0, sp", // register frame pointer for handler
-        "bl cap_invoke_handler",
-        "",
-        // Return values in x0, x1, x2 are set in the trap frame
-        "ldr    x19,      [sp, #16 * 16]",
-        "ldp    x30, x20, [sp, #16 * 15]",
-        "",
-        "msr    ELR_EL1, x19",
-        "msr    SPSR_EL1, x20",
-        "",
-        "ldp    x0,  x1,  [sp, #16 * 0]",
-        "ldp    x2,  x3,  [sp, #16 * 1]",
-        "ldp    x4,  x5,  [sp, #16 * 2]",
-        "ldp    x6,  x7,  [sp, #16 * 3]",
-        "ldp    x8,  x9,  [sp, #16 * 4]",
-        "ldp    x10, x11, [sp, #16 * 5]",
-        "ldp    x12, x13, [sp, #16 * 6]",
-        "ldp    x14, x15, [sp, #16 * 7]",
-        "ldp    x16, x17, [sp, #16 * 8]",
-        "ldp    x18, x19, [sp, #16 * 9]",
-        "ldp    x20, x21, [sp, #16 * 10]",
-        "ldp    x22, x23, [sp, #16 * 11]",
-        "ldp    x24, x25, [sp, #16 * 12]",
-        "ldp    x26, x27, [sp, #16 * 13]",
-        "ldp    x28, x29, [sp, #16 * 14]",
-        "",
-        "add    sp,  sp,  #16 * 17",
-        "",
-        "eret",
+extern "C" fn default_exception_handler(exc: &ExceptionContext) {
+    panic!(
+        "Unexpected CPU Exception!\n\n\
+        {}",
+        exc
     );
 }
 
-/// Kernel entry point
+//------------------------------------------------------------------------------
+// Current, EL0
+//------------------------------------------------------------------------------
+
 #[unsafe(no_mangle)]
-fn cap_invoke_handler(
-    // cap_slot: u32,
-    // op: u32,
-    // arg0: u64,
-    // arg1: u64,
-    // arg2: u64,
-    // arg3: u64,
-    // arg4: u64,
-    // arg5: u64,
-    frame: &mut ExceptionContext,
-) {
+extern "C" fn current_el0_synchronous(_e: &mut ExceptionContext) {
+    panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn current_el0_irq(_e: &mut ExceptionContext) {
+    panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn current_el0_serror(_e: &mut ExceptionContext) {
+    panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
+}
+
+//------------------------------------------------------------------------------
+// Current, ELx
+//------------------------------------------------------------------------------
+
+#[cfg(not(any(test, feature = "test_build")))]
+#[unsafe(no_mangle)]
+extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
+    cap_invoke_handler(e)
+}
+
+#[cfg(any(test, feature = "test_build"))]
+#[unsafe(no_mangle)]
+extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
+    {
+        const TEST_SVC_ID: u64 = 0x1337;
+
+        let esr_el1 = esr_el1::EsrEL1(LocalRegisterCopy::new(ESR_EL1.get()));
+
+        if let Some(ESR_EL1::EC::Value::SVC64) = esr_el1.exception_class()
+            && esr_el1.iss() == TEST_SVC_ID
+        {
+            liblog::println!("Serving syscall {TEST_SVC_ID}");
+            return;
+        }
+    }
+
+    if debug::exception_dump(e) {
+        return;
+    }
+
+    default_exception_handler(e);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn current_elx_irq(e: &mut ExceptionContext) {
+    // -- @todo
+    // let token = unsafe { &exception::asynchronous::IRQContext::new() };
+    // exception::asynchronous::irq_manager().handle_pending_irqs(token);
+    default_exception_handler(e);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
+    default_exception_handler(e);
+}
+
+//------------------------------------------------------------------------------
+// Lower, AArch64
+//------------------------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
+    cap_invoke_handler(e)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn lower_aarch64_irq(e: &mut ExceptionContext) {
+    default_exception_handler(e);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn lower_aarch64_serror(e: &mut ExceptionContext) {
+    default_exception_handler(e);
+}
+
+//------------------------------------------------------------------------------
+// Lower, AArch32
+//------------------------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+extern "C" fn lower_aarch32_synchronous(e: &mut ExceptionContext) {
+    default_exception_handler(e);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn lower_aarch32_irq(e: &mut ExceptionContext) {
+    default_exception_handler(e);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
+    default_exception_handler(e);
+}
+
+//------------------------------------------------------------------------------
+// Kernel entry point
+//------------------------------------------------------------------------------
+
+#[unsafe(no_mangle)]
+fn cap_invoke_handler(frame: &mut ExceptionContext) {
     let cap_slot = frame.gpr[0] as u32;
     let op = frame.gpr[1] as u32;
     semi_println!(

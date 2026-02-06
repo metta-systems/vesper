@@ -18,7 +18,7 @@ use crate::arch::aarch64 as arch_exception;
 //--------------------------------------------------------------------------------------------------
 // Architectural Public Reexports
 //--------------------------------------------------------------------------------------------------
-pub use arch_exception::{current_privilege_level, handling_init};
+pub use arch_exception::current_privilege_level;
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
