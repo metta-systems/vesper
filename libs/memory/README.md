@@ -14,6 +14,11 @@ This library should export the following:
 - Page-table hierarchy representation. This needs to be platform-independent.
   Abstract translation stages and page size granularity.
 
+   +---------------- work with MMU structures and kernel knowledge of mappings (THIS LIBRARY)
+   |          +----- work with higher level mapping abstractions, without MMU details?
+   v          v
+libmmu -> libmapping
+
 ---
 
 For more information please re-read.

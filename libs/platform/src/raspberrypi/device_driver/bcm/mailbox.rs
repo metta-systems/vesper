@@ -22,7 +22,7 @@ use {
         sync::atomic::{Ordering, compiler_fence},
     },
     // liblocking::IRQSafeNullLock,
-    // libmemory::{Address, Virtual},
+    // libaddress::{Address, Virtual},
     snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},

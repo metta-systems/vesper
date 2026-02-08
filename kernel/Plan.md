@@ -19,6 +19,8 @@ Steps:
 - [x] Fill it with capability to DebugConsole
 - [x] Invoke DebugConsole.Write via syscall
 
+- [ ] Generate complete memory map from DTB, print it out
+
 - [ ] Make some caps work - Untypeds, Domains, Buffers, what else?
 - [ ] Test out syscalls from EL0
 

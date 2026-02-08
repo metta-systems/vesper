@@ -4,10 +4,10 @@ use core::{
 };
 
 use {
-    super::{Granule64KiB, Granule512MiB, mair},
-    crate::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
+    crate::arch_mmu::{Granule64KiB, Granule512MiB, mair},
     core::convert,
     libaddress::{Address, PhysAddr, Physical, Virtual},
+    libmapping::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields,
@@ -107,12 +107,12 @@ pub struct TableDescriptor {
     value: u64,
 }
 
-/// A page descriptor with 64 KiB aperture.
+/// A page descriptor with given aperture.
 ///
 /// The output points to physical memory.
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct PageDescriptor {
+pub struct PageDescriptor<const PAGE_SIZE: usize> {
     value: u64,
 }
 
@@ -185,7 +185,7 @@ impl TableDescriptor {
     }
 }
 
-impl PageDescriptor {
+impl<const PAGE_SIZE: usize> PageDescriptor<PAGE_SIZE> {
     /// Create an instance.
     ///
     /// Descriptor is invalid by default.
@@ -195,12 +195,12 @@ impl PageDescriptor {
 
     /// Create an instance.
     pub fn from_output_page_addr(
-        phys_output_page_addr: PageAddress<Physical>,
+        phys_output_page_addr: PageAddress<Physical, PAGE_SIZE>,
         attribute_fields: AttributeFields,
     ) -> Self {
         let val = InMemoryRegister::<u64, STAGE1_PAGE_DESCRIPTOR::Register>::new(0);
 
-        let shifted = phys_output_page_addr.into_inner().as_usize() >> Granule64KiB::SHIFT;
+        let shifted = phys_output_page_addr.into_inner().as_usize() / PAGE_SIZE; // FIXME: Granule::SHIFT
         val.write(
             STAGE1_PAGE_DESCRIPTOR::OUTPUT_ADDR_64KiB.val(shifted as u64)
                 + STAGE1_PAGE_DESCRIPTOR::AF::Accessed
@@ -282,7 +282,7 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
     /// Create an instance.
     #[allow(clippy::assertions_on_constants)]
     pub const fn new() -> Self {
-        assert!(libplatform::memory::KernelGranule::SIZE == Granule64KiB::SIZE); // assert! is const-fn-friendly
+        // assert!(libplatform::memory::KernelGranule::SIZE == Granule64KiB::SIZE); // assert! is const-fn-friendly
 
         // Can't have a zero-sized address space.
         assert!(NUM_TABLES > 0);
@@ -447,11 +447,12 @@ impl<const NUM_TABLES: usize> crate::TranslationTable for FixedSizeTranslationTa
             return Err("Tried to map memory regions with different sizes");
         }
 
-        if phys_region.end_exclusive_page_addr()
-            > crate::platform::memory::phys_addr_space_end_exclusive_addr()
-        {
-            return Err("Tried to map outside of physical address space");
-        }
+        // TODO: keep track of phys memory end
+        // if phys_region.end_exclusive_page_addr()
+        //     > crate::platform::memory::phys_addr_space_end_exclusive_addr()
+        // {
+        //     return Err("Tried to map outside of physical address space");
+        // }
 
         #[allow(clippy::useless_conversion)]
         let iter = phys_region.into_iter().zip(virt_region.into_iter());

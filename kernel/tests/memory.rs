@@ -16,25 +16,22 @@ use {
         num::NonZeroUsize,
         ops::Range,
     },
+    libaddress::{align_up, Address, PhysAddr, PhysAddrNotValid, Physical, Virtual},
+    liballoc::BumpAllocator,
     liblocking::interface::Mutex,
     liblog::println,
     libmemory::{
         arch::mmu::translation_table::{PageDescriptor, TableDescriptor},
-        mm::{align_up, BumpAllocator},
         mmu::{
             kernel_map_at, page_alloc,
             translation_table::{interface::TranslationTable, FixedSizeTranslationTable},
             AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress,
         },
-        phys_addr::{PhysAddr, PhysAddrNotValid},
         platform::memory::mmu::{
             virt_boot_core_stack_region, virt_code_region, virt_data_region, KERNEL_TABLES,
         },
-        platform::KernelGranule, //memory::mmu::KernelGranule},
-        Address,
-        Physical,
-        Virtual,
     },
+    libplatform::KernelGranule,
 };
 
 mod common;

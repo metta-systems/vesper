@@ -6,6 +6,7 @@ members = [
   "bin/chainofcommand",
   # Libraries
   "libs/address",
+  "libs/alloc",
   "libs/boot",
   "libs/console",
   "libs/cpu",
@@ -16,7 +17,9 @@ members = [
   "libs/locking",
   "libs/log",
   "libs/machine",
+  "libs/mapping",
   "libs/memory",
+  "libs/mmio",
   "libs/object",
   "libs/platform",
   "libs/primitives",
@@ -51,6 +54,7 @@ bitflags = { version = "2.10" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
 libaddress = { path = "libs/address" }
+liballoc = { path = "libs/alloc" }
 libboot = { path = "libs/boot" }
 libconsole = { path = "libs/console" }
 libcpu = { path = "libs/cpu" }
@@ -61,7 +65,9 @@ liblocal-irq = { path = "libs/local-irq" }
 liblocking = { path = "libs/locking" }
 liblog = { path = "libs/log" }
 libmachine = { path = "libs/machine" }
+libmapping = { path = "libs/mapping" }
 libmemory = { path = "libs/memory" }
+libmmio = { path = "libs/mmio" }
 libobject = { path = "libs/object" }
 libplatform = { path = "libs/platform" }
 libprimitives = { path = "libs/primitives" }
@@ -73,6 +79,7 @@ libtime = { path = "libs/time" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 qemu-exit = { version = "3.0" }
+safe-mmio = { version = "0.2" }
 snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
 static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }

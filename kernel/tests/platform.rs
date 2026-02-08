@@ -5,10 +5,10 @@
 #![reexport_test_harness_main = "test_main"]
 
 use {
-    libmemory::{Address, Virtual},
+    libaddress::{Address, Virtual},
     libplatform::platform::device_driver::{
-        Function, GPIO, RateDivisors,
-        mailbox::{self, Mailbox, tag},
+        mailbox::{self, tag, Mailbox},
+        Function, RateDivisors, GPIO,
     },
 };
 

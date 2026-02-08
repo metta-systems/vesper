@@ -1,17 +1,16 @@
-//! Translation table.
+//! Translation table interface.
+// TODO: Move to libmmu, or libmapping - higher level mapping interface.
 
-#[cfg(target_arch = "aarch64")]
-use crate::arch::aarch64::mmu::translation_table as arch_translation_table;
+use crate::arch::translation_table as arch_translation_table;
 
 use {
-    super::{AttributeFields, MemoryRegion},
     libaddress::{Address, Physical, Virtual},
+    libmapping::{AttributeFields, MemoryRegion},
 };
 
 //--------------------------------------------------------------------------------------------------
 // Architectural Public Reexports
 //--------------------------------------------------------------------------------------------------
-#[cfg(target_arch = "aarch64")]
 pub use arch_translation_table::FixedSizeTranslationTable;
 
 //--------------------------------------------------------------------------------------------------

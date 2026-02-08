@@ -532,7 +532,7 @@ pub fn init_thread_run() -> ! {
     // switch_to_domain(init_domain, init_time);
     libqemu::semihosting::exit_success()
 
-    // libmemory::mmu::post_enable_init(); // kernel_init_mmio_va_allocator
+    // kernel_init_mmio_va_allocator()
 
     // SAFETY: Not safe!
     // if let Err(x) = unsafe { libplatform::platform::drivers::init() } {

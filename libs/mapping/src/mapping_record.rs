@@ -5,13 +5,9 @@
 //! A record of mapped pages.
 
 use {
-    super::{
-        Address, Physical, Virtual,
-        types::{AccessPermissions, AttributeFields, MMIODescriptor, MemAttributes, MemoryRegion},
-    },
-    crate::platform,
-    liblocking::{self, InitStateLock},
-    liblog::{info, warn},
+    super::{AccessPermissions, AttributeFields, MMIODescriptor, MemAttributes, MemoryRegion},
+    libaddress::{Address, Physical, Virtual},
+    liblog::info,
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -19,9 +15,9 @@ use {
 //--------------------------------------------------------------------------------------------------
 
 /// Type describing a virtual memory mapping.
-#[allow(missing_docs)]
+#[allow(missing_docs, dead_code)]
 #[derive(Copy, Clone)]
-struct MappingRecordEntry {
+struct MappingRecordEntry<const PAGE_SIZE: usize> {
     pub users: [Option<&'static str>; 5],
     pub phys_start_addr: Address<Physical>,
     pub virt_start_addr: Address<Virtual>,
@@ -29,8 +25,9 @@ struct MappingRecordEntry {
     pub attribute_fields: AttributeFields,
 }
 
-struct MappingRecord {
-    inner: [Option<MappingRecordEntry>; 12],
+#[allow(missing_docs, dead_code)]
+struct MappingRecord<const PAGE_SIZE: usize> {
+    inner: [Option<MappingRecordEntry<PAGE_SIZE>>; 12],
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -38,18 +35,19 @@ struct MappingRecord {
 //--------------------------------------------------------------------------------------------------
 
 // FIXME: global state
-static KERNEL_MAPPING_RECORD: InitStateLock<MappingRecord> =
-    InitStateLock::new(MappingRecord::new());
+// static KERNEL_MAPPING_RECORD: InitStateLock<MappingRecord<4096>> =
+//     InitStateLock::new(MappingRecord::new());
 
 //--------------------------------------------------------------------------------------------------
 // Private Code
 //--------------------------------------------------------------------------------------------------
 
-impl MappingRecordEntry {
+impl<const PAGE_SIZE: usize> MappingRecordEntry<PAGE_SIZE> {
+    #[allow(missing_docs, dead_code)]
     pub fn new(
         name: &'static str,
-        virt_region: &MemoryRegion<Virtual>,
-        phys_region: &MemoryRegion<Physical>,
+        virt_region: &MemoryRegion<Virtual, PAGE_SIZE>,
+        phys_region: &MemoryRegion<Physical, PAGE_SIZE>,
         attr: AttributeFields,
     ) -> Self {
         Self {
@@ -61,6 +59,7 @@ impl MappingRecordEntry {
         }
     }
 
+    #[allow(missing_docs, dead_code)]
     fn find_next_free_user(&mut self) -> Result<&mut Option<&'static str>, &'static str> {
         if let Some(x) = self.users.iter_mut().find(|x| x.is_none()) {
             return Ok(x);
@@ -69,6 +68,7 @@ impl MappingRecordEntry {
         Err("Storage for user info exhausted")
     }
 
+    #[allow(missing_docs, dead_code)]
     pub fn add_user(&mut self, user: &'static str) -> Result<(), &'static str> {
         let x = self.find_next_free_user()?;
         *x = Some(user);
@@ -76,15 +76,18 @@ impl MappingRecordEntry {
     }
 }
 
-impl MappingRecord {
+impl<const PAGE_SIZE: usize> MappingRecord<PAGE_SIZE> {
+    #[allow(missing_docs, dead_code)]
     pub const fn new() -> Self {
         Self { inner: [None; 12] }
     }
 
+    #[allow(missing_docs, dead_code)]
     fn size(&self) -> usize {
         self.inner.iter().filter(|x| x.is_some()).count()
     }
 
+    #[allow(missing_docs, dead_code)]
     fn sort(&mut self) {
         let upper_bound_exclusive = self.size();
         let entries = &mut self.inner.get_mut(0..upper_bound_exclusive).unwrap();
@@ -94,7 +97,10 @@ impl MappingRecord {
         }
     }
 
-    fn find_next_free(&mut self) -> Result<&mut Option<MappingRecordEntry>, &'static str> {
+    #[allow(missing_docs, dead_code)]
+    fn find_next_free(
+        &mut self,
+    ) -> Result<&mut Option<MappingRecordEntry<PAGE_SIZE>>, &'static str> {
         if let Some(x) = self.inner.iter_mut().find(|x| x.is_none()) {
             return Ok(x);
         }
@@ -102,10 +108,11 @@ impl MappingRecord {
         Err("Storage for mapping info exhausted")
     }
 
+    #[allow(missing_docs, dead_code)]
     fn find_duplicate(
         &mut self,
-        phys_region: &MemoryRegion<Physical>,
-    ) -> Option<&mut MappingRecordEntry> {
+        phys_region: &MemoryRegion<Physical, PAGE_SIZE>,
+    ) -> Option<&mut MappingRecordEntry<PAGE_SIZE>> {
         self.inner
             .iter_mut()
             .filter_map(|x| x.as_mut())
@@ -128,11 +135,12 @@ impl MappingRecord {
     /// # Returns
     ///
     /// Returns `Ok(())` on success, or a string error message on failure.
+    #[allow(missing_docs, dead_code)]
     pub fn add(
         &mut self,
         name: &'static str,
-        virt_region: &MemoryRegion<Virtual>,
-        phys_region: &MemoryRegion<Physical>,
+        virt_region: &MemoryRegion<Virtual, PAGE_SIZE>,
+        phys_region: &MemoryRegion<Physical, PAGE_SIZE>,
         attr: AttributeFields,
     ) -> Result<(), &'static str> {
         let x = self.find_next_free()?;
@@ -149,6 +157,7 @@ impl MappingRecord {
         Ok(())
     }
 
+    #[allow(missing_docs, dead_code)]
     pub fn print(&self) {
         info!(
             "      -------------------------------------------------------------------------------------------------------------------------------------------"
@@ -162,13 +171,13 @@ impl MappingRecord {
         );
 
         for i in self.inner.iter().flatten() {
-            let size = i.num_pages * platform::KernelGranule::SIZE;
+            let size = i.num_pages * PAGE_SIZE;
             let virt_start = i.virt_start_addr;
             let virt_end_inclusive = virt_start + (size - 1);
             let phys_start = i.phys_start_addr;
             let phys_end_inclusive = phys_start + (size - 1);
 
-            let (size, unit) = crate::size_human_readable_ceil(size);
+            let (size, unit) = liblog::size_human_readable_ceil(size);
 
             let attr = match i.attribute_fields.mem_attributes {
                 MemAttributes::CacheableDRAM => "C",
@@ -219,36 +228,40 @@ impl MappingRecord {
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
-use liblocking::interface::ReadWriteEx;
 
 /// Add an entry to the mapping info record.
-pub fn kernel_add(
-    name: &'static str,
-    virt_region: &MemoryRegion<Virtual>,
-    phys_region: &MemoryRegion<Physical>,
-    attr: AttributeFields,
+#[allow(missing_docs, dead_code)]
+pub fn kernel_add<const PAGE_SIZE: usize>(
+    _name: &'static str,
+    _virt_region: &MemoryRegion<Virtual, PAGE_SIZE>,
+    _phys_region: &MemoryRegion<Physical, PAGE_SIZE>,
+    _attr: AttributeFields,
 ) -> Result<(), &'static str> {
-    KERNEL_MAPPING_RECORD.write(|mr| mr.add(name, virt_region, phys_region, attr))
+    // KERNEL_MAPPING_RECORD.write(|mr| mr.add(name, virt_region, phys_region, attr))
+    Ok(())
 }
 
-pub fn kernel_find_and_insert_mmio_duplicate(
-    mmio_descriptor: &MMIODescriptor,
-    new_user: &'static str,
+#[allow(missing_docs, dead_code)]
+pub fn kernel_find_and_insert_mmio_duplicate<const PAGE_SIZE: usize>(
+    _mmio_descriptor: &MMIODescriptor,
+    _new_user: &'static str,
 ) -> Option<Address<Virtual>> {
-    let phys_region: MemoryRegion<Physical> = (*mmio_descriptor).into();
+    // let phys_region: MemoryRegion<Physical, PAGE_SIZE> = (*mmio_descriptor).into();
 
-    KERNEL_MAPPING_RECORD.write(|mr| {
-        let dup = mr.find_duplicate(&phys_region)?;
+    // KERNEL_MAPPING_RECORD.write(|mr| {
+    //     let dup = mr.find_duplicate(&phys_region)?;
 
-        if let Err(x) = dup.add_user(new_user) {
-            warn!("{x}");
-        }
+    //     if let Err(x) = dup.add_user(new_user) {
+    //         warn!("{x}");
+    //     }
 
-        Some(dup.virt_start_addr)
-    })
+    //     Some(dup.virt_start_addr)
+    // })
+    Some(Address::zero())
 }
 
 /// Human-readable print of all recorded kernel mappings.
+#[allow(missing_docs, dead_code)]
 pub fn kernel_print() {
-    KERNEL_MAPPING_RECORD.read(MappingRecord::print);
+    // KERNEL_MAPPING_RECORD.read(MappingRecord::print);
 }

@@ -9,14 +9,9 @@ pub mod features; // @todo make only pub re-export?
 pub mod mmu;
 mod page_size;
 mod phys_frame;
+pub(crate) mod translation_table;
 mod virt_page;
 
-// mod area_frame_allocator;
-// pub use self::area_frame_allocator::AreaFrameAllocator;
-// mod boot_allocator; // Hands out physical memory obtained from devtree
-// use self::paging::PAGE_SIZE;
-
-// pub use crate::memory::{PhysAddr, VirtAddr};
 pub use phys_frame::PhysFrame;
 
 /// @todo ??

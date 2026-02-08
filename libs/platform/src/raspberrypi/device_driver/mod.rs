@@ -9,8 +9,6 @@ pub mod arm;
 #[cfg(any(board_rpi3, board_rpi4))]
 pub mod bcm;
 
-pub mod common;
-
 #[cfg(board_rpi4)]
 pub use arm::*;
 #[cfg(any(board_rpi3, board_rpi4))]

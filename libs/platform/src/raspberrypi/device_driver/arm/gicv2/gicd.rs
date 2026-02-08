@@ -9,8 +9,8 @@
 
 use {
     crate::platform::device_driver::common::MMIODerefWrapper,
+    libaddress::{Address, Virtual},
     liblocking::IRQSafeNullLock,
-    libmemory::{Address, Virtual},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields, register_structs,

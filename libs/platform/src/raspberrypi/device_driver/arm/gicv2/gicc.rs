@@ -6,7 +6,7 @@
 
 use {
     crate::platform::device_driver::common::MMIODerefWrapper,
-    libmemory::{Address, Virtual},
+    libaddress::{Address, Virtual},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields, register_structs,

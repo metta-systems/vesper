@@ -2,8 +2,7 @@
 //
 // Copyright (c) 2020-2022 Andre Richter <andre.o.richter@gmail.com>
 
-//! Common device driver code.
-// @todo: Move to libprimitive or libdriver or sth?
+#![no_std]
 
 use {
     core::{marker::PhantomData, ops},
@@ -13,6 +12,9 @@ use {
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
 //--------------------------------------------------------------------------------------------------
+
+pub mod mmio_descriptor;
+pub use mmio_descriptor::*;
 
 #[allow(clippy::partial_pub_fields)]
 pub struct MMIODerefWrapper<T> {

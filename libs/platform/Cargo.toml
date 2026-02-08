@@ -35,13 +35,13 @@ cfg-if = { workspace = true }
 libaddress = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
+libdriver = { workspace = true }
 libexception = { workspace = true }
 libkernel-state = { workspace = true }
 liblocal-irq = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
-libmemory = { workspace = true }
-libdriver = { workspace = true }
+libmapping = { workspace = true }
 libprimitives = { workspace = true }
 libtime = { workspace = true }
 once_cell = { workspace = true }

@@ -6,7 +6,7 @@ use {
         sync::atomic::{AtomicBool, Ordering},
     },
     libdriver::drivers::DriverManager,
-    libmemory::{mmu::MMIODescriptor, platform::memory::map::mmio},
+    libmmio::MMIODescriptor,
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -94,7 +94,7 @@ unsafe fn instantiate_uart() -> Result<(), &'static str> {
     let mmio_descriptor = MMIODescriptor::new(mmio::PL011_UART_BASE, mmio::PL011_UART_SIZE);
     // SAFETY: You may believe praying will save you.
     let virt_addr = unsafe {
-        libmemory::mmu::kernel_map_mmio(device_driver::PL011Uart::COMPATIBLE, &mmio_descriptor)?
+        libmapping::kernel_map_mmio(device_driver::PL011Uart::COMPATIBLE, &mmio_descriptor)?
     };
 
     #[allow(static_mut_refs)]
@@ -122,9 +122,8 @@ unsafe fn post_init_pl011_uart() -> Result<(), &'static str> {
 unsafe fn instantiate_gpio() -> Result<(), &'static str> {
     let mmio_descriptor = MMIODescriptor::new(mmio::GPIO_BASE, mmio::GPIO_SIZE);
     // SAFETY: You may believe praying will save you.
-    let virt_addr = unsafe {
-        libmemory::mmu::kernel_map_mmio(device_driver::GPIO::COMPATIBLE, &mmio_descriptor)?
-    };
+    let virt_addr =
+        unsafe { libmapping::kernel_map_mmio(device_driver::GPIO::COMPATIBLE, &mmio_descriptor)? };
 
     #[allow(static_mut_refs)]
     // SAFETY: You may believe praying will save you.
@@ -153,7 +152,7 @@ unsafe fn instantiate_interrupt_controller() -> Result<(), &'static str> {
         MMIODescriptor::new(mmio::PERIPHERAL_IC_BASE, mmio::PERIPHERAL_IC_SIZE);
     // SAFETY: You may believe praying will save you.
     let periph_virt_addr = unsafe {
-        libmemory::mmu::kernel_map_mmio(
+        libmapping::kernel_map_mmio(
             device_driver::InterruptController::COMPATIBLE,
             &periph_mmio_descriptor,
         )?

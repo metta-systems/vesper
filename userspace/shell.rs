@@ -1,6 +1,6 @@
 fn print_mmu_state_and_features() {
     // use machine::memory::mmu::interface::MMU;
-    libmemory::arch::features::print_features();
+    features::print_mmu_features();
 }
 
 // TODO: AFTER INIT_THREAD, one of the userspace processes

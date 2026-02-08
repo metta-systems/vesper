@@ -25,8 +25,9 @@ pub struct PageAllocator<ATYPE: const AddressType> {
 // Global instances
 //--------------------------------------------------------------------------------------------------
 
+// TODO: drop this, kernel should not be allocating any memory!!
 static KERNEL_MMIO_VA_ALLOCATOR: IRQSafeNullLock<PageAllocator<Virtual>> =
-    IRQSafeNullLock::new(PageAllocator::new());
+    IRQSafeNullLock::new(PageAllocator::<Virtual>::new());
 
 //--------------------------------------------------------------------------------------------------
 // Public Code

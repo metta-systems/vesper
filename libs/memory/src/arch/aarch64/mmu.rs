@@ -1,10 +1,11 @@
 use {
     crate::{
-        arch::mmu::translation_table::{
+        AddressSpace, MMUEnableError, TranslationGranule,
+        arch::translation_table::{
             PageFlags, PageSize, STAGE1_PAGE_DESCRIPTOR, STAGE1_TABLE_DESCRIPTOR, Size2MiB,
             Size4KiB, TableFlags,
         },
-        mmu::{AddressSpace, AttributeFields, MMUEnableError, TranslationGranule, interface},
+        interface,
     },
     aarch64_cpu::{
         asm::{self, barrier},
@@ -13,10 +14,9 @@ use {
     core::intrinsics::unlikely,
     libaddress::{Address, Physical},
     liblog::println,
+    libmapping::AttributeFields,
     tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
 };
-
-pub(crate) mod translation_table;
 
 //--------------------------------------------------------------------------------------------------
 // Private Definitions
