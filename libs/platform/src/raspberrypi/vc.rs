@@ -3,7 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 use {
-    crate::platform::raspberrypi::{
+    crate::raspberrypi::{
         BcmHost,
         device_driver::bcm::mailbox::{
             self, Mailbox, MailboxOps, MailboxStorageRef, channel, response::VAL_LEN_FLAG,
@@ -32,17 +32,17 @@ impl VC {
     // Use framebuffer mailbox interface to initialize
     // https://www.raspberrypi.org/forums/viewtopic.php?f=72&t=185116
     pub fn init_fb(w: u32, h: u32, depth: u32) -> Result<Display> {
-        /*
-         *  * All tags in the request are processed in one operation.
-         *  * It is not valid to mix Test tags with Get/Set tags
-         *    in the same operation and no tags will be returned.
-         *  * Get tags will be processed after all Set tags.
-         *  * If an allocate buffer tag is omitted when setting parameters,
-         *    then no change occurs unless it can be accommodated without changing
-         *    the buffer base or size.
-         *  * When an allocate buffer response is returned, the old buffer area
-         *    (if the base or size has changed) is implicitly freed.
-         */
+        //
+        // - All tags in the request are processed in one operation.
+        // - It is not valid to mix Test tags with Get/Set tags
+        //   in the same operation and no tags will be returned.
+        // - Get tags will be processed after all Set tags.
+        // - If an allocate buffer tag is omitted when setting parameters,
+        //   then no change occurs unless it can be accommodated without changing
+        //   the buffer base or size.
+        // - When an allocate buffer response is returned, the old buffer area
+        //   (if the base or size has changed) is implicitly freed.
+        //
 
         // control: MailboxCommand<10, FrameBufferData>
         let mut mbox = Mailbox::<36>::default();

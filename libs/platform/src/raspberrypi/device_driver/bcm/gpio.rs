@@ -6,7 +6,7 @@
  */
 
 use {
-    crate::platform::device_driver::{IRQNumber, common::MMIODerefWrapper},
+    crate::device_driver::{IRQNumber, common::MMIODerefWrapper},
     core::marker::PhantomData,
     libaddress::{Address, Virtual},
     liblocking::{IRQSafeNullLock, interface::Mutex},

@@ -6,7 +6,7 @@
  */
 
 use {
-    crate::platform::device_driver::{
+    crate::device_driver::{
         common::MMIODerefWrapper,
         gpio,
         mailbox::{Mailbox, MailboxOps, channel},

@@ -1,6 +1,6 @@
 # Board Support Packages
 
-This directory contains support for specific Boards like RaspberryPi3 etc.
+This library contains support for specific Boards like RaspberryPi3 etc.
 
 ----
 

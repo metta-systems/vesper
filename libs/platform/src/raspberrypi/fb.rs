@@ -1,5 +1,5 @@
 use {
-    crate::platform::raspberrypi::device_driver::bcm::mailbox::{
+    crate::raspberrypi::device_driver::bcm::mailbox::{
         self, LocalMailboxStorage, Mailbox, MailboxError, MailboxOps,
     },
     libaddress::{Address, Virtual},

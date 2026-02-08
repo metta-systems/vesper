@@ -8,7 +8,7 @@
 // #[cfg(not(feature = "noserial"))]
 // use tock_registers::interfaces::{Readable, Writeable};
 use {
-    crate::platform::{
+    crate::{
         BcmHost,
         device_driver::{common::MMIODerefWrapper, gpio},
         exception::asynchronous::IRQNumber,

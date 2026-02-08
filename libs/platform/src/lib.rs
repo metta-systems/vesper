@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
+
 #![no_std]
 #![no_main]
 #![feature(decl_macro)]
@@ -7,4 +12,8 @@
 #![test_runner(libtest::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-pub mod platform; // @todo flatten!
+#[cfg(any(board_rpi3, board_rpi4))]
+pub mod raspberrypi;
+
+#[cfg(any(board_rpi3, board_rpi4))]
+pub use raspberrypi::*;

@@ -9,7 +9,7 @@
  */
 
 use {
-    crate::platform::device_driver::{IRQNumber, common::MMIODerefWrapper, gpio},
+    crate::device_driver::{IRQNumber, common::MMIODerefWrapper, gpio},
     core::fmt::{self, Arguments},
     libaddress::{Address, Virtual},
     libconsole::{SerialOps, console::interface},
@@ -520,7 +520,7 @@ impl libdriver::drivers::interface::DeviceDriver for PL011Uart {
         irq_number: Self::IRQNumberType,
     ) -> Result<(), &'static str> {
         use {
-            crate::platform::exception::asynchronous::irq_manager,
+            crate::exception::asynchronous::irq_manager,
             libexception::asynchronous::IRQHandlerDescriptor,
         };
 

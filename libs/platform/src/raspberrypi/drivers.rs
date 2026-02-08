@@ -1,6 +1,6 @@
 use {
     super::exception, // @todo
-    crate::platform::{device_driver, exception::asynchronous::IRQNumber},
+    crate::{device_driver, exception::asynchronous::IRQNumber},
     core::{
         mem::MaybeUninit,
         sync::atomic::{AtomicBool, Ordering},
@@ -197,7 +197,7 @@ unsafe fn instantiate_interrupt_controller() -> Result<(), &'static str> {
 #[allow(clippy::unnecessary_wraps)]
 unsafe fn post_init_interrupt_controller() -> Result<(), &'static str> {
     #[allow(static_mut_refs)]
-    crate::platform::exception::asynchronous::register_irq_manager(
+    crate::exception::asynchronous::register_irq_manager(
         // SAFETY: You may believe praying will save you.
         unsafe { INTERRUPT_CONTROLLER.assume_init_ref() },
     );

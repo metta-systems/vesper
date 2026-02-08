@@ -14,18 +14,18 @@ use {
 //--------------------------------------------------------------------------------------------------
 
 /// Export for reuse in generic asynchronous.rs.
-pub use crate::platform::device_driver::IRQNumber; // @todo
+pub use crate::device_driver::IRQNumber; // @todo
 
 #[cfg(board_rpi3)]
-pub(in crate::platform) mod irq_map {
-    use crate::platform::device_driver::{IRQNumber, PeripheralIRQ};
+pub(crate) mod irq_map {
+    use crate::device_driver::{IRQNumber, PeripheralIRQ};
 
     pub const PL011_UART: IRQNumber = IRQNumber::Peripheral(PeripheralIRQ::new(57));
 }
 
 #[cfg(board_rpi4)]
-pub(in crate::platform) mod irq_map {
-    use crate::platform::device_driver::IRQNumber;
+pub(crate) mod irq_map {
+    use crate::device_driver::IRQNumber;
 
     pub const PL011_UART: IRQNumber = IRQNumber::new(153);
 }

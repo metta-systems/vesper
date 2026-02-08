@@ -12,7 +12,7 @@
 #![allow(dead_code)]
 
 use {
-    crate::platform::{BcmHost, device_driver::common::MMIODerefWrapper},
+    crate::{BcmHost, device_driver::common::MMIODerefWrapper},
     aarch64_cpu::asm::barrier,
     core::{
         // alloc::{AllocError, Allocator, Layout},
