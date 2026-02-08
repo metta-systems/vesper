@@ -17,7 +17,6 @@
 #![feature(custom_test_frameworks)]
 
 mod arch;
-pub mod mm;
 pub mod mmu;
 pub mod platform;
 

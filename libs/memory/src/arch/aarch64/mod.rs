@@ -5,7 +5,6 @@
 
 //! Memory management functions for aarch64.
 
-mod addr;
 pub mod features; // @todo make only pub re-export?
 pub mod mmu;
 mod page_size;
