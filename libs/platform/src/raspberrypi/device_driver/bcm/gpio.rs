@@ -6,10 +6,11 @@
  */
 
 use {
-    crate::device_driver::{IRQNumber, common::MMIODerefWrapper},
+    crate::device_driver::IRQNumber,
     core::marker::PhantomData,
     libaddress::{Address, Virtual},
     liblocking::{IRQSafeNullLock, interface::Mutex},
+    libmmio::MMIODerefWrapper,
     tock_registers::{
         fields::FieldValue,
         interfaces::{ReadWriteable, Readable, Writeable},

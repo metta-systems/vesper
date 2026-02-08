@@ -42,6 +42,7 @@ liblocal-irq = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 libmapping = { workspace = true }
+libmmio = { workspace = true }
 libprimitives = { workspace = true }
 libtime = { workspace = true }
 once_cell = { workspace = true }

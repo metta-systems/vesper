@@ -23,7 +23,6 @@ aarch64-cpu = { workspace = true }
 libcpu = { workspace = true }
 libplatform = { workspace = true }
 tock-registers = { workspace = true }
-# probably libmemory
 
 [lints]
 workspace = true

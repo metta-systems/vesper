@@ -12,7 +12,7 @@
 #![allow(dead_code)]
 
 use {
-    crate::{BcmHost, device_driver::common::MMIODerefWrapper},
+    crate::BcmHost,
     aarch64_cpu::asm::barrier,
     core::{
         // alloc::{AllocError, Allocator, Layout},
@@ -21,6 +21,7 @@ use {
         result::Result as CoreResult,
         sync::atomic::{Ordering, compiler_fence},
     },
+    libmmio::MMIODerefWrapper,
     // liblocking::IRQSafeNullLock,
     // libaddress::{Address, Virtual},
     snafu::Snafu,
@@ -150,7 +151,7 @@ impl<const N_SLOTS: usize> MailboxStorage for LocalMailboxStorage<N_SLOTS> {
 
 impl<const N_SLOTS: usize> MailboxStorage for DmaBackedMailboxStorage<N_SLOTS> {
     fn new() -> Result<Self> {
-        use libmemory::platform::memory::map::virt::DMA_HEAP_START;
+        use crate::memory::map::virt::DMA_HEAP_START;
 
         Ok(Self {
             storage: DMA_HEAP_START

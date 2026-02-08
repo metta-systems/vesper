@@ -10,9 +10,9 @@
 
 use {
     super::{PendingIRQs, PeripheralIRQ},
-    crate::device_driver::common::MMIODerefWrapper,
     libexception::asynchronous::{IRQContext, IRQHandlerDescriptor, interface::IRQManager},
     liblocking::{self, IRQSafeNullLock, InitStateLock},
+    libmmio::MMIODerefWrapper,
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_structs,

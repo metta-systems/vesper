@@ -20,7 +20,7 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 libaddress = { workspace = true }
-libmemory = { workspace = true }
+# libmemory = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 libsyscall = { workspace = true }

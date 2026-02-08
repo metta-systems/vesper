@@ -15,7 +15,7 @@ use {
     aarch64_cpu::registers::*,
     core::arch::global_asm,
     libcpu::endless_sleep,
-    libplatform::platform::cpu::BOOT_CORE_ID,
+    libplatform::cpu::BOOT_CORE_ID,
     tock_registers::interfaces::{Readable, Writeable},
 };
 

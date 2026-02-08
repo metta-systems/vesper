@@ -38,7 +38,7 @@ libkernel-state = { workspace = true }
 liblocal-irq = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
-libmemory = { workspace = true }
+# libmemory = { workspace = true }
 libplatform = { workspace = true }
 libprimitives = { workspace = true }
 libqemu = { workspace = true }

@@ -9,11 +9,12 @@
  */
 
 use {
-    crate::device_driver::{IRQNumber, common::MMIODerefWrapper, gpio},
+    crate::device_driver::{IRQNumber, gpio},
     core::fmt::{self, Arguments},
     libaddress::{Address, Virtual},
     libconsole::{SerialOps, console::interface},
     liblocking::{IRQSafeNullLock, interface::Mutex},
+    libmmio::MMIODerefWrapper,
     libprimitives::cpu::loop_while,
     // snafu::Snafu,
     tock_registers::{

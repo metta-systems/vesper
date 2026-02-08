@@ -35,7 +35,7 @@ use {
     libexception::arch::aarch64::ExceptionContext,
     liblocking::{IRQSafeNullLock, interface::Mutex},
     liblog::{info, println, warn},
-    libmemory::mmu::AccessPermissions,
+    libmapping::AccessPermissions,
     libobject::{ArchType, CapError, KeySlot},
     libqemu::{semi_print, semi_println},
 };

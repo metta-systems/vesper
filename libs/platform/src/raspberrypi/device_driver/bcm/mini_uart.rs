@@ -8,11 +8,7 @@
 // #[cfg(not(feature = "noserial"))]
 // use tock_registers::interfaces::{Readable, Writeable};
 use {
-    crate::{
-        BcmHost,
-        device_driver::{common::MMIODerefWrapper, gpio},
-        exception::asynchronous::IRQNumber,
-    },
+    crate::{BcmHost, device_driver::gpio, exception::asynchronous::IRQNumber},
     core::{
         convert::From,
         fmt::{self, Arguments},
@@ -20,6 +16,7 @@ use {
     libaddress::{Address, Virtual},
     libconsole::{SerialOps, console::interface},
     liblocking::{IRQSafeNullLock, interface::Mutex},
+    libmmio::MMIODerefWrapper,
     tock_registers::{
         interfaces::ReadWriteable,
         register_bitfields, register_structs,

@@ -16,6 +16,7 @@ publish = false
 maintenance = { status = "experimental" }
 
 [dependencies]
+libaddress = { workspace = true }
 safe-mmio = { workspace = true }
 
 # Tests are offloaded to kernel integration tests binary.

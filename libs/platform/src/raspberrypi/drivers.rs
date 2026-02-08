@@ -1,6 +1,6 @@
 use {
     super::exception, // @todo
-    crate::{device_driver, exception::asynchronous::IRQNumber},
+    crate::{device_driver, exception::asynchronous::IRQNumber, memory::map::mmio},
     core::{
         mem::MaybeUninit,
         sync::atomic::{AtomicBool, Ordering},
@@ -173,12 +173,12 @@ unsafe fn instantiate_interrupt_controller() -> Result<(), &'static str> {
     let gic_distr_mmio_descriptor = MMIODescriptor::new(mmio::GICD_BASE, mmio::GICD_SIZE);
     let gic_distr_virt_addr =
         // SAFETY: Not safe!
-        unsafe { libmemory::mmu::kernel_map_mmio("GICv2 GICD", &gic_distr_mmio_descriptor)? };
+        unsafe { libmapping::kernel_map_mmio("GICv2 GICD", &gic_distr_mmio_descriptor)? };
 
     let gic_ctrlr_mmio_descriptor = MMIODescriptor::new(mmio::GICC_BASE, mmio::GICC_SIZE);
     let gic_ctrlr_virt_addr =
         // SAFETY: Not safe!
-        unsafe { libmemory::mmu::kernel_map_mmio("GICV2 GICC", &gic_ctrlr_mmio_descriptor)? };
+        unsafe { libmapping::kernel_map_mmio("GICV2 GICC", &gic_ctrlr_mmio_descriptor)? };
 
     #[allow(static_mut_refs)]
     // SAFETY: Not safe!

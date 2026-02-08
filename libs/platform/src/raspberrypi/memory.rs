@@ -7,30 +7,29 @@
 //!
 
 use {
-    crate::mmu::{
-        AddressSpace, AssociatedTranslationTable, MemoryRegion, PageAddress, TranslationGranule,
-    },
     libaddress::PhysAddr,
+    // libmapping::{MemoryRegion, PageAddress},
+    // libmemory::{AddressSpace, AssociatedTranslationTable, TranslationGranule},
 };
 
 //--------------------------------------------------------------------------------------------------
 // Private Definitions
 //--------------------------------------------------------------------------------------------------
 
-type KernelTranslationTable =
-    <KernelVirtAddrSpace as AssociatedTranslationTable>::TableStartFromBottom;
+// type KernelTranslationTable =
+//     <KernelVirtAddrSpace as AssociatedTranslationTable>::TableStartFromBottom;
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
 //--------------------------------------------------------------------------------------------------
 
-/// The translation granule chosen by this platform. This will be used everywhere else
-/// in the kernel to derive respective data structures and their sizes.
-/// For example, the `crate::memory::mmu::Page`.
-pub type KernelGranule = TranslationGranule<{ 64 * 1024 }>;
+// The translation granule chosen by this platform. This will be used everywhere else
+// in the kernel to derive respective data structures and their sizes.
+// For example, the `crate::memory::mmu::Page`.
+// pub type KernelGranule = TranslationGranule<{ 64 * 1024 }>;
 
-/// The kernel's virtual address space defined by this platform.
-pub type KernelVirtAddrSpace = AddressSpace<{ 1024 * 1024 * 1024 }>;
+// The kernel's virtual address space defined by this platform.
+// pub type KernelVirtAddrSpace = AddressSpace<{ 1024 * 1024 * 1024 }>;
 
 /// The board's physical memory map.
 /// This is a fixed memory map for Raspberry Pi,

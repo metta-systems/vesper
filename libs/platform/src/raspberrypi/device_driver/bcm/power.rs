@@ -7,11 +7,11 @@
 
 use {
     crate::device_driver::{
-        common::MMIODerefWrapper,
         gpio,
         mailbox::{Mailbox, MailboxOps, channel},
     },
     libaddress::{Address, Virtual},
+    libmmio::MMIODerefWrapper,
     snafu::Snafu,
     tock_registers::{
         interfaces::{Readable, Writeable},
