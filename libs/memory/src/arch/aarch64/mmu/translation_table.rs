@@ -5,12 +5,9 @@ use core::{
 
 use {
     super::{Granule64KiB, Granule512MiB, mair},
-    crate::{
-        mmu::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
-        platform,
-    },
+    crate::{AccessPermissions, AttributeFields, MemAttributes, MemoryRegion, PageAddress},
     core::convert,
-    libaddress::{Address, Physical, Virtual},
+    libaddress::{Address, PhysAddr, Physical, Virtual},
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields,
@@ -120,7 +117,7 @@ pub struct PageDescriptor {
 }
 
 pub trait BaseAddr {
-    fn phys_start_addr(&self) -> Address<Physical>;
+    fn phys_start_addr(&self) -> PhysAddr;
     fn base_addr_u64(&self) -> u64;
     fn base_addr_usize(&self) -> usize;
 }
@@ -152,7 +149,7 @@ pub struct FixedSizeTranslationTable<const NUM_TABLES: usize> {
 
 impl<T, const N: usize> BaseAddr for [T; N] {
     // The binary is still identity mapped, so we don't need to convert here.
-    fn phys_start_addr(&self) -> Address<Physical> {
+    fn phys_start_addr(&self) -> PhysAddr {
         Address::from_ptr(core::ptr::from_ref(self))
     }
 
@@ -174,7 +171,7 @@ impl TableDescriptor {
     }
 
     /// Create an instance pointing to the supplied address.
-    pub fn from_next_lvl_table_addr(phys_next_lvl_table_addr: Address<Physical>) -> Self {
+    pub fn from_next_lvl_table_addr(phys_next_lvl_table_addr: PhysAddr) -> Self {
         let val = InMemoryRegister::<u64, STAGE1_TABLE_DESCRIPTOR::Register>::new(0);
 
         let shifted = phys_next_lvl_table_addr.as_usize() >> Granule64KiB::SHIFT;
@@ -266,7 +263,7 @@ impl convert::From<AttributeFields>
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
-use crate::mmu::{AddressSpace, AssociatedTranslationTable};
+use crate::{AddressSpace, AssociatedTranslationTable};
 
 impl<const AS_SIZE: usize> AssociatedTranslationTable for AddressSpace<AS_SIZE>
 where
@@ -285,7 +282,7 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
     /// Create an instance.
     #[allow(clippy::assertions_on_constants)]
     pub const fn new() -> Self {
-        assert!(platform::memory::mmu::KernelGranule::SIZE == Granule64KiB::SIZE); // assert! is const-fn-friendly
+        assert!(libplatform::memory::KernelGranule::SIZE == Granule64KiB::SIZE); // assert! is const-fn-friendly
 
         // Can't have a zero-sized address space.
         assert!(NUM_TABLES > 0);
@@ -412,9 +409,7 @@ impl<const NUM_TABLES: usize> FixedSizeTranslationTable<NUM_TABLES> {
     }
 }
 
-impl<const NUM_TABLES: usize> crate::mmu::translation_table::interface::TranslationTable
-    for FixedSizeTranslationTable<NUM_TABLES>
-{
+impl<const NUM_TABLES: usize> crate::TranslationTable for FixedSizeTranslationTable<NUM_TABLES> {
     fn init(&mut self) -> Result<(), &'static str> {
         if self.initialized {
             return Ok(());
@@ -436,7 +431,7 @@ impl<const NUM_TABLES: usize> crate::mmu::translation_table::interface::Translat
         Ok(())
     }
 
-    fn phys_base_address(&self) -> Address<Physical> {
+    fn phys_base_address(&self) -> PhysAddr {
         self.lvl2.phys_start_addr()
     }
 
