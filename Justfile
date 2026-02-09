@@ -1,217 +1,320 @@
+# === Configuration ===
+
+target          := 'aarch64-metta-none-eabi'
+# ⚠️ Target path must be 'escaped' to work on Windows
+target_json     := "-Zjson-target-spec --target='" + justfile_directory() / 'targets' / target + ".json'"
+rust_std        := '-Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem'
+
+# Board presets: rustflags, dtb, qemu-machine
+board_rpi3_flags  := '-C target-cpu=cortex-a53 --cfg board_rpi3'
+board_rpi4_flags  := '-C target-cpu=cortex-a73 --cfg board_rpi4'
+rpi3_dtb          := justfile_directory() / 'targets/bcm2710-rpi-3-b-plus.dtb'
+rpi4_dtb          := justfile_directory() / 'targets/bcm2711-rpi-4-b.dtb'
+
+nucleus_link    := 'libs/platform/src/raspberrypi/linker/nucleus.ld'
+init_link       := 'libs/platform/src/raspberrypi/linker/init_thread.ld'
+test_link       := 'libs/platform/src/raspberrypi/linker/test.ld'
+chainboot_link  := 'bin/chainboot/src/link.ld'
+
+fixed_rustflags := '-D warnings -Z macro-backtrace'
+
+qemu            := env('QEMU', 'qemu-system-aarch64')
+qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
+gdb             := env('GDB', 'aarch64-elf-gdb') # An aarch64-enabled GDB (brew install aarch64-elf-gdb)
+objcopy         := 'rust-objcopy'
+nm              := 'rust-nm'
+volume          := env('VOLUME', '/Volumes/BOOT')
+
+kernel_elf      := justfile_directory() / 'target' / target / 'release/init_thread'
+kernel_bin      := justfile_directory() / 'target/kernel.bin'
+chainboot_elf   := justfile_directory() / 'target' / target / 'release/chainboot'
+chainboot_bin   := justfile_directory() / 'target/chainboot.bin'
+
+chainboot_serial := '/dev/tty.SLAB_USBtoUART'
+chainboot_baud   := '115200'
+
+# QEMU option fragments
+qemu_base_opts    := '-M ' + qemu_machine + ' -chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -mon chardev=char0 -serial chardev:char0 -semihosting-config enable=on,chardev=char0'
+qemu_disasm       := '-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin'
+qemu_gdb_opts     := '-gdb tcp::5555 -S'
+qemu_test_opts    := '-nographic'
+qemu_disasm_gdb   := qemu_disasm + ' ' + qemu_gdb_opts
+
+gdb_connect     := justfile_directory() / 'target' / target / 'gdb-connect'
+
+openocd_bin     := env('OPENOCD', '/usr/local/opt/openocd/4d6519593-rtt/bin/openocd')
+
+ok_label        := '✅'
+copy_label      := '🔄'
+
 _default:
     @just --list
 
-make-opts := '--time-summary --hide-uninteresting'
-# make-opts := '--quiet'
+# === Low-level: cross-compile a single crate ===
 
-# Update all dependencies
-[group("maintenance")]
-deps-up:
-    cargo update
+# Cross-build a crate for a given board with a given linker script and features
+[private]
+_cross-build crate board='rpi4' linker_script='' features='':
+    RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}{{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}" \
+    cargo build {{ target_json }} \
+      {{ if features != '' { '--features=' + features } else { '' } }} \
+      {{ rust_std }} \
+      --release -p {{ crate }}
 
-# Build default hw kernel and run chainofcommand to boot this kernel onto the board
+# === Kernel (nucleus + init_thread -> kernel.bin) ===
+
+# Build kernel (features: '' for hw, 'qemu' for emulation)
 [group("hw")]
-boot: chainofcommand
-    cargo make {{ make-opts }} chainboot # make boot-kernel ?
+build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'init_thread' board init_link features)
+    {{ objcopy }} --strip-all -O binary "{{ kernel_elf }}" "{{ kernel_bin }}"
+    @# TODO: print final binary size!
+    @echo "{{ok_label}} kernel built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
-# Build and run kernel in QEMU with serial port emulation
-[group("emu")]
-zellij:
-    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus zellij-nucleus
-    zellij --layout emulation/layout.zellij
+alias b := build
 
-# Build and run chainboot in QEMU with serial port emulation
-[group("emu")]
-cb-zellij:
-    # Connect to it via chainofcommand to load an actual kernel
-    # TODO: actually run chainofcommand in a zellij session too
-    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot zellij
-    zellij --layout emulation/layout.zellij
+# === Chainboot ===
 
-# Run chainboot with GDB in zellij window
-cb-zellij-gdb:
-    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot zellij-gdb
-    zellij --layout emulation/layout.zellij
+# Build chainboot bootloader (features: '' for hw, 'qemu' for emulation)
+[group("hw")]
+build-chainboot board='rpi4' features='': (_cross-build 'chainboot' board chainboot_link features)
+    {{ objcopy }} --strip-all -O binary "{{ chainboot_elf }}" "{{ chainboot_bin }}"
+    @echo "{{ok_label}} chainboot built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
+
+# === Chainofcommand (host tool) ===
 
 # Build chainofcommand serial loader
 [group("hw")]
 chainofcommand:
-    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainofcommand/Makefile.toml --cwd bin/chainofcommand build
+    @cargo build -p chainofcommand
 
 alias coc := chainofcommand
 
+# === QEMU runners ===
+
 # Build and run kernel in QEMU
 [group("emu")]
-qemu:
-    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus qemu
+qemu: (build 'rpi3' 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} with {{ kernel_bin }}"
+    @echo "🚜 .. on {{ rpi3_dtb }}"
+    @rm -f qemu.log
+    {{ qemu }} {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_bin }}"
 
-# Build and run kernel in QEMU with GDB port enabled
+# Build and run kernel in QEMU with GDB port
 [group("emu")]
-qemu-gdb:
-    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus qemu-gdb
+qemu-gdb: (build 'rpi3' 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm_gdb }} with {{ kernel_bin }}"
+    @echo "🚜 .. on {{ rpi3_dtb }}"
+    @rm -f qemu.log
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm_gdb }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_bin }}"
 
 # Build and run chainboot in QEMU
 [group("emu")]
-cb-qemu:
-    # Connect to it via chainofcommand to load an actual kernel
-    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot qemu
+cb-qemu: (build-chainboot 'rpi3' 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm }} with {{ chainboot_bin }}"
+    @echo "🚜 .. on {{ rpi3_dtb }}"
+    @rm -f qemu.log
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm }} -serial pty -dtb "{{ rpi3_dtb }}" -kernel "{{ chainboot_bin }}"
 
-# Build and run chainboot in QEMU with GDB port enabled
+# Build and run chainboot in QEMU with GDB port
 [group("emu")]
-cb-qemu-gdb:
-    # Connect to it via chainofcommand to load an actual kernel
-    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot qemu-gdb
+cb-qemu-gdb: (build-chainboot 'rpi3' 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm_gdb }} with {{ chainboot_bin }}"
+    @echo "🚜 .. on {{ rpi3_dtb }}"
+    @rm -f qemu.log
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm_gdb }} -serial pty -dtb "{{ rpi3_dtb }}" -kernel "{{ chainboot_bin }}"
 
-# Build and write kernel to an SD Card
-[group("hw")]
-device:
-    cargo make {{ make-opts }} sdcard
+# === Zellij (QEMU in split terminal) ===
 
-# Build and write kernel to an SD Card, then eject the SD Card volume
-[group("hw")]
-device-eject:
-    cargo make {{ make-opts }} sdeject
+[private]
+_write-zellij-config bin runner_opts dtb:
+    #!/usr/bin/env bash
+    cat > emulation/zellij-config.sh <<EOF
+    QEMU="{{ qemu }}"
+    QEMU_OPTS="{{ qemu_base_opts }}"
+    QEMU_RUNNER_OPTS="{{ runner_opts }}"
+    CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY="{{ justfile_directory() }}"
+    TARGET_DTB="{{ dtb }}"
+    KERNEL_BIN="{{ bin }}"
+    EOF
 
-# Build and write chainboot to an SD Card, then eject the SD Card volume
-[group("hw")]
-cb-eject:
-    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot sdeject
-
-# Build default hw kernel
-[group("hw")]
-build:
-    cargo make {{ make-opts }} build
-
-# Build default hw kernel (quietly)
-[group("hw")]
-qbuild:
-    cargo make {{ make-opts }} build
-
-alias b := build
-
-# Clean project
-[group("maintenance")]
-clean:
-    cargo make {{ make-opts }} clean
-
-# Run clippy checks
-[group("maintenance")]
-clippy:
-    # TODO: use cargo-hack
-    cargo make {{ make-opts }} clippy
-    env CLIPPY_FEATURES=noserial cargo make {{ make-opts }} clippy
-    env CLIPPY_FEATURES=qemu cargo make {{ make-opts }} clippy
-    env CLIPPY_FEATURES=noserial,qemu cargo make {{ make-opts }} clippy
-    env CLIPPY_FEATURES=jtag cargo make {{ make-opts }} clippy
-    env CLIPPY_FEATURES=noserial,jtag cargo make {{ make-opts }} clippy
-
-# Run shortened clippy checks
-[group("maintenance")]
-clippy-pre-push:
-    cargo make {{ make-opts }} clippy
-
-# Run tests in QEMU
+# Build and run kernel in QEMU with serial port emulation
 [group("emu")]
-test:
-    cargo make {{ make-opts }} test
+zellij: (build 'rpi3' 'qemu') (_write-zellij-config kernel_bin qemu_disasm_gdb rpi3_dtb)
+    zellij --layout emulation/layout.zellij
 
-alias disasm := hopper
+alias z-qemu := zellij
 
-# Build and disassemble kernel
+# Build and run chainboot in QEMU with serial port emulation
+[group("emu")]
+cb-zellij: (build-chainboot 'rpi3' 'qemu') (_write-zellij-config chainboot_bin qemu_disasm rpi3_dtb)
+    zellij --layout emulation/layout.zellij
+
+# Run chainboot with GDB in zellij window
+[group("emu")]
+cb-zellij-gdb: (build-chainboot 'rpi3' 'qemu') (_write-zellij-config chainboot_bin qemu_disasm_gdb rpi3_dtb)
+    zellij --layout emulation/layout.zellij
+
+# === GDB ===
+
+[private]
+_write-gdb-config:
+    #!/usr/bin/env bash
+    mkdir -p "$(dirname "{{ gdb_connect }}")"
+    cat > "{{ gdb_connect }}" <<EOF
+    target extended-remote :5555
+    break *0x80000
+    break main
+    break init_thread_run
+    break cap_invoke_handler
+    EOF
+    @echo "🖌️ Generated GDB config file {{ gdb_connect }}"
+
+# Build and run kernel in GDB (connect to openocd or QEMU on port 5555)
 [group("debug")]
-hopper:
-    cargo make {{ make-opts }} xtool-hopper
+gdb: build _write-gdb-config
+    @pipx run gdbgui -g "{{ gdb }} -x '{{ gdb_connect }}' '{{ kernel_elf }}'"
+
+# Build and run chainboot in GDB
+[group("debug")]
+cb-gdb: build-chainboot _write-gdb-config
+    {{ gdb }} -x "{{ gdb_connect }}" "{{ chainboot_elf }}"
+
+# === SD Card ===
+
+# Build and write kernel to SD Card
+[group("hw")]
+device: build
+    cp "{{ kernel_bin }}" "{{ volume }}/kernel8.img"
+    @echo "{{copy_label}} copied kernel to {{ volume }}/kernel8.img"
+
+# Build and write kernel to SD Card, then eject
+[group("hw")]
+device-eject: device
+    diskutil ejectAll "{{ volume }}"
+
+# Build and write chainboot to SD Card, then eject
+[group("hw")]
+cb-eject: build-chainboot
+    cp "{{ chainboot_bin }}" "{{ volume }}/chain_boot_rpi4.img"
+    @echo "{{copy_label}} copied chainboot to {{ volume }}/chain_boot_rpi4.img"
+    diskutil ejectAll "{{ volume }}"
+
+# Build and boot via chainofcommand
+[group("hw")]
+boot: build chainofcommand
+    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel target/kernel.bin
+
+# === Openocd ===
+
+# Start openocd connected via JTAG
+[group("hw")]
+openocd board='rpi4':
+    {{ openocd_bin }} -f interface/jlink.cfg -f ../ocd/{{ board }}_target.cfg
 
 alias ocd := openocd
 
-# Start openocd (by default connected via JTAG to a target device)
-[group("hw")]
-openocd:
-    cargo make {{ make-opts }} openocd
+# === Testing ===
 
-# Build and run kernel in GDB using openocd or QEMU as target (gdb port 5555)
-[group("debug")]
-gdb:
-    cargo make {{ make-opts }} --makefile $(pwd)/nucleus/Makefile.toml --cwd nucleus gdb
+# Run all device tests in QEMU (rpi3) with all device features, plus host tool tests natively
+[group("emu")]
+test: test-device test-chainboot test-host
 
-# Build and run chainboot in GDB using openocd or QEMU as target (gdb port 5555)
-[group("debug")]
-cb-gdb:
-    cargo make {{ make-opts }} --makefile $(pwd)/bin/chainboot/Makefile.toml --cwd bin/chainboot gdb
+# Run device crate tests in QEMU (rpi3) --verbose
+[group("emu")]
+test-device:
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
+    cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
+      --workspace --exclude=chainofcommand --exclude=chainboot
 
-# Build and print all symbols in the kernel
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
+    cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
+    --workspace --exclude=chainofcommand --exclude=chainboot
+
+# Run chainboot tests in QEMU (rpi3) with its own linker script
+[group("emu")]
+test-chainboot:
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ chainboot_link }}" \
+    cargo test {{ target_json }} --features=qemu {{ rust_std }} \
+      -p chainboot
+
+# Run host tool tests natively
+[group("emu")]
+test-host:
+    cargo test -p chainofcommand
+
+# Test runner invoked by .cargo/config.toml runner
+[private]
+_test-runner binary_path:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name=$(basename "{{ binary_path }}")
+    bin="{{ justfile_directory() }}/target/${name}.bin"
+    {{ objcopy }} --strip-all -O binary "{{ binary_path }}" "${bin}"
+    echo "🚨 Running test: ${name}"
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "${bin}"
+
+# === Clippy ===
+
+# Cross-clippy a single feature set
+[private]
+_clippy-cross features='' board='rpi3':
+    RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+    cargo clippy {{ target_json }} \
+      {{ if features != '' { '--features=' + features } else { '' } }} \
+      {{ rust_std }} \
+      --workspace --exclude=chainofcommand \
+      -- --deny warnings --allow deprecated
+
+# Run clippy checks (all feature combos)
 [group("maintenance")]
-nm:
-    cargo make {{ make-opts }} xtool-nm
+clippy: (build 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3')
 
-# Run `cargo expand` on nucleus
+# Run shortened clippy (default features only, both boards)
+[group("maintenance")]
+clippy-pre-push: (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4')
+
+# Clippy for chainofcommand (host tool)
+[private]
+_clippy-coc:
+    cargo clippy -p chainofcommand -- --deny warnings --allow deprecated
+
+# === Maintenance & Tools ===
+
+# Build and disassemble kernel
+[group("debug")]
+hopper: build
+    hopper --loader ELF --executable "{{ kernel_elf }}"
+
+alias disasm := hopper
+
+# Build and print all symbols
+[group("maintenance")]
+nm: build
+    {{ nm }} "{{ kernel_elf }}" | sort -k 1 | rustfilt
+
+# Run `cargo expand` on kernel
 [group("maintenance")]
 expand:
-    cargo make {{ make-opts }} xtool-expand-target -- nucleus
-
-#==============================================================================
-# Modules dependency visualization
-#==============================================================================
-
-# Render modules dependency tree
-[group("modules")]
-modules:
-    cargo make {{ make-opts }} xtool-modules
-
-# Render modules dependency tree with versions
-[group("modules")]
-tree:
-    cargo tree
-
-[private]
-gen-deps-graph MOD:
-    cargo modules dependencies --max-depth 5 --no-sysroot --no-externs -p {{ MOD }} > target/{{ MOD }}.dot \
-    && dot -Tpng target/{{ MOD }}.dot -o target/{{ MOD }}.png
-
-# Render modules' usage graph
-[group("modules")]
-[macos]
-deps-graph MOD: (gen-deps-graph MOD)
-    open target/{{ MOD }}.png
-
-# Render modules' usage graph
-[group("modules")]
-[windows]
-deps-graph MOD: (gen-deps-graph MOD)
-    start target/{{ MOD }}.png
-
-# Render modules' usage graph
-[group("modules")]
-[linux]
-deps-graph MOD: (gen-deps-graph MOD)
-    xdg-open target/{{ MOD }}.png
-
-# Render modules symbol visibility
-[group("modules")]
-exports MOD:
-    cargo modules structure -p {{ MOD }}
-
-# Find orphan files in the module sources
-[group("modules")]
-orphans MOD:
-    cargo modules orphans -p {{ MOD }}
-
-# Modules dependency visualization end
-#==============================================================================
+    cargo expand {{ target_json }} --release -- kernel
 
 # Generate and open documentation
 [group("maintenance")]
 doc:
-    cargo make {{ make-opts }} docs-flow
+    cargo doc --open --no-deps {{ target_json }} {{ rust_std }}
+
+# Clean project
+[group("maintenance")]
+clean:
+    cargo clean
 
 # Check formatting
 [group("maintenance")]
 fmt-check:
-    cargo fmt -- --check
+    cargo +nightly fmt -- --check
 
 # Run lint tasks
 [group("maintenance")]
-lint: fmt-check clippy
+lint: fmt-check clippy _clippy-coc
 
 # Run pre-push local checks
 [group("ci")]
@@ -221,10 +324,62 @@ pre-push: fmt-check clippy-pre-push test
 [group("ci")]
 ci: clean lint build test
 
+# Update all dependencies
+[group("maintenance")]
+deps-up:
+    cargo update
+
+# === Modules dependency visualization ===
+
+# Render modules dependency tree
+[group("modules")]
+modules:
+    cargo modules tree
+
+# Render modules dependency tree with versions
+[group("modules")]
+tree:
+    cargo tree
+
+[private]
+_gen-deps-graph mod:
+    cargo modules dependencies --max-depth 5 --no-sysroot --no-externs -p {{ mod }} > target/{{ mod }}.dot \
+    && dot -Tpng target/{{ mod }}.dot -o target/{{ mod }}.png
+
+# Render modules' usage graph
+[group("modules")]
+[macos]
+deps-graph mod: (_gen-deps-graph mod)
+    open target/{{ mod }}.png
+
+# Render modules' usage graph
+[group("modules")]
+[windows]
+deps-graph mod: (_gen-deps-graph mod)
+    start target/{{ mod }}.png
+
+# Render modules' usage graph
+[group("modules")]
+[linux]
+deps-graph mod: (_gen-deps-graph mod)
+    xdg-open target/{{ mod }}.png
+
+# Render modules symbol visibility
+[group("modules")]
+exports mod:
+    cargo modules structure -p {{ mod }}
+
+# Find orphan files
+[group("modules")]
+orphans mod:
+    cargo modules orphans -p {{ mod }}
+
 # Prepare local dev tools and set-up git hooks
 [group("maintenance")]
 setup-local-dev:
-    commit-emoji --help || cargo install commit-emoji
+    which cargo-binstall || cargo install cargo-binstall
+    commit-emoji --help || cargo binstall -y commit-emoji
     commit-emoji -i
-    # Run local shortened clippy before pushing to remote
-    cp .hooks/pre-push .git/hooks/pre-push
+    cargo binstall -y cargo-binutils
+    # todo install rustfilt, what else?
+    # install pre-push git hook with `just pre-push`
