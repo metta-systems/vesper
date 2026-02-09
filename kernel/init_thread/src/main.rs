@@ -166,8 +166,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     }
 
     let mut dumper = device_tree.dumper(0);
-
-    dumper.dump_metadata();
+    // dumper.dump_metadata();
     dumper.dump_root().expect("oof");
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
@@ -188,6 +187,8 @@ pub fn init_main_el2(dtb: u32) -> ! {
     let _mem_node = mem_prop.node();
     // let parent_node = mem_node.parent_node();
 
+    // reg == region, usually defines LOC+SIZE unless #size-cells is set to 0
+    // can also be reg = <0x7e100000 0x00000114 0x7e00a000 0x00000024 >; to define two locations
     let reg_prop = device_tree
         .get_prop_by_path("/memory@0/reg")
         .expect("Unable to figure out memory-reg");
@@ -265,6 +266,64 @@ pub fn init_main_el2(dtb: u32) -> ! {
     });
 
     // Next step: parse DTB!
+    // iterate nodes, look for reg, status, compat props
+
+    // See https://mjmwired.net/kernel/Documentation/devicetree/bindings/display/brcm,bcm-vc4.txt
+    // All these DT thingies are Broadcom= and Linux-specific, so need to read both to decode anything useful.
+    // https://mjmwired.net/kernel/Documentation/devicetree/usage-model.rst <- entry point
+
+    // Gather and print the following info: reg (start + size) x times, phandle if any, name, compat
+    // Sort them by start address to get ordered device map.
+    //
+    // e.g.:
+    // mmcnr@7e300000 @ 0x7e300000 +0x100 ("brcm,bcm2835-mmc", "brcm,bcm2835-sdhci")
+    // [0x2f] mmc@7e300000 @ 0x7e300000 +0x100 ("brcm,bcm2835-mmc", "brcm,bcm2835-sdhci")
+    //
+    // To add later: clocks and interrupts, if any
+    // Print "-" prefix is status = disabled;
+
+    for entry in device_tree.nodes() {
+        if let Some(item) = entry.props().find(|p| p.name() == Ok("reg")) {
+            let compat_names = entry
+                .props()
+                .find(|p| p.name() == Ok("compatible"))
+                .and_then(|prop| prop.str().ok())
+                .unwrap_or("");
+            let phandle = entry
+                .props()
+                .find(|p| p.name() == Ok("phandle"))
+                .and_then(|prop| prop.phandle(0).ok());
+            let disabled = entry
+                .props()
+                .find(|p| p.name() == Ok("status"))
+                .and_then(|prop| prop.str().ok())
+                .and_then(|value| Some(value == "disabled"))
+                .unwrap_or(false);
+            let name = entry.name().unwrap();
+            let name = name.split_once('@').unwrap_or((name, "")).0;
+
+            let reg_prop = DeviceTreeProp::new(item);
+            for (mem_base, mem_size) in reg_prop.payload_pairs_iter() {
+                semi_println!(
+                    "{}[{:02x}] {:<15} @ {:#10x} +{} ({})",
+                    if disabled { "-" } else { " " },
+                    if let Some(phandle) = phandle {
+                        phandle
+                    } else {
+                        0
+                    },
+                    name,
+                    mem_base,
+                    mem_size,
+                    compat_names
+                );
+            }
+        }
+    }
+
+    semi_println!("");
+    semi_println!("");
+
     // unsafe {
     //     BOOT_INFO.dtb_size = dtb.total_size();
 
