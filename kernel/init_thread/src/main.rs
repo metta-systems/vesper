@@ -41,6 +41,7 @@ mod embed;
 mod loader;
 mod memory;
 mod paging;
+mod qsort;
 
 use {
     crate::boot_info::{BOOT_INFO, BootInfoMemRegion},
@@ -268,9 +269,31 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // Next step: parse DTB!
     // iterate nodes, look for reg, status, compat props
 
+    #[derive(Default, Copy, Clone)]
+    struct Node {
+        name: &'static str,
+        compat: &'static str,
+        phandle: u32,
+        disabled: bool,
+        start: u64,
+        size: u64,
+    }
+
+    let mut nodes: [Node; 100] = [Node::default(); 100];
+    let mut num_nodes = 0;
+
     // See https://mjmwired.net/kernel/Documentation/devicetree/bindings/display/brcm,bcm-vc4.txt
     // All these DT thingies are Broadcom= and Linux-specific, so need to read both to decode anything useful.
     // https://mjmwired.net/kernel/Documentation/devicetree/usage-model.rst <- entry point
+
+    // The trick is that the kernel starts at the root of the tree and looks
+    // for nodes that have a 'compatible' property.  First, it is generally
+    // assumed that any node with a 'compatible' property represents a device
+    // of some kind, and second, it can be assumed that any node at the root
+    // of the tree is either directly attached to the processor bus, or is a
+    // miscellaneous system device that cannot be described any other way.
+    // For each of these nodes, Linux allocates and registers a
+    // platform_device, which in turn may get bound to a platform_driver.
 
     // Gather and print the following info: reg (start + size) x times, phandle if any, name, compat
     // Sort them by start address to get ordered device map.
@@ -304,25 +327,47 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
             let reg_prop = DeviceTreeProp::new(item);
             for (mem_base, mem_size) in reg_prop.payload_pairs_iter() {
-                semi_println!(
-                    "{}[{:02x}] {:<15} @ {:#10x} +{} ({})",
-                    if disabled { "-" } else { " " },
-                    if let Some(phandle) = phandle {
+                nodes[num_nodes] = Node {
+                    start: mem_base,
+                    size: mem_size,
+                    name: name,
+                    compat: compat_names,
+                    disabled,
+                    phandle: if let Some(phandle) = phandle {
                         phandle
                     } else {
                         0
                     },
-                    name,
-                    mem_base,
-                    mem_size,
-                    compat_names
-                );
+                };
+                num_nodes += 1;
             }
         }
     }
 
+    let mut nodes = &mut nodes[..num_nodes];
+
+    qsort::sort(nodes, |l, h| l.start.cmp(&h.start));
+
+    for node in nodes {
+        semi_println!(
+            "{}[{:02x}] {:<22} @ {:#10x} +{} ({})",
+            if node.disabled { "-" } else { " " },
+            node.phandle,
+            node.name,
+            node.start,
+            node.size,
+            node.compat
+        );
+    }
+
     semi_println!("");
     semi_println!("");
+
+    for entry in device_tree.nodes() {
+        if entry.name() == Ok("chosen") {
+            semi_println!("Found /chosen node");
+        }
+    }
 
     // unsafe {
     //     BOOT_INFO.dtb_size = dtb.total_size();
