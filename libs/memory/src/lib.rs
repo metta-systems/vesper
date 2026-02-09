@@ -29,11 +29,11 @@ pub use {
     arch_trait::{EntryKind, LevelCapabilities, TranslationArch},
     error::TableError,
     table::{Table, TableRef},
-    walk::{TranslationResult, translate},
+    walk::{TranslationResult, translate, translate_hashed},
 };
 
 // Re-export arch implementations.
 #[cfg(target_arch = "aarch64")]
 pub use arch::aarch64::{Aarch64_4K, features, mmu};
 
-pub use arch::{riscv64::RiscV_Sv48, x86_64::X86_64_4K};
+pub use arch::{powerpc::PowerPC_970, riscv64::RiscV_Sv48, x86_64::X86_64_4K};

@@ -17,6 +17,10 @@ use {
 /// The level is stored as a runtime value so that all table capabilities
 /// can be stored uniformly in the capability system without needing
 /// separate types per level.
+///
+/// For architectures with `ENTRY_WIDTH > 1` (e.g. PowerPC HPT with 16-byte
+/// PTEs), the slice contains `entries_per_table * ENTRY_WIDTH` u64 words
+/// and entry access uses sub-slices of width `ENTRY_WIDTH`.
 pub struct Table<'a, A: TranslationArch> {
     entries: &'a mut [u64],
     level: usize,
@@ -41,7 +45,7 @@ impl<'a, A: TranslationArch> Table<'a, A> {
         if level >= A::NUM_LEVELS {
             return Err(TableError::InvalidLevel);
         }
-        let expected = A::entries_per_table(level);
+        let expected = A::entries_per_table(level) * A::ENTRY_WIDTH;
         if memory.len() != expected {
             return Err(TableError::InvalidTableSize);
         }
@@ -66,7 +70,7 @@ impl<'a, A: TranslationArch> Table<'a, A> {
 
     /// Number of entries in this table.
     pub fn num_entries(&self) -> usize {
-        self.entries.len()
+        self.entries.len() / A::ENTRY_WIDTH
     }
 
     /// What this level supports.
@@ -75,17 +79,29 @@ impl<'a, A: TranslationArch> Table<'a, A> {
     }
 
     /// Read the raw u64 value at the given index.
+    /// For architectures with `ENTRY_WIDTH > 1`, returns only the first word.
+    /// Use `read_raw_wide` for the full entry.
     pub fn read_raw(&self, index: usize) -> Result<u64, TableError> {
+        let offset = index * A::ENTRY_WIDTH;
         self.entries
-            .get(index)
+            .get(offset)
             .copied()
+            .ok_or(TableError::IndexOutOfBounds)
+    }
+
+    /// Read the raw u64 words for the entry at the given index.
+    /// Returns a slice of `ENTRY_WIDTH` words.
+    pub fn read_raw_wide(&self, index: usize) -> Result<&[u64], TableError> {
+        let offset = index * A::ENTRY_WIDTH;
+        self.entries
+            .get(offset..offset + A::ENTRY_WIDTH)
             .ok_or(TableError::IndexOutOfBounds)
     }
 
     /// Read and decode the entry at the given index.
     pub fn read_entry(&self, index: usize) -> Result<EntryKind, TableError> {
-        let raw = self.read_raw(index)?;
-        Ok(A::decode_entry(raw, self.level))
+        let raw = self.read_raw_wide(index)?;
+        Ok(A::decode_entry_wide(raw, self.level))
     }
 
     /// Write a table pointer entry at the given index.
@@ -99,14 +115,16 @@ impl<'a, A: TranslationArch> Table<'a, A> {
         if !A::level_capabilities(self.level).supports_table_pointer {
             return Err(TableError::TablePointerNotSupported);
         }
+        let offset = index * A::ENTRY_WIDTH;
         let slot = self
             .entries
-            .get_mut(index)
+            .get(offset..offset + A::ENTRY_WIDTH)
             .ok_or(TableError::IndexOutOfBounds)?;
-        if A::decode_entry(*slot, self.level) != EntryKind::Invalid {
+        if A::decode_entry_wide(slot, self.level) != EntryKind::Invalid {
             return Err(TableError::EntryAlreadyValid);
         }
-        *slot = A::encode_table_entry(next_table_phys, self.level);
+        let encoded = A::encode_table_entry(next_table_phys, self.level);
+        self.entries[offset] = encoded;
         Ok(())
     }
 
@@ -123,45 +141,72 @@ impl<'a, A: TranslationArch> Table<'a, A> {
         if !caps.supports_block {
             return Err(TableError::BlockNotSupported);
         }
+        let offset = index * A::ENTRY_WIDTH;
         let slot = self
             .entries
-            .get_mut(index)
+            .get(offset..offset + A::ENTRY_WIDTH)
             .ok_or(TableError::IndexOutOfBounds)?;
-        if A::decode_entry(*slot, self.level) != EntryKind::Invalid {
+        if A::decode_entry_wide(slot, self.level) != EntryKind::Invalid {
             return Err(TableError::EntryAlreadyValid);
         }
         // Use page encoding at the leaf level, block encoding otherwise.
-        *slot = if self.level == A::NUM_LEVELS - 1 {
-            A::encode_page_entry(phys, attr)
+        if self.level == A::NUM_LEVELS - 1 || A::ENTRY_WIDTH > 1 {
+            let buf = self
+                .entries
+                .get_mut(offset..offset + A::ENTRY_WIDTH)
+                .ok_or(TableError::IndexOutOfBounds)?;
+            A::encode_page_entry_wide(phys, attr, buf);
         } else {
-            A::encode_block_entry(phys, attr, self.level)
+            self.entries[offset] = A::encode_block_entry(phys, attr, self.level);
         };
         Ok(())
     }
 
     /// Clear (invalidate) the entry at the given index.
     pub fn clear_entry(&mut self, index: usize) -> Result<(), TableError> {
+        let offset = index * A::ENTRY_WIDTH;
         let slot = self
             .entries
-            .get_mut(index)
+            .get_mut(offset..offset + A::ENTRY_WIDTH)
             .ok_or(TableError::IndexOutOfBounds)?;
-        *slot = 0;
+        slot.fill(0);
         Ok(())
     }
 
     /// Write a raw u64 value at the given index.
     ///
     /// This bypasses all validation — use only when you know exactly
-    /// what descriptor bits to set.
+    /// what descriptor bits to set. For architectures with `ENTRY_WIDTH > 1`,
+    /// this only writes the first word; use `write_raw_wide` for all words.
     ///
     /// # Safety
     /// The caller must ensure the raw value is a valid descriptor for this level.
     pub unsafe fn write_raw(&mut self, index: usize, value: u64) -> Result<(), TableError> {
+        let offset = index * A::ENTRY_WIDTH;
         let slot = self
             .entries
-            .get_mut(index)
+            .get_mut(offset)
             .ok_or(TableError::IndexOutOfBounds)?;
         *slot = value;
+        Ok(())
+    }
+
+    /// Write raw u64 words at the given index.
+    ///
+    /// # Safety
+    /// The caller must ensure the raw values form a valid descriptor for this level.
+    pub unsafe fn write_raw_wide(
+        &mut self,
+        index: usize,
+        values: &[u64],
+    ) -> Result<(), TableError> {
+        debug_assert_eq!(values.len(), A::ENTRY_WIDTH);
+        let offset = index * A::ENTRY_WIDTH;
+        let slot = self
+            .entries
+            .get_mut(offset..offset + A::ENTRY_WIDTH)
+            .ok_or(TableError::IndexOutOfBounds)?;
+        slot.copy_from_slice(values);
         Ok(())
     }
 
@@ -169,9 +214,9 @@ impl<'a, A: TranslationArch> Table<'a, A> {
     pub fn iter(&self) -> impl Iterator<Item = (usize, EntryKind)> + '_ {
         let level = self.level;
         self.entries
-            .iter()
+            .chunks_exact(A::ENTRY_WIDTH)
             .enumerate()
-            .map(move |(i, &raw)| (i, A::decode_entry(raw, level)))
+            .map(move |(i, chunk)| (i, A::decode_entry_wide(chunk, level)))
     }
 
     /// Iterate over only valid (non-invalid) entries.
@@ -195,7 +240,7 @@ impl<'a, A: TranslationArch> TableRef<'a, A> {
         if level >= A::NUM_LEVELS {
             return Err(TableError::InvalidLevel);
         }
-        let expected = A::entries_per_table(level);
+        let expected = A::entries_per_table(level) * A::ENTRY_WIDTH;
         if entries.len() != expected {
             return Err(TableError::InvalidTableSize);
         }
@@ -211,27 +256,35 @@ impl<'a, A: TranslationArch> TableRef<'a, A> {
     }
 
     pub fn num_entries(&self) -> usize {
-        self.entries.len()
+        self.entries.len() / A::ENTRY_WIDTH
     }
 
     pub fn read_raw(&self, index: usize) -> Result<u64, TableError> {
+        let offset = index * A::ENTRY_WIDTH;
         self.entries
-            .get(index)
+            .get(offset)
             .copied()
             .ok_or(TableError::IndexOutOfBounds)
     }
 
+    pub fn read_raw_wide(&self, index: usize) -> Result<&[u64], TableError> {
+        let offset = index * A::ENTRY_WIDTH;
+        self.entries
+            .get(offset..offset + A::ENTRY_WIDTH)
+            .ok_or(TableError::IndexOutOfBounds)
+    }
+
     pub fn read_entry(&self, index: usize) -> Result<EntryKind, TableError> {
-        let raw = self.read_raw(index)?;
-        Ok(A::decode_entry(raw, self.level))
+        let raw = self.read_raw_wide(index)?;
+        Ok(A::decode_entry_wide(raw, self.level))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (usize, EntryKind)> + '_ {
         let level = self.level;
         self.entries
-            .iter()
+            .chunks_exact(A::ENTRY_WIDTH)
             .enumerate()
-            .map(move |(i, &raw)| (i, A::decode_entry(raw, level)))
+            .map(move |(i, chunk)| (i, A::decode_entry_wide(chunk, level)))
     }
 
     pub fn iter_valid(&self) -> impl Iterator<Item = (usize, EntryKind)> + '_ {
