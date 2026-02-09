@@ -121,11 +121,11 @@ impl<'a, 'i: 'a, 'dt: 'i> DeviceTreeProp<'a, 'i, 'dt> {
         let size_cells = get_size_cells(self.node());
 
         // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
-        libqemu::semi_println!(
-            "Address cells: {}, size cells {}",
-            address_cells,
-            size_cells
-        );
+        // libqemu::semi_println!(
+        //     "Address cells: {}, size cells {}",
+        //     address_cells,
+        //     size_cells
+        // );
 
         PayloadPairsIter::new(&self.0, address_cells, size_cells)
     }
@@ -190,7 +190,7 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
     type Item = (u64, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
-        libqemu::semi_println!("Offset {}, total {}", self.offset, self.total);
+        // libqemu::semi_println!("Offset {}, total {}", self.offset, self.total);
         if self.offset >= self.total {
             // @todo check for sufficient space for the following read or the reads below may fail!
             return None;
@@ -237,7 +237,27 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
                     self.offset / STEP + 2,
                 )
             }
-            _ => panic!("oooops"),
+            (1, 0) => {
+                const SIZE: usize = 4;
+                self.prop
+                    .u32(self.offset / STEP)
+                    .map(|first| {
+                        self.offset += SIZE; // emulate read_pair()
+                        (first as u64, 0)
+                    })
+                    .ok()
+            }
+            (2, 0) => {
+                const SIZE: usize = 8;
+                self.prop
+                    .u64(self.offset / STEP)
+                    .map(|first| {
+                        self.offset += SIZE; // emulate read_pair()
+                        (first, 0)
+                    })
+                    .ok()
+            }
+            _ => panic!("oooops, (0,x) cells are not supported"),
         }
     }
 }
