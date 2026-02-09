@@ -36,4 +36,4 @@ pub use {
 #[cfg(target_arch = "aarch64")]
 pub use arch::aarch64::{Aarch64_4K, features, mmu};
 
-pub use arch::x86_64::X86_64_4K;
+pub use arch::{riscv64::RiscV_Sv48, x86_64::X86_64_4K};
