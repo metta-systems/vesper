@@ -44,7 +44,7 @@ mod paging;
 mod qsort;
 
 use {
-    crate::boot_info::{BOOT_INFO, BootInfoMemRegion},
+    crate::boot_info::BOOT_INFO,
     aarch64_cpu::registers::{SPSR_EL2, Writeable},
     core::{cell::UnsafeCell, panic::PanicInfo, ptr::write_bytes, slice},
     device_tree::{DeviceTree, DeviceTreeProp},
@@ -57,7 +57,7 @@ use {
     libboot::entry,
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
-    libmapping::{AttributeFields, MemAttributes},
+    libmapping::{AccessPermissions, AttributeFields, MemAttributes},
     libobject::{DebugConsoleKey, KeySlot},
     libqemu::semi_println,
     libsyscall::protected_call6,
@@ -80,12 +80,9 @@ fn dump_memory_map() {
     // Output the memory map as we could derive from FDT and information about our loaded image
     // Use it to imagine how the memmap would look like in the end.
     BOOT_INFO.lock(|bi| {
+        bi.compact();
         bi.sort();
-        for x in bi.regions {
-            // if !x.is_empty() {
-            semi_println!("{}", x);
-            // }
-        }
+        bi.dump();
     });
 }
 
@@ -215,12 +212,12 @@ pub fn init_main_el2(dtb: u32) -> ! {
         semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
         total_memory += mem_size;
         BOOT_INFO.lock(|bi| {
-            bi.insert_region(BootInfoMemRegion {
-                start_inclusive: PhysAddr::new(mem_addr),
-                end_exclusive: PhysAddr::new(mem_addr + mem_size),
-                attributes: AttributeFields::default(),
-                name: "RAM",
-            })
+            bi.insert_free_region(
+                PhysAddr::new(mem_addr),
+                PhysAddr::new(mem_addr + mem_size),
+                AttributeFields::default(),
+                "RAM",
+            )
             .expect("tough luck");
         });
     }
@@ -231,12 +228,12 @@ pub fn init_main_el2(dtb: u32) -> ! {
         let address: u64 = entry.address.into();
         semi_println!("Reserved memory: {size:?} bytes at {address:?}");
         BOOT_INFO.lock(|bi| {
-            bi.remove_region(BootInfoMemRegion::at(
+            bi.insert_used_region(
                 PhysAddr::new(entry.address.into()),
                 PhysAddr::new(u64::from(entry.address) + u64::from(entry.size)),
-                false,
+                AttributeFields::default(),
                 "Reserved",
-            ))
+            )
             .expect("tough luck");
         });
     }
@@ -257,12 +254,12 @@ pub fn init_main_el2(dtb: u32) -> ! {
         dtb_ptr as usize
     ); // also include the raw_slice allocated bit
     BOOT_INFO.lock(|bi| {
-        bi.insert_region(BootInfoMemRegion::at(
+        bi.insert_used_region(
             PhysAddr::new(dtb_ptr as u64),
             PhysAddr::new(dtb_ptr as u64 + device_tree.fdt().totalsize() as u64),
-            false,
+            AttributeFields::default(),
             "DTB",
-        ))
+        )
         .expect("tough luck");
     });
 
@@ -362,15 +359,18 @@ pub fn init_main_el2(dtb: u32) -> ! {
             node.compat
         );
 
-        if node.name != "memory" {
+        if node.name != "memory" && node.name != "gpio" && node.name != "mmc" && node.name != "smi"
+        {
             BOOT_INFO.lock(|bi| {
-                bi.insert_region(BootInfoMemRegion::at(
+                bi.insert_used_region(
                     PhysAddr::new(node.start),
                     PhysAddr::new(node.start + node.size),
-                    false,
+                    AttributeFields {
+                        mem_attributes: MemAttributes::Device,
+                        ..AttributeFields::default()
+                    },
                     node.name,
-                    MemAttributes::Device,
-                ))
+                )
                 .expect("tough luck");
             });
         }
@@ -424,9 +424,6 @@ pub fn init_main_el2(dtb: u32) -> ! {
     //     }
     // }
 
-    semi_println!("init_main: BOOT_INFO map before kernel load");
-    dump_memory_map();
-
     // ═══════════════════════════════════════════════════════════════
     // PHASE 1: Load kernel
     // ═══════════════════════════════════════════════════════════════
@@ -449,6 +446,41 @@ pub fn init_main_el2(dtb: u32) -> ! {
         let el1_stack_size = el1_stack_size * 4096; // 64KiB stack
         (el1_stack, el1_stack_size)
     };
+
+    // Mark kernel memory used:
+    BOOT_INFO.lock(|bi| {
+        for sec in kernel_layout.iter_sections() {
+            bi.insert_used_region(
+                sec.phys_start,
+                sec.phys_start + sec.size,
+                AttributeFields {
+                    acc_perms: if sec.permissions.writable {
+                        AccessPermissions::ReadWrite
+                    } else {
+                        AccessPermissions::ReadOnly
+                    },
+                    executable: sec.permissions.executable,
+                    ..Default::default()
+                },
+                sec.name,
+            );
+        }
+        bi.insert_used_region(
+            kernel_layout.bss_phys,
+            kernel_layout.bss_phys + kernel_layout.bss_size,
+            AttributeFields::defaulted(),
+            "Nucleus BSS",
+        );
+        bi.insert_used_region(
+            el1_stack,
+            el1_stack + el1_stack_size,
+            AttributeFields::defaulted(),
+            "Nucleus stack",
+        );
+    });
+
+    semi_println!("init_main: BOOT_INFO map after kernel load");
+    dump_memory_map();
 
     let mut mmu_setup = paging::MmuSetup::new(&mut allocator).expect("Failed to create MMU setup");
     semi_println!("init_main: Created MmuSetup");
