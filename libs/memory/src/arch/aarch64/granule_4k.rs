@@ -1,14 +1,15 @@
 use {
+    super::common::*,
     crate::arch_trait::{EntryKind, LevelCapabilities, TranslationArch},
     libaddress::{PhysAddr, VirtAddr},
-    libmapping::{AccessPermissions, AttributeFields, MemAttributes},
+    libmapping::AttributeFields,
 };
 
 // ---------------------------------------------------------------------------
-// AArch64 descriptor bit layout (Stage 1, 4KiB granule)
+// AArch64 Stage 1, 4KiB granule
 // ---------------------------------------------------------------------------
 //
-//  With 4K granule, virtual address split:
+//  Virtual address split (48-bit VA):
 //
 //    63-48    47-39    38-30    29-21    20-12    11-0
 //    signx     L0       L1       L2       L3      off
@@ -19,63 +20,11 @@ use {
 //  L1: table pointer or 1GiB block
 //  L2: table pointer or 2MiB block
 //  L3: 4KiB page only (TYPE bit 1 = 1 for valid page)
-//
-//  Descriptor formats (simplified):
-//
-//  Table descriptor (L0/L1/L2):
-//    [63:48]  upper attributes (ignored here)
-//    [47:12]  next-level table address (4K aligned)
-//    [1]      TYPE = 1 (table)
-//    [0]      VALID = 1
-//
-//  Block descriptor (L1/L2):
-//    [63:48]  upper attributes (UXN, PXN, ...)
-//    [47:N]   output address (N=30 for L1 1GiB, N=21 for L2 2MiB)
-//    [11:2]   lower attributes (AF, SH, AP, AttrIndx)
-//    [1]      TYPE = 0 (block)
-//    [0]      VALID = 1
-//
-//  Page descriptor (L3):
-//    [63:48]  upper attributes
-//    [47:12]  output address (4K aligned)
-//    [11:2]   lower attributes
-//    [1]      TYPE = 1 (page, note: different meaning than in table descriptor)
-//    [0]      VALID = 1
 
-// Descriptor bit positions
-const VALID_BIT: u64 = 1 << 0;
-const TYPE_BIT: u64 = 1 << 1;
-
-// Lower attribute bits
-const ATTR_INDX_SHIFT: u64 = 2;
-const AP_SHIFT: u64 = 6;
-const SH_SHIFT: u64 = 8;
-const AF_BIT: u64 = 1 << 10;
-
-// Upper attribute bits
-const PXN_BIT: u64 = 1 << 53;
-const UXN_BIT: u64 = 1 << 54;
-
-// Address masks (4K granule)
-const TABLE_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000; // [47:12]
+// Address masks (4K granule specific)
 const L1_BLOCK_ADDR_MASK: u64 = 0x0000_FFFF_C000_0000; // [47:30]
 const L2_BLOCK_ADDR_MASK: u64 = 0x0000_FFFF_FFE0_0000; // [47:21]
 const L3_PAGE_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000; // [47:12]
-
-// AP field values
-const AP_RW_EL1: u64 = 0b00 << AP_SHIFT;
-const AP_RO_EL1: u64 = 0b10 << AP_SHIFT;
-
-// SH field values
-const SH_INNER: u64 = 0b11 << SH_SHIFT;
-const SH_OUTER: u64 = 0b10 << SH_SHIFT;
-
-/// MAIR_EL1 attribute indices, matching the MAIR setup in mmu.rs.
-pub mod mair {
-    pub const NORMAL: u64 = 0;
-    pub const NORMAL_NON_CACHEABLE: u64 = 1;
-    pub const DEVICE_NGNRE: u64 = 2;
-}
 
 // Block sizes
 const SIZE_4K: usize = 4096;
@@ -92,7 +41,7 @@ impl TranslationArch for Aarch64_4K {
     const NUM_LEVELS: usize = 4;
 
     fn entries_per_table(_level: usize) -> usize {
-        512 // All levels have 512 entries with 4K granule
+        512
     }
 
     fn table_alignment(_level: usize) -> usize {
@@ -118,7 +67,7 @@ impl TranslationArch for Aarch64_4K {
             },
             3 => LevelCapabilities {
                 supports_table_pointer: false,
-                supports_block: true, // "block" at L3 is a 4K page
+                supports_block: true,
                 block_size: SIZE_4K,
             },
             _ => LevelCapabilities {
@@ -146,7 +95,6 @@ impl TranslationArch for Aarch64_4K {
         }
 
         match level {
-            // L0: TYPE=1 means table, TYPE=0 is reserved/invalid
             0 => {
                 if raw & TYPE_BIT != 0 {
                     EntryKind::Table(PhysAddr::new(raw & TABLE_ADDR_MASK))
@@ -154,7 +102,6 @@ impl TranslationArch for Aarch64_4K {
                     EntryKind::Invalid
                 }
             }
-            // L1: TYPE=1 means table, TYPE=0 means 1GiB block
             1 => {
                 if raw & TYPE_BIT != 0 {
                     EntryKind::Table(PhysAddr::new(raw & TABLE_ADDR_MASK))
@@ -162,7 +109,6 @@ impl TranslationArch for Aarch64_4K {
                     EntryKind::Block(PhysAddr::new(raw & L1_BLOCK_ADDR_MASK))
                 }
             }
-            // L2: TYPE=1 means table, TYPE=0 means 2MiB block
             2 => {
                 if raw & TYPE_BIT != 0 {
                     EntryKind::Table(PhysAddr::new(raw & TABLE_ADDR_MASK))
@@ -170,7 +116,6 @@ impl TranslationArch for Aarch64_4K {
                     EntryKind::Block(PhysAddr::new(raw & L2_BLOCK_ADDR_MASK))
                 }
             }
-            // L3: TYPE=1 means valid page, TYPE=0 is reserved/invalid
             3 => {
                 if raw & TYPE_BIT != 0 {
                     EntryKind::Block(PhysAddr::new(raw & L3_PAGE_ADDR_MASK))
@@ -199,7 +144,6 @@ impl TranslationArch for Aarch64_4K {
             addr & !addr_mask == 0,
             "Block address not aligned for level"
         );
-        // TYPE=0 for block, VALID=1
         (addr & addr_mask) | encode_attributes(attr) | AF_BIT | VALID_BIT
     }
 
@@ -209,7 +153,6 @@ impl TranslationArch for Aarch64_4K {
             addr & !L3_PAGE_ADDR_MASK == 0,
             "Page address not 4K aligned"
         );
-        // TYPE=1 for page at L3, VALID=1
         (addr & L3_PAGE_ADDR_MASK) | encode_attributes(attr) | AF_BIT | TYPE_BIT | VALID_BIT
     }
 
@@ -235,42 +178,4 @@ impl TranslationArch for Aarch64_4K {
         };
         PhysAddr::new(raw & mask)
     }
-}
-
-/// Encode `AttributeFields` into the lower+upper attribute bits of a
-/// block/page descriptor.
-fn encode_attributes(attr: AttributeFields) -> u64 {
-    let mut bits: u64 = 0;
-
-    // Memory type -> MAIR index + shareability
-    match attr.mem_attributes {
-        MemAttributes::CacheableDRAM => {
-            bits |= mair::NORMAL << ATTR_INDX_SHIFT;
-            bits |= SH_INNER;
-        }
-        MemAttributes::NonCacheableDRAM => {
-            bits |= mair::NORMAL_NON_CACHEABLE << ATTR_INDX_SHIFT;
-            bits |= SH_INNER;
-        }
-        MemAttributes::Device => {
-            bits |= mair::DEVICE_NGNRE << ATTR_INDX_SHIFT;
-            bits |= SH_OUTER;
-        }
-    }
-
-    // Access permissions
-    bits |= match attr.acc_perms {
-        AccessPermissions::ReadWrite => AP_RW_EL1,
-        AccessPermissions::ReadOnly => AP_RO_EL1,
-    };
-
-    // Execute-never
-    if attr.execute_never {
-        bits |= PXN_BIT;
-    }
-
-    // Always set UXN until userspace is implemented
-    bits |= UXN_BIT;
-
-    bits
 }

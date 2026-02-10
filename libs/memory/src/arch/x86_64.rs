@@ -247,7 +247,7 @@ fn encode_attributes(attr: AttributeFields) -> u64 {
     }
 
     // Execute-never via NX bit
-    if attr.execute_never {
+    if !attr.executable {
         bits |= NO_EXECUTE;
     }
 

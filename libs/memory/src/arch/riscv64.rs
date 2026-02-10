@@ -230,7 +230,7 @@ fn encode_attributes(attr: AttributeFields) -> u64 {
         AccessPermissions::ReadOnly => bits |= R,
     }
 
-    if !attr.execute_never {
+    if attr.executable {
         bits |= X;
     }
 

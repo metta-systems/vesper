@@ -240,7 +240,7 @@ impl TranslationArch for PowerPC_970 {
         let mut pte_lo = addr & PTE_LO_RPGN_MASK;
         pte_lo |= encode_wimg(attr.mem_attributes);
         pte_lo |= encode_pp(attr.acc_perms);
-        if attr.execute_never {
+        if !attr.executable {
             pte_lo |= PTE_LO_NOEXEC;
         }
         // Pre-set Referenced and Changed to avoid software faults.
