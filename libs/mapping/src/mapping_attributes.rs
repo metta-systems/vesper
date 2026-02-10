@@ -14,10 +14,10 @@ pub enum MemAttributes {
 /// Architecture agnostic memory region access permissions.
 #[derive(Copy, Clone, Debug, Eq, PartialOrd, PartialEq)]
 pub enum AccessPermissions {
-    /// Read-only access
-    ReadOnly,
     /// Read-write access
     ReadWrite,
+    /// Read-only access
+    ReadOnly,
 }
 
 /// Summary structure of memory region properties.
@@ -28,20 +28,29 @@ pub struct AttributeFields {
     /// Permissions
     pub acc_perms: AccessPermissions,
     /// Disable executable code in this region
-    pub execute_never: bool,
+    pub executable: bool,
+    /// Is the region occupied or free (use occupied for const init)
+    pub occupied: bool,
 }
 
 //--------------------------------------------------------------------------------------------------
 // Public Code
 //--------------------------------------------------------------------------------------------------
 
-impl Default for AttributeFields {
-    fn default() -> AttributeFields {
+impl AttributeFields {
+    pub const fn defaulted() -> AttributeFields {
         AttributeFields {
             mem_attributes: MemAttributes::CacheableDRAM,
             acc_perms: AccessPermissions::ReadWrite,
-            execute_never: true,
+            executable: false,
+            occupied: false,
         }
+    }
+}
+
+impl Default for AttributeFields {
+    fn default() -> Self {
+        Self::defaulted()
     }
 }
 
@@ -59,8 +68,10 @@ impl fmt::Display for AttributeFields {
             AccessPermissions::ReadWrite => "RW",
         };
 
-        let xn = if self.execute_never { "PXN" } else { "PX" };
+        let xn = if self.executable { "PX" } else { "PXN" };
 
-        write!(f, "{attr: <3} {acc_p} {xn: <3}")
+        let marker = if self.occupied { "Used" } else { "Free" };
+
+        write!(f, "({marker}) {attr: <3} {acc_p} {xn: <3}")
     }
 }

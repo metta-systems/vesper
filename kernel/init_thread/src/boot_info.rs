@@ -1,97 +1,18 @@
 //! Boot regions
 //!
 //! Define a map of memory regions used during boot allocations.
+//!
+//! Insert sections that are either "free" or "used", disparate used sections can not overlap,
+//! overlapping free sections are merged (unless they have different MemAttributes).
+//!
 use {
     core::{cell::LazyCell, fmt},
     libaddress::PhysAddr,
     liblocking::IRQSafeNullLock,
+    libmapping::{AccessPermissions, AttributeFields, MemAttributes},
+    libqemu::{semi_print, semi_println},
     snafu::Snafu,
 };
-
-// @todo These are copied from memory/mod.rs Descriptor helper structs:
-
-/// Memory region attributes.
-#[derive(Copy, Clone)]
-pub enum MemAttributes {
-    /// Regular memory
-    CacheableDRAM,
-    /// Memory without caching
-    NonCacheableDRAM,
-    /// Device memory
-    Device,
-}
-
-/// Memory region access permissions.
-#[derive(Copy, Clone)]
-pub enum AccessPermissions {
-    /// Read-write access
-    ReadWrite,
-    /// Read-only access
-    ReadOnly,
-}
-
-/// Summary structure of memory region properties.
-#[derive(Copy, Clone)]
-pub struct AttributeFields {
-    /// Attributes
-    pub mem_attributes: MemAttributes,
-    /// Permissions
-    pub acc_perms: AccessPermissions,
-    /// Allow executable code in this region
-    pub executable: bool,
-    /// This memory region is occupied
-    pub occupied: bool,
-}
-
-impl Default for AttributeFields {
-    fn default() -> Self {
-        Self::defaulted()
-    }
-}
-
-impl AttributeFields {
-    /// Create zero-initialized attribute structure.
-    pub const fn defaulted() -> Self {
-        Self {
-            mem_attributes: MemAttributes::CacheableDRAM,
-            acc_perms: AccessPermissions::ReadWrite,
-            executable: false,
-            occupied: false,
-        }
-    }
-}
-
-impl fmt::Debug for MemAttributes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let attr = match self {
-            MemAttributes::CacheableDRAM => "C",
-            MemAttributes::NonCacheableDRAM => "NC",
-            MemAttributes::Device => "Dev",
-        };
-        write!(f, "{: <3}", attr)
-    }
-}
-
-impl fmt::Debug for AccessPermissions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let acc_p = match self {
-            AccessPermissions::ReadOnly => "RO",
-            AccessPermissions::ReadWrite => "RW",
-        };
-        write!(f, "{}", acc_p)
-    }
-}
-
-impl fmt::Debug for AttributeFields {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AttributeFields")
-            .field("mem_attributes", &self.mem_attributes)
-            .field("acc_perms", &self.acc_perms)
-            .field("executable", &self.executable)
-            .field("occupied", &self.occupied)
-            .finish()
-    }
-}
 
 //=================================================================================================
 // BootInfoMemRegion
@@ -105,6 +26,7 @@ pub struct BootInfoMemRegion {
     /// Region end is exclusive.
     pub end_exclusive: PhysAddr,
     pub attributes: AttributeFields,
+    pub name: &'static str,
 }
 
 impl BootInfoMemRegion {
@@ -114,13 +36,19 @@ impl BootInfoMemRegion {
             start_inclusive: PhysAddr::zero(),
             end_exclusive: PhysAddr::zero(),
             attributes: AttributeFields::defaulted(),
+            name: "",
         }
     }
 
     /// Create an occupied or free region with start and end.
     /// Region is in range [start, end), that is, for start 0x0 and end 0x2000 the region will
     /// occupy memory between addresses 0x0 and 0x1fff.
-    pub fn at(start_inclusive: PhysAddr, end_exclusive: PhysAddr, free: bool) -> Self {
+    pub fn at(
+        start_inclusive: PhysAddr,
+        end_exclusive: PhysAddr,
+        free: bool,
+        name: &'static str,
+    ) -> Self {
         Self {
             start_inclusive: start_inclusive.min(end_exclusive),
             end_exclusive: end_exclusive.max(start_inclusive),
@@ -128,6 +56,7 @@ impl BootInfoMemRegion {
                 occupied: !free,
                 ..AttributeFields::default()
             },
+            name,
         }
     }
 
@@ -143,7 +72,10 @@ impl BootInfoMemRegion {
 
     /// Clear the region to empty.
     pub fn clear(&mut self) {
-        *self = Self::new();
+        self.start_inclusive = PhysAddr::zero();
+        self.end_exclusive = PhysAddr::zero();
+        self.attributes = AttributeFields::defaulted();
+        self.name = "";
     }
 
     /// Does this region intersect the given one?
@@ -160,49 +92,12 @@ impl BootInfoMemRegion {
 
 impl fmt::Display for BootInfoMemRegion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // log2(1024)
-        const KIB_RSHIFT: u32 = 10;
-
-        // log2(1024 * 1024)
-        const MIB_RSHIFT: u32 = 20;
-
-        let size = self.size();
-
-        let (size, unit) = if (size >> MIB_RSHIFT) > 0 {
-            (size >> MIB_RSHIFT, "MiB")
-        } else if (size >> KIB_RSHIFT) > 0 {
-            (size >> KIB_RSHIFT, "KiB")
-        } else {
-            (size, "B")
-        };
-
-        let attr = match self.attributes.mem_attributes {
-            MemAttributes::CacheableDRAM => "C",
-            MemAttributes::NonCacheableDRAM => "NC",
-            MemAttributes::Device => "Dev",
-        };
-
-        let acc_p = match self.attributes.acc_perms {
-            AccessPermissions::ReadOnly => "RO",
-            AccessPermissions::ReadWrite => "RW",
-        };
-
-        let xn = if self.attributes.executable {
-            "PX"
-        } else {
-            "PXN"
-        };
+        let (size, unit) = liblog::size_human_readable_ceil(self.size());
 
         write!(
             f,
-            "      [{:#010x} - {:#010x}) | {: >3} {} | {: <3} {} {: <3}", // | {}",
-            self.start_inclusive,
-            self.end_exclusive,
-            size,
-            unit,
-            attr,
-            acc_p,
-            xn, //self.name
+            "[{} - {}) | {: >3} {: <3} | {} | {}",
+            self.start_inclusive, self.end_exclusive, size, unit, self.attributes, self.name
         )
     }
 }
@@ -213,20 +108,22 @@ mod boot_info_region_tests {
 
     #[test_case]
     fn test_construct_regular_region() {
-        let region = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), true);
+        let region = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), true, "RAM");
         assert_eq!(region.start_inclusive, 0x0);
         assert_eq!(region.end_exclusive, 0x2000);
         assert_eq!(region.size(), 0x2000);
         assert_eq!(region.attributes.occupied, false);
+        assert_eq!(region.name, "RAM");
     }
 
     #[test_case]
     fn test_construct_reverse_region() {
-        let region = BootInfoMemRegion::at(0x2000.into(), 0x0.into(), true);
+        let region = BootInfoMemRegion::at(0x2000.into(), 0x0.into(), true, "RAM");
         assert_eq!(region.start_inclusive, 0x0);
         assert_eq!(region.end_exclusive, 0x2000);
         assert_eq!(region.size(), 0x2000);
         assert_eq!(region.attributes.occupied, false);
+        assert_eq!(region.name, "RAM");
     }
 
     #[test_case]
@@ -274,7 +171,7 @@ pub struct BootInfo {
     pub max_slot_pos: usize,
 }
 
-/// Implement Default manually to work around stupid Rust idea of not defining Default for arrays over 32 entries in size
+/// Implement Default manually to work around stupid Rust idea of not defining Default for arrays over 32 items in size
 impl Default for BootInfo {
     fn default() -> Self {
         Self::new()
@@ -300,9 +197,11 @@ impl BootInfo {
         if new_region.is_empty() {
             return Ok(());
         }
-        for region in self.regions.iter_mut() {
+        semi_println!("BOOT_INFO.insert_region: {}", new_region);
+        for (i, region) in self.regions.iter_mut().enumerate() {
             if region.is_empty() {
                 *region = new_region;
+                self.max_slot_pos = i;
                 return Ok(());
             }
         }
@@ -312,11 +211,18 @@ impl BootInfo {
     /// Remove a free memory region, turning it into an allocated one.
     /// Different from alloc_region() in that we have a specific address and size to remove.
     pub fn remove_region(&mut self, remove_region: BootInfoMemRegion) -> Result<(), BootInfoError> {
+        if remove_region.is_empty() {
+            return Ok(());
+        }
+        semi_println!("BOOT_INFO.remove_region: {}", remove_region);
         // Find intersection with existing regions.
         // Subtracted region may intersect zero or more regions.
         // Regions are not sorted in the list, so it may overlap any region at any point.
-        for iterated_region in self.regions.iter_mut() {
+        for (idx, iterated_region) in self.regions.iter_mut().enumerate() {
+            semi_println!("BOOT_INFO.remove_region: iteration {idx} - {iterated_region}");
+
             if iterated_region.start_inclusive == remove_region.start_inclusive {
+                semi_println!("BOOT_INFO.remove_region: same start");
                 // it may either cut off a piece from the start or completely eat the region
                 if remove_region.end_exclusive >= iterated_region.end_exclusive {
                     iterated_region.clear();
@@ -325,6 +231,7 @@ impl BootInfo {
                     return Ok(());
                 }
             } else if remove_region.intersects(iterated_region) {
+                semi_println!("BOOT_INFO.remove_region: intersects");
                 // they have common points, which must be resolved
                 // it may intersect over the beginning of the region
                 if remove_region.start_inclusive <= iterated_region.start_inclusive
@@ -342,11 +249,13 @@ impl BootInfo {
                         iterated_region.start_inclusive,
                         remove_region.start_inclusive,
                         true,
+                        iterated_region.name,
                     );
                     let second_region = BootInfoMemRegion::at(
                         remove_region.end_exclusive,
                         iterated_region.end_exclusive,
                         true,
+                        iterated_region.name,
                     );
                     iterated_region.clear();
                     return if first_region.size() > second_region.size() {
@@ -372,6 +281,7 @@ impl BootInfo {
                 }
             } else {
                 // no intersection and we can continue
+                semi_println!("BOOT_INFO.remove_region: no intersection");
             }
         }
         Ok(())
@@ -385,23 +295,37 @@ impl BootInfo {
     /// this means we aim to make the size of the smallest remaining region smaller (ideally zero)
     /// followed by making the size of the largest remaining region smaller.
     ///
-    // @fixme this method assumes all non-empty regions in BootInfo represent free memory
-    pub fn alloc_region(&mut self, size_bits: usize) -> Result<PhysAddr, BootInfoError> {
+    pub fn alloc_region(
+        &mut self,
+        size_bits: usize,
+        name: &'static str,
+    ) -> Result<PhysAddr, BootInfoError> {
         let mut reg_index: usize = 0;
         let mut reg: BootInfoMemRegion = BootInfoMemRegion::new();
         let mut rem_small: BootInfoMemRegion = BootInfoMemRegion::new();
         let mut rem_large: BootInfoMemRegion = BootInfoMemRegion::new();
 
-        for (i, reg_iter) in self.regions.iter().enumerate() {
+        // Iterate only free regions.
+        for (i, reg_iter) in self
+            .regions
+            .iter()
+            .enumerate()
+            .filter(|(_, reg)| !reg.attributes.occupied)
+        {
             // Determine whether placing the region at the start or the end will create a bigger left over region.
             let aligned_start = reg_iter.start_inclusive.aligned_up(1u64 << size_bits);
             let aligned_end = reg_iter.end_exclusive.aligned_down(1u64 << size_bits);
             let new_reg = if aligned_start - reg_iter.start_inclusive
                 < reg_iter.end_exclusive - aligned_end
             {
-                BootInfoMemRegion::at(aligned_start, aligned_start + (1u64 << size_bits), false)
+                BootInfoMemRegion::at(
+                    aligned_start,
+                    aligned_start + (1u64 << size_bits),
+                    false,
+                    name,
+                )
             } else {
-                BootInfoMemRegion::at(aligned_end - (1u64 << size_bits), aligned_end, false)
+                BootInfoMemRegion::at(aligned_end - (1u64 << size_bits), aligned_end, false, name)
             };
 
             if new_reg.start_inclusive >= reg_iter.start_inclusive
@@ -436,13 +360,16 @@ impl BootInfo {
                 }
             }
         }
+
         if reg.is_empty() {
             // @fixme just return error!
             panic!("Kernel init failed: not enough memory\n");
         }
+
         /* Remove the region in question */
         self.regions[reg_index] = BootInfoMemRegion::new();
         // self.regions[reg_index].clear();
+
         /* Add the remaining regions in largest to smallest order */
         self.insert_region(rem_large)?;
         if self.insert_region(rem_small).is_err() {
@@ -452,6 +379,12 @@ impl BootInfo {
             );
         }
         Ok(reg.start_inclusive)
+    }
+
+    pub fn sort(&mut self) {
+        if !self.regions.is_sorted_by_key(|reg| reg.start_inclusive) {
+            self.regions.sort_unstable_by_key(|reg| reg.start_inclusive);
+        }
     }
 }
 

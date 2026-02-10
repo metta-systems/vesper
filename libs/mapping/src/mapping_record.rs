@@ -190,10 +190,10 @@ impl<const PAGE_SIZE: usize> MappingRecord<PAGE_SIZE> {
                 AccessPermissions::ReadWrite => "RW",
             };
 
-            let xn = if i.attribute_fields.execute_never {
-                "XN"
-            } else {
+            let xn = if i.attribute_fields.executable {
                 "X"
+            } else {
+                "XN"
             };
 
             info!(

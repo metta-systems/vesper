@@ -542,6 +542,6 @@ pub const fn size_human_readable_ceil(size: usize) -> (usize, &'static str) {
     } else if (size / KIB) > 0 {
         (size.div_ceil(KIB), "KiB")
     } else {
-        (size, "Byte")
+        (size, "B")
     }
 }

@@ -57,6 +57,7 @@ use {
     libboot::entry,
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
+    libmapping::{AttributeFields, MemAttributes},
     libobject::{DebugConsoleKey, KeySlot},
     libqemu::semi_println,
     libsyscall::protected_call6,
@@ -78,8 +79,14 @@ fn panic(info: &PanicInfo) -> ! {
 fn dump_memory_map() {
     // Output the memory map as we could derive from FDT and information about our loaded image
     // Use it to imagine how the memmap would look like in the end.
-    // virt_mem_layout().print_layout();
-    // TODO print bi.regions instead
+    BOOT_INFO.lock(|bi| {
+        bi.sort();
+        for x in bi.regions {
+            // if !x.is_empty() {
+            semi_println!("{}", x);
+            // }
+        }
+    });
 }
 
 entry!(init_main_el2);
@@ -166,9 +173,9 @@ pub fn init_main_el2(dtb: u32) -> ! {
         semi_println!("Running on {board_name}");
     }
 
-    let mut dumper = device_tree.dumper(0);
+    // let mut dumper = device_tree.dumper(0);
     // dumper.dump_metadata();
-    dumper.dump_root().expect("oof");
+    // dumper.dump_root().expect("oof");
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
@@ -211,7 +218,8 @@ pub fn init_main_el2(dtb: u32) -> ! {
             bi.insert_region(BootInfoMemRegion {
                 start_inclusive: PhysAddr::new(mem_addr),
                 end_exclusive: PhysAddr::new(mem_addr + mem_size),
-                attributes: boot_info::AttributeFields::default(),
+                attributes: AttributeFields::default(),
+                name: "RAM",
             })
             .expect("tough luck");
         });
@@ -227,6 +235,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
                 PhysAddr::new(entry.address.into()),
                 PhysAddr::new(u64::from(entry.address) + u64::from(entry.size)),
                 false,
+                "Reserved",
             ))
             .expect("tough luck");
         });
@@ -248,22 +257,13 @@ pub fn init_main_el2(dtb: u32) -> ! {
         dtb_ptr as usize
     ); // also include the raw_slice allocated bit
     BOOT_INFO.lock(|bi| {
-        bi.remove_region(BootInfoMemRegion::at(
+        bi.insert_region(BootInfoMemRegion::at(
             PhysAddr::new(dtb_ptr as u64),
             PhysAddr::new(dtb_ptr as u64 + device_tree.fdt().totalsize() as u64),
             false,
+            "DTB",
         ))
         .expect("tough luck");
-    });
-
-    dump_memory_map();
-
-    BOOT_INFO.lock(|bi| {
-        for x in bi.regions {
-            if !x.is_empty() {
-                semi_println!("{}", x);
-            }
-        }
     });
 
     // Next step: parse DTB!
@@ -346,18 +346,34 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
     let mut nodes = &mut nodes[..num_nodes];
 
-    qsort::sort(nodes, |l, h| l.start.cmp(&h.start));
+    // Other in-place sorting available:
+    if !nodes.is_sorted_by_key(|item| item.start) {
+        nodes.sort_unstable_by_key(|item| item.start);
+    }
 
     for node in nodes {
         semi_println!(
-            "{}[{:02x}] {:<22} @ {:#10x} +{} ({})",
+            "{}[{:02x}] {:<22} @ {} +{} ({})",
             if node.disabled { "-" } else { " " },
             node.phandle,
             node.name,
-            node.start,
+            PhysAddr::new(node.start),
             node.size,
             node.compat
         );
+
+        if node.name != "memory" {
+            BOOT_INFO.lock(|bi| {
+                bi.insert_region(BootInfoMemRegion::at(
+                    PhysAddr::new(node.start),
+                    PhysAddr::new(node.start + node.size),
+                    false,
+                    node.name,
+                    MemAttributes::Device,
+                ))
+                .expect("tough luck");
+            });
+        }
     }
 
     semi_println!("");
@@ -407,6 +423,9 @@ pub fn init_main_el2(dtb: u32) -> ! {
     //         }
     //     }
     // }
+
+    semi_println!("init_main: BOOT_INFO map before kernel load");
+    dump_memory_map();
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 1: Load kernel
