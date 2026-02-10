@@ -106,6 +106,10 @@ impl<'a> MmuSetup<'a> {
         })
     }
 
+    pub fn memory_top(&self) -> PhysAddr {
+        self.allocator.current()
+    }
+
     /// Map a 4KB page with specific permissions
     pub fn map_page(
         &mut self,

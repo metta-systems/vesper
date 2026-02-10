@@ -448,6 +448,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     };
 
     // Mark kernel memory used:
+    // TODO: add alignment requirements to boot_info regions (align up to)
     BOOT_INFO.lock(|bi| {
         for sec in kernel_layout.iter_sections() {
             bi.insert_used_region(
@@ -479,9 +480,6 @@ pub fn init_main_el2(dtb: u32) -> ! {
         );
     });
 
-    semi_println!("init_main: BOOT_INFO map after kernel load");
-    dump_memory_map();
-
     let mut mmu_setup = paging::MmuSetup::new(&mut allocator).expect("Failed to create MMU setup");
     semi_println!("init_main: Created MmuSetup");
 
@@ -500,6 +498,22 @@ pub fn init_main_el2(dtb: u32) -> ! {
     )
     .expect("Failed to create kernel mapping");
     semi_println!("init_main: Higher-half mapped the nucleus");
+
+    // ═══════════════════════════════════════════════════════════════
+    // Interlude: Print the BOOT_INFO region map
+    // ═══════════════════════════════════════════════════════════════
+
+    BOOT_INFO.lock(|bi| {
+        bi.insert_overlay_region(
+            PhysAddr::new(init_start),
+            mmu_setup.memory_top(), // Up to allocated watermark
+            AttributeFields::defaulted(),
+            "Init_Thread",
+        );
+    });
+
+    semi_println!("init_main: BOOT_INFO map after kernel load and mapping");
+    dump_memory_map();
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 3: Prepare for EL1

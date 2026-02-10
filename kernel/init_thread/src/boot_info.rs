@@ -365,6 +365,98 @@ impl BootInfo {
         Ok(())
     }
 
+    /// Insert an overlay region that fills gaps between existing used regions.
+    ///
+    /// The overlay covers `[start, end)` but instead of failing on overlap with
+    /// existing used regions, it inserts new used regions only for the gaps.
+    /// This is useful for marking a large area (like the Init_Thread bump allocator
+    /// arena) as used, where sub-regions have already been individually recorded.
+    pub fn insert_overlay_region(
+        &mut self,
+        start: PhysAddr,
+        end: PhysAddr,
+        attributes: AttributeFields,
+        name: &'static str,
+    ) -> Result<(), BootInfoError> {
+        let overlay_start = start.min(end);
+        let overlay_end = end.max(start);
+
+        if overlay_start == overlay_end {
+            return Ok(());
+        }
+
+        semi_println!(
+            "BOOT_INFO.insert_overlay_region: [{} - {}) {}",
+            overlay_start,
+            overlay_end,
+            name
+        );
+
+        // Collect starts and ends of existing used regions that intersect the overlay.
+        // We only need the boundaries to compute gaps, so collect (start, end) pairs.
+        let mut boundaries: [(PhysAddr, PhysAddr); NUM_MEM_REGIONS] =
+            [(PhysAddr::zero(), PhysAddr::zero()); NUM_MEM_REGIONS];
+        let mut count = 0;
+
+        for slot in self.regions.iter() {
+            if !slot.is_used() {
+                continue;
+            }
+            // Clip to overlay range.
+            let s = slot.start_inclusive.max(overlay_start);
+            let e = slot.end_exclusive.min(overlay_end);
+            if s < e {
+                boundaries[count] = (s, e);
+                count += 1;
+            }
+        }
+
+        // Sort by start address.
+        boundaries[..count].sort_unstable_by_key(|&(s, _)| s);
+
+        // Walk left-to-right, inserting gap regions.
+        let mut cursor = overlay_start;
+
+        for i in 0..count {
+            let (used_start, used_end) = boundaries[i];
+            if cursor < used_start {
+                // Gap before this used region.
+                let gap = BootInfoMemRegion::with_attributes(
+                    cursor,
+                    used_start,
+                    AttributeFields {
+                        occupied: true,
+                        ..attributes
+                    },
+                    name,
+                );
+                self.insert_raw(gap)?;
+                self.cut_out_used_from_free(&gap)?;
+            }
+            // Advance cursor past this used region.
+            if used_end > cursor {
+                cursor = used_end;
+            }
+        }
+
+        // Trailing gap after the last used region.
+        if cursor < overlay_end {
+            let gap = BootInfoMemRegion::with_attributes(
+                cursor,
+                overlay_end,
+                AttributeFields {
+                    occupied: true,
+                    ..attributes
+                },
+                name,
+            );
+            self.insert_raw(gap)?;
+            self.cut_out_used_from_free(&gap)?;
+        }
+
+        Ok(())
+    }
+
     /// Merge all overlapping or adjacent free regions with compatible attributes.
     /// Repeats until no more merges are possible.
     fn merge_free_regions(&mut self) {
@@ -866,5 +958,79 @@ mod boot_info_tests {
         assert!(addr < PhysAddr::from(0x10_0000u64));
         // Free space should be reduced by 4 KiB.
         assert_eq!(bi.total_free(), 0x10_0000 - 0x1000);
+    }
+
+    // -- insert_overlay_region tests --
+
+    #[test_case]
+    fn test_overlay_fills_gaps_between_used() {
+        let mut bi = BootInfo::new();
+        bi.insert_free_region(0x0.into(), 0xA000.into(), default_attrs(), "RAM")
+            .unwrap();
+        bi.insert_used_region(0x1000.into(), 0x3000.into(), default_attrs(), "kernel")
+            .unwrap();
+        bi.insert_used_region(0x5000.into(), 0x7000.into(), default_attrs(), "stack")
+            .unwrap();
+        // Overlay [0x0, 0xA000) should fill three gaps.
+        bi.insert_overlay_region(0x0.into(), 0xA000.into(), default_attrs(), "init")
+            .unwrap();
+
+        bi.compact();
+        bi.sort();
+
+        // Should have: [0,1000) init, [1000,3000) kernel, [3000,5000) init,
+        //              [5000,7000) stack, [7000,A000) init = 5 used regions
+        assert_eq!(bi.used_regions().count(), 5);
+        assert_eq!(bi.total_used(), 0xA000);
+        assert_eq!(bi.total_free(), 0);
+    }
+
+    #[test_case]
+    fn test_overlay_no_existing_used() {
+        let mut bi = BootInfo::new();
+        bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM")
+            .unwrap();
+        // Overlay with no existing used regions — becomes one big used region.
+        bi.insert_overlay_region(0x0.into(), 0x4000.into(), default_attrs(), "init")
+            .unwrap();
+        assert_eq!(bi.used_regions().count(), 1);
+        assert_eq!(bi.total_used(), 0x4000);
+        assert_eq!(bi.total_free(), 0);
+    }
+
+    #[test_case]
+    fn test_overlay_fully_covered() {
+        let mut bi = BootInfo::new();
+        // Used region covers entire overlay — no gaps to fill.
+        bi.insert_used_region(0x0.into(), 0x4000.into(), default_attrs(), "kernel")
+            .unwrap();
+        bi.insert_overlay_region(0x0.into(), 0x4000.into(), default_attrs(), "init")
+            .unwrap();
+        assert_eq!(bi.used_regions().count(), 1);
+        assert_eq!(bi.total_used(), 0x4000);
+    }
+
+    #[test_case]
+    fn test_overlay_empty_is_noop() {
+        let mut bi = BootInfo::new();
+        bi.insert_overlay_region(0x1000.into(), 0x1000.into(), default_attrs(), "init")
+            .unwrap();
+        assert_eq!(bi.count(), 0);
+    }
+
+    #[test_case]
+    fn test_overlay_cuts_from_free() {
+        let mut bi = BootInfo::new();
+        bi.insert_free_region(0x0.into(), 0x8000.into(), default_attrs(), "RAM")
+            .unwrap();
+        bi.insert_used_region(0x2000.into(), 0x4000.into(), default_attrs(), "kernel")
+            .unwrap();
+        // Overlay [0x1000, 0x5000) — gaps: [0x1000,0x2000) and [0x4000,0x5000)
+        bi.insert_overlay_region(0x1000.into(), 0x5000.into(), default_attrs(), "init")
+            .unwrap();
+        // Used: kernel [2000,4000) + init [1000,2000) + init [4000,5000) = 0x4000
+        assert_eq!(bi.total_used(), 0x4000);
+        // Free: [0x0,0x1000) + [0x5000,0x8000) = 0x4000
+        assert_eq!(bi.total_free(), 0x4000);
     }
 }
