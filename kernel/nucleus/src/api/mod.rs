@@ -11,6 +11,8 @@ pub mod debug_console;
 pub mod key_entry;
 // pub mod key_table;
 
+pub use key_entry::KeyEntry;
+
 // ═════════════════
 // SYSCALL DISPATCH
 // ═════════════════

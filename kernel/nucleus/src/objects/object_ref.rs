@@ -51,6 +51,12 @@ impl ObjectRef {
         self.obj_type
     }
 
+    /// Get the raw type-erased pointer (for embedding in KeyEntry payload).
+    #[inline]
+    pub fn as_raw_ptr(&self) -> NonNull<()> {
+        self.ptr
+    }
+
     /// Attempt to cast to a specific type (immutable)
     #[inline]
     pub fn try_as<T: NucleusObject>(&self) -> Option<&T> {

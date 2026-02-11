@@ -111,7 +111,7 @@ impl<A: ArchObjects> Nucleus<A> {
             .and_then(|dom| {
                 let _ = dom.keytable.insert(
                     libobject::KeySlot(127),
-                    KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0, None),
+                    KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0),
                 );
                 Some(())
             })
