@@ -158,7 +158,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
 
     let block = allocator
-        .alloc_aligned(layout.size(), layout.align())
+        .alloc_aligned(layout.size(), layout.align(), "DTB index")
         .expect("Couldn't allocate DeviceTree index");
     let raw_slice = unsafe { core::slice::from_raw_parts_mut(block.as_mut_ptr(), layout.size()) };
 
@@ -441,7 +441,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         // Allocate EL1 stack
         let el1_stack_size = 128; // pages
         let el1_stack = allocator
-            .alloc_pages(el1_stack_size)
+            .alloc_pages(el1_stack_size, "Nucleus stack")
             .expect("Failed to allocate EL1 stack");
         let el1_stack_size = el1_stack_size * 4096; // 64KiB stack
         (el1_stack, el1_stack_size)

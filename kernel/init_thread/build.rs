@@ -229,6 +229,15 @@ fn find_symbol(elf: &Elf, symbol_name: &str) -> Option<Sym> {
     None
 }
 
+fn map_section_name(name: &String) -> String {
+    match name.as_ref() {
+        ".text" => "Nucleus code".to_string(),
+        ".rodata" => "Nucleus read-only data".to_string(),
+        ".data" => "Nucleus data".to_string(),
+        x => x.to_string(),
+    }
+}
+
 /// Try to find vector table location from symbols
 fn find_vector_table_from_symbols(elf: &Elf) -> Option<VectorTableInfo> {
     // Common symbol names for exception vectors
@@ -293,7 +302,7 @@ fn generate_rust_code(sections: &KernelSections, stack_virt_bottom: u64, out_pat
         .iter()
         .map(|section| {
             context! {
-                name => section.name,
+                name => map_section_name(&section.name),
                 meta_name => section.meta_name(),
                 bin_name => section.bin_name(),
                 bin_file => section.bin_file,

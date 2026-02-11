@@ -87,11 +87,11 @@ pub struct MmuSetup<'a> {
 impl<'a> MmuSetup<'a> {
     pub fn new(allocator: &'a mut BootAllocator) -> Result<Self, &'static str> {
         let ttbr0_l0 = allocator
-            .alloc_pages(1)
+            .alloc_pages(1, "user L0")
             .ok_or("Failed to allocate TTBR0 L0 table")?;
 
         let ttbr1_l0 = allocator
-            .alloc_pages(1)
+            .alloc_pages(1, "kernel L0")
             .ok_or("Failed to allocate TTBR1 L0 table")?;
 
         unsafe {
@@ -117,9 +117,10 @@ impl<'a> MmuSetup<'a> {
         virt: VirtAddr,
         phys: PhysAddr,
         perms: MemoryPermissions,
+        usage: &'static str,
     ) -> Result<(), &'static str> {
         let pte_flags = perms.as_pte_flags() | flags::ATTR_NORMAL;
-        self.map_page_with_flags(ttbr, virt, phys, pte_flags, perms)
+        self.map_page_with_flags(ttbr, virt, phys, pte_flags, perms, usage)
     }
 
     /// Map a 4KB page with raw PTE flags
@@ -130,6 +131,7 @@ impl<'a> MmuSetup<'a> {
         phys: PhysAddr,
         pte_flags: u64,
         perms: MemoryPermissions, // Only for Display
+        usage: &'static str,
     ) -> Result<(), &'static str> {
         let l0_phys = match ttbr {
             Ttbr::Ttbr0 => self.ttbr0_l0,
@@ -142,9 +144,9 @@ impl<'a> MmuSetup<'a> {
         let l2_idx = ((va >> 21) & 0x1FF) as usize;
         let l3_idx = ((va >> 12) & 0x1FF) as usize;
 
-        let l1_phys = self.ensure_table(l0_phys, l0_idx)?;
-        let l2_phys = self.ensure_table(l1_phys, l1_idx)?;
-        let l3_phys = self.ensure_table(l2_phys, l2_idx)?;
+        let l1_phys = self.ensure_table(l0_phys, l0_idx, usage)?;
+        let l2_phys = self.ensure_table(l1_phys, l1_idx, usage)?;
+        let l3_phys = self.ensure_table(l2_phys, l2_idx, usage)?;
 
         let l3_table = unsafe { &mut *(l3_phys.as_mut_ptr::<PageTable>()) };
         l3_table.entries[l3_idx] = phys.as_u64() | flags::VALID | flags::PAGE | pte_flags;
@@ -170,6 +172,7 @@ impl<'a> MmuSetup<'a> {
         virt: VirtAddr,
         phys: PhysAddr,
         perms: MemoryPermissions,
+        usage: &'static str,
     ) -> Result<(), &'static str> {
         if virt.as_u64() & 0x1F_FFFF != 0 || phys.as_u64() & 0x1F_FFFF != 0 {
             return Err("2MB block mapping requires 2MB alignment");
@@ -187,8 +190,8 @@ impl<'a> MmuSetup<'a> {
         let l1_idx = ((va >> 30) & 0x1FF) as usize;
         let l2_idx = ((va >> 21) & 0x1FF) as usize;
 
-        let l1_phys = self.ensure_table(l0_phys, l0_idx)?;
-        let l2_phys = self.ensure_table(l1_phys, l1_idx)?;
+        let l1_phys = self.ensure_table(l0_phys, l0_idx, usage)?;
+        let l2_phys = self.ensure_table(l1_phys, l1_idx, usage)?;
 
         let l2_table = unsafe { &mut *(l2_phys.as_mut_ptr::<PageTable>()) };
         l2_table.entries[l2_idx] = phys.as_u64() | flags::VALID | flags::BLOCK | pte_flags;
@@ -211,6 +214,7 @@ impl<'a> MmuSetup<'a> {
         &mut self,
         table_phys: PhysAddr,
         index: usize,
+        usage: &'static str,
     ) -> Result<PhysAddr, &'static str> {
         let table = unsafe { &mut *(table_phys.as_mut_ptr::<PageTable>()) };
         let entry = table.entries[index];
@@ -220,7 +224,7 @@ impl<'a> MmuSetup<'a> {
         } else {
             let new_table = self
                 .allocator
-                .alloc_pages(1)
+                .alloc_pages(1, usage)
                 .ok_or("Failed to allocate page table")?;
 
             unsafe {
@@ -258,7 +262,13 @@ pub fn create_identity_mapping(
 
     let mut addr = start_aligned;
     while addr.as_u64() < end_aligned.as_u64() {
-        setup.map_block_2mb(Ttbr::Ttbr0, VirtAddr::new(addr.as_u64()), addr, perms)?;
+        setup.map_block_2mb(
+            Ttbr::Ttbr0,
+            VirtAddr::new(addr.as_u64()),
+            addr,
+            perms,
+            "Init_Thread identity mapping",
+        )?;
         addr = PhysAddr::new(addr.as_u64() + 2 * 1024 * 1024);
     }
 
@@ -302,6 +312,7 @@ pub fn create_kernel_mapping(
             VirtAddr::new(libaddress::PHYSICAL_KERNEL_WINDOW + i * 2 * 1024 * 1024),
             PhysAddr::new(i * 2 * 1024 * 1024),
             perms,
+            "Nucleus phys memory mapping",
         );
     }
 
@@ -314,6 +325,7 @@ pub fn create_kernel_mapping(
             VirtAddr::new(stack_bottom.as_u64() + i * 4 * 1024),
             PhysAddr::new(el1_stack + i * 4 * 1024),
             perms,
+            "Nucleus stack mapping",
         );
     }
 
@@ -349,7 +361,13 @@ fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'s
         let mut remaining = section.size;
 
         while remaining >= 2 * 1024 * 1024 {
-            setup.map_block_2mb(Ttbr::Ttbr1, virt, phys, section.permissions)?;
+            setup.map_block_2mb(
+                Ttbr::Ttbr1,
+                virt,
+                phys,
+                section.permissions,
+                "Nucleus section mapping",
+            )?;
             phys = PhysAddr::new(phys.as_u64() + 2 * 1024 * 1024);
             virt = VirtAddr::new(virt.as_u64() + 2 * 1024 * 1024);
             remaining -= 2 * 1024 * 1024;
@@ -357,7 +375,13 @@ fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'s
 
         // Map remaining pages
         while remaining > 0 {
-            setup.map_page(Ttbr::Ttbr1, virt, phys, section.permissions)?;
+            setup.map_page(
+                Ttbr::Ttbr1,
+                virt,
+                phys,
+                section.permissions,
+                "Nucleus section mapping",
+            )?;
             phys = PhysAddr::new(phys.as_u64() + 0x1000);
             virt = VirtAddr::new(virt.as_u64() + 0x1000);
             remaining = remaining.saturating_sub(0x1000);
@@ -365,7 +389,13 @@ fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'s
     } else {
         // Use 4KB pages
         for (phys, virt) in section.pages() {
-            setup.map_page(Ttbr::Ttbr1, virt, phys, section.permissions)?;
+            setup.map_page(
+                Ttbr::Ttbr1,
+                virt,
+                phys,
+                section.permissions,
+                "Nucleus section mapping",
+            )?;
         }
     }
 
@@ -402,6 +432,7 @@ pub fn create_device_mapping(
             PhysAddr::new(pa),
             pte_flags,
             perms,
+            "Nucleus device mapping",
         )?;
     }
 

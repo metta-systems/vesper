@@ -1,8 +1,10 @@
 // Boot allocator, Section mapping, memory permissions
 
 use {
-    crate::loader::LoadableSection,
+    crate::{boot_info::BOOT_INFO, loader::LoadableSection},
     libaddress::{PhysAddr, VirtAddr},
+    liblocking::interface::Mutex,
+    libmapping::AttributeFields,
 };
 
 /// Memory region translation.
@@ -28,11 +30,16 @@ impl BootAllocator {
         }
     }
 
-    pub fn alloc_pages(&mut self, count: usize) -> Option<PhysAddr> {
-        self.alloc_aligned(count * 4096, 4096)
+    pub fn alloc_pages(&mut self, count: usize, usage: &'static str) -> Option<PhysAddr> {
+        self.alloc_aligned(count * 4096, 4096, usage)
     }
 
-    pub fn alloc_aligned(&mut self, size: usize, align: usize) -> Option<PhysAddr> {
+    pub fn alloc_aligned(
+        &mut self,
+        size: usize,
+        align: usize,
+        usage: &'static str,
+    ) -> Option<PhysAddr> {
         let aligned = self.current.aligned_up(align as u64);
         let new_current = PhysAddr::new(aligned.as_u64() + size as u64);
 
@@ -42,6 +49,12 @@ impl BootAllocator {
             new_current.as_u64(),
             self.end.as_u64()
         );
+
+        if usage != "" {
+            BOOT_INFO.lock(|bi| {
+                bi.insert_used_region(aligned, new_current, AttributeFields::defaulted(), usage);
+            });
+        }
 
         if new_current > self.end {
             return None;
