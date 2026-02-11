@@ -31,6 +31,8 @@ pub struct AttributeFields {
     pub executable: bool,
     /// Is the region occupied or free (use occupied for const init)
     pub occupied: bool,
+    /// If this memory can be reclaimed into an Untyped after init_thread completes
+    pub droppable: bool,
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -44,6 +46,7 @@ impl AttributeFields {
             acc_perms: AccessPermissions::ReadWrite,
             executable: false,
             occupied: false,
+            droppable: false,
         }
     }
 }
@@ -70,7 +73,11 @@ impl fmt::Display for AttributeFields {
 
         let xn = if self.executable { "PX" } else { "PXN" };
 
-        let marker = if self.occupied { "Used" } else { "Free" };
+        let marker = if self.droppable {
+            "Drop"
+        } else {
+            if self.occupied { "Used" } else { "Free" }
+        };
 
         write!(f, "({marker}) {attr: <3} {acc_p} {xn: <3}")
     }

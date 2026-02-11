@@ -44,7 +44,7 @@ mod paging;
 mod qsort;
 
 use {
-    crate::boot_info::BOOT_INFO,
+    crate::{boot_info::BOOT_INFO, memory::Alloc},
     aarch64_cpu::registers::{SPSR_EL2, Writeable},
     core::{cell::UnsafeCell, panic::PanicInfo, ptr::write_bytes, slice},
     device_tree::{DeviceTree, DeviceTreeProp},
@@ -158,7 +158,11 @@ pub fn init_main_el2(dtb: u32) -> ! {
     let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
 
     let block = allocator
-        .alloc_aligned(layout.size(), layout.align(), "DTB index")
+        .alloc_aligned(
+            layout.size(),
+            layout.align(),
+            ("DTB index", Alloc::Droppable),
+        )
         .expect("Couldn't allocate DeviceTree index");
     let raw_slice = unsafe { core::slice::from_raw_parts_mut(block.as_mut_ptr(), layout.size()) };
 
@@ -257,7 +261,10 @@ pub fn init_main_el2(dtb: u32) -> ! {
         bi.insert_used_region(
             PhysAddr::new(dtb_ptr as u64),
             PhysAddr::new(dtb_ptr as u64 + device_tree.fdt().totalsize() as u64),
-            AttributeFields::default(),
+            AttributeFields {
+                droppable: true,
+                ..Default::default()
+            },
             "DTB",
         )
         .expect("tough luck");
@@ -441,7 +448,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         // Allocate EL1 stack
         let el1_stack_size = 128; // pages
         let el1_stack = allocator
-            .alloc_pages(el1_stack_size, "Nucleus stack")
+            .alloc_pages(el1_stack_size, ("Nucleus stack", Alloc::Persistent))
             .expect("Failed to allocate EL1 stack");
         let el1_stack_size = el1_stack_size * 4096; // 64KiB stack
         (el1_stack, el1_stack_size)
@@ -507,7 +514,10 @@ pub fn init_main_el2(dtb: u32) -> ! {
         bi.insert_overlay_region(
             PhysAddr::new(init_start),
             mmu_setup.memory_top(), // Up to allocated watermark
-            AttributeFields::defaulted(),
+            AttributeFields {
+                droppable: true,
+                ..Default::default()
+            },
             "Init_Thread",
         );
     });

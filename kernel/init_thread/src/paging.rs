@@ -17,7 +17,7 @@
 /// 0xFFFF_0000_0000_0000  └─────────────────────┘
 /// ```
 use {
-    crate::memory::{BootAllocator, KernelLayout, MemoryPermissions, SectionMapping},
+    crate::memory::{Alloc, BootAllocator, KernelLayout, MemoryPermissions, SectionMapping},
     core::ptr,
     libaddress::{PhysAddr, VirtAddr},
     libqemu::semi_println,
@@ -87,11 +87,11 @@ pub struct MmuSetup<'a> {
 impl<'a> MmuSetup<'a> {
     pub fn new(allocator: &'a mut BootAllocator) -> Result<Self, &'static str> {
         let ttbr0_l0 = allocator
-            .alloc_pages(1, "user L0")
+            .alloc_pages(1, ("user L0", Alloc::Droppable))
             .ok_or("Failed to allocate TTBR0 L0 table")?;
 
         let ttbr1_l0 = allocator
-            .alloc_pages(1, "kernel L0")
+            .alloc_pages(1, ("kernel L0", Alloc::Persistent))
             .ok_or("Failed to allocate TTBR1 L0 table")?;
 
         unsafe {
@@ -117,7 +117,7 @@ impl<'a> MmuSetup<'a> {
         virt: VirtAddr,
         phys: PhysAddr,
         perms: MemoryPermissions,
-        usage: &'static str,
+        usage: (&'static str, Alloc),
     ) -> Result<(), &'static str> {
         let pte_flags = perms.as_pte_flags() | flags::ATTR_NORMAL;
         self.map_page_with_flags(ttbr, virt, phys, pte_flags, perms, usage)
@@ -131,7 +131,7 @@ impl<'a> MmuSetup<'a> {
         phys: PhysAddr,
         pte_flags: u64,
         perms: MemoryPermissions, // Only for Display
-        usage: &'static str,
+        usage: (&'static str, Alloc),
     ) -> Result<(), &'static str> {
         let l0_phys = match ttbr {
             Ttbr::Ttbr0 => self.ttbr0_l0,
@@ -172,7 +172,7 @@ impl<'a> MmuSetup<'a> {
         virt: VirtAddr,
         phys: PhysAddr,
         perms: MemoryPermissions,
-        usage: &'static str,
+        usage: (&'static str, Alloc),
     ) -> Result<(), &'static str> {
         if virt.as_u64() & 0x1F_FFFF != 0 || phys.as_u64() & 0x1F_FFFF != 0 {
             return Err("2MB block mapping requires 2MB alignment");
@@ -214,7 +214,7 @@ impl<'a> MmuSetup<'a> {
         &mut self,
         table_phys: PhysAddr,
         index: usize,
-        usage: &'static str,
+        usage: (&'static str, Alloc),
     ) -> Result<PhysAddr, &'static str> {
         let table = unsafe { &mut *(table_phys.as_mut_ptr::<PageTable>()) };
         let entry = table.entries[index];
@@ -267,7 +267,7 @@ pub fn create_identity_mapping(
             VirtAddr::new(addr.as_u64()),
             addr,
             perms,
-            "Init_Thread identity mapping",
+            ("Init_Thread identity mapping", Alloc::Droppable),
         )?;
         addr = PhysAddr::new(addr.as_u64() + 2 * 1024 * 1024);
     }
@@ -312,7 +312,7 @@ pub fn create_kernel_mapping(
             VirtAddr::new(libaddress::PHYSICAL_KERNEL_WINDOW + i * 2 * 1024 * 1024),
             PhysAddr::new(i * 2 * 1024 * 1024),
             perms,
-            "Nucleus phys memory mapping",
+            ("Nucleus phys memory mapping", Alloc::Persistent),
         );
     }
 
@@ -325,7 +325,7 @@ pub fn create_kernel_mapping(
             VirtAddr::new(stack_bottom.as_u64() + i * 4 * 1024),
             PhysAddr::new(el1_stack + i * 4 * 1024),
             perms,
-            "Nucleus stack mapping",
+            ("Nucleus stack mapping", Alloc::Persistent),
         );
     }
 
@@ -366,7 +366,7 @@ fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'s
                 virt,
                 phys,
                 section.permissions,
-                "Nucleus section mapping",
+                ("Nucleus section mapping", Alloc::Persistent),
             )?;
             phys = PhysAddr::new(phys.as_u64() + 2 * 1024 * 1024);
             virt = VirtAddr::new(virt.as_u64() + 2 * 1024 * 1024);
@@ -380,7 +380,7 @@ fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'s
                 virt,
                 phys,
                 section.permissions,
-                "Nucleus section mapping",
+                ("Nucleus section mapping", Alloc::Persistent),
             )?;
             phys = PhysAddr::new(phys.as_u64() + 0x1000);
             virt = VirtAddr::new(virt.as_u64() + 0x1000);
@@ -394,7 +394,7 @@ fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'s
                 virt,
                 phys,
                 section.permissions,
-                "Nucleus section mapping",
+                ("Nucleus section mapping", Alloc::Persistent),
             )?;
         }
     }
@@ -432,7 +432,7 @@ pub fn create_device_mapping(
             PhysAddr::new(pa),
             pte_flags,
             perms,
-            "Nucleus device mapping",
+            ("Nucleus device mapping", Alloc::Persistent),
         )?;
     }
 

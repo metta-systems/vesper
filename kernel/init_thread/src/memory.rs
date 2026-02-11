@@ -22,6 +22,14 @@ pub struct BootAllocator {
     end: PhysAddr,
 }
 
+#[derive(PartialEq, Copy, Clone)]
+pub enum Alloc {
+    /// This allocation should be entered into mappings and stay around after init_thread finishes
+    Persistent,
+    /// This allocation will perish and be added to Untypeds after init_thread finishes
+    Droppable,
+}
+
 impl BootAllocator {
     pub fn new(start: PhysAddr, size: usize) -> Self {
         Self {
@@ -30,7 +38,7 @@ impl BootAllocator {
         }
     }
 
-    pub fn alloc_pages(&mut self, count: usize, usage: &'static str) -> Option<PhysAddr> {
+    pub fn alloc_pages(&mut self, count: usize, usage: (&'static str, Alloc)) -> Option<PhysAddr> {
         self.alloc_aligned(count * 4096, 4096, usage)
     }
 
@@ -38,7 +46,7 @@ impl BootAllocator {
         &mut self,
         size: usize,
         align: usize,
-        usage: &'static str,
+        usage: (&'static str, Alloc),
     ) -> Option<PhysAddr> {
         let aligned = self.current.aligned_up(align as u64);
         let new_current = PhysAddr::new(aligned.as_u64() + size as u64);
@@ -50,9 +58,21 @@ impl BootAllocator {
             self.end.as_u64()
         );
 
-        if usage != "" {
+        if usage.0 != "" {
             BOOT_INFO.lock(|bi| {
-                bi.insert_used_region(aligned, new_current, AttributeFields::defaulted(), usage);
+                bi.insert_used_region(
+                    aligned,
+                    new_current,
+                    AttributeFields {
+                        droppable: if usage.1 == Alloc::Droppable {
+                            true
+                        } else {
+                            false
+                        },
+                        ..Default::default() // TODO: better RWX flags
+                    },
+                    usage.0,
+                );
             });
         }
 

@@ -3,7 +3,7 @@
 use {
     crate::{
         embed::KERNEL,
-        memory::{BootAllocator, KernelLayout, MemoryPermissions},
+        memory::{Alloc, BootAllocator, KernelLayout, MemoryPermissions},
     },
     core::ptr,
     libaddress::{PhysAddr, VirtAddr},
@@ -88,7 +88,11 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
 
     // Allocate 2MB-aligned for potential huge page mapping -- FIXME: with this we can abandon the whole loaded image and do ASLR easy
     let phys_base = allocator
-        .alloc_aligned(total_pages * 0x1000, 2 * 1024 * 1024, "")
+        .alloc_aligned(
+            total_pages * 0x1000,
+            2 * 1024 * 1024,
+            ("", Alloc::Persistent),
+        )
         .ok_or("Failed to allocate memory for kernel")?;
 
     semi_println!(
