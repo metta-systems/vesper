@@ -1,14 +1,24 @@
-use libobject::arch::frame::FrameOp;
+use {
+    crate::{
+        api::key_entry::KeyEntry,
+        objects::{ArchObjects, nucleus::Nucleus},
+    },
+    libobject::{CapError, Rights, arch::frame::FrameOp},
+};
 
-// pub trait FrameInvoke { fn invoke() }
-
+/// Invoke a frame capability operation.
+///
+/// The frame data is stored inline in the KeyEntry as a RegionPayload.
+/// Each frame cap tracks its own single mapping (seL4-style).
+/// To map the same physical frame at two addresses, duplicate the cap first.
 pub fn invoke<A: ArchObjects>(
-    frame: &mut A::Frame,
-    rights: Rights,
+    entry: &mut KeyEntry,
     op: u32,
     args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     let op = FrameOp::try_from(op as u8).map_err(|_| CapError::InvalidOperation)?;
+    let rights = entry.rights();
 
     match op {
         FrameOp::Map => {
@@ -21,37 +31,34 @@ pub fn invoke<A: ArchObjects>(
                 return Err(CapError::InsufficientRights);
             }
 
-            let vspace_slot = KeySlot(args[0] as u16);
-            let virt_addr = VirtAddr::new(args[1]);
-            let map_rights = MapRights::from_bits(args[2] as u8);
-            let attrs = MemAttrs::from_bits(args[3] as u8);
+            let frame = entry.as_frame_mut()?;
+            if frame.is_mapped() {
+                return Err(CapError::AlreadyMapped);
+            }
 
-            // Get the VSpace from the slot
-            let domain = kernel.current_domain()?;
-            let vspace_entry = domain.keytable.lookup(vspace_slot)?;
-            let vspace = vspace_entry.as_object::<AArch64VSpace>()?;
-
-            // Perform the mapping
-            // aarch64_map_frame(frame, vspace, virt_addr, map_rights, attrs, kernel)?;
+            let vaddr = args[1];
+            // ... perform the mapping via arch-specific page table code ...
+            frame.set_mapped(vaddr);
 
             Ok((0, 0))
         }
 
         FrameOp::Unmap => {
-            if frame.map_count == 0 {
+            let frame = entry.as_frame_mut()?;
+            if !frame.is_mapped() {
                 return Err(CapError::NotMapped);
             }
-            // ... unmap logic
-            todo!("frame unmap");
+            // ... perform the unmapping using frame.mapped_vaddr() ...
+            frame.clear_mapped();
             Ok((0, 0))
         }
 
         FrameOp::GetAddress => {
-            // Requires Grant right to expose physical address
             if !rights.contains(Rights::GRANT) {
                 return Err(CapError::InsufficientRights);
             }
-            Ok((frame.phys_addr.as_u64(), frame.size.size() as u64))
+            let frame = entry.as_frame()?;
+            Ok((frame.paddr, frame.size() as u64))
         }
 
         FrameOp::Remap => {

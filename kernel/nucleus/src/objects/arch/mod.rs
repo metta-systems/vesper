@@ -18,8 +18,6 @@ pub use asid_pool::AArch64ASIDPool;
 
 #[cfg(target_arch = "aarch64")]
 pub mod frame;
-#[cfg(target_arch = "aarch64")]
-pub use frame::AArch64Frame;
 
 #[cfg(target_arch = "aarch64")]
 pub mod page_table;

@@ -1,8 +1,5 @@
 use {
-    crate::{
-        api::key_entry::KeyEntry,
-        objects::{ArchObjects, DebugConsole, Nucleus},
-    },
+    crate::objects::{ArchObjects, DebugConsole, Nucleus},
     libobject::{ArchType, CapError, CoreType, KeySlot, ObjectType},
 };
 
@@ -155,8 +152,7 @@ fn arch_invoke<A: ArchObjects>(
 
     match arch_type {
         // ArchType::Frame => {
-        //     let frame = entry.as_object_mut::<A::Frame>()?;
-        //     A::invoke_frame(frame, entry.rights(), op, args, nucleus) // or A::Frame::invoke()?
+        //     A::invoke_frame(entry, op, args, nucleus)
         // }
 
         // ArchType::PageTable => {

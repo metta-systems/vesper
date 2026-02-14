@@ -1,18 +1,16 @@
 use {
     crate::{
         Nucleus,
+        api::key_entry::KeyEntry,
         objects::{
             ArchObjects,
-            arch::{
-                AArch64ASID, AArch64ASIDPool, AArch64Frame, AArch64PageTable, AArch64VSpace,
-                ArchPools,
-            },
+            arch::{AArch64ASID, AArch64ASIDPool, AArch64PageTable, AArch64VSpace, ArchPools},
             arch_objects::FrameSize,
             object_ref::ObjectRef,
         },
     },
-    libaddress::{PhysAddr, VirtAddr},
-    libobject::{ArchType, CapError, ObjectType, Rights},
+    libaddress::PhysAddr,
+    libobject::{ArchType, CapError, Rights},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -22,7 +20,6 @@ use {
 pub struct AArch64;
 
 impl ArchObjects for AArch64 {
-    type Frame = AArch64Frame;
     type PageTable = AArch64PageTable;
     type VSpace = AArch64VSpace;
     type ASIDPool = AArch64ASIDPool;
@@ -34,14 +31,17 @@ impl ArchObjects for AArch64 {
     const PT_LEVELS: usize = 4;
     const PT_INDEX_BITS: usize = 9;
 
+    fn validate_frame_size(size_bits: u8) -> Result<usize, CapError> {
+        match size_bits {
+            12 => Ok(4096),               // 4KB
+            21 => Ok(2 * 1024 * 1024),    // 2MB
+            30 => Ok(1024 * 1024 * 1024), // 1GB
+            _ => Err(CapError::InvalidFrameSize(size_bits as usize)),
+        }
+    }
+
     fn validate_retype(arch_type: ArchType, size_bits: u8) -> Result<usize, CapError> {
         match arch_type {
-            ArchType::Frame => match size_bits {
-                12 => Ok(4096),
-                21 => Ok(2 * 1024 * 1024),
-                30 => Ok(1024 * 1024 * 1024),
-                _ => Err(CapError::InvalidFrameSize(size_bits as usize)),
-            },
             ArchType::PageTable => {
                 if size_bits != 12 {
                     Err(CapError::InvalidSize(size_bits as usize))
@@ -107,13 +107,12 @@ impl ArchObjects for AArch64 {
     // ─────────────────────────────────────────────────────────────────
 
     fn invoke_frame(
-        frame: &mut AArch64Frame,
-        rights: Rights,
+        entry: &mut KeyEntry,
         op: u32,
         args: &[u64; 6],
         nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
-        // crate::api::arch::frame::invoke(frame, rights, op, args)
+        // crate::api::arch::frame::invoke(entry, op, args, nucleus)
         Err(CapError::InvalidOperation)
     }
 

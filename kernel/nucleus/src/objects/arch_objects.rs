@@ -45,10 +45,13 @@ impl FrameSize {
     }
 }
 
-/// Architecture abstraction trait - extended with invoke methods
+/// Architecture abstraction trait - extended with invoke methods.
+///
+/// Frame capabilities are arch-independent (inline RegionPayload in KeyEntry),
+/// so there is no `type Frame` associated type. Frame size validation is
+/// arch-specific via `validate_frame_size`.
 pub trait ArchObjects: Sized + 'static {
-    // ─── Associated Types ───
-    type Frame: NucleusObject;
+    // ─── Associated Types (pool-backed arch objects only) ───
     type PageTable: NucleusObject;
     type VSpace: NucleusObject;
     type ASIDPool: NucleusObject;
@@ -60,9 +63,17 @@ pub trait ArchObjects: Sized + 'static {
     const PT_INDEX_BITS: usize;
 
     // ─── Validation ───
+
+    /// Validate frame size_bits for this architecture.
+    /// Returns the frame size in bytes on success.
+    fn validate_frame_size(size_bits: u8) -> Result<usize, CapError>;
+
+    /// Validate and return object size for pool-backed arch types.
     fn validate_retype(arch_type: ArchType, size_bits: u8) -> Result<usize, CapError>;
 
-    // ─── Object Creation ───
+    // ─── Object Creation (pool-backed arch types only) ───
+    /// Create a pool-backed arch object. Frame is NOT handled here —
+    /// it is created inline via KeyEntry::new_frame() in the retype path.
     fn create_arch_object(
         arch_type: ArchType,
         phys_addr: PhysAddr,
@@ -71,9 +82,10 @@ pub trait ArchObjects: Sized + 'static {
     ) -> Result<ObjectRef, CapError>;
 
     // ─── Invocation Handlers ───
+
+    /// Handle frame operations. The frame data is inline in `entry` as a RegionPayload.
     fn invoke_frame(
-        frame: &mut Self::Frame,
-        rights: Rights,
+        entry: &mut KeyEntry,
         op: u32,
         args: &[u64; 6],
         nucleus: &mut Nucleus<Self>,
