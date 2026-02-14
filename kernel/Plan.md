@@ -19,16 +19,17 @@ Steps:
 - [x] Fill it with capability to DebugConsole
 - [x] Invoke DebugConsole.Write via syscall
 
-- [ ] Generate complete memory map from DTB, print it out
+- [x] Generate complete memory map from DTB, print it out
 
 - [ ] Make some caps work - Untypeds, Domains, Buffers, what else?
 - [ ] Test out syscalls from EL0
 
-- [ ] Print kernel covered area
-- [ ] Print KERNEL_HIGH_BASE
-- [ ] Print kernel mappings size and attribs
-- [ ] Print init_thread covered area
-- [ ] Print init_thread mappings size
+- [x] Print kernel covered area
+- [x] Print KERNEL_HIGH_BASE
+- [x] Print kernel mappings size and attribs
+- [x] Print init_thread covered area
+- [x] Print init_thread mappings size
+
 - START FILLING IN CAPS
   - [ ] untypeds
   - [ ] init_thread context and domain
