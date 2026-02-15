@@ -20,20 +20,23 @@ pub mod semihosting {
     #[expect(non_upper_case_globals)]
     const ADP_Stopped_ApplicationExit: u64 = 0x20026;
 
-    pub fn exit_success() -> ! {
+    #[inline]
+    pub fn exit(code: u32) -> ! {
         let params = ExitParameters {
             arg0: ADP_Stopped_ApplicationExit,
-            arg1: 0,
+            arg1: u64::from(code),
         };
         sys_exit_call(&params)
     }
 
+    #[inline]
+    pub fn exit_success() -> ! {
+        exit(0)
+    }
+
+    #[inline]
     pub fn exit_failure() -> ! {
-        let params = ExitParameters {
-            arg0: ADP_Stopped_ApplicationExit,
-            arg1: 1,
-        };
-        sys_exit_call(&params)
+        exit(1)
     }
 
     fn sys_exit_call(params: &ExitParameters) -> ! {
@@ -41,7 +44,7 @@ pub mod semihosting {
         unsafe {
             core::arch::asm!(
                 "hlt #0xF000",
-                in("x0") 0x18, // Sys_Exit
+                in("w0") 0x20, // Sys_Exit_Extended
                 in("x1") core::ptr::from_ref(params) as u64,
                 options(nostack)
             );
@@ -51,13 +54,14 @@ pub mod semihosting {
         }
     }
 
+    #[inline]
     pub fn sys_write0_call(text: &core::ffi::CStr) {
         // SAFETY: text must be \0-terminated, which CStr above shall ensure.
         unsafe {
             core::arch::asm!(
-                "hlt #0xF000"
-                , in("x0") 0x04 // Sys_Write0
-                , in("x1") text.as_ptr() as u64,
+                "hlt #0xF000",
+                in("w0") 0x04, // Sys_Write0
+                in("x1") text.as_ptr() as u64,
                 options(nostack)
             );
         }
@@ -65,7 +69,7 @@ pub mod semihosting {
 
     #[macro_export]
     macro_rules! semi_print {
-        // early_print!("a {} event", "log")
+        // semi_print!("a {} event", "log")
         ($($arg:tt)+) => {
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
             libqemu::semihosting::sys_write0_call(

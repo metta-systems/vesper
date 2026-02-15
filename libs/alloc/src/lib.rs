@@ -3,5 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
+#![no_std]
+
 mod bump_allocator;
 pub use bump_allocator::BumpAllocator;
