@@ -11,32 +11,54 @@
 #![reexport_test_harness_main = "test_main"]
 
 pub mod semihosting {
+    #[repr(C)]
+    struct ExitParameters {
+        arg0: u64,
+        arg1: u64,
+    }
+
+    #[expect(non_upper_case_globals)]
+    const ADP_Stopped_ApplicationExit: u64 = 0x20026;
+
     pub fn exit_success() -> ! {
-        use qemu_exit::QEMUExit;
-
-        #[cfg(target_arch = "aarch64")]
-        let qemu_exit_handle = qemu_exit::AArch64::new();
-
-        qemu_exit_handle.exit_success()
+        let params = ExitParameters {
+            arg0: ADP_Stopped_ApplicationExit,
+            arg1: 0,
+        };
+        sys_exit_call(&params)
     }
 
     pub fn exit_failure() -> ! {
-        use qemu_exit::QEMUExit;
+        let params = ExitParameters {
+            arg0: ADP_Stopped_ApplicationExit,
+            arg1: 1,
+        };
+        sys_exit_call(&params)
+    }
 
-        #[cfg(target_arch = "aarch64")]
-        let qemu_exit_handle = qemu_exit::AArch64::new();
-
-        qemu_exit_handle.exit_failure()
+    fn sys_exit_call(params: &ExitParameters) -> ! {
+        // SAFETY: safe enough!
+        unsafe {
+            core::arch::asm!(
+                "hlt #0xF000",
+                in("x0") 0x18, // Sys_Exit
+                in("x1") core::ptr::from_ref(params) as u64,
+                options(nostack)
+            );
+            loop {
+                core::arch::asm!("wfe", options(nomem, nostack));
+            }
+        }
     }
 
     pub fn sys_write0_call(text: &core::ffi::CStr) {
-        let cmd = 0x04;
         // SAFETY: text must be \0-terminated, which CStr above shall ensure.
         unsafe {
             core::arch::asm!(
                 "hlt #0xF000"
-                , in("w0") cmd
-                , in("x1") text.as_ptr() as u64
+                , in("x0") 0x04 // Sys_Write0
+                , in("x1") text.as_ptr() as u64,
+                options(nostack)
             );
         }
     }

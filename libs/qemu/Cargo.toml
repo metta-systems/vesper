@@ -19,7 +19,7 @@ publish = false
 maintenance = { status = "experimental" }
 
 [dependencies]
-qemu-exit = { workspace = true }
+libprint = { workspace = true }
 
 [lints]
 workspace = true
