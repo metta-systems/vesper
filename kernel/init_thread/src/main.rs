@@ -548,13 +548,21 @@ pub fn init_main_el2(dtb: u32) -> ! {
     semi_println!("Kernel image covers phys -:- mapped to KERNEL_HIGH_BASE:-");
     semi_println!("Kernel mapping tables filled in as - for kernel, as - for phys memory");
 
+    print_my_sp();
+
+    unsafe extern "Rust" {
+        // Stack top
+        static __STACK_TOP: UnsafeCell<()>;
+    }
+
     unsafe {
         el_switch::enable_mmu_and_drop_to_el1(
             ttbr0,
             ttbr1,
             vbar,
             init_thread_run as *const () as u64,
-            el1_stack_top,
+            // el1_stack_top, // This is solely for the kernel
+            __STACK_TOP.get() as u64,
         );
     }
 }
@@ -567,10 +575,12 @@ pub fn init_thread_run() -> ! {
 
     // Run initial thread further in EL1, seting up the capDL etc.
     semi_println!("init_main_run: enabled MMU and dropped to EL1");
+    print_my_sp();
     unsafe {
         protected_call6(0, 0, 0, 0, 0, 0, 0, 0);
     }
     semi_println!("init_main_run: Returned from fake syscall");
+    print_my_sp();
 
     // ─────────────────────────────────────────────────────────────────────
     // Initialize kernel subsystems
@@ -709,6 +719,8 @@ pub fn init_thread_run() -> ! {
     // // Kernel high map (TTBR1) is ready for when init makes syscalls
     // // This never returns
     // switch_to_domain(init_domain, init_time);
+    print_my_sp();
+
     libqemu::semihosting::exit_success()
 
     // kernel_init_mmio_va_allocator()
@@ -767,6 +779,12 @@ pub fn init_thread_run() -> ! {
     //     info!("Spinning for 1 second");
     //     libtime::time::time_manager().spin_for(Duration::from_secs(1));
     // }
+}
+
+fn print_my_sp() {
+    use aarch64_cpu::registers::Readable;
+    let sp = aarch64_cpu::registers::SP.get();
+    semi_println!("Current SP: {sp:016x}");
 }
 /*
 // ─────────────────────────────────────────────────────────────────────
