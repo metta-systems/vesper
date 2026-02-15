@@ -170,6 +170,16 @@ fn reset(dtb: u32) -> ! {
         fn main(dtb: u32) -> !;
     }
 
+    unsafe extern "Rust" {
+        // Stack top
+        static __STACK_TOP: core::cell::UnsafeCell<()>;
+    }
+    // Set up SP (stack pointer), which will be used by EL2 rust code.
+    // SAFETY: Pure asm.
+    unsafe {
+        SP.set(__STACK_TOP.get() as u64);
+    }
+
     // SAFETY: We're getting to more safety right here!
     unsafe { main(dtb) }
 }
