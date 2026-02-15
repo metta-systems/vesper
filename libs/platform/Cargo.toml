@@ -28,29 +28,28 @@ test_build = []
 
 [dependencies]
 aarch64-cpu = { workspace = true }
-bit_field = { workspace = true }
-bitflags = { workspace = true }
-buddy-alloc = { workspace = true }
-cfg-if = { workspace = true }
+# bit_field = { workspace = true }
+# bitflags = { workspace = true }
+# buddy-alloc = { workspace = true }
+# cfg-if = { workspace = true }
 libaddress = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
 libdriver = { workspace = true }
 libexception = { workspace = true }
 libkernel-state = { workspace = true }
-liblocal-irq = { workspace = true }
+# liblocal-irq = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 libmapping = { workspace = true }
 libmmio = { workspace = true }
 libprimitives = { workspace = true }
 libtime = { workspace = true }
-once_cell = { workspace = true }
-qemu-exit = { workspace = true }
+# once_cell = { workspace = true }
 snafu = { workspace = true }
 tock-registers = { workspace = true }
-usize_conversions = { workspace = true }
-ux = { workspace = true }
+# usize_conversions = { workspace = true }
+# ux = { workspace = true }
 
 [dev-dependencies]
 libtest = { workspace = true }

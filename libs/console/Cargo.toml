@@ -23,13 +23,13 @@ default = []
 qemu = []
 
 [dependencies]
-aarch64-cpu = { workspace = true }
+# aarch64-cpu = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 libtest = { workspace = true }
-libtime = { workspace = true }
+# libtime = { workspace = true }
 
 [lib]
 test = false

@@ -78,7 +78,6 @@ libtest = { path = "libs/test" }
 libtime = { path = "libs/time" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
-qemu-exit = { version = "3.0" }
 safe-mmio = { version = "0.2" }
 snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
 static_assertions = { version = "1.1.0" }

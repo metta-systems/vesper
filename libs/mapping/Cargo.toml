@@ -17,7 +17,7 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 libaddress = { workspace = true }
-liblocking = { workspace = true }
+# liblocking = { workspace = true }
 liblog = { workspace = true }
 libmmio = { workspace = true }
 

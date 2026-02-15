@@ -26,10 +26,10 @@ test_build = []
 [dependencies]
 aarch64-cpu = { workspace = true }
 liblocal-irq = { workspace = true }
-liblocking = { workspace = true }
+# liblocking = { workspace = true }
 liblog = { workspace = true }
-libprimitives = { workspace = true }
-snafu = { workspace = true }
+# libprimitives = { workspace = true }
+# snafu = { workspace = true }
 tock-registers = { workspace = true }
 
 [lints]
