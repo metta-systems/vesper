@@ -24,5 +24,9 @@ libcpu = { workspace = true }
 libplatform = { workspace = true }
 tock-registers = { workspace = true }
 
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+
 [lints]
 workspace = true

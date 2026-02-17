@@ -20,5 +20,9 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+
 [lints]
 workspace = true

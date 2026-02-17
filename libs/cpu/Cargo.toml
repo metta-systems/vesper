@@ -24,15 +24,8 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 aarch64-cpu = { workspace = true }
-# bit_field = { workspace = true }
-# bitflags = { workspace = true }
-# cfg-if = { workspace = true }
-# once_cell = { workspace = true }
-# snafu = { workspace = true }
-# tock-registers = { workspace = true }
-# usize_conversions = { workspace = true }
-# ux = { workspace = true }
 
+# Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
 

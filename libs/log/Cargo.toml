@@ -18,8 +18,12 @@ publish = false
 [badges]
 maintenance = { status = "experimental" }
 
-[dependencies]
+# [dependencies]
 # libtest = { workspace = true } cyclic dep
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
 
 [lints]
 workspace = true

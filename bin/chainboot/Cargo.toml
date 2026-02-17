@@ -22,18 +22,11 @@ noserial = []
 
 [dependencies]
 aarch64-cpu = { workspace = true }
-# bit_field = { workspace = true }
-# bitflags = { workspace = true }
-# cfg-if = { workspace = true }
 libconsole = { workspace = true }
 liblog = { workspace = true }
 libmachine = { workspace = true }
 libplatform = { workspace = true }
 seahash = { workspace = true }
-# snafu = { workspace = true }
-# tock-registers = { workspace = true }
-# usize_conversions = { workspace = true }
-# ux = { workspace = true }
 
 [dev-dependencies]
 libqemu = { workspace = true }

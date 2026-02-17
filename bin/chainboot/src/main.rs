@@ -9,7 +9,7 @@ use {
     core::hash::Hasher,
     libconsole::console::console,
     liblog::{print, println},
-    libplatform::platform::raspberrypi::BcmHost,
+    libplatform::raspberrypi::BcmHost,
     seahash::SeaHasher,
 };
 
@@ -25,14 +25,14 @@ unsafe extern "C" fn kernel_init(dtb: u32, max_kernel_size: u64) -> ! {
     libmachine::debug::jtag::wait_debugger();
 
     // SAFETY: VERY SAFE
-    if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
+    if let Err(x) = unsafe { libplatform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
 
     // Initialize all device drivers.
     // SAFETY: Relatively safe.
     unsafe {
-        libplatform::platform::drivers::driver_manager().init_drivers_and_irqs();
+        libplatform::drivers::driver_manager().init_drivers_and_irqs();
     }
 
     // println! is usable from here on.

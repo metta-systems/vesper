@@ -5,6 +5,19 @@ What's needed: quick-n-dirty higher-half mappings setup and kernel physical memo
 - `__init_thread_start` till `__init_thread_end` identity-map (no code/data split yet?)
 
 Steps:
+- [ ] Move tests from kernel/tests to individual libs?
+
+- [ ] Make some caps work - Untypeds, Domains, Buffers, what else?
+- [ ] Test out syscalls from EL0
+
+- START FILLING IN CAPS
+  - [ ] untypeds
+  - [ ] init_thread context and domain
+
+---
+
+# Completed
+
 - [x] Buildable
 - [x] build all shit together into a binary
 - [x] make separate init_thread section and start booting from init_thread
@@ -21,18 +34,13 @@ Steps:
 
 - [x] Generate complete memory map from DTB, print it out
 
-- [ ] Make some caps work - Untypeds, Domains, Buffers, what else?
-- [ ] Test out syscalls from EL0
-
 - [x] Print kernel covered area
 - [x] Print KERNEL_HIGH_BASE
 - [x] Print kernel mappings size and attribs
 - [x] Print init_thread covered area
 - [x] Print init_thread mappings size
 
-- START FILLING IN CAPS
-  - [ ] untypeds
-  - [ ] init_thread context and domain
+
 
 Whatever kernel links must also be located in high-mem mapping, so we cannot share this code with init_thread at all!
 This means it's probably sensible to build kernel as a separate ELF file linked entirely high, then merge it with the init_thread binary through specially-named sections; there should be no symbol resolution across two binaries, so the nucleus image is solely pulled via it's PHDRS (but we need to place the BSS which will be erased by the init_thread before turning the MMU on)

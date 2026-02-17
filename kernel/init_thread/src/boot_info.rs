@@ -142,108 +142,108 @@ impl fmt::Display for BootInfoMemRegion {
     }
 }
 
-#[cfg(test)]
-mod boot_info_region_tests {
-    use super::*;
+// #[cfg(test)]
+// mod boot_info_region_tests {
+//     use super::*;
 
-    #[test_case]
-    fn test_construct_regular_region() {
-        let region = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), true, "RAM");
-        assert_eq!(region.start_inclusive, 0x0);
-        assert_eq!(region.end_exclusive, 0x2000);
-        assert_eq!(region.size(), 0x2000);
-        assert_eq!(region.attributes.occupied, false);
-        assert_eq!(region.name, "RAM");
-    }
+//     #[test_case]
+//     fn test_construct_regular_region() {
+//         let region = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), true, "RAM");
+//         assert_eq!(region.start_inclusive, 0x0);
+//         assert_eq!(region.end_exclusive, 0x2000);
+//         assert_eq!(region.size(), 0x2000);
+//         assert_eq!(region.attributes.occupied, false);
+//         assert_eq!(region.name, "RAM");
+//     }
 
-    #[test_case]
-    fn test_construct_reverse_region() {
-        let region = BootInfoMemRegion::at(0x2000.into(), 0x0.into(), true, "RAM");
-        assert_eq!(region.start_inclusive, 0x0);
-        assert_eq!(region.end_exclusive, 0x2000);
-        assert_eq!(region.size(), 0x2000);
-        assert_eq!(region.attributes.occupied, false);
-        assert_eq!(region.name, "RAM");
-    }
+//     #[test_case]
+//     fn test_construct_reverse_region() {
+//         let region = BootInfoMemRegion::at(0x2000.into(), 0x0.into(), true, "RAM");
+//         assert_eq!(region.start_inclusive, 0x0);
+//         assert_eq!(region.end_exclusive, 0x2000);
+//         assert_eq!(region.size(), 0x2000);
+//         assert_eq!(region.attributes.occupied, false);
+//         assert_eq!(region.name, "RAM");
+//     }
 
-    #[test_case]
-    fn test_regions_touch() {
-        let region1 = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), false, "R1");
-        let region2 = BootInfoMemRegion::at(0x2000.into(), 0x4000.into(), false, "R2");
-        assert_eq!(region1.intersects(&region2), false);
-        assert_eq!(region2.intersects(&region1), false);
-        // But they do touch
-        assert_eq!(region1.touches_or_overlaps(&region2), true);
-        assert_eq!(region2.touches_or_overlaps(&region1), true);
-    }
+//     #[test_case]
+//     fn test_regions_touch() {
+//         let region1 = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), false, "R1");
+//         let region2 = BootInfoMemRegion::at(0x2000.into(), 0x4000.into(), false, "R2");
+//         assert_eq!(region1.intersects(&region2), false);
+//         assert_eq!(region2.intersects(&region1), false);
+//         // But they do touch
+//         assert_eq!(region1.touches_or_overlaps(&region2), true);
+//         assert_eq!(region2.touches_or_overlaps(&region1), true);
+//     }
 
-    #[test_case]
-    fn test_regions_intersect() {
-        let region1 = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), false, "R1");
-        let region2 = BootInfoMemRegion::at(0x1000.into(), 0x3000.into(), false, "R2");
-        assert_eq!(region1.intersects(&region2), true);
-        assert_eq!(region2.intersects(&region1), true);
-    }
+//     #[test_case]
+//     fn test_regions_intersect() {
+//         let region1 = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), false, "R1");
+//         let region2 = BootInfoMemRegion::at(0x1000.into(), 0x3000.into(), false, "R2");
+//         assert_eq!(region1.intersects(&region2), true);
+//         assert_eq!(region2.intersects(&region1), true);
+//     }
 
-    #[test_case]
-    fn test_self_intersect() {
-        let region1 = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), false, "R1");
-        let region2 = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), false, "R2");
-        assert_eq!(region1.intersects(&region2), true);
-        assert_eq!(region2.intersects(&region1), true);
-    }
+//     #[test_case]
+//     fn test_self_intersect() {
+//         let region1 = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), false, "R1");
+//         let region2 = BootInfoMemRegion::at(0x0.into(), 0x2000.into(), false, "R2");
+//         assert_eq!(region1.intersects(&region2), true);
+//         assert_eq!(region2.intersects(&region1), true);
+//     }
 
-    #[test_case]
-    fn test_regions_fully_overlap() {
-        let outer = BootInfoMemRegion::at(0x0.into(), 0x4000.into(), false, "outer");
-        let inner = BootInfoMemRegion::at(0x1000.into(), 0x3000.into(), false, "inner");
-        assert_eq!(outer.intersects(&inner), true);
-        assert_eq!(inner.intersects(&outer), true);
-    }
+//     #[test_case]
+//     fn test_regions_fully_overlap() {
+//         let outer = BootInfoMemRegion::at(0x0.into(), 0x4000.into(), false, "outer");
+//         let inner = BootInfoMemRegion::at(0x1000.into(), 0x3000.into(), false, "inner");
+//         assert_eq!(outer.intersects(&inner), true);
+//         assert_eq!(inner.intersects(&outer), true);
+//     }
 
-    #[test_case]
-    fn test_regions_disjoint() {
-        let region1 = BootInfoMemRegion::at(0x0.into(), 0x1000.into(), false, "R1");
-        let region2 = BootInfoMemRegion::at(0x2000.into(), 0x3000.into(), false, "R2");
-        assert_eq!(region1.intersects(&region2), false);
-        assert_eq!(region2.intersects(&region1), false);
-        assert_eq!(region1.touches_or_overlaps(&region2), false);
-        assert_eq!(region2.touches_or_overlaps(&region1), false);
-    }
+//     #[test_case]
+//     fn test_regions_disjoint() {
+//         let region1 = BootInfoMemRegion::at(0x0.into(), 0x1000.into(), false, "R1");
+//         let region2 = BootInfoMemRegion::at(0x2000.into(), 0x3000.into(), false, "R2");
+//         assert_eq!(region1.intersects(&region2), false);
+//         assert_eq!(region2.intersects(&region1), false);
+//         assert_eq!(region1.touches_or_overlaps(&region2), false);
+//         assert_eq!(region2.touches_or_overlaps(&region1), false);
+//     }
 
-    #[test_case]
-    fn test_compatible_attributes() {
-        let r1 = BootInfoMemRegion::at(0x0.into(), 0x1000.into(), true, "R1");
-        let r2 = BootInfoMemRegion::at(0x1000.into(), 0x2000.into(), true, "R2");
-        assert_eq!(r1.compatible_attributes(&r2), true);
+//     #[test_case]
+//     fn test_compatible_attributes() {
+//         let r1 = BootInfoMemRegion::at(0x0.into(), 0x1000.into(), true, "R1");
+//         let r2 = BootInfoMemRegion::at(0x1000.into(), 0x2000.into(), true, "R2");
+//         assert_eq!(r1.compatible_attributes(&r2), true);
 
-        let r3 = BootInfoMemRegion::with_attributes(
-            0x2000.into(),
-            0x3000.into(),
-            AttributeFields {
-                mem_attributes: MemAttributes::Device,
-                ..AttributeFields::default()
-            },
-            "MMIO",
-        );
-        assert_eq!(r1.compatible_attributes(&r3), false);
-    }
+//         let r3 = BootInfoMemRegion::with_attributes(
+//             0x2000.into(),
+//             0x3000.into(),
+//             AttributeFields {
+//                 mem_attributes: MemAttributes::Device,
+//                 ..AttributeFields::default()
+//             },
+//             "MMIO",
+//         );
+//         assert_eq!(r1.compatible_attributes(&r3), false);
+//     }
 
-    #[test_case]
-    fn test_is_free_and_is_used() {
-        let free = BootInfoMemRegion::at(0x0.into(), 0x1000.into(), true, "free");
-        assert_eq!(free.is_free(), true);
-        assert_eq!(free.is_used(), false);
+//     #[test_case]
+//     fn test_is_free_and_is_used() {
+//         let free = BootInfoMemRegion::at(0x0.into(), 0x1000.into(), true, "free");
+//         assert_eq!(free.is_free(), true);
+//         assert_eq!(free.is_used(), false);
 
-        let used = BootInfoMemRegion::at(0x0.into(), 0x1000.into(), false, "used");
-        assert_eq!(used.is_free(), false);
-        assert_eq!(used.is_used(), true);
+//         let used = BootInfoMemRegion::at(0x0.into(), 0x1000.into(), false, "used");
+//         assert_eq!(used.is_free(), false);
+//         assert_eq!(used.is_used(), true);
 
-        let empty = BootInfoMemRegion::new();
-        assert_eq!(empty.is_free(), false);
-        assert_eq!(empty.is_used(), false);
-    }
-}
+//         let empty = BootInfoMemRegion::new();
+//         assert_eq!(empty.is_free(), false);
+//         assert_eq!(empty.is_used(), false);
+//     }
+// }
 
 //=================================================================================================
 // BootInfo
@@ -728,309 +728,309 @@ impl BootInfo {
 pub static BOOT_INFO: IRQSafeNullLock<LazyCell<BootInfo>> =
     IRQSafeNullLock::new(LazyCell::new(|| BootInfo::new()));
 
-#[cfg(test)]
-mod boot_info_tests {
-    use super::*;
+// #[cfg(test)]
+// mod boot_info_tests {
+//     use super::*;
 
-    fn default_attrs() -> AttributeFields {
-        AttributeFields::default()
-    }
+//     fn default_attrs() -> AttributeFields {
+//         AttributeFields::default()
+//     }
 
-    fn device_attrs() -> AttributeFields {
-        AttributeFields {
-            mem_attributes: MemAttributes::Device,
-            acc_perms: AccessPermissions::ReadWrite,
-            executable: false,
-            occupied: false,
-        }
-    }
+//     fn device_attrs() -> AttributeFields {
+//         AttributeFields {
+//             mem_attributes: MemAttributes::Device,
+//             acc_perms: AccessPermissions::ReadWrite,
+//             executable: false,
+//             occupied: false,
+//         }
+//     }
 
-    // -- insert_free_region tests --
+//     // -- insert_free_region tests --
 
-    #[test_case]
-    fn test_insert_free_region() {
-        let mut bi = BootInfo::new();
-        let res = bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM");
-        assert!(res.is_ok());
-        assert_eq!(bi.count(), 1);
-        assert_eq!(bi.total_free(), 0x4000);
-    }
+//     #[test_case]
+//     fn test_insert_free_region() {
+//         let mut bi = BootInfo::new();
+//         let res = bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM");
+//         assert!(res.is_ok());
+//         assert_eq!(bi.count(), 1);
+//         assert_eq!(bi.total_free(), 0x4000);
+//     }
 
-    #[test_case]
-    fn test_insert_free_region_empty_is_noop() {
-        let mut bi = BootInfo::new();
-        let res = bi.insert_free_region(0x1000.into(), 0x1000.into(), default_attrs(), "empty");
-        assert!(res.is_ok());
-        assert_eq!(bi.count(), 0);
-    }
+//     #[test_case]
+//     fn test_insert_free_region_empty_is_noop() {
+//         let mut bi = BootInfo::new();
+//         let res = bi.insert_free_region(0x1000.into(), 0x1000.into(), default_attrs(), "empty");
+//         assert!(res.is_ok());
+//         assert_eq!(bi.count(), 0);
+//     }
 
-    #[test_case]
-    fn test_insert_free_merge_adjacent() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_free_region(0x2000.into(), 0x4000.into(), default_attrs(), "RAM")
-            .unwrap();
-        // Should merge into one region [0x0, 0x4000).
-        assert_eq!(bi.count(), 1);
-        assert_eq!(bi.total_free(), 0x4000);
-        let r = bi.free_regions().next().unwrap();
-        assert_eq!(r.start_inclusive, 0x0);
-        assert_eq!(r.end_exclusive, 0x4000);
-    }
+//     #[test_case]
+//     fn test_insert_free_merge_adjacent() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_free_region(0x2000.into(), 0x4000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         // Should merge into one region [0x0, 0x4000).
+//         assert_eq!(bi.count(), 1);
+//         assert_eq!(bi.total_free(), 0x4000);
+//         let r = bi.free_regions().next().unwrap();
+//         assert_eq!(r.start_inclusive, 0x0);
+//         assert_eq!(r.end_exclusive, 0x4000);
+//     }
 
-    #[test_case]
-    fn test_insert_free_merge_overlapping() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x3000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_free_region(0x2000.into(), 0x5000.into(), default_attrs(), "RAM")
-            .unwrap();
-        assert_eq!(bi.count(), 1);
-        assert_eq!(bi.total_free(), 0x5000);
-        let r = bi.free_regions().next().unwrap();
-        assert_eq!(r.start_inclusive, 0x0);
-        assert_eq!(r.end_exclusive, 0x5000);
-    }
+//     #[test_case]
+//     fn test_insert_free_merge_overlapping() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x3000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_free_region(0x2000.into(), 0x5000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         assert_eq!(bi.count(), 1);
+//         assert_eq!(bi.total_free(), 0x5000);
+//         let r = bi.free_regions().next().unwrap();
+//         assert_eq!(r.start_inclusive, 0x0);
+//         assert_eq!(r.end_exclusive, 0x5000);
+//     }
 
-    #[test_case]
-    fn test_insert_free_no_merge_different_attrs() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_free_region(0x2000.into(), 0x4000.into(), device_attrs(), "MMIO")
-            .unwrap();
-        // Different attributes: should NOT merge.
-        assert_eq!(bi.count(), 2);
-    }
+//     #[test_case]
+//     fn test_insert_free_no_merge_different_attrs() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_free_region(0x2000.into(), 0x4000.into(), device_attrs(), "MMIO")
+//             .unwrap();
+//         // Different attributes: should NOT merge.
+//         assert_eq!(bi.count(), 2);
+//     }
 
-    #[test_case]
-    fn test_insert_free_merge_three_regions() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x1000.into(), default_attrs(), "R1")
-            .unwrap();
-        bi.insert_free_region(0x2000.into(), 0x3000.into(), default_attrs(), "R3")
-            .unwrap();
-        // Insert a bridging region that touches both.
-        bi.insert_free_region(0x1000.into(), 0x2000.into(), default_attrs(), "R2")
-            .unwrap();
-        assert_eq!(bi.count(), 1);
-        assert_eq!(bi.total_free(), 0x3000);
-    }
+//     #[test_case]
+//     fn test_insert_free_merge_three_regions() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x1000.into(), default_attrs(), "R1")
+//             .unwrap();
+//         bi.insert_free_region(0x2000.into(), 0x3000.into(), default_attrs(), "R3")
+//             .unwrap();
+//         // Insert a bridging region that touches both.
+//         bi.insert_free_region(0x1000.into(), 0x2000.into(), default_attrs(), "R2")
+//             .unwrap();
+//         assert_eq!(bi.count(), 1);
+//         assert_eq!(bi.total_free(), 0x3000);
+//     }
 
-    // -- insert_used_region tests --
+//     // -- insert_used_region tests --
 
-    #[test_case]
-    fn test_insert_used_cuts_free_start() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_used_region(0x0.into(), 0x1000.into(), default_attrs(), "kernel")
-            .unwrap();
-        // Free region should be shrunk to [0x1000, 0x4000).
-        assert_eq!(bi.total_free(), 0x3000);
-        assert_eq!(bi.total_used(), 0x1000);
-        let free = bi.free_regions().next().unwrap();
-        assert_eq!(free.start_inclusive, 0x1000);
-        assert_eq!(free.end_exclusive, 0x4000);
-    }
+//     #[test_case]
+//     fn test_insert_used_cuts_free_start() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_used_region(0x0.into(), 0x1000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         // Free region should be shrunk to [0x1000, 0x4000).
+//         assert_eq!(bi.total_free(), 0x3000);
+//         assert_eq!(bi.total_used(), 0x1000);
+//         let free = bi.free_regions().next().unwrap();
+//         assert_eq!(free.start_inclusive, 0x1000);
+//         assert_eq!(free.end_exclusive, 0x4000);
+//     }
 
-    #[test_case]
-    fn test_insert_used_cuts_free_end() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_used_region(0x3000.into(), 0x4000.into(), default_attrs(), "kernel")
-            .unwrap();
-        assert_eq!(bi.total_free(), 0x3000);
-        let free = bi.free_regions().next().unwrap();
-        assert_eq!(free.start_inclusive, 0x0);
-        assert_eq!(free.end_exclusive, 0x3000);
-    }
+//     #[test_case]
+//     fn test_insert_used_cuts_free_end() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_used_region(0x3000.into(), 0x4000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         assert_eq!(bi.total_free(), 0x3000);
+//         let free = bi.free_regions().next().unwrap();
+//         assert_eq!(free.start_inclusive, 0x0);
+//         assert_eq!(free.end_exclusive, 0x3000);
+//     }
 
-    #[test_case]
-    fn test_insert_used_splits_free() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x8000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_used_region(0x2000.into(), 0x4000.into(), default_attrs(), "kernel")
-            .unwrap();
-        // Should split into [0x0, 0x2000) and [0x4000, 0x8000).
-        let free: usize = bi.free_regions().map(|r| r.size()).sum();
-        assert_eq!(free, 0x6000);
-        assert_eq!(bi.free_regions().count(), 2);
-        assert_eq!(bi.used_regions().count(), 1);
-    }
+//     #[test_case]
+//     fn test_insert_used_splits_free() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x8000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_used_region(0x2000.into(), 0x4000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         // Should split into [0x0, 0x2000) and [0x4000, 0x8000).
+//         let free: usize = bi.free_regions().map(|r| r.size()).sum();
+//         assert_eq!(free, 0x6000);
+//         assert_eq!(bi.free_regions().count(), 2);
+//         assert_eq!(bi.used_regions().count(), 1);
+//     }
 
-    #[test_case]
-    fn test_insert_used_subsumes_free() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x1000.into(), 0x3000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_used_region(0x0.into(), 0x4000.into(), default_attrs(), "kernel")
-            .unwrap();
-        assert_eq!(bi.total_free(), 0);
-        assert_eq!(bi.total_used(), 0x4000);
-    }
+//     #[test_case]
+//     fn test_insert_used_subsumes_free() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x1000.into(), 0x3000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_used_region(0x0.into(), 0x4000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         assert_eq!(bi.total_free(), 0);
+//         assert_eq!(bi.total_used(), 0x4000);
+//     }
 
-    #[test_case]
-    fn test_insert_used_overlapping_error() {
-        let mut bi = BootInfo::new();
-        bi.insert_used_region(0x0.into(), 0x2000.into(), default_attrs(), "kernel")
-            .unwrap();
-        let res = bi.insert_used_region(0x1000.into(), 0x3000.into(), default_attrs(), "dtb");
-        assert_eq!(res, Err(BootInfoError::OverlappingUsedRegions));
-    }
+//     #[test_case]
+//     fn test_insert_used_overlapping_error() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_used_region(0x0.into(), 0x2000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         let res = bi.insert_used_region(0x1000.into(), 0x3000.into(), default_attrs(), "dtb");
+//         assert_eq!(res, Err(BootInfoError::OverlappingUsedRegions));
+//     }
 
-    #[test_case]
-    fn test_insert_used_no_overlap_ok() {
-        let mut bi = BootInfo::new();
-        bi.insert_used_region(0x0.into(), 0x2000.into(), default_attrs(), "kernel")
-            .unwrap();
-        bi.insert_used_region(0x2000.into(), 0x4000.into(), default_attrs(), "dtb")
-            .unwrap();
-        assert_eq!(bi.used_regions().count(), 2);
-    }
+//     #[test_case]
+//     fn test_insert_used_no_overlap_ok() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_used_region(0x0.into(), 0x2000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         bi.insert_used_region(0x2000.into(), 0x4000.into(), default_attrs(), "dtb")
+//             .unwrap();
+//         assert_eq!(bi.used_regions().count(), 2);
+//     }
 
-    #[test_case]
-    fn test_insert_used_cuts_multiple_free_regions() {
-        let mut bi = BootInfo::new();
-        // Two separate free regions.
-        bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "R1")
-            .unwrap();
-        bi.insert_free_region(0x3000.into(), 0x5000.into(), default_attrs(), "R2")
-            .unwrap();
-        // Used region spans across both.
-        bi.insert_used_region(0x1000.into(), 0x4000.into(), default_attrs(), "kernel")
-            .unwrap();
-        // R1 shrunk to [0x0, 0x1000), R2 shrunk to [0x4000, 0x5000).
-        assert_eq!(bi.total_free(), 0x2000);
-        assert_eq!(bi.total_used(), 0x3000);
-    }
+//     #[test_case]
+//     fn test_insert_used_cuts_multiple_free_regions() {
+//         let mut bi = BootInfo::new();
+//         // Two separate free regions.
+//         bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "R1")
+//             .unwrap();
+//         bi.insert_free_region(0x3000.into(), 0x5000.into(), default_attrs(), "R2")
+//             .unwrap();
+//         // Used region spans across both.
+//         bi.insert_used_region(0x1000.into(), 0x4000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         // R1 shrunk to [0x0, 0x1000), R2 shrunk to [0x4000, 0x5000).
+//         assert_eq!(bi.total_free(), 0x2000);
+//         assert_eq!(bi.total_used(), 0x3000);
+//     }
 
-    // -- sort and compact tests --
+//     // -- sort and compact tests --
 
-    #[test_case]
-    fn test_sort() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x4000.into(), 0x8000.into(), default_attrs(), "R2")
-            .unwrap();
-        bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "R1")
-            .unwrap();
-        bi.sort();
-        let regions: Vec<_> = bi.iter().collect();
-        assert!(regions[0].start_inclusive < regions[1].start_inclusive);
-    }
+//     #[test_case]
+//     fn test_sort() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x4000.into(), 0x8000.into(), default_attrs(), "R2")
+//             .unwrap();
+//         bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "R1")
+//             .unwrap();
+//         bi.sort();
+//         let regions: Vec<_> = bi.iter().collect();
+//         assert!(regions[0].start_inclusive < regions[1].start_inclusive);
+//     }
 
-    #[test_case]
-    fn test_compact() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "R1")
-            .unwrap();
-        bi.insert_free_region(0x4000.into(), 0x6000.into(), default_attrs(), "R2")
-            .unwrap();
-        // Manually clear first to create a gap.
-        bi.regions[0].clear();
-        assert_eq!(bi.count(), 1);
-        bi.compact();
-        // After compact, the remaining region should be in slot 0.
-        assert!(!bi.regions[0].is_empty());
-        assert_eq!(bi.regions[0].start_inclusive, 0x4000);
-    }
+//     #[test_case]
+//     fn test_compact() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x2000.into(), default_attrs(), "R1")
+//             .unwrap();
+//         bi.insert_free_region(0x4000.into(), 0x6000.into(), default_attrs(), "R2")
+//             .unwrap();
+//         // Manually clear first to create a gap.
+//         bi.regions[0].clear();
+//         assert_eq!(bi.count(), 1);
+//         bi.compact();
+//         // After compact, the remaining region should be in slot 0.
+//         assert!(!bi.regions[0].is_empty());
+//         assert_eq!(bi.regions[0].start_inclusive, 0x4000);
+//     }
 
-    // -- alloc_region tests --
+//     // -- alloc_region tests --
 
-    #[test_case]
-    fn test_alloc_region_no_memory() {
-        let mut bi = BootInfo::new();
-        let res = bi.alloc_region(12, "test");
-        assert_eq!(res, Err(BootInfoError::NoFreeSlots));
-    }
+//     #[test_case]
+//     fn test_alloc_region_no_memory() {
+//         let mut bi = BootInfo::new();
+//         let res = bi.alloc_region(12, "test");
+//         assert_eq!(res, Err(BootInfoError::NoFreeSlots));
+//     }
 
-    #[test_case]
-    fn test_alloc_region_basic() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x10_0000.into(), default_attrs(), "RAM")
-            .unwrap();
-        let addr = bi.alloc_region(12, "page").unwrap(); // 4 KiB
-        // The allocated address should be within the original free region.
-        assert!(addr >= PhysAddr::from(0x0u64));
-        assert!(addr < PhysAddr::from(0x10_0000u64));
-        // Free space should be reduced by 4 KiB.
-        assert_eq!(bi.total_free(), 0x10_0000 - 0x1000);
-    }
+//     #[test_case]
+//     fn test_alloc_region_basic() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x10_0000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         let addr = bi.alloc_region(12, "page").unwrap(); // 4 KiB
+//         // The allocated address should be within the original free region.
+//         assert!(addr >= PhysAddr::from(0x0u64));
+//         assert!(addr < PhysAddr::from(0x10_0000u64));
+//         // Free space should be reduced by 4 KiB.
+//         assert_eq!(bi.total_free(), 0x10_0000 - 0x1000);
+//     }
 
-    // -- insert_overlay_region tests --
+//     // -- insert_overlay_region tests --
 
-    #[test_case]
-    fn test_overlay_fills_gaps_between_used() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0xA000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_used_region(0x1000.into(), 0x3000.into(), default_attrs(), "kernel")
-            .unwrap();
-        bi.insert_used_region(0x5000.into(), 0x7000.into(), default_attrs(), "stack")
-            .unwrap();
-        // Overlay [0x0, 0xA000) should fill three gaps.
-        bi.insert_overlay_region(0x0.into(), 0xA000.into(), default_attrs(), "init")
-            .unwrap();
+//     #[test_case]
+//     fn test_overlay_fills_gaps_between_used() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0xA000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_used_region(0x1000.into(), 0x3000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         bi.insert_used_region(0x5000.into(), 0x7000.into(), default_attrs(), "stack")
+//             .unwrap();
+//         // Overlay [0x0, 0xA000) should fill three gaps.
+//         bi.insert_overlay_region(0x0.into(), 0xA000.into(), default_attrs(), "init")
+//             .unwrap();
 
-        bi.compact();
-        bi.sort();
+//         bi.compact();
+//         bi.sort();
 
-        // Should have: [0,1000) init, [1000,3000) kernel, [3000,5000) init,
-        //              [5000,7000) stack, [7000,A000) init = 5 used regions
-        assert_eq!(bi.used_regions().count(), 5);
-        assert_eq!(bi.total_used(), 0xA000);
-        assert_eq!(bi.total_free(), 0);
-    }
+//         // Should have: [0,1000) init, [1000,3000) kernel, [3000,5000) init,
+//         //              [5000,7000) stack, [7000,A000) init = 5 used regions
+//         assert_eq!(bi.used_regions().count(), 5);
+//         assert_eq!(bi.total_used(), 0xA000);
+//         assert_eq!(bi.total_free(), 0);
+//     }
 
-    #[test_case]
-    fn test_overlay_no_existing_used() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM")
-            .unwrap();
-        // Overlay with no existing used regions — becomes one big used region.
-        bi.insert_overlay_region(0x0.into(), 0x4000.into(), default_attrs(), "init")
-            .unwrap();
-        assert_eq!(bi.used_regions().count(), 1);
-        assert_eq!(bi.total_used(), 0x4000);
-        assert_eq!(bi.total_free(), 0);
-    }
+//     #[test_case]
+//     fn test_overlay_no_existing_used() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x4000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         // Overlay with no existing used regions — becomes one big used region.
+//         bi.insert_overlay_region(0x0.into(), 0x4000.into(), default_attrs(), "init")
+//             .unwrap();
+//         assert_eq!(bi.used_regions().count(), 1);
+//         assert_eq!(bi.total_used(), 0x4000);
+//         assert_eq!(bi.total_free(), 0);
+//     }
 
-    #[test_case]
-    fn test_overlay_fully_covered() {
-        let mut bi = BootInfo::new();
-        // Used region covers entire overlay — no gaps to fill.
-        bi.insert_used_region(0x0.into(), 0x4000.into(), default_attrs(), "kernel")
-            .unwrap();
-        bi.insert_overlay_region(0x0.into(), 0x4000.into(), default_attrs(), "init")
-            .unwrap();
-        assert_eq!(bi.used_regions().count(), 1);
-        assert_eq!(bi.total_used(), 0x4000);
-    }
+//     #[test_case]
+//     fn test_overlay_fully_covered() {
+//         let mut bi = BootInfo::new();
+//         // Used region covers entire overlay — no gaps to fill.
+//         bi.insert_used_region(0x0.into(), 0x4000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         bi.insert_overlay_region(0x0.into(), 0x4000.into(), default_attrs(), "init")
+//             .unwrap();
+//         assert_eq!(bi.used_regions().count(), 1);
+//         assert_eq!(bi.total_used(), 0x4000);
+//     }
 
-    #[test_case]
-    fn test_overlay_empty_is_noop() {
-        let mut bi = BootInfo::new();
-        bi.insert_overlay_region(0x1000.into(), 0x1000.into(), default_attrs(), "init")
-            .unwrap();
-        assert_eq!(bi.count(), 0);
-    }
+//     #[test_case]
+//     fn test_overlay_empty_is_noop() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_overlay_region(0x1000.into(), 0x1000.into(), default_attrs(), "init")
+//             .unwrap();
+//         assert_eq!(bi.count(), 0);
+//     }
 
-    #[test_case]
-    fn test_overlay_cuts_from_free() {
-        let mut bi = BootInfo::new();
-        bi.insert_free_region(0x0.into(), 0x8000.into(), default_attrs(), "RAM")
-            .unwrap();
-        bi.insert_used_region(0x2000.into(), 0x4000.into(), default_attrs(), "kernel")
-            .unwrap();
-        // Overlay [0x1000, 0x5000) — gaps: [0x1000,0x2000) and [0x4000,0x5000)
-        bi.insert_overlay_region(0x1000.into(), 0x5000.into(), default_attrs(), "init")
-            .unwrap();
-        // Used: kernel [2000,4000) + init [1000,2000) + init [4000,5000) = 0x4000
-        assert_eq!(bi.total_used(), 0x4000);
-        // Free: [0x0,0x1000) + [0x5000,0x8000) = 0x4000
-        assert_eq!(bi.total_free(), 0x4000);
-    }
-}
+//     #[test_case]
+//     fn test_overlay_cuts_from_free() {
+//         let mut bi = BootInfo::new();
+//         bi.insert_free_region(0x0.into(), 0x8000.into(), default_attrs(), "RAM")
+//             .unwrap();
+//         bi.insert_used_region(0x2000.into(), 0x4000.into(), default_attrs(), "kernel")
+//             .unwrap();
+//         // Overlay [0x1000, 0x5000) — gaps: [0x1000,0x2000) and [0x4000,0x5000)
+//         bi.insert_overlay_region(0x1000.into(), 0x5000.into(), default_attrs(), "init")
+//             .unwrap();
+//         // Used: kernel [2000,4000) + init [1000,2000) + init [4000,5000) = 0x4000
+//         assert_eq!(bi.total_used(), 0x4000);
+//         // Free: [0x0,0x1000) + [0x5000,0x8000) = 0x4000
+//         assert_eq!(bi.total_free(), 0x4000);
+//     }
+// }

@@ -18,8 +18,11 @@ publish = false
 [badges]
 maintenance = { status = "experimental" }
 
-[dependencies]
-libtest = { workspace = true }
+# [dev-dependencies]
+# libtest = { workspace = true }
+
+[lib]
+test = false
 
 [lints]
 workspace = true

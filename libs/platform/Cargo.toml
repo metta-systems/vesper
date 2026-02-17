@@ -51,8 +51,8 @@ tock-registers = { workspace = true }
 # usize_conversions = { workspace = true }
 # ux = { workspace = true }
 
-[dev-dependencies]
-libtest = { workspace = true }
+# [dev-dependencies]
+# libtest = { workspace = true }
 
 # Tests are offloaded to kernel integration tests binary.
 [lib]

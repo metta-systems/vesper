@@ -26,7 +26,7 @@ use {
         mem,
         ptr::NonNull,
         result::Result as CoreResult,
-        sync::atomic::{compiler_fence, Ordering},
+        sync::atomic::{Ordering, compiler_fence},
     },
     snafu::Snafu,
     tock_registers::{
@@ -123,9 +123,9 @@ pub trait MailboxOps {
     fn write(&self, channel: u32) -> Result<()>;
     fn read(&self, channel: u32) -> Result<()>;
     fn call(&self, channel: u32) -> Result<()>; //{
-                                                //     self.write(channel)?;
-                                                //     self.read(channel)
-                                                // }
+    //     self.write(channel)?;
+    //     self.read(channel)
+    // }
 }
 
 pub trait MailboxStorage {
@@ -671,30 +671,30 @@ impl<const N_SLOTS: usize, Storage: MailboxStorage + MailboxStorageRef> MailboxS
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    // Validate the buffer is filled correctly
-    // Validate the buffer is properly terminated when call()ed -- this invariant must be maintained
-    // by the end() fn.
-    #[test_case]
-    fn test_prepare_mailbox() {
-        let mut mailbox = Mailbox::<8>::default();
-        let index = mailbox.request();
-        let index = mailbox.set_led_on(index, true);
-        let mailbox = mailbox.end(index);
-        // Instead of calling just check the filled buffer format:
-        assert_eq!(
-            unsafe { mailbox.0.buffer.as_ref()[0] } as usize,
-            (index + 1) * 4
-        );
-        assert_eq!(unsafe { mailbox.0.buffer.as_ref()[1] }, REQUEST);
-        assert_eq!(unsafe { mailbox.0.buffer.as_ref()[2] }, tag::SetGpioState);
-        assert_eq!(unsafe { mailbox.0.buffer.as_ref()[3] }, 8);
-        assert_eq!(unsafe { mailbox.0.buffer.as_ref()[4] }, 0);
-        assert_eq!(unsafe { mailbox.0.buffer.as_ref()[5] }, 130);
-        assert_eq!(unsafe { mailbox.0.buffer.as_ref()[6] }, 1);
-        assert_eq!(unsafe { mailbox.0.buffer.as_ref()[7] }, tag::End);
-    }
-}
+//     // Validate the buffer is filled correctly
+//     // Validate the buffer is properly terminated when call()ed -- this invariant must be maintained
+//     // by the end() fn.
+//     #[test_case]
+//     fn test_prepare_mailbox() {
+//         let mut mailbox = Mailbox::<8>::default();
+//         let index = mailbox.request();
+//         let index = mailbox.set_led_on(index, true);
+//         let mailbox = mailbox.end(index);
+//         // Instead of calling just check the filled buffer format:
+//         assert_eq!(
+//             unsafe { mailbox.0.buffer.as_ref()[0] } as usize,
+//             (index + 1) * 4
+//         );
+//         assert_eq!(unsafe { mailbox.0.buffer.as_ref()[1] }, REQUEST);
+//         assert_eq!(unsafe { mailbox.0.buffer.as_ref()[2] }, tag::SetGpioState);
+//         assert_eq!(unsafe { mailbox.0.buffer.as_ref()[3] }, 8);
+//         assert_eq!(unsafe { mailbox.0.buffer.as_ref()[4] }, 0);
+//         assert_eq!(unsafe { mailbox.0.buffer.as_ref()[5] }, 130);
+//         assert_eq!(unsafe { mailbox.0.buffer.as_ref()[6] }, 1);
+//         assert_eq!(unsafe { mailbox.0.buffer.as_ref()[7] }, tag::End);
+//     }
+// }

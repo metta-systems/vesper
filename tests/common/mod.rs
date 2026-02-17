@@ -8,7 +8,7 @@ fn panicked(info: &PanicInfo) -> ! {
 
 libboot::entry!(test_run_helper);
 
-pub fn test_run_helper() -> ! {
+pub fn test_run_helper(_dtb: u32) -> ! {
     libconsole::init_logger().unwrap();
     liblog::set_max_level(liblog::Level::Trace); // Allow everything in tests
     crate::test_main();

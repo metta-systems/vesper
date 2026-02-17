@@ -22,5 +22,9 @@ maintenance = { status = "experimental" }
 liblog = { workspace = true }
 libqemu = { workspace = true }
 
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+
 [lints]
 workspace = true

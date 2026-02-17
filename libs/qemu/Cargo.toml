@@ -21,5 +21,12 @@ maintenance = { status = "experimental" }
 [dependencies]
 libprint = { workspace = true }
 
+# [dev-dependencies]
+# libtest = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+
 [lints]
 workspace = true

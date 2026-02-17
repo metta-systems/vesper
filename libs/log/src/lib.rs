@@ -11,9 +11,9 @@
 #![no_std]
 #![no_main]
 #![feature(format_args_nl)]
-#![feature(custom_test_frameworks)]
+// #![feature(custom_test_frameworks)]
 // #![test_runner(libtest::test_runner)]
-#![reexport_test_harness_main = "test_main"]
+// #![reexport_test_harness_main = "test_main"]
 
 use core::{
     error::Error,
@@ -376,7 +376,7 @@ pub fn max_level() -> Level {
 /// # Examples
 ///
 /// ```
-/// use log::{error, info, warn, Record, Level, Metadata, LevelFilter};
+/// use liblog::{error, info, warn, Record, Level, Metadata, LevelFilter};
 ///
 /// static MY_LOGGER: MyLogger = MyLogger;
 ///
@@ -396,8 +396,8 @@ pub fn max_level() -> Level {
 /// }
 ///
 /// # fn main(){
-/// log::set_logger(&MY_LOGGER).unwrap();
-/// log::set_max_level(LevelFilter::Info);
+/// liblog::set_logger(&MY_LOGGER).unwrap();
+/// liblog::set_max_level(LevelFilter::Info);
 ///
 /// info!("hello log");
 /// warn!("warning");

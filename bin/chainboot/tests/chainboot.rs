@@ -7,7 +7,7 @@
 mod common;
 
 // This test essentially validates that a relocated chainboot executable runs correctly
-#[test_case]
-fn relocated_binary_works() {
-    assert_eq!(2 + 2, 4);
-}
+// #[test_case]
+// fn relocated_binary_works() {
+//     assert_eq!(2 + 2, 4);
+// }

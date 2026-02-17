@@ -4,9 +4,13 @@
 //
 
 #![no_std]
+#![no_main]
 #![feature(const_trait_impl)]
 #![feature(const_ops)]
 #![feature(const_convert)]
+#![feature(custom_test_frameworks)]
+#![test_runner(libtest::test_runner)]
+#![reexport_test_harness_main = "test_main"]
 
 use {
     // bit_field::BitField,
@@ -37,6 +41,8 @@ pub mod align;
 /// to be zero. This type guarantees that it always represents a valid physical address.
 pub type PhysAddr = Address<Physical>;
 
+pub type PhysAddrNotValid = AddressNotValid<Physical>;
+
 /// A canonical 64-bit virtual memory address.
 ///
 /// This is a wrapper type around an `u64`, so it is always 8 bytes, even when compiled
@@ -47,6 +53,8 @@ pub type PhysAddr = Address<Physical>;
 /// to be copies of bit 47, i.e. the most significant bit. Addresses that fulfil this criterium
 /// are called “canonical”. This type guarantees that it always represents a canonical address.
 pub type VirtAddr = Address<Virtual>;
+
+pub type VirtAddrNotValid = AddressNotValid<Virtual>;
 
 /// Address of all physical memory mapping, so that kernel can operate anywhere.
 pub const PHYSICAL_KERNEL_WINDOW: u64 = 0xffff_f000_0000_0000;
@@ -611,3 +619,7 @@ impl<ATYPE: AddressType> fmt::Octal for Address<ATYPE> {
         self.value.fmt(f)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/common/mod.rs"]
+mod common;

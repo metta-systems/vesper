@@ -22,6 +22,7 @@ maintenance = { status = "experimental" }
 libaddress = { workspace = true }
 liblog = { workspace = true }
 
+# Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
 

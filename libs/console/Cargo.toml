@@ -28,9 +28,11 @@ liblocking = { workspace = true }
 liblog = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
-libtest = { workspace = true }
 # libtime = { workspace = true }
 
+# libtest = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
 
