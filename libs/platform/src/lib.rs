@@ -12,8 +12,8 @@
 // #![test_runner(libtest::test_runner)]
 // #![reexport_test_harness_main = "test_main"]
 
-#[cfg(any(board_rpi3, board_rpi4))]
+#[cfg(any(board_rpi3, board_rpi4, test, feature = "test_build"))]
 pub mod raspberrypi;
 
-#[cfg(any(board_rpi3, board_rpi4))]
+#[cfg(any(board_rpi3, board_rpi4, test, feature = "test_build"))]
 pub use raspberrypi::*;

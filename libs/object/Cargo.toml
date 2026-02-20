@@ -20,7 +20,6 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 libaddress = { workspace = true }
-# libmemory = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 libsyscall = { workspace = true }
@@ -28,6 +27,7 @@ libsyscall = { workspace = true }
 # Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
+harness = false
 
 [lints]
 workspace = true

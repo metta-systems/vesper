@@ -120,9 +120,11 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
 #[unsafe(no_mangle)]
 extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
     {
+        use aarch64_cpu::registers::{ESR_EL1, Readable};
+
         const TEST_SVC_ID: u64 = 0x1337;
 
-        let esr_el1 = esr_el1::EsrEL1(LocalRegisterCopy::new(ESR_EL1.get()));
+        let esr_el1 = libexception::arch::esr_el1::EsrEL1(LocalRegisterCopy::new(ESR_EL1.get()));
 
         if let Some(ESR_EL1::EC::Value::SVC64) = esr_el1.exception_class()
             && esr_el1.iss() == TEST_SVC_ID
@@ -132,7 +134,7 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
         }
     }
 
-    if debug::exception_dump(e) {
+    if libdebug::exception_dump(e) {
         return;
     }
 

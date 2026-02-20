@@ -28,6 +28,8 @@ fn address_type_method_sanity() {
 
     let addr = Address::<Virtual>::new(SIZE + 100);
 
+    assert_eq!(addr.as_u64(), SIZE + 100);
+
     assert_eq!(addr.align_down_page(&SIZE), SIZE.into());
 
     assert_eq!(addr.align_up_page(&SIZE), (SIZE * 2).into());

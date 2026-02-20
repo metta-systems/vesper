@@ -34,6 +34,7 @@ libqemu = { workspace = true }
 
 [lib]
 test = false
+harness = false
 
 [lints]
 workspace = true

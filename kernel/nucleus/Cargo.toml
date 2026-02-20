@@ -32,29 +32,18 @@ qemu = [
 
 [dependencies]
 aarch64-cpu = { workspace = true }
-# bit_field = { workspace = true }
 bitflags = { workspace = true }
 cfg-if = { workspace = true }
 libaddress = { workspace = true }
-# libconsole = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
-# libkernel-state = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 libmachine = { workspace = true }
 libmapping = { workspace = true }
 libobject = { workspace = true }
-# libplatform = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true, optional = true }
-# libsyscall = { workspace = true }
-# libtime = { workspace = true }
-# snafu = { workspace = true }
-# static_assertions = { workspace = true }
-# tock-registers = { workspace = true }
-# usize_conversions = { workspace = true }
-# ux = { workspace = true }
 
 [dev-dependencies]
 libexception = { workspace = true, features = ["test_build"] }

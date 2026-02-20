@@ -11,9 +11,9 @@
 #![no_std]
 #![no_main]
 #![feature(format_args_nl)]
-// #![feature(custom_test_frameworks)]
-// #![test_runner(libtest::test_runner)]
-// #![reexport_test_harness_main = "test_main"]
+#![feature(custom_test_frameworks)]
+#![test_runner(libtest::test_runner)]
+#![reexport_test_harness_main = "test_main"]
 
 use core::{
     error::Error,
@@ -52,7 +52,7 @@ static LEVEL_PARSE_ERROR: &str =
 /// An enum representing the available verbosity levels of the logger.
 ///
 #[repr(isize)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Level {
     Print = -2,
     PrintLn = -1,
@@ -95,13 +95,21 @@ impl Level {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use log::Level;
+    /// ```no_run
+    /// # #![no_std]
+    /// # #![no_main]
+    /// # #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
+    /// # #[unsafe(no_mangle)] pub extern "C" fn main() {
+    /// # use core::assert_eq;
+    /// # use core::iter::Iterator;
+    /// # use core::option::Option::Some;
+    /// use liblog::Level;
     ///
     /// let mut levels = Level::iter();
     ///
     /// assert_eq!(Some(Level::Error), levels.next());
     /// assert_eq!(Some(Level::Trace), levels.last());
+    /// # }
     /// ```
     pub fn iter() -> impl Iterator<Item = Self> {
         (1..6).map(|i| Self::from_usize(i).unwrap())
@@ -114,14 +122,20 @@ impl Level {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use log::Level;
+    /// ```no_run
+    /// # #![no_std]
+    /// # #![no_main]
+    /// # #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
+    /// # #[unsafe(no_mangle)] pub extern "C" fn main() {
+    /// # use core::assert_eq;
+    /// use liblog::Level;
     ///
     /// let level = Level::Info;
     ///
     /// assert_eq!(Level::Debug, level.increment_severity());
     /// assert_eq!(Level::Trace, level.increment_severity().increment_severity());
     /// assert_eq!(Level::Trace, level.increment_severity().increment_severity().increment_severity()); // max level
+    /// # }
     /// ```
     #[must_use]
     pub fn increment_severity(&self) -> Self {
@@ -136,14 +150,20 @@ impl Level {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use log::Level;
+    /// ```no_run
+    /// # #![no_std]
+    /// # #![no_main]
+    /// # #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
+    /// # #[unsafe(no_mangle)] pub extern "C" fn main() {
+    /// # use core::assert_eq;
+    /// use liblog::Level;
     ///
     /// let level = Level::Info;
     ///
     /// assert_eq!(Level::Warn, level.decrement_severity());
     /// assert_eq!(Level::Error, level.decrement_severity().decrement_severity());
     /// assert_eq!(Level::Error, level.decrement_severity().decrement_severity().decrement_severity()); // min level
+    /// # }
     /// ```
     #[must_use]
     pub fn decrement_severity(&self) -> Self {
@@ -152,7 +172,7 @@ impl Level {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Record<'a> {
     level: Level,
     args: fmt::Arguments<'a>,
@@ -178,7 +198,6 @@ impl<'a> Record<'a> {
     }
 }
 
-#[derive(Debug)]
 pub struct RecordBuilder<'a> {
     record: Record<'a>,
 }
@@ -375,29 +394,28 @@ pub fn max_level() -> Level {
 ///
 /// # Examples
 ///
-/// ```
-/// use liblog::{error, info, warn, Record, Level, Metadata, LevelFilter};
+/// ```no_run
+/// # #![no_std]
+/// # #![no_main]
+/// # #![feature(format_args_nl)]
+/// # #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
+/// use liblog::{error, info, warn, Record, Level};
 ///
 /// static MY_LOGGER: MyLogger = MyLogger;
 ///
 /// struct MyLogger;
 ///
-/// impl log::Log for MyLogger {
-///     fn enabled(&self, metadata: &Metadata) -> bool {
-///         metadata.level() <= Level::Info
-///     }
-///
+/// impl liblog::Log for MyLogger {
+///     fn enabled(&self, level: Level) -> bool { true }
 ///     fn log(&self, record: &Record) {
-///         if self.enabled(record.metadata()) {
-///             println!("{} - {}", record.level(), record.args());
-///         }
+///         liblog::println!("{:?} - {}", record.level(), record.args());
 ///     }
 ///     fn flush(&self) {}
 /// }
 ///
-/// # fn main(){
+/// # #[unsafe(no_mangle)] fn main(){
 /// liblog::set_logger(&MY_LOGGER).unwrap();
-/// liblog::set_max_level(LevelFilter::Info);
+/// liblog::set_max_level(Level::Info);
 ///
 /// info!("hello log");
 /// warn!("warning");

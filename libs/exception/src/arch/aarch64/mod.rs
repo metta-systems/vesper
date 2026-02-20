@@ -54,7 +54,7 @@ use {
 };
 
 mod debug;
-mod esr_el1;
+pub mod esr_el1;
 mod exception_context;
 mod spsr_el1;
 

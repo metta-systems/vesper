@@ -27,6 +27,7 @@ libprint = { workspace = true }
 # Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
+harness = false
 
 [lints]
 workspace = true

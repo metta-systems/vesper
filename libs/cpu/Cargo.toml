@@ -28,6 +28,7 @@ aarch64-cpu = { workspace = true }
 # Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
+harness = false
 
 # For proper testing in libcpu, we build it as a test_runner binary!
 

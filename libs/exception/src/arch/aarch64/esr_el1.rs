@@ -12,7 +12,7 @@ impl EsrEL1 {
 
     #[cfg(any(test, feature = "test_build"))]
     #[inline(always)]
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     pub fn iss(&self) -> u64 {
         self.0.read(ESR_EL1::ISS)
     }

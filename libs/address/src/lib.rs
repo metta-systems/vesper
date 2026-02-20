@@ -75,7 +75,11 @@ impl const PageSize for u64 {
         *self
     }
     fn mask(&self) -> u64 {
-        !(self - 1)
+        assert!(
+            self.is_power_of_two(),
+            "PageSize must be a power of two to use as mask"
+        );
+        self - 1
     }
 }
 
@@ -84,7 +88,11 @@ impl const PageSize for usize {
         *self as u64
     }
     fn mask(&self) -> u64 {
-        !(self - 1) as u64
+        assert!(
+            self.is_power_of_two(),
+            "PageSize must be a power of two to use as mask"
+        );
+        (self - 1) as u64
     }
 }
 
