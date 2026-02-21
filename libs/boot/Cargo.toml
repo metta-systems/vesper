@@ -1,5 +1,5 @@
 [package]
-name = "libboot"
+name = "vesper-boot"
 
 description = "Vesper nanokernel boot PIE section."
 

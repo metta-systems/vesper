@@ -1,6 +1,6 @@
 [package]
-name = "libplatform"
-description = "Vesper nanokernel platform code."
+name = "vesper-platforms"
+description = "Vesper nanokernel platform abstraction code."
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }

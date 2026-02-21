@@ -1,6 +1,8 @@
 [package]
-name = "libmmio"
+name = "vesper-mmio"
+
 description = "Vesper nanokernel MMIO abstractions."
+
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }

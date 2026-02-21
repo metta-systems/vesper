@@ -1,7 +1,7 @@
 [package]
-name = "liblocal-irq"
+name = "vesper-local-irq"
 
-description = "Local IRQ management."
+description = "Vesper nanokernel local IRQ management."
 
 authors = { workspace = true }
 categories = { workspace = true }

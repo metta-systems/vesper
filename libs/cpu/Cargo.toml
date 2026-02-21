@@ -1,5 +1,5 @@
 [package]
-name = "libcpu"
+name = "vesper-cpu"
 
 description = "Vesper nanokernel CPU support."
 

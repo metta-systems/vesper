@@ -1,7 +1,7 @@
 [package]
-name = "libqemu"
+name = "vesper-qemu"
 
-description = "QEMU implementations"
+description = "Vesper nanokernel QEMU support."
 
 authors = { workspace = true }
 categories = { workspace = true }

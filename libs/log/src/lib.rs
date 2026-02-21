@@ -103,7 +103,7 @@ impl Level {
     /// # use core::assert_eq;
     /// # use core::iter::Iterator;
     /// # use core::option::Option::Some;
-    /// use liblog::Level;
+    /// use vesper_log::Level;
     ///
     /// let mut levels = Level::iter();
     ///
@@ -128,7 +128,7 @@ impl Level {
     /// # #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
     /// # #[unsafe(no_mangle)] pub extern "C" fn main() {
     /// # use core::assert_eq;
-    /// use liblog::Level;
+    /// use vesper_log::Level;
     ///
     /// let level = Level::Info;
     ///
@@ -156,7 +156,7 @@ impl Level {
     /// # #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
     /// # #[unsafe(no_mangle)] pub extern "C" fn main() {
     /// # use core::assert_eq;
-    /// use liblog::Level;
+    /// use vesper_log::Level;
     ///
     /// let level = Level::Info;
     ///
@@ -399,23 +399,23 @@ pub fn max_level() -> Level {
 /// # #![no_main]
 /// # #![feature(format_args_nl)]
 /// # #[panic_handler] fn panic(_: &core::panic::PanicInfo) -> ! { loop {} }
-/// use liblog::{error, info, warn, Record, Level};
+/// use vesper_log::{error, info, warn, Record, Level};
 ///
 /// static MY_LOGGER: MyLogger = MyLogger;
 ///
 /// struct MyLogger;
 ///
-/// impl liblog::Log for MyLogger {
+/// impl vesper_log::Log for MyLogger {
 ///     fn enabled(&self, level: Level) -> bool { true }
 ///     fn log(&self, record: &Record) {
-///         liblog::println!("{:?} - {}", record.level(), record.args());
+///         vesper_log::println!("{:?} - {}", record.level(), record.args());
 ///     }
 ///     fn flush(&self) {}
 /// }
 ///
 /// # #[unsafe(no_mangle)] fn main(){
-/// liblog::set_logger(&MY_LOGGER).unwrap();
-/// liblog::set_max_level(Level::Info);
+/// vesper_log::set_logger(&MY_LOGGER).unwrap();
+/// vesper_log::set_max_level(Level::Info);
 ///
 /// info!("hello log");
 /// warn!("warning");

@@ -9,7 +9,7 @@ mod common;
 
 #[test_case]
 pub fn test_invalid_phys_addr() {
-    use libaddress::{PhysAddr, PhysAddrNotValid};
+    use vesper_address::{PhysAddr, PhysAddrNotValid};
 
     let result = PhysAddr::try_new(0xfafa_0123_3210_3210);
     if let Err(e) = result {
@@ -22,7 +22,7 @@ pub fn test_invalid_phys_addr() {
 /// Sanity of [Address] methods.
 #[test_case]
 fn address_type_method_sanity() {
-    use libaddress::{Address, Virtual};
+    use vesper_address::{Address, Virtual};
 
     const SIZE: u64 = 0x1_0000;
 
@@ -40,7 +40,7 @@ fn address_type_method_sanity() {
 }
 #[test_case]
 pub fn test_align_up() {
-    use libaddress::align::align_up;
+    use vesper_address::align::align_up;
 
     // align 1
     assert_eq!(align_up(0, 1), 0);

@@ -1,6 +1,8 @@
 [package]
-name = "libmapping"
-description = "Vesper nanokernel mapping abstractions."
+name = "vesper-mapping"
+
+description = "Vesper nanokernel memory mapping abstractions."
+
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }

@@ -1,7 +1,7 @@
 [package]
-name = "libprimitives"
+name = "vesper-primitives"
 
-description = "Kernel primitives"
+description = "Vesper nanokernel primitives."
 
 authors = { workspace = true }
 categories = { workspace = true }

@@ -1,5 +1,5 @@
 [package]
-name = "liballoc"
+name = "vesper-alloc"
 
 description = "Vesper nanokernel memory allocator types."
 

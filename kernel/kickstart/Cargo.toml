@@ -1,6 +1,8 @@
 [package]
 name = "kickstart"
-description = "Boot time initialization"
+
+description = "Vesper nanokernel startup initialization."
+
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }

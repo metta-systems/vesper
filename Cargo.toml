@@ -53,29 +53,29 @@ bitfield-struct = { version = "0.12" }
 bitflags = { version = "2.10" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
-libaddress = { path = "libs/address" }
-liballoc = { path = "libs/alloc" }
-libboot = { path = "libs/boot" }
-libconsole = { path = "libs/console" }
-libcpu = { path = "libs/cpu" }
-libdriver = { path = "libs/driver" }
-libexception = { path = "libs/exception" }
-libkernel-state = { path = "libs/kernel-state" }
-liblocal-irq = { path = "libs/local-irq" }
-liblocking = { path = "libs/locking" }
-liblog = { path = "libs/log" }
-libmachine = { path = "libs/machine" }
-libmapping = { path = "libs/mapping" }
-libmemory = { path = "libs/memory" }
-libmmio = { path = "libs/mmio" }
-libobject = { path = "libs/object" }
-libplatform = { path = "libs/platform" }
-libprimitives = { path = "libs/primitives" }
-libprint = { path = "libs/print" }
-libqemu = { path = "libs/qemu" }
-libsyscall = { path = "libs/syscall" }
-libtest = { path = "libs/test" }
-libtime = { path = "libs/time" }
+libaddress = { path = "libs/address", package = "vesper-address" }
+liballoc = { path = "libs/alloc", package = "vesper-alloc" }
+libboot = { path = "libs/boot", package = "vesper-boot" }
+libconsole = { path = "libs/console", package = "vesper-console" }
+libcpu = { path = "libs/cpu", package = "vesper-cpu" }
+libdriver = { path = "libs/driver", package = "vesper-drivers" }
+libexception = { path = "libs/exception", package = "vesper-exceptions" }
+libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
+liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
+liblocking = { path = "libs/locking", package = "vesper-locking" }
+liblog = { path = "libs/log", package = "vesper-log" }
+libmachine = { path = "libs/machine", package = "vesper-machines" }
+libmapping = { path = "libs/mapping", package = "vesper-mapping" }
+libmemory = { path = "libs/memory", package = "vesper-memory" }
+libmmio = { path = "libs/mmio", package = "vesper-mmio" }
+libobject = { path = "libs/object", package = "vesper-objects" }
+libplatform = { path = "libs/platform", package = "vesper-platforms" }
+libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
+libprint = { path = "libs/print", package = "vesper-print" }
+libqemu = { path = "libs/qemu", package = "vesper-qemu" }
+libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
+libtest = { path = "libs/test", package = "vesper-tests" }
+libtime = { path = "libs/time", package = "vesper-time" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 safe-mmio = { version = "0.2" }

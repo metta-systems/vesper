@@ -1,6 +1,8 @@
 [package]
 name = "nucleus"
-description = "Vesper nanokernel binary"
+
+description = "Vesper nanokernel privileged nucleus binary."
+
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
