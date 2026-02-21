@@ -1,7 +1,7 @@
 //! Kernel object storage and capability lookup
 //!
 //! Design goals:
-//! 1. Compact KeyEntry (fits in cache line)
+//! 1. Compact `KeyEntry` (fits in cache line)
 //! 2. Type-safe access from handlers
 //! 3. Objects live in typed pools (good for allocation)
 //! 4. Support for derivation/revocation tree
@@ -79,7 +79,7 @@
 // KERNEL OBJECT TRAIT
 // ═══════════════════════════════════════════════════════════════════
 
-/// Marker trait for kernel objects - provides type → ObjectType mapping
+/// Marker trait for kernel objects - provides type → `ObjectType` mapping
 pub trait NucleusObject: Sized + 'static {
     const TYPE: libobject::ObjectType;
 

@@ -3,7 +3,7 @@
 //! Define a map of memory regions used during boot allocations.
 //!
 //! Insert sections that are either "free" or "used", disparate used sections can not overlap,
-//! overlapping free sections are merged (unless they have different MemAttributes).
+//! overlapping free sections are merged (unless they have different `MemAttributes`).
 //!
 #[cfg(qemu)]
 use libqemu::semi_println;
@@ -110,7 +110,7 @@ impl BootInfoMemRegion {
     /// Since end is exclusive, the actual value is one less than what it contains, for this reason,
     /// end equal to other's start means they touch but do not intersect.
     ///
-    /// Assumes start_inclusive <= end_exclusive, which holds for memory regions by construction.
+    /// Assumes `start_inclusive` <= `end_exclusive`, which holds for memory regions by construction.
     pub fn intersects(&self, other: &BootInfoMemRegion) -> bool {
         self.end_exclusive > other.start_inclusive && other.end_exclusive > self.start_inclusive
     }
@@ -123,7 +123,7 @@ impl BootInfoMemRegion {
     }
 
     /// Check if two regions have compatible attributes for merging.
-    /// Compares mem_attributes, acc_perms, and executable — ignores the occupied flag.
+    /// Compares `mem_attributes`, `acc_perms`, and executable — ignores the occupied flag.
     pub fn compatible_attributes(&self, other: &BootInfoMemRegion) -> bool {
         self.attributes.mem_attributes == other.attributes.mem_attributes
             && self.attributes.acc_perms == other.attributes.acc_perms
@@ -299,7 +299,7 @@ impl BootInfo {
     /// Insert a free memory region.
     ///
     /// The region is added and then merged with any adjacent or overlapping free regions
-    /// that have compatible attributes (same mem_attributes, acc_perms, executable).
+    /// that have compatible attributes (same `mem_attributes`, `acc_perms`, executable).
     pub fn insert_free_region(
         &mut self,
         start: PhysAddr,
@@ -353,7 +353,7 @@ impl BootInfo {
         semi_println!("BOOT_INFO.insert_used_region: {}", region);
 
         // Check for overlap with existing used regions.
-        for slot in self.regions.iter() {
+        for slot in &self.regions {
             if slot.is_used() && slot.intersects(&region) {
                 #[cfg(qemu)]
                 semi_println!(
@@ -373,7 +373,7 @@ impl BootInfo {
     ///
     /// The overlay covers `[start, end)` but instead of failing on overlap with
     /// existing used regions, it inserts new used regions only for the gaps.
-    /// This is useful for marking a large area (like the Init_Thread bump allocator
+    /// This is useful for marking a large area (like the `Init_Thread` bump allocator
     /// arena) as used, where sub-regions have already been individually recorded.
     pub fn insert_overlay_region(
         &mut self,
@@ -403,7 +403,7 @@ impl BootInfo {
             [(PhysAddr::zero(), PhysAddr::zero()); NUM_MEM_REGIONS];
         let mut count = 0;
 
-        for slot in self.regions.iter() {
+        for slot in &self.regions {
             if !slot.is_used() {
                 continue;
             }
@@ -422,8 +422,7 @@ impl BootInfo {
         // Walk left-to-right, inserting gap regions.
         let mut cursor = overlay_start;
 
-        for i in 0..count {
-            let (used_start, used_end) = boundaries[i];
+        for &(used_start, used_end) in boundaries.iter().take(count) {
             if cursor < used_start {
                 // Gap before this used region.
                 let gap = BootInfoMemRegion::with_attributes(
@@ -576,9 +575,9 @@ impl BootInfo {
         name: &'static str,
     ) -> Result<PhysAddr, BootInfoError> {
         let mut reg_index: usize = 0;
-        let mut reg: BootInfoMemRegion = BootInfoMemRegion::new();
-        let mut rem_small: BootInfoMemRegion = BootInfoMemRegion::new();
-        let mut rem_large: BootInfoMemRegion = BootInfoMemRegion::new();
+        let mut reg = BootInfoMemRegion::new();
+        let mut rem_small = BootInfoMemRegion::new();
+        let mut rem_large = BootInfoMemRegion::new();
 
         // Iterate only free regions.
         for (i, reg_iter) in self
@@ -589,26 +588,26 @@ impl BootInfo {
         {
             // Determine whether placing the region at the start or the end
             // will create a bigger left over region.
-            let aligned_start = reg_iter.start_inclusive.aligned_up(1u64 << size_bits);
-            let aligned_end = reg_iter.end_exclusive.aligned_down(1u64 << size_bits);
+            let aligned_start = reg_iter.start_inclusive.aligned_up(1_u64 << size_bits);
+            let aligned_end = reg_iter.end_exclusive.aligned_down(1_u64 << size_bits);
             let new_reg = if aligned_start - reg_iter.start_inclusive
                 < reg_iter.end_exclusive - aligned_end
             {
                 BootInfoMemRegion::at(
                     aligned_start,
-                    aligned_start + (1u64 << size_bits),
+                    aligned_start + (1_u64 << size_bits),
                     false,
                     name,
                 )
             } else {
-                BootInfoMemRegion::at(aligned_end - (1u64 << size_bits), aligned_end, false, name)
+                BootInfoMemRegion::at(aligned_end - (1_u64 << size_bits), aligned_end, false, name)
             };
 
             if new_reg.start_inclusive >= reg_iter.start_inclusive
                 && new_reg.end_exclusive <= reg_iter.end_exclusive
             {
-                let mut new_rem_small: BootInfoMemRegion = BootInfoMemRegion::new();
-                let mut new_rem_large: BootInfoMemRegion = BootInfoMemRegion::new();
+                let mut new_rem_small = BootInfoMemRegion::new();
+                let mut new_rem_large = BootInfoMemRegion::new();
 
                 if new_reg.start_inclusive - reg_iter.start_inclusive
                     < reg_iter.end_exclusive - new_reg.end_exclusive
@@ -670,8 +669,7 @@ impl BootInfo {
             .regions
             .iter()
             .rposition(|r| !r.is_empty())
-            .map(|p| p + 1)
-            .unwrap_or(0);
+            .map_or(0, |p| p + 1);
     }
 
     /// Remove empty gaps in the region array by shifting entries down.
@@ -693,7 +691,7 @@ impl BootInfo {
     pub fn dump(&self) {
         #[cfg(qemu)]
         semi_println!("BOOT_INFO: {} region(s):", self.count());
-        for region in self.regions.iter() {
+        for region in &self.regions {
             if !region.is_empty() {
                 #[cfg(qemu)]
                 semi_println!("  {}", region);
@@ -723,18 +721,18 @@ impl BootInfo {
 
     /// Total free memory in bytes.
     pub fn total_free(&self) -> usize {
-        self.free_regions().map(|r| r.size()).sum()
+        self.free_regions().map(BootInfoMemRegion::size).sum()
     }
 
     /// Total used memory in bytes.
     pub fn total_used(&self) -> usize {
-        self.used_regions().map(|r| r.size()).sum()
+        self.used_regions().map(BootInfoMemRegion::size).sum()
     }
 }
 
 // Should go to BSS
 pub static BOOT_INFO: IRQSafeNullLock<LazyCell<BootInfo>> =
-    IRQSafeNullLock::new(LazyCell::new(|| BootInfo::new()));
+    IRQSafeNullLock::new(LazyCell::new(BootInfo::new));
 
 // #[cfg(test)]
 // mod boot_info_tests {

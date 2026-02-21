@@ -23,7 +23,7 @@ pub enum FrameSize {
 }
 
 impl FrameSize {
-    pub const fn bits(&self) -> u8 {
+    pub const fn bits(self) -> u8 {
         match self {
             FrameSize::Small => 12,
             FrameSize::Large => 21,
@@ -40,14 +40,14 @@ impl FrameSize {
         }
     }
 
-    pub const fn size(&self) -> usize {
+    pub const fn size(self) -> usize {
         1 << self.bits()
     }
 }
 
 /// Architecture abstraction trait - extended with invoke methods.
 ///
-/// Frame capabilities are arch-independent (inline RegionPayload in KeyEntry),
+/// Frame capabilities are arch-independent (inline `RegionPayload` in `KeyEntry`),
 /// so there is no `type Frame` associated type. Frame size validation is
 /// arch-specific via `validate_frame_size`.
 pub trait ArchObjects: Sized + 'static {
@@ -64,7 +64,7 @@ pub trait ArchObjects: Sized + 'static {
 
     // ─── Validation ───
 
-    /// Validate frame size_bits for this architecture.
+    /// Validate frame `size_bits` for this architecture.
     /// Returns the frame size in bytes on success.
     fn validate_frame_size(size_bits: u8) -> Result<usize, CapError>;
 
@@ -73,7 +73,7 @@ pub trait ArchObjects: Sized + 'static {
 
     // ─── Object Creation (pool-backed arch types only) ───
     /// Create a pool-backed arch object. Frame is NOT handled here —
-    /// it is created inline via KeyEntry::new_frame() in the retype path.
+    /// it is created inline via `KeyEntry::new_frame()` in the retype path.
     fn create_arch_object(
         arch_type: ArchType,
         phys_addr: PhysAddr,
@@ -83,7 +83,7 @@ pub trait ArchObjects: Sized + 'static {
 
     // ─── Invocation Handlers ───
 
-    /// Handle frame operations. The frame data is inline in `entry` as a RegionPayload.
+    /// Handle frame operations. The frame data is inline in `entry` as a `RegionPayload`.
     fn invoke_frame(
         entry: &mut KeyEntry,
         op: u32,

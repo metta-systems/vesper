@@ -55,7 +55,9 @@ static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<objects::ArchObjectsImpl>>>
             current_domain: None,
             dcb_pages: DcbPages::new(),
             pools: objects::nucleus::NucleusPools {
+                /// SAFETY: Not very safe thing at all.
                 domains: unsafe { ObjectPool::new(0x1000 as *mut u8, 16384) }, // TODO: proper alloc...
+                /// SAFETY: Not very safe thing at all.
                 arch: unsafe { ArchPools::new() },
             },
         };
@@ -114,7 +116,7 @@ extern "C" fn current_el0_serror(_e: &mut ExceptionContext) {
 #[cfg(not(any(test, feature = "test_build")))]
 #[unsafe(no_mangle)]
 extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
-    cap_invoke_handler(e)
+    cap_invoke_handler(e);
 }
 
 #[cfg(any(test, feature = "test_build"))]
@@ -161,7 +163,7 @@ extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
 
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
-    cap_invoke_handler(e)
+    cap_invoke_handler(e);
 }
 
 #[unsafe(no_mangle)]
@@ -198,9 +200,9 @@ extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
 //------------------------------------------------------------------------------
 
 #[unsafe(no_mangle)]
-fn cap_invoke_handler(frame: &mut ExceptionContext) {
-    let cap_slot = frame.gpr[0] as u32;
-    let op = frame.gpr[1] as u32;
+extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
+    let cap_slot = u32::try_from(frame.gpr[0]).unwrap();
+    let op = u32::try_from(frame.gpr[1]).unwrap();
     #[cfg(qemu)]
     semi_println!(
         "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
@@ -213,6 +215,7 @@ fn cap_invoke_handler(frame: &mut ExceptionContext) {
 
     let args: &[u64; 6] = &frame.gpr[2..=7].try_into().unwrap();
 
+    // SAFETY: Unsafe.
     let result = unsafe {
         #[allow(static_mut_refs)]
         NUCLEUS.lock(|nucleus| api::handle_cap_invoke(nucleus, cap_slot, op, args))
@@ -240,6 +243,7 @@ fn cap_invoke_handler(frame: &mut ExceptionContext) {
     // Return values
     #[cfg(qemu)]
     semi_println!("CapInvoke SYSCALL(Return {x0:#x}, {x1:#x}, {x2:#x})",);
+    // SAFETY: Not safe.
     unsafe {
         frame.gpr[0] = x0;
         frame.gpr[1] = x1;
@@ -249,6 +253,7 @@ fn cap_invoke_handler(frame: &mut ExceptionContext) {
 
 fn get_pc() -> u64 {
     let pc: u64;
+    // SAFETY: Safe.
     unsafe {
         asm!(
             "adr {}, .",

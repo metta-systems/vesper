@@ -71,7 +71,7 @@ impl ImageInfo {
         let bss_end = self.bss.virt_addr + self.bss.size as u64;
         max_end = max_end.max(bss_end);
 
-        let size = (max_end - self.virt_base) as usize;
+        let size = usize::try_from(max_end - self.virt_base).unwrap();
         (size + 0xFFF) & !0xFFF // FIXME: aligned to a page size
     }
 }
@@ -124,12 +124,11 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
         let virt = VirtAddr::new(KERNEL.vectors.virt_addr);
 
         // Verify alignment
-        if !virt.is_aligned(2048u64) {
-            panic!(
-                "Vector table virtual address 0x{:016X} is not 2KB aligned!",
-                virt.as_u64()
-            );
-        }
+        assert!(
+            virt.is_aligned(2048_u64),
+            "Vector table virtual address 0x{:016X} is not 2KB aligned!",
+            virt.as_u64()
+        );
 
         virt
     };
@@ -143,7 +142,7 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
         bss_virt: bss_info.1,
         bss_size: bss_info.2,
         stack_virt_bottom: VirtAddr::new(KERNEL.stack_virt_bottom),
-        vectors_virt: vectors_virt,
+        vectors_virt,
     })
 }
 
@@ -164,6 +163,7 @@ fn load_section(section: &LoadableSection, kernel_phys_base: PhysAddr) -> Result
         return Err("Section alignment violated");
     }
 
+    // SAFETY: Unsafe
     unsafe {
         ptr::copy_nonoverlapping(
             section.data.as_ptr(),
@@ -175,6 +175,7 @@ fn load_section(section: &LoadableSection, kernel_phys_base: PhysAddr) -> Result
     if section.meta.size > section.data.len() {
         let zero_start = PhysAddr::new(dest_phys.as_u64() + section.data.len() as u64);
         let zero_size = section.meta.size - section.data.len();
+        // SAFETY: Unsafe
         unsafe {
             ptr::write_bytes(zero_start.as_mut_ptr::<u8>(), 0, zero_size);
         }
@@ -199,6 +200,7 @@ fn zero_bss(bss: &SectionMeta, kernel_phys_base: PhysAddr) -> Result<(), &'stati
         return Err("BSS alignment violated");
     }
 
+    // SAFETY: Unsafe
     unsafe {
         ptr::write_bytes(dest_phys.as_mut_ptr::<u8>(), 0, bss.size);
     }
@@ -207,6 +209,7 @@ fn zero_bss(bss: &SectionMeta, kernel_phys_base: PhysAddr) -> Result<(), &'stati
 
 #[inline(always)]
 pub fn memory_barrier() {
+    // SAFETY: Unsafe
     unsafe {
         core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
     }

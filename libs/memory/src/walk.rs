@@ -54,7 +54,7 @@ where
             }
             EntryKind::Block(block_phys) => {
                 let caps = A::level_capabilities(level);
-                let page_offset = vaddr.as_u64() as usize & (caps.block_size - 1);
+                let page_offset = vaddr.as_usize() & (caps.block_size - 1);
                 let phys_addr = PhysAddr::new(block_phys.as_u64() + page_offset as u64);
                 return Some(TranslationResult {
                     phys_addr,
@@ -121,23 +121,20 @@ fn search_pteg<A: TranslationArch>(
     for slot in 0..entries_per_pteg {
         let offset = base + slot * A::ENTRY_WIDTH;
         let entry_slice = htab.get(offset..offset + A::ENTRY_WIDTH)?;
-        match A::decode_entry_wide(entry_slice, 0) {
-            EntryKind::Block(block_phys) => {
-                // For HPT, we need to verify the VA matches the entry's AVPN.
-                // The decode_entry_wide implementation should only return Block
-                // for entries matching the queried VA — this requires the arch
-                // implementation to encode the VA comparison in decode, or we
-                // expose a separate match check. For now, any valid Block is
-                // considered a hit since the PTEG was selected by hash.
-                let page_offset = vaddr.as_u64() as usize & (caps.block_size - 1);
-                let phys_addr = PhysAddr::new(block_phys.as_u64() + page_offset as u64);
-                return Some(TranslationResult {
-                    phys_addr,
-                    level: 0,
-                    block_size: caps.block_size,
-                });
-            }
-            _ => continue,
+        if let EntryKind::Block(block_phys) = A::decode_entry_wide(entry_slice, 0) {
+            // For HPT, we need to verify the VA matches the entry's AVPN.
+            // The decode_entry_wide implementation should only return Block
+            // for entries matching the queried VA — this requires the arch
+            // implementation to encode the VA comparison in decode, or we
+            // expose a separate match check. For now, any valid Block is
+            // considered a hit since the PTEG was selected by hash.
+            let page_offset = vaddr.as_usize() & (caps.block_size - 1);
+            let phys_addr = PhysAddr::new(block_phys.as_u64() + page_offset as u64);
+            return Some(TranslationResult {
+                phys_addr,
+                level: 0,
+                block_size: caps.block_size,
+            });
         }
     }
     None

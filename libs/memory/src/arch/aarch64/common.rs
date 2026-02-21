@@ -32,7 +32,7 @@ pub(super) const AP_RO_EL1: u64 = 0b10 << AP_SHIFT;
 pub(super) const SH_INNER: u64 = 0b11 << SH_SHIFT;
 pub(super) const SH_OUTER: u64 = 0b10 << SH_SHIFT;
 
-/// MAIR_EL1 attribute indices, matching the MAIR setup in mmu.rs.
+/// `MAIR_EL1` attribute indices, matching the MAIR setup in mmu.rs.
 pub mod mair {
     pub const NORMAL: u64 = 0;
     pub const NORMAL_NON_CACHEABLE: u64 = 1;
@@ -40,7 +40,7 @@ pub mod mair {
 }
 
 /// Encode `AttributeFields` into the lower+upper attribute bits of a
-/// block/page descriptor. Shared by all AArch64 granule implementations.
+/// block/page descriptor. Shared by all `AArch64` granule implementations.
 pub(super) fn encode_attributes(attr: AttributeFields) -> u64 {
     let mut bits: u64 = 0;
 

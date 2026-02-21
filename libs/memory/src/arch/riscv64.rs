@@ -90,7 +90,7 @@ fn is_leaf(raw: u64) -> bool {
 /// Supports superpages at L0 (512GiB), L1 (1GiB), L2 (2MiB), and
 /// regular 4KiB pages at L3.
 ///
-/// Unlike AArch64 and x86_64, RISC-V uses the same PTE format at every
+/// Unlike `AArch64` and `x86_64`, RISC-V uses the same PTE format at every
 /// level. The distinction between table pointer and leaf is purely based
 /// on the R/W/X permission bits: if none are set, it's a table pointer.
 #[allow(non_camel_case_types)]
@@ -171,7 +171,7 @@ impl TranslationArch for RiscV_Sv48 {
 
     fn encode_table_entry(next_table_phys: PhysAddr, _level: usize) -> u64 {
         let addr = next_table_phys.as_u64();
-        debug_assert!(addr & 0xFFF == 0, "Table address not 4K aligned");
+        debug_assert!(addr.trailing_zeros() >= 12, "Table address not 4K aligned");
         // V=1, R=W=X=0 => non-leaf (table pointer)
         phys_to_ppn(addr) | V
     }
@@ -201,7 +201,7 @@ impl TranslationArch for RiscV_Sv48 {
 
     fn encode_page_entry(phys: PhysAddr, attr: AttributeFields) -> u64 {
         let addr = phys.as_u64();
-        debug_assert!(addr & 0xFFF == 0, "Page address not 4K aligned");
+        debug_assert!(addr.trailing_zeros() >= 12, "Page address not 4K aligned");
         phys_to_ppn(addr) | encode_attributes(attr) | V
     }
 

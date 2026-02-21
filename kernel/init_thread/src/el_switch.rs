@@ -11,7 +11,7 @@ use {
     },
 };
 
-/// Configure and enable the MMU, set VBAR_EL1, then drop to EL1
+/// Configure and enable the MMU, set `VBAR_EL1`, then drop to EL1
 ///
 /// # Arguments
 ///
@@ -35,6 +35,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     // MAIR: Memory Attribute Indirection Register
     // Index 0: Normal memory, Write-Back, Read/Write Allocate
     // Index 1: Device-nGnRnE memory
+    #[expect(clippy::identity_op)]
     let mair: u64 = 0xFF | (0x00 << 8);
 
     // ═══════════════════════════════════════════════════════════
@@ -51,9 +52,10 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     // STEP 2: Set up VBAR_EL1 (Exception Vector Base Address)
     // ═══════════════════════════════════════════════════════════
 
-    if vbar.trailing_zeros() < 11 {
-        panic!("Vector table NOT properly aligned!");
-    }
+    assert!(
+        vbar.trailing_zeros() >= 11,
+        "Vector table address {vbar} is NOT properly aligned!"
+    );
 
     // The address must be 2KB aligned (bits [10:0] must be 0).
     // We set the virtual address here since VBAR_EL1 is only
@@ -155,6 +157,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
 /// Invalidate all TLB entries
 #[inline(always)]
 pub fn tlb_invalidate_all() {
+    // SAFETY: Unsafe
     unsafe {
         core::arch::asm!(
             "dsb ishst",

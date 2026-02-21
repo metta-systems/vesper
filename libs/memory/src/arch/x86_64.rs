@@ -63,7 +63,7 @@ const SIZE_4K: usize = 4096;
 const SIZE_2M: usize = 2 * 1024 * 1024;
 const SIZE_1G: usize = 1024 * 1024 * 1024;
 
-/// x86_64 4-level paging with 4KiB pages.
+/// `x86_64` 4-level paging with 4KiB pages.
 ///
 /// 4-level hierarchy: PML4 (L0) -> PDPT (L1) -> PD (L2) -> PT (L3).
 /// 512 entries per table, 4096-byte table size, 4096-byte alignment.
@@ -189,7 +189,7 @@ impl TranslationArch for X86_64_4K {
 
     fn output_address(raw: u64, level: usize) -> PhysAddr {
         let mask = match level {
-            0 => ADDR_MASK_4K,
+            0 | 3 => ADDR_MASK_4K,
             1 => {
                 if raw & PAGE_SIZE != 0 {
                     ADDR_MASK_1G
@@ -204,16 +204,15 @@ impl TranslationArch for X86_64_4K {
                     ADDR_MASK_4K
                 }
             }
-            3 => ADDR_MASK_4K,
             _ => 0,
         };
         PhysAddr::new(raw & mask)
     }
 }
 
-/// Encode `AttributeFields` into the x86_64 PTE flag bits.
+/// Encode `AttributeFields` into the `x86_64` PTE flag bits.
 ///
-/// x86_64 uses a different model from ARM:
+/// `x86_64` uses a different model from ARM:
 /// - No MAIR — caching is controlled by PWT and PCD bits directly
 /// - Permissions are R/W (bit 1) and U/S (bit 2)
 /// - Execute control is NX (bit 63), opt-out rather than opt-in

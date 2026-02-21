@@ -1,4 +1,5 @@
 #![no_std]
+#![no_main]
 #![feature(format_args_nl)]
 
 pub mod debug_console;
@@ -64,18 +65,18 @@ impl CapError {
             CapError::InvalidOperation => (8, 0, 0),
             CapError::ASIDPoolExhausted => (9, 0, 0),
             CapError::NoASIDAssigned => (10, 0, 0),
-            CapError::InvalidSlot(s) => (11, s.0 as u64, 0),
-            CapError::EmptySlot(s) => (12, s.0 as u64, 0),
-            CapError::SlotOccupied(s) => (13, s.0 as u64, 0),
-            CapError::NotCoreType(t) => (14, t.as_u8() as u64, 0),
-            CapError::UnknownCoreType(t) => (15, t as u64, 0),
-            CapError::UnsupportedCoreType(t) => (16, t as u64, 0),
-            CapError::NotArchType(t) => (17, t.as_u8() as u64, 0),
-            CapError::UnknownArchType(t) => (18, t as u64, 0),
-            CapError::UnsupportedArchType(t) => (19, t as u64, 0),
-            CapError::InvalidObjectType(t) => (20, t.as_u8() as u64, 0),
+            CapError::InvalidSlot(s) => (11, u64::from(s.0), 0),
+            CapError::EmptySlot(s) => (12, u64::from(s.0), 0),
+            CapError::SlotOccupied(s) => (13, u64::from(s.0), 0),
+            CapError::NotCoreType(t) => (14, u64::from(t.as_u8()), 0),
+            CapError::UnknownCoreType(t) => (15, u64::from(t), 0),
+            CapError::UnsupportedCoreType(t) => (16, u64::from(t.as_u8()), 0),
+            CapError::NotArchType(t) => (17, u64::from(t.as_u8()), 0),
+            CapError::UnknownArchType(t) => (18, u64::from(t), 0),
+            CapError::UnsupportedArchType(t) => (19, u64::from(t.as_u8()), 0),
+            CapError::InvalidObjectType(t) => (20, u64::from(t.as_u8()), 0),
             CapError::TypeMismatch { expected, found } => {
-                (21, expected.as_u8() as u64, found.as_u8() as u64)
+                (21, u64::from(expected.as_u8()), u64::from(found.as_u8()))
             }
             CapError::InsufficientMemory => (22, 0, 0),
             CapError::PoolExhausted => (23, 0, 0),

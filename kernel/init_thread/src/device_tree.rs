@@ -12,17 +12,17 @@ use {
 };
 
 fn get_size_cell_tree_value<'a, 'i: 'a, 'dt: 'i>(
-    node: DevTreeIndexNode<'a, 'i, 'dt>,
+    node: &DevTreeIndexNode<'a, 'i, 'dt>,
     name: &str,
 ) -> u32 {
     const DEFAULT: u32 = 1;
 
     let res: Result<_, DevTreeError> = node.props().try_find(|prop| Ok(prop.name()? == name));
 
-    if !res.is_err() {
-        if let Some(res) = res.unwrap() {
-            return res.u32(0).unwrap_or(DEFAULT);
-        }
+    if res.is_ok()
+        && let Some(res) = res.unwrap()
+    {
+        return res.u32(0).unwrap_or(DEFAULT);
     }
 
     while let Some(node) = node.parent() {
@@ -41,15 +41,15 @@ fn get_size_cell_tree_value<'a, 'i: 'a, 'dt: 'i>(
     DEFAULT
 }
 
-pub fn get_address_cells<'a, 'i: 'a, 'dt: 'i>(node: DevTreeIndexNode<'a, 'i, 'dt>) -> u32 {
+pub fn get_address_cells<'a, 'i: 'a, 'dt: 'i>(node: &DevTreeIndexNode<'a, 'i, 'dt>) -> u32 {
     get_size_cell_tree_value(node, "#address-cells")
 }
 
-pub fn get_size_cells<'a, 'i: 'a, 'dt: 'i>(node: DevTreeIndexNode<'a, 'i, 'dt>) -> u32 {
+pub fn get_size_cells<'a, 'i: 'a, 'dt: 'i>(node: &DevTreeIndexNode<'a, 'i, 'dt>) -> u32 {
     get_size_cell_tree_value(node, "#size-cells")
 }
 
-/// Uses DevTreeIndex implementation for simpler navigation.
+/// Uses `DevTreeIndex` implementation for simpler navigation.
 /// This requires allocation of a single buffer, which is done at boot time via bump allocator.
 /// This means we can only parse the tree after bump allocator is initialized.
 #[derive(Shrinkwrap)]
@@ -107,7 +107,7 @@ impl<'a> DeviceTree<'a> {
     }
 }
 
-/// Augment DevTreeIndexProp with a set of pairs accessor.
+/// Augment `DevTreeIndexProp` with a set of pairs accessor.
 #[derive(Shrinkwrap)]
 pub struct DeviceTreeProp<'a, 'i: 'a, 'dt: 'i>(DevTreeIndexProp<'a, 'i, 'dt>);
 
@@ -117,8 +117,8 @@ impl<'a, 'i: 'a, 'dt: 'i> DeviceTreeProp<'a, 'i, 'dt> {
     }
 
     pub fn payload_pairs_iter(&'a self) -> PayloadPairsIter<'a, 'i, 'dt> {
-        let address_cells = get_address_cells(self.node());
-        let size_cells = get_size_cells(self.node());
+        let address_cells = get_address_cells(&self.node());
+        let size_cells = get_size_cells(&self.node());
 
         // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
         // libqemu::semi_println!(
@@ -148,7 +148,7 @@ impl<'a, 'i: 'a, 'dt: 'i> PayloadPairsIter<'a, 'i, 'dt> {
         Self {
             prop,
             total: prop.length(),
-            offset: 0usize,
+            offset: 0_usize,
             address_cells,
             size_cells,
         }
@@ -190,12 +190,12 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
     type Item = (u64, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
+        const STEP: usize = size_of::<u32>();
         // libqemu::semi_println!("Offset {}, total {}", self.offset, self.total);
         if self.offset >= self.total {
             // @todo check for sufficient space for the following read or the reads below may fail!
             return None;
         }
-        const STEP: usize = size_of::<u32>();
         match (self.address_cells, self.size_cells) {
             (1, 1) => {
                 const SIZE: usize = 8;
@@ -243,7 +243,7 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
                     .u32(self.offset / STEP)
                     .map(|first| {
                         self.offset += SIZE; // emulate read_pair()
-                        (first as u64, 0)
+                        (u64::from(first), 0)
                     })
                     .ok()
             }
@@ -428,7 +428,7 @@ pub struct FdtDumper<'a> {
     indent: usize,
 }
 
-impl<'i, 'dt> FdtDumper<'_> {
+impl FdtDumper<'_> {
     fn push_indent(&mut self) {
         for _ in 0..self.indent {
             #[cfg(qemu)]
@@ -453,7 +453,7 @@ impl<'i, 'dt> FdtDumper<'_> {
         Ok(())
     }
 
-    fn dump_property(&mut self, prop: DevTreeIndexProp) -> DevTreeResult<()> {
+    fn dump_property(&mut self, prop: &DevTreeIndexProp) -> DevTreeResult<()> {
         self.push_indent();
 
         #[cfg(qemu)]
@@ -467,7 +467,7 @@ impl<'i, 'dt> FdtDumper<'_> {
         #[cfg(qemu)]
         libqemu::semi_print!(" = ");
 
-        // Unsafe Ok - we're reinterpreting the data as expected.
+        // SAFETY: Unsafe Ok - we're reinterpreting the data as expected.
         unsafe {
             // First try to parse as an array of strings
             if are_printable_strings(prop.iter_str()) {
@@ -483,9 +483,7 @@ impl<'i, 'dt> FdtDumper<'_> {
                 libqemu::semi_print!("<");
                 for val in prop.propbuf().chunks_exact(size_of::<u32>()) {
                     // We use read_unaligned
-                    #[allow(clippy::cast_ptr_alignment)]
-                    let v = read_unaligned::<u32>(val.as_ptr() as *const u32);
-                    let v = u32::from_be(v);
+                    let v = u32::from_be(read_unaligned::<u32>(val.as_ptr().cast::<u32>()));
                     #[cfg(qemu)]
                     libqemu::semi_print!("{:#010x} ", v);
                 }
@@ -514,10 +512,10 @@ impl<'i, 'dt> FdtDumper<'_> {
         self.dump_node(node)?;
         self.indent += 1;
         for prop in node.props() {
-            let _ = self.dump_property(prop)?;
+            self.dump_property(&prop)?;
         }
         for child in node.children() {
-            let _ = self.dump_level(&child)?;
+            self.dump_level(&child)?;
         }
         self.indent -= 1;
         self.push_indent();

@@ -30,7 +30,7 @@ const L3_PAGE_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_C000; // [47:14]
 const SIZE_16K: usize = 16 * 1024;
 const SIZE_32M: usize = 32 * 1024 * 1024;
 
-/// AArch64 Stage 1 translation with 16KiB granule.
+/// `AArch64` Stage 1 translation with 16KiB granule.
 ///
 /// 4-level hierarchy: L0 (2 entries) -> L1 (2048) -> L2 (2048) -> L3 (2048).
 /// L0 table is only 16 bytes but requires 16KiB alignment.
@@ -84,7 +84,7 @@ impl TranslationArch for Aarch64_16K {
             3 => (14, 0x7FF),
             _ => return 0,
         };
-        ((vaddr.as_u64() >> shift) & mask) as usize
+        usize::try_from((vaddr.as_u64() >> shift) & mask).unwrap()
     }
 
     fn decode_entry(raw: u64, level: usize) -> EntryKind {

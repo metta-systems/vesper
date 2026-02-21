@@ -31,7 +31,7 @@ const KERNEL_DCB_BASE: u64 = 0xFFFF_FF00_0000_0000;
 const KERNEL_HEAP_BASE: u64 = 0xFFFF_FFFF_0000_0000;
 const KERNEL_STACK_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 
-/// Page table entry flags for AArch64 Stage 1
+/// Page table entry flags for `AArch64` Stage 1
 pub mod flags {
     pub const VALID: u64 = 1 << 0;
     pub const TABLE: u64 = 1 << 1;
@@ -95,6 +95,7 @@ impl<'a> MmuSetup<'a> {
             .alloc_pages(1, ("kernel L0", Alloc::Persistent))
             .ok_or("Failed to allocate TTBR1 L0 table")?;
 
+        // SAFETY: Unsafe
         unsafe {
             ptr::write_bytes(ttbr0_l0.as_mut_ptr::<u8>(), 0, 4096);
             ptr::write_bytes(ttbr1_l0.as_mut_ptr::<u8>(), 0, 4096);
@@ -149,6 +150,7 @@ impl<'a> MmuSetup<'a> {
         let l2_phys = self.ensure_table(l1_phys, l1_idx, usage)?;
         let l3_phys = self.ensure_table(l2_phys, l2_idx, usage)?;
 
+        // SAFETY: Unsafe
         let l3_table = unsafe { &mut *(l3_phys.as_mut_ptr::<PageTable>()) };
         l3_table.entries[l3_idx] = phys.as_u64() | flags::VALID | flags::PAGE | pte_flags;
 
@@ -195,6 +197,7 @@ impl<'a> MmuSetup<'a> {
         let l1_phys = self.ensure_table(l0_phys, l0_idx, usage)?;
         let l2_phys = self.ensure_table(l1_phys, l1_idx, usage)?;
 
+        // SAFETY: Unsafe
         let l2_table = unsafe { &mut *(l2_phys.as_mut_ptr::<PageTable>()) };
         l2_table.entries[l2_idx] = phys.as_u64() | flags::VALID | flags::BLOCK | pte_flags;
 
@@ -219,6 +222,7 @@ impl<'a> MmuSetup<'a> {
         index: usize,
         usage: (&'static str, Alloc),
     ) -> Result<PhysAddr, &'static str> {
+        // SAFETY: Unsafe
         let table = unsafe { &mut *(table_phys.as_mut_ptr::<PageTable>()) };
         let entry = table.entries[index];
 
@@ -230,6 +234,7 @@ impl<'a> MmuSetup<'a> {
                 .alloc_pages(1, usage)
                 .ok_or("Failed to allocate page table")?;
 
+            // SAFETY: Unsafe
             unsafe {
                 ptr::write_bytes(new_table.as_mut_ptr::<u8>(), 0, 4096);
             }
@@ -248,14 +253,14 @@ impl<'a> MmuSetup<'a> {
     }
 }
 
-/// Create identity mapping for init_thread
+/// Create identity mapping for `init_thread`
 pub fn create_identity_mapping(
     setup: &mut MmuSetup,
     start: PhysAddr,
     end: PhysAddr,
 ) -> Result<(), &'static str> {
-    let start_aligned = start.aligned_down(2u64 * 1024 * 1024);
-    let end_aligned = end.aligned_up(2u64 * 1024 * 1024);
+    let start_aligned = start.aligned_down(2_u64 * 1024 * 1024);
+    let end_aligned = end.aligned_up(2_u64 * 1024 * 1024);
 
     let perms = MemoryPermissions {
         readable: true,
@@ -347,15 +352,15 @@ pub fn create_kernel_mapping(
 
 /// Map a single section with proper permissions
 fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'static str> {
-    if !section.phys_start.is_aligned(4096u64) {
+    if !section.phys_start.is_aligned(4096_u64) {
         #[cfg(qemu)]
         semi_println!("!! Section {} not aligned to 4K boundary!", section.name);
         return Err("Section not aligned");
     }
 
     // Check if we can use 2MB blocks (section must be 2MB aligned and sized)
-    let can_use_2mb = section.phys_start.is_aligned(2u64 * 1024 * 1024)
-        && section.virt_start.as_u64() % (2 * 1024 * 1024) == 0
+    let can_use_2mb = section.phys_start.is_aligned(2_u64 * 1024 * 1024)
+        && section.virt_start.as_u64().is_multiple_of(2 * 1024 * 1024)
         && section.size >= 2 * 1024 * 1024;
 
     if can_use_2mb {
@@ -413,7 +418,7 @@ pub fn create_device_mapping(
     virt: VirtAddr,
     size: usize,
 ) -> Result<(), &'static str> {
-    let pages = (size + 0xFFF) / 0x1000;
+    let pages = size.div_ceil(0x1000);
     let perms = MemoryPermissions {
         readable: true,
         writable: true,
@@ -423,7 +428,7 @@ pub fn create_device_mapping(
     for i in 0..pages {
         let offset = (i * 0x1000) as u64;
 
-        let _l0_phys = setup.ttbr1_l0;
+        // let _l0_phys = setup.ttbr1_l0;
         let va = virt.as_u64() + offset;
         let pa = phys.as_u64() + offset;
 

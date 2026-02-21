@@ -6,7 +6,7 @@ use {
     tock_registers::interfaces::Readable,
 };
 
-/// Parse the ID_AA64MMFR0_EL1 register for runtime information about supported MMU features.
+/// Parse the `ID_AA64MMFR0_EL1` register for runtime information about supported MMU features.
 /// Print the current state of TCR register.
 pub fn print_features() {
     let sctlr = SCTLR_EL1.extract();
@@ -45,35 +45,35 @@ pub fn print_features() {
 
     match mmfr.read_as_enum(ID_AA64MMFR0_EL1::ASIDBits) {
         Some(ID_AA64MMFR0_EL1::ASIDBits::Value::Bits_16) => {
-            println!("[i] MMU: 16 bit ASIDs supported!")
+            println!("[i] MMU: 16 bit ASIDs supported!");
         }
         Some(ID_AA64MMFR0_EL1::ASIDBits::Value::Bits_8) => {
-            println!("[i] MMU: 8 bit ASIDs supported!")
+            println!("[i] MMU: 8 bit ASIDs supported!");
         }
         _ => println!("[i] MMU: Invalid ASID bits specified!"),
     }
 
     match mmfr.read_as_enum(ID_AA64MMFR0_EL1::PARange) {
         Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_32) => {
-            println!("[i] MMU: Up to 32 Bit physical address range supported!")
+            println!("[i] MMU: Up to 32 Bit physical address range supported!");
         }
         Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_36) => {
-            println!("[i] MMU: Up to 36 Bit physical address range supported!")
+            println!("[i] MMU: Up to 36 Bit physical address range supported!");
         }
         Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_40) => {
-            println!("[i] MMU: Up to 40 Bit physical address range supported!")
+            println!("[i] MMU: Up to 40 Bit physical address range supported!");
         }
         Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_42) => {
-            println!("[i] MMU: Up to 42 Bit physical address range supported!")
+            println!("[i] MMU: Up to 42 Bit physical address range supported!");
         }
         Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_44) => {
-            println!("[i] MMU: Up to 44 Bit physical address range supported!")
+            println!("[i] MMU: Up to 44 Bit physical address range supported!");
         }
         Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_48) => {
-            println!("[i] MMU: Up to 48 Bit physical address range supported!")
+            println!("[i] MMU: Up to 48 Bit physical address range supported!");
         }
         Some(ID_AA64MMFR0_EL1::PARange::Value::Bits_52) => {
-            println!("[i] MMU: Up to 52 Bit physical address range supported!")
+            println!("[i] MMU: Up to 52 Bit physical address range supported!");
         }
         _ => println!("[i] MMU: Invalid PARange specified!"),
     }
@@ -82,25 +82,25 @@ pub fn print_features() {
 
     match tcr.read_as_enum(TCR_EL1::IPS) {
         Some(TCR_EL1::IPS::Value::Bits_32) => {
-            println!("[i] MMU: 32 Bit intermediate physical address size supported!")
+            println!("[i] MMU: 32 Bit intermediate physical address size supported!");
         }
         Some(TCR_EL1::IPS::Value::Bits_36) => {
-            println!("[i] MMU: 36 Bit intermediate physical address size supported!")
+            println!("[i] MMU: 36 Bit intermediate physical address size supported!");
         }
         Some(TCR_EL1::IPS::Value::Bits_40) => {
-            println!("[i] MMU: 40 Bit intermediate physical address size supported!")
+            println!("[i] MMU: 40 Bit intermediate physical address size supported!");
         }
         Some(TCR_EL1::IPS::Value::Bits_42) => {
-            println!("[i] MMU: 42 Bit intermediate physical address size supported!")
+            println!("[i] MMU: 42 Bit intermediate physical address size supported!");
         }
         Some(TCR_EL1::IPS::Value::Bits_44) => {
-            println!("[i] MMU: 44 Bit intermediate physical address size supported!")
+            println!("[i] MMU: 44 Bit intermediate physical address size supported!");
         }
         Some(TCR_EL1::IPS::Value::Bits_48) => {
-            println!("[i] MMU: 48 Bit intermediate physical address size supported!")
+            println!("[i] MMU: 48 Bit intermediate physical address size supported!");
         }
         Some(TCR_EL1::IPS::Value::Bits_52) => {
-            println!("[i] MMU: 52 Bit intermediate physical address size supported!")
+            println!("[i] MMU: 52 Bit intermediate physical address size supported!");
         }
         _ => println!("[i] MMU: Invalid IPS specified!"),
     }

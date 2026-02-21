@@ -78,10 +78,12 @@ pub struct Nucleus<A: ArchObjects> {
 // ═══════════════════════════════════════════════════════════════════
 
 impl<A: ArchObjects> Nucleus<A> {
+    #[expect(clippy::unused_self)]
     pub fn current_cpu(&self) -> usize {
         0
     }
 
+    #[expect(clippy::unused_self)]
     pub fn current_time_ns(&self) -> u64 {
         0
     }
@@ -109,13 +111,14 @@ impl<A: ArchObjects> Nucleus<A> {
                 keytable: KeyTable::new(DomainId(0)),
             })
             .and_then(|dom| {
-                let _ = dom.keytable.insert(
-                    libobject::KeySlot(127),
-                    KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0),
-                );
-                Some(())
+                dom.keytable
+                    .insert(
+                        libobject::KeySlot(127),
+                        KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0),
+                    )
+                    .ok()
             })
-            .expect("Poof")
+            .expect("Poof");
     }
 
     /// Update DCB when domain is activated
@@ -128,7 +131,8 @@ impl<A: ArchObjects> Nucleus<A> {
                 .store(time_budget_ns, Ordering::Relaxed);
             dcb.last_activated_ns.store(time, Ordering::Relaxed);
             dcb.activation_count.fetch_add(1, Ordering::Relaxed);
-            dcb.cpu.store(cpu as u32, Ordering::Relaxed);
+            dcb.cpu
+                .store(u32::try_from(cpu).unwrap(), Ordering::Relaxed);
 
             // Set state last (Release ensures all above writes are visible)
             dcb.state
@@ -150,14 +154,14 @@ impl<A: ArchObjects> Nucleus<A> {
 
             // Update state based on reason
             match reason {
-                DeactivateReason::TimeExhausted => {
+                DeactivateReason::TimeExhausted | DeactivateReason::Yielded => {
                     dcb.state
                         .store(DomainState::Runnable as u32, Ordering::Release);
                 }
 
                 DeactivateReason::Blocked { reason, slot } => {
                     dcb.block_reason.store(reason as u32, Ordering::Relaxed);
-                    dcb.blocked_on_slot.store(slot.0 as u32, Ordering::Relaxed);
+                    dcb.blocked_on_slot.store(slot.0, Ordering::Relaxed);
                     dcb.state
                         .store(DomainState::Blocked as u32, Ordering::Release);
                 }
@@ -171,7 +175,7 @@ impl<A: ArchObjects> Nucleus<A> {
                     dcb.fault_type.store(fault_type as u32, Ordering::Relaxed);
                     dcb.fault_code.store(code, Ordering::Relaxed);
                     dcb.fault_addr.store(addr, Ordering::Relaxed);
-                    dcb.fault_slot.store(slot.0 as u32, Ordering::Relaxed);
+                    dcb.fault_slot.store(slot.0, Ordering::Relaxed);
                     dcb.state
                         .store(DomainState::Faulted as u32, Ordering::Release);
                 }
@@ -179,11 +183,6 @@ impl<A: ArchObjects> Nucleus<A> {
                 DeactivateReason::Suspended => {
                     dcb.state
                         .store(DomainState::Suspended as u32, Ordering::Release);
-                }
-
-                DeactivateReason::Yielded => {
-                    dcb.state
-                        .store(DomainState::Runnable as u32, Ordering::Release);
                 }
             }
         }

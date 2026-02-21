@@ -40,6 +40,7 @@ impl ObjectRef {
     /// Caller must ensure the pointer is valid and properly aligned
     pub unsafe fn from_raw<T: NucleusObject>(ptr: *mut T) -> Self {
         Self {
+            // SAFETY: Unsafe
             ptr: unsafe { NonNull::new_unchecked(ptr.cast()) },
             obj_type: T::TYPE,
         }
@@ -51,7 +52,7 @@ impl ObjectRef {
         self.obj_type
     }
 
-    /// Get the raw type-erased pointer (for embedding in KeyEntry payload).
+    /// Get the raw type-erased pointer (for embedding in `KeyEntry` payload).
     #[inline]
     pub fn as_raw_ptr(&self) -> NonNull<()> {
         self.ptr
@@ -60,23 +61,19 @@ impl ObjectRef {
     /// Attempt to cast to a specific type (immutable)
     #[inline]
     pub fn try_as<T: NucleusObject>(&self) -> Option<&T> {
-        if self.obj_type == T::TYPE {
+        (self.obj_type == T::TYPE).then(
             // SAFETY: We verified the type matches
-            Some(unsafe { self.ptr.cast::<T>().as_ref() })
-        } else {
-            None
-        }
+            || unsafe { self.ptr.cast::<T>().as_ref() },
+        )
     }
 
     /// Attempt to cast to a specific type (mutable)
     #[inline]
     pub fn try_as_mut<T: NucleusObject>(&mut self) -> Option<&mut T> {
-        if self.obj_type == T::TYPE {
+        (self.obj_type == T::TYPE).then(
             // SAFETY: We verified the type matches
-            Some(unsafe { self.ptr.cast::<T>().as_mut() })
-        } else {
-            None
-        }
+            || unsafe { self.ptr.cast::<T>().as_mut() },
+        )
     }
 
     /// Cast with error on type mismatch

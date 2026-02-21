@@ -13,7 +13,7 @@ use {
 // ====================
 
 /// This is a nucleus-visible half of domain structure.
-/// The DomainControlBlock is user-visible and is defined in libobject.
+/// The `DomainControlBlock` is user-visible and is defined in libobject.
 pub struct Domain {
     // ═══════════════════════════════════════════════════════════
     // PRIVATE SECTION (kernel only, NOT mapped to userspace)
@@ -107,6 +107,7 @@ impl DcbPages {
 
     /// Well-known user-space base address for DCB mapping
     /// This is mapped read-only into all domains
+    /// SAFETY: Safe, manual fixed address.
     pub const USER_BASE: VirtAddr = unsafe { VirtAddr::new_unchecked(0x0000_7FFF_FE00_0000) };
 
     /// Create empty DCB pages manager
@@ -135,6 +136,7 @@ impl DcbPages {
         }
 
         let idx = self.num_pages;
+        // SAFETY: Unsafe.
         self.pages[idx] = unsafe { Some(&mut *page) };
         self.phys_addrs[idx] = Some(phys_addr);
         self.num_pages += 1;
@@ -206,8 +208,9 @@ impl DcbPages {
     }
 
     /// Get user-space virtual address for a domain's DCB
+    #[expect(clippy::unused_self)]
     pub fn user_addr(&self, id: DomainId) -> VirtAddr {
-        VirtAddr::new(Self::USER_BASE.as_u64() + (id.0 as u64 * 128))
+        VirtAddr::new(Self::USER_BASE.as_u64() + (u64::from(id.0) * 128))
     }
 
     /// Iterate over all allocated domains
@@ -216,13 +219,9 @@ impl DcbPages {
             .iter()
             .enumerate()
             .flat_map(|(word_idx, &word)| {
-                (0..64).filter_map(move |bit| {
-                    if word & (1 << bit) != 0 {
-                        Some(DomainId((word_idx * 64 + bit) as u32))
-                    } else {
-                        None
-                    }
-                })
+                (0..64)
+                    .filter(move |&bit| (word & (1 << bit) != 0))
+                    .map(move |bit| DomainId(u32::try_from(word_idx * 64 + bit).unwrap()))
             })
     }
 
@@ -232,12 +231,12 @@ impl DcbPages {
     }
 
     fn find_free_slot(&self) -> Result<u32, DcbError> {
-        let max_id = (self.num_pages * DcbPage::DCBS_PER_PAGE as usize) as u32;
+        let max_id = u32::try_from(self.num_pages * DcbPage::DCBS_PER_PAGE as usize).unwrap();
 
         for (word_idx, &word) in self.allocated.iter().enumerate() {
             if word != !0 {
                 let bit = word.trailing_ones();
-                let id = (word_idx as u32 * 64) + bit;
+                let id = u32::try_from(word_idx * 64).unwrap() + bit;
                 if id < max_id {
                     return Ok(id);
                 }

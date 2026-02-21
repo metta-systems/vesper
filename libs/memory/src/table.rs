@@ -40,7 +40,7 @@ impl<'a, A: TranslationArch> Table<'a, A> {
     /// The caller must ensure:
     /// - `memory` points to a correctly-sized, correctly-aligned region
     /// - `memory` is zeroed
-    /// - `level` is valid for the architecture (0..NUM_LEVELS)
+    /// - `level` is valid for the architecture (`0..NUM_LEVELS`)
     pub fn from_memory(memory: &'a mut [u64], level: usize) -> Result<Self, TableError> {
         if level >= A::NUM_LEVELS {
             return Err(TableError::InvalidLevel);

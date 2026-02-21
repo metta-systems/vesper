@@ -235,7 +235,10 @@ impl<ATYPE: const AddressType> Address<ATYPE> {
     /// Panics if address is not representable.
     pub const fn new(addr: u64) -> Self {
         match ATYPE::validate(addr) {
-            Ok(addr) => unsafe { Address::<ATYPE>::new_unchecked(addr) },
+            Ok(addr) => unsafe {
+                // SAFETY: We've checked address for validity above.
+                Address::<ATYPE>::new_unchecked(addr)
+            },
             Err((_addr, message)) => panic!("{}", message),
         }
     }
@@ -243,7 +246,10 @@ impl<ATYPE: const AddressType> Address<ATYPE> {
     /// Tries to create a new address.
     pub const fn try_new(addr: u64) -> Result<Self, AddressNotValid<ATYPE>> {
         match ATYPE::validate(addr) {
-            Ok(addr) => Ok(unsafe { Address::<ATYPE>::new_unchecked(addr) }),
+            Ok(addr) => Ok(
+                // SAFETY: We've checked address for validity above.
+                unsafe { Address::<ATYPE>::new_unchecked(addr) },
+            ),
             Err((addr, _message)) => Err(AddressNotValid::<ATYPE>::new(addr)),
         }
     }
@@ -389,6 +395,7 @@ impl Address<Virtual> {
         } else {
             v.set_top_bits(0);
         }
+        // SAFETY: We've checked address for validity above.
         unsafe { Self::new_unchecked(v.into_bits()) }
     }
 
@@ -503,7 +510,7 @@ impl<ATYPE: const AddressType> Sub<Address<ATYPE>> for Address<ATYPE> {
     fn sub(self, rhs: Address<ATYPE>) -> Self::Output {
         match self.value.checked_sub(rhs.value) {
             None => panic!("Overflow on Address::sub"),
-            Some(x) => x as usize,
+            Some(x) => usize::try_from(x).unwrap(),
         }
     }
 }

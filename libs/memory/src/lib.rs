@@ -7,7 +7,7 @@
 //!
 //! This library provides arch-independent abstractions for MMU translation
 //! tables. Each table level is a first-class object, matching the kernel's
-//! capability-based syscall API where GlobalDirectory, PageDirectory, Frame
+//! capability-based syscall API where `GlobalDirectory`, `PageDirectory`, Frame
 //! etc. are separate capabilities.
 //!
 //! All table memory is externally provided — this library never allocates.

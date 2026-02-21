@@ -9,7 +9,7 @@ use {
 
 /// A capability table for a domain.
 ///
-/// This is what seL4 calls a CNode. Each domain has one.
+/// This is what seL4 calls a `CNode`. Each domain has one.
 /// The table itself is a kernel object that can be referenced
 /// by capabilities (for capability space manipulation).
 pub struct KeyTable {

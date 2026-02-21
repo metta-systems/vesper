@@ -7,7 +7,7 @@ use {
     libmapping::AttributeFields,
 };
 
-/// Memory region translation.
+// Memory region translation.
 // #[allow(dead_code)]
 // #[derive(Copy, Clone)]
 // pub enum Translation {
@@ -24,9 +24,9 @@ pub struct BootAllocator {
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum Alloc {
-    /// This allocation should be entered into mappings and stay around after init_thread finishes
+    /// This allocation should be entered into mappings and stay around after `init_thread` finishes
     Persistent,
-    /// This allocation will perish and be added to Untypeds after init_thread finishes
+    /// This allocation will perish and be added to Untypeds after `init_thread` finishes
     Droppable,
 }
 
@@ -59,17 +59,13 @@ impl BootAllocator {
             self.end.as_u64()
         );
 
-        if usage.0 != "" {
+        if !usage.0.is_empty() {
             BOOT_INFO.lock(|bi| {
                 bi.insert_used_region(
                     aligned,
                     new_current,
                     AttributeFields {
-                        droppable: if usage.1 == Alloc::Droppable {
-                            true
-                        } else {
-                            false
-                        },
+                        droppable: usage.1 == Alloc::Droppable,
                         ..Default::default() // TODO: better RWX flags
                     },
                     usage.0,
@@ -116,9 +112,9 @@ impl core::fmt::Display for MemoryPermissions {
 }
 
 impl MemoryPermissions {
-    /// Convert to AArch64 page table flags
-    pub const fn as_pte_flags(&self) -> u64 {
-        let mut flags = 0u64;
+    /// Convert to `AArch64` page table flags
+    pub const fn as_pte_flags(self) -> u64 {
+        let mut flags = 0_u64;
 
         // Access flag (must be set)
         flags |= 1 << 10; // AF
@@ -160,7 +156,7 @@ pub struct KernelLayout {
     pub bss_size: usize,
     /// Stack virtual address (for kernel mapping)
     pub stack_virt_bottom: VirtAddr,
-    /// Exception vector table virtual address (for VBAR_EL1)
+    /// Exception vector table virtual address (for `VBAR_EL1`)
     pub vectors_virt: VirtAddr,
 }
 
@@ -170,13 +166,13 @@ impl KernelLayout {
         PhysAddr::new(self.phys_base.as_u64() + offset)
     }
 
-    /// Get the VBAR_EL1 value (virtual address for use after MMU enable)
+    /// Get the `VBAR_EL1` value (virtual address for use after MMU enable)
     ///
-    /// This is what the kernel would set VBAR_EL1 to after switching to
+    /// This is what the kernel would set `VBAR_EL1` to after switching to
     /// higher-half addresses.
     pub fn vbar_el1_virt(&self) -> u64 {
         assert!(
-            self.vectors_virt.as_u64() & 0x7FF == 0,
+            self.vectors_virt.as_u64().trailing_zeros() >= 11,
             "VBAR_EL1 address 0x{:016X} must be 2KB aligned",
             self.vectors_virt.as_u64()
         );
@@ -197,21 +193,17 @@ impl KernelLayout {
     }
 
     pub fn bss_mapping(&self) -> Option<SectionMapping> {
-        if self.bss_size > 0 {
-            Some(SectionMapping {
-                name: ".bss",
-                phys_start: self.bss_phys,
-                virt_start: self.bss_virt,
-                size: self.bss_size,
-                permissions: MemoryPermissions {
-                    readable: true,
-                    writable: true,
-                    executable: false,
-                },
-            })
-        } else {
-            None
-        }
+        (self.bss_size > 0).then_some(SectionMapping {
+            name: ".bss",
+            phys_start: self.bss_phys,
+            virt_start: self.bss_virt,
+            size: self.bss_size,
+            permissions: MemoryPermissions {
+                readable: true,
+                writable: true,
+                executable: false,
+            },
+        })
     }
 }
 

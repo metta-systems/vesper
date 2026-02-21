@@ -18,16 +18,18 @@ impl DebugConsole {
         //     ptr.user_to_kernel(),
         //     len
         // );
-        let slice = unsafe { slice::from_raw_parts(ptr.user_to_kernel().as_ptr(), len as usize) };
-        let mut buf = [0u8; 4096];
+        let len = usize::try_from(len).unwrap();
+        // SAFETY: Unsafe, need to check user pointers.
+        let slice = unsafe { slice::from_raw_parts(ptr.user_to_kernel().as_ptr(), len) };
+        let mut buf = [0_u8; 4096];
         // libqemu::semi_println!(
         //     "DebugConsole::copy from user to {:#08x}",
         //     &buf as *const _ as u64
         // );
-        // SAFETY: Need to validate user pointer is valid, need to copy via kernel physmem mapping.
-        buf[..len as usize].copy_from_slice(slice);
+        buf[..len].copy_from_slice(slice);
         buf[slice.len()] = 0;
         let cstr =
+            // SAFETY: Need to validate user pointer is valid, need to copy via kernel physmem mapping.
             unsafe { core::ffi::CStr::from_bytes_with_nul(&buf[..=slice.len()]) }.map_err(|e| {
                 // libqemu::semi_println!("{e}");
                 CapError::Unknown

@@ -105,7 +105,7 @@ const PTES_PER_PTEG: usize = 8;
 ///   and virtual page number.
 ///
 /// Since the HPT is a single flat structure, `NUM_LEVELS = 1` and
-/// `ENTRY_WIDTH = 2` (each PTE is two u64 words: pte_hi and pte_lo).
+/// `ENTRY_WIDTH = 2` (each PTE is two u64 words: `pte_hi` and `pte_lo`).
 ///
 /// Page sizes: 4KiB (base) and 16MiB (large, indicated by the L bit).
 #[allow(non_camel_case_types)]
@@ -118,15 +118,15 @@ impl PowerPC_970 {
         htab_size_bytes / (PTES_PER_PTEG * 16)
     }
 
-    /// Compute the htab_mask from the HPT size in bytes.
+    /// Compute the `htab_mask` from the HPT size in bytes.
     /// This masks the hash to select a PTEG within the table.
     pub fn htab_mask(htab_size_bytes: usize) -> u64 {
         (Self::ptegs_for_htab_size(htab_size_bytes) - 1) as u64
     }
 
-    /// Build the AVPN field for pte_hi from a VSID and VA page index.
+    /// Build the AVPN field for `pte_hi` from a VSID and VA page index.
     ///
-    /// For 4KB pages: AVPN = VSID[36:0] << 23 | page_index[15:11]
+    /// For 4KB pages: AVPN = VSID[36:0] << 23 | `page_index`[15:11]
     /// (bits of the VA that are NOT part of the hash).
     pub fn build_avpn(vsid: u64, va_page_index: u64) -> u64 {
         // AVPN goes in bits [62:7] of pte_hi.
@@ -234,7 +234,10 @@ impl TranslationArch for PowerPC_970 {
     fn encode_page_entry_wide(phys: PhysAddr, attr: AttributeFields, buf: &mut [u64]) {
         debug_assert_eq!(buf.len(), 2);
         let addr = phys.as_u64();
-        debug_assert!(addr & 0xFFF == 0, "Physical address not 4K aligned");
+        debug_assert!(
+            addr.trailing_zeros() >= 12,
+            "Physical address not 4K aligned"
+        );
 
         // Build pte_lo: RPGN + WIMG + PP + N + R + C pre-set
         let mut pte_lo = addr & PTE_LO_RPGN_MASK;
@@ -267,16 +270,16 @@ impl TranslationArch for PowerPC_970 {
     fn hash_primary(vaddr: VirtAddr, vsid: u64, htab_mask: u64) -> usize {
         // Primary hash = (VSID ^ page_index) & htab_mask
         let page_index = PowerPC_970::page_index_4k(vaddr);
-        ((vsid ^ page_index) & htab_mask) as usize
+        usize::try_from((vsid ^ page_index) & htab_mask).unwrap()
     }
 
     fn hash_secondary(primary_hash: usize, htab_mask: u64) -> usize {
         // Secondary hash = ~primary_hash & htab_mask
-        (!(primary_hash as u64) & htab_mask) as usize
+        usize::try_from(!(primary_hash as u64) & htab_mask).unwrap()
     }
 }
 
-/// Encode memory attributes into WIMG bits for pte_lo.
+/// Encode memory attributes into WIMG bits for `pte_lo`.
 fn encode_wimg(mem_attr: MemAttributes) -> u64 {
     match mem_attr {
         // Normal cacheable memory: M=1 (coherence required for SMP)
@@ -288,7 +291,7 @@ fn encode_wimg(mem_attr: MemAttributes) -> u64 {
     }
 }
 
-/// Encode access permissions into PP bits for pte_lo.
+/// Encode access permissions into PP bits for `pte_lo`.
 fn encode_pp(acc_perms: AccessPermissions) -> u64 {
     match acc_perms {
         // Supervisor read/write (user no access for now)
@@ -301,10 +304,10 @@ fn encode_pp(acc_perms: AccessPermissions) -> u64 {
 /// Helper for constructing a complete HPT PTE with AVPN and hash info.
 ///
 /// `encode_page_entry_wide` sets the valid bit and physical attributes but
-/// leaves AVPN and H zeroed. This function builds the complete pte_hi
+/// leaves AVPN and H zeroed. This function builds the complete `pte_hi`
 /// word with the full AVPN, hash-group indicator, and optional large-page bit.
 ///
-/// Typical usage: call `encode_page_entry_wide` to get the base [pte_hi, pte_lo],
+/// Typical usage: call `encode_page_entry_wide` to get the base [`pte_hi`, `pte_lo`],
 /// then OR the result of this function into `buf[0]` to set AVPN and H.
 #[allow(dead_code)]
 pub fn build_complete_pte_hi(vsid: u64, vaddr: VirtAddr, secondary: bool, large_page: bool) -> u64 {

@@ -43,10 +43,10 @@ impl ArchObjects for AArch64 {
     fn validate_retype(arch_type: ArchType, size_bits: u8) -> Result<usize, CapError> {
         match arch_type {
             ArchType::PageTable => {
-                if size_bits != 12 {
-                    Err(CapError::InvalidSize(size_bits as usize))
-                } else {
+                if size_bits == 12 {
                     Ok(4096)
+                } else {
+                    Err(CapError::InvalidSize(size_bits as usize))
                 }
             }
             ArchType::VSpace => Ok(core::mem::size_of::<AArch64VSpace>()),

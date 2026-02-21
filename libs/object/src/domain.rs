@@ -72,7 +72,7 @@ pub enum DomainOp {
 }
 
 /// Domain capability - handle to a protection domain.
-/// State queries use shared DCB (no syscall), mutations use CapInvoke.
+/// State queries use shared DCB (no syscall), mutations use `CapInvoke`.
 pub struct DomainKey {
     key: Key<DomainType>,
     id: DomainId,
@@ -81,8 +81,8 @@ pub struct DomainKey {
 enum DomainType {}
 
 impl DomainKey {
-    /// Create a new domain from untyped memory.
-    /// Convenience wrapper around UntypedRetype.
+    // Create a new domain from untyped memory.
+    // Convenience wrapper around UntypedRetype.
     // pub fn create(untyped: &mut UntypedCap, dest_slot: KeySlot) -> Result<Self, Error> {
     //     // Domains need ~4KB (12 bits) for kernel structures
     //     untyped.retype(
@@ -103,6 +103,7 @@ impl DomainKey {
     /// Get domain state from shared DCB
     #[inline]
     pub fn state(&self) -> DomainState {
+        // SAFETY: Unsafe call.
         let dcb_view = unsafe { DcbView::from_user_mapping() };
         let dcb = dcb_view.get(self.id).expect("oh well");
         DomainState::try_from(dcb.state.load(Ordering::Acquire)).unwrap_or(DomainState::Inactive)
@@ -111,6 +112,7 @@ impl DomainKey {
     /// Get time used from shared DCB
     #[inline]
     pub fn time_used_ns(&self) -> u64 {
+        // SAFETY: Unsafe call.
         let dcb_view = unsafe { DcbView::from_user_mapping() };
         let dcb = dcb_view.get(self.id).expect("oh well");
         dcb.time_consumed_ns.load(Ordering::Relaxed)
@@ -119,6 +121,7 @@ impl DomainKey {
     /// Get pending notifications from shared DCB (NO SYSCALL!)
     #[inline]
     pub fn pending_notifications(&self) -> u64 {
+        // SAFETY: Unsafe call.
         let dcb_view = unsafe { DcbView::from_user_mapping() };
         let dcb = dcb_view.get(self.id).expect("oh well");
         dcb.pending_notifications.load(Ordering::Relaxed)
@@ -126,6 +129,7 @@ impl DomainKey {
 
     /// Activate domain (make runnable) - requires syscall
     pub fn activate(&self) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
         let (ok, _, _) = unsafe { protected_call0(self.key.slot(), DomainOp::Activate as u32) };
         match ok {
             0 => Ok(()),
@@ -135,12 +139,13 @@ impl DomainKey {
 
     /// Grant a capability to this domain
     pub fn grant<T>(&self, key: &Key<T>, dest_slot: KeySlot) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
         let (ok, _, _) = unsafe {
             protected_call2(
                 self.key.slot(),
                 DomainOp::Grant as u32,
-                key.slot() as u64,
-                dest_slot.0 as u64,
+                u64::from(key.slot()),
+                u64::from(dest_slot.0),
             )
         };
         match ok {
@@ -151,6 +156,7 @@ impl DomainKey {
 
     /// Suspend domain - requires syscall
     pub fn suspend(&self) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
         let (ok, _, _) = unsafe { protected_call0(self.key.slot(), DomainOp::Suspend as u32) };
         match ok {
             0 => Ok(()),
@@ -160,6 +166,7 @@ impl DomainKey {
 
     /// Resume suspended domain - requires syscall
     pub fn resume(&self) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
         let (ok, _, _) = unsafe { protected_call0(self.key.slot(), DomainOp::Resume as u32) };
         match ok {
             0 => Ok(()),
@@ -348,8 +355,10 @@ impl DcbPage {
     pub const DCBS_PER_PAGE: u32 = 4096 / 128; // = 32
 
     /// Create a new page with uninitialized DCBs
+    #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
         // This is a bit ugly but works at const time
+        #[expect(clippy::declare_interior_mutable_const)]
         const INIT_DCB: DomainControlBlock =
             DomainControlBlock::new(DomainId::INVALID, DomainId::INVALID);
         Self {
@@ -393,9 +402,10 @@ impl DcbView {
     /// Must only be called after kernel has set up the mapping
     pub const unsafe fn from_user_mapping() -> Self {
         // FIXME: Duplicate DcbPages::USER_BASE const from nucleus/objects/domain.rs here, keep in sync!
+        // SAFETY: Unsafe call.
         const USER_BASE: VirtAddr = unsafe { VirtAddr::new_unchecked(0x0000_7FFF_FE00_0000) };
         Self {
-            base: USER_BASE.as_ptr() as *const DomainControlBlock,
+            base: USER_BASE.as_ptr(),
         }
     }
 
@@ -407,11 +417,12 @@ impl DcbView {
     #[inline]
     pub fn get(&self, id: DomainId) -> Option<&DomainControlBlock> {
         // FIXME: Duplicate DcbPages::MAX_DOMAINS const from nucleus/objects/domain.rs here, keep in sync!
-        const MAX_DOMAINS: usize = 8192;
-        if id.0 >= MAX_DOMAINS as u32 {
+        const MAX_DOMAINS: u32 = 8192;
+        if id.0 >= MAX_DOMAINS {
             return None;
         }
 
+        // SAFETY: unsafe
         let dcb = unsafe { &*self.base.add(id.0 as usize) };
 
         // Basic validity check

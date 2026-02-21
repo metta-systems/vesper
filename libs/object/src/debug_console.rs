@@ -29,6 +29,7 @@ impl TryFrom<u32> for DebugConsoleOp {
 
 // Root domain gets a DebugConsoleCap, can delegate to others
 impl DebugConsoleKey {
+    #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             key: Key::new(KeySlot::DEBUG_CONSOLE),
@@ -42,6 +43,7 @@ impl DebugConsoleKey {
     }
 
     pub fn write(&self, s: &str) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
         let (ok, r1, r2) = unsafe {
             libsyscall::protected_call2(
                 self.key.slot(),

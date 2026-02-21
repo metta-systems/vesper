@@ -230,7 +230,7 @@ impl<const PAGE_SIZE: usize> MappingRecord<PAGE_SIZE> {
 //--------------------------------------------------------------------------------------------------
 
 /// Add an entry to the mapping info record.
-#[allow(missing_docs, dead_code)]
+#[expect(dead_code, clippy::unnecessary_wraps)]
 pub fn kernel_add<const PAGE_SIZE: usize>(
     _name: &'static str,
     _virt_region: &MemoryRegion<Virtual, PAGE_SIZE>,
@@ -241,7 +241,7 @@ pub fn kernel_add<const PAGE_SIZE: usize>(
     Ok(())
 }
 
-#[allow(missing_docs, dead_code)]
+#[expect(dead_code, clippy::unnecessary_wraps)]
 pub fn kernel_find_and_insert_mmio_duplicate<const PAGE_SIZE: usize>(
     _mmio_descriptor: &MMIODescriptor,
     _new_user: &'static str,

@@ -99,14 +99,14 @@ entry!(init_main_el2);
 /// Kernel early init code.
 /// `arch` crate is responsible for calling it.
 ///
-/// # Safety
+/// Safety
 ///
 /// - Only a single core must be active and running this function.
 /// - The init calls in this function must appear in the correct order:
 ///     - MMU + Data caching must be activated at the earliest. Without it, any atomic operations,
 ///       e.g. the yet-to-be-introduced spinlocks in the device drivers (which currently employ
 ///       `IRQSafeNullLocks` instead of spinlocks), will fail to work (properly) on the `RPi` `SoCs`.
-
+///
 pub fn init_main_el2(dtb: u32) -> ! {
     let dtb_ptr = dtb as *const u8;
 
@@ -142,8 +142,11 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // Start bump allocator
     // ─────────────────────────────────────────────────────────────────────
 
+    // SAFETY: Unsafe
     let init_start = unsafe { __INIT_START.get() as u64 };
+    // SAFETY: Unsafe
     let init_end = unsafe { __INIT_END.get() as u64 };
+    // SAFETY: Unsafe
     let free_start = unsafe { __FREE_MEMORY_START.get() as u64 };
 
     let memory_size = 256 * 1024 * 1024;
@@ -163,9 +166,8 @@ pub fn init_main_el2(dtb: u32) -> ! {
     semi_println!("Parsing device tree...");
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
-    let device_tree = unsafe {
-        DevTree::from_raw_pointer(dtb_ptr as *const _).expect("DeviceTree failed to read")
-    };
+    let device_tree =
+        unsafe { DevTree::from_raw_pointer(dtb_ptr).expect("DeviceTree failed to read") };
 
     let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
 
@@ -176,6 +178,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
             ("DTB index", Alloc::Droppable),
         )
         .expect("Couldn't allocate DeviceTree index");
+    // SAFETY: Unsafe call.
     let raw_slice = unsafe { core::slice::from_raw_parts_mut(block.as_mut_ptr(), layout.size()) };
 
     let device_tree =
@@ -291,6 +294,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // Next step: parse DTB!
     // iterate nodes, look for reg, status, compat props
 
+    #[expect(clippy::items_after_statements)]
     #[derive(Default, Copy, Clone)]
     struct Node {
         name: &'static str,
@@ -342,8 +346,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
                 .props()
                 .find(|p| p.name() == Ok("status"))
                 .and_then(|prop| prop.str().ok())
-                .and_then(|value| Some(value == "disabled"))
-                .unwrap_or(false);
+                .is_some_and(|value| value == "disabled");
             let name = entry.name().unwrap();
             let name = name.split_once('@').unwrap_or((name, "")).0;
 
@@ -352,14 +355,10 @@ pub fn init_main_el2(dtb: u32) -> ! {
                 nodes[num_nodes] = Node {
                     start: mem_base,
                     size: mem_size,
-                    name: name,
+                    name,
                     compat: compat_names,
                     disabled,
-                    phandle: if let Some(phandle) = phandle {
-                        phandle
-                    } else {
-                        0
-                    },
+                    phandle: phandle.unwrap_or_default(),
                 };
                 num_nodes += 1;
             }
@@ -589,12 +588,14 @@ pub fn init_main_el2(dtb: u32) -> ! {
         static __STACK_TOP: UnsafeCell<()>;
     }
 
+    // SAFETY: Not safe.
     unsafe {
+        #[expect(clippy::fn_to_numeric_cast_any)]
         el_switch::enable_mmu_and_drop_to_el1(
             ttbr0,
             ttbr1,
             vbar,
-            init_thread_run as *const () as u64,
+            init_thread_run as *const u8 as u64,
             // el1_stack_top, // This is solely for the kernel
             __STACK_TOP.get() as u64,
         );
@@ -611,6 +612,7 @@ pub fn init_thread_run() -> ! {
     #[cfg(qemu)]
     semi_println!("init_main_run: enabled MMU and dropped to EL1");
     print_my_sp();
+    // SAFETY: Not safe.
     unsafe {
         protected_call6(0, 0, 0, 0, 0, 0, 0, 0);
     }

@@ -77,7 +77,7 @@ impl<ATYPE: const AddressType, const PAGE_SIZE: usize> MemoryRegion<ATYPE, PAGE_
         end_exclusive - start
     }
 
-    /// Splits the MemoryRegion like in the following diagram.
+    /// Splits the `MemoryRegion` like in the following diagram.
     /// Left region is returned to the caller. Right region is the new region for this struct.
     ///
     /// --------------------------------------------------------------------------------

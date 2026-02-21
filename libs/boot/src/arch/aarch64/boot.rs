@@ -8,8 +8,8 @@
 //! Low-level boot of the ARMv8-A processor.
 //! <http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf>
 
-//! Raspi kernel boot helper: https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S
-//! In particular, see dtb_ptr32
+//! Raspi kernel boot helper: <https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S>
+//! In particular, see `dtb_ptr32`
 
 use {
     aarch64_cpu::registers::*,

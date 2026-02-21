@@ -26,7 +26,7 @@ impl<T: NucleusObject> ObjectPool<T> {
     /// # Safety
     /// The untyped memory must be properly sized and aligned for T
     pub unsafe fn new(memory: *mut u8, size: usize) -> Self {
-        let capacity = (size / core::mem::size_of::<T>()) as u16;
+        let capacity = u16::try_from(size / core::mem::size_of::<T>()).unwrap();
         assert!(capacity <= 256);
 
         Self {
@@ -49,6 +49,7 @@ impl<T: NucleusObject> ObjectPool<T> {
         self.count += 1;
 
         // Initialize the object
+        // SAFETY: Unsafe
         unsafe {
             let ptr = self.base.add(slot);
             ptr.write(init);
@@ -68,6 +69,7 @@ impl<T: NucleusObject> ObjectPool<T> {
             return None;
         }
 
+        // SAFETY: Unsafe
         unsafe { Some(&*self.base.add(index)) }
     }
 
@@ -83,6 +85,7 @@ impl<T: NucleusObject> ObjectPool<T> {
             return None;
         }
 
+        // SAFETY: Unsafe
         unsafe { Some(&mut *self.base.add(index)) }
     }
 
@@ -102,6 +105,7 @@ impl<T: NucleusObject> ObjectPool<T> {
         self.count -= 1;
 
         // Drop the object
+        // SAFETY: Unsafe
         unsafe {
             core::ptr::drop_in_place(self.base.add(index));
         }

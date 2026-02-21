@@ -33,7 +33,7 @@ const L2_PAGE_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_0000; // [47:16]
 const SIZE_64K: usize = 64 * 1024;
 const SIZE_512M: usize = 512 * 1024 * 1024;
 
-/// AArch64 Stage 1 translation with 64KiB granule.
+/// `AArch64` Stage 1 translation with 64KiB granule.
 ///
 /// 3-level hierarchy: L0 (64 entries) -> L1 (8192) -> L2 (8192).
 /// Our level numbering is 0-based from root; ARM calls these Level 1/2/3.
@@ -86,7 +86,7 @@ impl TranslationArch for Aarch64_64K {
             2 => (16, 0x1FFF),
             _ => return 0,
         };
-        ((vaddr.as_u64() >> shift) & mask) as usize
+        usize::try_from((vaddr.as_u64() >> shift) & mask).unwrap()
     }
 
     fn decode_entry(raw: u64, level: usize) -> EntryKind {

@@ -7,17 +7,17 @@ fn partition<T: Copy>(
     h: isize,
     compare: fn(&T, &T) -> Ordering,
 ) -> isize {
-    let pivot = array[h as usize];
+    let pivot = array[h.cast_unsigned()];
     let mut i = l - 1; // Index of the smaller element
 
     for j in l..h {
-        if compare(&array[j as usize], &pivot) != Ordering::Greater {
-            i = i + 1;
-            array.swap(i as usize, j as usize);
+        if compare(&array[j.cast_unsigned()], &pivot) != Ordering::Greater {
+            i += 1;
+            array.swap(i.cast_unsigned(), j.cast_unsigned());
         }
     }
 
-    array.swap((i + 1) as usize, h as usize);
+    array.swap((i + 1).cast_unsigned(), h.cast_unsigned());
 
     i + 1
 }
@@ -29,7 +29,7 @@ fn quick_sort_partition<T: Copy>(
     compare: fn(&T, &T) -> Ordering,
 ) {
     if start < end && end - start >= 1 {
-        let pivot = partition(array, start as isize, end as isize, compare);
+        let pivot = partition(array, start, end, compare);
         quick_sort_partition(array, start, pivot - 1, compare);
         quick_sort_partition(array, pivot + 1, end, compare);
     }
@@ -38,5 +38,5 @@ fn quick_sort_partition<T: Copy>(
 pub fn sort<T: Copy>(array: &mut [T], compare: fn(&T, &T) -> Ordering) {
     let start = 0;
     let end = array.len() - 1;
-    quick_sort_partition(array, start, end as isize, compare);
+    quick_sort_partition(array, start, end.cast_signed(), compare);
 }

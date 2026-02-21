@@ -31,7 +31,7 @@ const SIZE_4K: usize = 4096;
 const SIZE_2M: usize = 2 * 1024 * 1024;
 const SIZE_1G: usize = 1024 * 1024 * 1024;
 
-/// AArch64 Stage 1 translation with 4KiB granule.
+/// `AArch64` Stage 1 translation with 4KiB granule.
 ///
 /// 4-level hierarchy: L0 -> L1 -> L2 -> L3.
 /// 512 entries per table, 4096-byte table size, 4096-byte alignment.

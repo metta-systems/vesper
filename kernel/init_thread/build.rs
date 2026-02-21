@@ -57,7 +57,7 @@ struct ExtractedSection {
     /// Virtual address in kernel's address space (higher-half)
     virt_addr: u64,
     /// Size in memory
-    mem_size: usize,
+    mem_size: u64,
     /// Size in file (0 for BSS)
     // file_size: usize,
     /// Required alignment
@@ -91,7 +91,7 @@ struct VectorTableInfo {
     /// Virtual address of the vector table
     virt_addr: u64,
     /// Size of the vector table (should be 0x800 = 2048 bytes)
-    mem_size: usize,
+    mem_size: u64,
     /// Alignment requirement (must be 2KB aligned for VBAR)
     alignment: u64,
 }
@@ -142,13 +142,13 @@ fn extract_sections(elf: &Elf, elf_bytes: &[u8], out_path: &Path) -> KernelSecti
 
         // Determine permissions from section flags
         let readable = true;
-        let writable = sh.sh_flags & goblin::elf::section_header::SHF_WRITE as u64 != 0;
-        let executable = sh.sh_flags & goblin::elf::section_header::SHF_EXECINSTR as u64 != 0;
+        let writable = sh.sh_flags & u64::from(goblin::elf::section_header::SHF_WRITE) != 0;
+        let executable = sh.sh_flags & u64::from(goblin::elf::section_header::SHF_EXECINSTR) != 0;
 
         let section = ExtractedSection {
             name: name.to_string(),
             virt_addr: sh.sh_addr,
-            mem_size: sh.sh_size as usize,
+            mem_size: sh.sh_size,
             // file_size: if is_nobits { 0 } else { sh.sh_size as usize },
             alignment: sh.sh_addralign,
             readable,
@@ -179,14 +179,14 @@ fn extract_sections(elf: &Elf, elf_bytes: &[u8], out_path: &Path) -> KernelSecti
             .map(|(_, sh)| *sh)
             .unwrap();
 
-        let start = sh.sh_offset as usize;
-        let end = start + sh.sh_size as usize;
+        let start = usize::try_from(sh.sh_offset).unwrap();
+        let end = usize::try_from(sh.sh_offset + sh.sh_size).unwrap();
         let content = &elf_bytes[start..end];
 
         let bin_filename = format!("kernel_{}.bin", section.name.trim_start_matches('.'));
         let bin_path = out_path.join(&bin_filename);
         fs::write(&bin_path, content)
-            .unwrap_or_else(|e| panic!("Failed to write {}: {}", bin_filename, e));
+            .unwrap_or_else(|e| panic!("Failed to write {bin_filename}: {e}"));
 
         section.bin_file = Some(bin_filename);
 
@@ -260,11 +260,7 @@ fn find_vector_table_from_symbols(elf: &Elf) -> Option<VectorTableInfo> {
         return Some(VectorTableInfo {
             virt_addr: sym.st_value,
             // If size is 0, assume standard size of 0x800
-            mem_size: if sym.st_size > 0 {
-                sym.st_size as usize
-            } else {
-                0x800
-            },
+            mem_size: if sym.st_size > 0 { sym.st_size } else { 0x800 },
             alignment: 2048, // VBAR requirement
         });
     }

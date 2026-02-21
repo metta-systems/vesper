@@ -7,7 +7,7 @@ use {
 // == Public user interface, usable from userspace ==
 // ==================================================
 
-/// Slot index in a KeyTable
+/// Slot index in a `KeyTable`
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct KeySlot(pub u32);
@@ -51,14 +51,15 @@ impl KeyTableKey {
         dst_slot: u32,
         rights: Rights,
     ) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
         let (ok, _, _) = unsafe {
             protected_call4(
                 self.key.slot(),
                 KeyTableOp::CopyDerive as u32,
-                src_slot as u64,
-                dst_captbl.key.slot() as u64,
-                dst_slot as u64,
-                rights.bits() as u64,
+                u64::from(src_slot),
+                u64::from(dst_captbl.key.slot()),
+                u64::from(dst_slot),
+                u64::from(rights.bits()),
             )
         };
         match ok {
@@ -86,15 +87,17 @@ impl KeyTableKey {
 
     pub fn delete(&mut self, slot: u32) -> Result<(), CapError> {
         // TODO: Must invoke on self-captbl cap
+        // SAFETY: Unsafe call.
         let (_ok, _, _) =
-            unsafe { protected_call1(self.key.slot(), KeyTableOp::Delete as u32, slot as u64) };
+            unsafe { protected_call1(self.key.slot(), KeyTableOp::Delete as u32, u64::from(slot)) };
         Ok(())
     }
 
     // Revoke all children of cap in slot
     pub fn revoke(&self, _captbl: &KeyTableKey, slot: u32) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
         let (_ok, _, _) =
-            unsafe { protected_call1(self.key.slot(), KeyTableOp::Revoke as u32, slot as u64) };
+            unsafe { protected_call1(self.key.slot(), KeyTableOp::Revoke as u32, u64::from(slot)) };
         Ok(())
     }
 
@@ -105,14 +108,15 @@ impl KeyTableKey {
         their_captbl: &KeyTableKey,
         their_slot: u32,
     ) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
         let (_ok, _, _) = unsafe {
             protected_call4(
                 self.key.slot(),
                 KeyTableOp::CopyDerive as u32,
-                my_slot as u64,
-                their_captbl.key.slot() as u64,
-                their_slot as u64,
-                Rights::all().bits() as u64,
+                u64::from(my_slot),
+                u64::from(their_captbl.key.slot()),
+                u64::from(their_slot),
+                u64::from(Rights::all().bits()),
             )
         };
         Ok(())

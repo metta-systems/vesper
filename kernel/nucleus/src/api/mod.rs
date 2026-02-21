@@ -156,6 +156,10 @@ fn arch_invoke<A: ArchObjects>(
         .ok_or(CapError::InvalidDomain)?;
     let entry = domain.keytable.lookup_mut(entry_slot)?;
 
+    #[expect(
+        clippy::match_single_binding,
+        reason = "All other arms are commented out"
+    )]
     match arch_type {
         // ArchType::Frame => {
         //     A::invoke_frame(entry, op, args, nucleus)

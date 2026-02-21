@@ -3,7 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-//! AArch64 MMU hardware configuration and enablement.
+//! `AArch64` MMU hardware configuration and enablement.
 //!
 //! This module handles the actual hardware register setup (MAIR, TCR, SCTLR)
 //! and MMU enable sequence. It does NOT manage translation table contents —
@@ -41,7 +41,7 @@ impl core::fmt::Display for MMUEnableError {
 /// Memory Management Unit type.
 pub struct MemoryManagementUnit;
 
-/// MAIR_EL1 attribute indices.
+/// `MAIR_EL1` attribute indices.
 ///
 /// These must match the MAIR setup in `set_up_mair()` and the indices
 /// used by `arch::aarch64::translation::encode_attributes()`.
@@ -56,7 +56,8 @@ pub mod mair {
 static MMU: MemoryManagementUnit = MemoryManagementUnit;
 
 impl MemoryManagementUnit {
-    /// Setup function for the MAIR_EL1 register.
+    /// Setup function for the `MAIR_EL1` register.
+    #[expect(clippy::unused_self)]
     fn set_up_mair(&self) {
         use aarch64_cpu::registers::MAIR_EL1;
         MAIR_EL1.write(
@@ -72,6 +73,7 @@ impl MemoryManagementUnit {
     }
 
     /// Configure various settings of stage 1 of the EL1 translation regime.
+    #[expect(clippy::unused_self)]
     fn configure_translation_control(&self) {
         let ips = ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange);
 
@@ -102,6 +104,7 @@ impl MemoryManagementUnit {
         );
     }
 
+    #[expect(clippy::unused_self)]
     fn is_enabled(&self) -> bool {
         SCTLR_EL1.matches_all(SCTLR_EL1::M::Enable)
     }

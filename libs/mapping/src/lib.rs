@@ -20,14 +20,14 @@ pub use {mapping_attributes::*, memory_region::*, page_address::*};
 // FIXME: this code should move to init_thread and be only used during boot-up! (see paging.rs)
 //--------------------------------------------------------------------------------------------------
 
-/// Raw mapping of a virtual to physical region in the kernel translation tables.
-///
-/// Prevents mapping into the MMIO range of the tables.
-///
-/// # Safety
-///
-/// - See `kernel_map_at_unchecked()`.
-/// - Does not prevent aliasing. Currently, the callers must be trusted.
+// Raw mapping of a virtual to physical region in the kernel translation tables.
+//
+// Prevents mapping into the MMIO range of the tables.
+//
+// Safety
+//
+// - See `kernel_map_at_unchecked()`.
+// - Does not prevent aliasing. Currently, the callers must be trusted.
 // pub unsafe fn kernel_map_at(
 //     name: &'static str,
 //     virt_region: &MemoryRegion<Virtual>,
@@ -37,7 +37,6 @@ pub use {mapping_attributes::*, memory_region::*, page_address::*};
 //     // if platform::memory::mmu::virt_mmio_remap_region().overlaps(virt_region) {
 //     //     return Err("Attempt to manually map into MMIO region");
 //     // }
-//     // SAFETY: Make a mistake and you're dead!
 //     unsafe {
 //         kernel_map_at_unchecked(name, virt_region, phys_region, attr)?;
 //     }
@@ -72,7 +71,6 @@ pub unsafe fn kernel_map_mmio(
     //     let virt_region =
     //         page_alloc::kernel_mmio_va_allocator().lock(|allocator| allocator.alloc(num_pages))?;
 
-    //     // SAFETY: Make a mistake and you're dead, gaijin!
     //     unsafe {
     //         kernel_map_at_unchecked(
     //             name,

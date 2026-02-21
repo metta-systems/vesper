@@ -53,7 +53,7 @@ struct ObjectPayload {
 /// No indirection — the capability IS the object.
 ///
 /// The `state` field is dual-use:
-/// - **Untyped**: watermark (next free byte offset, shifted right by MIN_ALIGN_BITS)
+/// - **Untyped**: watermark (next free byte offset, shifted right by `MIN_ALIGN_BITS`)
 /// - **Frame**: mapped virtual address >> 12 (0 = unmapped).
 ///   Each frame cap copy tracks its own single mapping (seL4-style).
 ///   To map the same physical frame twice, duplicate the cap first.
@@ -64,11 +64,11 @@ pub struct RegionPayload {
     pub paddr: u64,
     /// Dual-use state field (see type docs)
     pub state: u32,
-    /// Size as log2 (region = 2^size_bits)
+    /// Size as log2 (region = `2^size_bits`)
     pub size_bits: u8,
     /// Is this device memory (not normal RAM)?
     pub is_device: bool,
-    _pad: u16,
+    pub _pad: u16,
 }
 
 /// 16-byte payload union, discriminated by `obj_type` in the header.
@@ -79,7 +79,7 @@ union KeyPayload {
     null: [u8; 16],
 }
 
-/// A single entry in a domain's capability table (KeyTable).
+/// A single entry in a domain's capability table (`KeyTable`).
 ///
 /// 20 bytes used in a 32-byte aligned slot.
 /// Discriminated union: `obj_type` selects the payload variant.
@@ -106,7 +106,7 @@ impl KeyEntry {
             obj_type: ObjectType::NULL,
             rights: Rights::empty(),
             badge: 0,
-            payload: KeyPayload { null: [0u8; 16] },
+            payload: KeyPayload { null: [0_u8; 16] },
         }
     }
 
@@ -126,7 +126,7 @@ impl KeyEntry {
         }
     }
 
-    /// Create a capability entry from a pre-built ObjectRef (for arch objects).
+    /// Create a capability entry from a pre-built `ObjectRef` (for arch objects).
     pub fn from_ref(obj_ref: ObjectRef, rights: Rights, badge: u16) -> Self {
         Self {
             obj_type: obj_ref.object_type(),
@@ -212,6 +212,7 @@ impl KeyEntry {
     #[inline]
     pub fn generation(&self) -> u32 {
         debug_assert!(!self.is_region() && self.obj_type != ObjectType::NULL);
+        // SAFETY: We checked the object is valid and is of correct type.
         unsafe { self.payload.obj.generation }
     }
 
@@ -252,6 +253,7 @@ impl KeyEntry {
                 found: self.obj_type,
             });
         }
+        // SAFETY: We checked the object is valid and is of the right type.
         Ok(unsafe { &self.payload.region })
     }
 
@@ -264,6 +266,7 @@ impl KeyEntry {
                 found: self.obj_type,
             });
         }
+        // SAFETY: We checked the object is valid and is of the right type.
         Ok(unsafe { &mut self.payload.region })
     }
 
@@ -276,6 +279,7 @@ impl KeyEntry {
                 found: self.obj_type,
             });
         }
+        // SAFETY: We checked the object is valid and is of the right type.
         Ok(unsafe { &self.payload.region })
     }
 
@@ -288,6 +292,7 @@ impl KeyEntry {
                 found: self.obj_type,
             });
         }
+        // SAFETY: We checked the object is valid and is of the right type.
         Ok(unsafe { &mut self.payload.region })
     }
 
@@ -300,6 +305,7 @@ impl KeyEntry {
                 found: self.obj_type,
             });
         }
+        // SAFETY: We checked the object is valid and is of the right type.
         Ok(unsafe { &self.payload.region })
     }
 
@@ -312,6 +318,7 @@ impl KeyEntry {
                 found: self.obj_type,
             });
         }
+        // SAFETY: We checked the object is valid and is of the right type.
         Ok(unsafe { &mut self.payload.region })
     }
 }
@@ -326,7 +333,7 @@ impl RegionPayload {
     /// Get the total size of the region in bytes.
     #[inline]
     pub fn size(&self) -> usize {
-        1usize << self.size_bits
+        1_usize << self.size_bits
     }
 
     /// Check if the state field is zero (no allocations / no mappings).
@@ -351,12 +358,12 @@ impl RegionPayload {
     }
 
     /// Set the watermark from a byte offset.
-    /// The offset must be aligned to MIN_ALIGN_BITS.
+    /// The offset must be aligned to `MIN_ALIGN_BITS`.
     /// Only meaningful when this is an Untyped region.
     #[inline]
     pub fn set_watermark_bytes(&mut self, offset: usize) {
         debug_assert!(offset & ((1 << MIN_ALIGN_BITS) - 1) == 0);
-        self.state = (offset >> MIN_ALIGN_BITS) as u32;
+        self.state = u32::try_from(offset >> MIN_ALIGN_BITS).unwrap();
     }
 
     /// Get the remaining free bytes in this untyped region.
@@ -378,20 +385,16 @@ impl RegionPayload {
     /// Get the virtual address this frame is mapped at (if any).
     #[inline]
     pub fn mapped_vaddr(&self) -> Option<u64> {
-        if self.state != 0 {
-            Some((self.state as u64) << 12)
-        } else {
-            None
-        }
+        (self.state != 0).then_some(u64::from(self.state) << 12)
     }
 
     /// Record that this frame cap was mapped at `vaddr`.
     /// The vaddr must be page-aligned.
     #[inline]
     pub fn set_mapped(&mut self, vaddr: u64) {
-        debug_assert!(vaddr & 0xFFF == 0);
+        debug_assert!(vaddr.trailing_zeros() >= 12);
         debug_assert!(vaddr != 0, "cannot map at vaddr 0");
-        self.state = (vaddr >> 12) as u32;
+        self.state = u32::try_from(vaddr >> 12).unwrap();
     }
 
     /// Clear the mapping (frame was unmapped).

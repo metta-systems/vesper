@@ -37,7 +37,7 @@ pub enum EntryKind {
 ///
 /// ## Hierarchical vs Hashed Page Tables
 ///
-/// Most architectures (AArch64, x86_64, RISC-V) use hierarchical multi-level
+/// Most architectures (`AArch64`, `x86_64`, RISC-V) use hierarchical multi-level
 /// page tables where each entry is a single u64. For these, the default
 /// `ENTRY_WIDTH` of 1 applies and the standard encode/decode methods work
 /// directly.
@@ -48,12 +48,12 @@ pub enum EntryKind {
 /// slices. The single-u64 methods have default panicking implementations
 /// for HPT architectures since they are not meaningful.
 pub trait TranslationArch {
-    /// Number of levels in the translation hierarchy (e.g. 4 for AArch64 4K granule).
+    /// Number of levels in the translation hierarchy (e.g. 4 for `AArch64` 4K granule).
     /// For hashed page tables, this is 1 (the hash table itself).
     const NUM_LEVELS: usize;
 
     /// Number of u64 words per entry. Default is 1 for hierarchical page tables.
-    /// PowerPC HPT uses 2 (16-byte PTEs: pte_hi + pte_lo).
+    /// PowerPC HPT uses 2 (16-byte PTEs: `pte_hi` + `pte_lo`).
     const ENTRY_WIDTH: usize = 1;
 
     /// Whether this architecture uses a hashed (non-hierarchical) page table.
@@ -68,7 +68,7 @@ pub trait TranslationArch {
     fn table_alignment(level: usize) -> usize;
 
     /// Size in bytes of a table at the given level.
-    /// For ENTRY_WIDTH=1: entries * 8. For ENTRY_WIDTH=2: entries * 16.
+    /// For `ENTRY_WIDTH=1`: entries * 8. For `ENTRY_WIDTH=2`: entries * 16.
     fn table_size(level: usize) -> usize {
         Self::entries_per_table(level) * Self::ENTRY_WIDTH * core::mem::size_of::<u64>()
     }
@@ -103,7 +103,7 @@ pub trait TranslationArch {
 
     /// Decode a wide entry (multiple u64 words) at a given level.
     /// The slice length must equal `ENTRY_WIDTH`.
-    /// Default implementation delegates to `decode_entry` for ENTRY_WIDTH=1.
+    /// Default implementation delegates to `decode_entry` for `ENTRY_WIDTH=1`.
     fn decode_entry_wide(raw: &[u64], level: usize) -> EntryKind {
         debug_assert_eq!(raw.len(), Self::ENTRY_WIDTH);
         Self::decode_entry(raw[0], level)

@@ -34,7 +34,7 @@ impl ObjectType {
     pub const DEBUG_CONSOLE: Self = Self(127); // only #cfg(debug)
 
     // ─── Arch Types (0x80 - 0xFF) ───
-    pub const FRAME: Self = Self(Self::ARCH_BIT | 0);
+    pub const FRAME: Self = Self(Self::ARCH_BIT);
     pub const PAGE_TABLE: Self = Self(Self::ARCH_BIT | 1);
     pub const VSPACE: Self = Self(Self::ARCH_BIT | 2);
     pub const ASID_POOL: Self = Self(Self::ARCH_BIT | 3);
@@ -65,7 +65,7 @@ impl ObjectType {
 
     /// Raw value
     #[inline(always)]
-    pub const fn as_u8(&self) -> u8 {
+    pub const fn as_u8(self) -> u8 {
         self.0
     }
 }
@@ -98,6 +98,14 @@ pub enum CoreType {
     Buffer = 8,
     Reply = 9,
     DebugConsole = 127,
+}
+
+impl CoreType {
+    /// Raw value
+    #[inline(always)]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
 }
 
 impl TryFrom<ObjectType> for CoreType {
@@ -145,6 +153,14 @@ pub enum ArchType {
     IOPort = 6,
     IRQHandler = 7,
     IRQControl = 8,
+}
+
+impl ArchType {
+    /// Raw value
+    #[inline(always)]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
 }
 
 impl TryFrom<ObjectType> for ArchType {
