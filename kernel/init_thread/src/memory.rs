@@ -51,6 +51,7 @@ impl BootAllocator {
         let aligned = self.current.aligned_up(align as u64);
         let new_current = PhysAddr::new(aligned.as_u64() + size as u64);
 
+        #[cfg(qemu)]
         libqemu::semi_println!(
             "alloc_aligned {:#016x} => {:#016x} (wrt {:#016x})",
             aligned.as_u64(),

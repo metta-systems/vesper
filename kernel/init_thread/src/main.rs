@@ -43,6 +43,8 @@ mod memory;
 mod paging;
 mod qsort;
 
+#[cfg(qemu)]
+use libqemu::semi_println;
 use {
     crate::{boot_info::BOOT_INFO, memory::Alloc},
     aarch64_cpu::registers::{SPSR_EL2, Writeable},
@@ -59,7 +61,6 @@ use {
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
     libobject::{DebugConsoleKey, KeySlot},
-    libqemu::semi_println,
     libsyscall::protected_call6,
     memory::BootAllocator,
 };
@@ -72,8 +73,15 @@ unsafe extern "C" {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    #[cfg(qemu)]
     semi_println!("PANICKED: {info}");
-    libqemu::semihosting::exit_failure()
+    cfg_if::cfg_if! {
+        if #[cfg(qemu)] {
+            libqemu::semihosting::exit_failure()
+        } else {
+            endless_sleep()
+        }
+    }
 }
 
 fn dump_memory_map() {
@@ -113,6 +121,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
+    #[cfg(qemu)]
     semi_println!("init_main started");
 
     // unsafe {
@@ -126,6 +135,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // Hardcoded UART address for early boot (RPi4: 0xFE201000)
     // Will be properly mapped later
     // early_uart_init(0xFE20_1000);
+    #[cfg(qemu)]
     semi_println!("DTB at physical: {:#016x}", dtb_ptr as u64);
 
     // ─────────────────────────────────────────────────────────────────────
@@ -139,6 +149,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     let memory_size = 256 * 1024 * 1024;
     let mut allocator = BootAllocator::new(PhysAddr::new(free_start), memory_size);
     let memory_end = allocator.end();
+    #[cfg(qemu)]
     semi_println!(
         "init_main: Created BootAllocator {memory_size} @ {:#016x}",
         free_start
@@ -148,6 +159,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // Parse Device Tree
     // ─────────────────────────────────────────────────────────────────────
 
+    #[cfg(qemu)]
     semi_println!("Parsing device tree...");
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
@@ -171,6 +183,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
     let board = device_tree.get_prop_by_path("/model").unwrap().str();
     if let Ok(board_name) = board {
+        #[cfg(qemu)]
         semi_println!("Running on {board_name}");
     }
 
@@ -202,6 +215,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         .get_prop_by_path("/memory@0/reg")
         .expect("Unable to figure out memory-reg");
 
+    #[cfg(qemu)]
     semi_println!(
         "Found memnode with reg prop: name {:?}, size {}",
         reg_prop.name(),
@@ -213,6 +227,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     let mut total_memory = 0;
 
     for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
+        #[cfg(qemu)]
         semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
         total_memory += mem_size;
         BOOT_INFO.lock(|bi| {
@@ -230,6 +245,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     for entry in device_tree.fdt().reserved_entries() {
         let size: u64 = entry.size.into();
         let address: u64 = entry.address.into();
+        #[cfg(qemu)]
         semi_println!("Reserved memory: {size:?} bytes at {address:?}");
         BOOT_INFO.lock(|bi| {
             bi.insert_used_region(
@@ -248,10 +264,12 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
     // Iterate compatible nodes (example):
     for entry in device_tree.compatible_nodes("arm,pl011") {
+        #[cfg(qemu)]
         semi_println!("PL011 device: {:?}", entry.name() /*, entry.address*/);
     }
 
     // 6. Also, remove the DTB memory region + index
+    #[cfg(qemu)]
     semi_println!(
         "DTB region: {} bytes at {:#016x}",
         device_tree.fdt().totalsize(),
@@ -356,6 +374,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     }
 
     for node in nodes {
+        #[cfg(qemu)]
         semi_println!(
             "{}[{:02x}] {:<22} @ {} +{} ({})",
             if node.disabled { "-" } else { " " },
@@ -383,11 +402,14 @@ pub fn init_main_el2(dtb: u32) -> ! {
         }
     }
 
+    #[cfg(qemu)]
     semi_println!("");
+    #[cfg(qemu)]
     semi_println!("");
 
     for entry in device_tree.nodes() {
         if entry.name() == Ok("chosen") {
+            #[cfg(qemu)]
             semi_println!("Found /chosen node");
         }
     }
@@ -435,9 +457,11 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // PHASE 1: Load kernel
     // ═══════════════════════════════════════════════════════════════
 
+    #[cfg(qemu)]
     semi_println!("init_main: Load kernel");
 
     let kernel_layout = loader::load_kernel(&mut allocator).expect("Failed to load nucleus");
+    #[cfg(qemu)]
     semi_println!("init_main: Loaded nucleus image");
 
     // ═══════════════════════════════════════════════════════════════
@@ -488,11 +512,13 @@ pub fn init_main_el2(dtb: u32) -> ! {
     });
 
     let mut mmu_setup = paging::MmuSetup::new(&mut allocator).expect("Failed to create MMU setup");
+    #[cfg(qemu)]
     semi_println!("init_main: Created MmuSetup");
 
     // Identity map init_thread
     paging::create_identity_mapping(&mut mmu_setup, PhysAddr::new(init_start), memory_end)
         .expect("Failed to create identity mapping");
+    #[cfg(qemu)]
     semi_println!("init_main: Identity mapped the Init_Thread");
 
     // Create kernel mapping with per-section permissions
@@ -504,6 +530,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         el1_stack_size,
     )
     .expect("Failed to create kernel mapping");
+    #[cfg(qemu)]
     semi_println!("init_main: Higher-half mapped the nucleus");
 
     // ═══════════════════════════════════════════════════════════════
@@ -522,6 +549,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         );
     });
 
+    #[cfg(qemu)]
     semi_println!("init_main: BOOT_INFO map after kernel load and mapping");
     dump_memory_map();
 
@@ -531,21 +559,27 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
     let ttbr0 = mmu_setup.ttbr0();
     let ttbr1 = mmu_setup.ttbr1();
+    #[cfg(qemu)]
     semi_println!("init_main: TTBR0_EL1 at {ttbr0:#016x}, TTBR1_EL1 at {ttbr1:#016x}");
 
     // Get vector table virtual address for VBAR_EL1
     // VBAR is only used after MMU is enabled, so we set the virtual address directly
     let vbar = kernel_layout.vbar_el1_virt();
 
+    #[cfg(qemu)]
     semi_println!("init_main: EL1 stack at {el1_stack_top:#016x}, vbar {vbar:#016x}");
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 4: Enable MMU and drop to EL1
     // ═══════════════════════════════════════════════════════════════
 
+    #[cfg(qemu)]
     semi_println!("Init thread image covers phys -:- identity mapped");
+    #[cfg(qemu)]
     semi_println!("Init thread mapping tables filled in as - entries");
+    #[cfg(qemu)]
     semi_println!("Kernel image covers phys -:- mapped to KERNEL_HIGH_BASE:-");
+    #[cfg(qemu)]
     semi_println!("Kernel mapping tables filled in as - for kernel, as - for phys memory");
 
     print_my_sp();
@@ -574,11 +608,13 @@ pub fn init_thread_run() -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     // Run initial thread further in EL1, seting up the capDL etc.
+    #[cfg(qemu)]
     semi_println!("init_main_run: enabled MMU and dropped to EL1");
     print_my_sp();
     unsafe {
         protected_call6(0, 0, 0, 0, 0, 0, 0, 0);
     }
+    #[cfg(qemu)]
     semi_println!("init_main_run: Returned from fake syscall");
     print_my_sp();
 
@@ -586,6 +622,7 @@ pub fn init_thread_run() -> ! {
     // Initialize kernel subsystems
     // ─────────────────────────────────────────────────────────────────────
 
+    #[cfg(qemu)]
     semi_println!("Initializing kernel subsystems...");
 
     // Initialize per-CPU data structures
@@ -721,7 +758,13 @@ pub fn init_thread_run() -> ! {
     // switch_to_domain(init_domain, init_time);
     print_my_sp();
 
-    libqemu::semihosting::exit_success()
+    cfg_if::cfg_if! {
+        if #[cfg(qemu)] {
+            libqemu::semihosting::exit_success()
+        } else {
+            endless_sleep()
+        }
+    }
 
     // kernel_init_mmio_va_allocator()
 
@@ -784,6 +827,7 @@ pub fn init_thread_run() -> ! {
 fn print_my_sp() {
     use aarch64_cpu::registers::Readable;
     let sp = aarch64_cpu::registers::SP.get();
+    #[cfg(qemu)]
     semi_println!("Current SP: {sp:016x}");
 }
 /*

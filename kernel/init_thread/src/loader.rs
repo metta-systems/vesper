@@ -1,5 +1,7 @@
 // init_thread/src/loader.rs
 
+#[cfg(qemu)]
+use libqemu::semi_println;
 use {
     crate::{
         embed::KERNEL,
@@ -7,7 +9,6 @@ use {
     },
     core::ptr,
     libaddress::{PhysAddr, VirtAddr},
-    libqemu::semi_println,
 };
 
 /// Metadata for a kernel section
@@ -95,6 +96,7 @@ pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'stat
         )
         .ok_or("Failed to allocate memory for kernel")?;
 
+    #[cfg(qemu)]
     semi_println!(
         "Nucleus is {total_pages} * 4K pages @ {:#016X}",
         phys_base.as_u64()
@@ -149,6 +151,7 @@ fn load_section(section: &LoadableSection, kernel_phys_base: PhysAddr) -> Result
     let offset = section.meta.offset_from_base(KERNEL.virt_base);
     let dest_phys = PhysAddr::new(kernel_phys_base.as_u64() + offset);
 
+    #[cfg(qemu)]
     semi_println!(
         "> section {}, copy {} bytes of {} bytes total to {:#016X}",
         section.meta.name,
@@ -184,6 +187,7 @@ fn zero_bss(bss: &SectionMeta, kernel_phys_base: PhysAddr) -> Result<(), &'stati
     let offset = bss.offset_from_base(KERNEL.virt_base);
     let dest_phys = PhysAddr::new(kernel_phys_base.as_u64() + offset);
 
+    #[cfg(qemu)]
     semi_println!(
         "> section {}, zero {} bytes at {:#016X}",
         bss.name,

@@ -16,11 +16,12 @@
 ///                        │  (kernel direct)    │  Kernel can access any phys through this offset
 /// 0xFFFF_0000_0000_0000  └─────────────────────┘
 /// ```
+#[cfg(qemu)]
+use libqemu::semi_println;
 use {
     crate::memory::{Alloc, BootAllocator, KernelLayout, MemoryPermissions, SectionMapping},
     core::ptr,
     libaddress::{PhysAddr, VirtAddr},
-    libqemu::semi_println,
 };
 
 const KERNEL_BASE: u64 = 0xFFFF_8000_0000_0000;
@@ -151,6 +152,7 @@ impl<'a> MmuSetup<'a> {
         let l3_table = unsafe { &mut *(l3_phys.as_mut_ptr::<PageTable>()) };
         l3_table.entries[l3_idx] = phys.as_u64() | flags::VALID | flags::PAGE | pte_flags;
 
+        #[cfg(qemu)]
         semi_println!(
             "Mapped 4K page {} frame {} in {} with {}",
             virt,
@@ -196,6 +198,7 @@ impl<'a> MmuSetup<'a> {
         let l2_table = unsafe { &mut *(l2_phys.as_mut_ptr::<PageTable>()) };
         l2_table.entries[l2_idx] = phys.as_u64() | flags::VALID | flags::BLOCK | pte_flags;
 
+        #[cfg(qemu)]
         semi_println!(
             "Mapped 2M page {} frame {} in {} with {}",
             virt,
@@ -345,6 +348,7 @@ pub fn create_kernel_mapping(
 /// Map a single section with proper permissions
 fn map_section(setup: &mut MmuSetup, section: &SectionMapping) -> Result<(), &'static str> {
     if !section.phys_start.is_aligned(4096u64) {
+        #[cfg(qemu)]
         semi_println!("!! Section {} not aligned to 4K boundary!", section.name);
         return Err("Section not aligned");
     }

@@ -39,21 +39,21 @@ pub mod map {
     use super::*;
 
     /// Beginning of memory.
-    pub const START:                   usize =             0x0000_0000;
+    pub const START:                   u64 =             0x0000_0000;
     /// End of memory - 8Gb `RPi4`
-    pub const END_INCLUSIVE:           usize =             0x1_FFFF_FFFF;
+    pub const END_INCLUSIVE:           u64 =             0x1_FFFF_FFFF;
 
     /// Physical RAM addresses.
     pub mod phys {
         /// Base address of video (VC) memory.
-        pub const VIDEOMEM_BASE:       usize =             0x3e00_0000;
+        pub const VIDEOMEM_BASE:       u64 =             0x3e00_0000;
     }
 
-    pub const VIDEOCORE_MBOX_OFFSET: usize = 0x0000_B880;
-    pub const POWER_OFFSET:          usize = 0x0010_0000;
-    pub const GPIO_OFFSET:           usize = 0x0020_0000;
-    pub const UART_OFFSET:           usize = 0x0020_1000;
-    pub const MINIUART_OFFSET:       usize = 0x0021_5000;
+    pub const VIDEOCORE_MBOX_OFFSET: u64 = 0x0000_B880;
+    pub const POWER_OFFSET:          u64 = 0x0010_0000;
+    pub const GPIO_OFFSET:           u64 = 0x0020_0000;
+    pub const UART_OFFSET:           u64 = 0x0020_1000;
+    pub const MINIUART_OFFSET:       u64 = 0x0021_5000;
 
     /// Physical devices.
     #[cfg(board_rpi3)]
@@ -61,27 +61,27 @@ pub mod map {
         use super::*;
 
         /// Base address of MMIO register range.
-        pub const MMIO_BASE:           usize =             0x3F00_0000;
+        pub const MMIO_BASE:           u64 =             0x3F00_0000;
 
         /// Interrupt controller
-        pub const PERIPHERAL_IC_BASE:  PhysAddr = PhysAddr::new((MMIO_BASE + 0x0000_B200) as u64);
+        pub const PERIPHERAL_IC_BASE:  PhysAddr = PhysAddr::new(MMIO_BASE + 0x0000_B200);
         pub const PERIPHERAL_IC_SIZE:  usize             =              0x24;
 
         /// Base address of ARM<->VC mailbox area.
-        pub const VIDEOCORE_MBOX_BASE: PhysAddr = PhysAddr::new((MMIO_BASE + VIDEOCORE_MBOX_OFFSET) as u64);
+        pub const VIDEOCORE_MBOX_BASE: PhysAddr = PhysAddr::new(MMIO_BASE + VIDEOCORE_MBOX_OFFSET);
 
         /// Board power control.
-        pub const POWER_BASE:          PhysAddr = PhysAddr::new((MMIO_BASE + POWER_OFFSET) as u64);
+        pub const POWER_BASE:          PhysAddr = PhysAddr::new(MMIO_BASE + POWER_OFFSET);
 
         /// Base address of GPIO registers.
-        pub const GPIO_BASE:           PhysAddr = PhysAddr::new((MMIO_BASE + GPIO_OFFSET) as u64);
+        pub const GPIO_BASE:           PhysAddr = PhysAddr::new(MMIO_BASE + GPIO_OFFSET);
         pub const GPIO_SIZE:           usize             =              0xA0;
 
-        pub const PL011_UART_BASE:     PhysAddr = PhysAddr::new((MMIO_BASE + UART_OFFSET) as u64);
+        pub const PL011_UART_BASE:     PhysAddr = PhysAddr::new(MMIO_BASE + UART_OFFSET);
         pub const PL011_UART_SIZE:     usize             =              0x48;
 
         /// Base address of `MiniUART`.
-        pub const MINI_UART_BASE:      PhysAddr = PhysAddr::new((MMIO_BASE + MINIUART_OFFSET) as u64);
+        pub const MINI_UART_BASE:      PhysAddr = PhysAddr::new(MMIO_BASE + MINIUART_OFFSET);
 
         /// End of MMIO memory region.
         pub const END:                 PhysAddr = PhysAddr::new(0x4001_0000);
@@ -93,7 +93,7 @@ pub mod map {
         use super::*;
 
         /// Base address of MMIO register range.
-        pub const MMIO_BASE:        usize =             0xFE00_0000;
+        pub const MMIO_BASE:        u64 =             0xFE00_0000;
 
         /// Base address of GPIO registers.
         pub const GPIO_BASE:        PhysAddr = PhysAddr::new(MMIO_BASE + GPIO_OFFSET);
@@ -114,7 +114,7 @@ pub mod map {
         pub const GICC_SIZE:        usize             =              0x14;
 
         /// Base address of ARM<->VC mailbox area.
-        pub const VIDEOCORE_MBOX_BASE: usize = MMIO_BASE + VIDEOCORE_MBOX_OFFSET;
+        pub const VIDEOCORE_MBOX_BASE: u64 = MMIO_BASE + VIDEOCORE_MBOX_OFFSET;
 
         /// End of MMIO memory region.
         pub const END:              PhysAddr = PhysAddr::new(0xFF85_0000);
@@ -133,13 +133,13 @@ pub mod map {
     /// Virtual (mapped) addresses.
     pub mod virt {
         /// Start (top) of kernel stack.
-        pub const KERN_STACK_START:    usize =             super::START;
+        pub const KERN_STACK_START:    u64 =             super::START;
         /// End (bottom) of kernel stack. SP starts at `KERN_STACK_END` + 1.
-        pub const KERN_STACK_END:      usize =             0x0007_FFFF;
+        pub const KERN_STACK_END:      u64 =             0x0007_FFFF;
 
         /// Location of DMA-able memory region (in the second 2 MiB block).
-        pub const DMA_HEAP_START:      usize =             0x0020_0000;
+        pub const DMA_HEAP_START:      u64 =             0x0020_0000;
         /// End of DMA-able memory region.
-        pub const DMA_HEAP_END:        usize =             0x005F_FFFF;
+        pub const DMA_HEAP_END:        u64 =             0x005F_FFFF;
     }
 }

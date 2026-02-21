@@ -8,9 +8,9 @@
 //!   - SPI - Shared Peripheral Interrupt.
 
 use {
-    crate::platform::device_driver::common::MMIODerefWrapper,
     libaddress::{Address, Virtual},
     liblocking::IRQSafeNullLock,
+    libmmio::MMIODerefWrapper,
     tock_registers::{
         interfaces::{Readable, Writeable},
         register_bitfields, register_structs,
@@ -69,10 +69,10 @@ register_structs! {
 }
 
 /// Abstraction for the non-banked parts of the associated MMIO registers.
-type SharedRegisters = MMIODerefWrapper<SharedRegisterBlock>;
+struct SharedRegisters(MMIODerefWrapper<SharedRegisterBlock>);
 
 /// Abstraction for the banked parts of the associated MMIO registers.
-type BankedRegisters = MMIODerefWrapper<BankedRegisterBlock>;
+struct BankedRegisters(MMIODerefWrapper<BankedRegisterBlock>);
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
@@ -99,7 +99,7 @@ impl SharedRegisters {
         // Query number of implemented IRQs.
         //
         // Refer to GICv2 Architecture Specification, Section 4.3.2.
-        ((self.TYPER.read(TYPER::ITLinesNumber) as usize) + 1) * 32
+        ((self.0.TYPER.read(TYPER::ITLinesNumber) as usize) + 1) * 32
     }
 
     /// Return a slice of the implemented ITARGETSR.
@@ -115,7 +115,7 @@ impl SharedRegisters {
         let spi_itargetsr_max_index = ((self.num_irqs() - 32) >> 2) - 1;
 
         // Rust automatically inserts slice range sanity check, i.e. max >= min.
-        &self.ITARGETSR[0..spi_itargetsr_max_index]
+        &self.0.ITARGETSR[0..spi_itargetsr_max_index]
     }
 }
 
@@ -132,8 +132,10 @@ impl GICD {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(mmio_start_addr: Address<Virtual>) -> Self {
         Self {
-            shared_registers: IRQSafeNullLock::new(SharedRegisters::new(mmio_start_addr)),
-            banked_registers: BankedRegisters::new(mmio_start_addr),
+            shared_registers: IRQSafeNullLock::new(SharedRegisters(MMIODerefWrapper::new(
+                mmio_start_addr,
+            ))),
+            banked_registers: BankedRegisters(MMIODerefWrapper::new(mmio_start_addr)),
         }
     }
 
@@ -144,7 +146,7 @@ impl GICD {
     ///   "`GICD_ITARGETSR0` to `GICD_ITARGETSR7` are read-only, and each field returns a value that
     ///    corresponds only to the processor reading the register."
     fn local_gic_target_mask(&self) -> u32 {
-        self.banked_registers.ITARGETSR[0].read(ITARGETSR::Offset0)
+        self.banked_registers.0.ITARGETSR[0].read(ITARGETSR::Offset0)
     }
 
     /// Route all SPIs to the boot core and enable the distributor.
@@ -167,7 +169,7 @@ impl GICD {
                 );
             }
 
-            regs.CTLR.write(CTLR::Enable::SET);
+            regs.0.CTLR.write(CTLR::Enable::SET);
         });
     }
 
@@ -184,7 +186,7 @@ impl GICD {
         match irq_num {
             // Private.
             0..=31 => {
-                let enable_reg = &self.banked_registers.ISENABLER;
+                let enable_reg = &self.banked_registers.0.ISENABLER;
                 enable_reg.set(enable_reg.get() | enable_bit);
             }
             // Shared.
@@ -192,7 +194,7 @@ impl GICD {
                 let enable_reg_index_shared = enable_reg_index - 1;
 
                 self.shared_registers.lock(|regs| {
-                    let enable_reg = &regs.ISENABLER[enable_reg_index_shared];
+                    let enable_reg = &regs.0.ISENABLER[enable_reg_index_shared];
                     enable_reg.set(enable_reg.get() | enable_bit);
                 });
             }

@@ -82,9 +82,7 @@ mod gicd;
 use {
     crate::cpu::BOOT_CORE_ID,
     libaddress::{Address, Virtual},
-    libexception::exception::asynchronous::{
-        IRQContext, IRQHandlerDescriptor, interface::IRQManager,
-    },
+    libexception::asynchronous::{IRQContext, IRQHandlerDescriptor, interface::IRQManager},
     liblocking::{self, InitStateLock},
     libprimitives::BoundedUsize,
 };
