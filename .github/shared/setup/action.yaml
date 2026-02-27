@@ -4,7 +4,7 @@ runs:
   using: "composite"
   steps:
     - name: "Install nightly Rust"
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       with:
         rustflags: ""
     - name: "Install Just"
