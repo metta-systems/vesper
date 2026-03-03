@@ -22,7 +22,7 @@
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 
-#[cfg(qemu)]
+#[cfg(feature = "qemu")]
 use libqemu::{semi_print, semi_println};
 use {
     crate::objects::{Nucleus, ObjectPool, arch::ArchPools, domain::DcbPages},
@@ -203,7 +203,7 @@ extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
 extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     let cap_slot = u32::try_from(frame.gpr[0]).unwrap();
     let op = u32::try_from(frame.gpr[1]).unwrap();
-    #[cfg(qemu)]
+    #[cfg(feature = "qemu")]
     semi_println!(
         "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
         get_pc(),
@@ -241,7 +241,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         Err(e) => e.code(),
     };
     // Return values
-    #[cfg(qemu)]
+    #[cfg(feature = "qemu")]
     semi_println!("CapInvoke SYSCALL(Return {x0:#x}, {x1:#x}, {x2:#x})",);
     // SAFETY: Not safe.
     unsafe {

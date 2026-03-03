@@ -5,7 +5,7 @@
 //! Insert sections that are either "free" or "used", disparate used sections can not overlap,
 //! overlapping free sections are merged (unless they have different `MemAttributes`).
 //!
-#[cfg(qemu)]
+#[cfg(feature = "qemu")]
 use libqemu::semi_println;
 use {
     core::{cell::LazyCell, fmt},
@@ -319,7 +319,7 @@ impl BootInfo {
         if region.is_empty() {
             return Ok(());
         }
-        #[cfg(qemu)]
+        #[cfg(feature = "qemu")]
         semi_println!("BOOT_INFO.insert_free_region: {}", region);
         self.insert_raw(region)?;
         self.merge_free_regions();
@@ -349,13 +349,13 @@ impl BootInfo {
         if region.is_empty() {
             return Ok(());
         }
-        #[cfg(qemu)]
+        #[cfg(feature = "qemu")]
         semi_println!("BOOT_INFO.insert_used_region: {}", region);
 
         // Check for overlap with existing used regions.
         for slot in &self.regions {
             if slot.is_used() && slot.intersects(&region) {
-                #[cfg(qemu)]
+                #[cfg(feature = "qemu")]
                 semi_println!(
                     "BOOT_INFO.insert_used_region: ERROR overlaps existing used region: {}",
                     slot
@@ -389,7 +389,7 @@ impl BootInfo {
             return Ok(());
         }
 
-        #[cfg(qemu)]
+        #[cfg(feature = "qemu")]
         semi_println!(
             "BOOT_INFO.insert_overlay_region: [{} - {}) {}",
             overlay_start,
@@ -646,7 +646,7 @@ impl BootInfo {
         // Add the remaining regions in largest to smallest order.
         self.insert_raw(rem_large)?;
         if self.insert_raw(rem_small).is_err() {
-            #[cfg(qemu)]
+            #[cfg(feature = "qemu")]
             semi_println!(
                 "BootInfo::alloc_region(): wasted {} bytes due to alignment, try to increase NUM_MEM_REGIONS",
                 rem_small.size()
@@ -689,11 +689,11 @@ impl BootInfo {
 
     /// Print all non-empty regions for debug purposes.
     pub fn dump(&self) {
-        #[cfg(qemu)]
+        #[cfg(feature = "qemu")]
         semi_println!("BOOT_INFO: {} region(s):", self.count());
         for region in &self.regions {
             if !region.is_empty() {
-                #[cfg(qemu)]
+                #[cfg(feature = "qemu")]
                 semi_println!("  {}", region);
             }
         }

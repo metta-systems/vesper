@@ -72,7 +72,7 @@ impl VC {
         // Apparently, QEMU doesn't care about intermixing Get/Set and Test tags either.
         let mut mbox = Mailbox::<36>::default();
         let index = mbox.request();
-        #[cfg(qemu)]
+        #[cfg(feature = "qemu")]
         let index = mbox.test_pixel_order(index, 1);
         #[cfg(not(qemu))]
         let index = mbox.set_pixel_order(index, 1);

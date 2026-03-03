@@ -34,7 +34,7 @@ impl DebugConsole {
                 // libqemu::semi_println!("{e}");
                 CapError::Unknown
             })?;
-        #[cfg(qemu)]
+        #[cfg(feature = "qemu")]
         libqemu::semihosting::sys_write0_call(cstr);
         Ok(())
     }
