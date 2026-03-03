@@ -87,7 +87,7 @@ Memory areas:
 - map entire RAM through TTBR1
 - need device data map to skip MMIO areas
     - read and parse device tree data then..
-- map only init_thread and boot_info structures through TTBR0
+- map only kickstart and boot_info structures through TTBR0
 
 ```
 // The region of the initial thread is the user image + ipcbuf and boot info.

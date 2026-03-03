@@ -17,7 +17,7 @@ pub use {mapping_attributes::*, memory_region::*, page_address::*};
 
 //--------------------------------------------------------------------------------------------------
 // Public Code
-// FIXME: this code should move to init_thread and be only used during boot-up! (see paging.rs)
+// FIXME: this code should move to kickstart and be only used during boot-up! (see paging.rs)
 //--------------------------------------------------------------------------------------------------
 
 // Raw mapping of a virtual to physical region in the kernel translation tables.

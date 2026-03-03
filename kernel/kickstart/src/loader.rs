@@ -1,4 +1,4 @@
-// init_thread/src/loader.rs
+// kickstart/src/loader.rs
 
 #[cfg(feature = "qemu")]
 use libqemu::semi_println;

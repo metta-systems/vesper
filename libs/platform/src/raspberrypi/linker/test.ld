@@ -6,7 +6,7 @@
  *
  * Test binaries use libboot::entry! which puts the boot stub in .text.main.entry
  * and expects __STACK_TOP, __STACK_BOTTOM, __BSS_START, __BSS_END symbols.
- * Layout mirrors init_thread.ld: load at 0x80000, identity-mapped.
+ * Layout mirrors kickstart.ld: load at 0x80000, identity-mapped.
  */
 
 ENTRY(_boot_cores)

@@ -373,7 +373,7 @@ impl BootInfo {
     ///
     /// The overlay covers `[start, end)` but instead of failing on overlap with
     /// existing used regions, it inserts new used regions only for the gaps.
-    /// This is useful for marking a large area (like the `Init_Thread` bump allocator
+    /// This is useful for marking a large area (like the `Kickstart` bump allocator
     /// arena) as used, where sub-regions have already been individually recorded.
     pub fn insert_overlay_region(
         &mut self,

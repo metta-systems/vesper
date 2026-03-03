@@ -1,5 +1,5 @@
 [package]
-name = "init_thread"
+name = "kickstart"
 description = "Boot time initialization"
 authors = { workspace = true }
 categories = { workspace = true }
@@ -59,7 +59,7 @@ build-print = { workspace = true }
 minijinja = { workspace = true }
 
 [[bin]]
-name = "init_thread"
+name = "kickstart"
 test = false  # test are all concentrated in integration tests/
 
 [lints]

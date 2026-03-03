@@ -31,7 +31,7 @@ pub struct AttributeFields {
     pub executable: bool,
     /// Is the region occupied or free (use occupied for const init)
     pub occupied: bool,
-    /// If this memory can be reclaimed into an Untyped after `init_thread` completes
+    /// If this memory can be reclaimed into an Untyped after `kickstart` completes
     pub droppable: bool,
 }
 

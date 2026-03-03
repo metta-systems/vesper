@@ -7,20 +7,20 @@
 // Init-thread process.
 // - Start initializing the kernel
 // - Enter itself into process list as high-priority privileged process
-// - The bootup is driven by the init_thread which loads and parses devtree, maps the kernel, gives itself all necessary
+// - The bootup is driven by the kickstart which loads and parses devtree, maps the kernel, gives itself all necessary
 // capabilities, (probably loads more things into their places) and transitions to user mode.
 // - From user mode it can continue distributing capabilities and launching servers until everything is handed out.
 // - After init is completed, it should create more low-priority user processes including idle, fs, some other handlers and
 // a user-space boot process like /sbin/init or sth, with scripts to control the boot up.
-// - At this point, exit the init_thread process normally.
+// - At this point, exit the kickstart process normally.
 // - The init-thread can be terminated and its memory freed up (should it inject a process descriptor for itself somehow to allow normal shutdown mechanisms to clean up? most probably).
 
 // create "tracing" and "debug" components for kernel call keys (intercepting syscall caps)
 
 // Kernel's main.rs just brings together all libs and syscall entry points.
-// init_thread.rs provides a boot up entry point which sets up everything.
+// kickstart.rs provides a boot up entry point which sets up everything.
 
-// init_thread should do some shared init
+// kickstart should do some shared init
 // and some system-specific loading like parsing the DTB and loading system drivers
 // distribute keys - this should be listed somewhere in the definitions (CapDL?)
 
@@ -514,11 +514,11 @@ pub fn init_main_el2(dtb: u32) -> ! {
     #[cfg(feature = "qemu")]
     semi_println!("init_main: Created MmuSetup");
 
-    // Identity map init_thread
+    // Identity map kickstart
     paging::create_identity_mapping(&mut mmu_setup, PhysAddr::new(init_start), memory_end)
         .expect("Failed to create identity mapping");
     #[cfg(feature = "qemu")]
-    semi_println!("init_main: Identity mapped the Init_Thread");
+    semi_println!("init_main: Identity mapped the Kickstart");
 
     // Create kernel mapping with per-section permissions
     let (el1_stack_top,) = paging::create_kernel_mapping(
@@ -544,7 +544,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
                 droppable: true,
                 ..Default::default()
             },
-            "Init_Thread",
+            "Kickstart",
         );
     });
 
@@ -595,7 +595,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
             ttbr0,
             ttbr1,
             vbar,
-            init_thread_run as *const u8 as u64,
+            kickstart_run as *const u8 as u64,
             // el1_stack_top, // This is solely for the kernel
             __STACK_TOP.get() as u64,
         );
@@ -603,7 +603,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
 }
 
 // DTB should be available to this code through BOOT_INFO records.
-pub fn init_thread_run() -> ! {
+pub fn kickstart_run() -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // PHASE 5: Initialize kernel objects and structures
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

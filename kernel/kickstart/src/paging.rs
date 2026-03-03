@@ -1,4 +1,4 @@
-// init_thread/src/paging.rs - Page table management with section-aware mapping
+// kickstart/src/paging.rs - Page table management with section-aware mapping
 
 /// Kernel virtual address space layout (TTBR1 region: `0xFFFF_xxxx_xxxx_xxxx`)
 ///
@@ -253,7 +253,7 @@ impl<'a> MmuSetup<'a> {
     }
 }
 
-/// Create identity mapping for `init_thread`
+/// Create identity mapping for `kickstart`
 pub fn create_identity_mapping(
     setup: &mut MmuSetup,
     start: PhysAddr,
@@ -275,7 +275,7 @@ pub fn create_identity_mapping(
             VirtAddr::new(addr.as_u64()),
             addr,
             perms,
-            ("Init_Thread identity mapping", Alloc::Droppable),
+            ("Kickstart identity mapping", Alloc::Droppable),
         )?;
         addr = PhysAddr::new(addr.as_u64() + 2 * 1024 * 1024);
     }

@@ -3,7 +3,7 @@ fn print_mmu_state_and_features() {
     features::print_mmu_features();
 }
 
-// TODO: AFTER INIT_THREAD, one of the userspace processes
+// TODO: AFTER KICKSTART, one of the userspace processes
 //
 //------------------------------------------------------------
 // Start a command prompt

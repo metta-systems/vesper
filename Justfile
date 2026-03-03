@@ -12,7 +12,7 @@ rpi3_dtb          := justfile_directory() / 'targets/bcm2710-rpi-3-b-plus.dtb'
 rpi4_dtb          := justfile_directory() / 'targets/bcm2711-rpi-4-b.dtb'
 
 nucleus_link    := 'libs/platform/src/raspberrypi/linker/nucleus.ld'
-init_link       := 'libs/platform/src/raspberrypi/linker/init_thread.ld'
+init_link       := 'libs/platform/src/raspberrypi/linker/kickstart.ld'
 test_link       := 'libs/platform/src/raspberrypi/linker/test.ld'
 chainboot_link  := 'bin/chainboot/src/link.ld'
 
@@ -25,7 +25,7 @@ objcopy         := 'rust-objcopy'
 nm              := 'rust-nm'
 volume          := env('VOLUME', '/Volumes/BOOT')
 
-kernel_elf      := justfile_directory() / 'target' / target / 'release/init_thread'
+kernel_elf      := justfile_directory() / 'target' / target / 'release/kickstart'
 kernel_bin      := justfile_directory() / 'target/kernel.bin'
 chainboot_elf   := justfile_directory() / 'target' / target / 'release/chainboot'
 chainboot_bin   := justfile_directory() / 'target/chainboot.bin'
@@ -61,11 +61,11 @@ _cross-build crate board='rpi4' linker_script='' features='':
       {{ rust_std }} \
       --release -p {{ crate }}
 
-# === Kernel (nucleus + init_thread -> kernel.bin) ===
+# === Kernel (nucleus + kickstart -> kernel.bin) ===
 
 # Build kernel (features: '' for hw, 'qemu' for emulation)
 [group("hw")]
-build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'init_thread' board init_link features)
+build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'kickstart' board init_link features)
     {{ objcopy }} --strip-all -O binary "{{ kernel_elf }}" "{{ kernel_bin }}"
     @# TODO: print final binary size!
     @echo "{{ok_label}} kernel built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
@@ -164,7 +164,7 @@ _write-gdb-config:
     target extended-remote :5555
     break *0x80000
     break main
-    break init_thread_run
+    break kickstart_run
     break cap_invoke_handler
     EOF
     @echo "🖌️ Generated GDB config file {{ gdb_connect }}"

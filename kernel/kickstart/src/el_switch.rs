@@ -1,4 +1,4 @@
-// init_thread/src/el_switch.rs - EL2 to EL1 transition with VBAR setup
+// kickstart/src/el_switch.rs - EL2 to EL1 transition with VBAR setup
 
 use {
     crate::loader::memory_barrier,

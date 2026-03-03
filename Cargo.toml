@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "kernel/nucleus",
-  "kernel/init_thread",
+  "kernel/kickstart",
   "bin/chainboot",
   "bin/chainofcommand",
   # Libraries

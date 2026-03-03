@@ -24,9 +24,9 @@ pub struct BootAllocator {
 
 #[derive(PartialEq, Copy, Clone)]
 pub enum Alloc {
-    /// This allocation should be entered into mappings and stay around after `init_thread` finishes
+    /// This allocation should be entered into mappings and stay around after `kickstart` finishes
     Persistent,
-    /// This allocation will perish and be added to Untypeds after `init_thread` finishes
+    /// This allocation will perish and be added to Untypeds after `kickstart` finishes
     Droppable,
 }
 
