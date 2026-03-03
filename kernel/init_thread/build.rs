@@ -25,7 +25,7 @@ fn main() {
     // Read kernel ELF
     let mut elf_bytes = Vec::new();
     File::open(kernel_elf_path)
-        .expect("Failed to open kernel ELF - build kernel first with: cd ../kernel && cargo build --release")
+        .expect("Failed to open kernel ELF - build kernel first with: just build")
         .read_to_end(&mut elf_bytes)
         .expect("Failed to read kernel ELF");
 

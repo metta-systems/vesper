@@ -1,6 +1,6 @@
 // init_thread/src/paging.rs - Page table management with section-aware mapping
 
-/// Kernel virtual address space layout (TTBR1 region: 0xFFFF_xxxx_xxxx_xxxx)
+/// Kernel virtual address space layout (TTBR1 region: `0xFFFF_xxxx_xxxx_xxxx`)
 ///
 /// ```
 /// 0xFFFF_FFFF_FFFF_FFFF  ┌─────────────────────┐

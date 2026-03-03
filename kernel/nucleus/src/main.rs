@@ -208,7 +208,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
         get_pc(),
         get_sp(),
-        frame as *mut _ as u64,
+        core::ptr::from_mut(frame) as u64,
     );
 
     // semi_println!("{}", frame);
