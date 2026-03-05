@@ -56,33 +56,6 @@ use {
 //     );
 // }
 
-// // Validate allocator allocates from the provided address range
-// // Validate allocation fails when range is exhausted
-// #[test_case]
-// fn test_allocates_within_init_range() {
-//     let allocator = BumpAllocator::new(256, 512, "Test allocator 1");
-//     let result1 = allocator.allocate(unsafe { Layout::from_size_align_unchecked(128, 1) });
-//     assert!(result1.is_ok());
-//     let result2 = allocator.allocate(unsafe { Layout::from_size_align_unchecked(128, 32) });
-//     println!("{:?}", result2);
-//     assert!(result2.is_ok());
-//     let result3 = allocator.allocate(unsafe { Layout::from_size_align_unchecked(1, 1) });
-//     assert!(result3.is_err());
-// }
-
-// // Creating with end <= start sshould fail
-// // @todo return Result<> from new?
-// #[test_case]
-// fn test_bad_allocator() {
-//     let bad_allocator = BumpAllocator::new(512, 256, "Test allocator 2");
-//     let result1 = bad_allocator.allocate(unsafe { Layout::from_size_align_unchecked(1, 1) });
-//     assert!(result1.is_err());
-// }
-
-// //==============================================================================
-// //==============================================================================
-// //==============================================================================
-
 // /// Check that you cannot map into the MMIO VA range from kernel_map_at().
 // /*#[test_case]
 // fn no_manual_mmio_map() {
@@ -113,10 +86,6 @@ use {
 //         )
 //     };
 // }*/
-// //==============================================================================
-// //==============================================================================
-// //==============================================================================
-
 // /// Sanity checks for the TranslationTable implementation.
 // #[test_case]
 // fn translation_table_implementation_sanity() {
@@ -143,73 +112,6 @@ use {
 //     };
 
 //     unsafe { assert_eq!(tables.map_at(&virt_region, &phys_region, attr), Ok(())) };
-// }
-
-// // (libmapping)
-// /// Sanity of [PageAddress] methods.
-// #[test_case]
-// fn pageaddress_type_method_sanity() {
-//     let page_addr: PageAddress<Virtual> = PageAddress::from(KernelGranule::SIZE * 2);
-
-//     assert_eq!(
-//         page_addr.checked_page_offset(-2),
-//         Some(PageAddress::<Virtual>::from(0))
-//     );
-
-//     assert_eq!(
-//         page_addr.checked_page_offset(2),
-//         Some(PageAddress::<Virtual>::from(KernelGranule::SIZE * 4))
-//     );
-
-//     assert_eq!(
-//         PageAddress::<Virtual>::from(0).checked_page_offset(0),
-//         Some(PageAddress::<Virtual>::from(0))
-//     );
-//     assert_eq!(
-//         PageAddress::<Virtual>::from(0).checked_page_offset(-1),
-//         None
-//     );
-
-//     let max_page_addr = Address::<Virtual>::new(usize::MAX).align_down_page();
-//     assert_eq!(
-//         PageAddress::<Virtual>::from(max_page_addr).checked_page_offset(1),
-//         None
-//     );
-
-//     let zero = PageAddress::<Virtual>::from(0);
-//     let three = PageAddress::<Virtual>::from(KernelGranule::SIZE * 3);
-//     assert_eq!(PageAddress::steps_between(&zero, &three), (3, Some(3)));
-// }
-
-// // (libmapping)
-// /// Sanity of [MemoryRegion] methods.
-// #[test_case]
-// fn memoryregion_type_method_sanity() {
-//     let zero = PageAddress::<Virtual>::from(0);
-//     let zero_region = MemoryRegion::new(zero, zero);
-//     assert_eq!(zero_region.num_pages(), 0);
-//     assert_eq!(zero_region.size(), 0);
-
-//     let one = PageAddress::<Virtual>::from(KernelGranule::SIZE);
-//     let one_region = MemoryRegion::new(zero, one);
-//     assert_eq!(one_region.num_pages(), 1);
-//     assert_eq!(one_region.size(), KernelGranule::SIZE);
-
-//     let three = PageAddress::<Virtual>::from(KernelGranule::SIZE * 3);
-//     let mut three_region = MemoryRegion::new(zero, three);
-//     assert!(three_region.contains(zero.into_inner()));
-//     assert!(!three_region.contains(three.into_inner()));
-//     assert!(three_region.overlaps(&one_region));
-
-//     let allocation = three_region
-//         .take_first_n_pages(NonZeroUsize::new(2).unwrap())
-//         .unwrap();
-//     assert_eq!(allocation.num_pages(), 2);
-//     assert_eq!(three_region.num_pages(), 1);
-
-//     for (i, alloc) in allocation.into_iter().enumerate() {
-//         assert_eq!(alloc.into_inner().as_usize(), i * KernelGranule::SIZE);
-//     }
 // }
 
 // /// Check alignment of the kernel's virtual memory layout sections.
