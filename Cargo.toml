@@ -78,8 +78,8 @@ libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
-safe-mmio = { version = "0.2" }
-snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
+safe-mmio = { version = "0.3" }
+snafu = { version = "0.9", default-features = false }
 static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
@@ -93,6 +93,7 @@ bytes = { version = "1.11" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
 futures-util = { version = "0.3", features = ["io"] }
+serialport = { version = "4.0" }
 tokio = { version = "1.49", features = ["full"] }
 tokio-serial = { version = "5.4" }
 tokio-stream = { version = "0.1" }
@@ -108,9 +109,6 @@ minijinja = { version = "2", features = ["loader"] }
 # mixed
 #=======
 seahash = { version = "4.1" }
-
-[patch.crates-io]
-serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = "macos-ENOTTY-fix" }
 
 [profile.dev]
 # See https://github.com/rust-lang/cargo/issues/7359 about why panic=abort is not working here.
