@@ -48,9 +48,10 @@ version = "0.0.1"
 # target
 #========
 aarch64-cpu = { version = "11.2" }
-bit_field = { version = "0.10" }
-bitfield-struct = { version = "0.12" }
-bitflags = { version = "2.10" }
+arbitrary-int = { version = "2.1", default-features = false }
+bit_field = { version = "0.10" } # use bitbybit instead
+bitfield-struct = { version = "0.12" } # use bitbybit instead
+bitflags = { version = "2.10" } # use bitbybit instead
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
 libaddress = { path = "libs/address", package = "vesper-address" }
@@ -83,7 +84,6 @@ snafu = { version = "0.9", default-features = false }
 static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
-ux = { version = "0.1", default-features = false }
 #======
 # host
 #======

@@ -13,6 +13,7 @@
 #![reexport_test_harness_main = "test_main"]
 
 use {
+    arbitrary_int::{u9, u12},
     // bit_field::BitField,
     bitfield_struct::bitfield,
     core::{
@@ -22,7 +23,6 @@ use {
         ops::{Add, AddAssign, Rem, RemAssign, Shl, Shr, Sub, SubAssign},
     },
     usize_conversions::FromUsize,
-    ux::*,
 };
 
 //--------------------------------------------------------------------------------------------------
