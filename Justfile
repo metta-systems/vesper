@@ -219,6 +219,8 @@ alias ocd := openocd
 [group("emu")]
 test: test-device test-chainboot test-host
 
+alias t := test
+
 # Run device crate tests in QEMU (rpi3) --verbose
 [group("emu")]
 test-device:
