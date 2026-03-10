@@ -13,9 +13,8 @@
 #![reexport_test_harness_main = "test_main"]
 
 use {
-    arbitrary_int::{u9, u12},
-    // bit_field::BitField,
-    bitfield_struct::bitfield,
+    arbitrary_int::{i47, i52, u9, u12, u17},
+    bitbybit::bitfield,
     core::{
         convert::{From, TryInto},
         fmt,
@@ -153,10 +152,10 @@ impl<T: AddressType> AddressNotValid<T> {
 
 #[bitfield(u64)]
 struct PhysTopBits {
-    #[bits(52)]
-    address: i64,
-    #[bits(12)] // bits(52..64)
-    top_bits: u16,
+    #[bits(0..=51, r)]
+    address: i52,
+    #[bits(52..=63, rw)]
+    top_bits: u12,
 }
 
 impl const AddressType for Physical {
@@ -165,7 +164,7 @@ impl const AddressType for Physical {
     /// Panics if any bits in the bit position 52 to 64 is set.
     /// TODO: this is arch-dependent!.
     fn validate(addr: u64) -> Result<u64, (u64, &'static str)> {
-        match PhysTopBits(addr).top_bits() {
+        match PhysTopBits::new_with_raw_value(addr).top_bits().value() {
             0 => Ok(addr),
             _ => Err((
                 addr,
@@ -177,10 +176,10 @@ impl const AddressType for Physical {
 
 #[bitfield(u64)]
 struct VirtTopBits {
-    #[bits(47)]
-    address: i64,
-    #[bits(17)] // bits(47..64)
-    top_bits: u32,
+    #[bits(0..=46, r)]
+    address: i47,
+    #[bits(47..=63, rw)]
+    top_bits: u17,
 }
 
 impl const AddressType for Virtual {
@@ -194,13 +193,13 @@ impl const AddressType for Virtual {
     /// This likely indicates a bug, for example an invalid address calculation.
     /// TODO: Support ASID byte in top bits of the address.
     fn validate(addr: u64) -> Result<u64, (u64, &'static str)> {
-        match VirtTopBits(addr).top_bits() {
+        match VirtTopBits::new_with_raw_value(addr).top_bits().value() {
             0 | 0x1ffff => Ok(addr), // address is canonical
             1 => {
                 // address needs sign extension
-                let mut addr = VirtTopBits(addr);
-                addr.set_top_bits(0x1ffff);
-                Ok(addr.into_bits())
+                let addr = VirtTopBits::new_with_raw_value(addr);
+                let addr = addr.with_top_bits(u17::from_u32(0x1ffff));
+                Ok(addr.raw_value())
             }
             _ => Err((
                 addr,
@@ -389,14 +388,14 @@ impl Address<Virtual> {
     /// bits 48 to 64 are overwritten. If you want to check that these bits contain no data,
     /// use `new` or `try_new`.
     pub const fn new_canonical(addr: u64) -> Self {
-        let mut v = VirtTopBits(addr);
-        if v.top_bits() & 1 != 0 {
-            v.set_top_bits(0x1ffff);
+        let v = VirtTopBits::new_with_raw_value(addr);
+        let v = if v.top_bits().value() & 1 != 0 {
+            v.with_top_bits(u17::from_u32(0x1ffff))
         } else {
-            v.set_top_bits(0);
-        }
+            v.with_top_bits(u17::from_u32(0))
+        };
         // SAFETY: We've checked address for validity above.
-        unsafe { Self::new_unchecked(v.into_bits()) }
+        unsafe { Self::new_unchecked(v.raw_value()) }
     }
 
     // @todo Support ASID byte in top bits of the address.

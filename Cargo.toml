@@ -49,9 +49,8 @@ version = "0.0.1"
 #========
 aarch64-cpu = { version = "11.2" }
 arbitrary-int = { version = "2.1", default-features = false }
-bit_field = { version = "0.10" } # use bitbybit instead
-bitfield-struct = { version = "0.12" } # use bitbybit instead
-bitflags = { version = "2.10" } # use bitbybit instead
+bitbybit  = { version = "2.0" }
+bitflags = { version = "2.10" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
 libaddress = { path = "libs/address", package = "vesper-address" }

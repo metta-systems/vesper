@@ -20,7 +20,7 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 arbitrary-int = { workspace = true }
-bitfield-struct = { workspace = true }
+bitbybit = { workspace = true }
 num = { workspace = true }
 usize_conversions = { workspace = true }
 
