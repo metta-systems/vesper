@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(format_args_nl)]
 
 pub mod debug_console;
 pub mod domain;
