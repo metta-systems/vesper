@@ -5,6 +5,7 @@ use {
     libaddress::{PhysAddr, VirtAddr},
     liblocking::interface::Mutex,
     libmapping::AttributeFields,
+    libqemu::semihosting as semi,
 };
 
 // Memory region translation.
@@ -51,8 +52,7 @@ impl BootAllocator {
         let aligned = self.current.aligned_up(align as u64);
         let new_current = PhysAddr::new(aligned.as_u64() + size as u64);
 
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!(
+        semi::println!(
             "alloc_aligned {:#016x} => {:#016x} (wrt {:#016x})",
             aligned.as_u64(),
             new_current.as_u64(),

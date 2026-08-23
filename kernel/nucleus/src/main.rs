@@ -22,8 +22,6 @@
 #![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 
-#[cfg(feature = "qemu")]
-use libqemu::{semi_print, semi_println};
 use {
     crate::objects::{Nucleus, ObjectPool, arch::ArchPools, domain::DcbPages},
     cfg_if::cfg_if,
@@ -39,6 +37,7 @@ use {
     liblog::{info, println, warn},
     libmapping::AccessPermissions,
     libobject::{ArchType, CapError, KeySlot},
+    libqemu::semihosting as semi,
 };
 
 /// Syscall API - capability invocation handlers
@@ -203,15 +202,14 @@ extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
 extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     let cap_slot = u32::try_from(frame.gpr[0]).unwrap();
     let op = u32::try_from(frame.gpr[1]).unwrap();
-    #[cfg(feature = "qemu")]
-    semi_println!(
+    semi::println!(
         "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
         get_pc(),
         get_sp(),
         core::ptr::from_mut(frame) as u64,
     );
 
-    // semi_println!("{}", frame);
+    // semi::println!("{}", frame);
 
     let args: &[u64; 6] = &frame.gpr[2..=7].try_into().unwrap();
 
@@ -241,8 +239,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         Err(e) => e.code(),
     };
     // Return values
-    #[cfg(feature = "qemu")]
-    semi_println!("CapInvoke SYSCALL(Return {x0:#x}, {x1:#x}, {x2:#x})",);
+    semi::println!("CapInvoke SYSCALL(Return {x0:#x}, {x1:#x}, {x2:#x})",);
     // SAFETY: Not safe.
     unsafe {
         frame.gpr[0] = x0;

@@ -52,7 +52,7 @@ impl DebugConsoleKey {
                 s.len() as u64,
             )
         };
-        libqemu::semi_println!(
+        libqemu::semihosting::println!(
             "Userspace return from DebugConsoleOp::Write with result ({}, {}, {})",
             ok,
             r1,

@@ -1,6 +1,7 @@
 use {
     crate::objects::{ArchObjects, DebugConsole, Nucleus},
     libobject::{ArchType, CapError, CoreType, KeySlot, ObjectType},
+    libqemu::semihosting as semi,
 };
 
 // pub mod arch;
@@ -30,8 +31,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     let slot = KeySlot(cap_slot);
-    #[cfg(feature = "qemu")]
-    libqemu::semi_println!(
+    semi::println!(
         "handle_cap_invoke(slot {cap_slot}:op {op}:args[{},{},{},{},{},{}])",
         args[0],
         args[1],
@@ -44,16 +44,13 @@ pub fn handle_cap_invoke<A: ArchObjects>(
         let domain = nucleus
             .current_domain_mut()
             .ok_or(CapError::InvalidDomain)?;
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("handle_cap_invoke(got domain)");
+        semi::println!("handle_cap_invoke(got domain)");
         let entry = domain.keytable.lookup_mut(slot)?;
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("handle_cap_invoke(got entry)");
+        semi::println!("handle_cap_invoke(got entry)");
         entry.object_type()
     };
 
-    #[cfg(feature = "qemu")]
-    libqemu::semi_println!("handle_cap_invoke(resolved obj_type {})", obj_type.as_u8());
+    semi::println!("handle_cap_invoke(resolved obj_type {})", obj_type.as_u8());
 
     if obj_type.is_arch() {
         // Architecture-specific dispatch (less common path)
@@ -80,8 +77,7 @@ fn core_invoke<A: ArchObjects>(
         .ok_or(CapError::InvalidDomain)?;
     let entry = domain.keytable.lookup_mut(entry_slot)?;
 
-    #[cfg(feature = "qemu")]
-    libqemu::semi_println!("core_invoke");
+    semi::println!("core_invoke");
 
     match core_type {
         CoreType::Null => Err(CapError::NullCapability),
@@ -92,8 +88,7 @@ fn core_invoke<A: ArchObjects>(
         //     api::untyped::invoke(untyped, entry.rights(), op, args, &mut nucleus.pools)
         // }
         CoreType::DebugConsole => {
-            #[cfg(feature = "qemu")]
-            libqemu::semi_println!("core_invoke: DebugConsole");
+            semi::println!("core_invoke: DebugConsole");
             let debug_console = entry.as_object_mut::<DebugConsole>()?;
             // DebugConsole::invoke(debug_console, entry.rights(), op, args, nucleus)
             crate::api::debug_console::invoke(entry, op, args[0], args[1])

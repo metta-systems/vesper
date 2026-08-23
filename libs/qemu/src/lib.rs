@@ -4,8 +4,6 @@
  */
 
 #![no_std]
-#![no_main]
-#![feature(format_args_nl)]
 // #![feature(custom_test_frameworks)]
 // #![test_runner(libtest::test_runner)]
 // #![reexport_test_harness_main = "test_main"]
@@ -67,32 +65,50 @@ pub mod semihosting {
         }
     }
 
-    #[macro_export]
-    macro_rules! semi_print {
-        // semi_print!("a {} event", "log")
-        ($($arg:tt)+) => {
-            let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
-            libqemu::semihosting::sys_write0_call(
-                libprint::format_cstr(&mut buf, core::format_args!($($arg)+)).unwrap(),
-            );
-        };
-    }
+    #[doc(inline)]
+    pub use crate::{semi_print as print, semi_println as println};
+}
 
-    #[macro_export]
-    macro_rules! semi_println {
-        // semi_println!()
-        () => {
+#[macro_export]
+macro_rules! semi_print {
+    // semi::print!("a {} event", "log")
+    ($($arg:tt)+) => {
+        #[cfg(feature = "qemu")]
+        {
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
-            libqemu::semihosting::sys_write0_call(
-                libprint::format_cstr(&mut buf, core::format_args_nl!("")).unwrap(),
+            $crate::semihosting::sys_write0_call(
+                ::libprint::format_cstr(&mut buf, core::format_args!($($arg)+)).unwrap(),
             );
-        };
-        // semi_println!("a {} event", "log")
-        ($($arg:tt)+) => {
+        }
+        #[cfg(not(feature = "qemu"))]
+        {}
+    };
+}
+
+#[macro_export]
+macro_rules! semi_println {
+    // semi::println!()
+    () => {
+        #[cfg(feature = "qemu")]
+        {
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
-            libqemu::semihosting::sys_write0_call(
-                libprint::format_cstr(&mut buf, core::format_args_nl!($($arg)+)).unwrap(),
+            $crate::semihosting::sys_write0_call(
+                ::libprint::format_cstr(&mut buf, core::format_args_nl!("")).unwrap(),
             );
-        };
-    }
+        }
+        #[cfg(not(feature = "qemu"))]
+        {}
+    };
+    // semi::println!("a {} event", "log")
+    ($($arg:tt)+) => {
+        #[cfg(feature = "qemu")]
+        {
+            let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
+            $crate::semihosting::sys_write0_call(
+                ::libprint::format_cstr(&mut buf, core::format_args_nl!($($arg)+)).unwrap(),
+            );
+        }
+        #[cfg(not(feature = "qemu"))]
+        {}
+    };
 }

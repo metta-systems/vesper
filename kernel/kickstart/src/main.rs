@@ -43,8 +43,6 @@ mod memory;
 mod paging;
 mod qsort;
 
-#[cfg(feature = "qemu")]
-use libqemu::semi_println;
 use {
     crate::{boot_info::BOOT_INFO, memory::Alloc},
     aarch64_cpu::registers::{SPSR_EL2, Writeable},
@@ -56,11 +54,12 @@ use {
         prelude::{FallibleIterator, PropReader},
     },
     libaddress::{PhysAddr, VirtAddr},
-    libboot::entry,
+    libboot as boot,
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
     libobject::{DebugConsoleKey, KeySlot},
+    libqemu::semihosting as semi,
     libsyscall::protected_call6,
     memory::BootAllocator,
 };
@@ -73,8 +72,7 @@ unsafe extern "C" {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    #[cfg(feature = "qemu")]
-    semi_println!("PANICKED: {info}");
+    semi::println!("PANICKED: {info}");
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {
             libqemu::semihosting::exit_failure()
@@ -94,7 +92,7 @@ fn dump_memory_map() {
     });
 }
 
-entry!(init_main_el2);
+boot::entry!(init_main_el2);
 
 /// Kernel early init code.
 /// `arch` crate is responsible for calling it.
@@ -121,8 +119,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main started");
+    semi::println!("init_main started");
 
     // unsafe {
     //     BOOT_INFO.dtb_phys = PhysAddr::new(dtb_phys);
@@ -135,8 +132,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // Hardcoded UART address for early boot (RPi4: 0xFE201000)
     // Will be properly mapped later
     // early_uart_init(0xFE20_1000);
-    #[cfg(feature = "qemu")]
-    semi_println!("DTB at physical: {:#016x}", dtb_ptr as u64);
+    semi::println!("DTB at physical: {:#016x}", dtb_ptr as u64);
 
     // ─────────────────────────────────────────────────────────────────────
     // Start bump allocator
@@ -152,8 +148,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     let memory_size = 256 * 1024 * 1024;
     let mut allocator = BootAllocator::new(PhysAddr::new(free_start), memory_size);
     let memory_end = allocator.end();
-    #[cfg(feature = "qemu")]
-    semi_println!(
+    semi::println!(
         "init_main: Created BootAllocator {memory_size} @ {:#016x}",
         free_start
     );
@@ -162,8 +157,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // Parse Device Tree
     // ─────────────────────────────────────────────────────────────────────
 
-    #[cfg(feature = "qemu")]
-    semi_println!("Parsing device tree...");
+    semi::println!("Parsing device tree...");
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
     let device_tree =
@@ -186,8 +180,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
     let board = device_tree.get_prop_by_path("/model").unwrap().str();
     if let Ok(board_name) = board {
-        #[cfg(feature = "qemu")]
-        semi_println!("Running on {board_name}");
+        semi::println!("Running on {board_name}");
     }
 
     // let mut dumper = device_tree.dumper(0);
@@ -218,8 +211,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         .get_prop_by_path("/memory@0/reg")
         .expect("Unable to figure out memory-reg");
 
-    #[cfg(feature = "qemu")]
-    semi_println!(
+    semi::println!(
         "Found memnode with reg prop: name {:?}, size {}",
         reg_prop.name(),
         reg_prop.length()
@@ -230,8 +222,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     let mut total_memory = 0;
 
     for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
-        #[cfg(feature = "qemu")]
-        semi_println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+        semi::println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
         total_memory += mem_size;
         BOOT_INFO.lock(|bi| {
             bi.insert_free_region(
@@ -248,8 +239,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     for entry in device_tree.fdt().reserved_entries() {
         let size: u64 = entry.size.into();
         let address: u64 = entry.address.into();
-        #[cfg(feature = "qemu")]
-        semi_println!("Reserved memory: {size:?} bytes at {address:?}");
+        semi::println!("Reserved memory: {size:?} bytes at {address:?}");
         BOOT_INFO.lock(|bi| {
             bi.insert_used_region(
                 PhysAddr::new(entry.address.into()),
@@ -267,13 +257,11 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
     // Iterate compatible nodes (example):
     for entry in device_tree.compatible_nodes("arm,pl011") {
-        #[cfg(feature = "qemu")]
-        semi_println!("PL011 device: {:?}", entry.name() /*, entry.address*/);
+        semi::println!("PL011 device: {:?}", entry.name() /*, entry.address*/);
     }
 
     // 6. Also, remove the DTB memory region + index
-    #[cfg(feature = "qemu")]
-    semi_println!(
+    semi::println!(
         "DTB region: {} bytes at {:#016x}",
         device_tree.fdt().totalsize(),
         dtb_ptr as usize
@@ -373,8 +361,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     }
 
     for node in nodes {
-        #[cfg(feature = "qemu")]
-        semi_println!(
+        semi::println!(
             "{}[{:02x}] {:<22} @ {} +{} ({})",
             if node.disabled { "-" } else { " " },
             node.phandle,
@@ -401,15 +388,12 @@ pub fn init_main_el2(dtb: u32) -> ! {
         }
     }
 
-    #[cfg(feature = "qemu")]
-    semi_println!("");
-    #[cfg(feature = "qemu")]
-    semi_println!("");
+    semi::println!();
+    semi::println!();
 
     for entry in device_tree.nodes() {
         if entry.name() == Ok("chosen") {
-            #[cfg(feature = "qemu")]
-            semi_println!("Found /chosen node");
+            semi::println!("Found /chosen node");
         }
     }
 
@@ -421,7 +405,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     //         if BOOT_INFO.memory_region_count < 16 {
     //             BOOT_INFO.memory_regions[BOOT_INFO.memory_region_count] = region;
     //             BOOT_INFO.memory_region_count += 1;
-    //             semi_println!(
+    //             semi::println!(
     //                 "  RAM: {:#x} - {:#x}",
     //                 region.base.as_u64(),
     //                 region.base.as_u64() + region.size as u64
@@ -442,7 +426,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
     //         if BOOT_INFO.module_count < 8 {
     //             BOOT_INFO.modules[BOOT_INFO.module_count] = module;
     //             BOOT_INFO.module_count += 1;
-    //             semi_println!(
+    //             semi::println!(
     //                 "  Module '{}': {:#x}, {} bytes",
     //                 core::str::from_utf8(&module.name).unwrap_or("???"),
     //                 module.phys_start.as_u64(),
@@ -456,12 +440,10 @@ pub fn init_main_el2(dtb: u32) -> ! {
     // PHASE 1: Load kernel
     // ═══════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main: Load kernel");
+    semi::println!("init_main: Load nucleus");
 
     let kernel_layout = loader::load_kernel(&mut allocator).expect("Failed to load nucleus");
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main: Loaded nucleus image");
+    semi::println!("init_main: Loaded nucleus image");
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 2: Set up page tables
@@ -511,14 +493,12 @@ pub fn init_main_el2(dtb: u32) -> ! {
     });
 
     let mut mmu_setup = paging::MmuSetup::new(&mut allocator).expect("Failed to create MMU setup");
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main: Created MmuSetup");
+    semi::println!("init_main: Created MmuSetup");
 
     // Identity map kickstart
     paging::create_identity_mapping(&mut mmu_setup, PhysAddr::new(init_start), memory_end)
         .expect("Failed to create identity mapping");
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main: Identity mapped the Kickstart");
+    semi::println!("init_main: Identity mapped the Kickstart");
 
     // Create kernel mapping with per-section permissions
     let (el1_stack_top,) = paging::create_kernel_mapping(
@@ -529,8 +509,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         el1_stack_size,
     )
     .expect("Failed to create kernel mapping");
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main: Higher-half mapped the nucleus");
+    semi::println!("init_main: Higher-half mapped the nucleus");
 
     // ═══════════════════════════════════════════════════════════════
     // Interlude: Print the BOOT_INFO region map
@@ -548,8 +527,7 @@ pub fn init_main_el2(dtb: u32) -> ! {
         );
     });
 
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main: BOOT_INFO map after kernel load and mapping");
+    semi::println!("init_main: BOOT_INFO map after kernel load and mapping");
     dump_memory_map();
 
     // ═══════════════════════════════════════════════════════════════
@@ -558,28 +536,22 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
     let ttbr0 = mmu_setup.ttbr0();
     let ttbr1 = mmu_setup.ttbr1();
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main: TTBR0_EL1 at {ttbr0:#016x}, TTBR1_EL1 at {ttbr1:#016x}");
+    semi::println!("init_main: TTBR0_EL1 at {ttbr0:#016x}, TTBR1_EL1 at {ttbr1:#016x}");
 
     // Get vector table virtual address for VBAR_EL1
     // VBAR is only used after MMU is enabled, so we set the virtual address directly
     let vbar = kernel_layout.vbar_el1_virt();
 
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main: EL1 stack at {el1_stack_top:#016x}, vbar {vbar:#016x}");
+    semi::println!("init_main: EL1 stack at {el1_stack_top:#016x}, vbar {vbar:#016x}");
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 4: Enable MMU and drop to EL1
     // ═══════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "qemu")]
-    semi_println!("Init thread image covers phys -:- identity mapped");
-    #[cfg(feature = "qemu")]
-    semi_println!("Init thread mapping tables filled in as - entries");
-    #[cfg(feature = "qemu")]
-    semi_println!("Kernel image covers phys -:- mapped to KERNEL_HIGH_BASE:-");
-    #[cfg(feature = "qemu")]
-    semi_println!("Kernel mapping tables filled in as - for kernel, as - for phys memory");
+    semi::println!("Init thread image covers phys ?:? identity mapped");
+    semi::println!("Init thread mapping tables filled in as ? entries");
+    semi::println!("Kernel image covers phys ?:? mapped to KERNEL_HIGH_BASE:?");
+    semi::println!("Kernel mapping tables filled in as ? for kernel, as ? for phys memory");
 
     print_my_sp();
 
@@ -609,23 +581,20 @@ pub fn kickstart_run() -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     // Run initial thread further in EL1, seting up the capDL etc.
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main_run: enabled MMU and dropped to EL1");
+    semi::println!("init_main_run: enabled MMU and dropped to EL1");
     print_my_sp();
     // SAFETY: Not safe.
     unsafe {
         protected_call6(0, 0, 0, 0, 0, 0, 0, 0);
     }
-    #[cfg(feature = "qemu")]
-    semi_println!("init_main_run: Returned from fake syscall");
+    semi::println!("init_main_run: Returned from fake syscall");
     print_my_sp();
 
     // ─────────────────────────────────────────────────────────────────────
     // Initialize kernel subsystems
     // ─────────────────────────────────────────────────────────────────────
 
-    #[cfg(feature = "qemu")]
-    semi_println!("Initializing kernel subsystems...");
+    semi::println!("Initializing kernel subsystems...");
 
     // Initialize per-CPU data structures
     // percpu::init();
@@ -638,7 +607,7 @@ pub fn kickstart_run() -> ! {
     // Build physical memory map and create Untyped caps
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi_println!("Building physical memory allocator...");
+    // semi::println!("Building physical memory allocator...");
 
     // Create the root untyped capability list
     // This will be delegated to init process
@@ -657,7 +626,7 @@ pub fn kickstart_run() -> ! {
     //         let untypeds = create_untyped_caps_for_range(range);
     //         untyped_list.extend(untypeds);
 
-    //         semi_println!(
+    //         semi::println!(
     //             "  Untyped: {:#x} - {:#x} ({} caps)",
     //             range.base.as_u64(),
     //             range.base.as_u64() + range.size as u64,
@@ -666,13 +635,13 @@ pub fn kickstart_run() -> ! {
     //     }
     // }
 
-    // semi_println!("Total untyped caps: {}", untyped_list.len());
+    // semi::println!("Total untyped caps: {}", untyped_list.len());
 
     // ─────────────────────────────────────────────────────────────────────
     // Initialize DCB shared pages
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi_println!("Initializing DCB pages...");
+    // semi::println!("Initializing DCB pages...");
 
     // // Allocate DCB pages from a reserved untyped
     // // These are special: mapped RW in kernel, RO in all user domains
@@ -683,7 +652,7 @@ pub fn kickstart_run() -> ! {
     // Create kernel idle domain (domain 0)
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi_println!("Creating idle domain...");
+    // semi::println!("Creating idle domain...");
 
     // let idle_domain = Domain::create_idle();
     // SCHEDULER.set_idle(idle_domain);
@@ -692,7 +661,7 @@ pub fn kickstart_run() -> ! {
     // PHASE 6: Create the init domain and its capability space
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // semi_println!("Creating init domain...");
+    // semi::println!("Creating init domain...");
 
     // let init_module = boot_info
     //     .modules
@@ -709,7 +678,7 @@ pub fn kickstart_run() -> ! {
     // Mark init thread memory as reclaimable
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi_println!("Marking init thread memory for reclamation...");
+    // semi::println!("Marking init thread memory for reclamation...");
 
     // // The init stack and any init-only code/data can now be reclaimed, the are in the Untypeds table now.
     // mark_init_memory_reclaimable(boot_info, &mut untyped_list);
@@ -718,7 +687,7 @@ pub fn kickstart_run() -> ! {
     // PHASE 7: Delegate all resources to init domain
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // semi_println!(
+    // semi::println!(
     //     "Delegating {} untyped caps to init...",
     //     untyped_list.len()
     // );
@@ -747,8 +716,8 @@ pub fn kickstart_run() -> ! {
     liblog::info!("Exception handling state:");
     libexception::asynchronous::print_state();
 
-    // semi_println!("Switching to init domain...");
-    // semi_println!("═══════════════════════════════════════════════════════════");
+    // semi::println!("Switching to init domain...");
+    // semi::println!("═══════════════════════════════════════════════════════════");
 
     // // Create initial time budget for init
     // let init_time = TimeCap::create_root(INIT_TIME_BUDGET_US);
@@ -829,8 +798,7 @@ pub fn kickstart_run() -> ! {
 fn print_my_sp() {
     use aarch64_cpu::registers::Readable;
     let sp = aarch64_cpu::registers::SP.get();
-    #[cfg(feature = "qemu")]
-    semi_println!("Current SP: {sp:016x}");
+    semi::println!("Current SP: {sp:016x}");
 }
 /*
 // ─────────────────────────────────────────────────────────────────────
@@ -878,7 +846,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
 
     let elf = Elf64::parse(elf_data).expect("Invalid ELF");
 
-    semi_println!("  ELF entry point: {:#x}", elf.entry_point());
+    semi::println!("  ELF entry point: {:#x}", elf.entry_point());
 
     // Map each loadable segment
     for phdr in elf.program_headers() {
@@ -894,7 +862,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         // Determine page flags from ELF flags
         let flags = elf_flags_to_page_flags(phdr.p_flags);
 
-        semi_println!(
+        semi::println!(
             "  Segment: {:#x} - {:#x} ({:?})",
             virt_start.as_u64(),
             virt_end.as_u64(),
@@ -947,7 +915,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         PageFlags::USER_RW,
     );
 
-    semi_println!(
+    semi::println!(
         "  Stack: {:#x} - {:#x}",
         INIT_STACK_TOP - INIT_STACK_SIZE as u64,
         INIT_STACK_TOP
@@ -1048,7 +1016,7 @@ fn delegate_module_caps_to_init(init_domain: &DomainRef, boot_info: &BootInfo) {
         // Also store module metadata in a well-known location
         // (Init can query its DCB for module info)
 
-        semi_println!("  Module '{}' at slot {:#x}", name, slot);
+        semi::println!("  Module '{}' at slot {:#x}", name, slot);
         slot += 1;
     }
 
@@ -1078,7 +1046,7 @@ fn mark_init_memory_reclaimable(boot_info: &BootInfo, untypeds_list: ) {
                 kind: ReclaimableKind::InitCode,
             });
 
-            semi_println!(
+            semi::println!(
                 "  Init code memory {:#x}-{:#x} ({init_size} bytes) reclaimed",
                 init_start,
                 init_end
@@ -1116,7 +1084,7 @@ fn switch_to_domain(domain: DomainRef, time: TimeCap) -> ! {
     // Record this as current domain -- why percpu??
     percpu::set_current_domain(domain);
 
-    semi_println!(
+    semi::println!(
         "Entering init at {:#x} with SP={:#x}",
         entry_point.as_u64(),
         stack_pointer.as_u64()

@@ -8,6 +8,7 @@ use {
         index::{DevTreeIndex, DevTreeIndexNode, DevTreeIndexProp},
         prelude::{FallibleIterator, PropReader},
     },
+    libqemu::semihosting as semi,
     shrinkwraprs::Shrinkwrap,
 };
 
@@ -121,7 +122,7 @@ impl<'a, 'i: 'a, 'dt: 'i> DeviceTreeProp<'a, 'i, 'dt> {
         let size_cells = get_size_cells(&self.node());
 
         // @todo boot this on 8Gb RasPi, because I'm not sure how it allocates memory regions there.
-        // libqemu::semi_println!(
+        // semi::println!(
         //     "Address cells: {}, size cells {}",
         //     address_cells,
         //     size_cells
@@ -191,7 +192,7 @@ impl<'a, 'i: 'a, 'dt: 'i> Iterator for PayloadPairsIter<'a, 'i, 'dt> {
 
     fn next(&mut self) -> Option<Self::Item> {
         const STEP: usize = size_of::<u32>();
-        // libqemu::semi_println!("Offset {}, total {}", self.offset, self.total);
+        // semi::println!("Offset {}, total {}", self.offset, self.total);
         if self.offset >= self.total {
             // @todo check for sufficient space for the following read or the reads below may fail!
             return None;
@@ -431,15 +432,13 @@ pub struct FdtDumper<'a> {
 impl FdtDumper<'_> {
     fn push_indent(&mut self) {
         for _ in 0..self.indent {
-            #[cfg(feature = "qemu")]
-            libqemu::semi_print!("  ");
+            semi::print!("  ");
         }
     }
 
     fn dump_node_name(&mut self, name: &str) {
         self.push_indent();
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("{name} {{");
+        semi::println!("{name} {{");
     }
 
     fn dump_node(&mut self, node: &DevTreeIndexNode) -> DevTreeResult<()> {
@@ -456,16 +455,13 @@ impl FdtDumper<'_> {
     fn dump_property(&mut self, prop: &DevTreeIndexProp) -> DevTreeResult<()> {
         self.push_indent();
 
-        #[cfg(feature = "qemu")]
-        libqemu::semi_print!("{}", prop.name()?);
+        semi::print!("{}", prop.name()?);
 
         if prop.length() == 0 {
-            #[cfg(feature = "qemu")]
-            libqemu::semi_println!(";");
+            semi::println!(" ;");
             return Ok(());
         }
-        #[cfg(feature = "qemu")]
-        libqemu::semi_print!(" = ");
+        semi::print!(" = ");
 
         // SAFETY: Unsafe Ok - we're reinterpreting the data as expected.
         unsafe {
@@ -473,38 +469,30 @@ impl FdtDumper<'_> {
             if are_printable_strings(prop.iter_str()) {
                 let mut iter = prop.iter_str();
                 while let Some(s) = iter.next()? {
-                    #[cfg(feature = "qemu")]
-                    libqemu::semi_print!("\"{}\", ", s);
+                    semi::print!("\"{}\", ", s);
                 }
                 // let _ = self.dump.pop();
                 // let _ = self.dump.pop();
             } else if prop.propbuf().len() % size_of::<u32>() == 0 {
-                #[cfg(feature = "qemu")]
-                libqemu::semi_print!("<");
+                semi::print!("<");
                 for val in prop.propbuf().chunks_exact(size_of::<u32>()) {
                     // We use read_unaligned
                     let v = u32::from_be(read_unaligned::<u32>(val.as_ptr().cast::<u32>()));
-                    #[cfg(feature = "qemu")]
-                    libqemu::semi_print!("{:#010x} ", v);
+                    semi::print!("{:#010x} ", v);
                 }
                 // let _ = self.dump.pop(); // Pop off extra space
-                #[cfg(feature = "qemu")]
-                libqemu::semi_print!(">");
+                semi::print!(">");
             } else {
-                #[cfg(feature = "qemu")]
-                libqemu::semi_print!("[");
+                semi::print!("[");
                 for val in prop.propbuf() {
-                    #[cfg(feature = "qemu")]
-                    libqemu::semi_print!("{:02x} ", val);
+                    semi::print!("{:02x} ", val);
                 }
                 // let _ = self.dump.pop(); // Pop off extra space
-                #[cfg(feature = "qemu")]
-                libqemu::semi_print!("]");
+                semi::print!("]");
             }
         }
 
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!(";");
+        semi::println!(" ;");
         Ok(())
     }
 
@@ -519,8 +507,7 @@ impl FdtDumper<'_> {
         }
         self.indent -= 1;
         self.push_indent();
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("}};");
+        semi::println!("}};");
         Ok(())
     }
 
@@ -530,28 +517,17 @@ impl FdtDumper<'_> {
 
     pub fn dump_metadata(&mut self) {
         let fdt = self.index.fdt();
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// magic:\t\t{:#x}", fdt.magic());
+        semi::println!("// magic:\t\t{:#x}", fdt.magic());
         let s = fdt.totalsize();
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// totalsize:\t\t{:#x} ({})", s, s);
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// off_dt_struct:\t{:#x}", fdt.off_dt_struct());
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// off_dt_strings:\t{:#x}", fdt.off_dt_strings());
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// off_mem_rsvmap:\t{:#x}", fdt.off_mem_rsvmap());
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// version:\t\t{:}", fdt.version());
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// last_comp_version:\t{:}", fdt.last_comp_version());
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// boot_cpuid_phys:\t{:#x}", fdt.boot_cpuid_phys());
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// size_dt_strings:\t{:#x}", fdt.size_dt_strings());
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!("// size_dt_struct:\t{:#x}", fdt.size_dt_struct());
-        #[cfg(feature = "qemu")]
-        libqemu::semi_println!();
+        semi::println!("// totalsize:\t\t{:#x} ({})", s, s);
+        semi::println!("// off_dt_struct:\t{:#x}", fdt.off_dt_struct());
+        semi::println!("// off_dt_strings:\t{:#x}", fdt.off_dt_strings());
+        semi::println!("// off_mem_rsvmap:\t{:#x}", fdt.off_mem_rsvmap());
+        semi::println!("// version:\t\t{:}", fdt.version());
+        semi::println!("// last_comp_version:\t{:}", fdt.last_comp_version());
+        semi::println!("// boot_cpuid_phys:\t{:#x}", fdt.boot_cpuid_phys());
+        semi::println!("// size_dt_strings:\t{:#x}", fdt.size_dt_strings());
+        semi::println!("// size_dt_struct:\t{:#x}", fdt.size_dt_struct());
+        semi::println!();
     }
 }
