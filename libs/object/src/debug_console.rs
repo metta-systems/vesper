@@ -44,7 +44,7 @@ impl DebugConsoleKey {
 
     pub fn write(&self, s: &str) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let (ok, r1, r2) = unsafe {
+        let (_ok, _r1, _r2) = unsafe {
             libsyscall::protected_call2(
                 self.key.slot(),
                 DebugConsoleOp::Write as u32,
@@ -54,9 +54,9 @@ impl DebugConsoleKey {
         };
         libqemu::semihosting::println!(
             "Userspace return from DebugConsoleOp::Write with result ({}, {}, {})",
-            ok,
-            r1,
-            r2
+            _ok,
+            _r1,
+            _r2
         );
         Ok(())
     }
