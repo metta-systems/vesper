@@ -403,19 +403,48 @@ fn handle_key_event(key_event: KeyEvent) -> Option<Bytes> {
 #[derive(argh::FromArgs)]
 struct Args {
     /// device path to a serial port, e.g. /dev/ttyUSB0
-    #[argh(positional)]
-    port: String,
+    #[argh(option, short = 'p')]
+    port: Option<String>,
     /// baud rate to connect at
-    #[argh(positional)]
-    baud: u32,
+    #[argh(option, short = 'b')]
+    baud: Option<u32>,
     /// path of the binary kernel image to send
-    #[argh(positional, default = "String::from(\"kernel8.img\")")]
-    kernel: String,
+    #[argh(option, short = 'k')]
+    kernel: Option<String>,
+    /// positional form: <port> [baud] [kernel]
+    #[argh(positional)]
+    positional: Vec<String>,
+}
+
+impl Args {
+    fn resolve(self) -> anyhow::Result<(String, u32, String)> {
+        let pos = |index: usize| self.positional.get(index).cloned();
+
+        let port = self
+            .port
+            .or_else(|| pos(0))
+            .ok_or_else(|| anyhow::anyhow!("missing serial port (first parameter or --port)"))?;
+        let baud = match self.baud {
+            Some(b) => b,
+            None => match pos(1) {
+                Some(s) => s
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("invalid baud rate: {e}"))?,
+                None => 115200,
+            },
+        };
+        let kernel = self
+            .kernel
+            .or_else(|| pos(2))
+            .unwrap_or_else(|| String::from("kernel8.img"));
+        Ok((port, baud, kernel))
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Args = argh::from_env();
+    let (port, baud, kernel) = args.resolve()?;
 
     // Check that STDIN is a proper tty
     assert!(std::io::stdin().is_tty(), "Must have a TTY for stdin");
@@ -438,7 +467,7 @@ async fn main() -> Result<()> {
         )?;
 
         // tokio_serial::new() creates a builder with 8N1 setup without flow control by default.
-        let port = tokio_serial::new(args.port.clone(), args.baud).open_native_async();
+        let port = tokio_serial::new(port.clone(), baud).open_native_async();
         if let Err(e) = port {
             let cont = match e.kind {
                 tokio_serial::ErrorKind::NoDevice => true,
@@ -492,7 +521,7 @@ async fn main() -> Result<()> {
 
         let port = port?;
 
-        if let Err(e) = main_loop(port, args.kernel.clone()).await {
+        if let Err(e) = main_loop(port, kernel.clone()).await {
             execute!(stdout, style::Print(format!("\nError: {e:?}\n")))?;
             stdout.flush()?;
 

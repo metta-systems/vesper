@@ -86,6 +86,7 @@ build-chainboot board='rpi4' features='': (_cross-build 'chainboot' board chainb
 [group("hw")]
 chainofcommand:
     @cargo build -p chainofcommand
+    @echo "Run 'just boot' to boot via coc"
 
 alias coc := chainofcommand
 
