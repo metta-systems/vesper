@@ -4,6 +4,12 @@
 #![no_builtins]
 #![feature(format_args_nl)]
 
+core::arch::global_asm!(
+    core::include_str!("boot.s"),
+    CONST_BOOT_CORE_ID = const 0,
+    CONST_CORE_ID_MASK = const 0b11,
+);
+
 use {
     aarch64_cpu::asm::barrier,
     core::hash::Hasher,
@@ -99,23 +105,24 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
 
         print!("OK");
 
-        // We use seahash, simple and with no_std implementation.
+        // We use seahash, it's simple and has no_std implementation.
         let mut hasher = SeaHasher::new();
 
         // Read the kernel byte by byte.
         for i in 0..size {
             let val = console().read_byte();
-            // SAFETY: Could be unsafe.
+            // SAFETY: Writing things can be unsafe.
             unsafe {
                 core::ptr::write_volatile(
                     kernel_addr.offset(i.cast_signed().try_into().unwrap()),
                     val,
                 );
             }
-            // SAFETY: Writing things can be unsafe.
+            // SAFETY: Could be unsafe.
             let written = unsafe {
                 core::ptr::read_volatile(kernel_addr.offset(i.cast_signed().try_into().unwrap()))
             };
+            // Hash what is actually in memory, this helps catch writing over memory holes or device memory.
             hasher.write_u8(written);
         }
 

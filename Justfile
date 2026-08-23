@@ -167,7 +167,7 @@ _write-gdb-config:
     break kickstart_run
     break cap_invoke_handler
     EOF
-    @echo "🖌️ Generated GDB config file {{ gdb_connect }}"
+    echo "🖌️ Generated GDB config file {{ gdb_connect }}"
 
 # Build and run kernel in GDB (connect to openocd or QEMU on port 5555)
 [group("debug")]
@@ -288,6 +288,12 @@ hopper: build
     hopper --loader ELF --executable "{{ kernel_elf }}"
 
 alias disasm := hopper
+
+[group("debug")]
+cb-hopper: (build-chainboot 'rpi3' 'qemu')
+    #hopper --loader RAW --plugin arm --cpu aarch64 --variant generic --base-address 0x80000 --executable "{{ chainboot_bin }}"
+
+alias cb-disasm := cb-hopper
 
 # Build and print all symbols
 [group("maintenance")]

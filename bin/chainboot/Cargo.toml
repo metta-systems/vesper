@@ -36,8 +36,5 @@ libtest = { workspace = true }
 name = "chainboot"
 test = false
 
-[lib]
-test = false
-
 [lints]
 workspace = true

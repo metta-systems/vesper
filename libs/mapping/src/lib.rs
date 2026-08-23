@@ -51,7 +51,7 @@ pub use {mapping_attributes::*, memory_region::*, page_address::*};
 /// - Same as `kernel_map_at_unchecked()`, minus the aliasing part.
 pub unsafe fn kernel_map_mmio(
     _name: &'static str,
-    _mmio_descriptor: &MMIODescriptor,
+    mmio_descriptor: &MMIODescriptor,
 ) -> Result<Address<Virtual>, &'static str> {
     // let phys_region = MemoryRegion::from(*mmio_descriptor);
     // let offset_into_start_page = mmio_descriptor.start_addr().offset_into_page(&4096); // FIXME: hardcoded page size
@@ -87,7 +87,7 @@ pub unsafe fn kernel_map_mmio(
     // };
 
     // Ok(virt_addr + offset_into_start_page)
-    Ok(Address::zero())
+    Ok(mmio_descriptor.start_addr().as_usize().into())
 }
 
 // Map a region in the kernel's translation tables.
