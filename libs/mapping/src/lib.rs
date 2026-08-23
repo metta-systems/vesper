@@ -1,7 +1,6 @@
 #![no_std]
 #![feature(const_trait_impl)]
 #![feature(step_trait)]
-#![feature(new_range_api)]
 
 use {
     libaddress::{Address, Virtual},
