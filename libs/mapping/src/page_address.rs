@@ -83,4 +83,28 @@ impl<ATYPE: const AddressType, const PAGE_SIZE: usize> Step for PageAddress<ATYP
     fn backward_checked(start: Self, count: usize) -> Option<Self> {
         start.checked_page_offset(-(count.cast_signed()))
     }
+
+    fn forward_overflowing(start: Self, count: usize) -> (Self, bool) {
+        match start.checked_page_offset(count.cast_signed()) {
+            Some(next) => (next, false),
+            None => (
+                Self {
+                    inner: Address::<ATYPE>::new(u64::MAX - (u64::MAX % PAGE_SIZE as u64)),
+                },
+                true,
+            ),
+        }
+    }
+
+    fn backward_overflowing(start: Self, count: usize) -> (Self, bool) {
+        match start.checked_page_offset(-(count.cast_signed())) {
+            Some(next) => (next, false),
+            None => (
+                Self {
+                    inner: Address::<ATYPE>::new(0),
+                },
+                true,
+            ),
+        }
+    }
 }
