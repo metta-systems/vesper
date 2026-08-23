@@ -1,6 +1,9 @@
 use {
-    super::exception, // @todo
-    crate::{device_driver, exception::asynchronous::IRQNumber, memory::map::mmio},
+    crate::{
+        device_driver,
+        exception::{self, asynchronous::IRQNumber},
+        memory::map::mmio,
+    },
     core::{
         mem::MaybeUninit,
         sync::atomic::{AtomicBool, Ordering},

@@ -740,14 +740,14 @@ pub fn kickstart_run() -> ! {
     // kernel_init_mmio_va_allocator()
 
     // SAFETY: Not safe!
-    // if let Err(x) = unsafe { libplatform::platform::drivers::init() } {
+    // if let Err(x) = unsafe { libplatform::drivers::init() } {
     //     panic!("Error initializing platform drivers: {}", x);
     // }
 
     // Initialize all device drivers.
     // SAFETY: Not safe!
     // unsafe {
-    //     libplatform::platform::drivers::driver_manager().init_drivers_and_irqs();
+    //     libplatform::drivers::driver_manager().init_drivers_and_irqs();
     // }
 
     // Unmask interrupts on the boot CPU core.
@@ -767,7 +767,7 @@ pub fn kickstart_run() -> ! {
     // );
     // info!(
     //     "Booting on: {}",
-    //     libplatform::platform::BcmHost::board_name()
+    //     libplatform::BcmHost::board_name()
     // );
 
     // info!("MMU online. Special regions:");
@@ -781,10 +781,10 @@ pub fn kickstart_run() -> ! {
     // );
 
     // info!("Drivers loaded:");
-    // libplatform::platform::drivers::driver_manager().enumerate();
+    // libplatform::drivers::driver_manager().enumerate();
 
     // info!("Registered IRQ handlers:");
-    // libplatform::platform::exception::asynchronous::irq_manager().print_handler();
+    // libplatform::exception::asynchronous::irq_manager().print_handler();
 
     // // Test a failing timer case.
     // libtime::time::time_manager().spin_for(Duration::from_nanos(1));
