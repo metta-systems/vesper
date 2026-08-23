@@ -7,7 +7,6 @@
 #![no_main]
 #![feature(const_trait_impl)]
 #![feature(const_ops)]
-#![feature(const_convert)]
 #![feature(custom_test_frameworks)]
 #![test_runner(libtest::test_runner)]
 #![reexport_test_harness_main = "test_main"]
@@ -69,7 +68,7 @@ pub const trait PageSize {
     fn mask(&self) -> u64;
 }
 
-impl const PageSize for u64 {
+const impl PageSize for u64 {
     fn alignment(&self) -> u64 {
         *self
     }
@@ -82,7 +81,7 @@ impl const PageSize for u64 {
     }
 }
 
-impl const PageSize for usize {
+const impl PageSize for usize {
     fn alignment(&self) -> u64 {
         *self as u64
     }
@@ -158,7 +157,7 @@ struct PhysTopBits {
     top_bits: u12,
 }
 
-impl const AddressType for Physical {
+const impl AddressType for Physical {
     const NAME: &'static str = "PhysAddr";
 
     /// Panics if any bits in the bit position 52 to 64 is set.
@@ -182,7 +181,7 @@ struct VirtTopBits {
     top_bits: u17,
 }
 
-impl const AddressType for Virtual {
+const impl AddressType for Virtual {
     const NAME: &'static str = "VirtAddr";
 
     /// This function tries to performs sign extension of bit 47 to make the address canonical.
@@ -309,25 +308,25 @@ impl<ATYPE: const AddressType> Address<ATYPE> {
 
     /// Align down to page size.
     #[must_use]
-    pub const fn align_down_page(&self, page_size: &impl const PageSize) -> Self {
+    pub const fn align_down_page(&self, page_size: &impl [const] PageSize) -> Self {
         let aligned = align::align_down(self.value, page_size.alignment());
         Self::new(aligned)
     }
 
     /// Align up to page size.
     #[must_use]
-    pub const fn align_up_page(&self, page_size: &impl const PageSize) -> Self {
+    pub const fn align_up_page(&self, page_size: &impl [const] PageSize) -> Self {
         let aligned = align::align_up(self.value, page_size.alignment());
         Self::new(aligned)
     }
 
     /// Checks if the address is page aligned.
-    pub const fn is_page_aligned(&self, page_size: &impl const PageSize) -> bool {
+    pub const fn is_page_aligned(&self, page_size: &impl [const] PageSize) -> bool {
         align::is_aligned(self.value, page_size.alignment())
     }
 
     /// Return the address' offset into the corresponding page.
-    pub const fn offset_into_page(&self, page_size: &impl const PageSize) -> u64 {
+    pub const fn offset_into_page(&self, page_size: &impl [const] PageSize) -> u64 {
         self.value & page_size.mask()
     }
 
