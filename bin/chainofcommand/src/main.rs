@@ -20,7 +20,10 @@ use {
         path::Path,
         time::Duration,
     },
-    tokio::{io::AsyncReadExt, sync::mpsc},
+    tokio::{
+        io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+        sync::mpsc,
+    },
     tokio_serial::{SerialPortBuilderExt, SerialStream},
     tokio_stream::StreamExt,
 };
@@ -143,11 +146,10 @@ async fn send_kernel<P: ThePath>(
 
 // Async reading using Tokio: https://fasterthanli.me/articles/a-terminal-case-of-linux
 
-async fn serial_loop(
-    mut port: tokio_serial::SerialStream,
-    to_console: Sender,
-    mut from_console: Receiver,
-) -> Result<()> {
+async fn serial_loop<T>(mut port: T, to_console: Sender, mut from_console: Receiver) -> Result<()>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
     let mut buf = [0; 256];
     loop {
         tokio::select! {
@@ -157,9 +159,9 @@ async fn serial_loop(
                 // debug!("serial write {} bytes", msg.len());
                 match msg.unwrap() {
                     Message::Text(s) => {
-                        tokio::io::AsyncWriteExt::write_all(&mut port, s.as_bytes()).await?;
+                        port.write_all(s.as_bytes()).await?;
                     },
-                    Message::Binary(b) => tokio::io::AsyncWriteExt::write_all(&mut port, b.as_ref()).await?,
+                    Message::Binary(b) => port.write_all(b.as_ref()).await?,
                 }
              }
 
@@ -319,8 +321,9 @@ where
     }
 }
 
-async fn main_loop<P>(port: SerialStream, kernel: P) -> Result<()>
+async fn main_loop<T, P>(port: T, kernel: P) -> Result<()>
 where
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     P: ThePath,
 {
     // read from serial -> to_console==>from_serial -> output to console
@@ -477,43 +480,84 @@ async fn main() -> Result<()> {
         )?;
 
         // tokio_serial::new() creates a builder with 8N1 setup without flow control by default.
-        let port = tokio_serial::new(port.clone(), baud).open_native_async();
-        if let Err(e) = port {
-            let cont = match e.kind {
-                tokio_serial::ErrorKind::NoDevice => true,
-                tokio_serial::ErrorKind::Io(e)
-                    if e == std::io::ErrorKind::NotFound
-                        || e == std::io::ErrorKind::PermissionDenied =>
-                {
-                    true
-                }
-                _ => false,
-            };
-            if cont {
-                execute!(
-                    stdout,
-                    cursor::RestorePosition,
-                    style::Print(format!(
-                        "⏳ Waiting for serial port {}\r",
-                        animated(&mut serial_step)
-                    ))
-                )?;
-                stdout.flush()?;
+        // On macOS, QEMU PTYs (/dev/ttys*) may reject serial ioctls with ENOTTY ("Not a typewriter").
+        // In that case, fall back to plain async file I/O.
+        let serial_port = tokio_serial::new(port.clone(), baud).open_native_async();
 
-                if crossterm::event::poll(Duration::from_millis(1000))?
-                    && let Event::Key(KeyEvent {
-                        code, modifiers, ..
-                    }) = crossterm::event::read()?
-                    && code == KeyCode::Char('c')
-                    && modifiers == KeyModifiers::CONTROL
-                {
-                    return Ok(());
-                }
-
-                continue;
-            }
-            return Err(e.into());
+        enum OpenedPort {
+            Serial(SerialStream),
+            Raw(tokio::fs::File),
         }
+
+        let opened_port = match serial_port {
+            Ok(p) => OpenedPort::Serial(p),
+            Err(e) => {
+                let should_wait = matches!(
+                    e.kind,
+                    tokio_serial::ErrorKind::NoDevice
+                        | tokio_serial::ErrorKind::Io(std::io::ErrorKind::NotFound)
+                        | tokio_serial::ErrorKind::Io(std::io::ErrorKind::PermissionDenied)
+                );
+
+                if should_wait {
+                    execute!(
+                        stdout,
+                        cursor::RestorePosition,
+                        style::Print(format!(
+                            "⏳ Waiting for serial port {}\r",
+                            animated(&mut serial_step)
+                        ))
+                    )?;
+                    stdout.flush()?;
+
+                    if crossterm::event::poll(Duration::from_millis(1000))?
+                        && let Event::Key(KeyEvent {
+                            code, modifiers, ..
+                        }) = crossterm::event::read()?
+                        && code == KeyCode::Char('c')
+                        && modifiers == KeyModifiers::CONTROL
+                    {
+                        return Ok(());
+                    }
+
+                    continue;
+                }
+
+                // macOS PTY fallback for QEMU -serial pty.
+                // Some PTYs reject serial ioctls with ENOTTY ("Not a typewriter"), but still work
+                // fine as a plain byte stream.
+                let is_macos_tty_path = cfg!(target_os = "macos")
+                    && (port.starts_with("/dev/tty") || port.starts_with("/dev/cu"));
+
+                if is_macos_tty_path {
+                    execute!(
+                        stdout,
+                        cursor::RestorePosition,
+                        style::Print(format!(
+                            "⚠️  serial open failed ({e}); trying raw stream fallback\r\n"
+                        ))
+                    )?;
+                    stdout.flush()?;
+
+                    let raw_open = tokio::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&port)
+                        .await;
+
+                    match raw_open {
+                        Ok(raw) => OpenedPort::Raw(raw),
+                        Err(raw_e) => {
+                            return Err(anyhow!(
+                                "serial open failed ({e}); raw fallback open failed ({raw_e})"
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(e.into());
+                }
+            }
+        };
 
         execute!(
             stdout,
@@ -528,9 +572,12 @@ async fn main() -> Result<()> {
         // Input from STDIN should pass through to serial
         // Input from serial should pass through to STDOUT
 
-        let port = port?;
+        let loop_result = match opened_port {
+            OpenedPort::Serial(port) => main_loop(port, kernel.clone()).await,
+            OpenedPort::Raw(port) => main_loop(port, kernel.clone()).await,
+        };
 
-        if let Err(e) = main_loop(port, kernel.clone()).await {
+        if let Err(e) = loop_result {
             execute!(stdout, style::Print(format!("\nError: {e:?}\n")))?;
             stdout.flush()?;
 
