@@ -87,7 +87,16 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
         // While waiting, periodically emit sync beacons so a late-attaching host can still catch us.
         console().clear_rx();
 
+        let mut beacon_count: u64 = 0;
         let first = 'wait_for_first: loop {
+            beacon_count = beacon_count.saturating_add(1);
+            let uptime = libtime::time::time_manager().uptime();
+            println!(
+                "⏪ [sync] beacon #{beacon_count} at {}.{:03}s (sending ^C^C^C)",
+                uptime.as_secs(),
+                uptime.subsec_millis()
+            );
+
             for _ in 0..3 {
                 console().write_byte(3_u8);
             }
@@ -96,10 +105,23 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
             let start = libtime::time::time_manager().uptime();
             while libtime::time::time_manager().uptime() - start < Duration::from_secs(5) {
                 if let Some(b) = console().read_byte_nonblocking() {
+                    let now = libtime::time::time_manager().uptime();
+                    println!(
+                        "⏪ [sync] host byte 0x{b:02x} received at {}.{:03}s",
+                        now.as_secs(),
+                        now.subsec_millis()
+                    );
                     break 'wait_for_first b;
                 }
                 libtime::time::time_manager().spin_for(Duration::from_millis(10));
             }
+
+            let waited = libtime::time::time_manager().uptime() - start;
+            println!(
+                "⏪ [sync] no host data after {}.{:03}s, retrying beacon",
+                waited.as_secs(),
+                waited.subsec_millis()
+            );
         };
 
         let size: u64 = read_u64(Some(first));
