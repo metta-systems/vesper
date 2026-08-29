@@ -441,6 +441,16 @@ impl Args {
     }
 }
 
+fn animated(step: &mut usize) -> char {
+    let frames = ['◐', '◓', '◑', '◒'];
+    if *step >= frames.len() {
+        *step = 0;
+    }
+    let s = *step;
+    *step += 1;
+    frames[s]
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Args = argh::from_env();
@@ -454,7 +464,7 @@ async fn main() -> Result<()> {
     let _terminal_drop_guard =
         std::mem::DropGuard::new((), |()| terminal::disable_raw_mode().unwrap_or(()));
 
-    let mut serial_toggle = false;
+    let mut serial_step = 0_usize;
     let mut stdout = std::io::stdout();
 
     execute!(stdout, cursor::SavePosition)?;
@@ -485,11 +495,10 @@ async fn main() -> Result<()> {
                     cursor::RestorePosition,
                     style::Print(format!(
                         "⏳ Waiting for serial port {}\r",
-                        if serial_toggle { "# " } else { " #" }
+                        animated(&mut serial_step)
                     ))
                 )?;
                 stdout.flush()?;
-                serial_toggle = !serial_toggle;
 
                 if crossterm::event::poll(Duration::from_millis(1000))?
                     && let Event::Key(KeyEvent {
