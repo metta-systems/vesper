@@ -9,6 +9,10 @@ pub mod console;
 pub trait SerialOps {
     /// Read one byte from serial without translation.
     fn read_byte(&self) -> u8;
+    /// Try reading one byte from serial without blocking.
+    ///
+    /// Returns `Some(byte)` if data is available now, otherwise `None`.
+    fn read_byte_nonblocking(&self) -> Option<u8>;
     /// Write one byte to serial without translation.
     fn write_byte(&self, byte: u8);
     /// Wait until the TX FIFO is empty, aka all characters have been put on the

@@ -286,6 +286,19 @@ impl SerialOps for MiniUartInner {
         (self.registers.AUX_MU_IO.get() & 0xff) as u8
     }
 
+    fn read_byte_nonblocking(&self) -> Option<u8> {
+        use tock_registers::interfaces::Readable;
+        if self
+            .registers
+            .AUX_MU_STAT
+            .is_set(AUX_MU_STAT::SYMBOL_AVAILABLE)
+        {
+            Some((self.registers.AUX_MU_IO.get() & 0xff) as u8)
+        } else {
+            None
+        }
+    }
+
     fn write_byte(&self, b: u8) {
         use tock_registers::interfaces::{Readable, Writeable};
         // wait until we can send
@@ -342,6 +355,10 @@ impl interface::Write for MiniUart {
 impl SerialOps for MiniUart {
     fn read_byte(&self) -> u8 {
         self.inner.lock(|inner| inner.read_byte())
+    }
+
+    fn read_byte_nonblocking(&self) -> Option<u8> {
+        self.inner.lock(|inner| inner.read_byte_nonblocking())
     }
 
     fn write_byte(&self, byte: u8) {

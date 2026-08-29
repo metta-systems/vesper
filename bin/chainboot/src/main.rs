@@ -12,7 +12,7 @@ core::arch::global_asm!(
 
 use {
     aarch64_cpu::asm::barrier,
-    core::hash::Hasher,
+    core::{hash::Hasher, time::Duration},
     libconsole::console::console,
     liblog::{print, println},
     libplatform::raspberrypi::BcmHost,
@@ -55,8 +55,8 @@ const LOGO: &str = r"
  |____|__|__|___._|__|__|__|_____|_____|_____|____|
 ";
 
-fn read_u64() -> u64 {
-    let mut val: u64 = u64::from(console().read_byte());
+fn read_u64(first: Option<u8>) -> u64 {
+    let mut val: u64 = u64::from(first.or_else(|| Some(console().read_byte())).unwrap());
     val |= u64::from(console().read_byte()) << 8;
     val |= u64::from(console().read_byte()) << 16;
     val |= u64::from(console().read_byte()) << 24;
@@ -83,16 +83,26 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
     loop {
         console().flush();
 
-        // Discard any spurious received characters before starting with the loader protocol.
+        // Read the binary's size.
+        // While waiting, periodically emit sync beacons so a late-attaching host can still catch us.
         console().clear_rx();
 
-        // Notify `chainofcommand` to send the binary.
-        for _ in 0..3 {
-            console().write_byte(3_u8);
-        }
+        let first = 'wait_for_first: loop {
+            for _ in 0..3 {
+                console().write_byte(3_u8);
+            }
+            console().flush();
 
-        // Read the binary's size.
-        let size = read_u64();
+            let start = libtime::time::time_manager().uptime();
+            while libtime::time::time_manager().uptime() - start < Duration::from_secs(5) {
+                if let Some(b) = console().read_byte_nonblocking() {
+                    break 'wait_for_first b;
+                }
+                libtime::time::time_manager().spin_for(Duration::from_millis(10));
+            }
+        };
+
+        let size: u64 = read_u64(Some(first));
 
         // Check the size to fit RAM
         if size > max_kernel_size {
@@ -127,7 +137,7 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
         }
 
         // Read the binary's checksum.
-        let checksum = read_u64();
+        let checksum = read_u64(None);
 
         let valid = hasher.finish() == checksum;
         if !valid {

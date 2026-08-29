@@ -458,6 +458,14 @@ impl SerialOps for PL011UartInner {
         u8::try_from(self.registers.Data.get() & 0xff).unwrap()
     }
 
+    fn read_byte_nonblocking(&self) -> Option<u8> {
+        if self.registers.Flag.is_set(FR::RXFE) {
+            None
+        } else {
+            Some(u8::try_from(self.registers.Data.get() & 0xff).unwrap())
+        }
+    }
+
     fn write_byte(&self, b: u8) {
         // wait until we can send
         loop_while(|| self.registers.Flag.is_set(FR::TXFF));
@@ -537,6 +545,10 @@ impl libdriver::drivers::interface::DeviceDriver for PL011Uart {
 impl SerialOps for PL011Uart {
     fn read_byte(&self) -> u8 {
         self.inner.lock(|inner| inner.read_byte())
+    }
+
+    fn read_byte_nonblocking(&self) -> Option<u8> {
+        self.inner.lock(|inner| inner.read_byte_nonblocking())
     }
 
     fn write_byte(&self, byte: u8) {

@@ -26,6 +26,7 @@ libconsole = { workspace = true }
 liblog = { workspace = true }
 libmachine = { workspace = true }
 libplatform = { workspace = true }
+libtime = { workspace = true }
 seahash = { workspace = true }
 
 [dev-dependencies]
