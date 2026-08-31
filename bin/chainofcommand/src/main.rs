@@ -22,13 +22,12 @@ use {
     },
     tokio::{
         io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+        net::TcpStream,
         sync::mpsc,
     },
     tokio_serial::{SerialPortBuilderExt, SerialStream},
     tokio_stream::StreamExt,
 };
-
-// mod utf8_codec;
 
 trait Writable = std::io::Write + Send;
 trait ThePath = AsRef<Path> + std::fmt::Display + Clone + Sync + Send + 'static;
@@ -39,18 +38,33 @@ type Sender = mpsc::Sender<Result<Message>>;
 type Receiver = mpsc::Receiver<Result<Message>>;
 
 async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Result<()> {
+    // Accumulate chunks until we have enough chars for an exact match.
+    // Chunk boundaries are arbitrary (TCP/serial coalescing): "OK" may arrive
+    // as one chunk or split across several, so we can't pull one chunk per char.
     let mut s = String::new();
-    for _x in m.chars() {
+    let want = m.chars().count();
+    while s.chars().count() < want {
+        // to_console2
+        //     .send(Ok(Message::Text(format!(
+        //         "\r\n[expect {m:?}: waiting, have {s:?}]"
+        //     ))))
+        //     .await?;
+
         let next_char = from_serial.recv().await;
 
         let Some(Ok(c)) = next_char else {
             return Err(anyhow!(
-                "Failed to receive expected value {m:?}: got empty buf"
+                "Failed to receive expected value {m:?}: got empty buf (accumulated {s:?})"
             ));
         };
 
         match c {
             Message::Text(payload) => {
+                // to_console2
+                //     .send(Ok(Message::Text(format!(
+                //         "\r\n[expect {m:?}: got chunk {payload:?}]",
+                //     ))))
+                //     .await?;
                 s.push_str(&payload);
                 to_console2.send(Ok(Message::Text(payload))).await?;
             }
@@ -60,6 +74,9 @@ async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Re
     if s != m {
         return Err(anyhow!("Failed to receive expected value {m:?}: got {s:?}"));
     }
+    // to_console2
+    //     .send(Ok(Message::Text(format!("\r\n[expect {m:?}: matched]"))))
+    //     .await?;
     Ok(())
 }
 
@@ -68,7 +85,7 @@ where
     P: ThePath,
 {
     to_console2
-        .send(Ok(Message::Text("⏩ Loading kernel image\n".into())))
+        .send(Ok(Message::Text("⏩ Loading kernel image\r\n".into())))
         .await?;
 
     let Ok(kernel_file) = std::fs::File::open(kernel.clone()) else {
@@ -78,7 +95,7 @@ where
 
     to_console2
         .send(Ok(Message::Text(format!(
-            "⏩ .. {kernel} ({kernel_size} bytes)\n"
+            "⏩ .. {kernel} ({kernel_size} bytes)\r\n"
         ))))
         .await?;
 
@@ -86,15 +103,15 @@ where
 }
 
 async fn send_kernel<P: ThePath>(
-    to_console2: &Sender,
-    to_serial: &Sender,
-    from_serial: &mut Receiver,
+    to_console2: Sender,
+    to_serial: Sender,
+    mut from_serial: Receiver,
     kernel: P,
 ) -> Result<()> {
-    let (kernel_file, kernel_size) = load_kernel(to_console2, kernel).await?;
+    let (kernel_file, kernel_size) = load_kernel(&to_console2, kernel).await?;
 
     to_console2
-        .send(Ok(Message::Text("⏩ Sending image size\n".into())))
+        .send(Ok(Message::Text("⏩ Sending image size\r\n".into())))
         .await?;
     to_serial
         .send(Ok(Message::Binary(Bytes::copy_from_slice(
@@ -103,11 +120,13 @@ async fn send_kernel<P: ThePath>(
         .await?;
 
     // Wait for OK response
-    expect(to_console2, from_serial, "OK").await?;
+    expect(&to_console2, &mut from_serial, "OK").await?;
 
     to_console2
-        .send(Ok(Message::Text("⏩ Sending kernel image\n".into())))
+        .send(Ok(Message::Text("⏩ Sending kernel image\r\n".into())))
         .await?;
+    let to_console2 = &to_console2;
+    let to_serial = &to_serial;
 
     let mut hasher = SeaHasher::new();
     let mut reader = BufReader::with_capacity(1, kernel_file);
@@ -129,7 +148,7 @@ async fn send_kernel<P: ThePath>(
 
     to_console2
         .send(Ok(Message::Text(format!(
-            "⏩ Sending image checksum {hashed_value:x}\n"
+            "⏩ Sending image checksum {hashed_value:x}\r\n"
         ))))
         .await?;
 
@@ -139,7 +158,7 @@ async fn send_kernel<P: ThePath>(
         ))))
         .await?;
 
-    expect(to_console2, from_serial, "OK").await?;
+    expect(to_console2, &mut from_serial, "OK").await?;
 
     Ok(())
 }
@@ -173,7 +192,6 @@ where
                     }
                     Ok(n) => {
                         // debug!("Serial read {n} bytes.");
-                        // let codec = Utf8Codec::new(buf);
                         let s = String::from_utf8_lossy(&buf[0..n]);
                         to_console.send(Ok(Message::Text(s.to_string()))).await?;
                     }
@@ -201,15 +219,6 @@ enum Message {
     Text(String),
 }
 
-// impl Message {
-//     pub fn len(&self) -> usize {
-//         match self {
-//             Message::Binary(b) => b.len(),
-//             Message::Text(s) => s.len(),
-//         }
-//     }
-// }
-
 impl std::fmt::Display for Message {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -223,20 +232,6 @@ impl std::fmt::Display for Message {
         }
     }
 }
-
-// impl Buf for Message {
-//     fn remaining(&self) -> usize {
-//         todo!()
-//     }
-//
-//     fn chunk(&self) -> &[u8] {
-//         todo!()
-//     }
-//
-//     fn advance(&mut self, cnt: usize) {
-//         todo!()
-//     }
-// }
 
 async fn console_loop<P>(
     to_console2: Sender,
@@ -254,6 +249,13 @@ where
 
     let mut event_reader = EventStream::new();
 
+    // Protocol channel: while an upload task is running, serial bytes are
+    // routed here instead of being printed, so send_kernel can await the
+    // target's replies without starving the select loop's other branches.
+    let (mut to_proto, from_proto) = mpsc::channel::<Result<Message>>(256);
+    let mut from_proto = Some(from_proto);
+    let mut upload: Option<tokio::task::JoinHandle<Result<()>>> = None;
+
     loop {
         tokio::select! {
             biased;
@@ -267,21 +269,36 @@ where
 
             Some(received) = from_serial.recv() => { // returns Vec<char>
                 if let Ok(received) = received {
+                    // While an upload is in flight, hand bytes to the protocol task.
+                    // If the task already finished (receiver dropped), fall through to
+                    // pass-through printing instead of failing with "channel closed".
+                    if upload.is_some() && to_proto.send(Ok(received.clone())).await.is_ok() {
+                        continue;
+                    }
+
                     let Message::Text(received) = received else {
                         unreachable!();
                     };
-                    execute!(w, cursor::MoveToNextLine(1), style::Print(format!("[>>] Received {} bytes from serial", received.len())), cursor::MoveToNextLine(1))?;
+                    // execute!(w, style::Print(format!("⏩ Received {} bytes from serial\r\n", received.len())))?;
 
                     for x in received.chars() {
                         if x == 0x3 as char {
-                            // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received a BREAK"), cursor::MoveToNextLine(1))?;
+                            // execute!(w, style::Print("⏩ Received a BREAK\r\n"))?;
                             breaks += 1;
                             // Await for 3 consecutive \3 to start downloading
                             if breaks == 3 {
-                                // execute!(w, cursor::MoveToNextLine(1), style::Print("[>>] Received 3 BREAKs"), cursor::MoveToNextLine(1))?;
+                                // execute!(w, style::Print("⏩ Received 3 BREAKs\r\n"))?;
+                                w.flush()?;
                                 breaks = 0;
-                                send_kernel(&to_console2, &to_serial, &mut from_serial, kernel.clone()).await?;
-                                to_console2.send(Ok(Message::Text("🦀 Send successful, pass-through\n".into()))).await?;
+                                // Spawn the upload so this loop keeps polling
+                                // from_internal (status messages) and stdin.
+                                let handle = tokio::spawn(send_kernel(
+                                    to_console2.clone(),
+                                    to_serial.clone(),
+                                    from_proto.take().expect("proto receiver already taken"),
+                                    kernel.clone(),
+                                ));
+                                upload = Some(handle);
                             }
                         } else {
                             while breaks > 0 {
@@ -292,6 +309,27 @@ where
                             execute!(w, style::Print(format!("{x}")))?;
                             w.flush()?;
                         }
+                    }
+                }
+            }
+
+            Some(result) = async { match &mut upload { Some(h) => Some(h.await), None => None } } => {
+                upload = None;
+                // The task consumed from_proto; recreate the channel for the next round.
+                let (tx, rx) = mpsc::channel::<Result<Message>>(256);
+                to_proto = tx;
+                from_proto = Some(rx);
+                match result {
+                    Ok(Ok(())) => {
+                        to_console2.send(Ok(Message::Text("🦀 Send successful, pass-through\r\n".into()))).await?;
+                    }
+                    Ok(Err(e)) => {
+                        execute!(w, style::Print(format!("\r\n\r\n❌ Upload failed: {e:?}\r\n")))?;
+                        w.flush()?;
+                    }
+                    Err(join_err) => {
+                        execute!(w, style::Print(format!("\r\n\r\n❌ Upload task panicked: {join_err:?}\r\n")))?;
+                        w.flush()?;
                     }
                 }
             }
@@ -311,7 +349,7 @@ where
                     }
                     Some(Ok(_)) => {},
                     Some(Err(e)) => {
-                        execute!(w, style::Print(format!("Console read error: {e:?}\r")))?;
+                      execute!(w, style::Print(format!("Console read error: {e:?}\r\n")))?;
                         w.flush()?;
                     },
                     None => return Err(anyhow!("woops")),
@@ -445,7 +483,7 @@ impl Args {
 }
 
 fn animated(step: &mut usize) -> char {
-    let frames = ['◐', '◓', '◑', '◒'];
+    let frames = ['⏳', '⌛'];
     if *step >= frames.len() {
         *step = 0;
     }
@@ -454,13 +492,19 @@ fn animated(step: &mut usize) -> char {
     frames[s]
 }
 
+enum OpenedPort {
+    Serial(SerialStream),
+    Raw(tokio::fs::File),
+    Tcp(TcpStream),
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Args = argh::from_env();
     let (port, baud, kernel) = args.resolve()?;
 
     // Check that STDIN is a proper tty
-    assert!(std::io::stdin().is_tty(), "Must have a TTY for stdin");
+    assert!(std::io::stdin().is_tty(), "Must have a TTY for stdin"); // TODO: relax this requirement
 
     // Disable line buffering, local echo, etc.
     terminal::enable_raw_mode()?;
@@ -479,32 +523,23 @@ async fn main() -> Result<()> {
             style::Print("⏩ Opening serial port       ")
         )?;
 
-        // tokio_serial::new() creates a builder with 8N1 setup without flow control by default.
-        // On macOS, QEMU PTYs (/dev/ttys*) may reject serial ioctls with ENOTTY ("Not a typewriter").
-        // In that case, fall back to plain async file I/O.
-        let serial_port = tokio_serial::new(port.clone(), baud).open_native_async();
-
-        enum OpenedPort {
-            Serial(SerialStream),
-            Raw(tokio::fs::File),
-        }
-
-        let opened_port = match serial_port {
-            Ok(p) => OpenedPort::Serial(p),
-            Err(e) => {
-                let should_wait = matches!(
-                    e.kind,
-                    tokio_serial::ErrorKind::NoDevice
-                        | tokio_serial::ErrorKind::Io(std::io::ErrorKind::NotFound)
-                        | tokio_serial::ErrorKind::Io(std::io::ErrorKind::PermissionDenied)
-                );
-
-                if should_wait {
+        let opened_port = if let Some(addr) = port.strip_prefix("tcp:") {
+            // TCP transport, e.g. for QEMU's `-serial tcp:127.0.0.1:4321,server,nowait`.
+            // Avoids macOS PTY quirks; retry while QEMU isn't listening yet.
+            match TcpStream::connect(addr).await {
+                Ok(stream) => {
+                    stream.set_nodelay(true)?;
+                    OpenedPort::Tcp(stream)
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::ConnectionRefused
+                        || e.kind() == std::io::ErrorKind::NotFound =>
+                {
                     execute!(
                         stdout,
                         cursor::RestorePosition,
                         style::Print(format!(
-                            "⏳ Waiting for serial port {}\r",
+                            "{} Waiting for QEMU TCP port {addr}\r",
                             animated(&mut serial_step)
                         ))
                     )?;
@@ -522,39 +557,80 @@ async fn main() -> Result<()> {
 
                     continue;
                 }
+                Err(e) => return Err(e.into()),
+            }
+        } else {
+            // tokio_serial::new() creates a builder with 8N1 setup without flow control by default.
+            // On macOS, QEMU PTYs (/dev/ttys*) may reject serial ioctls with ENOTTY
+            // ("Not a typewriter"). In that case, fall back to plain async file I/O.
+            match tokio_serial::new(port.clone(), baud).open_native_async() {
+                Ok(p) => OpenedPort::Serial(p),
+                Err(e) => {
+                    let should_wait = matches!(
+                        e.kind,
+                        tokio_serial::ErrorKind::NoDevice
+                            | tokio_serial::ErrorKind::Io(
+                                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                            )
+                    );
 
-                // macOS PTY fallback for QEMU -serial pty.
-                // Some PTYs reject serial ioctls with ENOTTY ("Not a typewriter"), but still work
-                // fine as a plain byte stream.
-                let is_macos_tty_path = cfg!(target_os = "macos")
-                    && (port.starts_with("/dev/tty") || port.starts_with("/dev/cu"));
+                    if should_wait {
+                        execute!(
+                            stdout,
+                            cursor::RestorePosition,
+                            style::Print(format!(
+                                "{} Waiting for serial port {port}\r",
+                                animated(&mut serial_step)
+                            ))
+                        )?;
+                        stdout.flush()?;
 
-                if is_macos_tty_path {
-                    execute!(
-                        stdout,
-                        cursor::RestorePosition,
-                        style::Print(format!(
-                            "⚠️  serial open failed ({e}); trying raw stream fallback\r\n"
-                        ))
-                    )?;
-                    stdout.flush()?;
-
-                    let raw_open = tokio::fs::OpenOptions::new()
-                        .read(true)
-                        .write(true)
-                        .open(&port)
-                        .await;
-
-                    match raw_open {
-                        Ok(raw) => OpenedPort::Raw(raw),
-                        Err(raw_e) => {
-                            return Err(anyhow!(
-                                "serial open failed ({e}); raw fallback open failed ({raw_e})"
-                            ));
+                        if crossterm::event::poll(Duration::from_millis(1000))?
+                            && let Event::Key(KeyEvent {
+                                code, modifiers, ..
+                            }) = crossterm::event::read()?
+                            && code == KeyCode::Char('c')
+                            && modifiers == KeyModifiers::CONTROL
+                        {
+                            return Ok(());
                         }
+
+                        continue;
                     }
-                } else {
-                    return Err(e.into());
+
+                    // macOS PTY fallback for QEMU -serial pty.
+                    // Some PTYs reject serial ioctls with ENOTTY ("Not a typewriter"), but still
+                    // work fine as a plain byte stream.
+                    let is_macos_tty_path = cfg!(target_os = "macos")
+                        && (port.starts_with("/dev/tty") || port.starts_with("/dev/cu"));
+
+                    if is_macos_tty_path {
+                        execute!(
+                            stdout,
+                            cursor::RestorePosition,
+                            style::Print(format!(
+                                "⚠️  serial open failed ({e}); trying raw stream fallback\r\n"
+                            ))
+                        )?;
+                        stdout.flush()?;
+
+                        let raw_open = tokio::fs::OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .open(&port)
+                            .await;
+
+                        match raw_open {
+                            Ok(raw) => OpenedPort::Raw(raw),
+                            Err(raw_e) => {
+                                return Err(anyhow!(
+                                    "serial open failed ({e}); raw fallback open failed ({raw_e})"
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(e.into());
+                    }
                 }
             }
         };
@@ -575,6 +651,7 @@ async fn main() -> Result<()> {
         let loop_result = match opened_port {
             OpenedPort::Serial(port) => main_loop(port, kernel.clone()).await,
             OpenedPort::Raw(port) => main_loop(port, kernel.clone()).await,
+            OpenedPort::Tcp(port) => main_loop(port, kernel.clone()).await,
         };
 
         if let Err(e) = loop_result {

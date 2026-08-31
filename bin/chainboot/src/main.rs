@@ -16,6 +16,7 @@ use {
     libconsole::console::console,
     liblog::{print, println},
     libplatform::raspberrypi::BcmHost,
+    libqemu::semihosting as semi,
     seahash::SeaHasher,
 };
 
@@ -30,15 +31,23 @@ unsafe extern "C" fn kernel_init(dtb: u32, max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
+    semi::println!("Initializing drivers");
     // SAFETY: VERY SAFE
     if let Err(x) = unsafe { libplatform::drivers::init() } {
         panic!("Error initializing platform drivers: {}", x);
     }
 
+    semi::println!("Initializing devices and IRQs");
     // Initialize all device drivers.
     // SAFETY: Relatively safe.
     unsafe {
         libplatform::drivers::driver_manager().init_drivers_and_irqs();
+    }
+
+    // Route print!/println! through the console logger; without this they
+    // silently no-op on the default NopLogger.
+    if libconsole::init_logger().is_err() {
+        semi::println!("Logger already initialized");
     }
 
     // println! is usable from here on.
@@ -91,8 +100,8 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
         let first = 'wait_for_first: loop {
             beacon_count = beacon_count.saturating_add(1);
             let uptime = libtime::time::time_manager().uptime();
-            println!(
-                "⏪ [sync] beacon #{beacon_count} at {}.{:03}s (sending ^C^C^C)",
+            semi::println!(
+                "⏪ Beacon #{beacon_count} at {}.{:03}s (sending ^C^C^C)",
                 uptime.as_secs(),
                 uptime.subsec_millis()
             );
@@ -106,8 +115,8 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
             while libtime::time::time_manager().uptime() - start < Duration::from_secs(5) {
                 if let Some(b) = console().read_byte_nonblocking() {
                     let now = libtime::time::time_manager().uptime();
-                    println!(
-                        "⏪ [sync] host byte 0x{b:02x} received at {}.{:03}s",
+                    semi::println!(
+                        "⏪ Host byte 0x{b:02x} received at {}.{:03}s",
                         now.as_secs(),
                         now.subsec_millis()
                     );
@@ -117,8 +126,8 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
             }
 
             let waited = libtime::time::time_manager().uptime() - start;
-            println!(
-                "⏪ [sync] no host data after {}.{:03}s, retrying beacon",
+            semi::println!(
+                "⏪ No host data after {}.{:03}s, retrying beacon",
                 waited.as_secs(),
                 waited.subsec_millis()
             );
@@ -136,6 +145,7 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
         }
 
         print!("OK");
+        semi::println!("Read kernel size {size} bytes");
 
         // We use seahash, it's simple and has no_std implementation.
         let mut hasher = SeaHasher::new();
@@ -166,6 +176,7 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
             println!("ERR ❌ Kernel image checksum mismatch");
             continue;
         }
+        semi::println!("Read kernel checksum {checksum:016x}");
 
         print!("OK");
         break;

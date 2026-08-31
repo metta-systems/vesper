@@ -34,7 +34,7 @@ chainboot_serial := '/dev/tty.SLAB_USBtoUART'
 chainboot_baud   := '115200'
 
 # QEMU option fragments
-qemu_base_opts    := '-M ' + qemu_machine + ' -chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -mon chardev=char0 -serial chardev:char0 -semihosting-config enable=on,chardev=char0'
+qemu_base_opts    := '-M ' + qemu_machine + ' -chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -object monitor-hmp,chardev=char0,id=mon0 -serial chardev:char0 -semihosting-config enable=on,chardev=char0'
 qemu_disasm       := '-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin'
 qemu_gdb_opts     := '-gdb tcp::5555 -S'
 qemu_test_opts    := '-nographic'
@@ -114,7 +114,7 @@ cb-qemu: (build-chainboot 'rpi3' 'qemu')
     @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm }} with {{ chainboot_bin }}"
     @echo "🚜 .. on {{ rpi3_dtb }}"
     @rm -f qemu.log
-    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm }} -serial pty -dtb "{{ rpi3_dtb }}" -kernel "{{ chainboot_bin }}"
+    {{ qemu }} -serial tcp:127.0.0.1:4321,server,nowait {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ chainboot_bin }}"
 
 # Build and run chainboot in QEMU with GDB port
 [group("emu")]
@@ -203,6 +203,11 @@ cb-eject: build-chainboot
 # Build and boot via chainofcommand
 [group("hw")]
 boot: build chainofcommand
+    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel target/kernel.bin
+
+# Build and boot in qemu via chainofcommand
+[group("emu")]
+boot-qemu: (build 'rpi3' 'qemu') chainofcommand
     target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel target/kernel.bin
 
 # === Openocd ===

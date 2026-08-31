@@ -3,7 +3,7 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-__PAGE_SIZE = 64K;
+__PAGE_SIZE = 4K;
 __PAGE_MASK = __PAGE_SIZE - 1;
 
 __KERNEL_VIRT_ADDR_BASE = 0xffff800000000000; /* Nucleus is higher-mem mapped here */
@@ -19,6 +19,7 @@ __KERNEL_VIRT_ADDR_BASE = 0xffff800000000000; /* Nucleus is higher-mem mapped he
 PHDRS
 {
     segment_code            PT_LOAD FLAGS(5);
+    segment_rodata          PT_LOAD FLAGS(4);
     segment_data            PT_LOAD FLAGS(6);
 }
 
@@ -26,44 +27,44 @@ SECTIONS
 {
     . = __KERNEL_VIRT_ADDR_BASE;
 
+    /**********************************************************************************************
+    * Regular Kernel Code
+    **********************************************************************************************/
     .text : ALIGN(__PAGE_SIZE)
     {
-        /*******************************************************************************************
-        * Regular Kernel Code
-        *******************************************************************************************/
+        . = ALIGN(__PAGE_SIZE);
         *(.text*)
         . = ALIGN(2K);
         KEEP(*(.vectors))
-        . = ALIGN(2K);
     } :segment_code
 
-    /* TODO: rodata is currently executable, but doesn't have to... also each individual section must be aligned to 4K at least for mappings to work */
+    /**********************************************************************************************
+    * Read-only data
+    **********************************************************************************************/
     .rodata : ALIGN(__PAGE_SIZE)
     {
+        . = ALIGN(__PAGE_SIZE);
         *(.rodata*)
         FILL(0x00)
-        . = ALIGN(__PAGE_SIZE); /* Fill up to page size */
-    } :segment_code
+    } :segment_rodata
 
-    /***********************************************************************************************
+    /**********************************************************************************************
     * Data + BSS
-    ***********************************************************************************************/
-
+    **********************************************************************************************/
     .data : ALIGN(__PAGE_SIZE)
     {
-        *(.data*)
-        FILL(0x00)
-
         . = ALIGN(__PAGE_SIZE);
+        *(.data*)
     } :segment_data
 
     .bss (NOLOAD) : ALIGN(__PAGE_SIZE)
     {
+        . = ALIGN(__PAGE_SIZE);
         *(.bss*)
         *(COMMON)
-        . = ALIGN(__PAGE_SIZE); /* Align up to page size */
     } :segment_data
 
+    . = ALIGN(__PAGE_SIZE);
     . += __PAGE_SIZE; /* add guard page between BSS and the stack! */
 
     /* Kernel stack virt addr will be mapped beginning from here */
@@ -73,7 +74,7 @@ SECTIONS
     * MMIO Remap Reserved (8Mb) - TODO: we do not use, instead map it via bump allocator
     ***********************************************************************************************/
     /* __MMIO_REMAP_START = .; FIXME: VMA? Must be LMA perhaps, the point is to remap this
-    . += 8 * 1024 * 1024;
+    . += 8M;
     __MMIO_REMAP_END = .; FIXME: VMA? Must be LMA perhaps, the point is to remap this */
 
     /***********************************************************************************************

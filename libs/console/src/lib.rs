@@ -34,6 +34,8 @@ impl liblog::Log for ConsoleLogger {
     }
 
     fn log(&self, record: &Record) {
+        // In QEMU/test builds, mirror output to the semihosting console so it
+        // shows up in qemu.log even before/without a working UART console.
         #[cfg(any(test, feature = "qemu"))]
         {
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
@@ -42,7 +44,8 @@ impl liblog::Log for ConsoleLogger {
             );
         }
 
-        #[cfg(not(any(test, feature = "qemu")))]
+        // Always write to the registered console (e.g. PL011 UART) as well.
+        // Chainboot's protocol replies ("OK") depend on this path in QEMU builds.
         if self.enabled(record.level()) {
             //           let timestamp = libtime::_time();
             //           concat!("[  {:>3}.{:06}] ", $string),

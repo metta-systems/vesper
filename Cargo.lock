@@ -126,6 +126,7 @@ dependencies = [
  "vesper-log",
  "vesper-machines",
  "vesper-platforms",
+ "vesper-print",
  "vesper-qemu",
  "vesper-tests",
  "vesper-time",
