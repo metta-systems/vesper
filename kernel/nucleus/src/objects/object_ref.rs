@@ -29,7 +29,7 @@ impl ObjectRef {
 
     pub const fn null() -> Self {
         Self {
-            ptr: NonNull::dangling(),
+            ptr: NonNull::dangling(), // TBD!
             obj_type: ObjectType::NULL,
         }
     }
