@@ -18,6 +18,7 @@ pub fn invoke(cap: &mut KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResul
     match op {
         // DebugConsoleOp::Write => console.handle_write(arg0, arg1),
         DebugConsoleOp::Write => {
+            // TODO: validate client phys ptr validity
             crate::objects::debug_console::DebugConsole::handle_write(PhysAddr::new(arg0), arg1)?;
             Ok((0, 0))
         }

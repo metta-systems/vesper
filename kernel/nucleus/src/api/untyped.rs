@@ -2,6 +2,7 @@
 // == Syscall handler ==
 // =====================
 
+/// The only operation - Untyped.Retype
 #[inline]
 pub fn invoke(cap: u32, op: u32, args: &[u64]) -> SyscallResult {
     // fn captbl_activate(captbl: u32, op: KeyTableOp, slot: u32) -> Result<()> {

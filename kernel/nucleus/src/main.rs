@@ -12,6 +12,7 @@
 #![feature(decl_macro)]
 #![feature(allocator_api)]
 #![feature(format_args_nl)]
+#![feature(likely_unlikely)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
 #![deny(missing_docs)]

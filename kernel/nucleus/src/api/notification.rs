@@ -30,7 +30,7 @@ pub fn invoke(
                 return Err(CapError::InsufficientRights);
             }
 
-            let bits = notify.wait(current_domain_mut());
+            let bits = notify.wait(current_domain_mut()); // FIXME: can't block syscall
             Ok((bits, 0))
         }
 

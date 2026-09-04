@@ -52,7 +52,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 
     semi::println!("handle_cap_invoke(resolved obj_type {})", obj_type.as_u8());
 
-    if obj_type.is_arch() {
+    if core::hint::unlikely(obj_type.is_arch()) {
         // Architecture-specific dispatch (less common path)
         arch_invoke::<A>(nucleus, slot, obj_type, op, args)
     } else {

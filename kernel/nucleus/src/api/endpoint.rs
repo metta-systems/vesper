@@ -44,7 +44,9 @@ pub fn invoke(cap: &Cap, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
         EndpointOp::Call => ep.handle_call(),
         EndpointOp::Send => ep.handle_send(),
         EndpointOp::Recv => ep.handle_recv(),
-        EndpointOp::Reply => { /* invoke the reply_cap */ }
+        EndpointOp::Reply => { /* invoke the reply_cap */
+            // TODO: do this on ReplyCap side, see ReplyOp::Send
+        }
         EndpointOp::ReplyRecv => ep.handle_replyrecv(),
         EndpointOp::Forward => ep.handle_forward(),
         _ => Err(SyscallError::InvalidOp),

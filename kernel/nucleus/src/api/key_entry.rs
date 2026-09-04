@@ -249,7 +249,7 @@ impl KeyEntry {
     pub fn as_region(&self) -> Result<&RegionPayload, CapError> {
         if !self.is_region() {
             return Err(CapError::TypeMismatch {
-                expected: ObjectType::UNTYPED,
+                expected: ObjectType::UNTYPED, // FIXME or Frame?
                 found: self.obj_type,
             });
         }
@@ -262,7 +262,7 @@ impl KeyEntry {
     pub fn as_region_mut(&mut self) -> Result<&mut RegionPayload, CapError> {
         if !self.is_region() {
             return Err(CapError::TypeMismatch {
-                expected: ObjectType::UNTYPED,
+                expected: ObjectType::UNTYPED, // FIXME or Frame?
                 found: self.obj_type,
             });
         }
@@ -349,6 +349,7 @@ impl RegionPayload {
     }
 
     // ── Untyped-specific ──
+    // TODO: UntypedPayload trait?
 
     /// Get the watermark (next free byte offset) in bytes.
     /// Only meaningful when this is an Untyped region.
@@ -373,6 +374,7 @@ impl RegionPayload {
     }
 
     // ── Frame-specific ──
+    // TODO: FramePayload trait?
     // Each frame cap tracks its own single mapping (seL4-style).
     // state = mapped vaddr >> 12 (0 = unmapped).
 
