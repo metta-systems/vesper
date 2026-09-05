@@ -1,9 +1,17 @@
 use {
-    crate::{CapError, Key, KeySlot},
+    crate::{CapError, Key, KeySlot, decode_syscall_result},
     core::sync::atomic::{AtomicU32, AtomicU64, Ordering},
     libaddress::VirtAddr,
-    libsyscall::{protected_call0, protected_call2},
 };
+
+#[cfg(not(test))]
+use libsyscall::{protected_call0, protected_call2};
+#[cfg(test)]
+use tests::{protected_call0, protected_call2};
+
+#[cfg(test)]
+#[path = "../tests/support/domain.rs"]
+mod tests;
 
 // ┌─────────────────────────────────────────────────────────────────────┐
 // │                    DCB SHARED PAGES ARCHITECTURE                    │
@@ -73,6 +81,8 @@ pub enum DomainOp {
 
 /// Domain capability - handle to a protection domain.
 /// State queries use shared DCB (no syscall), mutations use `CapInvoke`.
+/// Domain operations are currently unsupported by nucleus dispatch. Mutation
+/// wrappers preserve its errors; they do not establish DCB mapping or lifetime.
 pub struct DomainKey {
     key: Key<DomainType>,
     id: DomainId,
@@ -130,17 +140,14 @@ impl DomainKey {
     /// Activate domain (make runnable) - requires syscall
     pub fn activate(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let (ok, _, _) = unsafe { protected_call0(self.key.slot(), DomainOp::Activate as u32) };
-        match ok {
-            0 => Ok(()),
-            _ => Err(CapError::Unknown),
-        }
+        let response = unsafe { protected_call0(self.key.slot(), DomainOp::Activate as u32) };
+        decode_syscall_result(response).map(|_| ())
     }
 
     /// Grant a capability to this domain
     pub fn grant<T>(&self, key: &Key<T>, dest_slot: KeySlot) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let (ok, _, _) = unsafe {
+        let response = unsafe {
             protected_call2(
                 self.key.slot(),
                 DomainOp::Grant as u32,
@@ -148,30 +155,21 @@ impl DomainKey {
                 u64::from(dest_slot.0),
             )
         };
-        match ok {
-            0 => Ok(()),
-            _ => Err(CapError::Unknown),
-        }
+        decode_syscall_result(response).map(|_| ())
     }
 
     /// Suspend domain - requires syscall
     pub fn suspend(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let (ok, _, _) = unsafe { protected_call0(self.key.slot(), DomainOp::Suspend as u32) };
-        match ok {
-            0 => Ok(()),
-            _ => Err(CapError::Unknown),
-        }
+        let response = unsafe { protected_call0(self.key.slot(), DomainOp::Suspend as u32) };
+        decode_syscall_result(response).map(|_| ())
     }
 
     /// Resume suspended domain - requires syscall
     pub fn resume(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let (ok, _, _) = unsafe { protected_call0(self.key.slot(), DomainOp::Resume as u32) };
-        match ok {
-            0 => Ok(()),
-            _ => Err(CapError::Unknown),
-        }
+        let response = unsafe { protected_call0(self.key.slot(), DomainOp::Resume as u32) };
+        decode_syscall_result(response).map(|_| ())
     }
 }
 

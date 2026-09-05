@@ -148,9 +148,11 @@ Decode full-width inputs before narrowing. Reject unknown opcodes, unrepresentab
 
 ### Errors and evolution
 
-`CapError::code()` in `libs/object/src/lib.rs` is the existing error-number baseline (status 1–25); success is zero. Preserve those status meanings while adding one shared checked encoder/decoder. Correct object-type details to the canonical numbering above. Make clear which error detail is a category-local index and which is a full wire ObjectType.
+`syscall_status` in `libs/object/src/syscall_status.rs` defines the shared symbolic wire statuses: success zero and the existing errors 1–25. `CapError::code()` and `decode_syscall_result` use the same error constants; nucleus syscall return handling uses `SUCCESS` and `CapError::code()`. Preserve these status meanings; literal ABI tests independently pin their numeric values. Correct object-type details to the canonical numbering above. Make clear which error detail is a category-local index and which is a full wire ObjectType.
 
 Do not create competing per-family wire error spaces such as the draft `RetypeError`. Typed client errors may wrap the shared decoded result. Unknown future status/detail values must remain observable without panicking or being turned into success. New errors for overflow, cancellation, unsupported behavior, and partial completion require explicit shared definitions, not ad hoc sentinel values (D9).
+
+The shared `decode_syscall_result` now decodes the existing three-word result without changing this wire baseline. Zero status preserves both success words; statuses 1–25 decode to their existing variants only when detail widths/known kind indices are representable and unused words are zero. Otherwise `CapError::UnknownResponse` preserves the nonzero status and both details verbatim, including future extensions to known errors. This is a client representation, not a new status or a kernel reserved-argument rule. Domain mutation wrappers use it; other families remain unmigrated. The added Rust enum variant requires downstream exhaustive matches to be updated, but existing wire meanings and Domain method signatures are unchanged.
 
 Kernel and userspace changes to IDs, layouts, and meaning are coordinated migrations. Before separately versioned components are supported, choose ABI compatibility/version discovery and how callers learn which optional operations are available (D9). No performance claim or `repr` annotation substitutes for a layout/round-trip test.
 
@@ -337,7 +339,8 @@ Snapshot at initial consolidation (2026-09-05); update this table as complete sl
 | Family | Userspace | Nucleus API | Object/storage |
 |---|---|---|---|
 | DebugConsole | Only with `debug_kernel` | Only with `debug_kernel`; otherwise unsupported | Debug-only prototype; pointer/length/authority/error handling still needs repair |
-| Domain / KeyTable | Included, incomplete | Excluded sketches; dispatcher reports unsupported | Included, partial lifecycle/storage |
+| Domain | Included; mutation errors decoded losslessly, DCB access still incomplete | Excluded sketch; dispatcher reports unsupported | Included, partial lifecycle/storage |
+| KeyTable | Included, incomplete; result handling not yet migrated | Excluded sketch; dispatcher reports unsupported | Included, partial lifecycle/storage |
 | Frame/architecture | Operation modules excluded | Handlers excluded; architecture dispatch unsupported | Inline regions and AArch64 scaffolding included; creation/invocation stubs |
 | Untyped / Buffer | Excluded sketches | Excluded sketches | Excluded sketches; region payload helpers included separately |
 | Time / Endpoint / Reply / Notification / EventCount | Excluded sketches | Excluded sketches | Excluded sketches |

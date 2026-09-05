@@ -1,3 +1,15 @@
+use vesper_objects::{CapError, Key, KeySlot, decode_syscall_result};
+
+#[cfg(test)]
+#[path = "support/cap_error.rs"]
+mod cap_error;
+
+// Compile the actual wrapper methods with a test-only transport. DCB accessors
+// remain uncalled: constructing a test handle does not establish a user mapping.
+#[cfg(test)]
+#[path = "../src/domain.rs"]
+pub mod domain_client;
+
 #[cfg(test)]
 mod tests {
     use core::mem::{align_of, size_of};

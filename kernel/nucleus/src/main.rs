@@ -37,7 +37,7 @@ use {
     liblocking::{IRQSafeNullLock, interface::Mutex},
     liblog::{info, println, warn},
     libmapping::AccessPermissions,
-    libobject::{ArchType, CapError, KeySlot},
+    libobject::{ArchType, CapError, KeySlot, syscall_status},
     libqemu::semihosting as semi,
 };
 
@@ -235,7 +235,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     // };
 
     let (x0, x1, x2) = match result {
-        Ok((v0, v1)) => (0, v0, v1),
+        Ok((v0, v1)) => (syscall_status::SUCCESS, v0, v1),
         Err(e) => e.code(),
     };
     // Return values

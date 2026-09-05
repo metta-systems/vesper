@@ -68,6 +68,7 @@ Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wir
 - [x] Establish one canonical type declaration and exhaustive checks for every related representation. Coordinate kernel/client migration; do not preserve the contradictory old `ObjectType` numbering.
 - [ ] Add full-width checked operation/slot/size decoding; reject high-bit aliases, invalid flag bits, out-of-range values, and arithmetic overflow before narrowing.
 - [ ] Implement shared error encoding/decoding, preserving existing status meanings and unknown future errors/details. Eliminate competing per-family wire error spaces as each family migrates.
+  - [x] Decode the existing status 1–25 baseline with checked detail widths and lossless unknown-response preservation; migrate Domain mutation wrappers. Other families and competing draft errors remain pending.
 - [ ] Define shared fixed-width records and constants; require layout/offset/size assertions for user-visible memory structures. Leave kernel `KeyEntry` layout private.
 - [ ] Record operation schemas and reserved IDs for the first supported slice; define unused/reserved argument treatment.
 - [ ] Set the compatibility/support-discovery policy needed for current consumers (D9); document any coordinated rebuild requirement.
@@ -111,6 +112,7 @@ Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contract
 - [ ] Bound console copying and terminator handling; return specified errors for malformed inputs rather than panicking.
 - [ ] Decode and propagate console results in userspace; gate/remove unconditional semihosting diagnostics from ordinary wrapper behavior.
 - [ ] Correct false-success/error-discarding behavior in already-included Domain/KeyTable wrappers, while leaving unimplemented kernel operations explicitly unsupported.
+  - [x] Preserve specific errors and unknown status/details in Domain Activate/Grant/Suspend/Resume without enabling the excluded handler. KeyTable remains pending.
 - [ ] Test console success, kernel error propagation, invalid/empty slots, excessive raw slot/op values, boundary lengths, invalid/unauthorized pointers, non-SVC faults, unsupported SVC immediates, and fault recovery without recursive capability dispatch.
 
 ### Debug-only availability slice validation
@@ -143,6 +145,23 @@ Removed both `as_object_mut::<DebugConsole>()` calls in active dispatch/handling
 | `just test` | Passed device/doctest, chainboot, host, and new debug-console workflows; chainboot has no runnable test executable and the host tool has zero tests |
 
 Coverage limits: handler/lookup rejection tests are not SVC entry/return or successful-output integration tests. No general rights checks, caller context, user-copy safety, raw-register validation, client error propagation, or guarded object storage were introduced. The new embedded test harness is compiled/run by its test recipe; the existing Clippy recipe does not explicitly lint that harness. General console support still requires the approved caller/authority and buffer-access contracts. Compiler-cache access and toolchain/dependency future-compatibility warnings remain nonblocking. Only the pointer-reference removal item is completed by this slice.
+
+### Domain client-result slice validation
+
+Follow-up: centralized all existing wire status numbers in `libs/object/src/syscall_status.rs`. Both the error encoder and decoder use these symbols, and nucleus uses the shared `SUCCESS` constant. Numeric meanings and unknown-response handling are unchanged; a literal ABI test pins every constant independently. Validation: `just test-object-host` passed 24 feature-off / 25 feature-on tests; `just fmt-check` and full `just clippy` passed after correcting a documentation lint. Target/QEMU runtime tests were not rerun for this symbolic-only follow-up.
+
+Selected the Domain portion of the included-wrapper repair: its four mutation wrappers now use the shared `decode_syscall_result`, preserving request encoding and returning specific kernel errors instead of collapsing every failure into `Unknown`. Kernel dispatch still returns `UnsupportedCoreType(Domain)` after successful lookup. No operation, rights policy, lifetime, DCB access, scheduling transition, or new wire schema was enabled; D1–D9 remain open as previously recorded.
+
+The decoder preserves success words and existing statuses 1–25, checks details before narrowing, and retains unknown/malformed responses verbatim in the client-only `UnknownResponse` variant. Its nonzero status cannot re-encode as success. Downstream exhaustive Rust matches need the added variant; no coordinated wire migration is required for this unchanged encoding.
+
+| Recipe | Result and scope |
+|---|---|
+| `just test-object-host` | Passed 23 feature-off / 24 feature-on tests, including nine result-decoder tests and three Domain wrapper tests |
+| `just fmt-check` | Passed workspace formatting |
+| `just clippy` | Passed the configured RPi3/QEMU build, all nine embedded feature configurations, and both host-test states after fixing test-module visibility/configuration |
+| `just test-device` | Passed the existing QEMU device integration and device doctest workflow |
+
+The host harness compiles the actual Domain source with a test-only mock transport; it checks all four methods, full-width slot encoding, success, unsupported/lookup/rights errors, unknown statuses, malformed details, and unchanged handles. It never executes host SVC or dereferences DCB mappings. These are not real SVC/Domain lifecycle integration tests, and the AArch64 host cannot exercise a narrower-`usize` overflow branch. Compiler-cache access and toolchain future-compatibility warnings remain nonblocking. Full `just test` was not run for this slice. Next is the remaining KeyTable result repair; enabling Domain behavior still requires the guarded storage, authority, execution-context, completion, and time prerequisites.
 
 **Exit:** a real end-to-end operation demonstrates the standard decoding, authority, user-copy, and result pattern. Unsupported wrappers fail honestly.
 
