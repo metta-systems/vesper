@@ -19,6 +19,8 @@ publish = false
 maintenance = { status = "experimental" }
 
 [features]
+# Opt in to the debug-only prototype console wrapper.
+debug_kernel = []
 # Opt in to standard host integration tests, not the freestanding test-device workflow.
 host-tests = []
 

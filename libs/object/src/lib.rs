@@ -8,8 +8,10 @@ pub mod key_table;
 pub mod object_type;
 pub mod rights;
 
+#[cfg(feature = "debug_kernel")]
+pub use debug_console::DebugConsoleKey;
+
 pub use {
-    debug_console::DebugConsoleKey,
     key::Key,
     key_table::KeySlot,
     object_type::{ArchType, CoreType, ObjectType},

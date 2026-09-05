@@ -1,10 +1,6 @@
 use {
-    crate::{
-        api::key_entry::KeyEntry,
-        objects::{
-            ArchObjects, DebugConsole, Domain, KeyTable, ObjectPool, arch::ArchPools,
-            domain::DcbPages,
-        },
+    crate::objects::{
+        ArchObjects, Domain, KeyTable, ObjectPool, arch::ArchPools, domain::DcbPages,
     },
     core::sync::atomic::Ordering,
     libobject::{
@@ -12,6 +8,9 @@ use {
         domain::{BlockReason, DomainControlBlock, DomainId, DomainState},
     },
 };
+
+#[cfg(feature = "debug_kernel")]
+use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 
 // ┌─────────────────────────────────────────────────────────────────────┐
 // │                    KERNEL TYPE STRUCTURE                            │
@@ -105,19 +104,20 @@ impl<A: ArchObjects> Nucleus<A> {
 
     // TODO: Testing fixture
     pub fn create_domain(&mut self) {
-        self.pools
+        let dom = self
+            .pools
             .domains
             .allocate(Domain {
                 keytable: KeyTable::new(DomainId(0)),
             })
-            .and_then(|dom| {
-                dom.keytable
-                    .insert(
-                        libobject::KeySlot(127),
-                        KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0),
-                    )
-                    .ok()
-            })
+            .expect("Poof");
+        #[cfg(feature = "debug_kernel")]
+        dom.keytable
+            .insert(
+                libobject::KeySlot(127),
+                KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0),
+            )
+            .ok()
             .expect("Poof");
     }
 

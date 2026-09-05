@@ -170,8 +170,16 @@ The following preserves existing operation declarations as a starting vocabulary
 | EventCount | Advance `0`, Await `1`, Read `2` | Monotonic progress and threshold wait |
 | Buffer | Map `0`, Unmap `1`, Query `2` | Dedicated kernel kind versus userspace composition remains D6; retain its type ID |
 | Reply | Send `0`, SendWithCap `1`, SendError `2` | One-shot reply authority; exact transfer/cancellation encoding remains D7 |
-| DebugConsole | Write `0` | Bounded checked user-memory access and explicit authority |
+| DebugConsole | Write `0` | Debug-only prototype behind explicit `debug_kernel`; checked user-memory access and explicit authority remain deferred |
 | Architecture families | Frame mapping/query; page-table mapping; VSpace translation/ASID binding; ASID, I/O, IRQ control | Freeze per-operation schemas with the relevant backend; do not treat draft handlers as complete contracts |
+
+### DebugConsole debug-only exception
+
+Maintainer decision (2026-09-05, scoped D4/D9): DebugConsole is **not a generally available capability**. Its handler, bootstrap grant, userspace wrapper, and boot demonstration require the opt-in Cargo feature `debug_kernel`, disabled by default. This feature identifies a debug kernel independently of Cargo's optimization profile: the embedded build recipes use `--release` even for debugging. Neither `qemu` nor `jtag` implicitly enables it. Build nucleus and kickstart together, for example with `just build rpi3 qemu,debug_kernel`; production kernels must omit `debug_kernel`.
+
+Keep the current pointer-based Write mechanism for trusted debugging only; do not add an inline-byte operation or change the wire schema in this slice. The canonical type ID `127` and operation ID `0` remain reserved/defined regardless of feature availability. Without the kernel feature, no console capability is installed and DebugConsole dispatch is unsupported (an absent slot still returns the normal lookup error).
+
+Temporary debug-only leeway is not a safety or isolation guarantee. The existing EL1 bootstrap caller, domain-zero fallback, broad grant, unchecked physical/direct-map pointer interpretation and copying, C-string limitations, pointer-derived mutable access, and discarded client errors remain migration gaps. Actual console output currently requires `qemu`; enabling `debug_kernel` alone does not add a hardware output backend. Deferred improvements and alternatives are recorded beside `kernel/nucleus/src/api/debug_console.rs::invoke`. General availability requires the normal supported-operation criteria, including explicit caller/rights, bounded caller-authorized memory access with fault recovery, defined byte/length/partial-output semantics, checked exception/argument decoding, and observable results. D1/D3/D4/D6/D9 remain open beyond this limited availability decision.
 
 ## Authority, slots, and capability lifecycle
 
@@ -328,7 +336,7 @@ Snapshot at initial consolidation (2026-09-05); update this table as complete sl
 
 | Family | Userspace | Nucleus API | Object/storage |
 |---|---|---|---|
-| DebugConsole | Included | Included and dispatched | Included; pointer/length/authority/error handling still needs repair |
+| DebugConsole | Only with `debug_kernel` | Only with `debug_kernel`; otherwise unsupported | Debug-only prototype; pointer/length/authority/error handling still needs repair |
 | Domain / KeyTable | Included, incomplete | Excluded sketches; dispatcher reports unsupported | Included, partial lifecycle/storage |
 | Frame/architecture | Operation modules excluded | Handlers excluded; architecture dispatch unsupported | Inline regions and AArch64 scaffolding included; creation/invocation stubs |
 | Untyped / Buffer | Excluded sketches | Excluded sketches | Excluded sketches; region payload helpers included separately |
@@ -347,12 +355,12 @@ Resolve the decisions needed by a slice before enabling it. An unrelated open de
 | D1 | Shared-address-space protection model, threat model, backend isolation/fallback, and meaning of VSpace versus Domain. Preserve shared-namespace intent without claiming capabilities/MTE/PAC alone isolate arbitrary memory access. | Domain protection and mapping semantics |
 | D2 | Derivation/revocation trust boundary: userspace manager exclusivity, kernel-enforced identity/scope, completion/incremental work, and when resources may be reused. | General derivation/revoke and reclaiming retyped memory |
 | D3 | Object/domain/slot reuse identity, guarded access and synchronization, owned versus borrowed handles, and per-kind copy/delete rules. | General capability access, domain teardown, safe client ownership APIs |
-| D4 | Per-operation rights/bit assignments, badge width/zero behavior, bootstrap slots/manager identity, notification-index convention, and Domain.Grant relationship to KeyTable operations. | Exposing those authorities or bootstrap records |
+| D4 | DebugConsole availability resolved only: explicit opt-in `debug_kernel`, not general availability; current debug mechanism retained temporarily (see debug-only exception). Per-operation rights/bit assignments, badge width/zero behavior, bootstrap slots/manager identity, notification-index convention, and Domain.Grant relationship to KeyTable operations remain open. | Exposing those authorities or bootstrap records |
 | D5 | DCB layout/stride, page sizing, read visibility, discovery/mapping lifetime, snapshots/publication, event summaries, and reuse protocol. | Stable userspace DCB observations |
 | D6 | Retype layout/accounting and single/batch shape; initialization/sanitization; Buffer role; mapping identity and backend namespace; ASID allocation/binding/reuse; device-memory rules. | Memory-object vertical slice |
 | D7 | IPC payload/transport, operation set, transfer/reply destinations and failure semantics, open/closed waits, timeouts, cancellation, deferred completion, notification delivery, shared-payload ordering/stability, and event-count overflow. | Blocking primitives and IPC activation |
 | D8 | Budget issuance, donation loan/transfer, unused-budget return, split/merge/deletion/expiry, units/clocks, multicore accounting. | Time/scheduler vertical slice |
-| D9 | Shared error additions/detail schemas, reserved/unsupported operations, ABI version/support discovery, and kernel/userspace migration policy. | Freezing new operation schemas or separately deployed ABI consumers |
+| D9 | DebugConsole gate preserves type `127` and Write `0`; no new inline-byte ABI is approved. Shared error additions/detail schemas, reserved/unsupported operations, ABI version/support discovery, and kernel/userspace migration policy otherwise remain open. | Freezing new operation schemas or separately deployed ABI consumers |
 
 ## Definition of a supported operation
 

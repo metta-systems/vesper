@@ -58,11 +58,13 @@ use {
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
-    libobject::{DebugConsoleKey, KeySlot},
     libqemu::semihosting as semi,
     libsyscall::protected_call6,
     memory::BootAllocator,
 };
+
+#[cfg(feature = "debug_kernel")]
+use libobject::{DebugConsoleKey, KeySlot};
 
 unsafe extern "C" {
     static __INIT_START: UnsafeCell<()>;
@@ -700,14 +702,17 @@ pub fn kickstart_run() -> ! {
     // PHASE 8: Context switch to init domain
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // We have domain caps here, can use:
-    let dbg = DebugConsoleKey::new();
-    dbg.write(
-        "DEBCON| Debug output via capability invocation on domain's debug console capability\n",
-    );
+    #[cfg(feature = "debug_kernel")]
+    {
+        // We have domain caps here, can use:
+        let dbg = DebugConsoleKey::new();
+        dbg.write(
+            "DEBCON| Debug output via capability invocation on domain's debug console capability\n",
+        );
 
-    let err = DebugConsoleKey::new_slot(KeySlot::CAPTBL_SELF);
-    err.write("DEBCON| Invalid capability invocation - no output");
+        let err = DebugConsoleKey::new_slot(KeySlot::CAPTBL_SELF);
+        err.write("DEBCON| Invalid capability invocation - no output");
+    }
 
     let (_, privilege_level) = libexception::current_privilege_level();
     liblog::info!("Current privilege level: {privilege_level}");

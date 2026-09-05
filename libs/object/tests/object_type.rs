@@ -4,6 +4,33 @@ mod tests {
 
     use vesper_objects::{ArchType, CapError, CoreType, ObjectType};
 
+    #[test]
+    fn debug_console_operation_stays_defined_without_kernel_availability() {
+        use vesper_objects::debug_console::DebugConsoleOp;
+
+        assert_eq!(DebugConsoleOp::Write as u8, 0);
+        assert!(matches!(
+            DebugConsoleOp::try_from(0),
+            Ok(DebugConsoleOp::Write)
+        ));
+        for raw in [1, 127, 255, 256, 1 << 16, u32::MAX] {
+            assert!(matches!(
+                DebugConsoleOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[cfg(feature = "debug_kernel")]
+    #[test]
+    fn debug_console_client_is_available_for_debug_kernels() {
+        use vesper_objects::{DebugConsoleKey, KeySlot};
+
+        // Construct handles only: host tests must not execute the SVC transport.
+        let _console = DebugConsoleKey::new();
+        let _other_slot = DebugConsoleKey::new_slot(KeySlot(42));
+    }
+
     // Literal ABI oracles: do not derive these IDs from the production catalogue.
     const CORE_TYPES: [(CoreType, ObjectType, u8); 11] = [
         (CoreType::Null, ObjectType::NULL, 0),

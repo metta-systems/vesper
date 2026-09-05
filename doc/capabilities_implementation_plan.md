@@ -100,6 +100,7 @@ Coverage limits: the chainboot test recipe currently has no runnable test execut
 
 Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contracts), [authorization](nucleus_capabilities.md#authorization). Prerequisites: relevant Phase 2 definitions; console authority decision under D4.
 
+- [x] Gate DebugConsole handler, bootstrap grant, userspace wrapper, and boot use behind opt-in `debug_kernel`; retain canonical IDs and the current debug mechanism, record deferred repairs beside `invoke`, and validate feature-off/on builds. This is the maintainer-approved debug-only availability slice, not completion of the safety work below.
 - [ ] Validate exception class, SVC immediate, and permitted origin before dispatch; route non-SVC faults and user-copy recovery through the correct exception path.
 - [ ] Replace panicking raw register conversions in nucleus entry with checked failures; specify the ordinary control-call register preservation/output contract with `libs/syscall`.
 - [ ] Establish explicit caller/domain context; do not use absence of a current domain as an implicit grant to domain zero.
@@ -110,6 +111,20 @@ Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contract
 - [ ] Decode and propagate console results in userspace; gate/remove unconditional semihosting diagnostics from ordinary wrapper behavior.
 - [ ] Correct false-success/error-discarding behavior in already-included Domain/KeyTable wrappers, while leaving unimplemented kernel operations explicitly unsupported.
 - [ ] Test console success, kernel error propagation, invalid/empty slots, excessive raw slot/op values, boundary lengths, invalid/unauthorized pointers, non-SVC faults, unsupported SVC immediates, and fault recovery without recursive capability dispatch.
+
+### Debug-only availability slice validation
+
+The maintainer-approved scope retains the current pointer-based mechanism and defers safety/ABI changes. `debug_kernel` is opt-in in nucleus, kickstart, and the client library; kickstart forwards it to the client. Kernel dispatch/object code, the bootstrap console grant, the client wrapper, and boot calls are gated. Type `127` and Write `0` remain defined with the feature off. `qemu`/`jtag` do not imply availability, and Cargo's release profile does not disable an explicitly requested debug kernel.
+
+| Recipe | Result and scope |
+|---|---|
+| `just fmt-check` | Passed workspace formatting |
+| `just test-object-host` | Passed 11 tests feature-off and 12 feature-on; includes unchanged catalogue IDs, operation decoding, and feature-enabled handle construction without executing SVC |
+| `just clippy` | Passed after removing an unnecessary binding in the new host test; includes feature-off RPi3/QEMU nucleus + kickstart build, the original seven embedded configurations plus `debug_kernel` and `qemu,debug_kernel`, and both host feature states |
+| `just build rpi3 qemu,debug_kernel` | Passed coordinated feature-enabled nucleus + kickstart release build |
+| `just test-device` | Passed existing QEMU device integration tests and device doctest workflow, with `debug_kernel` off |
+
+Coverage limits: these checks do not validate runtime console authorization, pointer safety, error propagation, exception recovery, or the feature-enabled boot demonstration. No console-specific runtime tests were added. Deferred changes and alternatives are documented beside `api::debug_console::invoke`; the other Phase 3 items remain unchecked. Nonblocking compiler-cache access and toolchain future-compatibility warnings remain. The next prerequisite for general console support is an approved caller/authority and buffer-access contract, not another implicitly enabled operation.
 
 **Exit:** a real end-to-end operation demonstrates the standard decoding, authority, user-copy, and result pattern. Unsupported wrappers fail honestly.
 

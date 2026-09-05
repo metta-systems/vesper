@@ -16,6 +16,8 @@ version = { workspace = true }
 
 [features]
 default = []
+# Opt in to the debug-only prototype console demonstration.
+debug_kernel = ["libobject/debug_kernel"]
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["libmachine/jtag"]

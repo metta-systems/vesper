@@ -1,13 +1,21 @@
-use crate::{CapError, Key, KeySlot};
+use crate::CapError;
+#[cfg(feature = "debug_kernel")]
+use crate::{Key, KeySlot};
 
 // ==================================================
 // == Public user interface, usable from userspace ==
 // ==================================================
 
+/// Debug-only prototype console wrapper, available with opt-in `debug_kernel`.
+///
+/// Not a general service or a safety/isolation guarantee: retains unchecked
+/// pointer-based writes and discarded kernel errors for trusted debugging only.
+#[cfg(feature = "debug_kernel")]
 pub struct DebugConsoleKey {
     key: Key<DebugConsoleType>,
 }
 
+#[cfg(feature = "debug_kernel")]
 enum DebugConsoleType {}
 
 #[repr(u8)]
@@ -28,6 +36,7 @@ impl TryFrom<u32> for DebugConsoleOp {
 }
 
 // Root domain gets a DebugConsoleCap, can delegate to others
+#[cfg(feature = "debug_kernel")]
 impl DebugConsoleKey {
     #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {

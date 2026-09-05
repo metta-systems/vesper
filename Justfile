@@ -255,6 +255,8 @@ test-host: test-object-host
 test-object-host:
     RUSTFLAGS="{{ fixed_rustflags }}" \
     cargo test -p vesper-objects --features=host-tests --test object_type
+    RUSTFLAGS="{{ fixed_rustflags }}" \
+    cargo test -p vesper-objects --features=host-tests,debug_kernel --test object_type
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -281,7 +283,7 @@ _clippy-cross features='' board='rpi3':
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') clippy-object-host
+clippy: (build 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') (_clippy-cross 'debug_kernel' 'rpi3') (_clippy-cross 'qemu,debug_kernel' 'rpi3') clippy-object-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
@@ -292,6 +294,9 @@ clippy-pre-push: (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') clippy-obje
 clippy-object-host:
     RUSTFLAGS="{{ fixed_rustflags }}" \
     cargo clippy -p vesper-objects --features=host-tests --test object_type \
+      -- --deny warnings --allow deprecated
+    RUSTFLAGS="{{ fixed_rustflags }}" \
+    cargo clippy -p vesper-objects --features=host-tests,debug_kernel --test object_type \
       -- --deny warnings --allow deprecated
 
 # Clippy for chainofcommand (host tool)

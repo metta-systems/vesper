@@ -1,10 +1,14 @@
 use {
-    crate::objects::{ArchObjects, DebugConsole, Nucleus},
+    crate::objects::{ArchObjects, Nucleus},
     libobject::{ArchType, CapError, CoreType, KeySlot, ObjectType},
     libqemu::semihosting as semi,
 };
 
+#[cfg(feature = "debug_kernel")]
+use crate::objects::DebugConsole;
+
 // pub mod arch;
+#[cfg(feature = "debug_kernel")]
 pub mod debug_console;
 pub mod key_entry;
 // pub mod key_table;
@@ -87,6 +91,7 @@ fn core_invoke<A: ArchObjects>(
         //     // Untyped::invoke(untyped, ....)
         //     api::untyped::invoke(untyped, entry.rights(), op, args, &mut nucleus.pools)
         // }
+        #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
             semi::println!("core_invoke: DebugConsole");
             let debug_console = entry.as_object_mut::<DebugConsole>()?;
