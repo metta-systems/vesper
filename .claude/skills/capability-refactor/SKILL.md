@@ -1,6 +1,6 @@
 ---
 name: capability-refactor
-description: Guide one incremental Vesper capability refactor across shared ABI, userspace wrappers, kernel API, objects, and syscall entry; read the canonical contract and checkbox plan, resolve decision blockers, and validate a scoped cross-layer change.
+description: Guide one incremental Vesper capability refactor across shared ABI, userspace wrappers, kernel API, objects, and syscall entry; follow the canonical contract and checkbox plan, use JJ and Justfile workflows, resolve decision blockers, and validate a scoped cross-layer change.
 ---
 
 # Capability refactor
@@ -68,10 +68,20 @@ Respect the plan's ordering and explicit prerequisites:
 - Reject malformed or unsupported user input with defined errors, not panics, unchecked indexing, or fake success.
 - Keep authority, badges, lifetime, revocation, and blocking semantics aligned with approved decisions; expose unresolved assumptions instead of encoding them as defaults.
 
+## Use project tooling
+
+- Vesper uses **JJ for version control and `just` for build, test, lint, and related workflows**. Run recipes from the repository root.
+- Read the current `Justfile` before selecting validation commands. Use `just --list` to discover public recipes and `just --dry-run <recipe>` to inspect expanded commands and prerequisites without executing them.
+- This is a `no_std` embedded project: the recipes supply the custom target, `build-std`, board CPU/cfg flags, feature combinations, linker scripts, warning policy, and QEMU test runner. Do not reconstruct those commands by hand or substitute bare `cargo clippy`, `cargo test`, `cargo check`, or standalone `rustfmt` for project validation.
+- Run lint validation as **`just clippy`**. `just clippy-pre-push` is a smaller default-feature check, not equivalent to the full recipe. Use `just fmt-check` for formatting and `just lint` for formatting plus full embedded and host-tool linting.
+- Use `just test` for the full test workflow, or a relevant documented subset (`just test-device`, `just test-chainboot`, `just test-host`). Currently `test-host` tests only `chainofcommand`, not the capability catalogue tests.
+- Use `just build` with the recipe's documented board/features when needed; for example, `just build rpi3 qemu`. Consult the work plan's command table for scope and default behavior.
+- If a focused ABI/host test lacks a recipe, propose adding one to `Justfile` as scoped work; do not silently bypass the convention. Treat explicitly approved ad hoc diagnostics as supplemental evidence, never as a replacement for the configured project checks.
+- Inspect recipe dependencies and side effects. Do not run interactive/debug/flash/eject/setup/dependency-update recipes as validation; `just ci` starts with cleanup. In particular, `setup-local-dev` installs tools and changes Git hooks, contrary to the no-default-version-control-mutation rule.
+
 ## Validate and report
 
-- Discover existing build/test workflows from repository documentation, manifests, scripts, and configuration; do not invent commands or assume a target/toolchain.
-- Start with pure ABI tests (IDs, layouts, encode/decode, errors), then state/rights/lifetime models and failure atomicity, then relevant target/QEMU integration. Match coverage to the slice and its acceptance criteria.
+- Start with pure ABI tests (IDs, layouts, encode/decode, errors), then state/rights/lifetime models and failure atomicity, then relevant target/QEMU integration, all through appropriate `just` recipes. Match coverage to the slice and its acceptance criteria; narrower checks do not imply the broader workflow passed.
 - Bound long-running commands with timeouts. Report exact commands, results, missing prerequisites, and timeouts; an unavailable target run is a validation blocker, not a pass.
 - Before completion, compare changed contracts, code, tests, and plan status. Report the item addressed, affected paths, observed validation, remaining blockers, and next prerequisite without starting another slice.
 - The user uses **JJ only**: no raw Git. Do not automatically perform version-control operations; use read-only JJ only if necessary. No commit/change creation, history mutation, branch/bookmark changes, or push by default, and no force rewriting.

@@ -12,7 +12,33 @@ This is a TODO list, not a claim of implementation. The reference and initial ch
 - Change a contract here and in the reference before intentionally implementing a different ABI or semantic model.
 - Complete the affected shared definitions, client encoding/decoding, kernel authorization, state transitions, and tests together. Unsupported operations must remain explicit errors.
 - Preserve user work. This repository uses JJ: no raw Git, commits, history changes, new changes/branches, or pushes by default. Version-control mutation requires an explicit request.
-- Keep completion evidence with the checklist or in the task report: commands/checks actually run, outcomes, limitations, and follow-up blockers.
+- Use **`just` for project build, test, formatting, and lint workflows**. Read the current `Justfile`; do not replace its recipes with hand-assembled Cargo/rustfmt commands or assume a native build validates the embedded target.
+- Keep completion evidence with the checklist or in the task report: recipes/checks actually run, outcomes, limitations, and follow-up blockers. Supplemental diagnostics and dry runs do not count as completed project validation.
+
+## Project validation commands
+
+Run these from the repository root. The [Justfile](../Justfile) is authoritative; this table is a navigation aid, not a replacement for reading recipe bodies and dependencies. Discover recipes with `just --list`; inspect a workflow without running it with `just --dry-run <recipe>`.
+
+Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-metta-none-eabi` target, `build-std`, board CPU/cfg flags, feature matrices, linker scripts, warning policy, and QEMU runner. **Use `just clippy`, not bare `cargo clippy`.** The same rule applies to build/test/format workflows. Do not copy private helper commands or override away their configuration to get a passing result.
+
+| Command | Scope |
+|---|---|
+| `just build` | Build nucleus and kickstart and produce the kernel binary; defaults to RPi4/hardware |
+| `just build rpi3 qemu` | Build the RPi3/QEMU kernel configuration without starting QEMU |
+| `just fmt-check` | Workspace formatting check using the configured nightly toolchain |
+| `just clippy` | RPi3/QEMU build prerequisite, then embedded Clippy across the defined board/feature combinations |
+| `just clippy-pre-push` | Shorter Clippy workflow: default features on RPi3 and RPi4; not the full matrix |
+| `just lint` | Formatting, full embedded Clippy workflow, and host-tool Clippy |
+| `just test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
+| `just test-chainboot` | Chainboot tests with its own linker script and target runner |
+| `just test-host` | Native `chainofcommand` tests only; does not currently run capability host tests |
+| `just test` | Device, chainboot, and host-tool test workflows |
+| `just pre-push` | Formatting, shortened Clippy, and tests; does not itself push anything |
+| `just ci` | Cleanup, lint, build, and tests; do not invoke its cleanup as an incidental check |
+
+Choose the appropriate scope and report it accurately. Missing tools, failed prerequisites, and timeouts are blockers, not reasons to fall back silently to a less representative native Cargo command. Keep long-running recipes time-bounded. Inspect side effects before using recipes: interactive/debug sessions, hardware flashing/ejection, tool installation, hook setup, and dependency updates are not routine validation.
+
+When a needed focused test has no recipe, propose a small `Justfile` addition rather than inventing a parallel workflow. Explicitly approved ad hoc diagnostics may provide supplemental evidence, but never replace configured project checks.
 
 ## Phase 1 — Confirm contracts and support boundaries
 
@@ -33,6 +59,7 @@ Reference: [status](nucleus_capabilities.md#status-and-authority), [responsibili
 Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wire contracts](nucleus_capabilities.md#invocation-and-wire-contracts). Prerequisite: Phase 1 scope; D9 where schemas change.
 
 - [ ] Separate shared ABI definitions from client/syscall dependencies so they can be tested without booting a kernel. Decide module/feature separation before adding a new crate.
+- [ ] Add a scoped `Justfile` recipe for the opt-in capability host tests and integrate it into the appropriate test workflow; `just test-host` currently covers only `chainofcommand`.
 - [x] Reconcile all core constants/conversions with **CoreType**: Null `0`, Untyped `1`, Domain `2`, KeyTable `3`, Time `4`, Endpoint `5`, Notification `6`, EventCount `7`, Buffer `8`, Reply `9`, DebugConsole `127`.
 - [x] Keep architecture kinds distinguished by `0x80`; distinguish category-local indices from complete wire IDs in conversions and error details.
 - [x] Establish one canonical type declaration and exhaustive checks for every related representation. Coordinate kernel/client migration; do not preserve the contradictory old `ObjectType` numbering.
@@ -48,7 +75,7 @@ Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wir
 
 The private catalogue macro now generates enums, aliases, checked local-index decoding, and typed-to-wire conversions. Existing public names remain; Time/Endpoint/Notification/EventCount wire values now follow the canonical IDs. No object handlers were enabled. The host test feature is opt-in so the standard harness is skipped by the existing freestanding test workflow; full ABI/client dependency separation remains unchecked.
 
-Validated on the native AArch64 macOS host:
+Historical supplemental checks run on the native AArch64 macOS host, before the `just` convention above was recorded. These commands are retained as evidence of what actually ran, **not as instructions for future validation**:
 
 ```sh
 RUSTC_WRAPPER= cargo test -p vesper-objects --features host-tests --test object_type --offline
@@ -57,7 +84,10 @@ rustfmt --edition 2024 --check libs/object/src/object_type.rs libs/object/tests/
 RUSTC_WRAPPER= RUSTFLAGS='--cfg board_rpi3 -C target-cpu=cortex-a53' cargo check -p nucleus --target targets/aarch64-metta-none-eabi.json -Zjson-target-spec -Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem --features qemu --offline
 ```
 
-Ten tests pass, as do formatting, targeted Clippy, and the nucleus cross-check. Clippy still reports the existing removed `from_iter_instead_of_collect` workspace lint; the cross-check reports a toolchain `core` future-compatibility warning. No QEMU runtime test was run for this type-only slice. `RUSTC_WRAPPER=` bypasses the host compiler cache, whose cache directory is not writable in the agent sandbox.
+Those checks passed ten tests, targeted formatting/Clippy, and a manually configured nucleus cross-check. They did **not** run `just clippy`'s build prerequisite/feature matrix or the project test workflow, so they are not equivalent to project-wide embedded validation. Clippy reported the existing removed `from_iter_instead_of_collect` workspace lint; the cross-check reported a toolchain `core` future-compatibility warning. No QEMU runtime test was run. The cache override in that historical command bypassed a sandbox-inaccessible host cache; it does not establish a general recipe-override policy.
+
+- [ ] Validate the catalogue changes through `just fmt-check` and `just clippy`; record actual recipe outcomes and any blockers without treating the earlier native checks as substitutes.
+- [ ] Run the catalogue host tests through their new `just` recipe once available, and the relevant configured embedded test workflow; record the tested scope explicitly.
 
 **Exit:** kernel and client share unambiguous checked wire definitions, with ABI-only tests independent of target assembly. Later families extend this core rather than inventing another protocol.
 
