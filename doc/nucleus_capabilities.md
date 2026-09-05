@@ -18,7 +18,7 @@ This document consolidates:
 - The research note **Kernel API Surface.md**, located in the Metta notes at `Vesper/API/Kernel API Surface.md`: Composite-inspired delegation and userspace resource managers; Nemesis-inspired shared-address-space direction, DCB observations, event counts, and self-scheduling; seL4-inspired untyped allocation, notifications, and capability operations.
 - The cross-layer review of `kernel/nucleus/src/api/`, `kernel/nucleus/src/objects/`, `libs/object/`, and the adjacent syscall transport.
 
-The research is inspiration, not a wire ABI. Its example numbering, object sizes, register layouts, slot allocations, standalone syscall list, Rust ownership claims, and cycle estimates are not authoritative. In particular, **the existing `CoreType` discriminants are the correct core numbering**, not the conflicting `ObjectType` constants or the earlier review's suggested preservation of those constants.
+The research is inspiration, not a wire ABI. Its example numbering, object sizes, register layouts, slot allocations, standalone syscall list, Rust ownership claims, and cycle estimates are not authoritative. In particular, **the existing `CoreType` discriminants are the correct core numbering**, not the former conflicting `ObjectType` constants or the earlier review's suggested preservation of those constants.
 
 ## Key tenets
 
@@ -101,7 +101,9 @@ These follow `CoreType` in `libs/object/src/object_type.rs` and are the migratio
 | Reserved | 10–126 | `0x0a..=0x7e` |
 | DebugConsole | 127 | `0x7f` |
 
-There must be one canonical declaration from which related forms are derived or exhaustively checked. Fix `ObjectType` and conversions to agree with this table; do not renumber `CoreType` to match the old constants. Until migration, the repository contains conflicting IDs for Time, Endpoint, Notification, and EventCount. Kernel and userspace must migrate together; compatibility with the contradictory encoding is not implied.
+Each category has one declarative catalogue in `libs/object/src/object_type.rs`. A private declarative macro generates its enum, checked category-index decoder, `ObjectType` aliases, and typed-to-wire conversions. `ObjectType` remains a one-byte wire wrapper that can retain unknown/reserved values; category checks and high-bit encoding remain ordinary Rust code. Catalogue indices are checked at compile time to fit below `0x80`. The macro does not generate handlers, authorization, or object implementations.
+
+The core catalogue follows this table; do not renumber `CoreType` to match the old constants. This corrects the previously conflicting IDs for Time, Endpoint, Notification, and EventCount. Kernel and userspace must migrate together; compatibility with the contradictory encoding is not implied.
 
 ### Architecture ID baseline
 
@@ -332,7 +334,7 @@ Snapshot at initial consolidation (2026-09-05); update this table as complete sl
 | Untyped / Buffer | Excluded sketches | Excluded sketches | Excluded sketches; region payload helpers included separately |
 | Time / Endpoint / Reply / Notification / EventCount | Excluded sketches | Excluded sketches | Excluded sketches |
 
-Cross-layer blockers include conflicting core IDs, discarded client errors, unsafe pointer-derived references, unchecked syscall inputs, DCB layout/reuse drift, table occupancy bypasses, incomplete rights, inconsistent message registers, nontransactional allocation/transfers, and missing deferred completion. They are tracked as work in the plan, not adopted as intended behavior.
+Core-ID drift is now reconciled through the shared catalogues, with exhaustive raw/index conversion tests. Remaining cross-layer blockers include discarded client errors, unsafe pointer-derived references, unchecked syscall inputs, DCB layout/reuse drift, table occupancy bypasses, incomplete rights, inconsistent message registers, nontransactional allocation/transfers, and missing deferred completion. They are tracked as work in the plan, not adopted as intended behavior.
 
 There are no validated performance promises here. Measure supported paths after correctness and state what target/workload was measured.
 

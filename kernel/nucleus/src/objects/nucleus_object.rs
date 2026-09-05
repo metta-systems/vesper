@@ -35,45 +35,8 @@
 // │                                                                     │
 // └─────────────────────────────────────────────────────────────────────┘
 
-// ┌─────────────────────────────────────────────────────────────────────┐
-// │                    OBJECT TYPE HIERARCHY                            │
-// ├─────────────────────────────────────────────────────────────────────┤
-// │                                                                     │
-// │  ObjectType (u8)                                                    │
-// │  ├── Core Types (0-15)                                              │
-// │  │   ├── 0: Null                                                    │
-// │  │   ├── 1: Untyped       ─→ Untyped struct                         │
-// │  │   ├── 2: Domain        ─→ Domain struct                          │
-// │  │   ├── 3: KeyTable      ─→ KeyTable struct                        │
-// │  │   ├── 4: Notification  ─→ Notification struct                    │
-// │  │   ├── 5: EventCount    ─→ EventCount struct                      │
-// │  │   ├── 6: Endpoint      ─→ Endpoint struct                        │
-// │  │   ├── 7: Time          ─→ TimeSlice struct                       │
-// │  │   ├── 8: Buffer        ─→ Buffer struct                          │
-// │  │   └── 9: Reply         ─→ Reply struct                           │
-// │  │                                                                  │
-// │  └── Arch Types (16-63) ──────────────────────────────────────────┐ │
-// │      │                                                            │ │
-// │      │  ┌─────────────────────────────────────────────────────┐   │ │
-// │      │  │ impl ArchObjects for AArch64                        │   │ │
-// │      │  │   type Frame = AArch64Frame                         │   │ │
-// │      │  │   type PageTable = AArch64PageTable                 │   │ │
-// │      │  │   type VSpace = AArch64VSpace                       │   │ │
-// │      │  │   type ASIDPool = AArch64ASIDPool                   │   │ │
-// │      │  │   type ASID = AArch64ASID                           │   │ │
-// │      │  └─────────────────────────────────────────────────────┘   │ │
-// │      │                                                            │ │
-// │      ├── 16: Frame       ─→ A::Frame                              │ │
-// │      ├── 17: PageTable   ─→ A::PageTable                          │ │
-// │      ├── 18: VSpace      ─→ A::VSpace                             │ │
-// │      ├── 19: ASIDPool    ─→ A::ASIDPool                           │ │
-// │      ├── 20: ASID        ─→ A::ASID                               │ │
-// │      ├── 21: IOSpace     ─→ (SMMU/VT-d specific)                  │ │
-// │      ├── 22: IOPort      ─→ (x86 only)                            │ │
-// │      ├── 23: IRQHandler  ─→ IRQ binding                           │ │
-// │      └── 24: IRQControl  ─→ IRQ management                        │ │
-// │                                                                     │
-// └─────────────────────────────────────────────────────────────────────┘
+// Object kind catalogues and wire IDs live in libobject::object_type.
+// The cross-layer contract is documented in doc/nucleus_capabilities.md.
 
 // ═══════════════════════════════════════════════════════════════════
 // KERNEL OBJECT TRAIT
@@ -86,5 +49,3 @@ pub trait NucleusObject: Sized + 'static {
     //TODO: add invoke here?
     // fn invoke(obj: &Self::TYPE, op: u32, args: &[u64]) -> SyscallResult;
 }
-
-// Should object type live here or in libobject? Seems like here is a better place but CapErrors need to refer to object types.

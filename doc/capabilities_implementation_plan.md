@@ -33,15 +33,31 @@ Reference: [status](nucleus_capabilities.md#status-and-authority), [responsibili
 Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wire contracts](nucleus_capabilities.md#invocation-and-wire-contracts). Prerequisite: Phase 1 scope; D9 where schemas change.
 
 - [ ] Separate shared ABI definitions from client/syscall dependencies so they can be tested without booting a kernel. Decide module/feature separation before adding a new crate.
-- [ ] Reconcile all core constants/conversions with **CoreType**: Null `0`, Untyped `1`, Domain `2`, KeyTable `3`, Time `4`, Endpoint `5`, Notification `6`, EventCount `7`, Buffer `8`, Reply `9`, DebugConsole `127`.
-- [ ] Keep architecture kinds distinguished by `0x80`; distinguish category-local indices from complete wire IDs in conversions and error details.
-- [ ] Establish one canonical type declaration and exhaustive checks for every related representation. Coordinate kernel/client migration; do not preserve the contradictory old `ObjectType` numbering.
+- [x] Reconcile all core constants/conversions with **CoreType**: Null `0`, Untyped `1`, Domain `2`, KeyTable `3`, Time `4`, Endpoint `5`, Notification `6`, EventCount `7`, Buffer `8`, Reply `9`, DebugConsole `127`.
+- [x] Keep architecture kinds distinguished by `0x80`; distinguish category-local indices from complete wire IDs in conversions and error details.
+- [x] Establish one canonical type declaration and exhaustive checks for every related representation. Coordinate kernel/client migration; do not preserve the contradictory old `ObjectType` numbering.
 - [ ] Add full-width checked operation/slot/size decoding; reject high-bit aliases, invalid flag bits, out-of-range values, and arithmetic overflow before narrowing.
 - [ ] Implement shared error encoding/decoding, preserving existing status meanings and unknown future errors/details. Eliminate competing per-family wire error spaces as each family migrates.
 - [ ] Define shared fixed-width records and constants; require layout/offset/size assertions for user-visible memory structures. Leave kernel `KeyEntry` layout private.
 - [ ] Record operation schemas and reserved IDs for the first supported slice; define unused/reserved argument treatment.
 - [ ] Set the compatibility/support-discovery policy needed for current consumers (D9); document any coordinated rebuild requirement.
 - [ ] Add ABI tests for type/error round trips, every known operation decoder, reserved values, high-bit inputs, rights masks, and record layouts.
+  - [x] Cover all object-kind aliases, all 256 wire values and local-index inputs, wrong categories/reserved IDs, const constructors, one-byte layouts, and type-related error payloads with independent literal ABI expectations.
+
+### Catalogue slice validation
+
+The private catalogue macro now generates enums, aliases, checked local-index decoding, and typed-to-wire conversions. Existing public names remain; Time/Endpoint/Notification/EventCount wire values now follow the canonical IDs. No object handlers were enabled. The host test feature is opt-in so the standard harness is skipped by the existing freestanding test workflow; full ABI/client dependency separation remains unchecked.
+
+Validated on the native AArch64 macOS host:
+
+```sh
+RUSTC_WRAPPER= cargo test -p vesper-objects --features host-tests --test object_type --offline
+RUSTC_WRAPPER= cargo clippy -p vesper-objects --features host-tests --test object_type --offline -- -D warnings
+rustfmt --edition 2024 --check libs/object/src/object_type.rs libs/object/tests/object_type.rs kernel/nucleus/src/objects/nucleus_object.rs
+RUSTC_WRAPPER= RUSTFLAGS='--cfg board_rpi3 -C target-cpu=cortex-a53' cargo check -p nucleus --target targets/aarch64-metta-none-eabi.json -Zjson-target-spec -Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem --features qemu --offline
+```
+
+Ten tests pass, as do formatting, targeted Clippy, and the nucleus cross-check. Clippy still reports the existing removed `from_iter_instead_of_collect` workspace lint; the cross-check reports a toolchain `core` future-compatibility warning. No QEMU runtime test was run for this type-only slice. `RUSTC_WRAPPER=` bypasses the host compiler cache, whose cache directory is not writable in the agent sandbox.
 
 **Exit:** kernel and client share unambiguous checked wire definitions, with ABI-only tests independent of target assembly. Later families extend this core rather than inventing another protocol.
 
