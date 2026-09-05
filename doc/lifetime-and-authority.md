@@ -199,11 +199,15 @@ Typed pools remain a useful starting point, with representation free to change u
 
 ### Who tracks revocation?
 
-**CONFIRMED:** trusted userspace KeyMaster alone manages derivation trees. The kernel supplies checked operations and object retirement, not general derivation-tree policy. The maintainer selects a **SPeCK-like resource-management model**: userspace policy and derivation management over kernel resource, liveness, and quiescence mechanisms. This is architectural direction, not wholesale adoption of Composite layouts, every implementation detail, or its address-space configuration. The table below preserves historical alternatives; kernel-owned tree management and a mandatory kernel ancestry chain are not the chosen direction.
+**CONFIRMED authority split (2026-09-06):** userspace components granted management capabilities/rights may derive, install, and manage capabilities directly. They are also entrusted with the associated bookkeeping and form part of the TCB of that libOS composition, within their granted authority. There may be multiple managers or a hierarchy; that is policy, not a kernel-mandated topology. KeyMaster names a management role, not a unique kernel-recognized service.
+
+A Key selects a slot/incarnation; KeyTable capabilities provide authority for table operations. The existing Vesper abstraction already expresses the distinction between using an object and managing entries that name it. A component without direct management authority can call a manager service instead. A component explicitly granted direct derivation power is not required by the nucleus to register afterward with a central KeyMaster; its bookkeeping obligations belong to the entrusted composition.
+
+The kernel supplies checked source/destination authorization, per-kind transitions, rights attenuation, lifetime validity, and quiescence/reuse mechanisms. Composition-scoped TCB membership does not grant unconfined execution or bypass kernel memory protection. This is the selected **SPeCK-like resource-management model**, not wholesale adoption of Composite's layouts or every implementation detail. The table below preserves historical alternatives; kernel-owned tree management and a mandatory kernel ancestry chain are not the chosen direction.
 
 | Model | Benefits | Costs |
 |---|---|---|
-| Exclusive trusted manager controls derivation | Smaller kernel derivation machinery | Every derivation/transfer path must respect exclusivity; manager failure requires recovery |
+| Composition chooses one entrusted manager | Smaller kernel derivation machinery; clients use its services | Direct management authority must be granted consistently with that policy; leaks/recovery remain OS concerns |
 | Kernel tracks derivation scopes | Supports direct delegation between mutually distrustful components | Charged metadata, traversal, bounded cancellation and reclamation |
 | Coarse allocation/delegation scopes | Simpler initial revocation mechanism | Broader disruption; less selective reclamation |
 
@@ -213,11 +217,12 @@ An object-wide epoch does not provide selective branch-only invalidation while s
 
 Lazy object invalidation does not remove PTEs or cancel all retained work by itself. **The authorized library OS/resource manager owns unmap-before-invalidation orchestration.** Trust follows explicitly granted capabilities, not a blanket assumption that all Domains or libOS instances cooperate. It must not invalidate the only usable cleanup authority and then expect a malicious recipient to cooperate. Premature-reuse checks and the kernel/manager completion protocol remain D2/D6, but the new D1 threat model requires confinement even when a recipient bypasses its libOS. Accepted allocation leaks must not become conflicting physical reuse.
 
-KeyMaster is entrusted with tree management because it receives the necessary authority. No kernel bypass should depend merely on its name. The earlier manager-exclusive direction still needs a precise permission model: if another application is granted direct derivation powers, does it join the trusted bookkeeping boundary or still register its work through KeyMaster? That is a D2/D4 clarification, not a reason to reject capability-scoped trust.
+The earlier question about applications deriving directly is resolved: granting direct management authority also entrusts the recipient with bookkeeping. Multiple or hierarchical managers distribute this responsibility through composition policy. No universal central registration protocol or name-based manager privilege is implied. Exact manager-side synchronization, partial-failure handling, and coordination remain work for the chosen composition, not a new kernel policy mandate.
 
 **OPEN / DECISION REQUIRED — D2:**
 
-- [ ] Specify how every derivation/transfer path preserves the selected trusted-manager boundary, including Copy authorization and IPC registration.
+- [ ] Specify/enforce management authority for each derivation/installation/transfer path, including source/destination table checks and per-kind attenuation; do not impose central post-hoc registration.
+- [ ] Define manager-side bookkeeping contracts for the selected libOS composition, including failure handling and any cross-manager/hierarchical coordination; granting direct derivation power entrusts that responsibility.
 - [ ] Implement shared-object validity checks across tables, and define stable authoritative metadata for inline Frame/Untyped regions as well as pooled objects.
 - [ ] Define the kernel-retirement/KeyMaster-cleanup notification or handoff, idempotent cleanup, and generation-safe metadata reuse.
 - [ ] Define selective subtree invalidation of a still-live shared object if required; do not assume the object-wide epoch preserves siblings.
@@ -432,7 +437,7 @@ Domain = VSpace is a semantic protection-unit decision, not permission to silent
 
 **6. Availability policy versus resource enforcement.** Keeping recovery/admission policy in the libOS is consistent with the model. A malicious Domain may bypass its libOS, so the nucleus still must bound/charge its resource consumption and provide checked IPC/syscall failure rather than unbounded allocations or panics. Exact budget/quota and bounded-work mechanisms remain implementation work, not a new kernel scheduling-policy mandate.
 
-**7. Authorized derivation versus manager exclusivity — next discussion, not resolved here.** KeyMaster's authority is capability-based. If another Domain receives equivalent direct derivation permissions, decide whether it is another entrusted manager or must register through KeyMaster. A name-only exception is not acceptable, and unregistered derivation must not silently invalidate the bookkeeping assumptions used for revocation. The maintainer requested revisiting this after the current results are recorded; no new answer is inferred from the fbuf/VA deferral decisions.
+**7. CONFIRMED — direct derivation entails bookkeeping responsibility.** Applications granted explicit copying/derivation-management authority join the TCB of the particular libOS composition and are responsible for bookkeeping. Multiple managers or hierarchies are composition policy. The kernel provides mechanisms and checks authority; it does not impose a central registry or special KeyMaster identity. The remaining work is implementing operation schemas and composition-specific management protocols, not choosing between direct derivation and mandatory registration again.
 
 ### D1 implementation and validation work
 
@@ -505,6 +510,24 @@ Current source examined at [`3ef8f8c4d3296624640e6f3bd00801054d8350a3`](https://
 
 **Limits:** component expiration does not itself sweep every PTE; the examined source does not establish Vesper's unmap-before-invalidation protocol or a universal background subtree worker. Some cleanup paths remain incomplete, including [`cos_mem_remove`](https://github.com/gwsystems/composite/blob/3ef8f8c4d3296624640e6f3bd00801054d8350a3/src/components/lib/kernel/cos_kernel_api.c#L1596-L1601). This was source/document inspection, not execution or a correctness audit; paper goals and current implementation coverage must not be conflated.
 
+#### Recent Composite activity and newer research
+
+Public sources checked on 2026-09-06: the old SPeCK/PARSEC/C3 papers do not imply abandonment. The [official repository](https://github.com/gwsystems/composite) is not archived, and the already-inspected source pin [`3ef8f8c4d3296624640e6f3bd00801054d8350a3`](https://github.com/gwsystems/composite/commit/3ef8f8c4d3296624640e6f3bd00801054d8350a3) is a substantive merge dated **2026-08-31**. [PR #502](https://github.com/gwsystems/composite/pull/502) integrates generic guest-image builds, VMM I/O changes, and a networking-thread placement fix. [PR #498](https://github.com/gwsystems/composite/pull/498), merged **2026-02-18**, integrates Patina and VMX updates. These establish recent research development, not production support.
+
+Newer directly relevant primary work includes:
+
+| Work | Date | Relevance and limit |
+|---|---|---|
+| [Ch'i: Scaling Microkernel Capabilities in Cache-Incoherent Systems](https://faculty.cs.gwu.edu/gparmer/publications/chi20ross.pdf) | ROSS 2020 | Composite-based capability visibility/quiescence and safe reuse on incoherent systems; not a general derivation-tree policy |
+| [Practical Principle of Least Privilege for Secure Embedded Systems (Patina)](https://faculty.cs.gwu.edu/gparmer/publications/rtas21patina.pdf) | RTAS 2021 | Section IV-C directly discusses user-level capability-manager delegation/revocation policy and statically bounded tracking specialized for restricted sharing patterns; not arbitrary-depth tree management |
+| [Janus: OS Support for a Secure, Fast Control-Plane](https://faculty.cs.gwu.edu/gparmer/publications/rtas25janus.pdf) | RTAS 2025 | Composite capability-controlled fast paths using MPK; section III-E links capability revocation to removing fast-path callgate/dispatch access. Its threat model/backend cannot be assumed to satisfy Vesper D1 without review |
+| Byways: High-Performance, Isolated Network Functions for Multi-Tenant Cloud Servers | SoCC 2024 | BywayOS is built as components on Composite; evidence of continued systems research, not a completed general revocation service |
+| SPR: Shielded Processor Reservations with Bounded Management Overhead | RTAS 2025 | Composite implementation/evaluation of temporal-isolation mechanisms; not derivation bookkeeping |
+
+The latter two and other newer work are listed in the author's [publication catalogue](https://faculty.cs.gwu.edu/gparmer/pubs.html). Bibliography/site maintenance can lag actual development.
+
+**Maturity qualification:** the inspected repository still labels itself pre-alpha; public GitHub release/tag listings were empty at this check. Recent activity and papers establish that calling it abandoned is unsupported, but do not establish stable releases, long-term support, or completed failure-resilient revocation in current `capmgr/simple`. Patina is the most direct newer reference for the external-management question; the earlier source-level completeness caveats still apply.
+
 #### Implications and remaining implementation questions
 
 - Shared-object generation validation and KeyMaster-owned mapping trees are complementary, not competing mechanisms. No kernel ancestry walk is needed merely to reject all caps to a retired object.
@@ -533,7 +556,7 @@ Within the main implementation plan's dependency ordering, the next work is:
 
 - [ ] Implement incarnation-bearing keys, authoritative shared-object lifetime validation, and the agreed inconsistency behavior.
 - [ ] Implement delegable lifetime-control permission while preserving creator authority and accepted leak behavior.
-- [ ] Enforce KeyMaster's derivation boundary and implement the retirement/background-cleanup handoff.
+- [ ] Enforce explicit management authority and implement the retirement/background-cleanup handoff for the composition's entrusted managers, without requiring a singleton KeyMaster or central post-hoc registration.
 - [ ] Settle remaining selective-revocation and completion guarantees, including Unmap-before-invalidation and safe physical reuse.
 - [ ] Implement private guard-owned mapping lifecycles, investigate Rust mutability/shared-resource APIs, and define persistent DCB record guarantees.
 - [ ] Resolve remaining namespace scope, common-address reservation/conflicts, and relocation policy under the selected cross-Domain-alias/protected-context model; do not reopen the permitted aliasing modes.
