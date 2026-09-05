@@ -9,6 +9,7 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 
 - Resolve every repository-relative path below against the **Vesper repository root**, not this skill's directory (`.claude/skills/capability-refactor`).
 - Always read **both** `doc/nucleus_capabilities.md` (canonical contract) and `doc/capabilities_implementation_plan.md` (checkbox plan) first, before analysis or edits. If either is unavailable, ask the user rather than inventing its contents.
+- For lifetime, ownership, authority, delegation, revocation, or reclamation work, also read the relevant sections of `doc/lifetime-and-authority.md`. It records code-grounded alternatives, complexity estimates, explicit open decisions, and outstanding tasks; it supplements rather than supersedes the canonical contract and implementation plan.
 - Preserve user and concurrent-agent edits to these documents; coordinate overlapping changes and make focused updates rather than replacing either document wholesale.
 - Distinguish accepted contracts, proposals, open decisions, and implementation status. Existing code and unchecked plan items are not architectural approval.
 - Use canonical `CoreType` numeric IDs, not legacy `ObjectType` constants. Preserve the canonical mapping; consult the contract and `CoreType` rather than copying full type/opcode/rights tables here. Core IDs include `Null = 0` and `DebugConsole = 127`; architecture-specific types use the high bit `0x80`.
@@ -29,6 +30,8 @@ Check the documents' decision status and dependencies for the selected item:
 - **D9:** ABI evolution.
 
 Resolve blocking decisions with the user before implementing dependent behavior. Present the concrete choice, consequences, and affected checklist item; never silently promote a proposal to an accepted contract.
+
+For lifecycle and authority changes, consult the **OPEN / DECISION REQUIRED** sections in `doc/lifetime-and-authority.md` and map them to D1–D9 above. In particular, do not assume slot-incarnation semantics, retirement authority, a revocation trust boundary, cancellation/completion guarantees, or safe mapping leases have been approved. Record approved choices in the canonical contract first, then reconcile the analysis document and implementation plan.
 
 ## Pick one incremental slice
 
@@ -69,11 +72,11 @@ Respect the plan's ordering and explicit prerequisites:
 
 ## Safety requirements
 
-- Never fabricate lifetimes or references with unsafe code to bypass ownership or guard constraints; establish real backing-storage and domain lifetime guarantees.
+- Never fabricate lifetimes or references with unsafe code to bypass ownership or guard constraints; establish real backing-storage and domain lifetime guarantees. Consult `doc/lifetime-and-authority.md` sections 1–3 and 5–6 for slot/object/domain reuse, guarded access, and direct-memory/DCB hazards; thin fallible handles do not justify unguarded references.
 - Prevent rights amplification across lookup, derivation, transfer, and invocation; validate authority in the kernel regardless of wrapper types.
 - Preserve resources and ownership on pre-commit failure through validation/reservation and rollback. Where the approved contract permits irreversible partial completion, expose it explicitly with recoverable bookkeeping; never silently lose or duplicate resources.
 - Reject malformed or unsupported user input with defined errors, not panics, unchecked indexing, or fake success.
-- Keep authority, badges, lifetime, revocation, and blocking semantics aligned with approved decisions; expose unresolved assumptions instead of encoding them as defaults.
+- Keep authority, badges, lifetime, revocation, and blocking semantics aligned with approved decisions; expose unresolved assumptions instead of encoding them as defaults. Use `doc/lifetime-and-authority.md` sections 2 and 4–8 to review per-kind authority, delete/revoke/retire/reclaim distinctions, pending-operation outcomes, and hardware-safe reuse; generation invalidation alone is not completed reclamation.
 
 ## Nightly Rust features
 
@@ -94,5 +97,5 @@ Vesper is a playground for nightly Rust features. Using the latest nightly-only 
 
 - Start with pure ABI tests (IDs, layouts, encode/decode, errors), then state/rights/lifetime models and failure atomicity, then relevant target/QEMU integration, all through appropriate `just` recipes. Match coverage to the slice and its acceptance criteria; narrower checks do not imply the broader workflow passed.
 - Bound long-running commands with timeouts. Report exact commands, results, missing prerequisites, and timeouts; an unavailable target run is a validation blocker, not a pass.
-- Before completion, compare changed contracts, code, tests, and plan status. Report the item addressed, affected paths, observed validation, remaining blockers, and next prerequisite without starting another slice.
+- Before completion, compare changed contracts, code, tests, and plan status. For lifecycle/authority slices, also reconcile the relevant open decisions and task/validation checklists in `doc/lifetime-and-authority.md`; documentation alone does not complete implementation or validation tasks. Report the item addressed, affected paths, observed validation, remaining blockers, and next prerequisite without starting another slice.
 - The user uses **JJ only**: no raw Git. Do not automatically perform version-control operations; use read-only JJ only if necessary. No commit/change creation, history mutation, branch/bookmark changes, or push by default, and no force rewriting.
