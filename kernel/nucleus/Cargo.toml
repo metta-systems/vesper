@@ -1,0 +1,71 @@
+[package]
+name = "nucleus"
+
+description = "Vesper nanokernel privileged nucleus binary."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+default = []
+# Opt in to debug-only kernel capabilities; never enable in production kernels.
+debug_kernel = []
+# Enable JTAG debugging of kernel - enable jtag helpers and
+# block waiting for JTAG probe attach at the start of kernel main.
+jtag = ["libmachine/jtag"]
+noserial = [] #"libplatform/noserial"
+# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
+qemu = [
+  # "libconsole/qemu",
+  "libexception/qemu",
+  "libmachine/qemu",
+  # "libplatform/qemu",
+]
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+bitflags = { workspace = true }
+cfg-if = { workspace = true }
+libaddress = { workspace = true }
+libcpu = { workspace = true }
+libexception = { workspace = true }
+liblocking = { workspace = true }
+liblog = { workspace = true }
+libmachine = { workspace = true }
+libmapping = { workspace = true }
+libobject = { workspace = true }
+libprint = { workspace = true }
+libqemu = { workspace = true }
+
+[dev-dependencies]
+libboot = { workspace = true }
+libconsole = { workspace = true }
+libexception = { workspace = true, features = ["test_build"] }
+liblocking = { workspace = true }
+libqemu = { workspace = true }
+libtest = { workspace = true }
+
+[build-dependencies]
+build-rs = { workspace = true }
+
+[[bin]]
+name = "nucleus"
+test = false  # test are all concentrated in integration tests/
+
+[[test]]
+name = "debug_console"
+required-features = ["debug_kernel"]
+
+[lints]
+workspace = true

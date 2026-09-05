@@ -1,0 +1,43 @@
+[package]
+name = "vesper-objects"
+
+description = "Vesper nanokernel objects interface."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+# Opt in to the debug-only prototype console wrapper.
+debug_kernel = []
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+[dependencies]
+libaddress = { workspace = true }
+libprint = { workspace = true }
+libqemu = { workspace = true }
+libsyscall = { workspace = true }
+
+# Keep the freestanding library harness disabled; host integration tests opt in above.
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "object_type"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

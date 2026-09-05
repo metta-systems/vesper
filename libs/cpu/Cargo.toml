@@ -1,5 +1,5 @@
 [package]
-name = "libcpu"
+name = "vesper-cpu"
 
 description = "Vesper nanokernel CPU support."
 
@@ -24,17 +24,11 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 aarch64-cpu = { workspace = true }
-bit_field = { workspace = true }
-bitflags = { workspace = true }
-cfg-if = { workspace = true }
-once_cell = { workspace = true }
-snafu = { workspace = true }
-tock-registers = { workspace = true }
-usize_conversions = { workspace = true }
-ux = { workspace = true }
 
+# Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
+harness = false
 
 # For proper testing in libcpu, we build it as a test_runner binary!
 

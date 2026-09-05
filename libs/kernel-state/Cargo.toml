@@ -1,7 +1,7 @@
 [package]
-name = "libkernel-state"
+name = "vesper-kernel-state"
 
-description = "Kernel boot state manager."
+description = "Vesper nanokernel boot state manager."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -18,7 +18,12 @@ publish = false
 [badges]
 maintenance = { status = "experimental" }
 
-[dependencies]
+# [dev-dependencies]
+# libtest = { workspace = true }
+
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

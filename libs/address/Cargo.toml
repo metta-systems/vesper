@@ -1,0 +1,38 @@
+[package]
+name = "vesper-address"
+
+description = "Vesper nanokernel memory address types."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]
+arbitrary-int = { workspace = true }
+bitbybit = { workspace = true }
+num = { workspace = true }
+usize_conversions = { workspace = true }
+
+[dev-dependencies]
+libboot = { workspace = true }
+libconsole = { workspace = true }
+liblog = { workspace = true }
+libqemu = { workspace = true }
+libtest = { workspace = true }
+
+# [lib]
+# test = false
+
+[lints]
+workspace = true

@@ -1,7 +1,7 @@
 [package]
-name = "libtime"
+name = "vesper-time"
 
-description = "Time functions"
+description = "Vesper nanokernel time functions."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -24,6 +24,14 @@ liblocking = { workspace = true }
 liblog = { workspace = true }
 once_cell = { workspace = true }
 tock-registers = { workspace = true }
+
+# [dev-dependencies]
+# libtest = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

@@ -1,0 +1,31 @@
+[package]
+name = "vesper-alloc"
+
+description = "Vesper nanokernel memory allocator types."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]
+libaddress = { workspace = true }
+liblog = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+harness = false
+
+[lints]
+workspace = true

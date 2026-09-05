@@ -1,7 +1,7 @@
 [package]
-name = "libexception"
+name = "vesper-exceptions"
 
-description = "Exceptions handling"
+description = "Vesper nanokernel CPU exceptions handling."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -26,11 +26,19 @@ test_build = []
 [dependencies]
 aarch64-cpu = { workspace = true }
 liblocal-irq = { workspace = true }
-liblocking = { workspace = true }
 liblog = { workspace = true }
-libprimitives = { workspace = true }
-snafu = { workspace = true }
 tock-registers = { workspace = true }
+
+[dev-dependencies]
+libboot = { workspace = true }
+libconsole = { workspace = true }
+libqemu = { workspace = true }
+libtest = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

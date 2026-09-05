@@ -1,0 +1,69 @@
+[package]
+name = "kickstart"
+
+description = "Vesper nanokernel startup initialization."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+# Opt in to the debug-only prototype console demonstration.
+debug_kernel = ["libobject/debug_kernel"]
+# Enable JTAG debugging of kernel - enable jtag helpers and
+# block waiting for JTAG probe attach at the start of kernel main.
+jtag = ["libmachine/jtag"]
+noserial = [] #"libplatform/noserial"
+# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
+qemu = [
+  # "libconsole/qemu",
+  "libexception/qemu",
+  "libmachine/qemu",
+  # "libplatform/qemu",
+]
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+cfg-if = { workspace = true }
+libaddress = { workspace = true }
+libboot = { workspace = true }
+libcpu = { workspace = true }
+libexception = { workspace = true }
+liblog = { workspace = true }
+liblocking = { workspace = true }
+libmachine = { workspace = true }
+libmapping = { workspace = true }
+libprint = { workspace = true }
+libqemu = { workspace = true }
+libobject = { workspace = true }
+libsyscall = { workspace = true }
+snafu = { workspace = true }
+shrinkwraprs = { version = "0.3", default-features = false }
+fdt-rs = { version = "=0.4.4", default-features = false }
+
+[dev-dependencies]
+libexception = { workspace = true, features = ["test_build"] }
+liblocking = { workspace = true }
+libqemu = { workspace = true }
+libtest = { workspace = true }
+
+[build-dependencies]
+goblin = { workspace = true }
+build-rs = { workspace = true }
+build-print = { workspace = true }
+minijinja = { workspace = true }
+
+[[bin]]
+name = "kickstart"
+test = false  # test are all concentrated in integration tests/
+
+[lints]
+workspace = true

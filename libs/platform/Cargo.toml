@@ -1,6 +1,6 @@
 [package]
-name = "libplatform"
-description = "Vesper nanokernel platform code."
+name = "vesper-platforms"
+description = "Vesper nanokernel platform abstraction code."
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
@@ -28,34 +28,30 @@ test_build = []
 
 [dependencies]
 aarch64-cpu = { workspace = true }
-bit_field = { workspace = true }
-bitflags = { workspace = true }
-buddy-alloc = { workspace = true }
-cfg-if = { workspace = true }
+libaddress = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
+libdriver = { workspace = true }
 libexception = { workspace = true }
 libkernel-state = { workspace = true }
-liblocal-irq = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
-libmemory = { workspace = true }
-libdriver = { workspace = true }
+libmapping = { workspace = true }
+libmmio = { workspace = true }
 libprimitives = { workspace = true }
 libtime = { workspace = true }
-once_cell = { workspace = true }
-qemu-exit = { workspace = true }
 snafu = { workspace = true }
 tock-registers = { workspace = true }
-usize_conversions = { workspace = true }
-ux = { workspace = true }
 
 [dev-dependencies]
+libboot = { workspace = true }
+libqemu = { workspace = true }
 libtest = { workspace = true }
 
-# Tests are offloaded to nucleus integration tests binary.
+# Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
+harness = false
 
 [lints]
 workspace = true

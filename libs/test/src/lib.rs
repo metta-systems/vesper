@@ -27,7 +27,7 @@ where
 }
 
 pub fn test_runner(tests: &[&dyn TestFn]) {
-    liblog::println!("Running {} tests", tests.len());
+    liblog::println!("*TESTING* Running {} tests", tests.len());
     for test in tests {
         test.run();
     }

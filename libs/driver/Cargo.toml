@@ -1,7 +1,7 @@
 [package]
-name = "libdriver"
+name = "vesper-drivers"
 
-description = "Interfaces for implementing drivers"
+description = "Vesper nanokernel interfaces for implementing device drivers."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -26,8 +26,12 @@ maintenance = { status = "experimental" }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 
+# libtest = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
+harness = false
 
 [lints]
 workspace = true
