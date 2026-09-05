@@ -288,15 +288,10 @@ impl SerialOps for MiniUartInner {
 
     fn read_byte_nonblocking(&self) -> Option<u8> {
         use tock_registers::interfaces::Readable;
-        if self
-            .registers
+        self.registers
             .AUX_MU_STAT
             .is_set(AUX_MU_STAT::SYMBOL_AVAILABLE)
-        {
-            Some((self.registers.AUX_MU_IO.get() & 0xff) as u8)
-        } else {
-            None
-        }
+            .then(|| (self.registers.AUX_MU_IO.get() & 0xff) as u8)
     }
 
     fn write_byte(&self, b: u8) {

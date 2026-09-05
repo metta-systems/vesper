@@ -85,8 +85,7 @@ fn panicked(info: &PanicInfo) -> ! {
 extern "C" fn default_exception_handler(exc: &ExceptionContext) {
     panic!(
         "Unexpected CPU Exception!\n\n\
-        {}",
-        exc
+        {exc}"
     );
 }
 

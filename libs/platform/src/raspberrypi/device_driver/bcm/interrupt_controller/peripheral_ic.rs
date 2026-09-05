@@ -143,7 +143,7 @@ impl IRQManager for PeripheralIC {
         self.handler_table.read(|table| {
             for irq_number in self.pending_irqs() {
                 match table[irq_number] {
-                    None => panic!("No handler registered for IRQ {}", irq_number),
+                    None => panic!("No handler registered for IRQ {irq_number}"),
                     Some(descriptor) => {
                         // Call the IRQ handler. Panics on failure.
                         descriptor.handler().handle().expect("Error handling IRQ");
