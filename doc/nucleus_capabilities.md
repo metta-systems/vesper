@@ -175,6 +175,8 @@ The following preserves existing operation declarations as a starting vocabulary
 | DebugConsole | Write `0` | Debug-only prototype behind explicit `debug_kernel`; checked user-memory access and explicit authority remain deferred |
 | Architecture families | Frame mapping/query; page-table mapping; VSpace translation/ASID binding; ASID, I/O, IRQ control | Freeze per-operation schemas with the relevant backend; do not treat draft handlers as complete contracts |
 
+Implementation status: `KeyTableOp` provides checked `TryFrom<u64>` and `TryFrom<u32>` decoding of the existing IDs above. The full-width decoder rejects every other value with the existing `InvalidOperation` error, including unassigned `3` and high-bit aliases; the `u32` adapter widens before delegating. This is shared ABI vocabulary only: the excluded KeyTable handler is not enabled, active dispatch still reports `UnsupportedCoreType(KeyTable)` after successful lookup, and entry-level register validation remains unfinished. No rights, slot/argument schema, ownership, or D2–D4/D9 decision is implied.
+
 ### DebugConsole debug-only exception
 
 Maintainer decision (2026-09-05, scoped D4/D9): DebugConsole is **not a generally available capability**. Its handler, bootstrap grant, userspace wrapper, and boot demonstration require the opt-in Cargo feature `debug_kernel`, disabled by default. This feature identifies a debug kernel independently of Cargo's optimization profile: the embedded build recipes use `--release` even for debugging. Neither `qemu` nor `jtag` implicitly enables it. Build nucleus and kickstart together, for example with `just build rpi3 qemu,debug_kernel`; production kernels must omit `debug_kernel`.

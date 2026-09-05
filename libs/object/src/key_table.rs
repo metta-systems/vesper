@@ -39,12 +39,36 @@ pub struct KeyTableKey {
 
 enum KeyTableType {}
 
+/// Existing operation vocabulary; decoding an ID does not imply kernel support.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum KeyTableOp {
     CopyDerive = 0, // copy cap between slots or create derived cap with reduced rights
     Move = 1,       // move cap between slots
     Delete = 2,     // delete cap at slot
     Revoke = 4,     // revoke all children of cap
+}
+
+impl TryFrom<u64> for KeyTableOp {
+    type Error = CapError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::CopyDerive),
+            1 => Ok(Self::Move),
+            2 => Ok(Self::Delete),
+            4 => Ok(Self::Revoke),
+            _ => Err(CapError::InvalidOperation),
+        }
+    }
+}
+
+impl TryFrom<u32> for KeyTableOp {
+    type Error = CapError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::try_from(u64::from(value))
+    }
 }
 
 // Userspace KeyMaster must track parent→child relationships,

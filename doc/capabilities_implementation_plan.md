@@ -67,6 +67,7 @@ Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wir
 - [x] Keep architecture kinds distinguished by `0x80`; distinguish category-local indices from complete wire IDs in conversions and error details.
 - [x] Establish one canonical type declaration and exhaustive checks for every related representation. Coordinate kernel/client migration; do not preserve the contradictory old `ObjectType` numbering.
 - [ ] Add full-width checked operation/slot/size decoding; reject high-bit aliases, invalid flag bits, out-of-range values, and arithmetic overflow before narrowing.
+  - [x] Add checked KeyTable operation decoding from `u64` with a widening `u32` adapter; preserve IDs `0`, `1`, `2`, `4`, and reject reserved IDs/high-bit aliases without enabling the handler.
 - [ ] Implement shared error encoding/decoding, preserving existing status meanings and unknown future errors/details. Eliminate competing per-family wire error spaces as each family migrates.
   - [x] Decode the existing status 1–25 baseline with checked detail widths and lossless unknown-response preservation; migrate Domain mutation wrappers. Other families and competing draft errors remain pending.
 - [ ] Define shared fixed-width records and constants; require layout/offset/size assertions for user-visible memory structures. Leave kernel `KeyEntry` layout private.
@@ -74,6 +75,20 @@ Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wir
 - [ ] Set the compatibility/support-discovery policy needed for current consumers (D9); document any coordinated rebuild requirement.
 - [ ] Add ABI tests for type/error round trips, every known operation decoder, reserved values, high-bit inputs, rights masks, and record layouts.
   - [x] Cover all object-kind aliases, all 256 wire values and local-index inputs, wrong categories/reserved IDs, const constructors, one-byte layouts, and type-related error payloads with independent literal ABI expectations.
+
+### KeyTable operation-decoder slice validation
+
+Selected the smallest remaining KeyTable ABI prerequisite, not its lifecycle implementation. `KeyTableOp` now decodes the existing operation vocabulary through `TryFrom<u64>` and a delegating `TryFrom<u32>`, returning the existing `InvalidOperation` error for every other value. No wire IDs, client request/result encoding, authority rules, or object transitions changed. The kernel handler remains excluded; active dispatch still rejects KeyTable as unsupported. D1–D9 remain unchanged because no new operation schema or behavior is enabled.
+
+Three tests in the existing host harness pin all four operation IDs and the one-byte enum layout, reject every unassigned byte including `3`, and reject aliases with each high bit from 8 through 63 plus maximum-width values. Existing wrapper tests continue checking literal request encoding and error propagation.
+
+| Recipe | Result and scope |
+|---|---|
+| `just test-object-host` | Passed 30 feature-off / 31 feature-on tests |
+| `just fmt-check` | Passed workspace formatting |
+| `just clippy` | Passed the RPi3/QEMU nucleus + kickstart build, all nine embedded configurations, and both host-harness feature states |
+
+Coverage limits: no QEMU runtime tests or full `just test` run for this pure decoder addition. The decoder is not wired into active KeyTable dispatch because the operations remain unsupported. Raw SVC entry still has panicking register conversions; this slice does not repair that boundary or complete full-width argument/slot/size decoding. General KeyTable activation still requires guarded storage/lifetime and approved D2–D4 authority/lifecycle semantics. Existing cache-access and toolchain future-compatibility warnings remain nonblocking. The parent decoding item remains unchecked.
 
 ### Catalogue slice validation
 

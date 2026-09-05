@@ -21,6 +21,77 @@ mod tests {
     use vesper_objects::{ArchType, CapError, CoreType, ObjectType};
 
     #[test]
+    fn key_table_operations_match_existing_wire_ids() {
+        use vesper_objects::key_table::KeyTableOp;
+
+        for (op, raw) in [
+            (KeyTableOp::CopyDerive, 0_u32),
+            (KeyTableOp::Move, 1),
+            (KeyTableOp::Delete, 2),
+            (KeyTableOp::Revoke, 4),
+        ] {
+            assert_eq!(op as u32, raw);
+            assert_eq!(KeyTableOp::try_from(raw).map_err(CapError::code), Ok(op));
+            assert_eq!(
+                KeyTableOp::try_from(u64::from(raw)).map_err(CapError::code),
+                Ok(op)
+            );
+        }
+        assert_eq!(size_of::<KeyTableOp>(), 1);
+        assert_eq!(align_of::<KeyTableOp>(), 1);
+    }
+
+    #[test]
+    fn key_table_operations_reject_every_unassigned_byte() {
+        use vesper_objects::key_table::KeyTableOp;
+
+        for raw in 0_u32..=255 {
+            if matches!(raw, 0 | 1 | 2 | 4) {
+                continue;
+            }
+            assert!(matches!(
+                KeyTableOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+            assert!(matches!(
+                KeyTableOp::try_from(u64::from(raw)),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn key_table_operations_reject_high_bit_aliases_before_narrowing() {
+        use vesper_objects::key_table::KeyTableOp;
+
+        for low in [0_u64, 1, 2, 4] {
+            for bit in 8..64 {
+                let raw = low | (1_u64 << bit);
+                assert!(matches!(
+                    KeyTableOp::try_from(raw),
+                    Err(CapError::InvalidOperation)
+                ));
+                if let Ok(raw) = u32::try_from(raw) {
+                    assert!(matches!(
+                        KeyTableOp::try_from(raw),
+                        Err(CapError::InvalidOperation)
+                    ));
+                }
+            }
+        }
+        for raw in [u64::from(u32::MAX), u64::MAX] {
+            assert!(matches!(
+                KeyTableOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        assert!(matches!(
+            KeyTableOp::try_from(u32::MAX),
+            Err(CapError::InvalidOperation)
+        ));
+    }
+
+    #[test]
     fn debug_console_operation_stays_defined_without_kernel_availability() {
         use vesper_objects::debug_console::DebugConsoleOp;
 
