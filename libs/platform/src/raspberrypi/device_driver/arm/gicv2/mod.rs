@@ -201,7 +201,7 @@ impl IRQManager for GICv2 {
         // Call the IRQ handler. Panic if there is none.
         self.handler_table.read(|table| {
             match table[irq_number] {
-                None => panic!("No handler registered for IRQ {}", irq_number),
+                None => panic!("No handler registered for IRQ {irq_number}"),
                 Some(descriptor) => {
                     // Call the IRQ handler. Panics on failure.
                     descriptor.handler().handle().expect("Error handling IRQ");

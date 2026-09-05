@@ -22,8 +22,12 @@ maintenance = { status = "experimental" }
 libkernel-state = { workspace = true }
 liblocal-irq = { workspace = true }
 
-# [dev-dependencies]
-# libtest = { workspace = true }
+[dev-dependencies]
+libboot = { workspace = true }
+libconsole = { workspace = true }
+liblog = { workspace = true }
+libqemu = { workspace = true }
+libtest = { workspace = true }
 
 [lib]
 test = false

@@ -221,7 +221,7 @@ alias ocd := openocd
 
 # === Testing ===
 
-# Run all device tests in QEMU (rpi3) with all device features, plus host tool tests natively
+# Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("emu")]
 test: test-device test-chainboot test-host
 
@@ -245,10 +245,16 @@ test-chainboot:
     cargo test {{ target_json }} --features=qemu {{ rust_std }} \
       -p chainboot
 
-# Run host tool tests natively
+# Run capability and host tool tests natively
 [group("emu")]
-test-host:
+test-host: test-object-host
     cargo test -p chainofcommand
+
+# Run the opt-in capability ABI tests on the native host (currently AArch64)
+[group("emu")]
+test-object-host:
+    RUSTFLAGS="{{ fixed_rustflags }}" \
+    cargo test -p vesper-objects --features=host-tests --test object_type
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -273,13 +279,20 @@ _clippy-cross features='' board='rpi3':
       --workspace --exclude=chainofcommand \
       -- --deny warnings --allow deprecated
 
-# Run clippy checks (all feature combos)
+# Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3')
+clippy: (build 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') clippy-object-host
 
-# Run shortened clippy (default features only, both boards)
+# Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
-clippy-pre-push: (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4')
+clippy-pre-push: (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') clippy-object-host
+
+# Lint the opt-in capability ABI tests with their native host harness
+[group("maintenance")]
+clippy-object-host:
+    RUSTFLAGS="{{ fixed_rustflags }}" \
+    cargo clippy -p vesper-objects --features=host-tests --test object_type \
+      -- --deny warnings --allow deprecated
 
 # Clippy for chainofcommand (host tool)
 [private]

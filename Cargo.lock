@@ -1140,8 +1140,12 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "tock-registers",
+ "vesper-boot",
+ "vesper-console",
  "vesper-local-irq",
  "vesper-log",
+ "vesper-qemu",
+ "vesper-tests",
 ]
 
 [[package]]
@@ -1161,8 +1165,13 @@ dependencies = [
 name = "vesper-locking"
 version = "0.0.1"
 dependencies = [
+ "vesper-boot",
+ "vesper-console",
  "vesper-kernel-state",
  "vesper-local-irq",
+ "vesper-log",
+ "vesper-qemu",
+ "vesper-tests",
 ]
 
 [[package]]
@@ -1226,6 +1235,7 @@ dependencies = [
  "snafu",
  "tock-registers",
  "vesper-address",
+ "vesper-boot",
  "vesper-console",
  "vesper-cpu",
  "vesper-drivers",
@@ -1237,6 +1247,7 @@ dependencies = [
  "vesper-mmio",
  "vesper-primitives",
  "vesper-qemu",
+ "vesper-tests",
  "vesper-time",
 ]
 
@@ -1247,6 +1258,13 @@ version = "0.0.1"
 [[package]]
 name = "vesper-print"
 version = "0.0.1"
+dependencies = [
+ "vesper-boot",
+ "vesper-console",
+ "vesper-log",
+ "vesper-qemu",
+ "vesper-tests",
+]
 
 [[package]]
 name = "vesper-qemu"

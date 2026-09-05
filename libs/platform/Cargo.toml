@@ -44,8 +44,9 @@ snafu = { workspace = true }
 tock-registers = { workspace = true }
 
 [dev-dependencies]
+libboot = { workspace = true }
 libqemu = { workspace = true }
-# libtest = { workspace = true }
+libtest = { workspace = true }
 
 # Tests are offloaded to kernel integration tests binary.
 [lib]

@@ -26,13 +26,15 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just build` | Build nucleus and kickstart and produce the kernel binary; defaults to RPi4/hardware |
 | `just build rpi3 qemu` | Build the RPi3/QEMU kernel configuration without starting QEMU |
 | `just fmt-check` | Workspace formatting check using the configured nightly toolchain |
-| `just clippy` | RPi3/QEMU build prerequisite, then embedded Clippy across the defined board/feature combinations |
-| `just clippy-pre-push` | Shorter Clippy workflow: default features on RPi3 and RPi4; not the full matrix |
+| `just clippy` | RPi3/QEMU build prerequisite, embedded Clippy across the defined board/feature combinations, and capability host-test linting |
+| `just clippy-pre-push` | Default features on RPi3 and RPi4 plus capability host-test linting; not the full embedded matrix |
+| `just clippy-object-host` | Focused native lint check of the capability library and its opt-in ABI test harness |
 | `just lint` | Formatting, full embedded Clippy workflow, and host-tool Clippy |
 | `just test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
 | `just test-chainboot` | Chainboot tests with its own linker script and target runner |
-| `just test-host` | Native `chainofcommand` tests only; does not currently run capability host tests |
-| `just test` | Device, chainboot, and host-tool test workflows |
+| `just test-object-host` | Opt-in capability ABI integration tests on the native host (currently AArch64) |
+| `just test-host` | Capability ABI tests, then native `chainofcommand` tests |
+| `just test` | Device, chainboot, capability-host, and host-tool test workflows |
 | `just pre-push` | Formatting, shortened Clippy, and tests; does not itself push anything |
 | `just ci` | Cleanup, lint, build, and tests; do not invoke its cleanup as an incidental check |
 
@@ -59,7 +61,7 @@ Reference: [status](nucleus_capabilities.md#status-and-authority), [responsibili
 Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wire contracts](nucleus_capabilities.md#invocation-and-wire-contracts). Prerequisite: Phase 1 scope; D9 where schemas change.
 
 - [ ] Separate shared ABI definitions from client/syscall dependencies so they can be tested without booting a kernel. Decide module/feature separation before adding a new crate.
-- [ ] Add a scoped `Justfile` recipe for the opt-in capability host tests and integrate it into the appropriate test workflow; `just test-host` currently covers only `chainofcommand`.
+- [x] Add `just test-object-host` for the opt-in capability host tests and include it in `just test-host` / `just test`. Include `just clippy-object-host` in the full and shortened Clippy workflows.
 - [x] Reconcile all core constants/conversions with **CoreType**: Null `0`, Untyped `1`, Domain `2`, KeyTable `3`, Time `4`, Endpoint `5`, Notification `6`, EventCount `7`, Buffer `8`, Reply `9`, DebugConsole `127`.
 - [x] Keep architecture kinds distinguished by `0x80`; distinguish category-local indices from complete wire IDs in conversions and error details.
 - [x] Establish one canonical type declaration and exhaustive checks for every related representation. Coordinate kernel/client migration; do not preserve the contradictory old `ObjectType` numbering.
@@ -75,19 +77,22 @@ Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wir
 
 The private catalogue macro now generates enums, aliases, checked local-index decoding, and typed-to-wire conversions. Existing public names remain; Time/Endpoint/Notification/EventCount wire values now follow the canonical IDs. No object handlers were enabled. The host test feature is opt-in so the standard harness is skipped by the existing freestanding test workflow; full ABI/client dependency separation remains unchecked.
 
-Historical supplemental checks run on the native AArch64 macOS host, before the `just` convention above was recorded. These commands are retained as evidence of what actually ran, **not as instructions for future validation**:
+Validation uses the repository recipes from an AArch64 macOS host:
 
-```sh
-RUSTC_WRAPPER= cargo test -p vesper-objects --features host-tests --test object_type --offline
-RUSTC_WRAPPER= cargo clippy -p vesper-objects --features host-tests --test object_type --offline -- -D warnings
-rustfmt --edition 2024 --check libs/object/src/object_type.rs libs/object/tests/object_type.rs kernel/nucleus/src/objects/nucleus_object.rs
-RUSTC_WRAPPER= RUSTFLAGS='--cfg board_rpi3 -C target-cpu=cortex-a53' cargo check -p nucleus --target targets/aarch64-metta-none-eabi.json -Zjson-target-spec -Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem --features qemu --offline
-```
+| Recipe | Result and scope |
+|---|---|
+| `just fmt-check` | Passed workspace formatting |
+| `just clippy` | Passed the RPi3/QEMU nucleus + kickstart build, all seven embedded board/feature configurations, and capability host-test linting |
+| `just clippy-object-host` | Passed the focused capability host-harness lint check |
+| `just test-host` | Passed all 10 capability ABI tests; the host-tool harness completed with zero test cases |
+| `just test` | Passed device integration tests under QEMU, device doctest workflow, chainboot test recipe, and the host stage including all 10 capability ABI tests |
 
-Those checks passed ten tests, targeted formatting/Clippy, and a manually configured nucleus cross-check. They did **not** run `just clippy`'s build prerequisite/feature matrix or the project test workflow, so they are not equivalent to project-wide embedded validation. Clippy reported the existing removed `from_iter_instead_of_collect` workspace lint; the cross-check reported a toolchain `core` future-compatibility warning. No QEMU runtime test was run. The cache override in that historical command bypassed a sandbox-inaccessible host cache; it does not establish a general recipe-override policy.
+The restored device harness uses current crate/API paths and explicit startup/panic dependencies. Its shared test startup enters EL1 from the boot helper's EL2 context before executing kernel-mode tests; production boot is unchanged. GPIO/MMIO and mailbox-format tests retain their assertions, with the mailbox-format test using local storage rather than requiring kernel DMA mappings.
 
-- [ ] Validate the catalogue changes through `just fmt-check` and `just clippy`; record actual recipe outcomes and any blockers without treating the earlier native checks as substitutes.
-- [ ] Run the catalogue host tests through their new `just` recipe once available, and the relevant configured embedded test workflow; record the tested scope explicitly.
+Coverage limits: the chainboot test recipe currently has no runnable test executable, the host tool has zero test cases, and passing the existing suite does not complete the later capability lifecycle/IPC work. Nonblocking compiler-cache access and toolchain/dependency future-compatibility warnings remain; they do not change recipe configuration or exit status.
+
+- [x] Validate the catalogue changes through `just fmt-check` and `just clippy`, including the configured build prerequisite and full embedded feature matrix.
+- [x] Run the capability host tests through `just test-object-host` (included in `just test-host` and `just test`) and the configured embedded test workflow; record the tested scope explicitly.
 
 **Exit:** kernel and client share unambiguous checked wire definitions, with ABI-only tests independent of target assembly. Later families extend this core rather than inventing another protocol.
 

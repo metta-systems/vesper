@@ -34,7 +34,7 @@ unsafe extern "C" fn kernel_init(dtb: u32, max_kernel_size: u64) -> ! {
     semi::println!("Initializing drivers");
     // SAFETY: VERY SAFE
     if let Err(x) = unsafe { libplatform::drivers::init() } {
-        panic!("Error initializing platform drivers: {}", x);
+        panic!("Error initializing platform drivers: {x}");
     }
 
     semi::println!("Initializing devices and IRQs");
@@ -100,6 +100,8 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
         let first = 'wait_for_first: loop {
             beacon_count = beacon_count.saturating_add(1);
             let uptime = libtime::time::time_manager().uptime();
+            #[cfg(not(feature = "qemu"))]
+            let _: Duration = uptime;
             semi::println!(
                 "⏪ Beacon #{beacon_count} at {}.{:03}s (sending ^C^C^C)",
                 uptime.as_secs(),
@@ -112,9 +114,16 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
             console().flush();
 
             let start = libtime::time::time_manager().uptime();
-            while libtime::time::time_manager().uptime() - start < Duration::from_secs(5) {
+            while libtime::time::time_manager()
+                .uptime()
+                .checked_sub(start)
+                .expect("uptime must not go backwards")
+                < Duration::from_secs(5)
+            {
                 if let Some(b) = console().read_byte_nonblocking() {
                     let now = libtime::time::time_manager().uptime();
+                    #[cfg(not(feature = "qemu"))]
+                    let _: Duration = now;
                     semi::println!(
                         "⏪ Host byte 0x{b:02x} received at {}.{:03}s",
                         now.as_secs(),
@@ -125,7 +134,12 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
                 libtime::time::time_manager().spin_for(Duration::from_millis(10));
             }
 
-            let waited = libtime::time::time_manager().uptime() - start;
+            let waited = libtime::time::time_manager()
+                .uptime()
+                .checked_sub(start)
+                .expect("uptime must not go backwards");
+            #[cfg(not(feature = "qemu"))]
+            let _: Duration = waited;
             semi::println!(
                 "⏪ No host data after {}.{:03}s, retrying beacon",
                 waited.as_secs(),
@@ -133,7 +147,7 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
             );
         };
 
-        let size: u64 = read_u64(Some(first));
+        let size = read_u64(Some(first));
 
         // Check the size to fit RAM
         if size > max_kernel_size {

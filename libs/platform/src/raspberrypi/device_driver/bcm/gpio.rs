@@ -117,8 +117,8 @@ impl GPIOInner {
         const DELAY: Duration = Duration::from_micros(1);
 
         // power off gpio pins (but not VCC pins)
-        for bank in 0..5 {
-            self.registers.FunctionSelect[bank].set(0);
+        for register in self.registers.FunctionSelect.iter().take(5) {
+            register.set(0);
         }
 
         self.registers.PullUpDown.set(0);

@@ -562,7 +562,6 @@ pub fn init_main_el2(dtb: u32) -> ! {
 
     // SAFETY: Not safe.
     unsafe {
-        #[expect(clippy::fn_to_numeric_cast_any)]
         el_switch::enable_mmu_and_drop_to_el1(
             ttbr0,
             ttbr1,

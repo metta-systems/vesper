@@ -475,7 +475,7 @@ impl FdtDumper<'_> {
                 // let _ = self.dump.pop();
             } else if prop.propbuf().len() % size_of::<u32>() == 0 {
                 semi::print!("<");
-                for val in prop.propbuf().chunks_exact(size_of::<u32>()) {
+                for val in prop.propbuf().as_chunks::<{ size_of::<u32>() }>().0 {
                     // We use read_unaligned
                     let v = u32::from_be(read_unaligned::<u32>(val.as_ptr().cast::<u32>()));
                     semi::print!("{:#010x} ", v);

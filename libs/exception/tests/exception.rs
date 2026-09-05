@@ -4,9 +4,10 @@
 #![test_runner(libtest::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use libexception::exception::{current_privilege_level, PrivilegeLevel};
+use vesper_exceptions::{PrivilegeLevel, current_privilege_level};
 
-// mod common;
+#[path = "../../../tests/common/mod.rs"]
+mod common;
 
 /// libmachine unit tests must execute in kernel mode.
 #[test_case]

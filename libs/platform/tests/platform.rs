@@ -6,18 +6,20 @@
 
 use {
     libaddress::{Address, Virtual},
-    libplatform::platform::device_driver::{
+    vesper_platforms::device_driver::{
         Function, GPIO, RateDivisors,
-        mailbox::{self, Mailbox, tag},
+        mailbox::{self, LocalMailboxStorage, Mailbox, MailboxStorageRef, tag},
     },
 };
 
-// mod common;
+#[path = "../../../tests/common/mod.rs"]
+mod common;
 
 #[test_case]
 fn test_pin_transitions() {
     let mut reg = [0u32; 40];
-    let mmio_base_addr = Address::<Virtual>::new(&mut reg as *mut _ as usize);
+    let mmio_base_addr = Address::<Virtual>::from_ptr(reg.as_mut_ptr());
+    // SAFETY: The aligned register buffer covers the GPIO register block and outlives the driver.
     let gpio = unsafe { GPIO::new(mmio_base_addr) };
 
     let _out = gpio.get_pin(1).into_output();
@@ -31,7 +33,8 @@ fn test_pin_transitions() {
 #[test_case]
 fn test_pin_outputs() {
     let mut reg = [0u32; 40];
-    let mmio_base_addr = Address::<Virtual>::new(&mut reg as *mut _ as usize);
+    let mmio_base_addr = Address::<Virtual>::from_ptr(reg.as_mut_ptr());
+    // SAFETY: The aligned register buffer covers the GPIO register block and outlives the driver.
     let gpio = unsafe { GPIO::new(mmio_base_addr) };
 
     let pin = gpio.get_pin(1);
@@ -53,7 +56,8 @@ fn test_pin_outputs() {
 #[expect(unused_assignments)]
 fn test_pin_inputs() {
     let mut reg = [0u32; 40];
-    let mmio_base_addr = Address::<Virtual>::new(&mut reg as *mut _ as usize);
+    let mmio_base_addr = Address::<Virtual>::from_ptr(reg.as_mut_ptr());
+    // SAFETY: The aligned register buffer covers the GPIO register block and outlives the driver.
     let gpio = unsafe { GPIO::new(mmio_base_addr) };
 
     // Modify pin 1
@@ -78,9 +82,12 @@ fn test_pin_inputs() {
 // by the end() fn.
 #[test_case]
 fn test_prepare_mailbox() {
-    use libplatform::platform::device_driver::mailbox::MailboxStorageRef;
-
-    let mut mailbox = Mailbox::<8>::default();
+    let mut registers = [0u32; 9];
+    // SAFETY: The aligned register buffer covers the mailbox registers and outlives the mailbox.
+    // Local storage keeps this buffer-format test independent of the kernel's DMA mappings.
+    let mut mailbox =
+        unsafe { Mailbox::<8, LocalMailboxStorage<8>>::new(registers.as_mut_ptr() as usize) }
+            .unwrap();
     let index = mailbox.request();
     let index = mailbox.set_led_on(index, true);
     let mailbox = mailbox.end(index);
