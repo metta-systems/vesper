@@ -35,6 +35,7 @@ The research is inspiration, not a wire ABI. Its example numbering, object sizes
 11. **Complementary communication primitives.** Small requests use endpoint/reply IPC; large payloads use shared memory; notifications coalesce event identities; event counts preserve progress. Do not merge these distinct semantics into one primitive.
 12. **Bounded and testable work.** Prefer explicit storage limits, typed pools, reserved IPC resources, and no hidden hot-path allocation. Long revocation or teardown work needs a bounded/incremental completion contract.
 13. **Complete vertical slices.** An operation is supported only when its shared contract, userspace encoding/decoding, kernel authorization, object transitions, and tests agree. A file or enum variant is not evidence of support.
+14. **Correctness before representation optimization.** Add, remove, or expand kernel-object and key fields as necessary for consistent identity, authority, mapping, and lifetime semantics; current sizes, packing, and inline representations are not optimization constraints to preserve. Optimize only in a later measured pass. Every layout change must also update affected allocation/accounting, pool capacities/alignment, strides, DCB page views, shared ABI consumers, and layout assertions/tests. Hardware formats and agreed wire encodings still require deliberate, coordinated treatment.
 
 ## Protection and system composition
 
@@ -43,6 +44,8 @@ The research direction is a **single shared virtual-address namespace**, support
 A shared namespace is not itself an isolation mechanism. Capability checks mediate nucleus operations, not arbitrary CPU loads/stores after a mapping is installed. MTE and PAC alone do not establish robust isolation between mutually distrustful domains; realms and other hardware mechanisms have their own constraints. The actual protection mechanism, threat model, mapping permissions, and architecture-specific fallback must be chosen explicitly (D1).
 
 VSpace represents translation/protection context where the backend requires it, conceptually composing a root page table and ASID binding. Whether contexts share one virtual namespace, one translation root, or multiple protected views is part of D1/D6. Domain IDs must not be assumed to be VSpace IDs.
+
+Mapping the same physical Frame at different virtual pages in different Domains is intended use of derived Frame capabilities. How those aliases coexist with the shared-address-space goal remains D1/D6: a shared address namespace need not mean one virtual address per frame or one page-table root. See the alternatives in [Lifetime and authority semantics](lifetime-and-authority.md). Selecting SPeCK-like resource mechanisms does not itself choose a translation/protection model.
 
 Bootstrap is explicit: the initial privileged component receives authority over discovered resources and delegates subsets to resource managers and child domains. Well-known slots are conventions for locating granted capabilities, never a way to manufacture them. Debug-console authority is an explicit bootstrap/delegation choice, not an entitlement implied by knowing its slot.
 
@@ -65,7 +68,7 @@ The ABI portion must be testable independently of syscall assembly. A separate A
 ## Vocabulary and identity
 
 - **`KeySlot`**: an index in a particular domain's KeyTable. The shared baseline is a `u32`; wire arguments still arrive in wider registers and require checked conversion.
-- **`Key<T>` / typed key wrapper**: a userspace handle to a slot. Constructing or copying one does not mint or duplicate kernel authority. Its type is an expectation checked by the kernel, not proof of the current slot contents.
+- **`Key<T>` / typed key wrapper**: names the particular capability incarnation obtained by the caller, not a slot's future occupant (maintainer decision, 2026-09-05). Altered or invalidated authority must fail invocation with an explicit inconsistency error. The current slot-only wrapper does not yet implement this guarantee; incarnation encoding and the error's wire schema remain D3/D9. Constructing or copying a Rust wrapper does not mint kernel authority or perform capability Copy. Normal authorized resource operations need not change capability incarnation; Frame remapping is explicitly such an operation, with detailed mapping semantics below.
 - **`KeyEntry`**: a fixed-size kernel capability value containing object kind, rights, badge/other authority metadata, and an object handle or inline region description. It is not a userspace record.
 - **Kernel object/resource**: persistent state with a separately managed lifetime. Multiple entries may refer to it when its contract permits.
 - **`DomainId`**: identity for domain state and observation, not a capability granting control. Reuse must not let stale references accidentally identify a new domain.
@@ -150,7 +153,7 @@ Decode full-width inputs before narrowing. Reject unknown opcodes, unrepresentab
 
 `syscall_status` in `libs/object/src/syscall_status.rs` defines the shared symbolic wire statuses: success zero and the existing errors 1–25. `CapError::code()` and `decode_syscall_result` use the same error constants; nucleus syscall return handling uses `SUCCESS` and `CapError::code()`. Preserve these status meanings; literal ABI tests independently pin their numeric values. Correct object-type details to the canonical numbering above. Make clear which error detail is a category-local index and which is a full wire ObjectType.
 
-Do not create competing per-family wire error spaces such as the draft `RetypeError`. Typed client errors may wrap the shared decoded result. Unknown future status/detail values must remain observable without panicking or being turned into success. New errors for overflow, cancellation, unsupported behavior, and partial completion require explicit shared definitions, not ad hoc sentinel values (D9).
+Do not create competing per-family wire error spaces such as the draft `RetypeError`. Typed client errors may wrap the shared decoded result. Unknown future status/detail values must remain observable without panicking or being turned into success. New errors for inconsistency, overflow, cancellation, unsupported behavior, and partial completion require explicit shared definitions, not ad hoc sentinel values (D9). Inconsistency for a stale/altered capability incarnation is an approved semantic requirement, not yet a numeric status or implemented `CapError` variant.
 
 The shared `decode_syscall_result` now decodes the existing three-word result without changing this wire baseline. Zero status preserves both success words; statuses 1–25 decode to their existing variants only when detail widths/known kind indices are representable and unused words are zero. Otherwise `CapError::UnknownResponse` preserves the nonzero status and both details verbatim, including future extensions to known errors. This is a client representation, not a new status or a kernel reserved-argument rule. Domain mutation wrappers and the four syscall-backed KeyTable wrappers (`copy_derive`, `delete`, `revoke`, `grant_to`) use it; other families remain unmigrated. The added Rust enum variant requires downstream exhaustive matches to be updated, but existing wire meanings and Domain/KeyTable method signatures are unchanged.
 
@@ -219,11 +222,20 @@ Current tables have 256 slots. Do not assume that every slot fits a 64-bit pendi
 - **Copy/derive** installs another permitted authority, with no amplification and with per-kind derived state. Rust handle copying is not this operation.
 - **Move** changes the slot holding an authority and preserves its appropriate per-capability state. The source is invalidated only when the destination installation commits.
 - **Delete** removes an entry. Whether it also retires a resource depends on other capabilities, in-flight use, mappings, and the object's contract.
-- **Revoke** retires a defined descendant/scope of authority. Its completion condition must establish when access and reuse are safe; it is not merely clearing a watermark.
+- **Revoke** retires a defined descendant/scope of authority. Trusted userspace KeyMaster owns derivation-tree operations; kernel object retirement and userspace subtree revocation/cleanup are distinct operations. Their completion boundaries must not conflate invalid capability invocations with withdrawn hardware access or reusable backing; revoke is not merely clearing a watermark.
 
-Untyped allocation authority must not be duplicated into independent watermarks over the same memory. The existing draft forbids ordinary untyped copying; retain that restriction unless a reviewed shared-allocation authority design replaces it. Frame copies must not accidentally duplicate ownership of one mapping record; moving a mapped frame preserves the binding needed for teardown. Reply authority cannot be copied into independently usable replies. Time derivation must conserve budget.
+Untyped allocation authority must not be duplicated into independent watermarks over the same memory. The existing draft forbids ordinary untyped copying; retain that restriction unless a reviewed shared-allocation authority design replaces it. Frame Copy is a checked capability operation, not manual entry copying and not Map: it produces another permitted capability to the same physical frame without duplicating an active mapping association or installing a PTE. A subsequent Map establishes that cap's mapping in an authorized context, potentially at a different virtual page. Stable frame authority and mutable per-cap mapping association are distinct. Moving a mapped frame preserves the binding needed for teardown. Reply authority cannot be copied into independently usable replies. Time derivation must conserve budget.
 
-The intended userspace capability manager can own allocation/delegation policy and bookkeeping. D2 must settle what it is trusted to enforce, whether all relevant derivations pass through it, and what lifetime/revocation mechanism the nucleus validates. A userspace tree, a kernel generation, and hardware mapping teardown solve different parts of the problem; none is a substitute for the others.
+### Maintainer lifecycle and authority decisions (2026-09-05)
+
+- `Untyped.Retype` yields creation-origin capabilities carrying permission to control the created object's lifetime. That permission may be delegated in derived capabilities; retirement authorization follows capability permissions, not a separate privileged owner identity. Delegating/donating object authority does not implicitly surrender the creator's control: it retains its authority until it destroys its own capability. This does not resolve the separate consuming CPU-budget semantics of Time.Donate (D8).
+- Deleting the last retirement-authorized capability need not retire the object. Correct resource management is the OS's responsibility. A resulting permanently lost retyped allocation is an accepted leak, not a kernel obligation to recover or run an automatic final-capability destructor. Leaked storage remains unavailable for conflicting reuse.
+- Trusted userspace KeyMaster is solely responsible for derivation-tree management. It orchestrates subtree revocation as a separate, potentially background process; the kernel supplies object retirement and checked capability/mapping mechanisms. The maintainer selects a SPeCK-like model for this division: userspace resource policy/derivation and kernel liveness, individual resource operations, and quiescence/reuse mechanisms. Exact metadata and synchronization protocols remain to be designed, not copied wholesale from Composite. How all derivation/transfer paths are restricted to or registered with KeyMaster remains to be implemented (D2/D4).
+- Derived capabilities to one object refer to that same object, not successively nested kernel objects. Invalidating its authoritative lifetime identity/generation must reject all old capability invocations irrespective of table or tree depth. Object retirement triggers KeyMaster subtree cleanup, which need not synchronously erase every dead slot. It does not require a kernel ancestry walk just to detect retirement of that shared object.
+- An object-wide generation cannot selectively invalidate one branch while retaining other capabilities to the same object. The mechanism and completion contract for selective subtree revocation without object retirement remain open (D2); do not impose kernel ancestry metadata or claim object generations solve this different operation.
+- The library OS is responsible for correct unmap-before-invalidation orchestration. Invalidating capability authority before withdrawing installed access is a resource-management error in that trusted layer, not a requirement for a recipient to cooperate after invalidation. Kernel mapping primitives supply hardware transitions; the exact premature-reuse checks, retirement prerequisites, and manager/kernel completion handshake remain D2/D6. System-wide safe reuse still requires withdrawal of stale mappings and in-flight access.
+
+See [Lifetime and authority semantics](lifetime-and-authority.md) for the decision history, seL4/Composite comparison, and outstanding implementation work.
 
 Kernel object generations and domain reuse protection are distinct from revocation scopes. Persistent handles must not manufacture shared or exclusive Rust references without an owning/locking access context. Resolve aliases before operations involving two capabilities that may name the same table or object (D3).
 
@@ -233,7 +245,7 @@ Kernel object generations and domain reuse protection are distinct from revocati
 
 Memory-backed objects are created through authorized untyped retype, including the storage for domains and capability tables. Kernel-private state uses typed pools or equivalently explicit bounded storage. Core and architecture storage remain distinguishable because their layouts and lifecycles differ. Allocating a pool must account for its backing rather than silently supplying a second source of uncharged kernel memory.
 
-Untyped and Frame may store region metadata inline in a `KeyEntry`: physical extent, size/alignment information, memory kind, and appropriate per-capability state. They do not require a separate heap-allocated descriptor simply to describe that region. Inline representation does not imply that all shared allocation, mapping, or revocation state can safely be copied per entry.
+Untyped and Frame may store region metadata inline in a `KeyEntry`: physical extent, size/alignment information, memory kind, and appropriate per-capability state. This is an available representation, not a size constraint: introduce shared descriptors, additional identity fields, or different layouts when correctness needs them, then consider optimization later. Inline representation does not imply that shared allocation, mapping, or revocation state can safely be copied per entry.
 
 Separate these quantities:
 
@@ -256,11 +268,19 @@ Mapping identity must contain enough information to locate and retire the real m
 
 Mapping permissions are bounded by backing and target-context authority; cache/device attributes are a separate validated dimension. Record a mapping only with the actual hardware transition, and preserve enough state to roll back or finish partial map/unmap failures. Reuse requires completed hardware invalidation, including remote TLB or device translation synchronization where applicable.
 
+Maintainer Frame clarification (2026-09-05): Copy and Map are separate. Unmap is mapping-local for origin A as well as derived B. The earlier phrase “origin Unmap” meant **capability Revoke on the origin**, not a stronger Frame.Unmap primitive. In the seL4-like distinction, origin Revoke withdraws descendant capabilities/mappings while retaining the origin; removal of the origin's own mapping/capability is separate, and object retirement remains a distinct permission-authorized operation. KeyMaster/libOS orchestrates the selected revocation semantics using kernel mechanisms; this is not approval of a kernel-managed derivation tree.
+
+The same physical Frame may be mapped by different derived caps at different virtual pages in different Domains. These are normally distinct PTEs, not competing ownership of one PTE. Origin-authorized remapping remains a valid operation and does not by itself make the capability inconsistent; initial Map of a copied cap is not an origin-only remap. Whether remap changes only virtual placement or can replace physical backing, how descendant mappings respond, and how to encode/enforce origin-only remap authority remain open (D4/D6). Delegated retirement permission must not be treated as permission for a derived capability to remap.
+
+Interim deprovisioning direction: fully revoke the Frame capability and do not reuse that slot for Frames. The precise scope/duration of this no-reuse restriction, exhaustion handling, and interaction with eventual incarnation-safe reuse remain D3/D6; it is not a replacement for object identity or hardware-safe backing reuse.
+
 ASIDs come from an authoritative namespace with binding and safe reuse rules. Decide whether ASID capabilities are explicit resources or pool-owned VSpace bindings; preserve the registered IDs while this is unresolved. IRQ/I/O authority likewise comes from authorized hardware-resource assignment, not arbitrary retype.
 
 Large-data IPC uses shared backing and explicit producer/consumer ownership protocols. Ring/buffer pools plus produced/consumed event counts support backpressure without allocation or copying in the hot path. A common address namespace can simplify sharing but is not required to equate authority with an address.
 
-Safe userspace mapping guards must prevent independent unmap/revoke from leaving usable safe references. Ordinary Rust slices require additional guarantees against aliasing and external mutation. Shared memory, DMA, and MMIO need access protocols appropriate to their semantics, not automatic `&mut [u8]` creation from WRITE rights. Buffer as a kernel object versus a userspace aggregate remains D6; do not remove its public kind merely as cosmetic cleanup.
+Safe userspace mapping guards must prevent independent unmap/revoke from leaving usable safe references. Intended MappedSlice ownership: create/own a private capability and its mapping, expose no further derivations or independently usable management aliases, and unmap on Drop. Cleanup uses the incarnation-bearing capability key and required kernel checks, so a stale guard must be rejected rather than affect a replacement. This is not yet implemented by the current wrapper, which borrows an existing BufferKey. Specify integration with ancestor revocation/object retirement so the private mapping remains valid for the borrow; private slot ownership does not by itself imply exclusive access to shared physical contents.
+
+Ordinary Rust slices require additional guarantees against aliasing and external mutation. Shared memory, DMA, and MMIO need access protocols appropriate to their semantics, not automatic `&mut [u8]` creation from WRITE rights. Rust mutability versus shared-resource semantics remains open, including whether reference-producing APIs need to be unsafe. Buffer as a kernel object versus a userspace aggregate remains D6; do not remove its public kind merely as cosmetic cleanup.
 
 ## Domain and shared DCB contracts
 
@@ -270,7 +290,7 @@ Domain identity lookup checks validity and allocation, not just whether a page e
 
 Domain control has explicit legal state transitions. First activation requires an initialized execution context and valid execution authority. Suspend/Resume must distinguish running, runnable, blocked, faulted, and dying states; resuming a suspended blocked invocation cannot bypass its wait condition or create CPU budget. Specify interaction with pending completion, cancellation, and Time donation before exposing these operations (D3/D7/D8).
 
-The DCB exposes state, blocking/fault information, time accounting, scheduler relationship, and pending-event summaries sufficient for userspace scheduling. Kernel writes and userspace reads through authorized read-only mappings. Reading a DCB does not grant control of that domain.
+The DCB exposes state, blocking/fault information, time accounting, scheduler relationship, and pending-event summaries sufficient for userspace scheduling. Kernel writes and userspace reads through authorized read-only mappings. Reading a DCB does not grant control of that domain. Maintainer direction (2026-09-05): DcbView is intended to be persistent, not withdrawn like an ordinary revocable buffer mapping. Exact backing/availability guarantees and record reuse/publication remain D5; persistence of the view does not imply persistence of each domain incarnation.
 
 Contracts for the shared ABI:
 
@@ -320,6 +340,19 @@ An object transition can complete now, block, or request a handoff. Blocking is 
 
 Scheduling and context switching occur after relevant object references and incompatible lock guards end. A fast direct switch is an optimization of that contract, not a bypass. IPC-related time donation must obey the Time accounting contract. Resource reservation for reply records and wait queues must be bounded and accounted, rather than hidden allocation inside an otherwise guaranteed rendezvous.
 
+### Aborted-work vocabulary
+
+Maintainer-adopted terminology (2026-09-05); these are semantic outcome categories, not new wire statuses or an approved result layout:
+
+| Outcome | Meaning |
+|---|---|
+| Rejected before admission | This attempt did not start |
+| Cancelled before commit | The operation guarantees its defined commit did not occur; this does not erase all possible preparatory effects |
+| Completed | The outcome is known, including an operation-specific failure or explicitly reported partial result |
+| Outcome unknown | Work may have committed, but the observer cannot establish completion |
+
+Authority validity and operation outcome are separate: revoking authority does not prove that already-delivered work did not commit. A timeout or lost reply alone cannot be reported as cancellation-before-commit. The nucleus provides local invocation, cancellation, and completion mechanisms only. Distributed/remote protocols, retries, deduplication, durable receipts, and network failure policy belong in userspace services, not the kernel. D7/D9 must specify which categories each local operation can produce and their exact ABI representation.
+
 ## Time and userspace scheduling
 
 Time is a first-class capability to a bounded CPU budget, not just a timer object. Userspace schedulers implement policy, distribute budget hierarchically, and observe DCBs. The nucleus enforces budget consumption, deadlines, preemption, and authorized transitions.
@@ -336,7 +369,7 @@ Time sketches use microseconds; DCB accounting uses nanoseconds. D8 must select 
 
 ## Implementation status and known migration gaps
 
-Snapshot at initial consolidation (2026-09-05); update this table as complete slices land. Module inclusion and dispatch determine reachability, not file presence.
+Snapshot at initial consolidation (2026-09-05); update this table as complete slices land. Module inclusion and dispatch determine reachability, not file presence. Maintainer clarification: operation families marked excluded below are excluded because they do not compile as-is today; they remain intended functionality and must inform design and future implementation. Exclusion is not rejection of their design intent or permission to discard them.
 
 | Family | Userspace | Nucleus API | Object/storage |
 |---|---|---|---|
@@ -360,14 +393,14 @@ Resolve the decisions needed by a slice before enabling it. An unrelated open de
 | ID | Open decision and constraints | Needed before |
 |---|---|---|
 | D1 | Shared-address-space protection model, threat model, backend isolation/fallback, and meaning of VSpace versus Domain. Preserve shared-namespace intent without claiming capabilities/MTE/PAC alone isolate arbitrary memory access. | Domain protection and mapping semantics |
-| D2 | Derivation/revocation trust boundary: userspace manager exclusivity, kernel-enforced identity/scope, completion/incremental work, and when resources may be reused. | General derivation/revoke and reclaiming retyped memory |
-| D3 | Object/domain/slot reuse identity, guarded access and synchronization, owned versus borrowed handles, and per-kind copy/delete rules. | General capability access, domain teardown, safe client ownership APIs |
-| D4 | DebugConsole availability resolved only: explicit opt-in `debug_kernel`, not general availability; current debug mechanism retained temporarily (see debug-only exception). Per-operation rights/bit assignments, badge width/zero behavior, bootstrap slots/manager identity, notification-index convention, and Domain.Grant relationship to KeyTable operations remain open. | Exposing those authorities or bootstrap records |
-| D5 | DCB layout/stride, page sizing, read visibility, discovery/mapping lifetime, snapshots/publication, event summaries, and reuse protocol. | Stable userspace DCB observations |
-| D6 | Retype layout/accounting and single/batch shape; initialization/sanitization; Buffer role; mapping identity and backend namespace; ASID allocation/binding/reuse; device-memory rules. | Memory-object vertical slice |
-| D7 | IPC payload/transport, operation set, transfer/reply destinations and failure semantics, open/closed waits, timeouts, cancellation, deferred completion, notification delivery, shared-payload ordering/stability, and event-count overflow. | Blocking primitives and IPC activation |
+| D2 | Selected: SPeCK-like resource mechanisms with trusted userspace KeyMaster managing derivation trees; kernel retires objects; shared-object invalidation rejects old invocations and tree cleanup can run in background; libOS orchestrates unmap before invalidation. Open: manager exclusivity enforcement, selective subtree invalidation of a still-live object, completion/handshake, and safe reuse enforcement. | General derivation/revoke and reclaiming retyped memory |
+| D3 | Selected: keys name capability incarnations; stale/altered authority yields inconsistency; no automatic leak recovery; correctness-first field/layout changes; intended MappedSlice privately owns an underived mapping cap with checked cleanup. Open: identity encoding/wrap, guarded access/synchronization, borrow versus ancestor-retirement guarantees, Rust mutability, per-kind details, and interim Frame slot no-reuse scope. | General capability access, domain teardown, safe client ownership APIs |
+| D4 | Selected: Retype origin caps carry delegable lifetime-control permission; donating object authority does not surrender the creator's retained control. DebugConsole remains opt-in `debug_kernel`, not generally available. Open: per-operation rights/bit assignments and enforcement of origin-only remap distinct from delegated retirement, badges, bootstrap/manager identity, notification indexing, and Domain.Grant relationship to KeyTable operations. | Exposing those authorities or bootstrap records |
+| D5 | Selected direction: persistent DcbView. Open: DCB layout/stride, page sizing, visibility/discovery, enforceable backing availability, snapshots/publication, event summaries, and record reuse. | Stable userspace DCB observations |
+| D6 | Selected Frame direction: Copy is not Map; each copied cap can Map the same frame at a different Domain/virtual page; Unmap is local and origin cap-Revoke withdraws descendants; origin remap remains a valid operation; full revoke/no Frame-slot reuse on deprovision is interim. Open: shared-namespace alias model, precise Map/remap/revoke/no-reuse schemas and orchestration, Retype layout/accounting, sanitization, Buffer role, mapping identity, ASID/reuse and device rules. | Memory-object vertical slice |
+| D7 | Adopted aborted-work vocabulary and local-mechanisms-only kernel boundary; no new wire encoding. Open: IPC payload/transport, operation set, transfer/reply destinations and failure semantics, open/closed waits, timeouts, cancellation, deferred completion, notification delivery, shared-payload ordering/stability, and event-count overflow. | Blocking primitives and IPC activation |
 | D8 | Budget issuance, donation loan/transfer, unused-budget return, split/merge/deletion/expiry, units/clocks, multicore accounting. | Time/scheduler vertical slice |
-| D9 | DebugConsole gate preserves type `127` and Write `0`; no new inline-byte ABI is approved. Shared error additions/detail schemas, reserved/unsupported operations, ABI version/support discovery, and kernel/userspace migration policy otherwise remain open. | Freezing new operation schemas or separately deployed ABI consumers |
+| D9 | DebugConsole gate preserves type `127` and Write `0`; no new inline-byte ABI is approved. Inconsistency is required for stale/altered capability incarnations; aborted-work terms are adopted vocabulary only. Wire encodings, other shared errors/details, reserved/unsupported operations, ABI version/support discovery, and migration policy remain open. | Freezing new operation schemas or separately deployed ABI consumers |
 
 ## Definition of a supported operation
 

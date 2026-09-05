@@ -199,9 +199,16 @@ Coverage limits: mock responses test client propagation, not kernel authorizatio
 
 ## Phase 4 — Capability storage and domain lifetime
 
-Reference: [identity](nucleus_capabilities.md#vocabulary-and-identity), [lifecycle](nucleus_capabilities.md#copy-move-deletion-and-revocation), [DCBs](nucleus_capabilities.md#domain-and-shared-dcb-contracts). Prerequisites: D2–D5 as applicable, plus D1 before protection-context bindings.
+Reference: [identity](nucleus_capabilities.md#vocabulary-and-identity), [lifecycle](nucleus_capabilities.md#copy-move-deletion-and-revocation), [DCBs](nucleus_capabilities.md#domain-and-shared-dcb-contracts), and [lifetime/authority decisions and research](lifetime-and-authority.md). Prerequisites: D2–D5 as applicable, plus D1 before protection-context bindings.
 
-- [ ] Choose guarded object access, object/domain/slot reuse identity, synchronization, and owned-versus-borrowed handle semantics (D3).
+Maintainer direction is partially resolved: keys name capability incarnations; Retype origins carry delegable lifetime-control permission; creators retain their own authority after delegation; SPeCK-like resource mechanisms support trusted KeyMaster derivation management and kernel object retirement; abandoned allocations may leak without kernel recovery. Correctness comes before representation optimization: change object/key fields and layouts as needed, updating all dependent calculations/views/tests; optimize in a later measured pass. Remaining schemas/mechanisms are still open, and no implementation is marked complete by these decisions. Excluded operation families remain intended functionality, not rejected designs.
+
+- [ ] Choose guarded object access, identity encoding/wrap, synchronization, and owned-versus-borrowed handle details implementing the selected incarnation semantics (D3/D9).
+- [ ] Define the inconsistency wire error and implement stale/altered-capability rejection; keep ordinary resource operations, including authorized Frame remapping, distinct from capability replacement.
+- [ ] Implement authoritative shared-object generation checks across tables, adding/changing Frame/object/key metadata as needed rather than preserving current layouts; do not require ancestry traversal merely to detect object retirement.
+- [ ] Audit allocation/accounting, backing alignment/size, pool capacity, table/DCB strides and page views, initialization bounds, shared ABI consumers, and layout tests with each representation change; defer optimization to a separate measured pass.
+- [ ] Enforce KeyMaster's derivation/transfer boundary and define retirement-to-background-cleanup handoff; settle selective branch invalidation of a still-live shared object separately.
+- [ ] Implement permission-based retirement and preserve creator control after object delegation; test accepted allocation leaks without automatic final-capability destruction or conflicting reuse.
 - [ ] Move `KeyEntry` responsibility to kernel capability storage and adjust imports without changing unrelated APIs. Keep shared `ObjectType` in the ABI layer.
 - [ ] Replace lifetime-erasing safe constructors and unrestricted pointer-to-reference casts. Establish unique kernel kind mappings and exclusive access through an owning context.
 - [ ] Define pool backing/alignment/lifetime requirements, capacity behavior, zero-sized-type policy, object retirement, and reuse validation.
@@ -211,7 +218,7 @@ Reference: [identity](nucleus_capabilities.md#vocabulary-and-identity), [lifecyc
 - [ ] Allocate and retire private Domain state, DCB identity, KeyTable owner, and scheduler/protection relationships coherently.
 - [ ] Define execution-context initialization and legal Activate/Suspend/Resume transitions, including blocked continuations and valid-budget requirements (D3/D7/D8). Implement only transitions supported by the substrate; keep the rest explicitly deferred until Phase 7.
 - [ ] Reject invalid/released/stale domain IDs before indexing; retire in-flight references before domain reuse.
-- [ ] Choose DCB size/stride/page capacity, visibility/discovery, publication/snapshot protocol, event-summary indexing, and mapped-record lifetime (D5).
+- [ ] Choose DCB size/stride/page capacity, visibility/discovery, publication/snapshot protocol, event-summary indexing, and record reuse/availability within the intended persistent DcbView (D5).
 - [ ] Replace duplicated/hardcoded DCB layout assumptions with shared constants and mandatory assertions; make userspace observations honor availability and reuse.
 - [ ] Add model tests for pool/table exhaustion, null insertion, stale handles, same-object operands, move failure, rights attenuation, domain release/reuse, and DCB layout/publication.
 - [ ] Run appropriate target checks for shared DCB access and kernel-private state isolation.
@@ -230,9 +237,15 @@ Reference: [memory contracts](nucleus_capabilities.md#resource-storage-and-memor
 - [ ] Define and enforce initialization/sanitization before ordinary RAM is newly exposed across protection boundaries; distinguish intentional content-preserving sharing and device-memory policy.
 - [ ] Implement frame/page-table backing and the selected translation/protection-context mapping path with architecture-validated layouts and permission ceilings.
 - [ ] Track actual mapping identity, full supported virtual addresses, permissions/attributes, and teardown state; eliminate placeholder map/unmap success.
+- [ ] Implement Copy as capability-only derivation with no active mapping association/PTE installation; define and implement separate Map with explicit target context, virtual address, permissions, and per-cap mapping bookkeeping.
+- [ ] Specify/implement mapping-local Unmap versus origin-capability Revoke of descendants through KeyMaster/libOS; retain the origin unless separately unmapped/deleted, and define partial completion and prevention of racing mapping installation.
+- [ ] Resolve how the same physical Frame mapped at different Domain/virtual pages fits the shared namespace: global aliases/allocation, protected views versus shared roots, and pointer/offset conventions (D1/D6).
+- [ ] Define encoding/enforcement of origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no Frame-slot-reuse rule, including scope and exhaustion.
 - [ ] Implement ASID allocation/binding and TLB-safe reuse where the target mapping model requires it. Keep unrelated I/O/IRQ operations explicitly unsupported until their contracts are implemented.
-- [ ] Implement revocation/reclamation completion, including descendant/in-flight authority retirement, PTE removal, required TLB/device synchronization, and safe backing/metadata reuse.
-- [ ] Add userspace mapping/buffer wrappers only after their unmap, sharing, aliasing, external-mutation, and revocation safety contracts can be enforced.
+- [ ] Define trusted-libOS Unmap-before-invalidation prerequisites and the kernel checks/manager obligations preventing premature reuse; implement kernel retirement separately from KeyMaster background subtree cleanup.
+- [ ] Implement the agreed revocation/reclamation completion protocol, including pending-use retirement, PTE removal, required TLB/device synchronization, and safe backing/metadata reuse; allocation leaks need not trigger kernel recovery.
+- [ ] Implement MappedSlice ownership of a dedicated private capability/mapping with no derivations or independent management aliases; use incarnation-checked Drop cleanup and reject stale keys without touching replacements.
+- [ ] Specify full-borrow backing validity and ancestor-retirement integration; investigate Rust exclusivity/shared-resource semantics separately from mapping ownership, and choose safe versus unsafe access APIs accordingly.
 - [ ] Test tiny/oversized/misaligned regions, high virtual addresses, occupied destinations, pool exhaustion, rights denial, device restrictions, partial mapping failures, stale mappings, ASID reuse, and cross-domain reuse without stale-data disclosure.
 - [ ] Run target integration for retype → mapping → access → unmapping/revocation → safe reuse, including failure paths.
 
@@ -246,6 +259,7 @@ Reference: [communication](nucleus_capabilities.md#communication-and-deferred-co
 
 - [ ] Choose message/register or IPC-buffer transport, output/clobber declarations, message capacity, status/error shape, and supported operation set (D7).
 - [ ] Define open/closed wait identity, separate send and receive/reply timeouts, clock/units, no-wait/infinite encodings, cancellation, and late completion.
+- [ ] Apply the adopted rejected-before-admission / cancelled-before-commit / completed / outcome-unknown vocabulary to each local operation's commit guarantees; define wire representations separately. Keep remote/distributed protocols and policy out of the nucleus.
 - [ ] Implement explicit completed/blocked/handoff outcomes with saved pending invocation state; schedule only after relevant borrows/guards have ended.
 - [ ] Specify bounded wait/reply resource reservation and cancellation on domain/capability teardown.
 - [ ] Define stable user-record decoding and retained-buffer/mapping lifetime across blocking; test adversarial mutation and unmap during pending operations.
