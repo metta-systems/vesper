@@ -68,6 +68,10 @@ Respect the plan's ordering and explicit prerequisites:
 - Reject malformed or unsupported user input with defined errors, not panics, unchecked indexing, or fake success.
 - Keep authority, badges, lifetime, revocation, and blocking semantics aligned with approved decisions; expose unresolved assumptions instead of encoding them as defaults.
 
+## Nightly Rust features
+
+Vesper is a playground for nightly Rust features. Using the latest nightly-only language or library features is allowed when needed for the selected refactor; do not introduce awkward stable-only workarounds merely to avoid a feature gate. Inform the user whenever a new `#![feature(...)]` gate is required, including in a test harness: name the feature, explain why it is needed, and note any toolchain compatibility impact. This permission does not require a separate approval for each feature, but ask before changing the configured toolchain or making an architectural/ABI decision to use it. Verify availability on the configured nightly and validate through the project recipes; nightly features do not relax safety requirements or approved contracts.
+
 ## Use project tooling
 
 - Vesper uses **JJ for version control and `just` for build, test, lint, and related workflows**. Run recipes from the repository root.
