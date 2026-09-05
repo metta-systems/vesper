@@ -223,7 +223,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("emu")]
-test: test-device test-chainboot test-host
+test: test-device test-chainboot test-host test-debug-console
 
 alias t := test
 
@@ -237,6 +237,13 @@ test-device:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
     --workspace --exclude=chainofcommand --exclude=chainboot
+
+# Test the debug-only nucleus console handler in QEMU (rpi3)
+[group("emu")]
+test-debug-console:
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
+    cargo test -p nucleus --test debug_console {{ target_json }} \
+      --features=qemu,debug_kernel {{ rust_std }}
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 [group("emu")]

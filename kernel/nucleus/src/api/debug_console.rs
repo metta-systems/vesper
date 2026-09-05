@@ -1,7 +1,7 @@
 use {
     crate::{api::KeyEntry, objects::DebugConsole},
     libaddress::PhysAddr,
-    libobject::{CapError, Key, SyscallResult, debug_console::DebugConsoleOp},
+    libobject::{CapError, ObjectType, SyscallResult, debug_console::DebugConsoleOp},
 };
 
 // =====================
@@ -27,8 +27,6 @@ use {
 // - Specify bytes versus UTF-8/C strings, embedded NUL and empty-input behavior,
 //   a maximum length or chunking policy, and partial-output/progress semantics.
 //   The current 4096-byte buffer needs terminator space and has no length check.
-// - Remove pointer-derived mutable DebugConsole references: this stateless path
-//   should not depend on the unsound capability cast pending guarded storage.
 // - Decode/propagate kernel results in the client and gate routine semihosting
 //   diagnostics; define backend availability (actual output currently needs qemu).
 // - Test success/errors, missing rights, empty/invalid slots, wide raw arguments,
@@ -41,19 +39,24 @@ use {
 // silently reinterpret Write=0. Full caller-virtual writes need D1/D6 memory and
 // lifetime guarantees; new schemas/rights/results need the relevant D4/D9 decisions.
 #[inline]
-pub fn invoke(cap: &mut KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
-    let console = cap.as_object_mut::<DebugConsole>()?;
-    let op = DebugConsoleOp::try_from(op).map_err(|_unused| CapError::InvalidOperation)?;
+pub fn invoke(cap: &KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
+    // The console has no per-object state. Validate the capability header without
+    // turning its stored pointer into a reference; this is not a rights check.
+    if cap.object_type() != ObjectType::DEBUG_CONSOLE {
+        return Err(CapError::TypeMismatch {
+            expected: ObjectType::DEBUG_CONSOLE,
+            found: cap.object_type(),
+        });
+    }
+    let op = DebugConsoleOp::try_from(op)?;
 
     libqemu::semihosting::println!("DebugConsole:invoke");
 
     match op {
-        // DebugConsoleOp::Write => console.handle_write(arg0, arg1),
         DebugConsoleOp::Write => {
             // TODO: validate client phys ptr validity
-            crate::objects::debug_console::DebugConsole::handle_write(PhysAddr::new(arg0), arg1)?;
+            DebugConsole::handle_write(PhysAddr::new(arg0), arg1)?;
             Ok((0, 0))
         }
-        _ => Err(CapError::InvalidOperation),
     }
 }

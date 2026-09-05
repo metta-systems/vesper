@@ -31,6 +31,7 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just clippy-object-host` | Focused native lint check of the capability library and its opt-in ABI test harness |
 | `just lint` | Formatting, full embedded Clippy workflow, and host-tool Clippy |
 | `just test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
+| `just test-debug-console` | Debug-enabled nucleus handler regression tests under QEMU; included in `just test` |
 | `just test-chainboot` | Chainboot tests with its own linker script and target runner |
 | `just test-object-host` | Opt-in capability ABI integration tests on the native host (currently AArch64) |
 | `just test-host` | Capability ABI tests, then native `chainofcommand` tests |
@@ -106,7 +107,7 @@ Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contract
 - [ ] Establish explicit caller/domain context; do not use absence of a current domain as an implicit grant to domain zero.
 - [ ] Define the console operation's authority, byte/string/NUL behavior, maximum length or chunking policy, and pointer semantics.
 - [ ] Introduce checked user-memory access for the console path, including caller-context authorization, range/length/overflow validation, input stability, and fault behavior. Do not relabel caller virtual addresses as trusted physical addresses.
-- [ ] Remove unnecessary pointer-derived mutable object access from the console path; do not make the repaired vertical slice depend on a known-unsound cast pending Phase 4.
+- [x] Remove unnecessary pointer-derived mutable object access from the console path; do not make the repaired vertical slice depend on a known-unsound cast pending Phase 4.
 - [ ] Bound console copying and terminator handling; return specified errors for malformed inputs rather than panicking.
 - [ ] Decode and propagate console results in userspace; gate/remove unconditional semihosting diagnostics from ordinary wrapper behavior.
 - [ ] Correct false-success/error-discarding behavior in already-included Domain/KeyTable wrappers, while leaving unimplemented kernel operations explicitly unsupported.
@@ -125,6 +126,23 @@ The maintainer-approved scope retains the current pointer-based mechanism and de
 | `just test-device` | Passed existing QEMU device integration tests and device doctest workflow, with `debug_kernel` off |
 
 Coverage limits: these checks do not validate runtime console authorization, pointer safety, error propagation, exception recovery, or the feature-enabled boot demonstration. No console-specific runtime tests were added. Deferred changes and alternatives are documented beside `api::debug_console::invoke`; the other Phase 3 items remain unchecked. Nonblocking compiler-cache access and toolchain future-compatibility warnings remain. The next prerequisite for general console support is an approved caller/authority and buffer-access contract, not another implicitly enabled operation.
+
+### Stateless console access slice validation
+
+Removed both `as_object_mut::<DebugConsole>()` calls in active dispatch/handling. Core dispatch borrows the table entry read-only; the console handler accepts `&KeyEntry`, preserves type-mismatch checking/error precedence, decodes the existing operation, and calls the stateless writer without accessing the capability's object pointer. The debug gate, canonical IDs, pointer-based Write ABI, bootstrap grant, and client/transport behavior are unchanged. No new D1–D9 decision is implied.
+
+`kernel/nucleus/tests/debug_console.rs` compiles the production API/object module trees. Its three QEMU cases cover wrong-kind/null entries (including inline regions), invalid operations before touching deliberately invalid write arguments, shared entry borrows with unchanged metadata, and empty/invalid table lookup before an installed entry reaches the handler. `just test-debug-console` runs this opt-in harness and is included in `just test`.
+
+| Recipe | Result and scope |
+|---|---|
+| `just test-object-host` | Passed 11 feature-off and 12 feature-on ABI tests |
+| `just test-debug-console` | Passed the new three-case QEMU harness after fixing its feature attribute and non-Debug error handling |
+| `just fmt-check` | Passed workspace formatting |
+| `just clippy` | Passed the configured build, all nine embedded configurations, and both host-test feature states |
+| `just build rpi3 qemu,debug_kernel` | Passed coordinated debug-enabled nucleus + kickstart release build |
+| `just test` | Passed device/doctest, chainboot, host, and new debug-console workflows; chainboot has no runnable test executable and the host tool has zero tests |
+
+Coverage limits: handler/lookup rejection tests are not SVC entry/return or successful-output integration tests. No general rights checks, caller context, user-copy safety, raw-register validation, client error propagation, or guarded object storage were introduced. The new embedded test harness is compiled/run by its test recipe; the existing Clippy recipe does not explicitly lint that harness. General console support still requires the approved caller/authority and buffer-access contracts. Compiler-cache access and toolchain/dependency future-compatibility warnings remain nonblocking. Only the pointer-reference removal item is completed by this slice.
 
 **Exit:** a real end-to-end operation demonstrates the standard decoding, authority, user-copy, and result pattern. Unsupported wrappers fail honestly.
 

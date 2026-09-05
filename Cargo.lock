@@ -558,6 +558,8 @@ dependencies = [
  "build-rs",
  "cfg-if",
  "vesper-address",
+ "vesper-boot",
+ "vesper-console",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-locking",

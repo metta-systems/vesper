@@ -4,9 +4,6 @@ use {
     libqemu::semihosting as semi,
 };
 
-#[cfg(feature = "debug_kernel")]
-use crate::objects::DebugConsole;
-
 // pub mod arch;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
@@ -79,7 +76,7 @@ fn core_invoke<A: ArchObjects>(
     let domain = nucleus
         .current_domain_mut()
         .ok_or(CapError::InvalidDomain)?;
-    let entry = domain.keytable.lookup_mut(entry_slot)?;
+    let entry = domain.keytable.lookup(entry_slot)?;
 
     semi::println!("core_invoke");
 
@@ -94,8 +91,6 @@ fn core_invoke<A: ArchObjects>(
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
             semi::println!("core_invoke: DebugConsole");
-            let debug_console = entry.as_object_mut::<DebugConsole>()?;
-            // DebugConsole::invoke(debug_console, entry.rights(), op, args, nucleus)
             crate::api::debug_console::invoke(entry, op, args[0], args[1])
         } // CoreType::Domain => {
         //     let domain = entry.as_object_mut::<Domain>()?;

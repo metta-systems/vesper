@@ -49,6 +49,8 @@ libprint = { workspace = true }
 libqemu = { workspace = true }
 
 [dev-dependencies]
+libboot = { workspace = true }
+libconsole = { workspace = true }
 libexception = { workspace = true, features = ["test_build"] }
 liblocking = { workspace = true }
 libqemu = { workspace = true }
@@ -60,6 +62,10 @@ build-rs = { workspace = true }
 [[bin]]
 name = "nucleus"
 test = false  # test are all concentrated in integration tests/
+
+[[test]]
+name = "debug_console"
+required-features = ["debug_kernel"]
 
 [lints]
 workspace = true
