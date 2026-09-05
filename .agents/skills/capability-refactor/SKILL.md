@@ -19,7 +19,7 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 
 Check the documents' decision status and dependencies for the selected item:
 
-- **D1:** protection model and single-address-space design.
+- **D1:** selected protection/threat model and shared-address-space semantics; remaining backend, machine-local namespace-conflict, and fault-delivery details. Multi-node global address allocation is out of scope; stronger stale-raw-pointer protection across VA reuse is far-future work.
 - **D2:** revocation.
 - **D3:** ownership and lifetime.
 - **D4:** authority, badges, and bootstrap.
@@ -31,7 +31,9 @@ Check the documents' decision status and dependencies for the selected item:
 
 Resolve blocking decisions with the user before implementing dependent behavior. Present the concrete choice, consequences, and affected checklist item; never silently promote a proposal to an accepted contract.
 
-For lifecycle and authority changes, consult the **CONFIRMED**, **INTERIM**, and **OPEN / DECISION REQUIRED** sections in `doc/lifetime-and-authority.md` and map them to D1–D9 above. Preserve the selected incarnation, permission-based retirement, SPeCK-like trusted-KeyMaster, accepted-leak, Copy-not-Map, local-Unmap versus origin-cap-Revoke, and private mapping-guard directions. Do not treat these as approval of remaining identity encodings, selective-revocation mechanisms, Frame Map/remap schemas, shared-address-space protection, Rust mutability guarantees, completion ABIs, or safe mapping leases. Use the seL4/Composite research in section 8 as evidence, not as permission to substitute unrelated semantics. Record new approved choices in the canonical contract first, then reconcile the analysis document and implementation plan.
+For lifecycle and authority changes, consult the **CONFIRMED**, **INTERIM**, and **OPEN / DECISION REQUIRED** sections in `doc/lifetime-and-authority.md` and map them to D1–D9 above. Preserve the selected hostile-native-code confinement, capability-scoped trust, Domain = VSpace boundary, shared numerical meaning/cheap fbufs with protected-context fallback, no-intra-Domain-alias policy, incarnation, permission-based retirement, SPeCK-like KeyMaster, accepted-leak, Copy-not-Map, local-Unmap versus origin-cap-Revoke, and private mapping-guard directions. Revocation takes precedence over client borrows; unsafe mapped-memory caller obligations are the preferred direction, not a kernel safety exemption. Do not treat these as approval of remaining identity encodings, selective-revocation mechanisms, Frame Map/remap schemas, machine-local namespace conflicts, per-target enforcement, precise Rust/fbuf contracts, or completion ABIs. Use the seL4/Composite research in section 8 as evidence, not as permission to substitute unrelated semantics. Record new approved choices in the canonical contract first, then reconcile the analysis document and implementation plan.
+
+Fbuf setup must establish suitable addresses for all participating Domains before mapping. Do not add multi-node global address allocation. Stronger temporal-VA quarantine/stale-pointer prevention is explicitly deferred; outside mechanisms prevent stale application accesses for now, and revoked addresses need not remain inaccessible for a surviving Domain's lifetime. Do not reintroduce that work as a current blocker or confuse its deferral with relaxing kernel memory safety, capability incarnation checks, hardware/TLB withdrawal, or safe physical-resource reuse.
 
 ## Pick one incremental slice
 

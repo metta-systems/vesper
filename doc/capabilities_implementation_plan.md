@@ -50,7 +50,8 @@ Reference: [status](nucleus_capabilities.md#status-and-authority), [responsibili
 - [ ] Review the consolidated reference with the maintainer; record amendments without reviving the retired `kernel/nucleus/design.md` as a second authority.
 - [ ] Confirm the implementation-status matrix against module declarations and dispatch; identify supported, unsupported, and excluded draft operations in code/docs.
 - [ ] Record prerequisite decisions for the next slice using D1–D9. Leave unrelated decisions explicitly open instead of blocking all progress or guessing their answers.
-- [ ] Confirm the shared-address-space/protection direction (D1) before introducing domain/VSpace behavior that would fix a different architecture by accident.
+- [ ] Resolve remaining D1 details under the selected architecture: hostile native Domains, capability-scoped trust, Domain = VSpace boundary, shared numerical meaning/cheap fbufs with protected-context fallback, no intra-Domain aliases, permitted cross-Domain sharing, and revocation over client borrows. Settle machine-local namespace/reservation conflicts, fault delivery, and per-target protection features; fbuf participant addresses must be agreed before mapping. Multi-node global address allocation is out of scope, and stronger stale-raw-pointer/temporal-VA prevention is far-future work delegated to outside mechanisms for now; do not make it a current prerequisite.
+- [ ] Define adversarial agent/test work against confinement, including libOS bypass, malicious syscall inputs, alias-rule bypass, DMA programming bypass, and revocation/reuse races. Keep side-channel resistance explicitly deferred.
 - [ ] Confirm the capability-manager/revocation trust boundary (D2) before enabling general derivation or reclamation.
 - [ ] Agree the ordinary-operation schema template: operation ID, arguments/units, slot scope, authority, results, blocking, ownership, and failure/partial completion.
 - [ ] Keep research examples and unimplemented operations clearly labeled; remove conflicting authoritative-looking diagrams/comments as the corresponding code is reconciled.
@@ -215,7 +216,7 @@ Maintainer direction is partially resolved: keys name capability incarnations; R
 - [ ] Enforce KeyTable occupancy invariants: no counted null inserts; no entry mutation bypassing membership bookkeeping; checked bounds; failed operations preserve state.
 - [ ] Finalize per-kind copy/move/delete rules, rights attenuation, destination authority, badges, bootstrap slots, and Domain.Grant semantics (D2–D4).
 - [ ] Implement the minimal KeyTable lifecycle with same-table/same-object alias handling and atomic source/destination updates. Keep unresolved Revoke/derivation behavior unsupported.
-- [ ] Allocate and retire private Domain state, DCB identity, KeyTable owner, and scheduler/protection relationships coherently.
+- [ ] Allocate and retire private Domain state, DCB identity, KeyTable owner, and backend protection relationships coherently: each Domain is an independent VSpace/protection boundary, not a member of a shared unprotected context. Reconcile separate ABI kinds/identifiers deliberately.
 - [ ] Define execution-context initialization and legal Activate/Suspend/Resume transitions, including blocked continuations and valid-budget requirements (D3/D7/D8). Implement only transitions supported by the substrate; keep the rest explicitly deferred until Phase 7.
 - [ ] Reject invalid/released/stale domain IDs before indexing; retire in-flight references before domain reuse.
 - [ ] Choose DCB size/stride/page capacity, visibility/discovery, publication/snapshot protocol, event-summary indexing, and record reuse/availability within the intended persistent DcbView (D5).
@@ -239,17 +240,23 @@ Reference: [memory contracts](nucleus_capabilities.md#resource-storage-and-memor
 - [ ] Track actual mapping identity, full supported virtual addresses, permissions/attributes, and teardown state; eliminate placeholder map/unmap success.
 - [ ] Implement Copy as capability-only derivation with no active mapping association/PTE installation; define and implement separate Map with explicit target context, virtual address, permissions, and per-cap mapping bookkeeping.
 - [ ] Specify/implement mapping-local Unmap versus origin-capability Revoke of descendants through KeyMaster/libOS; retain the origin unless separately unmapped/deleted, and define partial completion and prevention of racing mapping installation.
-- [ ] Resolve how the same physical Frame mapped at different Domain/virtual pages fits the shared namespace: global aliases/allocation, protected views versus shared roots, and pointer/offset conventions (D1/D6).
+- [ ] Implement the selected alias policy: no two virtual addresses for overlapping physical backing within one Domain, including through different caps/frame sizes; allow cross-Domain aliases and writable sharing.
+- [ ] Implement fbuf setup that establishes addresses suitable for all participants before mapping; specify reservation/conflict handling and installation rollback before pointer publication. Keep machine-local allocation policy explicit and multi-node global address allocation out of scope; all shared pointees still need authorized mappings.
+- [ ] Define per-target MMU/MPU/IOMMU, address-width/granularity, and DMA restrictions across the intended hardware range; support separate protected-context fallback without silently downgrading hostile-code isolation.
 - [ ] Define encoding/enforcement of origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no Frame-slot-reuse rule, including scope and exhaustion.
 - [ ] Implement ASID allocation/binding and TLB-safe reuse where the target mapping model requires it. Keep unrelated I/O/IRQ operations explicitly unsupported until their contracts are implemented.
 - [ ] Define trusted-libOS Unmap-before-invalidation prerequisites and the kernel checks/manager obligations preventing premature reuse; implement kernel retirement separately from KeyMaster background subtree cleanup.
 - [ ] Implement the agreed revocation/reclamation completion protocol, including pending-use retirement, PTE removal, required TLB/device synchronization, and safe backing/metadata reuse; allocation leaks need not trigger kernel recovery.
 - [ ] Implement MappedSlice ownership of a dedicated private capability/mapping with no derivations or independent management aliases; use incarnation-checked Drop cleanup and reject stale keys without touching replacements.
-- [ ] Specify full-borrow backing validity and ancestor-retirement integration; investigate Rust exclusivity/shared-resource semantics separately from mapping ownership, and choose safe versus unsafe access APIs accordingly.
+- [ ] Specify the preferred unsafe reference-access obligations and fbuf synchronization under authoritative revocation; client borrows must not veto revocation, and protection faults do not make invalid Rust references sound.
+- [ ] Implement exclusive, immutable-shared, and mutable-shared modes with explicit transitions; distinguish a read-only mapping from backing with no other writers.
+- [ ] Define revocation completion and fault delivery/likely Domain termination for withdrawn mappings; preserve hardware/TLB and physical-reuse safety. Preventing stale raw-pointer accesses after authorized VA reuse is delegated to outside mechanisms, not a current kernel implementation task.
 - [ ] Test tiny/oversized/misaligned regions, high virtual addresses, occupied destinations, pool exhaustion, rights denial, device restrictions, partial mapping failures, stale mappings, ASID reuse, and cross-domain reuse without stale-data disclosure.
 - [ ] Run target integration for retype → mapping → access → unmapping/revocation → safe reuse, including failure paths.
 
-**Exit:** the memory slice creates, uses, and retires resources without untracked mappings, overlapping allocations, leaked authority, or unsafe reuse.
+**Deferred scope:** stronger temporal-VA quarantine/stale-pointer detection is far-future work, not an exit prerequisite. Revoked VAs need not remain inaccessible for a surviving Domain's lifetime. This does not defer kernel lifetime safety, capability incarnation checks, mapping withdrawal/TLB synchronization, or safe physical-resource reuse.
+
+**Exit:** the memory slice creates, uses, and retires resources without untracked mappings, overlapping allocations, leaked authority, or unsafe physical reuse; it does not promise stale raw pointers always fault after authorized VA reuse.
 
 ## Phase 6 — Deferred completion, asynchronous primitives, and IPC
 

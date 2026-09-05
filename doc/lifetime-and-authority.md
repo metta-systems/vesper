@@ -211,7 +211,9 @@ Typed pools remain a useful starting point, with representation free to change u
 
 An object-wide epoch does not provide selective branch-only invalidation while sibling caps to the same object remain valid. If that separate operation is required, KeyMaster must use an explicit invalidation protocol; the exact primitive/completion boundary remains open. Do not add kernel ancestry metadata as a presumed prerequisite for the already-selected object-retirement mechanism.
 
-Lazy object invalidation does not remove PTEs or cancel all retained work by itself. **The trusted library OS owns unmap-before-invalidation orchestration.** It must not invalidate the only usable cleanup authority and then expect a recipient to cooperate. How premature physical reuse is rejected or prevented, and which checks are kernel-enforced versus trusted-manager preconditions, remains D2/D6. Accepted allocation leaks must not become conflicting physical reuse.
+Lazy object invalidation does not remove PTEs or cancel all retained work by itself. **The authorized library OS/resource manager owns unmap-before-invalidation orchestration.** Trust follows explicitly granted capabilities, not a blanket assumption that all Domains or libOS instances cooperate. It must not invalidate the only usable cleanup authority and then expect a malicious recipient to cooperate. Premature-reuse checks and the kernel/manager completion protocol remain D2/D6, but the new D1 threat model requires confinement even when a recipient bypasses its libOS. Accepted allocation leaks must not become conflicting physical reuse.
+
+KeyMaster is entrusted with tree management because it receives the necessary authority. No kernel bypass should depend merely on its name. The earlier manager-exclusive direction still needs a precise permission model: if another application is granted direct derivation powers, does it join the trusted bookkeeping boundary or still register its work through KeyMaster? That is a D2/D4 clarification, not a reason to reject capability-scoped trust.
 
 **OPEN / DECISION REQUIRED — D2:**
 
@@ -234,9 +236,29 @@ Included [`DcbView`](../libs/object/src/domain.rs) constructs references into sh
 
 **CONFIRMED cleanup guarantee:** Drop uses an incarnation-bearing capability key and the necessary kernel checks. A stale key is rejected rather than allowed to unmap a replacement. This follows the general key contract, not a new destructor exception. Tests must establish it once the new keys exist; the current destructor discards errors. The private mapping design prevents another holder from independently remapping that same guard-owned association; its lifecycle must enforce this, rather than treating a normal remap as capability invalidation. A forgotten guard may leak, which is acceptable if it cannot cause invalid reuse.
 
-There are two different exclusivity questions: ownership of the capability/mapping, and access to the physical bytes. No derivations from the guard-owned capability addresses the first. It does not prove that the same physical frame has no pre-existing aliases, ancestor retirement authority, or external writers. The full-borrow backing guarantee and integration with ancestor revocation/object retirement still need an explicit protocol.
+There are two different exclusivity questions: ownership of the capability/mapping, and access to the physical bytes. No derivations from the guard-owned capability addresses the first. It does not prove that the physical frame has no aliases in other Domains, ancestor retirement authority, or device writers. D1 now prohibits multiple virtual aliases within one Domain, but permits cross-Domain writable sharing.
 
-**OPEN Rust mutability question:** WRITE permission is not exclusivity; READ permission is not a guarantee against external mutation. A mutable borrow of the guard is not automatically exclusive ownership of shared physical bytes. Whether to expose ordinary slices, scoped access guards, shared-memory-specific operations, or unsafe access remains undecided. Making a reference-producing API unsafe is an option, not the conclusion of this discussion; any unsafe contract must be enforceable for the entire borrow.
+**CONFIRMED priority:** authorized revocation is the ultimate source of access validity and is not vetoed by a client holding a Rust borrow. Higher-level protocols coordinate safe use. Access after completed withdrawal to a still-unmapped address faults; the expected policy is likely termination of the offending Domain, with exact fault/supervisor semantics still open. Private mapping ownership does not prevent ancestor revocation. Revocation must retire hardware access, not just capability lookup, to supply this behavior.
+
+**Preferred Rust direction:** explicit unsafe caller obligations for reference-producing access, because the kernel cannot generally promise cross-Domain exclusivity of shared resources. This is not a decision to make every mapping operation unsafe. The exact unsafe API and its full-borrow obligations remain to be designed; raw/fbuf protocol access may be preferable where an ordinary reference cannot be justified. Safe wrappers may exist only where they actually enforce stronger conditions. The kernel must remain memory-safe and isolate unrelated authority even if the application violates its unsafe contract.
+
+**Technical correction — read-only is not immutable backing:** read-only PTE permissions prevent stores through that particular mapping. For example, A can map frame F read-only while B maps F read-write; B's permitted write changes the bytes A observes. DMA and kernel writers can also change them. This is consistent with hardware read-only protection, but inconsistent with calling the backing immutable. A read-only DCB mapping updated by the kernel is an existing example. Ordinary `&[u8]` needs no conflicting mutation for its borrow, not merely an inability to write through A's PTE. An immutable-sharing mode must establish a stronger backing/protocol guarantee.
+
+**DEFERRED — stale raw pointers after VA reuse:** a capability generation is checked on invocation, not an ordinary load. If revoked address X is later mapped to accessible replacement backing, an old raw pointer X may access that replacement instead of faulting. The maintainer explicitly does not require X to remain inaccessible for the surviving Domain's lifetime: outside/higher-level mechanisms must prevent stale application accesses for now. Stronger temporal-address guarantees/quarantine are a far-future topic, not a current kernel implementation prerequisite. Frame-cap slot non-reuse is not virtual-address non-reuse. This deferral does not weaken kernel lifetime safety, generation checks, completed mapping withdrawal/TLB synchronization, or safe physical-resource reuse; it also does not make an invalid Rust reference sound.
+
+### What an ordinary `&[u8]` requires
+
+The standard library's [`slice::from_raw_parts` safety contract](https://doc.rust-lang.org/std/slice/fn.from_raw_parts.html#safety) is the relevant boundary when a mapping wrapper creates a slice. For `&'a [u8]` it requires:
+
+1. A non-null pointer, correctly aligned, valid to read all `len` bytes. Non-null/alignment still apply to empty slices; `u8` alignment is one byte.
+2. Consecutive initialized bytes in a single valid allocation, with correct bounds/provenance. Every initialized bit pattern is valid for `u8`, but uninitialized memory is not. Adjacent mappings/allocations are not automatically one Rust allocation. Physical contiguity is not required; the mapping abstraction must establish the virtual allocation it exposes.
+3. Total byte length at most `isize::MAX`, without address arithmetic wrapping.
+4. Memory that remains valid for the entire borrow: no deallocation, unmapping, or replacement that invalidates the reference while it is live. The wrapper must tie the slice lifetime to the actual access contract, not manufacture permanence.
+5. No mutation of those bytes for the borrow's duration. The documented interior-mutability exception concerns `UnsafeCell`; ordinary `u8` elements provide no such exception. Another Domain's writer, DMA, or the kernel can violate this even if the observer's PTE is read-only. Multiple shared readers are allowed, but competing exclusive/mutating access is not.
+
+Wrapping backing in `UnsafeCell` does not permit returning an ordinary `&[u8]` and then mutating through other paths during that borrow. Expose a suitable cell/atomic/protocol interface, or establish a non-mutating access interval before creating the ordinary slice. `UnsafeCell` itself is not synchronization. An unsafe constructor assigns these obligations to the caller; it does not switch off Rust's reference rules.
+
+A possible fbuf read-phase protocol is: producer initializes/publishes bytes with appropriate ordering → reader obtains an access interval during which the payload stays valid and no participant modifies it → reader drops all ordinary slice borrows and releases/acknowledges the interval → producer may reuse/mutate the payload. Protocol state can use appropriate atomics separately from the borrowed payload. This is an implementation idea, not an approved fbuf wire/state machine; a peer that can ignore the protocol prevents an unconditional safe-reference promise. Lifetime and revocation coordination remain outside mechanisms under the selected unsafe direction.
 
 | Memory/access contract | Candidate Rust representation, not yet approved |
 |---|---|
@@ -250,17 +272,19 @@ Synchronization must cover every participant allowed to access the bytes. A user
 | Alternative | Tradeoff |
 |---|---|
 | Raw mapping handles with explicitly unsafe access | Low wrapper complexity; caller bears documented safety obligations |
-| Enforceable mapping lease/pin | Can protect validity, but delays or constrains reclamation; does not alone establish aliasing/external-mutation safety |
+| Coordinated access interval/pin | May support a stronger wrapper if compatible with the protocol, but must not give an uncooperative recipient a veto over authoritative revocation; pins alone do not establish exclusivity |
 | Copied, fallible observations | Avoid exposed persistent references; may require an agreed query operation and syscall cost |
 | Shared-memory-specific access protocols | Appropriate for atomics, producer/consumer data, DMA, or MMIO; not automatically ordinary Rust slices |
 
-**OPEN / DECISION REQUIRED — D1/D3/D5/D6/D7:** implement the private guard-owned mapping direction and investigate physical-byte exclusivity versus shared-resource semantics. Persistent DCB views and revocable buffer mappings need different contracts; do not assume both can disappear at arbitrary times.
+**OPEN / DECISION REQUIRED — D1/D3/D5/D6/D7:** implement private guard-owned mappings and specify the preferred unsafe/fbuf protocols under authoritative revocation. All three sharing modes are required: exclusive ownership, immutable sharing, and synchronized mutable sharing. Persistent DCB views and ordinary revocable buffers have different lifecycles; view persistence does not imply immutable contents.
 
 - [ ] Implement dedicated guard-owned capability/mapping creation and teardown with no derivation or management-handle escape; replace the existing shared BufferKey borrow.
 - [ ] Validate stale Drop rejection through the same incarnation checks as other invocations, and prevent independent remap of a live guard-owned association.
-- [ ] Define full-borrow backing validity under ancestor revocation/object retirement; introduce leases/pins only if the selected contract requires them.
-- [ ] Choose safe versus unsafe construction/access and define which physical-byte aliasing/writer guarantees each API establishes.
-- [ ] Specify external mutation and synchronization rules independently of mapping permissions.
+- [ ] Define unsafe full-borrow validity obligations and fbuf coordination under ancestor revocation/object retirement without making client borrows veto revocation.
+- [ ] Select the reference-producing unsafe boundary and stronger safe wrappers, if any; state what physical-byte validity, aliasing, and writer guarantees each requires.
+- [ ] Define exclusive/immutable-shared/mutable-shared mode transitions and synchronization independently of per-mapping permissions, including writers in other Domains and DMA.
+- [ ] Define fault delivery and the likely Domain-termination policy after revoked access; distinguish capability inconsistency errors from CPU protection faults.
+- [ ] **Far-future, deferred:** revisit temporal-VA reuse/quarantine or stronger stale-pointer detection only in a separately scoped design. For now outside mechanisms prevent stale application accesses; this is not a dependency of the current capability/mapping refactor.
 - [ ] Define buffer lifetime and input stability across blocked operations, including copying, pinning, or revalidation where appropriate.
 - [ ] Keep arbitrary safe slice construction unavailable until validity, aliasing, and mutation guarantees are enforceable.
 
@@ -340,7 +364,7 @@ The shared-address-space protection decision matters here: capability checks on 
 ### CONFIRMED Frame mapping direction
 
 - **Copy is not Map.** Checked Copy creates another permitted capability to the same physical frame, without duplicating a live mapping association or installing a PTE. Separate Map creates that cap's mapping.
-- The same physical frame may be mapped at different virtual pages in different Domains through capabilities derived from the same origin. Their mapping associations are independent of the shared frame identity.
+- The same physical frame may be mapped at different virtual pages in different Domains through capabilities derived from the same origin; the same virtual address is preferred for fbufs and pointer sharing. A frame must not be mapped at two distinct virtual addresses within one Domain. This must cover physical overlap through different caps or large/small frame aliases, not just duplicate handles. Simultaneous writable mappings across Domains are permitted with higher-level synchronization.
 - Unmap is mapping-local, whether invoked through origin A or derived B; it does not itself traverse descendants.
 - **Terminology correction:** the maintainer's earlier “origin Unmap” meant capability **Revoke on the origin**, as in seL4, not a stronger Frame.Unmap. Origin Revoke withdraws descendants while retaining the origin; removing the origin's own mapping/capability is separate. Earlier text describing an Unmap primitive that removes A+B was a misunderstanding and is superseded. KeyMaster implements tree policy using kernel mechanisms; object retirement is still distinct.
 - Remapping is origin-authorized and remains a valid operation on the capability. The concrete effect on descendant mappings, and virtual relocation versus replacing physical backing, remain open.
@@ -351,7 +375,7 @@ The current inline `RegionPayload` has physical address and compressed per-cap m
 
 **OPEN / DECISION REQUIRED — D1/D2/D4/D6:**
 
-- [ ] Choose the protection backend/threat model and Domain/VSpace relationship without silently abandoning shared-namespace intent.
+- [ ] Implement backends for the selected hostile-code threat model and Domain = VSpace protection boundary; resolve per-target features without weakening confinement.
 - [ ] Define physical and metadata layouts, accounting, single/batch retype, and initialization/sanitization enforcement.
 - [ ] Define complete per-mapping identity, permissions/attributes, ASID ownership, and hardware-safe namespace reuse.
 - [ ] Specify/implement separate Copy and Map schemas: Copy installs only the destination capability; Map validates target context, address, rights, and mapping state before installing a PTE.
@@ -363,30 +387,65 @@ The current inline `RegionPayload` has physical address and compressed per-cap m
 - [ ] Retain teardown bookkeeping until mapping/device invalidation completes; do not reset an allocation watermark as a substitute for revoke.
 - [ ] Implement backing reuse only after authority retirement, pending-use retirement, hardware synchronization, and required sanitization.
 
-### Different virtual pages and the single-address-space goal
+### D1: selected protection and sharing architecture
 
-**CONFIRMED use case:** two derived capabilities to physical frame F can Map it at X in Domain A and Y in Domain B. This does not require copying F or changing its object identity.
+Maintainer answers to the D1 questionnaire establish the following direction. These are approved semantics, not implementation/test results.
 
-**OPEN — D1/D6:** distinguish three properties that are often conflated:
-
-1. One shared virtual-address namespace/allocation policy.
-2. One hardware translation root/page-table view.
-3. Identical access permissions for every Domain.
-
-The intended aliasing use case can coexist with a shared namespace if X and Y are globally meaningful aliases of F. A shared namespace does not require exactly one virtual address per physical frame. What conflicts with a strict shared-meaning namespace is giving the same address X unrelated meanings in different Domains, not giving one frame multiple addresses.
-
-| Candidate | Consequences and tradeoffs |
+| Topic | Selected direction |
 |---|---|
-| Global virtual allocation with per-Domain protected views | Where an address is present, it has the same intended backing; views may omit aliases or restrict rights. Supports X/Y aliases and shared-pointer conventions, but needs coordinated allocation and can still require translation-context switches |
-| One shared translation root | X and Y can both map F, but ordinary PTE permissions alone do not distinguish Domains executing with the same relevant privilege/root. Separate domain protection machinery or a restricted trust model is required |
-| Independent Domain-local virtual allocation | Straightforward per-Domain X/Y placement, but the same numerical pointer need not retain meaning across Domains; this changes the strict shared-namespace goal and is not silently adopted |
+| Adversary | Arbitrary native code, including actively malicious code and deliberate confinement attacks |
+| Trust | Explicit capability scope; KeyMaster is entrusted with key/tree operations because it holds appropriate authority, not because of a kernel name-based exemption |
+| Protection unit | Domain and VSpace are the same protection-context boundary; separate Domains are independent |
+| Execution privilege | Everything except the nucleus is userspace by default; no unconfined service promotions initially |
+| Required confidentiality/integrity | Other Domains' memory absent granted access, and kernel-private memory always |
+| Single address space | Shared numerical meaning when correctly mapped, plus cheap sharing; a single root/no-switch execution is not required |
+| Preferred IPC payload path | fbufs mapped at matching addresses in peers, with pointer sharing and higher-level synchronization |
+| Intra-Domain frame aliases | Prohibited: one physical frame must not have two distinct virtual addresses in one Domain |
+| Cross-Domain frame aliases | Different addresses permitted; matching addresses preferred |
+| Cross-Domain writers | Permitted; fbuf protocols coordinate shared mutation |
+| Sharing modes | Exclusive, immutable-shared, and mutable-shared all required |
+| DMA | Trusted mediation or IOMMU confinement, depending on the platform |
+| Availability | libOS policy; nucleus provides resource isolation/abstraction and IPC mechanisms |
+| Timing/cache side channels | Deferred, but tracked in design; not part of the current confidentiality guarantee |
+| Revocation | Authoritative over client references; subsequent access to withdrawn/unmapped memory faults, with Domain termination the likely policy |
+| Rust shared-memory access | Preference for explicit unsafe caller obligations; exact reference/fbuf APIs remain open |
+| Hardware range | PowerPC G5 through current Intel, Armv9, RISC-V; potentially higher-end STM32 |
+| Fallback | Separate protected translation contexts, preserving shared-address conventions where possible |
 
-**Discussion recommendation, not a D1 decision:** explore global virtual allocation plus protected per-Domain views first. It separates a common namespace from identical mappings/access. Applications that need cross-Domain raw pointers may use a canonical shared address; aliases require pointer translation or offset-based payloads as appropriate. Choosing SPeCK-like lifetime/resource mechanisms does not itself resolve these address-space questions or eliminate switching costs.
+SPeCK-like userspace policy over kernel liveness/resource/quiescence mechanisms remains the selected architecture. A Domain's possession of a permission authorizes its specified operation; it does not imply that its arbitrary syscall inputs are safe, that it follows fbuf protocols, or that it may violate protection of unrelated objects. Applications can deliberately damage resources they are permitted to write/retire; such delegated power is not a confinement escape.
 
-- [ ] Define whether shared address space means shared numerical meanings, shared translation roots, or both, and how X/Y aliases are allocated/discovered.
-- [ ] Define target-context authority and which Domain can access each alias; choose the actual protection backend rather than infer isolation from capability lookup.
-- [ ] Define shared-buffer pointer versus offset conventions when peers map the same backing at different addresses.
-- [ ] Test cross-Domain aliases, independent mapping-local Unmap, and descendant withdrawal by origin cap-Revoke under the selected backend.
+Domain = VSpace is a semantic protection-unit decision, not permission to silently merge the current public type IDs or cast DomainId into an ASID. Internal object representation, execution-context relationships, and backend identity binding still require a coordinated design.
+
+### D1 clarifications and consistency checks
+
+**1. Read-only mapping versus immutable backing — technical correction.** The inability of A to store through its read-only PTE does not prevent B's writable PTE from changing the same frame. The read-only DCB view is also intentionally updated by the kernel. Consequently, immutable sharing requires more than read-only permissions at one observer. The record preserves the hardware write-protection requirement without adopting the incorrect inference of global immutability.
+
+**2. CONFIRMED — fbuf address agreement precedes mapping.** Fbuf setup establishes addresses suitable for all two-or-more participating Domains before installing mappings, and publishes pointers only after successful setup. F at X in A and Y in B is otherwise allowed, but passing pointer X to B does not work merely because B maps F at Y. The no-intra-Domain-alias rule means B cannot keep Y and additionally map F at X. Address negotiation/reservation must resolve that conflict rather than silently relocate escaped pointers. Every shared pointer's pointee also needs the intended authorized mapping; mapping a pointer-containing buffer does not grant access to arbitrary targets.
+
+**Scope decision:** multi-node global/distributed address allocation is out of scope. Do not import a classical SASOS assumption that one coordinated 64-bit namespace covers local RAM, neighboring nodes' RAM, and allocated disk space. The maintainer has raised concerns about global reservation; the exact machine-local reservation/allocation model remains open rather than being silently replaced by a specific scheme. The current concrete requirement is participant-compatible fbuf addresses established before mapping.
+
+**3. DEFERRED — stronger raw-pointer temporal guarantees.** Completed hardware withdrawal can make stale accesses fault while addresses remain unmapped. Once X is legitimately reused for accessible memory, the old pointer X may access the replacement without a capability-generation check. The maintainer explicitly declines a lifetime-long inaccessible-address requirement: outside mechanisms must ensure no stale application accesses for now. Preserve stronger temporal-VA mechanisms as far-future research, not a current blocker. This is distinct from Frame-cap slot non-reuse and from mandatory present-day hardware withdrawal, remote TLB/in-flight synchronization, and physical reuse safety.
+
+**4. Unsafe Rust versus fault containment.** Unsafe shared-memory APIs can place validity, exclusivity, and synchronization obligations on their callers. They cannot promise ordinary Rust reference soundness if those obligations are violated; an eventual protection fault does not repair undefined behavior or compiler assumptions. That is an application/protocol error, but the nucleus must remain memory-safe and preserve confinement from malicious native code. Fbuf APIs need not expose ordinary references when the full-borrow guarantee is unavailable.
+
+**5. Hardware breadth — features are not uniform.** Separate translation contexts are an acceptable fallback, but MPU-only targets may isolate regions without supporting arbitrary virtual aliases or page-table-style remapping. Per-target support restrictions and whether a requested mapping mode is unsupported must be explicit. Software-mediated DMA requires exclusive control of programming paths/descriptors; giving an untrusted Domain raw device-programming authority can bypass mediation. This document does not claim all listed machines currently support the same features.
+
+**6. Availability policy versus resource enforcement.** Keeping recovery/admission policy in the libOS is consistent with the model. A malicious Domain may bypass its libOS, so the nucleus still must bound/charge its resource consumption and provide checked IPC/syscall failure rather than unbounded allocations or panics. Exact budget/quota and bounded-work mechanisms remain implementation work, not a new kernel scheduling-policy mandate.
+
+**7. Authorized derivation versus manager exclusivity — next discussion, not resolved here.** KeyMaster's authority is capability-based. If another Domain receives equivalent direct derivation permissions, decide whether it is another entrusted manager or must register through KeyMaster. A name-only exception is not acceptable, and unregistered derivation must not silently invalidate the bookkeeping assumptions used for revocation. The maintainer requested revisiting this after the current results are recorded; no new answer is inferred from the fbuf/VA deferral decisions.
+
+### D1 implementation and validation work
+
+- [ ] Implement fbuf address agreement for all participants before mapping; define reservation/conflict detection, stability during installation, and pre-publication failure cleanup. Keep the machine-local allocator choice explicit and multi-node global address allocation out of scope.
+- [ ] Implement no-intra-Domain-alias checks across physical overlaps, including distinct caps and large/small frame extents; define who enforces them so arbitrary native code cannot bypass the selected rule.
+- [ ] Bind each Domain to its independently protected backend context while reconciling existing Domain/VSpace ABI/storage responsibilities without renumbering by accident.
+- [ ] Define a target MMU/MPU/IOMMU, address-width, page/region-granularity, and DMA feature matrix; document unsupported modes rather than downgrade malicious-code confinement silently.
+- [ ] Specify kernel/userspace transitions and caller identity; remove bootstrap-only EL1/domain-zero assumptions before claiming user confinement.
+- [ ] Define revocation completion, fault delivery and likely Domain termination for access to withdrawn mappings. Do not require permanent inaccessible VAs or solve stale raw-pointer reuse in this slice; outside mechanisms own that prevention for now.
+- [ ] Implement fbuf sharing modes, synchronization, and preferred unsafe access contracts; distinguish read-only views from immutable backing.
+- [ ] Specify resource-accounting/bounded-work mechanisms supporting libOS policy against callers that bypass library wrappers.
+- [ ] Plan adversarial agent tasks and regression tests for unauthorized loads/stores, privileged operations, malformed invocations, cross-Domain/key-table attacks, alias-rule bypass, DMA bypass, revocation races, and reuse.
+- [ ] Keep timing/cache side-channel exposure recorded as deferred rather than claiming it is solved by address-space isolation.
 
 ### seL4 and Composite research: mapping authority versus object lifetime
 
@@ -477,7 +536,7 @@ Within the main implementation plan's dependency ordering, the next work is:
 - [ ] Enforce KeyMaster's derivation boundary and implement the retirement/background-cleanup handoff.
 - [ ] Settle remaining selective-revocation and completion guarantees, including Unmap-before-invalidation and safe physical reuse.
 - [ ] Implement private guard-owned mapping lifecycles, investigate Rust mutability/shared-resource APIs, and define persistent DCB record guarantees.
-- [ ] Resolve how cross-Domain frame aliases fit the shared-address-space/protection model.
+- [ ] Resolve remaining namespace scope, common-address reservation/conflicts, and relocation policy under the selected cross-Domain-alias/protected-context model; do not reopen the permitted aliasing modes.
 - [ ] Keep remaining decision approvals, schemas, and implementation evidence synchronized with the canonical contract and plan.
 - [ ] Implement guarded storage and the smallest approved KeyTable lifecycle first; leave unresolved revoke/derivation behavior unsupported.
 - [ ] Follow with domain/DCB, memory reclamation, deferred completion/IPC, and Time slices according to their actual prerequisites, not by enabling existing sketches wholesale.
