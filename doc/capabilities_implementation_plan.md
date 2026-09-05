@@ -112,7 +112,9 @@ Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contract
 - [ ] Bound console copying and terminator handling; return specified errors for malformed inputs rather than panicking.
 - [ ] Decode and propagate console results in userspace; gate/remove unconditional semihosting diagnostics from ordinary wrapper behavior.
 - [ ] Correct false-success/error-discarding behavior in already-included Domain/KeyTable wrappers, while leaving unimplemented kernel operations explicitly unsupported.
-  - [x] Preserve specific errors and unknown status/details in Domain Activate/Grant/Suspend/Resume without enabling the excluded handler. KeyTable remains pending.
+  - [x] Preserve specific errors and unknown status/details in Domain Activate/Grant/Suspend/Resume without enabling the excluded handler.
+  - [x] Preserve specific errors and unknown status/details in KeyTable `copy_derive`, `delete`, `revoke`, and `grant_to`, without enabling the excluded handler or changing request encoding.
+  - [ ] Replace KeyTable's no-op `transfer` placeholder after its interface/ownership contract is settled; do not advertise Move support.
 - [ ] Test console success, kernel error propagation, invalid/empty slots, excessive raw slot/op values, boundary lengths, invalid/unauthorized pointers, non-SVC faults, unsupported SVC immediates, and fault recovery without recursive capability dispatch.
 
 ### Debug-only availability slice validation
@@ -161,7 +163,22 @@ The decoder preserves success words and existing statuses 1–25, checks details
 | `just clippy` | Passed the configured RPi3/QEMU build, all nine embedded feature configurations, and both host-test states after fixing test-module visibility/configuration |
 | `just test-device` | Passed the existing QEMU device integration and device doctest workflow |
 
-The host harness compiles the actual Domain source with a test-only mock transport; it checks all four methods, full-width slot encoding, success, unsupported/lookup/rights errors, unknown statuses, malformed details, and unchanged handles. It never executes host SVC or dereferences DCB mappings. These are not real SVC/Domain lifecycle integration tests, and the AArch64 host cannot exercise a narrower-`usize` overflow branch. Compiler-cache access and toolchain future-compatibility warnings remain nonblocking. Full `just test` was not run for this slice. Next is the remaining KeyTable result repair; enabling Domain behavior still requires the guarded storage, authority, execution-context, completion, and time prerequisites.
+The host harness compiles the actual Domain source with a test-only mock transport; it checks all four methods, full-width slot encoding, success, unsupported/lookup/rights errors, unknown statuses, malformed details, and unchanged handles. It never executes host SVC or dereferences DCB mappings. These are not real SVC/Domain lifecycle integration tests, and the AArch64 host cannot exercise a narrower-`usize` overflow branch. Compiler-cache access and toolchain future-compatibility warnings remain nonblocking. Full `just test` was not run for this slice. The remaining KeyTable result repair is recorded below; enabling Domain behavior still requires the guarded storage, authority, execution-context, completion, and time prerequisites.
+
+### KeyTable client-result slice validation
+
+Selected the remaining syscall-backed KeyTable wrapper repair. `copy_derive`, `delete`, `revoke`, and `grant_to` now use the existing shared decoder; `grant_to` delegates to `copy_derive` with the same all-rights request. Nonzero statuses no longer become false success or collapse into `Unknown`. Signatures, operation IDs, slot encoding, and wire errors are unchanged. The kernel handler remains excluded and active dispatch still reports `UnsupportedCoreType(KeyTable)` after successful lookup. No authority, lifecycle, or D1–D9 decision was introduced.
+
+The existing host harness compiles the production KeyTable source with a test-only transport. Three new tests cover all four methods: full-width slot and rights encoding, exactly one call, success, unsupported/lookup/occupied-slot/rights errors, unknown statuses, malformed details, and unchanged handles. Literal expectations pin the used operation IDs and request masks without approving their eventual authority semantics.
+
+| Recipe | Result and scope |
+|---|---|
+| `just test-object-host` | Passed 27 feature-off / 28 feature-on tests after correcting the test's `Rights` construction |
+| `just fmt-check` | Passed workspace formatting |
+| `just clippy` | Passed configured RPi3/QEMU build, all nine embedded feature configurations, and both host-test states after correcting a documentation lint |
+| `just test-device` | Passed existing QEMU device integration tests and device doctest workflow |
+
+Coverage limits: mock responses test client propagation, not kernel authorization, real SVC return, or table mutation/rollback. Full `just test` was not run. Existing compiler-cache access and toolchain/dependency future-compatibility warnings remain nonblocking. The no-op `transfer`, missing public handle construction, unused legacy `revoke` table argument, and unresolved all-rights delegation policy remain deferred. The parent wrapper-cleanup item stays unchecked because the no-op still exists. Enabling actual KeyTable operations next requires guarded storage/lifetime and approved D2–D4 lifecycle/authority semantics; this slice does not start that work.
 
 **Exit:** a real end-to-end operation demonstrates the standard decoding, authority, user-copy, and result pattern. Unsupported wrappers fail honestly.
 

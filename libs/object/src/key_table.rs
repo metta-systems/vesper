@@ -1,7 +1,13 @@
-use {
-    crate::{CapError, Key, Rights},
-    libsyscall::{protected_call1, protected_call4},
-};
+use crate::{CapError, Key, Rights, decode_syscall_result};
+
+#[cfg(not(test))]
+use libsyscall::{protected_call1, protected_call4};
+#[cfg(test)]
+use tests::{protected_call1, protected_call4};
+
+#[cfg(test)]
+#[path = "../tests/support/key_table.rs"]
+mod tests;
 
 // ==================================================
 // == Public user interface, usable from userspace ==
@@ -22,6 +28,11 @@ impl KeySlot {
     pub const DEBUG_CONSOLE: KeySlot = KeySlot(127); // FIXME: randomly chosen for now
 }
 
+/// Userspace handle to a capability table.
+///
+/// Nucleus dispatch currently rejects `KeyTable` operations as unsupported. The
+/// syscall-backed wrappers preserve its errors; they do not implement lifecycle
+/// or delegation policy.
 pub struct KeyTableKey {
     key: Key<KeyTableType>,
 }
@@ -39,6 +50,9 @@ pub enum KeyTableOp {
 // Userspace KeyMaster must track parent→child relationships,
 // kernel only manages flat key tables.
 
+// Contract status: the KeyMaster/kernel derivation and revocation trust boundary
+// remains an open decision (D2).
+
 impl KeyTableKey {
     // This naturally supports cross-domain derivation:
     // "Create a read-only view of my buffer in their cspace"
@@ -52,7 +66,7 @@ impl KeyTableKey {
         rights: Rights,
     ) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let (ok, _, _) = unsafe {
+        let result = unsafe {
             protected_call4(
                 self.key.slot(),
                 KeyTableOp::CopyDerive as u32,
@@ -62,10 +76,7 @@ impl KeyTableKey {
                 u64::from(rights.bits()),
             )
         };
-        match ok {
-            0 => Ok(()),
-            _ => Err(CapError::Unknown),
-        }
+        decode_syscall_result(result).map(|_| ())
     }
 
     // fn activate(&self, slot: u32, object: NucleusObject) -> Result<()> {
@@ -83,22 +94,26 @@ impl KeyTableKey {
     // }
 
     /// Move the key, named "transfer" to avoid clashing with Rust's reserved word.
+    ///
+    /// Implementation status: unimplemented placeholder; does not invoke Move.
     pub fn transfer() {}
 
     pub fn delete(&mut self, slot: u32) -> Result<(), CapError> {
         // TODO: Must invoke on self-captbl cap
         // SAFETY: Unsafe call.
-        let (_ok, _, _) =
+        let result =
             unsafe { protected_call1(self.key.slot(), KeyTableOp::Delete as u32, u64::from(slot)) };
-        Ok(())
+        decode_syscall_result(result).map(|_| ())
     }
 
     // Revoke all children of cap in slot
+    /// Implementation status: invokes on `self`; the legacy `_captbl` argument is
+    /// unused. Revocation semantics remain unresolved and nucleus rejects this operation.
     pub fn revoke(&self, _captbl: &KeyTableKey, slot: u32) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let (_ok, _, _) =
+        let result =
             unsafe { protected_call1(self.key.slot(), KeyTableOp::Revoke as u32, u64::from(slot)) };
-        Ok(())
+        decode_syscall_result(result).map(|_| ())
     }
 
     // User code to copy cap to another domain (if you have their captbl cap):
@@ -108,17 +123,6 @@ impl KeyTableKey {
         their_captbl: &KeyTableKey,
         their_slot: u32,
     ) -> Result<(), CapError> {
-        // SAFETY: Unsafe call.
-        let (_ok, _, _) = unsafe {
-            protected_call4(
-                self.key.slot(),
-                KeyTableOp::CopyDerive as u32,
-                u64::from(my_slot),
-                u64::from(their_captbl.key.slot()),
-                u64::from(their_slot),
-                u64::from(Rights::all().bits()),
-            )
-        };
-        Ok(())
+        self.copy_derive(my_slot, their_captbl, their_slot, Rights::all())
     }
 }

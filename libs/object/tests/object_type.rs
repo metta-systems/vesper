@@ -1,4 +1,4 @@
-use vesper_objects::{CapError, Key, KeySlot, decode_syscall_result};
+use vesper_objects::{CapError, Key, KeySlot, Rights, decode_syscall_result};
 
 #[cfg(test)]
 #[path = "support/cap_error.rs"]
@@ -9,6 +9,10 @@ mod cap_error;
 #[cfg(test)]
 #[path = "../src/domain.rs"]
 pub mod domain_client;
+
+#[cfg(test)]
+#[path = "../src/key_table.rs"]
+pub mod key_table_client;
 
 #[cfg(test)]
 mod tests {
