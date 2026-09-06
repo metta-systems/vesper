@@ -90,16 +90,15 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Nucleus-private domain data, like keytables
     pub fn current_domain_mut(&mut self) -> Option<&mut Domain> {
         // need objects::Domain here, not DCB! or a tuple
-        self.pools
-            .domains
-            .get_mut(self.current_domain.unwrap_or(0) as usize)
+        let id = self.current_domain?;
+        self.pools.domains.get_mut(usize::try_from(id).ok()?)
     }
 
     /// User-visible DCB
     pub fn current_dcb_mut(&mut self) -> Option<&mut DomainControlBlock> {
         // need objects::Domain here, not DCB! or a tuple
-        self.dcb_pages
-            .get_mut(DomainId(self.current_domain.unwrap_or(0)))
+        let id = self.current_domain?;
+        self.dcb_pages.get_mut(DomainId(id))
     }
 
     // TODO: Testing fixture

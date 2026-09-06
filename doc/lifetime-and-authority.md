@@ -305,7 +305,7 @@ Synchronization must cover every participant allowed to access the bytes. A user
 
 [`DcbPages`](../kernel/nucleus/src/objects/domain.rs) release indexes allocation metadata before validating the full ID range. Lookup checks page availability, not allocated incarnation. Reuse has no generation protection.
 
-[`Nucleus::current_domain_mut` and `current_dcb_mut`](../kernel/nucleus/src/objects/nucleus.rs) fall back to domain zero when no current domain is recorded. Missing identity therefore selects authority rather than producing an error. Domain-pool allocation, table ownership, and DCB allocation are not yet one coherent lifecycle.
+[`Nucleus::current_domain_mut` and `current_dcb_mut`](../kernel/nucleus/src/objects/nucleus.rs) now reject absent current-domain identity rather than falling back to domain zero. Active dispatch returns the existing `InvalidDomain` error. The boot fixture explicitly selects its first private domain after creation; exception-origin/caller binding remains unfinished. Domain-pool allocation, table ownership, and DCB allocation are not yet one coherent lifecycle, and this repair does not add incarnation-safe reuse or DCB allocation/publication checks.
 
 The shared DCB has unresolved layout/stride and publication issues, including non-atomic identity fields that cannot be rewritten concurrently with readers under an unsupported reference model.
 
@@ -319,7 +319,7 @@ The shared DCB has unresolved layout/stride and publication issues, including no
 - [ ] Specify independently observable fields versus coherent snapshots and a Rust-sound publication mechanism.
 - [ ] Define legal Activate/Suspend/Resume transitions, preserving blocked continuations and execution-budget requirements.
 - [ ] Implement coherent domain allocation/retirement and bounds/allocation/incarnation checks.
-- [ ] Reject absent caller identity instead of implicitly selecting domain zero.
+- [x] Reject absent caller identity instead of implicitly selecting domain zero. Validated by the six-case `just test-debug-console` QEMU harness (three new caller-context regressions), existing host ABI/client tests, full `just clippy`, `just fmt-check`, the debug-enabled coordinated build, and `just test-device`; see the plan's absent-caller rejection slice for coverage limits. Exception-origin binding and domain lifecycle remain separate work.
 
 ## 7. Pending operations, replies, and Time
 

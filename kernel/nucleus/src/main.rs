@@ -62,6 +62,9 @@ static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<objects::ArchObjectsImpl>>>
             },
         };
         n.create_domain();
+        // The existing boot fixture creates the first pool entry for Kickstart.
+        // Select it explicitly; a missing runtime caller must not inherit it.
+        n.current_domain = Some(0);
         n
     }));
 

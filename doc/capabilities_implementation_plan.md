@@ -122,6 +122,7 @@ Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contract
 - [ ] Validate exception class, SVC immediate, and permitted origin before dispatch; route non-SVC faults and user-copy recovery through the correct exception path.
 - [ ] Replace panicking raw register conversions in nucleus entry with checked failures; specify the ordinary control-call register preservation/output contract with `libs/syscall`.
 - [ ] Establish explicit caller/domain context; do not use absence of a current domain as an implicit grant to domain zero.
+  - [x] Reject absent caller identity in private-domain/DCB accessors and active capability dispatch; explicitly select the existing boot fixture's domain. Exception-origin/caller binding and coherent domain lifecycle remain pending.
 - [ ] Define the console operation's authority, byte/string/NUL behavior, maximum length or chunking policy, and pointer semantics.
 - [ ] Introduce checked user-memory access for the console path, including caller-context authorization, range/length/overflow validation, input stability, and fault behavior. Do not relabel caller virtual addresses as trusted physical addresses.
 - [x] Remove unnecessary pointer-derived mutable object access from the console path; do not make the repaired vertical slice depend on a known-unsound cast pending Phase 4.
@@ -132,6 +133,25 @@ Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contract
   - [x] Preserve specific errors and unknown status/details in KeyTable `copy_derive`, `delete`, `revoke`, and `grant_to`, without enabling the excluded handler or changing request encoding.
   - [ ] Replace KeyTable's no-op `transfer` placeholder after its interface/ownership contract is settled; do not advertise Move support.
 - [ ] Test console success, kernel error propagation, invalid/empty slots, excessive raw slot/op values, boundary lengths, invalid/unauthorized pointers, non-SVC faults, unsupported SVC immediates, and fault recovery without recursive capability dispatch.
+
+### Absent-caller rejection slice validation
+
+Removed the `unwrap_or(0)` fallback from both `Nucleus::current_domain_mut` and `current_dcb_mut`. Missing caller identity now returns `None`; active dispatch propagates the existing `InvalidDomain` status without consulting domain zero's table. The existing boot fixture explicitly selects its first domain after creation, preserving its debug invocation path without introducing a general bootstrap layout or activating Domain operations. Private-domain lookup still checks pool bounds/allocation. No shared ABI, transport, rights, or object layout changed.
+
+Three regression cases extend `kernel/nucleus/tests/debug_console.rs` using the production module trees and valid test-owned backing. They cover absent/cleared caller identity despite an installed domain-zero console, the existing error's wire/client round trip, explicit domain-zero dispatch, a distinct caller's empty table, unallocated/out-of-range/released private-domain IDs, and absent caller identity despite installed DCB records. The six-case QEMU harness failed before the production fix and passed afterward; an initial test compile error from consuming `CapError::code()` twice was corrected first.
+
+| Recipe | Result and scope |
+|---|---|
+| `just test-object-host` | Passed 30 feature-off / 31 feature-on ABI/client tests |
+| `just test-debug-console` | Passed all six cases under QEMU after the fix |
+| `just fmt-check` | Passed workspace formatting |
+| `just clippy` | Passed configured RPi3/QEMU build, all nine embedded configurations, and both host-harness feature states |
+| `just build rpi3 qemu,debug_kernel` | Passed coordinated debug-enabled nucleus + kickstart release build |
+| `just test-device` | Passed existing QEMU device integration and doctest workflow |
+
+Coverage limits: these tests call production dispatch/accessors, not real SVC entry/return or the boot demonstration. Caller-origin binding, raw-register validation, domain incarnation/reuse, coherent private-domain/DCB allocation and DCB publication remain unfinished; the parent caller-context item stays unchecked. The test fixture does not claim Untyped-backed production storage or mapping isolation. Full `just test` was not run, and the Clippy recipe does not explicitly lint this embedded harness. Existing compiler-cache access and toolchain future-compatibility warnings remain nonblocking.
+
+Next prerequisite: choose the full-width malformed-input error representation before replacing the raw slot conversion panic. Existing `InvalidSlot(KeySlot)` carries only a `u32` slot; do not truncate oversized input or invent an unapproved status. Then finish checked entry/origin/caller binding before enabling the guarded KeyTable lifecycle.
 
 ### Debug-only availability slice validation
 

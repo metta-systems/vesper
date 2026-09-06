@@ -20,9 +20,140 @@ mod objects;
 
 use {
     api::{KeyEntry, debug_console::invoke},
-    libobject::{CapError, KeySlot, ObjectType, Rights, domain::DomainId},
-    objects::{DebugConsole, KeyTable, Nucleus},
+    core::mem::{MaybeUninit, size_of},
+    libaddress::PhysAddr,
+    libobject::{
+        CapError, KeySlot, ObjectType, Rights, decode_syscall_result,
+        domain::{DcbPage, DomainId},
+    },
+    objects::{
+        ArchObjectsImpl, DebugConsole, Domain, KeyTable, Nucleus, ObjectPool, arch::ArchPools,
+        domain::DcbPages, nucleus::NucleusPools,
+    },
 };
+
+fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>)) {
+    let mut backing = MaybeUninit::<[Domain; 2]>::uninit();
+    // SAFETY: The backing is aligned for two Domains and remains exclusively
+    // owned here until after the nucleus and its pool are dropped. The callback
+    // cannot return a borrowed nucleus/object reference. Only the pool accesses
+    // the backing while it is live.
+    let domains =
+        unsafe { ObjectPool::new(backing.as_mut_ptr().cast::<u8>(), size_of::<[Domain; 2]>()) };
+    let mut nucleus = Nucleus {
+        pools: NucleusPools {
+            domains,
+            // SAFETY: ArchPools currently contains only PhantomData and owns no
+            // regions. This fixture does not allocate or invoke arch objects.
+            arch: unsafe { ArchPools::new() },
+        },
+        current_domain: None,
+        dcb_pages: DcbPages::new(),
+    };
+    test(&mut nucleus);
+    for index in 0..2 {
+        nucleus.pools.domains.deallocate(index);
+    }
+}
+
+#[test_case]
+fn missing_caller_cannot_invoke_bootstrap_console() {
+    with_nucleus(|nucleus| {
+        nucleus.create_domain();
+        assert_eq!(nucleus.current_domain, None);
+        let slot = KeySlot::DEBUG_CONSOLE.0;
+        let args = [u64::MAX; 6];
+
+        assert!(nucleus.current_domain_mut().is_none());
+        let error = match api::handle_cap_invoke(nucleus, slot, 1, &args) {
+            Err(error) => error,
+            Ok(_) => panic!("invocation without a caller succeeded"),
+        };
+        assert!(matches!(error, CapError::InvalidDomain));
+        let response = error.code();
+        assert_eq!(response, (3, 0, 0));
+        assert!(matches!(
+            decode_syscall_result(response),
+            Err(CapError::InvalidDomain)
+        ));
+
+        // Explicitly selecting the existing boot fixture preserves its debug
+        // path. Invalid op 1 proves dispatch without dereferencing write args.
+        nucleus.current_domain = Some(0);
+        assert!(matches!(
+            api::handle_cap_invoke(nucleus, slot, 1, &args),
+            Err(CapError::InvalidOperation)
+        ));
+        nucleus.current_domain = None;
+        assert!(matches!(
+            api::handle_cap_invoke(nucleus, slot, 1, &args),
+            Err(CapError::InvalidDomain)
+        ));
+    });
+}
+
+#[test_case]
+fn dispatch_uses_only_the_explicit_allocated_caller_table() {
+    with_nucleus(|nucleus| {
+        nucleus.create_domain();
+        let slot = KeySlot::DEBUG_CONSOLE.0;
+        let args = [u64::MAX; 6];
+        for caller in [1, 2, u32::MAX] {
+            nucleus.current_domain = Some(caller);
+            assert!(nucleus.current_domain_mut().is_none());
+            assert!(matches!(
+                api::handle_cap_invoke(nucleus, slot, 1, &args),
+                Err(CapError::InvalidDomain)
+            ));
+        }
+
+        nucleus
+            .pools
+            .domains
+            .allocate(Domain {
+                keytable: KeyTable::new(DomainId(1)),
+            })
+            .expect("second domain allocation failed");
+        nucleus.current_domain = Some(1);
+        assert!(matches!(
+            api::handle_cap_invoke(nucleus, slot, 1, &args),
+            Err(CapError::EmptySlot(s)) if s.0 == slot
+        ));
+        assert!(nucleus.pools.domains.deallocate(1));
+        assert!(matches!(
+            api::handle_cap_invoke(nucleus, slot, 1, &args),
+            Err(CapError::InvalidDomain)
+        ));
+    });
+}
+
+#[test_case]
+fn missing_caller_cannot_select_an_existing_dcb() {
+    // This page is used only by this test, once in the serial QEMU harness.
+    // Static backing satisfies DcbPages' retained-reference lifetime.
+    static mut PAGE: DcbPage = DcbPage::new();
+    with_nucleus(|nucleus| {
+        let page = &raw mut PAGE;
+        // SAFETY: PAGE is initialized, aligned, static, and exclusively accessed
+        // through this DcbPages instance. Tests run with identity-mapped RAM;
+        // the recorded physical address is the page's actual address.
+        unsafe { nucleus.dcb_pages.add_page(page, PhysAddr::new(page as u64)) }
+            .expect("DCB page installation failed");
+        let first = nucleus.dcb_pages.allocate_domain(DomainId(0)).unwrap();
+        let second = nucleus.dcb_pages.allocate_domain(DomainId(0)).unwrap();
+        assert_eq!(first, DomainId(0));
+        assert_eq!(second, DomainId(1));
+        assert!(nucleus.current_dcb_mut().is_none());
+        for id in [first, second] {
+            nucleus.current_domain = Some(id.0);
+            assert_eq!(nucleus.current_dcb_mut().unwrap().id, id);
+        }
+        nucleus.current_domain = None;
+        assert!(nucleus.current_dcb_mut().is_none());
+        nucleus.current_domain = Some(u32::MAX);
+        assert!(nucleus.current_dcb_mut().is_none());
+    });
+}
 
 #[test_case]
 fn rejects_wrong_capability_types_before_touching_write_arguments() {
