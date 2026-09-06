@@ -48,7 +48,7 @@ Even a type check cannot distinguish two endpoints. This need not escalate autho
 
 ### Historical alternatives and selected semantics
 
-The incarnation guarantee is now selected; a slot-only current-occupant API is not the chosen contract. The exact representation remains open.
+The incarnation guarantee is now selected; a slot-only current-occupant API is not the chosen contract. **Maintainer clarification (2026-09-06):** ordinary keys are local to the current Domain's implicit KeyTable and carry slot plus incarnation, not table identity or a guarded-table path. Numeric key transfer alone conveys no authority; authorized derivation/installation produces a recipient-local key. **Follow-up:** initially use a 32-bit slot and 32-bit incarnation, without freezing the total key size permanently. This replaces the earlier table-capacity-dependent bit split. If type is embedded later, its 8 bits come from the slot field (24 slot bits, 32 incarnation bits), not incarnation. Capacity is fixed for now through an easily changed constant; runtime resizing is outside initial scope. Concrete wire packing, optional type inclusion, object/domain generation widths, and replacement/rebinding safety remain open. Independent shared-object lifetime validation remains required. Generation wrap must not silently resurrect stale identities; Move invalidates the source on commit and yields a destination-local key. These directions require coordinated ABI/bootstrap migration, not a silent reinterpretation of today's slot-only arguments.
 
 | Choice | Consequences | Complexity |
 |---|---|---|
@@ -56,9 +56,11 @@ The incarnation guarantee is now selected; a slot-only current-occupant API is n
 | Exclusive userspace slot allocator with owned slots and borrowed handles | Prevent accidental reuse while handles exist, provided every mutation follows that allocator | Medium; requires enforceable runtime discipline |
 | Kernel-checked slot incarnation supplied with invocation | Retained handles fail after replacement without monitoring liveness | Medium cross-layer change, including ABI/bootstrap |
 
-**CONFIRMED:** invocation through an altered or invalidated capability incarnation returns an explicit **inconsistency** error. Do not refresh a stale handle and retry against replacement authority silently. A userspace generation precheck alone leaves a check/use race; validation belongs in the invocation path. The error's numeric status/details and handle encoding are not yet defined.
+**CONFIRMED:** invocation through an altered or invalidated capability incarnation returns an explicit **inconsistency** error. Do not refresh a stale handle and retry against replacement authority silently. A userspace generation precheck alone leaves a check/use race; validation belongs in the invocation path. **Follow-up (3C=B):** one shared inconsistency error carries diagnostic reasons for stale slot incarnation, capability invalidation and underlying object retirement, without returning replacement keys or refreshing automatically. Numeric status/reason values, precedence and concrete handle wire packing are not yet defined; the initial logical slot/incarnation widths are selected above.
 
-Authorized resource-state changes are not automatically capability replacement. In particular, origin-authorized Frame remapping is a valid operation even when mapping location changes. Which other authority mutations create a new incarnation, and how a mutating call returns its replacement key, remain open.
+Authorized resource-state changes are not automatically capability replacement. In particular, origin-authorized Frame remapping is a valid operation even when mapping location changes. **Selected initial scope (3A=A):** no in-place rights/badge mutation. Derive attenuated authority into another slot and optionally delete the original; CopyDerive preserves badges and rebadging is deferred. Future in-place mutation semantics are not a prerequisite for this initial slice.
+
+**Selected exhaustion behavior (3B=A):** a slot unable to issue a fresh 32-bit incarnation is permanently unavailable for further installation within that table lifetime; existing-capability deletion remains possible and other slots remain usable. No silent wrap or whole-table retirement is implied. Advancement/initial values and error encoding remain to be specified, and replacing/rebinding the table must not reset stale-key protection.
 
 **INTERIM Frame deprovisioning direction:** fully revoke the capability and do not reuse that slot for Frames. This is not a general solution to object/slot identity; the restriction's lifetime, cross-table scope, exhaustion behavior, and whether another kind may occupy the slot need clarification.
 
@@ -73,11 +75,11 @@ Three distinct identity problems must be covered:
 **OPEN / DECISION REQUIRED — D3/D9:**
 
 - [ ] Implement the selected incarnation guarantee and define the shared inconsistency error without inventing an ad hoc status.
-- [ ] Specify which authority mutations replace an incarnation; distinguish ordinary object operations and valid Frame remapping.
+- [ ] Implement derivation-only authority attenuation for the initial slice, with no in-place rights/badge mutation; preserve ordinary object operations and valid Frame remapping as distinct from capability replacement.
 - [ ] Specify/enforce the interim Frame slot no-reuse restriction and its capacity/exhaustion policy.
-- [ ] Define identity scope, including table/domain context and how cross-domain transfer produces a receiver-local handle.
+- [ ] Implement the selected implicit caller-table scope and receiver-local key creation through authorized derivation/installation; specify management operand/result encodings, constant-controlled capacity consumers, replacement/rebinding safety, and initial handoff; do not introduce runtime resizing in this slice.
 - [ ] Define object/domain allocation identities and their authoritative validation metadata.
-- [ ] Define generation widths, wrap/exhaustion policy, and pool/table reuse rules; silent wrap must not resurrect stale identities.
+- [ ] Implement the initial 32-bit slot/32-bit incarnation fields; decide optional type inclusion (taking 8 slot bits), object/domain generation widths/exhaustion and pool/table reuse rules; implement selected slot-local exhaustion, allowing cleanup but no further installation, under the no-silent-wrap guarantee.
 - [ ] If the wire representation changes, specify coordinated migration, bootstrap encoding, and result/error schemas.
 
 ## 2. Delete, revoke, retire, and reclaim are different operations
@@ -144,7 +146,9 @@ Layout freedom does not remove layout obligations. Changes must update all affec
 - [ ] Audit and update size-dependent allocation/capacity/stride/page-view calculations and cross-layer layout tests with each representation change.
 - [ ] After correctness is established, measure memory/performance costs and perform a separate optimization pass without weakening the contracts.
 
-### Proposed foundation
+### Selected guarded-access direction and remaining representation work
+
+**CONFIRMED (2026-09-06):** enforce single-core kernel execution for the initial foundation and defer SMP. An owning kernel access context provides short-lived guarded references; pending work keeps checked identities/reservations. All managed storage/metadata originates from accounted Untypeds. When Retype creates a KeyTable, the kernel makes the backing private, including against the caller's direct access; the caller receives manipulation authority through a capability. **Retype clarification (5):** only an Untyped is a valid source; its unused watermark range has no outstanding access. Retype does not reuse an arbitrary live Frame/object or need to unmap earlier allocations. Enforce non-overlap and allocation provenance, then initialize the new KeyTable privately. Earlier allocations below the watermark may have their own live mappings; they are not the candidate allocation. Stable metadata placement, pool-backing ownership and transactional failure handling still need design. Any future reclamation/reset must complete access withdrawal before making a range available again, not turn ordinary Retype into a cleanup protocol.
 
 Typed pools remain a useful starting point, with representation free to change under the correctness-first rule:
 
@@ -155,14 +159,14 @@ Typed pools remain a useful starting point, with representation free to change u
 5. Object references and incompatible guards end before scheduling or context switching.
 6. Pending operations retain checked identities and explicit reservations, not borrowed Rust references.
 
-**OPEN / DECISION REQUIRED — D3, with D1 for protection bindings:** choose serialization/locking, reference/pin accounting, authoritative metadata placement, and safe pool-backing lifetime. Initially serialized single-core transitions can reduce complexity; this is not an SMP guarantee.
+**OPEN / DECISION REQUIRED — D3, with D1/D6 for protection bindings and private backing:** specify single-core and non-reentry enforcement, the concrete access API/reference accounting, authoritative metadata placement, and safe pool-backing lifetime. Single-core is selected, not an open SMP-versus-serialization choice. A lock serializes executions but does not prevent two operands within one execution from naming the same object: resolve that alias before constructing mutable references. For example, two copied `ObjectRef` values can each produce a mutable reference to the same pointer through the current `try_as_mut`; an outer lock does not make those simultaneous references disjoint.
 
-- [ ] Establish pool backing, alignment, capacity, zero-sized-type policy, and charged metadata requirements.
+- [ ] Establish Untyped-backed pool ownership, alignment, capacity, zero-sized-type policy, and charged metadata requirements; enforce unused-watermark/non-overlap/no-outstanding-access allocation and kernel-private KeyTable initialization. Do not add an unmap phase to ordinary Retype.
 - [ ] Replace lifetime-erasing constructors and unrestricted object casts with access through the approved owning/locking context.
 - [ ] Implement allocated/incarnation/retirement checks before object dereference.
 - [ ] Enforce unique kernel type mappings and handle aliased operands without fabricating exclusivity.
 - [ ] Make table insertion/removal/mutation preserve occupancy and identity invariants.
-- [ ] Ensure scheduling occurs after guards end; add real cross-core synchronization before permitting concurrent access.
+- [ ] Enforce the selected single-core/non-reentry boundary and ensure scheduling occurs after guards end. SMP synchronization is deferred; concurrent cross-core access is not supported by this foundation.
 
 ## 4. Authority, delegation, badges, and revocation scopes
 
@@ -188,14 +192,16 @@ Typed pools remain a useful starting point, with representation free to change u
 - Copy is per-kind: Untyped cannot duplicate independent allocation watermarks; Reply cannot create independently usable replies; Time must conserve budget. **Latest confirmed Frame rule:** checked Copy duplicates capability authority, not a live mapping association; it is not Map. B maps the same physical frame through a separate Map operation, potentially at a different virtual page/Domain. This supersedes the earlier interpretation that Copy might install a mapping. A move preserves the binding needed for teardown.
 - Validate and reserve a destination before removing source authority. Resolve aliases before constructing references or mutating operands.
 
+**CONFIRMED clarification (2026-09-06):** use the general capability authorization rule: appropriate permissions on the source/destination KeyTable capabilities authorize table management, with no special manager-identity cases. Kickstart establishes the first Untypeds covering available memory and initial tables for predefined Domains, then delegates onward; exact tables/slots and handoff records remain open. **Selected follow-up (4A=A, 4B=B, 4C=A, 4D=A):** source/target entry selectors include expected incarnation; table permissions separately authorize source derivation, source removal/move, destination installation and deletion. CopyDerive/Move require vacant destinations and return destination-local keys. Move to the same table/slot is rejected, not a no-op; different slots in one table remain supported. CopyDerive preserves badges and attenuates rights; Move preserves rights/per-capability state. Delete removes an entry without automatic object retirement and permits cleanup after object retirement when the slot incarnation and table-management authority still match. Pre-commit failure preserves authority/accounting. The initial target-kind allowlist is KeyTable and existing-debug-gated DebugConsole, not arbitrary kinds. Exact rights bits and wire packing remain open; the canonical contract records the logical operand/result schemas. Selective Revoke, mapping teardown, and Reply/Time-specific transitions remain deferred; this does not reject their intended functionality.
+
 **OPEN / DECISION REQUIRED — D4, plus D2/D3/D6/D8 where applicable:**
 
 - [ ] Define per-kind semantic rights and the operation-to-rights matrix before freezing bit assignments.
 - [ ] Define permitted attenuation of rights, extents, badges, budgets, and other per-kind authority.
 - [ ] Set badge width, zero-badge meaning, and mint/rebadge/notification-bit policies.
-- [ ] Define destination table management versus installation/receive authority.
-- [ ] Finalize bootstrap slots, real KeyTable versus userspace-manager identity, and Domain.Grant's relationship to KeyTable operations.
-- [ ] Specify per-kind copy/move/delete semantics and transactional transfer outcomes.
+- [ ] Assign/enforce the selected separate table-management permissions and exact operation-to-rights combinations; narrower receive-slot windows remain a later refinement.
+- [ ] Specify Kickstart's initial Domain/table capacities, slots/grants and incarnation-bearing handoff, keeping boot reservations/accounting correct and real KeyTable capabilities distinct from manager-service endpoints; settle Domain.Grant's relationship to KeyTable operations.
+- [ ] Implement the selected KeyTable/debug-console CopyDerive/Move/Delete subset and transactional failures; settle other per-kind semantics before extending the allowlist.
 
 ### Who tracks revocation?
 
@@ -568,10 +574,10 @@ Within the main implementation plan's dependency ordering, the next work is:
 
 Use the repository's documented Justfile workflows. Pure ABI/model tests do not substitute for target validation of mapping, hardware synchronization, or blocked-call resumption.
 
-- [ ] Test stale slot/object/domain identities, same-type replacement, and generation exhaustion/reuse policy.
+- [ ] Test stale slot/object/domain identities, same-type replacement, diagnostic inconsistency reasons, slot exhaustion with deletion still permitted, and generation/rebinding reuse safety.
 - [ ] Test one object retirement rejecting old derived caps in multiple tables while background tree cleanup has not yet run; distinguish selective branch revocation.
 - [ ] Test creator control surviving delegation, unauthorized retirement, and safe leaked allocations without automatic final-capability retirement.
-- [ ] Test same-table/same-object aliases, null insertion, capacity exhaustion, and bookkeeping consistency.
+- [ ] Test same-table/same-object aliases, same-slot Move rejection, occupied destinations, stale management selectors, deletion of entries naming retired objects, null insertion, capacity exhaustion, and bookkeeping consistency.
 - [ ] Test rights attenuation, badge policy, explicit destination authority, and unauthorized retirement/revocation.
 - [ ] Inject failures before and after reservation; verify move/transfer/retype ownership and accounting preservation.
 - [ ] Test invoke/derive/transfer versus revoke ordering and the advertised revoke-completion boundary.
