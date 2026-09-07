@@ -8,7 +8,7 @@ use {
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
 pub mod key_entry;
-// pub mod key_table;
+pub mod key_table;
 
 pub use key_entry::KeyEntry;
 
@@ -95,11 +95,7 @@ fn core_invoke<A: ArchObjects>(
         //     let domain = entry.as_object_mut::<Domain>()?;
         //     api::domain::invoke(domain, entry.rights(), op, args)
         // }
-
-        // CoreType::KeyTable => {
-        //     let kt = entry.as_object_mut::<KeyTable>()?;
-        //     api::keytable::invoke(kt, entry.rights(), op, args)
-        // }
+        CoreType::KeyTable => crate::api::key_table::invoke(domain, key, op, args),
 
         // CoreType::Notification => {
         //     let notify = entry.as_object_mut::<Notification>()?;

@@ -223,7 +223,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("emu")]
-test: test-device test-chainboot test-host test-debug-console test-capability-boot
+test: test-device test-chainboot test-host test-debug-console test-key-table test-capability-boot
 
 alias t := test
 
@@ -243,6 +243,13 @@ test-device:
 test-debug-console:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test -p nucleus --test debug_console {{ target_json }} \
+      --features=qemu,debug_kernel {{ rust_std }}
+
+# Test the nucleus KeyTable management handler in QEMU (rpi3)
+[group("emu")]
+test-key-table:
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
+    cargo test -p nucleus --test key_table {{ target_json }} \
       --features=qemu,debug_kernel {{ rust_std }}
 
 # Boot the debug kernel; in-guest assertions and QEMU exit status validate handoff and SVC results

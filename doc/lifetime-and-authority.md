@@ -202,9 +202,9 @@ Typed pools remain a useful starting point, with representation free to change u
 - [ ] Define per-kind semantic rights and the operation-to-rights matrix before freezing bit assignments.
 - [ ] Define permitted attenuation of rights, extents, badges, budgets, and other per-kind authority.
 - [ ] Set badge width, zero-badge meaning, and mint/rebadge/notification-bit policies.
-- [ ] Assign/enforce the selected separate table-management permissions and exact operation-to-rights combinations; narrower receive-slot windows remain a later refinement.
+- [x] Assign the selected separate table-management permissions and exact operation-to-rights combinations (2026-09-07): KeyTable rights bits are `DERIVE` (0x1), `REMOVE` (0x2), `INSTALL` (0x4), bit 3 reserved. CopyDerive = source `DERIVE` + destination `INSTALL`; Move = source `DERIVE` + `REMOVE` + destination `INSTALL`; Delete = `REMOVE`. Enforcement in the kernel handler remains implementation work; narrower receive-slot windows remain a later refinement.
 - [ ] Specify Kickstart's initial Domain/table capacities, slots/grants and incarnation-bearing handoff, keeping boot reservations/accounting correct and real KeyTable capabilities distinct from manager-service endpoints; settle Domain.Grant's relationship to KeyTable operations.
-- [ ] Implement the selected KeyTable/debug-console CopyDerive/Move/Delete subset and transactional failures; settle other per-kind semantics before extending the allowlist.
+- [x] Implement the selected KeyTable/debug-console CopyDerive/Move/Delete subset and transactional failures; settle other per-kind semantics before extending the allowlist. (2026-09-07: handler active for the caller's own table via CAPTBL_SELF with atomic validate-commit and Move rollback; cross-table resolution and retired-object cleanup await pooled KeyTables and the retirement transition.)
 
 ### Who tracks revocation?
 

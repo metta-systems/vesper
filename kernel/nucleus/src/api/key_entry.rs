@@ -84,6 +84,7 @@ pub struct RegionPayload {
 
 /// 16-byte payload union, discriminated by `obj_type` in the header.
 #[repr(C)]
+#[derive(Clone, Copy)]
 union KeyPayload {
     obj: ObjectPayload,
     region: RegionPayload,
@@ -95,6 +96,7 @@ union KeyPayload {
 /// 20 bytes used in a 32-byte aligned slot.
 /// Discriminated union: `obj_type` selects the payload variant.
 #[repr(C, align(32))]
+#[derive(Clone, Copy)]
 pub struct KeyEntry {
     obj_type: ObjectType,
     rights: Rights,
@@ -207,6 +209,17 @@ impl KeyEntry {
     #[inline]
     pub fn rights(&self) -> Rights {
         self.rights
+    }
+
+    /// Create a derived copy with attenuated rights, preserving the badge and
+    /// payload verbatim. Callers must have already established that
+    /// `rights` is a subset of this entry's rights; this is a pure
+    /// representation transform, not an authority check.
+    #[inline]
+    pub fn derive(&self, rights: Rights) -> Self {
+        let mut derived = *self;
+        derived.rights = rights;
+        derived
     }
 
     /// Get badge value.

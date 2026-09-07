@@ -1,4 +1,4 @@
-use vesper_objects::{CapError, CoreType, Key, KeySlot, RawKey, Rights, decode_syscall_result};
+use vesper_objects::{CapError, Key, KeySlot, RawKey, Rights, decode_syscall_result};
 
 #[cfg(test)]
 #[path = "support/cap_error.rs"]

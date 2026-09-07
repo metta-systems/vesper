@@ -16,7 +16,7 @@ pub use debug_console::DebugConsoleKey;
 
 pub use {
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
-    key_table::KeySlot,
+    key_table::{KeySlot, KeyTableOp},
     object_type::{ArchType, CoreType, ObjectType},
     rights::Rights,
 };

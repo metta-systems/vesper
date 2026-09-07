@@ -1,4 +1,4 @@
-use crate::{CapError, CoreType, Key, RawKey, Rights, decode_syscall_result};
+use crate::{CapError, Key, RawKey, Rights, decode_syscall_result};
 
 #[cfg(not(test))]
 use libsyscall::{protected_call1, protected_call4};
@@ -133,21 +133,41 @@ impl KeyTableKey {
     //     Ok(())
     // }
 
-    /// Move the key, named "transfer" to avoid clashing with Rust's reserved word.
+    /// Move a capability to a vacant destination slot, invalidating the
+    /// source on commit. Named "transfer" to avoid clashing with Rust's
+    /// reserved word.
     ///
-    /// Implementation status: unimplemented placeholder; does not invoke Move.
-    /// Status update: explicitly returns unsupported instead of a successful
-    /// no-op. Move's interface and wire schema remain unapproved.
-    pub fn transfer() -> Result<(), CapError> {
-        Err(CapError::UnsupportedCoreType(CoreType::KeyTable))
+    /// Wire schema (approved 2026-09-07): `x2` source selector, `x3`
+    /// destination-table key, `x4` vacant destination slot, `x5..x7` zero.
+    /// Returns the destination-local packed key from the first success word
+    /// and ignores the second. Rights and per-capability state are preserved.
+    pub fn transfer(
+        &self,
+        src_key: RawKey,
+        dst_captbl: &KeyTableKey,
+        dst_slot: u32,
+    ) -> Result<RawKey, CapError> {
+        // SAFETY: Unsafe call.
+        let result = unsafe {
+            protected_call4(
+                self.key.to_wire(),
+                KeyTableOp::Move as u64,
+                src_key.to_wire(),
+                dst_captbl.key.to_wire(),
+                u64::from(dst_slot),
+                0,
+            )
+        };
+        let (key, _) = decode_syscall_result(result)?;
+        Ok(RawKey::from_wire(key))
     }
 
-    /// Select an entry by its incarnation in the invoked table. Kernel support
-    /// remains excluded pending the complete Delete schema and rights matrix.
+    /// Delete the entry selected by its incarnation in the invoked table,
+    /// without automatic object retirement.
+    ///
+    /// Wire schema (approved 2026-09-07): `x2` target selector, `x3..x7` zero.
+    /// Requires `REMOVE` permission on the invoked table capability.
     pub fn delete(&mut self, key: RawKey) -> Result<(), CapError> {
-        // TODO: Must invoke on self-captbl cap
-        // Contract status update: authorized table management is not restricted
-        // to the caller's own table; exact permission bits remain provisional.
         // SAFETY: Unsafe call.
         let result = unsafe {
             protected_call1(self.key.to_wire(), KeyTableOp::Delete as u64, key.to_wire())

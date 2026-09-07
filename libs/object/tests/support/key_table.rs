@@ -37,13 +37,15 @@ pub(super) unsafe fn protected_call4(
 #[derive(Clone, Copy, Debug)]
 enum Method {
     CopyDerive,
+    Move,
     Delete,
     Revoke,
     GrantTo,
 }
 
-const METHODS: [Method; 4] = [
+const METHODS: [Method; 5] = [
     Method::CopyDerive,
+    Method::Move,
     Method::Delete,
     Method::Revoke,
     Method::GrantTo,
@@ -64,6 +66,12 @@ fn invoke(method: Method, response: Response) -> Result<Option<RawKey>, CapError
                 .map(Some),
             0,
             [0x1357_9bdf_ffff_fffd, 0x7654_3210_ffff_fffe, 0xffff_fffc, 1],
+            4,
+        ),
+        Method::Move => (
+            table.transfer(src, &other, dst).map(Some),
+            1,
+            [0x1357_9bdf_ffff_fffd, 0x7654_3210_ffff_fffe, 0xffff_fffc, 0],
             4,
         ),
         Method::Delete => (
@@ -107,7 +115,7 @@ fn invoke(method: Method, response: Response) -> Result<Option<RawKey>, CapError
 fn all_key_table_wrappers_preserve_request_encoding_and_accept_success() {
     for method in METHODS {
         let expected = match method {
-            Method::CopyDerive | Method::GrantTo => Some(0xfedc_ba98_ffff_fffc),
+            Method::CopyDerive | Method::Move | Method::GrantTo => Some(0xfedc_ba98_ffff_fffc),
             Method::Delete | Method::Revoke => None,
         };
         assert_eq!(
@@ -120,8 +128,8 @@ fn all_key_table_wrappers_preserve_request_encoding_and_accept_success() {
 }
 
 #[test]
-fn copy_derive_and_grant_to_ignore_nonzero_second_success_word() {
-    for method in [Method::CopyDerive, Method::GrantTo] {
+fn copy_derive_move_and_grant_to_ignore_nonzero_second_success_word() {
+    for method in [Method::CopyDerive, Method::Move, Method::GrantTo] {
         for second in [1, 1 << 63, u64::MAX] {
             assert_eq!(
                 invoke(method, (0, 0xfedc_ba98_ffff_fffc, second))
@@ -131,15 +139,6 @@ fn copy_derive_and_grant_to_ignore_nonzero_second_success_word() {
             );
         }
     }
-}
-
-#[test]
-fn transfer_is_explicitly_unsupported_without_invoking_move() {
-    assert!(matches!(
-        KeyTableKey::transfer(),
-        Err(CapError::UnsupportedCoreType(CoreType::KeyTable))
-    ));
-    REQUEST.with(|request| assert!(request.get().is_none()));
 }
 
 #[test]
