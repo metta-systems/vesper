@@ -91,7 +91,7 @@ impl<A: ArchObjects> Nucleus<A> {
     pub fn current_domain_mut(&mut self) -> Option<&mut Domain> {
         // need objects::Domain here, not DCB! or a tuple
         let id = self.current_domain?;
-        self.pools.domains.get_mut(usize::try_from(id).ok()?)
+        self.pools.domains.get_live_mut(usize::try_from(id).ok()?)
     }
 
     /// User-visible DCB
@@ -110,7 +110,7 @@ impl<A: ArchObjects> Nucleus<A> {
         )
     )]
     pub fn create_domain(&mut self) -> Option<RawKey> {
-        let dom = self
+        let (_dom_id, dom) = self
             .pools
             .domains
             .allocate(Domain {
@@ -119,11 +119,23 @@ impl<A: ArchObjects> Nucleus<A> {
             .expect("Poof");
         #[cfg(feature = "debug_kernel")]
         {
+            // The debug console is a stateless singleton, not a pool object;
+            // its entry carries a null identity and is validated by type only
+            // (see the debug-only exception in doc/nucleus_capabilities.md).
             let key = dom
                 .keytable
                 .insert(
                     KeySlot::DEBUG_CONSOLE,
-                    KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0),
+                    KeyEntry::from_id(
+                        libobject::ObjectType::DEBUG_CONSOLE,
+                        crate::objects::access::ObjectId {
+                            pool: crate::objects::access::PoolTag::Region,
+                            index: 0,
+                            generation: 0,
+                        },
+                        libobject::Rights::all(),
+                        0,
+                    ),
                 )
                 .unwrap_or_else(|failure| {
                     panic!(

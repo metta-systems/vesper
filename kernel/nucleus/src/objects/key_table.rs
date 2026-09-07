@@ -137,6 +137,7 @@ impl KeyTable {
 // KeyTable is itself a kernel object
 impl NucleusObject for KeyTable {
     const TYPE: ObjectType = ObjectType::KEY_TABLE;
+    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::KeyTable;
 }
 
 #[cfg(test)]

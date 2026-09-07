@@ -10,4 +10,5 @@ impl AArch64PageTable {
 
 impl NucleusObject for AArch64PageTable {
     const TYPE: ObjectType = ObjectType::PAGE_TABLE;
+    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::PageTable;
 }

@@ -15,10 +15,12 @@
 // ├──────────────────────────────────────────────┤
 // │  Payload — 16 bytes (union on obj_type)      │
 // │                                              │
-// │  VARIANT A: Pointer-based (most types)       │
-// │    ptr: NonNull<()>           (8 bytes)      │
+// │  VARIANT A: Object identity (most types)     │
+// │    pool: PoolTag              (1 byte)       │
+// │    _pad: u8                   (1 byte)       │
+// │    index: u16                 (2 bytes)      │
 // │    generation: u32            (4 bytes)      │
-// │    _pad: u32                  (4 bytes)      │
+// │    _pad2: u64                 (8 bytes)      │
 // │                                              │
 // │  VARIANT B: Inline Region (Untyped, Frame)   │
 // │    paddr: u64                 (8 bytes)      │
@@ -33,20 +35,29 @@
 // │    (all zeros)                               │
 // └──────────────────────────────────────────────┘
 // Total: 20 bytes used, 32-byte aligned slot
+//
+// Variant A stores a checked object identity (pool tag, index, generation),
+// never a raw pointer: the owning access context computes object addresses
+// from pool bases after validating authoritative pool metadata, so stale
+// pointers cannot be dereferenced (D3 concrete guarded access, 2026-09-07).
 
 use {
-    crate::objects::{NucleusObject, object_ref::ObjectRef},
-    core::ptr::NonNull,
+    crate::objects::{
+        NucleusObject,
+        access::{ObjectId, PoolTag},
+    },
     libobject::{CapError, ObjectType, Rights},
 };
 
-/// Payload for pointer-based capabilities (most object types).
+/// Payload for identity-based capabilities (most object types).
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct ObjectPayload {
-    ptr: NonNull<()>,
+    pool: u8,
+    _pad: u8,
+    index: u16,
     generation: u32,
-    _pad: u32,
+    _pad2: u64,
 }
 
 /// Payload for inline region capabilities (Untyped, Frame).
@@ -110,33 +121,29 @@ impl KeyEntry {
         }
     }
 
-    /// Create a pointer-based capability entry (most object types).
-    pub fn new<T: NucleusObject>(object: &T, rights: Rights, badge: u16) -> Self {
-        Self {
-            obj_type: T::TYPE,
-            rights,
-            badge,
-            payload: KeyPayload {
-                obj: ObjectPayload {
-                    ptr: NonNull::from(object).cast(),
-                    generation: 0,
-                    _pad: 0,
-                },
-            },
-        }
+    /// Create an identity-based capability entry (most object types).
+    ///
+    /// The entry stores only the checked `ObjectId`; dereferencing requires
+    /// the owning access context (see `doc/lifetime-and-authority.md` §3).
+    pub fn new<T: NucleusObject>(id: ObjectId, rights: Rights, badge: u16) -> Self {
+        debug_assert_eq!(id.pool, T::POOL);
+        Self::from_id(T::TYPE, id, rights, badge)
     }
 
-    /// Create a capability entry from a pre-built `ObjectRef` (for arch objects).
-    pub fn from_ref(obj_ref: ObjectRef, rights: Rights, badge: u16) -> Self {
+    /// Create an identity-based capability entry from a checked identity
+    /// (for arch objects created via `ArchObjects::create_arch_object`).
+    pub fn from_id(obj_type: ObjectType, id: ObjectId, rights: Rights, badge: u16) -> Self {
         Self {
-            obj_type: obj_ref.object_type(),
+            obj_type,
             rights,
             badge,
             payload: KeyPayload {
                 obj: ObjectPayload {
-                    ptr: obj_ref.as_raw_ptr(),
-                    generation: 0,
+                    pool: id.pool as u8,
                     _pad: 0,
+                    index: id.index,
+                    generation: id.generation,
+                    _pad2: 0,
                 },
             },
         }
@@ -208,40 +215,26 @@ impl KeyEntry {
         self.badge
     }
 
-    /// Get generation counter (pointer-based caps only).
+    /// Get the checked object identity (identity-based caps only).
+    ///
+    /// This is a handle, not a reference: dereferencing requires the owning
+    /// access context, which validates the identity against authoritative
+    /// pool metadata first. Returns error on region types — use `as_region()`.
     #[inline]
-    pub fn generation(&self) -> u32 {
-        debug_assert!(!self.is_region() && self.obj_type != ObjectType::NULL);
-        // SAFETY: We checked the object is valid and is of correct type.
-        unsafe { self.payload.obj.generation }
-    }
-
-    /// Access the underlying object with type checking.
-    /// Returns error if called on a region type — use `as_region()` instead.
-    #[inline]
-    pub fn as_object<T: NucleusObject>(&self) -> Result<&T, CapError> {
-        if self.obj_type != T::TYPE || self.is_region() {
+    pub fn object_id(&self) -> Result<ObjectId, CapError> {
+        if self.is_region() || self.obj_type == ObjectType::NULL {
             return Err(CapError::TypeMismatch {
-                expected: T::TYPE,
+                expected: ObjectType::UNTYPED, // any region type; see as_region
                 found: self.obj_type,
             });
         }
-        // SAFETY: type verified, pointer-based variant guaranteed
-        Ok(unsafe { self.payload.obj.ptr.cast::<T>().as_ref() })
-    }
-
-    /// Access the underlying object mutably with type checking.
-    /// Returns error if called on a region type — use `as_region_mut()` instead.
-    #[inline]
-    pub fn as_object_mut<T: NucleusObject>(&mut self) -> Result<&mut T, CapError> {
-        if self.obj_type != T::TYPE || self.is_region() {
-            return Err(CapError::TypeMismatch {
-                expected: T::TYPE,
-                found: self.obj_type,
-            });
-        }
-        // SAFETY: type verified, pointer-based variant guaranteed
-        Ok(unsafe { self.payload.obj.ptr.cast::<T>().as_mut() })
+        // SAFETY: identity-based variant guaranteed by the checks above.
+        let obj = unsafe { self.payload.obj };
+        Ok(ObjectId {
+            pool: PoolTag::from_raw(obj.pool),
+            index: obj.index,
+            generation: obj.generation,
+        })
     }
 
     /// Access the inline region payload (Untyped or Frame, read-only).

@@ -90,7 +90,7 @@ pub unsafe extern "C" fn nucleus_bootstrap_debug_console() -> u64 {
         #[allow(static_mut_refs)]
         NUCLEUS.lock(|nucleus| {
             assert!(
-                nucleus.current_domain.is_none() && nucleus.pools.domains.get(0).is_none(),
+                nucleus.current_domain.is_none() && nucleus.pools.domains.get_live(0).is_none(),
                 "debug bootstrap must run only once"
             );
             let key = nucleus

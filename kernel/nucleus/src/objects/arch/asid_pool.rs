@@ -10,4 +10,5 @@ impl AArch64ASIDPool {
 
 impl NucleusObject for AArch64ASIDPool {
     const TYPE: ObjectType = ObjectType::ASID_POOL;
+    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::ASIDPool;
 }

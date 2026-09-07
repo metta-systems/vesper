@@ -4,13 +4,13 @@ use {
         api::key_entry::KeyEntry,
         objects::{
             ArchObjects,
+            access::ObjectId,
             arch::{AArch64ASID, AArch64ASIDPool, AArch64PageTable, AArch64VSpace, ArchPools},
             arch_objects::FrameSize,
-            object_ref::ObjectRef,
         },
     },
     libaddress::PhysAddr,
-    libobject::{ArchType, CapError, Rights},
+    libobject::{ArchType, CapError, ObjectType, Rights},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -61,41 +61,41 @@ impl ArchObjects for AArch64 {
         phys_addr: PhysAddr,
         size_bits: u8,
         pools: &mut ArchPools<Self>,
-    ) -> Result<ObjectRef, CapError> {
+    ) -> Result<(ObjectType, ObjectId), CapError> {
         // match arch_type {
         //     ArchType::Frame => {
         //         let frame_size = FrameSize::from_bits(size_bits as usize)
         //             .map_err(|_| CapError::InvalidSize(size_bits as usize))?;
         //         let frame = AArch64Frame::new(phys_addr, frame_size);
-        //         let obj = pools
+        //         let (id, _obj) = pools
         //             .frames
         //             .allocate(frame)
         //             .ok_or(CapError::PoolExhausted)?;
-        //         Ok(ObjectRef::new(obj))
+        //         Ok((ObjectType::FRAME, id))
         //     }
         //     ArchType::PageTable => {
         //         let pt = AArch64PageTable::new(phys_addr);
-        //         let obj = pools
+        //         let (id, _obj) = pools
         //             .page_tables
         //             .allocate(pt)
         //             .ok_or(CapError::PoolExhausted)?;
-        //         Ok(ObjectRef::new(obj))
+        //         Ok((ObjectType::PAGE_TABLE, id))
         //     }
         //     ArchType::VSpace => {
         //         let vspace = AArch64VSpace::new();
-        //         let obj = pools
+        //         let (id, _obj) = pools
         //             .vspaces
         //             .allocate(vspace)
         //             .ok_or(CapError::PoolExhausted)?;
-        //         Ok(ObjectRef::new(obj))
+        //         Ok((ObjectType::VSPACE, id))
         //     }
         //     ArchType::ASIDPool => {
         //         let pool = AArch64ASIDPool::new();
-        //         let obj = pools
+        //         let (id, _obj) = pools
         //             .asid_pools
         //             .allocate(pool)
         //             .ok_or(CapError::PoolExhausted)?;
-        //         Ok(ObjectRef::new(obj))
+        //         Ok((ObjectType::ASID_POOL, id))
         //     }
         //     _ => Err(CapError::UnsupportedArchType(arch_type)),
         // }

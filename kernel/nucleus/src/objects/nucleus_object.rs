@@ -46,6 +46,13 @@
 pub trait NucleusObject: Sized + 'static {
     const TYPE: libobject::ObjectType;
 
+    /// Unique kernel-internal pool identity for this object type.
+    ///
+    /// Defaults to `PoolTag::Region` (never pooled) so inline region types
+    /// and not-yet-pooled sketch types need no explicit override. Pooled
+    /// types must override this with their unique tag.
+    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::Region;
+
     //TODO: add invoke here?
     // fn invoke(obj: &Self::TYPE, op: u32, args: &[u64]) -> SyscallResult;
 }

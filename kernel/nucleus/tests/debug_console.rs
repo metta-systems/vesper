@@ -28,10 +28,29 @@ use {
         domain::{DcbPage, DomainId},
     },
     objects::{
-        ArchObjectsImpl, DebugConsole, Domain, KeyTable, Nucleus, ObjectPool, arch::ArchPools,
-        domain::DcbPages, nucleus::NucleusPools,
+        ArchObjectsImpl, Domain, KeyTable, Nucleus, ObjectPool,
+        access::{ObjectId, PoolTag},
+        arch::ArchPools,
+        domain::DcbPages,
+        nucleus::NucleusPools,
     },
 };
+
+// The debug console is a stateless singleton, not a pool object; its entry
+// carries a null identity and is validated by type only (see the debug-only
+// exception in doc/nucleus_capabilities.md).
+fn console_entry(rights: Rights, badge: u16) -> KeyEntry {
+    KeyEntry::from_id(
+        ObjectType::DEBUG_CONSOLE,
+        ObjectId {
+            pool: PoolTag::Region,
+            index: 0,
+            generation: 0,
+        },
+        rights,
+        badge,
+    )
+}
 
 fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>)) {
     let mut backing = MaybeUninit::<[Domain; 2]>::uninit();
@@ -52,8 +71,19 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>)) {
         dcb_pages: DcbPages::new(),
     };
     test(&mut nucleus);
-    for index in 0..2 {
-        nucleus.pools.domains.deallocate(index);
+    for index in 0..2_u16 {
+        let id = ObjectId {
+            pool: PoolTag::Domain,
+            index,
+            generation: 1,
+        };
+        if nucleus.pools.domains.get_live(usize::from(index)).is_some() {
+            nucleus
+                .pools
+                .domains
+                .deallocate(id)
+                .unwrap_or_else(|_| panic!("domain cleanup failed"));
+        }
     }
 }
 
@@ -134,7 +164,12 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
             }) if submitted == key
         ));
         assert_eq!(nucleus.current_domain_mut().unwrap().keytable.len(), 0);
-        assert!(nucleus.pools.domains.deallocate(1));
+        let id = ObjectId {
+            pool: PoolTag::Domain,
+            index: 1,
+            generation: 1,
+        };
+        assert!(nucleus.pools.domains.deallocate(id).is_ok());
         assert!(matches!(
             api::handle_cap_invoke(nucleus, key, 1, &args),
             Err(CapError::InvalidDomain)
@@ -189,8 +224,7 @@ fn rejects_wrong_capability_types_before_touching_write_arguments() {
 
 #[test_case]
 fn rejects_invalid_operations_through_shared_capability_borrows() {
-    static CONSOLE: DebugConsole = DebugConsole;
-    let cap = KeyEntry::new(&CONSOLE, Rights::all(), 42);
+    let cap = console_entry(Rights::all(), 42);
     let alias = &cap;
 
     // Invalid opcodes must fail before constructing an address or copying bytes.
@@ -210,7 +244,12 @@ fn rejects_invalid_operations_through_shared_capability_borrows() {
     assert_eq!(cap.object_type(), ObjectType::DEBUG_CONSOLE);
     assert_eq!(cap.rights(), Rights::all());
     assert_eq!(cap.badge(), 42);
-    assert_eq!(cap.generation(), 0);
+    assert_eq!(
+        cap.object_id()
+            .unwrap_or_else(|_| panic!("no identity"))
+            .generation,
+        0
+    );
 }
 
 // Check every slot through the public API, including retained identity on deletion.
@@ -225,7 +264,12 @@ fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u16
             assert_eq!(cap.object_type(), ObjectType::DEBUG_CONSOLE);
             assert_eq!(cap.rights(), rights);
             assert_eq!(cap.badge(), badge);
-            assert_eq!(cap.generation(), 0);
+            assert_eq!(
+                cap.object_id()
+                    .unwrap_or_else(|_| panic!("no identity"))
+                    .generation,
+                0
+            );
         }
         None => assert!(matches!(
             table.lookup(key),
@@ -339,7 +383,6 @@ fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
 
 #[test_case]
 fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
-    static CONSOLE: DebugConsole = DebugConsole;
     with_nucleus(|nucleus| {
         let old = nucleus
             .create_domain()
@@ -370,7 +413,7 @@ fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
             .current_domain_mut()
             .unwrap()
             .keytable
-            .insert(old.slot(), KeyEntry::new(&CONSOLE, rights, 0x2222))
+            .insert(old.slot(), console_entry(rights, 0x2222))
             .unwrap_or_else(|_| panic!("replacement installation failed"));
         assert_eq!(replacement, future);
         for op in [0, u64::MAX] {
@@ -431,9 +474,8 @@ fn table_lookup_still_requires_an_installed_capability() {
         }) if key == invalid
     ));
 
-    static CONSOLE: DebugConsole = DebugConsole;
     let key = table
-        .insert(slot, KeyEntry::new(&CONSOLE, Rights::all(), 0))
+        .insert(slot, console_entry(Rights::all(), 0))
         .unwrap_or_else(|_| panic!("console insertion failed"));
     assert_eq!(key, RawKey::new(slot, 1));
     assert_eq!(table.len(), 1);

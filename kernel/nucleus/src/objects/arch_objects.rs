@@ -1,10 +1,10 @@
 use {
     crate::{
         api::key_entry::KeyEntry,
-        objects::{NucleusObject, arch::ArchPools, nucleus::Nucleus, object_ref::ObjectRef},
+        objects::{NucleusObject, access::ObjectId, arch::ArchPools, nucleus::Nucleus},
     },
     libaddress::PhysAddr,
-    libobject::{ArchType, CapError, Rights},
+    libobject::{ArchType, CapError, ObjectType, Rights},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -74,12 +74,16 @@ pub trait ArchObjects: Sized + 'static {
     // ─── Object Creation (pool-backed arch types only) ───
     /// Create a pool-backed arch object. Frame is NOT handled here —
     /// it is created inline via `KeyEntry::new_frame()` in the retype path.
+    ///
+    /// Returns the created object's type and its checked identity.
+    /// Dereferencing the identity requires the owning access context
+    /// (see `doc/lifetime-and-authority.md` §3).
     fn create_arch_object(
         arch_type: ArchType,
         phys_addr: PhysAddr,
         size_bits: u8,
         pools: &mut ArchPools<Self>,
-    ) -> Result<ObjectRef, CapError>;
+    ) -> Result<(ObjectType, ObjectId), CapError>;
 
     // ─── Invocation Handlers ───
 

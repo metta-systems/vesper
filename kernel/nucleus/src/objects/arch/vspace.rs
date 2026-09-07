@@ -10,4 +10,5 @@ impl AArch64VSpace {
 
 impl NucleusObject for AArch64VSpace {
     const TYPE: ObjectType = ObjectType::VSPACE;
+    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::VSpace;
 }

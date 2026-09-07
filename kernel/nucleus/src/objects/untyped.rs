@@ -125,13 +125,13 @@ fn create_object<A: ArchObjects>(
         // ── Pool-backed arch types (PageTable, VSpace, ASID, etc.) ──
         _ if obj_type.is_arch() => {
             let arch_type = ArchType::try_from(obj_type)?;
-            let obj_ref = A::create_arch_object(
+            let (obj_type, id) = A::create_arch_object(
                 arch_type,
                 PhysAddr::from(paddr),
                 size_bits,
                 &mut pools.arch,
             )?;
-            Ok(KeyEntry::from_ref(obj_ref, Rights::all(), 0))
+            Ok(KeyEntry::from_id(obj_type, id, Rights::all(), 0))
         }
 
         _ => Err(CapError::InvalidObjectType),

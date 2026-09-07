@@ -32,6 +32,7 @@ pub struct Domain {
 
 impl NucleusObject for Domain {
     const TYPE: ObjectType = ObjectType::DOMAIN;
+    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::Domain;
 }
 
 impl Domain {
