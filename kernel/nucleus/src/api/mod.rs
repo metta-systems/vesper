@@ -1,6 +1,6 @@
 use {
     crate::objects::{ArchObjects, Nucleus},
-    libobject::{ArchType, CapError, CoreType, KeySlot, ObjectType},
+    libobject::{ArchType, CapError, CoreType, ObjectType, RawKey},
     libqemu::semihosting as semi,
 };
 
@@ -27,13 +27,12 @@ pub use key_entry::KeyEntry;
 #[inline]
 pub fn handle_cap_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
-    cap_slot: u32,
-    op: u32,
+    key: RawKey,
+    op: u64,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
-    let slot = KeySlot(cap_slot);
     semi::println!(
-        "handle_cap_invoke(slot {cap_slot}:op {op}:args[{},{},{},{},{},{}])",
+        "handle_cap_invoke(key {key:?}:op {op}:args[{},{},{},{},{},{}])",
         args[0],
         args[1],
         args[2],
@@ -46,7 +45,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
             .current_domain_mut()
             .ok_or(CapError::InvalidDomain)?;
         semi::println!("handle_cap_invoke(got domain)");
-        let entry = domain.keytable.lookup_mut(slot)?;
+        let entry = domain.keytable.lookup(key)?;
         semi::println!("handle_cap_invoke(got entry)");
         entry.object_type()
     };
@@ -55,10 +54,10 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 
     if core::hint::unlikely(obj_type.is_arch()) {
         // Architecture-specific dispatch (less common path)
-        arch_invoke::<A>(nucleus, slot, obj_type, op, args)
+        arch_invoke::<A>(nucleus, key, obj_type, op, args)
     } else {
         // Core dispatch (common path)
-        core_invoke::<A>(nucleus, slot, obj_type, op, args)
+        core_invoke::<A>(nucleus, key, obj_type, op, args)
     }
 }
 
@@ -66,9 +65,9 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 #[inline(always)]
 fn core_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
-    entry_slot: KeySlot,
+    key: RawKey,
     obj_type: ObjectType,
-    op: u32,
+    op: u64,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     let core_type = CoreType::try_from(obj_type)?;
@@ -76,7 +75,7 @@ fn core_invoke<A: ArchObjects>(
     let domain = nucleus
         .current_domain_mut()
         .ok_or(CapError::InvalidDomain)?;
-    let entry = domain.keytable.lookup(entry_slot)?;
+    let entry = domain.keytable.lookup(key)?;
 
     semi::println!("core_invoke");
 
@@ -139,9 +138,9 @@ fn core_invoke<A: ArchObjects>(
 #[inline(always)]
 fn arch_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
-    entry_slot: KeySlot,
+    key: RawKey,
     obj_type: ObjectType,
-    op: u32,
+    op: u64,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     let arch_type = ArchType::try_from(obj_type)?;
@@ -149,7 +148,7 @@ fn arch_invoke<A: ArchObjects>(
     let domain = nucleus
         .current_domain_mut()
         .ok_or(CapError::InvalidDomain)?;
-    let entry = domain.keytable.lookup_mut(entry_slot)?;
+    let entry = domain.keytable.lookup(key)?;
 
     #[expect(
         clippy::match_single_binding,

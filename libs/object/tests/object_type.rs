@@ -1,8 +1,12 @@
-use vesper_objects::{CapError, Key, KeySlot, Rights, decode_syscall_result};
+use vesper_objects::{CapError, CoreType, Key, KeySlot, RawKey, Rights, decode_syscall_result};
 
 #[cfg(test)]
 #[path = "support/cap_error.rs"]
 mod cap_error;
+
+#[cfg(test)]
+#[path = "support/key_identity.rs"]
+mod key_identity;
 
 // Compile the actual wrapper methods with a test-only transport. DCB accessors
 // remain uncalled: constructing a test handle does not establish a user mapping.
@@ -97,10 +101,32 @@ mod tests {
 
         assert_eq!(DebugConsoleOp::Write as u8, 0);
         assert!(matches!(
-            DebugConsoleOp::try_from(0),
+            DebugConsoleOp::try_from(0_u32),
             Ok(DebugConsoleOp::Write)
         ));
-        for raw in [1, 127, 255, 256, 1 << 16, u32::MAX] {
+        assert!(matches!(
+            DebugConsoleOp::try_from(0_u64),
+            Ok(DebugConsoleOp::Write)
+        ));
+        for raw in [1_u32, 127, 255, 256, 1 << 16, u32::MAX] {
+            assert!(matches!(
+                DebugConsoleOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn debug_console_operation_rejects_all_full_width_aliases() {
+        use vesper_objects::debug_console::DebugConsoleOp;
+
+        for bit in 0..64 {
+            assert!(matches!(
+                DebugConsoleOp::try_from(1_u64 << bit),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        for raw in [u64::from(u32::MAX), u64::MAX] {
             assert!(matches!(
                 DebugConsoleOp::try_from(raw),
                 Err(CapError::InvalidOperation)
@@ -111,11 +137,16 @@ mod tests {
     #[cfg(feature = "debug_kernel")]
     #[test]
     fn debug_console_client_is_available_for_debug_kernels() {
-        use vesper_objects::{DebugConsoleKey, KeySlot};
+        use vesper_objects::{DebugConsoleKey, KeySlot, RawKey};
 
         // Construct handles only: host tests must not execute the SVC transport.
-        let _console = DebugConsoleKey::new();
-        let _other_slot = DebugConsoleKey::new_slot(KeySlot(42));
+        // Model two issued keys, including a later occupant of the same slot.
+        const ISSUED: RawKey = RawKey::new(KeySlot(127), 0x1234_5678);
+        const REISSUED: RawKey = RawKey::new(KeySlot(127), 0x8765_4321);
+        const CONSOLE: DebugConsoleKey = DebugConsoleKey::from_key(ISSUED);
+        const OTHER: DebugConsoleKey = DebugConsoleKey::from_key(REISSUED);
+        assert_eq!(CONSOLE.raw().to_wire(), 0x1234_5678_0000_007f);
+        assert_eq!(OTHER.raw().to_wire(), 0x8765_4321_0000_007f);
     }
 
     // Literal ABI oracles: do not derive these IDs from the production catalogue.

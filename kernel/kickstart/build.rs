@@ -46,8 +46,17 @@ fn main() {
     // Extract stack mapping information
     let stack_virt_bottom = stack_virt_bottom(&elf);
 
+    let bootstrap_debug_console_virt = env::var_os("CARGO_FEATURE_DEBUG_KERNEL")
+        .is_some()
+        .then(|| bootstrap_debug_console_virt(&elf));
+
     // Generate Rust code
-    generate_rust_code(&sections, stack_virt_bottom, out_path);
+    generate_rust_code(
+        &sections,
+        stack_virt_bottom,
+        bootstrap_debug_console_virt,
+        out_path,
+    );
 }
 
 /// Extracted section with all metadata needed for loading
@@ -229,6 +238,51 @@ fn find_symbol(elf: &Elf, symbol_name: &str) -> Option<Sym> {
     None
 }
 
+/// Resolve the private EL1 boot bridge only for a debug-enabled Kickstart.
+fn bootstrap_debug_console_virt(elf: &Elf) -> u64 {
+    use goblin::elf::{
+        section_header::{SHF_ALLOC, SHF_EXECINSTR, SHN_LORESERVE, SHN_UNDEF},
+        sym::STT_FUNC,
+    };
+
+    const SYMBOL: &str = "nucleus_bootstrap_debug_console";
+    let sym = find_symbol(elf, SYMBOL)
+        .expect("Missing nucleus_bootstrap_debug_console; rebuild nucleus with debug_kernel");
+    assert!(
+        sym.st_shndx != usize::try_from(SHN_UNDEF).unwrap()
+            && sym.st_shndx < usize::try_from(SHN_LORESERVE).unwrap(),
+        "{SYMBOL} must be defined in a regular section"
+    );
+    let section = elf
+        .section_headers
+        .get(sym.st_shndx)
+        .expect("Bootstrap symbol has an invalid section index");
+    assert!(
+        elf.shdr_strtab.get_at(section.sh_name) == Some(".text")
+            && section.sh_type != SHT_NOBITS
+            && section.sh_flags & u64::from(SHF_ALLOC | SHF_EXECINSTR)
+                == u64::from(SHF_ALLOC | SHF_EXECINSTR),
+        "{SYMBOL} must reside in the loaded executable .text section"
+    );
+    assert!(
+        sym.st_type() == STT_FUNC && sym.st_size >= 4 && sym.st_value.is_multiple_of(4),
+        "{SYMBOL} must be an aligned AArch64 function with a nonempty body"
+    );
+    let symbol_end = sym
+        .st_value
+        .checked_add(sym.st_size)
+        .expect("Bootstrap symbol range overflows");
+    let section_end = section
+        .sh_addr
+        .checked_add(section.sh_size)
+        .expect("Bootstrap section range overflows");
+    assert!(
+        sym.st_value >= section.sh_addr && symbol_end <= section_end,
+        "{SYMBOL} must fit entirely within its loaded section"
+    );
+    sym.st_value
+}
+
 fn map_section_name(name: &String) -> String {
     match name.as_ref() {
         ".text" => "Nucleus code".to_string(),
@@ -279,7 +333,12 @@ fn stack_virt_bottom(elf: &Elf) -> u64 {
     0
 }
 
-fn generate_rust_code(sections: &KernelSections, stack_virt_bottom: u64, out_path: &Path) {
+fn generate_rust_code(
+    sections: &KernelSections,
+    stack_virt_bottom: u64,
+    bootstrap_debug_console_virt: Option<u64>,
+    out_path: &Path,
+) {
     use minijinja::{Environment, context};
 
     let mut code = Environment::new();
@@ -342,6 +401,7 @@ fn generate_rust_code(sections: &KernelSections, stack_virt_bottom: u64, out_pat
         bss => bss_tmpl,
         vectors => vector_tmpl,
         stack_virt_bottom,
+        bootstrap_debug_console_virt,
     };
 
     // Write generated code

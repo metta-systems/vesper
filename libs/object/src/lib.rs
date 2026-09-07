@@ -15,7 +15,7 @@ use syscall_status as code;
 pub use debug_console::DebugConsoleKey;
 
 pub use {
-    key::Key,
+    key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::KeySlot,
     object_type::{ArchType, CoreType, ObjectType},
     rights::Rights,
@@ -75,6 +75,22 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::INVALID_FRAME_SIZE, s, 0) => {
                 CapError::InvalidFrameSize(usize::try_from(s).ok()?)
             }
+            (code::INVALID_KEY, key, diagnostic) if diagnostic >> 8 <= 7 => CapError::InvalidKey {
+                key: RawKey::from_wire(key),
+                reason: InvalidKeyReason::try_from(u8::try_from(diagnostic & 0xff).ok()?).ok()?,
+                operand: u8::try_from(diagnostic >> 8).ok()?,
+            },
+            (code::INCONSISTENT_KEY, key, diagnostic) if diagnostic >> 8 <= 7 => {
+                CapError::InconsistentKey {
+                    key: RawKey::from_wire(key),
+                    reason: InconsistencyReason::try_from(u8::try_from(diagnostic & 0xff).ok()?)
+                        .ok()?,
+                    operand: u8::try_from(diagnostic >> 8).ok()?,
+                }
+            }
+            (code::KEY_SLOT_EXHAUSTED, s, 0) => {
+                CapError::KeySlotExhausted(KeySlot(u32::try_from(s).ok()?))
+            }
             _ => return None,
         })
     })();
@@ -117,6 +133,19 @@ pub enum CapError {
     PoolExhausted,
     InvalidSize(usize),
     InvalidFrameSize(usize),
+    /// Invalid submitted key, with the offending input-register index (0–7).
+    InvalidKey {
+        key: RawKey,
+        reason: InvalidKeyReason,
+        operand: u8,
+    },
+    /// Changed identity, retaining the submitted key rather than a replacement.
+    InconsistentKey {
+        key: RawKey,
+        reason: InconsistencyReason,
+        operand: u8,
+    },
+    KeySlotExhausted(KeySlot),
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
     UnknownResponse {
@@ -127,6 +156,27 @@ pub enum CapError {
 }
 
 impl CapError {
+    /// Attribute a key error to its input register; leave other errors unchanged.
+    ///
+    /// Callers should supply 0–7. Out-of-range indices are retained, not masked;
+    /// the shared decoder preserves them as an unknown response.
+    #[must_use]
+    pub fn with_key_operand(self, operand: u8) -> Self {
+        match self {
+            Self::InvalidKey { key, reason, .. } => Self::InvalidKey {
+                key,
+                reason,
+                operand,
+            },
+            Self::InconsistentKey { key, reason, .. } => Self::InconsistentKey {
+                key,
+                reason,
+                operand,
+            },
+            other => other,
+        }
+    }
+
     pub fn code(self) -> (u64, u64, u64) {
         match self {
             CapError::Unknown => (code::UNKNOWN, 0, 0),
@@ -162,6 +212,25 @@ impl CapError {
             CapError::PoolExhausted => (code::POOL_EXHAUSTED, 0, 0),
             CapError::InvalidSize(s) => (code::INVALID_SIZE, s.try_into().unwrap(), 0),
             CapError::InvalidFrameSize(s) => (code::INVALID_FRAME_SIZE, s.try_into().unwrap(), 0),
+            CapError::InvalidKey {
+                key,
+                reason,
+                operand,
+            } => (
+                code::INVALID_KEY,
+                key.to_wire(),
+                u64::from(reason as u8) | (u64::from(operand) << 8),
+            ),
+            CapError::InconsistentKey {
+                key,
+                reason,
+                operand,
+            } => (
+                code::INCONSISTENT_KEY,
+                key.to_wire(),
+                u64::from(reason as u8) | (u64::from(operand) << 8),
+            ),
+            CapError::KeySlotExhausted(s) => (code::KEY_SLOT_EXHAUSTED, u64::from(s.0), 0),
             CapError::UnknownResponse {
                 status,
                 detail1,

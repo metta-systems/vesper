@@ -23,7 +23,8 @@ use {
     core::mem::{MaybeUninit, size_of},
     libaddress::PhysAddr,
     libobject::{
-        CapError, KeySlot, ObjectType, Rights, decode_syscall_result,
+        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights,
+        decode_syscall_result,
         domain::{DcbPage, DomainId},
     },
     objects::{
@@ -59,13 +60,16 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>)) {
 #[test_case]
 fn missing_caller_cannot_invoke_bootstrap_console() {
     with_nucleus(|nucleus| {
-        nucleus.create_domain();
+        let key = nucleus
+            .create_domain()
+            .expect("bootstrap console key missing");
+        assert_eq!(key.slot(), KeySlot::DEBUG_CONSOLE);
+        assert_ne!(key.incarnation(), 0);
         assert_eq!(nucleus.current_domain, None);
-        let slot = KeySlot::DEBUG_CONSOLE.0;
         let args = [u64::MAX; 6];
 
         assert!(nucleus.current_domain_mut().is_none());
-        let error = match api::handle_cap_invoke(nucleus, slot, 1, &args) {
+        let error = match api::handle_cap_invoke(nucleus, key, 1, &args) {
             Err(error) => error,
             Ok(_) => panic!("invocation without a caller succeeded"),
         };
@@ -81,12 +85,17 @@ fn missing_caller_cannot_invoke_bootstrap_console() {
         // path. Invalid op 1 proves dispatch without dereferencing write args.
         nucleus.current_domain = Some(0);
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, slot, 1, &args),
+            api::handle_cap_invoke(nucleus, key, 1, &args),
             Err(CapError::InvalidOperation)
         ));
         nucleus.current_domain = None;
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, slot, 1, &args),
+            api::handle_cap_invoke(nucleus, key, 1, &args),
+            Err(CapError::InvalidDomain)
+        ));
+        // Caller validation also precedes malformed-key validation.
+        assert!(matches!(
+            api::handle_cap_invoke(nucleus, RawKey::from_wire(0), 0, &args),
             Err(CapError::InvalidDomain)
         ));
     });
@@ -95,14 +104,15 @@ fn missing_caller_cannot_invoke_bootstrap_console() {
 #[test_case]
 fn dispatch_uses_only_the_explicit_allocated_caller_table() {
     with_nucleus(|nucleus| {
-        nucleus.create_domain();
-        let slot = KeySlot::DEBUG_CONSOLE.0;
+        let key = nucleus
+            .create_domain()
+            .expect("bootstrap console key missing");
         let args = [u64::MAX; 6];
         for caller in [1, 2, u32::MAX] {
             nucleus.current_domain = Some(caller);
             assert!(nucleus.current_domain_mut().is_none());
             assert!(matches!(
-                api::handle_cap_invoke(nucleus, slot, 1, &args),
+                api::handle_cap_invoke(nucleus, key, 1, &args),
                 Err(CapError::InvalidDomain)
             ));
         }
@@ -116,12 +126,17 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
             .expect("second domain allocation failed");
         nucleus.current_domain = Some(1);
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, slot, 1, &args),
-            Err(CapError::EmptySlot(s)) if s.0 == slot
+            api::handle_cap_invoke(nucleus, key, 1, &args),
+            Err(CapError::InvalidKey {
+                key: submitted,
+                reason: InvalidKeyReason::NeverIssued,
+                operand: 0,
+            }) if submitted == key
         ));
+        assert_eq!(nucleus.current_domain_mut().unwrap().keytable.len(), 0);
         assert!(nucleus.pools.domains.deallocate(1));
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, slot, 1, &args),
+            api::handle_cap_invoke(nucleus, key, 1, &args),
             Err(CapError::InvalidDomain)
         ));
     });
@@ -162,7 +177,7 @@ fn rejects_wrong_capability_types_before_touching_write_arguments() {
         KeyEntry::new_untyped(0, 12, false, Rights::all()),
         KeyEntry::new_frame(0, 12, false, Rights::all()),
     ] {
-        for op in [0, u32::MAX] {
+        for op in [0, u64::from(u32::MAX), u64::MAX] {
             assert!(matches!(
                 invoke(&cap, op, u64::MAX, u64::MAX),
                 Err(CapError::TypeMismatch { expected, found })
@@ -174,12 +189,15 @@ fn rejects_wrong_capability_types_before_touching_write_arguments() {
 
 #[test_case]
 fn rejects_invalid_operations_through_shared_capability_borrows() {
-    let console = DebugConsole;
-    let cap = KeyEntry::new(&console, Rights::all(), 42);
+    static CONSOLE: DebugConsole = DebugConsole;
+    let cap = KeyEntry::new(&CONSOLE, Rights::all(), 42);
     let alias = &cap;
 
     // Invalid opcodes must fail before constructing an address or copying bytes.
-    for op in [1, 127, 255, 256, 1 << 16, u32::MAX] {
+    for op in [1, 127, 255, 256, 1 << 16, u64::from(u32::MAX), u64::MAX]
+        .into_iter()
+        .chain((0..64).map(|bit| 1_u64 << bit))
+    {
         assert!(matches!(
             invoke(&cap, op, u64::MAX, u64::MAX),
             Err(CapError::InvalidOperation)
@@ -195,20 +213,232 @@ fn rejects_invalid_operations_through_shared_capability_borrows() {
     assert_eq!(cap.generation(), 0);
 }
 
+// Check every slot through the public API, including retained identity on deletion.
+// Only console metadata is inspected; no object pointer or write buffer is accessed.
+fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u16)>) {
+    assert_eq!(table.len(), usize::from(live.is_some()));
+    match live {
+        Some((rights, badge)) => {
+            let cap = table
+                .lookup(key)
+                .unwrap_or_else(|_| panic!("console key changed"));
+            assert_eq!(cap.object_type(), ObjectType::DEBUG_CONSOLE);
+            assert_eq!(cap.rights(), rights);
+            assert_eq!(cap.badge(), badge);
+            assert_eq!(cap.generation(), 0);
+        }
+        None => assert!(matches!(
+            table.lookup(key),
+            Err(CapError::InconsistentKey {
+                key: submitted,
+                reason: InconsistencyReason::CapabilityInvalidated,
+                operand: 0,
+            }) if submitted == key
+        )),
+    }
+    for index in 0..KeyTable::NUM_SLOTS {
+        let slot = KeySlot(u32::try_from(index).unwrap());
+        if slot != key.slot() {
+            let probe = RawKey::new(slot, 1);
+            assert!(matches!(
+                table.lookup(probe),
+                Err(CapError::InvalidKey {
+                    key: submitted,
+                    reason: InvalidKeyReason::NeverIssued,
+                    operand: 0,
+                }) if submitted == probe
+            ));
+        }
+    }
+}
+
+fn assert_dispatch_error(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    key: RawKey,
+    op: u64,
+    expected: (u64, u64, u64),
+) {
+    // An erroneous Write dispatch must not get as far as copying these arguments.
+    let error = match api::handle_cap_invoke(nucleus, key, op, &[u64::MAX; 6]) {
+        Err(error) => error,
+        Ok(_) => panic!("rejected invocation succeeded"),
+    };
+    assert_eq!(error.code(), expected);
+}
+
+#[test_case]
+fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
+    with_nucleus(|nucleus| {
+        let issued = nucleus
+            .create_domain()
+            .expect("bootstrap console key missing");
+        nucleus.current_domain = Some(0);
+        // Literal wire words deliberately avoid deriving expectations from the
+        // encoder under test. Zero incarnation wins even over out-of-range slots;
+        // a never-issued slot wins over an arbitrary nonzero incarnation.
+        for (wire, reason, details) in [
+            (0x0000_0000_0000_0000, InvalidKeyReason::ZeroIncarnation, 1),
+            (0x0000_0000_0000_007f, InvalidKeyReason::ZeroIncarnation, 1),
+            (0x0000_0000_ffff_ffff, InvalidKeyReason::ZeroIncarnation, 1),
+            (0x0000_0001_ffff_ffff, InvalidKeyReason::SlotOutOfRange, 2),
+            (0x0000_0001_8000_007f, InvalidKeyReason::SlotOutOfRange, 2),
+            (0xffff_ffff_ffff_ffff, InvalidKeyReason::SlotOutOfRange, 2),
+            (0x0000_0001_0000_0000, InvalidKeyReason::NeverIssued, 3),
+            (0xffff_ffff_0000_0000, InvalidKeyReason::NeverIssued, 3),
+        ] {
+            let key = RawKey::from_wire(wire);
+            let words = (26, wire, details);
+            for op in [0, u64::MAX] {
+                assert_dispatch_error(nucleus, key, op, words);
+                assert_console_table(
+                    &nucleus.current_domain_mut().unwrap().keytable,
+                    issued,
+                    Some((Rights::all(), 0)),
+                );
+            }
+            assert!(matches!(
+                decode_syscall_result(words),
+                Err(CapError::InvalidKey {
+                    key: submitted,
+                    reason: decoded,
+                    operand: 0,
+                }) if submitted == key && decoded == reason
+            ));
+        }
+    });
+}
+
+#[test_case]
+fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
+    with_nucleus(|nucleus| {
+        let issued = nucleus
+            .create_domain()
+            .expect("bootstrap console key missing");
+        nucleus.current_domain = Some(0);
+        // Write is zero: every individual set bit is invalid, including all
+        // aliases that narrowing to u8/u16/u32 would turn back into Write.
+        for op in (0..64).map(|bit| 1_u64 << bit).chain([u64::MAX]) {
+            assert_dispatch_error(nucleus, issued, op, (8, 0, 0));
+            assert_console_table(
+                &nucleus.current_domain_mut().unwrap().keytable,
+                issued,
+                Some((Rights::all(), 0)),
+            );
+        }
+        let table = &mut nucleus.current_domain_mut().unwrap().keytable;
+        let entry = table
+            .remove(issued)
+            .unwrap_or_else(|_| panic!("console removal failed"));
+        let next = table
+            .insert(issued.slot(), entry)
+            .unwrap_or_else(|_| panic!("console reinstallation failed"));
+        assert_eq!(next, RawKey::new(issued.slot(), issued.incarnation() + 1));
+        assert_console_table(table, next, Some((Rights::all(), 0)));
+    });
+}
+
+#[test_case]
+fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
+    static CONSOLE: DebugConsole = DebugConsole;
+    with_nucleus(|nucleus| {
+        let old = nucleus
+            .create_domain()
+            .expect("bootstrap console key missing");
+        nucleus.current_domain = Some(0);
+        assert_dispatch_error(nucleus, old, 1, (8, 0, 0));
+        assert_console_table(
+            &nucleus.current_domain_mut().unwrap().keytable,
+            old,
+            Some((Rights::all(), 0)),
+        );
+        nucleus
+            .current_domain_mut()
+            .unwrap()
+            .keytable
+            .remove(old)
+            .unwrap_or_else(|_| panic!("console removal failed"));
+        let future = RawKey::new(old.slot(), old.incarnation() + 1);
+        for op in [0, u64::MAX] {
+            assert_dispatch_error(nucleus, old, op, (27, old.to_wire(), 2));
+            assert_console_table(&nucleus.current_domain_mut().unwrap().keytable, old, None);
+            // Mismatch precedes invalidation even while the slot is vacant.
+            assert_dispatch_error(nucleus, future, op, (27, future.to_wire(), 1));
+            assert_console_table(&nucleus.current_domain_mut().unwrap().keytable, old, None);
+        }
+        let rights = Rights(Rights::READ);
+        let replacement = nucleus
+            .current_domain_mut()
+            .unwrap()
+            .keytable
+            .insert(old.slot(), KeyEntry::new(&CONSOLE, rights, 0x2222))
+            .unwrap_or_else(|_| panic!("replacement installation failed"));
+        assert_eq!(replacement, future);
+        for op in [0, u64::MAX] {
+            assert_dispatch_error(nucleus, old, op, (27, old.to_wire(), 1));
+            assert_console_table(
+                &nucleus.current_domain_mut().unwrap().keytable,
+                replacement,
+                Some((rights, 0x2222)),
+            );
+        }
+        assert_dispatch_error(nucleus, replacement, 1, (8, 0, 0));
+        assert_console_table(
+            &nucleus.current_domain_mut().unwrap().keytable,
+            replacement,
+            Some((rights, 0x2222)),
+        );
+        nucleus
+            .current_domain_mut()
+            .unwrap()
+            .keytable
+            .remove(replacement)
+            .unwrap_or_else(|_| panic!("replacement removal failed"));
+        assert_dispatch_error(nucleus, old, 0, (27, old.to_wire(), 1));
+        assert_console_table(
+            &nucleus.current_domain_mut().unwrap().keytable,
+            replacement,
+            None,
+        );
+        assert_dispatch_error(nucleus, replacement, 0, (27, replacement.to_wire(), 2));
+        assert_console_table(
+            &nucleus.current_domain_mut().unwrap().keytable,
+            replacement,
+            None,
+        );
+    });
+}
+
 #[test_case]
 fn table_lookup_still_requires_an_installed_capability() {
     let mut table = KeyTable::new(DomainId(0));
     let slot = KeySlot::DEBUG_CONSOLE;
-    assert!(matches!(table.lookup(slot), Err(CapError::EmptySlot(s)) if s == slot));
-    let invalid = KeySlot(u32::MAX);
-    assert!(matches!(table.lookup(invalid), Err(CapError::InvalidSlot(s)) if s == invalid));
+    let never_issued = RawKey::new(slot, 1);
+    assert!(matches!(
+        table.lookup(never_issued),
+        Err(CapError::InvalidKey {
+            key,
+            reason: InvalidKeyReason::NeverIssued,
+            operand: 0,
+        }) if key == never_issued
+    ));
+    let invalid = RawKey::new(KeySlot(u32::MAX), 1);
+    assert!(matches!(
+        table.lookup(invalid),
+        Err(CapError::InvalidKey {
+            key,
+            reason: InvalidKeyReason::SlotOutOfRange,
+            operand: 0,
+        }) if key == invalid
+    ));
 
-    let console = DebugConsole;
-    table
-        .insert(slot, KeyEntry::new(&console, Rights::all(), 0))
+    static CONSOLE: DebugConsole = DebugConsole;
+    let key = table
+        .insert(slot, KeyEntry::new(&CONSOLE, Rights::all(), 0))
         .unwrap_or_else(|_| panic!("console insertion failed"));
+    assert_eq!(key, RawKey::new(slot, 1));
+    assert_eq!(table.len(), 1);
     let cap = table
-        .lookup(slot)
+        .lookup(key)
         .unwrap_or_else(|_| panic!("installed console not found"));
     assert!(matches!(
         invoke(cap, 1, u64::MAX, u64::MAX),

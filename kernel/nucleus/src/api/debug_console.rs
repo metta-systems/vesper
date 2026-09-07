@@ -39,7 +39,7 @@ use {
 // silently reinterpret Write=0. Full caller-virtual writes need D1/D6 memory and
 // lifetime guarantees; new schemas/rights/results need the relevant D4/D9 decisions.
 #[inline]
-pub fn invoke(cap: &KeyEntry, op: u32, arg0: u64, arg1: u64) -> SyscallResult {
+pub fn invoke(cap: &KeyEntry, op: u64, arg0: u64, arg1: u64) -> SyscallResult {
     // The console has no per-object state. Validate the capability header without
     // turning its stored pointer into a reference; this is not a rights check.
     if cap.object_type() != ObjectType::DEBUG_CONSOLE {

@@ -223,7 +223,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("emu")]
-test: test-device test-chainboot test-host test-debug-console
+test: test-device test-chainboot test-host test-debug-console test-capability-boot
 
 alias t := test
 
@@ -244,6 +244,11 @@ test-debug-console:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test -p nucleus --test debug_console {{ target_json }} \
       --features=qemu,debug_kernel {{ rust_std }}
+
+# Boot the debug kernel; in-guest assertions and QEMU exit status validate handoff and SVC results
+[group("emu")]
+test-capability-boot: (build 'rpi3' 'qemu,debug_kernel')
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_bin }}"
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 [group("emu")]
@@ -290,7 +295,7 @@ _clippy-cross features='' board='rpi3':
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') (_clippy-cross 'debug_kernel' 'rpi3') (_clippy-cross 'qemu,debug_kernel' 'rpi3') clippy-object-host
+clippy: (build 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') (build 'rpi3' 'qemu,debug_kernel') (_clippy-cross 'debug_kernel' 'rpi3') (_clippy-cross 'qemu,debug_kernel' 'rpi3') clippy-object-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]

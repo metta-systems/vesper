@@ -1,4 +1,4 @@
-use crate::{CapError, Key, Rights, decode_syscall_result};
+use crate::{CapError, CoreType, Key, RawKey, Rights, decode_syscall_result};
 
 #[cfg(not(test))]
 use libsyscall::{protected_call1, protected_call4};
@@ -76,31 +76,47 @@ impl TryFrom<u32> for KeyTableOp {
 
 // Contract status: the KeyMaster/kernel derivation and revocation trust boundary
 // remains an open decision (D2).
+// Contract status update: the management-authority/bookkeeping split is approved;
+// selective revocation mechanisms and the table-rights matrix remain unresolved.
 
 impl KeyTableKey {
+    /// Construct a non-owning handle without installing or validating authority.
+    pub const fn from_key(key: RawKey) -> Self {
+        Self { key: Key::new(key) }
+    }
+
     // This naturally supports cross-domain derivation:
     // "Create a read-only view of my buffer in their cspace"
     // derive(&my_captbl, buffer_slot, &their_captbl, their_slot, Rights::READ)?;
     /// Copy with derivation in single syscall
+    ///
+    /// Returns the issued destination-table-local selector, directly invocable
+    /// only if that table is the caller's implicit table. The rights encoding is
+    /// provisional pending the table-rights matrix; this does not enable dispatch.
+    ///
+    /// The client decodes errors through `decode_syscall_result`, then returns
+    /// the key from the first success word and ignores the second. The producer
+    /// must emit zero in `x2`; no receiver reserved-zero rejection rule is approved.
     pub fn copy_derive(
         &self,
-        src_slot: u32,
+        src_key: RawKey,
         dst_captbl: &KeyTableKey, // Could be same or different!
         dst_slot: u32,
         rights: Rights,
-    ) -> Result<(), CapError> {
+    ) -> Result<RawKey, CapError> {
         // SAFETY: Unsafe call.
         let result = unsafe {
             protected_call4(
-                self.key.slot(),
-                KeyTableOp::CopyDerive as u32,
-                u64::from(src_slot),
-                u64::from(dst_captbl.key.slot()),
+                self.key.to_wire(),
+                KeyTableOp::CopyDerive as u64,
+                src_key.to_wire(),
+                dst_captbl.key.to_wire(),
                 u64::from(dst_slot),
                 u64::from(rights.bits()),
             )
         };
-        decode_syscall_result(result).map(|_| ())
+        let (key, _) = decode_syscall_result(result)?;
+        Ok(RawKey::from_wire(key))
     }
 
     // fn activate(&self, slot: u32, object: NucleusObject) -> Result<()> {
@@ -120,33 +136,50 @@ impl KeyTableKey {
     /// Move the key, named "transfer" to avoid clashing with Rust's reserved word.
     ///
     /// Implementation status: unimplemented placeholder; does not invoke Move.
-    pub fn transfer() {}
+    /// Status update: explicitly returns unsupported instead of a successful
+    /// no-op. Move's interface and wire schema remain unapproved.
+    pub fn transfer() -> Result<(), CapError> {
+        Err(CapError::UnsupportedCoreType(CoreType::KeyTable))
+    }
 
-    pub fn delete(&mut self, slot: u32) -> Result<(), CapError> {
+    /// Select an entry by its incarnation in the invoked table. Kernel support
+    /// remains excluded pending the complete Delete schema and rights matrix.
+    pub fn delete(&mut self, key: RawKey) -> Result<(), CapError> {
         // TODO: Must invoke on self-captbl cap
+        // Contract status update: authorized table management is not restricted
+        // to the caller's own table; exact permission bits remain provisional.
         // SAFETY: Unsafe call.
-        let result =
-            unsafe { protected_call1(self.key.slot(), KeyTableOp::Delete as u32, u64::from(slot)) };
+        let result = unsafe {
+            protected_call1(self.key.to_wire(), KeyTableOp::Delete as u64, key.to_wire())
+        };
         decode_syscall_result(result).map(|_| ())
     }
 
     // Revoke all children of cap in slot
     /// Implementation status: invokes on `self`; the legacy `_captbl` argument is
     /// unused. Revocation semantics remain unresolved and nucleus rejects this operation.
-    pub fn revoke(&self, _captbl: &KeyTableKey, slot: u32) -> Result<(), CapError> {
+    /// The selector now retains its full incarnation, without defining a new scope
+    /// or revocation protocol.
+    pub fn revoke(&self, _captbl: &KeyTableKey, key: RawKey) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let result =
-            unsafe { protected_call1(self.key.slot(), KeyTableOp::Revoke as u32, u64::from(slot)) };
+        let result = unsafe {
+            protected_call1(self.key.to_wire(), KeyTableOp::Revoke as u64, key.to_wire())
+        };
         decode_syscall_result(result).map(|_| ())
     }
 
     // User code to copy cap to another domain (if you have their captbl cap):
+    /// Implementation status: retains the provisional all-rights request; no
+    /// authority amplification policy is implied before the rights matrix settles.
+    ///
+    /// Shares `copy_derive`'s result handling, including ignoring the second
+    /// success word.
     pub fn grant_to(
         &self,
-        my_slot: u32,
+        my_key: RawKey,
         their_captbl: &KeyTableKey,
         their_slot: u32,
-    ) -> Result<(), CapError> {
-        self.copy_derive(my_slot, their_captbl, their_slot, Rights::all())
+    ) -> Result<RawKey, CapError> {
+        self.copy_derive(my_key, their_captbl, their_slot, Rights::all())
     }
 }

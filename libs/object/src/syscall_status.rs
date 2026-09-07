@@ -29,3 +29,6 @@ pub const INSUFFICIENT_MEMORY: u64 = 22;
 pub const POOL_EXHAUSTED: u64 = 23;
 pub const INVALID_SIZE: u64 = 24;
 pub const INVALID_FRAME_SIZE: u64 = 25;
+pub const INVALID_KEY: u64 = 26;
+pub const INCONSISTENT_KEY: u64 = 27;
+pub const KEY_SLOT_EXHAUSTED: u64 = 28;

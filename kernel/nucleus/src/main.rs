@@ -24,11 +24,12 @@
 #![feature(core_intrinsics)]
 
 use {
-    crate::objects::{Nucleus, ObjectPool, arch::ArchPools, domain::DcbPages},
+    crate::objects::{Domain, Nucleus, ObjectPool, arch::ArchPools, domain::DcbPages},
     cfg_if::cfg_if,
     core::{
         arch::asm,
         cell::{LazyCell, UnsafeCell},
+        mem::{MaybeUninit, size_of},
         panic::PanicInfo,
         time::Duration,
     },
@@ -37,7 +38,7 @@ use {
     liblocking::{IRQSafeNullLock, interface::Mutex},
     liblog::{info, println, warn},
     libmapping::AccessPermissions,
-    libobject::{ArchType, CapError, KeySlot, syscall_status},
+    libobject::{ArchType, CapError, KeySlot, RawKey, syscall_status},
     libqemu::semihosting as semi,
 };
 
@@ -51,22 +52,55 @@ mod objects;
 /// Global kernel state, protected by The Great Kernel Lock
 static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<objects::ArchObjectsImpl>>> =
     IRQSafeNullLock::new(LazyCell::new(|| {
-        let mut n = Nucleus::<objects::ArchObjectsImpl> {
+        Nucleus::<objects::ArchObjectsImpl> {
             current_domain: None,
             dcb_pages: DcbPages::new(),
             pools: objects::nucleus::NucleusPools {
                 /// SAFETY: Not very safe thing at all.
-                domains: unsafe { ObjectPool::new(0x1000 as *mut u8, 16384) }, // TODO: proper alloc...
+                // Boot-fixture backing is now part of the reserved kernel image,
+                // aligned and sized for Domain, and used only by this pool under
+                // NUCLEUS. General Untyped-backed allocation remains separate work.
+                domains: unsafe {
+                    ObjectPool::new((&raw mut BOOT_DOMAIN_STORAGE).cast::<u8>(), size_of::<Domain>())
+                }, // TODO: proper alloc...
                 /// SAFETY: Not very safe thing at all.
                 arch: unsafe { ArchPools::new() },
             },
-        };
-        n.create_domain();
-        // The existing boot fixture creates the first pool entry for Kickstart.
-        // Select it explicitly; a missing runtime caller must not inherit it.
-        n.current_domain = Some(0);
-        n
+        }
     }));
+
+/// Statically reserved backing for the existing single-Domain boot fixture.
+static mut BOOT_DOMAIN_STORAGE: MaybeUninit<Domain> = MaybeUninit::uninit();
+
+/// Private paired-image entry for the trusted debug boot fixture, not a syscall.
+///
+/// # Safety
+/// Called once by Kickstart at EL1 after loading/mapping the nucleus image,
+/// with interrupts masked and other cores parked. No kernel operation may be
+/// active. This bridge is not exposed as an EL0 capability or discovery API.
+#[cfg(feature = "debug_kernel")]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.bootstrap")]
+pub unsafe extern "C" fn nucleus_bootstrap_debug_console() -> u64 {
+    // The existing boot fixture creates the first pool entry for Kickstart.
+    // Select it explicitly; a missing runtime caller must not inherit it.
+    // SAFETY: The caller establishes the one-core/non-reentry boot conditions;
+    // the lock bounds the state borrow, which ends before the key is returned.
+    unsafe {
+        #[allow(static_mut_refs)]
+        NUCLEUS.lock(|nucleus| {
+            assert!(
+                nucleus.current_domain.is_none() && nucleus.pools.domains.get(0).is_none(),
+                "debug bootstrap must run only once"
+            );
+            let key = nucleus
+                .create_domain()
+                .expect("debug console was not installed");
+            nucleus.current_domain = Some(0);
+            key.to_wire()
+        })
+    }
+}
 
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
@@ -203,10 +237,10 @@ extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
 
 #[unsafe(no_mangle)]
 extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
-    let cap_slot = u32::try_from(frame.gpr[0]).unwrap();
-    let op = u32::try_from(frame.gpr[1]).unwrap();
+    let key = RawKey::from_wire(frame.gpr[0]);
+    let op = frame.gpr[1];
     semi::println!(
-        "CapInvoke SYSCALL(cap: {cap_slot}, op: {op}) happened, we're at PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
+        "CapInvoke SYSCALL(key: {key:?}, op: {op}) happened, we're at PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
         get_pc(),
         get_sp(),
         core::ptr::from_mut(frame) as u64,
@@ -214,12 +248,19 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
 
     // semi::println!("{}", frame);
 
-    let args: &[u64; 6] = &frame.gpr[2..=7].try_into().unwrap();
+    let args = [
+        frame.gpr[2],
+        frame.gpr[3],
+        frame.gpr[4],
+        frame.gpr[5],
+        frame.gpr[6],
+        frame.gpr[7],
+    ];
 
     // SAFETY: Unsafe.
     let result = unsafe {
         #[allow(static_mut_refs)]
-        NUCLEUS.lock(|nucleus| api::handle_cap_invoke(nucleus, cap_slot, op, args))
+        NUCLEUS.lock(|nucleus| api::handle_cap_invoke(nucleus, key, op, &args))
     };
 
     // let cap = current_domain().keytable.lookup(cap_slot)?;

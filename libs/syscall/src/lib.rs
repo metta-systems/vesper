@@ -32,6 +32,11 @@
 // │  └─────────────────────────────────────────────────────────────────┘  │
 // └───────────────────────────────────────────────────────────────────────┘
 
+// Contract status: the diagrams above retain draft operation vocabulary.
+// Approved CopyDerive uses packed keys in x0/x2/x3, a vacant u32 slot in x4,
+// provisional rights in x5, and reserved-zero x6/x7. Success returns the
+// destination-local packed key in x1 with x2 zero; other sketches are not enabled.
+
 /// Single syscall ABI
 ///
 /// Entry: SVC #0
@@ -41,6 +46,9 @@
 ///   x1 = operation code
 ///   x2-x7 = operation arguments (6 args!)
 ///   x9-x15 are caller-saved, we don't use them
+///
+/// Contract status: x0 now carries the complete packed key (incarnation high,
+/// slot low), not a slot-only selector. x1 remains full width for checked decoding.
 ///
 /// Returns:
 ///   x0 = error code (0 = success)
@@ -52,8 +60,8 @@
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn protected_call6(
-    cap: u32,
-    op: u32,
+    cap: u64,
+    op: u64,
     a0: u64,
     a1: u64,
     a2: u64,
@@ -68,8 +76,8 @@ pub unsafe fn protected_call6(
     unsafe {
         core::arch::asm!(
             "svc #0",
-            inlateout("x0") u64::from(cap) => r0,
-            inlateout("x1") u64::from(op) => r1,
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
             inlateout("x2") a0 => r2,
             in("x3") a1,
             in("x4") a2,
@@ -88,8 +96,8 @@ pub unsafe fn protected_call6(
 /// - Not safe.
 #[inline(always)]
 pub unsafe fn protected_call5(
-    cap: u32,
-    op: u32,
+    cap: u64,
+    op: u64,
     a0: u64,
     a1: u64,
     a2: u64,
@@ -103,8 +111,8 @@ pub unsafe fn protected_call5(
     unsafe {
         core::arch::asm!(
             "svc #0",
-            inlateout("x0") u64::from(cap) => r0,
-            inlateout("x1") u64::from(op) => r1,
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
             inlateout("x2") a0 => r2,
             in("x3") a1,
             in("x4") a2,
@@ -122,8 +130,8 @@ pub unsafe fn protected_call5(
 /// - Not safe.
 #[inline(always)]
 pub unsafe fn protected_call4(
-    cap: u32,
-    op: u32,
+    cap: u64,
+    op: u64,
     a0: u64,
     a1: u64,
     a2: u64,
@@ -136,12 +144,15 @@ pub unsafe fn protected_call4(
     unsafe {
         core::arch::asm!(
             "svc #0",
-            inlateout("x0") u64::from(cap) => r0,
-            inlateout("x1") u64::from(op) => r1,
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
             inlateout("x2") a0 => r2,
             in("x3") a1,
             in("x4") a2,
             in("x5") a3,
+            // CopyDerive reserves these argument registers as zero.
+            in("x6") 0_u64,
+            in("x7") 0_u64,
             options(nostack),
         );
     }
@@ -153,7 +164,7 @@ pub unsafe fn protected_call4(
 /// # Safety
 /// - Not safe.
 #[inline(always)]
-pub unsafe fn protected_call3(cap: u32, op: u32, a0: u64, a1: u64, a2: u64) -> (u64, u64, u64) {
+pub unsafe fn protected_call3(cap: u64, op: u64, a0: u64, a1: u64, a2: u64) -> (u64, u64, u64) {
     let r0: u64;
     let r1: u64;
     let r2: u64;
@@ -161,8 +172,8 @@ pub unsafe fn protected_call3(cap: u32, op: u32, a0: u64, a1: u64, a2: u64) -> (
     unsafe {
         core::arch::asm!(
             "svc #0",
-            inlateout("x0") u64::from(cap) => r0,
-            inlateout("x1") u64::from(op) => r1,
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
             inlateout("x2") a0 => r2,
             in("x3") a1,
             in("x4") a2,
@@ -177,7 +188,7 @@ pub unsafe fn protected_call3(cap: u32, op: u32, a0: u64, a1: u64, a2: u64) -> (
 /// # Safety
 /// - Not safe.
 #[inline(always)]
-pub unsafe fn protected_call2(cap: u32, op: u32, a0: u64, a1: u64) -> (u64, u64, u64) {
+pub unsafe fn protected_call2(cap: u64, op: u64, a0: u64, a1: u64) -> (u64, u64, u64) {
     let r0: u64;
     let r1: u64;
     let r2: u64;
@@ -185,8 +196,8 @@ pub unsafe fn protected_call2(cap: u32, op: u32, a0: u64, a1: u64) -> (u64, u64,
     unsafe {
         core::arch::asm!(
             "svc #0",
-            inlateout("x0") u64::from(cap) => r0,
-            inlateout("x1") u64::from(op) => r1,
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
             inlateout("x2") a0 => r2,
             in("x3") a1,
             options(nostack),
@@ -200,7 +211,7 @@ pub unsafe fn protected_call2(cap: u32, op: u32, a0: u64, a1: u64) -> (u64, u64,
 /// # Safety
 /// - Not safe.
 #[inline(always)]
-pub unsafe fn protected_call1(cap: u32, op: u32, a0: u64) -> (u64, u64, u64) {
+pub unsafe fn protected_call1(cap: u64, op: u64, a0: u64) -> (u64, u64, u64) {
     let r0: u64;
     let r1: u64;
     let r2: u64;
@@ -208,8 +219,8 @@ pub unsafe fn protected_call1(cap: u32, op: u32, a0: u64) -> (u64, u64, u64) {
     unsafe {
         core::arch::asm!(
             "svc #0",
-            inlateout("x0") u64::from(cap) => r0,
-            inlateout("x1") u64::from(op) => r1,
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
             inlateout("x2") a0 => r2,
             options(nostack),
         );
@@ -222,7 +233,7 @@ pub unsafe fn protected_call1(cap: u32, op: u32, a0: u64) -> (u64, u64, u64) {
 /// # Safety
 /// - Not safe.
 #[inline(always)]
-pub unsafe fn protected_call0(cap: u32, op: u32) -> (u64, u64, u64) {
+pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
     let r0: u64;
     let r1: u64;
     let r2: u64;
@@ -230,8 +241,8 @@ pub unsafe fn protected_call0(cap: u32, op: u32) -> (u64, u64, u64) {
     unsafe {
         core::arch::asm!(
             "svc #0",
-            inlateout("x0") u64::from(cap) => r0,
-            inlateout("x1") u64::from(op) => r1,
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
             out("x2") r2,
             options(nostack),
         );

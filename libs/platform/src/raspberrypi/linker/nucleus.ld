@@ -33,6 +33,8 @@ SECTIONS
     .text : ALIGN(__PAGE_SIZE)
     {
         . = ALIGN(__PAGE_SIZE);
+        /* Private boot entry is discovered from the ELF, not referenced by nucleus code. */
+        KEEP(*(.text.bootstrap))
         *(.text*)
         . = ALIGN(2K);
         KEEP(*(.vectors))

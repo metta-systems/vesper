@@ -35,20 +35,22 @@ Phantom types improve ergonomics, not authority or lifetime enforcement. Copying
 
 ## 1. Stale handles and identity reuse
 
-### Current code and counterexample
+### Historical counterexample and current status
 
-[`Key<T>`](../libs/object/src/key.rs) contains only `KeySlot` and `PhantomData<T>`. The ordinary transport supplies a slot, operation, and arguments, not the identity of the object previously occupying that slot.
+The original [`Key<T>`](../libs/object/src/key.rs) contained only `KeySlot` and `PhantomData<T>`. Its slot-only transport allowed this counterexample:
 
 1. Slot 12 contains endpoint A.
 2. Userspace retains a key naming slot 12.
 3. A's entry is deleted and the slot is reused for endpoint B.
 4. The retained key invokes slot 12 and can operate on B.
 
-Even a type check cannot distinguish two endpoints. This need not escalate authority across domains—B is already in the caller's table—but it can use replacement authority unintentionally. Thus stale invocation does not necessarily fail under the current slot-only representation.
+Even a type check cannot distinguish two endpoints. This need not escalate authority across domains—B is already in the caller's table—but it can use replacement authority unintentionally. Thus stale invocation did not necessarily fail under the former slot-only representation.
+
+Implemented follow-up (2026-09-07): RawKey now carries slot/incarnation across included wrappers, transport and active dispatch. Table lookup/removal checks the expected incarnation; deletion retains its counter and replacement advances it only at commit. Tests cover same-kind replacement, stale removal, failed installation, null/occupied/bounds rejection, ownership preservation and slot-local exhaustion. Debug bootstrap hands over the actual issued key through a private one-shot EL1 bridge; the real SVC success/error path passes the bounded boot smoke test. This fixes slot reuse within the table lifetime, not independent object/domain retirement or reusable-metadata identity. Full evidence and limits are in the plan's key wire and slot-identity slice.
 
 ### Historical alternatives and selected semantics
 
-The incarnation guarantee is now selected; a slot-only current-occupant API is not the chosen contract. **Maintainer clarification (2026-09-06):** ordinary keys are local to the current Domain's implicit KeyTable and carry slot plus incarnation, not table identity or a guarded-table path. Numeric key transfer alone conveys no authority; authorized derivation/installation produces a recipient-local key. **Follow-up:** initially use a 32-bit slot and 32-bit incarnation, without freezing the total key size permanently. This replaces the earlier table-capacity-dependent bit split. If type is embedded later, its 8 bits come from the slot field (24 slot bits, 32 incarnation bits), not incarnation. Capacity is fixed for now through an easily changed constant; runtime resizing is outside initial scope. Concrete wire packing, optional type inclusion, object/domain generation widths, and replacement/rebinding safety remain open. Independent shared-object lifetime validation remains required. Generation wrap must not silently resurrect stale identities; Move invalidates the source on commit and yields a destination-local key. These directions require coordinated ABI/bootstrap migration, not a silent reinterpretation of today's slot-only arguments.
+The incarnation guarantee is now selected; a slot-only current-occupant API is not the chosen contract. **Maintainer clarification (2026-09-06):** ordinary keys are local to the current Domain's implicit KeyTable and carry slot plus incarnation, not table identity or a guarded-table path. Numeric key transfer alone conveys no authority; authorized derivation/installation produces a recipient-local key. **Follow-up:** initially use a 32-bit slot and 32-bit incarnation, without freezing the total key size permanently. This replaces the earlier table-capacity-dependent bit split. If type is embedded later, its 8 bits come from the slot field (24 slot bits, 32 incarnation bits), not incarnation. Capacity is fixed for now through an easily changed constant; runtime resizing is outside initial scope. Follow-up approval (2026-09-07): pack slot in low 32 bits and incarnation in high 32 bits, with no initial type tag. Typed handles are non-owning. Live Domains may not rebind to a fresh logical invocation table with reset counters. Kernel allocation references use pool identity/index and 64-bit generation, with no generation wrap or metadata-identity reset; concrete ownership and Domain integration remain work. Independent shared-object lifetime validation remains required. Generation wrap must not silently resurrect stale identities; Move invalidates the source on commit and yields a destination-local key. The included ABI/bootstrap paths have migrated together without a slot-only fallback; excluded sketches remain unmigrated, unsupported design material.
 
 | Choice | Consequences | Complexity |
 |---|---|---|
@@ -56,11 +58,11 @@ The incarnation guarantee is now selected; a slot-only current-occupant API is n
 | Exclusive userspace slot allocator with owned slots and borrowed handles | Prevent accidental reuse while handles exist, provided every mutation follows that allocator | Medium; requires enforceable runtime discipline |
 | Kernel-checked slot incarnation supplied with invocation | Retained handles fail after replacement without monitoring liveness | Medium cross-layer change, including ABI/bootstrap |
 
-**CONFIRMED:** invocation through an altered or invalidated capability incarnation returns an explicit **inconsistency** error. Do not refresh a stale handle and retry against replacement authority silently. A userspace generation precheck alone leaves a check/use race; validation belongs in the invocation path. **Follow-up (3C=B):** one shared inconsistency error carries diagnostic reasons for stale slot incarnation, capability invalidation and underlying object retirement, without returning replacement keys or refreshing automatically. Numeric status/reason values, precedence and concrete handle wire packing are not yet defined; the initial logical slot/incarnation widths are selected above.
+**CONFIRMED:** invocation through an altered or invalidated capability incarnation returns an explicit **inconsistency** error. Do not refresh a stale handle and retry against replacement authority silently. A userspace generation precheck alone leaves a check/use race; validation belongs in the invocation path. **Follow-up (3C=B):** one shared inconsistency error carries diagnostic reasons for stale slot incarnation, capability invalidation and underlying object retirement, without returning replacement keys or refreshing automatically. The approved key package now assigns InvalidKey/InconsistentKey/KeySlotExhausted statuses 26–28 and explicit reason/operand details, with key-shape/bounds/never-issued checks preceding incarnation mismatch, invalidation and object retirement. See the canonical contract for exact encoding and migration requirements.
 
 Authorized resource-state changes are not automatically capability replacement. In particular, origin-authorized Frame remapping is a valid operation even when mapping location changes. **Selected initial scope (3A=A):** no in-place rights/badge mutation. Derive attenuated authority into another slot and optionally delete the original; CopyDerive preserves badges and rebadging is deferred. Future in-place mutation semantics are not a prerequisite for this initial slice.
 
-**Selected exhaustion behavior (3B=A):** a slot unable to issue a fresh 32-bit incarnation is permanently unavailable for further installation within that table lifetime; existing-capability deletion remains possible and other slots remain usable. No silent wrap or whole-table retirement is implied. Advancement/initial values and error encoding remain to be specified, and replacing/rebinding the table must not reset stale-key protection.
+**Selected exhaustion behavior (3B=A):** a slot unable to issue a fresh 32-bit incarnation is permanently unavailable for further installation within that table lifetime; existing-capability deletion remains possible and other slots remain usable. No silent wrap or whole-table retirement is implied. The approved key package starts unused counters at 0, issues 1 on first installation, advances only at successful installation, retains counters on deletion, and reports exhaustion with status 28. Replacing/rebinding the table must not reset stale-key protection.
 
 **INTERIM Frame deprovisioning direction:** fully revoke the capability and do not reuse that slot for Frames. This is not a general solution to object/slot identity; the restriction's lifetime, cross-table scope, exhaustion behavior, and whether another kind may occupy the slot need clarification.
 
@@ -75,11 +77,12 @@ Three distinct identity problems must be covered:
 **OPEN / DECISION REQUIRED — D3/D9:**
 
 - [ ] Implement the selected incarnation guarantee and define the shared inconsistency error without inventing an ad hoc status.
+  - [x] Implement and validate the slot-incarnation guarantee and shared error schema through host tests, QEMU storage/dispatch tests, real debug boot/SVC smoke test, full Clippy and full `just test`. Independent object lifetime validation remains pending.
 - [ ] Implement derivation-only authority attenuation for the initial slice, with no in-place rights/badge mutation; preserve ordinary object operations and valid Frame remapping as distinct from capability replacement.
 - [ ] Specify/enforce the interim Frame slot no-reuse restriction and its capacity/exhaustion policy.
 - [ ] Implement the selected implicit caller-table scope and receiver-local key creation through authorized derivation/installation; specify management operand/result encodings, constant-controlled capacity consumers, replacement/rebinding safety, and initial handoff; do not introduce runtime resizing in this slice.
 - [ ] Define object/domain allocation identities and their authoritative validation metadata.
-- [ ] Implement the initial 32-bit slot/32-bit incarnation fields; decide optional type inclusion (taking 8 slot bits), object/domain generation widths/exhaustion and pool/table reuse rules; implement selected slot-local exhaustion, allowing cleanup but no further installation, under the no-silent-wrap guarantee.
+- [ ] Implement the approved packed 32-bit slot/32-bit incarnation fields without an initial type tag, increment-on-install, retained deletion counters and slot-local exhaustion. Implement the approved independent 64-bit allocation-generation model, metadata reuse rules and no-live-rebinding guarantee; integrate Domain identity coherently.
 - [ ] If the wire representation changes, specify coordinated migration, bootstrap encoding, and result/error schemas.
 
 ## 2. Delete, revoke, retire, and reclaim are different operations
@@ -131,7 +134,7 @@ A pin that keeps storage safe is **not** permission to continue using revoked au
 - [`KeyEntry`](../kernel/nucleus/src/api/key_entry.rs) has a pointer-payload generation field, but constructors initialize it to zero and object access checks type rather than allocation generation/liveness.
 - [`ObjectRef`](../kernel/nucleus/src/objects/object_ref.rs) accepts `&T`, erases its lifetime, is copyable, and later manufactures shared or mutable references based on a type tag. `T: 'static` does not mean the particular instance lives forever. Separate aliases can also manufacture incompatible mutable references.
 - [`ObjectPool`](../kernel/nucleus/src/objects/object_pool.rs) tracks allocation bits and indexes, not incarnations or retirement.
-- [`KeyTable`](../kernel/nucleus/src/objects/key_table.rs) permits null insertion to increment occupancy; unrestricted mutable entry access can bypass membership bookkeeping.
+- [`KeyTable`](../kernel/nucleus/src/objects/key_table.rs) now rejects null/occupied/out-of-bounds/exhausted insertion without changing occupancy or losing the submitted entry. Lookup/removal requires an incarnation-bearing selector, counters persist after deletion, and unrestricted mutable entry access is removed. The boot Domain pool uses correctly sized/aligned reserved nucleus BSS backing; general pools still need authoritative lifetime metadata and Untyped-backed ownership.
 - The nucleus entry path uses [`IRQSafeNullLock`](../libs/locking/src/lib.rs), which masks interrupts rather than providing general multicore exclusion.
 
 Returning an error requires safe validation **before** dereferencing an object. Comparing against metadata in already-freed backing is not a valid generation check.
@@ -165,7 +168,7 @@ Typed pools remain a useful starting point, with representation free to change u
 - [ ] Replace lifetime-erasing constructors and unrestricted object casts with access through the approved owning/locking context.
 - [ ] Implement allocated/incarnation/retirement checks before object dereference.
 - [ ] Enforce unique kernel type mappings and handle aliased operands without fabricating exclusivity.
-- [ ] Make table insertion/removal/mutation preserve occupancy and identity invariants.
+- [x] Make table insertion/removal/mutation preserve occupancy and slot-identity invariants. Validated with eight QEMU storage cases plus active-dispatch/ABI tests; management syscalls and object lifetime remain separate work.
 - [ ] Enforce the selected single-core/non-reentry boundary and ensure scheduling occurs after guards end. SMP synchronization is deferred; concurrent cross-core access is not supported by this foundation.
 
 ## 4. Authority, delegation, badges, and revocation scopes

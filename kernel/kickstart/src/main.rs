@@ -59,12 +59,14 @@ use {
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
     libqemu::semihosting as semi,
-    libsyscall::protected_call6,
     memory::BootAllocator,
 };
 
 #[cfg(feature = "debug_kernel")]
-use libobject::{DebugConsoleKey, KeySlot};
+use {
+    crate::embed::NUCLEUS_BOOTSTRAP_DEBUG_CONSOLE_VIRT,
+    libobject::{CapError, DebugConsoleKey, InvalidKeyReason, RawKey},
+};
 
 unsafe extern "C" {
     static __INIT_START: UnsafeCell<()>;
@@ -584,11 +586,22 @@ pub fn kickstart_run() -> ! {
     // Run initial thread further in EL1, seting up the capDL etc.
     semi::println!("init_main_run: enabled MMU and dropped to EL1");
     print_my_sp();
-    // SAFETY: Not safe.
-    unsafe {
-        protected_call6(0, 0, 0, 0, 0, 0, 0, 0);
-    }
-    semi::println!("init_main_run: Returned from fake syscall");
+    // Prototype status: the private debug bridge replaces the fake slot-zero SVC;
+    // general capDL/bootstrap authority handoff remains future work.
+    #[cfg(feature = "debug_kernel")]
+    let debug_console_key = {
+        // SAFETY: The paired nucleus image has been loaded, its BSS zeroed and its
+        // linked VA mapped executable before entering this trusted EL1h boot path.
+        // Extraction validates the symbol; both images agree on this C signature.
+        // Only the boot core runs here, with interrupts masked, and calls once.
+        let wire = unsafe {
+            let bootstrap = core::mem::transmute::<u64, unsafe extern "C" fn() -> u64>(
+                NUCLEUS_BOOTSTRAP_DEBUG_CONSOLE_VIRT,
+            );
+            bootstrap()
+        };
+        RawKey::from_wire(wire)
+    };
     print_my_sp();
 
     // ─────────────────────────────────────────────────────────────────────
@@ -705,13 +718,29 @@ pub fn kickstart_run() -> ! {
     #[cfg(feature = "debug_kernel")]
     {
         // We have domain caps here, can use:
-        let dbg = DebugConsoleKey::new();
+        // Prototype status: use only the key actually issued to this boot Domain.
+        let dbg = DebugConsoleKey::from_key(debug_console_key);
         dbg.write(
             "DEBCON| Debug output via capability invocation on domain's debug console capability\n",
-        );
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "Issued debug console key invocation failed: {:?}",
+                error.code()
+            );
+        });
 
-        let err = DebugConsoleKey::new_slot(KeySlot::CAPTBL_SELF);
-        err.write("DEBCON| Invalid capability invocation - no output");
+        // Deliberately malformed key for rejection testing, never a slot-only fallback.
+        let invalid_key = RawKey::new(debug_console_key.slot(), 0);
+        let err = DebugConsoleKey::from_key(invalid_key);
+        assert!(matches!(
+            err.write("DEBCON| Invalid capability invocation - no output"),
+            Err(CapError::InvalidKey {
+                key,
+                reason: InvalidKeyReason::ZeroIncarnation,
+                operand: 0,
+            }) if key == invalid_key
+        ));
     }
 
     let (_, privilege_level) = libexception::current_privilege_level();

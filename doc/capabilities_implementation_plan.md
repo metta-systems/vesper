@@ -26,16 +26,17 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just build` | Build nucleus and kickstart and produce the kernel binary; defaults to RPi4/hardware |
 | `just build rpi3 qemu` | Build the RPi3/QEMU kernel configuration without starting QEMU |
 | `just fmt-check` | Workspace formatting check using the configured nightly toolchain |
-| `just clippy` | RPi3/QEMU build prerequisite, embedded Clippy across the defined board/feature combinations, and capability host-test linting |
+| `just clippy` | RPi3/QEMU feature-off and debug-enabled build prerequisites, all nine embedded configurations, and capability host-test linting |
 | `just clippy-pre-push` | Default features on RPi3 and RPi4 plus capability host-test linting; not the full embedded matrix |
 | `just clippy-object-host` | Focused native lint check of the capability library and its opt-in ABI test harness |
 | `just lint` | Formatting, full embedded Clippy workflow, and host-tool Clippy |
 | `just test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
-| `just test-debug-console` | Debug-enabled nucleus handler regression tests under QEMU; included in `just test` |
+| `just test-debug-console` | Debug-enabled nucleus handler and slot-identity regression tests under QEMU; included in `just test` |
+| `just test-capability-boot` | Debug boot, actual issued-key handoff and real SVC success/error smoke test; in-guest assertions and QEMU exit status, included in `just test` |
 | `just test-chainboot` | Chainboot tests with its own linker script and target runner |
 | `just test-object-host` | Opt-in capability ABI integration tests on the native host (currently AArch64) |
 | `just test-host` | Capability ABI tests, then native `chainofcommand` tests |
-| `just test` | Device, chainboot, capability-host, and host-tool test workflows |
+| `just test` | Device, chainboot, capability-host, host-tool, debug handler/storage and capability boot workflows |
 | `just pre-push` | Formatting, shortened Clippy, and tests; does not itself push anything |
 | `just ci` | Cleanup, lint, build, and tests; do not invoke its cleanup as an incidental check |
 
@@ -151,7 +152,7 @@ Three regression cases extend `kernel/nucleus/tests/debug_console.rs` using the 
 
 Coverage limits: these tests call production dispatch/accessors, not real SVC entry/return or the boot demonstration. Caller-origin binding, raw-register validation, domain incarnation/reuse, coherent private-domain/DCB allocation and DCB publication remain unfinished; the parent caller-context item stays unchecked. The test fixture does not claim Untyped-backed production storage or mapping isolation. Full `just test` was not run, and the Clippy recipe does not explicitly lint this embedded harness. Existing compiler-cache access and toolchain future-compatibility warnings remain nonblocking.
 
-Next prerequisite: choose the full-width malformed-input error representation before replacing the raw slot conversion panic. Existing `InvalidSlot(KeySlot)` carries only a `u32` slot; do not truncate oversized input or invent an unapproved status. Then finish checked entry/origin/caller binding before enabling the guarded KeyTable lifecycle.
+Follow-up superseded by the approved key package: migrate directly to full-width incarnation-bearing keys and the agreed InvalidKey/InconsistentKey diagnostics, rather than introduce an intermediate malformed-slot ABI. Then finish checked entry/origin/caller binding before enabling the guarded KeyTable lifecycle.
 
 ### Debug-only availability slice validation
 
@@ -226,7 +227,10 @@ Maintainer direction is partially resolved: keys name capability incarnations; R
 
 Maintainer foundation decisions (2026-09-06): ordinary keys use implicit caller-table context, with initially 32-bit slot and 32-bit incarnation fields and separate shared-object identity, without freezing total key size permanently. Optional embedded type remains a proposal and would take 8 slot bits, not incarnation bits. Capacity is fixed for now through an easily changed constant; runtime resizing is outside initial scope. Move yields a destination-local key and invalidates the source on commit; generations must not silently wrap. All managed storage/metadata comes from accounted Untypeds, with retyped KeyTable backing made kernel-private. Enforce single-core execution and defer SMP; use short-lived guarded access and explicitly handle aliased operands even under the kernel lock. Table management follows ordinary source/destination capability permissions without manager-identity exceptions. Kickstart establishes initial Untypeds/KeyTables and hands authority onward. Follow-up choices: derive rather than mutate authority in place; exhaust only the slot when its 32-bit incarnation is consumed, retaining deletion; shared inconsistency error with diagnostic reasons; incarnation-checked management selectors; separate table-management permissions; vacant destinations and rejected same-slot Move; initial target-kind allowlist of KeyTable and debug-gated DebugConsole. Retype uses only an Untyped's unused watermark range with no outstanding access; it does not reclaim or unmap arbitrary live allocations. These decisions complete no implementation or validation checkbox.
 
-- [ ] Implement initial 32-bit slot/32-bit incarnation fields and constant-controlled fixed table capacity with synchronized layout/accounting/consumer checks; do not freeze total key size as a permanent constraint. Specify wire packing/register placement, optional type inclusion (8 bits from slot), table replacement/rebinding safety, object/domain generation widths/exhaustion, slot advancement/initial values and exhausted-slot error encoding, and owned-versus-borrowed handle details (D3/D9). Implement slot-local exhaustion with cleanup allowed, and no in-place rights/badge mutation in this slice.
+Approved key package (2026-09-07): packed incarnation-high/slot-low 64-bit keys without a type tag; non-owning typed handles; increment on committed installation from 1, retained counters on deletion and slot-local exhaustion; InvalidKey/InconsistentKey/KeySlotExhausted statuses 26–28 with diagnostic reasons; CopyDerive register packing and destination-local results; no live-Domain logical table rebinding; independent 64-bit kernel allocation generations; explicit actual-key bootstrap handoff and coordinated rebuild without slot-only fallback. See the canonical contract for exact encodings. Concrete guarded metadata/backing, rights, bootstrap mechanism and domain integration remain work. Prototype code may be replaced rather than preserved as a compatibility constraint; pre-existing design-intent comments remain protected.
+
+- [ ] Implement the approved key package across shared/client keys, entry/transport, slot storage, bootstrap and tests. Synchronize capacity/layout/accounting consumers; do not freeze total key size. Implement slot-local exhaustion with cleanup allowed and no in-place rights/badge mutation. Implement independent kernel allocation identities and no-reset/no-rebinding enforcement before advertising general lifetime safety.
+  - [x] Implement packed RawKey/non-owning Key, included client/transport migration, active full-width key/op decoding, checked slot lookup/removal, commit-only incarnation advancement and exhaustion, shared errors 26–28, and actual-key debug bootstrap handoff; validate ABI, storage, dispatch and real SVC paths. General object/domain lifetime and reusable metadata remain pending.
 - [ ] Specify authoritative metadata/backing ownership and the concrete guarded access API; enforce single-core/non-reentry execution, resolve same-object operands without aliased mutable references, and end guards before scheduling. SMP is deferred.
 - [ ] Assign shared inconsistency status/reason encodings and precedence; implement diagnostic rejection for stale slot incarnation, invalidated capability and retired object, without returning replacement keys or automatic refresh. Keep ordinary resource operations, including authorized Frame remapping, distinct from capability replacement.
 - [ ] Implement authoritative shared-object generation checks across tables, adding/changing Frame/object/key metadata as needed rather than preserving current layouts; do not require ancestry traversal merely to detect object retirement.
@@ -237,7 +241,7 @@ Maintainer foundation decisions (2026-09-06): ordinary keys use implicit caller-
 - [ ] Move `KeyEntry` responsibility to kernel capability storage and adjust imports without changing unrelated APIs. Keep shared `ObjectType` in the ABI layer.
 - [ ] Replace lifetime-erasing safe constructors and unrestricted pointer-to-reference casts. Establish unique kernel kind mappings and exclusive access through an owning context.
 - [ ] Define Untyped-backed pool/metadata ownership, alignment/lifetime requirements, capacity behavior, zero-sized-type policy, object retirement, and reuse validation; establish kernel-private KeyTable backing through unused-watermark allocation with no outstanding access, not an ordinary-Retype withdrawal protocol.
-- [ ] Enforce KeyTable occupancy invariants: no counted null inserts; no entry mutation bypassing membership bookkeeping; checked bounds; failed operations preserve state.
+- [x] Enforce KeyTable occupancy invariants: no counted null inserts; no entry mutation bypassing membership bookkeeping; checked bounds; failed operations preserve state. Insertion failure also returns ownership of the submitted entry; this is internal storage, not enabled management syscalls.
 - [ ] Specify wire operands/results and rights bits/combinations for the approved CopyDerive/Move/Delete logical schemas: incarnation-checked source/target selectors, separately grantable table permissions, vacant destinations, rejected same-slot Move, preserved badges, CopyDerive attenuation and Move state preservation. Initial target kinds are KeyTable and debug-gated DebugConsole; leave other kinds/rebadging unsupported and settle Domain.Grant support/deferment (D2–D4).
 - [ ] Specify Kickstart's predefined Domains, initial table capacities/slots/grants and incarnation-bearing handoff; account for boot/reserved memory without conflicting Untyped allocations. Numeric key passing alone does not install receiver authority.
 - [ ] Implement the approved KeyTable/debug-console lifecycle with same-table/same-object alias handling, atomic source/destination updates and destination-local result keys. Permit authorized deletion of entries naming retired objects when slot incarnation still matches, without automatic object retirement. Keep unresolved Revoke/derivation, other target kinds, mapping teardown and Reply/Time-specific behavior unsupported.
@@ -248,6 +252,27 @@ Maintainer foundation decisions (2026-09-06): ordinary keys use implicit caller-
 - [ ] Replace duplicated/hardcoded DCB layout assumptions with shared constants and mandatory assertions; make userspace observations honor availability and reuse.
 - [ ] Add model tests for pool/table/slot-incarnation exhaustion (including cleanup), null insertion, stale invocation/management selectors, inconsistency reasons, same-object operands, same-slot Move rejection, occupied destinations, atomic failure, retired-object entry deletion, separate permissions, attenuation/badge preservation, initial kind allowlist, domain release/reuse and DCB layout/publication.
 - [ ] Run appropriate target checks for shared DCB access and kernel-private state isolation.
+
+### Key wire and slot-identity slice validation (2026-09-07)
+
+Implemented the approved RawKey encoding and non-owning typed handles, statuses 26–28 with lossless unknown-response decoding, included-client/transport migration, and full-width active key/op decoding. Table storage retains per-slot incarnation counters, rejects stale/deleted selectors, advances only on successful installation, allows final-incarnation deletion, and preserves entry ownership/accounting on insertion failure. Unrestricted mutable entry access is removed. CopyDerive clients encode the approved operands and return destination-local keys, but the management handler remains excluded; `transfer` returns explicit unsupported status. Console clients now propagate errors. Public Domain construction remains deferred to avoid exposing unfinished DCB observation safety.
+
+The private debug-gated one-shot EL1 boot bridge returns the actual console installation result. Kickstart extracts its retained executable symbol from the paired nucleus image; no fake initialization SVC, guessed incarnation, or runtime key-refresh API remains. The boot Domain pool now uses aligned `MaybeUninit<Domain>` backing in the reserved nucleus BSS, sized from Domain rather than the old `0x1000`/16-KiB fixture. The loader accounts the complete BSS and mapping extent. General Untyped-backed metadata/pool ownership is not completed by this fixture.
+
+| Recipe | Observed result |
+|---|---|
+| `just test-object-host` | Passed feature-off/on ABI and client tests, including new key/error round trips and packed wrapper requests |
+| `just test-debug-console` | Passed 17 QEMU cases: nine handler/dispatch/caller cases and eight slot-storage cases |
+| `just build rpi3 qemu,debug_kernel` | Passed coordinated debug build and boot-symbol extraction |
+| `just test-capability-boot` | Passed actual issued-key handoff, successful Write through SVC and exact zero-incarnation InvalidKey response |
+| `just clippy-object-host` | Passed both host harness configurations |
+| `just clippy` | Passed both required paired-image builds, all nine embedded configurations and host harness linting |
+| `just fmt-check` | Passed workspace formatting |
+| `just test` | Passed complete configured workflow, including the new bounded capability boot smoke test |
+
+Initial integration failures (CapError formatting and Clippy diagnostics) were fixed before the passing runs. Existing cache-access and Rust future-compatibility warnings remain nonblocking. No new nightly feature gates were added. Chainboot still has no runnable test executable and the host tool has zero test cases; the embedded regression harness is run by its recipe but not explicitly linted by Clippy.
+
+Coverage limits: ObjectRetired is encoded/decoded but authoritative shared-object generation checks are not implemented. General object/domain retirement, no-reset/rebinding enforcement for reusable storage, rights/management transitions, exception-origin classification, hostile-EL0 confinement, user-copy safety, DCB publication and revocation remain unfinished. The boot smoke test intentionally stops after its success marker; it does not validate subsequent scheduling. The larger parent identity/lifecycle items remain unchecked. Next prerequisite is concrete authoritative object metadata/backing and the guarded access API, followed by the remaining management rights/operation schemas—not another slot-only ABI repair.
 
 **Exit:** safe access no longer depends on type tags alone; domain identity and table membership have one enforced lifecycle. Features requiring unresolved revocation/protection decisions are not advertised as complete.
 

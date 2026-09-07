@@ -83,6 +83,11 @@ pub enum DomainOp {
 /// State queries use shared DCB (no syscall), mutations use `CapInvoke`.
 /// Domain operations are currently unsupported by nucleus dispatch. Mutation
 /// wrappers preserve its errors; they do not establish DCB mapping or lifetime.
+///
+/// Implementation status: public construction remains deferred. The existing
+/// safe observation methods assume a valid DCB mapping and lifetime internally;
+/// a raw key alone cannot establish those prerequisites. Packed-key mutation
+/// encoding does not make these observation methods safe for arbitrary handles.
 pub struct DomainKey {
     key: Key<DomainType>,
     id: DomainId,
@@ -140,18 +145,22 @@ impl DomainKey {
     /// Activate domain (make runnable) - requires syscall
     pub fn activate(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let response = unsafe { protected_call0(self.key.slot(), DomainOp::Activate as u32) };
+        let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Activate as u64) };
         decode_syscall_result(response).map(|_| ())
     }
 
     /// Grant a capability to this domain
+    ///
+    /// Implementation status: the kernel operation remains excluded. This carries
+    /// the source incarnation and a vacant destination slot, not an installation
+    /// or an approved replacement for `KeyTable` delegation.
     pub fn grant<T>(&self, key: &Key<T>, dest_slot: KeySlot) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
         let response = unsafe {
             protected_call2(
-                self.key.slot(),
-                DomainOp::Grant as u32,
-                u64::from(key.slot()),
+                self.key.to_wire(),
+                DomainOp::Grant as u64,
+                key.to_wire(),
                 u64::from(dest_slot.0),
             )
         };
@@ -161,14 +170,14 @@ impl DomainKey {
     /// Suspend domain - requires syscall
     pub fn suspend(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let response = unsafe { protected_call0(self.key.slot(), DomainOp::Suspend as u32) };
+        let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Suspend as u64) };
         decode_syscall_result(response).map(|_| ())
     }
 
     /// Resume suspended domain - requires syscall
     pub fn resume(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
-        let response = unsafe { protected_call0(self.key.slot(), DomainOp::Resume as u32) };
+        let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Resume as u64) };
         decode_syscall_result(response).map(|_| ())
     }
 }

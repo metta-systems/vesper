@@ -4,7 +4,7 @@ use {
     },
     core::sync::atomic::Ordering,
     libobject::{
-        KeySlot,
+        KeySlot, RawKey,
         domain::{BlockReason, DomainControlBlock, DomainId, DomainState},
     },
 };
@@ -102,7 +102,14 @@ impl<A: ArchObjects> Nucleus<A> {
     }
 
     // TODO: Testing fixture
-    pub fn create_domain(&mut self) {
+    #[cfg_attr(
+        feature = "debug_kernel",
+        expect(
+            clippy::unnecessary_wraps,
+            reason = "feature-off bootstrap has no console key"
+        )
+    )]
+    pub fn create_domain(&mut self) -> Option<RawKey> {
         let dom = self
             .pools
             .domains
@@ -111,13 +118,23 @@ impl<A: ArchObjects> Nucleus<A> {
             })
             .expect("Poof");
         #[cfg(feature = "debug_kernel")]
-        dom.keytable
-            .insert(
-                libobject::KeySlot(127),
-                KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0),
-            )
-            .ok()
-            .expect("Poof");
+        {
+            let key = dom
+                .keytable
+                .insert(
+                    KeySlot::DEBUG_CONSOLE,
+                    KeyEntry::new(&DebugConsole, libobject::Rights::all(), 0),
+                )
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "bootstrap console installation failed: {:?}",
+                        failure.error.code()
+                    )
+                });
+            Some(key)
+        }
+        #[cfg(not(feature = "debug_kernel"))]
+        None
     }
 
     /// Update DCB when domain is activated
