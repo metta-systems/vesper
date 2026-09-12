@@ -49,6 +49,10 @@ pub struct ObjectPool<T: NucleusObject> {
     count: u16,
     /// Total capacity
     capacity: u16,
+    /// Next-fit cursor: the slot to start scanning from on the next
+    /// allocation. Advances monotonically (wrapping around the pool) so
+    /// allocation is amortized O(1) rather than always scanning from slot 0.
+    next_free: u16,
 }
 
 impl<T: NucleusObject> ObjectPool<T> {
@@ -71,6 +75,7 @@ impl<T: NucleusObject> ObjectPool<T> {
             }; MAX_POOL_SLOTS],
             count: 0,
             capacity,
+            next_free: 0,
         }
     }
 
@@ -79,12 +84,31 @@ impl<T: NucleusObject> ObjectPool<T> {
     /// Advances the slot's allocation generation; the first generation is 1.
     /// Returns `None` when the pool is full or every free slot's generation
     /// is exhausted.
+    ///
+    /// Uses a next-fit cursor: allocation scans forward from the last cursor
+    /// position (wrapping around the pool) and records the slot after the one
+    /// taken, so allocation is amortized O(1) rather than always scanning from
+    /// slot 0. Slots whose generation is exhausted are skipped during the scan.
     pub fn allocate(&mut self, init: T) -> Option<(ObjectId, &mut T)> {
-        let slot = self.find_free_slot()?;
+        let capacity = usize::from(self.capacity);
+        let start = usize::from(self.next_free);
+        // Find the next free slot with a non-exhausted generation, scanning
+        // forward from the cursor and wrapping around the pool. Skipping
+        // exhausted slots here avoids reporting pool-full while a later slot
+        // is still usable.
+        let slot = (0..capacity)
+            .map(|i| (start + i) % capacity)
+            .find(|&slot| {
+                let m = &self.meta[slot];
+                m.state == SlotState::Free && m.generation != u32::MAX
+            })?;
+        // Record the next-fit cursor: the slot after the one we take.
+        self.next_free = u16::try_from((slot + 1) % capacity).ok()?;
+
         let meta = &mut self.meta[slot];
         debug_assert_eq!(meta.state, SlotState::Free);
-        // Generation exhaustion prohibits reuse of this allocation identity.
-        meta.generation = meta.generation.checked_add(1)?;
+        // Exhausted generations were filtered above, so this cannot overflow.
+        meta.generation += 1;
         meta.state = SlotState::Live;
         self.count += 1;
 
@@ -217,10 +241,6 @@ impl<T: NucleusObject> ObjectPool<T> {
             _ => Err(CapError::InvalidOperation),
         }
     }
-
-    fn find_free_slot(&self) -> Option<usize> {
-        (0..usize::from(self.capacity)).find(|&slot| self.meta[slot].state == SlotState::Free)
-    }
 }
 
 #[cfg(test)]
@@ -317,6 +337,41 @@ mod tests {
         assert_eq!(pool.meta[usize::from(id.index)].state, SlotState::Free);
         // Generation exhaustion prohibits reuse of the allocation identity.
         assert!(pool.allocate(Dummy(3)).is_none());
+    }
+
+    #[test_case]
+    fn next_fit_allocates_forward_from_the_cursor() {
+        let mut backing = MaybeUninit::<[Dummy; 2]>::uninit();
+        let mut pool = pool(&mut backing);
+        let first = alloc(&mut pool, 1);
+        assert_eq!(first.index, 0);
+        dealloc(&mut pool, first);
+        // The cursor has advanced past slot 0, so the next allocation wraps to
+        // slot 1 rather than restarting at slot 0.
+        let second = alloc(&mut pool, 2);
+        assert_eq!(second.index, 1);
+        dealloc(&mut pool, second);
+        // The cursor wraps around and finds the freed slot 0 again.
+        let third = alloc(&mut pool, 3);
+        assert_eq!(third.index, 0);
+        dealloc(&mut pool, third);
+    }
+
+    #[test_case]
+    fn exhausted_free_slot_is_skipped_in_favor_of_a_usable_one() {
+        let mut backing = MaybeUninit::<[Dummy; 2]>::uninit();
+        let mut pool = pool(&mut backing);
+        let first = alloc(&mut pool, 1);
+        let second = alloc(&mut pool, 2);
+        dealloc(&mut pool, first);
+        dealloc(&mut pool, second);
+        // Exhaust slot 0's generation; slot 1 remains usable.
+        pool.meta[0].generation = u32::MAX;
+        assert_eq!(pool.meta[0].state, SlotState::Free);
+        // Allocation must skip the exhausted slot 0 and take slot 1.
+        let third = alloc(&mut pool, 3);
+        assert_eq!(third.index, 1);
+        dealloc(&mut pool, third);
     }
 
     #[test_case]
