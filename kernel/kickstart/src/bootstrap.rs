@@ -13,11 +13,11 @@
 
 use {
     libaddress::{PhysAddr, align},
-    libobject::CapError,
+    libobject::{CapError, domain::DomainId},
     nucleus::{
         api::key_entry::RegionPayload,
         objects::{
-            ArchObjects, Domain, Nucleus, NucleusObject, ObjectPool, arch::ArchPools,
+            ArchObjects, Domain, KeyTable, Nucleus, NucleusObject, ObjectPool, arch::ArchPools,
             domain::DcbPages, nucleus::NucleusPools,
         },
     },
@@ -71,14 +71,16 @@ pub struct PoolCapacities {
 
 /// Build the initial [`Nucleus`] in memory carved from the boot Untyped.
 ///
-/// Carves the `Nucleus` struct region and each pool backing from `boot`'s
-/// unused watermark range, constructs the pools, writes the `Nucleus` into the
-/// carved region, and returns its address. The caller (boot code) records this
+/// Carves the `Nucleus` struct region, the Domain pool backing, and the boot
+/// Domain's `KeyTable` region from `boot`'s unused watermark range, constructs
+/// the pools, initializes the boot `KeyTable` kernel-privately, writes the
+/// `Nucleus` into the carved region, and returns its address together with the
+/// boot `KeyTable`'s kernel address. The caller (boot code) records the nucleus
 /// address as the anchor the inert nucleus reads on entry.
 pub fn build_initial_nucleus<A: ArchObjects>(
     boot: &mut RegionPayload,
     capacities: &PoolCapacities,
-) -> Result<*mut Nucleus<A>, CapError> {
+) -> Result<(*mut Nucleus<A>, u64), CapError> {
     if capacities.domains > ObjectPool::<Domain>::MAX_SLOTS {
         return Err(CapError::InvalidSize(capacities.domains));
     }
@@ -87,6 +89,16 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     let nucleus_ptr = nucleus_paddr.user_to_kernel().as_mut_ptr::<Nucleus<A>>();
 
     let domains = carve_pool::<Domain>(boot, capacities.domains)?;
+
+    // Carve the boot Domain's KeyTable region and initialize it kernel-privately
+    // (the same unused-watermark allocation Retype performs at runtime).
+    let keytable_paddr = carve_region(boot, core::mem::size_of::<KeyTable>())?;
+    let keytable_ptr = keytable_paddr.user_to_kernel().as_mut_ptr::<KeyTable>();
+    // SAFETY: carve_region reserved the bytes from the boot Untyped's unused
+    // watermark range, and the direct map makes them kernel-dereferenceable.
+    unsafe {
+        keytable_ptr.write(KeyTable::new(DomainId(0)));
+    }
 
     let nucleus = Nucleus::<A> {
         current_domain: None,
@@ -101,5 +113,5 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     unsafe {
         nucleus_ptr.write(nucleus);
     }
-    Ok(nucleus_ptr)
+    Ok((nucleus_ptr, keytable_ptr as u64))
 }

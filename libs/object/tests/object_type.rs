@@ -1,4 +1,6 @@
-use vesper_objects::{CapError, Key, KeySlot, RawKey, Rights, decode_syscall_result};
+use vesper_objects::{
+    CapError, Key, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, decode_syscall_result,
+};
 
 #[cfg(test)]
 #[path = "support/cap_error.rs"]
@@ -19,10 +21,60 @@ pub mod domain_client;
 pub mod key_table_client;
 
 #[cfg(test)]
+#[path = "../src/untyped.rs"]
+pub mod untyped_client;
+
+#[cfg(test)]
 mod tests {
     use core::mem::{align_of, size_of};
 
     use vesper_objects::{ArchType, CapError, CoreType, ObjectType};
+
+    #[test]
+    fn untyped_operation_matches_existing_wire_id() {
+        use vesper_objects::untyped::UntypedOp;
+
+        assert_eq!(UntypedOp::Retype as u8, 0);
+        assert_eq!(UntypedOp::Retype as u32, 0);
+        assert!(matches!(UntypedOp::try_from(0_u32), Ok(UntypedOp::Retype)));
+        assert!(matches!(UntypedOp::try_from(0_u64), Ok(UntypedOp::Retype)));
+        assert_eq!(size_of::<UntypedOp>(), 1);
+        assert_eq!(align_of::<UntypedOp>(), 1);
+    }
+
+    #[test]
+    fn untyped_operation_rejects_every_unassigned_value() {
+        use vesper_objects::untyped::UntypedOp;
+
+        for raw in 1_u32..=255 {
+            assert!(matches!(
+                UntypedOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+            assert!(matches!(
+                UntypedOp::try_from(u64::from(raw)),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        for raw in [256_u64, 1 << 16, u64::from(u32::MAX), u64::MAX] {
+            assert!(matches!(
+                UntypedOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn untyped_operation_rejects_high_bit_aliases_before_narrowing() {
+        use vesper_objects::untyped::UntypedOp;
+
+        for bit in 8..64 {
+            assert!(matches!(
+                UntypedOp::try_from(1_u64 << bit),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
 
     #[test]
     fn key_table_operations_match_existing_wire_ids() {

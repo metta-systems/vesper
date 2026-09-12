@@ -52,14 +52,41 @@ fn console_entry(rights: Rights, badge: u16) -> KeyEntry {
     )
 }
 
-fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>)) {
-    let mut backing = MaybeUninit::<[Domain; 2]>::uninit();
+/// Fixed RAM address for test-carved `KeyTable`s (QEMU rpi3: 1 GiB RAM at 0).
+///
+/// The test binary loads at `0x80000` and the DTB sits at `0x8000000`; 32 MiB
+/// is clear of both. Carving from a fixed address keeps the large `KeyTable`
+/// storage out of the test's stack frame.
+const TEST_BACKING: u64 = 0x2000_0000;
+
+/// Carve a `KeyTable` into the fixed test backing at `index`, returning its
+/// kernel address.
+fn carve(index: usize) -> u64 {
+    let obj = (TEST_BACKING + (index as u64) * (size_of::<KeyTable>() as u64)) as *mut KeyTable;
+    // SAFETY: TEST_BACKING is RAM, aligned for KeyTable, and exclusively owned
+    // by the test fixture for its lifetime.
+    unsafe {
+        obj.write(KeyTable::new(DomainId(0)));
+    }
+    obj as u64
+}
+
+fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
+    let mut dom_backing = MaybeUninit::<[Domain; 2]>::uninit();
     // SAFETY: The backing is aligned for two Domains and remains exclusively
-    // owned here until after the nucleus and its pool are dropped. The callback
-    // cannot return a borrowed nucleus/object reference. Only the pool accesses
-    // the backing while it is live.
-    let domains =
-        unsafe { ObjectPool::new(backing.as_mut_ptr().cast::<u8>(), size_of::<[Domain; 2]>()) };
+    // owned here until after the nucleus and its pools are dropped. The
+    // callback cannot return a borrowed nucleus/object reference. Only the
+    // pools access the backing while they are live.
+    let domains = unsafe {
+        ObjectPool::new(
+            dom_backing.as_mut_ptr().cast::<u8>(),
+            size_of::<[Domain; 2]>(),
+        )
+    };
+    // Carve two KeyTable regions from the fixed test backing (mirrors the boot
+    // carve / runtime Retype: the table's storage is the carved region).
+    let table_addr = carve(0);
+    let second_table_addr = carve(1);
     let mut nucleus = Nucleus {
         pools: NucleusPools {
             domains,
@@ -70,7 +97,7 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>)) {
         current_domain: None,
         dcb_pages: DcbPages::new(),
     };
-    test(&mut nucleus);
+    test(&mut nucleus, table_addr, second_table_addr);
     for index in 0..2_u16 {
         let id = ObjectId {
             pool: PoolTag::Domain,
@@ -89,9 +116,9 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>)) {
 
 #[test_case]
 fn missing_caller_cannot_invoke_bootstrap_console() {
-    with_nucleus(|nucleus| {
+    with_nucleus(|nucleus, table_addr, _second| {
         let key = nucleus
-            .create_domain()
+            .create_domain(table_addr)
             .expect("bootstrap console key missing");
         assert_eq!(key.slot(), KeySlot::DEBUG_CONSOLE);
         assert_ne!(key.incarnation(), 0);
@@ -133,9 +160,9 @@ fn missing_caller_cannot_invoke_bootstrap_console() {
 
 #[test_case]
 fn dispatch_uses_only_the_explicit_allocated_caller_table() {
-    with_nucleus(|nucleus| {
+    with_nucleus(|nucleus, table_addr, second_table_addr| {
         let key = nucleus
-            .create_domain()
+            .create_domain(table_addr)
             .expect("bootstrap console key missing");
         let args = [u64::MAX; 6];
         for caller in [1, 2, u32::MAX] {
@@ -151,7 +178,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
             .pools
             .domains
             .allocate(Domain {
-                keytable: KeyTable::new(DomainId(1)),
+                keytable_addr: second_table_addr,
             })
             .expect("second domain allocation failed");
         nucleus.current_domain = Some(1);
@@ -163,7 +190,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
                 operand: 0,
             }) if submitted == key
         ));
-        assert_eq!(nucleus.current_domain_mut().unwrap().keytable.len(), 0);
+        assert_eq!(nucleus.current_domain_table_mut().unwrap().len(), 0);
         let id = ObjectId {
             pool: PoolTag::Domain,
             index: 1,
@@ -182,7 +209,7 @@ fn missing_caller_cannot_select_an_existing_dcb() {
     // This page is used only by this test, once in the serial QEMU harness.
     // Static backing satisfies DcbPages' retained-reference lifetime.
     static mut PAGE: DcbPage = DcbPage::new();
-    with_nucleus(|nucleus| {
+    with_nucleus(|nucleus, _table_addr, _second| {
         let page = &raw mut PAGE;
         // SAFETY: PAGE is initialized, aligned, static, and exclusively accessed
         // through this DcbPages instance. Tests run with identity-mapped RAM;
@@ -312,9 +339,9 @@ fn assert_dispatch_error(
 
 #[test_case]
 fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
-    with_nucleus(|nucleus| {
+    with_nucleus(|nucleus, table_addr, _second| {
         let issued = nucleus
-            .create_domain()
+            .create_domain(table_addr)
             .expect("bootstrap console key missing");
         nucleus.current_domain = Some(0);
         // Literal wire words deliberately avoid deriving expectations from the
@@ -335,7 +362,7 @@ fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
             for op in [0, u64::MAX] {
                 assert_dispatch_error(nucleus, key, op, words);
                 assert_console_table(
-                    &nucleus.current_domain_mut().unwrap().keytable,
+                    nucleus.current_domain_table_mut().unwrap(),
                     issued,
                     Some((Rights::all(), 0)),
                 );
@@ -354,9 +381,9 @@ fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
 
 #[test_case]
 fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
-    with_nucleus(|nucleus| {
+    with_nucleus(|nucleus, table_addr, _second| {
         let issued = nucleus
-            .create_domain()
+            .create_domain(table_addr)
             .expect("bootstrap console key missing");
         nucleus.current_domain = Some(0);
         // Write is zero: every individual set bit is invalid, including all
@@ -364,12 +391,12 @@ fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
         for op in (0..64).map(|bit| 1_u64 << bit).chain([u64::MAX]) {
             assert_dispatch_error(nucleus, issued, op, (8, 0, 0));
             assert_console_table(
-                &nucleus.current_domain_mut().unwrap().keytable,
+                nucleus.current_domain_table_mut().unwrap(),
                 issued,
                 Some((Rights::all(), 0)),
             );
         }
-        let table = &mut nucleus.current_domain_mut().unwrap().keytable;
+        let table = nucleus.current_domain_table_mut().unwrap();
         let entry = table
             .remove(issued)
             .unwrap_or_else(|_| panic!("console removal failed"));
@@ -383,68 +410,65 @@ fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
 
 #[test_case]
 fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
-    with_nucleus(|nucleus| {
+    with_nucleus(|nucleus, table_addr, _second| {
         let old = nucleus
-            .create_domain()
+            .create_domain(table_addr)
             .expect("bootstrap console key missing");
         nucleus.current_domain = Some(0);
         assert_dispatch_error(nucleus, old, 1, (8, 0, 0));
         assert_console_table(
-            &nucleus.current_domain_mut().unwrap().keytable,
+            nucleus.current_domain_table_mut().unwrap(),
             old,
             Some((Rights::all(), 0)),
         );
         nucleus
-            .current_domain_mut()
+            .current_domain_table_mut()
             .unwrap()
-            .keytable
             .remove(old)
             .unwrap_or_else(|_| panic!("console removal failed"));
         let future = RawKey::new(old.slot(), old.incarnation() + 1);
         for op in [0, u64::MAX] {
             assert_dispatch_error(nucleus, old, op, (27, old.to_wire(), 2));
-            assert_console_table(&nucleus.current_domain_mut().unwrap().keytable, old, None);
+            assert_console_table(nucleus.current_domain_table_mut().unwrap(), old, None);
             // Mismatch precedes invalidation even while the slot is vacant.
             assert_dispatch_error(nucleus, future, op, (27, future.to_wire(), 1));
-            assert_console_table(&nucleus.current_domain_mut().unwrap().keytable, old, None);
+            assert_console_table(nucleus.current_domain_table_mut().unwrap(), old, None);
         }
         let rights = Rights(Rights::READ);
         let replacement = nucleus
-            .current_domain_mut()
+            .current_domain_table_mut()
             .unwrap()
-            .keytable
             .insert(old.slot(), console_entry(rights, 0x2222))
             .unwrap_or_else(|_| panic!("replacement installation failed"));
         assert_eq!(replacement, future);
         for op in [0, u64::MAX] {
             assert_dispatch_error(nucleus, old, op, (27, old.to_wire(), 1));
             assert_console_table(
-                &nucleus.current_domain_mut().unwrap().keytable,
+                nucleus.current_domain_table_mut().unwrap(),
                 replacement,
                 Some((rights, 0x2222)),
             );
         }
         assert_dispatch_error(nucleus, replacement, 1, (8, 0, 0));
         assert_console_table(
-            &nucleus.current_domain_mut().unwrap().keytable,
+            nucleus.current_domain_table_mut().unwrap(),
             replacement,
             Some((rights, 0x2222)),
         );
         nucleus
-            .current_domain_mut()
+            .current_domain_table_mut()
             .unwrap()
-            .keytable
             .remove(replacement)
             .unwrap_or_else(|_| panic!("replacement removal failed"));
         assert_dispatch_error(nucleus, old, 0, (27, old.to_wire(), 1));
         assert_console_table(
-            &nucleus.current_domain_mut().unwrap().keytable,
+            nucleus.current_domain_table_mut().unwrap(),
             replacement,
             None,
         );
         assert_dispatch_error(nucleus, replacement, 0, (27, replacement.to_wire(), 2));
         assert_console_table(
-            &nucleus.current_domain_mut().unwrap().keytable,
+            nucleus.current_domain_table_mut().unwrap(),
             replacement,
             None,
         );

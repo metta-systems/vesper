@@ -1,5 +1,5 @@
 use {
-    crate::objects::{ArchObjects, Nucleus},
+    crate::objects::{ArchObjects, KeyTable, Nucleus, access::Access},
     libobject::{ArchType, CapError, CoreType, ObjectType, RawKey},
     libqemu::semihosting as semi,
 };
@@ -9,6 +9,7 @@ use {
 pub mod debug_console;
 pub mod key_entry;
 pub mod key_table;
+pub mod untyped;
 
 pub use key_entry::KeyEntry;
 
@@ -40,31 +41,47 @@ pub fn handle_cap_invoke<A: ArchObjects>(
         args[4],
         args[5]
     );
+    // SAFETY: the caller holds the kernel lock for the whole invocation and
+    // constructs no overlapping access context.
+    let access = unsafe { Access::new() };
+    let caller_table_addr = caller_table_addr(nucleus)?;
     let obj_type = {
-        let domain = nucleus
-            .current_domain_mut()
-            .ok_or(CapError::InvalidDomain)?;
-        semi::println!("handle_cap_invoke(got domain)");
-        let entry = domain.keytable.lookup(key)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
         semi::println!("handle_cap_invoke(got entry)");
-        entry.object_type()
+        caller_table.lookup(key)?.object_type()
     };
 
     semi::println!("handle_cap_invoke(resolved obj_type {})", obj_type.as_u8());
 
     if core::hint::unlikely(obj_type.is_arch()) {
         // Architecture-specific dispatch (less common path)
-        arch_invoke::<A>(nucleus, key, obj_type, op, args)
+        arch_invoke::<A>(nucleus, &access, caller_table_addr, key, obj_type, op, args)
     } else {
         // Core dispatch (common path)
-        core_invoke::<A>(nucleus, key, obj_type, op, args)
+        core_invoke::<A>(nucleus, &access, caller_table_addr, key, obj_type, op, args)
     }
+}
+
+/// Address of the current domain's capability table (a carved `KeyTable`).
+///
+/// Resolved as an owned value (not a borrowed reference) so the caller can
+/// also borrow the domain pool; the domain and `KeyTable` storage are disjoint.
+fn caller_table_addr<A: ArchObjects>(nucleus: &Nucleus<A>) -> Result<u64, CapError> {
+    let index = nucleus.current_domain.ok_or(CapError::InvalidDomain)?;
+    nucleus
+        .pools
+        .domains
+        .get_live(usize::try_from(index).ok().ok_or(CapError::InvalidDomain)?)
+        .ok_or(CapError::InvalidDomain)
+        .map(|domain| domain.keytable_addr)
 }
 
 /// Core object dispatch
 #[inline(always)]
 fn core_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
+    access: &Access,
+    caller_table_addr: u64,
     key: RawKey,
     obj_type: ObjectType,
     op: u64,
@@ -72,30 +89,25 @@ fn core_invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let core_type = CoreType::try_from(obj_type)?;
 
-    let domain = nucleus
-        .current_domain_mut()
-        .ok_or(CapError::InvalidDomain)?;
-    let entry = domain.keytable.lookup(key)?;
-
     semi::println!("core_invoke");
 
     match core_type {
         CoreType::Null => Err(CapError::NullCapability),
 
-        // CoreType::Untyped => {
-        //     let untyped = entry.as_object_mut::<Untyped>()?;
-        //     // Untyped::invoke(untyped, ....)
-        //     api::untyped::invoke(untyped, entry.rights(), op, args, &mut nucleus.pools)
-        // }
+        CoreType::Untyped => crate::api::untyped::invoke(access, caller_table_addr, key, op, args),
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
             semi::println!("core_invoke: DebugConsole");
+            let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+            let entry = caller_table.lookup(key)?;
             crate::api::debug_console::invoke(entry, op, args[0], args[1])
         } // CoreType::Domain => {
         //     let domain = entry.as_object_mut::<Domain>()?;
         //     api::domain::invoke(domain, entry.rights(), op, args)
         // }
-        CoreType::KeyTable => crate::api::key_table::invoke(domain, key, op, args),
+        CoreType::KeyTable => {
+            crate::api::key_table::invoke(access, caller_table_addr, key, op, args)
+        }
 
         // CoreType::Notification => {
         //     let notify = entry.as_object_mut::<Notification>()?;
@@ -134,6 +146,8 @@ fn core_invoke<A: ArchObjects>(
 #[inline(always)]
 fn arch_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
+    access: &Access,
+    caller_table_addr: u64,
     key: RawKey,
     obj_type: ObjectType,
     op: u64,
@@ -141,10 +155,8 @@ fn arch_invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let arch_type = ArchType::try_from(obj_type)?;
 
-    let domain = nucleus
-        .current_domain_mut()
-        .ok_or(CapError::InvalidDomain)?;
-    let entry = domain.keytable.lookup(key)?;
+    let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+    let entry = caller_table.lookup(key)?;
 
     #[expect(
         clippy::match_single_binding,

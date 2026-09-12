@@ -21,7 +21,7 @@ use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 // │  ├── pools: KernelPools<A>                                          │
 // │  │   ├── untypeds: ObjectPool<Untyped>                              │
 // │  │   ├── domains: ObjectPool<Domain>                                │
-// │  │   ├── keytables: ObjectPool<KeyTable>                            │
+// │  │   ├── keytables: carved by Retype (no pool; see api::untyped)     │
 // │  │   ├── notifications: ObjectPool<Notification>                    │
 // │  │   ├── event_counts: ObjectPool<EventCount>                       │
 // │  │   ├── endpoints: ObjectPool<Endpoint>                            │
@@ -50,7 +50,6 @@ pub struct NucleusPools<A: ArchObjects> {
     // ─── Core Object Pools ───
     // pub untypeds: ObjectPool<Untyped>,
     pub domains: ObjectPool<Domain>,
-    // pub keytables: ObjectPool<KeyTable>,
     // pub notifications: ObjectPool<Notification>,
     // pub event_counts: ObjectPool<EventCount>,
     // pub endpoints: ObjectPool<Endpoint>,
@@ -94,6 +93,28 @@ impl<A: ArchObjects> Nucleus<A> {
         self.pools.domains.get_live_mut(usize::try_from(id).ok()?)
     }
 
+    /// Shared access to the current domain's capability table.
+    pub fn current_domain_table(&self) -> Option<&KeyTable> {
+        let addr = self.current_domain_table_addr()?;
+        // SAFETY: the domain's table address is kernel-issued (carved by Retype
+        // or the boot carve) and the region is never freed under accepted-leak.
+        Some(unsafe { &*(addr as *const KeyTable) })
+    }
+
+    /// Exclusive access to the current domain's capability table.
+    pub fn current_domain_table_mut(&mut self) -> Option<&mut KeyTable> {
+        let addr = self.current_domain_table_addr()?;
+        // SAFETY: see current_domain_table; &mut self guarantees exclusivity.
+        Some(unsafe { &mut *(addr as *mut KeyTable) })
+    }
+
+    /// Address of the current domain's capability table (a carved `KeyTable`).
+    pub fn current_domain_table_addr(&self) -> Option<u64> {
+        let id = self.current_domain?;
+        let dom = self.pools.domains.get_live(usize::try_from(id).ok()?)?;
+        Some(dom.keytable_addr)
+    }
+
     /// User-visible DCB
     pub fn current_dcb_mut(&mut self) -> Option<&mut DomainControlBlock> {
         // need objects::Domain here, not DCB! or a tuple
@@ -109,21 +130,19 @@ impl<A: ArchObjects> Nucleus<A> {
             reason = "feature-off bootstrap has no console key"
         )
     )]
-    pub fn create_domain(&mut self) -> Option<RawKey> {
-        let (_dom_id, dom) = self
-            .pools
-            .domains
-            .allocate(Domain {
-                keytable: KeyTable::new(DomainId(0)),
-            })
-            .expect("Poof");
+    pub fn create_domain(&mut self, keytable_addr: u64) -> Option<RawKey> {
+        // Allocate the Domain itself; its capability table is a carved KeyTable
+        // provided by the caller (Retype or the boot carve).
+        let (_dom_id, _dom) = self.pools.domains.allocate(Domain { keytable_addr })?;
         #[cfg(feature = "debug_kernel")]
         {
             // The debug console is a stateless singleton, not a pool object;
             // its entry carries a null identity and is validated by type only
             // (see the debug-only exception in doc/nucleus_capabilities.md).
-            let key = dom
-                .keytable
+            // SAFETY: the caller supplied a live carved table address; the
+            // region is never freed under the accepted-leak model.
+            let keytable = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+            let key = keytable
                 .insert(
                     KeySlot::DEBUG_CONSOLE,
                     KeyEntry::from_id(

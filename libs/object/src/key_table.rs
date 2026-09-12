@@ -87,6 +87,11 @@ impl KeyTableKey {
         Self { key: Key::new(key) }
     }
 
+    /// The wire encoding of the underlying key.
+    pub const fn to_wire(&self) -> u64 {
+        self.key.to_wire()
+    }
+
     // This naturally supports cross-domain derivation:
     // "Create a read-only view of my buffer in their cspace"
     // derive(&my_captbl, buffer_slot, &their_captbl, their_slot, Rights::READ)?;

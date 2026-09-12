@@ -241,4 +241,77 @@ impl<'ctx> Access<'ctx> {
         // the slots are distinct, so the pointers are disjoint.
         Ok(unsafe { (GuardMut::new(first_ptr), Guard::new(second_ptr)) })
     }
+
+    /// Resolve a carved (Retype-created) object address to a shared guard.
+    ///
+    /// # Safety contract
+    /// The address must name a live carved object of type `T`: the caller must
+    /// have validated the capability entry (slot/incarnation and kind) before
+    /// extracting the address, and the carved region must not have been freed.
+    /// Under the accepted-leak model carved regions are never freed, so issued
+    /// addresses never go stale.
+    #[expect(
+        clippy::unused_self,
+        reason = "the context receiver ties guard lifetimes to the locked invocation"
+    )]
+    pub fn resolve_carved<T: NucleusObject>(
+        &self,
+        address: u64,
+    ) -> Result<Guard<'ctx, T>, CapError> {
+        if address == 0 {
+            return Err(CapError::InvalidOperation);
+        }
+        // SAFETY: the caller validated the capability entry before extracting
+        // the address; the carved region is never freed under accepted-leak.
+        Ok(unsafe { Guard::new(address as *const T) })
+    }
+
+    /// Resolve a carved (Retype-created) object address to an exclusive guard.
+    ///
+    /// # Safety contract
+    /// As `resolve_carved`, plus the caller must not construct a second
+    /// mutable guard into the same address within one invocation (same-address
+    /// operands must use a single guard or the pair form below).
+    #[expect(
+        clippy::unused_self,
+        reason = "the context receiver ties guard lifetimes to the locked invocation"
+    )]
+    pub fn resolve_carved_mut<T: NucleusObject>(
+        &self,
+        address: u64,
+    ) -> Result<GuardMut<'ctx, T>, CapError> {
+        if address == 0 {
+            return Err(CapError::InvalidOperation);
+        }
+        // SAFETY: see resolve_carved; exclusivity is the caller's obligation.
+        Ok(unsafe { GuardMut::new(address as *mut T) })
+    }
+
+    /// Resolve two carved operands, rejecting same-address aliases.
+    ///
+    /// Two capability entries may reference the same carved object (e.g. a
+    /// derived `KeyTable` cap); an outer lock does not make two simultaneous
+    /// mutable references disjoint. This form rejects the alias before
+    /// constructing any reference.
+    #[expect(
+        clippy::unused_self,
+        reason = "the context receiver ties guard lifetimes to the locked invocation"
+    )]
+    pub fn resolve_carved_pair_mut<T: NucleusObject>(
+        &self,
+        first: u64,
+        second: u64,
+    ) -> Result<(GuardMut<'ctx, T>, Guard<'ctx, T>), CapError> {
+        if first == second || first == 0 || second == 0 {
+            // Kernel-internal alias rejection: not a wire status of its own.
+            return Err(CapError::InvalidOperation);
+        }
+        // SAFETY: distinct nonzero addresses name distinct carved regions.
+        Ok(unsafe {
+            (
+                GuardMut::new(first as *mut T),
+                Guard::new(second as *const T),
+            )
+        })
+    }
 }

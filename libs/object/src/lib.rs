@@ -8,6 +8,7 @@ pub mod key_table;
 pub mod object_type;
 pub mod rights;
 pub mod syscall_status;
+pub mod untyped;
 
 use syscall_status as code;
 
@@ -16,9 +17,10 @@ pub use debug_console::DebugConsoleKey;
 
 pub use {
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
-    key_table::{KeySlot, KeyTableOp},
+    key_table::{KeySlot, KeyTableKey, KeyTableOp},
     object_type::{ArchType, CoreType, ObjectType},
     rights::Rights,
+    untyped::{UntypedKey, UntypedOp},
 };
 
 pub type SyscallResult = core::result::Result<(u64, u64), CapError>;

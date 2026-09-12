@@ -77,7 +77,7 @@ use {
 };
 
 #[cfg(feature = "debug_kernel")]
-use libobject::{CapError, DebugConsoleKey, InvalidKeyReason, RawKey};
+use libobject::{CapError, DebugConsoleKey, InvalidKeyReason, KeyTableKey, RawKey, UntypedKey};
 
 unsafe extern "C" {
     static __INIT_START: UnsafeCell<()>;
@@ -622,7 +622,7 @@ pub fn kickstart_run() -> ! {
     let Ok(boot_payload) = boot_untyped.as_region_mut() else {
         panic!("boot Untyped is not a region")
     };
-    let Ok(nucleus_ptr) =
+    let Ok((nucleus_ptr, keytable_addr)) =
         build_initial_nucleus::<ArchObjectsImpl>(boot_payload, &PoolCapacities { domains: 1 })
     else {
         panic!("failed to build the initial nucleus")
@@ -632,16 +632,29 @@ pub fn kickstart_run() -> ! {
     let nucleus = unsafe { &mut *nucleus_ptr };
     // The boot Domain is the first (index 0) allocation; make it current.
     nucleus.current_domain = Some(0);
-    let (_, dom) = nucleus
+
+    // Allocate the boot Domain in the carved pool; its KeyTable was carved and
+    // initialized kernel-privately by build_initial_nucleus.
+    let _dom_id = nucleus
         .pools
         .domains
-        .allocate(Domain {
-            keytable: KeyTable::new(DomainId(0)),
-        })
-        .expect("no boot Domain slot");
+        .allocate(Domain { keytable_addr })
+        .expect("no boot Domain slot")
+        .0;
 
-    // Install the boot Untyped as the first grant.
-    dom.keytable
+    // Install the boot Domain's self-table capability and the boot Untyped as
+    // the first grants.
+    // SAFETY: keytable_addr names the freshly carved, live boot KeyTable.
+    let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+    let self_table_key = boot_table
+        .insert(
+            KeySlot::CAPTBL_SELF,
+            KeyEntry::new_keytable(keytable_addr, Rights::all(), 0),
+        )
+        .unwrap_or_else(|failure| {
+            panic!("boot self-table install failed: {:?}", failure.error.code())
+        });
+    let boot_untyped_key = boot_table
         .insert(KeySlot::BOOT_UNTYPED, boot_untyped)
         .unwrap_or_else(|failure| {
             panic!("boot Untyped install failed: {:?}", failure.error.code())
@@ -649,8 +662,7 @@ pub fn kickstart_run() -> ! {
 
     // Install the debug console grant (debug_kernel) and use it below.
     #[cfg(feature = "debug_kernel")]
-    let debug_console_key = dom
-        .keytable
+    let debug_console_key = boot_table
         .insert(
             KeySlot::DEBUG_CONSOLE,
             KeyEntry::from_id(
@@ -816,6 +828,97 @@ pub fn kickstart_run() -> ! {
                 operand: 0,
             }) if key == invalid_key
         ));
+
+        // Retype a KeyTable from the boot Untyped into the boot table through
+        // the real SVC path (the direct map is live, so the carve lands in the
+        // boot Untyped's unused watermark range).
+        let untyped = UntypedKey::from_key(boot_untyped_key);
+        let self_table = KeyTableKey::from_key(self_table_key);
+        let new_table_key = untyped
+            .retype(
+                ObjectType::KEY_TABLE,
+                0,
+                1,
+                &self_table,
+                KeySlot(5).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("boot Retype failed: {:?}", error.code()));
+        assert_eq!(new_table_key.slot(), KeySlot(5));
+        assert_ne!(new_table_key.incarnation(), 0);
+
+        // The new table is a distinct carved object: CopyDerive the self-table
+        // capability into it through the real SVC path.
+        let derived_key = self_table
+            .copy_derive(
+                self_table_key,
+                &KeyTableKey::from_key(new_table_key),
+                KeySlot(1).0,
+                Rights(Rights::DERIVE),
+            )
+            .unwrap_or_else(|error| panic!("cross-table CopyDerive failed: {:?}", error.code()));
+        assert_eq!(derived_key.slot(), KeySlot(1));
+
+        // Validation failures leave the Untyped and destination unchanged.
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::DOMAIN,
+                0,
+                1,
+                &self_table,
+                KeySlot(6).0,
+                Rights::all(),
+            ),
+            Err(CapError::InvalidObjectType(ObjectType::DOMAIN))
+        ));
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::KEY_TABLE,
+                0,
+                1,
+                &self_table,
+                KeySlot(5).0,
+                Rights::all(),
+            ),
+            Err(CapError::SlotOccupied(KeySlot(5)))
+        ));
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::KEY_TABLE,
+                0,
+                u32::MAX,
+                &self_table,
+                KeySlot(7).0,
+                Rights::all(),
+            ),
+            Err(CapError::InsufficientMemory)
+        ));
+
+        // A second Retype must not disturb the first carved table: its
+        // storage and bookkeeping survive the next carve (non-overlap).
+        let second_table_key = untyped
+            .retype(
+                ObjectType::KEY_TABLE,
+                0,
+                1,
+                &self_table,
+                KeySlot(6).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("second boot Retype failed: {:?}", error.code()));
+        assert_eq!(second_table_key.slot(), KeySlot(6));
+
+        // The first new table still accepts a cross-table derivation after
+        // the second carve.
+        let derived_again = self_table
+            .copy_derive(
+                self_table_key,
+                &KeyTableKey::from_key(new_table_key),
+                KeySlot(2).0,
+                Rights(Rights::DERIVE),
+            )
+            .unwrap_or_else(|error| panic!("post-carve CopyDerive failed: {:?}", error.code()));
+        assert_eq!(derived_again.slot(), KeySlot(2));
     }
 
     let (_, privilege_level) = libexception::current_privilege_level();

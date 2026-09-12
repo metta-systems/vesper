@@ -8,6 +8,14 @@
 //! target-kind allowlist is `KeyTable` and debug-gated `DebugConsole`; other
 //! kinds, `Revoke`, and rebadging remain unsupported.
 //!
+//! `KeyTable`s are Retype-created carved objects referenced by per-type
+//! capability payloads (their kernel address). The invoked `table_key` and the
+//! destination-table key are resolved through the caller's own table (its
+//! `keytable_addr`) to distinct carved tables, so `CopyDerive`/`Move` can
+//! target a table other than the caller's. Same-object operands are handled
+//! through a single mutable guard; distinct objects use the alias-rejecting
+//! pair-resolution form.
+//!
 //! Wire schemas (see `doc/nucleus_capabilities.md`):
 //! - `CopyDerive` `0`: `x2` source selector, `x3` destination-table key,
 //!   `x4` vacant destination slot, `x5` requested rights; `x6..x7` zero.
@@ -18,30 +26,28 @@
 //!   `x1`/`x2`.
 
 use {
-    crate::{
-        api::KeyEntry,
-        objects::{Domain, key_table::KeyTable},
-    },
+    crate::objects::{KeyTable, access::Access},
     libobject::{CapError, KeySlot, KeyTableOp, ObjectType, RawKey, Rights},
 };
 
 /// Handle a `KeyTable` management invocation.
 ///
-/// `domain` is the caller's domain (its implicit table resolves the invoked
-/// table key and the destination-table key); `table_key` is the invoked
-/// source/target-table key. Both table capabilities are resolved through the
-/// caller's implicit table with checked identities and authority.
+/// `caller_table_addr` is the caller's own table (its implicit table), through
+/// which the invoked `table_key` and the destination-table key are resolved.
+/// `table_key` is the invoked source/target-table key. Both table capabilities
+/// are resolved with checked identities and authority.
 pub fn invoke(
-    domain: &mut Domain,
+    access: &Access,
+    caller_table_addr: u64,
     table_key: RawKey,
     op: u64,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     let op = KeyTableOp::try_from(op)?;
     match op {
-        KeyTableOp::CopyDerive => copy_derive(domain, table_key, args),
-        KeyTableOp::Move => move_key(domain, table_key, args),
-        KeyTableOp::Delete => delete(domain, table_key, args),
+        KeyTableOp::CopyDerive => copy_derive(access, caller_table_addr, table_key, args),
+        KeyTableOp::Move => move_key(access, caller_table_addr, table_key, args),
+        KeyTableOp::Delete => delete(access, caller_table_addr, table_key, args),
         // Revoke's scope/completion contract is unresolved (D2); reject it
         // rather than fake a subtree operation.
         KeyTableOp::Revoke => Err(CapError::InvalidOperation),
@@ -50,7 +56,8 @@ pub fn invoke(
 
 /// `CopyDerive` `0`: derive an attenuated capability into a vacant destination.
 fn copy_derive(
-    domain: &mut Domain,
+    access: &Access,
+    caller_table_addr: u64,
     table_key: RawKey,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
@@ -68,33 +75,63 @@ fn copy_derive(
         return Err(CapError::InvalidOperation);
     }
 
-    // Authority: DERIVE on the invoked source table, INSTALL on destination.
-    check_table_rights(domain, table_key, Rights::DERIVE, 0)?;
-    check_table_rights(domain, dst_table_key, Rights::INSTALL, 3)?;
-
-    // Resolve the source entry from the invoked table.
-    let src_entry = {
-        let src_table = table_entry(domain, table_key, 0)?;
-        src_table
-            .lookup(src_sel)
-            .map_err(|e| e.with_key_operand(2))?
+    // Resolve the invoked source and destination table capabilities through
+    // the caller's own table, checking type and per-table rights.
+    let (src_cap, dst_cap) = {
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let src_cap = resolve_table_cap(&caller_table, table_key, 0)?;
+        let dst_cap = resolve_table_cap(&caller_table, dst_table_key, 3)?;
+        (src_cap, dst_cap)
     };
-    check_allowlisted(src_entry.object_type(), 2)?;
-
-    // No amplification: requested rights must be a subset of the source's.
-    if !src_entry.rights().permits(requested) {
+    // Authority: DERIVE on the invoked source table, INSTALL on destination.
+    if !src_cap.rights.has(Rights::DERIVE) {
         return Err(CapError::InsufficientRights);
     }
-    // CopyDerive preserves the badge and payload; only rights attenuate.
-    let derived = src_entry.derive(requested);
+    if !dst_cap.rights.has(Rights::INSTALL) {
+        return Err(CapError::InsufficientRights);
+    }
 
-    install_destination(domain, table_key, dst_table_key, dst_slot, derived)
+    if src_cap.address == dst_cap.address {
+        // Same table: one mutable guard. No amplification: requested rights
+        // must be a subset of the source's; CopyDerive preserves the badge and
+        // payload and only attenuates rights.
+        let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
+        let derived = {
+            let src_entry = table.lookup(src_sel).map_err(|e| e.with_key_operand(2))?;
+            check_allowlisted(src_entry.object_type(), 2)?;
+            if !src_entry.rights().permits(requested) {
+                return Err(CapError::InsufficientRights);
+            }
+            src_entry.derive(requested)
+        };
+        table
+            .insert(dst_slot, derived)
+            .map(|key| (key.to_wire(), 0))
+            .map_err(|failure| failure.error.with_key_operand(4))
+    } else {
+        // Distinct tables: alias-safe pair resolution (destination mutable).
+        let (mut dst_table, src_table) =
+            access.resolve_carved_pair_mut::<KeyTable>(dst_cap.address, src_cap.address)?;
+        let src_entry = src_table
+            .lookup(src_sel)
+            .map_err(|e| e.with_key_operand(2))?;
+        check_allowlisted(src_entry.object_type(), 2)?;
+        if !src_entry.rights().permits(requested) {
+            return Err(CapError::InsufficientRights);
+        }
+        let derived = src_entry.derive(requested);
+        dst_table
+            .insert(dst_slot, derived)
+            .map(|key| (key.to_wire(), 0))
+            .map_err(|failure| failure.error.with_key_operand(4))
+    }
 }
 
 /// Move `1`: transfer a capability to a vacant destination, invalidating the
 /// source on commit. Rights and per-capability state are preserved.
 fn move_key(
-    domain: &mut Domain,
+    access: &Access,
+    caller_table_addr: u64,
     table_key: RawKey,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
@@ -111,60 +148,93 @@ fn move_key(
         return Err(CapError::InvalidOperation);
     }
 
+    let (src_cap, dst_cap) = {
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let src_cap = resolve_table_cap(&caller_table, table_key, 0)?;
+        let dst_cap = resolve_table_cap(&caller_table, dst_table_key, 3)?;
+        (src_cap, dst_cap)
+    };
     // Authority: DERIVE + REMOVE on the invoked source table (Move is a
     // derive-then-remove), INSTALL on the destination.
-    check_table_rights(domain, table_key, Rights::DERIVE | Rights::REMOVE, 0)?;
-    check_table_rights(domain, dst_table_key, Rights::INSTALL, 3)?;
+    if !src_cap.rights.has(Rights::DERIVE | Rights::REMOVE) {
+        return Err(CapError::InsufficientRights);
+    }
+    if !dst_cap.rights.has(Rights::INSTALL) {
+        return Err(CapError::InsufficientRights);
+    }
 
-    // Same-table/same-slot Move is rejected, not a successful no-op.
-    if table_key == dst_table_key && src_sel.slot() == dst_slot {
+    // Same-table/same-slot Move is rejected, not a successful no-op. Distinct
+    // tables may use the same slot number in each.
+    if src_cap.address == dst_cap.address && src_sel.slot() == dst_slot {
         return Err(CapError::SlotOccupied(dst_slot));
     }
 
-    check_allowlisted(
-        {
-            let src_table = table_entry(domain, table_key, 0)?;
-            src_table
-                .lookup(src_sel)
-                .map_err(|e| e.with_key_operand(2))?
+    if src_cap.address == dst_cap.address {
+        // Same table: validate and remove the source, then install, rolling
+        // back into the source slot on installation failure.
+        let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
+        check_source_allowlisted(&table, src_sel, 2)?;
+        let moved = table.remove(src_sel).map_err(|e| e.with_key_operand(2))?;
+        match table.insert(dst_slot, moved) {
+            Ok(key) => Ok((key.to_wire(), 0)),
+            Err(failure) => {
+                // Reinsertion into the same slot cannot fail with occupancy
+                // (we just removed it), but the slot's incarnation has
+                // advanced, so the restored entry gets a fresh incarnation;
+                // the original source key stays invalidated.
+                drop(table.insert(src_sel.slot(), failure.entry));
+                Err(failure.error.with_key_operand(4))
+            }
         }
-        .object_type(),
-        2,
-    )?;
-
-    // Validate and reserve the destination before removing source authority.
-    // Move preserves the entry verbatim: rights, badge, and payload state.
-    let moved = {
-        let src_table = table_entry_mut(domain, table_key, 0)?;
-        src_table
-            .remove(src_sel)
-            .map_err(|e| e.with_key_operand(2))?
-    };
-    match install_destination(domain, table_key, dst_table_key, dst_slot, moved) {
-        Ok(result) => Ok(result),
-        Err(error) => {
-            // Roll back: restore the source entry. Reinsertion into the same
-            // slot cannot fail with occupancy (we just removed it), but the
-            // slot's incarnation has advanced, so the restored entry gets a
-            // fresh incarnation; the original source key stays invalidated.
-            let src_table = table_entry_mut(domain, table_key, 0)?;
-            drop(src_table.insert(src_sel.slot(), moved));
-            Err(error)
+    } else {
+        // Distinct tables: remove from the source, then install into the
+        // destination, rolling back into the source on failure. The source
+        // guard is dropped before the destination is resolved, so no aliased
+        // mutable references are constructed.
+        let moved = {
+            let mut src_table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
+            check_source_allowlisted(&src_table, src_sel, 2)?;
+            src_table
+                .remove(src_sel)
+                .map_err(|e| e.with_key_operand(2))?
+        };
+        let install_result = {
+            let mut dst_table = access.resolve_carved_mut::<KeyTable>(dst_cap.address)?;
+            dst_table.insert(dst_slot, moved)
+        };
+        match install_result {
+            Ok(key) => Ok((key.to_wire(), 0)),
+            Err(failure) => {
+                let mut src_table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
+                drop(src_table.insert(src_sel.slot(), failure.entry));
+                Err(failure.error.with_key_operand(4))
+            }
         }
     }
 }
 
 /// Delete `2`: remove an entry without automatic object retirement.
-fn delete(domain: &mut Domain, table_key: RawKey, args: &[u64; 6]) -> Result<(u64, u64), CapError> {
+fn delete(
+    access: &Access,
+    caller_table_addr: u64,
+    table_key: RawKey,
+    args: &[u64; 6],
+) -> Result<(u64, u64), CapError> {
     let target_sel = RawKey::from_wire(args[0]);
     if args[1] != 0 || args[2] != 0 || args[3] != 0 || args[4] != 0 || args[5] != 0 {
         return Err(CapError::InvalidOperation);
     }
 
+    let src_cap = {
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        resolve_table_cap(&caller_table, table_key, 0)?
+    };
     // Authority: REMOVE on the invoked table.
-    check_table_rights(domain, table_key, Rights::REMOVE, 0)?;
+    if !src_cap.rights.has(Rights::REMOVE) {
+        return Err(CapError::InsufficientRights);
+    }
 
-    let table = table_entry_mut(domain, table_key, 0)?;
+    let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
     table
         .remove(target_sel)
         .map_err(|e| e.with_key_operand(2))?;
@@ -175,94 +245,47 @@ fn delete(domain: &mut Domain, table_key: RawKey, args: &[u64; 6]) -> Result<(u6
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════
 
-/// Resolve a table capability through the caller's implicit table and check
-/// that it names a `KeyTable` carrying every permission in `required`.
-fn check_table_rights(
-    domain: &mut Domain,
-    table_key: RawKey,
-    required: u8,
+/// A resolved table capability: the carved table's address and its rights.
+pub(crate) struct TableCap {
+    pub(crate) address: u64,
+    pub(crate) rights: Rights,
+}
+
+/// Resolve a `KeyTable` capability through the caller's own table, checking
+/// that it names a `KeyTable` and returning its carved address and rights.
+pub(crate) fn resolve_table_cap(
+    caller_table: &KeyTable,
+    key: RawKey,
+    operand: u8,
+) -> Result<TableCap, CapError> {
+    let entry = caller_table
+        .lookup(key)
+        .map_err(|e| e.with_key_operand(operand))?;
+    if entry.object_type() != ObjectType::KEY_TABLE {
+        return Err(CapError::TypeMismatch {
+            expected: ObjectType::KEY_TABLE,
+            found: entry.object_type(),
+        });
+    }
+    Ok(TableCap {
+        address: entry
+            .keytable_address()
+            .map_err(|e| e.with_key_operand(operand))?,
+        rights: entry.rights(),
+    })
+}
+
+/// Check that the source entry's kind is on the approved derivation allowlist
+/// before removing/deriving it.
+fn check_source_allowlisted(
+    table: &KeyTable,
+    src_sel: RawKey,
     operand: u8,
 ) -> Result<(), CapError> {
-    let entry = domain
-        .keytable
-        .lookup(table_key)
+    let entry = table
+        .lookup(src_sel)
         .map_err(|e| e.with_key_operand(operand))?;
-    if entry.object_type() != ObjectType::KEY_TABLE {
-        return Err(CapError::TypeMismatch {
-            expected: ObjectType::KEY_TABLE,
-            found: entry.object_type(),
-        });
-    }
-    if !entry.rights().has(required) {
-        return Err(CapError::InsufficientRights);
-    }
-    Ok(())
-}
-
-/// Resolve a table capability to the caller's own `KeyTable`.
-///
-/// Implementation status: key tables are not yet pooled objects, so a table
-/// capability cannot be resolved to a distinct table object through the
-/// `Access` context. Only the caller's own table — named by the
-/// `KeySlot::CAPTBL_SELF` self-capability convention — is a valid management
-/// target in this slice. A `KeyTable` capability in any other slot is
-/// rejected as unsupported rather than silently resolving to the caller's
-/// table; the pooled-`KeyTable` migration will replace this with real
-/// per-object resolution and alias-safe pair access.
-fn check_self_table(domain: &Domain, table_key: RawKey, operand: u8) -> Result<(), CapError> {
-    let entry = domain
-        .keytable
-        .lookup(table_key)
-        .map_err(|e| e.with_key_operand(operand))?;
-    if entry.object_type() != ObjectType::KEY_TABLE {
-        return Err(CapError::TypeMismatch {
-            expected: ObjectType::KEY_TABLE,
-            found: entry.object_type(),
-        });
-    }
-    if table_key.slot() != KeySlot::CAPTBL_SELF {
-        // Distinct table objects are not resolvable yet; do not pretend they
-        // name the caller's table.
-        return Err(CapError::UnsupportedCoreType(libobject::CoreType::KeyTable));
-    }
-    Ok(())
-}
-
-/// Shared borrow of the caller's own `KeyTable` after self-capability checks.
-fn table_entry(domain: &Domain, table_key: RawKey, operand: u8) -> Result<&KeyTable, CapError> {
-    check_self_table(domain, table_key, operand)?;
-    Ok(&domain.keytable)
-}
-
-/// Mutable variant of `table_entry`.
-fn table_entry_mut(
-    domain: &mut Domain,
-    table_key: RawKey,
-    operand: u8,
-) -> Result<&mut KeyTable, CapError> {
-    check_self_table(domain, table_key, operand)?;
-    Ok(&mut domain.keytable)
-}
-
-/// Install a derived/moved entry into the destination table, returning the
-/// destination-local packed key in `x1` and zero in `x2`.
-///
-/// Same-table installation when source and destination keys name the
-/// caller's table; distinct-table installation awaits the pooled-table
-/// `Access` path (see `table_entry`). `src_table_key` is reserved for the
-/// cross-table form.
-fn install_destination(
-    domain: &mut Domain,
-    _src_table_key: RawKey,
-    dst_table_key: RawKey,
-    dst_slot: KeySlot,
-    entry: KeyEntry,
-) -> Result<(u64, u64), CapError> {
-    let dst_table = table_entry_mut(domain, dst_table_key, 3)?;
-    dst_table
-        .insert(dst_slot, entry)
-        .map(|key| (key.to_wire(), 0))
-        .map_err(|failure| failure.error.with_key_operand(4))
+    check_allowlisted(entry.object_type(), operand)
 }
 
 /// Only the approved initial target kinds may be derived/moved: `KeyTable`

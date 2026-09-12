@@ -82,12 +82,27 @@ pub struct RegionPayload {
     pub _pad: u16,
 }
 
+/// Payload for a `KeyTable` capability: a reference to the carved `KeyTable`
+/// kernel object (seL4-style object pointer). Retype-created objects are
+/// addressed directly; the carved region is never freed under the accepted-leak
+/// model, so the address never goes stale. The kind lives in the entry header;
+/// this payload is interpreted per actual object type, not as a storage
+/// mechanism.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct KeyTablePayload {
+    /// Kernel virtual address of the carved `KeyTable` object.
+    pub address: u64,
+    pub _pad: u64,
+}
+
 /// 16-byte payload union, discriminated by `obj_type` in the header.
 #[repr(C)]
 #[derive(Clone, Copy)]
 union KeyPayload {
     obj: ObjectPayload,
     region: RegionPayload,
+    keytable: KeyTablePayload,
     null: [u8; 16],
 }
 
@@ -108,9 +123,17 @@ pub struct KeyEntry {
 const _: () = assert!(core::mem::size_of::<KeyEntry>() == 32); // same as seL4
 const _: () = assert!(core::mem::size_of::<KeyPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
+const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
 
 /// Minimum alignment bits for watermark shift (16-byte alignment).
 const MIN_ALIGN_BITS: u32 = 4;
+
+/// Watermark encoding granularity in bytes: stored watermarks are always
+/// multiples of this (see `RegionPayload::set_watermark_bytes`), so every
+/// allocation end committed to an Untyped's watermark must be aligned up to
+/// it or the encoding would silently discard the remainder and let the next
+/// allocation overlap.
+pub(crate) const MIN_ALIGN: usize = 1 << MIN_ALIGN_BITS;
 
 impl KeyEntry {
     /// Create a null/empty entry.
@@ -187,6 +210,23 @@ impl KeyEntry {
         }
     }
 
+    /// Create a capability for a carved `KeyTable` object (Retype-created).
+    ///
+    /// The payload is a reference to the carved `KeyTable` kernel object; the
+    /// kind is the entry header. The address is kernel-issued (from Retype or
+    /// the boot carve) and the region is never freed under the accepted-leak
+    /// model, so it never goes stale.
+    pub fn new_keytable(address: u64, rights: Rights, badge: u16) -> Self {
+        Self {
+            obj_type: ObjectType::KEY_TABLE,
+            rights,
+            badge,
+            payload: KeyPayload {
+                keytable: KeyTablePayload { address, _pad: 0 },
+            },
+        }
+    }
+
     /// Check if this entry is valid (not null).
     #[inline]
     pub fn is_valid(&self) -> bool {
@@ -197,6 +237,15 @@ impl KeyEntry {
     #[inline]
     pub fn is_region(&self) -> bool {
         self.obj_type == ObjectType::UNTYPED || self.obj_type == ObjectType::FRAME
+    }
+
+    /// Check if this is a Retype-created (carved) object kind.
+    ///
+    /// Carved objects are addressed directly through a per-type payload rather
+    /// than a pooled identity; see `doc/lifetime-and-authority.md` §3.
+    #[inline]
+    pub fn is_carved(&self) -> bool {
+        self.obj_type == ObjectType::KEY_TABLE
     }
 
     /// Get the object type.
@@ -232,10 +281,11 @@ impl KeyEntry {
     ///
     /// This is a handle, not a reference: dereferencing requires the owning
     /// access context, which validates the identity against authoritative
-    /// pool metadata first. Returns error on region types — use `as_region()`.
+    /// pool metadata first. Returns error on region types and carved-object
+    /// kinds — use `as_region()` / `keytable_address()` instead.
     #[inline]
     pub fn object_id(&self) -> Result<ObjectId, CapError> {
-        if self.is_region() || self.obj_type == ObjectType::NULL {
+        if self.is_region() || self.is_carved() || self.obj_type == ObjectType::NULL {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::UNTYPED, // any region type; see as_region
                 found: self.obj_type,
@@ -248,6 +298,23 @@ impl KeyEntry {
             index: obj.index,
             generation: obj.generation,
         })
+    }
+
+    /// Get the carved `KeyTable` object address (`KeyTable` caps only).
+    ///
+    /// The address is kernel-issued and the carved region is never freed under
+    /// the accepted-leak model; dereferencing requires the owning access
+    /// context, which ties the resulting guard to the locked invocation.
+    #[inline]
+    pub fn keytable_address(&self) -> Result<u64, CapError> {
+        if self.obj_type != ObjectType::KEY_TABLE {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::KEY_TABLE,
+                found: self.obj_type,
+            });
+        }
+        // SAFETY: keytable variant guaranteed by the type check above.
+        Ok(unsafe { self.payload.keytable.address })
     }
 
     /// Access the inline region payload (Untyped or Frame, read-only).

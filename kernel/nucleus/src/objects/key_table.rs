@@ -96,6 +96,54 @@ impl KeyTable {
         self.count
     }
 
+    /// The domain that owns this table.
+    pub fn owner(&self) -> DomainId {
+        self.owner
+    }
+
+    /// Pre-validate that a new valid entry may be installed at `slot`,
+    /// returning the same error `insert` would return for it: range,
+    /// vacancy, and remaining incarnation capacity.
+    ///
+    /// Used by Retype to validate a run of destination slots before
+    /// committing to any of them, so the subsequent installs cannot fail.
+    pub fn check_insert(&self, slot: KeySlot) -> Result<(), CapError> {
+        let idx = usize::try_from(slot.0)
+            .ok()
+            .filter(|&idx| idx < Self::NUM_SLOTS)
+            .ok_or(CapError::InvalidSlot(slot))?;
+        if self.entries[idx].is_valid() {
+            return Err(CapError::SlotOccupied(slot));
+        }
+        self.incarnations[idx]
+            .checked_add(1)
+            .map(|_| ())
+            .ok_or(CapError::KeySlotExhausted(slot))
+    }
+
+    /// Advance the watermark of the validated Untyped entry at `key`.
+    ///
+    /// This is the commit step of Retype: the entry's identity, rights, badge
+    /// and incarnation are unchanged; only the region's allocation watermark
+    /// moves. Targeted mutation only — unrestricted mutable entry access
+    /// remains unavailable.
+    pub fn advance_untyped_watermark(
+        &mut self,
+        key: RawKey,
+        new_watermark: usize,
+    ) -> Result<(), CapError> {
+        let idx = self.validate_key(key)?;
+        let entry = &mut self.entries[idx];
+        if entry.object_type() != ObjectType::UNTYPED {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::UNTYPED,
+                found: entry.object_type(),
+            });
+        }
+        entry.as_untyped_mut()?.set_watermark_bytes(new_watermark);
+        Ok(())
+    }
+
     /// Insert a capability at a specific slot
     pub fn insert(&mut self, slot: KeySlot, entry: KeyEntry) -> Result<RawKey, InsertError> {
         let reservation = (|| {

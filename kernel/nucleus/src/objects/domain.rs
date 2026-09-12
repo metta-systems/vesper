@@ -1,5 +1,5 @@
 use {
-    crate::objects::{KeyTable, NucleusObject},
+    crate::objects::NucleusObject,
     core::{ptr::NonNull, sync::atomic::Ordering},
     libaddress::{PhysAddr, VirtAddr},
     libobject::{
@@ -24,7 +24,13 @@ pub struct Domain {
     // - Capability space (keytable)
     // - Kernel stack pointer
     // - Etc.
-    pub keytable: KeyTable,
+    /// Kernel address of this domain's capability table (a carved `KeyTable`).
+    ///
+    /// The table is a Retype-created carved object, resolved through the
+    /// guarded `Access` context (see `doc/lifetime-and-authority.md` §3).
+    /// Placement of the table capability in the DCB's fixed slots is follow-up
+    /// (D5).
+    pub keytable_addr: u64,
 }
 
 // Verify size for cache alignment
