@@ -35,6 +35,7 @@
 // - scheduler (invokes process upcall key)
 
 mod boot_info;
+mod bootstrap;
 mod device_tree;
 mod el_switch;
 mod embed;
@@ -44,7 +45,12 @@ mod paging;
 mod qsort;
 
 use {
-    crate::{boot_info::BOOT_INFO, memory::Alloc},
+    crate::{
+        boot_info::BOOT_INFO,
+        bootstrap::{PoolCapacities, build_initial_nucleus},
+        embed::NUCLEUS_SET_ANCHOR_VIRT,
+        memory::Alloc,
+    },
     aarch64_cpu::registers::{SPSR_EL2, Writeable},
     core::{cell::UnsafeCell, panic::PanicInfo, ptr::write_bytes, slice},
     device_tree::{DeviceTree, DeviceTreeProp},
@@ -58,15 +64,20 @@ use {
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
+    libobject::{KeySlot, ObjectType, Rights, domain::DomainId},
     libqemu::semihosting as semi,
     memory::BootAllocator,
+    nucleus::{
+        api::key_entry::KeyEntry,
+        objects::{
+            ArchObjectsImpl, Domain, KeyTable, Nucleus,
+            access::{ObjectId, PoolTag},
+        },
+    },
 };
 
 #[cfg(feature = "debug_kernel")]
-use {
-    crate::embed::NUCLEUS_BOOTSTRAP_DEBUG_CONSOLE_VIRT,
-    libobject::{CapError, DebugConsoleKey, InvalidKeyReason, RawKey},
-};
+use libobject::{CapError, DebugConsoleKey, InvalidKeyReason, RawKey};
 
 unsafe extern "C" {
     static __INIT_START: UnsafeCell<()>;
@@ -577,6 +588,9 @@ pub fn init_main_el2(dtb: u32) -> ! {
     }
 }
 
+/// Size (as log2) of the boot Untyped region carved for the initial kernel state.
+const BOOT_UNTYPED_SIZE_BITS: u8 = 24; // 16 MiB
+
 // DTB should be available to this code through BOOT_INFO records.
 pub fn kickstart_run() -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -586,22 +600,83 @@ pub fn kickstart_run() -> ! {
     // Run initial thread further in EL1, seting up the capDL etc.
     semi::println!("init_main_run: enabled MMU and dropped to EL1");
     print_my_sp();
-    // Prototype status: the private debug bridge replaces the fake slot-zero SVC;
-    // general capDL/bootstrap authority handoff remains future work.
-    #[cfg(feature = "debug_kernel")]
-    let debug_console_key = {
-        // SAFETY: The paired nucleus image has been loaded, its BSS zeroed and its
-        // linked VA mapped executable before entering this trusted EL1h boot path.
-        // Extraction validates the symbol; both images agree on this C signature.
-        // Only the boot core runs here, with interrupts masked, and calls once.
-        let wire = unsafe {
-            let bootstrap = core::mem::transmute::<u64, unsafe extern "C" fn() -> u64>(
-                NUCLEUS_BOOTSTRAP_DEBUG_CONSOLE_VIRT,
-            );
-            bootstrap()
-        };
-        RawKey::from_wire(wire)
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Build the initial kernel state in carved memory (inert nucleus).
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Allocate a power-of-2 boot region for the boot Untyped.
+    let boot_region = BOOT_INFO
+        .lock(|bi| bi.alloc_region(usize::from(BOOT_UNTYPED_SIZE_BITS), "Boot Untyped"))
+        .expect("no free region for the boot Untyped");
+
+    // Create the boot Untyped capability over that region.
+    let mut boot_untyped = KeyEntry::new_untyped(
+        boot_region.as_u64(),
+        BOOT_UNTYPED_SIZE_BITS,
+        false,
+        Rights::all(),
+    );
+
+    // Carve the initial Nucleus + pools from the boot Untyped's watermark.
+    let Ok(boot_payload) = boot_untyped.as_region_mut() else {
+        panic!("boot Untyped is not a region")
     };
+    let Ok(nucleus_ptr) =
+        build_initial_nucleus::<ArchObjectsImpl>(boot_payload, &PoolCapacities { domains: 1 })
+    else {
+        panic!("failed to build the initial nucleus")
+    };
+
+    // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.
+    let nucleus = unsafe { &mut *nucleus_ptr };
+    // The boot Domain is the first (index 0) allocation; make it current.
+    nucleus.current_domain = Some(0);
+    let (_, dom) = nucleus
+        .pools
+        .domains
+        .allocate(Domain {
+            keytable: KeyTable::new(DomainId(0)),
+        })
+        .expect("no boot Domain slot");
+
+    // Install the boot Untyped as the first grant.
+    dom.keytable
+        .insert(KeySlot::BOOT_UNTYPED, boot_untyped)
+        .unwrap_or_else(|failure| {
+            panic!("boot Untyped install failed: {:?}", failure.error.code())
+        });
+
+    // Install the debug console grant (debug_kernel) and use it below.
+    #[cfg(feature = "debug_kernel")]
+    let debug_console_key = dom
+        .keytable
+        .insert(
+            KeySlot::DEBUG_CONSOLE,
+            KeyEntry::from_id(
+                ObjectType::DEBUG_CONSOLE,
+                ObjectId {
+                    pool: PoolTag::Region,
+                    index: 0,
+                    generation: 0,
+                },
+                Rights::all(),
+                0,
+            ),
+        )
+        .unwrap_or_else(|failure| {
+            panic!("debug console install failed: {:?}", failure.error.code())
+        });
+
+    // Record the carved Nucleus address for the inert nucleus.
+    // SAFETY: The paired nucleus image is loaded and mapped; the setter is a
+    // boot-only one-shot write before any syscall.
+    unsafe {
+        let setter = core::mem::transmute::<u64, unsafe extern "C" fn(*mut Nucleus<ArchObjectsImpl>)>(
+            NUCLEUS_SET_ANCHOR_VIRT,
+        );
+        setter(nucleus_ptr);
+    }
     print_my_sp();
 
     // ─────────────────────────────────────────────────────────────────────

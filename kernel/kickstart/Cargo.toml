@@ -17,7 +17,7 @@ version = { workspace = true }
 [features]
 default = []
 # Opt in to the debug-only prototype console demonstration.
-debug_kernel = ["libobject/debug_kernel"]
+debug_kernel = ["libobject/debug_kernel", "nucleus/debug_kernel"]
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["libmachine/jtag"]
@@ -27,6 +27,7 @@ qemu = [
   # "libconsole/qemu",
   "libexception/qemu",
   "libmachine/qemu",
+  "nucleus/qemu",
   # "libplatform/qemu",
 ]
 
@@ -45,6 +46,7 @@ libprint = { workspace = true }
 libqemu = { workspace = true }
 libobject = { workspace = true }
 libsyscall = { workspace = true }
+nucleus = { path = "../nucleus" }
 snafu = { workspace = true }
 shrinkwraprs = { version = "0.3", default-features = false }
 fdt-rs = { version = "=0.4.4", default-features = false }

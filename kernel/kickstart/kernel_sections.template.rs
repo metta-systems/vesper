@@ -49,11 +49,8 @@ pub const VECTORS_META: SectionMeta = SectionMeta {
     permissions: MemoryPermissions { readable: true, writable: false, executable: true },
 };
 
-{% if bootstrap_debug_console_virt is not none %}
-/// Private one-shot debug bridge, callable only by trusted EL1 boot code.
-#[cfg(feature = "debug_kernel")]
-pub const NUCLEUS_BOOTSTRAP_DEBUG_CONSOLE_VIRT: u64 = {{bootstrap_debug_console_virt | address}};
-{% endif %}
+/// Exported setter that records the boot-carved Nucleus address.
+pub const NUCLEUS_SET_ANCHOR_VIRT: u64 = {{nucleus_set_anchor_virt | address}};
 
 // ═══════════════════════════════════════════════════════════════
 // Combined kernel sections

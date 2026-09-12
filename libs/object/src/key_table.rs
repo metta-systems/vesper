@@ -24,6 +24,8 @@ impl KeySlot {
     pub const PARENT_DOMAIN: KeySlot = KeySlot(2);
     // CSpace layout with self-reference
     pub const CAPTBL_SELF: KeySlot = KeySlot(3); // Every domain has cap to own captbl here - or rather to KeyMaster
+    /// The boot Untyped covering the initial carve region (Kickstart grant).
+    pub const BOOT_UNTYPED: KeySlot = KeySlot(4);
     // ... other well-known slots
     pub const DEBUG_CONSOLE: KeySlot = KeySlot(127); // FIXME: randomly chosen for now
 }

@@ -32,7 +32,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     semi::println!(
-        "handle_cap_invoke(key {key:?}:op {op}:args[{},{},{},{},{},{}])",
+        "handle_cap_invoke(key {key:?},op {op},args[{:x},{:x},{:x},{:x},{:x},{:x}])",
         args[0],
         args[1],
         args[2],

@@ -585,6 +585,11 @@ impl BootInfo {
             // will create a bigger left over region.
             let aligned_start = reg_iter.start_inclusive.aligned_up(1_u64 << size_bits);
             let aligned_end = reg_iter.end_exclusive.aligned_down(1_u64 << size_bits);
+            // Skip regions too small to hold the requested allocation; otherwise
+            // the `aligned_end - size` below would underflow.
+            if aligned_end < aligned_start + (1_u64 << size_bits) {
+                continue;
+            }
             let new_reg = if aligned_start - reg_iter.start_inclusive
                 < reg_iter.end_exclusive - aligned_end
             {

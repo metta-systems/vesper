@@ -24,13 +24,11 @@
 #![feature(core_intrinsics)]
 
 use {
-    crate::objects::{Domain, Nucleus, ObjectPool, arch::ArchPools, domain::DcbPages},
     cfg_if::cfg_if,
     core::{
         arch::asm,
-        cell::{LazyCell, UnsafeCell},
-        mem::{MaybeUninit, size_of},
         panic::PanicInfo,
+        sync::atomic::{AtomicUsize, Ordering},
         time::Duration,
     },
     libcpu::endless_sleep,
@@ -40,66 +38,50 @@ use {
     libmapping::AccessPermissions,
     libobject::{ArchType, CapError, KeySlot, RawKey, syscall_status},
     libqemu::semihosting as semi,
+    nucleus::objects::Nucleus,
 };
-
-/// Syscall API - capability invocation handlers
-mod api;
-/// Nucleus objects implementations
-mod objects;
 
 // TODO: Split this into read-only part, that does not need locks, per-cpu mutable part that does not need locks,
 // TODO: Shared atomic counters that do not need locks and shared mutable collections that DO need locks (but should be minority)
-/// Global kernel state, protected by The Great Kernel Lock
-static mut NUCLEUS: IRQSafeNullLock<LazyCell<Nucleus<objects::ArchObjectsImpl>>> =
-    IRQSafeNullLock::new(LazyCell::new(|| {
-        Nucleus::<objects::ArchObjectsImpl> {
-            current_domain: None,
-            dcb_pages: DcbPages::new(),
-            pools: objects::nucleus::NucleusPools {
-                /// SAFETY: Not very safe thing at all.
-                // Boot-fixture backing is now part of the reserved kernel image,
-                // aligned and sized for Domain, and used only by this pool under
-                // NUCLEUS. General Untyped-backed allocation remains separate work.
-                domains: unsafe {
-                    ObjectPool::new((&raw mut BOOT_DOMAIN_STORAGE).cast::<u8>(), size_of::<Domain>())
-                }, // TODO: proper alloc...
-                /// SAFETY: Not very safe thing at all.
-                arch: unsafe { ArchPools::new() },
-            },
-        }
-    }));
 
-/// Statically reserved backing for the existing single-Domain boot fixture.
-static mut BOOT_DOMAIN_STORAGE: MaybeUninit<Domain> = MaybeUninit::uninit();
+/// The Great Kernel Lock. The boot-carved [`Nucleus`] is accessed under it.
+static KERNEL_LOCK: IRQSafeNullLock<()> = IRQSafeNullLock::new(());
 
-/// Private paired-image entry for the trusted debug boot fixture, not a syscall.
+/// Anchor to the boot-carved [`Nucleus`].
+///
+/// Written once by Kickstart (the one-time boot code) before the nucleus runs;
+/// the inert nucleus only reads it. Kept as an atomic pointer so boot code can
+/// record it via [`nucleus_set_anchor`] without the compiler constant-folding
+/// the read (the static is only ever written from boot code).
+static NUCLEUS: AtomicUsize = AtomicUsize::new(0);
+
+/// Record the boot-carved [`Nucleus`] address.
+///
+/// Called once by Kickstart before the nucleus runs; the inert nucleus performs
+/// no other initialization. Exported so the compiler cannot constant-fold the
+/// anchor read (the static is only ever written from boot code).
 ///
 /// # Safety
-/// Called once by Kickstart at EL1 after loading/mapping the nucleus image,
-/// with interrupts masked and other cores parked. No kernel operation may be
-/// active. This bridge is not exposed as an EL0 capability or discovery API.
-#[cfg(feature = "debug_kernel")]
+/// Must be called exactly once, before any syscall, from the single boot core
+/// with interrupts masked. `ptr` must point at a live, exclusively-owned
+/// boot-carved [`Nucleus`].
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.bootstrap")]
-pub unsafe extern "C" fn nucleus_bootstrap_debug_console() -> u64 {
-    // The existing boot fixture creates the first pool entry for Kickstart.
-    // Select it explicitly; a missing runtime caller must not inherit it.
-    // SAFETY: The caller establishes the one-core/non-reentry boot conditions;
-    // the lock bounds the state borrow, which ends before the key is returned.
+pub unsafe extern "C" fn nucleus_set_anchor(ptr: *mut Nucleus<nucleus::objects::ArchObjectsImpl>) {
+    // SAFETY: one-shot boot write, single-core, before any syscall.
     unsafe {
-        #[allow(static_mut_refs)]
-        NUCLEUS.lock(|nucleus| {
-            assert!(
-                nucleus.current_domain.is_none() && nucleus.pools.domains.get_live(0).is_none(),
-                "debug bootstrap must run only once"
-            );
-            let key = nucleus
-                .create_domain()
-                .expect("debug console was not installed");
-            nucleus.current_domain = Some(0);
-            key.to_wire()
-        })
+        NUCLEUS.store(ptr as usize, Ordering::Relaxed);
     }
+}
+
+/// The boot-carved [`Nucleus`], or `None` before Kickstart records it.
+pub fn nucleus_anchor() -> Option<*mut Nucleus<nucleus::objects::ArchObjectsImpl>> {
+    let addr = NUCLEUS.load(Ordering::Relaxed);
+    if addr == 0 {
+        return None;
+    }
+    // SAFETY: Kickstart wrote `addr` as the address of the boot-carved Nucleus.
+    Some(unsafe { addr as *mut Nucleus<nucleus::objects::ArchObjectsImpl> })
 }
 
 #[panic_handler]
@@ -260,7 +242,13 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     // SAFETY: Unsafe.
     let result = unsafe {
         #[allow(static_mut_refs)]
-        NUCLEUS.lock(|nucleus| api::handle_cap_invoke(nucleus, key, op, &args))
+        KERNEL_LOCK.lock(|()| {
+            let Some(ptr) = nucleus_anchor() else {
+                panic!("nucleus not booted by Kickstart")
+            };
+            // SAFETY: the anchor points at the live boot-carved Nucleus.
+            nucleus::api::handle_cap_invoke(unsafe { &mut *ptr }, key, op, &args)
+        })
     };
 
     // let cap = current_domain().keytable.lookup(cap_slot)?;

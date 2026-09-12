@@ -59,6 +59,11 @@ libtest = { workspace = true }
 [build-dependencies]
 build-rs = { workspace = true }
 
+[lib]
+# The object modules' unit tests use the custom QEMU test framework and run in
+# the integration-test binaries (via `#[path]`), not as lib unit tests.
+test = false
+
 [[bin]]
 name = "nucleus"
 test = false  # test are all concentrated in integration tests/

@@ -410,6 +410,7 @@ dependencies = [
  "fdt-rs",
  "goblin",
  "minijinja",
+ "nucleus",
  "shrinkwraprs",
  "snafu",
  "vesper-address",
