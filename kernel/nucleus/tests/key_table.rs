@@ -32,7 +32,7 @@ const FULL: u8 = Rights::DERIVE | Rights::REMOVE | Rights::INSTALL;
 
 /// Fixed RAM address for test-carved `KeyTable`s (QEMU rpi3: 1 GiB RAM at 0).
 ///
-/// The test binary loads at `0x80000` and the DTB sits at `0x8000000`; 32 MiB
+/// The test binary loads at `0x80000` and the DTB sits at `0x8000000`; 512 MiB
 /// is clear of both. Carving from a fixed address keeps the large `KeyTable`
 /// storage out of the test's stack frame.
 const TEST_BACKING: u64 = 0x2000_0000;

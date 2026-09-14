@@ -92,7 +92,8 @@ impl UntypedKey {
     /// at the consecutive destination slots.
     ///
     /// The initial kind allowlist is `KeyTable`; other kinds are rejected by
-    /// the kernel as unsupported rather than created.
+    /// the kernel as unsupported rather than created. Device Untypeds cannot
+    /// be retyped at all until a device-capable kind is approved (D6).
     pub fn retype(
         &self,
         kind: ObjectType,

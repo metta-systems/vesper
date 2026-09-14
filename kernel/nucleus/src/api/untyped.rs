@@ -7,6 +7,8 @@
 //!
 //! Authority: WRITE on the invoked Untyped, INSTALL on the destination table.
 //! The initial kind allowlist is `KeyTable`; other kinds remain unsupported.
+//! Device Untypeds are rejected as sources: no creatable kind is
+//! device-capable yet (per-kind device policy is D6).
 //!
 //! Transaction: validate → reserve (watermark fit) → initialize each object
 //! kernel-privately in the carved region → install capabilities → advance the
@@ -99,6 +101,14 @@ fn retype(
         }
         if !untyped.rights().has(Rights::WRITE) {
             return Err(CapError::InsufficientRights);
+        }
+        // Device-memory restriction: no creatable kind is device-capable yet
+        // (device regions are MMIO, not kernel-object storage; per-kind device
+        // policy is D6). Reject before any reservation, initialization, or
+        // watermark change; when a device-capable kind is approved, this
+        // becomes a per-kind check.
+        if untyped.as_untyped()?.is_device {
+            return Err(CapError::InvalidObjectType(kind));
         }
         let dst_cap = resolve_table_cap(&caller_table, dst_table_key, 5)?;
         if !dst_cap.rights.has(Rights::INSTALL) {
