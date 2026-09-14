@@ -50,7 +50,10 @@ libqemu = { workspace = true }
 
 [dev-dependencies]
 libboot = { workspace = true }
-libconsole = { workspace = true }
+# Test binaries have no UART console registered, so libconsole's semihosting
+# mirror is their only output path. It is gated on libconsole's own `qemu`
+# feature (cfg(test) does not apply to dependencies of a test binary).
+libconsole = { workspace = true, features = ["qemu"] }
 libexception = { workspace = true, features = ["test_build"] }
 liblocking = { workspace = true }
 libqemu = { workspace = true }
