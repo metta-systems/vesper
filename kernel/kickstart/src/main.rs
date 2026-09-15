@@ -1422,6 +1422,20 @@ pub fn kickstart_run() -> ! {
             Err(CapError::NotMapped)
         ));
 
+        // Alias policy: the derived capability names the same physical frame
+        // the original maps at 0x1000_0000. Mapping it at a second virtual
+        // address in the same Domain is rejected whatever capability carries
+        // it; the error names the conflicting live mapping's physical base.
+        assert!(matches!(
+            FrameKey::from_key(derived_frame_key).map(
+                boot_domain_key,
+                0x1000_1000,
+                Rights(Rights::READ | Rights::WRITE),
+                0
+            ),
+            Err(CapError::PhysicalAlias { paddr }) if paddr == frame_paddr
+        ));
+
         // A 2 MiB frame installs a block descriptor at level 2 in the same
         // chain (a distinct slot, read-only).
         let large_frame = FrameKey::from_key(large_frame_key);
@@ -1471,6 +1485,42 @@ pub fn kickstart_run() -> ! {
             let l2e = read_entry(l1e & ADDR_MASK, 128);
             assert_eq!(read_entry(l2e & ADDR_MASK, 0), 0, "the PTE must be cleared");
         }
+
+        // With the original unmapped, the physical extent is free in this
+        // Domain again: the derived capability now maps at the second address,
+        // proving the policy tracks live physical mappings, not capability
+        // identity. The 2 MiB block remains mapped and disjoint, so the overlap
+        // walk must not reject the unrelated extent.
+        FrameKey::from_key(derived_frame_key)
+            .map(
+                boot_domain_key,
+                0x1000_1000,
+                Rights(Rights::READ | Rights::WRITE),
+                0,
+            )
+            .unwrap_or_else(|error| {
+                panic!("post-unmap derived Frame.Map failed: {:?}", error.code())
+            });
+        {
+            const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
+            // SAFETY: see above.
+            let read_entry = |paddr: u64, slot: usize| unsafe {
+                *(PhysAddr::new(paddr).user_to_kernel().as_ptr::<u64>()).add(slot)
+            };
+            let l0e = read_entry(root_paddr, 0);
+            let l1e = read_entry(l0e & ADDR_MASK, 0);
+            let l2e = read_entry(l1e & ADDR_MASK, 128);
+            let pte = read_entry(l2e & ADDR_MASK, 1);
+            assert_eq!(
+                pte & ADDR_MASK,
+                frame_paddr,
+                "the derived mapping's PTE must name the same frame"
+            );
+            assert!(pte & 0b1 != 0, "the derived PTE must be valid");
+        }
+        FrameKey::from_key(derived_frame_key)
+            .unmap()
+            .unwrap_or_else(|error| panic!("derived Frame.Unmap failed: {:?}", error.code()));
         // The 2 MiB block clears too.
         large_frame
             .unmap()

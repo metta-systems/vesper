@@ -96,6 +96,10 @@ impl ArchObjects for AArch64 {
         super::page_table::clear_frame_pte(root_paddr, vaddr, frame_paddr, size_bits)
     }
 
+    fn find_physical_overlap(root_paddr: u64, paddr: u64, size_bits: u8) -> Option<u64> {
+        super::page_table::find_physical_overlap(root_paddr, paddr, size_bits)
+    }
+
     fn create_arch_object(
         arch_type: ArchType,
         phys_addr: PhysAddr,

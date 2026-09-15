@@ -10,7 +10,11 @@
 //!   the intended ordinary path once syscall caller identity exists. The
 //!   requested rights must be a subset of the frame capability's rights
 //!   (permission ceiling); execute is not grantable yet, so every mapping is
-//!   PXN|UXN. The walk requires every intermediate table to be present.
+//!   PXN|UXN. The walk requires every intermediate table to be present. The
+//!   alias policy is enforced ahead of the hardware transition: the frame's
+//!   physical extent must not overlap any live mapping in the target Domain,
+//!   whatever capability installed it (`PhysicalAlias` otherwise);
+//!   cross-Domain aliases are distinct PTEs and remain allowed.
 //! - `Unmap` `1`: no arguments. The frame's recorded mapping identity (owning
 //!   Domain, full virtual address) locates and clears the leaf descriptor.
 //! - `GetAddress` `2`: no arguments; requires `GRANT`. Returns the physical
@@ -130,6 +134,16 @@ fn map<A: ArchObjects>(
     let root = domain
         .translation_root
         .ok_or(CapError::MissingIntermediate { vaddr })?;
+
+    // Alias policy: no two virtual addresses for overlapping physical backing
+    // within one Domain. The check is physical, not capability-based, so it
+    // also rejects overlaps through different derived caps and different frame
+    // sizes; it walks only the target Domain's tables, so cross-Domain aliases
+    // remain distinct PTEs. Ahead of the hardware transition: a rejection
+    // leaves every table and record unchanged.
+    if let Some(existing) = A::find_physical_overlap(root, frame.paddr, frame.size_bits) {
+        return Err(CapError::PhysicalAlias { paddr: existing });
+    }
 
     // Hardware transition: the arch layer validates the virtual-address width
     // and alignment, walks the installed tables (missing levels fail with

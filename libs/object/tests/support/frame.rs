@@ -98,6 +98,10 @@ fn frame_wrappers_preserve_kernel_errors() {
         invoke_map((29, 0x2000_0000, 0)),
         Err(CapError::MissingIntermediate { vaddr: 0x2000_0000 })
     ));
+    assert!(matches!(
+        invoke_map((30, 0x0040_0000, 0)),
+        Err(CapError::PhysicalAlias { paddr: 0x0040_0000 })
+    ));
     assert!(matches!(invoke_unmap((6, 0, 0)), Err(CapError::NotMapped)));
     assert!(matches!(
         invoke_map((u64::MAX, 42, 99)),

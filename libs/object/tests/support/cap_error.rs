@@ -338,3 +338,23 @@ fn missing_intermediate_pins_status_vaddr_and_lossless_fallback() {
         assert_unknown_response((29, extra, extra));
     }
 }
+
+#[test]
+fn physical_alias_pins_status_paddr_and_lossless_fallback() {
+    use vesper_objects::syscall_status::PHYSICAL_ALIAS;
+
+    assert_eq!(PHYSICAL_ALIAS, 30);
+    for paddr in [0, 0x1000, 0x1000_0000, 1 << 47, 1 << 63, u64::MAX] {
+        let wire = (30, paddr, 0);
+        assert_error!(
+            wire,
+            CapError::PhysicalAlias { paddr },
+            CapError::PhysicalAlias { paddr: p } if p == paddr
+        );
+    }
+    // A nonzero second detail word is not silently discarded.
+    for extra in [1, 1 << 63, u64::MAX] {
+        assert_unknown_response((30, 0, extra));
+        assert_unknown_response((30, extra, extra));
+    }
+}

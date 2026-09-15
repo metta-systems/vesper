@@ -98,6 +98,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
                 CapError::KeySlotExhausted(KeySlot(u32::try_from(s).ok()?))
             }
             (code::MISSING_INTERMEDIATE, vaddr, 0) => CapError::MissingIntermediate { vaddr },
+            (code::PHYSICAL_ALIAS, paddr, 0) => CapError::PhysicalAlias { paddr },
             _ => return None,
         })
     })();
@@ -157,6 +158,12 @@ pub enum CapError {
     MissingIntermediate {
         /// The virtual address whose walk could not proceed.
         vaddr: u64,
+    },
+    /// The alias policy rejected the mapping: the frame's physical extent
+    /// overlaps a live mapping in the target Domain.
+    PhysicalAlias {
+        /// The physical base of the conflicting live mapping.
+        paddr: u64,
     },
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
@@ -244,6 +251,7 @@ impl CapError {
             ),
             CapError::KeySlotExhausted(s) => (code::KEY_SLOT_EXHAUSTED, u64::from(s.0), 0),
             CapError::MissingIntermediate { vaddr } => (code::MISSING_INTERMEDIATE, vaddr, 0),
+            CapError::PhysicalAlias { paddr } => (code::PHYSICAL_ALIAS, paddr, 0),
             CapError::UnknownResponse {
                 status,
                 detail1,

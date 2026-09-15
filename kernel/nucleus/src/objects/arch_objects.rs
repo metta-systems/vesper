@@ -152,6 +152,14 @@ pub trait ArchObjects: Sized + 'static {
         size_bits: u8,
     ) -> Result<(), CapError>;
 
+    /// Alias-policy check: find a live leaf descriptor in the walk from
+    /// `root_paddr` whose physical extent overlaps
+    /// `[paddr, paddr + (1 << size_bits))`, returning its physical base.
+    /// The enforcement representation is physical overlap, not capability
+    /// identity: any installed page/block descriptor covering any byte of
+    /// the candidate extent conflicts, whatever capability installed it.
+    fn find_physical_overlap(root_paddr: u64, paddr: u64, size_bits: u8) -> Option<u64>;
+
     // ─── Object Creation (pool-backed arch types only) ───
     /// Create a pool-backed arch object. Frame is NOT handled here —
     /// it is created inline via `KeyEntry::new_frame()` in the retype path.

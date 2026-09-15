@@ -278,8 +278,8 @@ pub fn install_frame_pte(
     Ok(())
 }
 
-/// Clear the page/block descriptor of the frame mapping at `vaddr`, verifying
-/// it still points at `frame_paddr` first.
+/// Clear the page/block descriptor of the frame mapping at `vaddr`, verifying it
+/// still points at `frame_paddr` first.
 pub fn clear_frame_pte(
     root_paddr: u64,
     vaddr: u64,
@@ -297,4 +297,52 @@ pub fn clear_frame_pte(
     }
     leaf_table.entries[slot] = 0;
     Ok(())
+}
+
+/// Alias-policy walk: find a live leaf descriptor whose physical extent
+/// overlaps `[start, end)`, returning its physical base.
+///
+/// Table descriptors (levels 0–2) are followed recursively; block descriptors
+/// (levels 1–2) and page descriptors (level 3) are leaves whose extents are
+/// checked for interval overlap with the candidate frame extent. The check is
+/// physical, not capability-based: any live descriptor covering any byte of
+/// the candidate conflicts, whatever capability installed it and whatever
+/// frame sizes were involved.
+fn overlap_walk(table_paddr: u64, level: u8, start: u64, end: u64) -> Option<u64> {
+    // SAFETY: reached from the translation root through installed table
+    // descriptors, so the address names a live carved table.
+    let table = unsafe { raw_table(table_paddr) };
+    for &entry in &table.entries {
+        if entry & pte::VALID == 0 {
+            continue;
+        }
+        let output = entry & ENTRY_ADDR_MASK;
+        if entry & pte::DESCRIPTOR != 0 && level < 3 {
+            if let Some(hit) = overlap_walk(output, level + 1, start, end) {
+                return Some(hit);
+            }
+        } else {
+            // Leaf: level 1 blocks cover 1 GiB, level 2 blocks 2 MiB, and
+            // level 3 pages 4 KiB.
+            let leaf_size = 1_u64 << (12 + 9 * u32::from(3 - level));
+            if output < end && start < output + leaf_size {
+                return Some(output);
+            }
+        }
+    }
+    None
+}
+
+/// Find a live descriptor in the walk from `root_paddr` whose physical extent
+/// overlaps the frame extent `[paddr, paddr + (1 << size_bits))`, returning
+/// the conflicting descriptor's physical base.
+///
+/// Enforces the selected alias policy — no two virtual addresses for
+/// overlapping physical backing within one Domain — ahead of the hardware
+/// transition, so a rejected mapping leaves every table and record unchanged.
+pub fn find_physical_overlap(root_paddr: u64, paddr: u64, size_bits: u8) -> Option<u64> {
+    // Frame sizes are architecture-validated upstream
+    // (`validate_frame_size`), so the extent cannot wrap the address space.
+    let end = paddr + (1_u64 << size_bits);
+    overlap_walk(root_paddr, 0, paddr, end)
 }

@@ -35,3 +35,7 @@ pub const KEY_SLOT_EXHAUSTED: u64 = 28;
 /// A mapping walk reached an absent intermediate page table.
 /// Detail 1 is the faulting virtual address; detail 2 is zero.
 pub const MISSING_INTERMEDIATE: u64 = 29;
+/// The mapping violates the alias policy: the frame's physical extent
+/// overlaps a live mapping in the target Domain. Detail 1 is the physical
+/// base of the conflicting live mapping; detail 2 is zero.
+pub const PHYSICAL_ALIAS: u64 = 30;
