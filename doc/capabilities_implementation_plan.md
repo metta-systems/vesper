@@ -472,7 +472,7 @@ Reference: [communication](nucleus_capabilities.md#communication-and-deferred-co
 
 ### Completion foundation
 
-- [ ] Choose message/register or IPC-buffer transport, output/clobber declarations, message capacity, status/error shape, and supported operation set (D7).
+- [x] Choose message/register or IPC-buffer transport, output/clobber declarations, message capacity, status/error shape, and supported operation set (D7). (2026-09-16: register transport with hybrid per-domain IPC-buffer spill; dedicated-word layout preserving the sketched label + five data words + one optional transfer slot; extended outputs `x1..x7` for IPC completions, ordinary two-word results unchanged; zero-or-one transferred capability; blocking operations return only on completion/cancellation, no blocked status; foundation + Notification/EventCount staged before Endpoint/Reply wide returns. Recorded in the contract's communication section and D7 register entry; implementation of the transport, buffer, and primitives remains open.)
 - [ ] Define open/closed wait identity, separate send and receive/reply timeouts, clock/units, no-wait/infinite encodings, cancellation, and late completion.
 - [ ] Apply the adopted rejected-before-admission / cancelled-before-commit / completed / outcome-unknown vocabulary to each local operation's commit guarantees; define wire representations separately. Keep remote/distributed protocols and policy out of the nucleus.
 - [ ] Implement explicit completed/blocked/handoff outcomes with saved pending invocation state; schedule only after relevant borrows/guards have ended.
