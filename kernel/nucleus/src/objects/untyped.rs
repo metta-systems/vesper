@@ -142,7 +142,7 @@ fn create_object<A: ArchObjects>(
 fn object_size<A: ArchObjects>(obj_type: ObjectType, size_bits: u8) -> Result<usize, CapError> {
     match obj_type {
         // Variable-size region types
-        ObjectType::Buffer | ObjectType::Untyped => {
+        ObjectType::Untyped => {
             if size_bits > 30 {
                 Err(CapError::InvalidSize)
             } else {

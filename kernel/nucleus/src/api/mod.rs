@@ -131,11 +131,6 @@ fn core_invoke<A: ArchObjects>(
         //     api::time::invoke(time, entry.rights(), op, args, nucleus)
         // }
 
-        // CoreType::Buffer => {
-        //     let buf = entry.as_object_mut::<Buffer>()?;
-        //     api::buffer::invoke(buf, entry.rights(), op, args)
-        // }
-
         // CoreType::Reply => {
         //     let reply = entry.as_object_mut::<Reply>()?;
         //     api::reply::invoke(reply, op, args, nucleus)

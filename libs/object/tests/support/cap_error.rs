@@ -250,8 +250,7 @@ fn unsupported_types_decode_only_known_local_indices() {
         (5, CoreType::Endpoint),
         (6, CoreType::Notification),
         (7, CoreType::EventCount),
-        (8, CoreType::Buffer),
-        (9, CoreType::Reply),
+        (8, CoreType::Reply),
         (127, CoreType::DebugConsole),
     ];
     let arch_types = [

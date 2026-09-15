@@ -132,10 +132,8 @@ define_object_types! {
         Notification => NOTIFICATION = 6,
         /// Monotonic event count.
         EventCount => EVENT_COUNT = 7,
-        /// Shareable buffer.
-        Buffer => BUFFER = 8,
         /// One-shot reply authority.
-        Reply => REPLY = 9,
+        Reply => REPLY = 8,
         /// Debug console; availability is a separate policy decision.
         DebugConsole => DEBUG_CONSOLE = 127,
     }

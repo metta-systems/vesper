@@ -20,7 +20,6 @@
 // │  • EventCount                    • ASIDPool (ASID allocation)       │
 // │  • Endpoint                      • ASID (address space ID)          │
 // │  • Time                          • IOSpace (SMMU for devices)       │
-// │  • Buffer                                                           │
 // │  • Reply                       x86_64:                              │
 // │                                  • Frame (4KB, 2MB, 1GB pages)      │
 // │                                  • PageTable (PML4/PDPT/PD/PT)      │

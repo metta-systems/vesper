@@ -262,7 +262,6 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     //     ObjectType::Endpoint => api::endpoint::invoke(cap, op, args),
     //     ObjectType::Notification => api::notification::invoke(cap, op, args),
     //     ObjectType::EventCount => api::event_count::invoke(cap, op, args),
-    //     ObjectType::Buffer => api::buffer::invoke(cap, op, args), // map, unmap, query
     //     ObjectType::None => Err(SyscallError::InvalidSlot),
     // };
 

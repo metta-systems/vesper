@@ -1324,9 +1324,11 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         // Zero BSS portion
         write_bytes(&mut dst[file_size..], 0, dst.len() - file_size);
 
-        // Create BufferCap for this region and add to init's cspace -- FIXME: This is how we pass the process images to init domain
-        let buffer_cap = BufferCap::create_from_untyped(segment_untyped, flags.into());
-        domain.cspace().insert_at_next_free(buffer_cap);
+        // Pass the segment region to init as Untyped/Frame capabilities -- FIXME: This is how we pass
+        // the process images to init domain. Buffer is a userspace/libOS construct (selected
+        // 2026-09-15): the kernel hands over memory via Untyped/Frame capabilities only.
+        // let segment_cap = FrameCap::create_from_untyped(segment_untyped, flags.into());
+        // domain.cspace().insert_at_next_free(segment_cap);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1439,11 +1441,13 @@ fn delegate_module_caps_to_init(init_domain: &DomainRef, boot_info: &BootInfo) {
             continue;
         }
 
-        // Create a read-only buffer cap for the module's memory - FIXME: this is how process images are passed on
-        let module_cap =
-            BufferCap::create_for_phys_range(module.phys_start, module.size, Rights::READ);
+        // Pass the module's memory to init as a read-only Untyped/Frame capability -- FIXME: this
+        // is how process images are passed on. Buffer is a userspace/libOS construct (selected
+        // 2026-09-15): the kernel hands over memory via Untyped/Frame capabilities only.
+        // let module_cap =
+        //     FrameCap::create_for_phys_range(module.phys_start, module.size, Rights::READ);
 
-        cspace.insert(slot, module_cap);
+        // cspace.insert(slot, module_cap);
 
         // Also store module metadata in a well-known location
         // (Init can query its DCB for module info)

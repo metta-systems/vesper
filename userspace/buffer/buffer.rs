@@ -2,6 +2,15 @@
 // == Public user interface, usable from userspace ==
 // ==================================================
 
+// Buffer is a userspace/libOS construct over frame capabilities (selected
+// 2026-09-15, see doc/nucleus_capabilities.md): there is no kernel Buffer
+// object, handler, or pool, and the Buffer kind and its ID were removed from
+// the shared core catalogue the same day (Reply took the freed 8). This sketch
+// is excluded from compilation and must be reworked onto frame capabilities —
+// its `Key<Buffer>` kernel-kind references no longer exist in the ABI — before
+// it can compile; the intended MappedSlice ownership design is recorded in
+// doc/lifetime-and-authority.md section 5.
+
 /// Buffer capability with permission tracking in type system
 pub struct BufferKey<P: Permission> {
     key: Key<Buffer>,

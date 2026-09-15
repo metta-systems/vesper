@@ -202,7 +202,7 @@ mod tests {
     }
 
     // Literal ABI oracles: do not derive these IDs from the production catalogue.
-    const CORE_TYPES: [(CoreType, ObjectType, u8); 11] = [
+    const CORE_TYPES: [(CoreType, ObjectType, u8); 10] = [
         (CoreType::Null, ObjectType::NULL, 0),
         (CoreType::Untyped, ObjectType::UNTYPED, 1),
         (CoreType::Domain, ObjectType::DOMAIN, 2),
@@ -211,8 +211,7 @@ mod tests {
         (CoreType::Endpoint, ObjectType::ENDPOINT, 5),
         (CoreType::Notification, ObjectType::NOTIFICATION, 6),
         (CoreType::EventCount, ObjectType::EVENT_COUNT, 7),
-        (CoreType::Buffer, ObjectType::BUFFER, 8),
-        (CoreType::Reply, ObjectType::REPLY, 9),
+        (CoreType::Reply, ObjectType::REPLY, 8),
         (CoreType::DebugConsole, ObjectType::DEBUG_CONSOLE, 127),
     ];
 

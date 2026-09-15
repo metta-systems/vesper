@@ -242,7 +242,7 @@ The earlier question about applications deriving directly is resolved: granting 
 
 ### Current code and limitation
 
-Included [`DcbView`](../libs/object/src/domain.rs) constructs references into shared mapped memory. The [`Buffer` wrapper](../libs/object/src/buffer.rs), intended functionality currently excluded from compilation, creates ordinary slices.
+Included [`DcbView`](../libs/object/src/domain.rs) constructs references into shared mapped memory. The [`Buffer` wrapper](../userspace/buffer/buffer.rs), intended functionality currently excluded from compilation, creates ordinary slices; it moved out of `libs/object` when Buffer was selected as a userspace/libOS construct (2026-09-15).
 
 “Direct references” means `&[u8]`, `&mut [u8]`, or `&DomainControlBlock` produced by these userspace wrappers after mapping—not raw pointers granting authority across the kernel boundary. The control interface remains capability-based; subsequent loads/stores are not capability invocations and cannot return the inconsistency status.
 
@@ -369,7 +369,7 @@ These terms are adopted for discussion and operation contracts; they are not new
 
 The excluded [`Frame` handler](../kernel/nucleus/src/api/arch/frame.rs) records mapping state without implementing the hardware transition. Included inline region mapping state in [`KeyEntry`](../kernel/nucleus/src/api/key_entry.rs) lacks enough context for general teardown.
 
-The excluded [`Untyped` retype sketch](../kernel/nucleus/src/objects/untyped.rs) advances its watermark before subsequent fallible creation/insertion. The excluded Buffer handler can lose bookkeeping around partial map/unmap failures.
+The excluded [`Untyped` retype sketch](../kernel/nucleus/src/objects/untyped.rs) advances its watermark before subsequent fallible creation/insertion. The excluded Buffer handler (which could lose bookkeeping around partial map/unmap failures) was removed on 2026-09-15 when Buffer was selected as a userspace/libOS construct; the kernel maps Frames only.
 
 **Recommendation:** durable mapping identity, transactional creation, and retained partial-teardown bookkeeping. Before reuse, complete required CPU TLB/device translation synchronization and sanitize fresh ordinary RAM crossing protection boundaries. Intentional content-preserving sharing and device memory require distinct treatment.
 

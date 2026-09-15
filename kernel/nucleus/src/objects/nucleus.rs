@@ -26,7 +26,6 @@ use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 // │  │   ├── event_counts: ObjectPool<EventCount>                       │
 // │  │   ├── endpoints: ObjectPool<Endpoint>                            │
 // │  │   ├── time_slices: ObjectPool<TimeSlice>                         │
-// │  │   ├── buffers: ObjectPool<Buffer>                                │
 // │  │   ├── replies: ObjectPool<Reply>                                 │
 // │  │   │                                                              │
 // │  │   └── arch: ArchPools<A>                                         │
@@ -54,7 +53,6 @@ pub struct NucleusPools<A: ArchObjects> {
     // pub event_counts: ObjectPool<EventCount>,
     // pub endpoints: ObjectPool<Endpoint>,
     // pub time_slices: ObjectPool<TimeSlice>,
-    // pub buffers: ObjectPool<Buffer>,
     // pub replies: ObjectPool<Reply>,
 
     // ─── Architecture-Specific Pools ───
