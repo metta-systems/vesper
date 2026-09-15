@@ -17,8 +17,16 @@ mod key_identity;
 pub mod domain_client;
 
 #[cfg(test)]
+#[path = "../src/frame.rs"]
+pub mod frame_client;
+
+#[cfg(test)]
 #[path = "../src/key_table.rs"]
 pub mod key_table_client;
+
+#[cfg(test)]
+#[path = "../src/page_table.rs"]
+pub mod page_table_client;
 
 #[cfg(test)]
 #[path = "../src/untyped.rs"]
@@ -145,6 +153,77 @@ mod tests {
             KeyTableOp::try_from(u32::MAX),
             Err(CapError::InvalidOperation)
         ));
+    }
+
+    #[test]
+    fn frame_operations_match_existing_wire_ids() {
+        use vesper_objects::frame::FrameOp;
+
+        assert_eq!(FrameOp::Map as u8, 0);
+        assert_eq!(FrameOp::Map as u32, 0);
+        assert_eq!(FrameOp::Unmap as u8, 1);
+        assert_eq!(FrameOp::GetAddress as u8, 2);
+        assert_eq!(FrameOp::Remap as u8, 3);
+        for value in [4, 255, 256, 1 << 32, u64::MAX] {
+            assert!(matches!(
+                FrameOp::try_from(value),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn page_table_operations_match_existing_wire_ids() {
+        use vesper_objects::page_table::PageTableOp;
+
+        assert_eq!(PageTableOp::Map as u8, 0);
+        assert_eq!(PageTableOp::Map as u32, 0);
+        assert_eq!(PageTableOp::Unmap as u8, 1);
+        for value in [2, 255, 256, 1 << 32, u64::MAX] {
+            assert!(matches!(
+                PageTableOp::try_from(value),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn core_and_arch_types_display_their_variant_names() {
+        use std::fmt::Write as _;
+
+        fn name(kind: impl core::fmt::Display) -> String {
+            let mut out = String::new();
+            write!(out, "{kind}").unwrap();
+            out
+        }
+
+        for (kind, expected) in [
+            (CoreType::Null, "Null"),
+            (CoreType::Untyped, "Untyped"),
+            (CoreType::Domain, "Domain"),
+            (CoreType::KeyTable, "KeyTable"),
+            (CoreType::Time, "Time"),
+            (CoreType::Endpoint, "Endpoint"),
+            (CoreType::Notification, "Notification"),
+            (CoreType::EventCount, "EventCount"),
+            (CoreType::Reply, "Reply"),
+            (CoreType::DebugConsole, "DebugConsole"),
+        ] {
+            assert_eq!(name(kind), expected);
+        }
+        for (kind, expected) in [
+            (ArchType::Frame, "Frame"),
+            (ArchType::PageTable, "PageTable"),
+            (ArchType::VSpace, "VSpace"),
+            (ArchType::ASIDPool, "ASIDPool"),
+            (ArchType::ASID, "ASID"),
+            (ArchType::IOSpace, "IOSpace"),
+            (ArchType::IOPort, "IOPort"),
+            (ArchType::IRQHandler, "IRQHandler"),
+            (ArchType::IRQControl, "IRQControl"),
+        ] {
+            assert_eq!(name(kind), expected);
+        }
     }
 
     #[test]

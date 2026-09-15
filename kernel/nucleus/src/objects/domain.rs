@@ -31,6 +31,15 @@ pub struct Domain {
     /// Placement of the table capability in the DCB's fixed slots is follow-up
     /// (D5).
     pub keytable_addr: u64,
+    /// Physical address of this Domain's translation-root page table, if a
+    /// root has been installed (mapping context, selected 2026-09-15).
+    ///
+    /// The root is a Retype-carved `PageTable` installed through
+    /// `PageTable.Map` with this Domain's capability as the parent. ASID
+    /// assignment is deferred (capability-protected ASIDPool/ASID); the field
+    /// records the table's physical address so the hardware walk can be
+    /// reached through the direct map.
+    pub translation_root: Option<u64>,
 }
 
 // Verify size for cache alignment

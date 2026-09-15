@@ -77,7 +77,10 @@ use {
 };
 
 #[cfg(feature = "debug_kernel")]
-use libobject::{CapError, DebugConsoleKey, InvalidKeyReason, KeyTableKey, RawKey, UntypedKey};
+use libobject::{
+    CapError, DebugConsoleKey, FrameKey, InvalidKeyReason, KeyTableKey, PageTableKey, RawKey,
+    UntypedKey,
+};
 
 unsafe extern "C" {
     static __INIT_START: UnsafeCell<()>;
@@ -622,9 +625,13 @@ pub fn kickstart_run() -> ! {
     let Ok(boot_payload) = boot_untyped.as_region_mut() else {
         panic!("boot Untyped is not a region")
     };
-    let Ok((nucleus_ptr, keytable_addr)) =
-        build_initial_nucleus::<ArchObjectsImpl>(boot_payload, &PoolCapacities { domains: 1 })
-    else {
+    let Ok((nucleus_ptr, keytable_addr)) = build_initial_nucleus::<ArchObjectsImpl>(
+        boot_payload,
+        &PoolCapacities {
+            domains: 1,
+            page_tables: 16,
+        },
+    ) else {
         panic!("failed to build the initial nucleus")
     };
 
@@ -635,15 +642,19 @@ pub fn kickstart_run() -> ! {
 
     // Allocate the boot Domain in the carved pool; its KeyTable was carved and
     // initialized kernel-privately by build_initial_nucleus.
-    let _dom_id = nucleus
+    let boot_domain_id = nucleus
         .pools
         .domains
-        .allocate(Domain { keytable_addr })
+        .allocate(Domain {
+            keytable_addr,
+            translation_root: None,
+        })
         .expect("no boot Domain slot")
         .0;
 
-    // Install the boot Domain's self-table capability and the boot Untyped as
-    // the first grants.
+    // Install the boot Domain's self-table capability, the boot Domain itself
+    // (the bootstrap-era mapping context for `PageTable.Map`/`Frame.Map`), and
+    // the boot Untyped as the first grants.
     // SAFETY: keytable_addr names the freshly carved, live boot KeyTable.
     let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
     let self_table_key = boot_table
@@ -659,6 +670,12 @@ pub fn kickstart_run() -> ! {
         .unwrap_or_else(|failure| {
             panic!("boot Untyped install failed: {:?}", failure.error.code())
         });
+    let _boot_domain_key = boot_table
+        .insert(
+            KeySlot::SELF_DOMAIN,
+            KeyEntry::new::<Domain>(boot_domain_id, Rights::all(), 0),
+        )
+        .unwrap_or_else(|failure| panic!("boot Domain install failed: {:?}", failure.error.code()));
 
     // Install the debug console grant (debug_kernel) and use it below.
     #[cfg(feature = "debug_kernel")]
@@ -959,7 +976,7 @@ pub fn kickstart_run() -> ! {
                 .as_frame()
                 .unwrap_or_else(|_| panic!("frame entry is not a Frame cap"));
             assert_eq!(frame.size_bits, 12);
-            assert!(!frame.is_device);
+            assert!(!frame.is_device());
             frame.paddr
         };
         assert_eq!(
@@ -1140,6 +1157,384 @@ pub fn kickstart_run() -> ! {
                 panic!("misaligned-base CopyDerive failed: {:?}", error.code())
             });
         assert_eq!(derived_misaligned.slot(), KeySlot(1));
+
+        // ─────────────────────────────────────────────────────────────────
+        // Mapping vertical slice (2026-09-15): carved page tables, real
+        // descriptor installation, mapping bookkeeping, and teardown.
+        // ─────────────────────────────────────────────────────────────────
+
+        // The boot Domain capability (installed at the well-known self slot)
+        // is the bootstrap-era mapping context.
+        let boot_domain_key = RawKey::new(KeySlot::SELF_DOMAIN, 1);
+
+        // PageTable Retype: a fixed 4 KiB carve; other size_bits are rejected
+        // with the architecture's own error, leaving the slot free.
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::PAGE_TABLE,
+                13,
+                1,
+                &self_table,
+                KeySlot(20).0,
+                Rights::all(),
+            ),
+            Err(CapError::InvalidSize(13))
+        ));
+        let root_pt_key = untyped
+            .retype(
+                ObjectType::PAGE_TABLE,
+                12,
+                1,
+                &self_table,
+                KeySlot(20).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("root PageTable Retype failed: {:?}", error.code()));
+        assert_eq!(root_pt_key.slot(), KeySlot(20));
+
+        // The carved table is sanitized (zeroed) at retype: stale descriptors
+        // must never leak prior contents into hardware walks.
+        {
+            // SAFETY: keytable_addr names the live boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let id = boot_table
+                .lookup(root_pt_key)
+                .unwrap_or_else(|_| panic!("root PageTable entry missing"))
+                .object_id()
+                .unwrap_or_else(|_| panic!("root PageTable entry has no identity"));
+            let paddr = nucleus
+                .pools
+                .arch
+                .page_tables
+                .get_live(usize::from(id.index))
+                .unwrap_or_else(|| panic!("root PageTable metadata missing"))
+                .paddr;
+            assert_eq!(paddr % 4096, 0, "the table carve must be 4 KiB-aligned");
+            // SAFETY: the table lies in the boot Untyped's committed range;
+            // the direct map is live.
+            let words = unsafe {
+                slice::from_raw_parts(PhysAddr::new(paddr).user_to_kernel().as_ptr::<u64>(), 512)
+            };
+            assert!(
+                words.iter().all(|word| *word == 0),
+                "page-table contents must be zeroed at retype"
+            );
+        }
+
+        // Carve the rest of the chain toward vaddr 0x1000_0000.
+        let l1_pt_key = untyped
+            .retype(
+                ObjectType::PAGE_TABLE,
+                12,
+                1,
+                &self_table,
+                KeySlot(21).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("L1 PageTable Retype failed: {:?}", error.code()));
+        let l2_pt_key = untyped
+            .retype(
+                ObjectType::PAGE_TABLE,
+                12,
+                1,
+                &self_table,
+                KeySlot(22).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("L2 PageTable Retype failed: {:?}", error.code()));
+        let l3_pt_key = untyped
+            .retype(
+                ObjectType::PAGE_TABLE,
+                12,
+                1,
+                &self_table,
+                KeySlot(23).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("L3 PageTable Retype failed: {:?}", error.code()));
+
+        // Install the root into the boot Domain (vaddr must be zero).
+        let root_pt = PageTableKey::from_key(root_pt_key);
+        root_pt
+            .map(boot_domain_key, 0)
+            .unwrap_or_else(|error| panic!("root PageTable.Map failed: {:?}", error.code()));
+        // A second root is rejected: the Domain's root slot is occupied.
+        assert!(matches!(
+            root_pt.map(boot_domain_key, 0),
+            Err(CapError::AlreadyMapped)
+        ));
+        {
+            let domain = nucleus
+                .pools
+                .domains
+                .get_live(0)
+                .unwrap_or_else(|| panic!("boot Domain missing"));
+            assert!(domain.translation_root.is_some());
+        }
+
+        // Build the intermediate chain: L1 under the root, L2 under L1,
+        // L3 under L2, all selecting the slots for vaddr 0x1000_0000.
+        let l1_pt = PageTableKey::from_key(l1_pt_key);
+        l1_pt
+            .map(root_pt_key, 0x1000_0000)
+            .unwrap_or_else(|error| panic!("L1 PageTable.Map failed: {:?}", error.code()));
+        let l2_pt = PageTableKey::from_key(l2_pt_key);
+        l2_pt
+            .map(l1_pt_key, 0x1000_0000)
+            .unwrap_or_else(|error| panic!("L2 PageTable.Map failed: {:?}", error.code()));
+        let l3_pt = PageTableKey::from_key(l3_pt_key);
+        l3_pt
+            .map(l2_pt_key, 0x1000_0000)
+            .unwrap_or_else(|error| panic!("L3 PageTable.Map failed: {:?}", error.code()));
+
+        // Mapping a table into itself is rejected as an alias.
+        assert!(matches!(
+            l1_pt.map(l1_pt_key, 0x1000_0000),
+            Err(CapError::InvalidOperation)
+        ));
+
+        // Frame.Map with a missing intermediate fails with the faulting vaddr.
+        let frame = FrameKey::from_key(frame_key);
+        assert!(matches!(
+            frame.map(
+                boot_domain_key,
+                0x2000_0000,
+                Rights(Rights::READ | Rights::WRITE),
+                0
+            ),
+            Err(CapError::MissingIntermediate { vaddr: 0x2000_0000 })
+        ));
+        // A misaligned virtual address is rejected with the frame's size.
+        assert!(matches!(
+            frame.map(
+                boot_domain_key,
+                0x1000_0001,
+                Rights(Rights::READ | Rights::WRITE),
+                0
+            ),
+            Err(CapError::InvalidSize(12))
+        ));
+        // Unsupported attributes are rejected.
+        assert!(matches!(
+            frame.map(
+                boot_domain_key,
+                0x1000_0000,
+                Rights(Rights::READ | Rights::WRITE),
+                1
+            ),
+            Err(CapError::InvalidOperation)
+        ));
+
+        // Real mapping: the walk installs the page descriptor at level 3.
+        frame
+            .map(
+                boot_domain_key,
+                0x1000_0000,
+                Rights(Rights::READ | Rights::WRITE),
+                0,
+            )
+            .unwrap_or_else(|error| panic!("Frame.Map failed: {:?}", error.code()));
+        // A second mapping of the same capability is rejected.
+        assert!(matches!(
+            frame.map(
+                boot_domain_key,
+                0x1000_0000,
+                Rights(Rights::READ | Rights::WRITE),
+                0
+            ),
+            Err(CapError::AlreadyMapped)
+        ));
+
+        // Verify the descriptor chain by hand through the direct map.
+        let root_paddr = nucleus
+            .pools
+            .domains
+            .get_live(0)
+            .unwrap_or_else(|| panic!("boot Domain missing"))
+            .translation_root
+            .expect("translation root missing");
+        {
+            const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
+            // SAFETY: the tables are carved RAM in the boot Untyped's committed
+            // range; the direct map is live.
+            let read_entry = |paddr: u64, slot: usize| unsafe {
+                *(PhysAddr::new(paddr).user_to_kernel().as_ptr::<u64>()).add(slot)
+            };
+            let l0e = read_entry(root_paddr, 0);
+            assert!(
+                l0e & 0b11 == 0b11,
+                "L0 entry must be a valid table descriptor"
+            );
+            let l1_paddr = l0e & ADDR_MASK;
+            let l1e = read_entry(l1_paddr, 0);
+            assert!(
+                l1e & 0b11 == 0b11,
+                "L1 entry must be a valid table descriptor"
+            );
+            let l2_paddr = l1e & ADDR_MASK;
+            let l2e = read_entry(l2_paddr, 128);
+            assert!(
+                l2e & 0b11 == 0b11,
+                "L2 entry must be a valid table descriptor"
+            );
+            let l3_paddr = l2e & ADDR_MASK;
+            let pte = read_entry(l3_paddr, 0);
+            assert_eq!(pte & ADDR_MASK, frame_paddr, "the PTE must name the frame");
+            assert!(pte & 0b1 != 0, "the PTE must be valid");
+            assert!(pte & 0b10 != 0, "a level-3 entry must be a page descriptor");
+            assert!(pte & (1 << 10) != 0, "the access flag must be set");
+            assert_eq!(
+                pte & (0b11 << 6),
+                0b01 << 6,
+                "a READ|WRITE mapping must be user read/write"
+            );
+            assert!(
+                pte & (1 << 53) != 0 && pte & (1 << 54) != 0,
+                "execute must not be grantable yet"
+            );
+        }
+
+        // The frame entry records the full mapping identity.
+        {
+            // SAFETY: keytable_addr names the live boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let f = boot_table
+                .lookup(frame_key)
+                .unwrap_or_else(|_| panic!("frame entry missing"))
+                .as_frame()
+                .unwrap_or_else(|_| panic!("frame entry is not a Frame cap"));
+            assert!(f.is_mapped());
+            assert_eq!(f.mapping().unwrap().vaddr, 0x1000_0000);
+        }
+
+        // CopyDerive of a mapped frame yields an unmapped derived capability:
+        // Copy is capability-only derivation with no mapping association.
+        let derived_frame_key = self_table
+            .copy_derive(
+                frame_key,
+                &self_table,
+                KeySlot(12).0,
+                Rights(Rights::READ | Rights::WRITE),
+            )
+            .unwrap_or_else(|error| panic!("frame CopyDerive failed: {:?}", error.code()));
+        assert!(matches!(
+            FrameKey::from_key(derived_frame_key).unmap(),
+            Err(CapError::NotMapped)
+        ));
+
+        // A 2 MiB frame installs a block descriptor at level 2 in the same
+        // chain (a distinct slot, read-only).
+        let large_frame = FrameKey::from_key(large_frame_key);
+        large_frame
+            .map(boot_domain_key, 0x1020_0000, Rights(Rights::READ), 0)
+            .unwrap_or_else(|error| panic!("2 MiB Frame.Map failed: {:?}", error.code()));
+        {
+            const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
+            // SAFETY: see above.
+            let read_entry = |paddr: u64, slot: usize| unsafe {
+                *(PhysAddr::new(paddr).user_to_kernel().as_ptr::<u64>()).add(slot)
+            };
+            let l0e = read_entry(root_paddr, 0);
+            let l1e = read_entry(l0e & ADDR_MASK, 0);
+            let block = read_entry(l1e & ADDR_MASK, 129);
+            assert_eq!(block & ADDR_MASK, large_frame_paddr);
+            assert!(block & 0b1 != 0, "the block descriptor must be valid");
+            assert!(
+                block & 0b10 == 0,
+                "a level-2 entry must be a block descriptor"
+            );
+            assert_eq!(
+                block & (0b11 << 6),
+                0b11 << 6,
+                "a READ-only mapping must be user read-only"
+            );
+        }
+
+        // Unmapping a non-empty table is rejected: L3 still holds the page.
+        assert!(matches!(l3_pt.unmap(), Err(CapError::InvalidOperation)));
+        // L2 still holds the L3 table descriptor.
+        assert!(matches!(l2_pt.unmap(), Err(CapError::InvalidOperation)));
+
+        // Frame.Unmap clears the descriptor and the record.
+        frame
+            .unmap()
+            .unwrap_or_else(|error| panic!("Frame.Unmap failed: {:?}", error.code()));
+        assert!(matches!(frame.unmap(), Err(CapError::NotMapped)));
+        {
+            const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
+            // SAFETY: see above.
+            let read_entry = |paddr: u64, slot: usize| unsafe {
+                *(PhysAddr::new(paddr).user_to_kernel().as_ptr::<u64>()).add(slot)
+            };
+            let l0e = read_entry(root_paddr, 0);
+            let l1e = read_entry(l0e & ADDR_MASK, 0);
+            let l2e = read_entry(l1e & ADDR_MASK, 128);
+            assert_eq!(read_entry(l2e & ADDR_MASK, 0), 0, "the PTE must be cleared");
+        }
+        // The 2 MiB block clears too.
+        large_frame
+            .unmap()
+            .unwrap_or_else(|error| panic!("2 MiB Frame.Unmap failed: {:?}", error.code()));
+
+        // Now the empty tables unmap cleanly, innermost first.
+        l3_pt
+            .unmap()
+            .unwrap_or_else(|error| panic!("L3 PageTable.Unmap failed: {:?}", error.code()));
+        l2_pt
+            .unmap()
+            .unwrap_or_else(|error| panic!("L2 PageTable.Unmap failed: {:?}", error.code()));
+        l1_pt
+            .unmap()
+            .unwrap_or_else(|error| panic!("L1 PageTable.Unmap failed: {:?}", error.code()));
+        root_pt
+            .unmap()
+            .unwrap_or_else(|error| panic!("root PageTable.Unmap failed: {:?}", error.code()));
+        assert!(matches!(root_pt.unmap(), Err(CapError::NotMapped)));
+        {
+            let domain = nucleus
+                .pools
+                .domains
+                .get_live(0)
+                .unwrap_or_else(|| panic!("boot Domain missing"));
+            assert_eq!(domain.translation_root, None);
+        }
+
+        // Page-table pool accounting: a batch that cannot fit releases its
+        // partially allocated metadata slots, and a later smaller batch
+        // succeeds (capacity 16, four tables carved so far).
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::PAGE_TABLE,
+                12,
+                13,
+                &self_table,
+                KeySlot(24).0,
+                Rights::all(),
+            ),
+            Err(CapError::PoolExhausted)
+        ));
+        let refill = untyped
+            .retype(
+                ObjectType::PAGE_TABLE,
+                12,
+                12,
+                &self_table,
+                KeySlot(24).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("refill PageTable Retype failed: {:?}", error.code()));
+        assert_eq!(refill.slot(), KeySlot(24));
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::PAGE_TABLE,
+                12,
+                1,
+                &self_table,
+                KeySlot(36).0,
+                Rights::all(),
+            ),
+            Err(CapError::PoolExhausted)
+        ));
     }
 
     let (_, privilege_level) = libexception::current_privilege_level();

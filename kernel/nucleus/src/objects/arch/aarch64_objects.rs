@@ -56,6 +56,46 @@ impl ArchObjects for AArch64 {
         }
     }
 
+    fn new_page_table(paddr: u64) -> AArch64PageTable {
+        AArch64PageTable::new(paddr)
+    }
+
+    fn install_table_entry(
+        parent_paddr: u64,
+        parent_level: u8,
+        vaddr: u64,
+        child_paddr: u64,
+    ) -> Result<u16, CapError> {
+        super::page_table::install_table_entry(parent_paddr, parent_level, vaddr, child_paddr)
+    }
+
+    fn clear_table_entry(parent_paddr: u64, slot: u16, child_paddr: u64) -> Result<(), CapError> {
+        super::page_table::clear_table_entry(parent_paddr, slot, child_paddr)
+    }
+
+    fn page_table_is_empty(paddr: u64) -> bool {
+        super::page_table::table_is_empty(paddr)
+    }
+
+    fn install_frame_pte(
+        root_paddr: u64,
+        vaddr: u64,
+        frame_paddr: u64,
+        size_bits: u8,
+        writable: bool,
+    ) -> Result<(), CapError> {
+        super::page_table::install_frame_pte(root_paddr, vaddr, frame_paddr, size_bits, writable)
+    }
+
+    fn clear_frame_pte(
+        root_paddr: u64,
+        vaddr: u64,
+        frame_paddr: u64,
+        size_bits: u8,
+    ) -> Result<(), CapError> {
+        super::page_table::clear_frame_pte(root_paddr, vaddr, frame_paddr, size_bits)
+    }
+
     fn create_arch_object(
         arch_type: ArchType,
         phys_addr: PhysAddr,
@@ -103,33 +143,9 @@ impl ArchObjects for AArch64 {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Frame Operations
+    // Frame and PageTable operations are dispatched directly to their API
+    // handlers; see `crate::api::arch::{frame,page_table}`.
     // ─────────────────────────────────────────────────────────────────
-
-    fn invoke_frame(
-        entry: &mut KeyEntry,
-        op: u32,
-        args: &[u64; 6],
-        nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError> {
-        // crate::api::arch::frame::invoke(entry, op, args, nucleus)
-        Err(CapError::InvalidOperation)
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Page Table Operations
-    // ─────────────────────────────────────────────────────────────────
-
-    fn invoke_page_table(
-        pt: &mut AArch64PageTable,
-        rights: Rights,
-        op: u32,
-        args: &[u64; 6],
-        nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError> {
-        // crate::api::arch::page_table::invoke(pt, rights, op, args)
-        Err(CapError::InvalidOperation)
-    }
 
     // ─────────────────────────────────────────────────────────────────
     // VSpace Operations

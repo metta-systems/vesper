@@ -4,33 +4,29 @@ use crate::objects::{ArchObjects, ObjectPool};
 // ARCHITECTURE-SPECIFIC OBJECT POOLS
 // ═══════════════════════════════════════════════════════════════════
 
-/// Pools for architecture-specific objects
+/// Pools for architecture-specific objects.
+///
+/// Pool backing is explicitly carved and charged (boot Untyped or Retype), never
+/// a silent second source of kernel memory. The page-table pool holds only
+/// kernel metadata (carve address, installation record); the 4 KiB tables
+/// themselves are Retype carves charged to the invoking Untyped.
 pub struct ArchPools<A: ArchObjects> {
-    // pub frames: ObjectPool<A::Frame>,
-    // pub page_tables: ObjectPool<A::PageTable>,
-    // pub vspaces: ObjectPool<A::VSpace>,
-    // pub asid_pools: ObjectPool<A::ASIDPool>,
-    // pub asids: ObjectPool<A::ASID>,
-    _marker: core::marker::PhantomData<A>, // FIXME temp
+    pub page_tables: ObjectPool<A::PageTable>,
+    // Pools for VSpace/ASIDPool/ASID remain deferred with their kinds: no
+    // creatable arch kind other than Frame and PageTable is allowlisted, so
+    // no backing is carved for them yet.
+    pub _marker: core::marker::PhantomData<A>,
 }
 
 impl<A: ArchObjects> ArchPools<A> {
-    /// Create pools backed by untyped memory
+    /// Create the arch pools with an explicitly carved page-table pool.
     ///
     /// # Safety
-    /// Memory regions must be valid and non-overlapping
-    pub unsafe fn new(// frame_mem: (*mut u8, usize),
-        // pt_mem: (*mut u8, usize),
-        // vspace_mem: (*mut u8, usize),
-        // asid_pool_mem: (*mut u8, usize),
-        // asid_mem: (*mut u8, usize),
-    ) -> Self {
+    /// `page_tables` must be backed by memory exclusively owned by this pool:
+    /// carved from an Untyped's committed range and never freed.
+    pub unsafe fn new(page_tables: ObjectPool<A::PageTable>) -> Self {
         Self {
-            // frames: unsafe { ObjectPool::new(frame_mem.0, frame_mem.1) },
-            // page_tables: unsafe { ObjectPool::new(pt_mem.0, pt_mem.1) },
-            // vspaces: unsafe { ObjectPool::new(vspace_mem.0, vspace_mem.1) },
-            // asid_pools: unsafe { ObjectPool::new(asid_pool_mem.0, asid_pool_mem.1) },
-            // asids: unsafe { ObjectPool::new(asid_mem.0, asid_mem.1) },
+            page_tables,
             _marker: core::marker::PhantomData,
         }
     }

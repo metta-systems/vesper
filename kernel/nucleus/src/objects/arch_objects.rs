@@ -45,6 +45,40 @@ impl FrameSize {
     }
 }
 
+/// Installation record of a page table (architecture-neutral).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PtParent {
+    /// Not installed anywhere.
+    Uninstalled,
+    /// Installed as the translation root of a Domain (checked identity).
+    Root { domain: ObjectId },
+    /// Installed in the parent table (physical address) at `slot`.
+    Table { parent_paddr: u64, slot: u16 },
+}
+
+/// Kernel metadata operations for page-table objects, implemented per
+/// architecture alongside `ArchObjects::PageTable`.
+///
+/// The metadata (carve address, walk level, installation record) is the
+/// mapping identity for a translation table: enough to locate and retire the
+/// real descriptor.
+pub trait PageTableObject: NucleusObject {
+    /// Physical address of the carved table.
+    fn paddr(&self) -> u64;
+    /// Walk level: 0 is the translation root, 3 the leaf-level table.
+    fn level(&self) -> u8;
+    /// Whether this table is currently installed.
+    fn is_installed(&self) -> bool;
+    /// The installation record.
+    fn parent(&self) -> PtParent;
+    /// Record root installation into `domain` at walk level 0.
+    fn install_root(&mut self, domain: ObjectId);
+    /// Record intermediate installation into the parent at `parent_level`.
+    fn install_table(&mut self, parent_paddr: u64, parent_level: u8, slot: u16);
+    /// Clear the installation record.
+    fn uninstall(&mut self);
+}
+
 /// Architecture abstraction trait - extended with invoke methods.
 ///
 /// Frame capabilities are arch-independent (inline `RegionPayload` in `KeyEntry`),
@@ -52,7 +86,7 @@ impl FrameSize {
 /// arch-specific via `validate_frame_size`.
 pub trait ArchObjects: Sized + 'static {
     // ─── Associated Types (pool-backed arch objects only) ───
-    type PageTable: NucleusObject;
+    type PageTable: PageTableObject;
     type VSpace: NucleusObject;
     type ASIDPool: NucleusObject;
     type ASID: NucleusObject;
@@ -71,6 +105,53 @@ pub trait ArchObjects: Sized + 'static {
     /// Validate and return object size for pool-backed arch types.
     fn validate_retype(arch_type: ArchType, size_bits: u8) -> Result<usize, CapError>;
 
+    /// Construct the kernel metadata object for a freshly carved page table
+    /// at physical address `paddr` (uninstalled).
+    fn new_page_table(paddr: u64) -> Self::PageTable;
+
+    // ─── Mapping mechanics (hardware descriptor installation) ───
+    // The arch layer owns the descriptor format, walk, and vacancy checks;
+    // the API handlers own authority and the transaction order.
+
+    /// Install a table descriptor for `child_paddr` in the parent table at
+    /// `parent_paddr` (walk level `parent_level`), at the slot selected by
+    /// `vaddr`. The selected slot must be vacant. Returns the installed slot
+    /// index, part of the installation record.
+    fn install_table_entry(
+        parent_paddr: u64,
+        parent_level: u8,
+        vaddr: u64,
+        child_paddr: u64,
+    ) -> Result<u16, CapError>;
+
+    /// Clear the table descriptor at `slot` in the parent table, verifying it
+    /// still points at `child_paddr` first.
+    fn clear_table_entry(parent_paddr: u64, slot: u16, child_paddr: u64) -> Result<(), CapError>;
+
+    /// Whether every descriptor in the table at `paddr` is zero.
+    fn page_table_is_empty(paddr: u64) -> bool;
+
+    /// Install the page/block descriptor for a frame mapping. `vaddr` must be
+    /// inside the supported virtual-address width and aligned to the frame
+    /// size; the leaf slot must be vacant. `writable` selects user
+    /// read/write versus read-only; execute is not grantable yet.
+    fn install_frame_pte(
+        root_paddr: u64,
+        vaddr: u64,
+        frame_paddr: u64,
+        size_bits: u8,
+        writable: bool,
+    ) -> Result<(), CapError>;
+
+    /// Clear the frame mapping descriptor at `vaddr`, verifying it still
+    /// points at `frame_paddr` first.
+    fn clear_frame_pte(
+        root_paddr: u64,
+        vaddr: u64,
+        frame_paddr: u64,
+        size_bits: u8,
+    ) -> Result<(), CapError>;
+
     // ─── Object Creation (pool-backed arch types only) ───
     /// Create a pool-backed arch object. Frame is NOT handled here —
     /// it is created inline via `KeyEntry::new_frame()` in the retype path.
@@ -86,22 +167,11 @@ pub trait ArchObjects: Sized + 'static {
     ) -> Result<(ObjectType, ObjectId), CapError>;
 
     // ─── Invocation Handlers ───
-
-    /// Handle frame operations. The frame data is inline in `entry` as a `RegionPayload`.
-    fn invoke_frame(
-        entry: &mut KeyEntry,
-        op: u32,
-        args: &[u64; 6],
-        nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError>;
-
-    fn invoke_page_table(
-        pt: &mut Self::PageTable,
-        rights: Rights,
-        op: u32,
-        args: &[u64; 6],
-        nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError>;
+    // Frame and PageTable invocations are dispatched directly to their API
+    // handlers (`crate::api::arch::{frame,page_table}`), which resolve the
+    // invoked capability, the caller's table, and the operand pools through
+    // the guarded `Access` context; no trait shim is needed. The remaining
+    // handlers below serve the deferred kinds.
 
     fn invoke_vspace(
         vspace: &mut Self::VSpace,

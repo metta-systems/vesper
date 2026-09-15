@@ -26,11 +26,18 @@ mod objects;
 
 use {
     api::KeyEntry,
+    core::mem::MaybeUninit,
     libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, UntypedOp, domain::DomainId},
     // `Nucleus` is not used directly here: binding it at the crate root lets
     // the included production tree resolve `crate::Nucleus`
     // (objects/arch/aarch64_objects.rs, as the nucleus lib re-exports it).
-    objects::{ArchObjectsImpl, KeyTable, Nucleus, access::Access},
+    objects::{
+        ArchObjectsImpl, KeyTable, Nucleus, ObjectPool,
+        access::Access,
+        arch::{AArch64PageTable, ArchPools},
+        domain::DcbPages,
+        nucleus::NucleusPools,
+    },
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -59,11 +66,44 @@ fn carve_table() -> u64 {
     obj as u64
 }
 
+/// Backing bytes for the fixture nucleus's pools. The Domain pool is built
+/// with zero capacity (never dereferenced); the page-table metadata pool
+/// holds exactly one slot so its exhaustion and rollback behavior is
+/// observable without any carve write (these MMU-off tests only exercise
+/// rejection paths).
+static mut POOL_MEM: [u64; 16] = [0; 16];
+
+/// A minimal fixture nucleus. Tests run sequentially and each fixture
+/// re-initializes the same static storage before use.
+fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
+    static mut NUCLEUS_MEM: MaybeUninit<Nucleus<ArchObjectsImpl>> = MaybeUninit::uninit();
+    // SAFETY: POOL_MEM and NUCLEUS_MEM are exclusively owned by the fixture;
+    // initialization happens before any use, and tests are sequential. Raw
+    // pointers avoid mutable references to statics (edition 2024).
+    unsafe {
+        let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
+        let pool_ptr = (&raw mut POOL_MEM).cast::<u8>();
+        nucleus_ptr.write(Nucleus {
+            current_domain: None,
+            dcb_pages: DcbPages::new(),
+            pools: NucleusPools {
+                domains: ObjectPool::new(pool_ptr, 0),
+                arch: ArchPools::new(ObjectPool::new(
+                    pool_ptr,
+                    core::mem::size_of::<AArch64PageTable>(),
+                )),
+            },
+        });
+        &mut *nucleus_ptr
+    }
+}
+
 /// A carved-table fixture: the caller's own table with a self-table capability
 /// at `CAPTBL_SELF`, through which `Untyped.Retype` is invoked.
 struct Fixture {
     table_addr: u64,
     self_key: RawKey,
+    nucleus: &'static mut Nucleus<ArchObjectsImpl>,
 }
 
 impl Fixture {
@@ -79,6 +119,7 @@ impl Fixture {
         Self {
             table_addr,
             self_key,
+            nucleus: fixture_nucleus(),
         }
     }
 
@@ -104,14 +145,21 @@ impl Fixture {
 
     /// Invoke the Untyped handler against the fixture.
     fn invoke(
-        &self,
+        &mut self,
         untyped_key: RawKey,
         op: u64,
         args: &[u64; 6],
     ) -> Result<(u64, u64), CapError> {
         // SAFETY: test-only; no overlapping access context.
         let access = unsafe { Access::new() };
-        api::untyped::invoke::<ArchObjectsImpl>(&access, self.table_addr, untyped_key, op, args)
+        api::untyped::invoke::<ArchObjectsImpl>(
+            &access,
+            self.table_addr,
+            untyped_key,
+            op,
+            args,
+            self.nucleus,
+        )
     }
 }
 
@@ -400,7 +448,7 @@ fn retype_rejects_nongranular_frame_sizes() {
 /// is not reported when the size is already rejected.
 #[test_case]
 fn retype_frame_size_rejection_precedes_source_resolution() {
-    let fx = Fixture::new(FULL);
+    let mut fx = Fixture::new(FULL);
     // A source key that was never issued.
     let bogus = RawKey::new(KeySlot(200), 7);
 
@@ -491,4 +539,121 @@ fn retype_frame_from_ram_reaches_capacity_validation() {
         .unwrap_or_else(|_| panic!("entry is not an Untyped"));
     assert!(!region.is_device);
     assert_eq!(region.watermark_bytes(), 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PAGE TABLE RETYPE
+// ═══════════════════════════════════════════════════════════════════
+
+/// A PageTable is a fixed 4 KiB architecture carve: other size_bits are
+/// rejected with the architecture's own error, leaving the state unchanged.
+#[test_case]
+fn retype_rejects_non_arch_page_table_sizes_without_changing_state() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::PAGE_TABLE,
+            13,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::InvalidSize(13))));
+
+    // Validation failed before any reservation or destination install.
+    assert_eq!(fx.len(), before);
+    let region = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 0);
+}
+
+/// A device Untyped is not a valid source for PageTable carves either: the
+/// general device-source rejection covers every creatable kind.
+#[test_case]
+fn retype_rejects_device_untypeds_for_page_tables() {
+    let mut fx = Fixture::new(FULL);
+    let device = fx.install(KeySlot(30), device_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        device,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::PAGE_TABLE,
+            12,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(
+        result,
+        Err(CapError::InvalidObjectType(ObjectType::PAGE_TABLE))
+    ));
+    assert_eq!(fx.len(), before);
+}
+
+/// A PageTable batch that cannot fit the metadata pool is rejected with
+/// `PoolExhausted`, and the partially allocated slots are released: the
+/// failure precedes any carve write or destination install, and a fresh
+/// fixture exhausts at the same point (the pool capacity did not leak).
+#[test_case]
+fn retype_page_table_batch_releases_partial_pool_slots_on_exhaustion() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    // The fixture's page-table metadata pool holds exactly one slot, so a
+    // batch of two exhausts it after the first allocation.
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::PAGE_TABLE,
+            12,
+            2,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::PoolExhausted)));
+
+    // The rollback released the first metadata slot and installed nothing.
+    assert_eq!(fx.len(), before);
+    let region = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 0);
+
+    // The released slot is usable again: a fresh fixture batch of two still
+    // exhausts at the same point.
+    let mut fx2 = Fixture::new(FULL);
+    let ram2 = fx2.install(KeySlot(30), ram_untyped(24));
+    let result2 = fx2.invoke(
+        ram2,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::PAGE_TABLE,
+            12,
+            2,
+            fx2.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result2, Err(CapError::PoolExhausted)));
 }

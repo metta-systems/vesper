@@ -257,18 +257,64 @@ fn copy_derive_rejects_occupied_destination_and_non_allowlisted_kinds() {
         Err(CapError::SlotOccupied(KeySlot(20)))
     ));
 
-    // A non-allowlisted kind (Frame) cannot be derived.
+    // A non-allowlisted kind (Untyped) cannot be derived: one region must not
+    // gain independent allocation watermarks.
     let mut fx = Fixture::new(FULL);
-    let frame = fx.install(
+    let untyped = fx.install(
         0,
         KeySlot(11),
-        KeyEntry::new_frame(0x1000, 12, false, Rights::all()),
+        KeyEntry::new_untyped(0x1000, 12, false, Rights::all()),
     );
-    let call = args(frame.to_wire(), fx.self_table_key.to_wire(), 21, 1, 0, 0);
+    let call = args(untyped.to_wire(), fx.self_table_key.to_wire(), 21, 1, 0, 0);
     assert!(matches!(
         fx.invoke(fx.self_table_key, 0, &call),
-        Err(CapError::InvalidObjectType(ObjectType::FRAME))
+        Err(CapError::InvalidObjectType(ObjectType::UNTYPED))
     ));
+
+    // Frame is allowlisted for capability-only derivation (2026-09-15): a
+    // mapped frame derives into an unmapped capability with no mapping
+    // association, while the original keeps its mapping.
+    let mut fx = Fixture::new(FULL);
+    let mut mapped_frame = KeyEntry::new_frame(0x1000, 12, false, Rights::all());
+    {
+        let frame = mapped_frame
+            .as_frame_mut()
+            .unwrap_or_else(|_| panic!("not a frame"));
+        frame.set_mapped(
+            objects::access::ObjectId {
+                pool: objects::access::PoolTag::Domain,
+                index: 0,
+                generation: 1,
+            },
+            0x1000_0000,
+        );
+    }
+    let frame = fx.install(0, KeySlot(12), mapped_frame);
+    let call = args(frame.to_wire(), fx.self_table_key.to_wire(), 22, 1, 0, 0);
+    let (derived_wire, _) = fx
+        .invoke(fx.self_table_key, 0, &call)
+        .unwrap_or_else(|_| panic!("frame CopyDerive failed"));
+    let derived = RawKey::from_wire(derived_wire);
+    let derived_entry = fx
+        .lookup(0, derived)
+        .unwrap_or_else(|_| panic!("derived frame entry missing"));
+    let derived_frame = derived_entry
+        .as_frame()
+        .unwrap_or_else(|_| panic!("derived entry is not a Frame cap"));
+    assert!(
+        !derived_frame.is_mapped(),
+        "a derived frame starts unmapped"
+    );
+    let original_entry = fx
+        .lookup(0, frame)
+        .unwrap_or_else(|_| panic!("original frame entry missing"));
+    assert!(
+        original_entry
+            .as_frame()
+            .unwrap_or_else(|_| panic!("original entry is not a Frame cap"))
+            .is_mapped(),
+        "the original frame keeps its mapping"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════

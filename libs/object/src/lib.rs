@@ -3,9 +3,11 @@
 
 pub mod debug_console;
 pub mod domain;
+pub mod frame;
 pub mod key;
 pub mod key_table;
 pub mod object_type;
+pub mod page_table;
 pub mod rights;
 pub mod syscall_status;
 pub mod untyped;
@@ -16,9 +18,11 @@ use syscall_status as code;
 pub use debug_console::DebugConsoleKey;
 
 pub use {
+    frame::{FrameKey, FrameOp},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},
     object_type::{ArchType, CoreType, ObjectType},
+    page_table::{PageTableKey, PageTableOp},
     rights::Rights,
     untyped::{UntypedKey, UntypedOp},
 };
@@ -93,6 +97,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::KEY_SLOT_EXHAUSTED, s, 0) => {
                 CapError::KeySlotExhausted(KeySlot(u32::try_from(s).ok()?))
             }
+            (code::MISSING_INTERMEDIATE, vaddr, 0) => CapError::MissingIntermediate { vaddr },
             _ => return None,
         })
     })();
@@ -148,6 +153,11 @@ pub enum CapError {
         operand: u8,
     },
     KeySlotExhausted(KeySlot),
+    /// A mapping walk reached an absent intermediate page table.
+    MissingIntermediate {
+        /// The virtual address whose walk could not proceed.
+        vaddr: u64,
+    },
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
     UnknownResponse {
@@ -233,6 +243,7 @@ impl CapError {
                 u64::from(reason as u8) | (u64::from(operand) << 8),
             ),
             CapError::KeySlotExhausted(s) => (code::KEY_SLOT_EXHAUSTED, u64::from(s.0), 0),
+            CapError::MissingIntermediate { vaddr } => (code::MISSING_INTERMEDIATE, vaddr, 0),
             CapError::UnknownResponse {
                 status,
                 detail1,

@@ -67,6 +67,11 @@ pub fn carve_pool<T: NucleusObject>(
 pub struct PoolCapacities {
     /// Number of Domain slots in the initial Domain pool.
     pub domains: usize,
+    /// Number of page-table metadata slots in the initial architecture
+    /// page-table pool. The pool holds only kernel metadata (carve address,
+    /// installation record); the 4 KiB tables themselves are Retype carves
+    /// charged to the invoking Untyped.
+    pub page_tables: usize,
 }
 
 /// Build the initial [`Nucleus`] in memory carved from the boot Untyped.
@@ -84,11 +89,15 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     if capacities.domains > ObjectPool::<Domain>::MAX_SLOTS {
         return Err(CapError::InvalidSize(capacities.domains));
     }
+    if capacities.page_tables > ObjectPool::<A::PageTable>::MAX_SLOTS {
+        return Err(CapError::InvalidSize(capacities.page_tables));
+    }
 
     let nucleus_paddr = carve_region(boot, core::mem::size_of::<Nucleus<A>>())?;
     let nucleus_ptr = nucleus_paddr.user_to_kernel().as_mut_ptr::<Nucleus<A>>();
 
     let domains = carve_pool::<Domain>(boot, capacities.domains)?;
+    let page_tables = carve_pool::<A::PageTable>(boot, capacities.page_tables)?;
 
     // Carve the boot Domain's KeyTable region and initialize it kernel-privately
     // (the same unused-watermark allocation Retype performs at runtime).
@@ -105,8 +114,9 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         dcb_pages: DcbPages::new(),
         pools: NucleusPools::<A> {
             domains,
-            // SAFETY: ArchPools::new() owns no regions in the initial build.
-            arch: unsafe { ArchPools::new() },
+            // SAFETY: the page-table pool backing was carved above from the
+            // boot Untyped's unused watermark range and is exclusively owned.
+            arch: unsafe { ArchPools::new(page_tables) },
         },
     };
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.

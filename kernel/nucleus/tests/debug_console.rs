@@ -73,7 +73,9 @@ fn carve(index: usize) -> u64 {
 
 fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
     let mut dom_backing = MaybeUninit::<[Domain; 2]>::uninit();
-    // SAFETY: The backing is aligned for two Domains and remains exclusively
+    type Pt = objects::arch::AArch64PageTable;
+    let mut pt_backing = MaybeUninit::<[Pt; 2]>::uninit();
+    // SAFETY: The backings are aligned for their arrays and remain exclusively
     // owned here until after the nucleus and its pools are dropped. The
     // callback cannot return a borrowed nucleus/object reference. Only the
     // pools access the backing while they are live.
@@ -83,6 +85,8 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
             size_of::<[Domain; 2]>(),
         )
     };
+    let page_tables =
+        unsafe { ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), size_of::<[Pt; 2]>()) };
     // Carve two KeyTable regions from the fixed test backing (mirrors the boot
     // carve / runtime Retype: the table's storage is the carved region).
     let table_addr = carve(0);
@@ -90,9 +94,9 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
     let mut nucleus = Nucleus {
         pools: NucleusPools {
             domains,
-            // SAFETY: ArchPools currently contains only PhantomData and owns no
-            // regions. This fixture does not allocate or invoke arch objects.
-            arch: unsafe { ArchPools::new() },
+            // SAFETY: the page-table pool backing is exclusively owned by this
+            // fixture; this test does not allocate or invoke arch objects.
+            arch: unsafe { ArchPools::new(page_tables) },
         },
         current_domain: None,
         dcb_pages: DcbPages::new(),
@@ -179,6 +183,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
             .domains
             .allocate(Domain {
                 keytable_addr: second_table_addr,
+                translation_root: None,
             })
             .expect("second domain allocation failed");
         nucleus.current_domain = Some(1);

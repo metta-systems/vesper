@@ -84,6 +84,14 @@ macro_rules! define_object_types {
             }
         }
 
+        impl core::fmt::Display for $kind {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                match self {
+                    $(Self::$variant => f.write_str(stringify!($variant)),)+
+                }
+            }
+        }
+
         impl TryFrom<u8> for $kind {
             type Error = CapError;
 

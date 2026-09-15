@@ -318,3 +318,23 @@ fn size_details_use_checked_native_width() {
         }
     }
 }
+
+#[test]
+fn missing_intermediate_pins_status_vaddr_and_lossless_fallback() {
+    use vesper_objects::syscall_status::MISSING_INTERMEDIATE;
+
+    assert_eq!(MISSING_INTERMEDIATE, 29);
+    for vaddr in [0, 1, 0x1000_0000, 1 << 47, 1 << 63, u64::MAX] {
+        let wire = (29, vaddr, 0);
+        assert_error!(
+            wire,
+            CapError::MissingIntermediate { vaddr },
+            CapError::MissingIntermediate { vaddr: v } if v == vaddr
+        );
+    }
+    // A nonzero second detail word is not silently discarded.
+    for extra in [1, 1 << 63, u64::MAX] {
+        assert_unknown_response((29, 0, extra));
+        assert_unknown_response((29, extra, extra));
+    }
+}

@@ -13,28 +13,37 @@
 // │    rights: Rights             (1 byte)       │
 // │    badge: u16                 (2 bytes)      │
 // ├──────────────────────────────────────────────┤
-// │  Payload — 16 bytes (union on obj_type)      │
+// │  Payload — 24 bytes (union on obj_type)      │
 // │                                              │
 // │  VARIANT A: Object identity (most types)     │
 // │    pool: PoolTag              (1 byte)       │
 // │    _pad: u8                   (1 byte)       │
-// │    index: u16                 (2 bytes)      │
-// │    generation: u32            (4 bytes)      │
-// │    _pad2: u64                 (8 bytes)      │
+// │    index: u16                 (2 bytes)       │
+// │    generation: u32            (4 bytes)       │
+// │    _pad2: u64                 (8 bytes)       │
 // │                                              │
-// │  VARIANT B: Inline Region (Untyped, Frame)   │
-// │    paddr: u64                 (8 bytes)      │
-// │    state: u32                 (4 bytes)      │
-// │      Untyped → watermark (>> MIN_ALIGN_BITS) │
-// │      Frame   → map_count (low 16 bits)       │
+// │  VARIANT B: Inline Untyped                    │
+// │    paddr: u64                 (8 bytes)       │
+// │    state: u32  → watermark (>> MIN_ALIGN_BITS)│
 // │    size_bits: u8              (1 byte)       │
 // │    is_device: bool            (1 byte)       │
-// │    _pad: u16                  (2 bytes)      │
+// │    _pad: u16                  (2 bytes)       │
 // │                                              │
-// │  VARIANT C: Null                             │
+// │  VARIANT C: Inline Frame (mapping record)    │
+// │    paddr: u64                 (8 bytes)       │
+// │    vaddr: u64  → mapped virtual address      │
+// │    domain_index: u16          (2 bytes)       │
+// │    domain_generation: u32      (4 bytes)       │
+// │    size_bits: u8              (1 byte)       │
+// │    flags: u8   → is_device | mapped          │
+// │                                              │
+// │  VARIANT D: Carved KeyTable address          │
+// │    address: u64               (8 bytes)       │
+// │                                              │
+// │  VARIANT E: Null                             │
 // │    (all zeros)                               │
 // └──────────────────────────────────────────────┘
-// Total: 20 bytes used, 32-byte aligned slot
+// Total: 28 bytes used, 32-byte aligned slot
 //
 // Variant A stores a checked object identity (pool tag, index, generation),
 // never a raw pointer: the owning access context computes object addresses
@@ -60,14 +69,11 @@ struct ObjectPayload {
     _pad2: u64,
 }
 
-/// Payload for inline region capabilities (Untyped, Frame).
+/// Payload for inline Untyped capabilities.
 /// No indirection — the capability IS the object.
 ///
-/// The `state` field is dual-use:
-/// - **Untyped**: watermark (next free byte offset, shifted right by `MIN_ALIGN_BITS`)
-/// - **Frame**: mapped virtual address >> 12 (0 = unmapped).
-///   Each frame cap copy tracks its own single mapping (seL4-style).
-///   To map the same physical frame twice, duplicate the cap first.
+/// The `state` field stores the allocation watermark (next free byte offset,
+/// shifted right by `MIN_ALIGN_BITS`).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RegionPayload {
@@ -80,6 +86,47 @@ pub struct RegionPayload {
     /// Is this device memory (not normal RAM)?
     pub is_device: bool,
     pub _pad: u16,
+}
+
+/// Payload for inline Frame capabilities: a physical region plus the frame's
+/// single-mapping record.
+///
+/// Mapping identity must contain enough information to locate and retire the
+/// real mapping (translation context and full virtual address), so a frame
+/// records its mapping as a dedicated record — the owning Domain's checked
+/// identity and the complete virtual address — rather than a compressed
+/// address squeezed into a shared state field. Each frame capability tracks
+/// its own single mapping (seL4-style); a derived copy starts unmapped.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct FramePayload {
+    /// Physical base address of the frame.
+    pub paddr: u64,
+    /// Mapped virtual address; meaningful only while the mapped flag is set.
+    pub vaddr: u64,
+    /// Owning Domain allocation generation; meaningful only while mapped.
+    pub domain_generation: u32,
+    /// Owning Domain pool index; meaningful only while the mapped flag is set.
+    pub domain_index: u16,
+    /// Size as log2 (frame = `2^size_bits`).
+    pub size_bits: u8,
+    /// Flag bits: bit 0 `is_device`, bit 1 `mapped`.
+    pub flags: u8,
+}
+
+/// Flag bit: the backing is device memory, not ordinary RAM.
+const FRAME_IS_DEVICE: u8 = 1 << 0;
+/// Flag bit: the frame is currently mapped.
+const FRAME_MAPPED: u8 = 1 << 1;
+
+/// A frame's recorded mapping: enough identity to locate and retire the real
+/// hardware descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameMapping {
+    /// The mapping context: the owning Domain's checked identity.
+    pub domain: ObjectId,
+    /// The complete mapped virtual address.
+    pub vaddr: u64,
 }
 
 /// Payload for a `KeyTable` capability: a reference to the carved `KeyTable`
@@ -96,19 +143,20 @@ pub struct KeyTablePayload {
     pub _pad: u64,
 }
 
-/// 16-byte payload union, discriminated by `obj_type` in the header.
+/// 24-byte payload union, discriminated by `obj_type` in the header.
 #[repr(C)]
 #[derive(Clone, Copy)]
 union KeyPayload {
     obj: ObjectPayload,
     region: RegionPayload,
+    frame: FramePayload,
     keytable: KeyTablePayload,
-    null: [u8; 16],
+    null: [u8; 24],
 }
 
 /// A single entry in a domain's capability table (`KeyTable`).
 ///
-/// 20 bytes used in a 32-byte aligned slot.
+/// 28 bytes used in a 32-byte aligned slot.
 /// Discriminated union: `obj_type` selects the payload variant.
 #[repr(C, align(32))]
 #[derive(Clone, Copy)]
@@ -121,8 +169,9 @@ pub struct KeyEntry {
 
 // Verify sizes at compile time
 const _: () = assert!(core::mem::size_of::<KeyEntry>() == 32); // same as seL4
-const _: () = assert!(core::mem::size_of::<KeyPayload>() == 16);
+const _: () = assert!(core::mem::size_of::<KeyPayload>() == 24);
 const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
+const _: () = assert!(core::mem::size_of::<FramePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
 
 /// Minimum alignment bits for watermark shift (16-byte alignment).
@@ -142,7 +191,7 @@ impl KeyEntry {
             obj_type: ObjectType::NULL,
             rights: Rights::empty(),
             badge: 0,
-            payload: KeyPayload { null: [0_u8; 16] },
+            payload: KeyPayload { null: [0_u8; 24] },
         }
     }
 
@@ -199,12 +248,13 @@ impl KeyEntry {
             rights,
             badge: 0,
             payload: KeyPayload {
-                region: RegionPayload {
+                frame: FramePayload {
                     paddr,
-                    state: 0, // map_count starts at 0
+                    vaddr: 0,
+                    domain_index: 0,
+                    domain_generation: 0,
                     size_bits,
-                    is_device,
-                    _pad: 0,
+                    flags: if is_device { FRAME_IS_DEVICE } else { 0 },
                 },
             },
         }
@@ -261,13 +311,21 @@ impl KeyEntry {
     }
 
     /// Create a derived copy with attenuated rights, preserving the badge and
-    /// payload verbatim. Callers must have already established that
-    /// `rights` is a subset of this entry's rights; this is a pure
-    /// representation transform, not an authority check.
+    /// payload verbatim — except that a derived Frame starts unmapped: the
+    /// mapping belongs to the original capability, and Copy is capability-only
+    /// derivation with no active mapping association. Callers must have
+    /// already established that `rights` is a subset of this entry's rights;
+    /// this is a pure representation transform, not an authority check.
     #[inline]
     pub fn derive(&self, rights: Rights) -> Self {
         let mut derived = *self;
         derived.rights = rights;
+        if derived.obj_type == ObjectType::FRAME {
+            // SAFETY: the FRAME type check selects the frame payload variant.
+            unsafe {
+                derived.payload.frame.clear_mapped();
+            }
+        }
         derived
     }
 
@@ -317,12 +375,12 @@ impl KeyEntry {
         Ok(unsafe { self.payload.keytable.address })
     }
 
-    /// Access the inline region payload (Untyped or Frame, read-only).
+    /// Access the inline Untyped payload (read-only).
     #[inline]
     pub fn as_region(&self) -> Result<&RegionPayload, CapError> {
-        if !self.is_region() {
+        if self.obj_type != ObjectType::UNTYPED {
             return Err(CapError::TypeMismatch {
-                expected: ObjectType::UNTYPED, // FIXME or Frame?
+                expected: ObjectType::UNTYPED,
                 found: self.obj_type,
             });
         }
@@ -330,12 +388,12 @@ impl KeyEntry {
         Ok(unsafe { &self.payload.region })
     }
 
-    /// Access the inline region payload (Untyped or Frame, mutable).
+    /// Access the inline Untyped payload (mutable).
     #[inline]
     pub fn as_region_mut(&mut self) -> Result<&mut RegionPayload, CapError> {
-        if !self.is_region() {
+        if self.obj_type != ObjectType::UNTYPED {
             return Err(CapError::TypeMismatch {
-                expected: ObjectType::UNTYPED, // FIXME or Frame?
+                expected: ObjectType::UNTYPED,
                 found: self.obj_type,
             });
         }
@@ -369,9 +427,9 @@ impl KeyEntry {
         Ok(unsafe { &mut self.payload.region })
     }
 
-    /// Access the inline region payload, but only if this is a Frame.
+    /// Access the inline Frame payload, but only if this is a Frame.
     #[inline]
-    pub fn as_frame(&self) -> Result<&RegionPayload, CapError> {
+    pub fn as_frame(&self) -> Result<&FramePayload, CapError> {
         if self.obj_type != ObjectType::FRAME {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::FRAME,
@@ -379,12 +437,12 @@ impl KeyEntry {
             });
         }
         // SAFETY: We checked the object is valid and is of the right type.
-        Ok(unsafe { &self.payload.region })
+        Ok(unsafe { &self.payload.frame })
     }
 
-    /// Access the inline region payload mutably, but only if this is a Frame.
+    /// Access the inline Frame payload mutably, but only if this is a Frame.
     #[inline]
-    pub fn as_frame_mut(&mut self) -> Result<&mut RegionPayload, CapError> {
+    pub fn as_frame_mut(&mut self) -> Result<&mut FramePayload, CapError> {
         if self.obj_type != ObjectType::FRAME {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::FRAME,
@@ -392,7 +450,7 @@ impl KeyEntry {
             });
         }
         // SAFETY: We checked the object is valid and is of the right type.
-        Ok(unsafe { &mut self.payload.region })
+        Ok(unsafe { &mut self.payload.frame })
     }
 }
 
@@ -445,36 +503,62 @@ impl RegionPayload {
     pub fn free_bytes(&self) -> usize {
         self.size() - self.watermark_bytes()
     }
+}
 
-    // ── Frame-specific ──
-    // TODO: FramePayload trait?
-    // Each frame cap tracks its own single mapping (seL4-style).
-    // state = mapped vaddr >> 12 (0 = unmapped).
+// ═══════════════════════════════════════════════════════════════════
+// FRAME PAYLOAD OPERATIONS
+// ═══════════════════════════════════════════════════════════════════
+
+impl FramePayload {
+    /// Get the total size of the frame in bytes.
+    #[inline]
+    pub fn size(&self) -> usize {
+        1_usize << self.size_bits
+    }
+
+    /// Whether the backing is device memory, not ordinary RAM.
+    #[inline]
+    pub fn is_device(&self) -> bool {
+        self.flags & FRAME_IS_DEVICE != 0
+    }
 
     /// Check if this frame cap is currently mapped.
     #[inline]
     pub fn is_mapped(&self) -> bool {
-        self.state != 0
+        self.flags & FRAME_MAPPED != 0
     }
 
-    /// Get the virtual address this frame is mapped at (if any).
+    /// The recorded mapping identity, if the frame is mapped.
     #[inline]
-    pub fn mapped_vaddr(&self) -> Option<u64> {
-        (self.state != 0).then_some(u64::from(self.state) << 12)
+    pub fn mapping(&self) -> Option<FrameMapping> {
+        self.is_mapped().then_some(FrameMapping {
+            domain: ObjectId {
+                pool: PoolTag::Domain,
+                index: self.domain_index,
+                generation: self.domain_generation,
+            },
+            vaddr: self.vaddr,
+        })
     }
 
-    /// Record that this frame cap was mapped at `vaddr`.
-    /// The vaddr must be page-aligned.
+    /// Record that this frame cap was mapped into `domain` at `vaddr`.
+    /// The vaddr must be aligned to the frame size.
     #[inline]
-    pub fn set_mapped(&mut self, vaddr: u64) {
-        debug_assert!(vaddr.trailing_zeros() >= 12);
-        debug_assert!(vaddr != 0, "cannot map at vaddr 0");
-        self.state = u32::try_from(vaddr >> 12).unwrap();
+    pub fn set_mapped(&mut self, domain: ObjectId, vaddr: u64) {
+        debug_assert_eq!(domain.pool, PoolTag::Domain);
+        debug_assert_eq!(vaddr & (self.size() as u64 - 1), 0);
+        self.domain_index = domain.index;
+        self.domain_generation = domain.generation;
+        self.vaddr = vaddr;
+        self.flags |= FRAME_MAPPED;
     }
 
-    /// Clear the mapping (frame was unmapped).
+    /// Clear the mapping record (frame was unmapped).
     #[inline]
     pub fn clear_mapped(&mut self) {
-        self.state = 0;
+        self.flags &= !FRAME_MAPPED;
+        self.vaddr = 0;
+        self.domain_index = 0;
+        self.domain_generation = 0;
     }
 }

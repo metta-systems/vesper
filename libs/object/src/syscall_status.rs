@@ -32,3 +32,6 @@ pub const INVALID_FRAME_SIZE: u64 = 25;
 pub const INVALID_KEY: u64 = 26;
 pub const INCONSISTENT_KEY: u64 = 27;
 pub const KEY_SLOT_EXHAUSTED: u64 = 28;
+/// A mapping walk reached an absent intermediate page table.
+/// Detail 1 is the faulting virtual address; detail 2 is zero.
+pub const MISSING_INTERMEDIATE: u64 = 29;

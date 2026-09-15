@@ -4,7 +4,7 @@ use {
     libqemu::semihosting as semi,
 };
 
-// pub mod arch;
+pub mod arch;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
 pub mod key_entry;
@@ -33,7 +33,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     semi::println!(
-        "handle_cap_invoke(key {key:?},op {op},args[{:x},{:x},{:x},{:x},{:x},{:x}])",
+        "🔄 handle_cap_invoke(key {key:?},op {op},args[{:x},{:x},{:x},{:x},{:x},{:x}])",
         args[0],
         args[1],
         args[2],
@@ -89,13 +89,13 @@ fn core_invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let core_type = CoreType::try_from(obj_type)?;
 
-    semi::println!("core_invoke");
+    semi::println!("🔄 core_invoke {key:?} / {core_type}:{op}");
 
     match core_type {
         CoreType::Null => Err(CapError::NullCapability),
 
         CoreType::Untyped => {
-            crate::api::untyped::invoke::<A>(access, caller_table_addr, key, op, args)
+            crate::api::untyped::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
         }
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
@@ -152,59 +152,25 @@ fn arch_invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let arch_type = ArchType::try_from(obj_type)?;
 
-    let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-    let entry = caller_table.lookup(key)?;
+    semi::println!("🔄 arch_invoke {key:?} / {arch_type}:{op}");
 
-    #[expect(
-        clippy::match_single_binding,
-        reason = "All other arms are commented out"
-    )]
     match arch_type {
-        // ArchType::Frame => {
-        //     A::invoke_frame(entry, op, args, nucleus)
-        // }
+        ArchType::Frame => {
+            crate::api::arch::frame::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
+        }
 
-        // ArchType::PageTable => {
-        //     let pt = entry.as_object_mut::<A::PageTable>()?;
-        //     A::invoke_page_table(pt, entry.rights(), op, args, nucleus)
-        // }
+        ArchType::PageTable => crate::api::arch::page_table::invoke::<A>(
+            access,
+            caller_table_addr,
+            key,
+            op,
+            args,
+            nucleus,
+        ),
 
-        // ArchType::VSpace => {
-        //     let vspace = entry.as_object_mut::<A::VSpace>()?;
-        //     A::invoke_vspace(vspace, entry.rights(), op, args, nucleus)
-        // }
-
-        // ArchType::ASIDPool => {
-        //     let pool = entry.as_object_mut::<A::ASIDPool>()?;
-        //     A::invoke_asid_pool(pool, entry.rights(), op, args, nucleus)
-        // }
-
-        // ArchType::ASID => {
-        //     let asid = entry.as_object_mut::<A::ASID>()?;
-        //     A::invoke_asid(asid, entry.rights(), op, args)
-        // }
-
-        // ArchType::IOSpace => {
-        //     // May not be supported on all architectures
-        //     A::invoke_io_space(entry, op, args, nucleus)
-        // }
-
-        // ArchType::IOPort => {
-        //     // x86 only
-        //     #[cfg(target_arch = "x86_64")]
-        //     {
-        //         let port = entry.as_object_mut::<x86_64::IOPort>()?;
-        //         x86_64::invoke_io_port(port, entry.rights(), op, args)
-        //     }
-        //     #[cfg(not(target_arch = "x86_64"))]
-        //     {
-        //         Err(CapError::UnsupportedArchType(arch_type))
-        //     }
-        // }
-
-        // ArchType::IRQHandler => A::invoke_irq_handler(entry, op, args, nucleus),
-
-        // ArchType::IRQControl => A::invoke_irq_control(entry, op, args, nucleus),
+        // VSpace translation/ASID binding and I/O/IRQ control remain deferred
+        // with their kinds: no creatable arch kind other than Frame and
+        // PageTable is allowlisted, and their draft handlers stay inactive.
         x => Err(CapError::UnsupportedArchType(x)),
     }
 }

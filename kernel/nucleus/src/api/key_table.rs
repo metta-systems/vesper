@@ -4,9 +4,10 @@
 //! incarnation-checked selectors, separately grantable table permissions
 //! (`DERIVE`/`REMOVE`/`INSTALL`), vacant destinations, same-slot `Move`
 //! rejection, badge preservation on `CopyDerive`, state preservation on
-//! `Move`, and `Delete` without automatic object retirement. The initial
-//! target-kind allowlist is `KeyTable` and debug-gated `DebugConsole`; other
-//! kinds, `Revoke`, and rebadging remain unsupported.
+//! `Move`, and `Delete` without automatic object retirement. The target-kind
+//! allowlist is `KeyTable`, `Frame` (capability-only derivation; added
+//! 2026-09-15), and debug-gated `DebugConsole`; other kinds, `Revoke`, and
+//! rebadging remain unsupported.
 //!
 //! `KeyTable`s are Retype-created carved objects referenced by per-type
 //! capability payloads (their kernel address). The invoked `table_key` and the
@@ -288,10 +289,14 @@ fn check_source_allowlisted(
     check_allowlisted(entry.object_type(), operand)
 }
 
-/// Only the approved initial target kinds may be derived/moved: `KeyTable`
-/// and debug-gated `DebugConsole`. Other kinds remain unsupported.
+/// Only the approved initial target kinds may be derived/moved: `KeyTable`,
+/// debug-gated `DebugConsole`, and `Frame` (added 2026-09-15: Copy is
+/// capability-only derivation — a derived Frame starts unmapped, with no
+/// active mapping association; Move preserves the mapping record; Delete of a
+/// mapped frame leaves the mapping in place under the accepted-leak model).
+/// Other kinds remain unsupported.
 fn check_allowlisted(obj_type: ObjectType, _operand: u8) -> Result<(), CapError> {
-    let allowed = obj_type == ObjectType::KEY_TABLE || {
+    let allowed = obj_type == ObjectType::KEY_TABLE || obj_type == ObjectType::FRAME || {
         #[cfg(feature = "debug_kernel")]
         {
             obj_type == ObjectType::DEBUG_CONSOLE

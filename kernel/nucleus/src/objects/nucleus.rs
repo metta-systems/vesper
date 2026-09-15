@@ -131,7 +131,10 @@ impl<A: ArchObjects> Nucleus<A> {
     pub fn create_domain(&mut self, keytable_addr: u64) -> Option<RawKey> {
         // Allocate the Domain itself; its capability table is a carved KeyTable
         // provided by the caller (Retype or the boot carve).
-        let (_dom_id, _dom) = self.pools.domains.allocate(Domain { keytable_addr })?;
+        let (_dom_id, _dom) = self.pools.domains.allocate(Domain {
+            keytable_addr,
+            translation_root: None,
+        })?;
         #[cfg(feature = "debug_kernel")]
         {
             // The debug console is a stateless singleton, not a pool object;

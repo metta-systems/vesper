@@ -1,5 +1,8 @@
 use {
-    crate::{api::key_entry::KeyEntry, objects::NucleusObject},
+    crate::{
+        api::key_entry::KeyEntry,
+        objects::{NucleusObject, access::ObjectId},
+    },
     libobject::{
         CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey,
         domain::DomainId,
@@ -144,6 +147,47 @@ impl KeyTable {
         Ok(())
     }
 
+    /// Record a mapping on the validated Frame entry at `key`.
+    ///
+    /// This is the commit step of `Frame.Map`: the entry's identity, rights,
+    /// badge and incarnation are unchanged; only the frame's mapping record
+    /// moves. Targeted mutation only — unrestricted mutable entry access
+    /// remains unavailable.
+    pub fn record_frame_mapping(
+        &mut self,
+        key: RawKey,
+        domain: ObjectId,
+        vaddr: u64,
+    ) -> Result<(), CapError> {
+        let idx = self.validate_key(key)?;
+        let entry = &mut self.entries[idx];
+        if entry.object_type() != ObjectType::FRAME {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::FRAME,
+                found: entry.object_type(),
+            });
+        }
+        entry.as_frame_mut()?.set_mapped(domain, vaddr);
+        Ok(())
+    }
+
+    /// Clear the mapping record of the validated Frame entry at `key`.
+    ///
+    /// This is the commit step of `Frame.Unmap`. Targeted mutation only —
+    /// unrestricted mutable entry access remains unavailable.
+    pub fn clear_frame_mapping(&mut self, key: RawKey) -> Result<(), CapError> {
+        let idx = self.validate_key(key)?;
+        let entry = &mut self.entries[idx];
+        if entry.object_type() != ObjectType::FRAME {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::FRAME,
+                found: entry.object_type(),
+            });
+        }
+        entry.as_frame_mut()?.clear_mapped();
+        Ok(())
+    }
+
     /// Insert a capability at a specific slot
     pub fn insert(&mut self, slot: KeySlot, entry: KeyEntry) -> Result<RawKey, InsertError> {
         let reservation = (|| {
@@ -210,10 +254,11 @@ mod tests {
             marker & 1 != 0,
             Rights(Rights::READ),
         );
+        // The unmapped frame's `vaddr` field is repurposed as a test marker.
         entry
             .as_frame_mut()
             .unwrap_or_else(|_| panic!("not a frame"))
-            .state = marker;
+            .vaddr = u64::from(marker);
         entry
     }
 
@@ -222,7 +267,7 @@ mod tests {
         kind: ObjectType,
         rights: Rights,
         badge: u16,
-        region: Option<(u64, u32, u8, bool, u16)>,
+        region: Option<(u64, u64, u8, bool, u8)>,
     }
 
     fn entry_state(entry: &KeyEntry) -> EntryState {
@@ -236,10 +281,10 @@ mod tests {
                     .unwrap_or_else(|_| panic!("not a frame fixture"));
                 Some((
                     region.paddr,
-                    region.state,
+                    region.vaddr,
                     region.size_bits,
-                    region.is_device,
-                    region._pad,
+                    region.is_device(),
+                    region.flags,
                 ))
             } else {
                 None
