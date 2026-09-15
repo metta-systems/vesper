@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+pub mod asid_pool;
 pub mod debug_console;
 pub mod domain;
 pub mod frame;
@@ -18,6 +19,7 @@ use syscall_status as code;
 pub use debug_console::DebugConsoleKey;
 
 pub use {
+    asid_pool::{ASIDPoolKey, ASIDPoolOp},
     frame::{FrameKey, FrameOp},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},

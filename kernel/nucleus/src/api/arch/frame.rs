@@ -16,17 +16,22 @@
 //!   whatever capability installed it (`PhysicalAlias` otherwise);
 //!   cross-Domain aliases are distinct PTEs and remain allowed.
 //! - `Unmap` `1`: no arguments. The frame's recorded mapping identity (owning
-//!   Domain, full virtual address) locates and clears the leaf descriptor.
+//!   Domain, full virtual address) locates and clears the leaf descriptor, and
+//!   the arch layer withdraws the cached translation for that address under
+//!   the owning Domain's bound ASID (if any) before returning.
 //! - `GetAddress` `2`: no arguments; requires `GRANT`. Returns the physical
 //!   extent — the base in `x1` and the size in bytes in `x2` (the client
 //!   wrapper names it `get_extent`).
 //! - `Remap` `3`: unsupported; origin-only remap authority remains open
 //!   (D4/D6). Returns a defined error rather than fake success.
 //!
-//! Carved tables are not yet active in any hardware translation context (no
-//! Domain context switching yet), so unmap performs no TLB invalidation; this
-//! must become a real invalidation when Domain activation installs these tables
-//! into a TTBR.
+//! Carved tables are not yet installed in any TTBR (Domain activation is
+//! future work), but the invalidation is executed whenever the owning Domain
+//! has a bound ASID: it is correct by construction once activation installs
+//! the tables, and a Domain without an ASID has no hardware context to
+//! withdraw. Gating the invalidation on live TTBR installation may be more
+//! efficient in the long term once Domain activation exists (maintainer
+//! remark, 2026-09-15).
 
 use {
     crate::objects::{ArchObjects, Domain, KeyTable, Nucleus, access::Access},
@@ -191,10 +196,15 @@ fn unmap<A: ArchObjects>(
     // Resolve the recorded owning Domain (generation-checked) and its root.
     let domain = access.resolve::<Domain>(&nucleus.pools.domains, mapping.domain)?;
     let root = domain.translation_root.ok_or(CapError::InvalidOperation)?;
+    let bound_asid = domain.asid;
 
     // Hardware transition: verify the descriptor still points at this frame,
-    // then clear it.
+    // then clear it and withdraw the cached translation under the owning
+    // Domain's bound ASID, so a stale translation cannot survive the unmap.
     A::clear_frame_pte(root, mapping.vaddr, frame.paddr, frame.size_bits)?;
+    if let Some(asid) = bound_asid {
+        A::invalidate_tlb_by_vaddr(asid, mapping.vaddr);
+    }
 
     // Commit: clear the mapping record.
     let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;

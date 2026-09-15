@@ -11,12 +11,17 @@
 //!   address must be vacant).
 //! - `Unmap` `1`: no arguments. The table must be installed and empty (all
 //!   descriptors zero); unmapping the root clears the Domain's translation-root
-//!   field.
+//!   field and withdraws every cached translation under the Domain's bound ASID
+//!   (if any).
 //!
-//! Carved tables are not yet active in any hardware translation context (no
-//! Domain context switching yet), so unmap performs no TLB invalidation; this
-//! must become a real invalidation when Domain activation installs these tables
-//! into a TTBR.
+//! Carved tables are not yet installed in any TTBR (Domain activation is
+//! future work), but the root-unmap invalidation is executed whenever the
+//! Domain has a bound ASID: it is correct by construction once activation
+//! installs the tables. An intermediate table's descriptors are all zero
+//! (required), so no cached translation can exist beneath it and no
+//! invalidation is needed there. Gating the invalidation on live TTBR
+//! installation may be more efficient in the long term once Domain activation
+//! exists (maintainer remark, 2026-09-15).
 
 use {
     crate::objects::{
@@ -189,8 +194,15 @@ fn unmap<A: ArchObjects>(
             if domain.translation_root != Some(pt.paddr()) {
                 return Err(CapError::InvalidOperation);
             }
+            let bound_asid = domain.asid;
             domain.translation_root = None;
             pt.uninstall();
+            // Withdraw every cached translation of the whole context under
+            // the Domain's bound ASID, so no stale translation survives the
+            // root withdrawal.
+            if let Some(asid) = bound_asid {
+                A::invalidate_tlb_asid(asid);
+            }
             Ok((0, 0))
         }
         PtParent::Table { parent_paddr, slot } => {

@@ -35,11 +35,18 @@ pub struct Domain {
     /// root has been installed (mapping context, selected 2026-09-15).
     ///
     /// The root is a Retype-carved `PageTable` installed through
-    /// `PageTable.Map` with this Domain's capability as the parent. ASID
-    /// assignment is deferred (capability-protected ASIDPool/ASID); the field
+    /// `PageTable.Map` with this Domain's capability as the parent. The field
     /// records the table's physical address so the hardware walk can be
     /// reached through the direct map.
     pub translation_root: Option<u64>,
+    /// The hardware ASID bound to this Domain's translation root, if any
+    /// (selected 2026-09-15: capability-protected `ASIDPool` resources with
+    /// authorized `ASIDPool.Assign` binding).
+    ///
+    /// Unmap paths use the bound ASID to withdraw cached translations for
+    /// exactly this Domain's context. `None` means no hardware context was
+    /// ever established for the root, so no TLB invalidation is required.
+    pub asid: Option<u16>,
 }
 
 // Verify size for cache alignment

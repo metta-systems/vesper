@@ -60,6 +60,44 @@ impl ArchObjects for AArch64 {
         AArch64PageTable::new(paddr)
     }
 
+    fn new_asid_pool() -> AArch64ASIDPool {
+        AArch64ASIDPool::new()
+    }
+
+    fn invalidate_tlb_by_vaddr(asid: u16, vaddr: u64) {
+        // Operand format of `TLBI VAE1IS`: ASID in bits 63:48, virtual
+        // address bits 47:12; the low 12 bits are ignored by hardware.
+        let value = (u64::from(asid) << 48) | (vaddr & 0x0000_FFFF_FFFF_F000);
+        // SAFETY: TLB maintenance is a hardware side effect; the instructions
+        // read no memory and clobber no registers. The barrier sequence
+        // guarantees the invalidation completes before any subsequent access
+        // could observe the withdrawn translation.
+        unsafe {
+            core::arch::asm!(
+                "tlbi vae1is, {value}",
+                "dsb sy",
+                "isb",
+                value = in(reg) value,
+                options(nostack),
+            );
+        }
+    }
+
+    fn invalidate_tlb_asid(asid: u16) {
+        // Operand format of `TLBI ASIDE1IS`: ASID in bits 63:48.
+        let value = u64::from(asid) << 48;
+        // SAFETY: see `invalidate_tlb_by_vaddr`.
+        unsafe {
+            core::arch::asm!(
+                "tlbi aside1is, {value}",
+                "dsb sy",
+                "isb",
+                value = in(reg) value,
+                options(nostack),
+            );
+        }
+    }
+
     fn install_table_entry(
         parent_paddr: u64,
         parent_level: u8,
@@ -163,33 +201,6 @@ impl ArchObjects for AArch64 {
         nucleus: &mut Nucleus<Self>,
     ) -> Result<(u64, u64), CapError> {
         // crate::api::arch::vspace::invoke(vspace, rights, op, args)
-        Err(CapError::InvalidOperation)
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // ASID Pool Operations
-    // ─────────────────────────────────────────────────────────────────
-
-    fn invoke_asid_pool(
-        pool: &mut AArch64ASIDPool,
-        rights: Rights,
-        op: u32,
-        args: &[u64; 6],
-        _nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError> {
-        // Most ASID operations go through VSpace.AssignASID
-        // Direct pool operations are rare
-        Err(CapError::InvalidOperation)
-    }
-
-    fn invoke_asid(
-        asid: &mut AArch64ASID,
-        rights: Rights,
-        op: u32,
-        args: &[u64; 6],
-    ) -> Result<(u64, u64), CapError> {
-        // ASID capabilities are mostly just tokens
-        // Operations would be for explicit invalidation
         Err(CapError::InvalidOperation)
     }
 }

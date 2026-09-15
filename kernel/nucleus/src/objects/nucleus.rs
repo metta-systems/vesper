@@ -134,6 +134,7 @@ impl<A: ArchObjects> Nucleus<A> {
         let (_dom_id, _dom) = self.pools.domains.allocate(Domain {
             keytable_addr,
             translation_root: None,
+            asid: None,
         })?;
         #[cfg(feature = "debug_kernel")]
         {

@@ -72,6 +72,10 @@ pub struct PoolCapacities {
     /// installation record); the 4 KiB tables themselves are Retype carves
     /// charged to the invoking Untyped.
     pub page_tables: usize,
+    /// Number of ASID-pool slots in the initial architecture ASID-pool pool.
+    /// ASID pools are boot-provided capability-protected resources (not
+    /// Retype-creatable); one slot backs the boot pool.
+    pub asid_pools: usize,
 }
 
 /// Build the initial [`Nucleus`] in memory carved from the boot Untyped.
@@ -92,12 +96,16 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     if capacities.page_tables > ObjectPool::<A::PageTable>::MAX_SLOTS {
         return Err(CapError::InvalidSize(capacities.page_tables));
     }
+    if capacities.asid_pools > ObjectPool::<A::ASIDPool>::MAX_SLOTS {
+        return Err(CapError::InvalidSize(capacities.asid_pools));
+    }
 
     let nucleus_paddr = carve_region(boot, core::mem::size_of::<Nucleus<A>>())?;
     let nucleus_ptr = nucleus_paddr.user_to_kernel().as_mut_ptr::<Nucleus<A>>();
 
     let domains = carve_pool::<Domain>(boot, capacities.domains)?;
     let page_tables = carve_pool::<A::PageTable>(boot, capacities.page_tables)?;
+    let asid_pools = carve_pool::<A::ASIDPool>(boot, capacities.asid_pools)?;
 
     // Carve the boot Domain's KeyTable region and initialize it kernel-privately
     // (the same unused-watermark allocation Retype performs at runtime).
@@ -114,9 +122,10 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         dcb_pages: DcbPages::new(),
         pools: NucleusPools::<A> {
             domains,
-            // SAFETY: the page-table pool backing was carved above from the
-            // boot Untyped's unused watermark range and is exclusively owned.
-            arch: unsafe { ArchPools::new(page_tables) },
+            // SAFETY: the page-table and ASID-pool backings were carved above
+            // from the boot Untyped's unused watermark range and are
+            // exclusively owned.
+            arch: unsafe { ArchPools::new(page_tables, asid_pools) },
         },
     };
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.

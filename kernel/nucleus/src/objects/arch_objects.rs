@@ -62,6 +62,14 @@ pub enum PtParent {
 /// The metadata (carve address, walk level, installation record) is the
 /// mapping identity for a translation table: enough to locate and retire the
 /// real descriptor.
+/// Behavior of an architecture's ASID-pool object: allocation from the
+/// hardware ASID namespace (binding is the API handler's commit step).
+pub trait AsidPoolObject: NucleusObject {
+    /// Allocate the lowest free ASID, or `None` when the pool is exhausted.
+    /// ASID 0 stays reserved for the kernel's boot context.
+    fn allocate(&mut self) -> Option<u16>;
+}
+
 pub trait PageTableObject: NucleusObject {
     /// Physical address of the carved table.
     fn paddr(&self) -> u64;
@@ -88,7 +96,7 @@ pub trait ArchObjects: Sized + 'static {
     // ─── Associated Types (pool-backed arch objects only) ───
     type PageTable: PageTableObject;
     type VSpace: NucleusObject;
-    type ASIDPool: NucleusObject;
+    type ASIDPool: AsidPoolObject;
     type ASID: NucleusObject;
 
     // ─── Constants ───
@@ -108,6 +116,23 @@ pub trait ArchObjects: Sized + 'static {
     /// Construct the kernel metadata object for a freshly carved page table
     /// at physical address `paddr` (uninstalled).
     fn new_page_table(paddr: u64) -> Self::PageTable;
+
+    /// Construct a fresh ASID pool (ASID 0 reserved for the kernel's boot
+    /// context). Boot-provisioned only: ASID pools are not Retype-creatable.
+    fn new_asid_pool() -> Self::ASIDPool;
+
+    // ─── TLB maintenance (hardware translation withdrawal) ───
+
+    /// Invalidate cached translations for `vaddr` under `asid` (inner
+    /// shareable), completing before the caller proceeds. Called after the
+    /// leaf descriptor is cleared, so a stale translation cannot survive the
+    /// unmap that withdrew it.
+    fn invalidate_tlb_by_vaddr(asid: u16, vaddr: u64);
+
+    /// Invalidate every cached translation for `asid` (inner shareable),
+    /// completing before the caller proceeds. Called when a Domain's
+    /// translation root is withdrawn.
+    fn invalidate_tlb_asid(asid: u16);
 
     // ─── Mapping mechanics (hardware descriptor installation) ───
     // The arch layer owns the descriptor format, walk, and vacancy checks;
@@ -175,11 +200,11 @@ pub trait ArchObjects: Sized + 'static {
     ) -> Result<(ObjectType, ObjectId), CapError>;
 
     // ─── Invocation Handlers ───
-    // Frame and PageTable invocations are dispatched directly to their API
-    // handlers (`crate::api::arch::{frame,page_table}`), which resolve the
-    // invoked capability, the caller's table, and the operand pools through
-    // the guarded `Access` context; no trait shim is needed. The remaining
-    // handlers below serve the deferred kinds.
+    // Frame, PageTable, and ASIDPool invocations are dispatched directly to
+    // their API handlers (`crate::api::arch::{frame,page_table,asid_pool}`),
+    // which resolve the invoked capability, the caller's table, and the
+    // operand pools through the guarded `Access` context; no trait shim is
+    // needed. The remaining handlers below serve the deferred kinds.
 
     fn invoke_vspace(
         vspace: &mut Self::VSpace,
@@ -187,21 +212,6 @@ pub trait ArchObjects: Sized + 'static {
         op: u32,
         args: &[u64; 6],
         nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError>;
-
-    fn invoke_asid_pool(
-        pool: &mut Self::ASIDPool,
-        rights: Rights,
-        op: u32,
-        args: &[u64; 6],
-        nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError>;
-
-    fn invoke_asid(
-        asid: &mut Self::ASID,
-        rights: Rights,
-        op: u32,
-        args: &[u64; 6],
     ) -> Result<(u64, u64), CapError>;
 
     // Optional - default implementations return UnsupportedArchType

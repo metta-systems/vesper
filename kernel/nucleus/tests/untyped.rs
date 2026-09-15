@@ -88,10 +88,12 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             dcb_pages: DcbPages::new(),
             pools: NucleusPools {
                 domains: ObjectPool::new(pool_ptr, 0),
-                arch: ArchPools::new(ObjectPool::new(
-                    pool_ptr,
-                    core::mem::size_of::<AArch64PageTable>(),
-                )),
+                arch: ArchPools::new(
+                    ObjectPool::new(pool_ptr, core::mem::size_of::<AArch64PageTable>()),
+                    // Zero capacity: these MMU-off rejection-path tests never
+                    // invoke ASIDPool operations.
+                    ObjectPool::new(pool_ptr, 0),
+                ),
             },
         });
         &mut *nucleus_ptr

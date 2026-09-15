@@ -70,7 +70,7 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjectsImpl, Domain, KeyTable, Nucleus,
+            ArchObjects, ArchObjectsImpl, Domain, KeyTable, Nucleus,
             access::{ObjectId, PoolTag},
         },
     },
@@ -78,8 +78,8 @@ use {
 
 #[cfg(feature = "debug_kernel")]
 use libobject::{
-    CapError, DebugConsoleKey, FrameKey, InvalidKeyReason, KeyTableKey, PageTableKey, RawKey,
-    UntypedKey,
+    ASIDPoolKey, CapError, DebugConsoleKey, FrameKey, InvalidKeyReason, KeyTableKey, PageTableKey,
+    RawKey, UntypedKey,
 };
 
 unsafe extern "C" {
@@ -630,6 +630,7 @@ pub fn kickstart_run() -> ! {
         &PoolCapacities {
             domains: 1,
             page_tables: 16,
+            asid_pools: 1,
         },
     ) else {
         panic!("failed to build the initial nucleus")
@@ -648,6 +649,7 @@ pub fn kickstart_run() -> ! {
         .allocate(Domain {
             keytable_addr,
             translation_root: None,
+            asid: None,
         })
         .expect("no boot Domain slot")
         .0;
@@ -676,6 +678,31 @@ pub fn kickstart_run() -> ! {
             KeyEntry::new::<Domain>(boot_domain_id, Rights::all(), 0),
         )
         .unwrap_or_else(|failure| panic!("boot Domain install failed: {:?}", failure.error.code()));
+
+    // Provision the boot ASID pool (seL4-style, selected 2026-09-15): ASIDs
+    // are a hardware namespace, not memory-backed, so the pool is carved and
+    // initialized kernel-privately here rather than Retype-created. Its
+    // capability is the authoritative grant the bootstrap builder assigns
+    // hardware translation contexts from.
+    let boot_asid_pool_id = nucleus
+        .pools
+        .arch
+        .asid_pools
+        .allocate(ArchObjectsImpl::new_asid_pool())
+        .expect("no boot ASID-pool slot")
+        .0;
+    let _boot_asid_pool_key = boot_table
+        .insert(
+            KeySlot::BOOT_ASID_POOL,
+            KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::ASIDPool>(
+                boot_asid_pool_id,
+                Rights::all(),
+                0,
+            ),
+        )
+        .unwrap_or_else(|failure| {
+            panic!("boot ASID-pool install failed: {:?}", failure.error.code())
+        });
 
     // Install the debug console grant (debug_kernel) and use it below.
     #[cfg(feature = "debug_kernel")]
@@ -1254,6 +1281,22 @@ pub fn kickstart_run() -> ! {
             .unwrap_or_else(|error| panic!("L3 PageTable Retype failed: {:?}", error.code()));
 
         // Install the root into the boot Domain (vaddr must be zero).
+        //
+        // ASID binding (2026-09-15) through the real SVC path: before a
+        // translation root exists, the assignment is rejected — an ASID binds
+        // to a Domain's root, not to the Domain in the abstract.
+        let boot_asid_pool_key = RawKey::new(KeySlot::BOOT_ASID_POOL, 1);
+        let boot_asid_pool = ASIDPoolKey::from_key(boot_asid_pool_key);
+        assert!(matches!(
+            boot_asid_pool.assign(boot_domain_key),
+            Err(CapError::NotMapped)
+        ));
+        // A non-Domain target key is a type mismatch, not a lookup success.
+        assert!(matches!(
+            boot_asid_pool.assign(boot_untyped_key),
+            Err(CapError::TypeMismatch { .. })
+        ));
+
         let root_pt = PageTableKey::from_key(root_pt_key);
         root_pt
             .map(boot_domain_key, 0)
@@ -1271,6 +1314,28 @@ pub fn kickstart_run() -> ! {
                 .unwrap_or_else(|| panic!("boot Domain missing"));
             assert!(domain.translation_root.is_some());
         }
+
+        // With a root installed, the assignment binds the lowest free ASID
+        // (ASID 0 is reserved for the kernel's boot context, so the first
+        // grant is 1) and records it on the Domain.
+        let bound_asid = boot_asid_pool
+            .assign(boot_domain_key)
+            .unwrap_or_else(|error| panic!("ASIDPool.Assign failed: {:?}", error.code()));
+        assert_eq!(bound_asid, 1);
+        {
+            let domain = nucleus
+                .pools
+                .domains
+                .get_live(0)
+                .unwrap_or_else(|| panic!("boot Domain missing"));
+            assert_eq!(domain.asid, Some(1));
+        }
+        // A second assignment to the same Domain is rejected: one ASID per
+        // translation context.
+        assert!(matches!(
+            boot_asid_pool.assign(boot_domain_key),
+            Err(CapError::AlreadyMapped)
+        ));
 
         // Build the intermediate chain: L1 under the root, L2 under L1,
         // L3 under L2, all selecting the slots for vaddr 0x1000_0000.
@@ -1469,7 +1534,10 @@ pub fn kickstart_run() -> ! {
         // L2 still holds the L3 table descriptor.
         assert!(matches!(l2_pt.unmap(), Err(CapError::InvalidOperation)));
 
-        // Frame.Unmap clears the descriptor and the record.
+        // Frame.Unmap clears the descriptor and the record, and withdraws the
+        // cached translation under the bound ASID (tlbi vae1is + dsb/isb) —
+        // executing the real maintenance sequence here proves it is safe on
+        // the live kernel context.
         frame
             .unmap()
             .unwrap_or_else(|error| panic!("Frame.Unmap failed: {:?}", error.code()));
@@ -1539,6 +1607,8 @@ pub fn kickstart_run() -> ! {
         root_pt
             .unmap()
             .unwrap_or_else(|error| panic!("root PageTable.Unmap failed: {:?}", error.code()));
+        // The root unmap withdrew the whole context: every cached translation
+        // under the bound ASID was invalidated (tlbi aside1is + dsb/isb).
         assert!(matches!(root_pt.unmap(), Err(CapError::NotMapped)));
         {
             let domain = nucleus

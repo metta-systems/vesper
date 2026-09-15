@@ -94,9 +94,16 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
     let mut nucleus = Nucleus {
         pools: NucleusPools {
             domains,
-            // SAFETY: the page-table pool backing is exclusively owned by this
-            // fixture; this test does not allocate or invoke arch objects.
-            arch: unsafe { ArchPools::new(page_tables) },
+            // SAFETY: the page-table and ASID-pool backings are exclusively
+            // owned by this fixture; this test does not allocate or invoke
+            // arch objects (the ASID pool has zero capacity for the same
+            // reason).
+            arch: unsafe {
+                ArchPools::new(
+                    page_tables,
+                    ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), 0),
+                )
+            },
         },
         current_domain: None,
         dcb_pages: DcbPages::new(),
@@ -184,6 +191,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
             .allocate(Domain {
                 keytable_addr: second_table_addr,
                 translation_root: None,
+                asid: None,
             })
             .expect("second domain allocation failed");
         nucleus.current_domain = Some(1);

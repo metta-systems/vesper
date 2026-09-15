@@ -168,9 +168,19 @@ fn arch_invoke<A: ArchObjects>(
             nucleus,
         ),
 
-        // VSpace translation/ASID binding and I/O/IRQ control remain deferred
-        // with their kinds: no creatable arch kind other than Frame and
-        // PageTable is allowlisted, and their draft handlers stay inactive.
+        ArchType::ASIDPool => crate::api::arch::asid_pool::invoke::<A>(
+            access,
+            caller_table_addr,
+            key,
+            op,
+            args,
+            nucleus,
+        ),
+
+        // VSpace translation and I/O/IRQ control remain deferred with their
+        // kinds: no creatable arch kind other than Frame and PageTable is
+        // allowlisted, and their draft handlers stay inactive. The registered
+        // ASID kind stays reserved (ASIDs bind through ASIDPool.Assign).
         x => Err(CapError::UnsupportedArchType(x)),
     }
 }

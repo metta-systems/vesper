@@ -12,21 +12,30 @@ use crate::objects::{ArchObjects, ObjectPool};
 /// themselves are Retype carves charged to the invoking Untyped.
 pub struct ArchPools<A: ArchObjects> {
     pub page_tables: ObjectPool<A::PageTable>,
-    // Pools for VSpace/ASIDPool/ASID remain deferred with their kinds: no
-    // creatable arch kind other than Frame and PageTable is allowlisted, so
-    // no backing is carved for them yet.
+    /// ASID pools: boot-provided capability-protected namespace resources
+    /// (selected 2026-09-15); not Retype-creatable, so the only backing today
+    /// is the boot pool carved at bootstrap.
+    pub asid_pools: ObjectPool<A::ASIDPool>,
+    // Pools for VSpace/ASID remain deferred with their kinds: no creatable
+    // arch kind other than Frame and PageTable is allowlisted, so no backing
+    // is carved for them yet.
     pub _marker: core::marker::PhantomData<A>,
 }
 
 impl<A: ArchObjects> ArchPools<A> {
-    /// Create the arch pools with an explicitly carved page-table pool.
+    /// Create the arch pools with explicitly carved backings.
     ///
     /// # Safety
-    /// `page_tables` must be backed by memory exclusively owned by this pool:
-    /// carved from an Untyped's committed range and never freed.
-    pub unsafe fn new(page_tables: ObjectPool<A::PageTable>) -> Self {
+    /// `page_tables` and `asid_pools` must be backed by memory exclusively
+    /// owned by this pool: carved from an Untyped's committed range and never
+    /// freed.
+    pub unsafe fn new(
+        page_tables: ObjectPool<A::PageTable>,
+        asid_pools: ObjectPool<A::ASIDPool>,
+    ) -> Self {
         Self {
             page_tables,
+            asid_pools,
             _marker: core::marker::PhantomData,
         }
     }

@@ -26,6 +26,11 @@ impl KeySlot {
     pub const CAPTBL_SELF: KeySlot = KeySlot(3); // Every domain has cap to own captbl here - or rather to KeyMaster
     /// The boot Untyped covering the initial carve region (Kickstart grant).
     pub const BOOT_UNTYPED: KeySlot = KeySlot(4);
+    /// The boot ASID pool (Kickstart grant): the authoritative ASID namespace
+    /// the bootstrap builder assigns hardware translation contexts from.
+    /// Slots 5–12 are the boot test's Retype destinations, so this grant sits
+    /// at the first free well-known slot after them.
+    pub const BOOT_ASID_POOL: KeySlot = KeySlot(13);
     // ... other well-known slots
     pub const DEBUG_CONSOLE: KeySlot = KeySlot(127); // FIXME: randomly chosen for now
 }

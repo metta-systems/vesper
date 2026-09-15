@@ -222,7 +222,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     let key = RawKey::from_wire(frame.gpr[0]);
     let op = frame.gpr[1];
     semi::println!(
-        "CapInvoke SYSCALL(key: {key:?}, op: {op}) happened, we're at PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
+        "➡️ CapInvoke SYSCALL(key: {key:?}, op: {op}) @ PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
         get_pc(),
         get_sp(),
         core::ptr::from_mut(frame) as u64,
@@ -270,7 +270,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         Err(e) => e.code(),
     };
     // Return values
-    semi::println!("CapInvoke SYSCALL(Return {x0:#x}, {x1:#x}, {x2:#x})",);
+    semi::println!("⬅️ CapInvoke SYSCALL(Return {x0:#x}, {x1:#x}, {x2:#x})");
     // SAFETY: Not safe.
     unsafe {
         frame.gpr[0] = x0;

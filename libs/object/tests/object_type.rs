@@ -13,6 +13,10 @@ mod key_identity;
 // Compile the actual wrapper methods with a test-only transport. DCB accessors
 // remain uncalled: constructing a test handle does not establish a user mapping.
 #[cfg(test)]
+#[path = "../src/asid_pool.rs"]
+pub mod asid_pool_client;
+
+#[cfg(test)]
 #[path = "../src/domain.rs"]
 pub mod domain_client;
 
@@ -182,6 +186,20 @@ mod tests {
         for value in [2, 255, 256, 1 << 32, u64::MAX] {
             assert!(matches!(
                 PageTableOp::try_from(value),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn asid_pool_operations_match_existing_wire_ids() {
+        use vesper_objects::asid_pool::ASIDPoolOp;
+
+        assert_eq!(ASIDPoolOp::Assign as u8, 0);
+        assert_eq!(ASIDPoolOp::Assign as u32, 0);
+        for value in [1, 255, 256, 1 << 32, u64::MAX] {
+            assert!(matches!(
+                ASIDPoolOp::try_from(value),
                 Err(CapError::InvalidOperation)
             ));
         }
