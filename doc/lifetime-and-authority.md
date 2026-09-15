@@ -391,7 +391,7 @@ The current inline `RegionPayload` has physical address and compressed per-cap m
 
 - [ ] Implement backends for the selected hostile-code threat model and Domain = VSpace protection boundary; resolve per-target features without weakening confinement.
 - [ ] Define physical and metadata layouts, accounting, single/batch retype, and initialization/sanitization enforcement.
-- [ ] Define complete per-mapping identity, permissions/attributes, ASID ownership, and hardware-safe namespace reuse.
+- [ ] Define complete per-mapping identity, permissions/attributes, ASID ownership, and hardware-safe namespace reuse. (2026-09-15: mapping-context identity selected — the Domain is the mapping context; there is no separately targetable VSpace kernel object, and the registered VSpace ID stays reserved. ASID ownership selected — explicit capability-protected ASIDPool/ASID resources with authorized AssignASID-style binding to a Domain's translation root. Complete per-mapping record contents, permissions/attributes, binding/reuse schemas, and hardware-safe namespace reuse remain open.)
 - [ ] Specify/implement separate Copy and Map schemas: Copy installs only the destination capability; Map validates target context, address, rights, and mapping state before installing a PTE.
 - [ ] Specify origin-capability Revoke orchestration, descendant mapping withdrawal, failure/partial completion, and prevention of racing remaps/derivations; keep local Unmap and origin removal distinct.
 - [ ] Specify virtual remap versus physical-backing replacement and whether derived mappings stay put, follow, or are withdrawn; origin permission alone is not a userspace pointer-lifetime proof.
