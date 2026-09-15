@@ -117,18 +117,41 @@ fn retype(
         (*untyped.as_untyped()?, dst_cap)
     };
 
-    // Phase 2 — reserve: align the watermark to the object alignment and the
-    // watermark encoding granularity, and check the whole run fits in the
-    // Untyped's unused range. The candidate bytes have no outstanding access:
-    // carved regions are kernel-private and never exposed to userspace.
+    // Phase 2 — reserve: validate the region extent, align the absolute
+    // carve address, and check the whole run fits the Untyped's unused and
+    // watermark-representable range. The candidate bytes have no outstanding
+    // access: carved regions are kernel-private and never exposed to
+    // userspace.
     //
-    // The stored watermark is `MIN_ALIGN`-granular: both the base and the
-    // committed end are aligned up to it, so the encoding can never discard
+    // The extent must be representable before any shift or addition:
+    // `size_bits` below the address width and `paddr + size` within `u64`.
+    // Malformed extents are rejected with the region's own size instead of
+    // panicking in the size shift.
+    let region_bits = untyped.size_bits;
+    let region_size = 1_u64
+        .checked_shl(u32::from(region_bits))
+        .ok_or(CapError::InvalidSize(usize::from(region_bits)))?;
+    untyped
+        .paddr
+        .checked_add(region_size)
+        .ok_or(CapError::InvalidSize(usize::from(region_bits)))?;
+    // The watermark state field stores `offset >> MIN_ALIGN_BITS` in a `u32`,
+    // so the usable range ends at `u32::MAX << MIN_ALIGN_BITS` (that is,
+    // `u32::MAX × MIN_ALIGN`) even in larger regions.
+    let usable_end = region_size.min(u64::from(u32::MAX) * u64::try_from(MIN_ALIGN).unwrap());
+    // The absolute carve address (`paddr + watermark`) must be aligned, not
+    // just the watermark: a region whose base is not aligned still yields
+    // aligned objects. The base's misalignment is folded into the watermark
+    // computation, so both the carve base and the committed end stay
+    // `MIN_ALIGN`-granular and the encoding can never discard
     // sub-granularity bytes (which would let the next carve overlap this
     // allocation). The end's padding bytes are consumed, not lost.
-    let wm = untyped.watermark_bytes();
     let align = u64::try_from(core::mem::align_of::<KeyTable>().max(MIN_ALIGN)).unwrap();
-    let aligned_wm = align::align_up(u64::try_from(wm).unwrap(), align);
+    let base_misalign = untyped.paddr & (align - 1);
+    let aligned_wm = align::align_up(
+        base_misalign + u64::try_from(untyped.watermark_bytes()).unwrap(),
+        align,
+    ) - base_misalign;
     let obj_size = u64::try_from(core::mem::size_of::<KeyTable>()).unwrap();
     let total = obj_size
         .checked_mul(u64::from(count))
@@ -139,7 +162,7 @@ fn retype(
             .ok_or(CapError::InvalidSize(0))?,
         align,
     );
-    if end > u64::try_from(untyped.size()).unwrap() {
+    if end > usable_end {
         return Err(CapError::InsufficientMemory);
     }
 

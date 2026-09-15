@@ -919,6 +919,86 @@ pub fn kickstart_run() -> ! {
             )
             .unwrap_or_else(|error| panic!("post-carve CopyDerive failed: {:?}", error.code()));
         assert_eq!(derived_again.slot(), KeySlot(2));
+
+        // A region whose base is not aligned still yields an aligned carve:
+        // the absolute carve address (base + watermark) is aligned up, not
+        // just the watermark. Fabricate a RAM region at a deliberately
+        // misaligned free physical address (just past the boot Untyped's
+        // committed watermark) and retype from it through the real SVC path.
+        let (boot_paddr, boot_wm) = {
+            // SAFETY: keytable_addr names the live boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let region = boot_table
+                .lookup(boot_untyped_key)
+                .unwrap_or_else(|_| panic!("boot Untyped entry missing"))
+                .as_untyped()
+                .unwrap_or_else(|_| panic!("boot Untyped entry is not a region"));
+            (
+                region.paddr,
+                u64::try_from(region.watermark_bytes()).unwrap(),
+            )
+        };
+        // The committed watermark is object-aligned, so +24 keeps the address
+        // inside the boot Untyped's free RAM while making the region base
+        // misaligned for the KeyTable alignment (32 under the current layout;
+        // 16 is the watermark encoding granularity — mirror the kernel's
+        // max(align_of, MIN_ALIGN)).
+        let align = u64::try_from(core::mem::align_of::<KeyTable>().max(16)).unwrap();
+        let misaligned_base = boot_paddr + boot_wm + 24;
+        assert_ne!(misaligned_base % align, 0, "fixture must be misaligned");
+        let misaligned_untyped_key = {
+            // SAFETY: see above.
+            let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+            boot_table
+                .insert(
+                    KeySlot(7),
+                    KeyEntry::new_untyped(misaligned_base, 14, false, Rights::all()),
+                )
+                .unwrap_or_else(|_| panic!("misaligned region install failed"))
+        };
+        let carved_key = UntypedKey::from_key(misaligned_untyped_key)
+            .retype(
+                ObjectType::KEY_TABLE,
+                0,
+                1,
+                &self_table,
+                KeySlot(8).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("misaligned-base Retype failed: {:?}", error.code()));
+        assert_eq!(carved_key.slot(), KeySlot(8));
+
+        // Read the carved address back: it must be the aligned base, not the
+        // region's misaligned start. The capability stores the kernel-window
+        // address of the carve; convert it back to physical to compare.
+        let carved_paddr = {
+            // SAFETY: see above.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let window_addr = boot_table
+                .lookup(carved_key)
+                .unwrap_or_else(|_| panic!("carved entry missing"))
+                .keytable_address()
+                .unwrap_or_else(|_| panic!("carved entry is not a KeyTable cap"));
+            VirtAddr::new(window_addr).kernel_to_user().as_u64()
+        };
+        assert_eq!(
+            carved_paddr,
+            misaligned_base + (align - misaligned_base % align) % align,
+            "the carve must start at the aligned absolute address"
+        );
+
+        // The aligned carve produced a live table: derive into it.
+        let derived_misaligned = self_table
+            .copy_derive(
+                self_table_key,
+                &KeyTableKey::from_key(carved_key),
+                KeySlot(1).0,
+                Rights(Rights::DERIVE),
+            )
+            .unwrap_or_else(|error| {
+                panic!("misaligned-base CopyDerive failed: {:?}", error.code())
+            });
+        assert_eq!(derived_misaligned.slot(), KeySlot(1));
     }
 
     let (_, privilege_level) = libexception::current_privilege_level();

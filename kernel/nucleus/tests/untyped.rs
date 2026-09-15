@@ -132,7 +132,12 @@ fn retype_args(count: u64, dst: RawKey, slot: KeySlot, rights: Rights) -> [u64; 
 /// A mock Untyped over normal RAM at 768 MiB (inside QEMU's 1 GiB, clear of
 /// the fixture backing); never written by these rejection-path tests.
 fn ram_untyped(size_bits: u8) -> KeyEntry {
-    KeyEntry::new_untyped(0x3000_0000, size_bits, false, Rights::all())
+    ram_untyped_at(0x3000_0000, size_bits)
+}
+
+/// A mock Untyped over normal RAM at an explicit base address.
+fn ram_untyped_at(paddr: u64, size_bits: u8) -> KeyEntry {
+    KeyEntry::new_untyped(paddr, size_bits, false, Rights::all())
 }
 
 /// A mock device-memory Untyped over rpi3 SoC peripherals (GPIO window at
@@ -242,4 +247,63 @@ fn retype_device_rejection_precedes_destination_resolution() {
         result,
         Err(CapError::InvalidObjectType(ObjectType::KEY_TABLE))
     ));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// EXTENT REPRESENTABILITY AND RANGE
+// ═══════════════════════════════════════════════════════════════════
+
+/// Regions whose size is not representable (`size_bits` at or above the
+/// address width) are rejected with the region's own size instead of
+/// panicking in the size shift.
+#[test_case]
+fn retype_rejects_unrepresentable_region_sizes() {
+    for size_bits in [64_u8, 100, u8::MAX] {
+        let mut fx = Fixture::new(FULL);
+        let huge = fx.install(KeySlot(30), ram_untyped_at(0x3000_0000, size_bits));
+
+        let result = fx.invoke(
+            huge,
+            UntypedOp::Retype as u64,
+            &retype_args(1, fx.self_key, KeySlot(40), Rights::all()),
+        );
+        assert!(
+            matches!(result, Err(CapError::InvalidSize(size)) if size == usize::from(size_bits)),
+            "size_bits {size_bits} must be rejected with its own size"
+        );
+    }
+}
+
+/// Regions whose extent overflows the physical address space (base + size
+/// beyond `u64`) are rejected with the region's own size.
+#[test_case]
+fn retype_rejects_unrepresentable_region_extents() {
+    let mut fx = Fixture::new(FULL);
+    // Base near the top of the address space: adding a 4 GiB size overflows.
+    let region = fx.install(KeySlot(30), ram_untyped_at(u64::MAX - 1024, 32));
+
+    let result = fx.invoke(
+        region,
+        UntypedOp::Retype as u64,
+        &retype_args(1, fx.self_key, KeySlot(40), Rights::all()),
+    );
+    assert!(matches!(result, Err(CapError::InvalidSize(32))));
+}
+
+/// The usable range ends where the watermark encoding does: a run that fits
+/// the region but ends beyond the largest representable watermark is rejected
+/// as insufficient memory, before any destination-slot iteration.
+#[test_case]
+fn retype_rejects_runs_beyond_the_watermark_encoding() {
+    let mut fx = Fixture::new(FULL);
+    // A 128 GiB region (size_bits 37) whose ~8-million-object run (~69 GiB)
+    // fits the region but ends past the `u32` watermark encoding (~64 GiB).
+    let region = fx.install(KeySlot(30), ram_untyped_at(0, 37));
+
+    let result = fx.invoke(
+        region,
+        UntypedOp::Retype as u64,
+        &retype_args(8_000_000, fx.self_key, KeySlot(0), Rights::all()),
+    );
+    assert!(matches!(result, Err(CapError::InsufficientMemory)));
 }
