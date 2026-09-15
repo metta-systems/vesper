@@ -6,14 +6,16 @@
 //! destination-local key in `x1`, zero in `x2`.
 //!
 //! Authority: WRITE on the invoked Untyped, INSTALL on the destination table.
-//! The initial kind allowlist is `KeyTable`; other kinds remain unsupported.
-//! Device Untypeds are rejected as sources: no creatable kind is
+//! The kind allowlist is `KeyTable` (`size_bits` reserved zero) and `Frame`
+//! (architecture-validated `size_bits`, added 2026-09-15); other kinds remain
+//! unsupported. Device Untypeds are rejected as sources: no creatable kind is
 //! device-capable yet (per-kind device policy is D6).
 //!
 //! Transaction: validate → reserve (watermark fit) → initialize each object
-//! kernel-privately in the carved region → install capabilities → advance the
-//! watermark last. Any failure before the watermark advance leaves the Untyped
-//! and the destination table unchanged.
+//! kernel-privately in the carved region (a `KeyTable` is written there; a
+//! `Frame`'s contents are sanitized by zeroing) → install capabilities →
+//! advance the watermark last. Any failure before the watermark advance
+//! leaves the Untyped and the destination table unchanged.
 
 use {
     crate::{
@@ -21,7 +23,7 @@ use {
             key_entry::{KeyEntry, MIN_ALIGN},
             key_table::resolve_table_cap,
         },
-        objects::{KeyTable, access::Access},
+        objects::{ArchObjects, KeyTable, access::Access},
     },
     libaddress::{PhysAddr, align},
     libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, UntypedOp},
@@ -32,7 +34,7 @@ use {
 /// `caller_table_addr` is the caller's own capability table (its implicit
 /// table), through which the invoked `untyped_key` and the destination-table
 /// key are resolved.
-pub fn invoke(
+pub fn invoke<A: ArchObjects>(
     access: &Access,
     caller_table_addr: u64,
     untyped_key: RawKey,
@@ -41,13 +43,23 @@ pub fn invoke(
 ) -> Result<(u64, u64), CapError> {
     let op = UntypedOp::try_from(op)?;
     match op {
-        UntypedOp::Retype => retype(access, caller_table_addr, untyped_key, args),
+        UntypedOp::Retype => retype::<A>(access, caller_table_addr, untyped_key, args),
     }
+}
+
+/// How one carved object is sized, aligned, and kernel-privately initialized.
+enum Carve {
+    /// A carved `KeyTable`: kernel bookkeeping storage, written at the carve.
+    KeyTable,
+    /// A carved `Frame`: a raw physical region of `bytes` bytes. There is no
+    /// kernel object at the carve; the capability stores the region inline,
+    /// and the contents are sanitized (zeroed) before installation.
+    Frame { bytes: usize },
 }
 
 /// `Retype` `0`: carve `count` objects of one kind from the Untyped's unused
 /// watermark range and install capabilities into consecutive destination slots.
-fn retype(
+fn retype<A: ArchObjects>(
     access: &Access,
     caller_table_addr: u64,
     untyped_key: RawKey,
@@ -76,14 +88,23 @@ fn retype(
             .ok_or(CapError::InvalidOperation)?,
     );
 
-    // Initial kind allowlist: only KeyTable. Other kinds are rejected, not
-    // silently created with wrong semantics.
-    if kind != ObjectType::KEY_TABLE {
-        return Err(CapError::InvalidObjectType(kind));
-    }
-    if size_bits != 0 {
-        return Err(CapError::InvalidSize(usize::from(size_bits)));
-    }
+    // Kind allowlist and per-kind sizing: only KeyTable bookkeeping storage
+    // and raw Frame regions are creatable from memory. Frame sizes are
+    // architecture-validated (AArch64 4 KiB-granule baseline: 12/21/30) and
+    // a frame is its own alignment; other kinds are rejected, not silently
+    // created with wrong semantics.
+    let carve = match kind {
+        ObjectType::KEY_TABLE => {
+            if size_bits != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::KeyTable
+        }
+        ObjectType::FRAME => Carve::Frame {
+            bytes: A::validate_frame_size(size_bits)?,
+        },
+        _ => return Err(CapError::InvalidObjectType(kind)),
+    };
     if count == 0 {
         return Err(CapError::InvalidOperation);
     }
@@ -139,6 +160,18 @@ fn retype(
     // so the usable range ends at `u32::MAX << MIN_ALIGN_BITS` (that is,
     // `u32::MAX × MIN_ALIGN`) even in larger regions.
     let usable_end = region_size.min(u64::from(u32::MAX) * u64::try_from(MIN_ALIGN).unwrap());
+    // A frame is its own alignment; a KeyTable uses its type alignment (at
+    // least the watermark encoding granularity).
+    let (obj_size, align) = match carve {
+        Carve::KeyTable => (
+            u64::try_from(core::mem::size_of::<KeyTable>()).unwrap(),
+            u64::try_from(core::mem::align_of::<KeyTable>().max(MIN_ALIGN)).unwrap(),
+        ),
+        Carve::Frame { bytes } => {
+            let frame_size = u64::try_from(bytes).unwrap();
+            (frame_size, frame_size)
+        }
+    };
     // The absolute carve address (`paddr + watermark`) must be aligned, not
     // just the watermark: a region whose base is not aligned still yields
     // aligned objects. The base's misalignment is folded into the watermark
@@ -146,13 +179,11 @@ fn retype(
     // `MIN_ALIGN`-granular and the encoding can never discard
     // sub-granularity bytes (which would let the next carve overlap this
     // allocation). The end's padding bytes are consumed, not lost.
-    let align = u64::try_from(core::mem::align_of::<KeyTable>().max(MIN_ALIGN)).unwrap();
     let base_misalign = untyped.paddr & (align - 1);
     let aligned_wm = align::align_up(
         base_misalign + u64::try_from(untyped.watermark_bytes()).unwrap(),
         align,
     ) - base_misalign;
-    let obj_size = u64::try_from(core::mem::size_of::<KeyTable>()).unwrap();
     let total = obj_size
         .checked_mul(u64::from(count))
         .ok_or(CapError::InvalidSize(0))?;
@@ -192,20 +223,38 @@ fn retype(
     let mut first_key = None;
     for i in 0..u64::from(count) {
         let paddr = base + obj_size * i;
-        let addr = PhysAddr::new(paddr)
-            .user_to_kernel()
-            .as_mut_ptr::<KeyTable>();
-        // SAFETY: the region lies within the Untyped's unused watermark range,
-        // is kernel-private, and is exclusively owned by this invocation.
-        unsafe {
-            addr.write(KeyTable::new(owner));
-        }
         let slot = KeySlot(
             u32::try_from(first_slot + i)
                 .ok()
                 .ok_or(CapError::InvalidOperation)?,
         );
-        let entry = KeyEntry::new_keytable(addr as u64, requested, 0);
+        let entry = match carve {
+            Carve::KeyTable => {
+                let addr = PhysAddr::new(paddr)
+                    .user_to_kernel()
+                    .as_mut_ptr::<KeyTable>();
+                // SAFETY: the region lies within the Untyped's unused watermark range,
+                // is kernel-private, and is exclusively owned by this invocation.
+                unsafe {
+                    addr.write(KeyTable::new(owner));
+                };
+                KeyEntry::new_keytable(addr as u64, requested, 0)
+            }
+            Carve::Frame { bytes } => {
+                // Sanitization (selected 2026-09-15): the kernel zeroes the
+                // carved frame contents before the capability is installed,
+                // so a fresh frame never carries prior-owner or kernel data
+                // when first exposed across a protection boundary.
+                let addr = PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>();
+                // SAFETY: the region lies within the Untyped's unused
+                // watermark range, is ordinary RAM (device sources are
+                // rejected above), and has no outstanding access.
+                unsafe {
+                    core::ptr::write_bytes(addr, 0, bytes);
+                };
+                KeyEntry::new_frame(paddr, size_bits, untyped.is_device, requested)
+            }
+        };
         match dst_table.insert(slot, entry) {
             Ok(key) => {
                 installed[installed_count] = key;

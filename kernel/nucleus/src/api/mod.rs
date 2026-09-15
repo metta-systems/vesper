@@ -94,7 +94,9 @@ fn core_invoke<A: ArchObjects>(
     match core_type {
         CoreType::Null => Err(CapError::NullCapability),
 
-        CoreType::Untyped => crate::api::untyped::invoke(access, caller_table_addr, key, op, args),
+        CoreType::Untyped => {
+            crate::api::untyped::invoke::<A>(access, caller_table_addr, key, op, args)
+        }
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
             semi::println!("core_invoke: DebugConsole");

@@ -920,6 +920,147 @@ pub fn kickstart_run() -> ! {
             .unwrap_or_else(|error| panic!("post-carve CopyDerive failed: {:?}", error.code()));
         assert_eq!(derived_again.slot(), KeySlot(2));
 
+        // Retype a Frame (4 KiB, the AArch64 small-granule baseline) from the
+        // boot Untyped through the real SVC path. The kernel sanitizes the
+        // carved contents (zeroes them) before installing the capability.
+        let frame_key = untyped
+            .retype(
+                ObjectType::FRAME,
+                12,
+                1,
+                &self_table,
+                KeySlot(9).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("frame Retype failed: {:?}", error.code()));
+        assert_eq!(frame_key.slot(), KeySlot(9));
+
+        // Non-granular frame sizes are rejected with the architecture's own
+        // error, leaving the table unchanged (slot 10 stays free).
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::FRAME,
+                13,
+                1,
+                &self_table,
+                KeySlot(10).0,
+                Rights::all(),
+            ),
+            Err(CapError::InvalidFrameSize(13))
+        ));
+
+        // The frame entry records the aligned absolute carve and the granule.
+        let frame_paddr = {
+            // SAFETY: keytable_addr names the live boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let frame = boot_table
+                .lookup(frame_key)
+                .unwrap_or_else(|_| panic!("frame entry missing"))
+                .as_frame()
+                .unwrap_or_else(|_| panic!("frame entry is not a Frame cap"));
+            assert_eq!(frame.size_bits, 12);
+            assert!(!frame.is_device);
+            frame.paddr
+        };
+        assert_eq!(
+            frame_paddr % 4096,
+            0,
+            "the frame carve must be frame-aligned"
+        );
+
+        // Sanitization: the carved frame contents were zeroed at retype.
+        {
+            // SAFETY: the frame lies in the boot Untyped's committed range;
+            // the direct map is live.
+            let words = unsafe {
+                slice::from_raw_parts(
+                    PhysAddr::new(frame_paddr).user_to_kernel().as_ptr::<u64>(),
+                    4096 / 8,
+                )
+            };
+            assert!(
+                words.iter().all(|word| *word == 0),
+                "frame contents must be zeroed at retype"
+            );
+        }
+
+        // A subsequent same-size frame carve continues the watermark exactly:
+        // no gap and no overlap between consecutive frame carves.
+        let second_frame_key = untyped
+            .retype(
+                ObjectType::FRAME,
+                12,
+                1,
+                &self_table,
+                KeySlot(10).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("second frame Retype failed: {:?}", error.code()));
+        assert_eq!(second_frame_key.slot(), KeySlot(10));
+        let second_frame_paddr = {
+            // SAFETY: see above.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            boot_table
+                .lookup(second_frame_key)
+                .unwrap_or_else(|_| panic!("second frame entry missing"))
+                .as_frame()
+                .unwrap_or_else(|_| panic!("second frame entry is not a Frame cap"))
+                .paddr
+        };
+        assert_eq!(
+            second_frame_paddr,
+            frame_paddr + 4096,
+            "consecutive frame carves must neither gap nor overlap"
+        );
+
+        // A larger-granule frame (2 MiB) aligns its own carve and is zeroed
+        // too (spot-checked at the first words).
+        let large_frame_key = untyped
+            .retype(
+                ObjectType::FRAME,
+                21,
+                1,
+                &self_table,
+                KeySlot(11).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("large frame Retype failed: {:?}", error.code()));
+        assert_eq!(large_frame_key.slot(), KeySlot(11));
+        let large_frame_paddr = {
+            // SAFETY: see above.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            boot_table
+                .lookup(large_frame_key)
+                .unwrap_or_else(|_| panic!("large frame entry missing"))
+                .as_frame()
+                .unwrap_or_else(|_| panic!("large frame entry is not a Frame cap"))
+                .paddr
+        };
+        assert_eq!(
+            large_frame_paddr % (2 * 1024 * 1024),
+            0,
+            "the 2 MiB frame carve must be 2 MiB-aligned"
+        );
+        assert!(
+            large_frame_paddr >= second_frame_paddr + 4096,
+            "the large frame must not overlap the earlier carves"
+        );
+        {
+            // SAFETY: see above.
+            let words = unsafe {
+                slice::from_raw_parts(
+                    PhysAddr::new(large_frame_paddr)
+                        .user_to_kernel()
+                        .as_ptr::<u64>(),
+                    8,
+                )
+            };
+            assert!(
+                words.iter().all(|word| *word == 0),
+                "the large frame must be zeroed at retype"
+            );
+        }
+
         // A region whose base is not aligned still yields an aligned carve:
         // the absolute carve address (base + watermark) is aligned up, not
         // just the watermark. Fabricate a RAM region at a deliberately

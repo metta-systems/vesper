@@ -1,9 +1,9 @@
 //! Nucleus `Untyped` handler tests: the Retype transaction's rejection paths.
 //!
 //! The embedded test binary runs with the MMU off, so these tests exercise
-//! only paths that reject before the kernel-private carve write (which goes
-//! through the physical direct map); the successful carve is covered by the
-//! kickstart boot test through the real SVC path.
+//! only paths that reject before the kernel-private carve write or frame
+//! sanitization (both go through the physical direct map); the successful
+//! carve is covered by the kickstart boot test through the real SVC path.
 
 #![no_std]
 #![no_main]
@@ -30,7 +30,7 @@ use {
     // `Nucleus` is not used directly here: binding it at the crate root lets
     // the included production tree resolve `crate::Nucleus`
     // (objects/arch/aarch64_objects.rs, as the nucleus lib re-exports it).
-    objects::{KeyTable, Nucleus, access::Access},
+    objects::{ArchObjectsImpl, KeyTable, Nucleus, access::Access},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -111,17 +111,24 @@ impl Fixture {
     ) -> Result<(u64, u64), CapError> {
         // SAFETY: test-only; no overlapping access context.
         let access = unsafe { Access::new() };
-        api::untyped::invoke(&access, self.table_addr, untyped_key, op, args)
+        api::untyped::invoke::<ArchObjectsImpl>(&access, self.table_addr, untyped_key, op, args)
     }
 }
 
 /// Encode Retype's approved wire schema (see `doc/nucleus_capabilities.md`):
 /// `x2` object kind, `x3` `size_bits`, `x4` count, `x5` destination-table key,
 /// `x6` first destination slot, `x7` requested rights.
-fn retype_args(count: u64, dst: RawKey, slot: KeySlot, rights: Rights) -> [u64; 6] {
+fn retype_args(
+    kind: ObjectType,
+    size_bits: u8,
+    count: u64,
+    dst: RawKey,
+    slot: KeySlot,
+    rights: Rights,
+) -> [u64; 6] {
     [
-        u64::from(ObjectType::KEY_TABLE.as_u8()),
-        0,
+        u64::from(kind.as_u8()),
+        u64::from(size_bits),
         count,
         dst.to_wire(),
         u64::from(slot.0),
@@ -161,7 +168,14 @@ fn retype_rejects_device_untypeds_without_changing_state() {
     let result = fx.invoke(
         device,
         UntypedOp::Retype as u64,
-        &retype_args(1, fx.self_key, KeySlot(40), Rights::all()),
+        &retype_args(
+            ObjectType::KEY_TABLE,
+            0,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
     );
     assert!(matches!(
         result,
@@ -193,7 +207,14 @@ fn retype_device_rejection_precedes_capacity_validation() {
     let result = fx.invoke(
         device,
         UntypedOp::Retype as u64,
-        &retype_args(1, fx.self_key, KeySlot(40), Rights::all()),
+        &retype_args(
+            ObjectType::KEY_TABLE,
+            0,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
     );
     assert!(matches!(
         result,
@@ -213,7 +234,14 @@ fn retype_from_ram_reaches_capacity_validation() {
     let result = fx.invoke(
         tiny,
         UntypedOp::Retype as u64,
-        &retype_args(1, fx.self_key, KeySlot(40), Rights::all()),
+        &retype_args(
+            ObjectType::KEY_TABLE,
+            0,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
     );
     assert!(matches!(result, Err(CapError::InsufficientMemory)));
 
@@ -241,7 +269,14 @@ fn retype_device_rejection_precedes_destination_resolution() {
     let result = fx.invoke(
         device,
         UntypedOp::Retype as u64,
-        &retype_args(1, bogus, KeySlot(40), Rights::all()),
+        &retype_args(
+            ObjectType::KEY_TABLE,
+            0,
+            1,
+            bogus,
+            KeySlot(40),
+            Rights::all(),
+        ),
     );
     assert!(matches!(
         result,
@@ -265,7 +300,14 @@ fn retype_rejects_unrepresentable_region_sizes() {
         let result = fx.invoke(
             huge,
             UntypedOp::Retype as u64,
-            &retype_args(1, fx.self_key, KeySlot(40), Rights::all()),
+            &retype_args(
+                ObjectType::KEY_TABLE,
+                0,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
         );
         assert!(
             matches!(result, Err(CapError::InvalidSize(size)) if size == usize::from(size_bits)),
@@ -285,7 +327,14 @@ fn retype_rejects_unrepresentable_region_extents() {
     let result = fx.invoke(
         region,
         UntypedOp::Retype as u64,
-        &retype_args(1, fx.self_key, KeySlot(40), Rights::all()),
+        &retype_args(
+            ObjectType::KEY_TABLE,
+            0,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
     );
     assert!(matches!(result, Err(CapError::InvalidSize(32))));
 }
@@ -303,7 +352,143 @@ fn retype_rejects_runs_beyond_the_watermark_encoding() {
     let result = fx.invoke(
         region,
         UntypedOp::Retype as u64,
-        &retype_args(8_000_000, fx.self_key, KeySlot(0), Rights::all()),
+        &retype_args(
+            ObjectType::KEY_TABLE,
+            0,
+            8_000_000,
+            fx.self_key,
+            KeySlot(0),
+            Rights::all(),
+        ),
     );
     assert!(matches!(result, Err(CapError::InsufficientMemory)));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FRAME RETYPE
+// ═══════════════════════════════════════════════════════════════════
+
+/// Frame `size_bits` is architecture-validated: only the AArch64 granule
+/// sizes (12/21/30) are creatable, and the rejection names the requested
+/// size.
+#[test_case]
+fn retype_rejects_nongranular_frame_sizes() {
+    for size_bits in [0_u8, 1, 13, 22, 31, u8::MAX] {
+        let mut fx = Fixture::new(FULL);
+        let ram = fx.install(KeySlot(30), ram_untyped(24));
+
+        let result = fx.invoke(
+            ram,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::FRAME,
+                size_bits,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        );
+        assert!(
+            matches!(result, Err(CapError::InvalidFrameSize(size)) if size == usize::from(size_bits)),
+            "size_bits {size_bits} must be rejected with its own size"
+        );
+    }
+}
+
+/// Frame-size validation precedes source resolution: an unissued source key
+/// is not reported when the size is already rejected.
+#[test_case]
+fn retype_frame_size_rejection_precedes_source_resolution() {
+    let fx = Fixture::new(FULL);
+    // A source key that was never issued.
+    let bogus = RawKey::new(KeySlot(200), 7);
+
+    let result = fx.invoke(
+        bogus,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::FRAME,
+            13,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::InvalidFrameSize(13))));
+}
+
+/// A device Untyped is not a valid source for Frames either: the general
+/// device rejection covers the frame kind, with no state changes.
+#[test_case]
+fn retype_rejects_device_frames_without_changing_state() {
+    let mut fx = Fixture::new(FULL);
+    let device = fx.install(KeySlot(30), device_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        device,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::FRAME,
+            12,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(
+        result,
+        Err(CapError::InvalidObjectType(ObjectType::FRAME))
+    ));
+
+    // No partial state: the source entry is untouched and nothing was
+    // installed.
+    assert_eq!(fx.len(), before);
+    let entry = fx
+        .lookup(device)
+        .unwrap_or_else(|_| panic!("device entry missing"));
+    let region = entry
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert!(region.is_device);
+    assert_eq!(region.watermark_bytes(), 0);
+}
+
+/// A 4 KiB frame that cannot fit the region is rejected at the reservation
+/// with the source accounting unchanged (the RAM contrast for frames).
+#[test_case]
+fn retype_frame_from_ram_reaches_capacity_validation() {
+    let mut fx = Fixture::new(FULL);
+    // Sixteen bytes cannot fit a 4 KiB frame, but the RAM source passes the
+    // device check and fails at the reservation instead.
+    let tiny = fx.install(KeySlot(30), ram_untyped(4));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        tiny,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::FRAME,
+            12,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::InsufficientMemory)));
+
+    // The reservation failed before any destination install.
+    assert_eq!(fx.len(), before);
+    let entry = fx
+        .lookup(tiny)
+        .unwrap_or_else(|_| panic!("ram entry missing"));
+    let region = entry
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert!(!region.is_device);
+    assert_eq!(region.watermark_bytes(), 0);
 }

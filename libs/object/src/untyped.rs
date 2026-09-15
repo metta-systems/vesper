@@ -70,9 +70,10 @@ impl TryFrom<u32> for UntypedOp {
 // │  ✗ CNode_Mutate    → Cannot modify                        │
 // └────────────────────────────────────────────────────────────┘
 // Contract status (2026-09-14): Retype is implemented (initial KeyTable
-// kind allowlist). Revoke remains unsupported pending its scope/completion
-// contract (D2). Delete/Move of the Untyped entry apply through the KeyTable
-// management operations like any other entry. Copy/Mint of an Untyped stay
+// kind allowlist, extended with Frame on 2026-09-15). Revoke remains
+// unsupported pending its scope/completion contract (D2). Delete/Move of
+// the Untyped entry apply through the KeyTable management operations like
+// any other entry. Copy/Mint of an Untyped stay
 // rejected: one region must not gain independent allocation watermarks.
 
 impl UntypedKey {
@@ -91,9 +92,11 @@ impl UntypedKey {
     /// the first success word and ignores the second; the remaining keys are
     /// at the consecutive destination slots.
     ///
-    /// The initial kind allowlist is `KeyTable`; other kinds are rejected by
-    /// the kernel as unsupported rather than created. Device Untypeds cannot
-    /// be retyped at all until a device-capable kind is approved (D6).
+    /// The kernel's kind allowlist is `KeyTable` and `Frame` (an
+    /// architecture kind with architecture-validated `size_bits`; the carved
+    /// frame contents are sanitized by the kernel at retype); other kinds are
+    /// rejected as unsupported rather than created. Device Untypeds cannot be
+    /// retyped at all until a device-capable kind is approved (D6).
     pub fn retype(
         &self,
         kind: ObjectType,

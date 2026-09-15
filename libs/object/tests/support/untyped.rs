@@ -32,7 +32,7 @@ pub(super) unsafe fn protected_call6(
     respond((key, op, [a0, a1, a2, a3, a4, a5], 6))
 }
 
-fn invoke(response: Response) -> Result<RawKey, CapError> {
+fn invoke_with(kind: ObjectType, size_bits: u8, response: Response) -> Result<RawKey, CapError> {
     let untyped_key = RawKey::new(KeySlot(4), 0x89ab_cdef);
     let table_key = RawKey::new(KeySlot(u32::MAX), 0x1357_9bdf);
     let untyped = UntypedKey::from_key(untyped_key);
@@ -40,8 +40,8 @@ fn invoke(response: Response) -> Result<RawKey, CapError> {
     let dst = u32::MAX - 1;
     RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
     let result = untyped.retype(
-        ObjectType::KEY_TABLE,
-        0,
+        kind,
+        size_bits,
         2,
         &table,
         dst,
@@ -53,7 +53,14 @@ fn invoke(response: Response) -> Result<RawKey, CapError> {
             Some((
                 0x89ab_cdef_0000_0004,
                 0,
-                [3, 0, 2, 0x1357_9bdf_ffff_ffff, 0xffff_fffe, 7],
+                [
+                    u64::from(kind.as_u8()),
+                    u64::from(size_bits),
+                    2,
+                    0x1357_9bdf_ffff_ffff,
+                    0xffff_fffe,
+                    7
+                ],
                 6,
             ))
         );
@@ -62,6 +69,10 @@ fn invoke(response: Response) -> Result<RawKey, CapError> {
     assert_eq!(untyped_key.to_wire(), 0x89ab_cdef_0000_0004);
     assert_eq!(table_key.to_wire(), 0x1357_9bdf_ffff_ffff);
     result
+}
+
+fn invoke(response: Response) -> Result<RawKey, CapError> {
+    invoke_with(ObjectType::KEY_TABLE, 0, response)
 }
 
 #[test]
@@ -155,4 +166,30 @@ fn retype_preserves_unknown_statuses_and_malformed_details() {
             _ => panic!("lost error details for {wire:?}"),
         }
     }
+}
+
+#[test]
+fn retype_encodes_frame_kind_and_granule_size_bits() {
+    // Frame is an architecture kind: wire kind 0x80 (arch bit | Frame 0)
+    // with size_bits 12, the AArch64 4 KiB granule baseline.
+    assert_eq!(
+        invoke_with(ObjectType::FRAME, 12, (0, 0xfedc_ba98_ffff_fffc, 0))
+            .map(|key| key.to_wire())
+            .map_err(CapError::code),
+        Ok(0xfedc_ba98_ffff_fffc)
+    );
+}
+
+#[test]
+fn retype_preserves_invalid_frame_size_errors() {
+    // Non-granular frame sizes are rejected with the requested size, from
+    // size_bits 0 (no 1-byte frames) up.
+    assert!(matches!(
+        invoke_with(ObjectType::FRAME, 0, (25, 0, 0)),
+        Err(CapError::InvalidFrameSize(0))
+    ));
+    assert!(matches!(
+        invoke_with(ObjectType::FRAME, 13, (25, 13, 0)),
+        Err(CapError::InvalidFrameSize(13))
+    ));
 }
