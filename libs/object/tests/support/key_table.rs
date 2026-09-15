@@ -93,7 +93,9 @@ fn invoke(method: Method, response: Response) -> Result<Option<RawKey>, CapError
                 0x1357_9bdf_ffff_fffd,
                 0x7654_3210_ffff_fffe,
                 0xffff_fffc,
-                15,
+                // The prototype `Rights::all()` request, including `EXECUTE`
+                // since 2026-09-15.
+                0x1F,
             ],
             4,
         ),

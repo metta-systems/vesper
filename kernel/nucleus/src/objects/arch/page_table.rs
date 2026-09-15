@@ -31,6 +31,11 @@ pub mod pte {
     pub const AF: u64 = 1 << 10;
     /// Inner shareable.
     pub const SH_INNER: u64 = 0b11 << 8;
+    /// AP[2:1] = 0b00: readable and writable at EL1 only (EL0 denied).
+    /// Required for privileged executable mappings: EL1 cannot execute
+    /// EL0-writable pages (the architectural user-writable execute-never
+    /// rule), so a kernel-privilege RW+X mapping must deny EL0.
+    pub const AP_RW_EL1: u64 = 0b00 << 6;
     /// AP[2:1] = 0b01: readable and writable at EL0 and EL1.
     pub const AP_RW_USER: u64 = 0b01 << 6;
     /// AP[2:1] = 0b11: read-only at EL0 and EL1.
@@ -233,14 +238,18 @@ fn walk_to_leaf(root_paddr: u64, vaddr: u64, size_bits: u8) -> Result<u64, CapEr
 ///
 /// `vaddr` must be inside the supported virtual-address width and aligned to
 /// the frame size; the leaf slot must be vacant. Permissions: `writable`
-/// selects user read/write versus user read-only; execute is not grantable
-/// yet, so every mapping is PXN|UXN (see the mapping contracts).
+/// selects read/write versus read-only; `executable` (the `EXECUTE` right,
+/// selected 2026-09-15) clears the PXN|UXN execute-never bits. A writable
+/// executable mapping is kernel-privilege (AP=00, EL0 denied): EL1 cannot
+/// execute EL0-writable pages, and EL0 must not execute writable pages
+/// either (W^X). Without `EXECUTE` every mapping stays PXN|UXN.
 pub fn install_frame_pte(
     root_paddr: u64,
     vaddr: u64,
     frame_paddr: u64,
     size_bits: u8,
     writable: bool,
+    executable: bool,
 ) -> Result<(), CapError> {
     if vaddr >= 1 << VA_BITS {
         return Err(CapError::InvalidPointer);
@@ -258,11 +267,21 @@ pub fn install_frame_pte(
     if leaf_table.entries[slot] != 0 {
         return Err(CapError::AlreadyMapped);
     }
-    let ap = if writable {
-        pte::AP_RW_USER
-    } else {
-        pte::AP_RO_USER
+    let ap = match (writable, executable) {
+        // Kernel-privilege RW+X: EL1 cannot execute EL0-writable pages (the
+        // architectural user-writable execute-never rule), so a writable
+        // executable mapping denies EL0 (AP=00). This is the bootstrap
+        // caller's image case.
+        (true, true) => pte::AP_RW_EL1,
+        (true, false) => pte::AP_RW_USER,
+        // Read-only executable at EL0 and EL1 (AP=11): not EL0-writable, so
+        // the privileged fetch is not execute-never'd either.
+        (false, _) => pte::AP_RO_USER,
     };
+    // Execute-never unless the mapping was requested with the `EXECUTE`
+    // right (selected 2026-09-15): one bit grants both privileged and
+    // unprivileged execute for now.
+    let execute_never = if executable { 0 } else { pte::PXN | pte::UXN };
     // Level 3 uses page descriptors (bit 1 set); levels 1–2 use block
     // descriptors (bit 1 clear).
     let descriptor_bit = if leaf == 3 { pte::DESCRIPTOR } else { 0 };
@@ -273,8 +292,7 @@ pub fn install_frame_pte(
         | pte::SH_INNER
         | ap
         | pte::ATTR_NORMAL
-        | pte::PXN
-        | pte::UXN;
+        | execute_never;
     Ok(())
 }
 

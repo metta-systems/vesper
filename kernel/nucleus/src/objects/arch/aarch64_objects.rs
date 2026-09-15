@@ -98,6 +98,26 @@ impl ArchObjects for AArch64 {
         }
     }
 
+    fn install_translation_context(root_paddr: u64, asid: u16) {
+        // TTBR0_EL1: ASID in bits 63:48, translation-table base in BADDR.
+        // The kernel executes through the TTBR1 high map, so switching the
+        // low-half context does not disturb kernel execution.
+        let ttbr = root_paddr | (u64::from(asid) << 48);
+        // SAFETY: register write plus context synchronization; reads no
+        // memory and clobbers no registers. `dsb ish` publishes the prior
+        // descriptor stores to page-table walks before the context switch;
+        // `isb` orders the new context before any subsequent translation.
+        unsafe {
+            core::arch::asm!(
+                "dsb ish",
+                "msr ttbr0_el1, {ttbr}",
+                "isb",
+                ttbr = in(reg) ttbr,
+                options(nostack),
+            );
+        }
+    }
+
     fn install_table_entry(
         parent_paddr: u64,
         parent_level: u8,
@@ -121,8 +141,16 @@ impl ArchObjects for AArch64 {
         frame_paddr: u64,
         size_bits: u8,
         writable: bool,
+        executable: bool,
     ) -> Result<(), CapError> {
-        super::page_table::install_frame_pte(root_paddr, vaddr, frame_paddr, size_bits, writable)
+        super::page_table::install_frame_pte(
+            root_paddr,
+            vaddr,
+            frame_paddr,
+            size_bits,
+            writable,
+            executable,
+        )
     }
 
     fn clear_frame_pte(

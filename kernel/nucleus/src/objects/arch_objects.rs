@@ -134,6 +134,19 @@ pub trait ArchObjects: Sized + 'static {
     /// translation root is withdrawn.
     fn invalidate_tlb_asid(asid: u16);
 
+    // ─── Translation-context installation (hardware activation) ───
+
+    /// Install `root_paddr` with `asid` as the current hardware
+    /// translation context (`TTBR0_EL1` on `AArch64`: base address with the
+    /// ASID in bits 63:48), completing before the caller proceeds. The
+    /// caller (the API handler) has already established the mapping-context
+    /// authority and that the root and ASID are bound to the same Domain;
+    /// this is the hardware mechanism only, not an authority decision.
+    /// Re-installing the same context is idempotent; switching between
+    /// contexts that share an ASID requires invalidation by the caller
+    /// (ASID reuse safety remains open, D6).
+    fn install_translation_context(root_paddr: u64, asid: u16);
+
     // ─── Mapping mechanics (hardware descriptor installation) ───
     // The arch layer owns the descriptor format, walk, and vacancy checks;
     // the API handlers own authority and the transaction order.
@@ -158,14 +171,18 @@ pub trait ArchObjects: Sized + 'static {
 
     /// Install the page/block descriptor for a frame mapping. `vaddr` must be
     /// inside the supported virtual-address width and aligned to the frame
-    /// size; the leaf slot must be vacant. `writable` selects user
-    /// read/write versus read-only; execute is not grantable yet.
+    /// size; the leaf slot must be vacant. `writable` selects read/write
+    /// versus read-only; `executable` clears the execute-never bits (the
+    /// `EXECUTE` right, selected 2026-09-15 — without it every mapping stays
+    /// UXN|PXN). A writable executable mapping is kernel-privilege (EL0
+    /// denied): EL1 cannot execute EL0-writable pages.
     fn install_frame_pte(
         root_paddr: u64,
         vaddr: u64,
         frame_paddr: u64,
         size_bits: u8,
         writable: bool,
+        executable: bool,
     ) -> Result<(), CapError>;
 
     /// Clear the frame mapping descriptor at `vaddr`, verifying it still

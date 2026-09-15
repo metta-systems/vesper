@@ -9,6 +9,14 @@ impl Rights {
     pub const RECV: u8 = 0x1;
     pub const CALL: u8 = 0x4;
     pub const GRANT: u8 = 0x8;
+    /// Execute permission for frame mappings (selected 2026-09-15): a
+    /// `Frame.Map` requested with `EXECUTE` — within the frame capability's
+    /// rights — clears PXN|UXN for the installed descriptor. Interim AP
+    /// semantics: with `WRITE` the mapping is kernel-privilege RW+X (EL0
+    /// denied — EL1 cannot execute EL0-writable pages); without `WRITE` it is
+    /// read-only executable at EL0 and EL1. Splitting user/privileged
+    /// execute is future work with EL0 entry (D6).
+    pub const EXECUTE: u8 = 0x10;
 
     // ── KeyTable-management permissions (per-kind interpretation) ──
     // Selected 2026-09-07 (D4): KeyTable capabilities interpret the rights
@@ -27,7 +35,7 @@ impl Rights {
         Rights(0)
     }
     pub const fn all() -> Rights {
-        Rights(0xF)
+        Rights(0x1F)
     }
     pub fn bits(&self) -> u8 {
         self.0

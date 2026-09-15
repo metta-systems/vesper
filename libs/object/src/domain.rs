@@ -1,5 +1,5 @@
 use {
-    crate::{CapError, Key, KeySlot, decode_syscall_result},
+    crate::{CapError, Key, KeySlot, RawKey, decode_syscall_result},
     core::sync::atomic::{AtomicU32, AtomicU64, Ordering},
     libaddress::VirtAddr,
 };
@@ -81,13 +81,18 @@ pub enum DomainOp {
 
 /// Domain capability - handle to a protection domain.
 /// State queries use shared DCB (no syscall), mutations use `CapInvoke`.
-/// Domain operations are currently unsupported by nucleus dispatch. Mutation
-/// wrappers preserve its errors; they do not establish DCB mapping or lifetime.
+/// `Activate` is dispatched (2026-09-15): it installs the Domain's bound
+/// translation root as the hardware translation context. `Grant`, `Suspend`,
+/// and `Resume` remain unsupported by nucleus dispatch and their wrappers
+/// preserve the kernel's errors; they do not establish DCB mapping or lifetime.
 ///
-/// Implementation status: public construction remains deferred. The existing
-/// safe observation methods assume a valid DCB mapping and lifetime internally;
-/// a raw key alone cannot establish those prerequisites. Packed-key mutation
-/// encoding does not make these observation methods safe for arbitrary handles.
+/// Implementation status: public construction is available since 2026-09-15
+/// for the mutation path (`from_key`), mirroring the other non-owning key
+/// wrappers. The safe observation methods still assume a valid DCB mapping
+/// and lifetime internally; a raw key alone cannot establish those
+/// prerequisites, so callers must not rely on them until DCB mapping is a
+/// supported operation (D5). Packed-key mutation encoding does not make
+/// these observation methods safe for arbitrary handles.
 pub struct DomainKey {
     key: Key<DomainType>,
     id: DomainId,
@@ -96,6 +101,16 @@ pub struct DomainKey {
 enum DomainType {}
 
 impl DomainKey {
+    /// Construct a non-owning handle without installing or validating
+    /// authority. The observation methods still require an established DCB
+    /// mapping and lifetime (see the type-level implementation-status note).
+    pub const fn from_key(key: RawKey, id: DomainId) -> Self {
+        Self {
+            key: Key::new(key),
+            id,
+        }
+    }
+
     // Create a new domain from untyped memory.
     // Convenience wrapper around UntypedRetype.
     // pub fn create(untyped: &mut UntypedCap, dest_slot: KeySlot) -> Result<Self, Error> {
@@ -142,7 +157,16 @@ impl DomainKey {
         dcb.pending_notifications.load(Ordering::Relaxed)
     }
 
-    /// Activate domain (make runnable) - requires syscall
+    /// Activate domain: install its bound translation root as the current
+    /// hardware translation context (requires syscall).
+    ///
+    /// Wire schema (selected 2026-09-15): no arguments. The Domain must have
+    /// a translation root installed and an ASID bound (`NotMapped` otherwise)
+    /// and must be the current Domain (`InvalidOperation` otherwise).
+    /// Authority: `MAP` on the Domain capability. This is the
+    /// translation-context installation step of activation only; full
+    /// Activate/Suspend/Resume with execution contexts and budget remains
+    /// Phase 7 work.
     pub fn activate(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
         let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Activate as u64) };

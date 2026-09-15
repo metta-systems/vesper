@@ -51,7 +51,7 @@ use {
         embed::NUCLEUS_SET_ANCHOR_VIRT,
         memory::Alloc,
     },
-    aarch64_cpu::registers::{SPSR_EL2, Writeable},
+    aarch64_cpu::registers::{Readable, SPSR_EL2, TTBR0_EL1, Writeable},
     core::{cell::UnsafeCell, panic::PanicInfo, ptr::write_bytes, slice},
     device_tree::{DeviceTree, DeviceTreeProp},
     fdt_rs::{
@@ -64,7 +64,10 @@ use {
     libcpu::endless_sleep,
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
-    libobject::{KeySlot, ObjectType, Rights, domain::DomainId},
+    libobject::{
+        KeySlot, ObjectType, Rights,
+        domain::{DomainId, DomainKey},
+    },
     libqemu::semihosting as semi,
     memory::BootAllocator,
     nucleus::{
@@ -1297,6 +1300,14 @@ pub fn kickstart_run() -> ! {
             Err(CapError::TypeMismatch { .. })
         ));
 
+        // Domain activation (2026-09-15) through the real SVC path: before a
+        // translation root exists, activation is rejected — there is no
+        // hardware context to install. (A non-Domain invoked key never reaches
+        // the Domain handler: dispatch selects the handler by the invoked
+        // key's own type.)
+        let boot_domain = DomainKey::from_key(boot_domain_key, DomainId(0));
+        assert!(matches!(boot_domain.activate(), Err(CapError::NotMapped)));
+
         let root_pt = PageTableKey::from_key(root_pt_key);
         root_pt
             .map(boot_domain_key, 0)
@@ -1314,6 +1325,9 @@ pub fn kickstart_run() -> ! {
                 .unwrap_or_else(|| panic!("boot Domain missing"));
             assert!(domain.translation_root.is_some());
         }
+
+        // A root without a bound ASID still establishes no hardware context.
+        assert!(matches!(boot_domain.activate(), Err(CapError::NotMapped)));
 
         // With a root installed, the assignment binds the lowest free ASID
         // (ASID 0 is reserved for the kernel's boot context, so the first
@@ -1455,7 +1469,7 @@ pub fn kickstart_run() -> ! {
             );
             assert!(
                 pte & (1 << 53) != 0 && pte & (1 << 54) != 0,
-                "execute must not be grantable yet"
+                "a mapping without the EXECUTE right must stay UXN|PXN"
             );
         }
 
@@ -1529,6 +1543,130 @@ pub fn kickstart_run() -> ! {
             );
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        // Domain activation (2026-09-15): install the bound root into
+        // TTBR0_EL1 with the bound ASID, making the carved tables the live
+        // hardware translation context for the low half. The kernel executes
+        // through the TTBR1 high map, so kernel code keeps running unchanged
+        // while the Domain's context is installed.
+        // ─────────────────────────────────────────────────────────────────
+
+        // Distinct marker contents: the original frame carries one magic
+        // word, the second carved frame another, so a stale cached
+        // translation is distinguishable from a freshly walked one.
+        #[expect(clippy::items_after_statements)]
+        const MAGIC_ORIGINAL: u64 = 0x1111_2222_3333_4444;
+        #[expect(clippy::items_after_statements)]
+        const MAGIC_SECOND: u64 = 0x5555_6666_7777_8888;
+        // SAFETY: both frames lie in the boot Untyped's committed range; the
+        // direct map is live.
+        unsafe {
+            *PhysAddr::new(frame_paddr)
+                .user_to_kernel()
+                .as_mut_ptr::<u64>() = MAGIC_ORIGINAL;
+            *PhysAddr::new(second_frame_paddr)
+                .user_to_kernel()
+                .as_mut_ptr::<u64>() = MAGIC_SECOND;
+        }
+
+        // Save the boot identity-map context so the test can restore it after
+        // the observation (deactivation is not a capability operation yet).
+        let boot_ttbr0 = TTBR0_EL1.get();
+
+        // The bootstrap caller (this test) executes in the low half through
+        // the boot identity map: its stack sits below the image base at
+        // 0x80000 and the kickstart image extends beyond the 2 MiB boundary.
+        // A real Domain's address space contains its own image and stack by
+        // construction, and the bootstrap caller is no exception — map its
+        // low-half working set into the boot Domain's context as two 2 MiB
+        // blocks (fabricated bootstrap-test fixtures naming the in-use
+        // physical range, like the misaligned-region fixture above), so
+        // execution can continue under the activated tables.
+        let low_block_keys: [RawKey; 2] = [
+            {
+                // SAFETY: keytable_addr names the live boot KeyTable.
+                let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+                boot_table
+                    .insert(
+                        KeySlot(14),
+                        KeyEntry::new_frame(0, 21, false, Rights::all()),
+                    )
+                    .unwrap_or_else(|_| panic!("low-half block A install failed"))
+            },
+            {
+                // SAFETY: see above.
+                let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+                boot_table
+                    .insert(
+                        KeySlot(15),
+                        KeyEntry::new_frame(0x20_0000, 21, false, Rights::all()),
+                    )
+                    .unwrap_or_else(|_| panic!("low-half block B install failed"))
+            },
+        ];
+        // The blocks are requested with the EXECUTE right (selected
+        // 2026-09-15): the bootstrap caller must keep executing inside its
+        // Domain's context, so its image is executable there.
+        for (block, vaddr) in low_block_keys.iter().zip([0_u64, 0x20_0000_u64]) {
+            FrameKey::from_key(*block)
+                .map(
+                    boot_domain_key,
+                    vaddr,
+                    Rights(Rights::READ | Rights::WRITE | Rights::EXECUTE),
+                    0,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "low-half Frame.Map at {vaddr:#x} failed: {:?}",
+                        error.code()
+                    )
+                });
+        }
+        {
+            const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
+            // SAFETY: see above.
+            let read_entry = |paddr: u64, slot: usize| unsafe {
+                *(PhysAddr::new(paddr).user_to_kernel().as_ptr::<u64>()).add(slot)
+            };
+            let l0e = read_entry(root_paddr, 0);
+            let l1e = read_entry(l0e & ADDR_MASK, 0);
+            let l2_paddr = l1e & ADDR_MASK;
+            for (slot, base) in [(0, 0_u64), (1, 0x20_0000)] {
+                let block = read_entry(l2_paddr, slot);
+                assert_eq!(
+                    block & ADDR_MASK,
+                    base,
+                    "the low-half block must be identity"
+                );
+                assert!(block & 0b1 != 0, "the low-half block must be valid");
+                assert!(
+                    block & (1 << 53) == 0 && block & (1 << 54) == 0,
+                    "an EXECUTE-requested mapping must have UXN|PXN clear"
+                );
+                assert_eq!(
+                    block & (0b11 << 6),
+                    0,
+                    "a writable EXECUTE mapping must be kernel-privilege (AP=00)"
+                );
+            }
+        }
+
+        // Activate through the real SVC path: the tables become hardware-live.
+        boot_domain
+            .activate()
+            .unwrap_or_else(|error| panic!("Domain.Activate failed: {:?}", error.code()));
+
+        // A load from the mapped virtual address now walks the Domain's
+        // tables: the marker written through the direct map must come back
+        // through the level-3 page descriptor.
+        // SAFETY: the activated translation context maps this virtual address
+        // to the original frame; the boot test runs at EL1 with PAN inactive.
+        let observed = unsafe { *(0x1000_0000_u64 as *const u64) };
+        assert_eq!(
+            observed, MAGIC_ORIGINAL,
+            "the activated context must serve the real mapping"
+        );
+
         // Unmapping a non-empty table is rejected: L3 still holds the page.
         assert!(matches!(l3_pt.unmap(), Err(CapError::InvalidOperation)));
         // L2 still holds the L3 table descriptor.
@@ -1552,6 +1690,47 @@ pub fn kickstart_run() -> ! {
             let l1e = read_entry(l0e & ADDR_MASK, 0);
             let l2e = read_entry(l1e & ADDR_MASK, 128);
             assert_eq!(read_entry(l2e & ADDR_MASK, 0), 0, "the PTE must be cleared");
+        }
+
+        // The unmap above cleared the descriptor and invalidated the cached
+        // translation under the bound ASID on the live context. Prove the
+        // invalidation: map the second frame (distinct physical backing and
+        // contents) at the same virtual address and read through it — a
+        // stale cached entry would still serve the original frame's marker.
+        FrameKey::from_key(second_frame_key)
+            .map(
+                boot_domain_key,
+                0x1000_0000,
+                Rights(Rights::READ | Rights::WRITE),
+                0,
+            )
+            .unwrap_or_else(|error| panic!("second frame Frame.Map failed: {:?}", error.code()));
+        // SAFETY: the activated context now maps this virtual address to the
+        // second frame; PAN is inactive at EL1.
+        let observed = unsafe { *(0x1000_0000_u64 as *const u64) };
+        assert_eq!(
+            observed, MAGIC_SECOND,
+            "the unmap's TLB invalidation must withdraw the stale translation"
+        );
+        FrameKey::from_key(second_frame_key)
+            .unmap()
+            .unwrap_or_else(|error| panic!("second frame Frame.Unmap failed: {:?}", error.code()));
+
+        // Restore the boot identity-map context; the remaining assertions walk
+        // tables through the direct map and need no live Domain context.
+        // SAFETY: the saved value is the boot TTBR0_EL1 installed by
+        // `enable_mmu_and_drop_to_el1`.
+        unsafe {
+            TTBR0_EL1.set(boot_ttbr0);
+            core::arch::asm!("isb", options(nostack));
+        }
+
+        // Withdraw the caller's low-half blocks before the table teardown
+        // below: the L2 teardown requires an empty table.
+        for block in low_block_keys {
+            FrameKey::from_key(block)
+                .unmap()
+                .unwrap_or_else(|error| panic!("low-half Frame.Unmap failed: {:?}", error.code()));
         }
 
         // With the original unmapped, the physical extent is free in this

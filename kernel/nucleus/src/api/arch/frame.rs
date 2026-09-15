@@ -9,8 +9,10 @@
 //!   Domain's address space before that Domain can run; self-context mapping is
 //!   the intended ordinary path once syscall caller identity exists. The
 //!   requested rights must be a subset of the frame capability's rights
-//!   (permission ceiling); execute is not grantable yet, so every mapping is
-//!   PXN|UXN. The walk requires every intermediate table to be present. The
+//!   (permission ceiling); requesting `EXECUTE` (within the ceiling) clears
+//!   PXN|UXN for the descriptor, and without it every mapping stays
+//!   execute-never (selected 2026-09-15). The walk requires every
+//!   intermediate table to be present. The
 //!   alias policy is enforced ahead of the hardware transition: the frame's
 //!   physical extent must not overlap any live mapping in the target Domain,
 //!   whatever capability installed it (`PhysicalAlias` otherwise);
@@ -25,13 +27,15 @@
 //! - `Remap` `3`: unsupported; origin-only remap authority remains open
 //!   (D4/D6). Returns a defined error rather than fake success.
 //!
-//! Carved tables are not yet installed in any TTBR (Domain activation is
-//! future work), but the invalidation is executed whenever the owning Domain
-//! has a bound ASID: it is correct by construction once activation installs
-//! the tables, and a Domain without an ASID has no hardware context to
-//! withdraw. Gating the invalidation on live TTBR installation may be more
-//! efficient in the long term once Domain activation exists (maintainer
-//! remark, 2026-09-15).
+//! Carved tables become hardware-live through `Domain.Activate` (selected
+//! 2026-09-15), which installs the bound root into `TTBR0_EL1` with the
+//! bound ASID. The invalidation is executed whenever the owning Domain has
+//! a bound ASID, and is observable on the live context: the boot test maps a
+//! frame, activates, reads through the mapping, unmaps (withdrawing the
+//! cached translation), remaps different backing at the same address, and
+//! verifies the freshly walked contents. Gating the invalidation on live
+//! TTBR installation may be more efficient in the long term once Domain
+//! scheduling exists (maintainer remark, 2026-09-15).
 
 use {
     crate::objects::{ArchObjects, Domain, KeyTable, Nucleus, access::Access},
@@ -154,7 +158,15 @@ fn map<A: ArchObjects>(
     // and alignment, walks the installed tables (missing levels fail with
     // `MissingIntermediate`), checks leaf vacancy, and writes the descriptor.
     let writable = requested.has(Rights::WRITE);
-    A::install_frame_pte(root, vaddr, frame.paddr, frame.size_bits, writable)?;
+    let executable = requested.has(Rights::EXECUTE);
+    A::install_frame_pte(
+        root,
+        vaddr,
+        frame.paddr,
+        frame.size_bits,
+        writable,
+        executable,
+    )?;
 
     // Commit: record the mapping identity on the frame entry. The destination
     // is the caller's own table; the entry was validated above and only the

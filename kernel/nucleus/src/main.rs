@@ -134,6 +134,15 @@ extern "C" fn current_el0_serror(_e: &mut ExceptionContext) {
 #[cfg(not(any(test, feature = "test_build")))]
 #[unsafe(no_mangle)]
 extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
+    // Only an SVC in AArch64 state is a capability invocation. Any other
+    // synchronous exception from the current EL (data/instruction abort,
+    // alignment fault, undefined instruction) must not be decoded as a
+    // syscall: its context would re-execute the faulting instruction with
+    // the "syscall result" written into x0..x2, looping forever. Route it
+    // to the default handler, which reports the exception and halts.
+    if !is_aarch64_svc() {
+        default_exception_handler(e);
+    }
     cap_invoke_handler(e);
 }
 
@@ -181,6 +190,10 @@ extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
 
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
+    // See `current_elx_synchronous`: only an SVC is a capability invocation.
+    if !is_aarch64_svc() {
+        default_exception_handler(e);
+    }
     cap_invoke_handler(e);
 }
 
@@ -211,6 +224,19 @@ extern "C" fn lower_aarch32_irq(e: &mut ExceptionContext) {
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
     default_exception_handler(e);
+}
+
+/// Whether the synchronous exception being handled is an SVC instruction
+/// executed in `AArch64` state — the only exception class that carries a
+/// capability invocation.
+fn is_aarch64_svc() -> bool {
+    use aarch64_cpu::registers::{ESR_EL1, Readable};
+
+    // ESR_EL1 bits 31:26 hold the exception class; 0x15 is an SVC
+    // instruction executed in AArch64 state (see
+    // `libexception::arch::esr_el1::ESR_EL1::EC::Value::SVC64`).
+    const EC_SVC64: u64 = 0x15;
+    (ESR_EL1.get() >> 26) & 0x3F == EC_SVC64
 }
 
 //------------------------------------------------------------------------------

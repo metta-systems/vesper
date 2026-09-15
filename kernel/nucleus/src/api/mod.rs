@@ -7,6 +7,7 @@ use {
 pub mod arch;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
+pub mod domain;
 pub mod key_entry;
 pub mod key_table;
 pub mod untyped;
@@ -103,10 +104,11 @@ fn core_invoke<A: ArchObjects>(
             let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
             let entry = caller_table.lookup(key)?;
             crate::api::debug_console::invoke(entry, op, args[0], args[1])
-        } // CoreType::Domain => {
-        //     let domain = entry.as_object_mut::<Domain>()?;
-        //     api::domain::invoke(domain, entry.rights(), op, args)
-        // }
+        }
+        CoreType::Domain => {
+            crate::api::domain::invoke(access, caller_table_addr, key, op, args, nucleus)
+        }
+
         CoreType::KeyTable => {
             crate::api::key_table::invoke(access, caller_table_addr, key, op, args)
         }

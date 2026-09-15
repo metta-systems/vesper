@@ -54,6 +54,14 @@ fn invoke(op: u64, response: Response) -> Result<(), CapError> {
 }
 
 #[test]
+fn from_key_preserves_key_and_id_without_validation() {
+    let key = RawKey::new(KeySlot(1), 7);
+    let domain = DomainKey::from_key(key, DomainId(3));
+    assert_eq!(domain.key.raw(), key);
+    assert_eq!(domain.id, DomainId(3));
+}
+
+#[test]
 fn all_domain_wrappers_preserve_request_encoding_and_accept_success() {
     for op in 0..=3 {
         assert_eq!(

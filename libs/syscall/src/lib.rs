@@ -230,6 +230,10 @@ pub unsafe fn protected_call1(cap: u64, op: u64, a0: u64) -> (u64, u64, u64) {
 
 /// 0-arg invoke (cap + op only)
 ///
+/// The six syscall argument registers (`x2..x7`) are all transmitted as
+/// zero: the kernel reads every argument register, so an unspecified value
+/// would arrive as a defined-but-arbitrary argument, not as "no argument".
+///
 /// # Safety
 /// - Not safe.
 #[inline(always)]
@@ -243,7 +247,12 @@ pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
             "svc #0",
             inlateout("x0") cap => r0,
             inlateout("x1") op => r1,
-            out("x2") r2,
+            inlateout("x2") 0_u64 => r2,
+            in("x3") 0_u64,
+            in("x4") 0_u64,
+            in("x5") 0_u64,
+            in("x6") 0_u64,
+            in("x7") 0_u64,
             options(nostack),
         );
     }

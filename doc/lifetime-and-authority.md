@@ -188,6 +188,8 @@ Typed pools remain a useful starting point, with representation free to change u
 | Transfer through IPC | Transfer permission and an authorized receiver destination |
 | Activate a domain | Domain-control authority and valid execution budget |
 
+**Interim Activate selection (2026-09-15):** the active `Domain.Activate` is the translation-context installation step only — `MAP` on the invoked Domain capability (mapping-context authority, consistent with root installation and ASID binding), a bound root and ASID, and the current Domain only. The execution-budget requirement lands with full Activate/Suspend/Resume (Phase 7, D8); the DCB-update sketch in `Nucleus::activate_domain` records that intent without being enabled.
+
 **Recommendations:**
 
 - Full table management is stronger than accepting a capability into a reserved receive slot. Keep destination authority explicit; narrower installation windows are a possible later refinement.
