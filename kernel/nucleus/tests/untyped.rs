@@ -73,6 +73,12 @@ fn carve_table() -> u64 {
 /// rejection paths).
 static mut POOL_MEM: [u64; 16] = [0; 16];
 
+/// Backing for the fixture's Notification pool: exactly two slots, so the
+/// Retype pool-exhaustion rollback is observable. A Notification carve
+/// writes no Untyped bytes (the object lives in this kernel pool), so the
+/// successful Notification Retype is also exercisable MMU-off.
+static mut NOTIFICATION_POOL_MEM: [u64; 32] = [0; 32];
+
 /// A minimal fixture nucleus. Tests run sequentially and each fixture
 /// re-initializes the same static storage before use.
 fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
@@ -83,11 +89,17 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
     unsafe {
         let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
         let pool_ptr = (&raw mut POOL_MEM).cast::<u8>();
+        let notification_pool_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
         nucleus_ptr.write(Nucleus {
             current_domain: None,
             dcb_pages: DcbPages::new(),
+            pending: crate::objects::PendingPool::new(),
             pools: NucleusPools {
                 domains: ObjectPool::new(pool_ptr, 0),
+                notifications: ObjectPool::new(
+                    notification_pool_ptr,
+                    core::mem::size_of::<crate::objects::Notification>() * 2,
+                ),
                 arch: ArchPools::new(
                     ObjectPool::new(pool_ptr, core::mem::size_of::<AArch64PageTable>()),
                     // Zero capacity: these MMU-off rejection-path tests never
@@ -658,4 +670,127 @@ fn retype_page_table_batch_releases_partial_pool_slots_on_exhaustion() {
         ),
     );
     assert!(matches!(result2, Err(CapError::PoolExhausted)));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NOTIFICATION RETYPE (allowlisted 2026-09-16)
+// ═══════════════════════════════════════════════════════════════
+
+/// A Notification carve writes no Untyped bytes: the object is pure kernel
+/// state allocated from the bootstrap-carved pool, so the successful Retype
+/// is exercisable MMU-off. The capability is a checked pool identity.
+#[test_case]
+fn retype_notification_succeeds_and_installs_pool_identities() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::NOTIFICATION,
+            0,
+            2,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    let (first_wire, second) =
+        result.unwrap_or_else(|e| panic!("notification retype failed: {:?}", e.code()));
+    assert_eq!(second, 0);
+    assert_eq!(fx.len(), before + 2);
+
+    // Both destination slots hold Notification identities that validate
+    // against the pool. The keys are destination-local with consecutive
+    // slots sharing the install incarnation.
+    let first = RawKey::from_wire(first_wire);
+    let second_key = RawKey::new(KeySlot(41), first.incarnation());
+    for (key, slot) in [(first, KeySlot(40)), (second_key, KeySlot(41))] {
+        let entry = fx
+            .lookup(key)
+            .unwrap_or_else(|_| panic!("notification entry missing at {slot:?}"));
+        assert_eq!(entry.object_type(), ObjectType::NOTIFICATION);
+        let id = entry
+            .object_id()
+            .unwrap_or_else(|_| panic!("notification entry is not a pool identity"));
+        assert_eq!(id.pool, crate::objects::access::PoolTag::Notification);
+        assert!(fx.nucleus.pools.notifications.validate(id).is_ok());
+    }
+
+    // No Untyped bytes were consumed: the watermark is unchanged.
+    let region = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 0);
+}
+
+/// `size_bits` is reserved zero for Notification; other values are rejected
+/// before any pool slot is taken.
+#[test_case]
+fn retype_notification_rejects_nonzero_size_bits() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::NOTIFICATION,
+            12,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::InvalidSize(12))));
+    assert_eq!(fx.len(), before);
+    assert!(fx.nucleus.pools.notifications.is_empty());
+}
+
+/// Pool exhaustion rolls the whole batch back: the already-taken slots are
+/// released and nothing is installed (the fixture pool holds two slots).
+#[test_case]
+fn retype_notification_pool_exhaustion_releases_partial_slots() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    // Three notifications cannot fit the two-slot fixture pool.
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::NOTIFICATION,
+            0,
+            3,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::PoolExhausted)));
+    assert_eq!(fx.len(), before);
+    assert!(fx.nucleus.pools.notifications.is_empty());
+
+    // The released slots are usable again: a batch of two now succeeds.
+    let result2 = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::NOTIFICATION,
+            0,
+            2,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(result2.is_ok());
+    assert_eq!(fx.nucleus.pools.notifications.len(), 2);
 }

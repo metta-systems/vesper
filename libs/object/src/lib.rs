@@ -7,6 +7,7 @@ pub mod domain;
 pub mod frame;
 pub mod key;
 pub mod key_table;
+pub mod notification;
 pub mod object_type;
 pub mod page_table;
 pub mod rights;
@@ -23,6 +24,7 @@ pub use {
     frame::{FrameKey, FrameOp},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},
+    notification::{NotificationKey, NotificationOp},
     object_type::{ArchType, CoreType, ObjectType},
     page_table::{PageTableKey, PageTableOp},
     rights::Rights,

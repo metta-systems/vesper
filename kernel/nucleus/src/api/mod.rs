@@ -10,6 +10,7 @@ pub mod debug_console;
 pub mod domain;
 pub mod key_entry;
 pub mod key_table;
+pub mod notification;
 pub mod untyped;
 
 pub use key_entry::KeyEntry;
@@ -113,13 +114,12 @@ fn core_invoke<A: ArchObjects>(
             crate::api::key_table::invoke(access, caller_table_addr, key, op, args)
         }
 
-        // CoreType::Notification => {
-        //     let notify = entry.as_object_mut::<Notification>()?;
-        //     api::notification::invoke(notify, entry.rights(), entry.badge(), op, args)
-        // }
+        CoreType::Notification => {
+            crate::api::notification::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
+        }
 
         // CoreType::EventCount => {
-        //     let ec = entry.as_object_mut::<EventCount>()?;
+        //     let ec = entry.as_object_mut::<EventCount>()?
         //     api::event_count::invoke(ec, entry.rights(), op, args)
         // }
 

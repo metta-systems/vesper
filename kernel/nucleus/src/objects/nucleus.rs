@@ -1,6 +1,7 @@
 use {
     crate::objects::{
-        ArchObjects, Domain, KeyTable, ObjectPool, arch::ArchPools, domain::DcbPages,
+        ArchObjects, Domain, KeyTable, Notification, ObjectPool, PendingPool, arch::ArchPools,
+        domain::DcbPages,
     },
     core::sync::atomic::Ordering,
     libobject::{
@@ -36,7 +37,8 @@ use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 // │  │       └── asids: ObjectPool<A::ASID>                             │
 // │  │                                                                  │
 // │  ├── current_domain: Option<DomainId>                               │
-// │  └── dcb_pages: DcbPages                                            │
+// │  ├── dcb_pages: DcbPages                                            │
+// │  └── pending: PendingPool (blocked-invocation records, 2026-09-16)  │
 // │                                                                     │
 // └─────────────────────────────────────────────────────────────────────┘
 
@@ -49,7 +51,10 @@ pub struct NucleusPools<A: ArchObjects> {
     // ─── Core Object Pools ───
     // pub untypeds: ObjectPool<Untyped>,
     pub domains: ObjectPool<Domain>,
-    // pub notifications: ObjectPool<Notification>,
+    /// Notification synchronization objects: pure kernel state, allocated by
+    /// `Untyped.Retype` (allowlisted 2026-09-16) from this bootstrap-carved
+    /// pool; the capability is a checked pool identity.
+    pub notifications: ObjectPool<Notification>,
     // pub event_counts: ObjectPool<EventCount>,
     // pub endpoints: ObjectPool<Endpoint>,
     // pub time_slices: ObjectPool<TimeSlice>,
@@ -67,6 +72,10 @@ pub struct Nucleus<A: ArchObjects> {
     pub current_domain: Option<u32 /*DomainId*/>, // FIXME: not option, always something (Idle or other)
     /// DCB shared pages
     pub dcb_pages: DcbPages,
+    /// Pending-invocation records for blocked callers (completion
+    /// foundation, 2026-09-16): bounded kernel-private storage, the
+    /// closed-wait identity for blocked invocations.
+    pub pending: PendingPool,
 }
 
 // ═══════════════════════════════════════════════════════════════════

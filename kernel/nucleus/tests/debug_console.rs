@@ -94,6 +94,9 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
     let mut nucleus = Nucleus {
         pools: NucleusPools {
             domains,
+            // SAFETY: zero-capacity backing: this test never allocates or
+            // invokes Notification objects.
+            notifications: unsafe { ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), 0) },
             // SAFETY: the page-table and ASID-pool backings are exclusively
             // owned by this fixture; this test does not allocate or invoke
             // arch objects (the ASID pool has zero capacity for the same
@@ -107,6 +110,7 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
         },
         current_domain: None,
         dcb_pages: DcbPages::new(),
+        pending: crate::objects::PendingPool::new(),
     };
     test(&mut nucleus, table_addr, second_table_addr);
     for index in 0..2_u16 {

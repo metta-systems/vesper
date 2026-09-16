@@ -34,6 +34,13 @@ pub enum PoolTag {
     Region = 255,
     Domain = 0,
     KeyTable = 1,
+    /// Kernel-internal pending-invocation records (completion foundation,
+    /// 2026-09-16). Never capability-addressed; the tag exists so record
+    /// identities reuse the checked `ObjectId` shape.
+    Pending = 2,
+    /// Notification synchronization objects (pool-backed kernel metadata;
+    /// the pool itself is carved when the Retype allowlist arm activates).
+    Notification = 3,
     // Arch pool tags are appended after core tags. Values are kernel-internal
     // and may be renumbered between builds; they are never serialized.
     PageTable = 16,
@@ -50,6 +57,8 @@ impl PoolTag {
         match raw {
             0 => Self::Domain,
             1 => Self::KeyTable,
+            2 => Self::Pending,
+            3 => Self::Notification,
             16 => Self::PageTable,
             17 => Self::VSpace,
             18 => Self::ASIDPool,

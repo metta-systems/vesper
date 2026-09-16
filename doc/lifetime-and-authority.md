@@ -338,7 +338,7 @@ The Endpoint, Reply, Notification, EventCount, and Time operation/object files a
 
 For a blocked caller, “the next invocation fails” is inadequate: there may never be another invocation. Retirement must arrange an explicit continuation outcome. Revocation/timeout cannot undo already committed effects or imply that a delivered request was never processed.
 
-**Recommendation:** a bounded pending-invocation record owns payload, badge/authority metadata, phase, reservations, and eventual result. Both rendezvous arrival orders use one commit transition. Reply names that invocation; reply, timeout, cancellation, and teardown compete for exactly one terminal transition.
+**CONFIRMED (2026-09-16, D7):** a bounded pending-invocation record owns payload, badge/authority metadata, phase, reservations, and eventual result. Both rendezvous arrival orders use one commit transition. Reply names that invocation; reply, timeout, cancellation, and teardown compete for exactly one terminal transition. The wait/timeout/cancellation semantics are selected in the canonical contract (one relative nanosecond timeout per blocking operation, phase-specific Call outcomes, late replies consumed with a defined replier error, cancellation by timeout/teardown only, one-consumer notification delivery).
 
 ### CONFIRMED vocabulary for aborted work
 
@@ -356,7 +356,7 @@ These terms are adopted for discussion and operation contracts; they are not new
 **OPEN / DECISION REQUIRED — D3/D7/D8/D9:**
 
 - [ ] Define each local operation's commit point and which adopted outcome categories it can produce; select shared ABI encodings separately.
-- [ ] Define per-phase timeout/cancellation semantics, late replies, open/closed wait identities, and terminal results.
+- [x] Define per-phase timeout/cancellation semantics, late replies, open/closed wait identities, and terminal results. (2026-09-16: defined in the canonical contract's selected wait/timeout/cancellation semantics; implementation remains open.)
 - [ ] Decide whether already-delivered calls remain replyable after endpoint retirement.
 - [ ] Define explicit deferred completion and bounded wait/reply reservation, including domain/capability/resource teardown.
 - [ ] Preserve source ownership on pre-commit failure; return it from consuming client APIs when retry remains possible.

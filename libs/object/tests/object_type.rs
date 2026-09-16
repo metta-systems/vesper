@@ -29,6 +29,10 @@ pub mod frame_client;
 pub mod key_table_client;
 
 #[cfg(test)]
+#[path = "../src/notification.rs"]
+pub mod notification_client;
+
+#[cfg(test)]
 #[path = "../src/page_table.rs"]
 pub mod page_table_client;
 
@@ -200,6 +204,43 @@ mod tests {
         for value in [1, 255, 256, 1 << 32, u64::MAX] {
             assert!(matches!(
                 ASIDPoolOp::try_from(value),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn notification_operations_match_existing_wire_ids() {
+        use vesper_objects::notification::NotificationOp;
+
+        assert_eq!(NotificationOp::Signal as u8, 0);
+        assert_eq!(NotificationOp::Wait as u8, 1);
+        assert_eq!(NotificationOp::Poll as u8, 2);
+        assert_eq!(size_of::<NotificationOp>(), 1);
+        assert_eq!(align_of::<NotificationOp>(), 1);
+        for id in [0_u32, 1, 2] {
+            assert!(NotificationOp::try_from(id).is_ok());
+            assert!(NotificationOp::try_from(u64::from(id)).is_ok());
+        }
+    }
+
+    #[test]
+    fn notification_operation_rejects_every_unassigned_value() {
+        use vesper_objects::notification::NotificationOp;
+
+        for raw in 3_u32..=255 {
+            assert!(matches!(
+                NotificationOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+            assert!(matches!(
+                NotificationOp::try_from(u64::from(raw)),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        for raw in [256_u64, 1 << 16, u64::from(u32::MAX), u64::MAX] {
+            assert!(matches!(
+                NotificationOp::try_from(raw),
                 Err(CapError::InvalidOperation)
             ));
         }

@@ -213,6 +213,18 @@ impl<T: NucleusObject> ObjectPool<T> {
         Some(unsafe { &mut *self.base.add(index) })
     }
 
+    /// The current allocation generation of a live slot by index, without
+    /// constructing an object reference. Kernel-internal callers use this to
+    /// build incarnation-checked identities for the current domain, where no
+    /// capability-carried identity exists yet.
+    pub fn generation_of(&self, index: usize) -> Option<u32> {
+        let meta = self.meta.get(index)?;
+        if index >= usize::from(self.capacity) || meta.state != SlotState::Live {
+            return None;
+        }
+        Some(meta.generation)
+    }
+
     /// Number of live objects.
     pub fn len(&self) -> usize {
         usize::from(self.count)

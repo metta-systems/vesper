@@ -81,8 +81,8 @@ use {
 
 #[cfg(feature = "debug_kernel")]
 use libobject::{
-    ASIDPoolKey, CapError, DebugConsoleKey, FrameKey, InvalidKeyReason, KeyTableKey, PageTableKey,
-    RawKey, UntypedKey,
+    ASIDPoolKey, CapError, DebugConsoleKey, FrameKey, InvalidKeyReason, KeyTableKey,
+    NotificationKey, PageTableKey, RawKey, UntypedKey,
 };
 
 unsafe extern "C" {
@@ -632,6 +632,7 @@ pub fn kickstart_run() -> ! {
         boot_payload,
         &PoolCapacities {
             domains: 1,
+            notifications: 4,
             page_tables: 16,
             asid_pools: 1,
         },
@@ -1349,6 +1350,91 @@ pub fn kickstart_run() -> ! {
         assert!(matches!(
             boot_asid_pool.assign(boot_domain_key),
             Err(CapError::AlreadyMapped)
+        ));
+
+        // ─────────────────────────────────────────────────────────────────
+        // Notification: Retype-creatable synchronization state (2026-09-16)
+        // ─────────────────────────────────────────────────────────────────
+
+        // Retype two Notifications: pure kernel state allocated from the
+        // bootstrap-carved pool — no Untyped bytes are carved.
+        let notification_key = untyped
+            .retype(
+                ObjectType::NOTIFICATION,
+                0,
+                2,
+                &self_table,
+                KeySlot(16).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("notification Retype failed: {:?}", error.code()));
+        assert_eq!(notification_key.slot(), KeySlot(16));
+
+        // A nonzero size_bits is rejected before any pool slot is taken.
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::NOTIFICATION,
+                12,
+                1,
+                &self_table,
+                KeySlot(18).0,
+                Rights::all(),
+            ),
+            Err(CapError::InvalidSize(12))
+        ));
+
+        let notification = NotificationKey::from_key(notification_key);
+
+        // Signal coalesces distinct bits into the bitmap; Poll consumes all
+        // pending bits at once.
+        notification
+            .signal(0b0110)
+            .unwrap_or_else(|error| panic!("Notification.Signal failed: {:?}", error.code()));
+        notification.signal(0b0001).unwrap_or_else(|error| {
+            panic!("second Notification.Signal failed: {:?}", error.code())
+        });
+        assert_eq!(
+            notification
+                .poll()
+                .unwrap_or_else(|error| panic!("Notification.Poll failed: {:?}", error.code())),
+            0b0111
+        );
+        // Nothing pending: Poll returns zero, never blocking.
+        assert_eq!(
+            notification.poll().unwrap_or_else(|error| panic!(
+                "second Notification.Poll failed: {:?}",
+                error.code()
+            )),
+            0
+        );
+
+        // An already-satisfied Wait consumes and returns the bits
+        // immediately through the real SVC path.
+        notification
+            .signal(0b1)
+            .unwrap_or_else(|error| panic!("third Notification.Signal failed: {:?}", error.code()));
+        assert_eq!(
+            notification
+                .wait(NotificationKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!(
+                    "satisfied Notification.Wait failed: {:?}",
+                    error.code()
+                )),
+            0b1
+        );
+
+        // A wait that would block is rejected with a defined error until
+        // the completion foundation's blocked entry path activates — no
+        // fake success.
+        assert!(matches!(
+            notification.wait(NotificationKey::WAIT_INFINITE),
+            Err(CapError::InvalidOperation)
+        ));
+        // A finite timeout is rejected too: the time subsystem does not
+        // exist yet (selected 2026-09-16).
+        assert!(matches!(
+            notification.wait(1_000_000),
+            Err(CapError::InvalidOperation)
         ));
 
         // Build the intermediate chain: L1 under the root, L2 under L1,

@@ -118,6 +118,10 @@ pub unsafe fn protected_call5(
             in("x4") a2,
             in("x5") a3,
             in("x6") a4,
+            // The kernel reads every argument register; unused words are
+            // transmitted as zero (strict wire-argument convention,
+            // selected 2026-09-15).
+            in("x7") 0_u64,
             options(nostack),
         );
     }
@@ -177,6 +181,12 @@ pub unsafe fn protected_call3(cap: u64, op: u64, a0: u64, a1: u64, a2: u64) -> (
             inlateout("x2") a0 => r2,
             in("x3") a1,
             in("x4") a2,
+            // The kernel reads every argument register; unused words are
+            // transmitted as zero (strict wire-argument convention,
+            // selected 2026-09-15).
+            in("x5") 0_u64,
+            in("x6") 0_u64,
+            in("x7") 0_u64,
             options(nostack),
         );
     }
@@ -200,6 +210,13 @@ pub unsafe fn protected_call2(cap: u64, op: u64, a0: u64, a1: u64) -> (u64, u64,
             inlateout("x1") op => r1,
             inlateout("x2") a0 => r2,
             in("x3") a1,
+            // The kernel reads every argument register; unused words are
+            // transmitted as zero (strict wire-argument convention,
+            // selected 2026-09-15).
+            in("x4") 0_u64,
+            in("x5") 0_u64,
+            in("x6") 0_u64,
+            in("x7") 0_u64,
             options(nostack),
         );
     }
@@ -207,6 +224,11 @@ pub unsafe fn protected_call2(cap: u64, op: u64, a0: u64, a1: u64) -> (u64, u64,
 }
 
 /// 1-arg invoke
+///
+/// The unused argument registers (`x3..x7`) are transmitted as zero: the
+/// kernel reads every argument register, so an unspecified value would
+/// arrive as a defined-but-arbitrary argument (strict wire-argument
+/// convention, selected 2026-09-15).
 ///
 /// # Safety
 /// - Not safe.
@@ -222,6 +244,11 @@ pub unsafe fn protected_call1(cap: u64, op: u64, a0: u64) -> (u64, u64, u64) {
             inlateout("x0") cap => r0,
             inlateout("x1") op => r1,
             inlateout("x2") a0 => r2,
+            in("x3") 0_u64,
+            in("x4") 0_u64,
+            in("x5") 0_u64,
+            in("x6") 0_u64,
+            in("x7") 0_u64,
             options(nostack),
         );
     }

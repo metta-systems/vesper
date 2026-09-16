@@ -7,10 +7,14 @@
 //!
 //! Authority: WRITE on the invoked Untyped, INSTALL on the destination table.
 //! The kind allowlist is `KeyTable` (`size_bits` reserved zero), `Frame`
-//! (architecture-validated `size_bits`, added 2026-09-15), and `PageTable`
-//! (fixed architecture-validated 4 KiB carve, added 2026-09-15); other kinds
-//! remain unsupported. Device Untypeds are rejected as sources: no creatable
-//! kind is device-capable yet (per-kind device policy is D6).
+//! (architecture-validated `size_bits`, added 2026-09-15), `PageTable`
+//! (fixed architecture-validated 4 KiB carve, added 2026-09-15), and
+//! `Notification` (pure kernel synchronization state, added 2026-09-16: no
+//! Untyped bytes are carved — the object is allocated from the
+//! bootstrap-carved notification pool and the capability is a checked pool
+//! identity); other kinds remain unsupported. Device Untypeds are rejected
+//! as sources: no creatable kind is device-capable yet (per-kind device
+//! policy is D6).
 //!
 //! Transaction: validate → reserve (watermark fit) → initialize each object
 //! kernel-privately in the carved region (a `KeyTable` is written there; a
@@ -26,7 +30,7 @@ use {
             key_table::resolve_table_cap,
         },
         objects::{
-            ArchObjects, KeyTable, Nucleus,
+            ArchObjects, KeyTable, Notification, Nucleus,
             access::{Access, ObjectId},
         },
     },
@@ -66,6 +70,11 @@ enum Carve {
     /// address, installation record); the metadata slot is allocated from the
     /// architecture page-table pool, whose backing is charged at bootstrap.
     PageTable { bytes: usize },
+    /// A `Notification`: pure kernel synchronization state (bitmap + bounded
+    /// wait queue). No Untyped bytes are carved (`size_bits` zero); the
+    /// object is allocated from the bootstrap-carved notification pool and
+    /// the capability is a checked pool identity over it.
+    Notification,
 }
 
 /// `Retype` `0`: carve `count` objects of one kind from the Untyped's unused
@@ -119,6 +128,12 @@ fn retype<A: ArchObjects>(
         ObjectType::PAGE_TABLE => Carve::PageTable {
             bytes: A::validate_retype(ArchType::PageTable, size_bits)?,
         },
+        ObjectType::NOTIFICATION => {
+            if size_bits != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::Notification
+        }
         _ => return Err(CapError::InvalidObjectType(kind)),
     };
     if count == 0 {
@@ -177,7 +192,8 @@ fn retype<A: ArchObjects>(
     // `u32::MAX × MIN_ALIGN`) even in larger regions.
     let usable_end = region_size.min(u64::from(u32::MAX) * u64::try_from(MIN_ALIGN).unwrap());
     // A frame and a page table are each their own alignment; a KeyTable uses
-    // its type alignment (at least the watermark encoding granularity).
+    // its type alignment (at least the watermark encoding granularity); a
+    // Notification carves no bytes.
     let (obj_size, align) = match carve {
         Carve::KeyTable => (
             u64::try_from(core::mem::size_of::<KeyTable>()).unwrap(),
@@ -187,6 +203,9 @@ fn retype<A: ArchObjects>(
             let size = u64::try_from(bytes).unwrap();
             (size, size)
         }
+        // Zero bytes at unit alignment: the watermark computation is a
+        // no-op and the commit below re-advances it to the same value.
+        Carve::Notification => (0, 1),
     };
     // The absolute carve address (`paddr + watermark`) must be aligned, not
     // just the watermark: a region whose base is not aligned still yields
@@ -228,10 +247,11 @@ fn retype<A: ArchObjects>(
         dst_table.check_insert(slot)?;
     }
 
-    // Phase 3.5 — for PageTable carves, allocate the kernel metadata slots
-    // from the architecture pool before any memory is touched. Pool backing
-    // is explicitly charged at bootstrap; on exhaustion the already-taken slots
-    // are released, leaving every part of the transaction unchanged.
+    // Phase 3.5 — for pool-backed kinds (PageTable metadata, Notification
+    // state), allocate the kernel pool slots before any memory is touched.
+    // Pool backing is explicitly charged at bootstrap; on exhaustion the
+    // already-taken slots are released, leaving every part of the
+    // transaction unchanged.
     let mut pt_ids: [Option<ObjectId>; KeyTable::NUM_SLOTS] = [const { None }; KeyTable::NUM_SLOTS];
     if matches!(carve, Carve::PageTable { .. }) {
         let base = untyped.paddr + aligned_wm;
@@ -247,6 +267,21 @@ fn retype<A: ArchObjects>(
                 None => {
                     for id in pt_ids[..index].iter().flatten().copied() {
                         drop(nucleus.pools.arch.page_tables.deallocate(id));
+                    }
+                    return Err(CapError::PoolExhausted);
+                }
+            }
+        }
+    }
+    let mut n_ids: [Option<ObjectId>; KeyTable::NUM_SLOTS] = [const { None }; KeyTable::NUM_SLOTS];
+    if matches!(carve, Carve::Notification) {
+        for i in 0..u64::from(count) {
+            let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
+            match nucleus.pools.notifications.allocate(Notification::new()) {
+                Some((id, _)) => n_ids[index] = Some(id),
+                None => {
+                    for id in n_ids[..index].iter().flatten().copied() {
+                        drop(nucleus.pools.notifications.deallocate(id));
                     }
                     return Err(CapError::PoolExhausted);
                 }
@@ -311,6 +346,11 @@ fn retype<A: ArchObjects>(
                     .expect("page-table metadata slot pre-allocated");
                 KeyEntry::from_id(ObjectType::PAGE_TABLE, id, requested, 0)
             }
+            Carve::Notification => {
+                let id = n_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
+                    .expect("notification pool slot pre-allocated");
+                KeyEntry::from_id(ObjectType::NOTIFICATION, id, requested, 0)
+            }
         };
         match dst_table.insert(slot, entry) {
             Ok(key) => {
@@ -322,7 +362,7 @@ fn retype<A: ArchObjects>(
             }
             Err(failure) => {
                 // Defensive rollback: remove the already-installed capabilities
-                // and release any pre-allocated page-table metadata slots. The
+                // and release any pre-allocated pool slots. The
                 // watermark is unchanged, so the Untyped's accounting is
                 // preserved and the destination table is restored.
                 for key in installed[..installed_count].iter().rev() {
@@ -330,6 +370,9 @@ fn retype<A: ArchObjects>(
                 }
                 for id in pt_ids.iter().flatten().copied() {
                     drop(nucleus.pools.arch.page_tables.deallocate(id));
+                }
+                for id in n_ids.iter().flatten().copied() {
+                    drop(nucleus.pools.notifications.deallocate(id));
                 }
                 return Err(failure.error.with_key_operand(6));
             }
