@@ -147,11 +147,12 @@ fn wake_waiter<A: ArchObjects>(
 ) -> Result<(), CapError> {
     let waiter = nucleus.pending.waiter(record)?;
     if nucleus.pools.domains.validate(waiter).is_ok() {
-        if !nucleus.scheduler.push(waiter.index) {
-            // The queue is sized to hold every domain-pool slot; a full
-            // queue is a kernel bookkeeping bug, not an expected condition.
-            panic!("runnable queue overflow");
-        }
+        // The queue is sized to hold every domain-pool slot; a full queue is
+        // a kernel bookkeeping bug, not an expected condition.
+        assert!(
+            nucleus.scheduler.push(waiter.index),
+            "runnable queue overflow"
+        );
     } else if nucleus.pending.release(record).is_err() {
         panic!("failed to release a completed record with a stale waiter");
     }

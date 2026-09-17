@@ -1460,31 +1460,42 @@ pub fn kickstart_run() -> ! {
             )
             .unwrap_or_else(|error| panic!("N2 Retype failed: {:?}", error.code()));
 
-        // Bounce's kernel stack: a 4 KiB frame carved through the public
-        // path (full-descending, so the stack top is the frame's kernel end).
+        // Bounce's kernel stack: eight contiguous 4 KiB frames (32 KiB)
+        // carved through the public path. The SVC entry path nests several
+        // semihosting println buffers (4 KiB each: the syscall entry, the
+        // dispatch, and the per-object handler all format one), so a single
+        // 4 KiB stack frame overflows into the carves directly below it and
+        // corrupts them — observed as the later Frame.Map alias walk
+        // following garbage L2 entries into a fault. 32 KiB holds the
+        // deepest handler chain with headroom. Full-descending, so the stack
+        // top is the last frame's kernel end.
         let bounce_stack_key = untyped
             .retype(
                 ObjectType::FRAME,
                 12,
-                1,
+                8,
                 &self_table,
-                KeySlot(26).0,
+                KeySlot(41).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("Bounce stack Retype failed: {:?}", error.code()));
         let (bounce_stack_paddr, _bounce_stack_size) = FrameKey::from_key(bounce_stack_key)
             .get_extent()
             .unwrap_or_else(|error| panic!("Bounce stack GetExtent failed: {:?}", error.code()));
-        let bounce_stack_top = PhysAddr::new(bounce_stack_paddr).user_to_kernel().as_u64() + 4096;
+        let bounce_stack_top =
+            PhysAddr::new(bounce_stack_paddr).user_to_kernel().as_u64() + 8 * 4096;
 
         // Bounce's capability table, carved through the public Retype path.
+        // The fixture's slots (40–48) sit outside the later pool-refill
+        // test's destination range (24–35), which requires those slots
+        // vacant.
         let bounce_table_key = untyped
             .retype(
                 ObjectType::KEY_TABLE,
                 0,
                 1,
                 &self_table,
-                KeySlot(25).0,
+                KeySlot(40).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("Bounce KeyTable Retype failed: {:?}", error.code()));
@@ -1506,11 +1517,11 @@ pub fn kickstart_run() -> ! {
             let boot_table_ref = unsafe { &*(keytable_addr as *const KeyTable) };
             let n1_id = boot_table_ref
                 .lookup(n1_key)
-                .and_then(|entry| entry.object_id())
+                .and_then(KeyEntry::object_id)
                 .unwrap_or_else(|_| panic!("N1 entry missing or not a pool identity"));
             let n2_id = boot_table_ref
                 .lookup(n2_key)
-                .and_then(|entry| entry.object_id())
+                .and_then(KeyEntry::object_id)
                 .unwrap_or_else(|_| panic!("N2 entry missing or not a pool identity"));
             // SAFETY: Bounce's table is the freshly carved, live KeyTable.
             let bounce_table = unsafe { &mut *(bounce_table_addr as *mut KeyTable) };
@@ -2150,6 +2161,7 @@ fn print_my_sp() {
 // ─────────────────────────────────────────────────────────────────────
 
 /// The bits Bounce delivers to the blocked boot domain.
+#[cfg(feature = "debug_kernel")]
 const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 
 /// The Bounce fixture domain's entry (N4-A, 2026-09-16): a second EL1
@@ -2160,6 +2172,7 @@ const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 /// it, so the scheduler resumes the boot domain. Bootstrap-era fixture
 /// mechanism, not the Phase 7 Activate contract: no budget, no EL0 entry,
 /// no legal-transition enforcement beyond what this path exercises.
+#[cfg(feature = "debug_kernel")]
 #[unsafe(no_mangle)]
 extern "C" fn bounce_entry() -> ! {
     let n1 = NotificationKey::from_key(RawKey::new(KeySlot(1), 1));

@@ -86,6 +86,13 @@ pub fn nucleus_anchor() -> Option<*mut Nucleus<nucleus::objects::ArchObjectsImpl
 
 #[panic_handler]
 fn panicked(info: &PanicInfo) -> ! {
+    // Route panic output through the console logger: without an installed
+    // logger, liblog drops every message on the default NopLogger, so a
+    // nucleus panic would silently degrade into a bare hang. In QEMU builds
+    // the logger mirrors to the semihosting console; without a registered
+    // UART console the console write itself is a null-sink no-op. The only
+    // install error is "a logger is already installed", which is fine here.
+    let _logger = libconsole::init_logger();
     libmachine::panic::handler(info)
 }
 
@@ -321,7 +328,7 @@ unsafe extern "C" fn context_switch(sp: u64, pc: u64) -> ! {
 /// Resume a parked domain: SP must point at its saved exception frame.
 ///
 /// Branches into the exception vectors' register-restore sequence, which
-/// reloads ELR_EL1/SPSR_EL1 and all GPRs from the frame and `eret`s back to
+/// reloads `ELR_EL1`/`SPSR_EL1` and all GPRs from the frame and `eret`s back to
 /// the parked caller's post-SVC instruction with the completion result
 /// written into `gpr[0..2]`.
 #[unsafe(naked)]
@@ -369,8 +376,7 @@ unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
         .scheduler
         .pop()
         .expect("all domains blocked and no timer exists to wake anyone");
-    nucleus.current_domain =
-        Some(u32::try_from(next).expect("domain index too wide for current-domain tracking"));
+    nucleus.current_domain = Some(u32::from(next));
 
     let Some(domain) = nucleus.pools.domains.get_live_mut(usize::from(next)) else {
         panic!("runnable domain is not live");
@@ -392,11 +398,17 @@ unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
                 Ok(PendingState::Waiting) => {
                     panic!("runnable domain's record has not reached its terminal transition")
                 }
-                Err(_) => panic!("runnable domain's record identity is stale"),
+                Err(error) => {
+                    panic!(
+                        "runnable domain's record identity is stale: {:?}",
+                        error.code()
+                    )
+                }
             };
-            if nucleus.pending.release(record).is_err() {
-                panic!("failed to release a delivered record");
-            }
+            assert!(
+                nucleus.pending.release(record).is_ok(),
+                "failed to release a delivered record"
+            );
             // SAFETY: the parked frame lives on the next domain's kernel
             // stack — valid, exclusively-owned memory that nothing executes
             // on while the domain is parked.

@@ -27,7 +27,7 @@ jtag = ["libmachine/jtag"]
 noserial = [] #"libplatform/noserial"
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = [
-  # "libconsole/qemu",
+  "libconsole/qemu",
   "libexception/qemu",
   "libmachine/qemu",
   # "libplatform/qemu",
@@ -38,6 +38,7 @@ aarch64-cpu = { workspace = true }
 bitflags = { workspace = true }
 cfg-if = { workspace = true }
 libaddress = { workspace = true }
+libconsole = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
 liblocking = { workspace = true }
