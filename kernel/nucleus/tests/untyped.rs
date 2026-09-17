@@ -94,6 +94,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             current_domain: None,
             dcb_pages: DcbPages::new(),
             pending: crate::objects::PendingPool::new(),
+            scheduler: crate::objects::Scheduler::new(),
             pools: NucleusPools {
                 domains: ObjectPool::new(pool_ptr, 0),
                 notifications: ObjectPool::new(

@@ -1,7 +1,7 @@
 use {
     crate::objects::{
-        ArchObjects, Domain, KeyTable, Notification, ObjectPool, PendingPool, arch::ArchPools,
-        domain::DcbPages,
+        ArchObjects, Domain, KeyTable, Notification, ObjectPool, PendingPool, Scheduler,
+        arch::ArchPools, domain::DcbPages,
     },
     core::sync::atomic::Ordering,
     libobject::{
@@ -76,6 +76,10 @@ pub struct Nucleus<A: ArchObjects> {
     /// foundation, 2026-09-16): bounded kernel-private storage, the
     /// closed-wait identity for blocked invocations.
     pub pending: PendingPool,
+    /// Runnable-domain queue: the minimal "run someone else" substrate
+    /// (completion foundation, 2026-09-16). Kernel mechanism only;
+    /// scheduling policy stays in userspace.
+    pub scheduler: Scheduler,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -144,6 +148,7 @@ impl<A: ArchObjects> Nucleus<A> {
             keytable_addr,
             translation_root: None,
             asid: None,
+            context: crate::objects::ExecutionContext::Running,
         })?;
         #[cfg(feature = "debug_kernel")]
         {

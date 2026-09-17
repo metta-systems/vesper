@@ -73,7 +73,7 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, Domain, KeyTable, Nucleus,
+            ArchObjects, ArchObjectsImpl, Domain, ExecutionContext, KeyTable, Nucleus,
             access::{ObjectId, PoolTag},
         },
     },
@@ -631,7 +631,7 @@ pub fn kickstart_run() -> ! {
     let Ok((nucleus_ptr, keytable_addr)) = build_initial_nucleus::<ArchObjectsImpl>(
         boot_payload,
         &PoolCapacities {
-            domains: 1,
+            domains: 2,
             notifications: 4,
             page_tables: 16,
             asid_pools: 1,
@@ -654,6 +654,7 @@ pub fn kickstart_run() -> ! {
             keytable_addr,
             translation_root: None,
             asid: None,
+            context: ExecutionContext::Running,
         })
         .expect("no boot Domain slot")
         .0;
@@ -1423,19 +1424,150 @@ pub fn kickstart_run() -> ! {
             0b1
         );
 
-        // A wait that would block is rejected with a defined error until
-        // the completion foundation's blocked entry path activates — no
-        // fake success.
-        assert!(matches!(
-            notification.wait(NotificationKey::WAIT_INFINITE),
-            Err(CapError::InvalidOperation)
-        ));
-        // A finite timeout is rejected too: the time subsystem does not
-        // exist yet (selected 2026-09-16).
+        // A wait that would block now blocks for real (completion foundation,
+        // 2026-09-16): the end-to-end proof below parks the boot domain and
+        // resumes it through the Bounce fixture domain. A finite timeout is
+        // still rejected: the time subsystem does not exist yet.
         assert!(matches!(
             notification.wait(1_000_000),
             Err(CapError::InvalidOperation)
         ));
+
+        // ─────────────────────────────────────────────────────────────────
+        // Blocking Wait end-to-end: the Bounce fixture domain (N4-A, 2026-09-16)
+        // ─────────────────────────────────────────────────────────────────
+
+        // N1: the notification the boot domain blocks on. N2: the one
+        // Bounce parks on. Both carved through the public Retype path.
+        let n1_key = untyped
+            .retype(
+                ObjectType::NOTIFICATION,
+                0,
+                1,
+                &self_table,
+                KeySlot(18).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("N1 Retype failed: {:?}", error.code()));
+        let n2_key = untyped
+            .retype(
+                ObjectType::NOTIFICATION,
+                0,
+                1,
+                &self_table,
+                KeySlot(19).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("N2 Retype failed: {:?}", error.code()));
+
+        // Bounce's kernel stack: a 4 KiB frame carved through the public
+        // path (full-descending, so the stack top is the frame's kernel end).
+        let bounce_stack_key = untyped
+            .retype(
+                ObjectType::FRAME,
+                12,
+                1,
+                &self_table,
+                KeySlot(26).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("Bounce stack Retype failed: {:?}", error.code()));
+        let (bounce_stack_paddr, _bounce_stack_size) = FrameKey::from_key(bounce_stack_key)
+            .get_extent()
+            .unwrap_or_else(|error| panic!("Bounce stack GetExtent failed: {:?}", error.code()));
+        let bounce_stack_top = PhysAddr::new(bounce_stack_paddr).user_to_kernel().as_u64() + 4096;
+
+        // Bounce's capability table, carved through the public Retype path.
+        let bounce_table_key = untyped
+            .retype(
+                ObjectType::KEY_TABLE,
+                0,
+                1,
+                &self_table,
+                KeySlot(25).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("Bounce KeyTable Retype failed: {:?}", error.code()));
+        let bounce_table_addr = {
+            // SAFETY: the boot table is the live carved boot KeyTable.
+            let entry = unsafe { &*(keytable_addr as *const KeyTable) }
+                .lookup(bounce_table_key)
+                .unwrap_or_else(|_| panic!("Bounce KeyTable entry missing"));
+            entry
+                .keytable_address()
+                .unwrap_or_else(|_| panic!("Bounce KeyTable entry is not carved"))
+        };
+
+        // Bootstrap grant: install Bounce's notification keys (the boot
+        // test's authority delegated kernel-privately by the bootstrap
+        // builder, like the boot console grant).
+        {
+            // SAFETY: the boot table is the live carved boot KeyTable.
+            let boot_table_ref = unsafe { &*(keytable_addr as *const KeyTable) };
+            let n1_id = boot_table_ref
+                .lookup(n1_key)
+                .and_then(|entry| entry.object_id())
+                .unwrap_or_else(|_| panic!("N1 entry missing or not a pool identity"));
+            let n2_id = boot_table_ref
+                .lookup(n2_key)
+                .and_then(|entry| entry.object_id())
+                .unwrap_or_else(|_| panic!("N2 entry missing or not a pool identity"));
+            // SAFETY: Bounce's table is the freshly carved, live KeyTable.
+            let bounce_table = unsafe { &mut *(bounce_table_addr as *mut KeyTable) };
+            bounce_table
+                .insert(
+                    KeySlot(1),
+                    KeyEntry::from_id(ObjectType::NOTIFICATION, n1_id, Rights::all(), 0),
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("Bounce N1 grant failed: {:?}", failure.error.code())
+                });
+            bounce_table
+                .insert(
+                    KeySlot(2),
+                    KeyEntry::from_id(ObjectType::NOTIFICATION, n2_id, Rights::all(), 0),
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("Bounce N2 grant failed: {:?}", failure.error.code())
+                });
+        }
+
+        // Allocate Bounce's Domain and queue it runnable: it starts only
+        // when the boot domain blocks.
+        let (bounce_id, _bounce_domain) = nucleus
+            .pools
+            .domains
+            .allocate(Domain {
+                keytable_addr: bounce_table_addr,
+                translation_root: None,
+                asid: None,
+                context: ExecutionContext::NotStarted {
+                    pc: bounce_entry as *const () as u64,
+                    stack_top: bounce_stack_top,
+                },
+            })
+            .unwrap_or_else(|| panic!("no Bounce Domain slot"));
+        assert_eq!(bounce_id.index, 1);
+        assert!(nucleus.scheduler.push(bounce_id.index));
+
+        // The boot domain blocks on N1: this SVC does not return — the
+        // kernel parks it, starts Bounce (which signals N1 and parks on N2),
+        // then resumes the boot domain with the delivered bitmap.
+        let received = NotificationKey::from_key(n1_key)
+            .wait(NotificationKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| {
+                panic!("blocking Notification.Wait failed: {:?}", error.code())
+            });
+        assert_eq!(received, BOUNCE_MAGIC_BITS);
+        // Bounce is parked on N2; the boot domain resumed with the bits.
+        {
+            let bounce = nucleus
+                .pools
+                .domains
+                .get_live(usize::from(bounce_id.index))
+                .unwrap_or_else(|| panic!("Bounce Domain missing"));
+            assert!(matches!(bounce.context, ExecutionContext::Parked { .. }));
+        }
 
         // Build the intermediate chain: L1 under the root, L2 under L1,
         // L3 under L2, all selecting the slots for vaddr 0x1000_0000.
@@ -2012,6 +2144,35 @@ fn print_my_sp() {
     let sp = aarch64_cpu::registers::SP.get();
     semi::println!("Current SP: {sp:016x}");
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Bounce fixture domain (completion foundation, 2026-09-16)
+// ─────────────────────────────────────────────────────────────────────
+
+/// The bits Bounce delivers to the blocked boot domain.
+const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
+
+/// The Bounce fixture domain's entry (N4-A, 2026-09-16): a second EL1
+/// execution context that unlocks the first blocked domain for testing.
+///
+/// Bounce signals the notification the boot domain is blocked on (waking
+/// it), then parks forever on its own notification — nothing ever signals
+/// it, so the scheduler resumes the boot domain. Bootstrap-era fixture
+/// mechanism, not the Phase 7 Activate contract: no budget, no EL0 entry,
+/// no legal-transition enforcement beyond what this path exercises.
+#[unsafe(no_mangle)]
+extern "C" fn bounce_entry() -> ! {
+    let n1 = NotificationKey::from_key(RawKey::new(KeySlot(1), 1));
+    let n2 = NotificationKey::from_key(RawKey::new(KeySlot(2), 1));
+    n1.signal(BOUNCE_MAGIC_BITS)
+        .unwrap_or_else(|error| panic!("Bounce: Notification.Signal failed: {:?}", error.code()));
+    // Park forever: this wait blocks, so the scheduler resumes the boot
+    // domain. Reaching either arm below is a fixture failure.
+    match n2.wait(NotificationKey::WAIT_INFINITE) {
+        Ok(bits) => panic!("Bounce: unexpected wakeup with bits {bits:#x}"),
+        Err(error) => panic!("Bounce: Notification.Wait failed: {:?}", error.code()),
+    }
+}
 /*
 // ─────────────────────────────────────────────────────────────────────
 // Create init domain from boot module
@@ -2309,6 +2470,35 @@ fn switch_to_domain(domain: DomainRef, time: TimeCap) -> ! {
     // Do the context switch - this never returns
     unsafe {
         context_switch_to_user(ttbr0, entry_point, stack_pointer);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Bounce fixture domain (completion foundation, 2026-09-16)
+// ─────────────────────────────────────────────────────────────────────
+
+/// The bits Bounce delivers to the blocked boot domain.
+const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
+
+/// The Bounce fixture domain's entry (N4-A, 2026-09-16): a second EL1
+/// execution context that unlocks the first blocked domain for testing.
+///
+/// Bounce signals the notification the boot domain is blocked on (waking
+/// it), then parks forever on its own notification — nothing ever signals
+/// it, so the scheduler resumes the boot domain. Bootstrap-era fixture
+/// mechanism, not the Phase 7 Activate contract: no budget, no EL0 entry,
+/// no legal-transition enforcement beyond what this path exercises.
+#[unsafe(no_mangle)]
+extern "C" fn bounce_entry() -> ! {
+    let n1 = NotificationKey::from_key(RawKey::new(KeySlot(1), 1));
+    let n2 = NotificationKey::from_key(RawKey::new(KeySlot(2), 1));
+    n1.signal(BOUNCE_MAGIC_BITS)
+        .unwrap_or_else(|error| panic!("Bounce: Notification.Signal failed: {:?}", error.code()));
+    // Park forever: this wait blocks, so the scheduler resumes the boot
+    // domain. Reaching either arm below is a fixture failure.
+    match n2.wait(NotificationKey::WAIT_INFINITE) {
+        Ok(bits) => panic!("Bounce: unexpected wakeup with bits {bits:#x}"),
+        Err(error) => panic!("Bounce: Notification.Wait failed: {:?}", error.code()),
     }
 }
 

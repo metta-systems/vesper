@@ -15,9 +15,29 @@ pub mod untyped;
 
 pub use key_entry::KeyEntry;
 
-// ═════════════════
+// ═════════════════════════════
+// INVOCATION OUTCOME
+// ═════════════════════════════
+
+/// The outcome of one capability invocation (completion foundation,
+/// 2026-09-16).
+///
+/// A blocking operation does not return until completion or cancellation
+/// (selected D7 model): `Blocked` tells the syscall entry that the caller's
+/// return happens later, when the pending-invocation record `record` reaches
+/// its terminal transition. The entry parks the caller and switches; it must
+/// not write a result and return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvokeOutcome {
+    /// The invocation completed (or failed) now; write the result and return.
+    Complete((u64, u64)),
+    /// The invocation blocked; `record` names its pending-invocation record.
+    Blocked(crate::objects::access::ObjectId),
+}
+
+// ═════════════════════════════
 // SYSCALL DISPATCH
-// ═════════════════
+// ═════════════════════════════
 
 /// Main capability invocation handler with two-level dispatch.
 ///
@@ -33,7 +53,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     key: RawKey,
     op: u64,
     args: &[u64; 6],
-) -> Result<(u64, u64), CapError> {
+) -> Result<InvokeOutcome, CapError> {
     semi::println!(
         "🔄 handle_cap_invoke(key {key:?},op {op},args[{:x},{:x},{:x},{:x},{:x},{:x}])",
         args[0],
@@ -58,6 +78,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     if core::hint::unlikely(obj_type.is_arch()) {
         // Architecture-specific dispatch (less common path)
         arch_invoke::<A>(nucleus, &access, caller_table_addr, key, obj_type, op, args)
+            .map(InvokeOutcome::Complete)
     } else {
         // Core dispatch (common path)
         core_invoke::<A>(nucleus, &access, caller_table_addr, key, obj_type, op, args)
@@ -88,7 +109,7 @@ fn core_invoke<A: ArchObjects>(
     obj_type: ObjectType,
     op: u64,
     args: &[u64; 6],
-) -> Result<(u64, u64), CapError> {
+) -> Result<InvokeOutcome, CapError> {
     let core_type = CoreType::try_from(obj_type)?;
 
     semi::println!("🔄 core_invoke {key:?} / {core_type}:{op}");
@@ -98,6 +119,7 @@ fn core_invoke<A: ArchObjects>(
 
         CoreType::Untyped => {
             crate::api::untyped::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
         }
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
@@ -105,13 +127,16 @@ fn core_invoke<A: ArchObjects>(
             let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
             let entry = caller_table.lookup(key)?;
             crate::api::debug_console::invoke(entry, op, args[0], args[1])
+                .map(InvokeOutcome::Complete)
         }
         CoreType::Domain => {
             crate::api::domain::invoke(access, caller_table_addr, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
         }
 
         CoreType::KeyTable => {
             crate::api::key_table::invoke(access, caller_table_addr, key, op, args)
+                .map(InvokeOutcome::Complete)
         }
 
         CoreType::Notification => {

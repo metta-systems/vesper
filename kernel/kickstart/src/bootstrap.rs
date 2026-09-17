@@ -18,7 +18,7 @@ use {
         api::key_entry::RegionPayload,
         objects::{
             ArchObjects, Domain, KeyTable, Notification, Nucleus, NucleusObject, ObjectPool,
-            PendingPool, arch::ArchPools, domain::DcbPages, nucleus::NucleusPools,
+            PendingPool, Scheduler, arch::ArchPools, domain::DcbPages, nucleus::NucleusPools,
         },
     },
 };
@@ -130,6 +130,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         current_domain: None,
         dcb_pages: DcbPages::new(),
         pending: PendingPool::new(),
+        scheduler: Scheduler::new(),
         pools: NucleusPools::<A> {
             domains,
             notifications,

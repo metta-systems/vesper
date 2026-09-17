@@ -1,5 +1,5 @@
 use {
-    crate::objects::NucleusObject,
+    crate::objects::{NucleusObject, access::ObjectId},
     core::{ptr::NonNull, sync::atomic::Ordering},
     libaddress::{PhysAddr, VirtAddr},
     libobject::{
@@ -11,6 +11,26 @@ use {
 // ====================
 // == Nucleus object ==
 // ====================
+
+/// Kernel-private execution context of a Domain (completion foundation,
+/// 2026-09-16).
+///
+/// This records only what the kernel needs to stop and later resume the
+/// domain's execution; the saved register state itself lives in the
+/// exception frame on the domain's kernel stack (see `vectors.S`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionContext {
+    /// The domain has never run: start it at `pc` with a full-descending
+    /// kernel stack whose top is `stack_top`.
+    NotStarted { pc: u64, stack_top: u64 },
+    /// Blocked: the saved exception frame lives at `frame_addr` on the
+    /// domain's kernel stack, and the invocation is parked on the
+    /// pending-invocation `record`.
+    Parked { frame_addr: u64, record: ObjectId },
+    /// Currently executing, or a fixture domain with no execution context:
+    /// no saved state to restore.
+    Running,
+}
 
 /// This is a nucleus-visible half of domain structure.
 /// The `DomainControlBlock` is user-visible and is defined in libobject.
@@ -47,6 +67,9 @@ pub struct Domain {
     /// exactly this Domain's context. `None` means no hardware context was
     /// ever established for the root, so no TLB invalidation is required.
     pub asid: Option<u16>,
+    /// Execution context for stopping and resuming this Domain (blocked
+    /// callers park here; never-run domains carry their first-start entry).
+    pub context: ExecutionContext,
 }
 
 // Verify size for cache alignment

@@ -9,11 +9,10 @@
 //! - `Wait` `1`: `x2` timeout (nanoseconds; `u64::MAX` = infinite; zero and
 //!   finite values are invalid/unsupported until the time subsystem exists),
 //!   `x3..x7` zero. An already-satisfied wait consumes and returns the
-//!   pending bits. A wait that would block returns a defined error until
-//!   the completion foundation's blocked entry path activates: the syscall
-//!   entry currently always returns, so pretending to block would be fake
-//!   success. Full blocking `Wait` lands with the entry-path blocked
-//!   handling and the Bounce fixture domain.
+//!   pending bits. A wait that would block reports `InvokeOutcome::Blocked`:
+//!   the syscall entry parks the caller and switches, and the caller's
+//!   return happens when the record completes (completion foundation,
+//!   2026-09-16).
 //! - `Poll` `2`: no arguments. Consumes and returns pending bits (zero =
 //!   none pending). Never blocks.
 //!
@@ -24,7 +23,10 @@
 //! reachable one; badge derivation (D4) activates the badge path.
 
 use {
-    crate::objects::{ArchObjects, KeyTable, Notification, Nucleus, access::Access},
+    crate::{
+        api::InvokeOutcome,
+        objects::{ArchObjects, KeyTable, Notification, Nucleus, access::Access},
+    },
     libobject::{CapError, ObjectType, RawKey, Rights, notification::NotificationOp},
 };
 
@@ -40,7 +42,7 @@ pub fn invoke<A: ArchObjects>(
     op: u64,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
-) -> Result<(u64, u64), CapError> {
+) -> Result<InvokeOutcome, CapError> {
     let op = NotificationOp::try_from(op)?;
 
     // Resolve the invoked Notification capability through the caller's own
@@ -81,11 +83,12 @@ pub fn invoke<A: ArchObjects>(
             };
             let mut notification =
                 access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
-            // One-consumer delivery: a queued waiter (none can exist until
-            // blocking Wait activates) is completed with the delivered
-            // bitmap here; otherwise the bits coalesce into the state.
-            notification.signal(bits, &mut nucleus.pending)?;
-            Ok((0, 0))
+            // One-consumer delivery: the front waiter's record completes
+            // with the delivered bitmap and its domain becomes runnable.
+            if let Some(record) = notification.signal(bits, &mut nucleus.pending)? {
+                wake_waiter(nucleus, record)?;
+            }
+            Ok(InvokeOutcome::Complete((0, 0)))
         }
 
         NotificationOp::Wait => {
@@ -103,22 +106,18 @@ pub fn invoke<A: ArchObjects>(
                 return Err(CapError::InvalidOperation);
             }
             // The already-satisfied path is real behavior: consume and
-            // return pending bits. The blocking path is not yet activatable
-            // (the syscall entry always returns), so a wait that would block
-            // fails with a defined error instead of fake success. The
-            // waiter identity is resolved before the pool guard so the
-            // borrows stay disjoint.
+            // return pending bits. The blocking path reports Blocked: the
+            // syscall entry parks the caller and switches; the caller's
+            // return happens when the record completes.
             let waiter = current_waiter(nucleus)?;
             let mut notification =
                 access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
             match notification.wait(waiter, &mut nucleus.pending)? {
-                crate::objects::notification::WaitOutcome::Ready(bits) => Ok((bits, 0)),
+                crate::objects::notification::WaitOutcome::Ready(bits) => {
+                    Ok(InvokeOutcome::Complete((bits, 0)))
+                }
                 crate::objects::notification::WaitOutcome::Blocked(record) => {
-                    // Unreachable today: nothing can complete the record
-                    // while the caller is still executing. Abandon the
-                    // registration and report the unsupported blocking.
-                    nucleus.pending.abandon(record);
-                    Err(CapError::InvalidOperation)
+                    Ok(InvokeOutcome::Blocked(record))
                 }
             }
         }
@@ -132,9 +131,31 @@ pub fn invoke<A: ArchObjects>(
             }
             let mut notification =
                 access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
-            Ok((notification.poll(), 0))
+            Ok(InvokeOutcome::Complete((notification.poll(), 0)))
         }
     }
+}
+
+/// Mark the domain of a completed record runnable.
+///
+/// The waiter identity is incarnation-checked against the domains pool
+/// before enqueueing; a stale identity (domain torn down) releases the
+/// terminal record instead — its waiter will never resume.
+fn wake_waiter<A: ArchObjects>(
+    nucleus: &mut Nucleus<A>,
+    record: crate::objects::access::ObjectId,
+) -> Result<(), CapError> {
+    let waiter = nucleus.pending.waiter(record)?;
+    if nucleus.pools.domains.validate(waiter).is_ok() {
+        if !nucleus.scheduler.push(waiter.index) {
+            // The queue is sized to hold every domain-pool slot; a full
+            // queue is a kernel bookkeeping bug, not an expected condition.
+            panic!("runnable queue overflow");
+        }
+    } else if nucleus.pending.release(record).is_err() {
+        panic!("failed to release a completed record with a stale waiter");
+    }
+    Ok(())
 }
 
 /// The current domain's incarnation-checked identity, for wait

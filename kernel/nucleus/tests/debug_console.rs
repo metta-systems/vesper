@@ -111,6 +111,7 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
         current_domain: None,
         dcb_pages: DcbPages::new(),
         pending: crate::objects::PendingPool::new(),
+        scheduler: crate::objects::Scheduler::new(),
     };
     test(&mut nucleus, table_addr, second_table_addr);
     for index in 0..2_u16 {
@@ -196,6 +197,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
                 keytable_addr: second_table_addr,
                 translation_root: None,
                 asid: None,
+                context: crate::objects::ExecutionContext::Running,
             })
             .expect("second domain allocation failed");
         nucleus.current_domain = Some(1);

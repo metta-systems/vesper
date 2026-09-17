@@ -38,7 +38,7 @@ use {
     libmapping::AccessPermissions,
     libobject::{ArchType, CapError, KeySlot, RawKey, syscall_status},
     libqemu::semihosting as semi,
-    nucleus::objects::Nucleus,
+    nucleus::objects::{ExecutionContext, Nucleus, access::ObjectId, completion::PendingState},
 };
 
 // TODO: Split this into read-only part, that does not need locks, per-cpu mutable part that does not need locks,
@@ -266,7 +266,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     ];
 
     // SAFETY: Unsafe.
-    let result = unsafe {
+    let outcome = unsafe {
         #[allow(static_mut_refs)]
         KERNEL_LOCK.lock(|()| {
             let Some(ptr) = nucleus_anchor() else {
@@ -277,22 +277,17 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         })
     };
 
-    // let cap = current_domain().keytable.lookup(cap_slot)?;
-    // let args = &[arg0, arg1, arg2, arg3, arg4, arg5]; // FIXME temp
-
-    // let result = match cap.cap_type() {
-    //     ObjectType::Untyped => api::untyped::invoke(cap, op, args), // retype, split
-    //     ObjectType::Domain => api::domain::invoke(cap, op, args),   // activate, suspend...
-    //     ObjectType::KeyTable => api::key_table::invoke(cap, op, args),
-    //     ObjectType::Time => api::time::invoke(cap, op, args), // donate, split, merge
-    //     ObjectType::Endpoint => api::endpoint::invoke(cap, op, args),
-    //     ObjectType::Notification => api::notification::invoke(cap, op, args),
-    //     ObjectType::EventCount => api::event_count::invoke(cap, op, args),
-    //     ObjectType::None => Err(SyscallError::InvalidSlot),
-    // };
-
-    let (x0, x1, x2) = match result {
-        Ok((v0, v1)) => (syscall_status::SUCCESS, v0, v1),
+    // A blocked invocation does not return: park the caller and switch.
+    // This happens after the kernel-lock closure has ended, satisfying the
+    // contract's rule that scheduling occurs only after guards are released.
+    let (x0, x1, x2) = match outcome {
+        Ok(nucleus::api::InvokeOutcome::Complete((v0, v1))) => (syscall_status::SUCCESS, v0, v1),
+        Ok(nucleus::api::InvokeOutcome::Blocked(record)) => {
+            // SAFETY: the kernel lock is released, no access guards are held,
+            // and the frame names the caller's saved exception context on the
+            // current kernel stack.
+            unsafe { park_and_switch(core::ptr::from_mut(frame) as u64, record) }
+        }
         Err(e) => e.code(),
     };
     // Return values
@@ -303,6 +298,130 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         frame.gpr[1] = x1;
         frame.gpr[2] = x2;
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CONTEXT SWITCHING (completion foundation, 2026-09-16)
+// ═══════════════════════════════════════════════════════════════════
+
+/// One-way context switch: set SP to `sp` and branch to `pc`.
+///
+/// Never returns: the current Rust call chain and its stack are abandoned.
+/// The caller must have released every lock and guard — nothing on the
+/// abandoned stack will run again.
+///
+/// # Safety
+/// `sp` must name a valid, exclusively-owned kernel stack and `pc` a valid
+/// entry point for it.
+#[unsafe(naked)]
+unsafe extern "C" fn context_switch(sp: u64, pc: u64) -> ! {
+    core::arch::naked_asm!("mov sp, x0", "br   x1",);
+}
+
+/// Resume a parked domain: SP must point at its saved exception frame.
+///
+/// Branches into the exception vectors' register-restore sequence, which
+/// reloads ELR_EL1/SPSR_EL1 and all GPRs from the frame and `eret`s back to
+/// the parked caller's post-SVC instruction with the completion result
+/// written into `gpr[0..2]`.
+#[unsafe(naked)]
+unsafe extern "C" fn resume_parked_context() -> ! {
+    core::arch::naked_asm!("b __restore_context");
+}
+
+/// Park the current domain on `record` and switch to the next runnable
+/// context. Never returns.
+///
+/// The current domain's exception frame stays parked at `frame_addr` on its
+/// kernel stack; the domain resumes through [`resume_parked_context`] when
+/// the record's terminal transition is delivered.
+///
+/// # Safety
+/// Must be called from the SVC entry with the kernel lock released and no
+/// access guards held; `frame_addr` must name the caller's saved exception
+/// frame on the current kernel stack.
+unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
+    let Some(nucleus_ptr) = nucleus_anchor() else {
+        panic!("nucleus not booted by Kickstart")
+    };
+    // SAFETY: the anchor points at the live boot-carved Nucleus; the kernel
+    // lock is released, so exclusive access is safe.
+    let nucleus = unsafe { &mut *nucleus_ptr };
+
+    let current = nucleus
+        .current_domain
+        .expect("blocked invocation without a current domain");
+    {
+        let Some(domain) = nucleus
+            .pools
+            .domains
+            .get_live_mut(usize::try_from(current).expect("current domain index too wide"))
+        else {
+            panic!("current domain is not live");
+        };
+        domain.context = ExecutionContext::Parked { frame_addr, record };
+    }
+
+    // Pick the next runnable context. An empty queue means every domain is
+    // blocked and no timer exists yet to wake anyone — the honest report is
+    // a halt, not a fake return to the blocked caller.
+    let next = nucleus
+        .scheduler
+        .pop()
+        .expect("all domains blocked and no timer exists to wake anyone");
+    nucleus.current_domain =
+        Some(u32::try_from(next).expect("domain index too wide for current-domain tracking"));
+
+    let Some(domain) = nucleus.pools.domains.get_live_mut(usize::from(next)) else {
+        panic!("runnable domain is not live");
+    };
+    let (sp, pc) = match domain.context {
+        ExecutionContext::Parked { frame_addr, record } => {
+            // Deliver the terminal outcome into the parked frame. A runnable
+            // domain's record is always terminal: the wake enqueues the
+            // domain only after the record's single terminal transition.
+            let (x0, x1, x2) = match nucleus.pending.state(record) {
+                Ok(PendingState::Completed { result0, result1 }) => {
+                    (syscall_status::SUCCESS, result0, result1)
+                }
+                // Cancellation outcomes need their D9 wire encoding; no
+                // teardown path can produce them yet.
+                Ok(PendingState::Cancelled) => {
+                    panic!("cancelled record resumed before its D9 encoding exists")
+                }
+                Ok(PendingState::Waiting) => {
+                    panic!("runnable domain's record has not reached its terminal transition")
+                }
+                Err(_) => panic!("runnable domain's record identity is stale"),
+            };
+            if nucleus.pending.release(record).is_err() {
+                panic!("failed to release a delivered record");
+            }
+            // SAFETY: the parked frame lives on the next domain's kernel
+            // stack — valid, exclusively-owned memory that nothing executes
+            // on while the domain is parked.
+            let frame = unsafe { &mut *(frame_addr as *mut ExceptionContext) };
+            frame.gpr[0] = x0;
+            frame.gpr[1] = x1;
+            frame.gpr[2] = x2;
+            domain.context = ExecutionContext::Running;
+            (frame_addr, resume_parked_context as *const () as u64)
+        }
+        ExecutionContext::NotStarted { pc, stack_top } => {
+            domain.context = ExecutionContext::Running;
+            (stack_top, pc)
+        }
+        ExecutionContext::Running => {
+            panic!("runnable domain is already executing")
+        }
+    };
+
+    semi::println!(
+        "🔄 context switch: domain {current} parked, resuming domain {next} @ SP {sp:#x}, PC {pc:#x}"
+    );
+    // SAFETY: the target stack and entry point were validated above; the
+    // current call chain is abandoned by design.
+    unsafe { context_switch(sp, pc) }
 }
 
 fn get_pc() -> u64 {
