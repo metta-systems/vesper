@@ -1,5 +1,4 @@
 #![feature(trait_alias)]
-#![feature(drop_guard)]
 
 use {
     anyhow::{Result, anyhow},
