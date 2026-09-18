@@ -259,9 +259,23 @@ test-untyped:
     cargo test -p nucleus --test untyped {{ target_json }} \
       --features=qemu {{ rust_std }}
 
+# Rebuild the boot-test kernel unconditionally.
+#
+# Deliberately a nested `just` invocation, not a `(build ...)` dependency:
+# just deduplicates same-argument recipe dependencies within one invocation,
+# and `clippy` also depends on `(build 'rpi3 'qemu,debug_kernel')`. In
+# `just ci` (clean lint build test) a plain dependency here would be skipped
+# as already run by clippy, leaving `target/kernel.bin` as the rpi4
+# no-features image from ci's own `build` step — a kernel with no
+# semihosting output and no boot test that hangs QEMU silently. The nested
+# invocation always runs and refreshes the image.
+[private]
+_rebuild-boot-test-kernel:
+    {{ just_executable() }} build rpi3 qemu,debug_kernel
+
 # Boot the debug kernel; in-guest assertions and QEMU exit status validate handoff and SVC results
 [group("emu")]
-test-capability-boot: (build 'rpi3' 'qemu,debug_kernel')
+test-capability-boot: _rebuild-boot-test-kernel
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_bin }}"
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
