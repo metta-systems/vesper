@@ -24,6 +24,7 @@
 use {
     crate::objects::{ArchObjects, Domain, KeyTable, Nucleus, access::Access},
     libobject::{CapError, ObjectType, RawKey, Rights},
+    libqemu::semihosting as semi,
 };
 
 /// Handle a `Domain` capability invocation.
@@ -95,5 +96,6 @@ fn activate<A: ArchObjects>(
 
     // Hardware transition: idempotent installation of the same context.
     A::install_translation_context(root, asid);
+    semi::println!("✅ Domain::Activate()");
     Ok((0, 0))
 }

@@ -36,6 +36,7 @@ use {
     },
     libaddress::{PhysAddr, align},
     libobject::{ArchType, CapError, KeySlot, ObjectType, RawKey, Rights, UntypedOp},
+    libqemu::semihosting as semi,
 };
 
 /// Handle an `Untyped` invocation.
@@ -390,6 +391,14 @@ fn retype<A: ArchObjects>(
         let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
         caller_table.advance_untyped_watermark(untyped_key, new_watermark)?;
     }
+
+    let kind_name = match carve {
+        Carve::KeyTable => "KeyTable",
+        Carve::Frame { .. } => "Frame",
+        Carve::PageTable { .. } => "PageTable",
+        Carve::Notification => "Notification",
+    };
+    semi::println!("✅ Untyped::Retype({kind_name}, count {count})");
 
     Ok((first_key.ok_or(CapError::InvalidOperation)?.to_wire(), 0))
 }

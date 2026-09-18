@@ -38,7 +38,11 @@ use {
     libmapping::AccessPermissions,
     libobject::{ArchType, CapError, KeySlot, RawKey, syscall_status},
     libqemu::semihosting as semi,
-    nucleus::objects::{ExecutionContext, Nucleus, access::ObjectId, completion::PendingState},
+    nucleus::objects::{
+        ExecutionContext, Nucleus,
+        access::ObjectId,
+        completion::{PendingKind, PendingState},
+    },
 };
 
 // TODO: Split this into read-only part, that does not need locks, per-cpu mutable part that does not need locks,
@@ -388,6 +392,14 @@ unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
             // domain only after the record's single terminal transition.
             let (x0, x1, x2) = match nucleus.pending.state(record) {
                 Ok(PendingState::Completed { result0, result1 }) => {
+                    // The invocation's handler reported `Blocked` at its SVC
+                    // entry, so its success line belongs here: the resume is
+                    // where the completed invocation's result is delivered.
+                    let kind = match nucleus.pending.kind(record) {
+                        Ok(PendingKind::NotificationWait) => "Notification::Wait",
+                        Err(_) => "blocked invocation",
+                    };
+                    semi::println!("✅ {kind}(0x{result0:x}) resumed");
                     (syscall_status::SUCCESS, result0, result1)
                 }
                 // Cancellation outcomes need their D9 wire encoding; no

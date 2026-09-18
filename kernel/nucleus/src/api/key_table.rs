@@ -29,6 +29,7 @@
 use {
     crate::objects::{KeyTable, access::Access},
     libobject::{CapError, KeySlot, KeyTableOp, ObjectType, RawKey, Rights},
+    libqemu::semihosting as semi,
 };
 
 /// Handle a `KeyTable` management invocation.
@@ -107,7 +108,10 @@ fn copy_derive(
         };
         table
             .insert(dst_slot, derived)
-            .map(|key| (key.to_wire(), 0))
+            .map(|key| {
+                semi::println!("✅ KeyTable::CopyDerive()");
+                (key.to_wire(), 0)
+            })
             .map_err(|failure| failure.error.with_key_operand(4))
     } else {
         // Distinct tables: alias-safe pair resolution (destination mutable).
@@ -123,7 +127,10 @@ fn copy_derive(
         let derived = src_entry.derive(requested);
         dst_table
             .insert(dst_slot, derived)
-            .map(|key| (key.to_wire(), 0))
+            .map(|key| {
+                semi::println!("✅ KeyTable::CopyDerive()");
+                (key.to_wire(), 0)
+            })
             .map_err(|failure| failure.error.with_key_operand(4))
     }
 }
@@ -177,7 +184,10 @@ fn move_key(
         check_source_allowlisted(&table, src_sel, 2)?;
         let moved = table.remove(src_sel).map_err(|e| e.with_key_operand(2))?;
         match table.insert(dst_slot, moved) {
-            Ok(key) => Ok((key.to_wire(), 0)),
+            Ok(key) => {
+                semi::println!("✅ KeyTable::Move()");
+                Ok((key.to_wire(), 0))
+            }
             Err(failure) => {
                 // Reinsertion into the same slot cannot fail with occupancy
                 // (we just removed it), but the slot's incarnation has
@@ -204,7 +214,10 @@ fn move_key(
             dst_table.insert(dst_slot, moved)
         };
         match install_result {
-            Ok(key) => Ok((key.to_wire(), 0)),
+            Ok(key) => {
+                semi::println!("✅ KeyTable::Move()");
+                Ok((key.to_wire(), 0))
+            }
             Err(failure) => {
                 let mut src_table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
                 drop(src_table.insert(src_sel.slot(), failure.entry));
@@ -239,6 +252,7 @@ fn delete(
     table
         .remove(target_sel)
         .map_err(|e| e.with_key_operand(2))?;
+    semi::println!("✅ KeyTable::Delete()");
     Ok((0, 0))
 }
 

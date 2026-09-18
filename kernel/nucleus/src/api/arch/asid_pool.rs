@@ -21,6 +21,7 @@ use {
         ArchObjects, Domain, KeyTable, Nucleus, access::Access, arch_objects::AsidPoolObject,
     },
     libobject::{ASIDPoolOp, CapError, ObjectType, RawKey, Rights},
+    libqemu::semihosting as semi,
 };
 
 /// Handle an `ASIDPool` capability invocation.
@@ -108,5 +109,6 @@ fn assign<A: ArchObjects>(
 
     // Commit: record the binding on the Domain.
     domain.asid = Some(asid);
+    semi::println!("✅ ASIDPool::Assign(asid {asid})");
     Ok((u64::from(asid), 0))
 }

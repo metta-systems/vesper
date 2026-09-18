@@ -30,6 +30,7 @@ use {
         arch_objects::{PageTableObject, PtParent},
     },
     libobject::{CapError, ObjectType, PageTableOp, RawKey, Rights},
+    libqemu::semihosting as semi,
 };
 
 /// Handle a `PageTable` capability invocation.
@@ -118,6 +119,7 @@ fn map<A: ArchObjects>(
             // the table. Neither step can fail after the checks above.
             domain.translation_root = Some(pt.paddr());
             pt.install_root(parent_id);
+            semi::println!("✅ PageTable::Map(root)");
             Ok((0, 0))
         }
         ObjectType::PAGE_TABLE => {
@@ -147,6 +149,7 @@ fn map<A: ArchObjects>(
             // Commit: record the installation. No step after the hardware
             // write can fail.
             pt.install_table(parent.paddr(), parent.level(), slot);
+            semi::println!("✅ PageTable::Map(intermediate)");
             Ok((0, 0))
         }
         found => Err(CapError::InvalidObjectType(found)),
@@ -203,6 +206,7 @@ fn unmap<A: ArchObjects>(
             if let Some(asid) = bound_asid {
                 A::invalidate_tlb_asid(asid);
             }
+            semi::println!("✅ PageTable::Unmap(root)");
             Ok((0, 0))
         }
         PtParent::Table { parent_paddr, slot } => {
@@ -210,6 +214,7 @@ fn unmap<A: ArchObjects>(
             // table, then clear it.
             A::clear_table_entry(parent_paddr, slot, pt.paddr())?;
             pt.uninstall();
+            semi::println!("✅ PageTable::Unmap(intermediate)");
             Ok((0, 0))
         }
     }

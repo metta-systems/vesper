@@ -195,6 +195,11 @@ impl PendingPool {
         self.live(id).map(PendingInvocation::waiter)
     }
 
+    /// What a live record's invocation waits on.
+    pub fn kind(&self, id: ObjectId) -> Result<PendingKind, CapError> {
+        self.live(id).map(PendingInvocation::kind)
+    }
+
     /// Discard a record whose admission failed before the waiter blocked.
     ///
     /// Rollback half of validate → reserve → commit: the record was never

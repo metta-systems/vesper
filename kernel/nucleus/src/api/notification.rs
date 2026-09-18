@@ -28,6 +28,7 @@ use {
         objects::{ArchObjects, KeyTable, Notification, Nucleus, access::Access},
     },
     libobject::{CapError, ObjectType, RawKey, Rights, notification::NotificationOp},
+    libqemu::semihosting as semi,
 };
 
 /// Handle a `Notification` capability invocation.
@@ -88,6 +89,7 @@ pub fn invoke<A: ArchObjects>(
             if let Some(record) = notification.signal(bits, &mut nucleus.pending)? {
                 wake_waiter(nucleus, record)?;
             }
+            semi::println!("✅ Notification::Signal(0x{bits:x})");
             Ok(InvokeOutcome::Complete((0, 0)))
         }
 
@@ -114,8 +116,11 @@ pub fn invoke<A: ArchObjects>(
                 access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
             match notification.wait(waiter, &mut nucleus.pending)? {
                 crate::objects::notification::WaitOutcome::Ready(bits) => {
+                    semi::println!("✅ Notification::Wait(0x{bits:x})");
                     Ok(InvokeOutcome::Complete((bits, 0)))
                 }
+                // The blocking path's success line prints at the resume that
+                // delivers the completed result (see `park_and_switch`).
                 crate::objects::notification::WaitOutcome::Blocked(record) => {
                     Ok(InvokeOutcome::Blocked(record))
                 }
@@ -131,7 +136,9 @@ pub fn invoke<A: ArchObjects>(
             }
             let mut notification =
                 access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
-            Ok(InvokeOutcome::Complete((notification.poll(), 0)))
+            let bits = notification.poll();
+            semi::println!("✅ Notification::Poll(0x{bits:x})");
+            Ok(InvokeOutcome::Complete((bits, 0)))
         }
     }
 }

@@ -56,6 +56,7 @@ pub fn invoke(cap: &KeyEntry, op: u64, arg0: u64, arg1: u64) -> SyscallResult {
         DebugConsoleOp::Write => {
             // TODO: validate client phys ptr validity
             DebugConsole::handle_write(PhysAddr::new(arg0), arg1)?;
+            libqemu::semihosting::println!("✅ DebugConsole::Write()");
             Ok((0, 0))
         }
     }
