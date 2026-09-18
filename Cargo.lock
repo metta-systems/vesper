@@ -555,8 +555,6 @@ name = "nucleus"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
- "bitflags 2.11.0",
- "build-rs",
  "cfg-if",
  "vesper-address",
  "vesper-boot",
@@ -1186,7 +1184,6 @@ name = "vesper-machines"
 version = "0.0.1"
 dependencies = [
  "vesper-cpu",
- "vesper-exceptions",
  "vesper-local-irq",
  "vesper-log",
  "vesper-qemu",
@@ -1272,9 +1269,6 @@ dependencies = [
 [[package]]
 name = "vesper-qemu"
 version = "0.0.1"
-dependencies = [
- "vesper-print",
-]
 
 [[package]]
 name = "vesper-syscalls"

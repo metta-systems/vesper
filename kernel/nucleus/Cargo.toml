@@ -34,7 +34,7 @@ qemu = [
 
 [dependencies]
 aarch64-cpu = { workspace = true }
-bitflags = { workspace = true }
+# bitflags = { workspace = true }
 cfg-if = { workspace = true }
 libaddress = { workspace = true }
 libconsole = { workspace = true }
@@ -60,7 +60,7 @@ libqemu = { workspace = true }
 libtest = { workspace = true }
 
 [build-dependencies]
-build-rs = { workspace = true }
+# build-rs = { workspace = true }
 
 [lib]
 # The object modules' unit tests use the custom QEMU test framework and run in

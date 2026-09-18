@@ -49,11 +49,11 @@ version = "0.0.1"
 aarch64-cpu = { version = "11.2" }
 arbitrary-int = { version = "2.1", default-features = false }
 bitbybit  = { version = "2.0" }
-bitflags = { version = "2.10" }
-buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
+# bitflags = { version = "2.10" }
+# buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
 libaddress = { path = "libs/address", package = "vesper-address" }
-liballoc = { path = "libs/alloc", package = "vesper-alloc" }
+# liballoc = { path = "libs/alloc", package = "vesper-alloc" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
@@ -65,7 +65,7 @@ liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
 libmachine = { path = "libs/machine", package = "vesper-machines" }
 libmapping = { path = "libs/mapping", package = "vesper-mapping" }
-libmemory = { path = "libs/memory", package = "vesper-memory" }
+# libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }
 libplatform = { path = "libs/platform", package = "vesper-platforms" }
@@ -77,9 +77,9 @@ libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
-safe-mmio = { version = "0.3" }
+# safe-mmio = { version = "0.3" }
 snafu = { version = "0.9", default-features = false }
-static_assertions = { version = "1.1.0" }
+# static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
 #======
@@ -90,12 +90,12 @@ argh = { version = "0.1" }
 bytes = { version = "1.11" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
-futures-util = { version = "0.3", features = ["io"] }
-serialport = { version = "4.0" }
+# futures-util = { version = "0.3", features = ["io"] }
+# serialport = { version = "4.0" }
 tokio = { version = "1.49", features = ["full"] }
 tokio-serial = { version = "5.4" }
 tokio-stream = { version = "0.1" }
-tokio-util = { version = "0.7", features = ["codec", "io"] }
+# tokio-util = { version = "0.7", features = ["codec", "io"] }
 #==========
 # build.rs
 #==========
