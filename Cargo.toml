@@ -36,7 +36,6 @@ authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
 categories = ["embedded", "no-std", "os"]
 documentation = "https://docs.metta.systems/vesper"
 edition = "2024"
-homepage = "https://github.com/metta-systems/vesper"
 license = "BlueOak-1.0.0"
 publish = false
 readme = "README.md"
