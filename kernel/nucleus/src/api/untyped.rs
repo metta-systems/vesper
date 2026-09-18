@@ -8,13 +8,15 @@
 //! Authority: WRITE on the invoked Untyped, INSTALL on the destination table.
 //! The kind allowlist is `KeyTable` (`size_bits` reserved zero), `Frame`
 //! (architecture-validated `size_bits`, added 2026-09-15), `PageTable`
-//! (fixed architecture-validated 4 KiB carve, added 2026-09-15), and
-//! `Notification` (pure kernel synchronization state, added 2026-09-16: no
-//! Untyped bytes are carved — the object is allocated from the
-//! bootstrap-carved notification pool and the capability is a checked pool
-//! identity); other kinds remain unsupported. Device Untypeds are rejected
-//! as sources: no creatable kind is device-capable yet (per-kind device
-//! policy is D6).
+//! (fixed architecture-validated 4 KiB carve, added 2026-09-15), `Notification`
+//! (pure kernel synchronization state, added 2026-09-16: no Untyped bytes are
+//! carved — the object is allocated from the bootstrap-carved notification pool
+//! and the capability is a checked pool identity), and `EventCount` (pure
+//! kernel synchronization state, added 2026-09-18: same pool-backed carve —
+//! no Untyped bytes, the object is allocated from the bootstrap-carved
+//! event-count pool); other kinds remain unsupported. Device Untypeds are
+//! rejected as sources: no creatable kind is device-capable yet (per-kind
+//! device policy is D6).
 //!
 //! Transaction: validate → reserve (watermark fit) → initialize each object
 //! kernel-privately in the carved region (a `KeyTable` is written there; a
@@ -30,7 +32,7 @@ use {
             key_table::resolve_table_cap,
         },
         objects::{
-            ArchObjects, KeyTable, Notification, Nucleus,
+            ArchObjects, EventCount, KeyTable, Notification, Nucleus,
             access::{Access, ObjectId},
         },
     },
@@ -76,6 +78,12 @@ enum Carve {
     /// object is allocated from the bootstrap-carved notification pool and
     /// the capability is a checked pool identity over it.
     Notification,
+    /// An `EventCount`: pure kernel synchronization state (a monotonic
+    /// counter with a bounded await queue). No Untyped bytes are carved
+    /// (`size_bits` zero); the object is allocated from the
+    /// bootstrap-carved event-count pool and the capability is a checked
+    /// pool identity over it.
+    EventCount,
 }
 
 /// `Retype` `0`: carve `count` objects of one kind from the Untyped's unused
@@ -134,6 +142,12 @@ fn retype<A: ArchObjects>(
                 return Err(CapError::InvalidSize(usize::from(size_bits)));
             }
             Carve::Notification
+        }
+        ObjectType::EVENT_COUNT => {
+            if size_bits != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::EventCount
         }
         _ => return Err(CapError::InvalidObjectType(kind)),
     };
@@ -194,7 +208,7 @@ fn retype<A: ArchObjects>(
     let usable_end = region_size.min(u64::from(u32::MAX) * u64::try_from(MIN_ALIGN).unwrap());
     // A frame and a page table are each their own alignment; a KeyTable uses
     // its type alignment (at least the watermark encoding granularity); a
-    // Notification carves no bytes.
+    // Notification and an EventCount carve no bytes.
     let (obj_size, align) = match carve {
         Carve::KeyTable => (
             u64::try_from(core::mem::size_of::<KeyTable>()).unwrap(),
@@ -206,7 +220,7 @@ fn retype<A: ArchObjects>(
         }
         // Zero bytes at unit alignment: the watermark computation is a
         // no-op and the commit below re-advances it to the same value.
-        Carve::Notification => (0, 1),
+        Carve::Notification | Carve::EventCount => (0, 1),
     };
     // The absolute carve address (`paddr + watermark`) must be aligned, not
     // just the watermark: a region whose base is not aligned still yields
@@ -289,6 +303,21 @@ fn retype<A: ArchObjects>(
             }
         }
     }
+    let mut ec_ids: [Option<ObjectId>; KeyTable::NUM_SLOTS] = [const { None }; KeyTable::NUM_SLOTS];
+    if matches!(carve, Carve::EventCount) {
+        for i in 0..u64::from(count) {
+            let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
+            match nucleus.pools.event_counts.allocate(EventCount::new()) {
+                Some((id, _)) => ec_ids[index] = Some(id),
+                None => {
+                    for id in ec_ids[..index].iter().flatten().copied() {
+                        drop(nucleus.pools.event_counts.deallocate(id));
+                    }
+                    return Err(CapError::PoolExhausted);
+                }
+            }
+        }
+    }
 
     // Phase 4+5 — initialize each object kernel-privately in the carved region
     // and install its capability. The region is not yet committed (watermark
@@ -352,6 +381,11 @@ fn retype<A: ArchObjects>(
                     .expect("notification pool slot pre-allocated");
                 KeyEntry::from_id(ObjectType::NOTIFICATION, id, requested, 0)
             }
+            Carve::EventCount => {
+                let id = ec_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
+                    .expect("event-count pool slot pre-allocated");
+                KeyEntry::from_id(ObjectType::EVENT_COUNT, id, requested, 0)
+            }
         };
         match dst_table.insert(slot, entry) {
             Ok(key) => {
@@ -375,6 +409,9 @@ fn retype<A: ArchObjects>(
                 for id in n_ids.iter().flatten().copied() {
                     drop(nucleus.pools.notifications.deallocate(id));
                 }
+                for id in ec_ids.iter().flatten().copied() {
+                    drop(nucleus.pools.event_counts.deallocate(id));
+                }
                 return Err(failure.error.with_key_operand(6));
             }
         }
@@ -397,6 +434,7 @@ fn retype<A: ArchObjects>(
         Carve::Frame { .. } => "Frame",
         Carve::PageTable { .. } => "PageTable",
         Carve::Notification => "Notification",
+        Carve::EventCount => "EventCount",
     };
     semi::println!("✅ Untyped::Retype({kind_name}, count {count})");
 

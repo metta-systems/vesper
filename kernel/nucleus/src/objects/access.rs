@@ -41,6 +41,9 @@ pub enum PoolTag {
     /// Notification synchronization objects (pool-backed kernel metadata;
     /// the pool itself is carved when the Retype allowlist arm activates).
     Notification = 3,
+    /// `EventCount` synchronization objects (pool-backed kernel metadata,
+    /// 2026-09-18): monotonic counters with target waits.
+    EventCount = 4,
     // Arch pool tags are appended after core tags. Values are kernel-internal
     // and may be renumbered between builds; they are never serialized.
     PageTable = 16,
@@ -59,6 +62,7 @@ impl PoolTag {
             1 => Self::KeyTable,
             2 => Self::Pending,
             3 => Self::Notification,
+            4 => Self::EventCount,
             16 => Self::PageTable,
             17 => Self::VSpace,
             18 => Self::ASIDPool,

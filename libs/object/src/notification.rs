@@ -19,10 +19,9 @@ mod tests;
 /// Userspace handle to a `Notification` capability: bitmap-based async
 /// signaling. Best for IRQs, completion events, wakeups.
 ///
-/// Nucleus dispatch supports `Signal` and `Poll` (2026-09-16); `Wait`'s
-/// already-satisfied path is active, and its blocking path returns a
-/// defined error until the completion foundation's entry-path blocked
-/// handling lands. Signal bits come from the capability badge when
+/// Nucleus dispatch supports `Signal`, `Wait`, and `Poll` (2026-09-16;
+/// `Wait`'s blocking path through the park/resume entry handling landed
+/// 2026-09-18). Signal bits come from the capability badge when
 /// nonzero, else the caller-supplied argument (selected 2026-09-16).
 pub struct NotificationKey {
     key: Key<NotificationType>,
@@ -102,10 +101,10 @@ impl NotificationKey {
     /// Wait: block until bits are pending, then consume and return them.
     ///
     /// Wire schema: `x2` timeout (nanoseconds; `WAIT_INFINITE` = forever),
-    /// `x3..x7` zero. Authority: `RECV`. Until the completion foundation's
-    /// blocked entry path activates, a wait with no pending bits returns a
-    /// defined error instead of blocking; an already-satisfied wait
-    /// consumes and returns the bits normally.
+    /// `x3..x7` zero. Authority: `RECV`. An already-satisfied wait consumes
+    /// and returns the bits immediately; a wait with no pending bits parks
+    /// the caller and returns when a signal completes it (finite timeouts
+    /// are unsupported until the time subsystem exists).
     pub fn wait(&self, timeout_ns: u64) -> Result<u64, CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
         let result =

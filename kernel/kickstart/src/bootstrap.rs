@@ -17,8 +17,9 @@ use {
     nucleus::{
         api::key_entry::RegionPayload,
         objects::{
-            ArchObjects, Domain, KeyTable, Notification, Nucleus, NucleusObject, ObjectPool,
-            PendingPool, Scheduler, arch::ArchPools, domain::DcbPages, nucleus::NucleusPools,
+            ArchObjects, Domain, EventCount, KeyTable, Notification, Nucleus, NucleusObject,
+            ObjectPool, PendingPool, Scheduler, arch::ArchPools, domain::DcbPages,
+            nucleus::NucleusPools,
         },
     },
 };
@@ -72,6 +73,11 @@ pub struct PoolCapacities {
     /// `Untyped.Retype` (allowlisted 2026-09-16); the pool backing is
     /// charged here, at bootstrap.
     pub notifications: usize,
+    /// Number of `EventCount` slots in the initial `EventCount` pool.
+    /// `EventCount`s are pure kernel synchronization state allocated by
+    /// `Untyped.Retype` (allowlisted 2026-09-18); the pool backing is
+    /// charged here, at bootstrap.
+    pub event_counts: usize,
     /// Number of page-table metadata slots in the initial architecture
     /// page-table pool. The pool holds only kernel metadata (carve address,
     /// installation record); the 4 KiB tables themselves are Retype carves
@@ -101,6 +107,9 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     if capacities.notifications > ObjectPool::<Notification>::MAX_SLOTS {
         return Err(CapError::InvalidSize(capacities.notifications));
     }
+    if capacities.event_counts > ObjectPool::<EventCount>::MAX_SLOTS {
+        return Err(CapError::InvalidSize(capacities.event_counts));
+    }
     if capacities.page_tables > ObjectPool::<A::PageTable>::MAX_SLOTS {
         return Err(CapError::InvalidSize(capacities.page_tables));
     }
@@ -113,6 +122,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
 
     let domains = carve_pool::<Domain>(boot, capacities.domains)?;
     let notifications = carve_pool::<Notification>(boot, capacities.notifications)?;
+    let event_counts = carve_pool::<EventCount>(boot, capacities.event_counts)?;
     let page_tables = carve_pool::<A::PageTable>(boot, capacities.page_tables)?;
     let asid_pools = carve_pool::<A::ASIDPool>(boot, capacities.asid_pools)?;
 
@@ -134,6 +144,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         pools: NucleusPools::<A> {
             domains,
             notifications,
+            event_counts,
             // SAFETY: the page-table and ASID-pool backings were carved above
             // from the boot Untyped's unused watermark range and are
             // exclusively owned.

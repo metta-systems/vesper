@@ -8,6 +8,7 @@ pub mod arch;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
 pub mod domain;
+pub mod event_count;
 pub mod key_entry;
 pub mod key_table;
 pub mod notification;
@@ -143,10 +144,9 @@ fn core_invoke<A: ArchObjects>(
             crate::api::notification::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
         }
 
-        // CoreType::EventCount => {
-        //     let ec = entry.as_object_mut::<EventCount>()?
-        //     api::event_count::invoke(ec, entry.rights(), op, args)
-        // }
+        CoreType::EventCount => {
+            crate::api::event_count::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
+        }
 
         // CoreType::Endpoint => {
         //     let ep = entry.as_object_mut::<Endpoint>()?;
@@ -164,6 +164,53 @@ fn core_invoke<A: ArchObjects>(
         // }
         _ => Err(CapError::UnsupportedCoreType(core_type)),
     }
+}
+
+/// Mark the domain of a completed record runnable.
+///
+/// The waiter identity is incarnation-checked against the domains pool
+/// before enqueueing; a stale identity (domain torn down) releases the
+/// terminal record instead — its waiter will never resume.
+pub(crate) fn wake_waiter<A: ArchObjects>(
+    nucleus: &mut Nucleus<A>,
+    record: crate::objects::access::ObjectId,
+) -> Result<(), CapError> {
+    let waiter = nucleus.pending.waiter(record)?;
+    if nucleus.pools.domains.validate(waiter).is_ok() {
+        // The queue is sized to hold every domain-pool slot; a full queue is
+        // a kernel bookkeeping bug, not an expected condition.
+        assert!(
+            nucleus.scheduler.push(waiter.index),
+            "runnable queue overflow"
+        );
+    } else if nucleus.pending.release(record).is_err() {
+        panic!("failed to release a completed record with a stale waiter");
+    }
+    Ok(())
+}
+
+/// The current domain's incarnation-checked identity, for wait
+/// registration.
+///
+/// The current-domain tracking is index-only today; the generation is read
+/// from the authoritative domains-pool metadata so a stale identity can
+/// never be registered. Coherent current-domain identity carrying its own
+/// generation remains Phase 4 work.
+pub(crate) fn current_waiter<A: ArchObjects>(
+    nucleus: &Nucleus<A>,
+) -> Result<crate::objects::access::ObjectId, CapError> {
+    let index = nucleus.current_domain.ok_or(CapError::InvalidDomain)?;
+    let index = usize::try_from(index).ok().ok_or(CapError::InvalidDomain)?;
+    let generation = nucleus
+        .pools
+        .domains
+        .generation_of(index)
+        .ok_or(CapError::InvalidDomain)?;
+    Ok(crate::objects::access::ObjectId {
+        pool: crate::objects::access::PoolTag::Domain,
+        index: u16::try_from(index).map_err(|_too_wide| CapError::InvalidDomain)?,
+        generation,
+    })
 }
 
 /// Architecture-specific dispatch - defined per architecture

@@ -81,7 +81,7 @@ use {
 
 #[cfg(feature = "debug_kernel")]
 use libobject::{
-    ASIDPoolKey, CapError, DebugConsoleKey, FrameKey, InvalidKeyReason, KeyTableKey,
+    ASIDPoolKey, CapError, DebugConsoleKey, EventCountKey, FrameKey, InvalidKeyReason, KeyTableKey,
     NotificationKey, PageTableKey, RawKey, UntypedKey,
 };
 
@@ -633,6 +633,7 @@ pub fn kickstart_run() -> ! {
         &PoolCapacities {
             domains: 2,
             notifications: 4,
+            event_counts: 4,
             page_tables: 16,
             asid_pools: 1,
         },
@@ -1438,7 +1439,9 @@ pub fn kickstart_run() -> ! {
         // ─────────────────────────────────────────────────────────────────
 
         // N1: the notification the boot domain blocks on. N2: the one
-        // Bounce parks on. Both carved through the public Retype path.
+        // Bounce parks on between its rounds. EC: the event count whose
+        // awaits the boot domain blocks on and Bounce advances. All carved
+        // through the public Retype path.
         let n1_key = untyped
             .retype(
                 ObjectType::NOTIFICATION,
@@ -1459,6 +1462,16 @@ pub fn kickstart_run() -> ! {
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("N2 Retype failed: {:?}", error.code()));
+        let ec_key = untyped
+            .retype(
+                ObjectType::EVENT_COUNT,
+                0,
+                1,
+                &self_table,
+                KeySlot(37).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("EC Retype failed: {:?}", error.code()));
 
         // Bounce's kernel stack: eight contiguous 4 KiB frames (32 KiB)
         // carved through the public path. The SVC entry path nests several
@@ -1523,6 +1536,10 @@ pub fn kickstart_run() -> ! {
                 .lookup(n2_key)
                 .and_then(KeyEntry::object_id)
                 .unwrap_or_else(|_| panic!("N2 entry missing or not a pool identity"));
+            let ec_id = boot_table_ref
+                .lookup(ec_key)
+                .and_then(KeyEntry::object_id)
+                .unwrap_or_else(|_| panic!("EC entry missing or not a pool identity"));
             // SAFETY: Bounce's table is the freshly carved, live KeyTable.
             let bounce_table = unsafe { &mut *(bounce_table_addr as *mut KeyTable) };
             bounce_table
@@ -1540,6 +1557,14 @@ pub fn kickstart_run() -> ! {
                 )
                 .unwrap_or_else(|failure| {
                     panic!("Bounce N2 grant failed: {:?}", failure.error.code())
+                });
+            bounce_table
+                .insert(
+                    KeySlot(3),
+                    KeyEntry::from_id(ObjectType::EVENT_COUNT, ec_id, Rights::all(), 0),
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("Bounce EC grant failed: {:?}", failure.error.code())
                 });
         }
 
@@ -1571,6 +1596,124 @@ pub fn kickstart_run() -> ! {
             });
         assert_eq!(received, BOUNCE_MAGIC_BITS);
         // Bounce is parked on N2; the boot domain resumed with the bits.
+        {
+            let bounce = nucleus
+                .pools
+                .domains
+                .get_live(usize::from(bounce_id.index))
+                .unwrap_or_else(|| panic!("Bounce Domain missing"));
+            assert!(matches!(bounce.context, ExecutionContext::Parked { .. }));
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // EventCount end-to-end (2026-09-18): monotonic counting, the
+        // selected overflow policy, and blocking Await through the Bounce
+        // fixture (broadcast wakeups, error wakeups)
+        // ─────────────────────────────────────────────────────────────────
+
+        let event_count = EventCountKey::from_key(ec_key);
+
+        // A fresh counter reads zero.
+        assert_eq!(
+            event_count
+                .read()
+                .unwrap_or_else(|error| panic!("EventCount.Read failed: {:?}", error.code())),
+            0
+        );
+        // Every advance is counted and returns the new value.
+        assert_eq!(
+            event_count
+                .advance(7)
+                .unwrap_or_else(|error| panic!("EventCount.Advance failed: {:?}", error.code())),
+            7
+        );
+        assert_eq!(
+            event_count.read().unwrap_or_else(|error| panic!(
+                "second EventCount.Read failed: {:?}",
+                error.code()
+            )),
+            7
+        );
+        // Zero is invalid: an advance must strictly increase (selected
+        // 2026-09-18).
+        assert!(matches!(
+            event_count.advance(0),
+            Err(CapError::InvalidOperation)
+        ));
+        // Overflow rejects, leaves the counter unchanged, and carries the
+        // shared status (selected 2026-09-18). No waiter is queued here, so
+        // only the advancer observes the error.
+        assert!(matches!(
+            event_count.advance(u64::MAX),
+            Err(CapError::CounterOverflow)
+        ));
+        assert_eq!(
+            event_count
+                .read()
+                .unwrap_or_else(|error| panic!("third EventCount.Read failed: {:?}", error.code())),
+            7
+        );
+        // An already-satisfied await returns the current value without
+        // blocking; awaiting does not consume the counter.
+        assert_eq!(
+            event_count
+                .await_ge(7, EventCountKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!(
+                    "satisfied EventCount.Await failed: {:?}",
+                    error.code()
+                )),
+            7
+        );
+        // A finite timeout is still rejected: the time subsystem does not
+        // exist yet.
+        assert!(matches!(
+            event_count.await_ge(100, 1_000_000),
+            Err(CapError::InvalidOperation)
+        ));
+
+        // Blocking Await end-to-end: request Bounce's +3 advance by
+        // signaling N2 (bit 0), then block on target 10. Bounce advances the
+        // counter, this domain's record completes with the new value, and
+        // Bounce parks again.
+        NotificationKey::from_key(n2_key)
+            .signal(0b1)
+            .unwrap_or_else(|error| panic!("N2 trigger signal failed: {:?}", error.code()));
+        assert_eq!(
+            event_count
+                .await_ge(10, EventCountKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| {
+                    panic!("blocking EventCount.Await failed: {:?}", error.code())
+                }),
+            10
+        );
+        assert_eq!(
+            event_count.read().unwrap_or_else(|error| panic!(
+                "fourth EventCount.Read failed: {:?}",
+                error.code()
+            )),
+            10
+        );
+
+        // Overflow wakes blocked waiters with the shared error (selected
+        // 2026-09-18): request Bounce's overflowing advance (bit 1), then
+        // block on an unreachable target. The advance completes the await
+        // with `CounterOverflow`, the counter stays unchanged, and Bounce
+        // parks for good.
+        NotificationKey::from_key(n2_key)
+            .signal(0b10)
+            .unwrap_or_else(|error| panic!("N2 overflow trigger failed: {:?}", error.code()));
+        assert!(matches!(
+            event_count.await_ge(u64::MAX - 2, EventCountKey::WAIT_INFINITE),
+            Err(CapError::CounterOverflow)
+        ));
+        assert_eq!(
+            event_count
+                .read()
+                .unwrap_or_else(|error| panic!("fifth EventCount.Read failed: {:?}", error.code())),
+            10
+        );
+        // Bounce is parked on N2 for good; the boot domain resumed with the
+        // error completion.
         {
             let bounce = nucleus
                 .pools
@@ -2167,18 +2310,49 @@ const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 /// The Bounce fixture domain's entry (N4-A, 2026-09-16): a second EL1
 /// execution context that unlocks the first blocked domain for testing.
 ///
-/// Bounce signals the notification the boot domain is blocked on (waking
-/// it), then parks forever on its own notification — nothing ever signals
-/// it, so the scheduler resumes the boot domain. Bootstrap-era fixture
-/// mechanism, not the Phase 7 Activate contract: no budget, no EL0 entry,
-/// no legal-transition enforcement beyond what this path exercises.
+/// Bounce first signals the notification the boot domain is blocked on
+/// (waking it). It then serves one `EventCount` advance per N2 trigger:
+/// trigger bit 0 requests a plain +3 advance, trigger bit 1 an overflowing
+/// one (which completes waiters with the shared `CounterOverflow` error,
+/// 2026-09-18). After two rounds it parks forever on N2 — nothing ever
+/// signals it again, so the scheduler resumes the boot domain.
+/// Bootstrap-era fixture mechanism, not the Phase 7 Activate contract: no
+/// budget, no EL0 entry, no legal-transition enforcement beyond what this
+/// path exercises.
 #[cfg(feature = "debug_kernel")]
 #[unsafe(no_mangle)]
 extern "C" fn bounce_entry() -> ! {
     let n1 = NotificationKey::from_key(RawKey::new(KeySlot(1), 1));
     let n2 = NotificationKey::from_key(RawKey::new(KeySlot(2), 1));
+    let ec = EventCountKey::from_key(RawKey::new(KeySlot(3), 1));
     n1.signal(BOUNCE_MAGIC_BITS)
         .unwrap_or_else(|error| panic!("Bounce: Notification.Signal failed: {:?}", error.code()));
+    // Serve one EventCount advance per N2 trigger, then park forever.
+    for round in 0..2_u64 {
+        let trigger = n2
+            .wait(NotificationKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| {
+                panic!("Bounce: round {round} wait failed: {:?}", error.code())
+            });
+        let result = match trigger {
+            // A plain +3 advance that satisfies the boot domain's target.
+            0b1 => ec.advance(3),
+            // The overflowing advance: it completes waiters with the shared
+            // error and leaves the counter unchanged (selected 2026-09-18).
+            0b10 => ec.advance(u64::MAX),
+            other => panic!("Bounce: unexpected trigger bits {other:#x}"),
+        };
+        if trigger == 0b10 {
+            assert!(
+                matches!(result, Err(CapError::CounterOverflow)),
+                "Bounce: round {round} advance should overflow"
+            );
+        } else {
+            result.unwrap_or_else(|error| {
+                panic!("Bounce: round {round} advance failed: {:?}", error.code())
+            });
+        }
+    }
     // Park forever: this wait blocks, so the scheduler resumes the boot
     // domain. Reaching either arm below is a fixture failure.
     match n2.wait(NotificationKey::WAIT_INFINITE) {

@@ -97,6 +97,9 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64)) {
             // SAFETY: zero-capacity backing: this test never allocates or
             // invokes Notification objects.
             notifications: unsafe { ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), 0) },
+            // SAFETY: zero-capacity backing: this test never allocates or
+            // invokes EventCount objects.
+            event_counts: unsafe { ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), 0) },
             // SAFETY: the page-table and ASID-pool backings are exclusively
             // owned by this fixture; this test does not allocate or invoke
             // arch objects (the ASID pool has zero capacity for the same

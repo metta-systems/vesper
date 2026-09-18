@@ -21,6 +21,10 @@ pub mod asid_pool_client;
 pub mod domain_client;
 
 #[cfg(test)]
+#[path = "../src/event_count.rs"]
+pub mod event_count_client;
+
+#[cfg(test)]
 #[path = "../src/frame.rs"]
 pub mod frame_client;
 
@@ -241,6 +245,55 @@ mod tests {
         for raw in [256_u64, 1 << 16, u64::from(u32::MAX), u64::MAX] {
             assert!(matches!(
                 NotificationOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn event_count_operations_match_existing_wire_ids() {
+        use vesper_objects::event_count::EventCountOp;
+
+        assert_eq!(EventCountOp::Advance as u8, 0);
+        assert_eq!(EventCountOp::Await as u8, 1);
+        assert_eq!(EventCountOp::Read as u8, 2);
+        assert_eq!(size_of::<EventCountOp>(), 1);
+        assert_eq!(align_of::<EventCountOp>(), 1);
+        for id in [0_u32, 1, 2] {
+            assert!(EventCountOp::try_from(id).is_ok());
+            assert!(EventCountOp::try_from(u64::from(id)).is_ok());
+        }
+    }
+
+    #[test]
+    fn event_count_operation_rejects_every_unassigned_value() {
+        use vesper_objects::event_count::EventCountOp;
+
+        for raw in 3_u32..=255 {
+            assert!(matches!(
+                EventCountOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+            assert!(matches!(
+                EventCountOp::try_from(u64::from(raw)),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        for raw in [256_u64, 1 << 16, u64::from(u32::MAX), u64::MAX] {
+            assert!(matches!(
+                EventCountOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn event_count_operation_rejects_high_bit_aliases_before_narrowing() {
+        use vesper_objects::event_count::EventCountOp;
+
+        for bit in 8..64 {
+            assert!(matches!(
+                EventCountOp::try_from(1_u64 << bit),
                 Err(CapError::InvalidOperation)
             ));
         }

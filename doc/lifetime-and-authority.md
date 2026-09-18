@@ -330,7 +330,7 @@ The shared DCB has unresolved layout/stride and publication issues, including no
 
 ### Current code and reachability
 
-The Endpoint, Reply, Notification, EventCount, and Time operation/object files are excluded because they do not compile as-is today. They remain intended functionality and must participate in lifecycle design now. Their current code is not evidence of supported syscall behavior; exclusion is not a reason to discard their design or omit future implementation.
+The Endpoint, Reply, and Time operation/object files are excluded because they do not compile as-is today. Notification left this set on 2026-09-16 and EventCount left it on 2026-09-18: both are Retype-creatable and active through real SVC dispatch, including the blocked-wait park/resume entry path (validated end-to-end 2026-09-18, with EventCount's broadcast wakeups and overflow error-completions exercising the same foundation). The remaining excluded files stay intended functionality and must participate in lifecycle design now. Their current code is not evidence of supported syscall behavior; exclusion is not a reason to discard their design or omit future implementation.
 
 - [`Endpoint`](../kernel/nucleus/src/objects/endpoint.rs) queues multiple callers but stores one endpoint-global pending message. Its two arrival orders do not implement equivalent reply/completion behavior.
 - [`Reply`](../kernel/nucleus/src/objects/reply.rs) identifies a caller rather than a particular invocation and removes transferred authority before fallible destination installation.
@@ -356,14 +356,14 @@ These terms are adopted for discussion and operation contracts; they are not new
 **OPEN / DECISION REQUIRED — D3/D7/D8/D9:**
 
 - [ ] Define each local operation's commit point and which adopted outcome categories it can produce; select shared ABI encodings separately.
-- [x] Define per-phase timeout/cancellation semantics, late replies, open/closed wait identities, and terminal results. (2026-09-16: defined in the canonical contract's selected wait/timeout/cancellation semantics; implementation remains open.)
+- [x] Define per-phase timeout/cancellation semantics, late replies, open/closed wait identities, and terminal results. (2026-09-16: defined in the canonical contract's selected wait/timeout/cancellation semantics. Implementation status: the infinite-wait blocking path and its terminal delivery are active for `Notification.Wait` (2026-09-18); timeouts, late replies, and the remaining primitives remain open.)
 - [ ] Decide whether already-delivered calls remain replyable after endpoint retirement.
-- [ ] Define explicit deferred completion and bounded wait/reply reservation, including domain/capability/resource teardown.
+- [ ] Define explicit deferred completion and bounded wait/reply reservation, including domain/capability/resource teardown. (2026-09-18: explicit deferred completion and bounded reservations are implemented and validated end-to-end for `Notification.Wait` and `EventCount.Await` — pending-pool capacity, per-object wait-queue capacity with before-admission rejection, and the park/resume entry path, with completed records now carrying the full result shape so error wakeups (an overflowing advance) resume with their status; domain-teardown-driven cancellation of all pending records remains open.)
 - [ ] Preserve source ownership on pre-commit failure; return it from consuming client APIs when retry remains possible.
 - [ ] Represent irreversible partial completion explicitly, especially reply-committed/receive-failed.
 - [ ] Make destructors best-effort fallback, not the sole guarantee of releasing callers or recovering budget; cleanup must not target replacement slot incarnations.
 - [ ] Choose Time donation as loan versus transfer, unused-budget destination, provenance, deletion/expiry/cancellation outcomes, and multicore accounting.
-- [ ] Implement one-shot reply consumption, race-free notification/event-count waits, and budget conservation on the shared completion foundation.
+- [ ] Implement one-shot reply consumption, race-free notification/event-count waits, and budget conservation on the shared completion foundation. (2026-09-18: race-free notification and event-count waits are implemented on the foundation — validate-before-reserve registration, one-consumer notification delivery, broadcast event-count wakeups with overflow error-completions, enforced single terminal transition, park/resume; one-shot reply consumption and budget conservation remain.)
 
 ## 8. Memory reclamation and protection
 

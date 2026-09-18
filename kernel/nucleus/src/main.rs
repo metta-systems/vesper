@@ -391,16 +391,28 @@ unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
             // domain's record is always terminal: the wake enqueues the
             // domain only after the record's single terminal transition.
             let (x0, x1, x2) = match nucleus.pending.state(record) {
-                Ok(PendingState::Completed { result0, result1 }) => {
+                Ok(PendingState::Completed {
+                    status,
+                    result0,
+                    result1,
+                }) => {
                     // The invocation's handler reported `Blocked` at its SVC
-                    // entry, so its success line belongs here: the resume is
+                    // entry, so its result line belongs here: the resume is
                     // where the completed invocation's result is delivered.
+                    // The status is part of the stored completion: an
+                    // operation-specific failure (e.g. an Await woken by an
+                    // overflowing advance) resumes with its error.
                     let kind = match nucleus.pending.kind(record) {
                         Ok(PendingKind::NotificationWait) => "Notification::Wait",
+                        Ok(PendingKind::EventCountAwait) => "EventCount::Await",
                         Err(_) => "blocked invocation",
                     };
-                    semi::println!("✅ {kind}(0x{result0:x}) resumed");
-                    (syscall_status::SUCCESS, result0, result1)
+                    if status == syscall_status::SUCCESS {
+                        semi::println!("✅ {kind}(0x{result0:x}) resumed");
+                    } else {
+                        semi::println!("⬅️ {kind} resumed with status {status:#x}");
+                    }
+                    (status, result0, result1)
                 }
                 // Cancellation outcomes need their D9 wire encoding; no
                 // teardown path can produce them yet.

@@ -358,3 +358,22 @@ fn physical_alias_pins_status_paddr_and_lossless_fallback() {
         assert_unknown_response((30, extra, extra));
     }
 }
+
+#[test]
+fn counter_overflow_pins_status_and_lossless_fallback() {
+    use vesper_objects::syscall_status::COUNTER_OVERFLOW;
+
+    assert_eq!(COUNTER_OVERFLOW, 31);
+    // The overflow error carries zero details (selected 2026-09-18).
+    assert_error!(
+        (31, 0, 0),
+        CapError::CounterOverflow,
+        CapError::CounterOverflow
+    );
+    // Nonzero detail words are not silently discarded.
+    for extra in [1, 1 << 63, u64::MAX] {
+        assert_unknown_response((31, extra, 0));
+        assert_unknown_response((31, 0, extra));
+        assert_unknown_response((31, extra, extra));
+    }
+}

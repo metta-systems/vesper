@@ -167,7 +167,7 @@ mod tests {
             access::{ObjectId, PoolTag},
             completion::{PendingKind, PendingPool, PendingState, WaitQueue},
         },
-        libobject::CapError,
+        libobject::{CapError, syscall_status},
     };
 
     fn waiter(index: u16) -> ObjectId {
@@ -238,6 +238,7 @@ mod tests {
         assert_eq!(
             pending.state(record).ok(),
             Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
                 result0: 0b110,
                 result1: 0
             })
@@ -268,6 +269,7 @@ mod tests {
         assert_eq!(
             pending.state(second).ok(),
             Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
                 result0: 0b10,
                 result1: 0
             })

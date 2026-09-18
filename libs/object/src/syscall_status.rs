@@ -39,3 +39,7 @@ pub const MISSING_INTERMEDIATE: u64 = 29;
 /// overlaps a live mapping in the target Domain. Detail 1 is the physical
 /// base of the conflicting live mapping; detail 2 is zero.
 pub const PHYSICAL_ALIAS: u64 = 30;
+/// An `EventCount.Advance` would exceed the counter's `u64` range
+/// (selected 2026-09-18): the counter is unchanged and every queued
+/// `Await` completes with this same error. Details are zero.
+pub const COUNTER_OVERFLOW: u64 = 31;

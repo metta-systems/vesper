@@ -20,7 +20,7 @@
 
 use {
     crate::objects::access::{ObjectId, PoolTag},
-    libobject::CapError,
+    libobject::{CapError, syscall_status},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -38,6 +38,10 @@ pub enum PendingKind {
     /// `Notification.Wait`: completion delivers the consumed signal bitmap
     /// in the first result word (one-consumer delivery, selected 2026-09-16).
     NotificationWait,
+    /// `EventCount.Await`: completion delivers the observed counter value
+    /// in the first result word, or the shared `CounterOverflow` error when
+    /// an advance's overflow wakes the waiter (selected 2026-09-18).
+    EventCountAwait,
 }
 
 /// State of a pending invocation.
@@ -49,9 +53,17 @@ pub enum PendingKind {
 pub enum PendingState {
     /// Blocked; waiting for its terminal transition.
     Waiting,
-    /// Completed: the eventual result is stored. The waiter must still be
-    /// resumed with it before the record is released.
-    Completed { result0: u64, result1: u64 },
+    /// Completed: the eventual result is stored — the full syscall result
+    /// shape (`status` plus both result words). A completed outcome may be
+    /// an operation-specific failure (the adopted aborted-work vocabulary:
+    /// "Completed" includes a known failure), e.g. an `EventCount.Await`
+    /// woken by an overflowing advance. The waiter must still be resumed
+    /// with it before the record is released.
+    Completed {
+        status: u64,
+        result0: u64,
+        result1: u64,
+    },
     /// Cancelled before commit (teardown): the waiter resumes with a
     /// cancellation error.
     Cancelled,
@@ -154,17 +166,37 @@ impl PendingPool {
         })
     }
 
-    /// Terminal transition to `Completed`.
+    /// Terminal transition to `Completed` with success status.
     ///
     /// Errors if the record is not `Waiting`: reply, timeout, cancellation,
     /// and teardown compete for exactly one terminal transition (adopted
     /// 2026-09-16); the losing attempt observes this error instead of
     /// mutating the record.
     pub fn complete(&mut self, id: ObjectId, result0: u64, result1: u64) -> Result<(), CapError> {
+        self.complete_with_status(id, syscall_status::SUCCESS, result0, result1)
+    }
+
+    /// Terminal transition to `Completed` with an explicit status — the
+    /// full syscall result shape. An error status completes the invocation
+    /// with a known failure (e.g. an `EventCount.Await` woken by an
+    /// overflowing advance); it is a completion, not a cancellation.
+    ///
+    /// Same single-terminal-transition rule as [`Self::complete`].
+    pub fn complete_with_status(
+        &mut self,
+        id: ObjectId,
+        status: u64,
+        result0: u64,
+        result1: u64,
+    ) -> Result<(), CapError> {
         let record = self.live_mut(id)?;
         match record.state {
             PendingState::Waiting => {
-                record.state = PendingState::Completed { result0, result1 };
+                record.state = PendingState::Completed {
+                    status,
+                    result0,
+                    result1,
+                };
                 Ok(())
             }
             _ => Err(CapError::InvalidOperation),
@@ -379,7 +411,7 @@ mod tests {
     use {
         super::{PendingKind, PendingPool, PendingState, WaitQueue},
         crate::objects::access::{ObjectId, PoolTag},
-        libobject::CapError,
+        libobject::{CapError, syscall_status},
     };
 
     /// A stand-in waiter identity: a domains-pool identity as stored by
@@ -420,6 +452,7 @@ mod tests {
         assert_eq!(
             pool.state(id).ok(),
             Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
                 result0: 0xBEEF,
                 result1: 0
             })
@@ -435,10 +468,45 @@ mod tests {
         assert_eq!(
             pool.state(id).ok(),
             Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
                 result0: 0xBEEF,
                 result1: 0
             })
         );
+    }
+
+    #[test_case]
+    fn error_completion_is_terminal_too() {
+        let mut pool = PendingPool::new();
+        let id = block(&mut pool, 0);
+
+        // An error status completes the invocation with a known failure
+        // (e.g. an Await woken by an overflowing advance): a completion,
+        // not a cancellation.
+        assert!(
+            pool.complete_with_status(id, syscall_status::COUNTER_OVERFLOW, 0, 0)
+                .is_ok()
+        );
+        assert_eq!(
+            pool.state(id).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::COUNTER_OVERFLOW,
+                result0: 0,
+                result1: 0
+            })
+        );
+        // The single-terminal-transition rule applies unchanged.
+        assert!(matches!(
+            pool.complete(id, 1, 0),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(matches!(
+            pool.complete_with_status(id, syscall_status::SUCCESS, 0, 0),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(matches!(pool.cancel(id), Err(CapError::InvalidOperation)));
+        // An error completion is releasable like any terminal record.
+        assert!(pool.release(id).is_ok());
     }
 
     #[test_case]

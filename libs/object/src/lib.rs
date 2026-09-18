@@ -4,6 +4,7 @@
 pub mod asid_pool;
 pub mod debug_console;
 pub mod domain;
+pub mod event_count;
 pub mod frame;
 pub mod key;
 pub mod key_table;
@@ -21,6 +22,7 @@ pub use debug_console::DebugConsoleKey;
 
 pub use {
     asid_pool::{ASIDPoolKey, ASIDPoolOp},
+    event_count::{EventCountKey, EventCountOp},
     frame::{FrameKey, FrameOp},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},
@@ -103,6 +105,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             }
             (code::MISSING_INTERMEDIATE, vaddr, 0) => CapError::MissingIntermediate { vaddr },
             (code::PHYSICAL_ALIAS, paddr, 0) => CapError::PhysicalAlias { paddr },
+            (code::COUNTER_OVERFLOW, 0, 0) => CapError::CounterOverflow,
             _ => return None,
         })
     })();
@@ -169,6 +172,10 @@ pub enum CapError {
         /// The physical base of the conflicting live mapping.
         paddr: u64,
     },
+    /// An `EventCount.Advance` would exceed the counter's `u64` range
+    /// (selected 2026-09-18): the counter is unchanged and queued `Await`s
+    /// complete with this same error.
+    CounterOverflow,
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
     UnknownResponse {
@@ -256,6 +263,7 @@ impl CapError {
             CapError::KeySlotExhausted(s) => (code::KEY_SLOT_EXHAUSTED, u64::from(s.0), 0),
             CapError::MissingIntermediate { vaddr } => (code::MISSING_INTERMEDIATE, vaddr, 0),
             CapError::PhysicalAlias { paddr } => (code::PHYSICAL_ALIAS, paddr, 0),
+            CapError::CounterOverflow => (code::COUNTER_OVERFLOW, 0, 0),
             CapError::UnknownResponse {
                 status,
                 detail1,

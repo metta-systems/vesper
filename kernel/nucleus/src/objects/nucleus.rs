@@ -1,7 +1,7 @@
 use {
     crate::objects::{
-        ArchObjects, Domain, KeyTable, Notification, ObjectPool, PendingPool, Scheduler,
-        arch::ArchPools, domain::DcbPages,
+        ArchObjects, Domain, EventCount, KeyTable, Notification, ObjectPool, PendingPool,
+        Scheduler, arch::ArchPools, domain::DcbPages,
     },
     core::sync::atomic::Ordering,
     libobject::{
@@ -55,7 +55,10 @@ pub struct NucleusPools<A: ArchObjects> {
     /// `Untyped.Retype` (allowlisted 2026-09-16) from this bootstrap-carved
     /// pool; the capability is a checked pool identity.
     pub notifications: ObjectPool<Notification>,
-    // pub event_counts: ObjectPool<EventCount>,
+    /// `EventCount` synchronization objects: pure kernel state, allocated by
+    /// `Untyped.Retype` (allowlisted 2026-09-18) from this bootstrap-carved
+    /// pool; the capability is a checked pool identity.
+    pub event_counts: ObjectPool<EventCount>,
     // pub endpoints: ObjectPool<Endpoint>,
     // pub time_slices: ObjectPool<TimeSlice>,
     // pub replies: ObjectPool<Reply>,
