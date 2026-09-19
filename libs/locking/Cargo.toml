@@ -1,13 +1,12 @@
 [package]
-name = "liblocking"
+name = "vesper-locking"
 
-description = "Synchronization primitives."
+description = "Vesper nanokernel synchronization primitives."
 
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
 edition = { workspace = true }
-homepage = { workspace = true }
 license = { workspace = true }
 readme = { workspace = true }
 repository = { workspace = true }
@@ -21,6 +20,17 @@ maintenance = { status = "experimental" }
 [dependencies]
 libkernel-state = { workspace = true }
 liblocal-irq = { workspace = true }
+
+[dev-dependencies]
+libboot = { workspace = true }
+libconsole = { workspace = true }
+liblog = { workspace = true }
+libqemu = { workspace = true }
+libtest = { workspace = true }
+
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

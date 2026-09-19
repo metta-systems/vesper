@@ -1,154 +1,39 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//
-// Copyright (c) 2018-2022 Andre Richter <andre.o.richter@gmail.com>
+/*
+ * SPDX-License-Identifier: BlueOak-1.0.0
+ * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+ */
 
-//! Memory Management.
+//! Translation table management for the Vesper nanokernel.
+//!
+//! This library provides arch-independent abstractions for MMU translation
+//! tables. Each table level is a first-class object, matching the kernel's
+//! capability-based syscall API where `GlobalDirectory`, `PageDirectory`, Frame
+//! etc. are separate capabilities.
+//!
+//! All table memory is externally provided — this library never allocates.
 
 #![no_std]
-#![allow(dead_code)] // while refactoring
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)] // incomplete_features
-#![feature(format_args_nl)]
 #![allow(internal_features)]
-#![feature(allocator_api)]
-#![feature(core_intrinsics)]
-#![feature(step_trait)]
+#![feature(core_intrinsics)] // internal feature
+#![feature(format_args_nl)]
 
-use core::{
-    fmt,
-    marker::PhantomData,
-    ops::{Add, Sub},
+pub mod arch_trait;
+pub mod error;
+pub mod table;
+pub mod walk;
+
+mod arch;
+
+// Re-export core types at crate root.
+pub use {
+    arch_trait::{EntryKind, LevelCapabilities, TranslationArch},
+    error::TableError,
+    table::{Table, TableRef},
+    walk::{TranslationResult, translate, translate_hashed},
 };
 
-pub mod arch;
-pub mod mm;
-pub mod mmu;
-pub mod platform;
+// Re-export arch implementations.
+#[cfg(target_arch = "aarch64")]
+pub use arch::aarch64::{Aarch64_4K, Aarch64_16K, Aarch64_64K, features, mmu};
 
-pub mod phys_addr; // merge with Address<Physical>?
-pub mod virt_addr; // merge with Address<Virtual>?
-
-//--------------------------------------------------------------------------------------------------
-// Public Definitions
-//--------------------------------------------------------------------------------------------------
-
-/// Metadata trait for marking the type of an address.
-pub trait AddressType: Copy + Clone + PartialOrd + PartialEq + Ord + Eq {}
-
-/// Zero-sized type to mark a physical address.
-#[derive(Copy, Clone, Debug, PartialOrd, PartialEq, Ord, Eq)]
-pub enum Physical {}
-
-/// Zero-sized type to mark a virtual address.
-#[derive(Copy, Clone, Debug, PartialOrd, PartialEq, Ord, Eq)]
-pub enum Virtual {}
-
-/// Generic address type.
-#[derive(Copy, Clone, Debug, PartialOrd, PartialEq, Ord, Eq)]
-pub struct Address<ATYPE: AddressType> {
-    value: usize,
-    _address_type: PhantomData<fn() -> ATYPE>,
-}
-
-//--------------------------------------------------------------------------------------------------
-// Public Code
-//--------------------------------------------------------------------------------------------------
-
-impl AddressType for Physical {}
-impl AddressType for Virtual {}
-
-impl<ATYPE: AddressType> Address<ATYPE> {
-    /// Create an instance.
-    pub const fn new(value: usize) -> Self {
-        Self {
-            value,
-            _address_type: PhantomData,
-        }
-    }
-
-    /// Convert to usize.
-    pub const fn as_usize(self) -> usize {
-        self.value
-    }
-
-    /// Align down to page size.
-    #[must_use]
-    pub const fn align_down_page(self) -> Self {
-        let aligned = mm::align_down(self.value, platform::KernelGranule::SIZE);
-
-        Self::new(aligned)
-    }
-
-    /// Align up to page size.
-    #[must_use]
-    pub const fn align_up_page(self) -> Self {
-        let aligned = mm::align_up(self.value, platform::KernelGranule::SIZE);
-
-        Self::new(aligned)
-    }
-
-    /// Checks if the address is page aligned.
-    pub const fn is_page_aligned(&self) -> bool {
-        mm::is_aligned(self.value, platform::KernelGranule::SIZE)
-    }
-
-    /// Return the address' offset into the corresponding page.
-    pub const fn offset_into_page(&self) -> usize {
-        self.value & platform::KernelGranule::MASK
-    }
-}
-
-impl<ATYPE: AddressType> Add<usize> for Address<ATYPE> {
-    type Output = Self;
-
-    #[inline(always)]
-    fn add(self, rhs: usize) -> Self::Output {
-        match self.value.checked_add(rhs) {
-            None => panic!("Overflow on Address::add"),
-            Some(x) => Self::new(x),
-        }
-    }
-}
-
-impl<ATYPE: AddressType> Sub<Address<ATYPE>> for Address<ATYPE> {
-    type Output = Self;
-
-    #[inline(always)]
-    fn sub(self, rhs: Address<ATYPE>) -> Self::Output {
-        match self.value.checked_sub(rhs.value) {
-            None => panic!("Overflow on Address::sub"),
-            Some(x) => Self::new(x),
-        }
-    }
-}
-
-impl fmt::Display for Address<Physical> {
-    // Don't expect to see physical addresses greater than 40 bit.
-    #[allow(clippy::cast_possible_truncation)]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let q3: u8 = ((self.value >> 32) & 0xff) as u8;
-        let q2: u16 = ((self.value >> 16) & 0xffff) as u16;
-        let q1: u16 = (self.value & 0xffff) as u16;
-
-        write!(f, "0x")?;
-        write!(f, "{q3:02x}_")?;
-        write!(f, "{q2:04x}_")?;
-        write!(f, "{q1:04x}")
-    }
-}
-
-impl fmt::Display for Address<Virtual> {
-    #[allow(clippy::cast_possible_truncation)]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let q4: u16 = ((self.value >> 48) & 0xffff) as u16;
-        let q3: u16 = ((self.value >> 32) & 0xffff) as u16;
-        let q2: u16 = ((self.value >> 16) & 0xffff) as u16;
-        let q1: u16 = (self.value & 0xffff) as u16;
-
-        write!(f, "0x")?;
-        write!(f, "{q4:04x}_")?;
-        write!(f, "{q3:04x}_")?;
-        write!(f, "{q2:04x}_")?;
-        write!(f, "{q1:04x}")
-    }
-}
+pub use arch::{powerpc::PowerPC_970, riscv64::RiscV_Sv48, x86_64::X86_64_4K};
