@@ -89,6 +89,45 @@ impl AwaitQueue {
         self.len -= 1;
         Some(entry)
     }
+
+    /// Remove every queued record naming `waiter` (domain-teardown
+    /// cancellation), preserving the FIFO order of the remaining awaits.
+    ///
+    /// As `WaitQueue::remove_waiter`: the queue holds record identities, the
+    /// pool resolves the waiter, and the teardown sweep
+    /// (`PendingPool::teardown_waiter`) gives the unqueued records their
+    /// terminal transition and releases them. Returns how many records were
+    /// unqueued.
+    fn remove_waiter(&mut self, waiter: ObjectId, pending: &PendingPool) -> usize {
+        let live = self.len;
+        let mut kept = 0;
+        let mut removed = 0;
+        for i in 0..live {
+            let slot = (self.head + i) % Self::CAPACITY;
+            let entry = self.entries[slot];
+            if matches!(pending.waiter(entry.0), Ok(blocked) if blocked == waiter) {
+                removed += 1;
+            } else {
+                // The compaction only writes to already-processed slots
+                // (`kept <= i`), so it never loses an unprocessed entry.
+                self.entries[(self.head + kept) % Self::CAPACITY] = entry;
+                kept += 1;
+            }
+        }
+        // Clear the vacated tail slots and shrink the live region.
+        for i in kept..live {
+            self.entries[(self.head + i) % Self::CAPACITY] = (
+                ObjectId {
+                    pool: PoolTag::Region,
+                    index: 0,
+                    generation: 0,
+                },
+                0,
+            );
+        }
+        self.len = kept;
+        removed
+    }
 }
 
 /// Records completed by one advance, in queue (arrival) order.
@@ -290,6 +329,19 @@ impl EventCount {
             pending.cancel(record)?;
         }
         Ok(())
+    }
+
+    /// Domain-teardown cancellation: stop holding the torn-down `waiter`'s
+    /// queued awaits, preserving the FIFO order of the remaining waiters.
+    ///
+    /// Distinct from object teardown ([`Self::cancel_waiters`]): the
+    /// waiter's Domain is going away, so its records are cancelled and
+    /// released by the pending-pool teardown sweep
+    /// (`PendingPool::teardown_waiter`) instead of being left terminal for a
+    /// resume that never happens. Returns how many of the waiter's records
+    /// were unqueued.
+    pub fn remove_waiter(&mut self, waiter: ObjectId, pending: &PendingPool) -> usize {
+        self.waiters.remove_waiter(waiter, pending)
     }
 }
 
@@ -564,6 +616,45 @@ mod tests {
             .expect("advance after teardown failed");
         assert_woken(&outcome, &[]);
         assert_eq!(event_count.read(), 1);
+    }
+
+    #[test_case]
+    fn domain_teardown_unqueues_only_the_torn_down_waiter() {
+        let mut pending = PendingPool::new();
+        let mut event_count = EventCount::new();
+
+        // Two readers with distinct targets; the torn-down one is at the
+        // front of the queue.
+        let gone = block_waiter(&mut event_count, &mut pending, 0, 5);
+        let survivor = block_waiter(&mut event_count, &mut pending, 1, 10);
+
+        // Unqueue the torn-down Domain's await; the sweep (not the object)
+        // gives it its terminal transition and releases it.
+        assert_eq!(event_count.remove_waiter(waiter(0), &pending), 1);
+        assert_eq!(pending.teardown_waiter(waiter(0)).ok(), Some(1));
+        assert!(matches!(
+            pending.state(gone),
+            Err(CapError::InvalidOperation)
+        ));
+
+        // A satisfying advance wakes only the surviving reader, in queue
+        // order, with the new value.
+        let outcome = event_count
+            .advance(10, &mut pending)
+            .ok()
+            .expect("advance after domain teardown failed");
+        assert_woken(&outcome, &[survivor]);
+        assert_eq!(
+            pending.state(survivor).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
+                result0: 10,
+                result1: 0
+            })
+        );
+
+        // A Domain with nothing queued removes nothing.
+        assert_eq!(event_count.remove_waiter(waiter(0), &pending), 0);
     }
 
     #[test_case]

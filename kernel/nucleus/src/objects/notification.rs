@@ -157,6 +157,18 @@ impl Notification {
         }
         Ok(())
     }
+
+    /// Domain-teardown cancellation: stop holding the torn-down `waiter`'s
+    /// queued records, preserving the FIFO order of the remaining waiters.
+    ///
+    /// Distinct from object teardown ([`Self::cancel_waiters`]): the waiter's
+    /// Domain is going away, so its records are cancelled and released by
+    /// the pending-pool teardown sweep (`PendingPool::teardown_waiter`)
+    /// instead of being left terminal for a resume that never happens.
+    /// Returns how many of the waiter's records were unqueued.
+    pub fn remove_waiter(&mut self, waiter: ObjectId, pending: &PendingPool) -> usize {
+        self.waiters.remove_waiter(waiter, pending)
+    }
 }
 
 #[cfg(test)]
@@ -324,5 +336,42 @@ mod tests {
         // After teardown the queue is empty: a further signal just sets bits.
         assert!(matches!(notification.signal(0b1, &mut pending), Ok(None)));
         assert_eq!(notification.pending_bits(), 0b1);
+    }
+
+    #[test_case]
+    fn domain_teardown_unqueues_only_the_torn_down_waiter() {
+        let mut pending = PendingPool::new();
+        let mut notification = Notification::new();
+
+        // Two waiters: the one torn down is at the front of the queue.
+        let gone = block_waiter(&mut notification, &mut pending, 0);
+        let survivor = block_waiter(&mut notification, &mut pending, 1);
+
+        // Unqueue the torn-down Domain's record; the sweep (not the object)
+        // gives it its terminal transition and releases it.
+        assert_eq!(notification.remove_waiter(waiter(0), &pending), 1);
+        assert_eq!(pending.teardown_waiter(waiter(0)).ok(), Some(1));
+        assert!(matches!(
+            pending.state(gone),
+            Err(CapError::InvalidOperation)
+        ));
+
+        // The next signal delivers to the surviving waiter, not to the dead
+        // one: one-consumer delivery continues over the remaining queue.
+        assert!(matches!(
+            notification.signal(0b110, &mut pending),
+            Ok(Some(woken)) if woken == survivor
+        ));
+        assert_eq!(
+            pending.state(survivor).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
+                result0: 0b110,
+                result1: 0
+            })
+        );
+
+        // A Domain with nothing queued removes nothing.
+        assert_eq!(notification.remove_waiter(waiter(0), &pending), 0);
     }
 }

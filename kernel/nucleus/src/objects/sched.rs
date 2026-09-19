@@ -67,6 +67,35 @@ impl Scheduler {
         self.len -= 1;
         Some(index)
     }
+
+    /// Remove every queued entry naming `index` (domain-teardown
+    /// cancellation), preserving the FIFO order of the remaining entries.
+    ///
+    /// A torn-down Domain must leave no queued wakeup behind: the next
+    /// context switch would try to resume a Domain that no longer exists.
+    /// Returns whether any entry was removed.
+    pub fn remove(&mut self, index: u16) -> bool {
+        let live = self.len;
+        let mut kept = 0;
+        let mut removed = false;
+        for i in 0..live {
+            let slot = (self.head + i) % Self::CAPACITY;
+            if self.queue[slot] == index {
+                removed = true;
+            } else {
+                // The compaction only writes to already-processed slots
+                // (`kept <= i`), so it never loses an unprocessed entry.
+                self.queue[(self.head + kept) % Self::CAPACITY] = self.queue[slot];
+                kept += 1;
+            }
+        }
+        // Clear the vacated tail slots and shrink the live region.
+        for i in kept..live {
+            self.queue[(self.head + i) % Self::CAPACITY] = 0;
+        }
+        self.len = kept;
+        removed
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +130,39 @@ mod tests {
                 assert_eq!(scheduler.pop(), Some(round * 16 + i));
             }
         }
+        assert!(scheduler.is_empty());
+    }
+
+    #[test_case]
+    fn remove_purges_a_domain_and_preserves_fifo_order() {
+        let mut scheduler = Scheduler::new();
+        assert!(scheduler.push(3));
+        assert!(scheduler.push(5));
+        assert!(scheduler.push(7));
+
+        // Domain teardown of the middle entry: only it leaves the queue.
+        assert!(scheduler.remove(5));
+        assert_eq!(scheduler.len(), 2);
+        assert_eq!(scheduler.pop(), Some(3));
+        assert_eq!(scheduler.pop(), Some(7));
+        assert_eq!(scheduler.pop(), None);
+
+        // Removing a domain that is not queued is a no-op.
+        assert!(!scheduler.remove(5));
+    }
+
+    #[test_case]
+    fn remove_purges_the_front_and_back_entries_too() {
+        let mut scheduler = Scheduler::new();
+        assert!(scheduler.push(1));
+        assert!(scheduler.push(2));
+        assert!(scheduler.push(3));
+
+        // The head and tail positions exercise the ring compaction at both
+        // ends; the surviving order is preserved.
+        assert!(scheduler.remove(1));
+        assert!(scheduler.remove(3));
+        assert_eq!(scheduler.pop(), Some(2));
         assert!(scheduler.is_empty());
     }
 }

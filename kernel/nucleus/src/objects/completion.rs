@@ -267,6 +267,52 @@ impl PendingPool {
         }
     }
 
+    /// Domain-teardown sweep: give every live record naming `waiter` its
+    /// terminal disposition and release it.
+    ///
+    /// The teardown orchestrator (`Nucleus::cancel_domain_pending`) first
+    /// removes the waiter's records from every object wait queue, so a
+    /// `Waiting` record found here is cancelled — teardown wins the
+    /// terminal-transition rule — and released. Already-terminal records
+    /// (completed or cancelled, but not yet delivered to the waiter) are
+    /// released unchanged: a torn-down waiter never resumes, so nothing else
+    /// would release them and the bounded slots must return to the
+    /// reservation. Returns how many records were released.
+    ///
+    /// This is the domain-teardown path, distinct from object teardown
+    /// (`Notification::cancel_waiters` and `EventCount::cancel_waiters`),
+    /// whose waiters are still alive and resume with their outcome.
+    pub fn teardown_waiter(&mut self, waiter: ObjectId) -> Result<usize, CapError> {
+        let mut released = 0;
+        for slot in 0..Self::CAPACITY {
+            // `PendingInvocation` is `Copy`: extract by value so the pool can
+            // be mutated below without holding a borrow.
+            let Some(record) = self.records[slot] else {
+                continue;
+            };
+            if record.waiter != waiter {
+                continue;
+            }
+            let id = ObjectId {
+                pool: PoolTag::Pending,
+                index: u16::try_from(slot).expect("pool capacity fits u16 slots"),
+                generation: self.generations[slot],
+            };
+            if record.state == PendingState::Waiting {
+                // Teardown's terminal transition. The orchestrator removed the
+                // record from its wait queue, so no completion can compete;
+                // an error here would mean a kernel bookkeeping bug.
+                self.cancel(id)?;
+            }
+            // The released record retains its generation: the identity is
+            // stale forever, and the slot may be reused with an advanced
+            // generation.
+            self.release(id)?;
+            released += 1;
+        }
+        Ok(released)
+    }
+
     /// Shared access to a live record after identity validation.
     fn live(&self, id: ObjectId) -> Result<&PendingInvocation, CapError> {
         if id.pool != PoolTag::Pending {
@@ -403,6 +449,43 @@ impl WaitQueue {
         };
         self.len -= 1;
         true
+    }
+
+    /// Remove every queued record naming `waiter` (domain-teardown
+    /// cancellation), preserving the FIFO order of the remaining waiters.
+    ///
+    /// A queue holds record identities; the waiter each record blocks is
+    /// resolved through the pending pool. The removed records are not
+    /// touched here — the teardown sweep (`PendingPool::teardown_waiter`)
+    /// gives them their terminal transition and releases them, because a
+    /// torn-down waiter never resumes to consume an outcome. Returns how
+    /// many records were unqueued.
+    pub fn remove_waiter(&mut self, waiter: ObjectId, pending: &PendingPool) -> usize {
+        let live = self.len;
+        let mut kept = 0;
+        let mut removed = 0;
+        for i in 0..live {
+            let slot = (self.head + i) % Self::CAPACITY;
+            let record = self.queue[slot];
+            if matches!(pending.waiter(record), Ok(blocked) if blocked == waiter) {
+                removed += 1;
+            } else {
+                // The compaction only writes to already-processed slots
+                // (`kept <= i`), so it never loses an unprocessed entry.
+                self.queue[(self.head + kept) % Self::CAPACITY] = record;
+                kept += 1;
+            }
+        }
+        // Clear the vacated tail slots and shrink the live region.
+        for i in kept..live {
+            self.queue[(self.head + i) % Self::CAPACITY] = ObjectId {
+                pool: PoolTag::Region,
+                index: 0,
+                generation: 0,
+            };
+        }
+        self.len = kept;
+        removed
     }
 }
 
@@ -633,5 +716,88 @@ mod tests {
         assert_eq!(queue.pop_front(), Some(ids[0]));
         assert_eq!(queue.pop_front(), Some(ids[2]));
         assert_eq!(queue.pop_front(), None);
+    }
+
+    #[test_case]
+    fn wait_queue_remove_waiter_unqueues_matching_records() {
+        // Three distinct waiters, one record each, in queue order.
+        let mut pending = PendingPool::new();
+        let mut queue = WaitQueue::new();
+        let mut records = [ObjectId {
+            pool: PoolTag::Pending,
+            index: 0,
+            generation: 0,
+        }; 3];
+        for (i, record) in records.iter_mut().enumerate() {
+            let index = u16::try_from(i).unwrap();
+            *record = block(&mut pending, index);
+            assert!(queue.push(*record).is_ok());
+        }
+
+        // Domain teardown of waiter 1: only its record leaves the queue, and
+        // the FIFO order of the surviving waiters is preserved.
+        assert_eq!(queue.remove_waiter(waiter(1), &pending), 1);
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.pop_front(), Some(records[0]));
+        assert_eq!(queue.pop_front(), Some(records[2]));
+        assert_eq!(queue.pop_front(), None);
+
+        // A waiter with nothing queued removes nothing.
+        assert_eq!(queue.remove_waiter(waiter(1), &pending), 0);
+    }
+
+    #[test_case]
+    fn teardown_waiter_cancels_and_releases_the_waiters_records() {
+        let mut pool = PendingPool::new();
+        let gone = block(&mut pool, 0);
+        let survivor = block(&mut pool, 1);
+
+        // Teardown of waiter 0: its `Waiting` record receives its `Cancelled`
+        // terminal transition (teardown wins) and is then released — a
+        // torn-down waiter never resumes to consume the outcome.
+        assert_eq!(pool.teardown_waiter(waiter(0)).ok(), Some(1));
+        assert!(matches!(pool.state(gone), Err(CapError::InvalidOperation)));
+        // The released reservation is not lost: a new blocking invocation
+        // registers fine, and the released identity stays stale (the next-fit
+        // cursor picks the slot, so reuse is not necessarily immediate).
+        let replacement = block(&mut pool, 2);
+        assert_eq!(pool.state(replacement).ok(), Some(PendingState::Waiting));
+        assert!(matches!(pool.state(gone), Err(CapError::InvalidOperation)));
+
+        // Another waiter's record is untouched.
+        assert_eq!(pool.state(survivor).ok(), Some(PendingState::Waiting));
+        assert_eq!(pool.len(), 2);
+
+        // Releasing the replacement by hand leaves waiter 2 with nothing
+        // pending: a further teardown sweep is an empty no-op.
+        pool.cancel(replacement)
+            .unwrap_or_else(|_| panic!("cancel failed"));
+        pool.release(replacement)
+            .unwrap_or_else(|_| panic!("release failed"));
+        assert_eq!(pool.teardown_waiter(waiter(2)).ok(), Some(0));
+    }
+
+    #[test_case]
+    fn teardown_waiter_releases_terminal_records_without_mutating_them() {
+        let mut pool = PendingPool::new();
+        let woken = block(&mut pool, 0);
+        let cancelled = block(&mut pool, 1);
+        // A completed-but-not-yet-delivered record (the waiter was woken but
+        // has not resumed) and an object-teardown-cancelled record: both are
+        // terminal, and teardown must release them unchanged rather than
+        // compete for a second terminal transition.
+        pool.complete_with_status(woken, syscall_status::SUCCESS, 0xaa, 0)
+            .unwrap_or_else(|_| panic!("complete failed"));
+        pool.cancel(cancelled)
+            .unwrap_or_else(|_| panic!("cancel failed"));
+
+        assert_eq!(pool.teardown_waiter(waiter(0)).ok(), Some(1));
+        assert!(matches!(pool.state(woken), Err(CapError::InvalidOperation)));
+        assert_eq!(pool.teardown_waiter(waiter(1)).ok(), Some(1));
+        assert!(matches!(
+            pool.state(cancelled),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(pool.is_empty());
     }
 }

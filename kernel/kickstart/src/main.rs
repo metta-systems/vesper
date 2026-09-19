@@ -75,6 +75,7 @@ use {
         objects::{
             ArchObjects, ArchObjectsImpl, Domain, ExecutionContext, KeyTable, Nucleus,
             access::{ObjectId, PoolTag},
+            completion::PendingState,
         },
     },
 };
@@ -1721,6 +1722,122 @@ pub fn kickstart_run() -> ! {
                 .get_live(usize::from(bounce_id.index))
                 .unwrap_or_else(|| panic!("Bounce Domain missing"));
             assert!(matches!(bounce.context, ExecutionContext::Parked { .. }));
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Domain.Retire end-to-end (2026-09-19): the Domain-control teardown
+        // trigger — cancel every pending record naming the target as waiter,
+        // purge its queued wakeup, reclaim its pool slot — through the real
+        // SVC path under `RETIRE` authority.
+        // ─────────────────────────────────────────────────────────────────
+        {
+            // Bounce is parked on N2 with a Waiting record: the canonical
+            // teardown state of a blocked Domain.
+            let ExecutionContext::Parked { record, .. } = nucleus
+                .pools
+                .domains
+                .get_live(usize::from(bounce_id.index))
+                .unwrap_or_else(|| panic!("Bounce Domain missing"))
+                .context
+            else {
+                panic!("Bounce is not parked")
+            };
+            assert_eq!(
+                nucleus.pending.state(record).ok(),
+                Some(PendingState::Waiting)
+            );
+            assert_eq!(nucleus.pending.waiter(record).ok(), Some(bounce_id));
+
+            // Bootstrap grants: Bounce's Domain capability in the boot table,
+            // kernel-privately (like the boot console grant) — one with full
+            // rights and one without `RETIRE`, so the authority check is
+            // observable through the real SVC path. Domain is not on the
+            // CopyDerive allowlist, so no public path could build these.
+            let (bounce_domain_key, unprivileged_bounce_key) = {
+                // SAFETY: keytable_addr names the live carved boot KeyTable.
+                let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+                let full = boot_table
+                    .insert(
+                        KeySlot(38),
+                        KeyEntry::new::<Domain>(bounce_id, Rights::all(), 0),
+                    )
+                    .unwrap_or_else(|failure| {
+                        panic!("Bounce Domain grant failed: {:?}", failure.error.code())
+                    });
+                let limited = boot_table
+                    .insert(
+                        KeySlot(39),
+                        KeyEntry::new::<Domain>(bounce_id, Rights(Rights::READ), 0),
+                    )
+                    .unwrap_or_else(|failure| {
+                        panic!(
+                            "limited Bounce Domain grant failed: {:?}",
+                            failure.error.code()
+                        )
+                    });
+                (full, limited)
+            };
+
+            // Authority is explicit: a capability without `RETIRE` is
+            // rejected before any teardown effect — Bounce stays parked.
+            assert!(matches!(
+                DomainKey::from_key(unprivileged_bounce_key, DomainId(1)).retire(),
+                Err(CapError::InsufficientRights)
+            ));
+            assert_eq!(
+                nucleus.pending.state(record).ok(),
+                Some(PendingState::Waiting)
+            );
+
+            // Self-retirement is rejected: the current Domain must survive
+            // its own invocation (never-returns self-retirement is recorded
+            // in the contract as wanted follow-up) — and again nothing was
+            // torn down.
+            assert!(matches!(
+                DomainKey::from_key(boot_domain_key, DomainId(0)).retire(),
+                Err(CapError::InvalidOperation)
+            ));
+            assert_eq!(
+                nucleus.pending.state(record).ok(),
+                Some(PendingState::Waiting)
+            );
+
+            // Retire Bounce through the real SVC path: the parked record is
+            // cancelled and released, and no queued wakeup survives.
+            DomainKey::from_key(bounce_domain_key, DomainId(1))
+                .retire()
+                .unwrap_or_else(|error| panic!("Bounce Retire failed: {:?}", error.code()));
+            assert!(nucleus.pending.is_empty());
+            assert!(nucleus.scheduler.is_empty());
+            // The released record's identity is stale.
+            nucleus.pending.state(record).unwrap_err();
+
+            // N2 no longer holds Bounce: a signal through the real SVC path
+            // delivers to no dead waiter — it succeeds and the bits stay
+            // pending — and the notification remains fully usable.
+            NotificationKey::from_key(n2_key)
+                .signal(0b100)
+                .unwrap_or_else(|error| panic!("post-retire Signal failed: {:?}", error.code()));
+            let bits = NotificationKey::from_key(n2_key)
+                .wait(NotificationKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!("post-retire Wait failed: {:?}", error.code()));
+            assert_eq!(bits, 0b100);
+
+            // The retired Domain's pool slot is reclaimed and its capability
+            // is stale: the identity no longer resolves, and a further Retire
+            // through the same capability fails with a defined error.
+            nucleus.pools.domains.validate(bounce_id).unwrap_err();
+            assert!(
+                nucleus
+                    .pools
+                    .domains
+                    .get_live(usize::from(bounce_id.index))
+                    .is_none()
+            );
+            assert!(matches!(
+                DomainKey::from_key(bounce_domain_key, DomainId(1)).retire(),
+                Err(CapError::InvalidOperation)
+            ));
         }
 
         // Build the intermediate chain: L1 under the root, L2 under L1,

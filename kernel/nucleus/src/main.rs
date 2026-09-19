@@ -414,8 +414,12 @@ unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
                     }
                     (status, result0, result1)
                 }
-                // Cancellation outcomes need their D9 wire encoding; no
-                // teardown path can produce them yet.
+                // Cancellation outcomes need their D9 wire encoding. No path
+                // can deliver this resume yet: object teardown
+                // (`cancel_waiters`) has no production caller, and
+                // domain-teardown cancellation (2026-09-19) releases the
+                // cancelled records without resuming — the torn-down waiter
+                // is gone.
                 Ok(PendingState::Cancelled) => {
                     panic!("cancelled record resumed before its D9 encoding exists")
                 }

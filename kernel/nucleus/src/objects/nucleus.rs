@@ -1,11 +1,11 @@
 use {
     crate::objects::{
         ArchObjects, Domain, EventCount, KeyTable, Notification, ObjectPool, PendingPool,
-        Scheduler, arch::ArchPools, domain::DcbPages,
+        Scheduler, access::ObjectId, arch::ArchPools, domain::DcbPages,
     },
     core::sync::atomic::Ordering,
     libobject::{
-        KeySlot, RawKey,
+        CapError, KeySlot, RawKey,
         domain::{BlockReason, DomainControlBlock, DomainId, DomainState},
     },
 };
@@ -254,6 +254,58 @@ impl<A: ArchObjects> Nucleus<A> {
         }
     }
 
+    /// Domain-teardown-driven cancellation (the selected D7 cancellation
+    /// trigger, 2026-09-16): cancel every pending-invocation record naming
+    /// `domain` as its waiter and purge every queued wakeup for it.
+    ///
+    /// Call this while the Domain slot is still live — before the teardown
+    /// path deallocates it — so the identity check below catches out-of-order
+    /// teardown. The steps:
+    ///
+    /// 1. Every live synchronization object stops holding the Domain's
+    ///    records (wait-queue removal; the FIFO order of other waiters is
+    ///    preserved).
+    /// 2. The pending-pool teardown sweep gives each of the Domain's records
+    ///    its single terminal transition — `Cancelled` for a still-`Waiting`
+    ///    record (teardown wins the terminal-transition rule) — and releases
+    ///    it. A torn-down Domain never resumes, so nothing else would release
+    ///    the bounded slots. Already-terminal records (a wakeup delivered
+    ///    but not yet resumed) are released unchanged.
+    /// 3. The runnable queue loses the Domain's index: a woken-but-not-yet
+    ///    -resumed Domain must leave no wakeup behind for the next context
+    ///    switch.
+    ///
+    /// No cancellation status crosses the wire: the torn-down waiter is
+    /// gone, so its outcome is never delivered (the D9 cancellation
+    /// encodings stay open for the timeout and object-teardown paths, whose
+    /// waiters do resume). DCB release and domain-slot deallocation are the
+    /// teardown path's separate steps (Phase 7 Domain control).
+    pub fn cancel_domain_pending(&mut self, domain: ObjectId) -> Result<(), CapError> {
+        // Teardown cancels pending records while the Domain slot is live; a
+        // stale identity means the caller tore the Domain down out of order.
+        self.pools.domains.validate(domain)?;
+
+        // Every live synchronization object stops holding the Domain's
+        // records. The scan is bounded by the pool slot count; `get_live_mut`
+        // rejects slots beyond the carved capacity.
+        for slot in 0..ObjectPool::<Notification>::MAX_SLOTS {
+            if let Some(notification) = self.pools.notifications.get_live_mut(slot) {
+                notification.remove_waiter(domain, &self.pending);
+            }
+        }
+        for slot in 0..ObjectPool::<EventCount>::MAX_SLOTS {
+            if let Some(event_count) = self.pools.event_counts.get_live_mut(slot) {
+                event_count.remove_waiter(domain, &self.pending);
+            }
+        }
+
+        // Every record naming the Domain reaches its terminal disposition
+        // and is released; every queued wakeup for it is purged.
+        self.pending.teardown_waiter(domain)?;
+        self.scheduler.remove(domain.index);
+        Ok(())
+    }
+
     /// Update DCB when notification is signaled to a domain
     pub fn signal_notification(&mut self, id: DomainId, slot: KeySlot, bits: u64) {
         if let Some(dcb) = self.dcb_pages.get_mut(id) {
@@ -299,4 +351,248 @@ pub enum FaultType {
     UnknownSyscall = 3,
     UserException = 4,
     VMFault = 5,
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::{Nucleus, NucleusPools},
+        crate::objects::{
+            ArchObjectsImpl, Domain, EventCount, Notification, ObjectPool, PendingPool, Scheduler,
+            access::{ObjectId, PoolTag},
+            arch::{AArch64PageTable, ArchPools},
+            completion::PendingState,
+            domain::{DcbPages, ExecutionContext},
+            event_count::{AdvanceOutcome, AwaitOutcome},
+            notification::WaitOutcome,
+        },
+        core::mem::MaybeUninit,
+        libobject::syscall_status,
+    };
+
+    // Backing bytes for the fixture's pools: three Domain slots, two
+    // Notification slots, one EventCount slot, and one page-table metadata
+    // slot (structural only; these tests never touch the arch pools).
+    static mut DOMAIN_POOL_MEM: [u64; 16] = [0; 16];
+    static mut NOTIFICATION_POOL_MEM: [u64; 32] = [0; 32];
+    static mut EVENT_COUNT_POOL_MEM: [u64; 32] = [0; 32];
+    static mut ARCH_POOL_MEM: [u64; 16] = [0; 16];
+
+    /// A minimal fixture nucleus. Tests run sequentially and the fixture
+    /// re-initializes the same static storage before use.
+    fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
+        static mut NUCLEUS_MEM: MaybeUninit<Nucleus<ArchObjectsImpl>> = MaybeUninit::uninit();
+        // SAFETY: the pool backings and NUCLEUS_MEM are exclusively owned by
+        // the fixture; initialization happens before any use, and tests are
+        // sequential. Raw pointers avoid mutable references to statics
+        // (edition 2024).
+        unsafe {
+            let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
+            let domain_ptr = (&raw mut DOMAIN_POOL_MEM).cast::<u8>();
+            let notification_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
+            let event_count_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
+            let arch_ptr = (&raw mut ARCH_POOL_MEM).cast::<u8>();
+            nucleus_ptr.write(Nucleus {
+                current_domain: None,
+                dcb_pages: DcbPages::new(),
+                pending: PendingPool::new(),
+                scheduler: Scheduler::new(),
+                pools: NucleusPools {
+                    domains: ObjectPool::new(domain_ptr, core::mem::size_of::<Domain>() * 3),
+                    notifications: ObjectPool::new(
+                        notification_ptr,
+                        core::mem::size_of::<Notification>() * 2,
+                    ),
+                    event_counts: ObjectPool::new(
+                        event_count_ptr,
+                        core::mem::size_of::<EventCount>(),
+                    ),
+                    // SAFETY: the arch backings are exclusively owned by the
+                    // fixture; the pools are structural for these tests.
+                    arch: ArchPools::new(
+                        ObjectPool::new(arch_ptr, core::mem::size_of::<AArch64PageTable>()),
+                        ObjectPool::new(arch_ptr, 0),
+                    ),
+                },
+            });
+            &mut *nucleus_ptr
+        }
+    }
+
+    fn domain_fixture() -> Domain {
+        Domain {
+            keytable_addr: 0x1000,
+            translation_root: None,
+            asid: None,
+            context: ExecutionContext::Running,
+        }
+    }
+
+    /// Block `waiter` on the notification at `notification`, returning its
+    /// pending-record identity.
+    fn block_on_notification(
+        nucleus: &mut Nucleus<ArchObjectsImpl>,
+        notification: ObjectId,
+        waiter: ObjectId,
+    ) -> ObjectId {
+        let n = nucleus
+            .pools
+            .notifications
+            .get_live_mut(usize::from(notification.index))
+            .expect("notification is live");
+        match n.wait(waiter, &mut nucleus.pending) {
+            Ok(WaitOutcome::Blocked(record)) => record,
+            _ => panic!("wait should block"),
+        }
+    }
+
+    #[test_case]
+    fn domain_teardown_cancels_parked_waits_and_queued_wakeups() {
+        let nucleus = fixture_nucleus();
+
+        // Three domains: A and C block on a notification, B awaits an event
+        // count. C is then woken but not resumed: its record completes and its
+        // index is enqueued runnable (what `wake_waiter` does).
+        let (a, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
+        let (b, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
+        let (c, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
+        let (n, _) = nucleus
+            .pools
+            .notifications
+            .allocate(Notification::new())
+            .unwrap();
+        let (e, _) = nucleus
+            .pools
+            .event_counts
+            .allocate(EventCount::new())
+            .unwrap();
+
+        // C queues first, then A: a signal delivers to C (one consumer).
+        let record_c = block_on_notification(nucleus, n, c);
+        let record_a = block_on_notification(nucleus, n, a);
+        let record_b = {
+            let ec = nucleus
+                .pools
+                .event_counts
+                .get_live_mut(usize::from(e.index))
+                .expect("event count is live");
+            match ec.await_ge(10, b, &mut nucleus.pending) {
+                Ok(AwaitOutcome::Blocked(record)) => record,
+                Ok(AwaitOutcome::Ready(_)) => panic!("await should block"),
+                Err(_) => panic!("await failed"),
+            }
+        };
+
+        // Wake C without resuming it: its record is Completed and its index
+        // is queued runnable.
+        {
+            let ec = nucleus
+                .pools
+                .notifications
+                .get_live_mut(usize::from(n.index))
+                .expect("notification is live");
+            match ec.signal(0b1, &mut nucleus.pending) {
+                Ok(Some(woken)) => assert_eq!(woken, record_c),
+                _ => panic!("signal should wake C"),
+            }
+        }
+        assert!(nucleus.scheduler.push(c.index));
+        assert_eq!(nucleus.scheduler.len(), 1);
+
+        // Teardown of A: its queued wait is cancelled and released; C's
+        // completed record and queued wakeup, and B's await, are untouched.
+        nucleus
+            .cancel_domain_pending(a)
+            .unwrap_or_else(|_| panic!("teardown of A failed"));
+        assert!(nucleus.pending.state(record_a).is_err());
+        assert_eq!(
+            nucleus.pending.state(record_c).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
+                result0: 0b1,
+                result1: 0
+            })
+        );
+        assert_eq!(
+            nucleus.pending.state(record_b).ok(),
+            Some(PendingState::Waiting)
+        );
+        assert_eq!(nucleus.scheduler.len(), 1);
+
+        // The notification no longer holds A: the next signal delivers to no
+        // one (the queue is empty), so the bits stay pending.
+        {
+            let ec = nucleus
+                .pools
+                .notifications
+                .get_live_mut(usize::from(n.index))
+                .expect("notification is live");
+            assert!(matches!(ec.signal(0b10, &mut nucleus.pending), Ok(None)));
+            assert_eq!(ec.pending_bits(), 0b10);
+        }
+
+        // Teardown of C: the completed-but-undelivered record is released and
+        // the queued wakeup is purged.
+        nucleus
+            .cancel_domain_pending(c)
+            .unwrap_or_else(|_| panic!("teardown of C failed"));
+        assert!(nucleus.pending.state(record_c).is_err());
+        assert!(nucleus.scheduler.is_empty());
+
+        // Teardown of B: the queued await is cancelled and released.
+        nucleus
+            .cancel_domain_pending(b)
+            .unwrap_or_else(|_| panic!("teardown of B failed"));
+        assert!(nucleus.pending.state(record_b).is_err());
+        assert!(nucleus.pending.is_empty());
+
+        // The event count is fully usable: an advance wakes no one.
+        {
+            let ec = nucleus
+                .pools
+                .event_counts
+                .get_live_mut(usize::from(e.index))
+                .expect("event count is live");
+            match ec.advance(5, &mut nucleus.pending) {
+                Ok(AdvanceOutcome::Advanced { new_value, woken }) => {
+                    assert_eq!(woken.iter().count(), 0);
+                    assert_eq!(new_value, 5);
+                }
+                Ok(AdvanceOutcome::Overflow { .. }) => panic!("advance should not overflow"),
+                Err(_) => panic!("advance after teardown failed"),
+            }
+        }
+    }
+
+    #[test_case]
+    fn domain_teardown_with_nothing_pending_is_a_no_op() {
+        let nucleus = fixture_nucleus();
+        let (a, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
+
+        // A live domain with nothing pending tears down cleanly.
+        nucleus
+            .cancel_domain_pending(a)
+            .unwrap_or_else(|_| panic!("teardown with nothing pending failed"));
+        assert!(nucleus.pending.is_empty());
+        assert!(nucleus.scheduler.is_empty());
+    }
+
+    #[test_case]
+    fn domain_teardown_rejects_a_stale_domain_identity() {
+        let nucleus = fixture_nucleus();
+        let (a, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
+
+        // Teardown cancels pending records while the domain slot is live;
+        // after deallocation the identity is stale and out-of-order teardown
+        // is rejected.
+        nucleus
+            .cancel_domain_pending(a)
+            .unwrap_or_else(|_| panic!("teardown before deallocation failed"));
+        nucleus
+            .pools
+            .domains
+            .deallocate(a)
+            .unwrap_or_else(|_| panic!("domain deallocation failed"));
+        assert!(nucleus.cancel_domain_pending(a).is_err());
+    }
 }

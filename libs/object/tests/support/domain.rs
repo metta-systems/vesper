@@ -42,6 +42,7 @@ fn invoke(op: u64, response: Response) -> Result<(), CapError> {
         1 => domain.grant(&source, KeySlot(u32::MAX - 2)),
         2 => domain.suspend(),
         3 => domain.resume(),
+        4 => domain.retire(),
         _ => panic!("unexpected test operation"),
     };
     let args = (op == 1).then_some((0x7654_3210_ffff_fffe, 0x0000_0000_ffff_fffd));
@@ -63,7 +64,7 @@ fn from_key_preserves_key_and_id_without_validation() {
 
 #[test]
 fn all_domain_wrappers_preserve_request_encoding_and_accept_success() {
-    for op in 0..=3 {
+    for op in 0..=4 {
         assert_eq!(
             invoke(op, (0, u64::MAX, 1 << 63)).map_err(CapError::code),
             Ok(())
@@ -73,7 +74,7 @@ fn all_domain_wrappers_preserve_request_encoding_and_accept_success() {
 
 #[test]
 fn all_domain_wrappers_report_unsupported_dispatch_and_lookup_errors() {
-    for op in 0..=3 {
+    for op in 0..=4 {
         assert!(matches!(
             invoke(op, (16, 2, 0)),
             Err(CapError::UnsupportedCoreType(CoreType::Domain))
@@ -100,7 +101,7 @@ fn all_domain_wrappers_report_unsupported_dispatch_and_lookup_errors() {
 #[test]
 fn all_domain_wrappers_preserve_key_diagnostics() {
     let wire_key = 0x7654_3210_ffff_fffe;
-    for op in 0..=3 {
+    for op in 0..=4 {
         match invoke(op, (26, wire_key, 0x0202)) {
             Err(CapError::InvalidKey {
                 key,
@@ -134,7 +135,7 @@ fn all_domain_wrappers_preserve_key_diagnostics() {
 
 #[test]
 fn all_domain_wrappers_preserve_unknown_statuses_and_malformed_details() {
-    for op in 0..=3 {
+    for op in 0..=4 {
         for wire in [
             (u64::MAX, 42, 99),
             (1 << 32, 1, 2),

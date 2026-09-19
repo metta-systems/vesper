@@ -77,14 +77,17 @@ pub enum DomainOp {
     Grant = 1,    // Grant capability to domain
     Suspend = 2,  // Suspend domain
     Resume = 3,   // Resume suspended domain
+    Retire = 4,   // Tear down: cancel pending, reclaim the pool slot
 }
 
 /// Domain capability - handle to a protection domain.
 /// State queries use shared DCB (no syscall), mutations use `CapInvoke`.
 /// `Activate` is dispatched (2026-09-15): it installs the Domain's bound
-/// translation root as the hardware translation context. `Grant`, `Suspend`,
-/// and `Resume` remain unsupported by nucleus dispatch and their wrappers
-/// preserve the kernel's errors; they do not establish DCB mapping or lifetime.
+/// translation root as the hardware translation context. `Retire` is
+/// dispatched (2026-09-19): it tears a non-current Domain down under `RETIRE`
+/// authority. `Grant`, `Suspend`, and `Resume` remain unsupported by nucleus
+/// dispatch and their wrappers preserve the kernel's errors; they do not
+/// establish DCB mapping or lifetime.
 ///
 /// Implementation status: public construction is available since 2026-09-15
 /// for the mutation path (`from_key`), mirroring the other non-owning key
@@ -202,6 +205,28 @@ impl DomainKey {
     pub fn resume(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
         let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Resume as u64) };
+        decode_syscall_result(response).map(|_| ())
+    }
+
+    /// Retire this domain: tear it down — cancel every pending record naming
+    /// it as waiter, purge its queued wakeup — and reclaim its Domain-pool
+    /// slot.
+    ///
+    /// Wire schema (selected 2026-09-19): no arguments. Authority: `RETIRE`
+    /// on the invoked Domain capability. The current Domain may not retire
+    /// itself (`InvalidOperation`): the caller must be a surviving Domain and
+    /// this invocation returns normally. Never-returns self-retirement is
+    /// recorded in the contract as wanted as soon as feasible (it needs
+    /// terminal entry-path work); until then a Domain's final exit is
+    /// userspace policy.
+    ///
+    /// Subsequent invocations of the retired Domain's capabilities fail pool
+    /// validation with a defined error. Carved backing (keytable, kernel
+    /// stack) stays leaked per accepted-leak; a bound ASID stays allocated
+    /// (D6); the DCB is untouched (D5).
+    pub fn retire(&self) -> Result<(), CapError> {
+        // SAFETY: Unsafe call.
+        let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Retire as u64) };
         decode_syscall_result(response).map(|_| ())
     }
 }
