@@ -1,14 +1,27 @@
-What's needed: quick-n-dirty higher-half mappings setup and kernel physical memory view setup (both in TTBR1), identity mapping for kickstart (in TTBR0).
+- [ ] ObjectPool .meta is limited to 256 entires, which is wrong - the meta should be allocated together with the pool from the Untyped, this is where we know the actual capacity.
+- [ ] seemingly AI decided we use process stacks, while it should be interrupt stacks for kernel state. Domain context should be stored in the DCB.
+- [ ] Extract testing bits from kickstart into a separate kicktest binary.
+- [ ] pub asid: Option<u16>, should probably use Option<NonZero<u16>> in domain.rs
+  - [ ] similarly for some other int-based optionals, where 0 is clearly an invalid value - find them
 
-- `__kernel_start` to `__kernel_end` map at KERNEL_HIGH_BASE
-- 0 to phys_ram_size (from DTB) map at KERNEL_PHYS_WINDOW
-- `__kickstart_start` till `__kickstart_end` identity-map (no code/data split yet?)
+- [ ] two mmio tests ignored -- running 2 tests
+  test libs/mmio/src/lib.rs - MMIODerefWrapper<T> (line 42) ... ignored
+  test libs/mmio/src/lib.rs - MMIODerefWrapper<T> (line 46) ... ignored
+
+- [ ] "cannot parse the debug map for" - where it is from, toolchain or my scripts?
+    info: Vector table:        0xFFFF800000003800 (size: 0x800)
+  error: cannot parse the debug map for '/Users/berkus/Projects/Metta/vesper/target/aarch64-metta-none-eabi/release/build/kickstart/05af02c1fa98982b/out/kickstart': The file was not recognized as a valid object file
+
+- [/] What's needed: quick-n-dirty higher-half mappings setup and kernel physical memory view setup (both in TTBR1), identity mapping for kickstart (in TTBR0).
+  - `__kernel_start` to `__kernel_end` map at KERNEL_HIGH_BASE
+  - 0 to phys_ram_size (from DTB) map at KERNEL_PHYS_WINDOW
+  - `__kickstart_start` till `__kickstart_end` identity-map (no code/data split yet?)
 
 Steps:
 - [ ] Move tests from kernel/tests to individual libs?
 
-- [ ] Make some caps work - Untypeds, Domains, Buffers, what else?
-- [ ] Test out syscalls from EL0
+- [x] Make some caps work - Untypeds, Domains, Buffers, what else?
+- [x] Test out syscalls from EL0
 
 - START FILLING IN CAPS
   - [ ] untypeds
