@@ -1,8 +1,18 @@
+- [ ] Rename Kickstart to Ymir?
+- [ ] VSpace -> Container?
+  - [ ] Component?
+- [ ] CSpace = KeyTable
+- [ ] our Domain shall be more like Protection Domain (= TCB + CSpace + VSpace), 
 - [ ] ObjectPool .meta is limited to 256 entires, which is wrong - the meta should be allocated together with the pool from the Untyped, this is where we know the actual capacity.
 - [ ] seemingly AI decided we use process stacks, while it should be interrupt stacks for kernel state. Domain context should be stored in the DCB.
 - [ ] Extract testing bits from kickstart into a separate kicktest binary.
 - [ ] pub asid: Option<u16>, should probably use Option<NonZero<u16>> in domain.rs
+  - ASID 0 reserved for the kernel's own boot translation context
   - [ ] similarly for some other int-based optionals, where 0 is clearly an invalid value - find them
+
+- [ ] "a per-domain IPC buffer receives anything beyond register capacity. The buffer's registered location and lifetime are part of domain creation (D5/D6 follow-up)." - does a per-Endpoint IPC buffer make more sense? How it is implemented?
+
+- [ ] Make KeySlot::DEBUG_CONSOLE not be slot 127, install it somewhere else (the capability will be 127 though, so it's more natural)
 
 - [ ] two mmio tests ignored -- running 2 tests
   test libs/mmio/src/lib.rs - MMIODerefWrapper<T> (line 42) ... ignored
@@ -26,6 +36,39 @@ Steps:
 - START FILLING IN CAPS
   - [ ] untypeds
   - [ ] kickstart context and domain
+
+---
+
+# Docs
+
+What was created
+
+`vesper/doc/object_types/` now contains a complete reference for every kind in the capability catalogue, grounded in the current implementation (`kernel/nucleus/src/objects/`, `kernel/nucleus/src/api/`, `libs/object/src/`) and the three contract docs:
+
+- **`README.md`** — index, wire encoding, invocation model, and a dispatch diagram
+- **`core/`** — `null`, `untyped`, `domain`, `key_table`, `time`, `endpoint`, `notification`, `event_count`, `reply`, `debug_console`
+- **`arch/`** — `frame`, `page_table`, `vspace`, `asid_pool`, `asid`, `io_space`, `io_port`, `irq_handler`, `irq_control`
+
+Each document follows the same structure: name/metadata table → purpose → user-level visible operations (wire schema, authority, results) → kernel-level implementation details (with small mermaid diagrams: retype transaction, retire teardown, KeyTable lookup precedence, Notification state machine, EventCount overflow flow, Frame.Map transaction, PageTable installation, ASIDPool.Assign, Endpoint rendezvous, dispatch) → sidenotes → TODOs → **final cross-reference section** against the 🧠 Vesper vault.
+
+## Most important discrepancies flagged for your review
+
+1. **KeyTable architecture** (`key_table.md`): vault describes a KeyNode directed graph with guarded page tables, radix/depth-limits, kernel CDT, and recursive revoke; current implementation is a flat 256-slot table, no CDT, Revoke rejected. Also 32-byte `KeyEntry` vs the vault's assumed 16 bytes/slot.
+2. **Single address space** (`domain.md`, `vspace.md`, `frame.md`): vault SAS vision vs. selected per-Domain translation contexts (D1).
+3. **Untyped split + device retyping** (`untyped.md`): vault expects Untyped→Untyped splitting and device-Untyped→Frame retyping; both are rejected today.
+4. **ASID pools** (`asid_pool.md`): vault/seL4 imply Retype-creatable pools; current model is boot-provided-only.
+5. **IRQ delivery** (`irq_handler.md`, `irq_control.md`): the entire interrupt HAL is an unchecked vault todo; Notification is ready as the target but nothing delivers to it.
+6. **IPC surface** (`endpoint.md`): vault expects non-blocking Send/Recv variants and a `Yield` syscall — neither exists nor is contracted.
+
+## Questions I skipped (per your instruction)
+
+1. **Scope of "currently existing"** — I documented *all* catalogue kinds (including reserved/deferred ones like `VSpace`, `ASID`, `IOPort`) with explicit status lines, rather than only the active kinds. Trim if you wanted active-only.
+2. **README index** — I added one; remove it if you want only the per-type files.
+3. **Untyped→Untyped split** — treated as a TODO/discrepancy rather than a deliberate rejection; confirm intent.
+4. **Vault phrasing "kernel creates Reply object"** — flagged in `reply.md` as a mechanism divergence (pending-record vs pooled object); needs your call.
+
+No code was changed, so no build/test validation was run; the mermaid diagrams use only supported types (flowchart, stateDiagram, sequenceDiagram).
+
 
 ---
 
