@@ -9,8 +9,8 @@ use tests::protected_call0;
 #[path = "../tests/support/address_space.rs"]
 mod tests;
 
-/// `AddressSpace` operations (the translation-root holder — the renamed
-/// `VSpace` kind, split from the former `Domain` 2026-09-21).
+/// `AddressSpace` operations (the translation-root holder — Vesper's
+/// equivalent of seL4's `VSpace`).
 #[repr(u8)]
 pub enum AddressSpaceOp {
     /// Install the bound translation root as the current hardware
@@ -36,9 +36,8 @@ impl TryFrom<u64> for AddressSpaceOp {
 /// `AddressSpace` capability — handle to a protection/mapping context
 /// (Vesper's equivalent of seL4's `VSpace`).
 ///
-/// `Activate` is dispatched (2026-09-15 as `Domain.Activate`; moved to the
-/// `AddressSpace` kind 2026-09-21): it installs the bound translation root as
-/// the hardware translation context. `Retire` is dispatched (2026-09-21): it
+/// `Activate` is dispatched: it installs the bound translation root as
+/// the hardware translation context. `Retire` is dispatched: it
 /// tears a non-current `AddressSpace` down under `RETIRE` authority.
 pub struct AddressSpaceKey {
     key: Key<AddressSpaceType>,
@@ -61,7 +60,7 @@ impl AddressSpaceKey {
     /// Activate this address space: install its bound translation root as
     /// the current hardware translation context (requires syscall).
     ///
-    /// Wire schema (selected 2026-09-15): no arguments. The `AddressSpace` must
+    /// Wire schema: no arguments. The `AddressSpace` must
     /// have a translation root installed and an ASID bound (`NotMapped`
     /// otherwise) and must be the current caller's own `AddressSpace`
     /// (`InvalidOperation` otherwise). Authority: `MAP` on the `AddressSpace`
@@ -79,7 +78,7 @@ impl AddressSpaceKey {
     /// originating pool (after the whole-ASID TLB invalidation), clear the
     /// root/ASID fields, and reclaim its AddressSpace-pool slot.
     ///
-    /// Wire schema (selected 2026-09-21): no arguments. Authority: `RETIRE`
+    /// Wire schema: no arguments. Authority: `RETIRE`
     /// on the invoked `AddressSpace` capability. The current caller's own
     /// `AddressSpace` may not be retired (`InvalidOperation`), and a
     /// translation root must not still be installed (`InvalidOperation`) —

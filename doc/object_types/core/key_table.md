@@ -38,11 +38,11 @@ Rules:
   the exact same table/slot is rejected, not a no-op.
 - **Checked selectors**: source/target selectors carry slot + expected
   incarnation; a stale selector never acts on a replacement occupant.
-- **Derivation allowlist**: `KeyTable`, `Frame` (added 2026-09-15), and
+- **Derivation allowlist**: `KeyTable`, `Frame`, and
   debug-gated `DebugConsole`. Frame CopyDerive produces an *unmapped* derived
   capability; Move preserves the mapping record; Delete of a mapped frame
   leaves the mapping in place (accepted-leak).
-- **Cross-table resolution** (2026-09-12): both the invoked table and the
+- **Cross-table resolution**: both the invoked table and the
   destination table are resolved through the caller's own table, so
   CopyDerive/Move can target a table other than the caller's.
 - Failed operations leave authority and accounting unchanged; Move rolls
@@ -94,7 +94,7 @@ flowchart TD
 
 ## Sidenotes
 
-- Authority split (2026-09-06): possession of an ordinary invocable object key
+- Authority split: possession of an ordinary invocable object key
   does not confer table-management authority; there is no manager-identity
   exception — the appropriate KeyTable capabilities and permissions are the
   general rule.
@@ -103,7 +103,7 @@ flowchart TD
   requesting prototype `Rights::all()`.
 - Deleting the last retirement-authorized capability need not retire the
   object — correct resource management is the OS's responsibility (accepted
-  leak, maintainer decision 2026-09-05).
+  leak).
 
 ## TODOs
 
@@ -136,8 +136,8 @@ flowchart TD
   userspace managers (D2 selection). The vault's kernel-side CDT conflicts with
   the selected no-kernel-derivation-tree direction.
 - Vault wiki: capabilities "sent via IPC" / "passed through messages" —
-  **gap**: capability transfer via IPC is designed (zero-or-one transfer slot,
-  2026-09-16) but unimplemented (Endpoint/Reply excluded sketches).
+  **gap**: capability transfer via IPC is designed (zero-or-one transfer
+  slot) but unimplemented (Endpoint/Reply excluded sketches).
 - Vault wiki: "number of slots in a KeyNode must be a power of two" and is
   user-chosen at Retype — **partial mismatch**: 256 slots is a fixed
   `NUM_SLOTS` constant; variable-size tables are not supported.

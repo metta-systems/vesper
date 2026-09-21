@@ -650,8 +650,7 @@ pub fn kickstart_run() -> ! {
     // The boot Thread is the first (index 0) allocation; make it current.
     nucleus.current_thread = Some(0);
 
-    // Allocate the boot AddressSpace (the protection/mapping context — the
-    // renamed VSpace kind, split from the former Domain 2026-09-21) and the
+    // Allocate the boot AddressSpace (the protection/mapping context) and the
     // boot Thread that executes in it; the Thread's KeyTable was carved and
     // initialized kernel-privately by build_initial_nucleus.
     let boot_as_id = nucleus
@@ -1331,8 +1330,7 @@ pub fn kickstart_run() -> ! {
             Err(CapError::TypeMismatch { .. })
         ));
 
-        // AddressSpace activation (2026-09-15 as `Domain.Activate`; moved to
-        // the AddressSpace kind 2026-09-21) through the real SVC path: before a
+        // AddressSpace activation through the real SVC path: before a
         // translation root exists, activation is rejected — there is no
         // hardware context to install. (A non-AddressSpace invoked key never
         // reaches the handler: dispatch selects the handler by the invoked
@@ -1755,8 +1753,7 @@ pub fn kickstart_run() -> ! {
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // Thread.Retire end-to-end (2026-09-19 as `Domain.Retire`; moved to
-        // the Thread kind 2026-09-21): the Thread-control teardown trigger —
+        // Thread.Retire end-to-end: the Thread-control teardown trigger —
         // cancel every pending record naming the target as waiter, purge its
         // queued wakeup, reclaim its pool slot — through the real SVC path
         // under `RETIRE` authority.
@@ -1874,10 +1871,10 @@ pub fn kickstart_run() -> ! {
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // AddressSpace.Retire end-to-end (2026-09-21): the address-space side
-        // of the former Domain teardown — whole-ASID invalidation, ASID
-        // release to the originating pool, root/ASID fields cleared, pool
-        // slot reclaimed — through the real SVC path under `RETIRE` authority.
+        // AddressSpace.Retire end-to-end: the address-space teardown —
+        // whole-ASID invalidation, ASID release to the originating pool,
+        // root/ASID fields cleared, pool slot reclaimed — through the real
+        // SVC path under `RETIRE` authority.
         // ─────────────────────────────────────────────────────────────────
         {
             // A fixture AddressSpace with its own root and ASID.

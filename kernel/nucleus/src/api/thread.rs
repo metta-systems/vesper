@@ -1,5 +1,4 @@
-//! `Thread.Retire`: teardown of a non-current Thread (selected 2026-09-19 as
-//! `Domain.Retire`; moved to the Thread kind 2026-09-21).
+//! `Thread.Retire`: teardown of a non-current Thread.
 //!
 //! Wire schema (see `doc/nucleus_capabilities.md`):
 //! - `Retire` `4`: no arguments (`x2..x7` zero). Tears down the invoked
@@ -47,8 +46,7 @@ pub fn invoke<A: ArchObjects>(
     }
 }
 
-/// `Retire` `4` (selected 2026-09-19; moved to the Thread kind 2026-09-21):
-/// tear down the invoked Thread.
+/// `Retire` `4`: tear down the invoked Thread.
 ///
 /// Teardown scope: cancel every pending record naming the Thread as waiter
 /// and purge its queued wakeup (`Nucleus::cancel_thread_pending`), then

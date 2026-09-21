@@ -12,8 +12,7 @@ use crate::objects::{ArchObjects, ObjectPool};
 /// themselves are Retype carves charged to the invoking Untyped.
 pub struct ArchPools<A: ArchObjects> {
     pub page_tables: ObjectPool<A::PageTable>,
-    /// Address spaces: the protection/mapping-context objects (the renamed
-    /// `VSpace` kind, split from the former `Domain` 2026-09-21). Boot-carved;
+    /// Address spaces: the protection/mapping-context objects. Boot-carved;
     /// not Retype-creatable yet.
     pub address_spaces: ObjectPool<A::AddressSpace>,
     /// ASID pools: boot-provided capability-protected namespace resources

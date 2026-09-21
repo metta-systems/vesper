@@ -23,7 +23,7 @@ workers to inspect a queue. Broadcast-style observation is served by
 | `1` | Wait | `x2` timeout (ns; `u64::MAX` = infinite; zero/finite invalid until the time subsystem exists); `x3..x7` zero | `RECV` | Pending bits in `x1` (consumed); blocks when none pending |
 | `2` | Poll | no arguments | `RECV` | Pending bits in `x1` (consumed), zero = none; never blocks |
 
-Signal-bits hybrid (selected 2026-09-16): a badged capability signals its
+Signal-bits hybrid: a badged capability signals its
 badge; an unbadged one (badge zero — what Retype installs) signals the
 caller-supplied argument. `NotificationKey::WAIT_INFINITE` (`u64::MAX`) is the
 userspace encoding of an infinite wait.
@@ -54,7 +54,7 @@ stateDiagram-v2
 - **Blocking path**: a would-block `Wait` returns `InvokeOutcome::Blocked`;
   the syscall entry parks the caller's exception frame and switches via the
   bounded runnable-thread scheduler; the resume delivers the completed
-  bitmap. Validated end-to-end (2026-09-18) by the debug-gated Bounce fixture
+  bitmap. Validated end-to-end by the debug-gated Bounce fixture
   in `just test-capability-boot`.
 - **Bounded queues**: the wait reservation is validated before admission — a
   full queue rejects with `PoolExhausted` before any record is registered,
@@ -64,7 +64,7 @@ stateDiagram-v2
   (`remove_waiter` + `PendingPool::teardown_waiter`) unqueues only the
   torn-down Thread's records, preserving FIFO order of the survivors, and is
   driven by `Thread.Retire` via `Nucleus::cancel_thread_pending`.
-- **Memory ordering** (selected 2026-09-18): kernel-mediated release/acquire
+- **Memory ordering** : kernel-mediated release/acquire
   — a `Signal` acts as a release on the caller's behalf; observing the
   bitmap (wakeup, satisfied wait, Poll) acts as an acquire. DMA/device writes
   are not covered.
@@ -109,5 +109,5 @@ stateDiagram-v2
   "waking workers to inspect a queue" composition; the kernel primitive
   exists, the IRQ half does not.
 - No vault note contradicts the one-consumer selection; the vault wiki does
-  not specify waiter-delivery policy, so the 2026-09-16 selection fills a
-  gap rather than diverging.
+  not specify waiter-delivery policy, so the selection fills a gap rather
+  than diverging.

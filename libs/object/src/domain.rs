@@ -11,8 +11,8 @@ use {
 // │  zero-syscall thread-scheduling state queries. The kernel   │
 // │  maintains DCBs, mapped read-only to the userspace           │
 // │  scheduler that the thread's owner granted visibility to     │
-// │  (Composite-style per-scheduler sharing, selected           │
-// │  2026-09-21 — no global export of every thread's state).    │
+// │  (Composite-style per-scheduler sharing — no global export    │
+// │  of every thread's state).                                   │
 // │                                                               │
 // │  KERNEL VIEW (RW)                      USER VIEW (RO)         │
 // │  ────────────────                      ───────────────        │
@@ -43,8 +43,8 @@ use {
 // == Public user interface, usable from userspace ==
 // ==================================================
 
-/// Thread identifier for DCB observation (named `DomainId` until D5 lands;
-// the DCB-observed entity is the Thread since the 2026-09-21 split).
+/// Thread identifier for DCB observation (the name migrates to Thread
+/// naming when D5 lands).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct DomainId(pub u32);
@@ -65,9 +65,8 @@ impl DomainId {
     }
 }
 
-// The former `DomainOp`/`DomainKey` wrappers moved to `thread.rs` (the
-// execution/scheduling remainder of the split Domain, 2026-09-21) and to
-// `address_space.rs` (the translation-root holder).
+// The thread mutation wrappers live in `thread.rs`; the translation-context
+// wrappers live in `address_space.rs`.
 
 // ═══════════════════════════════════════════════════════════════════
 // DOMAIN CONTROL BLOCK (DCB)

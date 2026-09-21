@@ -70,10 +70,9 @@ pub trait AsidPoolObject: NucleusObject {
     /// ASID 0 stays reserved for the kernel's boot context.
     fn allocate(&mut self) -> Option<u16>;
 
-    /// Release `asid` back to this pool (`AddressSpace.Retire`, selected
-    /// 2026-09-21). The caller performs the whole-ASID TLB invalidation
-    /// before releasing; ASID 0 is never released (it is the kernel's own
-    /// reserved boot context).
+    /// Release `asid` back to this pool (`AddressSpace.Retire`). The caller
+    /// performs the whole-ASID TLB invalidation before releasing; ASID 0 is
+    /// never released (it is the kernel's own reserved boot context).
     fn release(&mut self, asid: u16);
 }
 
@@ -95,8 +94,7 @@ pub trait PageTableObject: NucleusObject {
 }
 
 /// Behavior of an architecture's address-space object: the translation
-/// context state (mapping foundation, selected 2026-09-15; the kind was
-/// renamed from `VSpace` and activated 2026-09-21).
+/// context state (mapping foundation).
 pub trait AddressSpaceObject: NucleusObject {
     /// Physical address of the installed translation root, if any.
     fn translation_root(&self) -> Option<u64>;

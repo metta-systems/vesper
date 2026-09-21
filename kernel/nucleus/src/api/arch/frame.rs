@@ -29,9 +29,8 @@
 //! - `Remap` `3`: unsupported; origin-only remap authority remains open
 //!   (D4/D6). Returns a defined error rather than fake success.
 //!
-//! Carved tables become hardware-live through `AddressSpace.Activate`
-//! (selected 2026-09-15 as `Domain.Activate`; moved to the `AddressSpace` kind
-//! 2026-09-21), which installs the bound root into `TTBR0_EL1` with the
+//! Carved tables become hardware-live through `AddressSpace.Activate`, which
+//! installs the bound root into `TTBR0_EL1` with the
 //! bound ASID. The invalidation is executed whenever the owning `AddressSpace`
 //! has a bound ASID, and is observable on the live context: the boot test maps
 //! a frame, activates, reads through the mapping, unmaps (withdrawing the

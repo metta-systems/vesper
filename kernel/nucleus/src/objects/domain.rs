@@ -4,13 +4,10 @@ use {
     libobject::domain::{DcbPage, DomainControlBlock, DomainId, DomainState},
 };
 
-// The former kernel-private `Domain` object (keytable reference, translation
-// root, ASID, execution context) was split 2026-09-21: the execution/scheduling
-// remainder lives in `thread.rs` as `Thread`, and the translation-root/ASID
-// state lives in `arch/address_space.rs` as the `AddressSpace` arch object
-// (the renamed VSpace kind). This module keeps the DCB machinery — the
-// userspace-observable thread scheduling pages (D5; names unchanged until D5
-// lands).
+// This module keeps the DCB machinery — the userspace-observable thread
+// scheduling pages (D5; names unchanged until D5 lands). The execution object
+// is `Thread` (`thread.rs`); the translation-context object is `AddressSpace`
+// (`arch/address_space.rs`).
 
 // ## Memory Ordering Considerations
 //

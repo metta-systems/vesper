@@ -8,8 +8,7 @@
 
 ## Purpose
 
-A `Thread` is the execution/scheduling remainder of the former `Domain`
-(split 2026-09-21): the schedulable entity that holds a capability to its
+A `Thread` is the schedulable execution entity that holds a capability to its
 `AddressSpace` (the protection/mapping context — Vesper's VSpace equivalent)
 and to its `KeyTable` (its CSpace), plus the kernel-private execution state
 used to park and resume blocked callers. Thread capabilities authorize
@@ -19,13 +18,13 @@ control over that thread's lifecycle.
 
 | Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
 |---|---|---|---|---|
-| `0` | — | — | — | unassigned (the former `Domain.Activate` moved to `AddressSpace.Activate`); `InvalidOperation` |
+| `0` | — | — | — | unassigned; activation is `AddressSpace.Activate`; `InvalidOperation` |
 | `1` | Grant | — | — | `InvalidOperation` (unsupported; overlaps KeyTable delegation) |
 | `2` | Suspend | — | — | `InvalidOperation` (deferred, D7/D8) |
 | `3` | Resume | — | — | `InvalidOperation` (deferred, D7/D8) |
 | `4` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked Thread | zeros; tears down the invoked Thread |
 
-### Retire (selected 2026-09-19; moved to the Thread kind 2026-09-21)
+### Retire
 
 Tears down the invoked Thread:
 
@@ -65,9 +64,9 @@ validation with a defined error.
   wakeups first.
 - The user-visible half is the DCB (`DcbPages` manager, nanosecond time
   accounting). **DCBs are not yet connected to pool Threads** (D5); the
-  selected direction (2026-09-21) makes them thread scheduling pages
-  explicitly shared with the userspace scheduler (Composite-style), not a
-  global export of every thread's state.
+  selected direction makes them thread scheduling pages explicitly shared
+  with the userspace scheduler (Composite-style), not a global export of
+  every thread's state.
 - Retype cannot create a Thread (`InvalidObjectType`): bootstrap grants are
   the initial source of Thread capabilities, which is why `RETIRE` cannot
   originate from a memory carve.
@@ -78,7 +77,7 @@ validation with a defined error.
 
 - `RETIRE` is delegable like other capability permissions: retirement
   authorization follows capability permissions, not a privileged owner
-  identity (permission-based lifetime control, confirmed 2026-09-05).
+  identity (permission-based lifetime control).
 - A Thread executes in exactly one AddressSpace; resolving its
   `address_space` identity validates against the address-space pool, so a
   retired AddressSpace fails the next resolution with a defined error.
@@ -106,9 +105,9 @@ validation with a defined error.
   mechanism exists yet (Phase 7, D8).
 - `Memory.md` (vault): "arbitrary threads may execute" in a protection
   domain's address space (Mach/Mungi notes) — **now aligned in structure**:
-  the 2026-09-21 split separates the Thread (execution) from the
-  AddressSpace (protection context); multiple threads per address space
-  remains future work (one Thread per AddressSpace today).
+  the Thread (execution) is separate from the AddressSpace (protection
+  context); multiple threads per address space remains future work (one
+  Thread per AddressSpace today).
 - DCB observation ("protection domains … capabilities for accessing this
   memory from the outside", vault wiki) — **gap**: DCB pages exist and a
   manager is implemented, but they are not yet connected to pool Threads and

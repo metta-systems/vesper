@@ -27,9 +27,8 @@ pub enum ExecutionContext {
     Running,
 }
 
-/// The execution/scheduling remainder of the former `Domain` (split
-/// 2026-09-21): a core kind that holds a capability to its `AddressSpace`
-/// (the protection/mapping context) and to its `KeyTable` (the `CSpace`
+/// The schedulable execution entity: a core kind that holds a capability
+/// to its `AddressSpace` (the protection/mapping context) and to its `KeyTable` (the `CSpace`
 /// equivalent), plus the kernel-private execution state.
 ///
 /// The `DomainControlBlock` is user-visible and is defined in libobject.
@@ -51,8 +50,8 @@ pub struct Thread {
     /// (D5).
     pub keytable_addr: u64,
     /// The checked identity of this thread's `AddressSpace` (the
-    /// protection/mapping context — the renamed `VSpace` kind, split
-    /// 2026-09-21). A thread executes in exactly one address space;
+    /// protection/mapping context). A thread executes in exactly one address
+    /// space;
     /// resolution validates the identity against the address-space pool, so a
     /// retired address space fails here with a defined error.
     pub address_space: ObjectId,

@@ -11,9 +11,7 @@
 An `AddressSpace` is the protection/mapping-context boundary — Vesper's
 equivalent of seL4's VSpace (which is arch-side there too). It holds the
 translation root and the bound ASID: everything that makes a hardware
-translation context. It was created by the 2026-09-21 Domain split: the
-renamed `VSpace` kind, activated as the object that formerly was the
-Domain's mapping-context half. A [`Thread`](../core/thread.md) executes in
+translation context. A [`Thread`](../core/thread.md) executes in
 exactly one AddressSpace and references it through a checked pool identity.
 Sharing across protection boundaries uses frame capabilities mapped into
 each participant's own AddressSpace (distinct PTEs); sharing a translation
@@ -26,7 +24,7 @@ context would merge protection boundaries.
 | `0` | Activate | no arguments (all zero) | `MAP` on the invoked AddressSpace | zeros; installs the bound translation root + ASID into the current hardware translation context (`TTBR0_EL1`) |
 | `1` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked AddressSpace | zeros; tears down the invoked AddressSpace |
 
-### Activate (selected 2026-09-15 as `Domain.Activate`; moved 2026-09-21)
+### Activate
 
 Installs the invoked AddressSpace's bound translation root into the current
 hardware translation context. Preconditions: a translation root is installed
@@ -37,7 +35,7 @@ the same context. This is the translation-context step of activation only —
 full Thread Start/Suspend/Resume (initialized execution contexts, execution
 budget, EL0 entry) remains Phase 7 work.
 
-### Retire (selected 2026-09-21)
+### Retire
 
 Tears down the invoked AddressSpace:
 
@@ -113,8 +111,7 @@ rule).
   arrangements."
 - `Memory.md` (vault): "A passive address space … in which arbitrary threads
   may execute — a Protection Domain (PD)" (Mach/Mungi notes) — **structural
-  alignment**: the 2026-09-21 split makes the AddressSpace exactly the
-  passive protection context; "arbitrary threads" (multiple threads per
-  context) remains future work.
+  alignment**: the AddressSpace is exactly the passive protection context;
+  "arbitrary threads" (multiple threads per context) remains future work.
 - `Prototype.md` (vault): no VSpace kind in the sketch — superseded by the
   activated AddressSpace kind.

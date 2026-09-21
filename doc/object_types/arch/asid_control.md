@@ -8,14 +8,12 @@
 
 ## Purpose
 
-The `ASIDControl` kind (renamed from `ASID`, 2026-09-21) is the registered
+The `ASIDControl` kind is the registered
 placeholder for the capability-protected control point over the ASID
 namespace — the seL4 `ASIDControl` equivalent, the expected home for pool
 creation/partitioning. An ASID itself is a hardware naming value bound to an
 [`AddressSpace`](address_space.md), not an independently capabilitied
-object, so it must not be a wire type; the reserved `ASID` kind was replaced
-by `ASIDControl` at the same index. Under the selected ASID model
-(2026-09-15) the kind stays **reserved with no pool or handler**: an
+object, so there is no per-ASID capability kind. The kind stays **reserved with no pool or handler**: an
 AddressSpace's translation root receives an ASID through an authorized
 `ASIDPool.Assign` invocation directly, and no control operation is needed
 for that flow.

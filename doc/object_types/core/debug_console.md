@@ -54,8 +54,7 @@ flowchart TD
 ## Sidenotes
 
 Temporary debug-only leeway is not a safety or isolation guarantee. Known
-limitations, deliberately retained for now (maintainer decision 2026-09-05,
-scoped D4/D9):
+limitations, deliberately retained for now (scoped D4/D9):
 
 - The active caller is trusted EL1h boot code, not yet an EL0 domain;
   permitted origins are not classified.

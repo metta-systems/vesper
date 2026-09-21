@@ -18,11 +18,11 @@ impl Rights {
     /// execute is future work with EL0 entry (D6).
     pub const EXECUTE: u8 = 0x10;
 
-    /// Domain lifecycle control (selected 2026-09-19, D4): a `Domain.Retire`
-    /// invocation requires `RETIRE` on the invoked Domain capability.
+    /// Thread lifecycle control: a `Thread.Retire`
+    /// invocation requires `RETIRE` on the invoked Thread capability.
     /// Delegable like other capability permissions — retirement authority
     /// follows capability permissions, not a privileged owner identity.
-    /// Carving a Domain from Untyped stays unrepresentable (Retype rejects
+    /// Carving a Thread from Untyped stays unrepresentable (Retype rejects
     /// the kind), so bootstrap grants are the initial source of this right.
     pub const RETIRE: u8 = 0x20;
 

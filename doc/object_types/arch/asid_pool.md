@@ -61,7 +61,7 @@ flowchart TD
 
 - The `ASID` kind (wire `0x84`) stays reserved with no pool or handler:
   binding goes through `ASIDPool.Assign` directly (see [asid.md](asid.md)).
-- ASID release is `AddressSpace.Retire` (selected 2026-09-21): the whole-ASID
+- ASID release is `AddressSpace.Retire`: the whole-ASID
   invalidation runs first, then the ASID returns to its originating pool.
   `Thread.Retire` deliberately leaves the AddressSpace untouched. Hardware-safe
   ASID reuse and multi-pool partitioning remain open (D6).

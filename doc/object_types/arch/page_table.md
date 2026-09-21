@@ -82,14 +82,12 @@ descriptor still points at this table, then clears it.
 
 ## Sidenotes
 
-- The AddressSpace is the mapping context (selected 2026-09-15 as the
-  Domain; revised 2026-09-21 by the Domain split, which activated the
-  renamed `AddressSpace` arch kind as that object — see
+- The AddressSpace is the mapping context (see
   [address_space.md](address_space.md)).
 - Carved tables become hardware-live through `AddressSpace.Activate`, which
   installs the bound root into `TTBR0_EL1` with the bound ASID.
 - Gating TLB invalidation on live TTBR installation may be more efficient
-  once Thread scheduling exists (maintainer remark, 2026-09-15); today the
+  once Thread scheduling exists (maintainer remark); today the
   invalidation is executed whenever the owning AddressSpace has a bound ASID.
 
 ## TODOs

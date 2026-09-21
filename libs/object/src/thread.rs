@@ -15,12 +15,10 @@ use tests::{protected_call0, protected_call2};
 #[path = "../tests/support/thread.rs"]
 mod tests;
 
-/// `Thread` operations (the execution/scheduling remainder of the former
-/// `Domain`, split 2026-09-21).
+/// `Thread` operations (the schedulable execution entity).
 ///
-/// Operation `0` is unassigned: the former `Domain.Activate` moved to the
-/// `AddressSpace` kind (`AddressSpace.Activate` `0`). Do not silently reuse
-/// the freed number.
+/// Operation `0` is unassigned: activation is `AddressSpace.Activate` `0`
+/// on the `AddressSpace` kind. Do not silently reuse the number.
 #[repr(u8)]
 pub enum ThreadOp {
     Grant = 1,   // Grant a capability to this thread's table
@@ -45,8 +43,7 @@ impl TryFrom<u64> for ThreadOp {
 
 /// Thread capability — handle to an execution thread.
 /// State queries use the shared DCB (no syscall), mutations use `CapInvoke`.
-/// `Retire` is dispatched (2026-09-19 as `Domain.Retire`; moved to the Thread
-/// kind 2026-09-21): it tears a non-current Thread down under `RETIRE`
+/// `Retire` is dispatched: it tears a non-current Thread down under `RETIRE`
 /// authority. `Grant`, `Suspend`, and `Resume` remain unsupported by nucleus
 /// dispatch and their wrappers preserve the kernel's errors; they do not
 /// establish DCB mapping or lifetime.
@@ -140,8 +137,7 @@ impl ThreadKey {
     /// it as waiter, purge its queued wakeup — and reclaim its Thread-pool
     /// slot.
     ///
-    /// Wire schema (selected 2026-09-19; moved to the Thread kind 2026-09-21):
-    /// no arguments. Authority: `RETIRE` on the invoked Thread capability. The
+    /// Wire schema: no arguments. Authority: `RETIRE` on the invoked Thread capability. The
     /// current Thread may not retire itself (`InvalidOperation`): the caller
     /// must be a surviving Thread and this invocation returns normally.
     /// Never-returns self-retirement is recorded in the contract as wanted as

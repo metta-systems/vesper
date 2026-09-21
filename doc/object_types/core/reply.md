@@ -33,7 +33,7 @@ Invoking a Reply capability today returns `UnsupportedCoreType`.
   excluded sketch (caller + `Pending`/`Used`/`Cancelled` state machine) that
   does not compile as-is; `kernel/nucleus/src/api/reply.rs` holds an excluded
   handler sketch. Neither is wired into dispatch.
-- The selected model any implementation must follow (2026-09-16):
+- The selected model any implementation must follow:
   - A Call produces one-shot Reply authority associated with a particular
     **pending-invocation record** carrying a non-wrapping 64-bit generation
     (closed-wait identity) — never a bare slot number or domain index.
@@ -48,8 +48,7 @@ Invoking a Reply capability today returns `UnsupportedCoreType`.
 - The terminal-transition rule: reply, timeout, cancellation, and teardown
   compete for exactly one terminal transition of the pending record; losers
   observe a defined state.
-- Kind history: renumbered 9 → 8 when `Buffer` was removed from the catalogue
-  (2026-09-15). A wire value 8 decodes as `Reply`; there is no Buffer kind.
+- A wire value 8 decodes as `Reply`; there is no Buffer kind.
 
 ## Sidenotes
 

@@ -32,8 +32,8 @@ Invoking an Endpoint capability today returns `UnsupportedCoreType`.
 
 ## Kernel-level implementation details
 
-Nothing is active. The selected transport and completion model (2026-09-16)
-that any implementation must follow:
+Nothing is active. The selected transport and completion model that any
+implementation must follow:
 
 - **Register transport with hybrid spill**: small messages travel in syscall
   registers; a per-domain IPC buffer receives anything beyond register
@@ -87,7 +87,7 @@ model above (per-invocation pending records; explicit reply destinations).
 - Large-data IPC preferentially uses fbufs (shared frames at matching virtual
   addresses) rather than endpoint message copying; endpoints are for
   small-message rendezvous.
-- The staging decision (2026-09-16): the completion foundation plus
+- The staging decision: the completion foundation plus
   Notification/EventCount land first; Endpoint/Reply and the extended-return
   migration follow on the same foundation.
 

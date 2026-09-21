@@ -4,13 +4,11 @@ use {
 };
 
 /// Kernel state of one `AddressSpace` — the protection/mapping-context
-/// boundary (the renamed `VSpace` kind, split from the former `Domain`
-/// 2026-09-21; Vesper's equivalent of seL4's `VSpace`).
+/// boundary (Vesper's equivalent of seL4's `VSpace`).
 ///
 /// Holds the translation root and the bound ASID: everything that makes a
-/// hardware translation context. The execution/scheduling remainder of the
-/// former Domain lives in the core `Thread` object, which references its
-/// address space through a checked pool identity.
+/// hardware translation context. The executing `Thread` (a core object)
+/// references its address space through a checked pool identity.
 pub struct AArch64AddressSpace {
     /// Physical address of this address space's translation-root page table,
     /// if a root has been installed (mapping context, selected 2026-09-15).
@@ -27,8 +25,8 @@ pub struct AArch64AddressSpace {
     /// Unmap paths use the bound ASID to withdraw cached translations for
     /// exactly this context. `None` means no hardware context was ever
     /// established for the root, so no TLB invalidation is required.
-    /// `AddressSpace.Retire` (selected 2026-09-21) releases a bound ASID
-    /// back to its originating pool.
+    /// `AddressSpace.Retire` releases a
+    /// bound ASID back to its originating pool.
     pub asid: Option<u16>,
 }
 

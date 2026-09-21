@@ -1,7 +1,5 @@
 //! `AddressSpace.Activate`/`Retire`: hardware translation-context
-//! installation and address-space teardown (selected 2026-09-21; `Activate`
-//! was selected 2026-09-15 as `Domain.Activate` and moved to the `AddressSpace`
-//! kind with the Domain split).
+//! installation and address-space teardown.
 //!
 //! Wire schemas (see `doc/nucleus_capabilities.md`):
 //! - `Activate` `0`: no arguments (`x2..x7` zero). Installs the invoked
@@ -135,7 +133,7 @@ fn activate<A: ArchObjects>(
     Ok((0, 0))
 }
 
-/// `Retire` `1` (selected 2026-09-21): tear down the invoked `AddressSpace`.
+/// `Retire` `1`: tear down the invoked `AddressSpace`.
 ///
 /// Teardown scope: if an ASID is bound, execute the whole-ASID TLB
 /// invalidation, then release the ASID back to its originating pool (the

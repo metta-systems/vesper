@@ -56,7 +56,7 @@ The capability *is* the object: `FramePayload` is stored inline in the
 `size_bits`, and device/mapped flags. Frames are created by `Untyped.Retype`
 with an architecture-validated `size_bits`; the carved region is **zeroed
 (sanitized) by the kernel inside the retype transaction** before capability
-installation (selected 2026-09-15), so a fresh frame never carries prior-owner
+installation, so a fresh frame never carries prior-owner
 or kernel data.
 
 ```mermaid
@@ -124,9 +124,9 @@ flowchart TD
   note is a policy vision, not the current mechanism.
 - `API/fbufs.md` (vault): BufferCap over frames, same-address fbuf sharing,
   scatter-gather — **consistent as a userspace composition** over the frame
-  primitive (Buffer was deliberately removed from the kernel catalogue,
-  2026-09-15); none of the vault's higher-level patterns are implemented in
-  the kernel, by design.
+  primitive (Buffer is not a kernel object — a userspace/libOS construct
+  over frame capabilities); none of the vault's higher-level patterns are
+  implemented in the kernel, by design.
 - `Vesper Capabilities (from wiki).md` (vault): "protection domains …
   manipulation of default memory access rights and capabilities for
   accessing this memory from the outside" — **partially realized**: mapping

@@ -49,7 +49,7 @@ flowchart TD
 - **Broadcast wakeups**: an advance completes *every* queued `Await` whose
   target it satisfies, each resumed with the new value — the deliberate
   counterpart to Notification's one-consumer delivery.
-- **Overflow policy** (selected 2026-09-18): the counter never wraps and
+- **Overflow policy** : the counter never wraps and
   never saturates. An overflowing advance returns the shared
   `CounterOverflow` error (status 31, zero details), leaves the counter
   unchanged, and completes every queued `Await` with the same error so
@@ -59,14 +59,13 @@ flowchart TD
   `InvokeOutcome::Blocked`; the entry parks the caller and the resume
   delivers the terminal result — including error wakeups (status 31), since
   the completed pending record carries the full result shape (status + two
-  words). Validated end-to-end (2026-09-18) via the debug-gated Bounce
-  fixture.
+  words). Validated end-to-end via the debug-gated Bounce fixture.
 - **Bounded queues**: a full await queue rejects before admission
   (`PoolExhausted`) with no record to roll back.
 - **Teardown**: object teardown cancels queued waiters; domain teardown
   (`remove_waiter`) unqueues only the torn-down Thread's records, driven by
   `Thread.Retire`.
-- **Memory ordering** (selected 2026-09-18): kernel-mediated release/acquire
+- **Memory ordering** : kernel-mediated release/acquire
   — `Advance` is a release on the producer's behalf; observing the value
   (wakeup, satisfied await, Read) is an acquire. DMA/device writes excluded.
 
@@ -93,9 +92,8 @@ flowchart TD
   **consistent in intent**: the implemented EventCount is exactly the
   primitive that vault pattern needs. **Divergence in the surrounding
   design**: the vault's `BufferCap` kernel object does not exist — Buffer
-  was removed from the catalogue (2026-09-15) as a userspace/libOS construct
-  over frame capabilities; the fbuf composition is now frames +
-  EventCount caps, with no kernel Buffer kind.
+  is not a kernel catalogue kind (a userspace/libOS construct over frame
+  capabilities); the fbuf composition is frames + EventCount caps.
 - `Vesper.md` (vault): "efficient data passing between protection domains" —
   **half-realized**: the EventCount half of the fbuf pattern exists; the
   shared-frame mapping half exists (Frame.Map across Domains); the

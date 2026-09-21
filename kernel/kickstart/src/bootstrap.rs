@@ -69,8 +69,7 @@ pub struct PoolCapacities {
     /// Number of Thread slots in the initial Thread pool.
     pub threads: usize,
     /// Number of `AddressSpace` slots in the initial architecture address-space
-    /// pool. Address spaces are the protection/mapping-context objects (the
-    /// renamed `VSpace` kind, split from the former Domain 2026-09-21);
+    /// pool. Address spaces are the protection/mapping-context objects;
     /// boot-carved, not Retype-creatable yet.
     pub address_spaces: usize,
     /// Number of Notification slots in the initial Notification pool.

@@ -18,7 +18,8 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 ## Keep object-types documentation current
 
 - `doc/object_types/` is the per-kind user-facing reference and must be kept up to date as part of every capability refactor. When a refactor invalidates a per-kind document (kind split, rename, renumbering, operation/status change), replace the no-longer-valid content with new data; do not layer amendments, dated notes, or "formerly…" asides on top of stale documentation.
-- Update the catalogue tables, wire IDs, operation lists, and status columns in `doc/object_types/README.md` in the same slice as the code change. Documentation describing superseded behavior is a defect, not a historical record; the contract and the implementation plan carry the history.
+- **Documentation states the current contract only.** No selection dates, no "selected/moved/renamed from" history, no "formerly X" chains — a reader of the reference needs to know what a kind *is* and *does* now, not what it used to be called or when a decision was made. The contract (`doc/nucleus_capabilities.md`) and the implementation plan carry that history.
+- Update the catalogue tables, wire IDs, operation lists, and status columns in `doc/object_types/README.md` in the same slice as the code change. Documentation describing superseded behavior is a defect, not a historical record.
 
 ## No backwards compatibility
 
@@ -41,11 +42,11 @@ Check the documents' decision status and dependencies for the selected item:
 
 Resolve blocking decisions with the user before implementing dependent behavior. Present the concrete choice, consequences, and affected checklist item; never silently promote a proposal to an accepted contract. Present decision options as plain text in the conversation (markdown lists with lettered/named options), not via interactive input-request forms: the maintainer cannot read truncated option text in the selection UI and cannot make a choice there. Wait for the user's typed reply.
 
-For lifecycle and authority changes, consult the **CONFIRMED**, **INTERIM**, and **OPEN / DECISION REQUIRED** sections in `doc/lifetime-and-authority.md` and map them to D1–D9 above. Preserve the selected hostile-native-code confinement, capability-scoped trust, Domain = VSpace boundary, shared numerical meaning/cheap fbufs with protected-context fallback, no-intra-Domain-alias policy, incarnation, permission-based retirement, SPeCK-like KeyMaster, accepted-leak, Copy-not-Map, local-Unmap versus origin-cap-Revoke, and private mapping-guard directions. Revocation takes precedence over client borrows; unsafe mapped-memory caller obligations are the preferred direction, not a kernel safety exemption. Do not treat these as approval of remaining identity encodings, selective-revocation mechanisms, Frame Map/remap schemas, machine-local namespace conflicts, per-target enforcement, precise Rust/fbuf contracts, or completion ABIs. Use the seL4/Composite research in section 8 as evidence, not as permission to substitute unrelated semantics. Record new approved choices in the canonical contract first, then reconcile the analysis document and implementation plan.
+For lifecycle and authority changes, consult the **CONFIRMED**, **INTERIM**, and **OPEN / DECISION REQUIRED** sections in `doc/lifetime-and-authority.md` and map them to D1–D9 above. Preserve the selected hostile-native-code confinement, capability-scoped trust, AddressSpace = protection boundary (the core Thread executes in an arch AddressSpace), shared numerical meaning/cheap fbufs with protected-context fallback, no-intra-AddressSpace-alias policy, incarnation, permission-based retirement, SPeCK-like KeyMaster, accepted-leak, Copy-not-Map, local-Unmap versus origin-cap-Revoke, and private mapping-guard directions. Revocation takes precedence over client borrows; unsafe mapped-memory caller obligations are the preferred direction, not a kernel safety exemption. Do not treat these as approval of remaining identity encodings, selective-revocation mechanisms, Frame Map/remap schemas, machine-local namespace conflicts, per-target enforcement, precise Rust/fbuf contracts, or completion ABIs. Use the seL4/Composite research in section 8 as evidence, not as permission to substitute unrelated semantics. Record new approved choices in the canonical contract first, then reconcile the analysis document and implementation plan.
 
 Preserve the approved management authority split: KeyTable capabilities/rights authorize direct derivation, installation, and management; recipients also own the bookkeeping obligations and join the TCB of that libOS composition. Multiple managers or hierarchies are userspace policy. KeyMaster is a role, not a kernel-special singleton; do not add mandatory central post-hoc registration or reopen this settled choice. Remaining operation schemas, rights bits, and composition-specific synchronization/recovery are implementation work.
 
-Fbuf setup must establish suitable addresses for all participating Domains before mapping. Do not add multi-node global address allocation. Stronger temporal-VA quarantine/stale-pointer prevention is explicitly deferred; outside mechanisms prevent stale application accesses for now, and revoked addresses need not remain inaccessible for a surviving Domain's lifetime. Do not reintroduce that work as a current blocker or confuse its deferral with relaxing kernel memory safety, capability incarnation checks, hardware/TLB withdrawal, or safe physical-resource reuse.
+Fbuf setup must establish suitable addresses for all participating AddressSpaces before mapping. Do not add multi-node global address allocation. Stronger temporal-VA quarantine/stale-pointer prevention is explicitly deferred; outside mechanisms prevent stale application accesses for now, and revoked addresses need not remain inaccessible for a surviving Thread's lifetime. Do not reintroduce that work as a current blocker or confuse its deferral with relaxing kernel memory safety, capability incarnation checks, hardware/TLB withdrawal, or safe physical-resource reuse.
 
 ## Pick one incremental slice
 
@@ -62,7 +63,7 @@ Respect the plan's ordering and explicit prerequisites:
 1. Contracts, status audit, and decision approvals.
 2. Shared ABI and host-testability.
 3. Active console/syscall boundary.
-4. Guarded capability storage and domain lifetime.
+4. Guarded capability storage and thread lifetime.
 5. Memory vertical slice.
 6. Deferred completion first, then notifications/event counts and endpoint + reply.
 7. Time.
@@ -92,7 +93,7 @@ Respect the plan's ordering and explicit prerequisites:
 
 ## Safety requirements
 
-- Never fabricate lifetimes or references with unsafe code to bypass ownership or guard constraints; establish real backing-storage and domain lifetime guarantees. Consult `doc/lifetime-and-authority.md` sections 1–3 and 5–6 for slot/object/domain reuse, guarded access, and direct-memory/DCB hazards; thin fallible handles do not justify unguarded references.
+- Never fabricate lifetimes or references with unsafe code to bypass ownership or guard constraints; establish real backing-storage and thread lifetime guarantees. Consult `doc/lifetime-and-authority.md` sections 1–3 and 5–6 for slot/object/thread reuse, guarded access, and direct-memory/DCB hazards; thin fallible handles do not justify unguarded references.
 - Prevent rights amplification across lookup, derivation, transfer, and invocation; validate authority in the kernel regardless of wrapper types.
 - Preserve resources and ownership on pre-commit failure through validation/reservation and rollback. Where the approved contract permits irreversible partial completion, expose it explicitly with recoverable bookkeeping; never silently lose or duplicate resources.
 - Reject malformed or unsupported user input with defined errors, not panics, unchecked indexing, or fake success.

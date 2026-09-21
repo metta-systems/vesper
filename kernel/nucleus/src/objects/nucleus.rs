@@ -50,9 +50,8 @@ use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 pub struct NucleusPools<A: ArchObjects> {
     // ─── Core Object Pools ───
     // pub untypeds: ObjectPool<Untyped>,
-    /// Threads: the execution/scheduling remainder of the former Domain
-    /// (split 2026-09-21). Each Thread references its `AddressSpace` and its
-    /// carved `KeyTable`.
+    /// Threads: the schedulable execution entities. Each Thread references
+    /// its `AddressSpace` and its carved `KeyTable`.
     pub threads: ObjectPool<Thread>,
     /// Notification synchronization objects: pure kernel state, allocated by
     /// `Untyped.Retype` (allowlisted 2026-09-16) from this bootstrap-carved

@@ -40,12 +40,10 @@ ID never advertises implementation support.
 | Reply | `0x08` | [reply.md](core/reply.md) | Excluded sketch |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Debug-gated Write |
 
-IDs 9–126 are reserved. There is no `Buffer` wire kind (removed 2026-09-15;
-Buffer is a userspace/libOS construct over frame capabilities, and `Reply`
-took the freed ID 8). There is no `Domain` wire kind (removed by the
-2026-09-21 split: the execution/scheduling remainder became the core
-`Thread`, and the translation-root holder became the arch `AddressSpace` —
-the renamed VSpace kind; `KeyTable` moved 3 → 2 and `Thread` took 3).
+IDs 9–126 are reserved. There is no `Buffer` wire kind (Buffer is a
+userspace/libOS construct over frame capabilities) and no `Domain` wire kind
+(the execution entity is the core `Thread`; the mapping context is the arch
+`AddressSpace`).
 
 ### Architecture kinds (`arch/`)
 
@@ -72,7 +70,7 @@ Entry registers: `x0` packed caller-local key (incarnation in bits 63–32, slot
 in bits 31–0), `x1` operation number, `x2..x7` six operation arguments.
 Results: `x0` status (zero = success), `x1`/`x2` two result words (ordinary
 contract). Unused argument words are transmitted as zero and rejected when
-nonzero (strict wire-argument convention, selected 2026-09-15).
+nonzero (strict wire-argument convention).
 
 ```mermaid
 flowchart TD

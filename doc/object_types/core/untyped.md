@@ -22,10 +22,10 @@ authorized Untyped carve.
 |---|---|---|---|---|
 | `0` | Retype | `x2` object kind, `x3` `size_bits`, `x4` count, `x5` destination-table key, `x6` first destination slot, `x7` requested rights | `WRITE` on the invoked Untyped, `INSTALL` on the destination-table capability | First destination-local key in `x1`, zero in `x2`; remaining keys occupy consecutive slots |
 
-Batch semantics are **all-or-nothing** (selected 2026-09-13): every
-destination slot is pre-validated (range, vacancy, remaining incarnation
-capacity) before any object is initialized; any failure leaves the Untyped's
-accounting and the destination table unchanged.
+Batch semantics are **all-or-nothing**: every destination slot is
+pre-validated (range, vacancy, remaining incarnation capacity) before any
+object is initialized; any failure leaves the Untyped's accounting and the
+destination table unchanged.
 
 ### Creatable kinds and sizes
 
@@ -77,7 +77,7 @@ flowchart TD
   `KeyTable::advance_untyped_watermark` — a targeted mutation that changes
   only the watermark, never identity/rights/badge/incarnation.
 - The nucleus itself is boot-carved from a boot Untyped by Kickstart
-  (inert-nucleus handoff, 2026-09-12); the boot Untyped is granted at
+  (inert-nucleus handoff); the boot Untyped is granted at
   `KeySlot::BOOT_UNTYPED`.
 
 ## Sidenotes
@@ -87,11 +87,10 @@ flowchart TD
   unmapped.
 - Requested rights (`x7`) are installed on the created capabilities, subject to
   per-kind interpretation; Retype-origin capabilities carry delegable
-  lifetime-control permission (maintainer decision 2026-09-05).
+  lifetime-control permission.
 - Sanitization: the kernel zeroes Retype-carved Frame and PageTable contents
-  inside the transaction, before capability installation and watermark commit
-  (selected 2026-09-15), so a fresh object never leaks prior-owner or kernel
-  data.
+  inside the transaction, before capability installation and watermark
+  commit, so a fresh object never leaks prior-owner or kernel data.
 
 ## TODOs
 
