@@ -65,15 +65,15 @@ use {
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
     libobject::{
-        KeySlot, ObjectType, Rights,
-        domain::{DomainId, DomainKey},
+        KeySlot, ObjectType, Rights, address_space::AddressSpaceKey, domain::DomainId,
+        thread::ThreadKey,
     },
     libqemu::semihosting as semi,
     memory::BootAllocator,
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, Domain, ExecutionContext, KeyTable, Nucleus,
+            ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, Thread,
             access::{ObjectId, PoolTag},
             completion::PendingState,
         },
@@ -632,10 +632,13 @@ pub fn kickstart_run() -> ! {
     let Ok((nucleus_ptr, keytable_addr)) = build_initial_nucleus::<ArchObjectsImpl>(
         boot_payload,
         &PoolCapacities {
-            domains: 2,
+            threads: 2,
+            address_spaces: 3,
             notifications: 4,
             event_counts: 4,
-            page_tables: 16,
+            // 16 mapping-chain/exhaustion slots plus the two fixture roots of
+            // the AddressSpace.Retire test.
+            page_tables: 18,
             asid_pools: 1,
         },
     ) else {
@@ -644,26 +647,34 @@ pub fn kickstart_run() -> ! {
 
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.
     let nucleus = unsafe { &mut *nucleus_ptr };
-    // The boot Domain is the first (index 0) allocation; make it current.
-    nucleus.current_domain = Some(0);
+    // The boot Thread is the first (index 0) allocation; make it current.
+    nucleus.current_thread = Some(0);
 
-    // Allocate the boot Domain in the carved pool; its KeyTable was carved and
+    // Allocate the boot AddressSpace (the protection/mapping context — the
+    // renamed VSpace kind, split from the former Domain 2026-09-21) and the
+    // boot Thread that executes in it; the Thread's KeyTable was carved and
     // initialized kernel-privately by build_initial_nucleus.
-    let boot_domain_id = nucleus
+    let boot_as_id = nucleus
         .pools
-        .domains
-        .allocate(Domain {
+        .arch
+        .address_spaces
+        .allocate(ArchObjectsImpl::new_address_space())
+        .expect("no boot AddressSpace slot")
+        .0;
+    let boot_thread_id = nucleus
+        .pools
+        .threads
+        .allocate(Thread {
             keytable_addr,
-            translation_root: None,
-            asid: None,
+            address_space: boot_as_id,
             context: ExecutionContext::Running,
         })
-        .expect("no boot Domain slot")
+        .expect("no boot Thread slot")
         .0;
 
-    // Install the boot Domain's self-table capability, the boot Domain itself
-    // (the bootstrap-era mapping context for `PageTable.Map`/`Frame.Map`), and
-    // the boot Untyped as the first grants.
+    // Install the boot Thread's self-table capability, its AddressSpace
+    // (the bootstrap-era mapping context for `PageTable.Map`/`Frame.Map`),
+    // the boot Thread itself, and the boot Untyped as the first grants.
     // SAFETY: keytable_addr names the freshly carved, live boot KeyTable.
     let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
     let self_table_key = boot_table
@@ -679,12 +690,27 @@ pub fn kickstart_run() -> ! {
         .unwrap_or_else(|failure| {
             panic!("boot Untyped install failed: {:?}", failure.error.code())
         });
-    let _boot_domain_key = boot_table
+    let _boot_as_key = boot_table
         .insert(
-            KeySlot::SELF_DOMAIN,
-            KeyEntry::new::<Domain>(boot_domain_id, Rights::all(), 0),
+            KeySlot::SELF_ADDRESS_SPACE,
+            KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                boot_as_id,
+                Rights::all(),
+                0,
+            ),
         )
-        .unwrap_or_else(|failure| panic!("boot Domain install failed: {:?}", failure.error.code()));
+        .unwrap_or_else(|failure| {
+            panic!(
+                "boot AddressSpace install failed: {:?}",
+                failure.error.code()
+            )
+        });
+    let _boot_thread_key = boot_table
+        .insert(
+            KeySlot(50),
+            KeyEntry::new::<Thread>(boot_thread_id, Rights::all(), 0),
+        )
+        .unwrap_or_else(|failure| panic!("boot Thread install failed: {:?}", failure.error.code()));
 
     // Provision the boot ASID pool (seL4-style, selected 2026-09-15): ASIDs
     // are a hardware namespace, not memory-backed, so the pool is carved and
@@ -913,14 +939,14 @@ pub fn kickstart_run() -> ! {
         // Validation failures leave the Untyped and destination unchanged.
         assert!(matches!(
             untyped.retype(
-                ObjectType::DOMAIN,
+                ObjectType::THREAD,
                 0,
                 1,
                 &self_table,
                 KeySlot(6).0,
                 Rights::all(),
             ),
-            Err(CapError::InvalidObjectType(ObjectType::DOMAIN))
+            Err(CapError::InvalidObjectType(ObjectType::THREAD))
         ));
         assert!(matches!(
             untyped.retype(
@@ -1197,9 +1223,9 @@ pub fn kickstart_run() -> ! {
         // descriptor installation, mapping bookkeeping, and teardown.
         // ─────────────────────────────────────────────────────────────────
 
-        // The boot Domain capability (installed at the well-known self slot)
-        // is the bootstrap-era mapping context.
-        let boot_domain_key = RawKey::new(KeySlot::SELF_DOMAIN, 1);
+        // The boot AddressSpace capability (installed at the well-known self
+        // slot) is the bootstrap-era mapping context.
+        let boot_as_key = RawKey::new(KeySlot::SELF_ADDRESS_SPACE, 1);
 
         // PageTable Retype: a fixed 4 KiB carve; other size_bits are rejected
         // with the architecture's own error, leaving the slot free.
@@ -1287,71 +1313,75 @@ pub fn kickstart_run() -> ! {
             )
             .unwrap_or_else(|error| panic!("L3 PageTable Retype failed: {:?}", error.code()));
 
-        // Install the root into the boot Domain (vaddr must be zero).
+        // Install the root into the boot AddressSpace (vaddr must be zero).
         //
         // ASID binding (2026-09-15) through the real SVC path: before a
         // translation root exists, the assignment is rejected — an ASID binds
-        // to a Domain's root, not to the Domain in the abstract.
+        // to an AddressSpace's root, not to the AddressSpace in the abstract.
         let boot_asid_pool_key = RawKey::new(KeySlot::BOOT_ASID_POOL, 1);
         let boot_asid_pool = ASIDPoolKey::from_key(boot_asid_pool_key);
         assert!(matches!(
-            boot_asid_pool.assign(boot_domain_key),
+            boot_asid_pool.assign(boot_as_key),
             Err(CapError::NotMapped)
         ));
-        // A non-Domain target key is a type mismatch, not a lookup success.
+        // A non-AddressSpace target key is a type mismatch, not a lookup
+        // success.
         assert!(matches!(
             boot_asid_pool.assign(boot_untyped_key),
             Err(CapError::TypeMismatch { .. })
         ));
 
-        // Domain activation (2026-09-15) through the real SVC path: before a
+        // AddressSpace activation (2026-09-15 as `Domain.Activate`; moved to
+        // the AddressSpace kind 2026-09-21) through the real SVC path: before a
         // translation root exists, activation is rejected — there is no
-        // hardware context to install. (A non-Domain invoked key never reaches
-        // the Domain handler: dispatch selects the handler by the invoked
+        // hardware context to install. (A non-AddressSpace invoked key never
+        // reaches the handler: dispatch selects the handler by the invoked
         // key's own type.)
-        let boot_domain = DomainKey::from_key(boot_domain_key, DomainId(0));
-        assert!(matches!(boot_domain.activate(), Err(CapError::NotMapped)));
+        let boot_as = AddressSpaceKey::from_key(boot_as_key);
+        assert!(matches!(boot_as.activate(), Err(CapError::NotMapped)));
 
         let root_pt = PageTableKey::from_key(root_pt_key);
         root_pt
-            .map(boot_domain_key, 0)
+            .map(boot_as_key, 0)
             .unwrap_or_else(|error| panic!("root PageTable.Map failed: {:?}", error.code()));
-        // A second root is rejected: the Domain's root slot is occupied.
+        // A second root is rejected: the AddressSpace's root slot is occupied.
         assert!(matches!(
-            root_pt.map(boot_domain_key, 0),
+            root_pt.map(boot_as_key, 0),
             Err(CapError::AlreadyMapped)
         ));
         {
-            let domain = nucleus
+            let address_space = nucleus
                 .pools
-                .domains
+                .arch
+                .address_spaces
                 .get_live(0)
-                .unwrap_or_else(|| panic!("boot Domain missing"));
-            assert!(domain.translation_root.is_some());
+                .unwrap_or_else(|| panic!("boot AddressSpace missing"));
+            assert!(address_space.translation_root.is_some());
         }
 
         // A root without a bound ASID still establishes no hardware context.
-        assert!(matches!(boot_domain.activate(), Err(CapError::NotMapped)));
+        assert!(matches!(boot_as.activate(), Err(CapError::NotMapped)));
 
         // With a root installed, the assignment binds the lowest free ASID
         // (ASID 0 is reserved for the kernel's boot context, so the first
-        // grant is 1) and records it on the Domain.
+        // grant is 1) and records it on the AddressSpace.
         let bound_asid = boot_asid_pool
-            .assign(boot_domain_key)
+            .assign(boot_as_key)
             .unwrap_or_else(|error| panic!("ASIDPool.Assign failed: {:?}", error.code()));
         assert_eq!(bound_asid, 1);
         {
-            let domain = nucleus
+            let address_space = nucleus
                 .pools
-                .domains
+                .arch
+                .address_spaces
                 .get_live(0)
-                .unwrap_or_else(|| panic!("boot Domain missing"));
-            assert_eq!(domain.asid, Some(1));
+                .unwrap_or_else(|| panic!("boot AddressSpace missing"));
+            assert_eq!(address_space.asid, Some(1));
         }
-        // A second assignment to the same Domain is rejected: one ASID per
-        // translation context.
+        // A second assignment to the same AddressSpace is rejected: one ASID
+        // per translation context.
         assert!(matches!(
-            boot_asid_pool.assign(boot_domain_key),
+            boot_asid_pool.assign(boot_as_key),
             Err(CapError::AlreadyMapped)
         ));
 
@@ -1569,38 +1599,38 @@ pub fn kickstart_run() -> ! {
                 });
         }
 
-        // Allocate Bounce's Domain and queue it runnable: it starts only
-        // when the boot domain blocks.
-        let (bounce_id, _bounce_domain) = nucleus
+        // Allocate Bounce's Thread and queue it runnable: it starts only
+        // when the boot thread blocks. Bounce executes in the boot
+        // AddressSpace (fixture threads need no private translation context).
+        let (bounce_id, _bounce_thread) = nucleus
             .pools
-            .domains
-            .allocate(Domain {
+            .threads
+            .allocate(Thread {
                 keytable_addr: bounce_table_addr,
-                translation_root: None,
-                asid: None,
+                address_space: boot_as_id,
                 context: ExecutionContext::NotStarted {
                     pc: bounce_entry as *const () as u64,
                     stack_top: bounce_stack_top,
                 },
             })
-            .unwrap_or_else(|| panic!("no Bounce Domain slot"));
+            .unwrap_or_else(|| panic!("no Bounce Thread slot"));
         assert_eq!(bounce_id.index, 1);
         assert!(nucleus.scheduler.push(bounce_id.index));
 
-        // The boot domain blocks on N1: this SVC does not return — the
+        // The boot thread blocks on N1: this SVC does not return — the
         // kernel parks it, starts Bounce (which signals N1 and parks on N2),
-        // then resumes the boot domain with the delivered bitmap.
+        // then resumes the boot thread with the delivered bitmap.
         let received = NotificationKey::from_key(n1_key)
             .wait(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| {
                 panic!("blocking Notification.Wait failed: {:?}", error.code())
             });
         assert_eq!(received, BOUNCE_MAGIC_BITS);
-        // Bounce is parked on N2; the boot domain resumed with the bits.
+        // Bounce is parked on N2; the boot thread resumed with the bits.
         {
             let bounce = nucleus
                 .pools
-                .domains
+                .threads
                 .get_live(usize::from(bounce_id.index))
                 .unwrap_or_else(|| panic!("Bounce Domain missing"));
             assert!(matches!(bounce.context, ExecutionContext::Parked { .. }));
@@ -1718,24 +1748,25 @@ pub fn kickstart_run() -> ! {
         {
             let bounce = nucleus
                 .pools
-                .domains
+                .threads
                 .get_live(usize::from(bounce_id.index))
                 .unwrap_or_else(|| panic!("Bounce Domain missing"));
             assert!(matches!(bounce.context, ExecutionContext::Parked { .. }));
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // Domain.Retire end-to-end (2026-09-19): the Domain-control teardown
-        // trigger — cancel every pending record naming the target as waiter,
-        // purge its queued wakeup, reclaim its pool slot — through the real
-        // SVC path under `RETIRE` authority.
+        // Thread.Retire end-to-end (2026-09-19 as `Domain.Retire`; moved to
+        // the Thread kind 2026-09-21): the Thread-control teardown trigger —
+        // cancel every pending record naming the target as waiter, purge its
+        // queued wakeup, reclaim its pool slot — through the real SVC path
+        // under `RETIRE` authority.
         // ─────────────────────────────────────────────────────────────────
         {
             // Bounce is parked on N2 with a Waiting record: the canonical
-            // teardown state of a blocked Domain.
+            // teardown state of a blocked Thread.
             let ExecutionContext::Parked { record, .. } = nucleus
                 .pools
-                .domains
+                .threads
                 .get_live(usize::from(bounce_id.index))
                 .unwrap_or_else(|| panic!("Bounce Domain missing"))
                 .context
@@ -1748,30 +1779,30 @@ pub fn kickstart_run() -> ! {
             );
             assert_eq!(nucleus.pending.waiter(record).ok(), Some(bounce_id));
 
-            // Bootstrap grants: Bounce's Domain capability in the boot table,
+            // Bootstrap grants: Bounce's Thread capability in the boot table,
             // kernel-privately (like the boot console grant) — one with full
             // rights and one without `RETIRE`, so the authority check is
-            // observable through the real SVC path. Domain is not on the
+            // observable through the real SVC path. Thread is not on the
             // CopyDerive allowlist, so no public path could build these.
-            let (bounce_domain_key, unprivileged_bounce_key) = {
+            let (bounce_thread_key, unprivileged_bounce_key) = {
                 // SAFETY: keytable_addr names the live carved boot KeyTable.
                 let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
                 let full = boot_table
                     .insert(
                         KeySlot(38),
-                        KeyEntry::new::<Domain>(bounce_id, Rights::all(), 0),
+                        KeyEntry::new::<Thread>(bounce_id, Rights::all(), 0),
                     )
                     .unwrap_or_else(|failure| {
-                        panic!("Bounce Domain grant failed: {:?}", failure.error.code())
+                        panic!("Bounce Thread grant failed: {:?}", failure.error.code())
                     });
                 let limited = boot_table
                     .insert(
                         KeySlot(39),
-                        KeyEntry::new::<Domain>(bounce_id, Rights(Rights::READ), 0),
+                        KeyEntry::new::<Thread>(bounce_id, Rights(Rights::READ), 0),
                     )
                     .unwrap_or_else(|failure| {
                         panic!(
-                            "limited Bounce Domain grant failed: {:?}",
+                            "limited Bounce Thread grant failed: {:?}",
                             failure.error.code()
                         )
                     });
@@ -1781,7 +1812,7 @@ pub fn kickstart_run() -> ! {
             // Authority is explicit: a capability without `RETIRE` is
             // rejected before any teardown effect — Bounce stays parked.
             assert!(matches!(
-                DomainKey::from_key(unprivileged_bounce_key, DomainId(1)).retire(),
+                ThreadKey::from_key(unprivileged_bounce_key, DomainId(1)).retire(),
                 Err(CapError::InsufficientRights)
             ));
             assert_eq!(
@@ -1789,12 +1820,14 @@ pub fn kickstart_run() -> ! {
                 Some(PendingState::Waiting)
             );
 
-            // Self-retirement is rejected: the current Domain must survive
+            // Self-retirement is rejected: the current Thread must survive
             // its own invocation (never-returns self-retirement is recorded
             // in the contract as wanted follow-up) — and again nothing was
-            // torn down.
+            // torn down. The boot Thread's own capability (slot 40) is the
+            // invoked key.
+            let boot_thread_key = RawKey::new(KeySlot(50), 1);
             assert!(matches!(
-                DomainKey::from_key(boot_domain_key, DomainId(0)).retire(),
+                ThreadKey::from_key(boot_thread_key, DomainId(0)).retire(),
                 Err(CapError::InvalidOperation)
             ));
             assert_eq!(
@@ -1804,7 +1837,7 @@ pub fn kickstart_run() -> ! {
 
             // Retire Bounce through the real SVC path: the parked record is
             // cancelled and released, and no queued wakeup survives.
-            DomainKey::from_key(bounce_domain_key, DomainId(1))
+            ThreadKey::from_key(bounce_thread_key, DomainId(1))
                 .retire()
                 .unwrap_or_else(|error| panic!("Bounce Retire failed: {:?}", error.code()));
             assert!(nucleus.pending.is_empty());
@@ -1823,21 +1856,179 @@ pub fn kickstart_run() -> ! {
                 .unwrap_or_else(|error| panic!("post-retire Wait failed: {:?}", error.code()));
             assert_eq!(bits, 0b100);
 
-            // The retired Domain's pool slot is reclaimed and its capability
+            // The retired Thread's pool slot is reclaimed and its capability
             // is stale: the identity no longer resolves, and a further Retire
             // through the same capability fails with a defined error.
-            nucleus.pools.domains.validate(bounce_id).unwrap_err();
+            nucleus.pools.threads.validate(bounce_id).unwrap_err();
             assert!(
                 nucleus
                     .pools
-                    .domains
+                    .threads
                     .get_live(usize::from(bounce_id.index))
                     .is_none()
             );
             assert!(matches!(
-                DomainKey::from_key(bounce_domain_key, DomainId(1)).retire(),
+                ThreadKey::from_key(bounce_thread_key, DomainId(1)).retire(),
                 Err(CapError::InvalidOperation)
             ));
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // AddressSpace.Retire end-to-end (2026-09-21): the address-space side
+        // of the former Domain teardown — whole-ASID invalidation, ASID
+        // release to the originating pool, root/ASID fields cleared, pool
+        // slot reclaimed — through the real SVC path under `RETIRE` authority.
+        // ─────────────────────────────────────────────────────────────────
+        {
+            // A fixture AddressSpace with its own root and ASID.
+            let fixture_as_id = nucleus
+                .pools
+                .arch
+                .address_spaces
+                .allocate(ArchObjectsImpl::new_address_space())
+                .expect("no fixture AddressSpace slot")
+                .0;
+            assert_eq!(fixture_as_id.index, 1);
+            let fixture_as_key = {
+                // SAFETY: keytable_addr names the live carved boot KeyTable.
+                let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+                boot_table
+                    .insert(
+                        KeySlot(54),
+                        KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                            fixture_as_id,
+                            Rights::all(),
+                            0,
+                        ),
+                    )
+                    .unwrap_or_else(|failure| {
+                        panic!(
+                            "fixture AddressSpace grant failed: {:?}",
+                            failure.error.code()
+                        )
+                    })
+            };
+            let fixture_as = AddressSpaceKey::from_key(fixture_as_key);
+
+            // Retiring the current caller's own AddressSpace is rejected: the
+            // invocation must return to a surviving caller.
+            assert!(matches!(
+                AddressSpaceKey::from_key(boot_as_key).retire(),
+                Err(CapError::InvalidOperation)
+            ));
+
+            // A translation root must be torn down first: retire is rejected
+            // while one is installed.
+            let fixture_root_pt_key = untyped
+                .retype(
+                    ObjectType::PAGE_TABLE,
+                    12,
+                    1,
+                    &self_table,
+                    KeySlot(52).0,
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("fixture root PageTable Retype failed: {:?}", error.code())
+                });
+            PageTableKey::from_key(fixture_root_pt_key)
+                .map(fixture_as_key, 0)
+                .unwrap_or_else(|error| {
+                    panic!("fixture root PageTable.Map failed: {:?}", error.code())
+                });
+            let fixture_bound_asid =
+                boot_asid_pool
+                    .assign(fixture_as_key)
+                    .unwrap_or_else(|error| {
+                        panic!("fixture ASIDPool.Assign failed: {:?}", error.code())
+                    });
+            assert_eq!(
+                fixture_bound_asid, 2,
+                "the fixture binds the next free ASID"
+            );
+            assert!(matches!(
+                fixture_as.retire(),
+                Err(CapError::InvalidOperation)
+            ));
+
+            // Unmap the (empty) root, then retire: the ASID is released back
+            // to the boot pool and the pool slot is reclaimed.
+            PageTableKey::from_key(fixture_root_pt_key)
+                .unmap()
+                .unwrap_or_else(|error| {
+                    panic!("fixture root PageTable.Unmap failed: {:?}", error.code())
+                });
+            fixture_as.retire().unwrap_or_else(|error| {
+                panic!("fixture AddressSpace.Retire failed: {:?}", error.code())
+            });
+            nucleus
+                .pools
+                .arch
+                .address_spaces
+                .validate(fixture_as_id)
+                .unwrap_err();
+            // The retired AddressSpace's capability is stale: a further Retire
+            // fails with a defined error.
+            assert!(matches!(
+                fixture_as.retire(),
+                Err(CapError::InvalidOperation)
+            ));
+
+            // The released ASID is the next one granted: a third fixture
+            // AddressSpace with a fresh root binds ASID 2 again.
+            let rebind_as_id = nucleus
+                .pools
+                .arch
+                .address_spaces
+                .allocate(ArchObjectsImpl::new_address_space())
+                .expect("no rebind AddressSpace slot")
+                .0;
+            assert_eq!(rebind_as_id.index, 2);
+            let rebind_as_key = {
+                // SAFETY: keytable_addr names the live carved boot KeyTable.
+                let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+                boot_table
+                    .insert(
+                        KeySlot(55),
+                        KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                            rebind_as_id,
+                            Rights::all(),
+                            0,
+                        ),
+                    )
+                    .unwrap_or_else(|failure| {
+                        panic!(
+                            "rebind AddressSpace grant failed: {:?}",
+                            failure.error.code()
+                        )
+                    })
+            };
+            let rebind_root_pt_key = untyped
+                .retype(
+                    ObjectType::PAGE_TABLE,
+                    12,
+                    1,
+                    &self_table,
+                    KeySlot(53).0,
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("rebind root PageTable Retype failed: {:?}", error.code())
+                });
+            PageTableKey::from_key(rebind_root_pt_key)
+                .map(rebind_as_key, 0)
+                .unwrap_or_else(|error| {
+                    panic!("rebind root PageTable.Map failed: {:?}", error.code())
+                });
+            let rebound_asid = boot_asid_pool
+                .assign(rebind_as_key)
+                .unwrap_or_else(|error| {
+                    panic!("rebind ASIDPool.Assign failed: {:?}", error.code())
+                });
+            assert_eq!(
+                rebound_asid, 2,
+                "the retired AddressSpace's ASID was released back to the pool"
+            );
         }
 
         // Build the intermediate chain: L1 under the root, L2 under L1,
@@ -1865,7 +2056,7 @@ pub fn kickstart_run() -> ! {
         let frame = FrameKey::from_key(frame_key);
         assert!(matches!(
             frame.map(
-                boot_domain_key,
+                boot_as_key,
                 0x2000_0000,
                 Rights(Rights::READ | Rights::WRITE),
                 0
@@ -1875,7 +2066,7 @@ pub fn kickstart_run() -> ! {
         // A misaligned virtual address is rejected with the frame's size.
         assert!(matches!(
             frame.map(
-                boot_domain_key,
+                boot_as_key,
                 0x1000_0001,
                 Rights(Rights::READ | Rights::WRITE),
                 0
@@ -1885,7 +2076,7 @@ pub fn kickstart_run() -> ! {
         // Unsupported attributes are rejected.
         assert!(matches!(
             frame.map(
-                boot_domain_key,
+                boot_as_key,
                 0x1000_0000,
                 Rights(Rights::READ | Rights::WRITE),
                 1
@@ -1896,7 +2087,7 @@ pub fn kickstart_run() -> ! {
         // Real mapping: the walk installs the page descriptor at level 3.
         frame
             .map(
-                boot_domain_key,
+                boot_as_key,
                 0x1000_0000,
                 Rights(Rights::READ | Rights::WRITE),
                 0,
@@ -1905,7 +2096,7 @@ pub fn kickstart_run() -> ! {
         // A second mapping of the same capability is rejected.
         assert!(matches!(
             frame.map(
-                boot_domain_key,
+                boot_as_key,
                 0x1000_0000,
                 Rights(Rights::READ | Rights::WRITE),
                 0
@@ -1916,9 +2107,10 @@ pub fn kickstart_run() -> ! {
         // Verify the descriptor chain by hand through the direct map.
         let root_paddr = nucleus
             .pools
-            .domains
+            .arch
+            .address_spaces
             .get_live(0)
-            .unwrap_or_else(|| panic!("boot Domain missing"))
+            .unwrap_or_else(|| panic!("boot AddressSpace missing"))
             .translation_root
             .expect("translation root missing");
         {
@@ -1996,7 +2188,7 @@ pub fn kickstart_run() -> ! {
         // it; the error names the conflicting live mapping's physical base.
         assert!(matches!(
             FrameKey::from_key(derived_frame_key).map(
-                boot_domain_key,
+                boot_as_key,
                 0x1000_1000,
                 Rights(Rights::READ | Rights::WRITE),
                 0
@@ -2008,7 +2200,7 @@ pub fn kickstart_run() -> ! {
         // chain (a distinct slot, read-only).
         let large_frame = FrameKey::from_key(large_frame_key);
         large_frame
-            .map(boot_domain_key, 0x1020_0000, Rights(Rights::READ), 0)
+            .map(boot_as_key, 0x1020_0000, Rights(Rights::READ), 0)
             .unwrap_or_else(|error| panic!("2 MiB Frame.Map failed: {:?}", error.code()));
         {
             const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
@@ -2099,7 +2291,7 @@ pub fn kickstart_run() -> ! {
         for (block, vaddr) in low_block_keys.iter().zip([0_u64, 0x20_0000_u64]) {
             FrameKey::from_key(*block)
                 .map(
-                    boot_domain_key,
+                    boot_as_key,
                     vaddr,
                     Rights(Rights::READ | Rights::WRITE | Rights::EXECUTE),
                     0,
@@ -2141,11 +2333,11 @@ pub fn kickstart_run() -> ! {
         }
 
         // Activate through the real SVC path: the tables become hardware-live.
-        boot_domain
+        boot_as
             .activate()
-            .unwrap_or_else(|error| panic!("Domain.Activate failed: {:?}", error.code()));
+            .unwrap_or_else(|error| panic!("AddressSpace.Activate failed: {:?}", error.code()));
 
-        // A load from the mapped virtual address now walks the Domain's
+        // A load from the mapped virtual address now walks the AddressSpace's
         // tables: the marker written through the direct map must come back
         // through the level-3 page descriptor.
         // SAFETY: the activated translation context maps this virtual address
@@ -2188,7 +2380,7 @@ pub fn kickstart_run() -> ! {
         // stale cached entry would still serve the original frame's marker.
         FrameKey::from_key(second_frame_key)
             .map(
-                boot_domain_key,
+                boot_as_key,
                 0x1000_0000,
                 Rights(Rights::READ | Rights::WRITE),
                 0,
@@ -2229,7 +2421,7 @@ pub fn kickstart_run() -> ! {
         // walk must not reject the unrelated extent.
         FrameKey::from_key(derived_frame_key)
             .map(
-                boot_domain_key,
+                boot_as_key,
                 0x1000_1000,
                 Rights(Rights::READ | Rights::WRITE),
                 0,
@@ -2279,12 +2471,13 @@ pub fn kickstart_run() -> ! {
         // under the bound ASID was invalidated (tlbi aside1is + dsb/isb).
         assert!(matches!(root_pt.unmap(), Err(CapError::NotMapped)));
         {
-            let domain = nucleus
+            let address_space = nucleus
                 .pools
-                .domains
+                .arch
+                .address_spaces
                 .get_live(0)
-                .unwrap_or_else(|| panic!("boot Domain missing"));
-            assert_eq!(domain.translation_root, None);
+                .unwrap_or_else(|| panic!("boot AddressSpace missing"));
+            assert_eq!(address_space.translation_root, None);
         }
 
         // Page-table pool accounting: a batch that cannot fit releases its

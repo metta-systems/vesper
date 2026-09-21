@@ -1,56 +1,50 @@
 use {
-    crate::{CapError, Key, KeySlot, RawKey, decode_syscall_result},
     core::sync::atomic::{AtomicU32, AtomicU64, Ordering},
     libaddress::VirtAddr,
 };
 
-#[cfg(not(test))]
-use libsyscall::{protected_call0, protected_call2};
-#[cfg(test)]
-use tests::{protected_call0, protected_call2};
-
-#[cfg(test)]
-#[path = "../tests/support/domain.rs"]
-mod tests;
-
-// ┌─────────────────────────────────────────────────────────────────────┐
-// │                    DCB SHARED PAGES ARCHITECTURE                    │
-// ├─────────────────────────────────────────────────────────────────────┤
-// │                                                                     │
-// │  The DCB pages are the Nemesis-inspired mechanism for zero-syscall  │
-// │  domain state queries. The kernel maintains DCBs for all domains,   │
-// │  mapped read-only into user space.                                  │
-// │                                                                     │
-// │  KERNEL VIEW (RW)                      USER VIEW (RO)               │
-// │  ────────────────                      ───────────────              │
-// │                                                                     │
-// │  0xFFFF_0000_xxxx_xxxx                 0x7FFF_00xx_xxxx_xxxx        │
-// │  (kernel linear map)                   (user mapping)               │
-// │        │                                     │                      │
-// │        │    ┌─────────────────────┐          │                      │
-// │        └───►│  Physical DCB Page  │◄─────────┘                      │
-// │             │  ┌───────────────┐  │                                 │
-// │             │  │ DCB[0] 128B   │  │                                 │
-// │             │  ├───────────────┤  │                                 │
-// │             │  │ DCB[1] 128B   │  │                                 │
-// │             │  ├───────────────┤  │                                 │
-// │             │  │ DCB[2] 128B   │  │                                 │
-// │             │  ├───────────────┤  │                                 │
-// │             │  │ ...           │  │                                 │
-// │             │  ├───────────────┤  │                                 │
-// │             │  │ DCB[31] 128B  │  │                                 │
-// │             │  └───────────────┘  │                                 │
-// │             └─────────────────────┘                                 │
-// │                    4KB page                                         │
-// │                    32 DCBs per page                                 │
-// │                                                                     │
-// └─────────────────────────────────────────────────────────────────────┘
+// ┌─────────────────────────────────────────────────────────────────┐
+// │              DCB SHARED PAGES ARCHITECTURE                    │
+// ├─────────────────────────────────────────────────────────────┤
+// │                                                               │
+// │  The DCB pages are the Nemesis-inspired mechanism for        │
+// │  zero-syscall thread-scheduling state queries. The kernel   │
+// │  maintains DCBs, mapped read-only to the userspace           │
+// │  scheduler that the thread's owner granted visibility to     │
+// │  (Composite-style per-scheduler sharing, selected           │
+// │  2026-09-21 — no global export of every thread's state).    │
+// │                                                               │
+// │  KERNEL VIEW (RW)                      USER VIEW (RO)         │
+// │  ────────────────                      ───────────────        │
+// │                                                               │
+// │  0xFFFF_0000_xxxx_xxxx                 0x7FFF_00xx_xxxx_xxxx  │
+// │  (kernel linear map)                   (user mapping)         │
+// │        │                                     │                  │
+// │        │    ┌─────────────────────┐          │                  │
+// │        └───►│  Physical DCB Page  │◄─────────┘                  │
+// │             │  ┌───────────────┐  │                             │
+// │             │  │ DCB[0] 128B   │  │                             │
+// │             │  ├───────────────┤  │                             │
+// │             │  │ DCB[1] 128B   │  │                             │
+// │             │  ├───────────────┤  │                             │
+// │             │  │ DCB[2] 128B   │  │                             │
+// │             │  ├───────────────┤  │                             │
+// │             │  │ ...           │  │                             │
+// │             │  ├───────────────┤  │                             │
+// │             │  │ DCB[31] 128B  │  │                             │
+// │             │  └───────────────┘  │                             │
+// │             └─────────────────────┘                             │
+// │                    4KB page                                     │
+// │                    32 DCBs per page                             │
+// │                                                               │
+// └─────────────────────────────────────────────────────────────┘
 
 // ==================================================
 // == Public user interface, usable from userspace ==
 // ==================================================
 
-/// Domain identifier
+/// Thread identifier for DCB observation (named `DomainId` until D5 lands;
+// the DCB-observed entity is the Thread since the 2026-09-21 split).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct DomainId(pub u32);
@@ -58,7 +52,7 @@ pub struct DomainId(pub u32);
 impl DomainId {
     pub const INVALID: Self = Self(u32::MAX);
 
-    /// Get the page index for this domain's DCB
+    /// Get the page index for this thread's DCB
     #[inline]
     pub const fn page_index(&self) -> usize {
         (self.0 / DcbPage::DCBS_PER_PAGE) as usize
@@ -71,165 +65,9 @@ impl DomainId {
     }
 }
 
-#[repr(u8)]
-pub enum DomainOp {
-    Activate = 0, // Make domain runnable
-    Grant = 1,    // Grant capability to domain
-    Suspend = 2,  // Suspend domain
-    Resume = 3,   // Resume suspended domain
-    Retire = 4,   // Tear down: cancel pending, reclaim the pool slot
-}
-
-/// Domain capability - handle to a protection domain.
-/// State queries use shared DCB (no syscall), mutations use `CapInvoke`.
-/// `Activate` is dispatched (2026-09-15): it installs the Domain's bound
-/// translation root as the hardware translation context. `Retire` is
-/// dispatched (2026-09-19): it tears a non-current Domain down under `RETIRE`
-/// authority. `Grant`, `Suspend`, and `Resume` remain unsupported by nucleus
-/// dispatch and their wrappers preserve the kernel's errors; they do not
-/// establish DCB mapping or lifetime.
-///
-/// Implementation status: public construction is available since 2026-09-15
-/// for the mutation path (`from_key`), mirroring the other non-owning key
-/// wrappers. The safe observation methods still assume a valid DCB mapping
-/// and lifetime internally; a raw key alone cannot establish those
-/// prerequisites, so callers must not rely on them until DCB mapping is a
-/// supported operation (D5). Packed-key mutation encoding does not make
-/// these observation methods safe for arbitrary handles.
-pub struct DomainKey {
-    key: Key<DomainType>,
-    id: DomainId,
-}
-
-enum DomainType {}
-
-impl DomainKey {
-    /// Construct a non-owning handle without installing or validating
-    /// authority. The observation methods still require an established DCB
-    /// mapping and lifetime (see the type-level implementation-status note).
-    pub const fn from_key(key: RawKey, id: DomainId) -> Self {
-        Self {
-            key: Key::new(key),
-            id,
-        }
-    }
-
-    // Create a new domain from untyped memory.
-    // Convenience wrapper around UntypedRetype.
-    // pub fn create(untyped: &mut UntypedCap, dest_slot: KeySlot) -> Result<Self, Error> {
-    //     // Domains need ~4KB (12 bits) for kernel structures
-    //     untyped.retype(
-    //         untyped.split(12)?, // Carve off 4KB
-    //         ObjectType::Domain,
-    //         12,
-    //         dest_slot,
-    //     )?;
-    //
-    //     // Domain ID is returned in secondary return value
-    //     // (or we query it from the newly created DCB)
-    //     Ok(DomainKey {
-    //         cap: Cap::new(dest_slot),
-    //         id: DomainId(0),
-    //     })
-    // }
-
-    /// Get domain state from shared DCB
-    #[inline]
-    pub fn state(&self) -> DomainState {
-        // SAFETY: Unsafe call.
-        let dcb_view = unsafe { DcbView::from_user_mapping() };
-        let dcb = dcb_view.get(self.id).expect("oh well");
-        DomainState::try_from(dcb.state.load(Ordering::Acquire)).unwrap_or(DomainState::Inactive)
-    }
-
-    /// Get time used from shared DCB
-    #[inline]
-    pub fn time_used_ns(&self) -> u64 {
-        // SAFETY: Unsafe call.
-        let dcb_view = unsafe { DcbView::from_user_mapping() };
-        let dcb = dcb_view.get(self.id).expect("oh well");
-        dcb.time_consumed_ns.load(Ordering::Relaxed)
-    }
-
-    /// Get pending notifications from shared DCB (NO SYSCALL!)
-    #[inline]
-    pub fn pending_notifications(&self) -> u64 {
-        // SAFETY: Unsafe call.
-        let dcb_view = unsafe { DcbView::from_user_mapping() };
-        let dcb = dcb_view.get(self.id).expect("oh well");
-        dcb.pending_notifications.load(Ordering::Relaxed)
-    }
-
-    /// Activate domain: install its bound translation root as the current
-    /// hardware translation context (requires syscall).
-    ///
-    /// Wire schema (selected 2026-09-15): no arguments. The Domain must have
-    /// a translation root installed and an ASID bound (`NotMapped` otherwise)
-    /// and must be the current Domain (`InvalidOperation` otherwise).
-    /// Authority: `MAP` on the Domain capability. This is the
-    /// translation-context installation step of activation only; full
-    /// Activate/Suspend/Resume with execution contexts and budget remains
-    /// Phase 7 work.
-    pub fn activate(&self) -> Result<(), CapError> {
-        // SAFETY: Unsafe call.
-        let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Activate as u64) };
-        decode_syscall_result(response).map(|_| ())
-    }
-
-    /// Grant a capability to this domain
-    ///
-    /// Implementation status: the kernel operation remains excluded. This carries
-    /// the source incarnation and a vacant destination slot, not an installation
-    /// or an approved replacement for `KeyTable` delegation.
-    pub fn grant<T>(&self, key: &Key<T>, dest_slot: KeySlot) -> Result<(), CapError> {
-        // SAFETY: Unsafe call.
-        let response = unsafe {
-            protected_call2(
-                self.key.to_wire(),
-                DomainOp::Grant as u64,
-                key.to_wire(),
-                u64::from(dest_slot.0),
-            )
-        };
-        decode_syscall_result(response).map(|_| ())
-    }
-
-    /// Suspend domain - requires syscall
-    pub fn suspend(&self) -> Result<(), CapError> {
-        // SAFETY: Unsafe call.
-        let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Suspend as u64) };
-        decode_syscall_result(response).map(|_| ())
-    }
-
-    /// Resume suspended domain - requires syscall
-    pub fn resume(&self) -> Result<(), CapError> {
-        // SAFETY: Unsafe call.
-        let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Resume as u64) };
-        decode_syscall_result(response).map(|_| ())
-    }
-
-    /// Retire this domain: tear it down — cancel every pending record naming
-    /// it as waiter, purge its queued wakeup — and reclaim its Domain-pool
-    /// slot.
-    ///
-    /// Wire schema (selected 2026-09-19): no arguments. Authority: `RETIRE`
-    /// on the invoked Domain capability. The current Domain may not retire
-    /// itself (`InvalidOperation`): the caller must be a surviving Domain and
-    /// this invocation returns normally. Never-returns self-retirement is
-    /// recorded in the contract as wanted as soon as feasible (it needs
-    /// terminal entry-path work); until then a Domain's final exit is
-    /// userspace policy.
-    ///
-    /// Subsequent invocations of the retired Domain's capabilities fail pool
-    /// validation with a defined error. Carved backing (keytable, kernel
-    /// stack) stays leaked per accepted-leak; a bound ASID stays allocated
-    /// (D6); the DCB is untouched (D5).
-    pub fn retire(&self) -> Result<(), CapError> {
-        // SAFETY: Unsafe call.
-        let response = unsafe { protected_call0(self.key.to_wire(), DomainOp::Retire as u64) };
-        decode_syscall_result(response).map(|_| ())
-    }
-}
+// The former `DomainOp`/`DomainKey` wrappers moved to `thread.rs` (the
+// execution/scheduling remainder of the split Domain, 2026-09-21) and to
+// `address_space.rs` (the translation-root holder).
 
 // ═══════════════════════════════════════════════════════════════════
 // DOMAIN CONTROL BLOCK (DCB)

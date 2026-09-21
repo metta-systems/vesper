@@ -85,7 +85,7 @@ pub fn invoke<A: ArchObjects>(
             let mut notification =
                 access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
             // One-consumer delivery: the front waiter's record completes
-            // with the delivered bitmap and its domain becomes runnable.
+            // with the delivered bitmap and its thread becomes runnable.
             if let Some(record) = notification.signal(bits, &mut nucleus.pending)? {
                 wake_waiter(nucleus, record)?;
             }

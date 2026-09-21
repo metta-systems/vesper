@@ -358,7 +358,7 @@ mod tests {
 
     fn waiter(index: u16) -> ObjectId {
         ObjectId {
-            pool: PoolTag::Domain,
+            pool: PoolTag::Thread,
             index,
             generation: 1,
         }

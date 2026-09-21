@@ -19,7 +19,7 @@ mod tests;
 /// Userspace handle to an `ASIDPool` capability.
 ///
 /// Nucleus dispatch supports `Assign`: binding an ASID from this pool to a
-/// Domain's translation root.
+/// `AddressSpace`'s translation root.
 pub struct ASIDPoolKey {
     key: Key<ASIDPoolType>,
 }
@@ -30,9 +30,9 @@ enum ASIDPoolType {}
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ASIDPoolOp {
-    /// Assign an ASID from this pool to the target Domain's translation root.
-    /// The Domain must have a root installed and no ASID yet; the pool
-    /// capability requires `GRANT` and the Domain capability `MAP`.
+    /// Assign an ASID from this pool to the target `AddressSpace`'s translation
+    /// root. The `AddressSpace` must have a root installed and no ASID yet; the
+    /// pool capability requires `GRANT` and the `AddressSpace` capability `MAP`.
     Assign = 0,
 }
 
@@ -66,21 +66,21 @@ impl ASIDPoolKey {
         self.key.to_wire()
     }
 
-    /// Assign an ASID from this pool to `domain`'s translation root.
+    /// Assign an ASID from this pool to `address_space`'s translation root.
     ///
-    /// Wire schema (selected 2026-09-15): `x2` target `Domain` key,
+    /// Wire schema (selected 2026-09-15): `x2` target `AddressSpace` key,
     /// `x3..x7` zero. Success returns the assigned ASID in `x1` and zero in
-    /// `x2`. The Domain must have a translation root installed (`NotMapped`
+    /// `x2`. The `AddressSpace` must have a translation root installed (`NotMapped`
     /// otherwise) and no ASID yet (`AlreadyMapped` otherwise); pool
     /// exhaustion is `ASIDPoolExhausted`. Authority: `GRANT` on this pool
-    /// capability, `MAP` on the Domain capability.
-    pub fn assign(&self, domain: RawKey) -> Result<u16, CapError> {
+    /// capability, `MAP` on the `AddressSpace` capability.
+    pub fn assign(&self, address_space: RawKey) -> Result<u16, CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
         let result = unsafe {
             protected_call6(
                 self.key.to_wire(),
                 ASIDPoolOp::Assign as u64,
-                domain.to_wire(),
+                address_space.to_wire(),
                 0,
                 0,
                 0,

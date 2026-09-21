@@ -32,8 +32,8 @@
 // │  VARIANT C: Inline Frame (mapping record)    │
 // │    paddr: u64                 (8 bytes)       │
 // │    vaddr: u64  → mapped virtual address      │
-// │    domain_index: u16          (2 bytes)       │
-// │    domain_generation: u32      (4 bytes)       │
+// │    as_index: u16              (2 bytes)       │
+// │    as_generation: u32         (4 bytes)       │
 // │    size_bits: u8              (1 byte)       │
 // │    flags: u8   → is_device | mapped          │
 // │                                              │
@@ -93,8 +93,8 @@ pub struct RegionPayload {
 ///
 /// Mapping identity must contain enough information to locate and retire the
 /// real mapping (translation context and full virtual address), so a frame
-/// records its mapping as a dedicated record — the owning Domain's checked
-/// identity and the complete virtual address — rather than a compressed
+/// records its mapping as a dedicated record — the owning `AddressSpace`'s
+/// checked identity and the complete virtual address — rather than a compressed
 /// address squeezed into a shared state field. Each frame capability tracks
 /// its own single mapping (seL4-style); a derived copy starts unmapped.
 #[repr(C)]
@@ -104,10 +104,12 @@ pub struct FramePayload {
     pub paddr: u64,
     /// Mapped virtual address; meaningful only while the mapped flag is set.
     pub vaddr: u64,
-    /// Owning Domain allocation generation; meaningful only while mapped.
-    pub domain_generation: u32,
-    /// Owning Domain pool index; meaningful only while the mapped flag is set.
-    pub domain_index: u16,
+    /// Owning `AddressSpace` allocation generation; meaningful only while
+    /// mapped.
+    pub as_generation: u32,
+    /// Owning `AddressSpace` pool index; meaningful only while the mapped
+    /// flag is set.
+    pub as_index: u16,
     /// Size as log2 (frame = `2^size_bits`).
     pub size_bits: u8,
     /// Flag bits: bit 0 `is_device`, bit 1 `mapped`.
@@ -123,8 +125,8 @@ const FRAME_MAPPED: u8 = 1 << 1;
 /// hardware descriptor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameMapping {
-    /// The mapping context: the owning Domain's checked identity.
-    pub domain: ObjectId,
+    /// The mapping context: the owning `AddressSpace`'s checked identity.
+    pub address_space: ObjectId,
     /// The complete mapped virtual address.
     pub vaddr: u64,
 }
@@ -154,7 +156,7 @@ union KeyPayload {
     null: [u8; 24],
 }
 
-/// A single entry in a domain's capability table (`KeyTable`).
+/// A single entry in a thread's capability table (`KeyTable`).
 ///
 /// 28 bytes used in a 32-byte aligned slot.
 /// Discriminated union: `obj_type` selects the payload variant.
@@ -251,8 +253,8 @@ impl KeyEntry {
                 frame: FramePayload {
                     paddr,
                     vaddr: 0,
-                    domain_index: 0,
-                    domain_generation: 0,
+                    as_index: 0,
+                    as_generation: 0,
                     size_bits,
                     flags: if is_device { FRAME_IS_DEVICE } else { 0 },
                 },
@@ -532,23 +534,23 @@ impl FramePayload {
     #[inline]
     pub fn mapping(&self) -> Option<FrameMapping> {
         self.is_mapped().then_some(FrameMapping {
-            domain: ObjectId {
-                pool: PoolTag::Domain,
-                index: self.domain_index,
-                generation: self.domain_generation,
+            address_space: ObjectId {
+                pool: PoolTag::AddressSpace,
+                index: self.as_index,
+                generation: self.as_generation,
             },
             vaddr: self.vaddr,
         })
     }
 
-    /// Record that this frame cap was mapped into `domain` at `vaddr`.
+    /// Record that this frame cap was mapped into `address_space` at `vaddr`.
     /// The vaddr must be aligned to the frame size.
     #[inline]
-    pub fn set_mapped(&mut self, domain: ObjectId, vaddr: u64) {
-        debug_assert_eq!(domain.pool, PoolTag::Domain);
+    pub fn set_mapped(&mut self, address_space: ObjectId, vaddr: u64) {
+        debug_assert_eq!(address_space.pool, PoolTag::AddressSpace);
         debug_assert_eq!(vaddr & (self.size() as u64 - 1), 0);
-        self.domain_index = domain.index;
-        self.domain_generation = domain.generation;
+        self.as_index = address_space.index;
+        self.as_generation = address_space.generation;
         self.vaddr = vaddr;
         self.flags |= FRAME_MAPPED;
     }
@@ -558,7 +560,7 @@ impl FramePayload {
     pub fn clear_mapped(&mut self) {
         self.flags &= !FRAME_MAPPED;
         self.vaddr = 0;
-        self.domain_index = 0;
-        self.domain_generation = 0;
+        self.as_index = 0;
+        self.as_generation = 0;
     }
 }

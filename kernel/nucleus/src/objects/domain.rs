@@ -1,93 +1,16 @@
 use {
-    crate::objects::{NucleusObject, access::ObjectId},
-    core::{ptr::NonNull, sync::atomic::Ordering},
+    core::sync::atomic::Ordering,
     libaddress::{PhysAddr, VirtAddr},
-    libobject::{
-        ObjectType,
-        domain::{DcbPage, DomainControlBlock, DomainId, DomainState},
-    },
+    libobject::domain::{DcbPage, DomainControlBlock, DomainId, DomainState},
 };
 
-// ====================
-// == Nucleus object ==
-// ====================
-
-/// Kernel-private execution context of a Domain (completion foundation,
-/// 2026-09-16).
-///
-/// This records only what the kernel needs to stop and later resume the
-/// domain's execution; the saved register state itself lives in the
-/// exception frame on the domain's kernel stack (see `vectors.S`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExecutionContext {
-    /// The domain has never run: start it at `pc` with a full-descending
-    /// kernel stack whose top is `stack_top`.
-    NotStarted { pc: u64, stack_top: u64 },
-    /// Blocked: the saved exception frame lives at `frame_addr` on the
-    /// domain's kernel stack, and the invocation is parked on the
-    /// pending-invocation `record`.
-    Parked { frame_addr: u64, record: ObjectId },
-    /// Currently executing, or a fixture domain with no execution context:
-    /// no saved state to restore.
-    Running,
-}
-
-/// This is a nucleus-visible half of domain structure.
-/// The `DomainControlBlock` is user-visible and is defined in libobject.
-pub struct Domain {
-    // ═══════════════════════════════════════════════════════════
-    // PRIVATE SECTION (kernel only, NOT mapped to userspace)
-    // ═══════════════════════════════════════════════════════════
-    //
-    // This would be in a separate structure or after a page boundary
-    // - Saved register context
-    // - Capability space (keytable)
-    // - Kernel stack pointer
-    // - Etc.
-    /// Kernel address of this domain's capability table (a carved `KeyTable`).
-    ///
-    /// The table is a Retype-created carved object, resolved through the
-    /// guarded `Access` context (see `doc/lifetime-and-authority.md` §3).
-    /// Placement of the table capability in the DCB's fixed slots is follow-up
-    /// (D5).
-    pub keytable_addr: u64,
-    /// Physical address of this Domain's translation-root page table, if a
-    /// root has been installed (mapping context, selected 2026-09-15).
-    ///
-    /// The root is a Retype-carved `PageTable` installed through
-    /// `PageTable.Map` with this Domain's capability as the parent. The field
-    /// records the table's physical address so the hardware walk can be
-    /// reached through the direct map.
-    pub translation_root: Option<u64>,
-    /// The hardware ASID bound to this Domain's translation root, if any
-    /// (selected 2026-09-15: capability-protected `ASIDPool` resources with
-    /// authorized `ASIDPool.Assign` binding).
-    ///
-    /// Unmap paths use the bound ASID to withdraw cached translations for
-    /// exactly this Domain's context. `None` means no hardware context was
-    /// ever established for the root, so no TLB invalidation is required.
-    pub asid: Option<u16>,
-    /// Execution context for stopping and resuming this Domain (blocked
-    /// callers park here; never-run domains carry their first-start entry).
-    pub context: ExecutionContext,
-}
-
-// Verify size for cache alignment
-// TODO const _: () = assert!(core::mem::size_of::<Domain>() == 4096);
-
-impl NucleusObject for Domain {
-    const TYPE: ObjectType = ObjectType::DOMAIN;
-    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::Domain;
-}
-
-impl Domain {
-    // Initialize new domain's cspace
-    // fn init_cspace(&mut self) {
-    //     // Slot 0: capability to this captbl itself
-    //     self.cspace[CAPTBL_SELF] = Cap::new(ObjectType::KeyTable, self.cspace_id);
-    //     // Now domain can manipulate its own caps
-    // }
-}
+// The former kernel-private `Domain` object (keytable reference, translation
+// root, ASID, execution context) was split 2026-09-21: the execution/scheduling
+// remainder lives in `thread.rs` as `Thread`, and the translation-root/ASID
+// state lives in `arch/address_space.rs` as the `AddressSpace` arch object
+// (the renamed VSpace kind). This module keeps the DCB machinery — the
+// userspace-observable thread scheduling pages (D5; names unchanged until D5
+// lands).
 
 // ## Memory Ordering Considerations
 //

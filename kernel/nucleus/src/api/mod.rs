@@ -7,11 +7,11 @@ use {
 pub mod arch;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
-pub mod domain;
 pub mod event_count;
 pub mod key_entry;
 pub mod key_table;
 pub mod notification;
+pub mod thread;
 pub mod untyped;
 
 pub use key_entry::KeyEntry;
@@ -86,18 +86,18 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     }
 }
 
-/// Address of the current domain's capability table (a carved `KeyTable`).
+/// Address of the current thread's capability table (a carved `KeyTable`).
 ///
 /// Resolved as an owned value (not a borrowed reference) so the caller can
-/// also borrow the domain pool; the domain and `KeyTable` storage are disjoint.
+/// also borrow the thread pool; the thread and `KeyTable` storage are disjoint.
 fn caller_table_addr<A: ArchObjects>(nucleus: &Nucleus<A>) -> Result<u64, CapError> {
-    let index = nucleus.current_domain.ok_or(CapError::InvalidDomain)?;
+    let index = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
     nucleus
         .pools
-        .domains
+        .threads
         .get_live(usize::try_from(index).ok().ok_or(CapError::InvalidDomain)?)
         .ok_or(CapError::InvalidDomain)
-        .map(|domain| domain.keytable_addr)
+        .map(|thread| thread.keytable_addr)
 }
 
 /// Core object dispatch
@@ -130,8 +130,8 @@ fn core_invoke<A: ArchObjects>(
             crate::api::debug_console::invoke(entry, op, args[0], args[1])
                 .map(InvokeOutcome::Complete)
         }
-        CoreType::Domain => {
-            crate::api::domain::invoke(access, caller_table_addr, key, op, args, nucleus)
+        CoreType::Thread => {
+            crate::api::thread::invoke(access, caller_table_addr, key, op, args, nucleus)
                 .map(InvokeOutcome::Complete)
         }
 
@@ -166,18 +166,18 @@ fn core_invoke<A: ArchObjects>(
     }
 }
 
-/// Mark the domain of a completed record runnable.
+/// Mark the thread of a completed record runnable.
 ///
-/// The waiter identity is incarnation-checked against the domains pool
-/// before enqueueing; a stale identity (domain torn down) releases the
+/// The waiter identity is incarnation-checked against the threads pool
+/// before enqueueing; a stale identity (thread torn down) releases the
 /// terminal record instead — its waiter will never resume.
 pub(crate) fn wake_waiter<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
     record: crate::objects::access::ObjectId,
 ) -> Result<(), CapError> {
     let waiter = nucleus.pending.waiter(record)?;
-    if nucleus.pools.domains.validate(waiter).is_ok() {
-        // The queue is sized to hold every domain-pool slot; a full queue is
+    if nucleus.pools.threads.validate(waiter).is_ok() {
+        // The queue is sized to hold every thread-pool slot; a full queue is
         // a kernel bookkeeping bug, not an expected condition.
         assert!(
             nucleus.scheduler.push(waiter.index),
@@ -189,25 +189,25 @@ pub(crate) fn wake_waiter<A: ArchObjects>(
     Ok(())
 }
 
-/// The current domain's incarnation-checked identity, for wait
+/// The current thread's incarnation-checked identity, for wait
 /// registration.
 ///
-/// The current-domain tracking is index-only today; the generation is read
-/// from the authoritative domains-pool metadata so a stale identity can
-/// never be registered. Coherent current-domain identity carrying its own
+/// The current-thread tracking is index-only today; the generation is read
+/// from the authoritative threads-pool metadata so a stale identity can
+/// never be registered. Coherent current-thread identity carrying its own
 /// generation remains Phase 4 work.
 pub(crate) fn current_waiter<A: ArchObjects>(
     nucleus: &Nucleus<A>,
 ) -> Result<crate::objects::access::ObjectId, CapError> {
-    let index = nucleus.current_domain.ok_or(CapError::InvalidDomain)?;
+    let index = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
     let index = usize::try_from(index).ok().ok_or(CapError::InvalidDomain)?;
     let generation = nucleus
         .pools
-        .domains
+        .threads
         .generation_of(index)
         .ok_or(CapError::InvalidDomain)?;
     Ok(crate::objects::access::ObjectId {
-        pool: crate::objects::access::PoolTag::Domain,
+        pool: crate::objects::access::PoolTag::Thread,
         index: u16::try_from(index).map_err(|_too_wide| CapError::InvalidDomain)?,
         generation,
     })
@@ -242,6 +242,15 @@ fn arch_invoke<A: ArchObjects>(
             nucleus,
         ),
 
+        ArchType::AddressSpace => crate::api::arch::address_space::invoke::<A>(
+            access,
+            caller_table_addr,
+            key,
+            op,
+            args,
+            nucleus,
+        ),
+
         ArchType::ASIDPool => crate::api::arch::asid_pool::invoke::<A>(
             access,
             caller_table_addr,
@@ -251,10 +260,11 @@ fn arch_invoke<A: ArchObjects>(
             nucleus,
         ),
 
-        // VSpace translation and I/O/IRQ control remain deferred with their
-        // kinds: no creatable arch kind other than Frame and PageTable is
-        // allowlisted, and their draft handlers stay inactive. The registered
-        // ASID kind stays reserved (ASIDs bind through ASIDPool.Assign).
+        // ASIDControl and I/O/IRQ control remain deferred with their kinds:
+        // no creatable arch kind other than Frame, PageTable, and the
+        // boot-provided AddressSpace/ASIDPool is allowlisted or provided,
+        // and their draft handlers stay inactive. The registered ASIDControl
+        // kind stays reserved (ASIDs bind through ASIDPool.Assign).
         x => Err(CapError::UnsupportedArchType(x)),
     }
 }

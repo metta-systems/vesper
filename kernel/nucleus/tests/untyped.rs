@@ -66,7 +66,7 @@ fn carve_table() -> u64 {
     obj as u64
 }
 
-/// Backing bytes for the fixture nucleus's pools. The Domain pool is built
+/// Backing bytes for the fixture nucleus's pools. The Thread pool is built
 /// with zero capacity (never dereferenced); the page-table metadata pool
 /// holds exactly one slot so its exhaustion and rollback behavior is
 /// observable without any carve write (these MMU-off tests only exercise
@@ -98,12 +98,12 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
         let notification_pool_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
         let event_count_pool_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
         nucleus_ptr.write(Nucleus {
-            current_domain: None,
+            current_thread: None,
             dcb_pages: DcbPages::new(),
             pending: crate::objects::PendingPool::new(),
             scheduler: crate::objects::Scheduler::new(),
             pools: NucleusPools {
-                domains: ObjectPool::new(pool_ptr, 0),
+                threads: ObjectPool::new(pool_ptr, 0),
                 notifications: ObjectPool::new(
                     notification_pool_ptr,
                     core::mem::size_of::<crate::objects::Notification>() * 2,
@@ -115,7 +115,8 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
                 arch: ArchPools::new(
                     ObjectPool::new(pool_ptr, core::mem::size_of::<AArch64PageTable>()),
                     // Zero capacity: these MMU-off rejection-path tests never
-                    // invoke ASIDPool operations.
+                    // invoke AddressSpace or ASIDPool operations.
+                    ObjectPool::new(pool_ptr, 0),
                     ObjectPool::new(pool_ptr, 0),
                 ),
             },

@@ -81,7 +81,7 @@ pub fn invoke<A: ArchObjects>(
                 access.resolve_mut::<EventCount>(&mut nucleus.pools.event_counts, id)?;
             match event_count.advance(args[0], &mut nucleus.pending)? {
                 AdvanceOutcome::Advanced { new_value, woken } => {
-                    // Broadcast wakeups: every satisfied waiter's domain
+                    // Broadcast wakeups: every satisfied waiter's thread
                     // becomes runnable. The guard's borrow ended at the
                     // advance call, so the scheduler can be touched here.
                     for record in woken.iter() {

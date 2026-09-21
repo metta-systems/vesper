@@ -21,7 +21,7 @@ use {
     api::KeyEntry,
     core::mem::size_of,
     libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, domain::DomainId},
-    objects::{KeyTable, Nucleus, access::Access},
+    objects::{KeyTable, access::Access},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -282,7 +282,7 @@ fn copy_derive_rejects_occupied_destination_and_non_allowlisted_kinds() {
             .unwrap_or_else(|_| panic!("not a frame"));
         frame.set_mapped(
             objects::access::ObjectId {
-                pool: objects::access::PoolTag::Domain,
+                pool: objects::access::PoolTag::AddressSpace,
                 index: 0,
                 generation: 1,
             },

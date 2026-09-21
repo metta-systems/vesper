@@ -128,10 +128,10 @@ define_object_types! {
         Null => NULL = 0,
         /// Creates memory-backed objects, including new key tables.
         Untyped => UNTYPED = 1,
-        /// Protection domain.
-        Domain => DOMAIN = 2,
         /// Capability table.
-        KeyTable => KEY_TABLE = 3,
+        KeyTable => KEY_TABLE = 2,
+        /// Execution thread.
+        Thread => THREAD = 3,
         /// CPU time capability.
         Time => TIME = 4,
         /// Synchronous IPC endpoint.
@@ -152,9 +152,9 @@ define_object_types! {
     ArchType, from_arch, UnknownArchType {
         Frame => FRAME = 0,
         PageTable => PAGE_TABLE = 1,
-        VSpace => VSPACE = 2,
+        AddressSpace => ADDRESS_SPACE = 2,
         ASIDPool => ASID_POOL = 3,
-        ASID => ASID = 4,
+        ASIDControl => ASID_CONTROL = 4,
         IOSpace => IO_SPACE = 5,
         /// x86 I/O ports.
         IOPort => IO_PORT = 6,

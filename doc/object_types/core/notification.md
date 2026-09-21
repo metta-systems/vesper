@@ -48,12 +48,12 @@ stateDiagram-v2
 
 - **One-consumer delivery**: at most one waiter wakes per signal; the front
   (oldest) waiter's pending record completes with the delivered bitmap and
-  its domain becomes runnable. Invariant: `state` is nonzero only while no
+  its thread becomes runnable. Invariant: `state` is nonzero only while no
   waiter is queued (single-core execution under the kernel lock keeps this
   race-free).
 - **Blocking path**: a would-block `Wait` returns `InvokeOutcome::Blocked`;
   the syscall entry parks the caller's exception frame and switches via the
-  bounded runnable-domain scheduler; the resume delivers the completed
+  bounded runnable-thread scheduler; the resume delivers the completed
   bitmap. Validated end-to-end (2026-09-18) by the debug-gated Bounce fixture
   in `just test-capability-boot`.
 - **Bounded queues**: the wait reservation is validated before admission — a
@@ -62,8 +62,8 @@ stateDiagram-v2
 - **Teardown**: object teardown (`cancel_waiters`) gives every queued record
   its single terminal transition (`Cancelled`); domain teardown
   (`remove_waiter` + `PendingPool::teardown_waiter`) unqueues only the
-  torn-down Domain's records, preserving FIFO order of the survivors, and is
-  driven by `Domain.Retire` via `Nucleus::cancel_domain_pending`.
+  torn-down Thread's records, preserving FIFO order of the survivors, and is
+  driven by `Thread.Retire` via `Nucleus::cancel_thread_pending`.
 - **Memory ordering** (selected 2026-09-18): kernel-mediated release/acquire
   — a `Signal` acts as a release on the caller's behalf; observing the
   bitmap (wakeup, satisfied wait, Poll) acts as an acquire. DMA/device writes

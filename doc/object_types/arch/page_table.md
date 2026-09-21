@@ -13,8 +13,8 @@ translation table plus kernel metadata (carve address, walk level,
 installation record). Intermediate page tables are **explicitly managed,
 seL4-style**: the kernel never allocates translation structures implicitly,
 so every byte of a translation context is charged to a Retype carve. A
-Domain's translation root is also a PageTable capability, installed against
-the Domain.
+AddressSpace's translation root is also a PageTable capability, installed against
+the AddressSpace.
 
 ## User-level visible operations
 
@@ -28,16 +28,16 @@ the Domain.
 ```mermaid
 flowchart TD
     PT["PageTable.Map(table, parent, vaddr)"] --> Q{"Parent type?"}
-    Q -- "Domain cap" --> R{"vaddr == 0?<br/>root slot vacant?<br/>table uninstalled?"}
+    Q -- "AddressSpace cap" --> R{"vaddr == 0?<br/>root slot vacant?<br/>table uninstalled?"}
     R -- "no" --> E1["defined error"]
-    R -- "yes" --> RC["Record root on Domain,<br/>install_root(domain) level 0"]
+    R -- "yes" --> RC["Record root on AddressSpace,<br/>install_root(address_space) level 0"]
     Q -- "PageTable cap" --> I{"parent installed,<br/>level < 3,<br/>slot vacant?"}
     I -- "no" --> E2["NotMapped /<br/>InvalidOperation / AlreadyMapped"]
     I -- "yes" --> IC["install_table_entry:<br/>write table descriptor,<br/>record parent+slot, level = parent+1"]
 ```
 
-- **Root installation** (parent = Domain capability): the virtual address is
-  meaningless for a whole-context root and must be zero; the Domain's root
+- **Root installation** (parent = AddressSpace capability): the virtual address is
+  meaningless for a whole-context root and must be zero; the AddressSpace's root
   slot must be vacant and the table uninstalled (`AlreadyMapped`
   otherwise).
 - **Intermediate installation** (parent = PageTable capability): the parent
@@ -49,9 +49,9 @@ flowchart TD
 ### Unmap
 
 The table must be installed and **empty** (every descriptor zero — a non-empty
-table would orphan its children). Unmapping the root clears the Domain's
+table would orphan its children). Unmapping the root clears the AddressSpace's
 translation-root field and invalidates every cached translation under the
-Domain's bound ASID (if any); unmapping an intermediate verifies the parent
+AddressSpace's bound ASID (if any); unmapping an intermediate verifies the parent
 descriptor still points at this table, then clears it.
 
 ## Kernel-level implementation details
@@ -82,14 +82,15 @@ descriptor still points at this table, then clears it.
 
 ## Sidenotes
 
-- The Domain is the mapping context (selected 2026-09-15): there is no
-  separately targetable VSpace kernel object; the registered `VSpace` kind
-  stays reserved (see [vspace.md](vspace.md)).
-- Carved tables become hardware-live through `Domain.Activate`, which
+- The AddressSpace is the mapping context (selected 2026-09-15 as the
+  Domain; revised 2026-09-21 by the Domain split, which activated the
+  renamed `AddressSpace` arch kind as that object — see
+  [address_space.md](address_space.md)).
+- Carved tables become hardware-live through `AddressSpace.Activate`, which
   installs the bound root into `TTBR0_EL1` with the bound ASID.
 - Gating TLB invalidation on live TTBR installation may be more efficient
-  once Domain scheduling exists (maintainer remark, 2026-09-15); today the
-  invalidation is executed whenever the owning Domain has a bound ASID.
+  once Thread scheduling exists (maintainer remark, 2026-09-15); today the
+  invalidation is executed whenever the owning AddressSpace has a bound ASID.
 
 ## TODOs
 

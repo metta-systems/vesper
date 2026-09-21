@@ -36,10 +36,10 @@ pub(super) unsafe fn protected_call6(
 /// request plus the decoded ASID, or the kernel error decoded from `response`.
 pub(super) fn invoke_assign(response: Response) -> Result<(Request, u16), CapError> {
     let pool_key = RawKey::new(KeySlot(5), 1);
-    let domain_key = RawKey::new(KeySlot(1), 1);
+    let as_key = RawKey::new(KeySlot(1), 1);
     let pool = ASIDPoolKey::from_key(pool_key);
     RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
-    let result = pool.assign(domain_key);
+    let result = pool.assign(as_key);
     let request = REQUEST.with(|request| request.take().expect("missing syscall request"));
     result.map(|asid| (request, asid))
 }

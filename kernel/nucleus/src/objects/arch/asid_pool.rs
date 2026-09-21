@@ -40,6 +40,17 @@ impl AsidPoolObject for AArch64ASIDPool {
         }
         None
     }
+
+    fn release(&mut self, asid: u16) {
+        // ASID 0 is the kernel's own reserved boot context and is never
+        // released; a retirement carrying it is a kernel bookkeeping bug.
+        debug_assert_ne!(asid, 0);
+        let word = usize::from(asid) / 64;
+        let bit = usize::from(asid) % 64;
+        if let Some(word) = self.allocated.get_mut(word) {
+            *word &= !(1 << bit);
+        }
+    }
 }
 
 impl NucleusObject for AArch64ASIDPool {

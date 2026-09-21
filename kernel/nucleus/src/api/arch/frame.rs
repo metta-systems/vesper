@@ -1,44 +1,49 @@
 //! `Frame.Map`/`Unmap`/`GetAddress`: real descriptor installation through the
-//! target Domain's translation context (selected 2026-09-15).
+//! target `AddressSpace`'s translation context (selected 2026-09-15).
 //!
 //! Wire schemas (see `doc/nucleus_capabilities.md`):
-//! - `Map` `0`: `x2` target Domain key, `x3` virtual address, `x4` requested
-//!   rights, `x5` attributes (zero = normal write-back cacheable; other values
-//!   rejected), `x6..x7` zero. **The explicit target-Domain argument is
-//!   bootstrap-era mechanism**: it lets an authorized builder populate a
-//!   Domain's address space before that Domain can run; self-context mapping is
-//!   the intended ordinary path once syscall caller identity exists. The
+//! - `Map` `0`: `x2` target `AddressSpace` key, `x3` virtual address, `x4`
+//!   requested rights, `x5` attributes (zero = normal write-back cacheable;
+//!   other values rejected), `x6..x7` zero. **The explicit target-`AddressSpace`
+//!   argument is bootstrap-era mechanism**: it lets an authorized builder
+//!   populate an `AddressSpace` before its Thread can run; self-context mapping
+//!   is the intended ordinary path once syscall caller identity exists. The
 //!   requested rights must be a subset of the frame capability's rights
 //!   (permission ceiling); requesting `EXECUTE` (within the ceiling) clears
 //!   PXN|UXN for the descriptor, and without it every mapping stays
 //!   execute-never (selected 2026-09-15). The walk requires every
 //!   intermediate table to be present. The
 //!   alias policy is enforced ahead of the hardware transition: the frame's
-//!   physical extent must not overlap any live mapping in the target Domain,
-//!   whatever capability installed it (`PhysicalAlias` otherwise);
-//!   cross-Domain aliases are distinct PTEs and remain allowed.
+//!   physical extent must not overlap any live mapping in the target
+//!   `AddressSpace`, whatever capability installed it (`PhysicalAlias`
+//!   otherwise); cross-`AddressSpace` aliases are distinct PTEs and remain
+//!   allowed.
 //! - `Unmap` `1`: no arguments. The frame's recorded mapping identity (owning
-//!   Domain, full virtual address) locates and clears the leaf descriptor, and
-//!   the arch layer withdraws the cached translation for that address under
-//!   the owning Domain's bound ASID (if any) before returning.
+//!   `AddressSpace`, full virtual address) locates and clears the leaf
+//!   descriptor, and the arch layer withdraws the cached translation for that
+//!   address under the owning `AddressSpace`'s bound ASID (if any) before
+//!   returning.
 //! - `GetAddress` `2`: no arguments; requires `GRANT`. Returns the physical
 //!   extent — the base in `x1` and the size in bytes in `x2` (the client
 //!   wrapper names it `get_extent`).
 //! - `Remap` `3`: unsupported; origin-only remap authority remains open
 //!   (D4/D6). Returns a defined error rather than fake success.
 //!
-//! Carved tables become hardware-live through `Domain.Activate` (selected
-//! 2026-09-15), which installs the bound root into `TTBR0_EL1` with the
-//! bound ASID. The invalidation is executed whenever the owning Domain has
-//! a bound ASID, and is observable on the live context: the boot test maps a
-//! frame, activates, reads through the mapping, unmaps (withdrawing the
+//! Carved tables become hardware-live through `AddressSpace.Activate`
+//! (selected 2026-09-15 as `Domain.Activate`; moved to the `AddressSpace` kind
+//! 2026-09-21), which installs the bound root into `TTBR0_EL1` with the
+//! bound ASID. The invalidation is executed whenever the owning `AddressSpace`
+//! has a bound ASID, and is observable on the live context: the boot test maps
+//! a frame, activates, reads through the mapping, unmaps (withdrawing the
 //! cached translation), remaps different backing at the same address, and
 //! verifies the freshly walked contents. Gating the invalidation on live
-//! TTBR installation may be more efficient in the long term once Domain
+//! TTBR installation may be more efficient in the long term once Thread
 //! scheduling exists (maintainer remark, 2026-09-15).
 
 use {
-    crate::objects::{ArchObjects, Domain, KeyTable, Nucleus, access::Access},
+    crate::objects::{
+        ArchObjects, KeyTable, Nucleus, access::Access, arch_objects::AddressSpaceObject,
+    },
     libobject::{CapError, FrameOp, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
 };
@@ -46,7 +51,7 @@ use {
 /// Handle a `Frame` capability invocation.
 ///
 /// `caller_table_addr` is the caller's own table, through which the invoked
-/// `frame_key` and the target Domain key are resolved.
+/// `frame_key` and the target `AddressSpace` key are resolved.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
     caller_table_addr: u64,
@@ -67,7 +72,8 @@ pub fn invoke<A: ArchObjects>(
     }
 }
 
-/// `Map` `0`: install the frame's descriptor in the target Domain's context.
+/// `Map` `0`: install the frame's descriptor in the target `AddressSpace`'s
+/// context.
 fn map<A: ArchObjects>(
     access: &Access,
     caller_table_addr: u64,
@@ -75,7 +81,7 @@ fn map<A: ArchObjects>(
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
-    let domain_key = RawKey::from_wire(args[0]);
+    let as_key = RawKey::from_wire(args[0]);
     let vaddr = args[1];
     let requested = Rights(
         u8::try_from(args[2])
@@ -92,9 +98,9 @@ fn map<A: ArchObjects>(
         return Err(CapError::InvalidOperation);
     }
 
-    // Resolve the frame entry and the target Domain capability through the
-    // caller's own table, copying out what is needed later.
-    let (frame, domain_id) = {
+    // Resolve the frame entry and the target AddressSpace capability through
+    // the caller's own table, copying out what is needed later.
+    let (frame, as_id) = {
         let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
         let entry = caller_table
             .lookup(frame_key)
@@ -119,37 +125,36 @@ fn map<A: ArchObjects>(
         if frame.is_device() {
             return Err(CapError::InvalidOperation);
         }
-        let domain_entry = caller_table
-            .lookup(domain_key)
+        let as_entry = caller_table
+            .lookup(as_key)
             .map_err(|e| e.with_key_operand(2))?;
-        if domain_entry.object_type() != ObjectType::DOMAIN {
+        if as_entry.object_type() != ObjectType::ADDRESS_SPACE {
             return Err(CapError::TypeMismatch {
-                expected: ObjectType::DOMAIN,
-                found: domain_entry.object_type(),
+                expected: ObjectType::ADDRESS_SPACE,
+                found: as_entry.object_type(),
             });
         }
         // Authority over the target mapping context.
-        if !domain_entry.rights().has(Rights::MAP) {
+        if !as_entry.rights().has(Rights::MAP) {
             return Err(CapError::InsufficientRights);
         }
-        let domain_id = domain_entry
-            .object_id()
-            .map_err(|e| e.with_key_operand(2))?;
-        (frame, domain_id)
+        let as_id = as_entry.object_id().map_err(|e| e.with_key_operand(2))?;
+        (frame, as_id)
     };
 
-    // Resolve the target Domain and its translation root.
-    let domain = access.resolve::<Domain>(&nucleus.pools.domains, domain_id)?;
-    let root = domain
-        .translation_root
+    // Resolve the target AddressSpace and its translation root.
+    let address_space =
+        access.resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, as_id)?;
+    let root = address_space
+        .translation_root()
         .ok_or(CapError::MissingIntermediate { vaddr })?;
 
     // Alias policy: no two virtual addresses for overlapping physical backing
-    // within one Domain. The check is physical, not capability-based, so it
-    // also rejects overlaps through different derived caps and different frame
-    // sizes; it walks only the target Domain's tables, so cross-Domain aliases
-    // remain distinct PTEs. Ahead of the hardware transition: a rejection
-    // leaves every table and record unchanged.
+    // within one AddressSpace. The check is physical, not capability-based, so
+    // it also rejects overlaps through different derived caps and different
+    // frame sizes; it walks only the target AddressSpace's tables, so
+    // cross-AddressSpace aliases remain distinct PTEs. Ahead of the hardware
+    // transition: a rejection leaves every table and record unchanged.
     if let Some(existing) = A::find_physical_overlap(root, frame.paddr, frame.size_bits) {
         return Err(CapError::PhysicalAlias { paddr: existing });
     }
@@ -172,7 +177,7 @@ fn map<A: ArchObjects>(
     // is the caller's own table; the entry was validated above and only the
     // mapping record changes.
     let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-    caller_table.record_frame_mapping(frame_key, domain_id, vaddr)?;
+    caller_table.record_frame_mapping(frame_key, as_id, vaddr)?;
 
     semi::println!("✅ Frame::Map()");
     Ok((0, 0))
@@ -205,14 +210,19 @@ fn unmap<A: ArchObjects>(
     };
     let mapping = frame.mapping().ok_or(CapError::NotMapped)?;
 
-    // Resolve the recorded owning Domain (generation-checked) and its root.
-    let domain = access.resolve::<Domain>(&nucleus.pools.domains, mapping.domain)?;
-    let root = domain.translation_root.ok_or(CapError::InvalidOperation)?;
-    let bound_asid = domain.asid;
+    // Resolve the recorded owning AddressSpace (generation-checked) and its
+    // root.
+    let address_space = access
+        .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, mapping.address_space)?;
+    let root = address_space
+        .translation_root()
+        .ok_or(CapError::InvalidOperation)?;
+    let bound_asid = address_space.asid();
 
     // Hardware transition: verify the descriptor still points at this frame,
     // then clear it and withdraw the cached translation under the owning
-    // Domain's bound ASID, so a stale translation cannot survive the unmap.
+    // AddressSpace's bound ASID, so a stale translation cannot survive the
+    // unmap.
     A::clear_frame_pte(root, mapping.vaddr, frame.paddr, frame.size_bits)?;
     if let Some(asid) = bound_asid {
         A::invalidate_tlb_by_vaddr(asid, mapping.vaddr);

@@ -147,7 +147,7 @@ fn copy_derive_move_and_grant_to_ignore_nonzero_second_success_word() {
 fn all_key_table_wrappers_report_unsupported_dispatch_and_authority_errors() {
     for method in METHODS {
         assert!(matches!(
-            invoke(method, (16, 3, 0)),
+            invoke(method, (16, 2, 0)),
             Err(CapError::UnsupportedCoreType(CoreType::KeyTable))
         ));
         assert!(matches!(

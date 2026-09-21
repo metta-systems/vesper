@@ -64,8 +64,8 @@ flowchart TD
 - **Bounded queues**: a full await queue rejects before admission
   (`PoolExhausted`) with no record to roll back.
 - **Teardown**: object teardown cancels queued waiters; domain teardown
-  (`remove_waiter`) unqueues only the torn-down Domain's records, driven by
-  `Domain.Retire`.
+  (`remove_waiter`) unqueues only the torn-down Thread's records, driven by
+  `Thread.Retire`.
 - **Memory ordering** (selected 2026-09-18): kernel-mediated release/acquire
   — `Advance` is a release on the producer's behalf; observing the value
   (wakeup, satisfied await, Read) is an acquire. DMA/device writes excluded.

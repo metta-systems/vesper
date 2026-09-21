@@ -270,7 +270,7 @@ impl PendingPool {
     /// Domain-teardown sweep: give every live record naming `waiter` its
     /// terminal disposition and release it.
     ///
-    /// The teardown orchestrator (`Nucleus::cancel_domain_pending`) first
+    /// The teardown orchestrator (`Nucleus::cancel_thread_pending`) first
     /// removes the waiter's records from every object wait queue, so a
     /// `Waiting` record found here is cancelled — teardown wins the
     /// terminal-transition rule — and released. Already-terminal records
@@ -501,7 +501,7 @@ mod tests {
     /// `block`.
     fn waiter(index: u16) -> ObjectId {
         ObjectId {
-            pool: PoolTag::Domain,
+            pool: PoolTag::Thread,
             index,
             generation: 1,
         }

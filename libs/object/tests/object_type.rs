@@ -1,5 +1,5 @@
 use vesper_objects::{
-    CapError, Key, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, decode_syscall_result,
+    CapError, Key, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, decode_syscall_result, domain,
 };
 
 #[cfg(test)]
@@ -17,8 +17,12 @@ mod key_identity;
 pub mod asid_pool_client;
 
 #[cfg(test)]
-#[path = "../src/domain.rs"]
-pub mod domain_client;
+#[path = "../src/address_space.rs"]
+pub mod address_space_client;
+
+#[cfg(test)]
+#[path = "../src/thread.rs"]
+pub mod thread_client;
 
 #[cfg(test)]
 #[path = "../src/event_count.rs"]
@@ -312,8 +316,8 @@ mod tests {
         for (kind, expected) in [
             (CoreType::Null, "Null"),
             (CoreType::Untyped, "Untyped"),
-            (CoreType::Domain, "Domain"),
             (CoreType::KeyTable, "KeyTable"),
+            (CoreType::Thread, "Thread"),
             (CoreType::Time, "Time"),
             (CoreType::Endpoint, "Endpoint"),
             (CoreType::Notification, "Notification"),
@@ -326,9 +330,9 @@ mod tests {
         for (kind, expected) in [
             (ArchType::Frame, "Frame"),
             (ArchType::PageTable, "PageTable"),
-            (ArchType::VSpace, "VSpace"),
+            (ArchType::AddressSpace, "AddressSpace"),
             (ArchType::ASIDPool, "ASIDPool"),
-            (ArchType::ASID, "ASID"),
+            (ArchType::ASIDControl, "ASIDControl"),
             (ArchType::IOSpace, "IOSpace"),
             (ArchType::IOPort, "IOPort"),
             (ArchType::IRQHandler, "IRQHandler"),
@@ -396,8 +400,8 @@ mod tests {
     const CORE_TYPES: [(CoreType, ObjectType, u8); 10] = [
         (CoreType::Null, ObjectType::NULL, 0),
         (CoreType::Untyped, ObjectType::UNTYPED, 1),
-        (CoreType::Domain, ObjectType::DOMAIN, 2),
-        (CoreType::KeyTable, ObjectType::KEY_TABLE, 3),
+        (CoreType::KeyTable, ObjectType::KEY_TABLE, 2),
+        (CoreType::Thread, ObjectType::THREAD, 3),
         (CoreType::Time, ObjectType::TIME, 4),
         (CoreType::Endpoint, ObjectType::ENDPOINT, 5),
         (CoreType::Notification, ObjectType::NOTIFICATION, 6),
@@ -410,9 +414,9 @@ mod tests {
     const ARCH_TYPES: [(ArchType, ObjectType, u8, u8); 9] = [
         (ArchType::Frame, ObjectType::FRAME, 0, 0x80),
         (ArchType::PageTable, ObjectType::PAGE_TABLE, 1, 0x81),
-        (ArchType::VSpace, ObjectType::VSPACE, 2, 0x82),
+        (ArchType::AddressSpace, ObjectType::ADDRESS_SPACE, 2, 0x82),
         (ArchType::ASIDPool, ObjectType::ASID_POOL, 3, 0x83),
-        (ArchType::ASID, ObjectType::ASID, 4, 0x84),
+        (ArchType::ASIDControl, ObjectType::ASID_CONTROL, 4, 0x84),
         (ArchType::IOSpace, ObjectType::IO_SPACE, 5, 0x85),
         (ArchType::IOPort, ObjectType::IO_PORT, 6, 0x86),
         (ArchType::IRQHandler, ObjectType::IRQ_HANDLER, 7, 0x87),

@@ -31,8 +31,8 @@ ID never advertises implementation support.
 |---|---:|---|---|
 | Null | `0x00` | [null.md](core/null.md) | Active (always rejected) |
 | Untyped | `0x01` | [untyped.md](core/untyped.md) | Retype active |
-| Domain | `0x02` | [domain.md](core/domain.md) | Activate/Retire active |
-| KeyTable | `0x03` | [key_table.md](core/key_table.md) | CopyDerive/Move/Delete active |
+| KeyTable | `0x02` | [key_table.md](core/key_table.md) | CopyDerive/Move/Delete active |
+| Thread | `0x03` | [thread.md](core/thread.md) | Retire active |
 | Time | `0x04` | [time.md](core/time.md) | Excluded sketch |
 | Endpoint | `0x05` | [endpoint.md](core/endpoint.md) | Excluded sketch |
 | Notification | `0x06` | [notification.md](core/notification.md) | Signal/Wait/Poll active |
@@ -42,7 +42,10 @@ ID never advertises implementation support.
 
 IDs 9–126 are reserved. There is no `Buffer` wire kind (removed 2026-09-15;
 Buffer is a userspace/libOS construct over frame capabilities, and `Reply`
-took the freed ID 8).
+took the freed ID 8). There is no `Domain` wire kind (removed by the
+2026-09-21 split: the execution/scheduling remainder became the core
+`Thread`, and the translation-root holder became the arch `AddressSpace` —
+the renamed VSpace kind; `KeyTable` moved 3 → 2 and `Thread` took 3).
 
 ### Architecture kinds (`arch/`)
 
@@ -50,9 +53,9 @@ took the freed ID 8).
 |---|---:|---|---|
 | Frame | `0x80` | [frame.md](arch/frame.md) | Map/Unmap/GetAddress active |
 | PageTable | `0x81` | [page_table.md](arch/page_table.md) | Map/Unmap active |
-| VSpace | `0x82` | [vspace.md](arch/vspace.md) | Reserved (Domain is the mapping context) |
+| AddressSpace | `0x82` | [address_space.md](arch/address_space.md) | Activate/Retire active (boot-carved) |
 | ASIDPool | `0x83` | [asid_pool.md](arch/asid_pool.md) | Assign active (boot-provided) |
-| ASID | `0x84` | [asid.md](arch/asid.md) | Reserved |
+| ASIDControl | `0x84` | [asid_control.md](arch/asid_control.md) | Reserved |
 | IOSpace | `0x85` | [io_space.md](arch/io_space.md) | Deferred |
 | IOPort | `0x86` | [io_port.md](arch/io_port.md) | x86-only; unsupported on AArch64 |
 | IRQHandler | `0x87` | [irq_handler.md](arch/irq_handler.md) | Deferred |
@@ -79,12 +82,12 @@ flowchart TD
     D -- "core" --> E["core_invoke"]
     D -- "arch" --> F["arch_invoke"]
     E --> G{"CoreType match"}
-    G --> H["Untyped / Domain / KeyTable /<br/>Notification / EventCount /<br/>DebugConsole (debug_kernel)"]
+    G --> H["Untyped / Thread / KeyTable /<br/>Notification / EventCount /<br/>DebugConsole (debug_kernel)"]
     G --> I["Null → NullCapability"]
     G --> J["Time / Endpoint / Reply →<br/>UnsupportedCoreType"]
     F --> K{"ArchType match"}
-    K --> L["Frame / PageTable / ASIDPool"]
-    K --> M["VSpace / ASID / IO / IRQ →<br/>UnsupportedArchType"]
+    K --> L["Frame / PageTable / AddressSpace /<br/>ASIDPool"]
+    K --> M["ASIDControl / IO / IRQ →<br/>UnsupportedArchType"]
 ```
 
 Blocking operations do not return a "blocked" status: the syscall entry parks

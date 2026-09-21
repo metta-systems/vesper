@@ -17,8 +17,8 @@ use {
     nucleus::{
         api::key_entry::RegionPayload,
         objects::{
-            ArchObjects, Domain, EventCount, KeyTable, Notification, Nucleus, NucleusObject,
-            ObjectPool, PendingPool, Scheduler, arch::ArchPools, domain::DcbPages,
+            ArchObjects, EventCount, KeyTable, Notification, Nucleus, NucleusObject, ObjectPool,
+            PendingPool, Scheduler, Thread, arch::ArchPools, domain::DcbPages,
             nucleus::NucleusPools,
         },
     },
@@ -66,8 +66,13 @@ pub fn carve_pool<T: NucleusObject>(
 
 /// Capacities for the initial pool extents carved at boot.
 pub struct PoolCapacities {
-    /// Number of Domain slots in the initial Domain pool.
-    pub domains: usize,
+    /// Number of Thread slots in the initial Thread pool.
+    pub threads: usize,
+    /// Number of `AddressSpace` slots in the initial architecture address-space
+    /// pool. Address spaces are the protection/mapping-context objects (the
+    /// renamed `VSpace` kind, split from the former Domain 2026-09-21);
+    /// boot-carved, not Retype-creatable yet.
+    pub address_spaces: usize,
     /// Number of Notification slots in the initial Notification pool.
     /// Notifications are pure kernel synchronization state allocated by
     /// `Untyped.Retype` (allowlisted 2026-09-16); the pool backing is
@@ -91,18 +96,22 @@ pub struct PoolCapacities {
 
 /// Build the initial [`Nucleus`] in memory carved from the boot Untyped.
 ///
-/// Carves the `Nucleus` struct region, the Domain pool backing, and the boot
-/// Domain's `KeyTable` region from `boot`'s unused watermark range, constructs
-/// the pools, initializes the boot `KeyTable` kernel-privately, writes the
-/// `Nucleus` into the carved region, and returns its address together with the
-/// boot `KeyTable`'s kernel address. The caller (boot code) records the nucleus
-/// address as the anchor the inert nucleus reads on entry.
+/// Carves the `Nucleus` struct region, the Thread and `AddressSpace` pool
+/// backings, and the boot Thread's `KeyTable` region from `boot`'s unused
+/// watermark range, constructs the pools, initializes the boot `KeyTable`
+/// kernel-privately, writes the `Nucleus` into the carved region, and returns
+/// its address together with the boot `KeyTable`'s kernel address. The caller
+/// (boot code) records the nucleus address as the anchor the inert nucleus
+/// reads on entry.
 pub fn build_initial_nucleus<A: ArchObjects>(
     boot: &mut RegionPayload,
     capacities: &PoolCapacities,
 ) -> Result<(*mut Nucleus<A>, u64), CapError> {
-    if capacities.domains > ObjectPool::<Domain>::MAX_SLOTS {
-        return Err(CapError::InvalidSize(capacities.domains));
+    if capacities.threads > ObjectPool::<Thread>::MAX_SLOTS {
+        return Err(CapError::InvalidSize(capacities.threads));
+    }
+    if capacities.address_spaces > ObjectPool::<A::AddressSpace>::MAX_SLOTS {
+        return Err(CapError::InvalidSize(capacities.address_spaces));
     }
     if capacities.notifications > ObjectPool::<Notification>::MAX_SLOTS {
         return Err(CapError::InvalidSize(capacities.notifications));
@@ -120,13 +129,14 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     let nucleus_paddr = carve_region(boot, core::mem::size_of::<Nucleus<A>>())?;
     let nucleus_ptr = nucleus_paddr.user_to_kernel().as_mut_ptr::<Nucleus<A>>();
 
-    let domains = carve_pool::<Domain>(boot, capacities.domains)?;
+    let threads = carve_pool::<Thread>(boot, capacities.threads)?;
+    let address_spaces = carve_pool::<A::AddressSpace>(boot, capacities.address_spaces)?;
     let notifications = carve_pool::<Notification>(boot, capacities.notifications)?;
     let event_counts = carve_pool::<EventCount>(boot, capacities.event_counts)?;
     let page_tables = carve_pool::<A::PageTable>(boot, capacities.page_tables)?;
     let asid_pools = carve_pool::<A::ASIDPool>(boot, capacities.asid_pools)?;
 
-    // Carve the boot Domain's KeyTable region and initialize it kernel-privately
+    // Carve the boot Thread's KeyTable region and initialize it kernel-privately
     // (the same unused-watermark allocation Retype performs at runtime).
     let keytable_paddr = carve_region(boot, core::mem::size_of::<KeyTable>())?;
     let keytable_ptr = keytable_paddr.user_to_kernel().as_mut_ptr::<KeyTable>();
@@ -137,18 +147,18 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     }
 
     let nucleus = Nucleus::<A> {
-        current_domain: None,
+        current_thread: None,
         dcb_pages: DcbPages::new(),
         pending: PendingPool::new(),
         scheduler: Scheduler::new(),
         pools: NucleusPools::<A> {
-            domains,
+            threads,
             notifications,
             event_counts,
-            // SAFETY: the page-table and ASID-pool backings were carved above
-            // from the boot Untyped's unused watermark range and are
-            // exclusively owned.
-            arch: unsafe { ArchPools::new(page_tables, asid_pools) },
+            // SAFETY: the architecture pool backings were carved above from
+            // the boot Untyped's unused watermark range and are exclusively
+            // owned.
+            arch: unsafe { ArchPools::new(page_tables, address_spaces, asid_pools) },
         },
     };
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.

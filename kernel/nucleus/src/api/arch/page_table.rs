@@ -3,31 +3,28 @@
 //!
 //! Wire schemas (see `doc/nucleus_capabilities.md`):
 //! - `Map` `0`: `x2` parent key, `x3` virtual address, `x4..x7` zero. The
-//!   parent capability's type selects the installation: a `Domain` capability
-//!   installs the translation root (the virtual address must be zero; the
-//!   Domain capability must carry `MAP`), a `PageTable` capability installs one
-//!   intermediate level (the parent must be installed and below the leaf level;
-//!   the parent capability must carry `MAP`; the slot selected by the virtual
-//!   address must be vacant).
+//!   parent capability's type selects the installation: an `AddressSpace`
+//!   capability installs the translation root (the virtual address must be
+//!   zero; the `AddressSpace` capability must carry `MAP`), a `PageTable`
+//!   capability installs one intermediate level (the parent must be installed
+//!   and below the leaf level; the parent capability must carry `MAP`; the
+//!   slot selected by the virtual address must be vacant).
 //! - `Unmap` `1`: no arguments. The table must be installed and empty (all
-//!   descriptors zero); unmapping the root clears the Domain's translation-root
-//!   field and withdraws every cached translation under the Domain's bound ASID
-//!   (if any).
+//!   descriptors zero); unmapping the root clears the `AddressSpace`'s
+//!   translation-root field and withdraws every cached translation under the
+//!   `AddressSpace`'s bound ASID (if any).
 //!
-//! Carved tables are not yet installed in any TTBR (Domain activation is
-//! future work), but the root-unmap invalidation is executed whenever the
-//! Domain has a bound ASID: it is correct by construction once activation
-//! installs the tables. An intermediate table's descriptors are all zero
-//! (required), so no cached translation can exist beneath it and no
-//! invalidation is needed there. Gating the invalidation on live TTBR
-//! installation may be more efficient in the long term once Domain activation
-//! exists (maintainer remark, 2026-09-15).
+//! An intermediate table's descriptors are all zero (required), so no cached
+//! translation can exist beneath it and no invalidation is needed there.
+//! Gating the root-unmap invalidation on live TTBR installation may be more
+//! efficient in the long term once Thread scheduling exists (maintainer
+//! remark, 2026-09-15).
 
 use {
     crate::objects::{
-        ArchObjects, Domain, KeyTable, Nucleus,
+        ArchObjects, KeyTable, Nucleus,
         access::{Access, ObjectId},
-        arch_objects::{PageTableObject, PtParent},
+        arch_objects::{AddressSpaceObject, PageTableObject, PtParent},
     },
     libobject::{CapError, ObjectType, PageTableOp, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -98,16 +95,19 @@ fn map<A: ArchObjects>(
     }
 
     match parent_type {
-        ObjectType::DOMAIN => {
+        ObjectType::ADDRESS_SPACE => {
             // Root installation: the virtual address is meaningless for a
             // whole-context root and must be zero.
             if vaddr != 0 {
                 return Err(CapError::InvalidOperation);
             }
-            // Distinct pools: the Domain and the page-table metadata object
-            // cannot alias.
-            let mut domain = access.resolve_mut::<Domain>(&mut nucleus.pools.domains, parent_id)?;
-            if domain.translation_root.is_some() {
+            // Distinct pools: the AddressSpace and the page-table metadata
+            // object cannot alias.
+            let mut address_space = access.resolve_mut::<A::AddressSpace>(
+                &mut nucleus.pools.arch.address_spaces,
+                parent_id,
+            )?;
+            if address_space.translation_root().is_some() {
                 return Err(CapError::AlreadyMapped);
             }
             let mut pt =
@@ -115,9 +115,10 @@ fn map<A: ArchObjects>(
             if pt.is_installed() {
                 return Err(CapError::AlreadyMapped);
             }
-            // Commit: record the root on the Domain, then the installation on
-            // the table. Neither step can fail after the checks above.
-            domain.translation_root = Some(pt.paddr());
+            // Commit: record the root on the AddressSpace, then the
+            // installation on the table. Neither step can fail after the
+            // checks above.
+            address_space.set_translation_root(Some(pt.paddr()));
             pt.install_root(parent_id);
             semi::println!("✅ PageTable::Map(root)");
             Ok((0, 0))
@@ -190,19 +191,23 @@ fn unmap<A: ArchObjects>(
     }
     match pt.parent() {
         PtParent::Uninstalled => Err(CapError::NotMapped),
-        PtParent::Root { domain } => {
-            // Distinct pools: the Domain and the table metadata cannot alias.
-            let mut domain = access.resolve_mut::<Domain>(&mut nucleus.pools.domains, domain)?;
+        PtParent::Root { address_space } => {
+            // Distinct pools: the AddressSpace and the table metadata cannot
+            // alias.
+            let mut address_space = access.resolve_mut::<A::AddressSpace>(
+                &mut nucleus.pools.arch.address_spaces,
+                address_space,
+            )?;
             // Defensive: the recorded root must match this table.
-            if domain.translation_root != Some(pt.paddr()) {
+            if address_space.translation_root() != Some(pt.paddr()) {
                 return Err(CapError::InvalidOperation);
             }
-            let bound_asid = domain.asid;
-            domain.translation_root = None;
+            let bound_asid = address_space.asid();
+            address_space.set_translation_root(None);
             pt.uninstall();
             // Withdraw every cached translation of the whole context under
-            // the Domain's bound ASID, so no stale translation survives the
-            // root withdrawal.
+            // the AddressSpace's bound ASID, so no stale translation survives
+            // the root withdrawal.
             if let Some(asid) = bound_asid {
                 A::invalidate_tlb_asid(asid);
             }

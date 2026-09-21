@@ -1,17 +1,17 @@
 //! Minimal kernel scheduling substrate (completion foundation, 2026-09-16).
 //!
-//! This is kernel mechanism only — a bounded FIFO of runnable domain indices.
+//! This is kernel mechanism only — a bounded FIFO of runnable thread indices.
 //! Scheduling *policy* stays in userspace (the contract's userspace-scheduling
-//! boundary): the kernel only needs "run someone else" when a domain blocks,
-//! and a place to queue domains whose pending invocations completed.
+//! boundary): the kernel only needs "run someone else" when a thread blocks,
+//! and a place to queue threads whose pending invocations completed.
 //!
-//! The queue is bounded by the domain-pool slot count, so a completed record
+//! The queue is bounded by the thread-pool slot count, so a completed record
 //! can always enqueue its waiter; a full queue would be a kernel bookkeeping
 //! bug, not an expected condition.
 
-/// Bounded FIFO of runnable domain indices.
+/// Bounded FIFO of runnable thread indices.
 ///
-/// A domain enters the queue when its pending invocation completes (wakeup)
+/// A thread enters the queue when its pending invocation completes (wakeup)
 /// or when it is created and awaits its first start. It leaves the queue
 /// when the kernel switches to it.
 pub struct Scheduler {
@@ -21,9 +21,9 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    /// Bounded by the domain-pool slot count: every live domain could be
+    /// Bounded by the thread-pool slot count: every live thread could be
     /// runnable at once, and a wake must never be dropped for lack of queue.
-    pub const CAPACITY: usize = crate::objects::ObjectPool::<crate::objects::Domain>::MAX_SLOTS;
+    pub const CAPACITY: usize = crate::objects::ObjectPool::<crate::objects::Thread>::MAX_SLOTS;
 
     pub const fn new() -> Self {
         Self {
@@ -33,18 +33,18 @@ impl Scheduler {
         }
     }
 
-    /// Number of queued domains.
+    /// Number of queued threads.
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// Whether no domain is queued.
+    /// Whether no thread is queued.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Enqueue a runnable domain index. Returns `false` only when the queue
-    /// is full — unreachable while capacity matches the domain pool, so a
+    /// Enqueue a runnable thread index. Returns `false` only when the queue
+    /// is full — unreachable while capacity matches the thread pool, so a
     /// `false` return indicates a kernel bookkeeping bug.
     pub fn push(&mut self, index: u16) -> bool {
         if self.len == Self::CAPACITY {
@@ -56,7 +56,7 @@ impl Scheduler {
         true
     }
 
-    /// Dequeue the front (oldest) runnable domain index.
+    /// Dequeue the front (oldest) runnable thread index.
     pub fn pop(&mut self) -> Option<u16> {
         if self.len == 0 {
             return None;
@@ -68,11 +68,11 @@ impl Scheduler {
         Some(index)
     }
 
-    /// Remove every queued entry naming `index` (domain-teardown
+    /// Remove every queued entry naming `index` (thread-teardown
     /// cancellation), preserving the FIFO order of the remaining entries.
     ///
-    /// A torn-down Domain must leave no queued wakeup behind: the next
-    /// context switch would try to resume a Domain that no longer exists.
+    /// A torn-down Thread must leave no queued wakeup behind: the next
+    /// context switch would try to resume a Thread that no longer exists.
     /// Returns whether any entry was removed.
     pub fn remove(&mut self, index: u16) -> bool {
         let live = self.len;
@@ -134,20 +134,20 @@ mod tests {
     }
 
     #[test_case]
-    fn remove_purges_a_domain_and_preserves_fifo_order() {
+    fn remove_purges_a_thread_and_preserves_fifo_order() {
         let mut scheduler = Scheduler::new();
         assert!(scheduler.push(3));
         assert!(scheduler.push(5));
         assert!(scheduler.push(7));
 
-        // Domain teardown of the middle entry: only it leaves the queue.
+        // Thread teardown of the middle entry: only it leaves the queue.
         assert!(scheduler.remove(5));
         assert_eq!(scheduler.len(), 2);
         assert_eq!(scheduler.pop(), Some(3));
         assert_eq!(scheduler.pop(), Some(7));
         assert_eq!(scheduler.pop(), None);
 
-        // Removing a domain that is not queued is a no-op.
+        // Removing a thread that is not queued is a no-op.
         assert!(!scheduler.remove(5));
     }
 

@@ -267,8 +267,8 @@ mod tests {
     struct Dummy(u32);
 
     impl NucleusObject for Dummy {
-        const TYPE: ObjectType = ObjectType::DOMAIN;
-        const POOL: PoolTag = PoolTag::Domain;
+        const TYPE: ObjectType = ObjectType::THREAD;
+        const POOL: PoolTag = PoolTag::Thread;
     }
 
     fn pool<const N: usize>(backing: &mut MaybeUninit<[Dummy; N]>) -> ObjectPool<Dummy> {
@@ -295,7 +295,7 @@ mod tests {
         let mut backing = MaybeUninit::<[Dummy; 2]>::uninit();
         let mut pool = pool(&mut backing);
         let id = alloc(&mut pool, 7);
-        assert_eq!(id.pool, PoolTag::Domain);
+        assert_eq!(id.pool, PoolTag::Thread);
         assert_eq!(id.index, 0);
         assert_eq!(id.generation, 1);
         assert!(pool.validate(id).is_ok());

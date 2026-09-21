@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+pub mod address_space;
 pub mod asid_pool;
 pub mod debug_console;
 pub mod domain;
@@ -13,6 +14,7 @@ pub mod object_type;
 pub mod page_table;
 pub mod rights;
 pub mod syscall_status;
+pub mod thread;
 pub mod untyped;
 
 use syscall_status as code;
@@ -21,6 +23,7 @@ use syscall_status as code;
 pub use debug_console::DebugConsoleKey;
 
 pub use {
+    address_space::{AddressSpaceKey, AddressSpaceOp},
     asid_pool::{ASIDPoolKey, ASIDPoolOp},
     event_count::{EventCountKey, EventCountOp},
     frame::{FrameKey, FrameOp},
@@ -30,6 +33,7 @@ pub use {
     object_type::{ArchType, CoreType, ObjectType},
     page_table::{PageTableKey, PageTableOp},
     rights::Rights,
+    thread::{ThreadKey, ThreadOp},
     untyped::{UntypedKey, UntypedOp},
 };
 

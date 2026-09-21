@@ -37,10 +37,11 @@ accounting and the destination table unchanged.
 | `Notification` | reserved zero | no Untyped bytes; object allocated from the bootstrap-carved notification pool |
 | `EventCount` | reserved zero | no Untyped bytes; object allocated from the bootstrap-carved event-count pool |
 
-Every other kind is rejected with `InvalidObjectType`, including `Domain`
-(cannot be carved from memory) and `Untyped` itself (no split operation is
-implemented). A **device Untyped is not a valid source for any creatable
-kind**: rejected with `InvalidObjectType` before any reservation.
+Every other kind is rejected with `InvalidObjectType`, including `Thread`
+and `AddressSpace` (cannot be carved from memory) and `Untyped` itself (no
+split operation is implemented). A **device Untyped is not a valid source
+for any creatable kind**: rejected with `InvalidObjectType` before any
+reservation.
 
 ## Kernel-level implementation details
 

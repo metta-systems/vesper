@@ -1,5 +1,5 @@
 use {
-    super::{DomainId, DomainKey},
+    super::{DomainId, ThreadKey},
     std::cell::Cell,
     vesper_objects::{
         CapError, CoreType, InconsistencyReason, InvalidKeyReason, Key, KeySlot, RawKey,
@@ -28,28 +28,27 @@ pub(super) unsafe fn protected_call2(key: u64, op: u64, a0: u64, a1: u64) -> Res
 }
 
 fn invoke(op: u64, response: Response) -> Result<(), CapError> {
-    let domain_key = RawKey::new(KeySlot(u32::MAX), 0x89ab_cdef);
+    let thread_key = RawKey::new(KeySlot(u32::MAX), 0x89ab_cdef);
     let source_key = RawKey::new(KeySlot(u32::MAX - 1), 0x7654_3210);
     // Exercise mutations only; this fixture does not establish a DCB mapping.
-    let domain = DomainKey {
-        key: Key::new(domain_key),
+    let thread = ThreadKey {
+        key: Key::new(thread_key),
         id: DomainId::INVALID,
     };
     let source = Key::<()>::new(source_key);
     RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
     let result = match op {
-        0 => domain.activate(),
-        1 => domain.grant(&source, KeySlot(u32::MAX - 2)),
-        2 => domain.suspend(),
-        3 => domain.resume(),
-        4 => domain.retire(),
+        1 => thread.grant(&source, KeySlot(u32::MAX - 2)),
+        2 => thread.suspend(),
+        3 => thread.resume(),
+        4 => thread.retire(),
         _ => panic!("unexpected test operation"),
     };
     let args = (op == 1).then_some((0x7654_3210_ffff_fffe, 0x0000_0000_ffff_fffd));
     REQUEST.with(|request| assert_eq!(request.take(), Some((0x89ab_cdef_ffff_ffff, op, args))));
     RESPONSE.with(|pending| assert!(pending.get().is_none()));
-    assert_eq!(domain.key.raw(), domain_key);
-    assert_eq!(domain.id, DomainId::INVALID);
+    assert_eq!(thread.key.raw(), thread_key);
+    assert_eq!(thread.id, DomainId::INVALID);
     assert_eq!(source.raw(), source_key);
     result
 }
@@ -57,14 +56,14 @@ fn invoke(op: u64, response: Response) -> Result<(), CapError> {
 #[test]
 fn from_key_preserves_key_and_id_without_validation() {
     let key = RawKey::new(KeySlot(1), 7);
-    let domain = DomainKey::from_key(key, DomainId(3));
-    assert_eq!(domain.key.raw(), key);
-    assert_eq!(domain.id, DomainId(3));
+    let thread = ThreadKey::from_key(key, DomainId(3));
+    assert_eq!(thread.key.raw(), key);
+    assert_eq!(thread.id, DomainId(3));
 }
 
 #[test]
-fn all_domain_wrappers_preserve_request_encoding_and_accept_success() {
-    for op in 0..=4 {
+fn all_thread_wrappers_preserve_request_encoding_and_accept_success() {
+    for op in 1..=4 {
         assert_eq!(
             invoke(op, (0, u64::MAX, 1 << 63)).map_err(CapError::code),
             Ok(())
@@ -73,11 +72,11 @@ fn all_domain_wrappers_preserve_request_encoding_and_accept_success() {
 }
 
 #[test]
-fn all_domain_wrappers_report_unsupported_dispatch_and_lookup_errors() {
-    for op in 0..=4 {
+fn all_thread_wrappers_report_unsupported_dispatch_and_lookup_errors() {
+    for op in 1..=4 {
         assert!(matches!(
-            invoke(op, (16, 2, 0)),
-            Err(CapError::UnsupportedCoreType(CoreType::Domain))
+            invoke(op, (16, 3, 0)),
+            Err(CapError::UnsupportedCoreType(CoreType::Thread))
         ));
         assert!(matches!(
             invoke(op, (3, 0, 0)),
@@ -99,9 +98,9 @@ fn all_domain_wrappers_report_unsupported_dispatch_and_lookup_errors() {
 }
 
 #[test]
-fn all_domain_wrappers_preserve_key_diagnostics() {
+fn all_thread_wrappers_preserve_key_diagnostics() {
     let wire_key = 0x7654_3210_ffff_fffe;
-    for op in 0..=4 {
+    for op in 1..=4 {
         match invoke(op, (26, wire_key, 0x0202)) {
             Err(CapError::InvalidKey {
                 key,
@@ -134,8 +133,8 @@ fn all_domain_wrappers_preserve_key_diagnostics() {
 }
 
 #[test]
-fn all_domain_wrappers_preserve_unknown_statuses_and_malformed_details() {
-    for op in 0..=4 {
+fn all_thread_wrappers_preserve_unknown_statuses_and_malformed_details() {
+    for op in 1..=4 {
         for wire in [
             (u64::MAX, 42, 99),
             (1 << 32, 1, 2),

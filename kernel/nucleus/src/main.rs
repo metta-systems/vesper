@@ -329,7 +329,7 @@ unsafe extern "C" fn context_switch(sp: u64, pc: u64) -> ! {
     core::arch::naked_asm!("mov sp, x0", "br   x1",);
 }
 
-/// Resume a parked domain: SP must point at its saved exception frame.
+/// Resume a parked thread: SP must point at its saved exception frame.
 ///
 /// Branches into the exception vectors' register-restore sequence, which
 /// reloads `ELR_EL1`/`SPSR_EL1` and all GPRs from the frame and `eret`s back to
@@ -340,11 +340,11 @@ unsafe extern "C" fn resume_parked_context() -> ! {
     core::arch::naked_asm!("b __restore_context");
 }
 
-/// Park the current domain on `record` and switch to the next runnable
+/// Park the current thread on `record` and switch to the next runnable
 /// context. Never returns.
 ///
-/// The current domain's exception frame stays parked at `frame_addr` on its
-/// kernel stack; the domain resumes through [`resume_parked_context`] when
+/// The current thread's exception frame stays parked at `frame_addr` on its
+/// kernel stack; the thread resumes through [`resume_parked_context`] when
 /// the record's terminal transition is delivered.
 ///
 /// # Safety
@@ -360,36 +360,36 @@ unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
     let nucleus = unsafe { &mut *nucleus_ptr };
 
     let current = nucleus
-        .current_domain
-        .expect("blocked invocation without a current domain");
+        .current_thread
+        .expect("blocked invocation without a current thread");
     {
-        let Some(domain) = nucleus
+        let Some(thread) = nucleus
             .pools
-            .domains
-            .get_live_mut(usize::try_from(current).expect("current domain index too wide"))
+            .threads
+            .get_live_mut(usize::try_from(current).expect("current thread index too wide"))
         else {
-            panic!("current domain is not live");
+            panic!("current thread is not live");
         };
-        domain.context = ExecutionContext::Parked { frame_addr, record };
+        thread.context = ExecutionContext::Parked { frame_addr, record };
     }
 
-    // Pick the next runnable context. An empty queue means every domain is
+    // Pick the next runnable context. An empty queue means every thread is
     // blocked and no timer exists yet to wake anyone — the honest report is
     // a halt, not a fake return to the blocked caller.
     let next = nucleus
         .scheduler
         .pop()
-        .expect("all domains blocked and no timer exists to wake anyone");
-    nucleus.current_domain = Some(u32::from(next));
+        .expect("all threads blocked and no timer exists to wake anyone");
+    nucleus.current_thread = Some(u32::from(next));
 
-    let Some(domain) = nucleus.pools.domains.get_live_mut(usize::from(next)) else {
-        panic!("runnable domain is not live");
+    let Some(thread) = nucleus.pools.threads.get_live_mut(usize::from(next)) else {
+        panic!("runnable thread is not live");
     };
-    let (sp, pc) = match domain.context {
+    let (sp, pc) = match thread.context {
         ExecutionContext::Parked { frame_addr, record } => {
             // Deliver the terminal outcome into the parked frame. A runnable
-            // domain's record is always terminal: the wake enqueues the
-            // domain only after the record's single terminal transition.
+            // thread's record is always terminal: the wake enqueues the
+            // thread only after the record's single terminal transition.
             let (x0, x1, x2) = match nucleus.pending.state(record) {
                 Ok(PendingState::Completed {
                     status,
@@ -417,18 +417,18 @@ unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
                 // Cancellation outcomes need their D9 wire encoding. No path
                 // can deliver this resume yet: object teardown
                 // (`cancel_waiters`) has no production caller, and
-                // domain-teardown cancellation (2026-09-19) releases the
+                // thread-teardown cancellation (2026-09-19) releases the
                 // cancelled records without resuming — the torn-down waiter
                 // is gone.
                 Ok(PendingState::Cancelled) => {
                     panic!("cancelled record resumed before its D9 encoding exists")
                 }
                 Ok(PendingState::Waiting) => {
-                    panic!("runnable domain's record has not reached its terminal transition")
+                    panic!("runnable thread's record has not reached its terminal transition")
                 }
                 Err(error) => {
                     panic!(
-                        "runnable domain's record identity is stale: {:?}",
+                        "runnable thread's record identity is stale: {:?}",
                         error.code()
                     )
                 }
@@ -444,20 +444,20 @@ unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
             frame.gpr[0] = x0;
             frame.gpr[1] = x1;
             frame.gpr[2] = x2;
-            domain.context = ExecutionContext::Running;
+            thread.context = ExecutionContext::Running;
             (frame_addr, resume_parked_context as *const () as u64)
         }
         ExecutionContext::NotStarted { pc, stack_top } => {
-            domain.context = ExecutionContext::Running;
+            thread.context = ExecutionContext::Running;
             (stack_top, pc)
         }
         ExecutionContext::Running => {
-            panic!("runnable domain is already executing")
+            panic!("runnable thread is already executing")
         }
     };
 
     semi::println!(
-        "🔄 context switch: domain {current} parked, resuming domain {next} @ SP {sp:#x}, PC {pc:#x}"
+        "🔄 context switch: thread {current} parked, resuming thread {next} @ SP {sp:#x}, PC {pc:#x}"
     );
     // SAFETY: the target stack and entry point were validated above; the
     // current call chain is abandoned by design.

@@ -4,7 +4,7 @@ use {
         objects::{NucleusObject, access::ObjectId, arch::ArchPools, nucleus::Nucleus},
     },
     libaddress::PhysAddr,
-    libobject::{ArchType, CapError, ObjectType, Rights},
+    libobject::{ArchType, CapError, ObjectType},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -50,8 +50,9 @@ impl FrameSize {
 pub enum PtParent {
     /// Not installed anywhere.
     Uninstalled,
-    /// Installed as the translation root of a Domain (checked identity).
-    Root { domain: ObjectId },
+    /// Installed as the translation root of an `AddressSpace` (checked
+    /// identity).
+    Root { address_space: ObjectId },
     /// Installed in the parent table (physical address) at `slot`.
     Table { parent_paddr: u64, slot: u16 },
 }
@@ -68,6 +69,12 @@ pub trait AsidPoolObject: NucleusObject {
     /// Allocate the lowest free ASID, or `None` when the pool is exhausted.
     /// ASID 0 stays reserved for the kernel's boot context.
     fn allocate(&mut self) -> Option<u16>;
+
+    /// Release `asid` back to this pool (`AddressSpace.Retire`, selected
+    /// 2026-09-21). The caller performs the whole-ASID TLB invalidation
+    /// before releasing; ASID 0 is never released (it is the kernel's own
+    /// reserved boot context).
+    fn release(&mut self, asid: u16);
 }
 
 pub trait PageTableObject: NucleusObject {
@@ -79,12 +86,27 @@ pub trait PageTableObject: NucleusObject {
     fn is_installed(&self) -> bool;
     /// The installation record.
     fn parent(&self) -> PtParent;
-    /// Record root installation into `domain` at walk level 0.
-    fn install_root(&mut self, domain: ObjectId);
+    /// Record root installation into `address_space` at walk level 0.
+    fn install_root(&mut self, address_space: ObjectId);
     /// Record intermediate installation into the parent at `parent_level`.
     fn install_table(&mut self, parent_paddr: u64, parent_level: u8, slot: u16);
     /// Clear the installation record.
     fn uninstall(&mut self);
+}
+
+/// Behavior of an architecture's address-space object: the translation
+/// context state (mapping foundation, selected 2026-09-15; the kind was
+/// renamed from `VSpace` and activated 2026-09-21).
+pub trait AddressSpaceObject: NucleusObject {
+    /// Physical address of the installed translation root, if any.
+    fn translation_root(&self) -> Option<u64>;
+    /// Record or clear the translation root (root installation/withdrawal).
+    fn set_translation_root(&mut self, root: Option<u64>);
+    /// The bound hardware ASID, if any.
+    fn asid(&self) -> Option<u16>;
+    /// Record or clear the bound ASID (`ASIDPool.Assign` /
+    /// `AddressSpace.Retire`).
+    fn set_asid(&mut self, asid: Option<u16>);
 }
 
 /// Architecture abstraction trait - extended with invoke methods.
@@ -95,9 +117,9 @@ pub trait PageTableObject: NucleusObject {
 pub trait ArchObjects: Sized + 'static {
     // ─── Associated Types (pool-backed arch objects only) ───
     type PageTable: PageTableObject;
-    type VSpace: NucleusObject;
+    type AddressSpace: AddressSpaceObject;
     type ASIDPool: AsidPoolObject;
-    type ASID: NucleusObject;
+    type ASIDControl: NucleusObject;
 
     // ─── Constants ───
     const FRAME_SIZES: &'static [FrameSize];
@@ -121,6 +143,11 @@ pub trait ArchObjects: Sized + 'static {
     /// context). Boot-provisioned only: ASID pools are not Retype-creatable.
     fn new_asid_pool() -> Self::ASIDPool;
 
+    /// Construct a fresh, unbound `AddressSpace` (no translation root, no
+    /// ASID). Boot-provisioned only: address spaces are not
+    /// Retype-creatable yet.
+    fn new_address_space() -> Self::AddressSpace;
+
     // ─── TLB maintenance (hardware translation withdrawal) ───
 
     /// Invalidate cached translations for `vaddr` under `asid` (inner
@@ -130,7 +157,7 @@ pub trait ArchObjects: Sized + 'static {
     fn invalidate_tlb_by_vaddr(asid: u16, vaddr: u64);
 
     /// Invalidate every cached translation for `asid` (inner shareable),
-    /// completing before the caller proceeds. Called when a Domain's
+    /// completing before the caller proceeds. Called when an `AddressSpace`'s
     /// translation root is withdrawn.
     fn invalidate_tlb_asid(asid: u16);
 
@@ -140,11 +167,11 @@ pub trait ArchObjects: Sized + 'static {
     /// translation context (`TTBR0_EL1` on `AArch64`: base address with the
     /// ASID in bits 63:48), completing before the caller proceeds. The
     /// caller (the API handler) has already established the mapping-context
-    /// authority and that the root and ASID are bound to the same Domain;
-    /// this is the hardware mechanism only, not an authority decision.
-    /// Re-installing the same context is idempotent; switching between
-    /// contexts that share an ASID requires invalidation by the caller
-    /// (ASID reuse safety remains open, D6).
+    /// authority and that the root and ASID are bound to the same
+    /// `AddressSpace`; this is the hardware mechanism only, not an authority
+    /// decision. Re-installing the same context is idempotent; switching
+    /// between contexts that share an ASID requires invalidation by the
+    /// caller (ASID reuse safety remains open, D6).
     fn install_translation_context(root_paddr: u64, asid: u16);
 
     // ─── Mapping mechanics (hardware descriptor installation) ───
@@ -217,21 +244,13 @@ pub trait ArchObjects: Sized + 'static {
     ) -> Result<(ObjectType, ObjectId), CapError>;
 
     // ─── Invocation Handlers ───
-    // Frame, PageTable, and ASIDPool invocations are dispatched directly to
-    // their API handlers (`crate::api::arch::{frame,page_table,asid_pool}`),
+    // Frame, PageTable, AddressSpace, and ASIDPool invocations are dispatched
+    // directly to their API handlers
+    // (`crate::api::arch::{frame,page_table,address_space,asid_pool}`),
     // which resolve the invoked capability, the caller's table, and the
     // operand pools through the guarded `Access` context; no trait shim is
     // needed. The remaining handlers below serve the deferred kinds.
 
-    fn invoke_vspace(
-        vspace: &mut Self::VSpace,
-        rights: Rights,
-        op: u32,
-        args: &[u64; 6],
-        nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError>;
-
-    // Optional - default implementations return UnsupportedArchType
     fn invoke_io_space(
         _entry: &mut KeyEntry,
         _op: u32,

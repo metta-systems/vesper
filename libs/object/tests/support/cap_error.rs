@@ -124,7 +124,7 @@ fn literal_error_baseline_encodes_and_decodes_real_variants() {
         CapError::SlotOccupied(KeySlot(44)),
         CapError::SlotOccupied(KeySlot(44))
     );
-    assert_error!((14, 0x82, 0), CapError::NotCoreType(ObjectType::VSPACE), CapError::NotCoreType(t) if t == ObjectType::VSPACE);
+    assert_error!((14, 0x82, 0), CapError::NotCoreType(ObjectType::ADDRESS_SPACE), CapError::NotCoreType(t) if t == ObjectType::ADDRESS_SPACE);
     assert_error!(
         (15, 126, 0),
         CapError::UnknownCoreType(126),
@@ -143,8 +143,8 @@ fn literal_error_baseline_encodes_and_decodes_real_variants() {
     );
     assert_error!(
         (19, 2, 0),
-        CapError::UnsupportedArchType(ArchType::VSpace),
-        CapError::UnsupportedArchType(ArchType::VSpace)
+        CapError::UnsupportedArchType(ArchType::AddressSpace),
+        CapError::UnsupportedArchType(ArchType::AddressSpace)
     );
     assert_error!((20, 0xff, 0), CapError::InvalidObjectType(ObjectType::from(0xff)), CapError::InvalidObjectType(t) if t.as_u8() == 0xff);
     assert_error!(
@@ -226,9 +226,9 @@ fn raw_type_details_preserve_every_byte_including_unknown_indices() {
         assert_error!((20, detail, 0), CapError::InvalidObjectType(object), CapError::InvalidObjectType(t) if t == object);
         assert_error!(
             (21, detail, 0x82),
-            CapError::TypeMismatch { expected: object, found: ObjectType::VSPACE },
+            CapError::TypeMismatch { expected: object, found: ObjectType::ADDRESS_SPACE },
             CapError::TypeMismatch { expected, found }
-                if expected == object && found == ObjectType::VSPACE
+                if expected == object && found == ObjectType::ADDRESS_SPACE
         );
         assert_error!(
             (21, 7, detail),
@@ -244,8 +244,8 @@ fn unsupported_types_decode_only_known_local_indices() {
     let core_types = [
         (0, CoreType::Null),
         (1, CoreType::Untyped),
-        (2, CoreType::Domain),
-        (3, CoreType::KeyTable),
+        (2, CoreType::KeyTable),
+        (3, CoreType::Thread),
         (4, CoreType::Time),
         (5, CoreType::Endpoint),
         (6, CoreType::Notification),
@@ -256,9 +256,9 @@ fn unsupported_types_decode_only_known_local_indices() {
     let arch_types = [
         (0, ArchType::Frame),
         (1, ArchType::PageTable),
-        (2, ArchType::VSpace),
+        (2, ArchType::AddressSpace),
         (3, ArchType::ASIDPool),
-        (4, ArchType::ASID),
+        (4, ArchType::ASIDControl),
         (5, ArchType::IOSpace),
         (6, ArchType::IOPort),
         (7, ArchType::IRQHandler),

@@ -36,10 +36,10 @@ pub(super) unsafe fn protected_call6(
 /// request, or the kernel error decoded from `response`.
 pub(super) fn invoke_map(response: Response) -> Result<Request, CapError> {
     let frame_key = RawKey::new(KeySlot(9), 0x0246_8ace);
-    let domain_key = RawKey::new(KeySlot(1), 1);
+    let as_key = RawKey::new(KeySlot(1), 1);
     let frame = FrameKey::from_key(frame_key);
     RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
-    let result = frame.map(domain_key, 0x0000_0040_0000, Rights(Rights::READ), 0);
+    let result = frame.map(as_key, 0x0000_0040_0000, Rights(Rights::READ), 0);
     captured(result)
 }
 

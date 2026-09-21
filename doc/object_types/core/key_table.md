@@ -2,18 +2,18 @@
 
 | | |
 |---|---|
-| Wire type | `0x03` (core) |
+| Wire type | `0x02` (core) |
 | Pool | none as an object — a Retype-carved kernel object referenced by carve address |
 | Status | Active: CopyDerive/Move/Delete; Revoke rejected with a defined error |
 
 ## Purpose
 
-A `KeyTable` is a domain's capability table (seL4's `CNode`): a fixed array of
+A `KeyTable` is a thread's capability table (seL4's `CNode`): a fixed array of
 256 capability slots, each holding one `KeyEntry` plus a per-slot incarnation
 counter. KeyTable capabilities authorize *management* of entries in a table —
 derivation, removal, and installation — distinct from the authority granted by
 the entries themselves. Tables are Retype-created carved objects; the boot
-Domain's table is carved and initialized kernel-privately by Kickstart.
+Thread's table is carved and initialized kernel-privately by Kickstart.
 
 ## User-level visible operations
 
@@ -111,7 +111,7 @@ flowchart TD
   still-live object — D2 (rejected, not faked, until then).
 - Badge derivation and badge-zero semantics beyond Notification's selected
   hybrid — D4.
-- Bootstrap slot conventions (self domain, parent, self-table, manager) — D4
+- Bootstrap slot conventions (self thread, parent, self-table, manager) — D4
   must define one layout; the current names are conflicting sketches.
 - Notification index/registration versus 256-slot tables (a 64-bit pending
   bitmap does not fit every slot) — D4.

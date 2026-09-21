@@ -32,7 +32,7 @@ use {
 pub enum PoolTag {
     /// Marker for inline region types (Untyped, Frame) that are never pooled.
     Region = 255,
-    Domain = 0,
+    Thread = 0,
     KeyTable = 1,
     /// Kernel-internal pending-invocation records (completion foundation,
     /// 2026-09-16). Never capability-addressed; the tag exists so record
@@ -47,10 +47,13 @@ pub enum PoolTag {
     // Arch pool tags are appended after core tags. Values are kernel-internal
     // and may be renumbered between builds; they are never serialized.
     PageTable = 16,
-    VSpace = 17,
+    AddressSpace = 17,
     ASIDPool = 18,
-    #[expect(clippy::upper_case_acronyms, reason = "matches the ASID object name")]
-    ASID = 19,
+    #[expect(
+        clippy::upper_case_acronyms,
+        reason = "matches the ASIDControl object name"
+    )]
+    ASIDControl = 19,
 }
 
 impl PoolTag {
@@ -58,15 +61,15 @@ impl PoolTag {
     /// which no pooled type uses, so validation against `T::POOL` rejects them.
     pub fn from_raw(raw: u8) -> Self {
         match raw {
-            0 => Self::Domain,
+            0 => Self::Thread,
             1 => Self::KeyTable,
             2 => Self::Pending,
             3 => Self::Notification,
             4 => Self::EventCount,
             16 => Self::PageTable,
-            17 => Self::VSpace,
+            17 => Self::AddressSpace,
             18 => Self::ASIDPool,
-            19 => Self::ASID,
+            19 => Self::ASIDControl,
             _ => Self::Region,
         }
     }

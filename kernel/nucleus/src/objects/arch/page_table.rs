@@ -3,8 +3,8 @@
 //! A `PageTable` capability names a Retype-carved 4 KiB physical table plus
 //! this kernel metadata: the carve address, the walk level (0 = translation
 //! root), and the installation record (parent table and slot, or the owning
-//! Domain for a root). The hardware-format table itself is ordinary RAM in the
-//! Untyped's committed range, reached through the direct map.
+//! `AddressSpace` for a root). The hardware-format table itself is ordinary RAM
+//! in the Untyped's committed range, reached through the direct map.
 //!
 //! Descriptor format (`AArch64` Stage 1, 4 KiB granule, 48-bit VA): matches the
 //! boot-time configuration set by Kickstart — MAIR index 0 is normal
@@ -101,9 +101,9 @@ impl PageTableObject for AArch64PageTable {
         self.parent
     }
 
-    fn install_root(&mut self, domain: ObjectId) {
+    fn install_root(&mut self, address_space: ObjectId) {
         self.level = 0;
-        self.parent = PtParent::Root { domain };
+        self.parent = PtParent::Root { address_space };
     }
 
     fn install_table(&mut self, parent_paddr: u64, parent_level: u8, slot: u16) {
@@ -356,7 +356,7 @@ fn overlap_walk(table_paddr: u64, level: u8, start: u64, end: u64) -> Option<u64
 /// the conflicting descriptor's physical base.
 ///
 /// Enforces the selected alias policy — no two virtual addresses for
-/// overlapping physical backing within one Domain — ahead of the hardware
+/// overlapping physical backing within one `AddressSpace` — ahead of the hardware
 /// transition, so a rejected mapping leaves every table and record unchanged.
 pub fn find_physical_overlap(root_paddr: u64, paddr: u64, size_bits: u8) -> Option<u64> {
     // Frame sizes are architecture-validated upstream

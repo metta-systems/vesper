@@ -20,10 +20,10 @@ pub struct KeySlot(pub u32);
 
 impl KeySlot {
     pub const NULL: KeySlot = KeySlot(0);
-    pub const SELF_DOMAIN: KeySlot = KeySlot(1);
-    pub const PARENT_DOMAIN: KeySlot = KeySlot(2);
+    pub const SELF_ADDRESS_SPACE: KeySlot = KeySlot(1);
+    pub const PARENT_THREAD: KeySlot = KeySlot(2);
     // CSpace layout with self-reference
-    pub const CAPTBL_SELF: KeySlot = KeySlot(3); // Every domain has cap to own captbl here - or rather to KeyMaster
+    pub const CAPTBL_SELF: KeySlot = KeySlot(3); // Every thread has cap to own captbl here - or rather to KeyMaster
     /// The boot Untyped covering the initial carve region (Kickstart grant).
     pub const BOOT_UNTYPED: KeySlot = KeySlot(4);
     /// The boot ASID pool (Kickstart grant): the authoritative ASID namespace

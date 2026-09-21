@@ -1,7 +1,7 @@
 use {
     crate::objects::{
-        ArchObjects, Domain, EventCount, KeyTable, Notification, ObjectPool, PendingPool,
-        Scheduler, access::ObjectId, arch::ArchPools, domain::DcbPages,
+        ArchObjects, EventCount, KeyTable, Notification, ObjectPool, PendingPool, Scheduler,
+        Thread, access::ObjectId, arch::ArchPools, domain::DcbPages, thread::ExecutionContext,
     },
     core::sync::atomic::Ordering,
     libobject::{
@@ -18,29 +18,29 @@ use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 // ├─────────────────────────────────────────────────────────────────────┤
 // │                                                                     │
 // │  Kernel<A: ArchObjects>                                             │
-// │  │                                                                  │
-// │  ├── pools: KernelPools<A>                                          │
-// │  │   ├── untypeds: ObjectPool<Untyped>                              │
-// │  │   ├── domains: ObjectPool<Domain>                                │
-// │  │   ├── keytables: carved by Retype (no pool; see api::untyped)     │
-// │  │   ├── notifications: ObjectPool<Notification>                    │
-// │  │   ├── event_counts: ObjectPool<EventCount>                       │
-// │  │   ├── endpoints: ObjectPool<Endpoint>                            │
-// │  │   ├── time_slices: ObjectPool<TimeSlice>                         │
-// │  │   ├── replies: ObjectPool<Reply>                                 │
-// │  │   │                                                              │
-// │  │   └── arch: ArchPools<A>                                         │
-// │  │       ├── frames: ObjectPool<A::Frame>                           │
-// │  │       ├── page_tables: ObjectPool<A::PageTable>                  │
-// │  │       ├── vspaces: ObjectPool<A::VSpace>                         │
-// │  │       ├── asid_pools: ObjectPool<A::ASIDPool>                    │
-// │  │       └── asids: ObjectPool<A::ASID>                             │
-// │  │                                                                  │
-// │  ├── current_domain: Option<DomainId>                               │
-// │  ├── dcb_pages: DcbPages                                            │
-// │  └── pending: PendingPool (blocked-invocation records, 2026-09-16)  │
-// │                                                                     │
-// └─────────────────────────────────────────────────────────────────────┘
+//  │  │                                                                  │
+//  │  ├── pools: KernelPools<A>                                          │
+//  │  │   ├── untypeds: ObjectPool<Untyped>                              │
+//  │  │   ├── threads: ObjectPool<Thread>                                │
+//  │  │   ├── keytables: carved by Retype (no pool; see api::untyped)     │
+//  │  │   ├── notifications: ObjectPool<Notification>                    │
+//  │  │   ├── event_counts: ObjectPool<EventCount>                       │
+//  │  │   ├── endpoints: ObjectPool<Endpoint>                            │
+//  │  │   ├── time slices: ObjectPool<TimeSlice>                         │
+//  │  │   ├── replies: ObjectPool<Reply>                                 │
+//  │  │   │                                                              │
+//  │  │   └── arch: ArchPools<A>                                         │
+//  │  │       ├── frames: inline regions (no pool)                       │
+//  │  │       ├── page_tables: ObjectPool<A::PageTable>                  │
+//  │  │       ├── address_spaces: ObjectPool<A::AddressSpace>            │
+//  │  │       ├── asid_pools: ObjectPool<A::ASIDPool>                    │
+//  │  │       └── asid_controls: reserved with the kind                   │
+//  │  │                                                                  │
+//  │  ├── current_thread: Option<ThreadId>                              │
+//  │  ├── dcb_pages: DcbPages (thread scheduling pages, D5)              │
+//  │  └── pending: PendingPool (blocked-invocation records, 2026-09-16)  │
+//  │                                                                     │
+//  └─────────────────────────────────────────────────────────────────┘
 
 // ═══════════════════════════════════════════════════════════════════
 // UNIFIED KERNEL OBJECT MANAGEMENT
@@ -50,7 +50,10 @@ use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 pub struct NucleusPools<A: ArchObjects> {
     // ─── Core Object Pools ───
     // pub untypeds: ObjectPool<Untyped>,
-    pub domains: ObjectPool<Domain>,
+    /// Threads: the execution/scheduling remainder of the former Domain
+    /// (split 2026-09-21). Each Thread references its `AddressSpace` and its
+    /// carved `KeyTable`.
+    pub threads: ObjectPool<Thread>,
     /// Notification synchronization objects: pure kernel state, allocated by
     /// `Untyped.Retype` (allowlisted 2026-09-16) from this bootstrap-carved
     /// pool; the capability is a checked pool identity.
@@ -71,8 +74,8 @@ pub struct NucleusPools<A: ArchObjects> {
 pub struct Nucleus<A: ArchObjects> {
     /// All object pools
     pub pools: NucleusPools<A>,
-    /// Currently running domain
-    pub current_domain: Option<u32 /*DomainId*/>, // FIXME: not option, always something (Idle or other)
+    /// Currently running thread
+    pub current_thread: Option<u32 /*ThreadId*/>, // FIXME: not option, always something (Idle or other)
     /// DCB shared pages
     pub dcb_pages: DcbPages,
     /// Pending-invocation records for blocked callers (completion
@@ -100,39 +103,39 @@ impl<A: ArchObjects> Nucleus<A> {
         0
     }
 
-    /// Nucleus-private domain data, like keytables
-    pub fn current_domain_mut(&mut self) -> Option<&mut Domain> {
-        // need objects::Domain here, not DCB! or a tuple
-        let id = self.current_domain?;
-        self.pools.domains.get_live_mut(usize::try_from(id).ok()?)
+    /// Nucleus-private thread data, like keytables
+    pub fn current_thread_mut(&mut self) -> Option<&mut Thread> {
+        // need objects::Thread here, not DCB! or a tuple
+        let id = self.current_thread?;
+        self.pools.threads.get_live_mut(usize::try_from(id).ok()?)
     }
 
-    /// Shared access to the current domain's capability table.
-    pub fn current_domain_table(&self) -> Option<&KeyTable> {
-        let addr = self.current_domain_table_addr()?;
-        // SAFETY: the domain's table address is kernel-issued (carved by Retype
+    /// Shared access to the current thread's capability table.
+    pub fn current_thread_table(&self) -> Option<&KeyTable> {
+        let addr = self.current_thread_table_addr()?;
+        // SAFETY: the thread's table address is kernel-issued (carved by Retype
         // or the boot carve) and the region is never freed under accepted-leak.
         Some(unsafe { &*(addr as *const KeyTable) })
     }
 
-    /// Exclusive access to the current domain's capability table.
-    pub fn current_domain_table_mut(&mut self) -> Option<&mut KeyTable> {
-        let addr = self.current_domain_table_addr()?;
-        // SAFETY: see current_domain_table; &mut self guarantees exclusivity.
+    /// Exclusive access to the current thread's capability table.
+    pub fn current_thread_table_mut(&mut self) -> Option<&mut KeyTable> {
+        let addr = self.current_thread_table_addr()?;
+        // SAFETY: see current_thread_table; &mut self guarantees exclusivity.
         Some(unsafe { &mut *(addr as *mut KeyTable) })
     }
 
-    /// Address of the current domain's capability table (a carved `KeyTable`).
-    pub fn current_domain_table_addr(&self) -> Option<u64> {
-        let id = self.current_domain?;
-        let dom = self.pools.domains.get_live(usize::try_from(id).ok()?)?;
-        Some(dom.keytable_addr)
+    /// Address of the current thread's capability table (a carved `KeyTable`).
+    pub fn current_thread_table_addr(&self) -> Option<u64> {
+        let id = self.current_thread?;
+        let thread = self.pools.threads.get_live(usize::try_from(id).ok()?)?;
+        Some(thread.keytable_addr)
     }
 
     /// User-visible DCB
     pub fn current_dcb_mut(&mut self) -> Option<&mut DomainControlBlock> {
-        // need objects::Domain here, not DCB! or a tuple
-        let id = self.current_domain?;
+        // need objects::Thread here, not DCB! or a tuple
+        let id = self.current_thread?;
         self.dcb_pages.get_mut(DomainId(id))
     }
 
@@ -144,14 +147,14 @@ impl<A: ArchObjects> Nucleus<A> {
             reason = "feature-off bootstrap has no console key"
         )
     )]
-    pub fn create_domain(&mut self, keytable_addr: u64) -> Option<RawKey> {
-        // Allocate the Domain itself; its capability table is a carved KeyTable
-        // provided by the caller (Retype or the boot carve).
-        let (_dom_id, _dom) = self.pools.domains.allocate(Domain {
+    pub fn create_thread(&mut self, keytable_addr: u64, address_space: ObjectId) -> Option<RawKey> {
+        // Allocate the Thread itself; its capability table is a carved KeyTable
+        // provided by the caller (Retype or the boot carve), and its address
+        // space is the checked identity of a live AddressSpace.
+        let (_thread_id, _thread) = self.pools.threads.allocate(Thread {
             keytable_addr,
-            translation_root: None,
-            asid: None,
-            context: crate::objects::ExecutionContext::Running,
+            address_space,
+            context: ExecutionContext::Running,
         })?;
         #[cfg(feature = "debug_kernel")]
         {
@@ -187,8 +190,8 @@ impl<A: ArchObjects> Nucleus<A> {
         None
     }
 
-    /// Update DCB when domain is activated
-    pub fn activate_domain(&mut self, id: DomainId, time_budget_ns: u64) {
+    /// Update the DCB when a thread is activated
+    pub fn activate_thread(&mut self, id: DomainId, time_budget_ns: u64) {
         let cpu = self.current_cpu();
         let time = self.current_time_ns();
         if let Some(dcb) = self.dcb_pages.get_mut(id) {
@@ -206,8 +209,8 @@ impl<A: ArchObjects> Nucleus<A> {
         }
     }
 
-    /// Update DCB when domain yields/blocks/faults
-    pub fn deactivate_domain(&mut self, id: DomainId, reason: DeactivateReason) {
+    /// Update the DCB when a thread yields/blocks/faults
+    pub fn deactivate_thread(&mut self, id: DomainId, reason: DeactivateReason) {
         let elapsed = 0; //self.time_since_activation(id);
 
         if let Some(dcb) = self.dcb_pages.get_mut(id) {
@@ -254,55 +257,55 @@ impl<A: ArchObjects> Nucleus<A> {
         }
     }
 
-    /// Domain-teardown-driven cancellation (the selected D7 cancellation
+    /// Thread-teardown-driven cancellation (the selected D7 cancellation
     /// trigger, 2026-09-16): cancel every pending-invocation record naming
-    /// `domain` as its waiter and purge every queued wakeup for it.
+    /// `thread` as its waiter and purge every queued wakeup for it.
     ///
-    /// Call this while the Domain slot is still live — before the teardown
+    /// Call this while the Thread slot is still live — before the teardown
     /// path deallocates it — so the identity check below catches out-of-order
     /// teardown. The steps:
     ///
-    /// 1. Every live synchronization object stops holding the Domain's
+    /// 1. Every live synchronization object stops holding the Thread's
     ///    records (wait-queue removal; the FIFO order of other waiters is
     ///    preserved).
-    /// 2. The pending-pool teardown sweep gives each of the Domain's records
+    /// 2. The pending-pool teardown sweep gives each of the Thread's records
     ///    its single terminal transition — `Cancelled` for a still-`Waiting`
     ///    record (teardown wins the terminal-transition rule) — and releases
-    ///    it. A torn-down Domain never resumes, so nothing else would release
+    ///    it. A torn-down Thread never resumes, so nothing else would release
     ///    the bounded slots. Already-terminal records (a wakeup delivered
     ///    but not yet resumed) are released unchanged.
-    /// 3. The runnable queue loses the Domain's index: a woken-but-not-yet
-    ///    -resumed Domain must leave no wakeup behind for the next context
+    /// 3. The runnable queue loses the Thread's index: a woken-but-not-yet
+    ///    -resumed Thread must leave no wakeup behind for the next context
     ///    switch.
     ///
     /// No cancellation status crosses the wire: the torn-down waiter is
     /// gone, so its outcome is never delivered (the D9 cancellation
     /// encodings stay open for the timeout and object-teardown paths, whose
-    /// waiters do resume). DCB release and domain-slot deallocation are the
-    /// teardown path's separate steps (Phase 7 Domain control).
-    pub fn cancel_domain_pending(&mut self, domain: ObjectId) -> Result<(), CapError> {
-        // Teardown cancels pending records while the Domain slot is live; a
-        // stale identity means the caller tore the Domain down out of order.
-        self.pools.domains.validate(domain)?;
+    /// waiters do resume). DCB release and thread-slot deallocation are the
+    /// teardown path's separate steps (Phase 7 Thread control).
+    pub fn cancel_thread_pending(&mut self, thread: ObjectId) -> Result<(), CapError> {
+        // Teardown cancels pending records while the Thread slot is live; a
+        // stale identity means the caller tore the Thread down out of order.
+        self.pools.threads.validate(thread)?;
 
-        // Every live synchronization object stops holding the Domain's
+        // Every live synchronization object stops holding the Thread's
         // records. The scan is bounded by the pool slot count; `get_live_mut`
         // rejects slots beyond the carved capacity.
         for slot in 0..ObjectPool::<Notification>::MAX_SLOTS {
             if let Some(notification) = self.pools.notifications.get_live_mut(slot) {
-                notification.remove_waiter(domain, &self.pending);
+                notification.remove_waiter(thread, &self.pending);
             }
         }
         for slot in 0..ObjectPool::<EventCount>::MAX_SLOTS {
             if let Some(event_count) = self.pools.event_counts.get_live_mut(slot) {
-                event_count.remove_waiter(domain, &self.pending);
+                event_count.remove_waiter(thread, &self.pending);
             }
         }
 
-        // Every record naming the Domain reaches its terminal disposition
+        // Every record naming the Thread reaches its terminal disposition
         // and is released; every queued wakeup for it is purged.
-        self.pending.teardown_waiter(domain)?;
-        self.scheduler.remove(domain.index);
+        self.pending.teardown_waiter(thread)?;
+        self.scheduler.remove(thread.index);
         Ok(())
     }
 
@@ -358,22 +361,22 @@ mod tests {
     use {
         super::{Nucleus, NucleusPools},
         crate::objects::{
-            ArchObjectsImpl, Domain, EventCount, Notification, ObjectPool, PendingPool, Scheduler,
+            ArchObjectsImpl, EventCount, Notification, ObjectPool, PendingPool, Scheduler, Thread,
             access::{ObjectId, PoolTag},
             arch::{AArch64PageTable, ArchPools},
             completion::PendingState,
-            domain::{DcbPages, ExecutionContext},
             event_count::{AdvanceOutcome, AwaitOutcome},
             notification::WaitOutcome,
+            thread::ExecutionContext,
         },
         core::mem::MaybeUninit,
         libobject::syscall_status,
     };
 
-    // Backing bytes for the fixture's pools: three Domain slots, two
+    // Backing bytes for the fixture's pools: three Thread slots, two
     // Notification slots, one EventCount slot, and one page-table metadata
     // slot (structural only; these tests never touch the arch pools).
-    static mut DOMAIN_POOL_MEM: [u64; 16] = [0; 16];
+    static mut THREAD_POOL_MEM: [u64; 16] = [0; 16];
     static mut NOTIFICATION_POOL_MEM: [u64; 32] = [0; 32];
     static mut EVENT_COUNT_POOL_MEM: [u64; 32] = [0; 32];
     static mut ARCH_POOL_MEM: [u64; 16] = [0; 16];
@@ -388,17 +391,17 @@ mod tests {
         // (edition 2024).
         unsafe {
             let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
-            let domain_ptr = (&raw mut DOMAIN_POOL_MEM).cast::<u8>();
+            let thread_ptr = (&raw mut THREAD_POOL_MEM).cast::<u8>();
             let notification_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
             let event_count_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
             let arch_ptr = (&raw mut ARCH_POOL_MEM).cast::<u8>();
             nucleus_ptr.write(Nucleus {
-                current_domain: None,
-                dcb_pages: DcbPages::new(),
+                current_thread: None,
+                dcb_pages: crate::objects::domain::DcbPages::new(),
                 pending: PendingPool::new(),
                 scheduler: Scheduler::new(),
                 pools: NucleusPools {
-                    domains: ObjectPool::new(domain_ptr, core::mem::size_of::<Domain>() * 3),
+                    threads: ObjectPool::new(thread_ptr, core::mem::size_of::<Thread>() * 3),
                     notifications: ObjectPool::new(
                         notification_ptr,
                         core::mem::size_of::<Notification>() * 2,
@@ -412,6 +415,7 @@ mod tests {
                     arch: ArchPools::new(
                         ObjectPool::new(arch_ptr, core::mem::size_of::<AArch64PageTable>()),
                         ObjectPool::new(arch_ptr, 0),
+                        ObjectPool::new(arch_ptr, 0),
                     ),
                 },
             });
@@ -419,11 +423,16 @@ mod tests {
         }
     }
 
-    fn domain_fixture() -> Domain {
-        Domain {
+    fn thread_fixture() -> Thread {
+        Thread {
             keytable_addr: 0x1000,
-            translation_root: None,
-            asid: None,
+            // Structural placeholder identity: these tests never resolve the
+            // address space.
+            address_space: ObjectId {
+                pool: PoolTag::AddressSpace,
+                index: 0,
+                generation: 1,
+            },
             context: ExecutionContext::Running,
         }
     }
@@ -447,15 +456,15 @@ mod tests {
     }
 
     #[test_case]
-    fn domain_teardown_cancels_parked_waits_and_queued_wakeups() {
+    fn thread_teardown_cancels_parked_waits_and_queued_wakeups() {
         let nucleus = fixture_nucleus();
 
-        // Three domains: A and C block on a notification, B awaits an event
+        // Three threads: A and C block on a notification, B awaits an event
         // count. C is then woken but not resumed: its record completes and its
         // index is enqueued runnable (what `wake_waiter` does).
-        let (a, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
-        let (b, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
-        let (c, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
+        let (a, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
+        let (b, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
+        let (c, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
         let (n, _) = nucleus
             .pools
             .notifications
@@ -502,7 +511,7 @@ mod tests {
         // Teardown of A: its queued wait is cancelled and released; C's
         // completed record and queued wakeup, and B's await, are untouched.
         nucleus
-            .cancel_domain_pending(a)
+            .cancel_thread_pending(a)
             .unwrap_or_else(|_| panic!("teardown of A failed"));
         assert!(nucleus.pending.state(record_a).is_err());
         assert_eq!(
@@ -534,14 +543,14 @@ mod tests {
         // Teardown of C: the completed-but-undelivered record is released and
         // the queued wakeup is purged.
         nucleus
-            .cancel_domain_pending(c)
+            .cancel_thread_pending(c)
             .unwrap_or_else(|_| panic!("teardown of C failed"));
         assert!(nucleus.pending.state(record_c).is_err());
         assert!(nucleus.scheduler.is_empty());
 
         // Teardown of B: the queued await is cancelled and released.
         nucleus
-            .cancel_domain_pending(b)
+            .cancel_thread_pending(b)
             .unwrap_or_else(|_| panic!("teardown of B failed"));
         assert!(nucleus.pending.state(record_b).is_err());
         assert!(nucleus.pending.is_empty());
@@ -565,34 +574,34 @@ mod tests {
     }
 
     #[test_case]
-    fn domain_teardown_with_nothing_pending_is_a_no_op() {
+    fn thread_teardown_with_nothing_pending_is_a_no_op() {
         let nucleus = fixture_nucleus();
-        let (a, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
+        let (a, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
 
-        // A live domain with nothing pending tears down cleanly.
+        // A live thread with nothing pending tears down cleanly.
         nucleus
-            .cancel_domain_pending(a)
+            .cancel_thread_pending(a)
             .unwrap_or_else(|_| panic!("teardown with nothing pending failed"));
         assert!(nucleus.pending.is_empty());
         assert!(nucleus.scheduler.is_empty());
     }
 
     #[test_case]
-    fn domain_teardown_rejects_a_stale_domain_identity() {
+    fn thread_teardown_rejects_a_stale_thread_identity() {
         let nucleus = fixture_nucleus();
-        let (a, _) = nucleus.pools.domains.allocate(domain_fixture()).unwrap();
+        let (a, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
 
-        // Teardown cancels pending records while the domain slot is live;
+        // Teardown cancels pending records while the thread slot is live;
         // after deallocation the identity is stale and out-of-order teardown
         // is rejected.
         nucleus
-            .cancel_domain_pending(a)
+            .cancel_thread_pending(a)
             .unwrap_or_else(|_| panic!("teardown before deallocation failed"));
         nucleus
             .pools
-            .domains
+            .threads
             .deallocate(a)
-            .unwrap_or_else(|_| panic!("domain deallocation failed"));
-        assert!(nucleus.cancel_domain_pending(a).is_err());
+            .unwrap_or_else(|_| panic!("thread deallocation failed"));
+        assert!(nucleus.cancel_thread_pending(a).is_err());
     }
 }

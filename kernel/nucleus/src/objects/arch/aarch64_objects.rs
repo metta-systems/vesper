@@ -1,16 +1,14 @@
 use {
-    crate::{
-        Nucleus,
-        api::key_entry::KeyEntry,
-        objects::{
-            ArchObjects,
-            access::ObjectId,
-            arch::{AArch64ASID, AArch64ASIDPool, AArch64PageTable, AArch64VSpace, ArchPools},
-            arch_objects::FrameSize,
+    crate::objects::{
+        ArchObjects,
+        access::ObjectId,
+        arch::{
+            AArch64ASIDControl, AArch64ASIDPool, AArch64AddressSpace, AArch64PageTable, ArchPools,
         },
+        arch_objects::FrameSize,
     },
     libaddress::PhysAddr,
-    libobject::{ArchType, CapError, ObjectType, Rights},
+    libobject::{ArchType, CapError, ObjectType},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -21,9 +19,9 @@ pub struct AArch64;
 
 impl ArchObjects for AArch64 {
     type PageTable = AArch64PageTable;
-    type VSpace = AArch64VSpace;
+    type AddressSpace = AArch64AddressSpace;
     type ASIDPool = AArch64ASIDPool;
-    type ASID = AArch64ASID;
+    type ASIDControl = AArch64ASIDControl;
 
     const FRAME_SIZES: &'static [FrameSize] =
         &[FrameSize::Small, FrameSize::Large, FrameSize::Huge];
@@ -49,9 +47,9 @@ impl ArchObjects for AArch64 {
                     Err(CapError::InvalidSize(size_bits as usize))
                 }
             }
-            ArchType::VSpace => Ok(core::mem::size_of::<AArch64VSpace>()),
+            ArchType::AddressSpace => Ok(core::mem::size_of::<AArch64AddressSpace>()),
             ArchType::ASIDPool => Ok(core::mem::size_of::<AArch64ASIDPool>()),
-            ArchType::ASID => Ok(core::mem::size_of::<AArch64ASID>()),
+            ArchType::ASIDControl => Ok(core::mem::size_of::<AArch64ASIDControl>()),
             _ => Err(CapError::UnsupportedArchType(arch_type)),
         }
     }
@@ -62,6 +60,10 @@ impl ArchObjects for AArch64 {
 
     fn new_asid_pool() -> AArch64ASIDPool {
         AArch64ASIDPool::new()
+    }
+
+    fn new_address_space() -> AArch64AddressSpace {
+        AArch64AddressSpace::new()
     }
 
     fn invalidate_tlb_by_vaddr(asid: u16, vaddr: u64) {
@@ -191,13 +193,13 @@ impl ArchObjects for AArch64 {
         //             .ok_or(CapError::PoolExhausted)?;
         //         Ok((ObjectType::PAGE_TABLE, id))
         //     }
-        //     ArchType::VSpace => {
-        //         let vspace = AArch64VSpace::new();
+        //     ArchType::AddressSpace => {
+        //         let address_space = AArch64AddressSpace::new();
         //         let (id, _obj) = pools
-        //             .vspaces
-        //             .allocate(vspace)
+        //             .address_spaces
+        //             .allocate(address_space)
         //             .ok_or(CapError::PoolExhausted)?;
-        //         Ok((ObjectType::VSPACE, id))
+        //         Ok((ObjectType::ADDRESS_SPACE, id))
         //     }
         //     ArchType::ASIDPool => {
         //         let pool = AArch64ASIDPool::new();
@@ -213,22 +215,8 @@ impl ArchObjects for AArch64 {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Frame and PageTable operations are dispatched directly to their API
-    // handlers; see `crate::api::arch::{frame,page_table}`.
+    // Frame, PageTable, AddressSpace, and ASIDPool operations are dispatched
+    // directly to their API handlers; see
+    // `crate::api::arch::{frame,page_table,address_space,asid_pool}`.
     // ─────────────────────────────────────────────────────────────────
-
-    // ─────────────────────────────────────────────────────────────────
-    // VSpace Operations
-    // ─────────────────────────────────────────────────────────────────
-
-    fn invoke_vspace(
-        vspace: &mut AArch64VSpace,
-        rights: Rights,
-        op: u32,
-        args: &[u64; 6],
-        nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError> {
-        // crate::api::arch::vspace::invoke(vspace, rights, op, args)
-        Err(CapError::InvalidOperation)
-    }
 }
