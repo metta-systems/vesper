@@ -15,6 +15,16 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 - Use canonical `CoreType` numeric IDs, not legacy `ObjectType` constants. Preserve the canonical mapping; consult the contract and `CoreType` rather than copying full type/opcode/rights tables here. Core IDs include `Null = 0` and `DebugConsole = 127`; architecture-specific types use the high bit `0x80`.
 - Treat disagreement between the contract, `CoreType`, and implementation as a discrepancy to resolve explicitly, not permission to silently renumber the ABI.
 
+## Keep object-types documentation current
+
+- `doc/object_types/` is the per-kind user-facing reference and must be kept up to date as part of every capability refactor. When a refactor invalidates a per-kind document (kind split, rename, renumbering, operation/status change), replace the no-longer-valid content with new data; do not layer amendments, dated notes, or "formerly…" asides on top of stale documentation.
+- Update the catalogue tables, wire IDs, operation lists, and status columns in `doc/object_types/README.md` in the same slice as the code change. Documentation describing superseded behavior is a defect, not a historical record; the contract and the implementation plan carry the history.
+
+## No backwards compatibility
+
+- There is no previous version of anything: once the maintainer approves a change, preserve no backwards compatibility, migration path, deprecated alias, or legacy behavior. Functionality can be completely ripped out and replaced when necessary; update all consumers (shared ABI, wrappers, kernel API, objects, tests, documentation) in the same slice rather than keeping the old version alongside the new one.
+- This does not authorize silent divergence from approved contracts: update the contract and plan first, then remove the old behavior outright.
+
 ## Gate architectural decisions
 
 Check the documents' decision status and dependencies for the selected item:
@@ -109,5 +119,5 @@ Vesper is a playground for nightly Rust features. Using the latest nightly-only 
 
 - Start with pure ABI tests (IDs, layouts, encode/decode, errors), then state/rights/lifetime models and failure atomicity, then relevant target/QEMU integration, all through appropriate `just` recipes. Match coverage to the slice and its acceptance criteria; narrower checks do not imply the broader workflow passed.
 - Bound long-running commands with timeouts. Report exact commands, results, missing prerequisites, and timeouts; an unavailable target run is a validation blocker, not a pass.
-- Before completion, compare changed contracts, code, tests, and plan status. For lifecycle/authority slices, also reconcile the relevant open decisions and task/validation checklists in `doc/lifetime-and-authority.md`; documentation alone does not complete implementation or validation tasks. Report the item addressed, affected paths, observed validation, remaining blockers, and next prerequisite without starting another slice.
+- Before completion, compare changed contracts, code, tests, and plan status, and reconcile the affected `doc/object_types/` documents — replace stale content rather than amending it (see "Keep object-types documentation current"). For lifecycle/authority slices, also reconcile the relevant open decisions and task/validation checklists in `doc/lifetime-and-authority.md`; documentation alone does not complete implementation or validation tasks. Report the item addressed, affected paths, observed validation, remaining blockers, and next prerequisite without starting another slice.
 - The user uses **JJ only**: no raw Git. Do not automatically perform version-control operations; use read-only JJ only if necessary. No commit/change creation, history mutation, branch/bookmark changes, or push by default, and no force rewriting.

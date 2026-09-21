@@ -1,8 +1,8 @@
 - [ ] Rename Kickstart to Ymir?
 - [ ] VSpace -> Container?
   - [ ] Component?
-- [ ] CSpace = KeyTable
-- [ ] our Domain shall be more like Protection Domain (= TCB + CSpace + VSpace), 
+- [x] CSpace = KeyTable
+- [-] our Domain shall be more like Protection Domain (= TCB + CSpace + VSpace), 
 - [ ] ObjectPool .meta is limited to 256 entires, which is wrong - the meta should be allocated together with the pool from the Untyped, this is where we know the actual capacity.
 - [ ] seemingly AI decided we use process stacks, while it should be interrupt stacks for kernel state. Domain context should be stored in the DCB.
 - [ ] Extract testing bits from kickstart into a separate kicktest binary.
