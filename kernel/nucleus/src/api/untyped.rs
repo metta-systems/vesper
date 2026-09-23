@@ -1,34 +1,43 @@
 //! `Untyped.Retype`: create objects from an Untyped's unused watermark range.
 //!
-//! Wire schema (approved 2026-09-13): invoked on the Untyped capability key;
-//! `x2` object kind, `x3` `size_bits`, `x4` count, `x5` destination-table key,
-//! `x6` first destination slot, `x7` requested rights. Returns the first
-//! destination-local key in `x1`, zero in `x2`.
+//! Wire schema (approved 2026-09-13; `KeyTable` guard packing selected
+//! 2026-09-23): invoked on the Untyped capability key; `x2` object kind,
+//! `x3` `size_bits` — with, for the `KeyTable` kind only, the userspace-chosen
+//! table guard packed in bits 39:8 above the `size_bits` byte (bits 63:40
+//! reserved zero; every other kind requires bits 63:8 zero) — `x4` count,
+//! `x5` destination-table key, `x6` first destination slot (a bare index),
+//! `x7` requested rights. Returns the first destination-local key in `x1`,
+//! zero in `x2`.
 //!
 //! Authority: WRITE on the invoked Untyped, INSTALL on the destination table.
-//! The kind allowlist is `KeyTable` (`size_bits` reserved zero), `Frame`
-//! (architecture-validated `size_bits`, added 2026-09-15), `PageTable`
-//! (fixed architecture-validated 4 KiB carve, added 2026-09-15), `Notification`
-//! (pure kernel synchronization state, added 2026-09-16: no Untyped bytes are
-//! carved — the object is allocated from the bootstrap-carved notification pool
-//! and the capability is a checked pool identity), and `EventCount` (pure
-//! kernel synchronization state, added 2026-09-18: same pool-backed carve —
-//! no Untyped bytes, the object is allocated from the bootstrap-carved
-//! event-count pool), and `Untyped` itself (added 2026-09-23: a split into
-//! smaller Untypeds — the child region is `2^size_bits` bytes, at least the
-//! watermark encoding granularity, its own alignment, with the child
+//! The kind allowlist is `KeyTable` (a variable-size carve: `size_bits` selects
+//! the capacity, 1..=20 entries as `2^size_bits`, and the packed guard — fixed
+//! for the table's lifetime, recorded in the created capability — must fit
+//! `32 − size_bits` bits), `Frame` (architecture-validated `size_bits`, added
+//! 2026-09-15), `PageTable` (fixed architecture-validated 4 KiB carve, added
+//! 2026-09-15), `Notification` (pure kernel synchronization state, added
+//! 2026-09-16: no Untyped bytes are carved — the object is allocated from the
+//! bootstrap-carved notification pool and the capability is a checked pool
+//! identity), `EventCount` (pure kernel synchronization state, added 2026-09-18:
+//! same pool-backed carve — no Untyped bytes, the object is allocated from the
+//! bootstrap-carved event-count pool), and `Untyped` itself (added 2026-09-23:
+//! a split into smaller Untypeds — the child region is `2^size_bits` bytes, at
+//! least the watermark encoding granularity, its own alignment, with the child
 //! watermark starting at zero; no bytes are initialized or sanitized because
 //! the split is pure bookkeeping); other kinds remain unsupported. Device
 //! Untypeds are rejected as sources for every kind except the `Untyped`
 //! split, which touches no bytes and propagates `is_device` to the children
-//! (per-kind device policy is D6).
+//! (per-kind device policy is D6). A batch is bounded by
+//! `MAX_RETYPE_BATCH` (256 objects; larger counts are rejected with
+//! `InvalidOperation` and split by the caller).
 //!
 //! Transaction: validate → reserve (watermark fit) → initialize each object
-//! kernel-privately in the carved region (a `KeyTable` is written there; a
-//! `Frame`'s and a `PageTable`'s contents are sanitized by zeroing — stale
-//! descriptors would leak prior contents into hardware walks) → install
-//! capabilities → advance the watermark last. Any failure before the watermark
-//! advance leaves the Untyped and the destination table unchanged.
+//! kernel-privately in the carved region (a `KeyTable`'s header, entries, and
+//! counters are written/zeroed there; a `Frame`'s and a `PageTable`'s contents
+//! are sanitized by zeroing — stale descriptors would leak prior contents into
+//! hardware walks) → install capabilities → advance the watermark last. Any
+//! failure before the watermark advance leaves the Untyped and the destination
+//! table unchanged.
 
 use {
     crate::{
@@ -39,6 +48,7 @@ use {
         objects::{
             ArchObjects, EventCount, KeyTable, Notification, Nucleus,
             access::{Access, ObjectId},
+            key_table::CallerTable,
         },
     },
     libaddress::{PhysAddr, align},
@@ -46,14 +56,22 @@ use {
     libqemu::semihosting as semi,
 };
 
+/// Upper bound on one Retype batch (selected 2026-09-23): the transaction's
+/// defensive rollback records are kernel stack arrays sized by this bound.
+/// Larger counts are rejected with `InvalidOperation`; callers split them.
+const MAX_RETYPE_BATCH: u32 = 256;
+/// `MAX_RETYPE_BATCH` in array-length form (the `u32 → usize` `From` impl is
+/// not const-callable, so the widening cast is explicit).
+const MAX_RETYPE_BATCH_LEN: usize = MAX_RETYPE_BATCH as usize;
+
 /// Handle an `Untyped` invocation.
 ///
-/// `caller_table_addr` is the caller's own capability table (its implicit
-/// table), through which the invoked `untyped_key` and the destination-table
-/// key are resolved.
+/// `caller` is the caller's own table context (its implicit table and guard),
+/// through which the invoked `untyped_key` and the destination-table key are
+/// resolved.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     untyped_key: RawKey,
     op: u64,
     args: &[u64; 6],
@@ -61,14 +79,16 @@ pub fn invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let op = UntypedOp::try_from(op)?;
     match op {
-        UntypedOp::Retype => retype::<A>(access, caller_table_addr, untyped_key, args, nucleus),
+        UntypedOp::Retype => retype::<A>(access, caller, untyped_key, args, nucleus),
     }
 }
 
 /// How one carved object is sized, aligned, and kernel-privately initialized.
 enum Carve {
-    /// A carved `KeyTable`: kernel bookkeeping storage, written at the carve.
-    KeyTable,
+    /// A carved `KeyTable`: kernel bookkeeping storage — the header, entries,
+    /// and incarnation counters are written/zeroed at the carve. The capacity
+    /// is `2^size_bits` entries.
+    KeyTable { size_bits: u8 },
     /// A carved `Frame`: a raw physical region of `bytes` bytes. There is no
     /// kernel object at the carve; the capability stores the region inline,
     /// and the contents are sanitized (zeroed) before installation.
@@ -102,7 +122,7 @@ enum Carve {
 /// watermark range and install capabilities into consecutive destination slots.
 fn retype<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     untyped_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
@@ -112,9 +132,26 @@ fn retype<A: ArchObjects>(
             .ok()
             .ok_or(CapError::InvalidOperation)?,
     );
-    let size_bits = u8::try_from(args[1])
-        .ok()
-        .ok_or(CapError::InvalidOperation)?;
+    // `x3` carries `size_bits` in its low byte. For the `KeyTable` kind the
+    // userspace-chosen table guard is packed in bits 39:8 above it (selected
+    // 2026-09-23); bits 63:40 are reserved zero. Every other kind requires
+    // bits 63:8 zero (the strict zero convention).
+    let (size_bits, table_guard) = if kind == ObjectType::KEY_TABLE {
+        let size_bits = u8::try_from(args[1] & 0xFF)
+            .ok()
+            .ok_or(CapError::InvalidOperation)?;
+        let guard_word = args[1] >> 8;
+        let guard = u32::try_from(guard_word)
+            .map_err(|_bits_63_40_set| CapError::InvalidSize(usize::from(size_bits)))?;
+        (size_bits, guard)
+    } else {
+        (
+            u8::try_from(args[1])
+                .ok()
+                .ok_or(CapError::InvalidOperation)?,
+            0,
+        )
+    };
     let count = u32::try_from(args[2])
         .ok()
         .ok_or(CapError::InvalidOperation)?;
@@ -138,10 +175,17 @@ fn retype<A: ArchObjects>(
     // silently created with wrong semantics.
     let carve = match kind {
         ObjectType::KEY_TABLE => {
-            if size_bits != 0 {
+            // A variable-size carve (selected 2026-09-23): `size_bits` selects
+            // the capacity (2^size_bits entries), and the packed guard — fixed
+            // for the table's lifetime — must fit the table-relative address
+            // layout: `32 − size_bits` bits above the slot index.
+            if !(KeyTable::MIN_SIZE_BITS..=KeyTable::MAX_SIZE_BITS).contains(&size_bits) {
                 return Err(CapError::InvalidSize(usize::from(size_bits)));
             }
-            Carve::KeyTable
+            if table_guard >> (32_u32 - u32::from(size_bits)) != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::KeyTable { size_bits }
         }
         ObjectType::FRAME => Carve::Frame {
             bytes: A::validate_frame_size(size_bits)?,
@@ -181,12 +225,17 @@ fn retype<A: ArchObjects>(
     if count == 0 {
         return Err(CapError::InvalidOperation);
     }
+    // The transaction's defensive rollback records are stack arrays sized by
+    // the batch bound; a larger run is malformed input, not a resource limit.
+    if count > MAX_RETYPE_BATCH {
+        return Err(CapError::InvalidOperation);
+    }
 
     // Phase 1 — read the Untyped entry and the destination-table capability
     // through the caller's own table, copying out the values needed later.
     let (untyped, dst_cap) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-        let untyped = caller_table.lookup(untyped_key)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let untyped = caller_table.lookup(untyped_key, caller.guard)?;
         if untyped.object_type() != ObjectType::UNTYPED {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::UNTYPED,
@@ -206,7 +255,7 @@ fn retype<A: ArchObjects>(
         if untyped.as_untyped()?.is_device && kind != ObjectType::UNTYPED {
             return Err(CapError::InvalidObjectType(kind));
         }
-        let dst_cap = resolve_table_cap(&caller_table, dst_table_key, 5)?;
+        let dst_cap = resolve_table_cap(&caller_table, dst_table_key, caller.guard, 5)?;
         if !dst_cap.rights.has(Rights::INSTALL) {
             return Err(CapError::InsufficientRights);
         }
@@ -236,11 +285,12 @@ fn retype<A: ArchObjects>(
     // `u32::MAX × MIN_ALIGN`) even in larger regions.
     let usable_end = region_size.min(u64::from(u32::MAX) * u64::try_from(MIN_ALIGN).unwrap());
     // A frame, a page table, and a split-off Untyped are each their own
-    // alignment; a KeyTable uses its type alignment (at least the watermark
-    // encoding granularity); a Notification and an EventCount carve no bytes.
+    // alignment; a KeyTable's carve size and alignment derive from its
+    // capacity exponent (at least the watermark encoding granularity); a
+    // Notification and an EventCount carve no bytes.
     let (obj_size, align) = match carve {
-        Carve::KeyTable => (
-            u64::try_from(core::mem::size_of::<KeyTable>()).unwrap(),
+        Carve::KeyTable { size_bits } => (
+            u64::try_from(KeyTable::carve_size(size_bits)).unwrap(),
             u64::try_from(core::mem::align_of::<KeyTable>().max(MIN_ALIGN)).unwrap(),
         ),
         Carve::Frame { bytes } | Carve::PageTable { bytes } | Carve::Untyped { bytes } => {
@@ -296,7 +346,8 @@ fn retype<A: ArchObjects>(
     // Pool backing is explicitly charged at bootstrap; on exhaustion the
     // already-taken slots are released, leaving every part of the
     // transaction unchanged.
-    let mut pt_ids: [Option<ObjectId>; KeyTable::NUM_SLOTS] = [const { None }; KeyTable::NUM_SLOTS];
+    let mut pt_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
+        [const { None }; MAX_RETYPE_BATCH_LEN];
     if matches!(carve, Carve::PageTable { .. }) {
         let base = untyped.paddr + aligned_wm;
         for i in 0..u64::from(count) {
@@ -317,7 +368,8 @@ fn retype<A: ArchObjects>(
             }
         }
     }
-    let mut n_ids: [Option<ObjectId>; KeyTable::NUM_SLOTS] = [const { None }; KeyTable::NUM_SLOTS];
+    let mut n_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
+        [const { None }; MAX_RETYPE_BATCH_LEN];
     if matches!(carve, Carve::Notification) {
         for i in 0..u64::from(count) {
             let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
@@ -332,7 +384,8 @@ fn retype<A: ArchObjects>(
             }
         }
     }
-    let mut ec_ids: [Option<ObjectId>; KeyTable::NUM_SLOTS] = [const { None }; KeyTable::NUM_SLOTS];
+    let mut ec_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
+        [const { None }; MAX_RETYPE_BATCH_LEN];
     if matches!(carve, Carve::EventCount) {
         for i in 0..u64::from(count) {
             let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
@@ -353,8 +406,8 @@ fn retype<A: ArchObjects>(
     // unchanged); stale writes are overwritten by the next carve if the
     // transaction aborts.
     let base = untyped.paddr + aligned_wm;
-    let mut installed: [RawKey; KeyTable::NUM_SLOTS] =
-        [RawKey::new(KeySlot(0), 0); KeyTable::NUM_SLOTS];
+    let mut installed: [RawKey; MAX_RETYPE_BATCH_LEN] =
+        [RawKey::new(KeySlot(0), 0); MAX_RETYPE_BATCH_LEN];
     let mut installed_count = 0_usize;
     let mut first_key = None;
     for i in 0..u64::from(count) {
@@ -365,16 +418,16 @@ fn retype<A: ArchObjects>(
                 .ok_or(CapError::InvalidOperation)?,
         );
         let entry = match carve {
-            Carve::KeyTable => {
-                let addr = PhysAddr::new(paddr)
-                    .user_to_kernel()
-                    .as_mut_ptr::<KeyTable>();
-                // SAFETY: the region lies within the Untyped's unused watermark range,
-                // is kernel-private, and is exclusively owned by this invocation.
+            Carve::KeyTable { size_bits } => {
+                let addr = PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>();
+                // SAFETY: the region lies within the Untyped's unused
+                // watermark range, is kernel-private, is exclusively owned by
+                // this invocation, and is aligned to the table's 32-byte
+                // header/entry alignment with room for the full carve.
                 unsafe {
-                    addr.write(KeyTable::new(owner));
-                };
-                KeyEntry::new_keytable(addr as u64, requested, 0)
+                    KeyTable::initialize(addr, owner, size_bits);
+                }
+                KeyEntry::new_keytable(addr as u64, table_guard, size_bits, requested, 0)
             }
             Carve::Frame { bytes } => {
                 // Sanitization (selected 2026-09-15): the kernel zeroes the
@@ -424,7 +477,7 @@ fn retype<A: ArchObjects>(
                 KeyEntry::new_untyped(paddr, size_bits, untyped.is_device, requested)
             }
         };
-        match dst_table.insert(slot, entry) {
+        match dst_table.insert(slot, entry, dst_cap.guard) {
             Ok(key) => {
                 installed[installed_count] = key;
                 installed_count += 1;
@@ -438,7 +491,7 @@ fn retype<A: ArchObjects>(
                 // watermark is unchanged, so the Untyped's accounting is
                 // preserved and the destination table is restored.
                 for key in installed[..installed_count].iter().rev() {
-                    drop(dst_table.remove(*key));
+                    drop(dst_table.remove(*key, dst_cap.guard));
                 }
                 for id in pt_ids.iter().flatten().copied() {
                     drop(nucleus.pools.arch.page_tables.deallocate(id));
@@ -457,17 +510,17 @@ fn retype<A: ArchObjects>(
     // Phase 6 — commit: advance the watermark last. The destination table may
     // be the caller's own table; re-resolve it only when they differ.
     let new_watermark = usize::try_from(end).unwrap();
-    if dst_cap.address == caller_table_addr {
-        dst_table.advance_untyped_watermark(untyped_key, new_watermark)?;
+    if dst_cap.address == caller.addr {
+        dst_table.advance_untyped_watermark(untyped_key, caller.guard, new_watermark)?;
     } else {
         // Distinct tables: the destination guard's borrow ended at its last
         // use above, so resolving the caller's own table cannot alias it.
-        let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-        caller_table.advance_untyped_watermark(untyped_key, new_watermark)?;
+        let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        caller_table.advance_untyped_watermark(untyped_key, caller.guard, new_watermark)?;
     }
 
     let kind_name = match carve {
-        Carve::KeyTable => "KeyTable",
+        Carve::KeyTable { .. } => "KeyTable",
         Carve::Frame { .. } => "Frame",
         Carve::PageTable { .. } => "PageTable",
         Carve::Notification => "Notification",

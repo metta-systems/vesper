@@ -42,6 +42,7 @@
 use {
     crate::objects::{
         ArchObjects, KeyTable, Nucleus, access::Access, arch_objects::AddressSpaceObject,
+        key_table::CallerTable,
     },
     libobject::{CapError, FrameOp, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -49,11 +50,11 @@ use {
 
 /// Handle a `Frame` capability invocation.
 ///
-/// `caller_table_addr` is the caller's own table, through which the invoked
+/// `caller` is the caller's own table context, through which the invoked
 /// `frame_key` and the target `AddressSpace` key are resolved.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     frame_key: RawKey,
     op: u64,
     args: &[u64; 6],
@@ -61,9 +62,9 @@ pub fn invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let op = FrameOp::try_from(op)?;
     match op {
-        FrameOp::Map => map::<A>(access, caller_table_addr, frame_key, args, nucleus),
-        FrameOp::Unmap => unmap::<A>(access, caller_table_addr, frame_key, args, nucleus),
-        FrameOp::GetAddress => get_extent(access, caller_table_addr, frame_key, args),
+        FrameOp::Map => map::<A>(access, caller, frame_key, args, nucleus),
+        FrameOp::Unmap => unmap::<A>(access, caller, frame_key, args, nucleus),
+        FrameOp::GetAddress => get_extent(access, caller, frame_key, args),
         // Origin-only remap authority, descendant effects, and the
         // virtual-relocation-versus-physical-replacement question remain open
         // (D4/D6); reject rather than fake an attribute change.
@@ -75,7 +76,7 @@ pub fn invoke<A: ArchObjects>(
 /// context.
 fn map<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     frame_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
@@ -100,9 +101,9 @@ fn map<A: ArchObjects>(
     // Resolve the frame entry and the target AddressSpace capability through
     // the caller's own table, copying out what is needed later.
     let (frame, as_id) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
-            .lookup(frame_key)
+            .lookup(frame_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
         if entry.object_type() != ObjectType::FRAME {
             return Err(CapError::TypeMismatch {
@@ -125,7 +126,7 @@ fn map<A: ArchObjects>(
             return Err(CapError::InvalidOperation);
         }
         let as_entry = caller_table
-            .lookup(as_key)
+            .lookup(as_key, caller.guard)
             .map_err(|e| e.with_key_operand(2))?;
         if as_entry.object_type() != ObjectType::ADDRESS_SPACE {
             return Err(CapError::TypeMismatch {
@@ -175,8 +176,8 @@ fn map<A: ArchObjects>(
     // Commit: record the mapping identity on the frame entry. The destination
     // is the caller's own table; the entry was validated above and only the
     // mapping record changes.
-    let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-    caller_table.record_frame_mapping(frame_key, as_id, vaddr)?;
+    let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+    caller_table.record_frame_mapping(frame_key, caller.guard, as_id, vaddr)?;
 
     semi::println!("✅ Frame::Map()");
     Ok((0, 0))
@@ -185,7 +186,7 @@ fn map<A: ArchObjects>(
 /// `Unmap` `1`: clear the frame's descriptor through its recorded mapping.
 fn unmap<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     frame_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
@@ -195,9 +196,9 @@ fn unmap<A: ArchObjects>(
     }
 
     let frame = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
-            .lookup(frame_key)
+            .lookup(frame_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
         if entry.object_type() != ObjectType::FRAME {
             return Err(CapError::TypeMismatch {
@@ -228,8 +229,8 @@ fn unmap<A: ArchObjects>(
     }
 
     // Commit: clear the mapping record.
-    let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-    caller_table.clear_frame_mapping(frame_key)?;
+    let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+    caller_table.clear_frame_mapping(frame_key, caller.guard)?;
     semi::println!("✅ Frame::Unmap()");
     Ok((0, 0))
 }
@@ -237,16 +238,16 @@ fn unmap<A: ArchObjects>(
 /// `GetExtent` `2`: the frame's physical extent.
 fn get_extent(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     frame_key: RawKey,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     if args.iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
-    let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+    let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
     let entry = caller_table
-        .lookup(frame_key)
+        .lookup(frame_key, caller.guard)
         .map_err(|e| e.with_key_operand(0))?;
     if entry.object_type() != ObjectType::FRAME {
         return Err(CapError::TypeMismatch {

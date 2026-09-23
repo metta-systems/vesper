@@ -38,7 +38,7 @@ lookup error).
   semihosting `sys_write0`. **Actual output currently requires `qemu`**;
   enabling `debug_kernel` alone does not add a hardware output backend.
 - Bootstrap: Kickstart installs the console capability at
-  `KeySlot::DEBUG_CONSOLE` (slot 127) with `Rights::all()` when the feature is
+  `KeySlot::DEBUG_CONSOLE` (slot 14) with `Rights::all()` when the feature is
   on.
 
 ```mermaid

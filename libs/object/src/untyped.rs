@@ -88,26 +88,34 @@ impl UntypedKey {
     /// range, installing capabilities into `count` consecutive vacant slots of
     /// the destination table.
     ///
-    /// Wire schema (approved 2026-09-13): `x2` object kind, `x3` `size_bits`,
+    /// Wire schema (approved 2026-09-13, `KeyTable` guard packing selected
+    /// 2026-09-23): `x2` object kind, `x3` `size_bits` with the table guard
+    /// packed in bits 39:8 (`KeyTable` kind only; zero for every other kind),
     /// `x4` count, `x5` destination-table key, `x6` first destination slot,
     /// `x7` requested rights. Returns the first destination-local key from
     /// the first success word and ignores the second; the remaining keys are
     /// at the consecutive destination slots.
     ///
-    /// The kernel's kind allowlist is `KeyTable`, `Frame` (an architecture
-    /// kind with architecture-validated `size_bits`; the carved frame
-    /// contents are sanitized by the kernel at retype), `PageTable`,
-    /// `Notification`, `EventCount`, and `Untyped` itself (a split into
-    /// smaller Untypeds: the child region is `2^size_bits` bytes, at least
-    /// the watermark encoding granularity, and no bytes are initialized or
-    /// sanitized); other kinds are rejected as unsupported rather than
-    /// created. Device Untypeds cannot be retyped into any of these except
+    /// The kernel's kind allowlist is `KeyTable` (a variable-size carve: the
+    /// `size_bits` byte selects the capacity, 1..=20 entries as
+    /// `2^size_bits`), `Frame` (an architecture kind with
+    /// architecture-validated `size_bits`; the carved frame contents are
+    /// sanitized by the kernel at retype), `PageTable`, `Notification`,
+    /// `EventCount`, and `Untyped` itself (a split into smaller Untypeds:
+    /// the child region is `2^size_bits` bytes, at least the watermark
+    /// encoding granularity, and no bytes are initialized or sanitized);
+    /// other kinds are rejected as unsupported rather than created. The
+    /// `guard` argument names the created table's guard (fixed for its
+    /// lifetime, recorded in the capability) and must be zero for every other
+    /// kind. Device Untypeds cannot be retyped into any of these except
     /// `Untyped` — the split touches no bytes and propagates the device
     /// flag — until per-kind device policy is approved (D6).
+    #[allow(clippy::too_many_arguments)]
     pub fn retype(
         &self,
         kind: ObjectType,
         size_bits: u8,
+        guard: u32,
         count: u32,
         dst_table: &KeyTableKey,
         dst_slot: u32,
@@ -119,7 +127,7 @@ impl UntypedKey {
                 self.key.to_wire(),
                 UntypedOp::Retype as u64,
                 u64::from(kind.as_u8()),
-                u64::from(size_bits),
+                (u64::from(guard) << 8) | u64::from(size_bits),
                 u64::from(count),
                 dst_table.to_wire(),
                 u64::from(dst_slot),

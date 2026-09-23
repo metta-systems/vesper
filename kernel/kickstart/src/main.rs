@@ -47,7 +47,9 @@ mod qsort;
 use {
     crate::{
         boot_info::BOOT_INFO,
-        bootstrap::{PoolCapacities, build_initial_nucleus},
+        bootstrap::{
+            BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, PoolCapacities, build_initial_nucleus,
+        },
         embed::NUCLEUS_SET_ANCHOR_VIRT,
         memory::Alloc,
     },
@@ -85,6 +87,32 @@ use libobject::{
     ASIDPoolKey, CapError, DebugConsoleKey, EventCountKey, FrameKey, InvalidKeyReason, KeyTableKey,
     NotificationKey, PageTableKey, RawKey, UntypedKey,
 };
+
+/// The guard Kickstart picks for the tables the boot test carves at runtime
+/// (guarded key-space package, selected 2026-09-23): distinct from the boot
+/// table's guard so cross-table key confusion is exercised. Fits the 24 guard
+/// bits of a 256-entry table's table-relative address.
+#[cfg(feature = "debug_kernel")]
+const TEST_TABLE_GUARD: u32 = 0xFEE_D42;
+
+/// Compose a boot-table key from a bare slot index and incarnation: the boot
+/// guard packed above the index.
+#[cfg(feature = "debug_kernel")]
+fn boot_key(slot: u32, incarnation: u32) -> RawKey {
+    RawKey::from_parts(BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, slot, incarnation)
+}
+
+/// The boot-table slot half for a bare index (the guard packed above it).
+#[cfg(feature = "debug_kernel")]
+fn boot_slot(index: u32) -> KeySlot {
+    KeySlot((BOOT_TABLE_GUARD << u32::from(BOOT_TABLE_SIZE_BITS)) | index)
+}
+
+/// The slot half of a key in one of the boot test's runtime-carved tables.
+#[cfg(feature = "debug_kernel")]
+fn test_slot(index: u32) -> KeySlot {
+    KeySlot((TEST_TABLE_GUARD << u32::from(BOOT_TABLE_SIZE_BITS)) | index)
+}
 
 unsafe extern "C" {
     static __INIT_START: UnsafeCell<()>;
@@ -678,14 +706,21 @@ pub fn kickstart_run() -> ! {
     let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
     let self_table_key = boot_table
         .insert(
-            KeySlot::CAPTBL_SELF,
-            KeyEntry::new_keytable(keytable_addr, Rights::all(), 0),
+            KeySlot::SELF_KEYTABLE,
+            KeyEntry::new_keytable(
+                keytable_addr,
+                BOOT_TABLE_GUARD,
+                BOOT_TABLE_SIZE_BITS,
+                Rights::all(),
+                0,
+            ),
+            BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {
             panic!("boot self-table install failed: {:?}", failure.error.code())
         });
     let boot_untyped_key = boot_table
-        .insert(KeySlot::BOOT_UNTYPED, boot_untyped)
+        .insert(KeySlot::BOOT_UNTYPED, boot_untyped, BOOT_TABLE_GUARD)
         .unwrap_or_else(|failure| {
             panic!("boot Untyped install failed: {:?}", failure.error.code())
         });
@@ -697,6 +732,7 @@ pub fn kickstart_run() -> ! {
                 Rights::all(),
                 0,
             ),
+            BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {
             panic!(
@@ -708,6 +744,7 @@ pub fn kickstart_run() -> ! {
         .insert(
             KeySlot(50),
             KeyEntry::new::<Thread>(boot_thread_id, Rights::all(), 0),
+            BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| panic!("boot Thread install failed: {:?}", failure.error.code()));
 
@@ -731,6 +768,7 @@ pub fn kickstart_run() -> ! {
                 Rights::all(),
                 0,
             ),
+            BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {
             panic!("boot ASID-pool install failed: {:?}", failure.error.code())
@@ -751,6 +789,7 @@ pub fn kickstart_run() -> ! {
                 Rights::all(),
                 0,
             ),
+            BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {
             panic!("debug console install failed: {:?}", failure.error.code())
@@ -913,14 +952,15 @@ pub fn kickstart_run() -> ! {
         let new_table_key = untyped
             .retype(
                 ObjectType::KEY_TABLE,
-                0,
+                8,
+                TEST_TABLE_GUARD,
                 1,
                 &self_table,
                 KeySlot(5).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("boot Retype failed: {:?}", error.code()));
-        assert_eq!(new_table_key.slot(), KeySlot(5));
+        assert_eq!(new_table_key.slot(), boot_slot(5));
         assert_ne!(new_table_key.incarnation(), 0);
 
         // The new table is a distinct carved object: CopyDerive the self-table
@@ -933,12 +973,13 @@ pub fn kickstart_run() -> ! {
                 Rights(Rights::DERIVE),
             )
             .unwrap_or_else(|error| panic!("cross-table CopyDerive failed: {:?}", error.code()));
-        assert_eq!(derived_key.slot(), KeySlot(1));
+        assert_eq!(derived_key.slot(), test_slot(1));
 
         // Validation failures leave the Untyped and destination unchanged.
         assert!(matches!(
             untyped.retype(
                 ObjectType::THREAD,
+                0,
                 0,
                 1,
                 &self_table,
@@ -950,7 +991,8 @@ pub fn kickstart_run() -> ! {
         assert!(matches!(
             untyped.retype(
                 ObjectType::KEY_TABLE,
-                0,
+                8,
+                TEST_TABLE_GUARD,
                 1,
                 &self_table,
                 KeySlot(5).0,
@@ -958,11 +1000,30 @@ pub fn kickstart_run() -> ! {
             ),
             Err(CapError::SlotOccupied(KeySlot(5)))
         ));
+        // A batch beyond the kernel's bound is malformed input, not a
+        // resource limit: the transaction's defensive rollback records are
+        // stack arrays sized by the bound (selected 2026-09-23).
         assert!(matches!(
             untyped.retype(
                 ObjectType::KEY_TABLE,
-                0,
+                8,
+                TEST_TABLE_GUARD,
                 u32::MAX,
+                &self_table,
+                KeySlot(7).0,
+                Rights::all(),
+            ),
+            Err(CapError::InvalidOperation)
+        ));
+        // A single table too large for the boot Untyped's remaining range
+        // fails the reservation instead (2^20 entries ≈ 37 MiB of carve);
+        // its guard must fit the 12 guard bits a 2^20-entry table leaves.
+        assert!(matches!(
+            untyped.retype(
+                ObjectType::KEY_TABLE,
+                20,
+                0xFED,
+                1,
                 &self_table,
                 KeySlot(7).0,
                 Rights::all(),
@@ -975,14 +1036,15 @@ pub fn kickstart_run() -> ! {
         let second_table_key = untyped
             .retype(
                 ObjectType::KEY_TABLE,
-                0,
+                8,
+                TEST_TABLE_GUARD,
                 1,
                 &self_table,
                 KeySlot(6).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("second boot Retype failed: {:?}", error.code()));
-        assert_eq!(second_table_key.slot(), KeySlot(6));
+        assert_eq!(second_table_key.slot(), boot_slot(6));
 
         // The first new table still accepts a cross-table derivation after
         // the second carve.
@@ -994,7 +1056,7 @@ pub fn kickstart_run() -> ! {
                 Rights(Rights::DERIVE),
             )
             .unwrap_or_else(|error| panic!("post-carve CopyDerive failed: {:?}", error.code()));
-        assert_eq!(derived_again.slot(), KeySlot(2));
+        assert_eq!(derived_again.slot(), test_slot(2));
 
         // Retype a Frame (4 KiB, the AArch64 small-granule baseline) from the
         // boot Untyped through the real SVC path. The kernel sanitizes the
@@ -1003,13 +1065,14 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::FRAME,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(9).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("frame Retype failed: {:?}", error.code()));
-        assert_eq!(frame_key.slot(), KeySlot(9));
+        assert_eq!(frame_key.slot(), boot_slot(9));
 
         // Non-granular frame sizes are rejected with the architecture's own
         // error, leaving the table unchanged (slot 10 stays free).
@@ -1017,6 +1080,7 @@ pub fn kickstart_run() -> ! {
             untyped.retype(
                 ObjectType::FRAME,
                 13,
+                0,
                 1,
                 &self_table,
                 KeySlot(10).0,
@@ -1030,7 +1094,7 @@ pub fn kickstart_run() -> ! {
             // SAFETY: keytable_addr names the live boot KeyTable.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let frame = boot_table
-                .lookup(frame_key)
+                .lookup(frame_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("frame entry missing"))
                 .as_frame()
                 .unwrap_or_else(|_| panic!("frame entry is not a Frame cap"));
@@ -1066,18 +1130,19 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::FRAME,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(10).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("second frame Retype failed: {:?}", error.code()));
-        assert_eq!(second_frame_key.slot(), KeySlot(10));
+        assert_eq!(second_frame_key.slot(), boot_slot(10));
         let second_frame_paddr = {
             // SAFETY: see above.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             boot_table
-                .lookup(second_frame_key)
+                .lookup(second_frame_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("second frame entry missing"))
                 .as_frame()
                 .unwrap_or_else(|_| panic!("second frame entry is not a Frame cap"))
@@ -1095,18 +1160,19 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::FRAME,
                 21,
+                0,
                 1,
                 &self_table,
                 KeySlot(11).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("large frame Retype failed: {:?}", error.code()));
-        assert_eq!(large_frame_key.slot(), KeySlot(11));
+        assert_eq!(large_frame_key.slot(), boot_slot(11));
         let large_frame_paddr = {
             // SAFETY: see above.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             boot_table
-                .lookup(large_frame_key)
+                .lookup(large_frame_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("large frame entry missing"))
                 .as_frame()
                 .unwrap_or_else(|_| panic!("large frame entry is not a Frame cap"))
@@ -1149,7 +1215,7 @@ pub fn kickstart_run() -> ! {
             // SAFETY: keytable_addr names the live boot KeyTable.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let region = boot_table
-                .lookup(boot_untyped_key)
+                .lookup(boot_untyped_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("boot Untyped entry missing"))
                 .as_untyped()
                 .unwrap_or_else(|_| panic!("boot Untyped entry is not a region"));
@@ -1164,13 +1230,14 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::UNTYPED,
                 12,
+                0,
                 2,
                 &self_table,
                 KeySlot(56).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("Untyped split failed: {:?}", error.code()));
-        assert_eq!(split_children.slot(), KeySlot(56));
+        assert_eq!(split_children.slot(), boot_slot(56));
 
         // Both children are inline regions: consecutive 4 KiB ranges starting
         // at the aligned continuation of the boot Untyped's watermark, each
@@ -1180,7 +1247,7 @@ pub fn kickstart_run() -> ! {
             // SAFETY: see above.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let child0 = boot_table
-                .lookup(split_children)
+                .lookup(split_children, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("first split child missing"))
                 .as_untyped()
                 .unwrap_or_else(|_| panic!("first split child is not a region"));
@@ -1189,7 +1256,7 @@ pub fn kickstart_run() -> ! {
             assert!(!child0.is_device);
             assert_eq!(child0.watermark_bytes(), 0);
             let child1 = boot_table
-                .lookup(RawKey::new(KeySlot(57), split_children.incarnation()))
+                .lookup(boot_key(57, split_children.incarnation()), BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("second split child missing"))
                 .as_untyped()
                 .unwrap_or_else(|_| panic!("second split child is not a region"));
@@ -1197,7 +1264,7 @@ pub fn kickstart_run() -> ! {
             assert_eq!(child1.size_bits, 12);
             assert_eq!(child1.watermark_bytes(), 0);
             let parent = boot_table
-                .lookup(boot_untyped_key)
+                .lookup(boot_untyped_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("boot Untyped entry missing"))
                 .as_untyped()
                 .unwrap_or_else(|_| panic!("boot Untyped entry is not a region"));
@@ -1211,29 +1278,30 @@ pub fn kickstart_run() -> ! {
         // The second child is a working allocation source: a 4 KiB Frame
         // carved from it through the real SVC path lands exactly at the
         // child's base (its watermark was zero) and advances it.
-        let child1_key = RawKey::new(KeySlot(57), split_children.incarnation());
+        let child1_key = boot_key(57, split_children.incarnation());
         let child_frame_key = UntypedKey::from_key(child1_key)
             .retype(
                 ObjectType::FRAME,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(58).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("carve from split child failed: {:?}", error.code()));
-        assert_eq!(child_frame_key.slot(), KeySlot(58));
+        assert_eq!(child_frame_key.slot(), boot_slot(58));
         {
             // SAFETY: see above.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let frame = boot_table
-                .lookup(child_frame_key)
+                .lookup(child_frame_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("child frame entry missing"))
                 .as_frame()
                 .unwrap_or_else(|_| panic!("child frame entry is not a Frame cap"));
             assert_eq!(frame.paddr, first_child_paddr + 4096);
             let child1 = boot_table
-                .lookup(child1_key)
+                .lookup(child1_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("second split child missing"))
                 .as_untyped()
                 .unwrap_or_else(|_| panic!("second split child is not a region"));
@@ -1248,6 +1316,7 @@ pub fn kickstart_run() -> ! {
             UntypedKey::from_key(child0_key).retype(
                 ObjectType::UNTYPED,
                 3,
+                0,
                 1,
                 &self_table,
                 KeySlot(59).0,
@@ -1259,6 +1328,7 @@ pub fn kickstart_run() -> ! {
             UntypedKey::from_key(child0_key).retype(
                 ObjectType::UNTYPED,
                 13,
+                0,
                 1,
                 &self_table,
                 KeySlot(59).0,
@@ -1270,7 +1340,7 @@ pub fn kickstart_run() -> ! {
             // SAFETY: see above.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let child0 = boot_table
-                .lookup(child0_key)
+                .lookup(child0_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("first split child missing"))
                 .as_untyped()
                 .unwrap_or_else(|_| panic!("first split child is not a region"));
@@ -1286,7 +1356,7 @@ pub fn kickstart_run() -> ! {
             // SAFETY: keytable_addr names the live boot KeyTable.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let region = boot_table
-                .lookup(boot_untyped_key)
+                .lookup(boot_untyped_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("boot Untyped entry missing"))
                 .as_untyped()
                 .unwrap_or_else(|_| panic!("boot Untyped entry is not a region"));
@@ -1310,20 +1380,22 @@ pub fn kickstart_run() -> ! {
                 .insert(
                     KeySlot(7),
                     KeyEntry::new_untyped(misaligned_base, 14, false, Rights::all()),
+                    BOOT_TABLE_GUARD,
                 )
                 .unwrap_or_else(|_| panic!("misaligned region install failed"))
         };
         let carved_key = UntypedKey::from_key(misaligned_untyped_key)
             .retype(
                 ObjectType::KEY_TABLE,
-                0,
+                8,
+                TEST_TABLE_GUARD,
                 1,
                 &self_table,
                 KeySlot(8).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("misaligned-base Retype failed: {:?}", error.code()));
-        assert_eq!(carved_key.slot(), KeySlot(8));
+        assert_eq!(carved_key.slot(), boot_slot(8));
 
         // Read the carved address back: it must be the aligned base, not the
         // region's misaligned start. The capability stores the kernel-window
@@ -1332,7 +1404,7 @@ pub fn kickstart_run() -> ! {
             // SAFETY: see above.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let window_addr = boot_table
-                .lookup(carved_key)
+                .lookup(carved_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("carved entry missing"))
                 .keytable_address()
                 .unwrap_or_else(|_| panic!("carved entry is not a KeyTable cap"));
@@ -1355,7 +1427,7 @@ pub fn kickstart_run() -> ! {
             .unwrap_or_else(|error| {
                 panic!("misaligned-base CopyDerive failed: {:?}", error.code())
             });
-        assert_eq!(derived_misaligned.slot(), KeySlot(1));
+        assert_eq!(derived_misaligned.slot(), test_slot(1));
 
         // ─────────────────────────────────────────────────────────────────
         // Mapping vertical slice (2026-09-15): carved page tables, real
@@ -1364,7 +1436,7 @@ pub fn kickstart_run() -> ! {
 
         // The boot AddressSpace capability (installed at the well-known self
         // slot) is the bootstrap-era mapping context.
-        let boot_as_key = RawKey::new(KeySlot::SELF_ADDRESS_SPACE, 1);
+        let boot_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
 
         // PageTable Retype: a fixed 4 KiB carve; other size_bits are rejected
         // with the architecture's own error, leaving the slot free.
@@ -1372,6 +1444,7 @@ pub fn kickstart_run() -> ! {
             untyped.retype(
                 ObjectType::PAGE_TABLE,
                 13,
+                0,
                 1,
                 &self_table,
                 KeySlot(20).0,
@@ -1383,13 +1456,14 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::PAGE_TABLE,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(20).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("root PageTable Retype failed: {:?}", error.code()));
-        assert_eq!(root_pt_key.slot(), KeySlot(20));
+        assert_eq!(root_pt_key.slot(), boot_slot(20));
 
         // The carved table is sanitized (zeroed) at retype: stale descriptors
         // must never leak prior contents into hardware walks.
@@ -1397,7 +1471,7 @@ pub fn kickstart_run() -> ! {
             // SAFETY: keytable_addr names the live boot KeyTable.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let id = boot_table
-                .lookup(root_pt_key)
+                .lookup(root_pt_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("root PageTable entry missing"))
                 .object_id()
                 .unwrap_or_else(|_| panic!("root PageTable entry has no identity"));
@@ -1425,6 +1499,7 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::PAGE_TABLE,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(21).0,
@@ -1435,6 +1510,7 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::PAGE_TABLE,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(22).0,
@@ -1445,6 +1521,7 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::PAGE_TABLE,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(23).0,
@@ -1457,7 +1534,7 @@ pub fn kickstart_run() -> ! {
         // ASID binding (2026-09-15) through the real SVC path: before a
         // translation root exists, the assignment is rejected — an ASID binds
         // to an AddressSpace's root, not to the AddressSpace in the abstract.
-        let boot_asid_pool_key = RawKey::new(KeySlot::BOOT_ASID_POOL, 1);
+        let boot_asid_pool_key = boot_key(KeySlot::BOOT_ASID_POOL.0, 1);
         let boot_asid_pool = ASIDPoolKey::from_key(boot_asid_pool_key);
         assert!(matches!(
             boot_asid_pool.assign(boot_as_key),
@@ -1533,19 +1610,21 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::NOTIFICATION,
                 0,
+                0,
                 2,
                 &self_table,
                 KeySlot(16).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("notification Retype failed: {:?}", error.code()));
-        assert_eq!(notification_key.slot(), KeySlot(16));
+        assert_eq!(notification_key.slot(), boot_slot(16));
 
         // A nonzero size_bits is rejected before any pool slot is taken.
         assert!(matches!(
             untyped.retype(
                 ObjectType::NOTIFICATION,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(18).0,
@@ -1615,6 +1694,7 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::NOTIFICATION,
                 0,
+                0,
                 1,
                 &self_table,
                 KeySlot(18).0,
@@ -1625,6 +1705,7 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::NOTIFICATION,
                 0,
+                0,
                 1,
                 &self_table,
                 KeySlot(19).0,
@@ -1634,6 +1715,7 @@ pub fn kickstart_run() -> ! {
         let ec_key = untyped
             .retype(
                 ObjectType::EVENT_COUNT,
+                0,
                 0,
                 1,
                 &self_table,
@@ -1655,6 +1737,7 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::FRAME,
                 12,
+                0,
                 8,
                 &self_table,
                 KeySlot(41).0,
@@ -1674,7 +1757,8 @@ pub fn kickstart_run() -> ! {
         let bounce_table_key = untyped
             .retype(
                 ObjectType::KEY_TABLE,
-                0,
+                8,
+                TEST_TABLE_GUARD,
                 1,
                 &self_table,
                 KeySlot(40).0,
@@ -1684,7 +1768,7 @@ pub fn kickstart_run() -> ! {
         let bounce_table_addr = {
             // SAFETY: the boot table is the live carved boot KeyTable.
             let entry = unsafe { &*(keytable_addr as *const KeyTable) }
-                .lookup(bounce_table_key)
+                .lookup(bounce_table_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("Bounce KeyTable entry missing"));
             entry
                 .keytable_address()
@@ -1698,23 +1782,42 @@ pub fn kickstart_run() -> ! {
             // SAFETY: the boot table is the live carved boot KeyTable.
             let boot_table_ref = unsafe { &*(keytable_addr as *const KeyTable) };
             let n1_id = boot_table_ref
-                .lookup(n1_key)
+                .lookup(n1_key, BOOT_TABLE_GUARD)
                 .and_then(KeyEntry::object_id)
                 .unwrap_or_else(|_| panic!("N1 entry missing or not a pool identity"));
             let n2_id = boot_table_ref
-                .lookup(n2_key)
+                .lookup(n2_key, BOOT_TABLE_GUARD)
                 .and_then(KeyEntry::object_id)
                 .unwrap_or_else(|_| panic!("N2 entry missing or not a pool identity"));
             let ec_id = boot_table_ref
-                .lookup(ec_key)
+                .lookup(ec_key, BOOT_TABLE_GUARD)
                 .and_then(KeyEntry::object_id)
                 .unwrap_or_else(|_| panic!("EC entry missing or not a pool identity"));
             // SAFETY: Bounce's table is the freshly carved, live KeyTable.
             let bounce_table = unsafe { &mut *(bounce_table_addr as *mut KeyTable) };
+            // The self-table capability anchors Bounce's invocations: the
+            // syscall entry sources the caller's own-table guard from this
+            // well-known slot (guarded key-space package, selected 2026-09-23).
+            bounce_table
+                .insert(
+                    KeySlot::SELF_KEYTABLE,
+                    KeyEntry::new_keytable(
+                        bounce_table_addr,
+                        TEST_TABLE_GUARD,
+                        BOOT_TABLE_SIZE_BITS,
+                        Rights::all(),
+                        0,
+                    ),
+                    TEST_TABLE_GUARD,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("Bounce self-table grant failed: {:?}", failure.error.code())
+                });
             bounce_table
                 .insert(
                     KeySlot(1),
                     KeyEntry::from_id(ObjectType::NOTIFICATION, n1_id, Rights::all(), 0),
+                    TEST_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
                     panic!("Bounce N1 grant failed: {:?}", failure.error.code())
@@ -1723,14 +1826,18 @@ pub fn kickstart_run() -> ! {
                 .insert(
                     KeySlot(2),
                     KeyEntry::from_id(ObjectType::NOTIFICATION, n2_id, Rights::all(), 0),
+                    TEST_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
                     panic!("Bounce N2 grant failed: {:?}", failure.error.code())
                 });
+            // The EventCount sits at slot 4: slot 3 is the well-known
+            // self-table slot and must hold the table capability.
             bounce_table
                 .insert(
-                    KeySlot(3),
+                    KeySlot(4),
                     KeyEntry::from_id(ObjectType::EVENT_COUNT, ec_id, Rights::all(), 0),
+                    TEST_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
                     panic!("Bounce EC grant failed: {:?}", failure.error.code())
@@ -1928,6 +2035,7 @@ pub fn kickstart_run() -> ! {
                     .insert(
                         KeySlot(38),
                         KeyEntry::new::<Thread>(bounce_id, Rights::all(), 0),
+                        BOOT_TABLE_GUARD,
                     )
                     .unwrap_or_else(|failure| {
                         panic!("Bounce Thread grant failed: {:?}", failure.error.code())
@@ -1936,6 +2044,7 @@ pub fn kickstart_run() -> ! {
                     .insert(
                         KeySlot(39),
                         KeyEntry::new::<Thread>(bounce_id, Rights(Rights::READ), 0),
+                        BOOT_TABLE_GUARD,
                     )
                     .unwrap_or_else(|failure| {
                         panic!(
@@ -1962,7 +2071,7 @@ pub fn kickstart_run() -> ! {
             // in the contract as wanted follow-up) — and again nothing was
             // torn down. The boot Thread's own capability (slot 40) is the
             // invoked key.
-            let boot_thread_key = RawKey::new(KeySlot(50), 1);
+            let boot_thread_key = boot_key(50, 1);
             assert!(matches!(
                 ThreadKey::from_key(boot_thread_key, DomainId(0)).retire(),
                 Err(CapError::InvalidOperation)
@@ -2037,6 +2146,7 @@ pub fn kickstart_run() -> ! {
                             Rights::all(),
                             0,
                         ),
+                        BOOT_TABLE_GUARD,
                     )
                     .unwrap_or_else(|failure| {
                         panic!(
@@ -2060,6 +2170,7 @@ pub fn kickstart_run() -> ! {
                 .retype(
                     ObjectType::PAGE_TABLE,
                     12,
+                    0,
                     1,
                     &self_table,
                     KeySlot(52).0,
@@ -2132,6 +2243,7 @@ pub fn kickstart_run() -> ! {
                             Rights::all(),
                             0,
                         ),
+                        BOOT_TABLE_GUARD,
                     )
                     .unwrap_or_else(|failure| {
                         panic!(
@@ -2144,6 +2256,7 @@ pub fn kickstart_run() -> ! {
                 .retype(
                     ObjectType::PAGE_TABLE,
                     12,
+                    0,
                     1,
                     &self_table,
                     KeySlot(53).0,
@@ -2296,7 +2409,7 @@ pub fn kickstart_run() -> ! {
             // SAFETY: keytable_addr names the live boot KeyTable.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
             let f = boot_table
-                .lookup(frame_key)
+                .lookup(frame_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("frame entry missing"))
                 .as_frame()
                 .unwrap_or_else(|_| panic!("frame entry is not a Frame cap"));
@@ -2406,8 +2519,9 @@ pub fn kickstart_run() -> ! {
                 let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
                 boot_table
                     .insert(
-                        KeySlot(14),
+                        KeySlot(60),
                         KeyEntry::new_frame(0, 21, false, Rights::all()),
+                        BOOT_TABLE_GUARD,
                     )
                     .unwrap_or_else(|_| panic!("low-half block A install failed"))
             },
@@ -2416,8 +2530,9 @@ pub fn kickstart_run() -> ! {
                 let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
                 boot_table
                     .insert(
-                        KeySlot(15),
+                        KeySlot(61),
                         KeyEntry::new_frame(0x20_0000, 21, false, Rights::all()),
+                        BOOT_TABLE_GUARD,
                     )
                     .unwrap_or_else(|_| panic!("low-half block B install failed"))
             },
@@ -2624,6 +2739,7 @@ pub fn kickstart_run() -> ! {
             untyped.retype(
                 ObjectType::PAGE_TABLE,
                 12,
+                0,
                 13,
                 &self_table,
                 KeySlot(24).0,
@@ -2635,17 +2751,19 @@ pub fn kickstart_run() -> ! {
             .retype(
                 ObjectType::PAGE_TABLE,
                 12,
+                0,
                 12,
                 &self_table,
                 KeySlot(24).0,
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("refill PageTable Retype failed: {:?}", error.code()));
-        assert_eq!(refill.slot(), KeySlot(24));
+        assert_eq!(refill.slot(), boot_slot(24));
         assert!(matches!(
             untyped.retype(
                 ObjectType::PAGE_TABLE,
                 12,
+                0,
                 1,
                 &self_table,
                 KeySlot(36).0,
@@ -2769,9 +2887,24 @@ const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 #[cfg(feature = "debug_kernel")]
 #[unsafe(no_mangle)]
 extern "C" fn bounce_entry() -> ! {
-    let n1 = NotificationKey::from_key(RawKey::new(KeySlot(1), 1));
-    let n2 = NotificationKey::from_key(RawKey::new(KeySlot(2), 1));
-    let ec = EventCountKey::from_key(RawKey::new(KeySlot(3), 1));
+    let n1 = NotificationKey::from_key(RawKey::from_parts(
+        TEST_TABLE_GUARD,
+        BOOT_TABLE_SIZE_BITS,
+        1,
+        1,
+    ));
+    let n2 = NotificationKey::from_key(RawKey::from_parts(
+        TEST_TABLE_GUARD,
+        BOOT_TABLE_SIZE_BITS,
+        2,
+        1,
+    ));
+    let ec = EventCountKey::from_key(RawKey::from_parts(
+        TEST_TABLE_GUARD,
+        BOOT_TABLE_SIZE_BITS,
+        4,
+        1,
+    ));
     n1.signal(BOUNCE_MAGIC_BITS)
         .unwrap_or_else(|error| panic!("Bounce: Notification.Signal failed: {:?}", error.code()));
     // Serve one EventCount advance per N2 trigger, then park forever.

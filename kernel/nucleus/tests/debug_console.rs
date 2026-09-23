@@ -59,14 +59,38 @@ fn console_entry(rights: Rights, badge: u16) -> KeyEntry {
 /// storage out of the test's stack frame.
 const TEST_BACKING: u64 = 0x2000_0000;
 
+/// Fixture-table capacity exponent: the historical 256-slot table.
+const SIZE_BITS: u8 = 8;
+
+/// The fixture tables' guard (guarded key-space package, selected 2026-09-23):
+/// every key minted into a fixture table carries it above the slot index. It
+/// fits the 24 guard bits of a 256-entry table's table-relative address.
+const FIXTURE_GUARD: u32 = 0xD1A_5EE;
+
+/// The bare slot index of a fixture key (its low `SIZE_BITS` address bits).
+fn bare_index(key: RawKey) -> KeySlot {
+    KeySlot(key.slot().0 & ((1_u32 << u32::from(SIZE_BITS)) - 1))
+}
+
 /// Carve a `KeyTable` into the fixed test backing at `index`, returning its
-/// kernel address.
+/// kernel address. A self-table capability with the fixture guard is installed
+/// at the well-known slot, anchoring invocations through this table.
 fn carve(index: usize) -> u64 {
-    let obj = (TEST_BACKING + (index as u64) * (size_of::<KeyTable>() as u64)) as *mut KeyTable;
-    // SAFETY: TEST_BACKING is RAM, aligned for KeyTable, and exclusively owned
-    // by the test fixture for its lifetime.
+    let stride = KeyTable::carve_size(SIZE_BITS);
+    let obj = (TEST_BACKING + (index as u64) * (stride as u64)) as *mut u8;
+    // SAFETY: TEST_BACKING is RAM, 32-byte aligned (a 512 MiB boundary), and
+    // exclusively owned by the test fixture for its lifetime; the stride
+    // covers the full variable-size carve.
     unsafe {
-        obj.write(KeyTable::new(DomainId(0)));
+        KeyTable::initialize(obj, DomainId(0), SIZE_BITS);
+        let table = &mut *(obj as *mut KeyTable);
+        table
+            .insert(
+                KeySlot::SELF_KEYTABLE,
+                KeyEntry::new_keytable(obj as u64, FIXTURE_GUARD, SIZE_BITS, Rights::all(), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|_| panic!("fixture self-table installation failed"));
     }
     obj as u64
 }
@@ -153,7 +177,7 @@ fn missing_caller_cannot_invoke_bootstrap_console() {
         let key = nucleus
             .create_thread(table_addr, fixture_as)
             .expect("bootstrap console key missing");
-        assert_eq!(key.slot(), KeySlot::DEBUG_CONSOLE);
+        assert_eq!(bare_index(key), KeySlot::DEBUG_CONSOLE);
         assert_ne!(key.incarnation(), 0);
         assert_eq!(nucleus.current_thread, None);
         let args = [u64::MAX; 6];
@@ -217,15 +241,17 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
             })
             .expect("second thread allocation failed");
         nucleus.current_thread = Some(1);
-        assert!(matches!(
-            api::handle_cap_invoke(nucleus, key, 1, &args),
-            Err(CapError::InvalidKey {
-                key: submitted,
-                reason: InvalidKeyReason::NeverIssued,
-                operand: 0,
-            }) if submitted == key
-        ));
-        assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 0);
+        let diag = api::handle_cap_invoke(nucleus, key, 1, &args);
+        let words = match diag {
+            Ok(_) => panic!("second-table invocation succeeded"),
+            Err(error) => error.code(),
+        };
+        // NeverIssued in wire form: the console key's slot was never issued in
+        // the second table.
+        assert_eq!(words, (26, key.to_wire(), 3));
+        // The second table holds only its self-table capability: the console
+        // key (same guard, same slot number) was never issued there.
+        assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
         let id = ObjectId {
             pool: PoolTag::Thread,
             index: 1,
@@ -317,11 +343,13 @@ fn rejects_invalid_operations_through_shared_capability_borrows() {
 // Check every slot through the public API, including retained identity on deletion.
 // Only console metadata is inspected; no object pointer or write buffer is accessed.
 fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u16)>) {
-    assert_eq!(table.len(), usize::from(live.is_some()));
+    // The fixture's self-table capability is always present alongside the
+    // console entry under test.
+    assert_eq!(table.len(), 1 + usize::from(live.is_some()));
     match live {
         Some((rights, badge)) => {
             let cap = table
-                .lookup(key)
+                .lookup(key, FIXTURE_GUARD)
                 .unwrap_or_else(|_| panic!("console key changed"));
             assert_eq!(cap.object_type(), ObjectType::DEBUG_CONSOLE);
             assert_eq!(cap.rights(), rights);
@@ -334,7 +362,7 @@ fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u16
             );
         }
         None => assert!(matches!(
-            table.lookup(key),
+            table.lookup(key, FIXTURE_GUARD),
             Err(CapError::InconsistentKey {
                 key: submitted,
                 reason: InconsistencyReason::CapabilityInvalidated,
@@ -342,12 +370,17 @@ fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u16
             }) if submitted == key
         )),
     }
-    for index in 0..KeyTable::NUM_SLOTS {
-        let slot = KeySlot(u32::try_from(index).unwrap());
-        if slot != key.slot() {
-            let probe = RawKey::new(slot, 1);
+    let console_index = bare_index(key).0;
+    let self_index = KeySlot::SELF_KEYTABLE.0;
+    for index in 0..KeyTable::capacity_for(SIZE_BITS) {
+        // Skip the console slot and the fixture's self-table slot (both
+        // issued); every other correctly guarded probe is never issued.
+        if u32::try_from(index).unwrap() != console_index
+            && u32::try_from(index).unwrap() != self_index
+        {
+            let probe = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, index as u32, 1);
             assert!(matches!(
-                table.lookup(probe),
+                table.lookup(probe, FIXTURE_GUARD),
                 Err(CapError::InvalidKey {
                     key: submitted,
                     reason: InvalidKeyReason::NeverIssued,
@@ -380,17 +413,18 @@ fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
             .expect("bootstrap console key missing");
         nucleus.current_thread = Some(0);
         // Literal wire words deliberately avoid deriving expectations from the
-        // encoder under test. Zero incarnation wins even over out-of-range slots;
-        // a never-issued slot wins over an arbitrary nonzero incarnation.
+        // encoder under test. Zero incarnation wins even over a wrong guard;
+        // with a nonzero table guard, every address whose guard bits do not
+        // match rejects as GuardMismatch before indexing (selected 2026-09-23).
         for (wire, reason, details) in [
             (0x0000_0000_0000_0000, InvalidKeyReason::ZeroIncarnation, 1),
             (0x0000_0000_0000_007f, InvalidKeyReason::ZeroIncarnation, 1),
             (0x0000_0000_ffff_ffff, InvalidKeyReason::ZeroIncarnation, 1),
-            (0x0000_0001_ffff_ffff, InvalidKeyReason::SlotOutOfRange, 2),
-            (0x0000_0001_8000_007f, InvalidKeyReason::SlotOutOfRange, 2),
-            (0xffff_ffff_ffff_ffff, InvalidKeyReason::SlotOutOfRange, 2),
-            (0x0000_0001_0000_0000, InvalidKeyReason::NeverIssued, 3),
-            (0xffff_ffff_0000_0000, InvalidKeyReason::NeverIssued, 3),
+            (0x0000_0001_ffff_ffff, InvalidKeyReason::GuardMismatch, 4),
+            (0x0000_0001_8000_007f, InvalidKeyReason::GuardMismatch, 4),
+            (0xffff_ffff_ffff_ffff, InvalidKeyReason::GuardMismatch, 4),
+            (0x0000_0001_0000_0000, InvalidKeyReason::GuardMismatch, 4),
+            (0xffff_ffff_0000_0000, InvalidKeyReason::GuardMismatch, 4),
         ] {
             let key = RawKey::from_wire(wire);
             let words = (26, wire, details);
@@ -411,6 +445,21 @@ fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
                 }) if submitted == key && decoded == reason
             ));
         }
+        // A correctly guarded key at a never-issued slot keeps its own
+        // diagnostic: the guard matches and the slot was never issued.
+        let never = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 200, 1);
+        let words = (26, never.to_wire(), 3);
+        for op in [0, u64::MAX] {
+            assert_dispatch_error(nucleus, never, op, words);
+        }
+        assert!(matches!(
+            decode_syscall_result(words),
+            Err(CapError::InvalidKey {
+                key: submitted,
+                reason: InvalidKeyReason::NeverIssued,
+                operand: 0,
+            }) if submitted == never
+        ));
     });
 }
 
@@ -433,12 +482,20 @@ fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
         }
         let table = nucleus.current_thread_table_mut().unwrap();
         let entry = table
-            .remove(issued)
+            .remove(issued, FIXTURE_GUARD)
             .unwrap_or_else(|_| panic!("console removal failed"));
         let next = table
-            .insert(issued.slot(), entry)
+            .insert(bare_index(issued), entry, FIXTURE_GUARD)
             .unwrap_or_else(|_| panic!("console reinstallation failed"));
-        assert_eq!(next, RawKey::new(issued.slot(), issued.incarnation() + 1));
+        assert_eq!(
+            next,
+            RawKey::from_parts(
+                FIXTURE_GUARD,
+                SIZE_BITS,
+                bare_index(issued).0,
+                issued.incarnation() + 1
+            )
+        );
         assert_console_table(table, next, Some((Rights::all(), 0)));
     });
 }
@@ -459,9 +516,14 @@ fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
         nucleus
             .current_thread_table_mut()
             .unwrap()
-            .remove(old)
+            .remove(old, FIXTURE_GUARD)
             .unwrap_or_else(|_| panic!("console removal failed"));
-        let future = RawKey::new(old.slot(), old.incarnation() + 1);
+        let future = RawKey::from_parts(
+            FIXTURE_GUARD,
+            SIZE_BITS,
+            bare_index(old).0,
+            old.incarnation() + 1,
+        );
         for op in [0, u64::MAX] {
             assert_dispatch_error(nucleus, old, op, (27, old.to_wire(), 2));
             assert_console_table(nucleus.current_thread_table_mut().unwrap(), old, None);
@@ -473,7 +535,11 @@ fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
         let replacement = nucleus
             .current_thread_table_mut()
             .unwrap()
-            .insert(old.slot(), console_entry(rights, 0x2222))
+            .insert(
+                bare_index(old),
+                console_entry(rights, 0x2222),
+                FIXTURE_GUARD,
+            )
             .unwrap_or_else(|_| panic!("replacement installation failed"));
         assert_eq!(replacement, future);
         for op in [0, u64::MAX] {
@@ -493,7 +559,7 @@ fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
         nucleus
             .current_thread_table_mut()
             .unwrap()
-            .remove(replacement)
+            .remove(replacement, FIXTURE_GUARD)
             .unwrap_or_else(|_| panic!("replacement removal failed"));
         assert_dispatch_error(nucleus, old, 0, (27, old.to_wire(), 1));
         assert_console_table(
@@ -510,36 +576,50 @@ fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
     });
 }
 
+/// 32-byte-aligned backing for the standalone table test (the carve needs
+/// `KeyEntry` alignment, which a plain byte array does not provide).
+#[repr(align(32))]
+struct Backing<const N: usize>([u8; N]);
+
 #[test_case]
 fn table_lookup_still_requires_an_installed_capability() {
-    let mut table = KeyTable::new(DomainId(0));
+    const TABLE_BACKING_SIZE: usize = KeyTable::carve_size(SIZE_BITS);
+    static mut TABLE_BACKING: Backing<TABLE_BACKING_SIZE> = Backing([0; TABLE_BACKING_SIZE]);
+    // SAFETY: the backing is exclusively owned by this sequential test and
+    // covers the full variable-size carve at the table's alignment.
+    let table = unsafe {
+        let ptr = (&raw mut TABLE_BACKING.0).cast::<u8>();
+        KeyTable::initialize(ptr, DomainId(0), SIZE_BITS);
+        &mut *(ptr as *mut KeyTable)
+    };
     let slot = KeySlot::DEBUG_CONSOLE;
-    let never_issued = RawKey::new(slot, 1);
+    let never_issued = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, slot.0, 1);
     assert!(matches!(
-        table.lookup(never_issued),
+        table.lookup(never_issued, FIXTURE_GUARD),
         Err(CapError::InvalidKey {
             key,
             reason: InvalidKeyReason::NeverIssued,
             operand: 0,
         }) if key == never_issued
     ));
+    // An address whose guard bits do not match rejects before indexing.
     let invalid = RawKey::new(KeySlot(u32::MAX), 1);
     assert!(matches!(
-        table.lookup(invalid),
+        table.lookup(invalid, FIXTURE_GUARD),
         Err(CapError::InvalidKey {
             key,
-            reason: InvalidKeyReason::SlotOutOfRange,
+            reason: InvalidKeyReason::GuardMismatch,
             operand: 0,
         }) if key == invalid
     ));
 
     let key = table
-        .insert(slot, console_entry(Rights::all(), 0))
+        .insert(slot, console_entry(Rights::all(), 0), FIXTURE_GUARD)
         .unwrap_or_else(|_| panic!("console insertion failed"));
-    assert_eq!(key, RawKey::new(slot, 1));
+    assert_eq!(key, RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, slot.0, 1));
     assert_eq!(table.len(), 1);
     let cap = table
-        .lookup(key)
+        .lookup(key, FIXTURE_GUARD)
         .unwrap_or_else(|_| panic!("installed console not found"));
     assert!(matches!(
         invoke(cap, 1, u64::MAX, u64::MAX),

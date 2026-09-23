@@ -19,9 +19,8 @@ mod objects;
 
 use {
     api::KeyEntry,
-    core::mem::size_of,
     libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, domain::DomainId},
-    objects::{KeyTable, access::Access},
+    objects::{KeyTable, access::Access, key_table::CallerTable},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -29,6 +28,28 @@ use {
 // ═══════════════════════════════════════════════════════════════════
 
 const FULL: u8 = Rights::DERIVE | Rights::REMOVE | Rights::INSTALL;
+
+/// Fixture-table capacity exponent: the historical 256-slot table.
+const SIZE_BITS: u8 = 8;
+
+/// The caller fixture table's guard (nonzero, exercising the guarded
+/// key-space machinery).
+const CALLER_GUARD: u32 = 0x51A_B7D;
+
+/// The destination fixture table's guard — distinct, so cross-table key
+/// confusion is exercised: a key minted into one table never resolves in
+/// the other.
+const DST_GUARD: u32 = 0x7DA_B51;
+
+/// The slot half of a key in the caller fixture table.
+fn caller_slot(index: u32) -> KeySlot {
+    KeySlot((CALLER_GUARD << u32::from(SIZE_BITS)) | index)
+}
+
+/// The slot half of a key in the destination fixture table.
+fn dst_slot(index: u32) -> KeySlot {
+    KeySlot((DST_GUARD << u32::from(SIZE_BITS)) | index)
+}
 
 /// Fixed RAM address for test-carved `KeyTable`s (QEMU rpi3: 1 GiB RAM at 0).
 ///
@@ -41,20 +62,23 @@ const TEST_BACKING: u64 = 0x2000_0000;
 /// kernel address.
 ///
 /// Mirrors the boot carve / runtime Retype: the table's storage is the carved
-/// region and capabilities reference it by address.
+/// region (header plus entries and counters, sized by the capacity exponent)
+/// and capabilities reference it by address.
 fn carve(index: usize) -> u64 {
-    let obj = (TEST_BACKING + (index as u64) * (size_of::<KeyTable>() as u64)) as *mut KeyTable;
-    // SAFETY: TEST_BACKING is RAM, aligned for KeyTable, and exclusively owned
-    // by the test fixture for its lifetime.
+    let stride = KeyTable::carve_size(SIZE_BITS);
+    let obj = (TEST_BACKING + (index as u64) * (stride as u64)) as *mut u8;
+    // SAFETY: TEST_BACKING is RAM, 32-byte aligned (a 2 MiB boundary), and
+    // exclusively owned by the test fixture for its lifetime; the stride
+    // covers the full variable-size carve.
     unsafe {
-        obj.write(KeyTable::new(DomainId(0)));
+        KeyTable::initialize(obj, DomainId(0), SIZE_BITS);
     }
     obj as u64
 }
 
 /// A carved-table test fixture: a caller table (with a self-table capability at
-/// `CAPTBL_SELF`) and a second, initially vacant table for cross-table
-/// operations.
+/// `SELF_KEYTABLE`) and a second, initially vacant table for cross-table
+/// operations. The two tables carry distinct guards.
 struct Fixture {
     caller_table_addr: u64,
     dst_table_addr: u64,
@@ -67,8 +91,15 @@ impl Fixture {
         let dst_table_addr = carve(1);
         let self_table_key = unsafe { &mut *(caller_table_addr as *mut KeyTable) }
             .insert(
-                KeySlot::CAPTBL_SELF,
-                KeyEntry::new_keytable(caller_table_addr, Rights(table_rights), 0),
+                KeySlot::SELF_KEYTABLE,
+                KeyEntry::new_keytable(
+                    caller_table_addr,
+                    CALLER_GUARD,
+                    SIZE_BITS,
+                    Rights(table_rights),
+                    0,
+                ),
+                CALLER_GUARD,
             )
             .unwrap_or_else(|_| panic!("self-table installation failed"));
         Self {
@@ -86,27 +117,39 @@ impl Fixture {
         }
     }
 
+    /// The guard of a table by fixture index.
+    fn table_guard(&self, index: usize) -> u32 {
+        match index {
+            0 => CALLER_GUARD,
+            1 => DST_GUARD,
+            _ => panic!("no such table"),
+        }
+    }
+
     /// Install an entry into a table by fixture index.
     fn install(&mut self, index: usize, slot: KeySlot, entry: KeyEntry) -> RawKey {
         let addr = self.table_addr(index);
+        let guard = self.table_guard(index);
         // SAFETY: the address names a live carved table owned by the fixture.
         unsafe { &mut *(addr as *mut KeyTable) }
-            .insert(slot, entry)
+            .insert(slot, entry, guard)
             .unwrap_or_else(|_| panic!("fixture installation failed"))
     }
 
     /// Look up an entry in a table by fixture index.
     fn lookup(&self, index: usize, key: RawKey) -> Result<&KeyEntry, CapError> {
         let addr = self.table_addr(index);
+        let guard = self.table_guard(index);
         // SAFETY: the address names a live carved table owned by the fixture.
-        Ok(unsafe { &*(addr as *const KeyTable) }.lookup(key)?)
+        Ok(unsafe { &*(addr as *const KeyTable) }.lookup(key, guard)?)
     }
 
     /// Remove an entry from a table by fixture index.
     fn remove(&mut self, index: usize, key: RawKey) -> Result<KeyEntry, CapError> {
         let addr = self.table_addr(index);
+        let guard = self.table_guard(index);
         // SAFETY: the address names a live carved table owned by the fixture.
-        unsafe { &mut *(addr as *mut KeyTable) }.remove(key)
+        unsafe { &mut *(addr as *mut KeyTable) }.remove(key, guard)
     }
 
     /// The caller table's live-entry count.
@@ -124,14 +167,20 @@ impl Fixture {
     ) -> Result<(u64, u64), CapError> {
         // SAFETY: test-only; no overlapping access context.
         let access = unsafe { Access::new() };
-        api::key_table::invoke(&access, self.caller_table_addr, table_key, op, args)
+        let caller = CallerTable {
+            addr: self.caller_table_addr,
+            guard: CALLER_GUARD,
+        };
+        api::key_table::invoke(&access, caller, table_key, op, args)
     }
 }
 
-/// A `KeyTable` capability naming a distinct carved table object (used as a
-/// source entry and as a destination-table capability).
+/// A `KeyTable` capability naming the distinct destination table object (used
+/// as a source entry and as a destination-table capability): it carries the
+/// destination table's guard and capacity exponent, copied verbatim by
+/// derivation.
 fn table_cap(addr: u64, rights: Rights, badge: u16) -> KeyEntry {
-    KeyEntry::new_keytable(addr, rights, badge)
+    KeyEntry::new_keytable(addr, DST_GUARD, SIZE_BITS, rights, badge)
 }
 
 fn args(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> [u64; 6] {
@@ -166,7 +215,7 @@ fn copy_derive_attenuates_rights_and_preserves_badge() {
     let (key_wire, zero) = result.unwrap_or_else(|_| panic!("copy_derive failed"));
     assert_eq!(zero, 0);
     let dst_key = RawKey::from_wire(key_wire);
-    assert_eq!(dst_key.slot(), KeySlot(20));
+    assert_eq!(dst_key.slot(), caller_slot(20));
     assert_eq!(dst_key.incarnation(), 1);
 
     let derived = fx
@@ -345,7 +394,7 @@ fn move_preserves_state_and_invalidates_source() {
     let (key_wire, zero) = result.unwrap_or_else(|_| panic!("move failed"));
     assert_eq!(zero, 0);
     let dst_key = RawKey::from_wire(key_wire);
-    assert_eq!(dst_key.slot(), KeySlot(20));
+    assert_eq!(dst_key.slot(), caller_slot(20));
 
     let moved = fx
         .lookup(0, dst_key)
@@ -510,7 +559,7 @@ fn copy_derive_across_distinct_tables() {
     let (key_wire, zero) = result.unwrap_or_else(|_| panic!("cross-table copy_derive failed"));
     assert_eq!(zero, 0);
     let dst_key = RawKey::from_wire(key_wire);
-    assert_eq!(dst_key.slot(), KeySlot(20));
+    assert_eq!(dst_key.slot(), dst_slot(20));
 
     // The derived entry lands in the distinct destination table.
     let derived = fx
@@ -548,7 +597,7 @@ fn move_across_distinct_tables() {
     let (key_wire, zero) = result.unwrap_or_else(|_| panic!("cross-table move failed"));
     assert_eq!(zero, 0);
     let dst_key = RawKey::from_wire(key_wire);
-    assert_eq!(dst_key.slot(), KeySlot(20));
+    assert_eq!(dst_key.slot(), dst_slot(20));
 
     let moved = fx
         .lookup(1, dst_key)
@@ -595,6 +644,93 @@ fn cross_table_move_rolls_back_on_occupied_destination() {
         Err(CapError::InconsistentKey { .. })
     ));
     assert_eq!(fx.caller_len(), 3); // self + destination cap + restored source
-    let restored = RawKey::new(KeySlot(10), 2);
+    let restored = RawKey::from_parts(CALLER_GUARD, SIZE_BITS, 10, 2);
     assert!(fx.lookup(0, restored).is_ok());
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// GUARDED KEY SPACE (selected 2026-09-23)
+// ═══════════════════════════════════════════════════════════════════
+
+/// A key minted into one table never resolves in another, even on an equal
+/// slot and incarnation: the guard check rejects it before indexing.
+#[test_case]
+fn keys_do_not_cross_tables_with_distinct_guards() {
+    let mut fx = Fixture::new(FULL);
+    let src = fx.install(
+        0,
+        KeySlot(10),
+        table_cap(fx.dst_table_addr, Rights::all(), 0xBEEF),
+    );
+    let dst_cap_key = fx.install(
+        0,
+        KeySlot(5),
+        table_cap(fx.dst_table_addr, Rights::all(), 0),
+    );
+
+    // CopyDerive into the destination table: the returned key carries the
+    // destination's guard.
+    let result = fx.invoke(
+        fx.self_table_key,
+        0,
+        &args(
+            src.to_wire(),
+            dst_cap_key.to_wire(),
+            10,
+            u64::from(Rights::READ),
+            0,
+            0,
+        ),
+    );
+    let (dst_wire, _) = result.unwrap_or_else(|_| panic!("cross-table copy_derive failed"));
+    let dst_key = RawKey::from_wire(dst_wire);
+    assert_eq!(dst_key.slot(), dst_slot(10));
+
+    // The same slot and incarnation in the caller table hold a different
+    // entry (`src` itself): the destination-minted key does not resolve
+    // there, and vice versa, despite identical index and incarnation.
+    assert_eq!(src.slot(), caller_slot(10));
+    assert_eq!(dst_key.incarnation(), src.incarnation());
+    assert!(matches!(
+        fx.lookup(0, dst_key),
+        Err(CapError::InvalidKey {
+            reason: libobject::InvalidKeyReason::GuardMismatch,
+            ..
+        })
+    ));
+    // And the caller-minted key does not resolve in the destination table.
+    assert!(matches!(
+        fx.lookup(1, src),
+        Err(CapError::InvalidKey {
+            reason: libobject::InvalidKeyReason::GuardMismatch,
+            ..
+        })
+    ));
+}
+
+/// A selector with a wrong guard is rejected before any table state is
+/// touched, and a management invocation presenting it fails the same way.
+#[test_case]
+fn management_selectors_validate_the_guard() {
+    let mut fx = Fixture::new(FULL);
+    let src = fx.install(
+        0,
+        KeySlot(10),
+        table_cap(fx.dst_table_addr, Rights::all(), 0),
+    );
+
+    // A foreign-guard selector for an existing slot: GuardMismatch, not a
+    // hit on the occupant.
+    let foreign = RawKey::from_parts(DST_GUARD, SIZE_BITS, 10, 1);
+    let call = args(foreign.to_wire(), fx.self_table_key.to_wire(), 20, 1, 0, 0);
+    assert!(matches!(
+        fx.invoke(fx.self_table_key, 0, &call),
+        Err(CapError::InvalidKey {
+            key,
+            reason: libobject::InvalidKeyReason::GuardMismatch,
+            ..
+        }) if key == foreign
+    ));
+    // The occupant is untouched.
+    assert!(fx.lookup(0, src).is_ok());
 }

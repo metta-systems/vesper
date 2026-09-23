@@ -32,6 +32,7 @@ use {
         ArchObjects, KeyTable, Nucleus,
         access::Access,
         arch_objects::{AddressSpaceObject, AsidPoolObject},
+        key_table::CallerTable,
     },
     libobject::{CapError, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -39,19 +40,19 @@ use {
 
 /// Handle an `AddressSpace` capability invocation.
 ///
-/// `caller_table_addr` is the caller's own table, through which the invoked
+/// `caller` is the caller's own table context, through which the invoked
 /// `as_key` is resolved.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     as_key: RawKey,
     op: u64,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     match op {
-        0 => activate::<A>(access, caller_table_addr, as_key, args, nucleus),
-        1 => retire::<A>(access, caller_table_addr, as_key, args, nucleus),
+        0 => activate::<A>(access, caller, as_key, args, nucleus),
+        1 => retire::<A>(access, caller, as_key, args, nucleus),
         _ => Err(CapError::InvalidOperation),
     }
 }
@@ -60,13 +61,13 @@ pub fn invoke<A: ArchObjects>(
 /// table, checking `right` and copying out the checked identity.
 fn resolve(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     as_key: RawKey,
     right: u8,
 ) -> Result<crate::objects::access::ObjectId, CapError> {
-    let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+    let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
     let entry = caller_table
-        .lookup(as_key)
+        .lookup(as_key, caller.guard)
         .map_err(|e| e.with_key_operand(0))?;
     if entry.object_type() != ObjectType::ADDRESS_SPACE {
         return Err(CapError::TypeMismatch {
@@ -84,7 +85,7 @@ fn resolve(
 /// ASID as the current hardware translation context.
 fn activate<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     as_key: RawKey,
     args: &[u64; 6],
     nucleus: &Nucleus<A>,
@@ -94,7 +95,7 @@ fn activate<A: ArchObjects>(
     }
 
     // Authority over the mapping context.
-    let as_id = resolve(access, caller_table_addr, as_key, Rights::MAP)?;
+    let as_id = resolve(access, caller, as_key, Rights::MAP)?;
 
     // Bootstrap-era restriction: only the current caller's own AddressSpace
     // activates. Switching the caller's own hardware context to a different
@@ -143,7 +144,7 @@ fn activate<A: ArchObjects>(
 /// validation on their next resolution (the stale-identity rule).
 fn retire<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     as_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
@@ -153,7 +154,7 @@ fn retire<A: ArchObjects>(
     }
 
     // Delegable lifecycle-control authority.
-    let as_id = resolve(access, caller_table_addr, as_key, Rights::RETIRE)?;
+    let as_id = resolve(access, caller, as_key, Rights::RETIRE)?;
 
     // The caller must be a surviving user of a different address space:
     // retiring the current caller's own context has no sound return path.

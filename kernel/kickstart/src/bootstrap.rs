@@ -93,6 +93,17 @@ pub struct PoolCapacities {
     pub asid_pools: usize,
 }
 
+/// The boot Thread's `KeyTable` capacity exponent: 256 entries (the historical
+/// fixed size; the well-known bootstrap slots and the boot test's Retype
+/// destinations fit comfortably).
+pub const BOOT_TABLE_SIZE_BITS: u8 = 8;
+
+/// The boot table's guard (guarded key-space package, selected 2026-09-23):
+/// Kickstart picks a nonzero value so every hand-constructed boot key
+/// exercises the guard machinery. It fits the 24 guard bits of a 256-entry
+/// table's table-relative address.
+pub const BOOT_TABLE_GUARD: u32 = 0xC0F_FEE;
+
 /// Build the initial [`Nucleus`] in memory carved from the boot Untyped.
 ///
 /// Carves the `Nucleus` struct region, the Thread and `AddressSpace` pool
@@ -136,13 +147,16 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     let asid_pools = carve_pool::<A::ASIDPool>(boot, capacities.asid_pools)?;
 
     // Carve the boot Thread's KeyTable region and initialize it kernel-privately
-    // (the same unused-watermark allocation Retype performs at runtime).
-    let keytable_paddr = carve_region(boot, core::mem::size_of::<KeyTable>())?;
-    let keytable_ptr = keytable_paddr.user_to_kernel().as_mut_ptr::<KeyTable>();
-    // SAFETY: carve_region reserved the bytes from the boot Untyped's unused
-    // watermark range, and the direct map makes them kernel-dereferenceable.
+    // (the same unused-watermark allocation Retype performs at runtime). The
+    // carve covers the variable-size layout: header plus 2^size_bits entries
+    // and incarnation counters.
+    let keytable_paddr = carve_region(boot, KeyTable::carve_size(BOOT_TABLE_SIZE_BITS))?;
+    let keytable_ptr = keytable_paddr.user_to_kernel().as_mut_ptr::<u8>();
+    // SAFETY: carve_region reserved the full carve size from the boot
+    // Untyped's unused watermark range at the table's 32-byte alignment, and
+    // the direct map makes the bytes kernel-dereferenceable.
     unsafe {
-        keytable_ptr.write(KeyTable::new(DomainId(0)));
+        KeyTable::initialize(keytable_ptr, DomainId(0), BOOT_TABLE_SIZE_BITS);
     }
 
     let nucleus = Nucleus::<A> {

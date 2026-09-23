@@ -76,6 +76,40 @@ fn raw_key_preserves_every_bit_and_field_boundaries() {
 }
 
 #[test]
+fn raw_key_from_parts_packs_guard_above_the_index() {
+    // The table-relative address (guarded key-space package, selected
+    // 2026-09-23): the guard occupies the top `32 − size_bits` bits of the
+    // low word, the index the bottom `size_bits` bits, and the index is
+    // masked so a stray high bit can never corrupt the guard.
+    const RAW: RawKey = RawKey::from_parts(0xC0F_FEE, 8, 0x42, 7);
+    const WIRE: u64 = RAW.to_wire();
+    const SLOT: KeySlot = RAW.slot();
+
+    assert_eq!(WIRE, 0x0000_0007_C0FF_EE42);
+    assert_eq!(SLOT, KeySlot(0xC0FF_EE42));
+
+    for (guard, size_bits, index) in [
+        (0_u32, 1_u8, 0_u32),
+        (0x1234_5678, 2, 3),
+        (0x7fff_ffff, 1, 1),
+        (0xC0F_FEE, 8, 255),
+        (0, 20, (1 << 20) - 1),
+    ] {
+        let raw = RawKey::from_parts(guard, size_bits, index, 0xAB);
+        let width = u32::from(size_bits);
+        assert_eq!(raw.incarnation(), 0xAB);
+        assert_eq!(raw.slot().0 >> width, guard);
+        assert_eq!(
+            raw.slot().0 & ((1_u32 << width) - 1),
+            index & ((1_u32 << width) - 1)
+        );
+    }
+    // A stray high index bit is masked into the index, never the guard.
+    let masked = RawKey::from_parts(0xC0F_FEE, 8, 0x142, 1);
+    assert_eq!(masked.slot().0, 0xC0FF_EE42);
+}
+
+#[test]
 fn typed_key_is_const_nonowning_and_has_no_phantom_trait_bounds() {
     struct NonCopyObject;
 
@@ -118,6 +152,7 @@ fn key_statuses_and_all_reason_bytes_are_pinned() {
             1 => Ok(InvalidKeyReason::ZeroIncarnation),
             2 => Ok(InvalidKeyReason::SlotOutOfRange),
             3 => Ok(InvalidKeyReason::NeverIssued),
+            4 => Ok(InvalidKeyReason::GuardMismatch),
             _ => Err(()),
         };
         let inconsistent = match byte {
@@ -145,6 +180,7 @@ fn key_errors_pin_all_reasons_operands_and_submitted_key_bits() {
                 (InvalidKeyReason::ZeroIncarnation, 0x01),
                 (InvalidKeyReason::SlotOutOfRange, 0x02),
                 (InvalidKeyReason::NeverIssued, 0x03),
+                (InvalidKeyReason::GuardMismatch, 0x04),
             ] {
                 let wire = (26, submitted, literal | (u64::from(operand) << 8));
                 let error = CapError::InvalidKey {
@@ -199,7 +235,14 @@ fn key_errors_pin_all_reasons_operands_and_submitted_key_bits() {
 fn key_error_unknown_reasons_operands_and_extension_bits_are_lossless() {
     for status in [26, 27] {
         for reason in 0..=u8::MAX {
-            if !(1..=3).contains(&reason) {
+            // InvalidKey reasons 1..=4 and Inconsistency reasons 1..=3 are
+            // known; every other reason byte stays losslessly observable.
+            let known = if status == 26 {
+                (1..=4).contains(&reason)
+            } else {
+                (1..=3).contains(&reason)
+            };
+            if !known {
                 for operand in 0..=7_u64 {
                     assert_unknown_response((status, u64::MAX, u64::from(reason) | (operand << 8)));
                 }

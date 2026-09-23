@@ -142,7 +142,13 @@ pub struct FrameMapping {
 pub struct KeyTablePayload {
     /// Kernel virtual address of the carved `KeyTable` object.
     pub address: u64,
-    pub _pad: u64,
+    /// The table's guard (guarded key-space package, selected 2026-09-23):
+    /// a userspace-chosen value fixed at Retype, carried by every key minted
+    /// into the table above the slot index. Copied verbatim on derivation.
+    pub guard: u32,
+    /// The table's capacity exponent: `2^size_bits` entries.
+    pub size_bits: u8,
+    pub _pad: [u8; 3],
 }
 
 /// 24-byte payload union, discriminated by `obj_type` in the header.
@@ -264,17 +270,30 @@ impl KeyEntry {
 
     /// Create a capability for a carved `KeyTable` object (Retype-created).
     ///
-    /// The payload is a reference to the carved `KeyTable` kernel object; the
-    /// kind is the entry header. The address is kernel-issued (from Retype or
-    /// the boot carve) and the region is never freed under the accepted-leak
-    /// model, so it never goes stale.
-    pub fn new_keytable(address: u64, rights: Rights, badge: u16) -> Self {
+    /// The payload is a reference to the carved `KeyTable` kernel object plus
+    /// its guard and capacity exponent; the kind is the entry header. The
+    /// address is kernel-issued (from Retype or the boot carve) and the region
+    /// is never freed under the accepted-leak model, so it never goes stale.
+    /// The guard and `size_bits` are fixed at table creation and copied
+    /// verbatim by derivation.
+    pub fn new_keytable(
+        address: u64,
+        guard: u32,
+        size_bits: u8,
+        rights: Rights,
+        badge: u16,
+    ) -> Self {
         Self {
             obj_type: ObjectType::KEY_TABLE,
             rights,
             badge,
             payload: KeyPayload {
-                keytable: KeyTablePayload { address, _pad: 0 },
+                keytable: KeyTablePayload {
+                    address,
+                    guard,
+                    size_bits,
+                    _pad: [0; 3],
+                },
             },
         }
     }
@@ -375,6 +394,21 @@ impl KeyEntry {
         }
         // SAFETY: keytable variant guaranteed by the type check above.
         Ok(unsafe { self.payload.keytable.address })
+    }
+
+    /// Get the carved table's guard and capacity exponent (`KeyTable` caps
+    /// only). Fixed at table creation; derivation copies them verbatim, so
+    /// every capability naming a table carries its guard.
+    #[inline]
+    pub fn keytable_guard_and_size(&self) -> Result<(u32, u8), CapError> {
+        if self.obj_type != ObjectType::KEY_TABLE {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::KEY_TABLE,
+                found: self.obj_type,
+            });
+        }
+        // SAFETY: keytable variant guaranteed by the type check above.
+        Ok(unsafe { (self.payload.keytable.guard, self.payload.keytable.size_bits) })
     }
 
     /// Access the inline Untyped payload (read-only).

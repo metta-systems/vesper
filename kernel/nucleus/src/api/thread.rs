@@ -23,25 +23,25 @@
 //! `AddressSpace.Retire`.
 
 use {
-    crate::objects::{ArchObjects, KeyTable, Nucleus, access::Access},
+    crate::objects::{ArchObjects, KeyTable, Nucleus, access::Access, key_table::CallerTable},
     libobject::{CapError, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
 };
 
 /// Handle a `Thread` capability invocation.
 ///
-/// `caller_table_addr` is the caller's own table, through which the invoked
+/// `caller` is the caller's own table context, through which the invoked
 /// `thread_key` is resolved.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     thread_key: RawKey,
     op: u64,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     match op {
-        4 => retire::<A>(access, caller_table_addr, thread_key, args, nucleus),
+        4 => retire::<A>(access, caller, thread_key, args, nucleus),
         _ => Err(CapError::InvalidOperation),
     }
 }
@@ -58,7 +58,7 @@ pub fn invoke<A: ArchObjects>(
 /// with a defined error.
 fn retire<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     thread_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
@@ -70,9 +70,9 @@ fn retire<A: ArchObjects>(
     // Resolve the invoked Thread capability through the caller's own table,
     // copying out the checked identity.
     let thread_id = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
-            .lookup(thread_key)
+            .lookup(thread_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
         if entry.object_type() != ObjectType::THREAD {
             return Err(CapError::TypeMismatch {

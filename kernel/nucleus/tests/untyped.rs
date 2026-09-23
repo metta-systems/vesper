@@ -54,16 +54,24 @@ const FULL: u8 = Rights::DERIVE | Rights::REMOVE | Rights::INSTALL;
 /// storage out of the test's stack frame.
 const TEST_BACKING: u64 = 0x2000_0000;
 
+/// Fixture-table capacity exponent: the historical 256-slot table.
+const SIZE_BITS: u8 = 8;
+
+/// The fixture table's guard (nonzero, exercising the guarded key-space
+/// machinery: every fixture key carries it above the slot index). It fits the
+/// 24 guard bits of a 256-entry table's table-relative address.
+const FIXTURE_GUARD: u32 = 0x600_D00;
+
 /// Carve the fixture's `KeyTable` at the fixed test backing, returning its
 /// address.
 fn carve_table() -> u64 {
-    let obj = TEST_BACKING as *mut KeyTable;
-    // SAFETY: TEST_BACKING is RAM, aligned for KeyTable, and exclusively owned
-    // by the test fixture for its lifetime.
+    // SAFETY: TEST_BACKING is RAM, 32-byte aligned (a 512 MiB boundary), and
+    // exclusively owned by the test fixture for its lifetime; the fixed
+    // backing covers the full variable-size carve.
     unsafe {
-        obj.write(KeyTable::new(DomainId(0)));
+        KeyTable::initialize(TEST_BACKING as *mut u8, DomainId(0), SIZE_BITS);
     }
-    obj as u64
+    TEST_BACKING
 }
 
 /// Backing bytes for the fixture nucleus's pools. The Thread pool is built
@@ -126,7 +134,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
 }
 
 /// A carved-table fixture: the caller's own table with a self-table capability
-/// at `CAPTBL_SELF`, through which `Untyped.Retype` is invoked.
+/// at `SELF_KEYTABLE`, through which `Untyped.Retype` is invoked.
 struct Fixture {
     table_addr: u64,
     self_key: RawKey,
@@ -139,8 +147,15 @@ impl Fixture {
         // SAFETY: table_addr names the freshly carved, live fixture table.
         let self_key = unsafe { &mut *(table_addr as *mut KeyTable) }
             .insert(
-                KeySlot::CAPTBL_SELF,
-                KeyEntry::new_keytable(table_addr, Rights(table_rights), 0),
+                KeySlot::SELF_KEYTABLE,
+                KeyEntry::new_keytable(
+                    table_addr,
+                    FIXTURE_GUARD,
+                    SIZE_BITS,
+                    Rights(table_rights),
+                    0,
+                ),
+                FIXTURE_GUARD,
             )
             .unwrap_or_else(|_| panic!("self-table installation failed"));
         Self {
@@ -154,14 +169,14 @@ impl Fixture {
     fn install(&mut self, slot: KeySlot, entry: KeyEntry) -> RawKey {
         // SAFETY: the address names a live carved table owned by the fixture.
         unsafe { &mut *(self.table_addr as *mut KeyTable) }
-            .insert(slot, entry)
+            .insert(slot, entry, FIXTURE_GUARD)
             .unwrap_or_else(|_| panic!("fixture installation failed"))
     }
 
     /// Look up an entry in the fixture table.
     fn lookup(&self, key: RawKey) -> Result<&KeyEntry, CapError> {
         // SAFETY: see install.
-        Ok(unsafe { &*(self.table_addr as *const KeyTable) }.lookup(key)?)
+        Ok(unsafe { &*(self.table_addr as *const KeyTable) }.lookup(key, FIXTURE_GUARD)?)
     }
 
     /// The fixture table's live-entry count.
@@ -179,9 +194,13 @@ impl Fixture {
     ) -> Result<(u64, u64), CapError> {
         // SAFETY: test-only; no overlapping access context.
         let access = unsafe { Access::new() };
+        let caller = crate::objects::key_table::CallerTable {
+            addr: self.table_addr,
+            guard: FIXTURE_GUARD,
+        };
         api::untyped::invoke::<ArchObjectsImpl>(
             &access,
-            self.table_addr,
+            caller,
             untyped_key,
             op,
             args,
@@ -191,11 +210,13 @@ impl Fixture {
 }
 
 /// Encode Retype's approved wire schema (see `doc/nucleus_capabilities.md`):
-/// `x2` object kind, `x3` `size_bits`, `x4` count, `x5` destination-table key,
-/// `x6` first destination slot, `x7` requested rights.
+/// `x2` object kind, `x3` `size_bits` with the table guard packed in bits 39:8
+/// (KeyTable kind only; zero for every other kind), `x4` count, `x5`
+/// destination-table key, `x6` first destination slot, `x7` requested rights.
 fn retype_args(
     kind: ObjectType,
     size_bits: u8,
+    guard: u32,
     count: u64,
     dst: RawKey,
     slot: KeySlot,
@@ -203,7 +224,7 @@ fn retype_args(
 ) -> [u64; 6] {
     [
         u64::from(kind.as_u8()),
-        u64::from(size_bits),
+        (u64::from(guard) << 8) | u64::from(size_bits),
         count,
         dst.to_wire(),
         u64::from(slot.0),
@@ -245,6 +266,7 @@ fn retype_rejects_device_untypeds_without_changing_state() {
         UntypedOp::Retype as u64,
         &retype_args(
             ObjectType::KEY_TABLE,
+            8,
             0,
             1,
             fx.self_key,
@@ -284,6 +306,7 @@ fn retype_device_rejection_precedes_capacity_validation() {
         UntypedOp::Retype as u64,
         &retype_args(
             ObjectType::KEY_TABLE,
+            8,
             0,
             1,
             fx.self_key,
@@ -311,6 +334,7 @@ fn retype_from_ram_reaches_capacity_validation() {
         UntypedOp::Retype as u64,
         &retype_args(
             ObjectType::KEY_TABLE,
+            8,
             0,
             1,
             fx.self_key,
@@ -339,13 +363,14 @@ fn retype_device_rejection_precedes_destination_resolution() {
     let mut fx = Fixture::new(FULL);
     let device = fx.install(KeySlot(30), device_untyped(24));
     // A destination key that was never issued.
-    let bogus = RawKey::new(KeySlot(200), 7);
+    let bogus = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 200, 7);
 
     let result = fx.invoke(
         device,
         UntypedOp::Retype as u64,
         &retype_args(
             ObjectType::KEY_TABLE,
+            8,
             0,
             1,
             bogus,
@@ -377,6 +402,7 @@ fn retype_rejects_unrepresentable_region_sizes() {
             UntypedOp::Retype as u64,
             &retype_args(
                 ObjectType::KEY_TABLE,
+                8,
                 0,
                 1,
                 fx.self_key,
@@ -404,6 +430,7 @@ fn retype_rejects_unrepresentable_region_extents() {
         UntypedOp::Retype as u64,
         &retype_args(
             ObjectType::KEY_TABLE,
+            8,
             0,
             1,
             fx.self_key,
@@ -414,23 +441,26 @@ fn retype_rejects_unrepresentable_region_extents() {
     assert!(matches!(result, Err(CapError::InvalidSize(32))));
 }
 
-/// The usable range ends where the watermark encoding does: a run that fits
-/// the region but ends beyond the largest representable watermark is rejected
-/// as insufficient memory, before any destination-slot iteration.
+/// The usable range ends where the watermark encoding does: a bounded run
+/// (≤ 256 objects) that fits the region but ends beyond the largest
+/// representable watermark is rejected as insufficient memory, before any
+/// destination-slot iteration.
 #[test_case]
 fn retype_rejects_runs_beyond_the_watermark_encoding() {
     let mut fx = Fixture::new(FULL);
-    // A 128 GiB region (size_bits 37) whose ~8-million-object run (~69 GiB)
-    // fits the region but ends past the `u32` watermark encoding (~64 GiB).
+    // A 128 GiB region (size_bits 37) whose 65-object run of 1 GiB frames
+    // (~65 GiB) fits the region but ends past the `u32` watermark encoding
+    // (~64 GiB) — reachable within the batch bound.
     let region = fx.install(KeySlot(30), ram_untyped_at(0, 37));
 
     let result = fx.invoke(
         region,
         UntypedOp::Retype as u64,
         &retype_args(
-            ObjectType::KEY_TABLE,
+            ObjectType::FRAME,
+            30,
             0,
-            8_000_000,
+            65,
             fx.self_key,
             KeySlot(0),
             Rights::all(),
@@ -458,6 +488,7 @@ fn retype_rejects_nongranular_frame_sizes() {
             &retype_args(
                 ObjectType::FRAME,
                 size_bits,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(40),
@@ -477,7 +508,7 @@ fn retype_rejects_nongranular_frame_sizes() {
 fn retype_frame_size_rejection_precedes_source_resolution() {
     let mut fx = Fixture::new(FULL);
     // A source key that was never issued.
-    let bogus = RawKey::new(KeySlot(200), 7);
+    let bogus = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 200, 7);
 
     let result = fx.invoke(
         bogus,
@@ -485,6 +516,7 @@ fn retype_frame_size_rejection_precedes_source_resolution() {
         &retype_args(
             ObjectType::FRAME,
             13,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -508,6 +540,7 @@ fn retype_rejects_device_frames_without_changing_state() {
         &retype_args(
             ObjectType::FRAME,
             12,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -548,6 +581,7 @@ fn retype_frame_from_ram_reaches_capacity_validation() {
         &retype_args(
             ObjectType::FRAME,
             12,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -586,6 +620,7 @@ fn retype_rejects_non_arch_page_table_sizes_without_changing_state() {
         &retype_args(
             ObjectType::PAGE_TABLE,
             13,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -618,6 +653,7 @@ fn retype_rejects_device_untypeds_for_page_tables() {
         &retype_args(
             ObjectType::PAGE_TABLE,
             12,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -649,6 +685,7 @@ fn retype_page_table_batch_releases_partial_pool_slots_on_exhaustion() {
         &retype_args(
             ObjectType::PAGE_TABLE,
             12,
+            0,
             2,
             fx.self_key,
             KeySlot(40),
@@ -676,6 +713,7 @@ fn retype_page_table_batch_releases_partial_pool_slots_on_exhaustion() {
         &retype_args(
             ObjectType::PAGE_TABLE,
             12,
+            0,
             2,
             fx2.self_key,
             KeySlot(40),
@@ -704,6 +742,7 @@ fn retype_notification_succeeds_and_installs_pool_identities() {
         &retype_args(
             ObjectType::NOTIFICATION,
             0,
+            0,
             2,
             fx.self_key,
             KeySlot(40),
@@ -719,7 +758,7 @@ fn retype_notification_succeeds_and_installs_pool_identities() {
     // against the pool. The keys are destination-local with consecutive
     // slots sharing the install incarnation.
     let first = RawKey::from_wire(first_wire);
-    let second_key = RawKey::new(KeySlot(41), first.incarnation());
+    let second_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 41, first.incarnation());
     for (key, slot) in [(first, KeySlot(40)), (second_key, KeySlot(41))] {
         let entry = fx
             .lookup(key)
@@ -755,6 +794,7 @@ fn retype_notification_rejects_nonzero_size_bits() {
         &retype_args(
             ObjectType::NOTIFICATION,
             12,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -781,6 +821,7 @@ fn retype_notification_pool_exhaustion_releases_partial_slots() {
         &retype_args(
             ObjectType::NOTIFICATION,
             0,
+            0,
             3,
             fx.self_key,
             KeySlot(40),
@@ -797,6 +838,7 @@ fn retype_notification_pool_exhaustion_releases_partial_slots() {
         UntypedOp::Retype as u64,
         &retype_args(
             ObjectType::NOTIFICATION,
+            0,
             0,
             2,
             fx.self_key,
@@ -827,6 +869,7 @@ fn retype_event_count_succeeds_and_installs_pool_identities() {
         &retype_args(
             ObjectType::EVENT_COUNT,
             0,
+            0,
             2,
             fx.self_key,
             KeySlot(40),
@@ -842,7 +885,7 @@ fn retype_event_count_succeeds_and_installs_pool_identities() {
     // against the pool. The keys are destination-local with consecutive
     // slots sharing the install incarnation.
     let first = RawKey::from_wire(first_wire);
-    let second_key = RawKey::new(KeySlot(41), first.incarnation());
+    let second_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 41, first.incarnation());
     for (key, slot) in [(first, KeySlot(40)), (second_key, KeySlot(41))] {
         let entry = fx
             .lookup(key)
@@ -878,6 +921,7 @@ fn retype_event_count_rejects_nonzero_size_bits() {
         &retype_args(
             ObjectType::EVENT_COUNT,
             12,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -905,6 +949,7 @@ fn retype_event_count_pool_exhaustion_releases_partial_slots() {
         &retype_args(
             ObjectType::EVENT_COUNT,
             0,
+            0,
             3,
             fx.self_key,
             KeySlot(40),
@@ -921,6 +966,7 @@ fn retype_event_count_pool_exhaustion_releases_partial_slots() {
         UntypedOp::Retype as u64,
         &retype_args(
             ObjectType::EVENT_COUNT,
+            0,
             0,
             2,
             fx.self_key,
@@ -953,6 +999,7 @@ fn retype_untyped_split_succeeds_and_installs_child_regions() {
         &retype_args(
             ObjectType::UNTYPED,
             8,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -965,7 +1012,10 @@ fn retype_untyped_split_succeeds_and_installs_child_regions() {
     assert_eq!(fx.len(), before + 1);
 
     let child = RawKey::from_wire(first_wire);
-    assert_eq!(child.slot(), KeySlot(40));
+    assert_eq!(
+        child.slot(),
+        KeySlot((FIXTURE_GUARD << u32::from(SIZE_BITS)) | 40)
+    );
     let entry = fx
         .lookup(child)
         .unwrap_or_else(|_| panic!("split child missing"));
@@ -1002,6 +1052,7 @@ fn retype_untyped_batch_split_installs_consecutive_children() {
         &retype_args(
             ObjectType::UNTYPED,
             8,
+            0,
             3,
             fx.self_key,
             KeySlot(40),
@@ -1017,7 +1068,7 @@ fn retype_untyped_batch_split_installs_consecutive_children() {
         let key = if index == 0 {
             first
         } else {
-            RawKey::new(KeySlot(slot.0), first.incarnation())
+            RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, slot.0, first.incarnation())
         };
         let region = fx
             .lookup(key)
@@ -1053,6 +1104,7 @@ fn retype_untyped_split_child_is_a_working_source() {
             &retype_args(
                 ObjectType::UNTYPED,
                 8,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(40),
@@ -1070,6 +1122,7 @@ fn retype_untyped_split_child_is_a_working_source() {
             &retype_args(
                 ObjectType::NOTIFICATION,
                 0,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(41),
@@ -1077,7 +1130,10 @@ fn retype_untyped_split_child_is_a_working_source() {
             ),
         )
         .unwrap_or_else(|e| panic!("notification carve from child failed: {:?}", e.code()));
-    assert_eq!(RawKey::from_wire(notification_wire).slot(), KeySlot(41));
+    assert_eq!(
+        RawKey::from_wire(notification_wire).slot(),
+        KeySlot((FIXTURE_GUARD << u32::from(SIZE_BITS)) | 41)
+    );
     let region = fx
         .lookup(child)
         .unwrap_or_else(|_| panic!("child entry missing"))
@@ -1094,6 +1150,7 @@ fn retype_untyped_split_child_is_a_working_source() {
             &retype_args(
                 ObjectType::UNTYPED,
                 4,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(42),
@@ -1132,6 +1189,7 @@ fn retype_untyped_split_rejects_subgranular_sizes() {
             &retype_args(
                 ObjectType::UNTYPED,
                 size_bits,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(40),
@@ -1169,6 +1227,7 @@ fn retype_untyped_split_rejects_unrepresentable_sizes() {
             &retype_args(
                 ObjectType::UNTYPED,
                 size_bits,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(40),
@@ -1199,6 +1258,7 @@ fn retype_untyped_split_enforces_the_fit_and_failure_atomicity() {
         &retype_args(
             ObjectType::UNTYPED,
             5,
+            0,
             1,
             fx.self_key,
             KeySlot(40),
@@ -1222,6 +1282,7 @@ fn retype_untyped_split_enforces_the_fit_and_failure_atomicity() {
             &retype_args(
                 ObjectType::UNTYPED,
                 4,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(40),
@@ -1253,6 +1314,7 @@ fn retype_untyped_split_enforces_the_fit_and_failure_atomicity() {
         &retype_args(
             ObjectType::UNTYPED,
             4,
+            0,
             1,
             fx.self_key,
             KeySlot(41),
@@ -1281,6 +1343,7 @@ fn retype_untyped_split_enforces_the_fit_and_failure_atomicity() {
             &retype_args(
                 ObjectType::UNTYPED,
                 8,
+                0,
                 1,
                 fx2.self_key,
                 KeySlot(40),
@@ -1288,7 +1351,10 @@ fn retype_untyped_split_enforces_the_fit_and_failure_atomicity() {
             ),
         )
         .unwrap_or_else(|e| panic!("split into slot 40 failed: {:?}", e.code()));
-    assert_eq!(RawKey::from_wire(first_wire).slot(), KeySlot(40));
+    assert_eq!(
+        RawKey::from_wire(first_wire).slot(),
+        KeySlot((FIXTURE_GUARD << u32::from(SIZE_BITS)) | 40)
+    );
     assert_eq!(fx2.len(), before2 + 1);
     let occupied = fx2.invoke(
         ram2,
@@ -1296,6 +1362,7 @@ fn retype_untyped_split_enforces_the_fit_and_failure_atomicity() {
         &retype_args(
             ObjectType::UNTYPED,
             8,
+            0,
             1,
             fx2.self_key,
             KeySlot(40),
@@ -1328,6 +1395,7 @@ fn retype_untyped_split_from_device_propagates_the_device_flag() {
             &retype_args(
                 ObjectType::UNTYPED,
                 8,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(40),
@@ -1355,6 +1423,7 @@ fn retype_untyped_split_from_device_propagates_the_device_flag() {
         UntypedOp::Retype as u64,
         &retype_args(
             ObjectType::KEY_TABLE,
+            8,
             0,
             1,
             fx.self_key,
@@ -1375,6 +1444,7 @@ fn retype_untyped_split_from_device_propagates_the_device_flag() {
             &retype_args(
                 ObjectType::UNTYPED,
                 4,
+                0,
                 1,
                 fx.self_key,
                 KeySlot(41),
@@ -1390,4 +1460,137 @@ fn retype_untyped_split_from_device_propagates_the_device_flag() {
     assert_eq!(grandchild.paddr, 0x3F00_0000);
     assert_eq!(grandchild.size_bits, 4);
     assert!(grandchild.is_device);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// KEYTABLE RETYPE SCHEMA (guarded key-space package, 2026-09-23)
+// ═══════════════════════════════════════════════════════════════
+
+/// A successful KeyTable carve writes the table at the carve (header,
+/// entries, counters), so it is covered by the boot test through the real
+/// SVC path; these tests exercise the new schema's rejection paths, which
+/// all precede any carve write.
+#[test_case]
+fn retype_keytable_rejects_out_of_range_capacity_exponents() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    // size_bits selects the capacity (1..=20): zero and twenty-one are
+    // rejected with the requested exponent.
+    for size_bits in [0_u8, 21, 255] {
+        let result = fx.invoke(
+            ram,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::KEY_TABLE,
+                size_bits,
+                0,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        );
+        assert!(
+            matches!(result, Err(CapError::InvalidSize(size)) if size == usize::from(size_bits)),
+            "size_bits {size_bits} must be rejected with its own exponent"
+        );
+    }
+    assert_eq!(fx.len(), before);
+}
+
+/// The packed guard must fit the table-relative address layout —
+/// `32 − size_bits` bits above the slot index — and bits 63:40 of `x3` are
+/// reserved zero.
+#[test_case]
+fn retype_keytable_rejects_guards_that_do_not_fit_the_layout() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    // A 256-entry table leaves 24 guard bits: 2^24 does not fit.
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::KEY_TABLE,
+            8,
+            1 << 24,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::InvalidSize(8))));
+
+    // Bits 63:40 of the packed word are reserved zero.
+    let mut args = retype_args(
+        ObjectType::KEY_TABLE,
+        8,
+        0,
+        1,
+        fx.self_key,
+        KeySlot(40),
+        Rights::all(),
+    );
+    args[1] |= 1_u64 << 40;
+    let result = fx.invoke(ram, UntypedOp::Retype as u64, &args);
+    assert!(matches!(result, Err(CapError::InvalidSize(8))));
+
+    // Every rejection preceded any carve write: nothing was installed.
+    assert_eq!(fx.len(), before);
+}
+
+/// Every non-KeyTable kind requires bits 63:8 of `x3` zero (the strict zero
+/// convention): a packed guard word is malformed input for them.
+#[test_case]
+fn retype_rejects_guard_words_for_non_keytable_kinds() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::FRAME,
+            12,
+            1,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::InvalidOperation)));
+    assert_eq!(fx.len(), before);
+}
+
+/// A Retype batch is bounded (`MAX_RETYPE_BATCH`, 256): the transaction's
+/// defensive rollback records are stack arrays sized by the bound. Larger
+/// counts are malformed input.
+#[test_case]
+fn retype_rejects_batches_beyond_the_bound() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::NOTIFICATION,
+            0,
+            0,
+            257,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(result, Err(CapError::InvalidOperation)));
+    assert_eq!(fx.len(), before);
+    assert!(fx.nucleus.pools.notifications.is_empty());
 }

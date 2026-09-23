@@ -163,6 +163,13 @@ impl<A: ArchObjects> Nucleus<A> {
             // SAFETY: the caller supplied a live carved table address; the
             // region is never freed under the accepted-leak model.
             let keytable = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+            // The table's guard is discovered through its self-table
+            // capability — the same source the syscall entry uses — so the
+            // fixture installs keys that are actually resolvable (guarded
+            // key-space package, selected 2026-09-23).
+            let (_self_addr, guard, _size_bits) = keytable
+                .self_table_capability()
+                .expect("fixture table has no self-table capability");
             let key = keytable
                 .insert(
                     KeySlot::DEBUG_CONSOLE,
@@ -176,6 +183,7 @@ impl<A: ArchObjects> Nucleus<A> {
                         libobject::Rights::all(),
                         0,
                     ),
+                    guard,
                 )
                 .unwrap_or_else(|failure| {
                     panic!(

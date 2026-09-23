@@ -1,6 +1,6 @@
 use {
-    crate::objects::{ArchObjects, KeyTable, Nucleus, access::Access},
-    libobject::{ArchType, CapError, CoreType, ObjectType, RawKey},
+    crate::objects::{ArchObjects, KeyTable, Nucleus, access::Access, key_table::CallerTable},
+    libobject::{ArchType, CapError, CoreType, InconsistencyReason, ObjectType, RawKey},
     libqemu::semihosting as semi,
 };
 
@@ -67,37 +67,59 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     // SAFETY: the caller holds the kernel lock for the whole invocation and
     // constructs no overlapping access context.
     let access = unsafe { Access::new() };
-    let caller_table_addr = caller_table_addr(nucleus)?;
+    let caller = caller_table(nucleus, &access, key)?;
     let obj_type = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         semi::println!("handle_cap_invoke(got entry)");
-        caller_table.lookup(key)?.object_type()
+        caller_table.lookup(key, caller.guard)?.object_type()
     };
 
     semi::println!("handle_cap_invoke(resolved obj_type {})", obj_type.as_u8());
 
     if core::hint::unlikely(obj_type.is_arch()) {
         // Architecture-specific dispatch (less common path)
-        arch_invoke::<A>(nucleus, &access, caller_table_addr, key, obj_type, op, args)
+        arch_invoke::<A>(nucleus, &access, caller, key, obj_type, op, args)
             .map(InvokeOutcome::Complete)
     } else {
         // Core dispatch (common path)
-        core_invoke::<A>(nucleus, &access, caller_table_addr, key, obj_type, op, args)
+        core_invoke::<A>(nucleus, &access, caller, key, obj_type, op, args)
     }
 }
 
-/// Address of the current thread's capability table (a carved `KeyTable`).
+/// The caller's own table for this invocation: its carved address (from the
+/// current Thread) plus its guard, sourced from the `SELF_KEYTABLE`
+/// capability and validated to name this very table (guarded key-space
+/// package, selected 2026-09-23).
 ///
-/// Resolved as an owned value (not a borrowed reference) so the caller can
-/// also borrow the thread pool; the thread and `KeyTable` storage are disjoint.
-fn caller_table_addr<A: ArchObjects>(nucleus: &Nucleus<A>) -> Result<u64, CapError> {
-    let index = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
-    nucleus
-        .pools
-        .threads
-        .get_live(usize::try_from(index).ok().ok_or(CapError::InvalidDomain)?)
-        .ok_or(CapError::InvalidDomain)
-        .map(|thread| thread.keytable_addr)
+/// An invocation whose `SELF_KEYTABLE` entry is missing, is not a `KeyTable`
+/// capability, or names a different table cannot establish its key-resolution
+/// context and is rejected before any key validation (provisional status:
+/// `InconsistentKey`/`CapabilityInvalidated`; the exact status is D9).
+fn caller_table<A: ArchObjects>(
+    nucleus: &Nucleus<A>,
+    access: &Access,
+    invoked: RawKey,
+) -> Result<CallerTable, CapError> {
+    let addr = {
+        let index = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
+        nucleus
+            .pools
+            .threads
+            .get_live(usize::try_from(index).ok().ok_or(CapError::InvalidDomain)?)
+            .ok_or(CapError::InvalidDomain)?
+            .keytable_addr
+    };
+    let no_context = || CapError::InconsistentKey {
+        key: invoked,
+        reason: InconsistencyReason::CapabilityInvalidated,
+        operand: 0,
+    };
+    let table = access.resolve_carved_mut::<KeyTable>(addr)?;
+    let (cap_addr, guard, _size_bits) = table.self_table_capability().ok_or_else(no_context)?;
+    if cap_addr != addr {
+        return Err(no_context());
+    }
+    Ok(CallerTable { addr, guard })
 }
 
 /// Core object dispatch
@@ -105,7 +127,7 @@ fn caller_table_addr<A: ArchObjects>(nucleus: &Nucleus<A>) -> Result<u64, CapErr
 fn core_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     key: RawKey,
     obj_type: ObjectType,
     op: u64,
@@ -119,33 +141,29 @@ fn core_invoke<A: ArchObjects>(
         CoreType::Null => Err(CapError::NullCapability),
 
         CoreType::Untyped => {
-            crate::api::untyped::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
+            crate::api::untyped::invoke::<A>(access, caller, key, op, args, nucleus)
                 .map(InvokeOutcome::Complete)
         }
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
             semi::println!("core_invoke: DebugConsole");
-            let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-            let entry = caller_table.lookup(key)?;
+            let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+            let entry = caller_table.lookup(key, caller.guard)?;
             crate::api::debug_console::invoke(entry, op, args[0], args[1])
                 .map(InvokeOutcome::Complete)
         }
-        CoreType::Thread => {
-            crate::api::thread::invoke(access, caller_table_addr, key, op, args, nucleus)
-                .map(InvokeOutcome::Complete)
-        }
+        CoreType::Thread => crate::api::thread::invoke(access, caller, key, op, args, nucleus)
+            .map(InvokeOutcome::Complete),
 
-        CoreType::KeyTable => {
-            crate::api::key_table::invoke(access, caller_table_addr, key, op, args)
-                .map(InvokeOutcome::Complete)
-        }
+        CoreType::KeyTable => crate::api::key_table::invoke(access, caller, key, op, args)
+            .map(InvokeOutcome::Complete),
 
         CoreType::Notification => {
-            crate::api::notification::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
+            crate::api::notification::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
         CoreType::EventCount => {
-            crate::api::event_count::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
+            crate::api::event_count::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
         // CoreType::Endpoint => {
@@ -218,7 +236,7 @@ pub(crate) fn current_waiter<A: ArchObjects>(
 fn arch_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     key: RawKey,
     obj_type: ObjectType,
     op: u64,
@@ -230,35 +248,20 @@ fn arch_invoke<A: ArchObjects>(
 
     match arch_type {
         ArchType::Frame => {
-            crate::api::arch::frame::invoke::<A>(access, caller_table_addr, key, op, args, nucleus)
+            crate::api::arch::frame::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
-        ArchType::PageTable => crate::api::arch::page_table::invoke::<A>(
-            access,
-            caller_table_addr,
-            key,
-            op,
-            args,
-            nucleus,
-        ),
+        ArchType::PageTable => {
+            crate::api::arch::page_table::invoke::<A>(access, caller, key, op, args, nucleus)
+        }
 
-        ArchType::AddressSpace => crate::api::arch::address_space::invoke::<A>(
-            access,
-            caller_table_addr,
-            key,
-            op,
-            args,
-            nucleus,
-        ),
+        ArchType::AddressSpace => {
+            crate::api::arch::address_space::invoke::<A>(access, caller, key, op, args, nucleus)
+        }
 
-        ArchType::ASIDPool => crate::api::arch::asid_pool::invoke::<A>(
-            access,
-            caller_table_addr,
-            key,
-            op,
-            args,
-            nucleus,
-        ),
+        ArchType::ASIDPool => {
+            crate::api::arch::asid_pool::invoke::<A>(access, caller, key, op, args, nucleus)
+        }
 
         // ASIDControl and I/O/IRQ control remain deferred with their kinds:
         // no creatable arch kind other than Frame, PageTable, and the

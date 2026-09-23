@@ -29,6 +29,7 @@ use {
             ArchObjects, EventCount, KeyTable, Nucleus,
             access::Access,
             event_count::{AdvanceOutcome, AwaitOutcome},
+            key_table::CallerTable,
         },
     },
     libobject::{CapError, ObjectType, RawKey, Rights, event_count::EventCountOp},
@@ -37,12 +38,12 @@ use {
 
 /// Handle an `EventCount` capability invocation.
 ///
-/// `caller_table_addr` is the caller's own table, through which the invoked
+/// `caller` is the caller's own table context, through which the invoked
 /// `key` is resolved. The event-count object is a checked pool identity
 /// resolved through the guarded `Access` context.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     key: RawKey,
     op: u64,
     args: &[u64; 6],
@@ -53,9 +54,9 @@ pub fn invoke<A: ArchObjects>(
     // Resolve the invoked EventCount capability through the caller's own
     // table, copying out the checked identity and authority.
     let (id, rights) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
-            .lookup(key)
+            .lookup(key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
         if entry.object_type() != ObjectType::EVENT_COUNT {
             return Err(CapError::TypeMismatch {

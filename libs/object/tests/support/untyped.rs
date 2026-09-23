@@ -32,7 +32,12 @@ pub(super) unsafe fn protected_call6(
     respond((key, op, [a0, a1, a2, a3, a4, a5], 6))
 }
 
-fn invoke_with(kind: ObjectType, size_bits: u8, response: Response) -> Result<RawKey, CapError> {
+fn invoke_with(
+    kind: ObjectType,
+    size_bits: u8,
+    guard: u32,
+    response: Response,
+) -> Result<RawKey, CapError> {
     let untyped_key = RawKey::new(KeySlot(4), 0x89ab_cdef);
     let table_key = RawKey::new(KeySlot(u32::MAX), 0x1357_9bdf);
     let untyped = UntypedKey::from_key(untyped_key);
@@ -42,6 +47,7 @@ fn invoke_with(kind: ObjectType, size_bits: u8, response: Response) -> Result<Ra
     let result = untyped.retype(
         kind,
         size_bits,
+        guard,
         2,
         &table,
         dst,
@@ -55,7 +61,7 @@ fn invoke_with(kind: ObjectType, size_bits: u8, response: Response) -> Result<Ra
                 0,
                 [
                     u64::from(kind.as_u8()),
-                    u64::from(size_bits),
+                    (u64::from(guard) << 8) | u64::from(size_bits),
                     2,
                     0x1357_9bdf_ffff_ffff,
                     0xffff_fffe,
@@ -72,7 +78,7 @@ fn invoke_with(kind: ObjectType, size_bits: u8, response: Response) -> Result<Ra
 }
 
 fn invoke(response: Response) -> Result<RawKey, CapError> {
-    invoke_with(ObjectType::KEY_TABLE, 0, response)
+    invoke_with(ObjectType::KEY_TABLE, 8, 0, response)
 }
 
 #[test]
@@ -173,7 +179,7 @@ fn retype_encodes_frame_kind_and_granule_size_bits() {
     // Frame is an architecture kind: wire kind 0x80 (arch bit | Frame 0)
     // with size_bits 12, the AArch64 4 KiB granule baseline.
     assert_eq!(
-        invoke_with(ObjectType::FRAME, 12, (0, 0xfedc_ba98_ffff_fffc, 0))
+        invoke_with(ObjectType::FRAME, 12, 0, (0, 0xfedc_ba98_ffff_fffc, 0))
             .map(|key| key.to_wire())
             .map_err(CapError::code),
         Ok(0xfedc_ba98_ffff_fffc)
@@ -185,9 +191,26 @@ fn retype_encodes_untyped_split_kind_and_size_bits() {
     // The Untyped split: wire kind 0x01 (core Untyped) with the child
     // region size exponent (here 8 = a 256-byte child).
     assert_eq!(
-        invoke_with(ObjectType::UNTYPED, 8, (0, 0xfedc_ba98_ffff_fffc, 0))
+        invoke_with(ObjectType::UNTYPED, 8, 0, (0, 0xfedc_ba98_ffff_fffc, 0))
             .map(|key| key.to_wire())
             .map_err(CapError::code),
+        Ok(0xfedc_ba98_ffff_fffc)
+    );
+}
+
+#[test]
+fn retype_encodes_the_keytable_guard_into_the_size_word() {
+    // The KeyTable guard rides bits 39:8 of `x3` above the capacity
+    // exponent (selected 2026-09-23); every other kind passes zero.
+    assert_eq!(
+        invoke_with(
+            ObjectType::KEY_TABLE,
+            8,
+            0xC0F_FEE,
+            (0, 0xfedc_ba98_ffff_fffc, 0)
+        )
+        .map(|key| key.to_wire())
+        .map_err(CapError::code),
         Ok(0xfedc_ba98_ffff_fffc)
     );
 }
@@ -197,11 +220,11 @@ fn retype_preserves_invalid_frame_size_errors() {
     // Non-granular frame sizes are rejected with the requested size, from
     // size_bits 0 (no 1-byte frames) up.
     assert!(matches!(
-        invoke_with(ObjectType::FRAME, 0, (25, 0, 0)),
+        invoke_with(ObjectType::FRAME, 0, 0, (25, 0, 0)),
         Err(CapError::InvalidFrameSize(0))
     ));
     assert!(matches!(
-        invoke_with(ObjectType::FRAME, 13, (25, 13, 0)),
+        invoke_with(ObjectType::FRAME, 13, 0, (25, 13, 0)),
         Err(CapError::InvalidFrameSize(13))
     ));
 }

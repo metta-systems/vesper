@@ -25,6 +25,7 @@ use {
         ArchObjects, KeyTable, Nucleus,
         access::{Access, ObjectId},
         arch_objects::{AddressSpaceObject, PageTableObject, PtParent},
+        key_table::CallerTable,
     },
     libobject::{CapError, ObjectType, PageTableOp, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -32,11 +33,11 @@ use {
 
 /// Handle a `PageTable` capability invocation.
 ///
-/// `caller_table_addr` is the caller's own table, through which the invoked
+/// `caller` is the caller's own table context, through which the invoked
 /// `pt_key` and the parent key are resolved.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     pt_key: RawKey,
     op: u64,
     args: &[u64; 6],
@@ -44,15 +45,15 @@ pub fn invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let op = PageTableOp::try_from(op)?;
     match op {
-        PageTableOp::Map => map::<A>(access, caller_table_addr, pt_key, args, nucleus),
-        PageTableOp::Unmap => unmap::<A>(access, caller_table_addr, pt_key, args, nucleus),
+        PageTableOp::Map => map::<A>(access, caller, pt_key, args, nucleus),
+        PageTableOp::Unmap => unmap::<A>(access, caller, pt_key, args, nucleus),
     }
 }
 
 /// `Map` `0`: install the invoked table into the parent named by `args[0]`.
 fn map<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     pt_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
@@ -66,9 +67,9 @@ fn map<A: ArchObjects>(
     // Resolve the invoked PageTable capability and the parent capability
     // through the caller's own table, copying out the checked identities.
     let (pt_id, parent_type, parent_id, parent_rights) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
-            .lookup(pt_key)
+            .lookup(pt_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
         if entry.object_type() != ObjectType::PAGE_TABLE {
             return Err(CapError::TypeMismatch {
@@ -78,7 +79,7 @@ fn map<A: ArchObjects>(
         }
         let pt_id = entry.object_id().map_err(|e| e.with_key_operand(0))?;
         let parent_entry = caller_table
-            .lookup(parent_key)
+            .lookup(parent_key, caller.guard)
             .map_err(|e| e.with_key_operand(2))?;
         (
             pt_id,
@@ -160,7 +161,7 @@ fn map<A: ArchObjects>(
 /// `Unmap` `1`: clear the installation of the invoked table.
 fn unmap<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     pt_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
@@ -170,9 +171,9 @@ fn unmap<A: ArchObjects>(
     }
 
     let pt_id = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
-            .lookup(pt_key)
+            .lookup(pt_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
         if entry.object_type() != ObjectType::PAGE_TABLE {
             return Err(CapError::TypeMismatch {

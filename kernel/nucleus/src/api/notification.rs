@@ -25,7 +25,9 @@
 use {
     crate::{
         api::{InvokeOutcome, current_waiter, wake_waiter},
-        objects::{ArchObjects, KeyTable, Notification, Nucleus, access::Access},
+        objects::{
+            ArchObjects, KeyTable, Notification, Nucleus, access::Access, key_table::CallerTable,
+        },
     },
     libobject::{CapError, ObjectType, RawKey, Rights, notification::NotificationOp},
     libqemu::semihosting as semi,
@@ -33,12 +35,12 @@ use {
 
 /// Handle a `Notification` capability invocation.
 ///
-/// `caller_table_addr` is the caller's own table, through which the invoked
+/// `caller` is the caller's own table context, through which the invoked
 /// `key` is resolved. The notification object is a checked pool identity
 /// resolved through the guarded `Access` context.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     key: RawKey,
     op: u64,
     args: &[u64; 6],
@@ -49,9 +51,9 @@ pub fn invoke<A: ArchObjects>(
     // Resolve the invoked Notification capability through the caller's own
     // table, copying out the checked identity and authority.
     let (id, rights, badge) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
-            .lookup(key)
+            .lookup(key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
         if entry.object_type() != ObjectType::NOTIFICATION {
             return Err(CapError::TypeMismatch {

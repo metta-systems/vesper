@@ -27,29 +27,29 @@
 //!   `x1`/`x2`.
 
 use {
-    crate::objects::{KeyTable, access::Access},
+    crate::objects::{KeyTable, access::Access, key_table::CallerTable},
     libobject::{CapError, KeySlot, KeyTableOp, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
 };
 
 /// Handle a `KeyTable` management invocation.
 ///
-/// `caller_table_addr` is the caller's own table (its implicit table), through
-/// which the invoked `table_key` and the destination-table key are resolved.
-/// `table_key` is the invoked source/target-table key. Both table capabilities
-/// are resolved with checked identities and authority.
+/// `caller` is the caller's own table context (its implicit table and guard),
+/// through which the invoked `table_key` and the destination-table key are
+/// resolved. `table_key` is the invoked source/target-table key. Both table
+/// capabilities are resolved with checked identities and authority.
 pub fn invoke(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     table_key: RawKey,
     op: u64,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
     let op = KeyTableOp::try_from(op)?;
     match op {
-        KeyTableOp::CopyDerive => copy_derive(access, caller_table_addr, table_key, args),
-        KeyTableOp::Move => move_key(access, caller_table_addr, table_key, args),
-        KeyTableOp::Delete => delete(access, caller_table_addr, table_key, args),
+        KeyTableOp::CopyDerive => copy_derive(access, caller, table_key, args),
+        KeyTableOp::Move => move_key(access, caller, table_key, args),
+        KeyTableOp::Delete => delete(access, caller, table_key, args),
         // Revoke's scope/completion contract is unresolved (D2); reject it
         // rather than fake a subtree operation.
         KeyTableOp::Revoke => Err(CapError::InvalidOperation),
@@ -59,7 +59,7 @@ pub fn invoke(
 /// `CopyDerive` `0`: derive an attenuated capability into a vacant destination.
 fn copy_derive(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     table_key: RawKey,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
@@ -80,9 +80,9 @@ fn copy_derive(
     // Resolve the invoked source and destination table capabilities through
     // the caller's own table, checking type and per-table rights.
     let (src_cap, dst_cap) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-        let src_cap = resolve_table_cap(&caller_table, table_key, 0)?;
-        let dst_cap = resolve_table_cap(&caller_table, dst_table_key, 3)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let src_cap = resolve_table_cap(&caller_table, table_key, caller.guard, 0)?;
+        let dst_cap = resolve_table_cap(&caller_table, dst_table_key, caller.guard, 3)?;
         (src_cap, dst_cap)
     };
     // Authority: DERIVE on the invoked source table, INSTALL on destination.
@@ -99,7 +99,9 @@ fn copy_derive(
         // payload and only attenuates rights.
         let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
         let derived = {
-            let src_entry = table.lookup(src_sel).map_err(|e| e.with_key_operand(2))?;
+            let src_entry = table
+                .lookup(src_sel, src_cap.guard)
+                .map_err(|e| e.with_key_operand(2))?;
             check_allowlisted(src_entry.object_type(), 2)?;
             if !src_entry.rights().permits(requested) {
                 return Err(CapError::InsufficientRights);
@@ -107,7 +109,7 @@ fn copy_derive(
             src_entry.derive(requested)
         };
         table
-            .insert(dst_slot, derived)
+            .insert(dst_slot, derived, dst_cap.guard)
             .map(|key| {
                 semi::println!("✅ KeyTable::CopyDerive()");
                 (key.to_wire(), 0)
@@ -118,7 +120,7 @@ fn copy_derive(
         let (mut dst_table, src_table) =
             access.resolve_carved_pair_mut::<KeyTable>(dst_cap.address, src_cap.address)?;
         let src_entry = src_table
-            .lookup(src_sel)
+            .lookup(src_sel, src_cap.guard)
             .map_err(|e| e.with_key_operand(2))?;
         check_allowlisted(src_entry.object_type(), 2)?;
         if !src_entry.rights().permits(requested) {
@@ -126,7 +128,7 @@ fn copy_derive(
         }
         let derived = src_entry.derive(requested);
         dst_table
-            .insert(dst_slot, derived)
+            .insert(dst_slot, derived, dst_cap.guard)
             .map(|key| {
                 semi::println!("✅ KeyTable::CopyDerive()");
                 (key.to_wire(), 0)
@@ -139,7 +141,7 @@ fn copy_derive(
 /// source on commit. Rights and per-capability state are preserved.
 fn move_key(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     table_key: RawKey,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
@@ -157,9 +159,9 @@ fn move_key(
     }
 
     let (src_cap, dst_cap) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-        let src_cap = resolve_table_cap(&caller_table, table_key, 0)?;
-        let dst_cap = resolve_table_cap(&caller_table, dst_table_key, 3)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let src_cap = resolve_table_cap(&caller_table, table_key, caller.guard, 0)?;
+        let dst_cap = resolve_table_cap(&caller_table, dst_table_key, caller.guard, 3)?;
         (src_cap, dst_cap)
     };
     // Authority: DERIVE + REMOVE on the invoked source table (Move is a
@@ -172,8 +174,10 @@ fn move_key(
     }
 
     // Same-table/same-slot Move is rejected, not a successful no-op. Distinct
-    // tables may use the same slot number in each.
-    if src_cap.address == dst_cap.address && src_sel.slot() == dst_slot {
+    // tables may use the same slot number in each. The selector's low
+    // `size_bits` bits are its bare index; the guard above them is validated
+    // against the source table during lookup.
+    if src_cap.address == dst_cap.address && bare_index(&src_cap, src_sel) == dst_slot {
         return Err(CapError::SlotOccupied(dst_slot));
     }
 
@@ -181,9 +185,11 @@ fn move_key(
         // Same table: validate and remove the source, then install, rolling
         // back into the source slot on installation failure.
         let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
-        check_source_allowlisted(&table, src_sel, 2)?;
-        let moved = table.remove(src_sel).map_err(|e| e.with_key_operand(2))?;
-        match table.insert(dst_slot, moved) {
+        check_source_allowlisted(&table, src_sel, src_cap.guard, 2)?;
+        let moved = table
+            .remove(src_sel, src_cap.guard)
+            .map_err(|e| e.with_key_operand(2))?;
+        match table.insert(dst_slot, moved, dst_cap.guard) {
             Ok(key) => {
                 semi::println!("✅ KeyTable::Move()");
                 Ok((key.to_wire(), 0))
@@ -193,7 +199,7 @@ fn move_key(
                 // (we just removed it), but the slot's incarnation has
                 // advanced, so the restored entry gets a fresh incarnation;
                 // the original source key stays invalidated.
-                drop(table.insert(src_sel.slot(), failure.entry));
+                drop(table.insert(bare_index(&src_cap, src_sel), failure.entry, src_cap.guard));
                 Err(failure.error.with_key_operand(4))
             }
         }
@@ -204,14 +210,14 @@ fn move_key(
         // mutable references are constructed.
         let moved = {
             let mut src_table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
-            check_source_allowlisted(&src_table, src_sel, 2)?;
+            check_source_allowlisted(&src_table, src_sel, src_cap.guard, 2)?;
             src_table
-                .remove(src_sel)
+                .remove(src_sel, src_cap.guard)
                 .map_err(|e| e.with_key_operand(2))?
         };
         let install_result = {
             let mut dst_table = access.resolve_carved_mut::<KeyTable>(dst_cap.address)?;
-            dst_table.insert(dst_slot, moved)
+            dst_table.insert(dst_slot, moved, dst_cap.guard)
         };
         match install_result {
             Ok(key) => {
@@ -220,7 +226,7 @@ fn move_key(
             }
             Err(failure) => {
                 let mut src_table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
-                drop(src_table.insert(src_sel.slot(), failure.entry));
+                drop(src_table.insert(bare_index(&src_cap, src_sel), failure.entry, src_cap.guard));
                 Err(failure.error.with_key_operand(4))
             }
         }
@@ -230,7 +236,7 @@ fn move_key(
 /// Delete `2`: remove an entry without automatic object retirement.
 fn delete(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     table_key: RawKey,
     args: &[u64; 6],
 ) -> Result<(u64, u64), CapError> {
@@ -240,8 +246,8 @@ fn delete(
     }
 
     let src_cap = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
-        resolve_table_cap(&caller_table, table_key, 0)?
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        resolve_table_cap(&caller_table, table_key, caller.guard, 0)?
     };
     // Authority: REMOVE on the invoked table.
     if !src_cap.rights.has(Rights::REMOVE) {
@@ -250,7 +256,7 @@ fn delete(
 
     let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
     table
-        .remove(target_sel)
+        .remove(target_sel, src_cap.guard)
         .map_err(|e| e.with_key_operand(2))?;
     semi::println!("✅ KeyTable::Delete()");
     Ok((0, 0))
@@ -260,21 +266,34 @@ fn delete(
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════
 
-/// A resolved table capability: the carved table's address and its rights.
+/// A resolved table capability: the carved table's address, its guard and
+/// capacity exponent (copied verbatim by derivation, so every capability
+/// naming a table carries them), and its rights.
 pub(crate) struct TableCap {
     pub(crate) address: u64,
+    pub(crate) guard: u32,
+    pub(crate) size_bits: u8,
     pub(crate) rights: Rights,
 }
 
+/// The bare slot index of a selector against a table capability's layout: the
+/// low `size_bits` bits of its table-relative address (the guard above them is
+/// validated against the table during lookup).
+fn bare_index(cap: &TableCap, key: RawKey) -> KeySlot {
+    KeySlot(key.slot().0 & ((1_u32 << u32::from(cap.size_bits)) - 1))
+}
+
 /// Resolve a `KeyTable` capability through the caller's own table, checking
-/// that it names a `KeyTable` and returning its carved address and rights.
+/// that it names a `KeyTable` and returning its carved address, guard, capacity
+/// exponent, and rights.
 pub(crate) fn resolve_table_cap(
     caller_table: &KeyTable,
     key: RawKey,
+    caller_guard: u32,
     operand: u8,
 ) -> Result<TableCap, CapError> {
     let entry = caller_table
-        .lookup(key)
+        .lookup(key, caller_guard)
         .map_err(|e| e.with_key_operand(operand))?;
     if entry.object_type() != ObjectType::KEY_TABLE {
         return Err(CapError::TypeMismatch {
@@ -282,10 +301,16 @@ pub(crate) fn resolve_table_cap(
             found: entry.object_type(),
         });
     }
+    let address = entry
+        .keytable_address()
+        .map_err(|e| e.with_key_operand(operand))?;
+    let (guard, size_bits) = entry
+        .keytable_guard_and_size()
+        .map_err(|e| e.with_key_operand(operand))?;
     Ok(TableCap {
-        address: entry
-            .keytable_address()
-            .map_err(|e| e.with_key_operand(operand))?,
+        address,
+        guard,
+        size_bits,
         rights: entry.rights(),
     })
 }
@@ -295,10 +320,11 @@ pub(crate) fn resolve_table_cap(
 fn check_source_allowlisted(
     table: &KeyTable,
     src_sel: RawKey,
+    guard: u32,
     operand: u8,
 ) -> Result<(), CapError> {
     let entry = table
-        .lookup(src_sel)
+        .lookup(src_sel, guard)
         .map_err(|e| e.with_key_operand(operand))?;
     check_allowlisted(entry.object_type(), operand)
 }

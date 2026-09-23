@@ -22,6 +22,7 @@ use {
         ArchObjects, KeyTable, Nucleus,
         access::Access,
         arch_objects::{AddressSpaceObject, AsidPoolObject},
+        key_table::CallerTable,
     },
     libobject::{ASIDPoolOp, CapError, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -29,11 +30,11 @@ use {
 
 /// Handle an `ASIDPool` capability invocation.
 ///
-/// `caller_table_addr` is the caller's own table, through which the invoked
+/// `caller` is the caller's own table context, through which the invoked
 /// `pool_key` and the target `AddressSpace` key are resolved.
 pub fn invoke<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     pool_key: RawKey,
     op: u64,
     args: &[u64; 6],
@@ -41,14 +42,14 @@ pub fn invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let op = ASIDPoolOp::try_from(op)?;
     match op {
-        ASIDPoolOp::Assign => assign::<A>(access, caller_table_addr, pool_key, args, nucleus),
+        ASIDPoolOp::Assign => assign::<A>(access, caller, pool_key, args, nucleus),
     }
 }
 
 /// `Assign` `0`: bind an ASID from this pool to the target `AddressSpace`'s root.
 fn assign<A: ArchObjects>(
     access: &Access,
-    caller_table_addr: u64,
+    caller: CallerTable,
     pool_key: RawKey,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
@@ -62,9 +63,9 @@ fn assign<A: ArchObjects>(
     // capability through the caller's own table, copying out the checked
     // identities.
     let (pool_id, as_id) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller_table_addr)?;
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
-            .lookup(pool_key)
+            .lookup(pool_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
         if entry.object_type() != ObjectType::ASID_POOL {
             return Err(CapError::TypeMismatch {
@@ -78,7 +79,7 @@ fn assign<A: ArchObjects>(
         }
         let pool_id = entry.object_id().map_err(|e| e.with_key_operand(0))?;
         let as_entry = caller_table
-            .lookup(as_key)
+            .lookup(as_key, caller.guard)
             .map_err(|e| e.with_key_operand(2))?;
         if as_entry.object_type() != ObjectType::ADDRESS_SPACE {
             return Err(CapError::TypeMismatch {

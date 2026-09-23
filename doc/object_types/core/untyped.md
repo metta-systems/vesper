@@ -20,7 +20,7 @@ authorized Untyped carve.
 
 | Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
 |---|---|---|---|---|
-| `0` | Retype | `x2` object kind, `x3` `size_bits`, `x4` count, `x5` destination-table key, `x6` first destination slot, `x7` requested rights | `WRITE` on the invoked Untyped, `INSTALL` on the destination-table capability | First destination-local key in `x1`, zero in `x2`; remaining keys occupy consecutive slots |
+| `0` | Retype | `x2` object kind, `x3` `size_bits` with the table guard packed in bits 39:8 (`KeyTable` kind only; zero for every other kind), `x4` count (≤ 256), `x5` destination-table key, `x6` first destination slot (bare index), `x7` requested rights | `WRITE` on the invoked Untyped, `INSTALL` on the destination-table capability | First destination-local key in `x1`, zero in `x2`; remaining keys occupy consecutive slots |
 
 Batch semantics are **all-or-nothing**: every destination slot is
 pre-validated (range, vacancy, remaining incarnation capacity) before any
@@ -31,7 +31,7 @@ destination table unchanged.
 
 | Kind | `size_bits` | Carve |
 |---|---|---|
-| `KeyTable` | reserved zero | kernel bookkeeping storage written at the carve |
+| `KeyTable` | 1..=20 (capacity `2^size_bits` entries) | variable-size carve — header, entries, and counters written/zeroed at the carve; the userspace-chosen guard packed in `x3` bits 39:8 is recorded in the capability and fixed for the table's lifetime |
 | `Frame` | arch-validated (AArch64: 12/21/30) | raw physical region, zeroed (sanitized) before installation |
 | `PageTable` | fixed 12 (4 KiB) on AArch64 | zeroed hardware-format table; capability is a checked pool identity over kernel metadata |
 | `Notification` | reserved zero | no Untyped bytes; object allocated from the bootstrap-carved notification pool |
