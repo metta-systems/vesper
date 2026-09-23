@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x01` (core) |
 | Pool | none — inline region payload in `KeyEntry` |
-| Status | Active: `Retype` handler with KeyTable/Frame/PageTable/Notification/EventCount allowlist |
+| Status | Active: `Retype` handler with KeyTable/Frame/PageTable/Notification/EventCount/Untyped allowlist |
 
 ## Purpose
 
@@ -36,11 +36,13 @@ destination table unchanged.
 | `PageTable` | fixed 12 (4 KiB) on AArch64 | zeroed hardware-format table; capability is a checked pool identity over kernel metadata |
 | `Notification` | reserved zero | no Untyped bytes; object allocated from the bootstrap-carved notification pool |
 | `EventCount` | reserved zero | no Untyped bytes; object allocated from the bootstrap-carved event-count pool |
+| `Untyped` | ≥ 4 (region ≥ 16 bytes, the watermark encoding granularity) | split: pure bookkeeping — no bytes initialized or sanitized; child watermark starts at zero; `is_device` propagates |
 
 Every other kind is rejected with `InvalidObjectType`, including `Thread`
-and `AddressSpace` (cannot be carved from memory) and `Untyped` itself (no
-split operation is implemented). A **device Untyped is not a valid source
-for any creatable kind**: rejected with `InvalidObjectType` before any
+and `AddressSpace` (cannot be carved from memory). A **device Untyped is not
+a valid source for any creatable kind except the `Untyped` split**: the
+split touches no bytes and propagates `is_device` to the children, while
+every other kind is rejected with `InvalidObjectType` before any
 reservation.
 
 ## Kernel-level implementation details
@@ -48,18 +50,18 @@ reservation.
 The capability *is* the object: an Untyped stores its `RegionPayload` inline
 in the `KeyEntry` — physical base, allocation watermark (state), `size_bits`,
 and an `is_device` flag. There is no separate kernel structure, pool slot, or
-pointer indirection (`kernel/nucleus/src/api/key_entry.rs`,
-`kernel/nucleus/src/objects/untyped.rs`).
+pointer indirection (`kernel/nucleus/src/api/key_entry.rs`;
+the Retype transaction lives in `kernel/nucleus/src/api/untyped.rs`).
 
 ```mermaid
 flowchart TD
-    A["Validate args<br/>(kind, size_bits, count, rights)"] --> B{"Kind allowlisted?<br/>Non-device source?"}
+    A["Validate args<br/>(kind, size_bits, count, rights)"] --> B{"Kind allowlisted?<br/>Non-device source?<br/>(Untyped split exempt)"}
     B -- "no" --> E1["InvalidObjectType"]
     B -- "yes" --> C["Pre-validate all destination slots<br/>(range, vacancy, incarnation headroom)"]
     C -- "fail" --> E2["defined key/slot error"]
     C -- "ok" --> D["Reserve watermark range<br/>(align up to object size)"]
     D -- "does not fit" --> E3["InsufficientMemory"]
-    D -- "fits" --> F["Initialize objects<br/>(write KeyTable / zero Frame+PageTable /<br/>allocate pool identity)"]
+    D -- "fits" --> F["Initialize objects<br/>(write KeyTable / zero Frame+PageTable /<br/>allocate pool identity / split Untyped:<br/>bookkeeping only)"]
     F --> G["Install capabilities into<br/>destination slots"]
     G --> H["Advance watermark last"]
     H --> OK["Return first key in x1"]
@@ -91,13 +93,15 @@ flowchart TD
 - Sanitization: the kernel zeroes Retype-carved Frame and PageTable contents
   inside the transaction, before capability installation and watermark
   commit, so a fresh object never leaks prior-owner or kernel data.
+- An `Untyped` split initializes nothing: the child's bytes become
+  observable only through later carves, each of which already initializes
+  or zeroes (a Frame or PageTable is zeroed, a KeyTable is written). A
+  child smaller than the watermark encoding granularity is rejected with
+  `InvalidSize` — its committed carve ends could not stay encodable.
 
 ## TODOs
 
 - Per-kind device policy (device frames, device-capable kinds) — D6.
-- Whether an Untyped-split (retyping an Untyped into smaller Untypeds) becomes
-  an operation, and its schema — currently unrepresentable via the active
-  allowlist.
 - Batch partial-result contracts beyond all-or-nothing, if ever needed — D6.
 - General Untyped-backed pools for kernel-private storage (beyond the
   bootstrap-carved notification/event-count pools) — Phase 5 work.
@@ -106,13 +110,14 @@ flowchart TD
 
 - `Memory.md` (vault): "Untyped Memory regions can then be **split into
   smaller regions** or other kernel objects using `Untyped.Retype()`" —
-  **mismatch**: the current Retype allowlist has no Untyped→Untyped split;
-  splitting untyped memory into smaller untypeds is not implemented.
+  **consistent**: the Untyped split is implemented; `size_bits` selects the
+  child region (`2^size_bits` bytes, at least the watermark encoding
+  granularity), the child watermark starts at zero, and the split is pure
+  bookkeeping.
 - `Memory.md` (vault): "Device untyped objects can only be retyped into
-  **frames or other untyped objects**" — **mismatch**: the current
-  implementation rejects *all* Retype from a device Untyped (no creatable kind
-  is device-capable yet; per-kind device policy is D6). The vault's intended
-  device-frame path does not exist yet.
+  **frames or other untyped objects**" — **partially consistent**: device
+  Untypeds can be split into device Untypeds (the flag propagates), but the
+  device-frame path remains unimplemented (per-kind device policy is D6).
 - `Memory.md` (vault): "The user-level application that creates an object …
   receives **full authority** over the resulting object" — **divergence**:
   current Retype installs the *requested* rights (`x7`), which may be a subset;

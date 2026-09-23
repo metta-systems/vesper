@@ -1137,6 +1137,146 @@ pub fn kickstart_run() -> ! {
             );
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        // Untyped split (2026-09-23): Retype an Untyped into smaller
+        // Untypeds through the real SVC path, then carve from a child.
+        // ─────────────────────────────────────────────────────────────────
+
+        // The pre-split watermark locates the children: a 4 KiB child is
+        // its own alignment, so the first child's absolute carve address is
+        // the next 4 KiB boundary at or past the watermark.
+        let (boot_paddr, pre_split_wm) = {
+            // SAFETY: keytable_addr names the live boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let region = boot_table
+                .lookup(boot_untyped_key)
+                .unwrap_or_else(|_| panic!("boot Untyped entry missing"))
+                .as_untyped()
+                .unwrap_or_else(|_| panic!("boot Untyped entry is not a region"));
+            (
+                region.paddr,
+                u64::try_from(region.watermark_bytes()).unwrap(),
+            )
+        };
+        let first_child_paddr = (boot_paddr + pre_split_wm + 4095) & !4095_u64;
+
+        let split_children = untyped
+            .retype(
+                ObjectType::UNTYPED,
+                12,
+                2,
+                &self_table,
+                KeySlot(56).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("Untyped split failed: {:?}", error.code()));
+        assert_eq!(split_children.slot(), KeySlot(56));
+
+        // Both children are inline regions: consecutive 4 KiB ranges starting
+        // at the aligned continuation of the boot Untyped's watermark, each
+        // fully unused, and the parent's watermark advanced by exactly the
+        // two child regions — no gap, no overlap.
+        {
+            // SAFETY: see above.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let child0 = boot_table
+                .lookup(split_children)
+                .unwrap_or_else(|_| panic!("first split child missing"))
+                .as_untyped()
+                .unwrap_or_else(|_| panic!("first split child is not a region"));
+            assert_eq!(child0.paddr, first_child_paddr);
+            assert_eq!(child0.size_bits, 12);
+            assert!(!child0.is_device);
+            assert_eq!(child0.watermark_bytes(), 0);
+            let child1 = boot_table
+                .lookup(RawKey::new(KeySlot(57), split_children.incarnation()))
+                .unwrap_or_else(|_| panic!("second split child missing"))
+                .as_untyped()
+                .unwrap_or_else(|_| panic!("second split child is not a region"));
+            assert_eq!(child1.paddr, first_child_paddr + 4096);
+            assert_eq!(child1.size_bits, 12);
+            assert_eq!(child1.watermark_bytes(), 0);
+            let parent = boot_table
+                .lookup(boot_untyped_key)
+                .unwrap_or_else(|_| panic!("boot Untyped entry missing"))
+                .as_untyped()
+                .unwrap_or_else(|_| panic!("boot Untyped entry is not a region"));
+            assert_eq!(
+                parent.watermark_bytes(),
+                usize::try_from(first_child_paddr + 2 * 4096 - boot_paddr).unwrap(),
+                "the split must advance the watermark by exactly the two children"
+            );
+        }
+
+        // The second child is a working allocation source: a 4 KiB Frame
+        // carved from it through the real SVC path lands exactly at the
+        // child's base (its watermark was zero) and advances it.
+        let child1_key = RawKey::new(KeySlot(57), split_children.incarnation());
+        let child_frame_key = UntypedKey::from_key(child1_key)
+            .retype(
+                ObjectType::FRAME,
+                12,
+                1,
+                &self_table,
+                KeySlot(58).0,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("carve from split child failed: {:?}", error.code()));
+        assert_eq!(child_frame_key.slot(), KeySlot(58));
+        {
+            // SAFETY: see above.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let frame = boot_table
+                .lookup(child_frame_key)
+                .unwrap_or_else(|_| panic!("child frame entry missing"))
+                .as_frame()
+                .unwrap_or_else(|_| panic!("child frame entry is not a Frame cap"));
+            assert_eq!(frame.paddr, first_child_paddr + 4096);
+            let child1 = boot_table
+                .lookup(child1_key)
+                .unwrap_or_else(|_| panic!("second split child missing"))
+                .as_untyped()
+                .unwrap_or_else(|_| panic!("second split child is not a region"));
+            assert_eq!(child1.watermark_bytes(), 4096);
+        }
+
+        // Rejections from the first child: a sub-granular split reports the
+        // child's own `size_bits`, and an oversized split cannot fit; both
+        // leave the child unchanged.
+        let child0_key = split_children;
+        assert!(matches!(
+            UntypedKey::from_key(child0_key).retype(
+                ObjectType::UNTYPED,
+                3,
+                1,
+                &self_table,
+                KeySlot(59).0,
+                Rights::all(),
+            ),
+            Err(CapError::InvalidSize(3))
+        ));
+        assert!(matches!(
+            UntypedKey::from_key(child0_key).retype(
+                ObjectType::UNTYPED,
+                13,
+                1,
+                &self_table,
+                KeySlot(59).0,
+                Rights::all(),
+            ),
+            Err(CapError::InsufficientMemory)
+        ));
+        {
+            // SAFETY: see above.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let child0 = boot_table
+                .lookup(child0_key)
+                .unwrap_or_else(|_| panic!("first split child missing"))
+                .as_untyped()
+                .unwrap_or_else(|_| panic!("first split child is not a region"));
+            assert_eq!(child0.watermark_bytes(), 0);
+        }
+
         // A region whose base is not aligned still yields an aligned carve:
         // the absolute carve address (base + watermark) is aligned up, not
         // just the watermark. Fabricate a RAM region at a deliberately

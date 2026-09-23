@@ -181,6 +181,18 @@ fn retype_encodes_frame_kind_and_granule_size_bits() {
 }
 
 #[test]
+fn retype_encodes_untyped_split_kind_and_size_bits() {
+    // The Untyped split: wire kind 0x01 (core Untyped) with the child
+    // region size exponent (here 8 = a 256-byte child).
+    assert_eq!(
+        invoke_with(ObjectType::UNTYPED, 8, (0, 0xfedc_ba98_ffff_fffc, 0))
+            .map(|key| key.to_wire())
+            .map_err(CapError::code),
+        Ok(0xfedc_ba98_ffff_fffc)
+    );
+}
+
+#[test]
 fn retype_preserves_invalid_frame_size_errors() {
     // Non-granular frame sizes are rejected with the requested size, from
     // size_bits 0 (no 1-byte frames) up.

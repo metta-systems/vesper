@@ -931,3 +931,463 @@ fn retype_event_count_pool_exhaustion_releases_partial_slots() {
     assert!(result2.is_ok());
     assert_eq!(fx.nucleus.pools.event_counts.len(), 2);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// UNTYPED SPLIT (allowlisted 2026-09-23)
+// ═══════════════════════════════════════════════════════════════
+
+/// A split writes no Untyped bytes — the child capability is an inline
+/// region — so the successful Retype is exercisable MMU-off. The child
+/// records the aligned carve base, its own `size_bits`, a zero watermark,
+/// and the requested rights; the parent's watermark advances by exactly
+/// the child region.
+#[test_case]
+fn retype_untyped_split_succeeds_and_installs_child_regions() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::UNTYPED,
+            8,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights(Rights::READ | Rights::WRITE),
+        ),
+    );
+    let (first_wire, second) =
+        result.unwrap_or_else(|e| panic!("untyped split failed: {:?}", e.code()));
+    assert_eq!(second, 0);
+    assert_eq!(fx.len(), before + 1);
+
+    let child = RawKey::from_wire(first_wire);
+    assert_eq!(child.slot(), KeySlot(40));
+    let entry = fx
+        .lookup(child)
+        .unwrap_or_else(|_| panic!("split child missing"));
+    assert_eq!(entry.object_type(), ObjectType::UNTYPED);
+    assert_eq!(entry.rights().bits(), Rights::READ | Rights::WRITE);
+    let region = entry
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("split child is not a region"));
+    assert_eq!(region.paddr, 0x3000_0000);
+    assert_eq!(region.size_bits, 8);
+    assert!(!region.is_device);
+    assert_eq!(region.watermark_bytes(), 0, "child starts fully unused");
+
+    // The parent advanced by exactly the child region (256 bytes).
+    let parent = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(parent.watermark_bytes(), 256);
+}
+
+/// A batch split installs consecutive children at consecutive carve
+/// addresses with no gap or overlap, and each child starts unused.
+#[test_case]
+fn retype_untyped_batch_split_installs_consecutive_children() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    let result = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::UNTYPED,
+            8,
+            3,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    let (first_wire, _) =
+        result.unwrap_or_else(|e| panic!("untyped batch split failed: {:?}", e.code()));
+    assert_eq!(fx.len(), before + 3);
+
+    let first = RawKey::from_wire(first_wire);
+    for (index, slot) in [(0_u64, KeySlot(40)), (1, KeySlot(41)), (2, KeySlot(42))] {
+        let key = if index == 0 {
+            first
+        } else {
+            RawKey::new(KeySlot(slot.0), first.incarnation())
+        };
+        let region = fx
+            .lookup(key)
+            .unwrap_or_else(|_| panic!("split child missing at {slot:?}"))
+            .as_untyped()
+            .unwrap_or_else(|_| panic!("split child at {slot:?} is not a region"));
+        assert_eq!(region.paddr, 0x3000_0000 + 256 * index);
+        assert_eq!(region.size_bits, 8);
+        assert_eq!(region.watermark_bytes(), 0);
+    }
+
+    // The parent advanced by exactly the three child regions.
+    let parent = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(parent.watermark_bytes(), 3 * 256);
+}
+
+/// A split child is itself a working Retype source: a Notification carve
+/// (no bytes) and a further split both allocate from the child's own
+/// watermark range.
+#[test_case]
+fn retype_untyped_split_child_is_a_working_source() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+
+    let (child_wire, _) = fx
+        .invoke(
+            ram,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::UNTYPED,
+                8,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("untyped split failed: {:?}", e.code()));
+    let child = RawKey::from_wire(child_wire);
+
+    // A Notification from the child consumes no child bytes.
+    let (notification_wire, _) = fx
+        .invoke(
+            child,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::NOTIFICATION,
+                0,
+                1,
+                fx.self_key,
+                KeySlot(41),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("notification carve from child failed: {:?}", e.code()));
+    assert_eq!(RawKey::from_wire(notification_wire).slot(), KeySlot(41));
+    let region = fx
+        .lookup(child)
+        .unwrap_or_else(|_| panic!("child entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("child entry is not a region"));
+    assert_eq!(region.watermark_bytes(), 0);
+
+    // A further split from the child carves the grandchild at the child's
+    // own watermark and advances it.
+    let (grandchild_wire, _) = fx
+        .invoke(
+            child,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::UNTYPED,
+                4,
+                1,
+                fx.self_key,
+                KeySlot(42),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("split from child failed: {:?}", e.code()));
+    let grandchild = fx
+        .lookup(RawKey::from_wire(grandchild_wire))
+        .unwrap_or_else(|_| panic!("grandchild entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("grandchild entry is not a region"));
+    assert_eq!(grandchild.paddr, 0x3000_0000);
+    assert_eq!(grandchild.size_bits, 4);
+    let region = fx
+        .lookup(child)
+        .unwrap_or_else(|_| panic!("child entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("child entry is not a region"));
+    assert_eq!(region.watermark_bytes(), 16);
+}
+
+/// A child smaller than the watermark encoding granularity is rejected
+/// with its own `size_bits`: a sub-granular region could not keep its
+/// committed carve ends encodable.
+#[test_case]
+fn retype_untyped_split_rejects_subgranular_sizes() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    for size_bits in 0_u8..4 {
+        let result = fx.invoke(
+            ram,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::UNTYPED,
+                size_bits,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        );
+        assert!(
+            matches!(result, Err(CapError::InvalidSize(size)) if size == usize::from(size_bits)),
+            "size_bits {size_bits} must be rejected with its own exponent"
+        );
+    }
+
+    // No state changed across the rejections.
+    assert_eq!(fx.len(), before);
+    let region = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 0);
+}
+
+/// Unrepresentable child sizes are rejected with the child's own
+/// `size_bits` before the source is even resolved.
+#[test_case]
+fn retype_untyped_split_rejects_unrepresentable_sizes() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    for size_bits in [64_u8, 255] {
+        let result = fx.invoke(
+            ram,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::UNTYPED,
+                size_bits,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        );
+        assert!(
+            matches!(result, Err(CapError::InvalidSize(size)) if size == usize::from(size_bits))
+        );
+    }
+    assert_eq!(fx.len(), before);
+}
+
+/// A child that cannot fit the source's unused range is rejected with
+/// `InsufficientMemory`; an exact-fit split consumes the whole region and
+/// the next split of the same size no longer fits. Both rejections leave
+/// the source unchanged.
+#[test_case]
+fn retype_untyped_split_enforces_the_fit_and_failure_atomicity() {
+    let mut fx = Fixture::new(FULL);
+    // A 16-byte region: exactly one minimum-size child fits.
+    let ram = fx.install(KeySlot(30), ram_untyped(4));
+    let before = fx.len();
+
+    let oversized = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::UNTYPED,
+            5,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(oversized, Err(CapError::InsufficientMemory)));
+    assert_eq!(fx.len(), before);
+    let region = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 0);
+
+    // The exact fit succeeds and consumes the whole region.
+    let (exact_wire, _) = fx
+        .invoke(
+            ram,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::UNTYPED,
+                4,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("exact-fit split failed: {:?}", e.code()));
+    let exact_child = fx
+        .lookup(RawKey::from_wire(exact_wire))
+        .unwrap_or_else(|_| panic!("exact-fit child missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("exact-fit child is not a region"));
+    assert_eq!(exact_child.paddr, 0x3000_0000);
+    assert_eq!(exact_child.size_bits, 4);
+    assert_eq!(exact_child.watermark_bytes(), 0);
+    let region = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 16);
+
+    // The exhausted source rejects a further same-size split: the
+    // reservation fails before destination pre-validation, and the source
+    // and the table are unchanged.
+    let exhausted = fx.invoke(
+        ram,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::UNTYPED,
+            4,
+            1,
+            fx.self_key,
+            KeySlot(41),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(exhausted, Err(CapError::InsufficientMemory)));
+    let region = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 16);
+    assert_eq!(fx.len(), before + 1);
+
+    // An occupied destination slot is rejected at pre-validation before
+    // any carve — this needs a source with room, since the reservation
+    // above runs first: the split leaves the source and table unchanged.
+    let mut fx2 = Fixture::new(FULL);
+    let ram2 = fx2.install(KeySlot(30), ram_untyped(24));
+    let before2 = fx2.len();
+    let (first_wire, _) = fx2
+        .invoke(
+            ram2,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::UNTYPED,
+                8,
+                1,
+                fx2.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("split into slot 40 failed: {:?}", e.code()));
+    assert_eq!(RawKey::from_wire(first_wire).slot(), KeySlot(40));
+    assert_eq!(fx2.len(), before2 + 1);
+    let occupied = fx2.invoke(
+        ram2,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::UNTYPED,
+            8,
+            1,
+            fx2.self_key,
+            KeySlot(40),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(occupied, Err(CapError::SlotOccupied(KeySlot(40)))));
+    let region = fx2
+        .lookup(ram2)
+        .unwrap_or_else(|_| panic!("ram entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 256);
+    assert_eq!(fx2.len(), before2 + 1);
+}
+
+/// A device Untyped may be split (the one device-source carve): the
+/// `is_device` flag propagates to the children, who remain device sources
+/// for every other kind.
+#[test_case]
+fn retype_untyped_split_from_device_propagates_the_device_flag() {
+    let mut fx = Fixture::new(FULL);
+    let device = fx.install(KeySlot(30), device_untyped(24));
+    let before = fx.len();
+
+    let (child_wire, _) = fx
+        .invoke(
+            device,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::UNTYPED,
+                8,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("device split failed: {:?}", e.code()));
+    assert_eq!(fx.len(), before + 1);
+
+    let child = RawKey::from_wire(child_wire);
+    let region = fx
+        .lookup(child)
+        .unwrap_or_else(|_| panic!("device child missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("device child is not a region"));
+    assert_eq!(region.paddr, 0x3F00_0000);
+    assert_eq!(region.size_bits, 8);
+    assert!(region.is_device, "the device flag must propagate");
+    assert_eq!(region.watermark_bytes(), 0);
+
+    // The device child is still a device source: every other kind is
+    // rejected from it without any state change.
+    let rejected = fx.invoke(
+        child,
+        UntypedOp::Retype as u64,
+        &retype_args(
+            ObjectType::KEY_TABLE,
+            0,
+            1,
+            fx.self_key,
+            KeySlot(41),
+            Rights::all(),
+        ),
+    );
+    assert!(matches!(
+        rejected,
+        Err(CapError::InvalidObjectType(ObjectType::KEY_TABLE))
+    ));
+
+    // Splitting the device child again works and keeps the flag.
+    let (grandchild_wire, _) = fx
+        .invoke(
+            child,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::UNTYPED,
+                4,
+                1,
+                fx.self_key,
+                KeySlot(41),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("device re-split failed: {:?}", e.code()));
+    let grandchild = fx
+        .lookup(RawKey::from_wire(grandchild_wire))
+        .unwrap_or_else(|_| panic!("device grandchild missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("device grandchild is not a region"));
+    assert_eq!(grandchild.paddr, 0x3F00_0000);
+    assert_eq!(grandchild.size_bits, 4);
+    assert!(grandchild.is_device);
+}

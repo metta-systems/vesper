@@ -69,11 +69,13 @@ impl TryFrom<u32> for UntypedOp {
 // │  ✗ CNode_Mint      → Cannot derive with reduced rights     │
 // │  ✗ CNode_Mutate    → Cannot modify                        │
 // └────────────────────────────────────────────────────────────┘
-// Contract status (2026-09-14): Retype is implemented (initial KeyTable
-// kind allowlist, extended with Frame on 2026-09-15). Revoke remains
-// unsupported pending its scope/completion contract (D2). Delete/Move of
-// the Untyped entry apply through the KeyTable management operations like
-// any other entry. Copy/Mint of an Untyped stay
+// Contract status: Retype is implemented (KeyTable/Frame/PageTable/
+// Notification/EventCount allowlist, plus the Untyped split added 2026-09-23:
+// the child region is `2^size_bits` bytes at minimum the watermark encoding
+// granularity, and a device Untyped may be split with the flag propagating).
+// Revoke remains unsupported pending its scope/completion contract (D2).
+// Delete/Move of the Untyped entry apply through the KeyTable management
+// operations like any other entry. Copy/Mint of an Untyped stay
 // rejected: one region must not gain independent allocation watermarks.
 
 impl UntypedKey {
@@ -92,11 +94,16 @@ impl UntypedKey {
     /// the first success word and ignores the second; the remaining keys are
     /// at the consecutive destination slots.
     ///
-    /// The kernel's kind allowlist is `KeyTable` and `Frame` (an
-    /// architecture kind with architecture-validated `size_bits`; the carved
-    /// frame contents are sanitized by the kernel at retype); other kinds are
-    /// rejected as unsupported rather than created. Device Untypeds cannot be
-    /// retyped at all until a device-capable kind is approved (D6).
+    /// The kernel's kind allowlist is `KeyTable`, `Frame` (an architecture
+    /// kind with architecture-validated `size_bits`; the carved frame
+    /// contents are sanitized by the kernel at retype), `PageTable`,
+    /// `Notification`, `EventCount`, and `Untyped` itself (a split into
+    /// smaller Untypeds: the child region is `2^size_bits` bytes, at least
+    /// the watermark encoding granularity, and no bytes are initialized or
+    /// sanitized); other kinds are rejected as unsupported rather than
+    /// created. Device Untypeds cannot be retyped into any of these except
+    /// `Untyped` — the split touches no bytes and propagates the device
+    /// flag — until per-kind device policy is approved (D6).
     pub fn retype(
         &self,
         kind: ObjectType,

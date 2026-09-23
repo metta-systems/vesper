@@ -14,9 +14,14 @@
 //! and the capability is a checked pool identity), and `EventCount` (pure
 //! kernel synchronization state, added 2026-09-18: same pool-backed carve —
 //! no Untyped bytes, the object is allocated from the bootstrap-carved
-//! event-count pool); other kinds remain unsupported. Device Untypeds are
-//! rejected as sources: no creatable kind is device-capable yet (per-kind
-//! device policy is D6).
+//! event-count pool), and `Untyped` itself (added 2026-09-23: a split into
+//! smaller Untypeds — the child region is `2^size_bits` bytes, at least the
+//! watermark encoding granularity, its own alignment, with the child
+//! watermark starting at zero; no bytes are initialized or sanitized because
+//! the split is pure bookkeeping); other kinds remain unsupported. Device
+//! Untypeds are rejected as sources for every kind except the `Untyped`
+//! split, which touches no bytes and propagates `is_device` to the children
+//! (per-kind device policy is D6).
 //!
 //! Transaction: validate → reserve (watermark fit) → initialize each object
 //! kernel-privately in the carved region (a `KeyTable` is written there; a
@@ -84,6 +89,13 @@ enum Carve {
     /// bootstrap-carved event-count pool and the capability is a checked
     /// pool identity over it.
     EventCount,
+    /// A carved `Untyped`: a child region of `bytes` bytes split off from the
+    /// source. No bytes are initialized or sanitized — an Untyped's contents
+    /// are never directly exposed; they become observable only through later
+    /// carves (a `Frame` or `PageTable` is zeroed, a `KeyTable` is written), each
+    /// of which sanitizes in its own transaction. The capability stores the
+    /// region inline and the child's watermark starts at zero (fully unused).
+    Untyped { bytes: usize },
 }
 
 /// `Retype` `0`: carve `count` objects of one kind from the Untyped's unused
@@ -149,6 +161,21 @@ fn retype<A: ArchObjects>(
             }
             Carve::EventCount
         }
+        ObjectType::UNTYPED => {
+            // A split (selected 2026-09-23): the child is its own region of
+            // `2^size_bits` bytes. A region smaller than the watermark
+            // encoding granularity could not keep its committed carve ends
+            // encodable — the encoding would discard sub-granular bytes and
+            // let the next carve overlap — so smaller exponents are rejected
+            // with the child's own `size_bits`.
+            let bytes = 1_usize
+                .checked_shl(u32::from(size_bits))
+                .ok_or(CapError::InvalidSize(usize::from(size_bits)))?;
+            if bytes < MIN_ALIGN {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::Untyped { bytes }
+        }
         _ => return Err(CapError::InvalidObjectType(kind)),
     };
     if count == 0 {
@@ -169,12 +196,14 @@ fn retype<A: ArchObjects>(
         if !untyped.rights().has(Rights::WRITE) {
             return Err(CapError::InsufficientRights);
         }
-        // Device-memory restriction: no creatable kind is device-capable yet
-        // (device regions are MMIO, not kernel-object storage; per-kind device
-        // policy is D6). Reject before any reservation, initialization, or
-        // watermark change; when a device-capable kind is approved, this
-        // becomes a per-kind check.
-        if untyped.as_untyped()?.is_device {
+        // Device-memory restriction: no creatable kind may touch or expose
+        // device bytes (device regions are MMIO, not kernel-object storage;
+        // sanitization must not zero them). Reject before any reservation,
+        // initialization, or watermark change. The one exception (selected
+        // 2026-09-23) is the Untyped split: it touches no bytes, so the
+        // hazard does not apply, and `is_device` propagates to the children.
+        // Per-kind device policy remains D6.
+        if untyped.as_untyped()?.is_device && kind != ObjectType::UNTYPED {
             return Err(CapError::InvalidObjectType(kind));
         }
         let dst_cap = resolve_table_cap(&caller_table, dst_table_key, 5)?;
@@ -206,15 +235,15 @@ fn retype<A: ArchObjects>(
     // so the usable range ends at `u32::MAX << MIN_ALIGN_BITS` (that is,
     // `u32::MAX × MIN_ALIGN`) even in larger regions.
     let usable_end = region_size.min(u64::from(u32::MAX) * u64::try_from(MIN_ALIGN).unwrap());
-    // A frame and a page table are each their own alignment; a KeyTable uses
-    // its type alignment (at least the watermark encoding granularity); a
-    // Notification and an EventCount carve no bytes.
+    // A frame, a page table, and a split-off Untyped are each their own
+    // alignment; a KeyTable uses its type alignment (at least the watermark
+    // encoding granularity); a Notification and an EventCount carve no bytes.
     let (obj_size, align) = match carve {
         Carve::KeyTable => (
             u64::try_from(core::mem::size_of::<KeyTable>()).unwrap(),
             u64::try_from(core::mem::align_of::<KeyTable>().max(MIN_ALIGN)).unwrap(),
         ),
-        Carve::Frame { bytes } | Carve::PageTable { bytes } => {
+        Carve::Frame { bytes } | Carve::PageTable { bytes } | Carve::Untyped { bytes } => {
             let size = u64::try_from(bytes).unwrap();
             (size, size)
         }
@@ -386,6 +415,14 @@ fn retype<A: ArchObjects>(
                     .expect("event-count pool slot pre-allocated");
                 KeyEntry::from_id(ObjectType::EVENT_COUNT, id, requested, 0)
             }
+            Carve::Untyped { .. } => {
+                // Pure bookkeeping: no initialization or sanitization (see
+                // the `Carve::Untyped` note). The child's extent is
+                // representable by construction — it fits inside the
+                // source's checked extent — and its watermark starts at
+                // zero. `is_device` propagates from the source.
+                KeyEntry::new_untyped(paddr, size_bits, untyped.is_device, requested)
+            }
         };
         match dst_table.insert(slot, entry) {
             Ok(key) => {
@@ -435,6 +472,7 @@ fn retype<A: ArchObjects>(
         Carve::PageTable { .. } => "PageTable",
         Carve::Notification => "Notification",
         Carve::EventCount => "EventCount",
+        Carve::Untyped { .. } => "Untyped",
     };
     semi::println!("✅ Untyped::Retype({kind_name}, count {count})");
 
