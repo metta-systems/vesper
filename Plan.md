@@ -5,7 +5,7 @@
 - [-] our Domain shall be more like Protection Domain (= TCB + CSpace + VSpace), 
 - [ ] ObjectPool .meta is limited to 256 entires, which is wrong - the meta should be allocated together with the pool from the Untyped, this is where we know the actual capacity.
 - [ ] seemingly AI decided we use process stacks, while it should be interrupt stacks for kernel state. Domain context should be stored in the DCB.
-- [ ] Extract testing bits from kickstart into a separate kicktest binary.
+- [x] Extract testing bits from kickstart into a separate kicktest binary. (2026-09-24: kickstart is now a lib + real-boot bin — the e2e suite, Bounce fixture, and test helpers live in the separate kernel/kicktest crate reusing the shared boot path; `just test-capability-boot` builds/boots the kicktest image via `just build-kicktest`)
 - [ ] pub asid: Option<u16>, should probably use Option<NonZero<u16>> in domain.rs
   - ASID 0 reserved for the kernel's own boot translation context
   - [ ] similarly for some other int-based optionals, where 0 is clearly an invalid value - find them

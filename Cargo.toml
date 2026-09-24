@@ -2,6 +2,7 @@
 members = [
   "kernel/nucleus",
   "kernel/kickstart",
+  "kernel/kicktest",
   "bin/chainboot",
   "bin/chainofcommand",
   # Libraries

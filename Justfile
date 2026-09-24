@@ -27,6 +27,8 @@ volume          := env('VOLUME', '/Volumes/BOOT')
 
 kernel_elf      := justfile_directory() / 'target' / target / 'release/kickstart'
 kernel_bin      := justfile_directory() / 'target/kernel.bin'
+kicktest_elf    := justfile_directory() / 'target' / target / 'release/kicktest'
+kicktest_bin    := justfile_directory() / 'target/kicktest.bin'
 chainboot_elf   := justfile_directory() / 'target' / target / 'release/chainboot'
 chainboot_bin   := justfile_directory() / 'target/chainboot.bin'
 
@@ -71,6 +73,12 @@ build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link featu
     @echo "{{ok_label}} kernel built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
 alias b := build
+
+# Build the kicktest e2e boot-test kernel (features: 'qemu,debug_kernel' for the full e2e suite)
+[group("emu")]
+build-kicktest board='rpi3' features='qemu,debug_kernel': (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'kicktest' board init_link features)
+    {{ objcopy }} --strip-all -O binary "{{ kicktest_elf }}" "{{ kicktest_bin }}"
+    @echo "{{ok_label}} kicktest built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
 # === Chainboot ===
 
@@ -259,24 +267,21 @@ test-untyped:
     cargo test -p nucleus --test untyped {{ target_json }} \
       --features=qemu {{ rust_std }}
 
-# Rebuild the boot-test kernel unconditionally.
+# Rebuild the e2e boot-test kernel (kicktest) unconditionally.
 #
-# Deliberately a nested `just` invocation, not a `(build ...)` dependency:
-# just deduplicates same-argument recipe dependencies within one invocation,
-# and `clippy` also depends on `(build 'rpi3 'qemu,debug_kernel')`. In
-# `just ci` (clean lint build test) a plain dependency here would be skipped
-# as already run by clippy, leaving `target/kernel.bin` as the rpi4
-# no-features image from ci's own `build` step — a kernel with no
-# semihosting output and no boot test that hangs QEMU silently. The nested
-# invocation always runs and refreshes the image.
+# Deliberately a nested `just` invocation, not a `(build-kicktest ...)`
+# dependency: just deduplicates same-argument recipe dependencies within one
+# invocation, so in `just ci` (clean lint build test) a plain dependency here
+# could be skipped as already run, leaving `target/kicktest.bin` stale. The
+# nested invocation always runs and refreshes the image.
 [private]
 _rebuild-boot-test-kernel:
-    {{ just_executable() }} build rpi3 qemu,debug_kernel
+    {{ just_executable() }} build-kicktest rpi3 qemu,debug_kernel
 
-# Boot the debug kernel; in-guest assertions and QEMU exit status validate handoff and SVC results
+# Boot the kicktest e2e kernel; in-guest assertions and QEMU exit status validate handoff and SVC results
 [group("emu")]
 test-capability-boot: _rebuild-boot-test-kernel
-    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_bin }}"
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kicktest_bin }}"
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 [group("emu")]

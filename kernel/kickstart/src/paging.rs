@@ -2,7 +2,7 @@
 
 /// Kernel virtual address space layout (TTBR1 region: `0xFFFF_xxxx_xxxx_xxxx`)
 ///
-/// ```
+/// ```text
 /// 0xFFFF_FFFF_FFFF_FFFF  ┌─────────────────────┐
 ///                        │  Kernel stacks      │  Per-CPU kernel stacks
 /// 0xFFFF_FFFF_8000_0000  ├─────────────────────┤

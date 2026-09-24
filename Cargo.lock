@@ -424,8 +424,25 @@ dependencies = [
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
- "vesper-syscalls",
- "vesper-tests",
+]
+
+[[package]]
+name = "kicktest"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-log",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
 ]
 
 [[package]]

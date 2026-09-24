@@ -27,6 +27,7 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 |---|---|
 | `just build` | Build nucleus and kickstart and produce the kernel binary; defaults to RPi4/hardware |
 | `just build rpi3 qemu` | Build the RPi3/QEMU kernel configuration without starting QEMU |
+| `just build-kicktest` | Build the kicktest e2e boot-test kernel image (nucleus + kicktest, which rebuilds the shared kickstart boot library); defaults to RPi3/QEMU with the full e2e suite |
 | `just fmt-check` | Workspace formatting check using the configured nightly toolchain |
 | `just clippy` | RPi3/QEMU feature-off and debug-enabled build prerequisites, all nine embedded configurations, and capability host-test linting |
 | `just clippy-pre-push` | Default features on RPi3 and RPi4 plus capability host-test linting; not the full embedded matrix |
@@ -34,7 +35,7 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just lint` | Formatting, full embedded Clippy workflow, and host-tool Clippy |
 | `just test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
 | `just test-debug-console` | Debug-enabled nucleus handler and slot-identity regression tests under QEMU; included in `just test` |
-| `just test-capability-boot` | Debug boot, actual issued-key handoff and real SVC success/error smoke test; in-guest assertions and QEMU exit status, included in `just test` |
+| `just test-capability-boot` | Boot the kicktest e2e kernel (a separate test binary reusing the real kickstart boot path); the full capability suite through the real SVC path with in-guest assertions and QEMU exit status, included in `just test` |
 | `just test-chainboot` | Chainboot tests with its own linker script and target runner |
 | `just test-object-host` | Opt-in capability ABI integration tests on the native host (currently AArch64) |
 | `just test-host` | Capability ABI tests, then native `chainofcommand` tests |

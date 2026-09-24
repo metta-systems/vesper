@@ -12,17 +12,27 @@
 //! transactional) is separate; see `nucleus::api::untyped`.
 
 use {
+    crate::{boot_info::BOOT_INFO, embed::NUCLEUS_SET_ANCHOR_VIRT, print_my_sp},
     libaddress::{PhysAddr, align},
-    libobject::{CapError, domain::DomainId},
+    liblocking::interface::Mutex,
+    libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, domain::DomainId},
     nucleus::{
-        api::key_entry::RegionPayload,
+        api::key_entry::{KeyEntry, RegionPayload},
         objects::{
-            ArchObjects, EventCount, KeyTable, Notification, Nucleus, NucleusObject, ObjectPool,
-            PendingPool, Scheduler, Thread, arch::ArchPools, domain::DcbPages,
+            ArchObjects, ArchObjectsImpl, EventCount, ExecutionContext, KeyTable, Notification,
+            Nucleus, NucleusObject, ObjectPool, PendingPool, Scheduler, Thread,
+            access::{ObjectId, PoolTag},
+            arch::ArchPools,
+            domain::DcbPages,
             nucleus::NucleusPools,
         },
     },
 };
+
+/// Size (as log2) of the boot Untyped region carved for the initial kernel
+/// state: 16 MiB, sized for the nucleus, its pools, the boot `KeyTable`, and
+/// the runtime Retype carves the boot continuation performs.
+const BOOT_UNTYPED_SIZE_BITS: u8 = 24;
 
 /// Alignment for every boot carve. Page alignment guarantees the 16-byte
 /// watermark granularity and object alignment for all pool types.
@@ -179,4 +189,211 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         nucleus_ptr.write(nucleus);
     }
     Ok((nucleus_ptr, keytable_ptr as u64))
+}
+
+/// The boot-time kernel state the post-boot continuation continues from.
+///
+/// Shared by the real kickstart kernel and the kicktest e2e boot-test kernel:
+/// everything here is real boot state (no test fixtures), sized by the
+/// [`PoolCapacities`] the caller passes to [`bootstrap_nucleus`].
+pub struct BootState {
+    /// The boot-carved, live initial [`Nucleus`]. Exclusively boot-owned; the
+    /// inert nucleus reads it through the anchor recorded at bootstrap.
+    pub nucleus: &'static mut Nucleus<ArchObjectsImpl>,
+    /// Kernel-window address of the boot Thread's carved, variable-size
+    /// `KeyTable`.
+    pub keytable_addr: u64,
+    /// The boot `AddressSpace`'s pool identity (the protection/mapping
+    /// context the boot Thread executes in).
+    pub boot_as_id: ObjectId,
+    /// Key of the boot Thread's self-table capability (slot `SELF_KEYTABLE`).
+    pub self_table_key: RawKey,
+    /// Key of the boot Untyped grant (slot `BOOT_UNTYPED`).
+    pub boot_untyped_key: RawKey,
+    /// Key of the debug console grant (slot `DEBUG_CONSOLE`), `debug_kernel`
+    /// only.
+    #[cfg(feature = "debug_kernel")]
+    pub debug_console_key: RawKey,
+}
+
+/// Bootstrap the initial kernel state and return the boot continuation's
+/// starting point.
+///
+/// Carves the boot Untyped, builds the initial [`Nucleus`] and its pools,
+/// allocates the boot `AddressSpace` and boot Thread, installs the bootstrap
+/// grants (self-table, boot Untyped, self-AddressSpace, boot Thread, boot ASID
+/// pool, and the debug console under `debug_kernel`), and records the nucleus
+/// anchor the inert nucleus reads on syscall entry.
+///
+/// The `capacities` size the carved pools for the caller's continuation: the
+/// real kickstart passes its own needs; kicktest passes the e2e suite's
+/// fixture extents (a Bounce Thread, fixture `AddressSpace`s, and the
+/// mapping-chain page-table pool).
+pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
+    // Allocate a power-of-2 boot region for the boot Untyped.
+    let boot_region = BOOT_INFO
+        .lock(|bi| bi.alloc_region(usize::from(BOOT_UNTYPED_SIZE_BITS), "Boot Untyped"))
+        .expect("no free region for the boot Untyped");
+
+    // Create the boot Untyped capability over that region.
+    let mut boot_untyped = KeyEntry::new_untyped(
+        boot_region.as_u64(),
+        BOOT_UNTYPED_SIZE_BITS,
+        false,
+        Rights::all(),
+    );
+
+    // Carve the initial Nucleus + pools from the boot Untyped's watermark.
+    let Ok(boot_payload) = boot_untyped.as_region_mut() else {
+        panic!("boot Untyped is not a region")
+    };
+    let Ok((nucleus_ptr, keytable_addr)) =
+        build_initial_nucleus::<ArchObjectsImpl>(boot_payload, capacities)
+    else {
+        panic!("failed to build the initial nucleus")
+    };
+
+    // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.
+    let nucleus: &'static mut Nucleus<ArchObjectsImpl> = unsafe { &mut *nucleus_ptr };
+    // The boot Thread is the first (index 0) allocation; make it current.
+    nucleus.current_thread = Some(0);
+
+    // Allocate the boot AddressSpace (the protection/mapping context) and the
+    // boot Thread that executes in it; the Thread's KeyTable was carved and
+    // initialized kernel-privately by build_initial_nucleus.
+    let boot_as_id = nucleus
+        .pools
+        .arch
+        .address_spaces
+        .allocate(ArchObjectsImpl::new_address_space())
+        .expect("no boot AddressSpace slot")
+        .0;
+    let boot_thread_id = nucleus
+        .pools
+        .threads
+        .allocate(Thread {
+            keytable_addr,
+            address_space: boot_as_id,
+            context: ExecutionContext::Running,
+        })
+        .expect("no boot Thread slot")
+        .0;
+
+    // Install the boot Thread's self-table capability, its AddressSpace
+    // (the bootstrap-era mapping context for `PageTable.Map`/`Frame.Map`),
+    // the boot Thread itself, and the boot Untyped as the first grants.
+    // SAFETY: keytable_addr names the freshly carved, live boot KeyTable.
+    let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+    let self_table_key = boot_table
+        .insert(
+            KeySlot::SELF_KEYTABLE,
+            KeyEntry::new_keytable(
+                keytable_addr,
+                BOOT_TABLE_GUARD,
+                BOOT_TABLE_SIZE_BITS,
+                Rights::all(),
+                0,
+            ),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| {
+            panic!("boot self-table install failed: {:?}", failure.error.code())
+        });
+    let boot_untyped_key = boot_table
+        .insert(KeySlot::BOOT_UNTYPED, boot_untyped, BOOT_TABLE_GUARD)
+        .unwrap_or_else(|failure| {
+            panic!("boot Untyped install failed: {:?}", failure.error.code())
+        });
+    let _boot_as_key = boot_table
+        .insert(
+            KeySlot::SELF_ADDRESS_SPACE,
+            KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                boot_as_id,
+                Rights::all(),
+                0,
+            ),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| {
+            panic!(
+                "boot AddressSpace install failed: {:?}",
+                failure.error.code()
+            )
+        });
+    let _boot_thread_key = boot_table
+        .insert(
+            KeySlot(50),
+            KeyEntry::new::<Thread>(boot_thread_id, Rights::all(), 0),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| panic!("boot Thread install failed: {:?}", failure.error.code()));
+
+    // Provision the boot ASID pool (seL4-style, selected 2026-09-15): ASIDs
+    // are a hardware namespace, not memory-backed, so the pool is carved and
+    // initialized kernel-privately here rather than Retype-created. Its
+    // capability is the authoritative grant the bootstrap builder assigns
+    // hardware translation contexts from.
+    let boot_asid_pool_id = nucleus
+        .pools
+        .arch
+        .asid_pools
+        .allocate(ArchObjectsImpl::new_asid_pool())
+        .expect("no boot ASID-pool slot")
+        .0;
+    let _boot_asid_pool_key = boot_table
+        .insert(
+            KeySlot::BOOT_ASID_POOL,
+            KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::ASIDPool>(
+                boot_asid_pool_id,
+                Rights::all(),
+                0,
+            ),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| {
+            panic!("boot ASID-pool install failed: {:?}", failure.error.code())
+        });
+
+    // Install the debug console grant (debug_kernel), the boot Thread's
+    // console authority.
+    #[cfg(feature = "debug_kernel")]
+    let debug_console_key = boot_table
+        .insert(
+            KeySlot::DEBUG_CONSOLE,
+            KeyEntry::from_id(
+                ObjectType::DEBUG_CONSOLE,
+                ObjectId {
+                    pool: PoolTag::Region,
+                    index: 0,
+                    generation: 0,
+                },
+                Rights::all(),
+                0,
+            ),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| {
+            panic!("debug console install failed: {:?}", failure.error.code())
+        });
+
+    // Record the carved Nucleus address for the inert nucleus.
+    // SAFETY: The paired nucleus image is loaded and mapped; the setter is a
+    // boot-only one-shot write before any syscall.
+    unsafe {
+        let setter = core::mem::transmute::<u64, unsafe extern "C" fn(*mut Nucleus<ArchObjectsImpl>)>(
+            NUCLEUS_SET_ANCHOR_VIRT,
+        );
+        setter(nucleus_ptr);
+    }
+    print_my_sp();
+
+    BootState {
+        nucleus,
+        keytable_addr,
+        boot_as_id,
+        self_table_key,
+        boot_untyped_key,
+        #[cfg(feature = "debug_kernel")]
+        debug_console_key,
+    }
 }
