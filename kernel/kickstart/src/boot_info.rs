@@ -365,6 +365,26 @@ impl BootInfo {
         Ok(())
     }
 
+    /// Insert a used (occupied) memory region rounded to an alignment.
+    ///
+    /// The start is rounded down to `align` and the end up to it, so the
+    /// recorded region covers whole alignment units: a kernel section recorded
+    /// with 4 KiB alignment owns its full pages instead of leaving the page
+    /// tails to be claimed by an enclosing overlay region. `align` must be a
+    /// power of two.
+    pub fn insert_used_region_aligned(
+        &mut self,
+        start: PhysAddr,
+        end: PhysAddr,
+        align: u64,
+        attributes: AttributeFields,
+        name: &'static str,
+    ) -> Result<(), BootInfoError> {
+        let start = start.aligned_down(align);
+        let end = end.aligned_up(align);
+        self.insert_used_region(start, end, attributes, name)
+    }
+
     /// Insert an overlay region that fills gaps between existing used regions.
     ///
     /// The overlay covers `[start, end)` but instead of failing on overlap with

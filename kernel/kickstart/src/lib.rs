@@ -425,17 +425,22 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
         (el1_stack, el1_stack_size)
     };
 
-    // Mark kernel memory used:
-    // TODO: add alignment requirements to boot_info regions (align up to)
+    // Mark kernel memory used.
+    //
+    // Sections are recorded page-granularly (start rounded down, end rounded
+    // up): the loaded image's sections are page-aligned and contiguous, so
+    // the rounded records tile the image's pages exactly and the enclosing
+    // `Kickstart` overlay cannot claim the intra-page tails between them.
     //
     // The EL1 stack is not inserted here: `alloc_pages` already records every
     // named allocation into BOOT_INFO, and a second insert would be rejected
     // as an overlapping used region.
     BOOT_INFO.lock(|bi| {
         for sec in kernel_layout.iter_sections() {
-            bi.insert_used_region(
+            bi.insert_used_region_aligned(
                 sec.phys_start,
                 sec.phys_start + sec.size,
+                4096,
                 AttributeFields {
                     acc_perms: if sec.permissions.writable {
                         AccessPermissions::ReadWrite
@@ -448,9 +453,10 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
                 sec.name,
             );
         }
-        bi.insert_used_region(
+        bi.insert_used_region_aligned(
             kernel_layout.bss_phys,
             kernel_layout.bss_phys + kernel_layout.bss_size,
+            4096,
             AttributeFields::defaulted(),
             "Nucleus BSS",
         );
