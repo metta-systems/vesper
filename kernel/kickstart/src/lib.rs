@@ -427,6 +427,10 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
 
     // Mark kernel memory used:
     // TODO: add alignment requirements to boot_info regions (align up to)
+    //
+    // The EL1 stack is not inserted here: `alloc_pages` already records every
+    // named allocation into BOOT_INFO, and a second insert would be rejected
+    // as an overlapping used region.
     BOOT_INFO.lock(|bi| {
         for sec in kernel_layout.iter_sections() {
             bi.insert_used_region(
@@ -449,12 +453,6 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
             kernel_layout.bss_phys + kernel_layout.bss_size,
             AttributeFields::defaulted(),
             "Nucleus BSS",
-        );
-        bi.insert_used_region(
-            el1_stack,
-            el1_stack + el1_stack_size,
-            AttributeFields::defaulted(),
-            "Nucleus stack",
         );
     });
 
