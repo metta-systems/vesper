@@ -2,17 +2,34 @@
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
-        "cargo": {
-          "target": "/Users/berkus/Projects/Metta/vesper/targets/aarch64-metta-none-eabi.json", // $ZED_WORKTREE_ROOT
-          "extraArgs": [
-            "-Zbuild-std=compiler_builtins,core,alloc",
-            "-Zbuild-std-features=compiler-builtins-mem"
-          ]
+        "rust": {
+          "analyzerTargetDir": true,
         },
+        // "checkOnSave": {
+        //   "enable": true,
+        //   "command": "clippy",
+        //   "target": "/Users/berkus/Projects/Metta/vesper/targets/aarch64-metta-none-eabi.json", // $ZED_WORKTREE_ROOT
+        //   "extraArgs": [
+        //     "-Zbuild-std=compiler_builtins,core,alloc",
+        //     "-Zbuild-std-features=compiler-builtins-mem",
+        //     "-Zmacro-backtrace",
+        //     "--cfg board_rpi3",
+        //     "-Ctarget-cpu=cortex-a53",
+        //     "--features qemu",
+        //   ],
+        // },
+        // "cargo": {
+        //   "target": "/Users/berkus/Projects/Metta/vesper/targets/aarch64-metta-none-eabi.json", // $ZED_WORKTREE_ROOT
+        //   "allTargets": false,
+        //   "extraArgs": [
+        //     "-Zbuild-std=compiler_builtins,core,alloc",
+        //     "-Zbuild-std-features=compiler-builtins-mem",
+        //   ],
+        // },
         "rustfmt": {
-          "extraArgs": ["+nightly"]
-        }
-      }
-    }
-  }
+          "extraArgs": ["+nightly"],
+        },
+      },
+    },
+  },
 }

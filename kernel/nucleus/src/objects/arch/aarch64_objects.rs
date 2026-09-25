@@ -1,0 +1,222 @@
+use {
+    crate::objects::{
+        ArchObjects,
+        access::ObjectId,
+        arch::{
+            AArch64ASIDControl, AArch64ASIDPool, AArch64AddressSpace, AArch64PageTable, ArchPools,
+        },
+        arch_objects::FrameSize,
+    },
+    libaddress::PhysAddr,
+    libobject::{ArchType, CapError, ObjectType},
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// AARCH64 IMPLEMENTATION
+// ═══════════════════════════════════════════════════════════════════
+
+pub struct AArch64;
+
+impl ArchObjects for AArch64 {
+    type PageTable = AArch64PageTable;
+    type AddressSpace = AArch64AddressSpace;
+    type ASIDPool = AArch64ASIDPool;
+    type ASIDControl = AArch64ASIDControl;
+
+    const FRAME_SIZES: &'static [FrameSize] =
+        &[FrameSize::Small, FrameSize::Large, FrameSize::Huge];
+
+    const PT_LEVELS: usize = 4;
+    const PT_INDEX_BITS: usize = 9;
+
+    fn validate_frame_size(size_bits: u8) -> Result<usize, CapError> {
+        match size_bits {
+            12 => Ok(4096),               // 4KB
+            21 => Ok(2 * 1024 * 1024),    // 2MB
+            30 => Ok(1024 * 1024 * 1024), // 1GB
+            _ => Err(CapError::InvalidFrameSize(size_bits as usize)),
+        }
+    }
+
+    fn validate_retype(arch_type: ArchType, size_bits: u8) -> Result<usize, CapError> {
+        match arch_type {
+            ArchType::PageTable => {
+                if size_bits == 12 {
+                    Ok(4096)
+                } else {
+                    Err(CapError::InvalidSize(size_bits as usize))
+                }
+            }
+            ArchType::AddressSpace => Ok(core::mem::size_of::<AArch64AddressSpace>()),
+            ArchType::ASIDPool => Ok(core::mem::size_of::<AArch64ASIDPool>()),
+            ArchType::ASIDControl => Ok(core::mem::size_of::<AArch64ASIDControl>()),
+            _ => Err(CapError::UnsupportedArchType(arch_type)),
+        }
+    }
+
+    fn new_page_table(paddr: u64) -> AArch64PageTable {
+        AArch64PageTable::new(paddr)
+    }
+
+    fn new_asid_pool() -> AArch64ASIDPool {
+        AArch64ASIDPool::new()
+    }
+
+    fn new_address_space() -> AArch64AddressSpace {
+        AArch64AddressSpace::new()
+    }
+
+    fn invalidate_tlb_by_vaddr(asid: u16, vaddr: u64) {
+        // Operand format of `TLBI VAE1IS`: ASID in bits 63:48, virtual
+        // address bits 47:12; the low 12 bits are ignored by hardware.
+        let value = (u64::from(asid) << 48) | (vaddr & 0x0000_FFFF_FFFF_F000);
+        // SAFETY: TLB maintenance is a hardware side effect; the instructions
+        // read no memory and clobber no registers. The barrier sequence
+        // guarantees the invalidation completes before any subsequent access
+        // could observe the withdrawn translation.
+        unsafe {
+            core::arch::asm!(
+                "tlbi vae1is, {value}",
+                "dsb sy",
+                "isb",
+                value = in(reg) value,
+                options(nostack),
+            );
+        }
+    }
+
+    fn invalidate_tlb_asid(asid: u16) {
+        // Operand format of `TLBI ASIDE1IS`: ASID in bits 63:48.
+        let value = u64::from(asid) << 48;
+        // SAFETY: see `invalidate_tlb_by_vaddr`.
+        unsafe {
+            core::arch::asm!(
+                "tlbi aside1is, {value}",
+                "dsb sy",
+                "isb",
+                value = in(reg) value,
+                options(nostack),
+            );
+        }
+    }
+
+    fn install_translation_context(root_paddr: u64, asid: u16) {
+        // TTBR0_EL1: ASID in bits 63:48, translation-table base in BADDR.
+        // The kernel executes through the TTBR1 high map, so switching the
+        // low-half context does not disturb kernel execution.
+        let ttbr = root_paddr | (u64::from(asid) << 48);
+        // SAFETY: register write plus context synchronization; reads no
+        // memory and clobbers no registers. `dsb ish` publishes the prior
+        // descriptor stores to page-table walks before the context switch;
+        // `isb` orders the new context before any subsequent translation.
+        unsafe {
+            core::arch::asm!(
+                "dsb ish",
+                "msr ttbr0_el1, {ttbr}",
+                "isb",
+                ttbr = in(reg) ttbr,
+                options(nostack),
+            );
+        }
+    }
+
+    fn install_table_entry(
+        parent_paddr: u64,
+        parent_level: u8,
+        vaddr: u64,
+        child_paddr: u64,
+    ) -> Result<u16, CapError> {
+        super::page_table::install_table_entry(parent_paddr, parent_level, vaddr, child_paddr)
+    }
+
+    fn clear_table_entry(parent_paddr: u64, slot: u16, child_paddr: u64) -> Result<(), CapError> {
+        super::page_table::clear_table_entry(parent_paddr, slot, child_paddr)
+    }
+
+    fn page_table_is_empty(paddr: u64) -> bool {
+        super::page_table::table_is_empty(paddr)
+    }
+
+    fn install_frame_pte(
+        root_paddr: u64,
+        vaddr: u64,
+        frame_paddr: u64,
+        size_bits: u8,
+        writable: bool,
+        executable: bool,
+    ) -> Result<(), CapError> {
+        super::page_table::install_frame_pte(
+            root_paddr,
+            vaddr,
+            frame_paddr,
+            size_bits,
+            writable,
+            executable,
+        )
+    }
+
+    fn clear_frame_pte(
+        root_paddr: u64,
+        vaddr: u64,
+        frame_paddr: u64,
+        size_bits: u8,
+    ) -> Result<(), CapError> {
+        super::page_table::clear_frame_pte(root_paddr, vaddr, frame_paddr, size_bits)
+    }
+
+    fn find_physical_overlap(root_paddr: u64, paddr: u64, size_bits: u8) -> Option<u64> {
+        super::page_table::find_physical_overlap(root_paddr, paddr, size_bits)
+    }
+
+    fn create_arch_object(
+        arch_type: ArchType,
+        phys_addr: PhysAddr,
+        size_bits: u8,
+        pools: &mut ArchPools<Self>,
+    ) -> Result<(ObjectType, ObjectId), CapError> {
+        // match arch_type {
+        //     ArchType::Frame => {
+        //         let frame_size = FrameSize::from_bits(size_bits as usize)
+        //             .map_err(|_| CapError::InvalidSize(size_bits as usize))?;
+        //         let frame = AArch64Frame::new(phys_addr, frame_size);
+        //         let (id, _obj) = pools
+        //             .frames
+        //             .allocate(frame)
+        //             .ok_or(CapError::PoolExhausted)?;
+        //         Ok((ObjectType::FRAME, id))
+        //     }
+        //     ArchType::PageTable => {
+        //         let pt = AArch64PageTable::new(phys_addr);
+        //         let (id, _obj) = pools
+        //             .page_tables
+        //             .allocate(pt)
+        //             .ok_or(CapError::PoolExhausted)?;
+        //         Ok((ObjectType::PAGE_TABLE, id))
+        //     }
+        //     ArchType::AddressSpace => {
+        //         let address_space = AArch64AddressSpace::new();
+        //         let (id, _obj) = pools
+        //             .address_spaces
+        //             .allocate(address_space)
+        //             .ok_or(CapError::PoolExhausted)?;
+        //         Ok((ObjectType::ADDRESS_SPACE, id))
+        //     }
+        //     ArchType::ASIDPool => {
+        //         let pool = AArch64ASIDPool::new();
+        //         let (id, _obj) = pools
+        //             .asid_pools
+        //             .allocate(pool)
+        //             .ok_or(CapError::PoolExhausted)?;
+        //         Ok((ObjectType::ASID_POOL, id))
+        //     }
+        //     _ => Err(CapError::UnsupportedArchType(arch_type)),
+        // }
+        Err(CapError::UnsupportedArchType(arch_type))
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Frame, PageTable, AddressSpace, and ASIDPool operations are dispatched
+    // directly to their API handlers; see
+    // `crate::api::arch::{frame,page_table,address_space,asid_pool}`.
+    // ─────────────────────────────────────────────────────────────────
+}

@@ -1,13 +1,12 @@
 [package]
-name = "libtest"
+name = "vesper-tests"
 
-description = "Test runner"
+description = "Vesper nanokernel test runner harness."
 
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
 edition = { workspace = true }
-homepage = { workspace = true }
 license = { workspace = true }
 readme = { workspace = true }
 repository = { workspace = true }
@@ -21,6 +20,11 @@ maintenance = { status = "experimental" }
 [dependencies]
 liblog = { workspace = true }
 libqemu = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

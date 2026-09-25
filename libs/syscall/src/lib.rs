@@ -1,0 +1,287 @@
+#![no_std]
+#![no_main]
+
+// Syscall ABI:
+// ┌───────────────────────────────────────────────────────────────────────┐
+// │  CAPTBL COPY (cross-domain grant):                                    │
+// │  ┌─────────────────────────────────────────────────────────────────┐  │
+// │  │ x0 = src_captbl    x3 = dst_captbl                              │  │
+// │  │ x1 = COPY op       x4 = dst_slot                                │  │
+// │  │ x2 = src_slot      x5 = rights_mask  ← derive+copy in one!      │  │
+// │  └─────────────────────────────────────────────────────────────────┘  │
+// │                                                                       │
+// │  BUFFER MAP (with full control):                                      │
+// │  ┌─────────────────────────────────────────────────────────────────┐  │
+// │  │ x0 = buffer_cap    x3 = size                                    │  │
+// │  │ x1 = MAP op        x4 = offset      ← map partial buffer        │  │
+// │  │ x2 = virt_addr     x5 = flags       ← cache policy, etc.        │  │
+// │  └─────────────────────────────────────────────────────────────────┘  │
+// │                                                                       │
+// │  ENDPOINT CALL (with inline payload):                                 │
+// │  ┌─────────────────────────────────────────────────────────────────┐  │
+// │  │ x0 = endpoint_cap  x3 = msg_word_1                              │  │
+// │  │ x1 = CALL op       x4 = msg_word_2                              │  │
+// │  │ x2 = msg_word_0    x5 = msg_word_3  ← 4 words inline!           │  │
+// │  └─────────────────────────────────────────────────────────────────┘  │
+// │                                                                       │
+// │  UNTYPED RETYPE (batch creation):                                     │
+// │  ┌─────────────────────────────────────────────────────────────────┐  │
+// │  │ x0 = untyped_cap   x3 = dest_captbl                             │  │
+// │  │ x1 = RETYPE op     x4 = dest_slot_start                         │  │
+// │  │ x2 = obj_type      x5 = count       ← create N objects at once! │  │
+// │  └─────────────────────────────────────────────────────────────────┘  │
+// └───────────────────────────────────────────────────────────────────────┘
+
+// Contract status: the diagrams above retain draft operation vocabulary.
+// Approved CopyDerive uses packed keys in x0/x2/x3, a vacant u32 slot in x4,
+// provisional rights in x5, and reserved-zero x6/x7. Success returns the
+// destination-local packed key in x1 with x2 zero; other sketches are not enabled.
+
+/// Single syscall ABI
+///
+/// Entry: SVC #0
+///
+/// Arguments:
+///   x0 = capability slot
+///   x1 = operation code
+///   x2-x7 = operation arguments (6 args!)
+///   x9-x15 are caller-saved, we don't use them
+///
+/// Contract status: x0 now carries the complete packed key (incarnation high,
+/// slot low), not a slot-only selector. x1 remains full width for checked decoding.
+///
+/// Returns:
+///   x0 = error code (0 = success)
+///   x1 = return value 0
+///   x2 = return value 1 (if needed)
+///
+/// # Safety
+/// - Not safe.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn protected_call6(
+    cap: u64,
+    op: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+    a5: u64,
+) -> (u64, u64, u64) {
+    let r0: u64;
+    let r1: u64;
+    let r2: u64;
+    // # SAFETY: As safe as possible, duh!
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
+            inlateout("x2") a0 => r2,
+            in("x3") a1,
+            in("x4") a2,
+            in("x5") a3,
+            in("x6") a4,
+            in("x7") a5,
+            options(nostack),
+        );
+    }
+    (r0, r1, r2)
+}
+
+/// 5-arg invoke
+///
+/// # Safety
+/// - Not safe.
+#[inline(always)]
+pub unsafe fn protected_call5(
+    cap: u64,
+    op: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+) -> (u64, u64, u64) {
+    let r0: u64;
+    let r1: u64;
+    let r2: u64;
+    // # SAFETY: As safe as possible, duh!
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
+            inlateout("x2") a0 => r2,
+            in("x3") a1,
+            in("x4") a2,
+            in("x5") a3,
+            in("x6") a4,
+            // The kernel reads every argument register; unused words are
+            // transmitted as zero (strict wire-argument convention,
+            // selected 2026-09-15).
+            in("x7") 0_u64,
+            options(nostack),
+        );
+    }
+    (r0, r1, r2)
+}
+
+/// 4-arg invoke
+///
+/// # Safety
+/// - Not safe.
+#[inline(always)]
+pub unsafe fn protected_call4(
+    cap: u64,
+    op: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+) -> (u64, u64, u64) {
+    let r0: u64;
+    let r1: u64;
+    let r2: u64;
+    // # SAFETY: As safe as possible, duh!
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
+            inlateout("x2") a0 => r2,
+            in("x3") a1,
+            in("x4") a2,
+            in("x5") a3,
+            // CopyDerive reserves these argument registers as zero.
+            in("x6") 0_u64,
+            in("x7") 0_u64,
+            options(nostack),
+        );
+    }
+    (r0, r1, r2)
+}
+
+/// 3-arg invoke
+///
+/// # Safety
+/// - Not safe.
+#[inline(always)]
+pub unsafe fn protected_call3(cap: u64, op: u64, a0: u64, a1: u64, a2: u64) -> (u64, u64, u64) {
+    let r0: u64;
+    let r1: u64;
+    let r2: u64;
+    // # SAFETY: As safe as possible, duh!
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
+            inlateout("x2") a0 => r2,
+            in("x3") a1,
+            in("x4") a2,
+            // The kernel reads every argument register; unused words are
+            // transmitted as zero (strict wire-argument convention,
+            // selected 2026-09-15).
+            in("x5") 0_u64,
+            in("x6") 0_u64,
+            in("x7") 0_u64,
+            options(nostack),
+        );
+    }
+    (r0, r1, r2)
+}
+
+/// 2-arg invoke
+///
+/// # Safety
+/// - Not safe.
+#[inline(always)]
+pub unsafe fn protected_call2(cap: u64, op: u64, a0: u64, a1: u64) -> (u64, u64, u64) {
+    let r0: u64;
+    let r1: u64;
+    let r2: u64;
+    // # SAFETY: As safe as possible, duh!
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
+            inlateout("x2") a0 => r2,
+            in("x3") a1,
+            // The kernel reads every argument register; unused words are
+            // transmitted as zero (strict wire-argument convention,
+            // selected 2026-09-15).
+            in("x4") 0_u64,
+            in("x5") 0_u64,
+            in("x6") 0_u64,
+            in("x7") 0_u64,
+            options(nostack),
+        );
+    }
+    (r0, r1, r2)
+}
+
+/// 1-arg invoke
+///
+/// The unused argument registers (`x3..x7`) are transmitted as zero: the
+/// kernel reads every argument register, so an unspecified value would
+/// arrive as a defined-but-arbitrary argument (strict wire-argument
+/// convention, selected 2026-09-15).
+///
+/// # Safety
+/// - Not safe.
+#[inline(always)]
+pub unsafe fn protected_call1(cap: u64, op: u64, a0: u64) -> (u64, u64, u64) {
+    let r0: u64;
+    let r1: u64;
+    let r2: u64;
+    // # SAFETY: As safe as possible, duh!
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
+            inlateout("x2") a0 => r2,
+            in("x3") 0_u64,
+            in("x4") 0_u64,
+            in("x5") 0_u64,
+            in("x6") 0_u64,
+            in("x7") 0_u64,
+            options(nostack),
+        );
+    }
+    (r0, r1, r2)
+}
+
+/// 0-arg invoke (cap + op only)
+///
+/// The six syscall argument registers (`x2..x7`) are all transmitted as
+/// zero: the kernel reads every argument register, so an unspecified value
+/// would arrive as a defined-but-arbitrary argument, not as "no argument".
+///
+/// # Safety
+/// - Not safe.
+#[inline(always)]
+pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
+    let r0: u64;
+    let r1: u64;
+    let r2: u64;
+    // # SAFETY: As safe as possible, duh!
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
+            inlateout("x2") 0_u64 => r2,
+            in("x3") 0_u64,
+            in("x4") 0_u64,
+            in("x5") 0_u64,
+            in("x6") 0_u64,
+            in("x7") 0_u64,
+            options(nostack),
+        );
+    }
+    (r0, r1, r2)
+}

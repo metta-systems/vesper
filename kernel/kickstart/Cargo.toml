@@ -1,0 +1,72 @@
+[package]
+name = "kickstart"
+
+description = "Vesper nanokernel startup initialization."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+# Opt in to the debug-only prototype console demonstration.
+debug_kernel = ["libobject/debug_kernel", "nucleus/debug_kernel"]
+# Enable JTAG debugging of kernel - enable jtag helpers and
+# block waiting for JTAG probe attach at the start of kernel main.
+jtag = ["libmachine/jtag"]
+noserial = [] #"libplatform/noserial"
+# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
+qemu = [
+  # "libconsole/qemu",
+  "libexception/qemu",
+  "libmachine/qemu",
+  "nucleus/qemu",
+  # "libplatform/qemu",
+]
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+cfg-if = { workspace = true }
+libaddress = { workspace = true }
+libboot = { workspace = true }
+libcpu = { workspace = true }
+libexception = { workspace = true }
+liblog = { workspace = true }
+liblocking = { workspace = true }
+libmachine = { workspace = true }
+libmapping = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libqemu = { workspace = true }
+libobject = { workspace = true }
+nucleus = { path = "../nucleus" }
+snafu = { workspace = true }
+shrinkwraprs = { version = "0.3", default-features = false }
+fdt-rs = { version = "=0.4.4", default-features = false }
+
+[build-dependencies]
+goblin = { workspace = true }
+build-rs = { workspace = true }
+build-print = { workspace = true }
+minijinja = { workspace = true }
+
+[lib]
+# Boot code runs on the boot path; it is exercised by the QEMU boot workflows
+# (just qemu, just test-capability-boot via kicktest), never on the host.
+# Doctests stay off too: the module docs are design diagrams, not host-runnable
+# snippets (as a bin crate this never had doctests either).
+test = false
+doctest = false
+
+[[bin]]
+name = "kickstart"
+test = false  # the real boot kernel; e2e tests live in the kicktest crate
+
+[lints]
+workspace = true
