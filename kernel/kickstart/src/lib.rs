@@ -76,7 +76,7 @@ fn dump_memory_map() {
 ///       e.g. the yet-to-be-introduced spinlocks in the device drivers (which currently employ
 ///       `IRQSafeNullLocks` instead of spinlocks), will fail to work (properly) on the `RPi` `SoCs`.
 ///
-pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
+pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     let dtb_ptr = dtb as *const u8;
 
     SPSR_EL2.write(
@@ -90,7 +90,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
-    semi::println!("init_main started");
+    semi::println!("🥾 started");
 
     // unsafe {
     //     BOOT_INFO.dtb_phys = PhysAddr::new(dtb_phys);
@@ -103,7 +103,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     // Hardcoded UART address for early boot (RPi4: 0xFE201000)
     // Will be properly mapped later
     // early_uart_init(0xFE20_1000);
-    semi::println!("DTB at physical: {:#016x}", dtb_ptr as u64);
+    semi::println!("🥾 DTB at physical {:#016x}", dtb_ptr as u64);
 
     // ─────────────────────────────────────────────────────────────────────
     // Start bump allocator
@@ -120,7 +120,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     let mut allocator = BootAllocator::new(PhysAddr::new(free_start), memory_size);
     let memory_end = allocator.end();
     semi::println!(
-        "init_main: Created BootAllocator {memory_size} @ {:#016x}",
+        "🥾 Created BootAllocator {memory_size} @ {:#016x}",
         free_start
     );
 
@@ -128,13 +128,13 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     // Parse Device Tree
     // ─────────────────────────────────────────────────────────────────────
 
-    semi::println!("Parsing device tree...");
+    semi::println!("🥾 Parsing device tree...");
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
     let device_tree =
-        unsafe { DevTree::from_raw_pointer(dtb_ptr).expect("DeviceTree failed to read") };
+        unsafe { DevTree::from_raw_pointer(dtb_ptr).expect("🥾 DeviceTree failed to read") };
 
-    let layout = DeviceTree::layout(device_tree).expect("Couldn't calculate DeviceTree index");
+    let layout = DeviceTree::layout(device_tree).expect("🥾 Couldn't calculate DeviceTree index");
 
     let block = allocator
         .alloc_aligned(
@@ -142,16 +142,16 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
             layout.align(),
             ("DTB index", Alloc::Droppable),
         )
-        .expect("Couldn't allocate DeviceTree index");
+        .expect("🥾 Couldn't allocate DeviceTree index");
     // SAFETY: Unsafe call.
     let raw_slice = unsafe { core::slice::from_raw_parts_mut(block.as_mut_ptr(), layout.size()) };
 
     let device_tree =
-        DeviceTree::new(device_tree, raw_slice).expect("Couldn't initialize indexed DeviceTree");
+        DeviceTree::new(device_tree, raw_slice).expect("🥾 Couldn't initialize indexed DeviceTree");
 
     let board = device_tree.get_prop_by_path("/model").unwrap().str();
     if let Ok(board_name) = board {
-        semi::println!("Running on {board_name}");
+        semi::println!("🥾 Running on {board_name}");
     }
 
     // let mut dumper = device_tree.dumper(0);
@@ -172,7 +172,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     let res: Result<_, DevTreeError> = device_tree
         .props()
         .try_find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"));
-    let mem_prop = res.unwrap().expect("Unable to find memory node.");
+    let mem_prop = res.unwrap().expect("🌴 Unable to find memory node.");
     let _mem_node = mem_prop.node();
     // let parent_node = mem_node.parent_node();
 
@@ -180,10 +180,10 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     // can also be reg = <0x7e100000 0x00000114 0x7e00a000 0x00000024 >; to define two locations
     let reg_prop = device_tree
         .get_prop_by_path("/memory@0/reg")
-        .expect("Unable to figure out memory-reg");
+        .expect("🌴 Unable to figure out memory-reg");
 
     semi::println!(
-        "Found memnode with reg prop: name {:?}, size {}",
+        "🌴 Found memnode with reg prop: name {:?}, size {}",
         reg_prop.name(),
         reg_prop.length()
     );
@@ -193,7 +193,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     let mut total_memory = 0;
 
     for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
-        semi::println!("Memory: {} KiB at offset {}", mem_size / 1024, mem_addr);
+        semi::println!("🌴 Memory {} KiB at offset {}", mem_size / 1024, mem_addr);
         total_memory += mem_size;
         BOOT_INFO.lock(|bi| {
             bi.insert_free_region(
@@ -202,7 +202,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
                 AttributeFields::default(),
                 "RAM",
             )
-            .expect("tough luck");
+            .expect("🌴 Cannot insert usable memory in boot_info");
         });
     }
 
@@ -210,7 +210,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     for entry in device_tree.fdt().reserved_entries() {
         let size: u64 = entry.size.into();
         let address: u64 = entry.address.into();
-        semi::println!("Reserved memory: {size:?} bytes at {address:?}");
+        semi::println!("🌴 Reserved memory {size:?} bytes at {address:?}");
         BOOT_INFO.lock(|bi| {
             bi.insert_used_region(
                 PhysAddr::new(entry.address.into()),
@@ -218,7 +218,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
                 AttributeFields::default(),
                 "Reserved",
             )
-            .expect("tough luck");
+            .expect("🌴 Cannot insert unusable memory in boot_info");
         });
     }
 
@@ -228,12 +228,15 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
 
     // Iterate compatible nodes (example):
     for entry in device_tree.compatible_nodes("arm,pl011") {
-        semi::println!("PL011 device: {:?}", entry.name() /*, entry.address*/);
+        semi::println!(
+            "🌴 PL011 device {:?}",
+            entry.name() /*, entry.address*/
+        );
     }
 
     // 6. Also, remove the DTB memory region + index
     semi::println!(
-        "DTB region: {} bytes at {:#016x}",
+        "🌴 DTB region {} bytes at {:#016x}",
         device_tree.fdt().totalsize(),
         dtb_ptr as usize
     ); // also include the raw_slice allocated bit
@@ -247,7 +250,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
             },
             "DTB",
         )
-        .expect("tough luck");
+        .expect("🌴 Cannot reserve DTB area in boot_info");
     });
 
     // Next step: parse DTB!
@@ -326,7 +329,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
 
     let mut nodes = &mut nodes[..num_nodes];
 
-    // Other in-place sorting available:
+    // Sort items in-place
     if !nodes.is_sorted_by_key(|item| item.start) {
         nodes.sort_unstable_by_key(|item| item.start);
     }
@@ -354,7 +357,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
                     },
                     node.name,
                 )
-                .expect("tough luck");
+                .expect("🌴 Cannot insert driver region in boot_info");
             });
         }
     }
@@ -364,7 +367,7 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
 
     for entry in device_tree.nodes() {
         if entry.name() == Ok("chosen") {
-            semi::println!("Found /chosen node");
+            semi::println!("🌴 Found /chosen node");
         }
     }
 
@@ -406,10 +409,10 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
     // PHASE 1: Load kernel
     // ═══════════════════════════════════════════════════════════════
 
-    semi::println!("init_main: Load nucleus");
+    semi::println!("🥾 Load nucleus");
 
-    let kernel_layout = loader::load_kernel(&mut allocator).expect("Failed to load nucleus");
-    semi::println!("init_main: Loaded nucleus image");
+    let kernel_layout = loader::load_kernel(&mut allocator).expect("🥾 Failed to load nucleus");
+    semi::println!("🥾 Loaded nucleus image");
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 2: Set up page tables
@@ -419,8 +422,8 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
         // Allocate EL1 stack
         let el1_stack_size = 128; // pages
         let el1_stack = allocator
-            .alloc_pages(el1_stack_size, ("Nucleus stack", Alloc::Persistent))
-            .expect("Failed to allocate EL1 stack");
+            .alloc_pages(el1_stack_size, ("🧠 Nucleus stack", Alloc::Persistent))
+            .expect("🥾 Failed to allocate EL1 stack");
         let el1_stack_size = el1_stack_size * 4096; // 64KiB stack
         (el1_stack, el1_stack_size)
     };
@@ -458,17 +461,18 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
             kernel_layout.bss_phys + kernel_layout.bss_size,
             4096,
             AttributeFields::defaulted(),
-            "Nucleus BSS",
+            "🧠 Nucleus BSS",
         );
     });
 
-    let mut mmu_setup = paging::MmuSetup::new(&mut allocator).expect("Failed to create MMU setup");
-    semi::println!("init_main: Created MmuSetup");
+    let mut mmu_setup =
+        paging::MmuSetup::new(&mut allocator).expect("🥾 Failed to create MMU setup");
+    semi::println!("🥾 Created MmuSetup");
 
     // Identity map kickstart
     paging::create_identity_mapping(&mut mmu_setup, PhysAddr::new(init_start), memory_end)
-        .expect("Failed to create identity mapping");
-    semi::println!("init_main: Identity mapped the Kickstart");
+        .expect("🥾 Failed to create identity mapping");
+    semi::println!("🥾 Identity mapped the Kickstart");
 
     // Create kernel mapping with per-section permissions
     let (el1_stack_top,) = paging::create_kernel_mapping(
@@ -478,8 +482,8 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
         el1_stack.as_u64(),
         el1_stack_size,
     )
-    .expect("Failed to create kernel mapping");
-    semi::println!("init_main: Higher-half mapped the nucleus");
+    .expect("🥾 Failed to create kernel mapping");
+    semi::println!("🥾 Higher-half mapped the nucleus");
 
     // ═══════════════════════════════════════════════════════════════
     // Interlude: Print the BOOT_INFO region map
@@ -493,11 +497,11 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
                 droppable: true,
                 ..Default::default()
             },
-            "Kickstart",
+            "🥾 Kickstart",
         );
     });
 
-    semi::println!("init_main: BOOT_INFO map after kernel load and mapping");
+    semi::println!("🥾 BOOT_INFO map after kernel load and mapping");
     dump_memory_map();
 
     // ═══════════════════════════════════════════════════════════════
@@ -506,22 +510,22 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
 
     let ttbr0 = mmu_setup.ttbr0();
     let ttbr1 = mmu_setup.ttbr1();
-    semi::println!("init_main: TTBR0_EL1 at {ttbr0:#016x}, TTBR1_EL1 at {ttbr1:#016x}");
+    semi::println!("🥾 TTBR0_EL1 at {ttbr0:#016x}, TTBR1_EL1 at {ttbr1:#016x}");
 
     // Get vector table virtual address for VBAR_EL1
     // VBAR is only used after MMU is enabled, so we set the virtual address directly
     let vbar = kernel_layout.vbar_el1_virt();
 
-    semi::println!("init_main: EL1 stack at {el1_stack_top:#016x}, vbar {vbar:#016x}");
+    semi::println!("🥾 EL1 stack at {el1_stack_top:#016x}, vbar {vbar:#016x}");
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 4: Enable MMU and drop to EL1
     // ═══════════════════════════════════════════════════════════════
 
-    semi::println!("Init thread image covers phys ?:? identity mapped");
-    semi::println!("Init thread mapping tables filled in as ? entries");
-    semi::println!("Kernel image covers phys ?:? mapped to KERNEL_HIGH_BASE:?");
-    semi::println!("Kernel mapping tables filled in as ? for kernel, as ? for phys memory");
+    semi::println!("📕 Init thread image covers phys ?:? identity mapped");
+    semi::println!("📕 Init thread mapping tables filled in as ? entries");
+    semi::println!("📕 Kernel image covers phys ?:? mapped to KERNEL_HIGH_BASE:?");
+    semi::println!("📕 Kernel mapping tables filled in as ? for kernel, as ? for phys memory");
 
     print_my_sp();
 
@@ -547,5 +551,5 @@ pub fn init_main_el2(dtb: u32, run_entry: u64) -> ! {
 pub fn print_my_sp() {
     use aarch64_cpu::registers::Readable;
     let sp = aarch64_cpu::registers::SP.get();
-    semi::println!("Current SP: {sp:016x}");
+    semi::println!("🥾 Current SP: {sp:016x}");
 }

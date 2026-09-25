@@ -44,7 +44,7 @@ use {
     cfg_if::cfg_if,
     kickstart::{
         bootstrap::{PoolCapacities, bootstrap_nucleus},
-        init_main_el2, print_my_sp,
+        kickstart_init_el2, print_my_sp,
     },
     libboot as boot,
     libcpu::endless_sleep,
@@ -56,12 +56,12 @@ boot::entry!(boot_main);
 /// EL2 entry: run the shared boot through the EL1 transition, then continue
 /// in [`kickstart_run`].
 fn boot_main(dtb: u32) -> ! {
-    init_main_el2(dtb, kickstart_run as *const u8 as u64)
+    kickstart_init_el2(dtb, kickstart_run as *const u8 as u64)
 }
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    semi::println!("PANICKED: {info}");
+    semi::println!("🥾 PANICKED: {info}");
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {
             libqemu::semihosting::exit_failure()
@@ -78,7 +78,7 @@ pub fn kickstart_run() -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     // Run initial thread further in EL1, setting up the capDL etc.
-    semi::println!("init_main_run: enabled MMU and dropped to EL1");
+    semi::println!("🥾 init_main_run: enabled MMU and dropped to EL1");
     print_my_sp();
 
     // ─────────────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ pub fn kickstart_run() -> ! {
     // Initialize kernel subsystems
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi::println!("Initializing kernel subsystems...");
+    // semi::println!("🥾 Initializing kernel subsystems...");
 
     // Initialize per-CPU data structures
     // percpu::init();
@@ -113,7 +113,7 @@ pub fn kickstart_run() -> ! {
     // Build physical memory map and create Untyped caps
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi::println!("Building physical memory allocator...");
+    // semi::println!("🥾 Building physical memory allocator...");
 
     // Create the root untyped capability list
     // This will be delegated to init process
@@ -132,7 +132,7 @@ pub fn kickstart_run() -> ! {
     //         let untypeds = create_untyped_caps_for_range(range);
     //         untyped_list.extend(untypeds);
     //         semi::println!(
-    //             "  Untyped: {:#x} - {:#x} ({} caps)",
+    //             "🥾  Untyped: {:#x} - {:#x} ({} caps)",
     //             range.base.as_u64(),
     //             range.base.as_u64() + range.size as u64,
     //             untypeds.len()
@@ -140,13 +140,13 @@ pub fn kickstart_run() -> ! {
     //     }
     // }
 
-    // semi::println!("Total untyped caps: {}", untyped_list.len());
+    // semi::println!("🥾 Total untyped caps - {}", untyped_list.len());
 
     // ─────────────────────────────────────────────────────────────────────
-    // Initialize DCB shared pages
+    // Initialize DCB shared pages - replace with scheduler component calls
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi::println!("Initializing DCB pages...");
+    // semi::println!("🥾 Initializing DCB pages...");
 
     // // Allocate DCB pages from a reserved untyped
     // // These are special: mapped RW in kernel, RO in all user domains
@@ -157,16 +157,16 @@ pub fn kickstart_run() -> ! {
     // Create kernel idle domain (domain 0)
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi::println!("Creating idle domain...");
+    // semi::println!("🥾 Creating idle domain...");
 
-    // let idle_domain = Domain::create_idle();
+    // let idle_domain = create_idle_domain();
     // SCHEDULER.set_idle(idle_domain);
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // PHASE 6: Create the init domain and its capability space
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // semi::println!("Creating init domain...");
+    // semi::println!("🥾 Creating init domain...");
 
     // let init_module = boot_info
     //     .modules
@@ -175,7 +175,7 @@ pub fn kickstart_run() -> ! {
     //         let name = core::str::from_utf8(&m.name).unwrap_or("");
     //         name.matches("init")
     //     })
-    //     .expect("No init module found in boot modules");
+    //     .expect("🥾 No init module found in boot modules");
 
     // let init_domain = create_init_domain(init_module, &mut untyped_list);
 
@@ -183,9 +183,9 @@ pub fn kickstart_run() -> ! {
     // Mark init thread memory as reclaimable
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi::println!("Marking init thread memory for reclamation...");
+    // semi::println!("🥾 Marking init thread memory for reclamation...");
 
-    // // The init stack and any init-only code/data can now be reclaimed, the are in the Untypeds table now.
+    // // The init stack and any init-only code/data can now be reclaimed, they are in the Untypeds table now.
     // mark_init_memory_reclaimable(boot_info, &mut untyped_list);
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -193,7 +193,7 @@ pub fn kickstart_run() -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     // semi::println!(
-    //     "Delegating {} untyped caps to init...",
+    //     "🥾 Delegating {} untyped caps to init...",
     //     untyped_list.len()
     // );
 
@@ -207,13 +207,13 @@ pub fn kickstart_run() -> ! {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     let (_, privilege_level) = libexception::current_privilege_level();
-    liblog::info!("Current privilege level: {privilege_level}");
+    liblog::info!("🥾 Current privilege level {privilege_level}");
 
-    liblog::info!("Exception handling state:");
+    liblog::info!("🥾 Exception handling state:");
     libexception::asynchronous::print_state();
 
-    // semi::println!("Switching to init domain...");
-    // semi::println!("═══════════════════════════════════════════════════════════");
+    // semi::println!("🥾 Switching to init domain...");
+    // semi::println!("════════════════════════════✂️🥾🥾🥾🥾🥾✂️═══════════════════════════════");
 
     // // Create initial time budget for init
     // let init_time = TimeCap::create_root(INIT_TIME_BUDGET_US);
@@ -237,7 +237,7 @@ pub fn kickstart_run() -> ! {
 
     // SAFETY: Not safe!
     // if let Err(x) = unsafe { libplatform::drivers::init() } {
-    //     panic!("Error initializing platform drivers: {}", x);
+    //     panic!("🥾 Error initializing platform drivers: {}", x);
     // }
 
     // Initialize all device drivers.
@@ -254,40 +254,40 @@ pub fn kickstart_run() -> ! {
 
     // libconsole::init_logger();
 
-    // info!("{}", libkernel::version());
+    // info!("🧠 {}", libkernel::version());
 
     // info!(
-    //     "{} version {}",
+    //     "🥾 {} version {}",
     //     env!("CARGO_PKG_NAME"),
     //     env!("CARGO_PKG_VERSION")
     // );
 
     // info!(
-    //     "Booting on: {}",
+    //     "🥾 Booting on: {}",
     //     libplatform::BcmHost::board_name()
     // );
 
-    // info!("MMU online. Special regions:");
+    // info!("🥾 MMU online. Special regions:");
     // machine::platform::memory::mmu::virt_mem_layout().print_layout();
 
     // dump_memory_map();
 
     // info!(
-    //     "Architectural timer resolution: {} ns",
+    //     "🥾 Architectural timer resolution: {} ns",
     //     libtime::time::time_manager().resolution().as_nanos()
     // );
 
-    // info!("Drivers loaded:");
+    // info!("🥾 Drivers loaded:");
     // libplatform::drivers::driver_manager().enumerate();
 
-    // info!("Registered IRQ handlers:");
+    // info!("🥾 Registered IRQ handlers:");
     // libplatform::exception::asynchronous::irq_manager().print_handler();
 
     // // Test a failing timer case.
     // libtime::time::time_manager().spin_for(Duration::from_nanos(1));
 
     // for _ in 0..3 {
-    //     info!("Spinning for 1 second");
+    //     info!("🥾 Spinning for 1 second");
     //     libtime::time::time_manager().spin_for(Duration::from_secs(1));
     // }
 }
@@ -306,7 +306,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
     // Take an untyped for domain structures
     let domain_untyped = untyped_list
         .take_of_size(DOMAIN_STRUCT_SIZE)
-        .expect("No memory for init domain");
+        .expect("🥾 No memory for init domain");
 
     let domain = Domain::create_from_untyped(
         domain_untyped,
@@ -321,7 +321,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
     // Allocate page table memory from untyped
     let pt_untyped = untyped_list
         .take_of_size(PAGE_TABLE_SIZE)
-        .expect("No memory for init page tables");
+        .expect("🥾 No memory for init page tables");
 
     let page_tables = UserPageTables::create_from_untyped(pt_untyped);
     domain.set_page_tables(page_tables);
@@ -336,9 +336,9 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         core::slice::from_raw_parts(virt as *const u8, module.size)
     };
 
-    let elf = Elf64::parse(elf_data).expect("Invalid ELF");
+    let elf = Elf64::parse(elf_data).expect("🧝🏼‍♂️ Invalid ELF");
 
-    semi::println!("  ELF entry point: {:#x}", elf.entry_point());
+    semi::println!("🧝🏼‍♂️  ELF entry point: {:#x}", elf.entry_point());
 
     // Map each loadable segment
     for phdr in elf.program_headers() {
@@ -355,7 +355,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         let flags = elf_flags_to_page_flags(phdr.p_flags);
 
         semi::println!(
-            "  Segment: {:#x} - {:#x} ({:?})",
+            "🧝🏼‍♂️  Segment: {:#x} - {:#x} ({:?})",
             virt_start.as_u64(),
             virt_end.as_u64(),
             flags
@@ -365,7 +365,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         let pages_needed = mem_size.div_ceil(PAGE_SIZE);
         let segment_untyped = untyped_list
             .take_of_size(pages_needed * PAGE_SIZE)
-            .expect("No memory for init segment");
+            .expect("🧝🏼‍♂️ No memory for init segment");
 
         // Map pages into init's address space
         let phys_base = segment_untyped.phys_addr();
@@ -396,11 +396,11 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
     // ─────────────────────────────────────────────────────────────────────
 
     const INIT_STACK_SIZE: usize = 64 * 1024; // 64KB
-    const INIT_STACK_TOP: u64 = 0x7FFF_FFFF_0000; // should be dynamic..
+    const INIT_STACK_TOP: u64 = 0x7FFF_FFFF_0000; // TODO: should be dynamic..
 
     let stack_untyped = untyped_list
         .take_of_size(INIT_STACK_SIZE)
-        .expect("No memory for init stack");
+        .expect("🥾 No memory for init stack");
 
     domain.page_tables().map_range(
         VirtAddr::new(INIT_STACK_TOP - INIT_STACK_SIZE as u64),
@@ -410,7 +410,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
     );
 
     semi::println!(
-        "  Stack: {:#x} - {:#x}",
+        "🥾  Stack: {:#x} - {:#x}",
         INIT_STACK_TOP - INIT_STACK_SIZE as u64,
         INIT_STACK_TOP
     );
@@ -436,12 +436,12 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
 // ─────────────────────────────────────────────────────────────────────
 
 /// Setup init's capability space with well-known slots
-fn setup_init_cspace(domain: &DomainRef) {
-    let cspace = domain.cspace();
+fn setup_init_keyspace(thread: &ThreadRef) {
+    let keyspace = thread.keyspace();
 
     // Slot 0: NULL (always invalid)
     // Slot 1: Self domain cap
-    cspace.insert(CSPACE_SLOT_SELF, domain.self_cap());
+    keyspace.insert(KEYSPACE_SLOT_SELF, thread.self_cap());
 
     // Slot 2: Parent domain cap (for init, this is invalid/null)
     // Slot 3: Current TimeCap (kernel sets this on activation)
@@ -452,7 +452,7 @@ fn setup_init_cspace(domain: &DomainRef) {
 
     // Create a notification for init to receive kernel events
     let kernel_notify = NotifyCap::create();
-    cspace.insert(CSPACE_SLOT_KERNEL_NOTIFY, kernel_notify);
+    keyspace.insert(KEYSPACE_SLOT_KERNEL_NOTIFY, kernel_notify);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -478,7 +478,7 @@ fn delegate_untypeds_to_init(init_domain: &DomainRef, untyped_list: UntypedList)
     init_domain.dcb_mut().untyped_cap_count = slot - UNTYPED_SLOT_START;
 
     semi_prinln!(
-        "  Delegated {} untyped caps to slots {:#x}-{:#x}",
+        "🥾  Delegated {} untyped caps to slots {:#x}-{:#x}",
         slot - UNTYPED_SLOT_START,
         UNTYPED_SLOT_START,
         slot - 1
@@ -512,7 +512,7 @@ fn delegate_module_caps_to_init(init_domain: &DomainRef, boot_info: &BootInfo) {
         // Also store module metadata in a well-known location
         // (Init can query its DCB for module info)
 
-        semi::println!("  Module '{}' at slot {:#x}", name, slot);
+        semi::println!("🥾  Module '{}' at slot {:#x}", name, slot);
         slot += 1;
     }
 
@@ -543,7 +543,7 @@ fn mark_init_memory_reclaimable(boot_info: &BootInfo, untypeds_list: ) {
             });
 
             semi::println!(
-                "  Init code memory {:#x}-{:#x} ({init_size} bytes) reclaimed",
+                "🥾  Init code memory {:#x}-{:#x} ({init_size} bytes) reclaimed",
                 init_start,
                 init_end
             );
@@ -581,7 +581,7 @@ fn switch_to_domain(domain: DomainRef, time: TimeCap) -> ! {
     percpu::set_current_domain(domain);
 
     semi::println!(
-        "Entering init at {:#x} with SP={:#x}",
+        "🥾 Entering init at {:#x} with SP={:#x}",
         entry_point.as_u64(),
         stack_pointer.as_u64()
     );

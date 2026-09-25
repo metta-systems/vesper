@@ -24,7 +24,7 @@ use {
         bootstrap::{
             BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, BootState, PoolCapacities, bootstrap_nucleus,
         },
-        init_main_el2, print_my_sp,
+        kickstart_init_el2, print_my_sp,
     },
     libaddress::{PhysAddr, VirtAddr},
     libboot as boot,
@@ -58,7 +58,7 @@ boot::entry!(boot_main);
 /// EL2 entry: run the shared kickstart boot through the EL1 transition, then
 /// continue in [`kicktest_run`].
 fn boot_main(dtb: u32) -> ! {
-    init_main_el2(dtb, kicktest_run as *const u8 as u64)
+    kickstart_init_el2(dtb, kicktest_run as *const u8 as u64)
 }
 
 #[panic_handler]
