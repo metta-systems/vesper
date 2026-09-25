@@ -33,14 +33,14 @@ unsafe impl Allocator for BumpAllocator {
         );
         let end = start + layout.size() as u64;
 
-        println!("[i] {name}:\n    Allocating Start {start:#010x} End {end:#010x}",);
+        println!("💩 {name} Allocating Start {start:#010x} End {end:#010x}",);
 
         if end > self.pool_end as u64 {
             return Err(AllocError);
         }
         self.next.set(end.try_into().unwrap());
 
-        println!("[i] {name}:\n    Allocated Addr {start:#010x} Size {size:#x}",);
+        println!("💩 {name}   Allocated Addr {start:#010x} Size {size:#x}",);
 
         Ok(NonNull::slice_from_raw_parts(
             // SAFETY: We just pray and hope for the best.

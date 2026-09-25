@@ -20,9 +20,9 @@ where
     T: Fn(),
 {
     fn run(&self) {
-        liblog::print!("*TEST* {}...\t", core::any::type_name::<T>());
+        liblog::print!("❓ {}...\t", core::any::type_name::<T>());
         self();
-        liblog::println!("[ok]\n");
+        liblog::println!("✅\n");
     }
 }
 
