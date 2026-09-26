@@ -1,4 +1,32 @@
 {
+  "context_servers": {
+    "filesystem": {
+      "command": {
+        "path": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "/Users/berkus/Projects/Metta/vesper"
+        ]
+      }
+    },
+    "rust-analyzer": {
+      "command": {
+        "path": "rust-analyzer-mcp",
+        "args": []
+      }
+    },
+
+    "pdf": {
+      "command": {
+        "path": "npx",
+        "args": [
+          "-y",
+          "@paradyno/pdf-mcp-server"
+        ]
+      }
+    }
+  },
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
