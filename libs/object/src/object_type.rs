@@ -134,14 +134,16 @@ define_object_types! {
         Thread => THREAD = 3,
         /// CPU time capability.
         Time => TIME = 4,
-        /// Synchronous IPC endpoint.
-        Endpoint => ENDPOINT = 5,
-        /// Coalescing notification endpoint.
-        Notification => NOTIFICATION = 6,
+        /// Authority for a Thread to act as a user-space scheduler.
+        Scheduler => SCHEDULER = 5,
+        /// Target identity for future IPI and thread-handler upcalls.
+        Brand => BRAND = 6,
+        /// Protected Procedure Call capability for an exported component API.
+        Invocation => INVOCATION = 7,
+        /// Coalescing notification.
+        Notification => NOTIFICATION = 8,
         /// Monotonic event count.
-        EventCount => EVENT_COUNT = 7,
-        /// One-shot reply authority.
-        Reply => REPLY = 8,
+        EventCount => EVENT_COUNT = 9,
         /// Debug console; availability is a separate policy decision.
         DebugConsole => DEBUG_CONSOLE = 127,
     }

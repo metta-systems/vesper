@@ -11,9 +11,11 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 - Always read **both** `doc/nucleus_capabilities.md` (canonical contract) and `doc/capabilities_implementation_plan.md` (checkbox plan) first, before analysis or edits. If either is unavailable, ask the user rather than inventing its contents.
 - For lifetime, ownership, authority, delegation, revocation, or reclamation work, also read the relevant sections of `doc/lifetime-and-authority.md`. It records code-grounded alternatives, complexity estimates, explicit open decisions, and outstanding tasks; it supplements rather than supersedes the canonical contract and implementation plan.
 - Preserve user and concurrent-agent edits to these documents; coordinate overlapping changes and make focused updates rather than replacing either document wholesale.
+- `doc/followup.md` is exclusively a parking lot for **unanswered architectural/contract decisions**. Do not keep resolved directions, settled decision recaps, implementation TODOs, code-audit tasks, or optional refactoring chores there. When a decision is resolved, record it in the canonical contract (and relevant lifetime/authority analysis), then remove the resolved item from `followup.md`. Put implementation, testing, and integration work in `doc/capabilities_implementation_plan.md`.
 - Distinguish accepted contracts, proposals, open decisions, and implementation status. Existing code and unchecked plan items are not architectural approval.
-- Use canonical `CoreType` numeric IDs, not legacy `ObjectType` constants. Preserve the canonical mapping; consult the contract and `CoreType` rather than copying full type/opcode/rights tables here. Core IDs include `Null = 0` and `DebugConsole = 127`; architecture-specific types use the high bit `0x80`.
-- Treat disagreement between the contract, `CoreType`, and implementation as a discrepancy to resolve explicitly, not permission to silently renumber the ABI.
+- Use the canonical `CoreType` numeric IDs, not legacy `ObjectType` constants. Core and architecture kind IDs are not compatibility constraints: the maintainer may reassign either catalogue to group kinds by functionality/category. Architecture wire IDs retain the high-bit category marker (`0x80`), but architecture-local indices may also be reassigned.
+- Never renumber silently. For an approved regrouping, record the new core and/or architecture mapping in `doc/nucleus_capabilities.md` first, reconcile the implementation plan, then migrate the shared catalogue, dispatch, errors, literal ABI tests, and object-type documentation together. Do not preserve prior IDs, aliases, or reserved-slot assumptions as backwards compatibility unless the maintainer explicitly selects that policy.
+- Treat disagreement between the canonical contract, `CoreType`/`ArchType`, and implementation as a discrepancy to resolve explicitly. Existing numeric mappings remain authoritative only until an approved contract change replaces them; do not infer that they are immutable.
 
 ## Keep object-types documentation current
 
@@ -65,7 +67,7 @@ Respect the plan's ordering and explicit prerequisites:
 3. Active console/syscall boundary.
 4. Guarded capability storage and thread lifetime.
 5. Memory vertical slice.
-6. Deferred completion first, then notifications/event counts and endpoint + reply.
+6. Deferred completion first, then notifications/event counts and PPC Invocation.
 7. Time.
 8. Final integration and documentation audit.
 

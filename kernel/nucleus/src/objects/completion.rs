@@ -7,15 +7,14 @@
 //! blocked, its invocation is represented here as a pending-invocation
 //! record — the bounded, kernel-private state the contract requires.
 //!
-//! The record is also the closed-wait identity: a blocked `Call`'s reply
-//! phase is named by its record, never by a bare slot number or domain
-//! index. Record identities reuse the checked `ObjectId` shape (pool tag +
+//! The record is the identity for a pending blocking operation, never a bare
+//! slot number or Thread index. Record identities reuse the checked `ObjectId` shape (pool tag +
 //! slot + non-wrapping generation, the D3 kernel-allocation-identity
 //! pattern), so stale identities cannot resolve after release and reuse.
 //!
-//! The terminal-transition rule (adopted 2026-09-16): reply, timeout,
-//! cancellation, and teardown compete for exactly one terminal transition
-//! of a record; the losers observe a defined error instead of mutating it.
+//! Completion, timeout, cancellation, and teardown compete for exactly one
+//! terminal transition of a record; the losers observe a defined error instead
+//! of mutating it.
 //! This module enforces that rule as a state machine.
 
 use {
@@ -168,10 +167,9 @@ impl PendingPool {
 
     /// Terminal transition to `Completed` with success status.
     ///
-    /// Errors if the record is not `Waiting`: reply, timeout, cancellation,
-    /// and teardown compete for exactly one terminal transition (adopted
-    /// 2026-09-16); the losing attempt observes this error instead of
-    /// mutating the record.
+    /// Errors if the record is not `Waiting`: completion, timeout,
+    /// cancellation, and teardown compete for exactly one terminal
+    /// transition; a losing attempt cannot mutate the record.
     pub fn complete(&mut self, id: ObjectId, result0: u64, result1: u64) -> Result<(), CapError> {
         self.complete_with_status(id, syscall_status::SUCCESS, result0, result1)
     }

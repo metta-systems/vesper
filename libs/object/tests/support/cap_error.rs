@@ -131,7 +131,7 @@ fn literal_error_baseline_encodes_and_decodes_real_variants() {
         CapError::UnknownCoreType(126)
     );
     assert_error!(
-        (16, 7, 0),
+        (16, 9, 0),
         CapError::UnsupportedCoreType(CoreType::EventCount),
         CapError::UnsupportedCoreType(CoreType::EventCount)
     );
@@ -148,7 +148,7 @@ fn literal_error_baseline_encodes_and_decodes_real_variants() {
     );
     assert_error!((20, 0xff, 0), CapError::InvalidObjectType(ObjectType::from(0xff)), CapError::InvalidObjectType(t) if t.as_u8() == 0xff);
     assert_error!(
-        (21, 7, 0x88),
+        (21, 9, 0x88),
         CapError::TypeMismatch {
             expected: ObjectType::EVENT_COUNT,
             found: ObjectType::IRQ_CONTROL,
@@ -231,7 +231,7 @@ fn raw_type_details_preserve_every_byte_including_unknown_indices() {
                 if expected == object && found == ObjectType::ADDRESS_SPACE
         );
         assert_error!(
-            (21, 7, detail),
+            (21, 9, detail),
             CapError::TypeMismatch { expected: ObjectType::EVENT_COUNT, found: object },
             CapError::TypeMismatch { expected, found }
                 if expected == ObjectType::EVENT_COUNT && found == object
@@ -247,10 +247,11 @@ fn unsupported_types_decode_only_known_local_indices() {
         (2, CoreType::KeyTable),
         (3, CoreType::Thread),
         (4, CoreType::Time),
-        (5, CoreType::Endpoint),
-        (6, CoreType::Notification),
-        (7, CoreType::EventCount),
-        (8, CoreType::Reply),
+        (5, CoreType::Scheduler),
+        (6, CoreType::Brand),
+        (7, CoreType::Invocation),
+        (8, CoreType::Notification),
+        (9, CoreType::EventCount),
         (127, CoreType::DebugConsole),
     ];
     let arch_types = [
@@ -286,7 +287,7 @@ fn oversized_type_details_preserve_both_words() {
             assert_unknown_response((status, detail, 0));
         }
         assert_unknown_response((21, detail, 0x82));
-        assert_unknown_response((21, 7, detail));
+        assert_unknown_response((21, 9, detail));
         assert_unknown_response((21, detail, detail));
     }
 }

@@ -25,9 +25,7 @@ use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 //  │  │   ├── keytables: carved by Retype (no pool; see api::untyped)     │
 //  │  │   ├── notifications: ObjectPool<Notification>                    │
 //  │  │   ├── event_counts: ObjectPool<EventCount>                       │
-//  │  │   ├── endpoints: ObjectPool<Endpoint>                            │
-//  │  │   ├── time slices: ObjectPool<TimeSlice>                         │
-//  │  │   ├── replies: ObjectPool<Reply>                                 │
+//  │  │   ├── time slices: future budget storage                        │
 //  │  │   │                                                              │
 //  │  │   └── arch: ArchPools<A>                                         │
 //  │  │       ├── frames: inline regions (no pool)                       │
@@ -61,9 +59,7 @@ pub struct NucleusPools<A: ArchObjects> {
     /// `Untyped.Retype` (allowlisted 2026-09-18) from this bootstrap-carved
     /// pool; the capability is a checked pool identity.
     pub event_counts: ObjectPool<EventCount>,
-    // pub endpoints: ObjectPool<Endpoint>,
     // pub time_slices: ObjectPool<TimeSlice>,
-    // pub replies: ObjectPool<Reply>,
 
     // ─── Architecture-Specific Pools ───
     pub arch: ArchPools<A>,

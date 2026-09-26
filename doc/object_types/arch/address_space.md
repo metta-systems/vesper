@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x82` (arch index 2) |
 | Pool | `PoolTag::AddressSpace` (pool-backed kernel object; boot-carved) |
-| Status | Active: `Activate` (translation-context installation) and `Retire` (teardown) |
+| Status | Active: `Activate` and `Retire`; `CreateInvocation` contract selected but not implemented |
 
 ## Purpose
 
@@ -23,6 +23,7 @@ context would merge protection boundaries.
 |---|---|---|---|---|
 | `0` | Activate | no arguments (all zero) | `MAP` on the invoked AddressSpace | zeros; installs the bound translation root + ASID into the current hardware translation context (`TTBR0_EL1`) |
 | `1` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked AddressSpace | zeros; tears down the invoked AddressSpace |
+| TBD | CreateInvocation | TBD: function pointer and destination KeyTable operands | Management authority on the invoked AddressSpace and destination KeyTable | Invocation capability installed in the selected KeyTable; exact result details TBD |
 
 ### Activate
 
@@ -77,6 +78,11 @@ rule).
 - `PageTable.Map` (root), `Frame.Map`, and `ASIDPool.Assign` all target an
   AddressSpace capability with `MAP` authority — one consistent
   mapping-context permission across the mapping family.
+- `AddressSpace.CreateInvocation` creates an Invocation for a supplied function
+  pointer and installs it into a destination KeyTable. It requires management
+  authority for both capabilities; operation number, register schema, exact
+  rights, and results remain open. No interface registry or additional
+  function-pointer validation is required.
 - Retype cannot create an AddressSpace (`InvalidObjectType`): bootstrap
   grants are the initial source of AddressSpace capabilities.
 

@@ -166,19 +166,9 @@ fn core_invoke<A: ArchObjects>(
             crate::api::event_count::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
-        // CoreType::Endpoint => {
-        //     let ep = entry.as_object_mut::<Endpoint>()?;
-        //     api::endpoint::invoke(ep, entry.rights(), entry.badge(), op, args, nucleus)
-        // }
-
         // CoreType::Time => {
         //     let time = entry.as_object_mut::<TimeSlice>()?;
         //     api::time::invoke(time, entry.rights(), op, args, nucleus)
-        // }
-
-        // CoreType::Reply => {
-        //     let reply = entry.as_object_mut::<Reply>()?;
-        //     api::reply::invoke(reply, op, args, nucleus)
         // }
         _ => Err(CapError::UnsupportedCoreType(core_type)),
     }

@@ -108,20 +108,6 @@ fn create_object<A: ArchObjects>(
             Ok(KeyEntry::new_frame(paddr, size_bits, is_device, rights))
         }
 
-        // ── Pool-backed core types ──
-
-        // ObjectType::Notification => {
-        //     let obj = pools.notifications.allocate(Notification::new())
-        //         .ok_or(CapError::PoolExhausted)?;
-        //     Ok(KeyEntry::new(obj, Rights::all(), 0))
-        // }
-        // ObjectType::Endpoint => {
-        //     let obj = pools.endpoints.allocate(Endpoint::new())
-        //         .ok_or(CapError::PoolExhausted)?;
-        //     Ok(KeyEntry::new(obj, Rights::all(), 0))
-        // }
-        // ... etc for other pool-backed core types
-
         // ── Pool-backed arch types (PageTable, VSpace, ASID, etc.) ──
         _ if obj_type.is_arch() => {
             let arch_type = ArchType::try_from(obj_type)?;
@@ -152,12 +138,6 @@ fn object_size<A: ArchObjects>(obj_type: ObjectType, size_bits: u8) -> Result<us
 
         // Frame size is validated by the arch layer
         ObjectType::FRAME => A::validate_frame_size(size_bits),
-
-        // Fixed-size core types
-        // ObjectType::Notification => Ok(core::mem::size_of::<Notification>()),
-        // ObjectType::Endpoint => Ok(core::mem::size_of::<Endpoint>()),
-        // ObjectType::Domain => Ok(4096),
-        // ... etc
 
         // Arch types validated by arch layer
         _ if obj_type.is_arch() => {

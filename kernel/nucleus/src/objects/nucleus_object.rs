@@ -14,23 +14,21 @@
 // │  ─────────────────────────     ─────────────────────────────────    │
 // │                                                                     │
 // │  • Untyped                     AArch64:                             │
-// │  • Domain                        • Frame (4KB, 2MB, 1GB pages)      │
-// │  • KeyTable                      • PageTable (translation table)    │
-// │  • Notification                  • VSpace (TTBR0/TTBR1 root)        │
-// │  • EventCount                    • ASIDPool (ASID allocation)       │
-// │  • Endpoint                      • ASID (address space ID)          │
-// │  • Time                          • IOSpace (SMMU for devices)       │
-// │  • Reply                       x86_64:                              │
-// │                                  • Frame (4KB, 2MB, 1GB pages)      │
-// │                                  • PageTable (PML4/PDPT/PD/PT)      │
+// │  • KeyTable                      • Frame (4KB, 2MB, 1GB pages)      │
+// │  • Thread                        • PageTable (translation table)    │
+// │  • Time                          • AddressSpace (translation root)  │
+// │  • Scheduler                     • ASIDPool (ASID allocation)       │
+// │  • Brand                         • IOSpace (SMMU for devices)       │
+// │  • Invocation                  x86_64:                              │
+// │  • Notification                  • Frame (4KB, 2MB, 1GB pages)      │
+// │  • EventCount                    • PageTable (PML4/PDPT/PD/PT)      │
 // │                                  • VSpace (CR3 root)                │
 // │                                  • IOPort (x86 I/O ports)           │
 // │                                  • IOSpace (VT-d for devices)       │
-// │                                                                     │
-// │  RISC-V:                                                            │
-// │    • Frame (4KB, 2MB, 1GB)                                          │
-// │    • PageTable (Sv39/Sv48)                                          │
-// │    • VSpace (satp root)                                             │
+// │                                RISC-V:                              │
+// │                                  • Frame (4KB, 2MB, 1GB)            │
+// │                                  • PageTable (Sv39/Sv48)            │
+// │                                  • VSpace (satp root)               │
 // │                                                                     │
 // └─────────────────────────────────────────────────────────────────────┘
 

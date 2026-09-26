@@ -99,15 +99,12 @@ pub enum BlockReason {
     None = 0,
     Notification = 1, // Waiting on NotificationKey::wait()
     EventCount = 2,   // Waiting on EventCountKey::await_ge()
-    EndpointSend = 3, // Blocked on EndpointKey::call() send phase
-    EndpointRecv = 4, // Blocked on EndpointKey::recv()
-    Reply = 5,        // Waiting for reply after call()
     TimeDonation = 6, // Donated time, waiting for return
 }
 
 // pub enum DeactivateReason {
 //     TimeExhausted,
-//     BlockedOnEvent(EndpointCap), <-- BlockReason::Endpoint
+//     BlockedOnEvent,
 //     Yielded,
 //     Faulted(fault),
 // }
@@ -170,10 +167,6 @@ pub struct DomainControlBlock {
     pub pending_notifications: AtomicU64,
     /// Count of event counts with pending events
     pub pending_event_counts: AtomicU32,
-    /// Count of pending endpoint messages
-    pub pending_endpoints: AtomicU32,
-    // Endpoint that caused last wakeup
-    // pub last_event_ep: AtomicU32,
 
     // ─── Fault Information ───
     /// Fault type (valid when state == Faulted)
@@ -210,7 +203,7 @@ impl DomainControlBlock {
             period_ns: 0,
             pending_notifications: AtomicU64::new(0),
             pending_event_counts: AtomicU32::new(0),
-            pending_endpoints: AtomicU32::new(0),
+
             fault_type: AtomicU32::new(0),
             fault_code: AtomicU32::new(0),
             fault_addr: AtomicU64::new(0),

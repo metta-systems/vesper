@@ -149,8 +149,8 @@ flowchart TD
   userspace managers (D2 selection). The vault's kernel-side CDT conflicts with
   the selected no-kernel-derivation-tree direction.
 - Vault wiki: capabilities "sent via IPC" / "passed through messages" —
-  **gap**: capability transfer via IPC is designed (zero-or-one transfer
-  slot) but unimplemented (Endpoint/Reply excluded sketches).
+  **open**: PPC Invocation capability-transfer semantics have not been
+  selected; do not infer them from the removed message-rendezvous sketches.
 - Vault wiki: "number of slots in a KeyNode must be a power of two" and is
   user-chosen at Retype — **consistent**: the capacity is `2^size_bits` with
   `size_bits` 1–20 chosen at Retype (not yet implemented; the active table

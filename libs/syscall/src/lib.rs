@@ -17,13 +17,8 @@
 // │  │ x2 = virt_addr     x5 = flags       ← cache policy, etc.        │  │
 // │  └─────────────────────────────────────────────────────────────────┘  │
 // │                                                                       │
-// │  ENDPOINT CALL (with inline payload):                                 │
-// │  ┌─────────────────────────────────────────────────────────────────┐  │
-// │  │ x0 = endpoint_cap  x3 = msg_word_1                              │  │
-// │  │ x1 = CALL op       x4 = msg_word_2                              │  │
-// │  │ x2 = msg_word_0    x5 = msg_word_3  ← 4 words inline!           │  │
-// │  └─────────────────────────────────────────────────────────────────┘  │
-// │                                                                       │
+// │  PPC INVOCATION: capability names a component API entry point.       │
+// │  Entry/return register ABI is not yet selected.                      │
 // │  UNTYPED RETYPE (batch creation):                                     │
 // │  ┌─────────────────────────────────────────────────────────────────┐  │
 // │  │ x0 = untyped_cap   x3 = dest_captbl                             │  │

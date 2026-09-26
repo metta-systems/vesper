@@ -319,10 +319,11 @@ mod tests {
             (CoreType::KeyTable, "KeyTable"),
             (CoreType::Thread, "Thread"),
             (CoreType::Time, "Time"),
-            (CoreType::Endpoint, "Endpoint"),
+            (CoreType::Scheduler, "Scheduler"),
+            (CoreType::Brand, "Brand"),
+            (CoreType::Invocation, "Invocation"),
             (CoreType::Notification, "Notification"),
             (CoreType::EventCount, "EventCount"),
-            (CoreType::Reply, "Reply"),
             (CoreType::DebugConsole, "DebugConsole"),
         ] {
             assert_eq!(name(kind), expected);
@@ -397,16 +398,17 @@ mod tests {
     }
 
     // Literal ABI oracles: do not derive these IDs from the production catalogue.
-    const CORE_TYPES: [(CoreType, ObjectType, u8); 10] = [
+    const CORE_TYPES: [(CoreType, ObjectType, u8); 11] = [
         (CoreType::Null, ObjectType::NULL, 0),
         (CoreType::Untyped, ObjectType::UNTYPED, 1),
         (CoreType::KeyTable, ObjectType::KEY_TABLE, 2),
         (CoreType::Thread, ObjectType::THREAD, 3),
         (CoreType::Time, ObjectType::TIME, 4),
-        (CoreType::Endpoint, ObjectType::ENDPOINT, 5),
-        (CoreType::Notification, ObjectType::NOTIFICATION, 6),
-        (CoreType::EventCount, ObjectType::EVENT_COUNT, 7),
-        (CoreType::Reply, ObjectType::REPLY, 8),
+        (CoreType::Scheduler, ObjectType::SCHEDULER, 5),
+        (CoreType::Brand, ObjectType::BRAND, 6),
+        (CoreType::Invocation, ObjectType::INVOCATION, 7),
+        (CoreType::Notification, ObjectType::NOTIFICATION, 8),
+        (CoreType::EventCount, ObjectType::EVENT_COUNT, 9),
         (CoreType::DebugConsole, ObjectType::DEBUG_CONSOLE, 127),
     ];
 

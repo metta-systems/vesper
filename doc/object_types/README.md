@@ -34,13 +34,14 @@ ID never advertises implementation support.
 | KeyTable | `0x02` | [key_table.md](core/key_table.md) | CopyDerive/Move/Delete active |
 | Thread | `0x03` | [thread.md](core/thread.md) | Retire active |
 | Time | `0x04` | [time.md](core/time.md) | Excluded sketch |
-| Endpoint | `0x05` | [endpoint.md](core/endpoint.md) | Excluded sketch |
-| Notification | `0x06` | [notification.md](core/notification.md) | Signal/Wait/Poll active |
-| EventCount | `0x07` | [event_count.md](core/event_count.md) | Advance/Await/Read active |
-| Reply | `0x08` | [reply.md](core/reply.md) | Excluded sketch |
+| Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | Contract selected; not implemented |
+| Brand | `0x06` | [brand.md](core/brand.md) | Contract direction recorded; implementation deferred to IRQ |
+| Invocation | `0x07` | [invocation.md](core/invocation.md) | PPC contract selected; not implemented |
+| Notification | `0x08` | [notification.md](core/notification.md) | Signal/Wait/Poll active |
+| EventCount | `0x09` | [event_count.md](core/event_count.md) | Advance/Await/Read active |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Debug-gated Write |
 
-IDs 9–126 are reserved. There is no `Buffer` wire kind (Buffer is a
+IDs 10–126 are reserved. There is no `Buffer` wire kind (Buffer is a
 userspace/libOS construct over frame capabilities) and no `Domain` wire kind
 (the execution entity is the core `Thread`; the mapping context is the arch
 `AddressSpace`).
@@ -51,7 +52,7 @@ userspace/libOS construct over frame capabilities) and no `Domain` wire kind
 |---|---:|---|---|
 | Frame | `0x80` | [frame.md](arch/frame.md) | Map/Unmap/GetAddress active |
 | PageTable | `0x81` | [page_table.md](arch/page_table.md) | Map/Unmap active |
-| AddressSpace | `0x82` | [address_space.md](arch/address_space.md) | Activate/Retire active (boot-carved) |
+| AddressSpace | `0x82` | [address_space.md](arch/address_space.md) | Activate/Retire active; CreateInvocation selected, not implemented |
 | ASIDPool | `0x83` | [asid_pool.md](arch/asid_pool.md) | Assign active (boot-provided) |
 | ASIDControl | `0x84` | [asid_control.md](arch/asid_control.md) | Reserved |
 | IOSpace | `0x85` | [io_space.md](arch/io_space.md) | Deferred |
@@ -82,7 +83,7 @@ flowchart TD
     E --> G{"CoreType match"}
     G --> H["Untyped / Thread / KeyTable /<br/>Notification / EventCount /<br/>DebugConsole (debug_kernel)"]
     G --> I["Null → NullCapability"]
-    G --> J["Time / Endpoint / Reply →<br/>UnsupportedCoreType"]
+    G --> J["Time / Scheduler / Brand /<br/>Invocation → UnsupportedCoreType"]
     F --> K{"ArchType match"}
     K --> L["Frame / PageTable / AddressSpace /<br/>ASIDPool"]
     K --> M["ASIDControl / IO / IRQ →<br/>UnsupportedArchType"]

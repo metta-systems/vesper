@@ -92,7 +92,7 @@ stateDiagram-v2
 ## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
 
 - `IPC and PPC/IPC and PPC.md` (vault wiki section): notifications as
-  coalescing endpoints for async signaling — **consistent**: the implemented
+  coalesced signal targets — **consistent**: the implemented
   bitmap-coalescing, wait-consumes semantics match the seL4-style intent.
 - Vault: notifications are the destination for IRQ delivery ("Interrupts …
   translating them into invocations of the device drivers' handlers",
@@ -100,9 +100,8 @@ stateDiagram-v2
   (`Interrupts.md` vault note is an unchecked todo list); the Notification
   object is ready to be the target, but nothing delivers to it yet.
 - `Vesper Capabilities (from wiki).md` (vault): capabilities can be "sent via
-  IPC" — **gap**: Notification carries no capability transfer (by design,
-  data-free); capability transfer belongs to Endpoint/Reply and is
-  unimplemented.
+  IPC" — **open**: Notification remains data-free; PPC Invocation
+  capability-transfer semantics have not been selected.
 - `API/fbufs.md` (vault): `irq_notify` notification in the NetRxChannel
   pattern — **consistent as a composition pattern**: the vault's intended
   use (IRQ → notification → worker inspects ring) is exactly the

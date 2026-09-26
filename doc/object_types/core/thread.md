@@ -45,8 +45,9 @@ surviving caller. Never-returns self-retirement is contract-recorded
 follow-up. Deliberately out of scope (recorded gaps): carved backing
 (keytable, kernel stack) stays leaked per accepted-leak; the AddressSpace is
 untouched — its teardown is the separate
-[`AddressSpace.Retire`](../arch/address_space.md); the DCB is untouched
-(D5). Subsequent invocations of the retired Thread's capabilities fail pool
+[`AddressSpace.Retire`](../arch/address_space.md); scheduler-shared record
+retirement and reuse follow the D5 protocol and are not implemented yet.
+Subsequent invocations of the retired Thread's capabilities fail pool
 validation with a defined error.
 
 ## Kernel-level implementation details
@@ -62,11 +63,13 @@ validation with a defined error.
 - `Thread.Retire` maps to `Nucleus::cancel_thread_pending` + pool
   deallocation; teardown-before-reuse cancels waits and purges queued
   wakeups first.
-- The user-visible half is the DCB (`DcbPages` manager, nanosecond time
-  accounting). **DCBs are not yet connected to pool Threads** (D5); the
-  selected direction makes them thread scheduling pages explicitly shared
-  with the userspace scheduler (Composite-style), not a global export of
-  every thread's state.
+- Scheduler-visible scheduling records reside in scheduler-owned pages
+  shared to the kernel through `Scheduler.ShareRegion`; they are not a global
+  DCB view. The scheduler can write all bytes in its mapped pages. Kernel-only
+  TCB/execution state remains private. The initial field split follows the
+  existing DcbPage/TCB division, with exact fields still to be specified.
+  Record association with pool Threads, sharing, and publication are not yet
+  implemented.
 - Retype cannot create a Thread (`InvalidObjectType`): bootstrap grants are
   the initial source of Thread capabilities, which is why `RETIRE` cannot
   originate from a memory carve.
@@ -87,7 +90,8 @@ validation with a defined error.
 - Full Start/Suspend/Resume with legal state transitions, execution
   budget, and EL0 entry — Phase 7 (D7/D8).
 - Never-returns self-retirement (terminal entry-path work).
-- DCB layout/stride/sharing/publication and DcbView persistence — D5.
+- Scheduler-shared record table layout/capacity/publication/reuse and
+  `Scheduler.ShareRegion` implementation — D5.
 - Coherent current-thread identity carrying its own generation — Phase 4.
 - `Thread.Grant` relationship to KeyTable CopyDerive — D4.
 
@@ -109,6 +113,5 @@ validation with a defined error.
   context); multiple threads per address space remains future work (one
   Thread per AddressSpace today).
 - DCB observation ("protection domains … capabilities for accessing this
-  memory from the outside", vault wiki) — **gap**: DCB pages exist and a
-  manager is implemented, but they are not yet connected to pool Threads and
-  no userspace observation contract is active (D5).
+  memory from the outside", vault wiki) — **gap**: scheduler-shared records
+  and their association with pool Threads are not implemented (D5).
