@@ -296,14 +296,14 @@ impl<A: ArchObjects> Nucleus<A> {
         self.pools.threads.validate(thread)?;
 
         // Every live synchronization object stops holding the Thread's
-        // records. The scan is bounded by the pool slot count; `get_live_mut`
-        // rejects slots beyond the carved capacity.
-        for slot in 0..ObjectPool::<Notification>::MAX_SLOTS {
+        // records. The scan is bounded by each pool's carved capacity;
+        // `get_live_mut` rejects slots beyond it.
+        for slot in 0..self.pools.notifications.capacity() {
             if let Some(notification) = self.pools.notifications.get_live_mut(slot) {
                 notification.remove_waiter(thread, &self.pending);
             }
         }
-        for slot in 0..ObjectPool::<EventCount>::MAX_SLOTS {
+        for slot in 0..self.pools.event_counts.capacity() {
             if let Some(event_count) = self.pools.event_counts.get_live_mut(slot) {
                 event_count.remove_waiter(thread, &self.pending);
             }
@@ -383,10 +383,12 @@ mod tests {
     // Backing bytes for the fixture's pools: three Thread slots, two
     // Notification slots, one EventCount slot, and one page-table metadata
     // slot (structural only; these tests never touch the arch pools).
-    static mut THREAD_POOL_MEM: [u64; 16] = [0; 16];
-    static mut NOTIFICATION_POOL_MEM: [u64; 32] = [0; 32];
-    static mut EVENT_COUNT_POOL_MEM: [u64; 32] = [0; 32];
-    static mut ARCH_POOL_MEM: [u64; 16] = [0; 16];
+    // u128 elements give the 16-byte minimum carve alignment; each fixture
+    // asserts the carve fits.
+    static mut THREAD_POOL_MEM: [u128; 16] = [0; 16];
+    static mut NOTIFICATION_POOL_MEM: [u128; 16] = [0; 16];
+    static mut EVENT_COUNT_POOL_MEM: [u128; 16] = [0; 16];
+    static mut ARCH_POOL_MEM: [u128; 8] = [0; 8];
 
     /// A minimal fixture nucleus. Tests run sequentially and the fixture
     /// re-initializes the same static storage before use.
@@ -402,27 +404,29 @@ mod tests {
             let notification_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
             let event_count_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
             let arch_ptr = (&raw mut ARCH_POOL_MEM).cast::<u8>();
+            assert!(ObjectPool::<Thread>::carve_size(3) <= core::mem::size_of::<[u128; 16]>());
+            assert!(
+                ObjectPool::<Notification>::carve_size(2) <= core::mem::size_of::<[u128; 16]>()
+            );
+            assert!(ObjectPool::<EventCount>::carve_size(1) <= core::mem::size_of::<[u128; 16]>());
+            assert!(
+                ObjectPool::<AArch64PageTable>::carve_size(1) <= core::mem::size_of::<[u128; 8]>()
+            );
             nucleus_ptr.write(Nucleus {
                 current_thread: None,
                 dcb_pages: crate::objects::domain::DcbPages::new(),
                 pending: PendingPool::new(),
                 scheduler: Scheduler::new(),
                 pools: NucleusPools {
-                    threads: ObjectPool::new(thread_ptr, core::mem::size_of::<Thread>() * 3),
-                    notifications: ObjectPool::new(
-                        notification_ptr,
-                        core::mem::size_of::<Notification>() * 2,
-                    ),
-                    event_counts: ObjectPool::new(
-                        event_count_ptr,
-                        core::mem::size_of::<EventCount>(),
-                    ),
+                    threads: ObjectPool::initialize(thread_ptr, 3),
+                    notifications: ObjectPool::initialize(notification_ptr, 2),
+                    event_counts: ObjectPool::initialize(event_count_ptr, 1),
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.
                     arch: ArchPools::new(
-                        ObjectPool::new(arch_ptr, core::mem::size_of::<AArch64PageTable>()),
-                        ObjectPool::new(arch_ptr, 0),
-                        ObjectPool::new(arch_ptr, 0),
+                        ObjectPool::initialize(arch_ptr, 1),
+                        ObjectPool::initialize(arch_ptr, 0),
+                        ObjectPool::initialize(arch_ptr, 0),
                     ),
                 },
             });

@@ -1,4 +1,4 @@
-- [ ] Rename Kickstart to Ymir?
+- [-] Rename Kickstart to Ymir? - kickstarter is clearer (ymir can be internal name or leave it for libos initializer)
 - [ ] VSpace -> Container?
   - [ ] Component?
 - [x] CSpace = KeyTable

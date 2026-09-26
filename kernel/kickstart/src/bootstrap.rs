@@ -1,11 +1,12 @@
 //! Boot-time construction of the initial kernel state.
 //!
 //! This is one-time boot code, owned by Kickstart, not by the inert nucleus.
-//! It carves the initial [`Nucleus`] and its pool backings from the boot
-//! Untyped's unused watermark range, writes the `Nucleus` into carved memory,
-//! and returns its address. Kickstart then records that address in the
-//! nucleus's `NUCLEUS_ANCHOR` (resolved by symbol lookup) before the nucleus
-//! runs.
+//! It carves the initial [`Nucleus`] and its object pools from the boot
+//! Untyped's unused watermark range — each pool one variable-size carve of
+//! per-slot metadata and object storage, sized by the bootstrap capacity —
+//! writes the `Nucleus` into carved memory, and returns its address. Kickstart
+//! then records that address in the nucleus's `NUCLEUS_ANCHOR` (resolved by
+//! symbol lookup) before the nucleus runs.
 //!
 //! Carving here is one-shot boot code: a failed carve aborts the boot, so a
 //! partially advanced watermark is not recovered. Runtime Retype (which must be
@@ -13,14 +14,14 @@
 
 use {
     crate::{boot_info::BOOT_INFO, embed::NUCLEUS_SET_ANCHOR_VIRT, print_my_sp},
-    libaddress::{PhysAddr, align},
+    libaddress::PhysAddr,
     liblocking::interface::Mutex,
     libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, domain::DomainId},
     nucleus::{
         api::key_entry::{KeyEntry, RegionPayload},
         objects::{
             ArchObjects, ArchObjectsImpl, EventCount, ExecutionContext, KeyTable, Notification,
-            Nucleus, NucleusObject, ObjectPool, PendingPool, Scheduler, Thread,
+            Nucleus, ObjectPool, PendingPool, Scheduler, Thread,
             access::{ObjectId, PoolTag},
             arch::ArchPools,
             domain::DcbPages,
@@ -43,38 +44,15 @@ const CARVE_ALIGN: u64 = 4096;
 /// Advances the watermark only on success, so a failed carve leaves the
 /// Untyped unchanged. Returns the physical address of the carved region.
 fn carve_region(boot: &mut RegionPayload, size: usize) -> Result<PhysAddr, CapError> {
-    let wm = boot.watermark_bytes();
-    let aligned = align::align_up(u64::try_from(wm).unwrap(), CARVE_ALIGN);
-    let end = aligned + u64::try_from(size).unwrap();
-    if end > u64::try_from(boot.size()).unwrap() {
-        return Err(CapError::InsufficientMemory);
-    }
-    let paddr = PhysAddr::new(boot.paddr + aligned);
-    boot.set_watermark_bytes(usize::try_from(end).unwrap());
+    let reservation = boot.reserve(CARVE_ALIGN, u64::try_from(size).unwrap())?;
+    let paddr = PhysAddr::new(boot.paddr + u64::try_from(reservation.start).unwrap());
+    boot.set_watermark_bytes(reservation.end);
     Ok(paddr)
 }
 
-/// Carve a whole pool of `capacity` objects of type `T` from the boot Untyped.
-///
-/// The pool's object backing lives in the carved range; its authoritative
-/// metadata (`SlotMeta` etc.) lives in the returned [`ObjectPool`] value, which
-/// the caller places in the carved [`Nucleus`].
-pub fn carve_pool<T: NucleusObject>(
-    boot: &mut RegionPayload,
-    capacity: usize,
-) -> Result<ObjectPool<T>, CapError> {
-    if capacity > ObjectPool::<T>::MAX_SLOTS {
-        return Err(CapError::InvalidSize(capacity));
-    }
-    let size = capacity * core::mem::size_of::<T>();
-    let paddr = carve_region(boot, size)?;
-    let ptr = paddr.user_to_kernel().as_mut_ptr::<u8>();
-    // SAFETY: carve_region reserved `size` bytes from the boot Untyped's unused
-    // watermark range, and the direct map makes them kernel-dereferenceable.
-    Ok(unsafe { ObjectPool::new(ptr, size) })
-}
-
-/// Capacities for the initial pool extents carved at boot.
+/// Capacities for the initial pool extents carved at boot. Each pool is one
+/// variable-size carve from the boot Untyped — the per-slot metadata and the
+/// object storage together, sized solely by the capacity given here.
 pub struct PoolCapacities {
     /// Number of Thread slots in the initial Thread pool.
     pub threads: usize,
@@ -127,34 +105,21 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     boot: &mut RegionPayload,
     capacities: &PoolCapacities,
 ) -> Result<(*mut Nucleus<A>, u64), CapError> {
-    if capacities.threads > ObjectPool::<Thread>::MAX_SLOTS {
+    // The scheduler queue is a fixed kernel structure: the thread pool must
+    // fit within it, or a wake could be dropped for lack of queue.
+    if capacities.threads > Scheduler::CAPACITY {
         return Err(CapError::InvalidSize(capacities.threads));
-    }
-    if capacities.address_spaces > ObjectPool::<A::AddressSpace>::MAX_SLOTS {
-        return Err(CapError::InvalidSize(capacities.address_spaces));
-    }
-    if capacities.notifications > ObjectPool::<Notification>::MAX_SLOTS {
-        return Err(CapError::InvalidSize(capacities.notifications));
-    }
-    if capacities.event_counts > ObjectPool::<EventCount>::MAX_SLOTS {
-        return Err(CapError::InvalidSize(capacities.event_counts));
-    }
-    if capacities.page_tables > ObjectPool::<A::PageTable>::MAX_SLOTS {
-        return Err(CapError::InvalidSize(capacities.page_tables));
-    }
-    if capacities.asid_pools > ObjectPool::<A::ASIDPool>::MAX_SLOTS {
-        return Err(CapError::InvalidSize(capacities.asid_pools));
     }
 
     let nucleus_paddr = carve_region(boot, core::mem::size_of::<Nucleus<A>>())?;
     let nucleus_ptr = nucleus_paddr.user_to_kernel().as_mut_ptr::<Nucleus<A>>();
 
-    let threads = carve_pool::<Thread>(boot, capacities.threads)?;
-    let address_spaces = carve_pool::<A::AddressSpace>(boot, capacities.address_spaces)?;
-    let notifications = carve_pool::<Notification>(boot, capacities.notifications)?;
-    let event_counts = carve_pool::<EventCount>(boot, capacities.event_counts)?;
-    let page_tables = carve_pool::<A::PageTable>(boot, capacities.page_tables)?;
-    let asid_pools = carve_pool::<A::ASIDPool>(boot, capacities.asid_pools)?;
+    let threads = ObjectPool::<Thread>::carve(boot, capacities.threads)?;
+    let address_spaces = ObjectPool::<A::AddressSpace>::carve(boot, capacities.address_spaces)?;
+    let notifications = ObjectPool::<Notification>::carve(boot, capacities.notifications)?;
+    let event_counts = ObjectPool::<EventCount>::carve(boot, capacities.event_counts)?;
+    let page_tables = ObjectPool::<A::PageTable>::carve(boot, capacities.page_tables)?;
+    let asid_pools = ObjectPool::<A::ASIDPool>::carve(boot, capacities.asid_pools)?;
 
     // Carve the boot Thread's KeyTable region and initialize it kernel-privately
     // (the same unused-watermark allocation Retype performs at runtime). The

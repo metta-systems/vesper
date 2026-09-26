@@ -74,24 +74,25 @@ fn carve_table() -> u64 {
     TEST_BACKING
 }
 
-/// Backing bytes for the fixture nucleus's pools. The Thread pool is built
-/// with zero capacity (never dereferenced); the page-table metadata pool
-/// holds exactly one slot so its exhaustion and rollback behavior is
-/// observable without any carve write (these MMU-off tests only exercise
-/// rejection paths).
-static mut POOL_MEM: [u64; 16] = [0; 16];
+/// Backing bytes for the fixture nucleus's pools (u128 elements give the
+/// 16-byte minimum carve alignment). The Thread pool is built with zero
+/// capacity (never dereferenced); the page-table metadata pool holds
+/// exactly one slot so its exhaustion and rollback behavior is observable
+/// without any carve write (these MMU-off tests only exercise rejection
+/// paths).
+static mut POOL_MEM: [u128; 8] = [0; 8];
 
 /// Backing for the fixture's Notification pool: exactly two slots, so the
 /// Retype pool-exhaustion rollback is observable. A Notification carve
 /// writes no Untyped bytes (the object lives in this kernel pool), so the
 /// successful Notification Retype is also exercisable MMU-off.
-static mut NOTIFICATION_POOL_MEM: [u64; 32] = [0; 32];
+static mut NOTIFICATION_POOL_MEM: [u128; 16] = [0; 16];
 
 /// Backing for the fixture's EventCount pool: exactly two slots, so the
 /// Retype pool-exhaustion rollback is observable. An EventCount carve
 /// writes no Untyped bytes (the object lives in this kernel pool), so the
 /// successful EventCount Retype is also exercisable MMU-off.
-static mut EVENT_COUNT_POOL_MEM: [u64; 64] = [0; 64];
+static mut EVENT_COUNT_POOL_MEM: [u128; 32] = [0; 32];
 
 /// A minimal fixture nucleus. Tests run sequentially and each fixture
 /// re-initializes the same static storage before use.
@@ -105,27 +106,30 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
         let pool_ptr = (&raw mut POOL_MEM).cast::<u8>();
         let notification_pool_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
         let event_count_pool_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
+        assert!(ObjectPool::<AArch64PageTable>::carve_size(1) <= core::mem::size_of::<[u128; 8]>());
+        assert!(
+            ObjectPool::<crate::objects::Notification>::carve_size(2)
+                <= core::mem::size_of::<[u128; 16]>()
+        );
+        assert!(
+            ObjectPool::<crate::objects::EventCount>::carve_size(2)
+                <= core::mem::size_of::<[u128; 32]>()
+        );
         nucleus_ptr.write(Nucleus {
             current_thread: None,
             dcb_pages: DcbPages::new(),
             pending: crate::objects::PendingPool::new(),
             scheduler: crate::objects::Scheduler::new(),
             pools: NucleusPools {
-                threads: ObjectPool::new(pool_ptr, 0),
-                notifications: ObjectPool::new(
-                    notification_pool_ptr,
-                    core::mem::size_of::<crate::objects::Notification>() * 2,
-                ),
-                event_counts: ObjectPool::new(
-                    event_count_pool_ptr,
-                    core::mem::size_of::<crate::objects::EventCount>() * 2,
-                ),
+                threads: ObjectPool::initialize(pool_ptr, 0),
+                notifications: ObjectPool::initialize(notification_pool_ptr, 2),
+                event_counts: ObjectPool::initialize(event_count_pool_ptr, 2),
                 arch: ArchPools::new(
-                    ObjectPool::new(pool_ptr, core::mem::size_of::<AArch64PageTable>()),
+                    ObjectPool::initialize(pool_ptr, 1),
                     // Zero capacity: these MMU-off rejection-path tests never
                     // invoke AddressSpace or ASIDPool operations.
-                    ObjectPool::new(pool_ptr, 0),
-                    ObjectPool::new(pool_ptr, 0),
+                    ObjectPool::initialize(pool_ptr, 0),
+                    ObjectPool::initialize(pool_ptr, 0),
                 ),
             },
         });

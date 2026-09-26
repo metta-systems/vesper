@@ -51,7 +51,7 @@ use {
             key_table::CallerTable,
         },
     },
-    libaddress::{PhysAddr, align},
+    libaddress::PhysAddr,
     libobject::{ArchType, CapError, KeySlot, ObjectType, RawKey, Rights, UntypedOp},
     libqemu::semihosting as semi,
 };
@@ -264,26 +264,12 @@ fn retype<A: ArchObjects>(
 
     // Phase 2 — reserve: validate the region extent, align the absolute
     // carve address, and check the whole run fits the Untyped's unused and
-    // watermark-representable range. The candidate bytes have no outstanding
-    // access: carved regions are kernel-private and never exposed to
-    // userspace.
+    // watermark-representable range, through the shared
+    // `RegionPayload::reserve` primitive (the same internal allocation
+    // `ObjectPool::carve` and the bootstrap carves perform). The candidate
+    // bytes have no outstanding access: carved regions are kernel-private
+    // and never exposed to userspace.
     //
-    // The extent must be representable before any shift or addition:
-    // `size_bits` below the address width and `paddr + size` within `u64`.
-    // Malformed extents are rejected with the region's own size instead of
-    // panicking in the size shift.
-    let region_bits = untyped.size_bits;
-    let region_size = 1_u64
-        .checked_shl(u32::from(region_bits))
-        .ok_or(CapError::InvalidSize(usize::from(region_bits)))?;
-    untyped
-        .paddr
-        .checked_add(region_size)
-        .ok_or(CapError::InvalidSize(usize::from(region_bits)))?;
-    // The watermark state field stores `offset >> MIN_ALIGN_BITS` in a `u32`,
-    // so the usable range ends at `u32::MAX << MIN_ALIGN_BITS` (that is,
-    // `u32::MAX × MIN_ALIGN`) even in larger regions.
-    let usable_end = region_size.min(u64::from(u32::MAX) * u64::try_from(MIN_ALIGN).unwrap());
     // A frame, a page table, and a split-off Untyped are each their own
     // alignment; a KeyTable's carve size and alignment derive from its
     // capacity exponent (at least the watermark encoding granularity); a
@@ -301,30 +287,10 @@ fn retype<A: ArchObjects>(
         // no-op and the commit below re-advances it to the same value.
         Carve::Notification | Carve::EventCount => (0, 1),
     };
-    // The absolute carve address (`paddr + watermark`) must be aligned, not
-    // just the watermark: a region whose base is not aligned still yields
-    // aligned objects. The base's misalignment is folded into the watermark
-    // computation, so both the carve base and the committed end stay
-    // `MIN_ALIGN`-granular and the encoding can never discard
-    // sub-granularity bytes (which would let the next carve overlap this
-    // allocation). The end's padding bytes are consumed, not lost.
-    let base_misalign = untyped.paddr & (align - 1);
-    let aligned_wm = align::align_up(
-        base_misalign + u64::try_from(untyped.watermark_bytes()).unwrap(),
-        align,
-    ) - base_misalign;
     let total = obj_size
         .checked_mul(u64::from(count))
         .ok_or(CapError::InvalidSize(0))?;
-    let end = align::align_up(
-        aligned_wm
-            .checked_add(total)
-            .ok_or(CapError::InvalidSize(0))?,
-        align,
-    );
-    if end > usable_end {
-        return Err(CapError::InsufficientMemory);
-    }
+    let reservation = untyped.reserve(align, total)?;
 
     // Phase 3 — resolve the destination table and pre-validate the run of
     // destination slots (in range, vacant, incarnation not exhausted) so the
@@ -349,7 +315,7 @@ fn retype<A: ArchObjects>(
     let mut pt_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
         [const { None }; MAX_RETYPE_BATCH_LEN];
     if matches!(carve, Carve::PageTable { .. }) {
-        let base = untyped.paddr + aligned_wm;
+        let base = untyped.paddr + u64::try_from(reservation.start).unwrap();
         for i in 0..u64::from(count) {
             let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
             match nucleus
@@ -405,7 +371,7 @@ fn retype<A: ArchObjects>(
     // and install its capability. The region is not yet committed (watermark
     // unchanged); stale writes are overwritten by the next carve if the
     // transaction aborts.
-    let base = untyped.paddr + aligned_wm;
+    let base = untyped.paddr + u64::try_from(reservation.start).unwrap();
     let mut installed: [RawKey; MAX_RETYPE_BATCH_LEN] =
         [RawKey::new(KeySlot(0), 0); MAX_RETYPE_BATCH_LEN];
     let mut installed_count = 0_usize;
@@ -509,7 +475,7 @@ fn retype<A: ArchObjects>(
 
     // Phase 6 — commit: advance the watermark last. The destination table may
     // be the caller's own table; re-resolve it only when they differ.
-    let new_watermark = usize::try_from(end).unwrap();
+    let new_watermark = reservation.end;
     if dst_cap.address == caller.addr {
         dst_table.advance_untyped_watermark(untyped_key, caller.guard, new_watermark)?;
     } else {

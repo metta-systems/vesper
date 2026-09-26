@@ -21,9 +21,12 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    /// Bounded by the thread-pool slot count: every live thread could be
-    /// runnable at once, and a wake must never be dropped for lack of queue.
-    pub const CAPACITY: usize = crate::objects::ObjectPool::<crate::objects::Thread>::MAX_SLOTS;
+    /// Kernel-internal queue bound. Must be at least the thread-pool
+    /// capacity provisioned at bootstrap (validated there): every live
+    /// thread could be runnable at once, and a wake must never be dropped
+    /// for lack of queue. Raising the thread pool beyond this bound first
+    /// requires growing the queue's storage.
+    pub const CAPACITY: usize = 256;
 
     pub const fn new() -> Self {
         Self {

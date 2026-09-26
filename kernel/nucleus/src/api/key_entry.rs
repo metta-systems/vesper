@@ -55,6 +55,7 @@ use {
         NucleusObject,
         access::{ObjectId, PoolTag},
     },
+    libaddress::align,
     libobject::{CapError, ObjectType, Rights},
 };
 
@@ -539,6 +540,64 @@ impl RegionPayload {
     pub fn free_bytes(&self) -> usize {
         self.size() - self.watermark_bytes()
     }
+
+    /// Validate and reserve `total` bytes aligned to `align` from this
+    /// region's unused watermark range — the single internal allocation
+    /// primitive shared by `Untyped.Retype`, kernel-private bootstrap
+    /// carves, and `ObjectPool::carve`. Pure calculation: the caller
+    /// commits by advancing the watermark to `end` (or installing it on the
+    /// capability entry), so a rejection leaves the region unchanged.
+    ///
+    /// The absolute carve address (`paddr + start`) is aligned, not just
+    /// the watermark: a misaligned region base is folded into the
+    /// computation, so both the carve base and the committed end stay
+    /// watermark-encodable and the encoding can never discard
+    /// sub-granularity bytes (which would let the next carve overlap this
+    /// allocation). The end's padding bytes are consumed, not lost.
+    pub fn reserve(&self, align: u64, total: u64) -> Result<CarveReservation, CapError> {
+        debug_assert!(align.is_power_of_two());
+        // The extent must be representable before any shift or addition:
+        // `size_bits` below the address width and `paddr + size` within
+        // `u64`. Malformed extents are rejected with the region's own size
+        // instead of panicking in the size shift.
+        let region_size = 1_u64
+            .checked_shl(u32::from(self.size_bits))
+            .ok_or(CapError::InvalidSize(usize::from(self.size_bits)))?;
+        self.paddr
+            .checked_add(region_size)
+            .ok_or(CapError::InvalidSize(usize::from(self.size_bits)))?;
+        // The watermark state field stores `offset >> MIN_ALIGN_BITS` in a
+        // `u32`, so the usable range ends at `u32::MAX << MIN_ALIGN_BITS`
+        // (that is, `u32::MAX × MIN_ALIGN`) even in larger regions.
+        let usable_end = region_size.min(u64::from(u32::MAX) * u64::try_from(MIN_ALIGN).unwrap());
+        let base_misalign = self.paddr & (align - 1);
+        let start = align::align_up(
+            base_misalign + u64::try_from(self.watermark_bytes()).unwrap(),
+            align,
+        ) - base_misalign;
+        let end = align::align_up(
+            start.checked_add(total).ok_or(CapError::InvalidSize(0))?,
+            align,
+        );
+        if end > usable_end {
+            return Err(CapError::InsufficientMemory);
+        }
+        Ok(CarveReservation {
+            start: usize::try_from(start).unwrap(),
+            end: usize::try_from(end).unwrap(),
+        })
+    }
+}
+
+/// A validated, uncommitted carve from an Untyped's unused watermark range;
+/// the result of [`RegionPayload::reserve`].
+#[derive(Clone, Copy, Debug)]
+pub struct CarveReservation {
+    /// Byte offset of the aligned carve start within the region.
+    pub start: usize,
+    /// Byte offset of the committed end (the new watermark) within the
+    /// region.
+    pub end: usize,
 }
 
 // ═══════════════════════════════════════════════════════════════════

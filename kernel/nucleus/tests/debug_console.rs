@@ -96,25 +96,23 @@ fn carve(index: usize) -> u64 {
 }
 
 fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, ObjectId)) {
-    let mut thread_backing = MaybeUninit::<[Thread; 2]>::uninit();
+    // 16-byte-aligned carve backings (the minimum pool carve alignment), each
+    // large enough for its pool's carve (asserted below).
+    let mut thread_backing = MaybeUninit::<[u128; 16]>::uninit();
     type Pt = objects::arch::AArch64PageTable;
-    let mut pt_backing = MaybeUninit::<[Pt; 2]>::uninit();
+    let mut pt_backing = MaybeUninit::<[u128; 16]>::uninit();
     type As = objects::arch::AArch64AddressSpace;
-    let mut as_backing = MaybeUninit::<[As; 2]>::uninit();
-    // SAFETY: The backings are aligned for their arrays and remain exclusively
-    // owned here until after the nucleus and its pools are dropped. The
-    // callback cannot return a borrowed nucleus/object reference. Only the
-    // pools access the backing while they are live.
-    let threads = unsafe {
-        ObjectPool::new(
-            thread_backing.as_mut_ptr().cast::<u8>(),
-            size_of::<[Thread; 2]>(),
-        )
-    };
-    let page_tables =
-        unsafe { ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), size_of::<[Pt; 2]>()) };
-    let address_spaces =
-        unsafe { ObjectPool::new(as_backing.as_mut_ptr().cast::<u8>(), size_of::<[As; 2]>()) };
+    let mut as_backing = MaybeUninit::<[u128; 16]>::uninit();
+    assert!(ObjectPool::<Thread>::carve_size(2) <= size_of::<[u128; 16]>());
+    assert!(ObjectPool::<Pt>::carve_size(2) <= size_of::<[u128; 16]>());
+    assert!(ObjectPool::<As>::carve_size(2) <= size_of::<[u128; 16]>());
+    // SAFETY: The backings are carve-aligned and remain exclusively owned
+    // here until after the nucleus and its pools are dropped. The callback
+    // cannot return a borrowed nucleus/object reference. Only the pools
+    // access the backing while they are live.
+    let threads = unsafe { ObjectPool::initialize(thread_backing.as_mut_ptr().cast::<u8>(), 2) };
+    let page_tables = unsafe { ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 2) };
+    let address_spaces = unsafe { ObjectPool::initialize(as_backing.as_mut_ptr().cast::<u8>(), 2) };
     // Carve two KeyTable regions from the fixed test backing (mirrors the boot
     // carve / runtime Retype: the table's storage is the carved region).
     let table_addr = carve(0);
@@ -122,12 +120,17 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, Objec
     let mut nucleus = Nucleus {
         pools: NucleusPools {
             threads,
-            // SAFETY: zero-capacity backing: this test never allocates or
-            // invokes Notification objects.
-            notifications: unsafe { ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), 0) },
-            // SAFETY: zero-capacity backing: this test never allocates or
+            // SAFETY: zero-capacity pool: this test never allocates or
+            // invokes Notification objects, so the carve pointers are never
+            // dereferenced.
+            notifications: unsafe {
+                ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 0)
+            },
+            // SAFETY: zero-capacity pool: this test never allocates or
             // invokes EventCount objects.
-            event_counts: unsafe { ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), 0) },
+            event_counts: unsafe {
+                ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 0)
+            },
             // SAFETY: the page-table, address-space, and ASID-pool backings are
             // exclusively owned by this fixture; this test does not invoke
             // arch objects (the ASID pool has zero capacity for the same
@@ -136,7 +139,7 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, Objec
                 ArchPools::new(
                     page_tables,
                     address_spaces,
-                    ObjectPool::new(pt_backing.as_mut_ptr().cast::<u8>(), 0),
+                    ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 0),
                 )
             },
         },
