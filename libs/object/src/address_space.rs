@@ -1,9 +1,9 @@
-use crate::{CapError, Key, RawKey, decode_syscall_result};
+use crate::{CapError, Key, KeySlot, KeyTableKey, RawKey, decode_syscall_result};
 
 #[cfg(not(test))]
-use libsyscall::protected_call0;
+use libsyscall::{protected_call0, protected_call3};
 #[cfg(test)]
-use tests::protected_call0;
+use tests::{protected_call0, protected_call3};
 
 #[cfg(test)]
 #[path = "../tests/support/address_space.rs"]
@@ -19,7 +19,7 @@ pub enum AddressSpaceOp {
     /// Tear the address space down: release the bound ASID, clear the
     /// root/ASID fields, reclaim the pool slot.
     Retire = 1,
-    /// Construct an Invocation for an entry point in this AddressSpace.
+    /// Construct an `Invocation` for an entry point in this `AddressSpace`.
     CreateInvocation = 3,
 }
 
@@ -39,9 +39,9 @@ impl TryFrom<u64> for AddressSpaceOp {
 /// `AddressSpace` capability — handle to a protection/mapping context
 /// (Vesper's equivalent of seL4's `VSpace`).
 ///
-/// `Activate` is dispatched: it installs the bound translation root as
-/// the hardware translation context. `Retire` is dispatched: it
-/// tears a non-current `AddressSpace` down under `RETIRE` authority.
+/// `Activate` and `Retire` are dispatched. `CreateInvocation` installs an
+/// `Invocation` capability into a destination `KeyTable`; PPC invocation itself
+/// remains unsupported.
 pub struct AddressSpaceKey {
     key: Key<AddressSpaceType>,
 }
@@ -58,6 +58,36 @@ impl AddressSpaceKey {
     /// The wire encoding of the underlying key.
     pub const fn to_wire(&self) -> u64 {
         self.key.to_wire()
+    }
+
+    /// Construct an `Invocation` capability for `function_address` in this
+    /// `AddressSpace` and install it into `destination` at `destination_slot`.
+    ///
+    /// Wire schema: `x2` function address, `x3` destination `KeyTable`
+    /// capability, `x4` vacant destination slot, `x5..x7` zero. Requires
+    /// `GRANT` on this `AddressSpace` and `INSTALL` on the destination
+    /// `KeyTable`. The installed `Invocation` capability has `CALL` authority only. The
+    /// address is stored as supplied; construction does not check mapping or
+    /// executable permission. Returns the destination-table-local key.
+    pub fn create_invocation(
+        &self,
+        function_address: u64,
+        destination: &KeyTableKey,
+        destination_slot: KeySlot,
+    ) -> Result<RawKey, CapError> {
+        // SAFETY: protected_call3 encapsulates the SVC ABI; these are raw
+        // register operands from the selected CreateInvocation wire schema.
+        let response = unsafe {
+            protected_call3(
+                self.key.to_wire(),
+                AddressSpaceOp::CreateInvocation as u64,
+                function_address,
+                destination.to_wire(),
+                u64::from(destination_slot.0),
+            )
+        };
+        let (key, _) = decode_syscall_result(response)?;
+        Ok(RawKey::from_wire(key))
     }
 
     /// Activate this address space: install its bound translation root as

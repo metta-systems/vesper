@@ -42,6 +42,10 @@
 // │                                              │
 // │  VARIANT E: Null                             │
 // │    (all zeros)                               │
+// │                                              │
+// │  VARIANT F: Invocation                       │
+// │    function_address: u64                     │
+// │    AddressSpace pool/index/generation        │
 // └──────────────────────────────────────────────┘
 // Total: 28 bytes used, 32-byte aligned slot
 //
@@ -132,8 +136,25 @@ pub struct FrameMapping {
     pub vaddr: u64,
 }
 
+/// Payload for an `Invocation` capability: the entry address and the checked
+/// identity of its target `AddressSpace`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct InvocationPayload {
+    /// Function address as supplied to `AddressSpace.CreateInvocation`.
+    pub function_address: u64,
+    /// Pool tag for the target `AddressSpace`.
+    pub address_space_pool: u8,
+    pub _pad: u8,
+    /// Target `AddressSpace` pool index.
+    pub address_space_index: u16,
+    /// Target `AddressSpace` allocation generation.
+    pub address_space_generation: u32,
+    pub _pad2: u64,
+}
+
 /// Payload for a `KeyTable` capability: a reference to the carved `KeyTable`
-/// kernel object (seL4-style object pointer). Retype-created objects are
+/// kernel object (Retype-created). Retype-created objects are
 /// addressed directly; the carved region is never freed under the accepted-leak
 /// model, so the address never goes stale. The kind lives in the entry header;
 /// this payload is interpreted per actual object type, not as a storage
@@ -160,6 +181,7 @@ union KeyPayload {
     region: RegionPayload,
     frame: FramePayload,
     keytable: KeyTablePayload,
+    invocation: InvocationPayload,
     null: [u8; 24],
 }
 
@@ -182,6 +204,7 @@ const _: () = assert!(core::mem::size_of::<KeyPayload>() == 24);
 const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<FramePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
+const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 24);
 
 /// Minimum alignment bits for watermark shift (16-byte alignment).
 const MIN_ALIGN_BITS: u32 = 4;
@@ -311,6 +334,27 @@ impl KeyEntry {
         self.obj_type == ObjectType::UNTYPED || self.obj_type == ObjectType::FRAME
     }
 
+    /// Create an `Invocation` capability targeting an entry point in an
+    /// `AddressSpace`. The capability starts with `CALL` authority and no badge.
+    pub fn new_invocation(address_space: ObjectId, function_address: u64) -> Self {
+        debug_assert_eq!(address_space.pool, PoolTag::AddressSpace);
+        Self {
+            obj_type: ObjectType::INVOCATION,
+            rights: Rights(Rights::CALL),
+            badge: 0,
+            payload: KeyPayload {
+                invocation: InvocationPayload {
+                    function_address,
+                    address_space_pool: address_space.pool as u8,
+                    _pad: 0,
+                    address_space_index: address_space.index,
+                    address_space_generation: address_space.generation,
+                    _pad2: 0,
+                },
+            },
+        }
+    }
+
     /// Check if this is a Retype-created (carved) object kind.
     ///
     /// Carved objects are addressed directly through a per-type payload rather
@@ -365,7 +409,11 @@ impl KeyEntry {
     /// kinds — use `as_region()` / `keytable_address()` instead.
     #[inline]
     pub fn object_id(&self) -> Result<ObjectId, CapError> {
-        if self.is_region() || self.is_carved() || self.obj_type == ObjectType::NULL {
+        if self.is_region()
+            || self.is_carved()
+            || self.obj_type == ObjectType::INVOCATION
+            || self.obj_type == ObjectType::NULL
+        {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::UNTYPED, // any region type; see as_region
                 found: self.obj_type,
@@ -462,6 +510,26 @@ impl KeyEntry {
         }
         // SAFETY: We checked the object is valid and is of the right type.
         Ok(unsafe { &mut self.payload.region })
+    }
+
+    /// The `AddressSpace` identity and function address of an `Invocation`.
+    pub fn invocation_target(&self) -> Result<(ObjectId, u64), CapError> {
+        if self.obj_type != ObjectType::INVOCATION {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::INVOCATION,
+                found: self.obj_type,
+            });
+        }
+        // SAFETY: the Invocation type check selects the invocation payload.
+        let payload = unsafe { self.payload.invocation };
+        Ok((
+            ObjectId {
+                pool: PoolTag::from_raw(payload.address_space_pool),
+                index: payload.address_space_index,
+                generation: payload.address_space_generation,
+            },
+            payload.function_address,
+        ))
     }
 
     /// Access the inline Frame payload, but only if this is a Frame.

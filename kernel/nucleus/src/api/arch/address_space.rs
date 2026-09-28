@@ -1,5 +1,4 @@
-//! `AddressSpace.Activate`/`Retire`: hardware translation-context
-//! installation and address-space teardown.
+//! `AddressSpace.Activate`/`Retire` and Invocation-capability construction.
 //!
 //! Wire schemas (see `doc/nucleus_capabilities.md`):
 //! - `Activate` `0`: no arguments (`x2..x7` zero). Installs the invoked
@@ -10,6 +9,12 @@
 //!   `AddressSpace`: whole-ASID TLB invalidation, ASID release to the
 //!   originating pool, root/ASID fields cleared, pool slot reclaimed.
 //!   Success returns zeros.
+//! - `CreateInvocation` `3`: `x2` function address, `x3` destination `KeyTable`
+//!   capability, `x4` vacant destination slot, `x5..x7` zero. Requires `GRANT`
+//!   on this `AddressSpace` and `INSTALL` on the destination `KeyTable`. Installs
+//!   an Invocation capability with only `CALL` authority; returns its
+//!   destination-local key in `x1` and zero in `x2`. The function address is
+//!   stored as supplied without mapping/executable validation.
 //!
 //! Authority: `Activate` requires `MAP` on the invoked `AddressSpace`
 //! capability (authority over the mapping context, consistent with root
@@ -28,13 +33,16 @@
 //! transitions, and EL0 entry — remains Phase 7 work (D8).
 
 use {
-    crate::objects::{
-        ArchObjects, KeyTable, Nucleus,
-        access::Access,
-        arch_objects::{AddressSpaceObject, AsidPoolObject},
-        key_table::CallerTable,
+    crate::{
+        api::{KeyEntry, key_table::resolve_table_cap},
+        objects::{
+            ArchObjects, KeyTable, Nucleus,
+            access::Access,
+            arch_objects::{AddressSpaceObject, AsidPoolObject},
+            key_table::CallerTable,
+        },
     },
-    libobject::{CapError, ObjectType, RawKey, Rights},
+    libobject::{CapError, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
 };
 
@@ -53,6 +61,7 @@ pub fn invoke<A: ArchObjects>(
     match op {
         0 => activate::<A>(access, caller, as_key, args, nucleus),
         1 => retire::<A>(access, caller, as_key, args, nucleus),
+        3 => create_invocation::<A>(access, caller, as_key, args, nucleus),
         _ => Err(CapError::InvalidOperation),
     }
 }
@@ -79,6 +88,72 @@ fn resolve(
         return Err(CapError::InsufficientRights);
     }
     entry.object_id().map_err(|e| e.with_key_operand(0))
+}
+
+/// `CreateInvocation` `3`: install an Invocation capability into a destination
+/// `KeyTable`. All validation completes before the table insertion commit.
+fn create_invocation<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    as_key: RawKey,
+    args: &[u64; 6],
+    nucleus: &Nucleus<A>,
+) -> Result<(u64, u64), CapError> {
+    if args[3..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let function_address = args[0];
+    let destination_key = RawKey::from_wire(args[1]);
+    let destination_slot =
+        KeySlot(
+            u32::try_from(args[2]).map_err(|_truncated| CapError::InvalidKey {
+                key: destination_key,
+                reason: InvalidKeyReason::SlotOutOfRange,
+                operand: 4,
+            })?,
+        );
+
+    let (address_space_id, destination) = {
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let address_space_entry = caller_table
+            .lookup(as_key, caller.guard)
+            .map_err(|error| error.with_key_operand(0))?;
+        if address_space_entry.object_type() != ObjectType::ADDRESS_SPACE {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::ADDRESS_SPACE,
+                found: address_space_entry.object_type(),
+            });
+        }
+        if !address_space_entry.rights().has(Rights::GRANT) {
+            return Err(CapError::InsufficientRights);
+        }
+        let address_space_id = address_space_entry
+            .object_id()
+            .map_err(|error| error.with_key_operand(0))?;
+        let destination = resolve_table_cap(&caller_table, destination_key, caller.guard, 3)?;
+        (address_space_id, destination)
+    };
+
+    if !destination.rights.has(Rights::INSTALL) {
+        return Err(CapError::InsufficientRights);
+    }
+
+    // The target identity must still name a live AddressSpace. The entry point
+    // itself is intentionally stored without mapping or executable validation.
+    {
+        let _target = access
+            .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, address_space_id)?;
+    }
+
+    let invocation = KeyEntry::new_invocation(address_space_id, function_address);
+    let mut destination_table = access.resolve_carved_mut::<KeyTable>(destination.address)?;
+    destination_table
+        .insert(destination_slot, invocation, destination.guard)
+        .map(|key| {
+            semi::println!("✅ AddressSpace::CreateInvocation()");
+            (key.to_wire(), 0)
+        })
+        .map_err(|failure| failure.error.with_key_operand(4))
 }
 
 /// `Activate` `0`: install this `AddressSpace`'s bound translation root and

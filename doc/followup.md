@@ -28,9 +28,6 @@ Unanswered questions before implementing the scheduler record ABI:
 
 Outstanding Invocation decisions:
 
-- What operation ID, register operands/results, and precise rights checks does
-  `AddressSpace.CreateInvocation` use to combine target AddressSpace authority,
-  destination KeyTable authority, and the supplied function pointer?
 - What are the badge, derivation, and per-kind rights rules?
 - How are the caller's execution context and stack established during
   migration, including nested or concurrent invocations and bounded resource

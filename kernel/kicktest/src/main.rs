@@ -813,6 +813,142 @@ pub fn kicktest_run() -> ! {
             Err(CapError::AlreadyMapped)
         ));
 
+        // AddressSpace.CreateInvocation installs a CALL-only capability into
+        // the selected KeyTable without validating the supplied entry address.
+        let invocation_key = boot_as
+            .create_invocation(0x1234, &self_table, KeySlot(62))
+            .unwrap_or_else(|error| {
+                panic!("AddressSpace.CreateInvocation failed: {:?}", error.code())
+            });
+        assert_eq!(invocation_key.slot(), boot_slot(62));
+        assert_ne!(invocation_key.incarnation(), 0);
+        {
+            // SAFETY: keytable_addr names the live carved boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let Ok(invocation) = boot_table.lookup(invocation_key, BOOT_TABLE_GUARD) else {
+                panic!("CreateInvocation did not install its destination cap");
+            };
+            assert_eq!(invocation.object_type(), ObjectType::INVOCATION);
+            assert_eq!(invocation.rights(), Rights(Rights::CALL));
+            let Ok((target, function_address)) = invocation.invocation_target() else {
+                panic!("installed entry is not an Invocation");
+            };
+            assert_eq!(target, boot_as_id);
+            assert_eq!(function_address, 0x1234);
+        }
+
+        // Export into a separate KeyTable as well; the result key must carry
+        // that destination table's guard rather than the caller table's guard.
+        let export_table_addr = {
+            // SAFETY: keytable_addr names the live carved boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let Ok(export_table_cap) = boot_table.lookup(new_table_key, BOOT_TABLE_GUARD) else {
+                panic!("export KeyTable capability is missing");
+            };
+            let Ok(address) = export_table_cap.keytable_address() else {
+                panic!("export destination is not a KeyTable");
+            };
+            address
+        };
+        let cross_table_invocation = boot_as
+            .create_invocation(0x5678, &KeyTableKey::from_key(new_table_key), KeySlot(3))
+            .unwrap_or_else(|error| {
+                panic!("cross-table CreateInvocation failed: {:?}", error.code())
+            });
+        assert_eq!(cross_table_invocation.slot(), test_slot(3));
+        {
+            // SAFETY: export_table_addr came from its live kernel-issued cap.
+            let export_table = unsafe { &*(export_table_addr as *const KeyTable) };
+            let Ok(invocation) = export_table.lookup(cross_table_invocation, TEST_TABLE_GUARD)
+            else {
+                panic!("cross-table Invocation key did not resolve in its target table");
+            };
+            let Ok((target, function_address)) = invocation.invocation_target() else {
+                panic!("cross-table export is not an Invocation");
+            };
+            assert_eq!(target, boot_as_id);
+            assert_eq!(function_address, 0x5678);
+        }
+        assert!(matches!(
+            boot_as.create_invocation(0x5678, &self_table, KeySlot(62)),
+            Err(CapError::SlotOccupied(KeySlot(62)))
+        ));
+        assert!(matches!(
+            boot_as.create_invocation(0x5678, &self_table, KeySlot(300)),
+            Err(CapError::InvalidSlot(KeySlot(300)))
+        ));
+        assert!(matches!(
+            boot_as.create_invocation(
+                0x5678,
+                &KeyTableKey::from_key(boot_untyped_key),
+                KeySlot(63)
+            ),
+            Err(CapError::TypeMismatch { .. })
+        ));
+
+        // GRANT on the source AddressSpace and INSTALL on the destination
+        // KeyTable are independently enforced by the kernel.
+        // SAFETY: keytable_addr names the live carved boot KeyTable.
+        let no_grant_address_space = unsafe { &mut *(keytable_addr as *mut KeyTable) }
+            .insert(
+                KeySlot(63),
+                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                    boot_as_id,
+                    Rights(Rights::MAP),
+                    0,
+                ),
+                BOOT_TABLE_GUARD,
+            )
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "restricted AddressSpace fixture failed: {:?}",
+                    failure.error.code()
+                )
+            });
+        assert!(matches!(
+            AddressSpaceKey::from_key(no_grant_address_space).create_invocation(
+                0x5678,
+                &self_table,
+                KeySlot(64)
+            ),
+            Err(CapError::InsufficientRights)
+        ));
+        // SAFETY: keytable_addr names the live carved boot KeyTable.
+        let no_install_table = unsafe { &mut *(keytable_addr as *mut KeyTable) }
+            .insert(
+                KeySlot(64),
+                KeyEntry::new_keytable(
+                    keytable_addr,
+                    BOOT_TABLE_GUARD,
+                    BOOT_TABLE_SIZE_BITS,
+                    Rights(Rights::DERIVE),
+                    0,
+                ),
+                BOOT_TABLE_GUARD,
+            )
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "restricted KeyTable fixture failed: {:?}",
+                    failure.error.code()
+                )
+            });
+        assert!(matches!(
+            boot_as.create_invocation(
+                0x5678,
+                &KeyTableKey::from_key(no_install_table),
+                KeySlot(65),
+            ),
+            Err(CapError::InsufficientRights)
+        ));
+        {
+            // SAFETY: keytable_addr names the live carved boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            assert!(
+                boot_table.check_insert(KeySlot(65)).is_ok(),
+                "failed INSTALL check modified the destination table"
+            );
+        }
+
         // ─────────────────────────────────────────────────────────────────
         // Notification: Retype-creatable synchronization state (2026-09-16)
         // ─────────────────────────────────────────────────────────────────

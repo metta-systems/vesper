@@ -1,11 +1,13 @@
 use {
     super::AddressSpaceKey,
     std::cell::Cell,
-    vesper_objects::{ArchType, CapError, InconsistencyReason, InvalidKeyReason, RawKey},
+    vesper_objects::{
+        ArchType, CapError, InconsistencyReason, InvalidKeyReason, KeySlot, KeyTableKey, RawKey,
+    },
 };
 
 type Response = (u64, u64, u64);
-type Request = (u64, u64, Option<(u64, u64)>);
+type Request = (u64, u64, [u64; 3]);
 
 std::thread_local! {
     static RESPONSE: Cell<Option<Response>> = const { Cell::new(None) };
@@ -18,7 +20,17 @@ fn respond(request: Request) -> Response {
 }
 
 pub(super) unsafe fn protected_call0(key: u64, op: u64) -> Response {
-    respond((key, op, None))
+    respond((key, op, [0; 3]))
+}
+
+pub(super) unsafe fn protected_call3(
+    key: u64,
+    op: u64,
+    arg0: u64,
+    arg1: u64,
+    arg2: u64,
+) -> Response {
+    respond((key, op, [arg0, arg1, arg2]))
 }
 
 fn invoke(op: u64, response: Response) -> Result<(), CapError> {
@@ -30,7 +42,7 @@ fn invoke(op: u64, response: Response) -> Result<(), CapError> {
         1 => address_space.retire(),
         _ => panic!("unexpected test operation"),
     };
-    REQUEST.with(|request| assert_eq!(request.take(), Some((0x89ab_cdef_ffff_ffff, op, None))));
+    REQUEST.with(|request| assert_eq!(request.take(), Some((0x89ab_cdef_ffff_ffff, op, [0; 3]))));
     RESPONSE.with(|pending| assert!(pending.get().is_none()));
     assert_eq!(address_space.to_wire(), key.to_wire());
     result
@@ -68,6 +80,62 @@ fn all_address_space_wrappers_preserve_request_encoding_and_accept_success() {
             Ok(())
         );
     }
+}
+
+#[test]
+fn create_invocation_encodes_operands_and_returns_destination_key() {
+    let address_space_key = RawKey::new(vesper_objects::KeySlot(1), 0x89ab_cdef);
+    let destination_key = RawKey::new(vesper_objects::KeySlot(3), 0x1357_2468);
+    let address_space = AddressSpaceKey::from_key(address_space_key);
+    let destination = KeyTableKey::from_key(destination_key);
+    let returned_key = RawKey::new(KeySlot(12), 0x2468_ace0);
+    RESPONSE.with(|pending| {
+        assert!(
+            pending
+                .replace(Some((0, returned_key.to_wire(), 0)))
+                .is_none()
+        );
+    });
+
+    let result = address_space.create_invocation(0xfeed_cafe_1234, &destination, KeySlot(12));
+
+    let Ok(actual_key) = result else {
+        panic!("CreateInvocation wrapper returned an error");
+    };
+    assert_eq!(actual_key, returned_key);
+    REQUEST.with(|request| {
+        assert_eq!(
+            request.take(),
+            Some((
+                address_space_key.to_wire(),
+                3,
+                [0xfeed_cafe_1234, destination_key.to_wire(), 12],
+            ))
+        );
+    });
+}
+
+#[test]
+fn create_invocation_preserves_kernel_errors() {
+    let address_space = AddressSpaceKey::from_key(RawKey::new(vesper_objects::KeySlot(1), 7));
+    let destination = KeyTableKey::from_key(RawKey::new(vesper_objects::KeySlot(3), 9));
+    RESPONSE.with(|pending| {
+        assert!(
+            pending
+                .replace(Some((
+                    vesper_objects::syscall_status::INSUFFICIENT_RIGHTS,
+                    0,
+                    0
+                )))
+                .is_none()
+        );
+    });
+
+    assert!(matches!(
+        address_space.create_invocation(0x1000, &destination, KeySlot(5)),
+        Err(CapError::InsufficientRights)
+    ));
+    REQUEST.with(|request| assert!(request.take().is_some()));
 }
 
 #[test]

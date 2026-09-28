@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x82` (arch index 2) |
 | Pool | `PoolTag::AddressSpace` (pool-backed kernel object; boot-carved) |
-| Status | Active: `Activate` and `Retire`; `CreateInvocation` contract selected but not implemented |
+| Status | Active: `Activate`, `Retire`, and `CreateInvocation` capability construction; PPC `Invoke` is not implemented |
 
 ## Purpose
 
@@ -23,7 +23,7 @@ context would merge protection boundaries.
 |---|---|---|---|---|
 | `0` | Activate | no arguments (all zero) | `MAP` on the invoked AddressSpace | zeros; installs the bound translation root + ASID into the current hardware translation context (`TTBR0_EL1`) |
 | `1` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked AddressSpace | zeros; tears down the invoked AddressSpace |
-| `3` | CreateInvocation | TBD: function pointer and destination KeyTable operands | Management authority on the invoked AddressSpace and destination KeyTable | Invocation capability installed in the selected KeyTable; exact result details TBD; not implemented |
+| `3` | CreateInvocation | `x2` function address, `x3` destination KeyTable capability, `x4` vacant destination slot index, `x5..x7` zero | `GRANT` on the invoked AddressSpace; `INSTALL` on the destination KeyTable | Destination-table-local Invocation key with `CALL` authority in result `x1`, zero in `x2` |
 
 ### Activate
 
@@ -78,11 +78,15 @@ rule).
 - `PageTable.Map` (root), `Frame.Map`, and `ASIDPool.Assign` all target an
   AddressSpace capability with `MAP` authority — one consistent
   mapping-context permission across the mapping family.
-- `AddressSpace.CreateInvocation` creates an Invocation for a supplied function
-  pointer and installs it into a destination KeyTable. It requires management
-  authority for both capabilities; register schema, exact rights, and results
-  remain open. Its operation ID is `3`; dispatch is not implemented. No
-  interface registry or additional function-pointer validation is required.
+- `AddressSpace.CreateInvocation` (op `3`) creates an Invocation for a supplied
+  function address and installs it into a destination KeyTable. It requires
+  `GRANT` on the invoked AddressSpace and `INSTALL` on the destination KeyTable.
+  The installed capability carries only `CALL` authority. Success returns the
+  destination-table-local key in `x1`, zero in `x2`; failure leaves state and
+  authority unchanged. Success emits `✅ AddressSpace::CreateInvocation()`.
+  The address is stored as supplied, with no construction-time
+  mapping/executable validation. The subsequent PPC `Invoke`
+  operation is not implemented; invocation-time fault behavior remains open.
 - Retype cannot create an AddressSpace (`InvalidObjectType`): bootstrap
   grants are the initial source of AddressSpace capabilities.
 
