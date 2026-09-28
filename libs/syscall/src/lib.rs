@@ -17,8 +17,8 @@
 // │  │ x2 = virt_addr     x5 = flags       ← cache policy, etc.        │  │
 // │  └─────────────────────────────────────────────────────────────────┘  │
 // │                                                                       │
-// │  PPC INVOCATION: capability names a component API entry point.       │
-// │  Entry/return register ABI is not yet selected.                      │
+// │  PPC Invocation.Call: x0 = cap, x1 = op 0, x2..x7 = six u64 args.   │
+// │  Return-value mapping and context/stack transition remain open.      │
 // │  UNTYPED RETYPE (batch creation):                                     │
 // │  ┌─────────────────────────────────────────────────────────────────┐  │
 // │  │ x0 = untyped_cap   x3 = dest_captbl                             │  │
@@ -27,10 +27,11 @@
 // │  └─────────────────────────────────────────────────────────────────┘  │
 // └───────────────────────────────────────────────────────────────────────┘
 
-// Contract status: the diagrams above retain draft operation vocabulary.
-// Approved CopyDerive uses packed keys in x0/x2/x3, a vacant u32 slot in x4,
-// provisional rights in x5, and reserved-zero x6/x7. Success returns the
-// destination-local packed key in x1 with x2 zero; other sketches are not enabled.
+// Contract status: CopyDerive uses packed keys in x0/x2/x3, a vacant u32 slot
+// in x4, provisional rights in x5, and reserved-zero x6/x7. Success returns
+// the destination-local packed key in x1 with x2 zero. Invocation.Call uses
+// x0 for the capability, x1 for operation 0, and forwards x2..x7; PPC return
+// mapping and context switching are not implemented.
 
 /// Single syscall ABI
 ///

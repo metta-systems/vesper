@@ -32,8 +32,9 @@ Outstanding Invocation decisions:
 - How are the caller's execution context and stack established during
   migration, including nested or concurrent invocations and bounded resource
   exhaustion?
-- What fixed-width argument/result ABI is used? Are shared-memory pointers or
-  capability transfer supported, and under what validation/authority rules?
+- How do interface return values map to the syscall result words? Are
+  shared-memory pointers or capability transfer supported, and under what
+  validation/authority rules?
 - What are the call lifecycle, return, fault, cancellation, timeout, and
   Thread/AddressSpace teardown semantics?
 

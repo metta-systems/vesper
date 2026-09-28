@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x07` (core) |
 | Target | An exported component API entry point in an `AddressSpace` |
-| Status | Capability construction is active; Protected Procedure Call (PPC) invocation is not implemented |
+| Status | Capability construction is active; `Call` dispatch and PPC execution are not implemented |
 
 ## Purpose
 
@@ -28,20 +28,21 @@ Queued rendezvous is userspace composition over Invocation and
 
 | Op | Name | Status |
 |---|---|---|
-| TBD | Invoke | Operation ID and call schema remain open; no wrapper or handler is implemented. |
+| `0` | Call | `x0` Invocation capability, `x1` operation ID `0`, `x2..x7` six `u64` arguments forwarded to the interface function; return mapping remains open. Call dispatch is not implemented. |
 
 ## Contract details still to specify
 
 - Invocation derivation, rights attenuation, and caller badge semantics.
 - How the caller's execution context and stack are established in the target
   AddressSpace, including nested/concurrent calls and bounded resource use.
-- Fixed-width argument and return ABI, pointer/shared-memory rules, and whether
-  capability transfer is supported.
+- Return-value mapping, pointer/shared-memory rules, and whether capability
+  transfer is supported.
 - Return, fault, cancellation, and Thread-teardown outcomes.
 
-The existing SVC's six argument words and two result words are candidates to
-reconcile with the function ABI, not an approved PPC register contract.
+The six SVC argument words are forwarded as six `u64` interface-function
+arguments. The mapping from the function's return values to the SVC result words
+remains open.
 
 ## Implementation status
 
-The shared `CoreType` catalogue recognizes Invocation at ID 7. `AddressSpace.CreateInvocation` constructs and installs CALL-only Invocation capabilities with a checked target AddressSpace identity and supplied function address. There is no `Invoke` wrapper or kernel handler, context migration, or return path; a created Invocation cannot yet be called.
+The shared `CoreType` catalogue recognizes Invocation at ID 7. `AddressSpace.CreateInvocation` constructs and installs CALL-only Invocation capabilities with a checked target AddressSpace identity and supplied function address. There is no `Call` wrapper or kernel handler, context migration, or return path; a created Invocation cannot yet be called.

@@ -36,7 +36,7 @@ ID never advertises implementation support.
 | Time | `0x04` | [time.md](core/time.md) | Excluded sketch |
 | Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | Contract selected; not implemented |
 | Brand | `0x06` | [brand.md](core/brand.md) | Contract direction recorded; implementation deferred to IRQ |
-| Invocation | `0x07` | [invocation.md](core/invocation.md) | CALL-only capability creation active; PPC Invoke not implemented |
+| Invocation | `0x07` | [invocation.md](core/invocation.md) | CALL-only capability creation active; PPC `Invocation.Call` not implemented |
 | Notification | `0x08` | [notification.md](core/notification.md) | Signal/Wait/Poll active |
 | EventCount | `0x09` | [event_count.md](core/event_count.md) | Advance/Await/Read active |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Debug-gated Write |

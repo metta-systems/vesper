@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x82` (arch index 2) |
 | Pool | `PoolTag::AddressSpace` (pool-backed kernel object; boot-carved) |
-| Status | Active: `Activate`, `Retire`, and `CreateInvocation` capability construction; PPC `Invoke` is not implemented |
+| Status | Active: `Activate`, `Retire`, and `CreateInvocation` capability construction; PPC `Invocation.Call` is not implemented |
 
 ## Purpose
 
@@ -85,7 +85,7 @@ rule).
   destination-table-local key in `x1`, zero in `x2`; failure leaves state and
   authority unchanged. Success emits `✅ AddressSpace::CreateInvocation()`.
   The address is stored as supplied, with no construction-time
-  mapping/executable validation. The subsequent PPC `Invoke`
+  mapping/executable validation. The subsequent PPC `Invocation.Call`
   operation is not implemented; invocation-time fault behavior remains open.
 - Retype cannot create an AddressSpace (`InvalidObjectType`): bootstrap
   grants are the initial source of AddressSpace capabilities.

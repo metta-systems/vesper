@@ -188,6 +188,24 @@ mod tests {
     }
 
     #[test]
+    fn invocation_call_is_operation_zero() {
+        use vesper_objects::invocation::InvocationOp;
+
+        assert_eq!(InvocationOp::Call as u8, 0);
+        assert_eq!(InvocationOp::Call as u32, 0);
+        assert!(matches!(
+            InvocationOp::try_from(0_u64),
+            Ok(InvocationOp::Call)
+        ));
+        for value in [1, 255, 256, 1 << 32, u64::MAX] {
+            assert!(matches!(
+                InvocationOp::try_from(value),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
     fn page_table_operations_match_existing_wire_ids() {
         use vesper_objects::page_table::PageTableOp;
 

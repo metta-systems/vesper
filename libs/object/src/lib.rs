@@ -7,6 +7,7 @@ pub mod debug_console;
 pub mod domain;
 pub mod event_count;
 pub mod frame;
+pub mod invocation;
 pub mod key;
 pub mod key_table;
 pub mod notification;
@@ -27,6 +28,7 @@ pub use {
     asid_pool::{ASIDPoolKey, ASIDPoolOp},
     event_count::{EventCountKey, EventCountOp},
     frame::{FrameKey, FrameOp},
+    invocation::InvocationOp,
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},
     notification::{NotificationKey, NotificationOp},
