@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn invocation_call_is_operation_zero() {
+    fn invocation_operations_match_existing_wire_ids() {
         use vesper_objects::invocation::InvocationOp;
 
         assert_eq!(InvocationOp::Call as u8, 0);
@@ -197,7 +197,13 @@ mod tests {
             InvocationOp::try_from(0_u64),
             Ok(InvocationOp::Call)
         ));
-        for value in [1, 255, 256, 1 << 32, u64::MAX] {
+        assert_eq!(InvocationOp::Return as u8, 1);
+        assert_eq!(InvocationOp::Return as u32, 1);
+        assert!(matches!(
+            InvocationOp::try_from(1_u64),
+            Ok(InvocationOp::Return)
+        ));
+        for value in [2, 255, 256, 1 << 32, u64::MAX] {
             assert!(matches!(
                 InvocationOp::try_from(value),
                 Err(CapError::InvalidOperation)

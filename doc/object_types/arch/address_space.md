@@ -23,7 +23,7 @@ context would merge protection boundaries.
 |---|---|---|---|---|
 | `0` | Activate | no arguments (all zero) | `MAP` on the invoked AddressSpace | zeros; installs the bound translation root + ASID into the current hardware translation context (`TTBR0_EL1`) |
 | `1` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked AddressSpace | zeros; tears down the invoked AddressSpace |
-| `3` | CreateInvocation | `x2` function address, `x3` destination KeyTable capability, `x4` vacant destination slot index, `x5..x7` zero | `GRANT` on the invoked AddressSpace; `INSTALL` on the destination KeyTable | Destination-table-local Invocation key with `CALL` authority in result `x1`, zero in `x2` |
+| `3` | CreateInvocation | `x2` function address (nonzero), `x3` destination KeyTable capability, `x4` vacant destination slot index, `x5..x7` zero | `GRANT` on the invoked AddressSpace; `INSTALL` on the destination KeyTable | Destination-table-local Invocation key with `CALL` authority in result `x1`, zero in `x2`; a zero function address is rejected with `InvalidPointer` |
 
 ### Activate
 
@@ -85,8 +85,12 @@ rule).
   destination-table-local key in `x1`, zero in `x2`; failure leaves state and
   authority unchanged. Success emits `✅ AddressSpace::CreateInvocation()`.
   The address is stored as supplied, with no construction-time
-  mapping/executable validation. The subsequent PPC `Invocation.Call`
-  operation is not implemented; invocation-time fault behavior remains open.
+  mapping/executable validation. The function address is an optional payload
+  field (`Option<NonZero<u64>>`): a zero address is rejected with the shared
+  `InvalidPointer` status because the absent form belongs to the fixed return
+  key, which only the kernel constructs (Kickstart installs it at well-known
+  Slot(1)). The subsequent PPC `Invocation.Call` operation is not implemented;
+  invocation-time fault behavior remains open.
 - Retype cannot create an AddressSpace (`InvalidObjectType`): bootstrap
   grants are the initial source of AddressSpace capabilities.
 

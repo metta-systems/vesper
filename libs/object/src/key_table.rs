@@ -21,18 +21,24 @@ pub struct KeySlot(pub u32);
 // TODO: These consts should probably NOT be parts of KeySlot impl? They are part of libOS TCB layout and what's supplied by kickstart, so maybe only keep it in kickstart-related area.
 impl KeySlot {
     pub const NULL: KeySlot = KeySlot(0);
-    pub const SELF_ADDRESS_SPACE: KeySlot = KeySlot(1);
-    pub const PARENT_THREAD: KeySlot = KeySlot(2);
+    /// The fixed PPC return key: a kernel-installed Invocation capability
+    /// with an empty function address and no target, accepting only the
+    /// `Return` operation (normal Invocations accept only `Call`). Not yet
+    /// installed by bootstrap; the presence guarantee is an open contract
+    /// decision.
+    pub const INVOCATION_RETURN: KeySlot = KeySlot(1);
+    pub const SELF_ADDRESS_SPACE: KeySlot = KeySlot(2);
+    pub const PARENT_THREAD: KeySlot = KeySlot(3);
     // KeyTable layout with self-reference
-    pub const SELF_KEYTABLE: KeySlot = KeySlot(3); // Every thread has cap to own captbl here - or rather to KeyMaster
+    pub const SELF_KEYTABLE: KeySlot = KeySlot(4); // Every thread has cap to own captbl here - or rather to KeyMaster
     /// The boot Untyped covering the initial carve region (Kickstart grant).
-    pub const BOOT_UNTYPED: KeySlot = KeySlot(4);
+    pub const BOOT_UNTYPED: KeySlot = KeySlot(5);
     /// The boot ASID pool (Kickstart grant): the authoritative ASID namespace
     /// the bootstrap builder assigns hardware translation contexts from.
-    /// Slots 5–12 are the boot test's Retype destinations, so this grant sits
+    /// Slots 6–13 are the boot test's Retype destinations, so this grant sits
     /// at the first free well-known slot after them.
-    pub const BOOT_ASID_POOL: KeySlot = KeySlot(13);
-    pub const DEBUG_CONSOLE: KeySlot = KeySlot(14);
+    pub const BOOT_ASID_POOL: KeySlot = KeySlot(14);
+    pub const DEBUG_CONSOLE: KeySlot = KeySlot(15);
     // ... other well-known slots
 }
 

@@ -26,12 +26,37 @@ Unanswered questions before implementing the scheduler record ABI:
 
 ## D7: Protected Procedure Call (`Invocation`)
 
-Outstanding Invocation decisions:
+Execution-context directions (interrupt-kernel discipline, Thread-resident
+bounded invocation stack, stub-provisioned target stack) are selected in
+the canonical contract; research evidence lives in `lifetime-and-authority.md`
+§7. Outstanding Invocation decisions:
 
 - What are the badge, derivation, and per-kind rights rules?
-- How are the caller's execution context and stack established during
-  migration, including nested or concurrent invocations and bounded resource
-  exhaustion?
+- What are the exact invocation-stack record layout, depth, and identifiers,
+  and the nested/concurrent-call and bounded-resource exhaustion rules?
+  (KeyKOS evidence: serializing the callee — busy targets queue callers —
+  eliminates kernel-side nesting state entirely, at the cost of no reentrancy;
+  Composite evidence: a bounded per-thread invocation stack allows nesting
+  with call-time depth rejection. Which model, or which mix, applies to an
+  Invocation target?)
+- What are the validation rules for the selected return form (underflow,
+  target liveness, frame skipping/double return)?
+- How is a fault in a migrated frame delivered and resumed? KeyKOS/EROS
+  deliver a fault as a CALL carrying a resume key to the faulting domain,
+  and the keeper resumes it by invoking that key; under the selected
+  kernel-internal invocation stack a migrated frame has no transferable
+  continuation, so keeper-style fault delivery needs its own answer (for
+  example a Thread-control authority rather than a return key). NOVA's
+  alternative: the faulting EC donates itself to a keeper through a
+  per-vector exception-portal capability, the keeper edits the faulting
+  state through its UTCB (bounded by the portal's transfer descriptor), and
+  its REPLY resumes the faulting EC.
+- Whose scheduling budget does a migrated call consume, and must the
+  caller's scheduling entity remain runnable while its Thread is migrated?
+  (Nemesis's crosstalk argument: kernel-scheduled migrating threads destroy
+  application-internal scheduling and accounting; K42's fix: the caller's
+  dispatcher stays runnable while the calling thread blocks; NOVA's EC/SC
+  split: the caller's scheduling context funds the donated chain.)
 - How do interface return values map to the syscall result words? Are
   shared-memory pointers or capability transfer supported, and under what
   validation/authority rules?

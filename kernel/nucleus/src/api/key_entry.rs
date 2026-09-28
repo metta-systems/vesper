@@ -44,7 +44,7 @@
 // │    (all zeros)                               │
 // │                                              │
 // │  VARIANT F: Invocation                       │
-// │    function_address: u64                     │
+// │    function_address: Option<NonZero<u64>>    │
 // │    AddressSpace pool/index/generation        │
 // └──────────────────────────────────────────────┘
 // Total: 28 bytes used, 32-byte aligned slot
@@ -59,6 +59,7 @@ use {
         NucleusObject,
         access::{ObjectId, PoolTag},
     },
+    core::num::NonZero,
     libaddress::align,
     libobject::{CapError, ObjectType, Rights},
 };
@@ -141,8 +142,12 @@ pub struct FrameMapping {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct InvocationPayload {
-    /// Function address as supplied to `AddressSpace.CreateInvocation`.
-    pub function_address: u64,
+    /// Interface entry address as supplied to `AddressSpace.CreateInvocation`.
+    /// `None` marks the fixed return key, which names no entry (and whose
+    /// target identity below is never resolved). The optional encoding
+    /// replaces a magic zero address, and only the kernel can build the
+    /// absent form: `CreateInvocation` rejects a zero address.
+    pub function_address: Option<NonZero<u64>>,
     /// Pool tag for the target `AddressSpace`.
     pub address_space_pool: u8,
     pub _pad: u8,
@@ -336,7 +341,9 @@ impl KeyEntry {
 
     /// Create an `Invocation` capability targeting an entry point in an
     /// `AddressSpace`. The capability starts with `CALL` authority and no badge.
-    pub fn new_invocation(address_space: ObjectId, function_address: u64) -> Self {
+    /// The entry is present by construction; only `new_invocation_return` builds
+    /// the absent (return-key) form.
+    pub fn new_invocation(address_space: ObjectId, function_address: NonZero<u64>) -> Self {
         debug_assert_eq!(address_space.pool, PoolTag::AddressSpace);
         Self {
             obj_type: ObjectType::INVOCATION,
@@ -344,7 +351,7 @@ impl KeyEntry {
             badge: 0,
             payload: KeyPayload {
                 invocation: InvocationPayload {
-                    function_address,
+                    function_address: Some(function_address),
                     address_space_pool: address_space.pool as u8,
                     _pad: 0,
                     address_space_index: address_space.index,
@@ -353,6 +360,35 @@ impl KeyEntry {
                 },
             },
         }
+    }
+
+    /// Create the fixed PPC return key: an `Invocation` with no entry, usable
+    /// only through the `Return` operation. It names no target `AddressSpace`
+    /// — the zeroed identity is never resolved, since `Return` pops the
+    /// invoking Thread's own continuation record — and carries no rights.
+    pub fn new_invocation_return() -> Self {
+        Self {
+            obj_type: ObjectType::INVOCATION,
+            rights: Rights(0),
+            badge: 0,
+            payload: KeyPayload {
+                invocation: InvocationPayload {
+                    function_address: None,
+                    address_space_pool: 0,
+                    _pad: 0,
+                    address_space_index: 0,
+                    address_space_generation: 0,
+                    _pad2: 0,
+                },
+            },
+        }
+    }
+
+    /// Whether this is the fixed return key: an `Invocation` with no entry.
+    pub fn is_return_key(&self) -> bool {
+        self.obj_type == ObjectType::INVOCATION
+            // SAFETY: the object-type check selects the invocation payload.
+            && unsafe { self.payload.invocation.function_address.is_none() }
     }
 
     /// Check if this is a Retype-created (carved) object kind.
@@ -512,8 +548,9 @@ impl KeyEntry {
         Ok(unsafe { &mut self.payload.region })
     }
 
-    /// The `AddressSpace` identity and function address of an `Invocation`.
-    pub fn invocation_target(&self) -> Result<(ObjectId, u64), CapError> {
+    /// The `AddressSpace` identity and entry address of an `Invocation`. The
+    /// entry is `None` for the fixed return key.
+    pub fn invocation_target(&self) -> Result<(ObjectId, Option<NonZero<u64>>), CapError> {
         if self.obj_type != ObjectType::INVOCATION {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::INVOCATION,

@@ -264,6 +264,18 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
         .unwrap_or_else(|failure| {
             panic!("boot self-table install failed: {:?}", failure.error.code())
         });
+    // The fixed PPC return key (selected 2026-09-29): an Invocation with no
+    // entry at the well-known slot libOS compositions fill. Only the `Return`
+    // operation applies; its presence in a KeyTable is a composition invariant.
+    let _boot_return_key = boot_table
+        .insert(
+            KeySlot::INVOCATION_RETURN,
+            KeyEntry::new_invocation_return(),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| {
+            panic!("boot return-key install failed: {:?}", failure.error.code())
+        });
     let boot_untyped_key = boot_table
         .insert(KeySlot::BOOT_UNTYPED, boot_untyped, BOOT_TABLE_GUARD)
         .unwrap_or_else(|failure| {

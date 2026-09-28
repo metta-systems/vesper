@@ -9,12 +9,14 @@
 //!   `AddressSpace`: whole-ASID TLB invalidation, ASID release to the
 //!   originating pool, root/ASID fields cleared, pool slot reclaimed.
 //!   Success returns zeros.
-//! - `CreateInvocation` `3`: `x2` function address, `x3` destination `KeyTable`
-//!   capability, `x4` vacant destination slot, `x5..x7` zero. Requires `GRANT`
-//!   on this `AddressSpace` and `INSTALL` on the destination `KeyTable`. Installs
-//!   an Invocation capability with only `CALL` authority; returns its
+//! - `CreateInvocation` `3`: `x2` nonzero function address, `x3` destination
+//!   `KeyTable` capability, `x4` vacant destination slot, `x5..x7` zero. Requires
+//!   `GRANT` on this `AddressSpace` and `INSTALL` on the destination `KeyTable`.
+//!   Installs an Invocation capability with only `CALL` authority; returns its
 //!   destination-local key in `x1` and zero in `x2`. The function address is
-//!   stored as supplied without mapping/executable validation.
+//!   stored as supplied without mapping/executable validation; a zero address is
+//!   rejected with `InvalidPointer`, because the payload's absent form belongs to
+//!   the kernel-built fixed return key.
 //!
 //! Authority: `Activate` requires `MAP` on the invoked `AddressSpace`
 //! capability (authority over the mapping context, consistent with root
@@ -42,6 +44,7 @@ use {
             key_table::CallerTable,
         },
     },
+    core::num::NonZero,
     libobject::{CapError, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
 };
@@ -102,7 +105,12 @@ fn create_invocation<A: ArchObjects>(
     if args[3..].iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
-    let function_address = args[0];
+    // Every userspace-constructible Invocation carries a present entry: the
+    // absent form belongs to the fixed return key, which only the kernel
+    // builds, so a zero address cannot mint a lookalike.
+    let Some(function_address) = NonZero::new(args[0]) else {
+        return Err(CapError::InvalidPointer);
+    };
     let destination_key = RawKey::from_wire(args[1]);
     let destination_slot =
         KeySlot(
