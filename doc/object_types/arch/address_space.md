@@ -23,7 +23,7 @@ context would merge protection boundaries.
 |---|---|---|---|---|
 | `0` | Activate | no arguments (all zero) | `MAP` on the invoked AddressSpace | zeros; installs the bound translation root + ASID into the current hardware translation context (`TTBR0_EL1`) |
 | `1` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked AddressSpace | zeros; tears down the invoked AddressSpace |
-| TBD | CreateInvocation | TBD: function pointer and destination KeyTable operands | Management authority on the invoked AddressSpace and destination KeyTable | Invocation capability installed in the selected KeyTable; exact result details TBD |
+| `3` | CreateInvocation | TBD: function pointer and destination KeyTable operands | Management authority on the invoked AddressSpace and destination KeyTable | Invocation capability installed in the selected KeyTable; exact result details TBD; not implemented |
 
 ### Activate
 
@@ -80,9 +80,9 @@ rule).
   mapping-context permission across the mapping family.
 - `AddressSpace.CreateInvocation` creates an Invocation for a supplied function
   pointer and installs it into a destination KeyTable. It requires management
-  authority for both capabilities; operation number, register schema, exact
-  rights, and results remain open. No interface registry or additional
-  function-pointer validation is required.
+  authority for both capabilities; register schema, exact rights, and results
+  remain open. Its operation ID is `3`; dispatch is not implemented. No
+  interface registry or additional function-pointer validation is required.
 - Retype cannot create an AddressSpace (`InvalidObjectType`): bootstrap
   grants are the initial source of AddressSpace capabilities.
 

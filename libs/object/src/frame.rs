@@ -19,8 +19,7 @@ mod tests;
 /// Userspace handle to a Frame capability.
 ///
 /// Nucleus dispatch supports `Map`, `Unmap`, and `GetAddress`; the wrapper
-/// preserves kernel errors. `Remap` remains unsupported (origin-only remap
-/// authority is open, D4/D6).
+/// preserves kernel errors. Operation ID `3` is unassigned.
 pub struct FrameKey {
     key: Key<FrameType>,
 }
@@ -41,8 +40,6 @@ pub enum FrameOp {
     Unmap = 1,
     /// Query the physical extent (requires `GRANT`).
     GetAddress = 2,
-    /// Change attributes on an existing mapping; unsupported.
-    Remap = 3,
 }
 
 impl TryFrom<u64> for FrameOp {
@@ -53,7 +50,7 @@ impl TryFrom<u64> for FrameOp {
             0 => Ok(Self::Map),
             1 => Ok(Self::Unmap),
             2 => Ok(Self::GetAddress),
-            3 => Ok(Self::Remap),
+
             _ => Err(CapError::InvalidOperation),
         }
     }

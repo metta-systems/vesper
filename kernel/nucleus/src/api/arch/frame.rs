@@ -26,8 +26,7 @@
 //! - `GetAddress` `2`: no arguments; requires `GRANT`. Returns the physical
 //!   extent — the base in `x1` and the size in bytes in `x2` (the client
 //!   wrapper names it `get_extent`).
-//! - `Remap` `3`: unsupported; origin-only remap authority remains open
-//!   (D4/D6). Returns a defined error rather than fake success.
+//! - Operation ID `3` is unassigned and rejected by checked decoding.
 //!
 //! Carved tables become hardware-live through `AddressSpace.Activate`, which
 //! installs the bound root into `TTBR0_EL1` with the
@@ -65,10 +64,6 @@ pub fn invoke<A: ArchObjects>(
         FrameOp::Map => map::<A>(access, caller, frame_key, args, nucleus),
         FrameOp::Unmap => unmap::<A>(access, caller, frame_key, args, nucleus),
         FrameOp::GetAddress => get_extent(access, caller, frame_key, args),
-        // Origin-only remap authority, descendant effects, and the
-        // virtual-relocation-versus-physical-replacement question remain open
-        // (D4/D6); reject rather than fake an attribute change.
-        FrameOp::Remap => Err(CapError::InvalidOperation),
     }
 }
 

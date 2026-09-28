@@ -44,6 +44,23 @@ fn from_key_preserves_key_without_validation() {
 }
 
 #[test]
+fn address_space_operation_ids_are_stable() {
+    use vesper_objects::address_space::AddressSpaceOp;
+
+    assert_eq!(AddressSpaceOp::Activate as u8, 0);
+    assert_eq!(AddressSpaceOp::Retire as u8, 1);
+    assert_eq!(AddressSpaceOp::CreateInvocation as u8, 3);
+    assert!(matches!(
+        AddressSpaceOp::try_from(3),
+        Ok(AddressSpaceOp::CreateInvocation)
+    ));
+    assert!(matches!(
+        AddressSpaceOp::try_from(2),
+        Err(CapError::InvalidOperation)
+    ));
+}
+
+#[test]
 fn all_address_space_wrappers_preserve_request_encoding_and_accept_success() {
     for op in 0..=1 {
         assert_eq!(

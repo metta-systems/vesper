@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x80` (arch index 0) |
 | Pool | none — inline `FramePayload` in `KeyEntry` (the capability is the object) |
-| Status | Active: Map/Unmap/GetAddress; Remap rejected with a defined error |
+| Status | Active: Map/Unmap/GetAddress; operation ID 3 is unassigned |
 
 ## Purpose
 
@@ -23,7 +23,7 @@ distinct PTEs.
 | `0` | Map | `x2` target AddressSpace key, `x3` virtual address, `x4` requested rights, `x5` attributes (only zero accepted), `x6..x7` zero | requested rights ⊆ frame rights, `READ` required, `MAP` on the target AddressSpace cap | zeros |
 | `1` | Unmap | no arguments | (via the frame's recorded mapping) | zeros |
 | `2` | GetAddress | no arguments | `GRANT` | physical base in `x1`, size in bytes in `x2` (client wrapper: `get_extent`) |
-| `3` | Remap | — | — | `InvalidOperation` (origin-only remap authority open, D4/D6) |
+
 
 ### Map details
 
@@ -102,8 +102,9 @@ flowchart TD
 
 ## TODOs
 
-- Remap: origin-only remap authority, descendant effects,
-  virtual-relocation vs physical-replacement — D4/D6.
+- Remapping remains a possible future operation; origin-only authority,
+  descendant effects, and virtual-relocation vs physical-replacement remain
+  open — D4/D6.
 - Device frames and per-kind device policy — D6.
 - Cache/device attribute dimension beyond "zero = normal cacheable" — D6.
 - Splitting user/privileged execute authority with EL0 entry — D6.

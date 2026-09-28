@@ -179,8 +179,7 @@ mod tests {
         assert_eq!(FrameOp::Map as u32, 0);
         assert_eq!(FrameOp::Unmap as u8, 1);
         assert_eq!(FrameOp::GetAddress as u8, 2);
-        assert_eq!(FrameOp::Remap as u8, 3);
-        for value in [4, 255, 256, 1 << 32, u64::MAX] {
+        for value in [3, 4, 255, 256, 1 << 32, u64::MAX] {
             assert!(matches!(
                 FrameOp::try_from(value),
                 Err(CapError::InvalidOperation)

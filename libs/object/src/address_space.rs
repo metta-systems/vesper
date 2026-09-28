@@ -19,6 +19,8 @@ pub enum AddressSpaceOp {
     /// Tear the address space down: release the bound ASID, clear the
     /// root/ASID fields, reclaim the pool slot.
     Retire = 1,
+    /// Construct an Invocation for an entry point in this AddressSpace.
+    CreateInvocation = 3,
 }
 
 impl TryFrom<u64> for AddressSpaceOp {
@@ -28,6 +30,7 @@ impl TryFrom<u64> for AddressSpaceOp {
         match op {
             0 => Ok(Self::Activate),
             1 => Ok(Self::Retire),
+            3 => Ok(Self::CreateInvocation),
             _ => Err(CapError::InvalidOperation),
         }
     }

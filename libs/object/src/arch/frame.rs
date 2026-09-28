@@ -6,6 +6,4 @@ pub enum FrameOp {
     Unmap = 1,
     /// Get physical address (requires special rights)
     GetAddress = 2,
-    /// Remap with different attributes
-    Remap = 3,
 }
