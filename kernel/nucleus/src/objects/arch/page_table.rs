@@ -29,6 +29,8 @@ pub mod pte {
     pub const DESCRIPTOR: u64 = 1 << 1;
     /// Access flag: hardware does not fault on first access.
     pub const AF: u64 = 1 << 10;
+    /// Non-global: the translation is tagged with this `AddressSpace`'s ASID.
+    pub const NG: u64 = 1 << 11;
     /// Inner shareable.
     pub const SH_INNER: u64 = 0b11 << 8;
     /// AP[2:1] = 0b00: readable and writable at EL1 only (EL0 denied).
@@ -188,6 +190,7 @@ pub fn install_table_entry(
         return Err(CapError::AlreadyMapped);
     }
     parent.entries[slot] = child_paddr | pte::VALID | pte::DESCRIPTOR;
+    publish_descriptor_store();
     Ok(u16::try_from(slot).expect("9-bit slot index"))
 }
 
@@ -267,6 +270,24 @@ pub fn install_frame_pte(
     if leaf_table.entries[slot] != 0 {
         return Err(CapError::AlreadyMapped);
     }
+    leaf_table.entries[slot] = frame_descriptor(frame_paddr, leaf, writable, executable);
+    publish_descriptor_store();
+    Ok(())
+}
+
+/// Publish a new descriptor before it can be consumed by a translation walk.
+fn publish_descriptor_store() {
+    // SAFETY: these barriers access no memory themselves and clobber no
+    // registers. They complete prior descriptor stores and synchronize the
+    // execution context before access through a newly installed mapping;
+    // ERET alone does not provide the descriptor-store completion.
+    unsafe {
+        core::arch::asm!("dsb ishst", "isb", options(nostack));
+    }
+}
+
+/// Encode a TTBR0 leaf without accessing its backing table.
+fn frame_descriptor(frame_paddr: u64, leaf: u8, writable: bool, executable: bool) -> u64 {
     let ap = match (writable, executable) {
         // Kernel-privilege RW+X: EL1 cannot execute EL0-writable pages (the
         // architectural user-writable execute-never rule), so a writable
@@ -285,15 +306,15 @@ pub fn install_frame_pte(
     // Level 3 uses page descriptors (bit 1 set); levels 1–2 use block
     // descriptors (bit 1 clear).
     let descriptor_bit = if leaf == 3 { pte::DESCRIPTOR } else { 0 };
-    leaf_table.entries[slot] = frame_paddr
+    frame_paddr
         | pte::VALID
         | descriptor_bit
         | pte::AF
+        | pte::NG
         | pte::SH_INNER
         | ap
         | pte::ATTR_NORMAL
-        | execute_never;
-    Ok(())
+        | execute_never
 }
 
 /// Clear the page/block descriptor of the frame mapping at `vaddr`, verifying it
@@ -363,4 +384,33 @@ pub fn find_physical_overlap(root_paddr: u64, paddr: u64, size_bits: u8) -> Opti
     // (`validate_frame_size`), so the extent cannot wrap the address space.
     let end = paddr + (1_u64 << size_bits);
     overlap_walk(root_paddr, 0, paddr, end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{frame_descriptor, leaf_level};
+
+    #[test_case]
+    fn ttbr0_pages_and_blocks_are_non_global_for_every_permission_shape() {
+        for (size_bits, base, descriptor_bits) in [
+            (12, 0x1234_5000, 0b11),
+            (21, 0x2460_0000, 0b01),
+            (30, 0x4000_0000, 0b01),
+        ] {
+            for (writable, executable, ap, xn) in [
+                (false, false, 0b11 << 6, (1 << 53) | (1 << 54)),
+                (true, false, 0b01 << 6, (1 << 53) | (1 << 54)),
+                (false, true, 0b11 << 6, 0),
+                (true, true, 0, 0),
+            ] {
+                let descriptor =
+                    frame_descriptor(base, leaf_level(size_bits), writable, executable);
+                // Literal flag bits pin the hardware format independently of
+                // the production constants, including nG at bit 11.
+                let expected =
+                    base | descriptor_bits | (1 << 10) | (1 << 11) | (0b11 << 8) | ap | xn;
+                assert_eq!(descriptor, expected);
+            }
+        }
+    }
 }

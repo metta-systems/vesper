@@ -18,9 +18,12 @@ mod api;
 #[path = "../src/objects/mod.rs"]
 mod objects;
 
+#[path = "support/resume.rs"]
+mod resume_tests;
+
 use {
     api::{KeyEntry, debug_console::invoke},
-    core::mem::{MaybeUninit, size_of},
+    core::mem::{MaybeUninit, align_of, size_of},
     libaddress::PhysAddr,
     libobject::{
         CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights,
@@ -29,9 +32,11 @@ use {
     },
     objects::{
         ArchObjects, ArchObjectsImpl, KeyTable, Nucleus, ObjectPool, Thread,
-        access::{ObjectId, PoolTag},
+        access::{Access, ObjectId, PoolTag},
         arch::ArchPools,
+        arch_objects::AddressSpaceObject,
         domain::DcbPages,
+        key_table::KeyTableBinding,
         nucleus::NucleusPools,
     },
 };
@@ -75,7 +80,10 @@ fn bare_index(key: RawKey) -> KeySlot {
 /// Carve a `KeyTable` into the fixed test backing at `index`, returning its
 /// kernel address. A self-table capability with the fixture guard is installed
 /// at the well-known slot, anchoring invocations through this table.
-fn carve(index: usize) -> u64 {
+///
+/// Implementation status: returns the stable carved-table binding used when
+/// provisioning an AddressSpace, rather than a per-Thread table address.
+fn carve(index: usize) -> KeyTableBinding {
     let stride = KeyTable::carve_size(SIZE_BITS);
     let obj = (TEST_BACKING + (index as u64) * (stride as u64)) as *mut u8;
     // SAFETY: TEST_BACKING is RAM, 32-byte aligned (a 512 MiB boundary), and
@@ -91,32 +99,99 @@ fn carve(index: usize) -> u64 {
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|_| panic!("fixture self-table installation failed"));
+        // SAFETY: the full carve is initialized, private to this serial QEMU
+        // fixture, and stays at its fixed address without relocation or
+        // reclamation while any binding is live. No binding escapes the
+        // fixture; subsequent tests reinitialize it only after this nucleus
+        // and all its AddressSpaces have been dropped.
+        table.binding()
     }
-    obj as u64
 }
 
-fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, ObjectId)) {
+impl Nucleus<ArchObjectsImpl> {
+    /// One-time console provisioning for a fixture AddressSpace, then Thread creation.
+    /// Additional Threads in that AddressSpace use production `create_thread`.
+    ///
+    /// Implementation status: console authority is test-local; production Thread
+    /// creation validates the AddressSpace and allocates without changing its table
+    /// or selecting a current caller.
+    fn create_console_thread(&mut self, address_space: ObjectId) -> Option<RawKey> {
+        let binding = {
+            // SAFETY: the serial QEMU fixture provides exclusive kernel access;
+            // no other Access context overlaps this short validation scope.
+            let access = unsafe { Access::new() };
+            access
+                .resolve(&self.pools.arch.address_spaces, address_space)
+                .ok()?
+                .keytable()
+        };
+        let key = {
+            // SAFETY: this live AddressSpace binding names a fixed, initialized
+            // carve owned by the serial fixture. No table reference or other
+            // Access context overlaps this scope, and the guard is dropped
+            // before production Thread creation or subsequent dispatch.
+            let access = unsafe { Access::new() };
+            let mut table = access
+                .resolve_carved_mut::<KeyTable>(binding.address())
+                .ok()?;
+            // Discover the guard through SELF, the same source used by syscall
+            // entry, so the fixture installs a resolvable guarded console key.
+            let (_self_addr, guard, _size_bits) = table
+                .self_table_capability()
+                .expect("fixture table has no self-table capability");
+            table
+                .insert(
+                    KeySlot::DEBUG_CONSOLE,
+                    console_entry(Rights::all(), 0),
+                    guard,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "bootstrap console installation failed: {:?}",
+                        failure.error.code()
+                    )
+                })
+        };
+        self.create_thread(address_space)?;
+        Some(key)
+    }
+}
+
+fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, ObjectId, ObjectId)) {
     // 16-byte-aligned carve backings (the minimum pool carve alignment), each
     // large enough for its pool's carve (asserted below).
-    let mut thread_backing = MaybeUninit::<[u128; 16]>::uninit();
+    const THREAD_CAPACITY: usize = 4;
+    const THREAD_WORDS: usize =
+        ObjectPool::<Thread>::carve_size(THREAD_CAPACITY).div_ceil(size_of::<u128>());
     type Pt = objects::arch::AArch64PageTable;
-    let mut pt_backing = MaybeUninit::<[u128; 16]>::uninit();
+    const PT_WORDS: usize = ObjectPool::<Pt>::carve_size(2).div_ceil(size_of::<u128>());
     type As = objects::arch::AArch64AddressSpace;
-    let mut as_backing = MaybeUninit::<[u128; 16]>::uninit();
-    assert!(ObjectPool::<Thread>::carve_size(2) <= size_of::<[u128; 16]>());
-    assert!(ObjectPool::<Pt>::carve_size(2) <= size_of::<[u128; 16]>());
-    assert!(ObjectPool::<As>::carve_size(2) <= size_of::<[u128; 16]>());
+    const AS_WORDS: usize = ObjectPool::<As>::carve_size(2).div_ceil(size_of::<u128>());
+    let mut thread_backing = MaybeUninit::<[u128; THREAD_WORDS]>::uninit();
+    let mut pt_backing = MaybeUninit::<[u128; PT_WORDS]>::uninit();
+    let mut as_backing = MaybeUninit::<[u128; AS_WORDS]>::uninit();
+    const _: () = {
+        assert!(ObjectPool::<Thread>::carve_size(THREAD_CAPACITY) <= 4096);
+        assert!(align_of::<[u128; THREAD_WORDS]>() >= ObjectPool::<Thread>::ALIGN);
+        assert!(align_of::<[u128; PT_WORDS]>() >= ObjectPool::<Pt>::ALIGN);
+        assert!(align_of::<[u128; AS_WORDS]>() >= ObjectPool::<As>::ALIGN);
+    };
+    assert!(ObjectPool::<Thread>::carve_size(THREAD_CAPACITY) <= size_of::<[u128; THREAD_WORDS]>());
+    assert!(ObjectPool::<Pt>::carve_size(2) <= size_of::<[u128; PT_WORDS]>());
+    assert!(ObjectPool::<As>::carve_size(2) <= size_of::<[u128; AS_WORDS]>());
     // SAFETY: The backings are carve-aligned and remain exclusively owned
     // here until after the nucleus and its pools are dropped. The callback
     // cannot return a borrowed nucleus/object reference. Only the pools
     // access the backing while they are live.
-    let threads = unsafe { ObjectPool::initialize(thread_backing.as_mut_ptr().cast::<u8>(), 2) };
+    let threads = unsafe {
+        ObjectPool::initialize(thread_backing.as_mut_ptr().cast::<u8>(), THREAD_CAPACITY)
+    };
     let page_tables = unsafe { ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 2) };
     let address_spaces = unsafe { ObjectPool::initialize(as_backing.as_mut_ptr().cast::<u8>(), 2) };
     // Carve two KeyTable regions from the fixed test backing (mirrors the boot
     // carve / runtime Retype: the table's storage is the carved region).
-    let table_addr = carve(0);
-    let second_table_addr = carve(1);
+    let table_binding = carve(0);
+    let second_table_binding = carve(1);
     let mut nucleus = Nucleus {
         pools: NucleusPools {
             threads,
@@ -150,21 +225,42 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, Objec
     };
     // One fixture AddressSpace shared by the fixture Threads: these tests
     // never resolve translation state.
+    // Implementation status: table selection now resolves AddressSpace
+    // identity. Each distinct fixture table is bound to its own AddressSpace
+    // at provisioning; Threads in the same AddressSpace share its one table.
+    // No translation root or hardware context is installed by this fixture.
     let fixture_as = nucleus
         .pools
         .arch
         .address_spaces
-        .allocate(ArchObjectsImpl::new_address_space())
+        .allocate(ArchObjectsImpl::new_address_space(table_binding))
         .expect("no fixture AddressSpace slot")
         .0;
-    test(&mut nucleus, table_addr, second_table_addr, fixture_as);
-    for index in 0..2_u16 {
-        let id = ObjectId {
-            pool: PoolTag::Thread,
-            index,
-            generation: 1,
-        };
-        if nucleus.pools.threads.get_live(usize::from(index)).is_some() {
+    let second_as = nucleus
+        .pools
+        .arch
+        .address_spaces
+        .allocate(ArchObjectsImpl::new_address_space(second_table_binding))
+        .expect("no second fixture AddressSpace slot")
+        .0;
+    assert_ne!(fixture_as, second_as);
+    assert_ne!(table_binding.address(), second_table_binding.address());
+    assert_eq!(table_binding.size_bits(), SIZE_BITS);
+    assert_eq!(second_table_binding.size_bits(), SIZE_BITS);
+    test(
+        &mut nucleus,
+        table_binding.address(),
+        second_table_binding.address(),
+        fixture_as,
+        second_as,
+    );
+    for index in 0..THREAD_CAPACITY {
+        if let Some(generation) = nucleus.pools.threads.generation_of(index) {
+            let id = ObjectId {
+                pool: PoolTag::Thread,
+                index: u16::try_from(index).unwrap(),
+                generation,
+            };
             nucleus
                 .pools
                 .threads
@@ -176,9 +272,9 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, Objec
 
 #[test_case]
 fn missing_caller_cannot_invoke_bootstrap_console() {
-    with_nucleus(|nucleus, table_addr, _second, fixture_as| {
+    with_nucleus(|nucleus, _table_addr, _second, fixture_as, _second_as| {
         let key = nucleus
-            .create_thread(table_addr, fixture_as)
+            .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
         assert_eq!(bare_index(key), KeySlot::DEBUG_CONSOLE);
         assert_ne!(key.incarnation(), 0);
@@ -220,51 +316,508 @@ fn missing_caller_cannot_invoke_bootstrap_console() {
 
 #[test_case]
 fn dispatch_uses_only_the_explicit_allocated_caller_table() {
-    with_nucleus(|nucleus, table_addr, second_table_addr, fixture_as| {
-        let key = nucleus
-            .create_thread(table_addr, fixture_as)
-            .expect("bootstrap console key missing");
-        let args = [u64::MAX; 6];
-        for caller in [1, 2, u32::MAX] {
-            nucleus.current_thread = Some(caller);
-            assert!(nucleus.current_thread_mut().is_none());
+    with_nucleus(
+        |nucleus, _table_addr, _second_table_addr, fixture_as, second_as| {
+            let key = nucleus
+                .create_console_thread(fixture_as)
+                .expect("bootstrap console key missing");
+            let args = [u64::MAX; 6];
+            for caller in [1, 2, u32::MAX] {
+                nucleus.current_thread = Some(caller);
+                assert!(nucleus.current_thread_mut().is_none());
+                assert!(matches!(
+                    api::handle_cap_invoke(nucleus, key, 1, &args),
+                    Err(CapError::InvalidDomain)
+                ));
+            }
+
+            nucleus
+                .pools
+                .threads
+                .allocate(Thread {
+                    address_space: second_as,
+                    context: crate::objects::ExecutionContext::Running,
+                })
+                .expect("second thread allocation failed");
+            nucleus.current_thread = Some(1);
+            let diag = api::handle_cap_invoke(nucleus, key, 1, &args);
+            let words = match diag {
+                Ok(_) => panic!("second-table invocation succeeded"),
+                Err(error) => error.code(),
+            };
+            // NeverIssued in wire form: the console key's slot was never issued in
+            // the second table.
+            assert_eq!(words, (26, key.to_wire(), 3));
+            // The second table holds only its self-table capability: the console
+            // key (same guard, same slot number) was never issued there.
+            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
+            let id = ObjectId {
+                pool: PoolTag::Thread,
+                index: 1,
+                generation: 1,
+            };
+            assert!(nucleus.pools.threads.deallocate(id).is_ok());
             assert!(matches!(
                 api::handle_cap_invoke(nucleus, key, 1, &args),
                 Err(CapError::InvalidDomain)
             ));
+        },
+    );
+}
+
+#[test_case]
+fn threads_in_the_same_address_space_share_one_dispatch_table() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
+        let issued = nucleus
+            .create_console_thread(fixture_as)
+            .expect("bootstrap console key missing");
+        nucleus.current_thread = Some(0);
+        let self_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
+        let original_console_id = {
+            let table = nucleus.current_thread_table_mut().unwrap();
+            assert_console_table(table, issued, Some((Rights::all(), 0)));
+            table
+                .lookup(issued, FIXTURE_GUARD)
+                .unwrap_or_else(|_| panic!("console key missing before Thread creation"))
+                .object_id()
+                .unwrap_or_else(|_| panic!("console identity missing"))
+        };
+        // Implementation status: production creation is table-neutral even when
+        // the AddressSpace already has a console grant. It must not reinstall
+        // that grant, advance any slot counter, or replace either live identity.
+        let second_thread = nucleus
+            .create_thread(fixture_as)
+            .expect("second thread allocation failed");
+        assert_eq!(second_thread.pool, PoolTag::Thread);
+        assert_eq!(second_thread.index, 1);
+        assert_eq!(second_thread.generation, 1);
+        assert_eq!(nucleus.pools.threads.len(), 2);
+        assert_eq!(nucleus.current_thread, Some(0));
+        for caller in [0, u32::from(second_thread.index)] {
+            nucleus.current_thread = Some(caller);
+            assert_eq!(
+                nucleus.current_thread_mut().unwrap().address_space,
+                fixture_as
+            );
+            assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+            assert_dispatch_error(nucleus, issued, 1, (8, 0, 0));
+            let table = nucleus.current_thread_table_mut().unwrap();
+            assert_console_table(table, issued, Some((Rights::all(), 0)));
+            assert_eq!(
+                table.self_table_capability(),
+                Some((table_addr, FIXTURE_GUARD, SIZE_BITS))
+            );
+            let self_cap = table
+                .lookup(self_key, FIXTURE_GUARD)
+                .unwrap_or_else(|_| panic!("Thread creation changed SELF identity"));
+            assert_eq!(self_cap.object_type(), ObjectType::KEY_TABLE);
+            assert_eq!(self_cap.rights(), Rights::all());
+            assert_eq!(self_cap.badge(), 0);
+            assert_eq!(
+                table
+                    .lookup(issued, FIXTURE_GUARD)
+                    .unwrap_or_else(|_| panic!("Thread creation changed console key"))
+                    .object_id()
+                    .unwrap_or_else(|_| panic!("Thread creation changed console identity")),
+                original_console_id
+            );
+            // Exact live keys still resolve, their next incarnations mismatch,
+            // and assert_console_table checks every other slot is NeverIssued:
+            // production creation changed neither occupancy nor slot counters.
+            for key in [self_key, issued] {
+                let future = RawKey::from_parts(
+                    FIXTURE_GUARD,
+                    SIZE_BITS,
+                    bare_index(key).0,
+                    key.incarnation() + 1,
+                );
+                assert!(matches!(
+                    table.lookup(future, FIXTURE_GUARD),
+                    Err(CapError::InconsistentKey {
+                        key: submitted,
+                        reason: InconsistencyReason::SlotIncarnationMismatch,
+                        operand: 0,
+                    }) if submitted == future
+                ));
+            }
         }
 
-        nucleus
+        nucleus.current_thread = Some(0);
+        let rights = Rights(Rights::READ);
+        let replacement = {
+            let table = nucleus.current_thread_table_mut().unwrap();
+            table
+                .remove(issued, FIXTURE_GUARD)
+                .unwrap_or_else(|_| panic!("shared console removal failed"));
+            table
+                .insert(bare_index(issued), console_entry(rights, 91), FIXTURE_GUARD)
+                .unwrap_or_else(|_| panic!("shared console replacement failed"))
+        };
+        assert_eq!(replacement.incarnation(), issued.incarnation() + 1);
+        for caller in [0, u32::from(second_thread.index)] {
+            nucleus.current_thread = Some(caller);
+            assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+            assert_dispatch_error(nucleus, issued, 0, (27, issued.to_wire(), 1));
+            assert_dispatch_error(nucleus, replacement, 1, (8, 0, 0));
+            assert_console_table(
+                nucleus.current_thread_table_mut().unwrap(),
+                replacement,
+                Some((rights, 91)),
+            );
+        }
+    });
+}
+
+#[test_case]
+fn changing_thread_address_space_selects_its_table_on_the_next_dispatch() {
+    with_nucleus(
+        |nucleus, table_addr, second_table_addr, fixture_as, second_as| {
+            let issued = nucleus
+                .create_console_thread(fixture_as)
+                .expect("bootstrap console key missing");
+            nucleus.current_thread = Some(0);
+            assert_dispatch_error(nucleus, issued, 1, (8, 0, 0));
+            assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+
+            // This is a private-state fixture transition, not PPC or a hardware
+            // migration: no translation context or saved registers are switched.
+            nucleus.current_thread_mut().unwrap().address_space = second_as;
+            assert_eq!(nucleus.current_thread_table_addr(), Some(second_table_addr));
+            assert_dispatch_error(nucleus, issued, 0, (26, issued.to_wire(), 3));
+            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
+            let rights = Rights(Rights::READ);
+            let second_key = nucleus
+                .current_thread_table_mut()
+                .unwrap()
+                .insert(
+                    KeySlot::DEBUG_CONSOLE,
+                    console_entry(rights, 92),
+                    FIXTURE_GUARD,
+                )
+                .unwrap_or_else(|_| panic!("second-table console installation failed"));
+            // These fixture tables deliberately use the same guard: differing
+            // table contents, not differing key bits, prove the table selection.
+            assert_eq!(second_key, issued);
+            assert_dispatch_error(nucleus, second_key, 1, (8, 0, 0));
+            assert_console_table(
+                nucleus.current_thread_table_mut().unwrap(),
+                second_key,
+                Some((rights, 92)),
+            );
+
+            nucleus.current_thread_mut().unwrap().address_space = fixture_as;
+            assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+            assert_dispatch_error(nucleus, issued, 1, (8, 0, 0));
+            assert_console_table(
+                nucleus.current_thread_table_mut().unwrap(),
+                issued,
+                Some((Rights::all(), 0)),
+            );
+            for (id, address) in [(fixture_as, table_addr), (second_as, second_table_addr)] {
+                assert!(nucleus.pools.arch.address_spaces.validate(id).is_ok());
+                let binding = nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .get_live(usize::from(id.index))
+                    .unwrap()
+                    .keytable();
+                assert_eq!(binding.address(), address);
+                assert_eq!(binding.size_bits(), SIZE_BITS);
+            }
+        },
+    );
+}
+
+#[test_case]
+fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
+    with_nucleus(
+        |nucleus, _table_addr, second_table_addr, fixture_as, second_as| {
+            let issued = nucleus
+                .create_console_thread(fixture_as)
+                .expect("bootstrap console key missing");
+            nucleus.current_thread = Some(0);
+            let self_key =
+                RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
+            nucleus
+                .current_thread_table_mut()
+                .unwrap()
+                .remove(self_key, FIXTURE_GUARD)
+                .unwrap_or_else(|_| panic!("self-table removal failed"));
+            // A live AddressSpace reaches the missing SELF rejection, even for a
+            // malformed key; stale AddressSpace validation must win instead.
+            // Implementation status: stale callers report InvalidDomain (status
+            // 3), before SELF or key lookup, not an object-retirement status.
+            let malformed = RawKey::from_wire(0);
+            assert_dispatch_error(nucleus, malformed, 0, (27, 0, 2));
+            assert!(
+                nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .deallocate(fixture_as)
+                    .is_ok()
+            );
+            assert_eq!(
+                nucleus.current_thread_mut().unwrap().address_space,
+                fixture_as
+            );
+            assert!(nucleus.current_thread_table_addr().is_none());
+            assert!(nucleus.current_thread_table_mut().is_none());
+            for key in [malformed, issued] {
+                assert_dispatch_error(nucleus, key, 0, (3, 0, 0));
+            }
+
+            let replacement_binding = nucleus
+                .pools
+                .arch
+                .address_spaces
+                .get_live(usize::from(second_as.index))
+                .unwrap()
+                .keytable();
+            assert!(
+                nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .deallocate(second_as)
+                    .is_ok()
+            );
+            let replacement_as = nucleus
+                .pools
+                .arch
+                .address_spaces
+                .allocate(ArchObjectsImpl::new_address_space(replacement_binding))
+                .expect("replacement AddressSpace allocation failed")
+                .0;
+            assert_eq!(replacement_as.index, fixture_as.index);
+            assert_eq!(replacement_as.generation, fixture_as.generation + 1);
+            assert!(
+                nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .validate(replacement_as)
+                    .is_ok()
+            );
+            assert!(
+                nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .validate(fixture_as)
+                    .is_err()
+            );
+            assert!(nucleus.current_thread_table_addr().is_none());
+            assert!(nucleus.current_thread_table_mut().is_none());
+            for key in [malformed, issued] {
+                assert_dispatch_error(nucleus, key, 0, (3, 0, 0));
+            }
+            assert_eq!(nucleus.pools.threads.len(), 1);
+
+            // Only the fresh identity admits access to the replacement's live
+            // table. Neither reuse nor the stale Thread silently refreshes it.
+            nucleus.current_thread_mut().unwrap().address_space = replacement_as;
+            assert_eq!(nucleus.current_thread_table_addr(), Some(second_table_addr));
+            assert_dispatch_error(nucleus, malformed, 0, (26, 0, 1));
+            assert_dispatch_error(nucleus, issued, 0, (26, issued.to_wire(), 3));
+            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
+        },
+    );
+}
+
+#[test_case]
+fn fixture_thread_creation_rejects_stale_address_space_without_allocating() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
+        let binding = nucleus
             .pools
-            .threads
-            .allocate(Thread {
-                keytable_addr: second_table_addr,
-                address_space: fixture_as,
-                context: crate::objects::ExecutionContext::Running,
-            })
-            .expect("second thread allocation failed");
-        nucleus.current_thread = Some(1);
-        let diag = api::handle_cap_invoke(nucleus, key, 1, &args);
-        let words = match diag {
-            Ok(_) => panic!("second-table invocation succeeded"),
-            Err(error) => error.code(),
-        };
-        // NeverIssued in wire form: the console key's slot was never issued in
-        // the second table.
-        assert_eq!(words, (26, key.to_wire(), 3));
-        // The second table holds only its self-table capability: the console
-        // key (same guard, same slot number) was never issued there.
-        assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
-        let id = ObjectId {
-            pool: PoolTag::Thread,
-            index: 1,
-            generation: 1,
-        };
-        assert!(nucleus.pools.threads.deallocate(id).is_ok());
-        assert!(matches!(
-            api::handle_cap_invoke(nucleus, key, 1, &args),
-            Err(CapError::InvalidDomain)
-        ));
+            .arch
+            .address_spaces
+            .get_live(usize::from(fixture_as.index))
+            .unwrap()
+            .keytable();
+        assert!(nucleus.pools.threads.is_empty());
+        assert!(
+            nucleus
+                .pools
+                .arch
+                .address_spaces
+                .deallocate(fixture_as)
+                .is_ok()
+        );
+        // These rejection checks exercise production creation, not the console
+        // provisioning helper: a stale AddressSpace must consume no Thread slot.
+        assert!(nucleus.create_thread(fixture_as).is_none());
+        assert!(nucleus.pools.threads.is_empty());
+        assert_eq!(nucleus.current_thread, None);
+
+        let replacement_as = nucleus
+            .pools
+            .arch
+            .address_spaces
+            .allocate(ArchObjectsImpl::new_address_space(binding))
+            .expect("replacement AddressSpace allocation failed")
+            .0;
+        assert_eq!(replacement_as.index, fixture_as.index);
+        assert_eq!(replacement_as.generation, fixture_as.generation + 1);
+        assert!(nucleus.create_thread(fixture_as).is_none());
+        assert!(nucleus.pools.threads.is_empty());
+        assert_eq!(nucleus.current_thread, None);
+
+        let issued = nucleus
+            .create_console_thread(replacement_as)
+            .expect("live replacement AddressSpace rejected");
+        assert_eq!(nucleus.pools.threads.len(), 1);
+        // The first slot and first generation are intact: rejected creation
+        // did not allocate a Thread even temporarily, or consume its identity.
+        assert_eq!(nucleus.pools.threads.generation_of(0), Some(1));
+        assert_eq!(issued.incarnation(), 1);
+        nucleus.current_thread = Some(0);
+        assert_eq!(
+            nucleus.current_thread_mut().unwrap().address_space,
+            replacement_as
+        );
+        assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+        assert_dispatch_error(nucleus, issued, 1, (8, 0, 0));
+        assert_console_table(
+            nucleus.current_thread_table_mut().unwrap(),
+            issued,
+            Some((Rights::all(), 0)),
+        );
+    });
+}
+
+#[test_case]
+fn mismatched_self_table_address_or_size_rejects_dispatch_without_changes() {
+    with_nucleus(
+        |nucleus, table_addr, second_table_addr, fixture_as, _second_as| {
+            let issued = nucleus
+                .create_console_thread(fixture_as)
+                .expect("bootstrap console key missing");
+            nucleus.current_thread = Some(0);
+            let mut self_key =
+                RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
+            for (address, size_bits) in [
+                (second_table_addr, SIZE_BITS),
+                (table_addr, SIZE_BITS - 1),
+                (table_addr, SIZE_BITS + 1),
+            ] {
+                let original = nucleus
+                    .current_thread_table_mut()
+                    .unwrap()
+                    .remove(self_key, FIXTURE_GUARD)
+                    .unwrap_or_else(|_| panic!("self-table removal failed"));
+                self_key = nucleus
+                    .current_thread_table_mut()
+                    .unwrap()
+                    .insert(
+                        KeySlot::SELF_KEYTABLE,
+                        KeyEntry::new_keytable(
+                            address,
+                            FIXTURE_GUARD,
+                            size_bits,
+                            Rights::all(),
+                            93,
+                        ),
+                        FIXTURE_GUARD,
+                    )
+                    .unwrap_or_else(|_| panic!("mismatched self-table installation failed"));
+                for key in [issued, RawKey::from_wire(0), RawKey::from_wire(u64::MAX)] {
+                    for op in [0, u64::MAX] {
+                        assert_dispatch_error(nucleus, key, op, (27, key.to_wire(), 2));
+                        let table = nucleus.current_thread_table_mut().unwrap();
+                        assert_console_table(table, issued, Some((Rights::all(), 0)));
+                        assert_eq!(table.size_bits(), SIZE_BITS);
+                        assert_eq!(
+                            table.self_table_capability(),
+                            Some((address, FIXTURE_GUARD, size_bits))
+                        );
+                        let cap = table
+                            .lookup(self_key, FIXTURE_GUARD)
+                            .unwrap_or_else(|_| panic!("rejected dispatch changed SELF identity"));
+                        assert_eq!(
+                            cap.keytable_address()
+                                .unwrap_or_else(|_| panic!("not a table")),
+                            address
+                        );
+                        assert_eq!(
+                            cap.keytable_guard_and_size()
+                                .unwrap_or_else(|_| panic!("not a table")),
+                            (FIXTURE_GUARD, size_bits)
+                        );
+                        assert_eq!(cap.rights(), Rights::all());
+                        assert_eq!(cap.badge(), 93);
+                        let future = RawKey::from_parts(
+                            FIXTURE_GUARD,
+                            SIZE_BITS,
+                            KeySlot::SELF_KEYTABLE.0,
+                            self_key.incarnation() + 1,
+                        );
+                        let error = match table.lookup(future, FIXTURE_GUARD) {
+                            Err(error) => error,
+                            Ok(_) => panic!("rejected dispatch changed SELF incarnation"),
+                        };
+                        assert_eq!(error.code(), (27, future.to_wire(), 1));
+                    }
+                }
+                nucleus
+                    .current_thread_table_mut()
+                    .unwrap()
+                    .remove(self_key, FIXTURE_GUARD)
+                    .unwrap_or_else(|_| panic!("mismatched self-table removal failed"));
+                self_key = nucleus
+                    .current_thread_table_mut()
+                    .unwrap()
+                    .insert(KeySlot::SELF_KEYTABLE, original, FIXTURE_GUARD)
+                    .unwrap_or_else(|_| panic!("self-table restoration failed"));
+                assert_dispatch_error(nucleus, issued, 1, (8, 0, 0));
+            }
+        },
+    );
+}
+
+#[test_case]
+fn self_table_capability_remains_the_source_of_the_caller_guard() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
+        let issued = nucleus
+            .create_console_thread(fixture_as)
+            .expect("bootstrap console key missing");
+        nucleus.current_thread = Some(0);
+        let self_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
+        let changed_guard = FIXTURE_GUARD ^ 1;
+        // Deliberately replace private fixture metadata to test the lookup
+        // source; this is not a public guard-mutation or table-rebinding API.
+        let table = nucleus.current_thread_table_mut().unwrap();
+        table
+            .remove(self_key, FIXTURE_GUARD)
+            .unwrap_or_else(|_| panic!("self-table removal failed"));
+        table
+            .insert(
+                KeySlot::SELF_KEYTABLE,
+                KeyEntry::new_keytable(table_addr, changed_guard, SIZE_BITS, Rights::all(), 0),
+                changed_guard,
+            )
+            .unwrap_or_else(|_| panic!("changed-guard self-table installation failed"));
+        let rebound_key = RawKey::from_parts(
+            changed_guard,
+            SIZE_BITS,
+            KeySlot::DEBUG_CONSOLE.0,
+            issued.incarnation(),
+        );
+        assert_dispatch_error(nucleus, issued, 0, (26, issued.to_wire(), 4));
+        assert_dispatch_error(nucleus, rebound_key, 1, (8, 0, 0));
+        let table = nucleus.current_thread_table_mut().unwrap();
+        assert_eq!(table.len(), 2);
+        assert_eq!(
+            table.self_table_capability(),
+            Some((table_addr, changed_guard, SIZE_BITS))
+        );
+        let cap = table
+            .lookup(rebound_key, changed_guard)
+            .unwrap_or_else(|_| panic!("console metadata changed"));
+        assert_eq!(cap.object_type(), ObjectType::DEBUG_CONSOLE);
+        assert_eq!(cap.rights(), Rights::all());
+        assert_eq!(cap.badge(), 0);
     });
 }
 
@@ -273,7 +826,7 @@ fn missing_caller_cannot_select_an_existing_dcb() {
     // This page is used only by this test, once in the serial QEMU harness.
     // Static backing satisfies DcbPages' retained-reference lifetime.
     static mut PAGE: DcbPage = DcbPage::new();
-    with_nucleus(|nucleus, _table_addr, _second, _fixture_as| {
+    with_nucleus(|nucleus, _table_addr, _second, _fixture_as, _second_as| {
         let page = &raw mut PAGE;
         // SAFETY: PAGE is initialized, aligned, static, and exclusively accessed
         // through this DcbPages instance. Tests run with identity-mapped RAM;
@@ -410,9 +963,9 @@ fn assert_dispatch_error(
 
 #[test_case]
 fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
-    with_nucleus(|nucleus, table_addr, _second, fixture_as| {
+    with_nucleus(|nucleus, _table_addr, _second, fixture_as, _second_as| {
         let issued = nucleus
-            .create_thread(table_addr, fixture_as)
+            .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
         nucleus.current_thread = Some(0);
         // Literal wire words deliberately avoid deriving expectations from the
@@ -468,9 +1021,9 @@ fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
 
 #[test_case]
 fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
-    with_nucleus(|nucleus, table_addr, _second, fixture_as| {
+    with_nucleus(|nucleus, _table_addr, _second, fixture_as, _second_as| {
         let issued = nucleus
-            .create_thread(table_addr, fixture_as)
+            .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
         nucleus.current_thread = Some(0);
         // Write is zero: every individual set bit is invalid, including all
@@ -505,9 +1058,9 @@ fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
 
 #[test_case]
 fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
-    with_nucleus(|nucleus, table_addr, _second, fixture_as| {
+    with_nucleus(|nucleus, _table_addr, _second, fixture_as, _second_as| {
         let old = nucleus
-            .create_thread(table_addr, fixture_as)
+            .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
         nucleus.current_thread = Some(0);
         assert_dispatch_error(nucleus, old, 1, (8, 0, 0));

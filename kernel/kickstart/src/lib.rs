@@ -67,6 +67,9 @@ fn dump_memory_map() {
 /// after the MMU is enabled and execution has dropped to EL1 (the boot image's
 /// own run function, e.g. kickstart's `kickstart_run` or kicktest's
 /// `kicktest_run`).
+/// Implementation status: this trusted linked continuation runs at `EL1t` on the
+/// existing low boot stack (`SP_EL0`); exceptions use the allocated high per-core
+/// kernel stack (`SP_EL1`). Protected EL0 component entry remains separate work.
 ///
 /// Safety
 ///
@@ -77,6 +80,11 @@ fn dump_memory_map() {
 ///       `IRQSafeNullLocks` instead of spinlocks), will fail to work (properly) on the `RPi` `SoCs`.
 ///
 pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
+    unsafe extern "Rust" {
+        static __STACK_BOTTOM: UnsafeCell<()>;
+        static __STACK_TOP: UnsafeCell<()>;
+    }
+
     let dtb_ptr = dtb as *const u8;
 
     SPSR_EL2.write(
@@ -84,7 +92,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             + SPSR_EL2::A::Masked
             + SPSR_EL2::I::Masked
             + SPSR_EL2::F::Masked
-            + SPSR_EL2::M::EL1h, // Use SP_EL1/2
+            + SPSR_EL2::M::EL1t, // Use SP_EL0 for trusted execution
     );
 
     #[cfg(feature = "jtag")]
@@ -221,6 +229,22 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             .expect("🌴 Cannot insert unusable memory in boot_info");
         });
     }
+
+    // Retained EL1t execution still uses the low boot stack after this EL2
+    // call chain is abandoned. Reserve it before any allocator can hand it out.
+    // SAFETY: take only the addresses of linker-defined stack bounds; no
+    // memory at either symbol is read or dereferenced.
+    let (execution_stack_bottom, execution_stack_top) =
+        unsafe { (__STACK_BOTTOM.get() as u64, __STACK_TOP.get() as u64) };
+    BOOT_INFO.lock(|bi| {
+        bi.insert_used_region(
+            PhysAddr::new(execution_stack_bottom),
+            PhysAddr::new(execution_stack_top),
+            AttributeFields::default(),
+            "Init execution stack",
+        )
+        .expect("cannot reserve the retained init execution stack");
+    });
 
     // 5. Also list memreserve entries, and remove then from allocator regions?
     // From FDT dump:
@@ -424,7 +448,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
         let el1_stack = allocator
             .alloc_pages(el1_stack_size, ("🧠 Nucleus stack", Alloc::Persistent))
             .expect("🥾 Failed to allocate EL1 stack");
-        let el1_stack_size = el1_stack_size * 4096; // 64KiB stack
+        let el1_stack_size = el1_stack_size * 4096; // 512 KiB stack
         (el1_stack, el1_stack_size)
     };
 
@@ -529,12 +553,10 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
 
     print_my_sp();
 
-    unsafe extern "Rust" {
-        // Stack top
-        static __STACK_TOP: UnsafeCell<()>;
-    }
-
-    // SAFETY: Not safe.
+    // SAFETY: Only the boot core is active at EL2 using SP_EL2. The boot image
+    // and its low stack are identity-mapped; vectors and the distinct persistent
+    // trap stack are high-mapped. Both stack tops are page-aligned. This terminal
+    // transition abandons the EL2 call chain before the low stack is reused.
     unsafe {
         el_switch::enable_mmu_and_drop_to_el1(
             ttbr0,
@@ -542,7 +564,10 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             vbar,
             run_entry,
             // el1_stack_top, // This is solely for the kernel
-            __STACK_TOP.get() as u64,
+            // Implementation status: pass it separately as the SP_EL1 trap
+            // stack, leaving the linked fixture's low execution stack in SP_EL0.
+            execution_stack_top,
+            el1_stack_top,
         );
     }
 }

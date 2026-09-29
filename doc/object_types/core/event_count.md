@@ -56,8 +56,10 @@ flowchart TD
   waiters observe the producer's failure instead of blocking indefinitely;
   a woken waiter may re-`Await`.
 - **Blocking path**: as with Notification, a would-block `Await` reports
-  `InvokeOutcome::Blocked`; the entry parks the caller and the resume
-  delivers the terminal result — including error wakeups (status 31), since
+  `InvokeOutcome::Blocked`; the entry copies the caller's execution context
+  into Thread storage. Resume rewrites the current transient trap frame and
+  returns normally through `ERET` on the shared per-core kernel stack,
+  delivering the terminal result — including error wakeups (status 31), since
   the completed pending record carries the full result shape (status + two
   words). Validated end-to-end via the debug-gated Bounce fixture.
 - **Bounded queues**: a full await queue rejects before admission

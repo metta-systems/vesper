@@ -42,8 +42,13 @@ SECTIONS
         __BSS_START = .;
         *(.bss .bss.*)
         *(COMMON)
+        /* The boot loop clears 16-byte words and terminates at this symbol. */
+        . = ALIGN(16);
         __BSS_END = .;
     }
+
+    ASSERT((__BSS_START % 16) == 0, "BSS start must match the 16-byte boot clear stride")
+    ASSERT((__BSS_END % 16) == 0, "BSS end must match the 16-byte boot clear stride")
 
     . = ALIGN(4K);
     __INIT_END = .;

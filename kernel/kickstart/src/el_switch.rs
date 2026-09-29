@@ -5,8 +5,8 @@ use {
     aarch64_cpu::{
         asm::{self, barrier},
         registers::{
-            ELR_EL2, HCR_EL2, MAIR_EL1, ReadWriteable, SCTLR_EL1, SP_EL1, SPSR_EL1, SPSR_EL2,
-            TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
+            ELR_EL2, HCR_EL2, MAIR_EL1, ReadWriteable, SCTLR_EL1, SP_EL0, SP_EL1, SPSR_EL1,
+            SPSR_EL2, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
         },
     },
 };
@@ -19,18 +19,30 @@ use {
 /// * `ttbr1` - Translation table base for high addresses (kernel)
 /// * `vbar` - Exception vector base address (physical, must be 2KB aligned)
 /// * `entry_point` - Kernel entry point (virtual address)
-/// * `stack_pointer` - Initial stack pointer for EL1
+/// * `execution_stack_pointer` - Initial execution stack pointer in `SP_EL0` (`EL1t`)
+/// * `trap_stack_pointer` - Shared per-core kernel trap stack pointer in `SP_EL1`
+///
+/// Implementation status: the entry is trusted linked `Kickstart`/`Kicktest` code,
+/// not a protected EL0 Thread; `vbar` is its mapped high virtual address.
 ///
 /// # Safety
 ///
 /// This function never returns to the caller.
+/// The caller must run at EL2 with `SP_EL2` selected and only the boot core active.
+/// The translation tables must remain live and map the entry executable, the
+/// vectors executable, and both distinct stack extents writable. Both stack
+/// pointers must be 16-byte aligned tops of sufficiently sized, retained backing.
+/// No live continuation or borrowed stack storage may be overwritten by either
+/// stack; reusing the EL2 boot stack for execution abandons the EL2 call chain.
+/// The trap stack must stay reserved for this core's kernel exception handling.
 #[inline(never)]
 pub unsafe fn enable_mmu_and_drop_to_el1(
     ttbr0: u64,
     ttbr1: u64,
     vbar: u64,
     entry_point: u64,
-    stack_pointer: u64,
+    execution_stack_pointer: u64,
+    trap_stack_pointer: u64,
 ) -> ! {
     // MAIR: Memory Attribute Indirection Register
     // Index 0: Normal memory, Write-Back, Read/Write Allocate
@@ -125,15 +137,19 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     //
     // Fake a saved program status, where all interrupts were
     // masked and SP_EL1 was used as a stack pointer.
+    // Implementation status: trusted fixture execution now returns to EL1t
+    // using SP_EL0; exception entry selects the separate shared SP_EL1.
     SPSR_EL2.write(
         SPSR_EL2::D::Masked
             + SPSR_EL2::A::Masked
             + SPSR_EL2::I::Masked
             + SPSR_EL2::F::Masked
-            + SPSR_EL2::M::EL1h, // Use SP_EL1, Return to EL1
+            + SPSR_EL2::M::EL1t, // Use SP_EL0, Return to EL1
     );
 
     // TODO: Mask interrupts in EL1
+    // Implementation status: SPSR_EL2 above supplies the initial EL1 masks;
+    // this saved EL1 status is overwritten on the first exception entry.
     SPSR_EL1.write(
         SPSR_EL1::D::Masked
             + SPSR_EL1::A::Masked
@@ -144,7 +160,8 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
 
     // Set return address and stack
     ELR_EL2.set(entry_point);
-    SP_EL1.set(stack_pointer);
+    SP_EL0.set(execution_stack_pointer);
+    SP_EL1.set(trap_stack_pointer);
 
     memory_barrier();
 

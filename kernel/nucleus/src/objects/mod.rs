@@ -11,6 +11,7 @@ pub mod notification;
 pub mod nucleus;
 pub mod nucleus_object;
 pub mod object_pool;
+pub mod resume;
 pub mod sched;
 pub mod thread;
 

@@ -3,6 +3,7 @@ use {
         api::key_entry::KeyEntry,
         objects::{NucleusObject, access::ObjectId},
     },
+    core::num::NonZero,
     libobject::{
         CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey,
         domain::DomainId,
@@ -39,6 +40,27 @@ pub struct KeyTable {
     _pad: [u8; 23],
 }
 
+/// Immutable association with initialized, kernel-private carved storage.
+///
+/// Issued only by [`KeyTable::binding`], whose safety contract keeps the full
+/// carve stable for every retained copy. This is not a reclaimable object
+/// identity: adding table reclamation requires a separate lifetime mechanism.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyTableBinding {
+    address: NonZero<u64>,
+    size_bits: u8,
+}
+
+impl KeyTableBinding {
+    pub const fn address(self) -> u64 {
+        self.address.get()
+    }
+
+    pub const fn size_bits(self) -> u8 {
+        self.size_bits
+    }
+}
+
 /// The error payload of a failed installation: the rejection reason plus the
 /// submitted entry, returned so ownership is preserved on failure.
 pub struct InsertError {
@@ -50,7 +72,8 @@ pub struct InsertError {
 /// selected 2026-09-23).
 ///
 /// Resolved once at the syscall entry: the address comes from the current
-/// Thread, and the guard comes from the `SELF_KEYTABLE` capability, which the
+/// Thread's live `AddressSpace` binding, and the guard comes from the
+/// `SELF_KEYTABLE` capability, which the
 /// entry validates to name this very table. Every presented key is resolved
 /// through this context; keys minted into other tables carry those tables'
 /// guards and are rejected here.
@@ -98,6 +121,21 @@ impl KeyTable {
     #[inline]
     pub fn size_bits(&self) -> u8 {
         self.size_bits
+    }
+
+    /// Issue a persistent binding for `AddressSpace` provisioning.
+    ///
+    /// # Safety
+    /// This must be a fully initialized carve, not a relocated header. Its
+    /// entire backing must remain kernel-private, at this address, and must
+    /// not be reclaimed or reinitialized while any copy of the binding lives.
+    /// This obligation extends beyond the lifetime of this borrow.
+    pub unsafe fn binding(&self) -> KeyTableBinding {
+        KeyTableBinding {
+            address: NonZero::new(core::ptr::from_ref(self) as u64)
+                .expect("a referenced table has a nonzero address"),
+            size_bits: self.size_bits,
+        }
     }
 
     /// Initialize a freshly carved table kernel-privately: write the header

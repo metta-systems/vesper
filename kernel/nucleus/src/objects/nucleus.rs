@@ -1,17 +1,15 @@
 use {
     crate::objects::{
         ArchObjects, EventCount, KeyTable, Notification, ObjectPool, PendingPool, Scheduler,
-        Thread, access::ObjectId, arch::ArchPools, domain::DcbPages, thread::ExecutionContext,
+        Thread, access::ObjectId, arch::ArchPools, arch_objects::AddressSpaceObject,
+        domain::DcbPages, key_table::KeyTableBinding, thread::ExecutionContext,
     },
     core::sync::atomic::Ordering,
     libobject::{
-        CapError, KeySlot, RawKey,
+        CapError, KeySlot,
         domain::{BlockReason, DomainControlBlock, DomainId, DomainState},
     },
 };
-
-#[cfg(feature = "debug_kernel")]
-use crate::{api::key_entry::KeyEntry, objects::DebugConsole};
 
 // ┌─────────────────────────────────────────────────────────────────────┐
 // │                    KERNEL TYPE STRUCTURE                            │
@@ -108,8 +106,8 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Shared access to the current thread's capability table.
     pub fn current_thread_table(&self) -> Option<&KeyTable> {
         let addr = self.current_thread_table_addr()?;
-        // SAFETY: the thread's table address is kernel-issued (carved by Retype
-        // or the boot carve) and the region is never freed under accepted-leak.
+        // SAFETY: validated AddressSpace identity supplies an issued binding;
+        // its full kernel-private carve stays stable under binding's contract.
         Some(unsafe { &*(addr as *const KeyTable) })
     }
 
@@ -122,9 +120,24 @@ impl<A: ArchObjects> Nucleus<A> {
 
     /// Address of the current thread's capability table (a carved `KeyTable`).
     pub fn current_thread_table_addr(&self) -> Option<u64> {
+        Some(self.current_thread_table_binding()?.address())
+    }
+
+    fn current_thread_table_binding(&self) -> Option<KeyTableBinding> {
         let id = self.current_thread?;
         let thread = self.pools.threads.get_live(usize::try_from(id).ok()?)?;
-        Some(thread.keytable_addr)
+        self.pools
+            .arch
+            .address_spaces
+            .validate(thread.address_space)
+            .ok()?;
+        Some(
+            self.pools
+                .arch
+                .address_spaces
+                .get_live(usize::from(thread.address_space.index))?
+                .keytable(),
+        )
     }
 
     /// User-visible DCB
@@ -135,62 +148,24 @@ impl<A: ArchObjects> Nucleus<A> {
     }
 
     // TODO: Testing fixture
-    #[cfg_attr(
-        feature = "debug_kernel",
-        expect(
-            clippy::unnecessary_wraps,
-            reason = "feature-off bootstrap has no console key"
-        )
-    )]
-    pub fn create_thread(&mut self, keytable_addr: u64, address_space: ObjectId) -> Option<RawKey> {
+    pub fn create_thread(&mut self, address_space: ObjectId) -> Option<ObjectId> {
         // Allocate the Thread itself; its capability table is a carved KeyTable
         // provided by the caller (Retype or the boot carve), and its address
         // space is the checked identity of a live AddressSpace.
-        let (_thread_id, _thread) = self.pools.threads.allocate(Thread {
-            keytable_addr,
+        // Implementation status: the AddressSpace already has its binding;
+        // Thread creation cannot supply or first-bind a different table.
+        self.pools
+            .arch
+            .address_spaces
+            .validate(address_space)
+            .ok()?;
+        let (thread_id, _thread) = self.pools.threads.allocate(Thread {
             address_space,
             context: ExecutionContext::Running,
         })?;
-        #[cfg(feature = "debug_kernel")]
-        {
-            // The debug console is a stateless singleton, not a pool object;
-            // its entry carries a null identity and is validated by type only
-            // (see the debug-only exception in doc/nucleus_capabilities.md).
-            // SAFETY: the caller supplied a live carved table address; the
-            // region is never freed under the accepted-leak model.
-            let keytable = unsafe { &mut *(keytable_addr as *mut KeyTable) };
-            // The table's guard is discovered through its self-table
-            // capability — the same source the syscall entry uses — so the
-            // fixture installs keys that are actually resolvable (guarded
-            // key-space package, selected 2026-09-23).
-            let (_self_addr, guard, _size_bits) = keytable
-                .self_table_capability()
-                .expect("fixture table has no self-table capability");
-            let key = keytable
-                .insert(
-                    KeySlot::DEBUG_CONSOLE,
-                    KeyEntry::from_id(
-                        libobject::ObjectType::DEBUG_CONSOLE,
-                        crate::objects::access::ObjectId {
-                            pool: crate::objects::access::PoolTag::Region,
-                            index: 0,
-                            generation: 0,
-                        },
-                        libobject::Rights::all(),
-                        0,
-                    ),
-                    guard,
-                )
-                .unwrap_or_else(|failure| {
-                    panic!(
-                        "bootstrap console installation failed: {:?}",
-                        failure.error.code()
-                    )
-                });
-            Some(key)
-        }
-        #[cfg(not(feature = "debug_kernel"))]
-        None
+        // Capability grants are provisioned once in the AddressSpace's table,
+        // independently of creating any number of Threads executing there.
+        Some(thread_id)
     }
 
     /// Update the DCB when a thread is activated
@@ -381,7 +356,9 @@ mod tests {
     // slot (structural only; these tests never touch the arch pools).
     // u128 elements give the 16-byte minimum carve alignment; each fixture
     // asserts the carve fits.
-    static mut THREAD_POOL_MEM: [u128; 16] = [0; 16];
+    const THREAD_POOL_WORDS: usize =
+        ObjectPool::<Thread>::carve_size(3).div_ceil(core::mem::size_of::<u128>());
+    static mut THREAD_POOL_MEM: [u128; THREAD_POOL_WORDS] = [0; THREAD_POOL_WORDS];
     static mut NOTIFICATION_POOL_MEM: [u128; 16] = [0; 16];
     static mut EVENT_COUNT_POOL_MEM: [u128; 16] = [0; 16];
     static mut ARCH_POOL_MEM: [u128; 8] = [0; 8];
@@ -400,7 +377,10 @@ mod tests {
             let notification_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
             let event_count_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
             let arch_ptr = (&raw mut ARCH_POOL_MEM).cast::<u8>();
-            assert!(ObjectPool::<Thread>::carve_size(3) <= core::mem::size_of::<[u128; 16]>());
+            assert!(
+                ObjectPool::<Thread>::carve_size(3)
+                    <= core::mem::size_of::<[u128; THREAD_POOL_WORDS]>()
+            );
             assert!(
                 ObjectPool::<Notification>::carve_size(2) <= core::mem::size_of::<[u128; 16]>()
             );
@@ -432,7 +412,6 @@ mod tests {
 
     fn thread_fixture() -> Thread {
         Thread {
-            keytable_addr: 0x1000,
             // Structural placeholder identity: these tests never resolve the
             // address space.
             address_space: ObjectId {

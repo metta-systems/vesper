@@ -1,5 +1,5 @@
 use {
-    crate::objects::{NucleusObject, access::PoolTag},
+    crate::objects::{NucleusObject, access::PoolTag, key_table::KeyTableBinding},
     libobject::ObjectType,
 };
 
@@ -9,7 +9,14 @@ use {
 /// Holds the translation root and the bound ASID: everything that makes a
 /// hardware translation context. The executing `Thread` (a core object)
 /// references its address space through a checked pool identity.
+#[expect(
+    clippy::partial_pub_fields,
+    reason = "the table binding must be immutable; translation root and ASID remain kernel-managed mapping state"
+)]
 pub struct AArch64AddressSpace {
+    /// Immutable table association established during provisioning. Every
+    /// Thread executing in this `AddressSpace` uses this same table.
+    keytable: KeyTableBinding,
     /// Physical address of this address space's translation-root page table,
     /// if a root has been installed (mapping context, selected 2026-09-15).
     ///
@@ -31,8 +38,9 @@ pub struct AArch64AddressSpace {
 }
 
 impl AArch64AddressSpace {
-    pub const fn new() -> Self {
+    pub const fn new(keytable: KeyTableBinding) -> Self {
         Self {
+            keytable,
             translation_root: None,
             asid: None,
         }
@@ -45,6 +53,10 @@ impl NucleusObject for AArch64AddressSpace {
 }
 
 impl crate::objects::arch_objects::AddressSpaceObject for AArch64AddressSpace {
+    fn keytable(&self) -> KeyTableBinding {
+        self.keytable
+    }
+
     fn translation_root(&self) -> Option<u64> {
         self.translation_root
     }

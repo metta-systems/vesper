@@ -122,7 +122,7 @@ pub fn invoke<A: ArchObjects>(
                     Ok(InvokeOutcome::Complete((bits, 0)))
                 }
                 // The blocking path's success line prints at the resume that
-                // delivers the completed result (see `park_and_switch`).
+                // delivers the completed result (see `park_and_resume`).
                 crate::objects::notification::WaitOutcome::Blocked(record) => {
                     Ok(InvokeOutcome::Blocked(record))
                 }

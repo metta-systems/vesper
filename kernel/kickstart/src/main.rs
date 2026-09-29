@@ -557,7 +557,7 @@ fn mark_init_memory_reclaimable(boot_info: &BootInfo, untypeds_list: ) {
 
 /// Final step: switch to init domain with initial time budget
 fn switch_to_domain(domain: DomainRef, time: TimeCap) -> ! {
-    // Update domain state
+    // Update domain state 💫
     {
         let dcb = domain.dcb_mut();
         dcb.state

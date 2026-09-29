@@ -14,6 +14,7 @@
 
 use {
     crate::{boot_info::BOOT_INFO, embed::NUCLEUS_SET_ANCHOR_VIRT, print_my_sp},
+    core::cell::UnsafeCell,
     libaddress::PhysAddr,
     liblocking::interface::Mutex,
     libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, domain::DomainId},
@@ -156,6 +157,113 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     Ok((nucleus_ptr, keytable_ptr as u64))
 }
 
+/// Accounted linked init image and retained low `EL1t` execution stack.
+///
+/// These occupied boot extents are not allocation sources: Retype would zero
+/// live code/data/stack. The bootstrap builder may issue content-preserving
+/// Frame authority over their pages instead. They remain reserved in `BOOT_INFO`
+/// and must never be reclaimed while either execution or a mapping survives.
+pub struct RetainedInitMemory {
+    image: (u64, u64),
+    stack: (u64, u64),
+}
+
+impl RetainedInitMemory {
+    /// Page-aligned physical/identity-virtual bounds of the entire linked image,
+    /// including text, rodata (and embedded dependencies), data and BSS.
+    pub fn image(&self) -> (u64, u64) {
+        self.image
+    }
+
+    /// Page-aligned bounds of the reserved low `SP_EL0` execution stack.
+    pub fn stack(&self) -> (u64, u64) {
+        self.stack
+    }
+
+    /// Issue one bootstrap-origin Frame grant without initializing its contents.
+    ///
+    /// The one-time builder issues each retained page once, then uses checked
+    /// `CopyDerive` for peers. This is boot authority, not a runtime creation ABI;
+    /// it neither creates an `Untyped` over occupied bytes nor advances an
+    /// unrelated allocation watermark. Mapping and derivation remain separate.
+    pub fn grant_page(
+        &self,
+        table: &mut KeyTable,
+        slot: KeySlot,
+        guard: u32,
+        paddr: u64,
+    ) -> RawKey {
+        assert_eq!(paddr & 4095, 0, "retained Frame must be page-aligned");
+        let end = paddr
+            .checked_add(4096)
+            .expect("retained Frame extent overflow");
+        assert!(
+            [self.image, self.stack]
+                .iter()
+                .any(|&(start, limit)| start <= paddr && end <= limit),
+            "Frame grant must lie wholly inside retained init backing"
+        );
+        table
+            .insert(
+                slot,
+                KeyEntry::new_frame(paddr, 12, false, Rights::all()),
+                guard,
+            )
+            .unwrap_or_else(|failure| {
+                panic!("retained Frame grant failed: {:?}", failure.error.code())
+            })
+    }
+}
+
+/// Discover retained init backing from linker bounds and verify boot accounting.
+///
+/// The Kickstart overlay already reserves the linked image; the execution
+/// stack has its own occupied record. No allocator or Retype may allocate
+/// these extents. The overlay's historical droppable hint is not a reclamation
+/// protocol: this continuation retains its image under accepted-leak lifetime.
+pub fn retained_init_memory() -> RetainedInitMemory {
+    unsafe extern "C" {
+        static __INIT_START: UnsafeCell<()>;
+        static __INIT_END: UnsafeCell<()>;
+        static __STACK_BOTTOM: UnsafeCell<()>;
+        static __STACK_TOP: UnsafeCell<()>;
+    }
+    // SAFETY: only take the addresses of linker-defined bounds, without reading
+    // their contents. The linked init image uses physical identity addresses.
+    let (image, stack) = unsafe {
+        (
+            (__INIT_START.get() as u64, __INIT_END.get() as u64),
+            (__STACK_BOTTOM.get() as u64, __STACK_TOP.get() as u64),
+        )
+    };
+    for (start, end) in [image, stack] {
+        assert!(start < end);
+        assert_eq!((start | end) & 4095, 0);
+    }
+    assert!(
+        stack.1 <= image.0,
+        "retained image and stack must not overlap"
+    );
+    BOOT_INFO.lock(|bi| {
+        for ((start, end), name) in [(image, "🥾 Kickstart"), (stack, "Init execution stack")] {
+            assert!(
+                bi.used_regions().any(|region| {
+                    region.name == name
+                        && region.start_inclusive.as_u64() <= start
+                        && end <= region.end_exclusive.as_u64()
+                }),
+                "retained {name} extent is not covered by occupied boot accounting"
+            );
+        }
+        assert!(bi.free_regions().all(|region| {
+            [image, stack].iter().all(|&(start, end)| {
+                region.end_exclusive.as_u64() <= start || end <= region.start_inclusive.as_u64()
+            })
+        }));
+    });
+    RetainedInitMemory { image, stack }
+}
+
 /// The boot-time kernel state the post-boot continuation continues from.
 ///
 /// Shared by the real kickstart kernel and the kicktest e2e boot-test kernel:
@@ -226,18 +334,25 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     // Allocate the boot AddressSpace (the protection/mapping context) and the
     // boot Thread that executes in it; the Thread's KeyTable was carved and
     // initialized kernel-privately by build_initial_nucleus.
+    // Implementation status: the table belongs to the AddressSpace and is
+    // bound at its provisioning, independently of creating the boot Thread.
+    // SAFETY: build_initial_nucleus initialized the full private boot carve.
+    // Boot allocations remain accounted below the Untyped watermark and are
+    // never relocated, reclaimed, or reinitialized while a binding is live.
+    let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+    // SAFETY: the initialized boot table has the retained backing described above.
+    let boot_table_binding = unsafe { boot_table.binding() };
     let boot_as_id = nucleus
         .pools
         .arch
         .address_spaces
-        .allocate(ArchObjectsImpl::new_address_space())
+        .allocate(ArchObjectsImpl::new_address_space(boot_table_binding))
         .expect("no boot AddressSpace slot")
         .0;
     let boot_thread_id = nucleus
         .pools
         .threads
         .allocate(Thread {
-            keytable_addr,
             address_space: boot_as_id,
             context: ExecutionContext::Running,
         })
@@ -247,15 +362,16 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     // Install the boot Thread's self-table capability, its AddressSpace
     // (the bootstrap-era mapping context for `PageTable.Map`/`Frame.Map`),
     // the boot Thread itself, and the boot Untyped as the first grants.
-    // SAFETY: keytable_addr names the freshly carved, live boot KeyTable.
-    let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+    // keytable_addr names the freshly carved, live boot KeyTable.
+    // Implementation status: boot_table was resolved above for AddressSpace
+    // provisioning; installing these grants does not establish the binding.
     let self_table_key = boot_table
         .insert(
             KeySlot::SELF_KEYTABLE,
             KeyEntry::new_keytable(
-                keytable_addr,
+                boot_table_binding.address(),
                 BOOT_TABLE_GUARD,
-                BOOT_TABLE_SIZE_BITS,
+                boot_table_binding.size_bits(),
                 Rights::all(),
                 0,
             ),

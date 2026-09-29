@@ -130,7 +130,7 @@ pub fn invoke<A: ArchObjects>(
                     Ok(InvokeOutcome::Complete((value, 0)))
                 }
                 // The blocking path's success line prints at the resume that
-                // delivers the completed result (see `park_and_switch`).
+                // delivers the completed result (see `park_and_resume`).
                 AwaitOutcome::Blocked(record) => Ok(InvokeOutcome::Blocked(record)),
             }
         }

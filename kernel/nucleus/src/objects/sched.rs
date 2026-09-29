@@ -59,6 +59,14 @@ impl Scheduler {
         true
     }
 
+    /// Inspect the front without consuming it. Scheduling validates the
+    /// selected context before dequeueing under the same kernel lock.
+    /// This is not a reservation that survives unlocking, nor an
+    /// incarnation-bearing Thread handle (scheduler lifecycle remains D5).
+    pub fn peek(&self) -> Option<u16> {
+        (self.len != 0).then(|| self.queue[self.head])
+    }
+
     /// Dequeue the front (oldest) runnable thread index.
     pub fn pop(&mut self) -> Option<u16> {
         if self.len == 0 {
@@ -110,9 +118,13 @@ mod tests {
         let mut scheduler = Scheduler::new();
         assert!(scheduler.is_empty());
         assert_eq!(scheduler.pop(), None);
+        assert_eq!(scheduler.peek(), None);
 
         assert!(scheduler.push(3));
         assert!(scheduler.push(7));
+        assert_eq!(scheduler.len(), 2);
+        assert_eq!(scheduler.peek(), Some(3));
+        assert_eq!(scheduler.peek(), Some(3));
         assert_eq!(scheduler.len(), 2);
         // FIFO: the oldest entry leaves first.
         assert_eq!(scheduler.pop(), Some(3));

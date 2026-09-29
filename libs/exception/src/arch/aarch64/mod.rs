@@ -58,13 +58,27 @@ pub mod esr_el1;
 mod exception_context;
 mod spsr_el1;
 
-pub use exception_context::ExceptionContext;
+pub use exception_context::{ExceptionContext, ExceptionOrigin, SavedContext};
 
 // Helpers for exception debugging
 pub use debug::{IssForDataAbort, cause_to_string, exception_dump, iss_dfsc_to_string};
 
 // Exception vectors for syscall handing and general IRQ routing
-core::arch::global_asm!(include_str!("vectors.S"));
+core::arch::global_asm!(
+    include_str!("vectors.S"),
+    context_size = const core::mem::size_of::<ExceptionContext>(),
+    context_gpr = const core::mem::offset_of!(ExceptionContext, gpr),
+    context_lr = const core::mem::offset_of!(ExceptionContext, lr),
+    context_spsr = const core::mem::offset_of!(ExceptionContext, spsr_el1),
+    context_elr = const core::mem::offset_of!(ExceptionContext, elr_el1),
+    context_sp = const core::mem::offset_of!(ExceptionContext, sp),
+    context_origin = const core::mem::offset_of!(ExceptionContext, origin),
+    context_padding = const core::mem::offset_of!(ExceptionContext, padding),
+    origin_current_sp0 = const ExceptionOrigin::CurrentSp0 as u64,
+    origin_current_spx = const ExceptionOrigin::CurrentSpx as u64,
+    origin_lower_aarch64 = const ExceptionOrigin::LowerAarch64 as u64,
+    origin_lower_aarch32 = const ExceptionOrigin::LowerAarch32 as u64,
+);
 
 //--------------------------------------------------------------------------------------------------
 // Public Code

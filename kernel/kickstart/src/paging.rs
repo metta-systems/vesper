@@ -46,6 +46,9 @@ pub mod flags {
     // Access flag
     pub const AF: u64 = 1 << 10;
 
+    // TTBR0 translations belong to an ASID; invariant TTBR1 mappings stay global.
+    pub const NG: u64 = 1 << 11;
+
     // Memory attributes index
     pub const ATTR_NORMAL: u64 = 0 << 2;
     pub const ATTR_DEVICE: u64 = 1 << 2;
@@ -134,9 +137,9 @@ impl<'a> MmuSetup<'a> {
         perms: MemoryPermissions, // Only for Display
         usage: (&'static str, Alloc),
     ) -> Result<(), &'static str> {
-        let l0_phys = match ttbr {
-            Ttbr::Ttbr0 => self.ttbr0_l0,
-            Ttbr::Ttbr1 => self.ttbr1_l0,
+        let (l0_phys, pte_flags) = match ttbr {
+            Ttbr::Ttbr0 => (self.ttbr0_l0, pte_flags | flags::NG),
+            Ttbr::Ttbr1 => (self.ttbr1_l0, pte_flags),
         };
 
         let va = virt.as_u64();
@@ -182,9 +185,9 @@ impl<'a> MmuSetup<'a> {
 
         let pte_flags = perms.as_pte_flags() | flags::ATTR_NORMAL;
 
-        let l0_phys = match ttbr {
-            Ttbr::Ttbr0 => self.ttbr0_l0,
-            Ttbr::Ttbr1 => self.ttbr1_l0,
+        let (l0_phys, pte_flags) = match ttbr {
+            Ttbr::Ttbr0 => (self.ttbr0_l0, pte_flags | flags::NG),
+            Ttbr::Ttbr1 => (self.ttbr1_l0, pte_flags),
         };
 
         let va = virt.as_u64();

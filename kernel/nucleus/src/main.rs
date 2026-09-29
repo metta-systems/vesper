@@ -32,16 +32,16 @@ use {
         time::Duration,
     },
     libcpu::endless_sleep,
-    libexception::arch::aarch64::ExceptionContext,
+    libexception::arch::aarch64::{ExceptionContext, ExceptionOrigin},
     liblocking::{IRQSafeNullLock, interface::Mutex},
     liblog::{info, println, warn},
     libmapping::AccessPermissions,
     libobject::{ArchType, CapError, KeySlot, RawKey, syscall_status},
     libqemu::semihosting as semi,
     nucleus::objects::{
-        ExecutionContext, Nucleus,
-        access::ObjectId,
-        completion::{PendingKind, PendingState},
+        ArchObjects, ArchObjectsImpl, Nucleus,
+        access::{Access, ObjectId},
+        completion::PendingKind,
     },
 };
 
@@ -124,18 +124,20 @@ extern "C" fn default_exception_handler(exc: &ExceptionContext) {
 //------------------------------------------------------------------------------
 
 #[unsafe(no_mangle)]
-extern "C" fn current_el0_synchronous(_e: &mut ExceptionContext) {
-    panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
+extern "C" fn current_el0_synchronous(e: &mut ExceptionContext) {
+    // This vector is current EL using SP_EL0 (trusted EL1t), not lower EL0.
+    // Exception entry has selected the shared SP_EL1 trap stack.
+    current_elx_synchronous(e);
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn current_el0_irq(_e: &mut ExceptionContext) {
-    panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
+extern "C" fn current_el0_irq(e: &mut ExceptionContext) {
+    current_elx_irq(e);
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn current_el0_serror(_e: &mut ExceptionContext) {
-    panic!("Should not be here. Use of SP_EL0 in EL1 is not supported.")
+extern "C" fn current_el0_serror(e: &mut ExceptionContext) {
+    current_elx_serror(e);
 }
 
 //------------------------------------------------------------------------------
@@ -265,7 +267,18 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         core::ptr::from_mut(frame) as u64,
     );
 
-    // semi::println!("{}", frame);
+    // SP_EL1 belongs to the active kernel, not a schedulable caller. Gate
+    // provenance before dispatch can reserve a pending record or mutate queues.
+    if !matches!(
+        frame.origin,
+        ExceptionOrigin::CurrentSp0 | ExceptionOrigin::LowerAarch64
+    ) {
+        let (status, detail0, detail1) = CapError::InvalidDomain.code();
+        frame.gpr[0] = status;
+        frame.gpr[1] = detail0;
+        frame.gpr[2] = detail1;
+        return;
+    }
 
     let args = [
         frame.gpr[2],
@@ -288,180 +301,110 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         })
     };
 
-    // A blocked invocation does not return: park the caller and switch.
-    // This happens after the kernel-lock closure has ended, satisfying the
-    // contract's rule that scheduling occurs only after guards are released.
+    // A blocked invocation cannot return to its caller yet. Copy its state
+    // into the Thread, then rewrite this transient frame for the selected
+    // Thread. The handler unwinds normally; vectors restore it with ERET.
+    // Dispatch guards have ended before the scheduling transaction begins.
     let (x0, x1, x2) = match outcome {
         Ok(nucleus::api::InvokeOutcome::Complete((v0, v1))) => (syscall_status::SUCCESS, v0, v1),
+        Ok(nucleus::api::InvokeOutcome::Activate(prepared)) => {
+            // API/Access guards and KERNEL_LOCK have ended. Execution and
+            // SP_EL1 use the invariant high TTBR1 map, not the replaced root.
+            // Trap entry masks interrupts; no scheduling/reentry occurs before
+            // this immediate installation on the enforced single boot core.
+            ArchObjectsImpl::install_translation_context(prepared.root(), prepared.asid());
+            semi::println!("✅ AddressSpace::Activate()");
+            (syscall_status::SUCCESS, 0, 0)
+        }
         Ok(nucleus::api::InvokeOutcome::Blocked(record)) => {
-            // SAFETY: the kernel lock is released, no access guards are held,
-            // and the frame names the caller's saved exception context on the
-            // current kernel stack.
-            unsafe { park_and_switch(core::ptr::from_mut(frame) as u64, record) }
+            park_and_resume(frame, record);
+            return;
         }
         Err(e) => e.code(),
     };
     // Return values
     semi::println!("⬅️ CapInvoke SYSCALL(Return {x0:#x}, {x1:#x}, {x2:#x})");
-    // SAFETY: Not safe.
-    unsafe {
-        frame.gpr[0] = x0;
-        frame.gpr[1] = x1;
-        frame.gpr[2] = x2;
-    }
+    frame.gpr[0] = x0;
+    frame.gpr[1] = x1;
+    frame.gpr[2] = x2;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // CONTEXT SWITCHING (completion foundation, 2026-09-16)
 // ═══════════════════════════════════════════════════════════════════
 
-/// One-way context switch: set SP to `sp` and branch to `pc`.
+/// Park the current Thread in private storage and select a runnable context.
 ///
-/// Never returns: the current Rust call chain and its stack are abandoned.
-/// The caller must have released every lock and guard — nothing on the
-/// abandoned stack will run again.
-///
-/// # Safety
-/// `sp` must name a valid, exclusively-owned kernel stack and `pc` a valid
-/// entry point for it.
-#[unsafe(naked)]
-unsafe extern "C" fn context_switch(sp: u64, pc: u64) -> ! {
-    core::arch::naked_asm!("mov sp, x0", "br   x1",);
-}
-
-/// Resume a parked thread: SP must point at its saved exception frame.
-///
-/// Branches into the exception vectors' register-restore sequence, which
-/// reloads `ELR_EL1`/`SPSR_EL1` and all GPRs from the frame and `eret`s back to
-/// the parked caller's post-SVC instruction with the completion result
-/// written into `gpr[0..2]`.
-#[unsafe(naked)]
-unsafe extern "C" fn resume_parked_context() -> ! {
-    core::arch::naked_asm!("b __restore_context");
-}
-
-/// Park the current thread on `record` and switch to the next runnable
-/// context. Never returns.
-///
-/// The current thread's exception frame stays parked at `frame_addr` on its
-/// kernel stack; the thread resumes through [`resume_parked_context`] when
-/// the record's terminal transition is delivered.
-///
-/// # Safety
-/// Must be called from the SVC entry with the kernel lock released and no
-/// access guards held; `frame_addr` must name the caller's saved exception
-/// frame on the current kernel stack.
-unsafe fn park_and_switch(frame_addr: u64, record: ObjectId) -> ! {
-    let Some(nucleus_ptr) = nucleus_anchor() else {
-        panic!("nucleus not booted by Kickstart")
-    };
-    // SAFETY: the anchor points at the live boot-carved Nucleus; the kernel
-    // lock is released, so exclusive access is safe.
-    let nucleus = unsafe { &mut *nucleus_ptr };
-
-    let current = nucleus
-        .current_thread
-        .expect("blocked invocation without a current thread");
-    {
-        let Some(thread) = nucleus
-            .pools
-            .threads
-            .get_live_mut(usize::try_from(current).expect("current thread index too wide"))
-        else {
-            panic!("current thread is not live");
-        };
-        thread.context = ExecutionContext::Parked { frame_addr, record };
-    }
-
-    // Pick the next runnable context. An empty queue means every thread is
-    // blocked and no timer exists yet to wake anyone — the honest report is
-    // a halt, not a fake return to the blocked caller.
-    let next = nucleus
-        .scheduler
-        .pop()
-        .expect("all threads blocked and no timer exists to wake anyone");
-    nucleus.current_thread = Some(u32::from(next));
-
-    let Some(thread) = nucleus.pools.threads.get_live_mut(usize::from(next)) else {
-        panic!("runnable thread is not live");
-    };
-    let (sp, pc) = match thread.context {
-        ExecutionContext::Parked { frame_addr, record } => {
-            // Deliver the terminal outcome into the parked frame. A runnable
-            // thread's record is always terminal: the wake enqueues the
-            // thread only after the record's single terminal transition.
-            let (x0, x1, x2) = match nucleus.pending.state(record) {
-                Ok(PendingState::Completed {
-                    status,
-                    result0,
-                    result1,
-                }) => {
-                    // The invocation's handler reported `Blocked` at its SVC
-                    // entry, so its result line belongs here: the resume is
-                    // where the completed invocation's result is delivered.
-                    // The status is part of the stored completion: an
-                    // operation-specific failure (e.g. an Await woken by an
-                    // overflowing advance) resumes with its error.
-                    let kind = match nucleus.pending.kind(record) {
-                        Ok(PendingKind::NotificationWait) => "Notification::Wait",
-                        Ok(PendingKind::EventCountAwait) => "EventCount::Await",
-                        Err(_) => "blocked invocation",
-                    };
-                    if status == syscall_status::SUCCESS {
-                        semi::println!("✅ {kind}(0x{result0:x}) resumed");
-                    } else {
-                        semi::println!("⬅️ {kind} resumed with status {status:#x}");
-                    }
-                    (status, result0, result1)
-                }
-                // Cancellation outcomes need their D9 wire encoding. No path
-                // can deliver this resume yet: object teardown
-                // (`cancel_waiters`) has no production caller, and
-                // thread-teardown cancellation (2026-09-19) releases the
-                // cancelled records without resuming — the torn-down waiter
-                // is gone.
-                Ok(PendingState::Cancelled) => {
-                    panic!("cancelled record resumed before its D9 encoding exists")
-                }
-                Ok(PendingState::Waiting) => {
-                    panic!("runnable thread's record has not reached its terminal transition")
-                }
-                Err(error) => {
-                    panic!(
-                        "runnable thread's record identity is stale: {:?}",
-                        error.code()
-                    )
-                }
-            };
-            assert!(
-                nucleus.pending.release(record).is_ok(),
-                "failed to release a delivered record"
-            );
-            // SAFETY: the parked frame lives on the next domain's kernel
-            // stack — valid, exclusively-owned memory that nothing executes
-            // on while the domain is parked.
-            let frame = unsafe { &mut *(frame_addr as *mut ExceptionContext) };
-            frame.gpr[0] = x0;
-            frame.gpr[1] = x1;
-            frame.gpr[2] = x2;
-            thread.context = ExecutionContext::Running;
-            (frame_addr, resume_parked_context as *const () as u64)
-        }
-        ExecutionContext::NotStarted { pc, stack_top } => {
-            thread.context = ExecutionContext::Running;
-            (stack_top, pc)
-        }
-        ExecutionContext::Running => {
-            panic!("runnable thread is already executing")
-        }
-    };
-
-    semi::println!(
-        "🔄 context switch: thread {current} parked, resuming thread {next} @ SP {sp:#x}, PC {pc:#x}"
+/// Dispatch has released its guards before this transaction begins. No frame
+/// address survives it: the current per-core frame is rewritten after the
+/// lock ends, and the Rust handler returns normally to the vector epilogue.
+/// Historical prerequisite status, superseded by the implementation below:
+/// hardware `AddressSpace` installation was pending, with the trusted Bounce
+/// fixture running under the bootstrap translation root.
+/// Implementation status: checked preparation/commit now lives in
+/// `Nucleus::park_and_select`; installation follows the lock below. Bootstrap
+/// must provision complete source/target roots before admitting the first wait.
+fn park_and_resume(frame: &mut ExceptionContext, record: ObjectId) {
+    assert!(
+        frame.origin != ExceptionOrigin::CurrentSpx,
+        "kernel-mode execution cannot retain a continuation on SP_EL1"
     );
-    // SAFETY: the target stack and entry point were validated above; the
-    // current call chain is abandoned by design.
-    unsafe { context_switch(sp, pc) }
+    let saved = frame.save();
+    let resumed = KERNEL_LOCK.lock(|()| {
+        let Some(nucleus_ptr) = nucleus_anchor() else {
+            panic!("nucleus not booted by Kickstart")
+        };
+        // SAFETY: the anchor names the retained boot-carved Nucleus, and the
+        // kernel lock gives exclusive access for this scheduling transaction.
+        let nucleus = unsafe { &mut *nucleus_ptr };
+        // SAFETY: exclusive access is serialized by KERNEL_LOCK, dispatch's
+        // Access has ended, and no second context overlaps this transaction.
+        let access = unsafe { Access::new() };
+        nucleus.park_and_select(&access, saved, record)
+    });
+
+    // No timer exists to wake a wholly blocked fixture: halt honestly,
+    // rather than returning fake success to a blocked caller. Scheduler-error
+    // recovery/fault delivery has no ABI yet; trusted fixture corruption is an
+    // invariant failure, after a failure-atomic preparation (not a lost wait).
+    let resumed = resumed.unwrap_or_else(|error| {
+        panic!(
+            "wait/resume scheduling invariant failed before commit: {:?}",
+            error.code()
+        )
+    });
+    let current = resumed.current;
+    let next = resumed.next;
+    let restored = resumed.saved;
+    // Only copied prepared metadata and the transient frame are live here;
+    // no Thread or object guard crosses hardware installation or ERET.
+    // High kernel code and shared high SP_EL1 remain mapped by TTBR1. The
+    // single-core, masked trap path cannot retire/rebind between prepare and
+    // install; this is not a reusable lifetime pin for asynchronous work.
+    ArchObjectsImpl::install_translation_context(
+        resumed.translation.root(),
+        resumed.translation.asid(),
+    );
+    // SP_EL1 is reclaimed by normal unwinding, with no kernel stack switch.
+    frame.restore(restored);
+    if let Some(completion) = resumed.completion {
+        let kind = match completion.kind {
+            PendingKind::NotificationWait => "Notification::Wait",
+            PendingKind::EventCountAwait => "EventCount::Await",
+        };
+        let status = completion.status;
+        let result0 = completion.result0;
+        if status == syscall_status::SUCCESS {
+            semi::println!("✅ {kind}(0x{result0:x}) resumed");
+        } else {
+            semi::println!("⬅️ {kind} resumed with status {status:#x}");
+        }
+    }
+    semi::println!(
+        "🔄 context switch: thread {current} parked, resuming thread {next} @ SP {:#x}, PC {:#x}",
+        restored.sp,
+        restored.elr_el1,
+    );
 }
 
 fn get_pc() -> u64 {

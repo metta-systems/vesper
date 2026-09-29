@@ -52,9 +52,10 @@ stateDiagram-v2
   waiter is queued (single-core execution under the kernel lock keeps this
   race-free).
 - **Blocking path**: a would-block `Wait` returns `InvokeOutcome::Blocked`;
-  the syscall entry parks the caller's exception frame and switches via the
-  bounded runnable-thread scheduler; the resume delivers the completed
-  bitmap. Validated end-to-end by the debug-gated Bounce fixture
+  the syscall entry copies execution state into the caller's Thread and
+  selects through the bounded runnable-thread fixture scheduler. Resume
+  injects the completed bitmap into the current transient trap frame; the
+  handler unwinds normally to `ERET` on the shared per-core kernel stack. Validated end-to-end by the debug-gated Bounce fixture
   in `just test-capability-boot`.
 - **Bounded queues**: the wait reservation is validated before admission — a
   full queue rejects with `PoolExhausted` before any record is registered,

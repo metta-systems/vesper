@@ -56,6 +56,9 @@ pub fn invoke<A: ArchObjects>(
 /// separate `AddressSpace.Retire`); the DCB is untouched (D5). Subsequent
 /// invocations of the retired Thread's capabilities fail pool validation
 /// with a defined error.
+/// Implementation status: the keytable backing belongs to the retained
+/// `AddressSpace` association. No per-Thread kernel stack exists; retirement
+/// drops its private saved context after cancelling its pending records.
 fn retire<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,

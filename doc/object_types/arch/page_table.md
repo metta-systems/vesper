@@ -62,14 +62,22 @@ descriptor still points at this table, then clears it.
   identity over kernel metadata, not an inline region.
 - Metadata (`kernel/nucleus/src/objects/arch/page_table.rs`):
   `AArch64PageTable { paddr, level, parent: PtParent }` where `PtParent` is
-  `Uninstalled` / `Root { domain }` / `Table { parent_paddr, slot }`. The
+  `Uninstalled` / `Root { address_space }` / `Table { parent_paddr, slot }`. The
   metadata (carve address, level, installation record) is the mapping
   identity: enough to locate and retire the real descriptor.
 - Hardware format: AArch64 Stage 1, 4 KiB granule, 48-bit VA, 9-bit indices
-  (512 entries per table), 4-level walk. Level 0 is the translation root;
-  4 KiB pages install page descriptors at level 3, 2 MiB blocks at level 2,
-  1 GiB blocks at level 1. Descriptor bits match the boot-time configuration
-  (MAIR index 0 = normal write-back cacheable).
+  (512 entries per table), L0-rooted four-level TTBR0 walk. Checked context
+  preparation requires `T0SZ=16`, `EPD0=0`, `A1=0`, and no DS/LPA2; it rejects
+  unsupported profiles, unencodable roots, and unsupported configured/hardware
+  PA or ASID widths before installation (see
+  [AddressSpace.Activate](address_space.md#activate)). 4 KiB pages install page
+  descriptors at level 3, 2 MiB blocks at level 2, 1 GiB blocks at level 1.
+  Descriptor bits match the boot-time configuration
+  (MAIR index 0 = normal write-back cacheable). TTBR0 leaves are non-global
+  (`nG=1`); table descriptors do not carry this leaf attribute. Invariant
+  bootstrap TTBR1 kernel mappings remain global. Installation publishes
+  each new table/leaf descriptor with `DSB ISHST` and `ISB` before further
+  translation walks; exception return alone does not complete the store.
 - Raw tables are reached through the direct map (`raw_table`); the safety
   contract requires the address to name a live carved table page (never
   freed under the accepted-leak model).
@@ -78,17 +86,27 @@ descriptor still points at this table, then clears it.
   the range means the address is already mapped (`AlreadyMapped`).
 - An intermediate table's descriptors are all zero when uninstalled
   (required), so no cached translation can exist beneath it and no
-  invalidation is needed there; root unmap invalidates the whole ASID.
+  invalidation is needed there; root unmap invalidates the whole ASID with
+  descriptor stores ordered before TLBI and completion barriers before reuse.
 
 ## Sidenotes
 
 - The AddressSpace is the mapping context (see
   [address_space.md](address_space.md)).
-- Carved tables become hardware-live through `AddressSpace.Activate`, which
-  installs the bound root into `TTBR0_EL1` with the bound ASID.
-- Gating TLB invalidation on live TTBR installation may be more efficient
-  once Thread scheduling exists (maintainer remark); today the
-  invalidation is executed whenever the owning AddressSpace has a bound ASID.
+- Carved tables become hardware-live through `AddressSpace.Activate` or
+  checked wait/resume selection. Both paths prepare validated translation
+  metadata and install `TTBR0_EL1` with the bound ASID after object/Access
+  guards and the kernel lock end. The copied metadata does not pin backing;
+  immediate installation relies on the serialized single-core, masked,
+  non-reentrant trap interval, and later/asynchronous use needs fresh validation.
+- Unmap invalidation runs whenever the owning AddressSpace has a bound ASID;
+  restricting it based on hardware installation state remains an optimization,
+  not implemented behavior.
+- The fixture retains the source's executing image/stack ancestors and bound
+  root. Positive innermost-first intermediate/root teardown uses a disposable,
+  nonexecuting AddressSpace; disposable test mappings and their empty L3 can
+  be removed without withdrawing the source's live image/stack. Unmap clears
+  installation state but does not release page-table metadata pool entries.
 
 ## TODOs
 

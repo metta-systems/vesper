@@ -1,7 +1,10 @@
 use {
     crate::{
         api::key_entry::KeyEntry,
-        objects::{NucleusObject, access::ObjectId, arch::ArchPools, nucleus::Nucleus},
+        objects::{
+            NucleusObject, access::ObjectId, arch::ArchPools, key_table::KeyTableBinding,
+            nucleus::Nucleus,
+        },
     },
     libaddress::PhysAddr,
     libobject::{ArchType, CapError, ObjectType},
@@ -96,6 +99,8 @@ pub trait PageTableObject: NucleusObject {
 /// Behavior of an architecture's address-space object: the translation
 /// context state (mapping foundation).
 pub trait AddressSpaceObject: NucleusObject {
+    /// The table bound at provisioning, shared by all executing Threads.
+    fn keytable(&self) -> KeyTableBinding;
     /// Physical address of the installed translation root, if any.
     fn translation_root(&self) -> Option<u64>;
     /// Record or clear the translation root (root installation/withdrawal).
@@ -144,7 +149,8 @@ pub trait ArchObjects: Sized + 'static {
     /// Construct a fresh, unbound `AddressSpace` (no translation root, no
     /// ASID). Boot-provisioned only: address spaces are not
     /// Retype-creatable yet.
-    fn new_address_space() -> Self::AddressSpace;
+    /// The initialized keytable association is mandatory and immutable.
+    fn new_address_space(keytable: KeyTableBinding) -> Self::AddressSpace;
 
     // ─── TLB maintenance (hardware translation withdrawal) ───
 
@@ -161,15 +167,23 @@ pub trait ArchObjects: Sized + 'static {
 
     // ─── Translation-context installation (hardware activation) ───
 
+    /// Check root alignment/address encoding and the active hardware ASID
+    /// range without installing anything. Binding/authority is checked by
+    /// the object/API layer before this hardware-format validation.
+    fn validate_translation_context(root_paddr: u64, asid: u16) -> Result<(), CapError>;
+
     /// Install `root_paddr` with `asid` as the current hardware
     /// translation context (`TTBR0_EL1` on `AArch64`: base address with the
     /// ASID in bits 63:48), completing before the caller proceeds. The
-    /// caller (the API handler) has already established the mapping-context
+    /// caller (the API handler or scheduler) has already established the mapping-context
     /// authority and that the root and ASID are bound to the same
     /// `AddressSpace`; this is the hardware mechanism only, not an authority
     /// decision. Re-installing the same context is idempotent; switching
     /// between contexts that share an ASID requires invalidation by the
     /// caller (ASID reuse safety remains open, D6).
+    /// Implementation status: preparation is fallible and separate; syscall
+    /// entry installs only after object guards and the kernel lock have ended,
+    /// on the shared high kernel stack. Preparation is not a lifetime pin.
     fn install_translation_context(root_paddr: u64, asid: u16);
 
     // ─── Mapping mechanics (hardware descriptor installation) ───

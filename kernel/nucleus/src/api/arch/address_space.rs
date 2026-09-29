@@ -33,15 +33,19 @@
 //! empty-table-gated `PageTable.Unmap` path. Full Thread Start/Suspend/Resume
 //! — initialized execution contexts, execution budget, legal state
 //! transitions, and EL0 entry — remains Phase 7 work (D8).
+//! Implementation status: the bounded wait/resume fixture now switches
+//! contexts, but `Activate` remains own-AS-only, not public Thread control.
+//! It returns prepared metadata; entry installs after the kernel lock ends.
 
 use {
     crate::{
-        api::{KeyEntry, key_table::resolve_table_cap},
+        api::{InvokeOutcome, KeyEntry, key_table::resolve_table_cap},
         objects::{
             ArchObjects, KeyTable, Nucleus,
             access::Access,
             arch_objects::{AddressSpaceObject, AsidPoolObject},
             key_table::CallerTable,
+            resume::{PreparedTranslationContext, prepare_translation_context},
         },
     },
     core::num::NonZero,
@@ -60,11 +64,12 @@ pub fn invoke<A: ArchObjects>(
     op: u64,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
-) -> Result<(u64, u64), CapError> {
+) -> Result<InvokeOutcome, CapError> {
     match op {
-        0 => activate::<A>(access, caller, as_key, args, nucleus),
-        1 => retire::<A>(access, caller, as_key, args, nucleus),
-        3 => create_invocation::<A>(access, caller, as_key, args, nucleus),
+        0 => activate::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Activate),
+        1 => retire::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Complete),
+        3 => create_invocation::<A>(access, caller, as_key, args, nucleus)
+            .map(InvokeOutcome::Complete),
         _ => Err(CapError::InvalidOperation),
     }
 }
@@ -166,13 +171,15 @@ fn create_invocation<A: ArchObjects>(
 
 /// `Activate` `0`: install this `AddressSpace`'s bound translation root and
 /// ASID as the current hardware translation context.
+/// Implementation status: prepare here, install/trace at syscall entry only
+/// after the Access context, object guards, and kernel lock have ended.
 fn activate<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,
     as_key: RawKey,
     args: &[u64; 6],
     nucleus: &Nucleus<A>,
-) -> Result<(u64, u64), CapError> {
+) -> Result<PreparedTranslationContext, CapError> {
     if args.iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
@@ -201,20 +208,10 @@ fn activate<A: ArchObjects>(
 
     // Both binding preconditions must hold before any hardware transition:
     // a root without an ASID (or neither) establishes no hardware context.
-    let address_space =
-        access.resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, as_id)?;
-    let root = address_space
-        .translation_root()
-        .ok_or(CapError::NotMapped)?;
-    let root = address_space
-        .translation_root()
-        .ok_or(CapError::NotMapped)?;
-    let bound_asid = address_space.asid().ok_or(CapError::NotMapped)?;
-
     // Hardware transition: idempotent installation of the same context.
-    A::install_translation_context(root, bound_asid);
-    semi::println!("✅ AddressSpace::Activate()");
-    Ok((0, 0))
+    // Implementation status: the entry performs that transition after this
+    // prepared value has left the locked invocation; no guard escapes here.
+    prepare_translation_context::<A>(access, &nucleus.pools.arch.address_spaces, as_id)
 }
 
 /// `Retire` `1`: tear down the invoked `AddressSpace`.

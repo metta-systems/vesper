@@ -4,13 +4,16 @@
 |---|---|
 | Wire type | `0x02` (core) |
 | Pool | none as an object — a Retype-carved kernel object referenced by carve address |
-| Status | Active: CopyDerive/Move/Delete with guard-aware resolution; variable-size guarded tables (Retype `size_bits` 1–20); Revoke rejected with a defined error |
+| Status | Active: AddressSpace-associated caller lookup, CopyDerive/Move/Delete with guard-aware resolution; variable-size guarded tables (Retype `size_bits` 1–20); Revoke rejected with a defined error |
 
 ## Purpose
 
-A `KeyTable` is a thread's capability table (seL4's `CNode`): a carved array of
+A `KeyTable` is a capability table (seL4's `CNode`): a carved array of
 capability slots, each holding one `KeyEntry` plus a per-slot incarnation
-counter. The capacity is selected at Retype — `2^size_bits` entries with
+counter. Each AddressSpace has one associated keytable, established during
+AddressSpace provisioning and shared by all Threads executing there. PPC
+selects the target AddressSpace's table on Call and restores the source
+AddressSpace's table on Return; the Thread does not have an independent table. The capacity is selected at Retype — `2^size_bits` entries with
 `size_bits` from 1 to 20 — and each table has a **guard**: a userspace-chosen
 value, fixed for the table's lifetime, that every key minted into the table
 carries above its slot index (see the key package in
@@ -21,8 +24,11 @@ incarnation. Guards are namespace values, not secrets: they are visible in
 any valid key's address bits. KeyTable capabilities authorize *management* of
 entries in a table — derivation, removal, and installation — distinct from the
 authority granted by the entries themselves. Tables are Retype-created carved
-objects; the boot Thread's table is carved and initialized kernel-privately by
-Kickstart.
+objects; the boot AddressSpace's table is carved and initialized kernel-privately
+by Kickstart. Caller-table selection resolves the current Thread's live
+AddressSpace and its immutable provisioned table binding before looking up a key.
+The binding is issued only from initialized, retained kernel-private storage;
+it does not provide future reclaimable table identity.
 
 ## User-level visible operations
 
@@ -64,7 +70,15 @@ Rules:
 
 ## Kernel-level implementation details
 
-Storage (`kernel/nucleus/src/objects/key_table.rs`): a carved, variable-size object — a 32-byte header (owner `DomainId`, occupancy count, and the table's own `size_bits`, authoritative for internal bounds) followed by `2^size_bits` `KeyEntry` slots and `2^size_bits` `u32` incarnation counters in the same carve; the carve size is derived from `size_bits` (`KeyTable::carve_size`), and `KeyTable::initialize` writes the header and zeroes both arrays (a null `KeyEntry` is the all-zero value, so the carve is sanitized). A KeyTable capability references the carved object through a per-kind payload — `{address, guard, size_bits}` (`KeyTablePayload`) — resolved via `Access::resolve_carved{,_mut,_pair_mut}`; the payload is kernel-visible only and copied verbatim by derivation. The caller's own-table guard is sourced from its self-table capability at the well-known `SELF_KEYTABLE` slot, which must name the caller's recorded table; a missing or mismatched self-table capability rejects the invocation before any key validation (provisionally `InconsistentKey`/`CapabilityInvalidated`; the exact status is D9).
+Storage (`kernel/nucleus/src/objects/key_table.rs`): a carved, variable-size object — a 32-byte header (owner `DomainId`, occupancy count, and the table's own `size_bits`, authoritative for internal bounds) followed by `2^size_bits` `KeyEntry` slots and `2^size_bits` `u32` incarnation counters in the same carve; the carve size is derived from `size_bits` (`KeyTable::carve_size`), and `KeyTable::initialize` writes the header and zeroes both arrays (a null `KeyEntry` is the all-zero value, so the carve is sanitized). A KeyTable capability references the carved object through a per-kind payload — `{address, guard, size_bits}` (`KeyTablePayload`) — resolved via `Access::resolve_carved{,_mut,_pair_mut}`; the payload is kernel-visible only and copied verbatim by derivation. The caller's own-table guard is sourced from its self-table capability at the well-known `SELF_KEYTABLE` slot, which must name the AddressSpace-bound table with the same capacity exponent as its binding and header; a missing or mismatched self-table capability rejects the invocation before any key validation (provisionally `InconsistentKey`/`CapabilityInvalidated`; the exact status is D9).
+
+`KeyTableBinding` stores a private nonzero address and capacity exponent, issued
+by `unsafe KeyTable::binding` only when the entire initialized private carve
+remains stable and neither reclaimed nor reinitialized for every retained copy.
+It carries no management authority or guard; SELF remains the guard source.
+The header's `owner: DomainId` is Retype bookkeeping provenance, not a checked
+AddressSpace owner or authorization mechanism. Table backing is not reclaimed
+by Thread/AddressSpace retirement under accepted-leak.
 
 Slot lifecycle and lookup validation precedence:
 

@@ -3,6 +3,18 @@ use {aarch64_cpu::registers::SPSR_EL1, core::fmt, tock_registers::LocalRegisterC
 #[repr(transparent)]
 pub struct SpsrEL1(pub LocalRegisterCopy<u64, SPSR_EL1::Register>);
 
+impl SpsrEL1 {
+    /// Construct a saved status without discarding flags, masks or mode bits.
+    pub fn from_raw(value: u64) -> Self {
+        Self(LocalRegisterCopy::new(value))
+    }
+
+    /// All saved status bits, unchanged.
+    pub fn raw(&self) -> u64 {
+        self.0.get()
+    }
+}
+
 /// Human readable `SPSR_EL1`.
 #[rustfmt::skip]
 impl fmt::Display for SpsrEL1 {

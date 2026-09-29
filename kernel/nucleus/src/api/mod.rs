@@ -1,5 +1,8 @@
 use {
-    crate::objects::{ArchObjects, KeyTable, Nucleus, access::Access, key_table::CallerTable},
+    crate::objects::{
+        ArchObjects, KeyTable, Nucleus, access::Access, arch_objects::AddressSpaceObject,
+        key_table::CallerTable, resume::PreparedTranslationContext,
+    },
     libobject::{ArchType, CapError, CoreType, InconsistencyReason, ObjectType, RawKey},
     libqemu::semihosting as semi,
 };
@@ -34,6 +37,9 @@ pub enum InvokeOutcome {
     Complete((u64, u64)),
     /// The invocation blocked; `record` names its pending-invocation record.
     Blocked(crate::objects::access::ObjectId),
+    /// Checked own-AS activation; install at entry after all guards/lock end,
+    /// then trace and return zeros. This is an internal outcome, not wire ABI.
+    Activate(PreparedTranslationContext),
 }
 
 // ═════════════════════════════
@@ -79,7 +85,6 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     if core::hint::unlikely(obj_type.is_arch()) {
         // Architecture-specific dispatch (less common path)
         arch_invoke::<A>(nucleus, &access, caller, key, obj_type, op, args)
-            .map(InvokeOutcome::Complete)
     } else {
         // Core dispatch (common path)
         core_invoke::<A>(nucleus, &access, caller, key, obj_type, op, args)
@@ -87,7 +92,8 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 }
 
 /// The caller's own table for this invocation: its carved address (from the
-/// current Thread) plus its guard, sourced from the `SELF_KEYTABLE`
+/// current Thread's live `AddressSpace` binding) plus its guard, sourced from
+/// the `SELF_KEYTABLE`
 /// capability and validated to name this very table (guarded key-space
 /// package, selected 2026-09-23).
 ///
@@ -100,23 +106,30 @@ fn caller_table<A: ArchObjects>(
     access: &Access,
     invoked: RawKey,
 ) -> Result<CallerTable, CapError> {
-    let addr = {
+    let binding = {
         let index = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
-        nucleus
+        let thread = nucleus
             .pools
             .threads
-            .get_live(usize::try_from(index).ok().ok_or(CapError::InvalidDomain)?)
-            .ok_or(CapError::InvalidDomain)?
-            .keytable_addr
+            .get_live(usize::try_from(index).map_err(|_invalid_index| CapError::InvalidDomain)?)
+            .ok_or(CapError::InvalidDomain)?;
+        let address_space = access
+            .resolve(&nucleus.pools.arch.address_spaces, thread.address_space)
+            .map_err(|_invalid_address_space| CapError::InvalidDomain)?;
+        address_space.keytable()
     };
+    let addr = binding.address();
     let no_context = || CapError::InconsistentKey {
         key: invoked,
         reason: InconsistencyReason::CapabilityInvalidated,
         operand: 0,
     };
     let table = access.resolve_carved_mut::<KeyTable>(addr)?;
-    let (cap_addr, guard, _size_bits) = table.self_table_capability().ok_or_else(no_context)?;
-    if cap_addr != addr {
+    let (cap_addr, guard, size_bits) = table.self_table_capability().ok_or_else(no_context)?;
+    if cap_addr != addr
+        || size_bits != binding.size_bits()
+        || table.size_bits() != binding.size_bits()
+    {
         return Err(no_context());
     }
     Ok(CallerTable { addr, guard })
@@ -231,7 +244,7 @@ fn arch_invoke<A: ArchObjects>(
     obj_type: ObjectType,
     op: u64,
     args: &[u64; 6],
-) -> Result<(u64, u64), CapError> {
+) -> Result<InvokeOutcome, CapError> {
     let arch_type = ArchType::try_from(obj_type)?;
 
     semi::println!("🔄 arch_invoke {key:?} / {arch_type}:{op}");
@@ -239,10 +252,12 @@ fn arch_invoke<A: ArchObjects>(
     match arch_type {
         ArchType::Frame => {
             crate::api::arch::frame::invoke::<A>(access, caller, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
         }
 
         ArchType::PageTable => {
             crate::api::arch::page_table::invoke::<A>(access, caller, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
         }
 
         ArchType::AddressSpace => {
@@ -251,6 +266,7 @@ fn arch_invoke<A: ArchObjects>(
 
         ArchType::ASIDPool => {
             crate::api::arch::asid_pool::invoke::<A>(access, caller, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
         }
 
         // ASIDControl and I/O/IRQ control remain deferred with their kinds:

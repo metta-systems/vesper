@@ -53,11 +53,23 @@ distinct PTEs.
 
 The capability *is* the object: `FramePayload` is stored inline in the
 `KeyEntry` — physical address, mapping record (AddressSpace identity + vaddr),
-`size_bits`, and device/mapped flags. Frames are created by `Untyped.Retype`
-with an architecture-validated `size_bits`; the carved region is **zeroed
-(sanitized) by the kernel inside the retype transaction** before capability
-installation, so a fresh frame never carries prior-owner
-or kernel data.
+`size_bits`, and device/mapped flags. Runtime Frames are created by
+`Untyped.Retype` with an architecture-validated `size_bits`; the freshly
+carved region is **zeroed (sanitized) by the kernel inside the retype
+transaction** before capability installation, so a fresh frame never carries
+prior-owner or kernel data.
+
+The trusted bootstrap builder also issues content-preserving Frame grants
+over already-accounted retained init image/stack pages. These occupied bytes
+are not Retype sources and remain reserved while execution or mappings
+survive. CopyDerive supplies separate unmapped capabilities for Bounce's
+shared image pages; explicit Map installs distinct PTEs in the source/Bounce
+roots. Move into an accounted archive KeyTable preserves each mapping record;
+scratch-slot reuse neither deprovisions the Frames nor reclaims their backing.
+Both low roots map the complete linked image with `EXECUTE` authority; the
+retained source execution stack is read/write, execute-never. Bounce's
+accounted SP_EL0 execution stack uses the invariant high direct map, separate
+from the shared high SP_EL1 trap stack.
 
 ```mermaid
 flowchart TD
@@ -75,11 +87,25 @@ flowchart TD
   (`InvalidOperation` otherwise), then invalidates the TLB entry by virtual
   address under the owning AddressSpace's ASID — observable on the live context
   (the boot test maps, activates, reads, unmaps, remaps different backing at
-  the same address, and verifies freshly walked contents).
+  the same address, then remaps the original backing and checks both markers
+  with volatile loads without switching the installed context). Descriptor
+  stores are ordered before `TLBI VAE1IS`; its operand carries the ASID in
+  bits 63:48 and `VA[55:12]` in bits 43:0. Completion barriers precede further
+  access.
+- The two-Thread source/Bounce fixture also uses distinct physical backing at
+  the same warmed low VA under independent roots with ASIDs 1 and 2. Its
+  volatile observations follow checked wait/resume installation, without
+  test-side switching, reactivation, or TLBI. This is separate from the
+  same-context unmap/remap path above and does not establish PPC migration or
+  protected EL0 confinement.
 - Descriptor mechanics live in the arch layer
   (`kernel/nucleus/src/objects/arch/page_table.rs`): level-3 page descriptors
   for 4 KiB, level-2/1 block descriptors for 2 MiB/1 GiB; MAIR index 0
-  (normal write-back cacheable) is the only accepted attribute today.
+  (normal write-back cacheable) is the only accepted attribute today. All
+  TTBR0 page/block leaves set `nG` (bit 11), so cached translations belong to
+  the owning AddressSpace's ASID rather than matching other contexts. New
+  descriptors are published with `DSB ISHST` and `ISB` before access through
+  the mapping, including live remaps without reactivation.
 - `CopyDerive` of a Frame produces an *unmapped* derived capability
   (capability-only derivation, no active mapping association); `Move`
   preserves the mapping record; `Delete` of a mapped frame leaves the mapping

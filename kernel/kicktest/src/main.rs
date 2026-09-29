@@ -18,40 +18,49 @@
 //! images.
 
 use {
+    aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
     cfg_if::cfg_if,
-    core::{num::NonZero, panic::PanicInfo, slice},
+    core::{
+        arch::asm,
+        mem::size_of,
+        num::NonZero,
+        panic::PanicInfo,
+        slice,
+        sync::atomic::{AtomicU64, Ordering},
+    },
     kickstart::{
         bootstrap::{
             BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, BootState, PoolCapacities, bootstrap_nucleus,
+            retained_init_memory,
         },
         kickstart_init_el2, print_my_sp,
     },
     libaddress::{PhysAddr, VirtAddr},
     libboot as boot,
     libcpu::endless_sleep,
+    libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
     libobject::{
-        KeySlot, ObjectType, Rights, address_space::AddressSpaceKey, domain::DomainId,
-        thread::ThreadKey,
+        ASIDPoolKey, CapError, EventCountKey, FrameKey, InvalidKeyReason, KeySlot, KeyTableKey,
+        NotificationKey, ObjectType, PageTableKey, RawKey, Rights, UntypedKey,
+        address_space::AddressSpaceKey, domain::DomainId, thread::ThreadKey,
     },
     libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, Thread,
+            ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, ObjectPool, Thread,
             access::{ObjectId, PoolTag},
+            arch_objects::AddressSpaceObject,
             completion::PendingState,
         },
     },
 };
 
 #[cfg(feature = "debug_kernel")]
-use {
-    aarch64_cpu::registers::{Readable, TTBR0_EL1, Writeable},
-    libobject::{
-        ASIDPoolKey, CapError, DebugConsoleKey, EventCountKey, FrameKey, InvalidKeyReason,
-        KeyTableKey, NotificationKey, PageTableKey, RawKey, UntypedKey,
-    },
-};
+use libobject::DebugConsoleKey;
+
+#[cfg(feature = "debug_kernel")]
+mod translation;
 
 boot::entry!(boot_main);
 
@@ -77,32 +86,171 @@ fn panic(info: &PanicInfo) -> ! {
 /// (guarded key-space package, selected 2026-09-23): distinct from the boot
 /// table's guard so cross-table key confusion is exercised. Fits the 24 guard
 /// bits of a 256-entry table's table-relative address.
-#[cfg(feature = "debug_kernel")]
 const TEST_TABLE_GUARD: u32 = 0xFEE_D42;
 
 /// Compose a boot-table key from a bare slot index and incarnation: the boot
 /// guard packed above the index.
-#[cfg(feature = "debug_kernel")]
 fn boot_key(slot: u32, incarnation: u32) -> RawKey {
     RawKey::from_parts(BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, slot, incarnation)
 }
 
 /// The boot-table slot half for a bare index (the guard packed above it).
-#[cfg(feature = "debug_kernel")]
 fn boot_slot(index: u32) -> KeySlot {
     KeySlot((BOOT_TABLE_GUARD << u32::from(BOOT_TABLE_SIZE_BITS)) | index)
 }
 
 /// The slot half of a key in one of the boot test's runtime-carved tables.
-#[cfg(feature = "debug_kernel")]
 fn test_slot(index: u32) -> KeySlot {
     KeySlot((TEST_TABLE_GUARD << u32::from(BOOT_TABLE_SIZE_BITS)) | index)
+}
+
+/// The trusted boot/Bounce fixture must share one high trap stack, even while
+/// their execution stacks differ. This is test-local state, not a syscall ABI.
+#[cfg(feature = "debug_kernel")]
+static FIXTURE_TRAP_SP: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "debug_kernel")]
+static BOUNCE_N1_KEY: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "debug_kernel")]
+static BOUNCE_N2_KEY: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "debug_kernel")]
+static BOUNCE_EC_KEY: AtomicU64 = AtomicU64::new(0);
+
+/// Observe the execution SP on `SP_EL0` and the idle shared `SP_EL1` at the same
+/// call depth. Reading `SP_EL1` directly at EL1 is not permitted, so briefly
+/// select it without touching memory. This trusted fixture runs with DAIF
+/// masked; the assertion precedes the temporary stack-selection change.
+#[cfg(feature = "debug_kernel")]
+#[inline(never)]
+fn fixture_stack_state() -> (u64, u64) {
+    let selection: u64;
+    let execution_sp: u64;
+    let daif: u64;
+    // SAFETY: read only the current stack selection, SP and interrupt masks.
+    unsafe {
+        asm!(
+            "mrs {selection}, SPSel",
+            "mov {execution_sp}, sp",
+            "mrs {daif}, DAIF",
+            selection = out(reg) selection,
+            execution_sp = out(reg) execution_sp,
+            daif = out(reg) daif,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    assert_eq!(
+        selection, 0,
+        "trusted fixture must execute as EL1t on SP_EL0"
+    );
+    assert_eq!(
+        daif & 0x3c0,
+        0x3c0,
+        "fixture stack observation requires masked DAIF"
+    );
+    let trap_sp: u64;
+    // SAFETY: all exceptions are masked, this single assembly block accesses
+    // no memory or stack, and it restores the original SP_EL0 selection before
+    // Rust resumes. It neither calls code nor changes either stack pointer.
+    unsafe {
+        asm!(
+            "msr SPSel, #1",
+            "mov {trap_sp}, sp",
+            "msr SPSel, #0",
+            trap_sp = out(reg) trap_sp,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    assert_eq!(
+        trap_sp >> 48,
+        0xFFFF,
+        "shared trap stack must be high-mapped"
+    );
+    assert_eq!(trap_sp & 15, 0, "trap stack must be 16-byte aligned");
+    assert_eq!(
+        execution_sp & 15,
+        0,
+        "execution stack must be 16-byte aligned"
+    );
+    assert_ne!(
+        execution_sp, trap_sp,
+        "execution and trap stacks must be distinct"
+    );
+    (execution_sp, trap_sp)
+}
+
+#[cfg(feature = "debug_kernel")]
+fn assert_bounce_parked_context(thread: &Thread, stack_bottom: u64, stack_top: u64) {
+    let ExecutionContext::Parked { saved, .. } = thread.context else {
+        panic!("Bounce has no Thread-resident parked context")
+    };
+    assert_eq!(saved.origin, ExceptionOrigin::CurrentSp0);
+    assert_eq!(saved.spsr_el1 & 0xf, 4, "Bounce must resume as EL1t");
+    assert_eq!(
+        saved.spsr_el1 & 0x3c0,
+        0x3c0,
+        "Bounce must retain its DAIF masks"
+    );
+    assert_eq!(saved.sp & 15, 0);
+    assert!(saved.sp >= stack_bottom && saved.sp < stack_top);
+    assert_ne!(saved.sp, FIXTURE_TRAP_SP.load(Ordering::Acquire));
+    assert_ne!(saved.elr_el1, 0);
+    assert_ne!(saved.lr, 0);
+    translation::assert_parked_registers(
+        &saved,
+        RawKey::from_wire(BOUNCE_N2_KEY.load(Ordering::Acquire)),
+    );
+}
+
+#[cfg(feature = "debug_kernel")]
+fn assert_source_selected(
+    nucleus: &Nucleus<ArchObjectsImpl>,
+    source: ObjectId,
+    root: u64,
+    asid: u16,
+) {
+    assert_eq!(nucleus.current_thread, Some(0));
+    let thread = nucleus
+        .pools
+        .threads
+        .get_live(0)
+        .expect("source Thread missing");
+    assert_eq!(thread.address_space, source);
+    assert_eq!(thread.context, ExecutionContext::Running);
+    nucleus
+        .pools
+        .arch
+        .address_spaces
+        .validate(source)
+        .unwrap_or_else(|_| panic!("source AddressSpace identity invalid"));
+    let address_space = nucleus
+        .pools
+        .arch
+        .address_spaces
+        .get_live(usize::from(source.index))
+        .expect("source AddressSpace missing");
+    assert_eq!(address_space.translation_root, Some(root));
+    assert_eq!(address_space.asid, Some(asid));
+    assert_eq!(TTBR0_EL1.get(), root | (u64::from(asid) << 48));
 }
 
 // DTB should be available to this code through BOOT_INFO records.
 pub fn kicktest_run() -> ! {
     semi::println!("kicktest_run: enabled MMU and dropped to EL1");
     print_my_sp();
+    #[cfg(feature = "debug_kernel")]
+    let (boot_execution_sp, shared_trap_sp) = {
+        let stack_state = fixture_stack_state();
+        FIXTURE_TRAP_SP.store(stack_state.1, Ordering::Release);
+        semi::println!(
+            "Thread layout: saved={} context={} thread={} pool(2)={} pool(4)={}",
+            size_of::<SavedContext>(),
+            size_of::<ExecutionContext>(),
+            size_of::<Thread>(),
+            ObjectPool::<Thread>::carve_size(2),
+            ObjectPool::<Thread>::carve_size(4),
+        );
+        stack_state
+    };
 
     // ─────────────────────────────────────────────────────────────────────
     // Build the initial kernel state in carved memory (inert nucleus), with
@@ -111,13 +259,25 @@ pub fn kicktest_run() -> ! {
     // EventCount pools the suite Retypes from, and the mapping-chain
     // page-table pool (16 slots plus the two fixture roots of the
     // AddressSpace.Retire test).
+    // Implementation status: Bounce now has a distinct AddressSpace bound to
+    // its own table, so the pool holds boot + Bounce + two retirement fixtures.
+    // Translation provisioning also charges source/Bounce image/probe tables;
+    // the precise capacity below leaves twelve slots for the refill test.
     // ─────────────────────────────────────────────────────────────────────
+    #[cfg(feature = "debug_kernel")]
+    let retained_init = retained_init_memory();
+    #[cfg(feature = "debug_kernel")]
+    let page_table_capacity = translation::page_table_capacity(&retained_init);
+    #[cfg(not(feature = "debug_kernel"))]
+    let page_table_capacity = 18;
+    #[cfg(feature = "debug_kernel")]
+    translation::observe_bootstrap();
     let boot = bootstrap_nucleus(&PoolCapacities {
         threads: 2,
-        address_spaces: 3,
+        address_spaces: 4,
         notifications: 4,
         event_counts: 4,
-        page_tables: 18,
+        page_tables: page_table_capacity,
         asid_pools: 1,
     });
 
@@ -131,6 +291,44 @@ pub fn kicktest_run() -> ! {
             boot_untyped_key,
             debug_console_key,
         } = boot;
+
+        assert_eq!(boot_as_id.index, 0);
+        assert_eq!(nucleus.pools.threads.capacity(), 2);
+        assert!(ObjectPool::<Thread>::carve_size(2) <= 4096);
+        assert_eq!(nucleus.pools.arch.address_spaces.capacity(), 4);
+        assert_eq!(
+            nucleus.pools.arch.page_tables.capacity(),
+            page_table_capacity
+        );
+        let boot_table_binding = nucleus
+            .pools
+            .arch
+            .address_spaces
+            .get_live(usize::from(boot_as_id.index))
+            .expect("boot AddressSpace missing")
+            .keytable();
+        assert_eq!(boot_table_binding.address(), keytable_addr);
+        assert_eq!(boot_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
+        {
+            // SAFETY: bootstrap retained the initialized, private boot carve;
+            // no SVC or mutable table access occurs while this borrow is live.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            assert_eq!(
+                boot_table.capacity(),
+                1_usize << boot_table_binding.size_bits()
+            );
+            let self_entry = boot_table
+                .lookup(self_table_key, BOOT_TABLE_GUARD)
+                .unwrap_or_else(|_| panic!("boot self-table capability missing"));
+            assert_eq!(
+                self_entry.keytable_address().ok(),
+                Some(boot_table_binding.address())
+            );
+            assert_eq!(
+                self_entry.keytable_guard_and_size().ok(),
+                Some((BOOT_TABLE_GUARD, boot_table_binding.size_bits()))
+            );
+        }
 
         // We have domain caps here, can use:
         // Prototype status: use only the key actually issued to this boot Domain.
@@ -417,8 +615,8 @@ pub fn kicktest_run() -> ! {
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // Untyped split (2026-09-23): Retype an Untyped into smaller
-        // Untypeds through the real SVC path, then carve from a child.
+        // Untyped split: Retype an Untyped into smaller Untypeds through
+        // the real SVC path, then carve from a child.
         // ─────────────────────────────────────────────────────────────────
 
         // The pre-split watermark locates the children: a 4 KiB child is
@@ -643,7 +841,7 @@ pub fn kicktest_run() -> ! {
         assert_eq!(derived_misaligned.slot(), test_slot(1));
 
         // ─────────────────────────────────────────────────────────────────
-        // Mapping vertical slice (2026-09-15): carved page tables, real
+        // Mapping vertical slice: carved page tables, real
         // descriptor installation, mapping bookkeeping, and teardown.
         // ─────────────────────────────────────────────────────────────────
 
@@ -744,7 +942,7 @@ pub fn kicktest_run() -> ! {
 
         // Install the root into the boot AddressSpace (vaddr must be zero).
         //
-        // ASID binding (2026-09-15) through the real SVC path: before a
+        // ASID binding through the real SVC path: before a
         // translation root exists, the assignment is rejected — an ASID binds
         // to an AddressSpace's root, not to the AddressSpace in the abstract.
         let boot_asid_pool_key = boot_key(KeySlot::BOOT_ASID_POOL.0, 1);
@@ -859,6 +1057,8 @@ pub fn kicktest_run() -> ! {
 
         // Export into a separate KeyTable as well; the result key must carry
         // that destination table's guard rather than the caller table's guard.
+        // Implementation status: the destination is only capability storage;
+        // it does not replace the target AddressSpace's provisioned keytable.
         let export_table_addr = {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
@@ -888,6 +1088,16 @@ pub fn kicktest_run() -> ! {
             };
             assert_eq!(target, boot_as_id);
             assert_eq!(function_address.map(NonZero::get), Some(0x5678));
+            assert_ne!(export_table_addr, boot_table_binding.address());
+            let target_table = nucleus
+                .pools
+                .arch
+                .address_spaces
+                .get_live(usize::from(target.index))
+                .expect("Invocation target AddressSpace missing")
+                .keytable();
+            assert_eq!(target_table.address(), boot_table_binding.address());
+            assert_eq!(target_table.size_bits(), boot_table_binding.size_bits());
         }
         assert!(matches!(
             boot_as.create_invocation(0x5678, &self_table, KeySlot(62)),
@@ -1027,29 +1237,8 @@ pub fn kicktest_run() -> ! {
             0
         );
 
-        // An already-satisfied Wait consumes and returns the bits
-        // immediately through the real SVC path.
-        notification
-            .signal(0b1)
-            .unwrap_or_else(|error| panic!("third Notification.Signal failed: {:?}", error.code()));
-        assert_eq!(
-            notification
-                .wait(NotificationKey::WAIT_INFINITE)
-                .unwrap_or_else(|error| panic!(
-                    "satisfied Notification.Wait failed: {:?}",
-                    error.code()
-                )),
-            0b1
-        );
-
-        // A wait that would block now blocks for real (completion foundation,
-        // 2026-09-16): the end-to-end proof below parks the boot domain and
-        // resumes it through the Bounce fixture domain. A finite timeout is
-        // still rejected: the time subsystem does not exist yet.
-        assert!(matches!(
-            notification.wait(1_000_000),
-            Err(CapError::InvalidOperation)
-        ));
+        // Wait tests follow complete source/Bounce provisioning below, so even
+        // the already-satisfied/rejected waits enter from the bound source root.
 
         // ─────────────────────────────────────────────────────────────────
         // Blocking Wait end-to-end: the Bounce fixture domain (N4-A, 2026-09-16)
@@ -1102,6 +1291,9 @@ pub fn kicktest_run() -> ! {
         // following garbage L2 entries into a fault. 32 KiB holds the
         // deepest handler chain with headroom. Full-descending, so the stack
         // top is the last frame's kernel end.
+        // Implementation status: these accounted frames now hold Bounce's
+        // EL1t execution stack on SP_EL0, not a per-Thread kernel trap stack.
+        // All SVC handlers use the shared high SP_EL1 stack observed above.
         let bounce_stack_key = untyped
             .retype(
                 ObjectType::FRAME,
@@ -1116,8 +1308,18 @@ pub fn kicktest_run() -> ! {
         let (bounce_stack_paddr, _bounce_stack_size) = FrameKey::from_key(bounce_stack_key)
             .get_extent()
             .unwrap_or_else(|error| panic!("Bounce stack GetExtent failed: {:?}", error.code()));
-        let bounce_stack_top =
-            PhysAddr::new(bounce_stack_paddr).user_to_kernel().as_u64() + 8 * 4096;
+        let bounce_stack_bottom = PhysAddr::new(bounce_stack_paddr).user_to_kernel().as_u64();
+        let bounce_stack_top = bounce_stack_bottom + 8 * 4096;
+        assert_eq!(bounce_stack_top & 15, 0);
+        assert_ne!(bounce_stack_top, shared_trap_sp);
+        for index in 0..8_u32 {
+            let frame = FrameKey::from_key(boot_key(41 + index, bounce_stack_key.incarnation()));
+            assert_eq!(
+                frame.get_extent().ok(),
+                Some((bounce_stack_paddr + u64::from(index) * 4096, 4096)),
+                "Bounce execution stack must be eight contiguous accounted Frames"
+            );
+        }
 
         // Bounce's capability table, carved through the public Retype path.
         // The fixture's slots (40–48) sit outside the later pool-refill
@@ -1182,7 +1384,7 @@ pub fn kicktest_run() -> ! {
                 .unwrap_or_else(|failure| {
                     panic!("Bounce self-table grant failed: {:?}", failure.error.code())
                 });
-            bounce_table
+            let bounce_n1 = bounce_table
                 .insert(
                     KeySlot(5),
                     KeyEntry::from_id(ObjectType::NOTIFICATION, n1_id, Rights::all(), 0),
@@ -1191,7 +1393,7 @@ pub fn kicktest_run() -> ! {
                 .unwrap_or_else(|failure| {
                     panic!("Bounce N1 grant failed: {:?}", failure.error.code())
                 });
-            bounce_table
+            let bounce_n2 = bounce_table
                 .insert(
                     KeySlot(6),
                     KeyEntry::from_id(ObjectType::NOTIFICATION, n2_id, Rights::all(), 0),
@@ -1203,7 +1405,7 @@ pub fn kicktest_run() -> ! {
             // The EventCount sits at slot 7: slots 1–4 are the well-known
             // layout (return key, self AddressSpace, parent Thread, self
             // KeyTable) and must not be disturbed by fixture grants.
-            bounce_table
+            let bounce_ec = bounce_table
                 .insert(
                     KeySlot(7),
                     KeyEntry::from_id(ObjectType::EVENT_COUNT, ec_id, Rights::all(), 0),
@@ -1212,20 +1414,153 @@ pub fn kicktest_run() -> ! {
                 .unwrap_or_else(|failure| {
                     panic!("Bounce EC grant failed: {:?}", failure.error.code())
                 });
+            // Hand over the actual recipient-local keys, including returned
+            // incarnations; slot conventions alone cannot mint authority.
+            BOUNCE_N1_KEY.store(bounce_n1.to_wire(), Ordering::Release);
+            BOUNCE_N2_KEY.store(bounce_n2.to_wire(), Ordering::Release);
+            BOUNCE_EC_KEY.store(bounce_ec.to_wire(), Ordering::Release);
         }
 
         // Allocate Bounce's Thread and queue it runnable: it starts only
         // when the boot thread blocks. Bounce executes in the boot
         // AddressSpace (fixture threads need no private translation context).
+        // Implementation status: the preceding shared-boot-AddressSpace setup
+        // is superseded by a distinct AddressSpace bound to Bounce's table at
+        // provisioning, before Thread creation. Bounce remains an EL1
+        // kernel-high-map fixture: there is no actual translation-context
+        // switch, protected isolation proof, or PPC migration trial here.
+        // Implementation status update: the complete linked low image now gets
+        // a distinct root/ASID below, before runnable admission. Execution still
+        // uses trusted EL1t/high SP_EL0 and invariant high SP_EL1; the two-Thread
+        // switch is neither a confinement proof nor same-Thread PPC migration.
+        // SAFETY: Retype initialized the full private carve; its accounted
+        // backing is never relocated, reclaimed, or reinitialized while the
+        // binding is live, including after Bounce's Thread is retired.
+        let bounce_table_binding = unsafe { (&*(bounce_table_addr as *const KeyTable)).binding() };
+        assert_ne!(bounce_table_binding.address(), boot_table_binding.address());
+        assert_eq!(bounce_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
+        let (bounce_as_id, bounce_as) = nucleus
+            .pools
+            .arch
+            .address_spaces
+            .allocate(ArchObjectsImpl::new_address_space(bounce_table_binding))
+            .expect("no Bounce AddressSpace slot");
+        assert_eq!(bounce_as_id.index, 1);
+        assert_ne!(bounce_as_id, boot_as_id);
+        assert_eq!(bounce_as.keytable().address(), bounce_table_addr);
+        assert_eq!(bounce_as.keytable().size_bits(), BOOT_TABLE_SIZE_BITS);
+        assert!(bounce_as.translation_root.is_none());
+        assert!(bounce_as.asid.is_none());
+        let bounce_as_key = {
+            // SAFETY: both initialized private tables have retained accounted
+            // carves; the source and target are distinct, and neither borrow
+            // survives a capability invocation.
+            let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+            let key = boot_table
+                .insert(
+                    KeySlot(69),
+                    KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                        bounce_as_id,
+                        Rights::all(),
+                        0,
+                    ),
+                    BOOT_TABLE_GUARD,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("Bounce AS grant failed: {:?}", failure.error.code())
+                });
+            // SAFETY: distinct retained initialized Bounce table, exclusively
+            // borrowed for this bootstrap grant.
+            unsafe { &mut *(bounce_table_addr as *mut KeyTable) }
+                .insert(
+                    KeySlot::SELF_ADDRESS_SPACE,
+                    KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                        bounce_as_id,
+                        Rights::all(),
+                        0,
+                    ),
+                    TEST_TABLE_GUARD,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("Bounce self-AS grant failed: {:?}", failure.error.code())
+                });
+            key
+        };
+        let bounce_root_key = translation::Provisioner {
+            untyped: &untyped,
+            self_table: &self_table,
+            boot_table_addr: keytable_addr,
+            retained: &retained_init,
+            source_as: boot_as_key,
+            bounce_as: bounce_as_key,
+        }
+        .provision([root_pt_key, l1_pt_key, l2_pt_key], bounce_table_key);
+        let bounce_hardware_asid = boot_asid_pool
+            .assign(bounce_as_key)
+            .unwrap_or_else(|error| panic!("Bounce ASID assignment failed: {:?}", error.code()));
+        assert_eq!(bounce_hardware_asid, 2);
+        let source_root = nucleus
+            .pools
+            .arch
+            .address_spaces
+            .get_live(0)
+            .expect("source AS missing")
+            .translation_root
+            .expect("source root missing");
+        let bounce_root = nucleus
+            .pools
+            .arch
+            .address_spaces
+            .get_live(1)
+            .expect("Bounce AS missing")
+            .translation_root
+            .expect("Bounce root missing");
+        translation::verify_retained(&retained_init, source_root, bounce_root);
+        translation::bind_contexts(source_root, bound_asid, bounce_root, bounce_hardware_asid);
+        // The source must run under its own ASID-1 root before the first wait.
+        // Never confuse this bound context with the raw ASID-0 bootstrap TTBR.
+        boot_as
+            .activate()
+            .unwrap_or_else(|error| panic!("early source Activate failed: {:?}", error.code()));
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        translation::observe_source();
+        assert!(matches!(
+            AddressSpaceKey::from_key(bounce_as_key).activate(),
+            Err(CapError::InvalidOperation)
+        ));
+        assert_eq!(TTBR0_EL1.get(), source_root | (u64::from(bound_asid) << 48));
+
+        // An already-satisfied Wait consumes and returns the bits
+        // immediately through the real SVC path.
+        notification
+            .signal(0b1)
+            .unwrap_or_else(|error| panic!("third Notification.Signal failed: {:?}", error.code()));
+        assert_eq!(
+            notification
+                .wait(NotificationKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!(
+                    "satisfied Notification.Wait failed: {:?}",
+                    error.code()
+                )),
+            0b1
+        );
+
+        // A wait that would block now blocks for real (completion foundation,
+        // 2026-09-16): the end-to-end proof below parks the boot domain and
+        // resumes it through the Bounce fixture domain. A finite timeout is
+        // still rejected: the time subsystem does not exist yet.
+        assert!(matches!(
+            notification.wait(1_000_000),
+            Err(CapError::InvalidOperation)
+        ));
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
         let (bounce_id, _bounce_thread) = nucleus
             .pools
             .threads
             .allocate(Thread {
-                keytable_addr: bounce_table_addr,
-                address_space: boot_as_id,
+                address_space: bounce_as_id,
                 context: ExecutionContext::NotStarted {
-                    pc: bounce_entry as *const () as u64,
-                    stack_top: bounce_stack_top,
+                    saved: SavedContext::el1t(bounce_entry as *const () as u64, bounce_stack_top),
                 },
             })
             .unwrap_or_else(|| panic!("no Bounce Thread slot"));
@@ -1235,21 +1570,35 @@ pub fn kicktest_run() -> ! {
         // The boot thread blocks on N1: this SVC does not return — the
         // kernel parks it, starts Bounce (which signals N1 and parks on N2),
         // then resumes the boot thread with the delivered bitmap.
-        let received = NotificationKey::from_key(n1_key)
-            .wait(NotificationKey::WAIT_INFINITE)
-            .unwrap_or_else(|error| {
-                panic!("blocking Notification.Wait failed: {:?}", error.code())
-            });
+        let received = translation::notification_wait(n1_key).unwrap_or_else(|error| {
+            panic!("blocking Notification.Wait failed: {:?}", error.code())
+        });
         assert_eq!(received, BOUNCE_MAGIC_BITS);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        translation::observe_source();
+        assert_eq!(fixture_stack_state(), (boot_execution_sp, shared_trap_sp));
         // Bounce is parked on N2; the boot thread resumed with the bits.
-        {
+        let first_bounce_parked = {
             let bounce = nucleus
                 .pools
                 .threads
                 .get_live(usize::from(bounce_id.index))
                 .unwrap_or_else(|| panic!("Bounce Domain missing"));
-            assert!(matches!(bounce.context, ExecutionContext::Parked { .. }));
-        }
+            assert_bounce_parked_context(bounce, bounce_stack_bottom, bounce_stack_top);
+            assert_eq!(bounce.address_space, bounce_as_id);
+            assert_eq!(
+                nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .get_live(usize::from(bounce.address_space.index))
+                    .expect("Bounce AddressSpace missing")
+                    .keytable()
+                    .address(),
+                bounce_table_binding.address()
+            );
+            bounce.context
+        };
 
         // ─────────────────────────────────────────────────────────────────
         // EventCount end-to-end (2026-09-18): monotonic counting, the
@@ -1317,6 +1666,20 @@ pub fn kicktest_run() -> ! {
             Err(CapError::InvalidOperation)
         ));
 
+        // The preceding nonblocking SVCs reused the shared trap stack while
+        // Bounce stayed parked. Its entire saved state and wait identity must
+        // remain unchanged, not merely its completion-result registers.
+        assert_eq!(
+            nucleus
+                .pools
+                .threads
+                .get_live(usize::from(bounce_id.index))
+                .expect("parked Bounce missing")
+                .context,
+            first_bounce_parked
+        );
+        assert_eq!(fixture_stack_state(), (boot_execution_sp, shared_trap_sp));
+
         // Blocking Await end-to-end: request Bounce's +3 advance by
         // signaling N2 (bit 0), then block on target 10. Bounce advances the
         // counter, this domain's record completes with the new value, and
@@ -1325,19 +1688,30 @@ pub fn kicktest_run() -> ! {
             .signal(0b1)
             .unwrap_or_else(|error| panic!("N2 trigger signal failed: {:?}", error.code()));
         assert_eq!(
-            event_count
-                .await_ge(10, EventCountKey::WAIT_INFINITE)
-                .unwrap_or_else(|error| {
-                    panic!("blocking EventCount.Await failed: {:?}", error.code())
-                }),
+            translation::event_count_await(ec_key, 10).unwrap_or_else(|error| {
+                panic!("blocking EventCount.Await failed: {:?}", error.code())
+            }),
             10
         );
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        translation::observe_source();
         assert_eq!(
             event_count.read().unwrap_or_else(|error| panic!(
                 "fourth EventCount.Read failed: {:?}",
                 error.code()
             )),
             10
+        );
+
+        assert_eq!(fixture_stack_state(), (boot_execution_sp, shared_trap_sp));
+        assert_bounce_parked_context(
+            nucleus
+                .pools
+                .threads
+                .get_live(usize::from(bounce_id.index))
+                .expect("Bounce missing after successful Await"),
+            bounce_stack_bottom,
+            bounce_stack_top,
         );
 
         // Overflow wakes blocked waiters with the shared error (selected
@@ -1349,7 +1723,7 @@ pub fn kicktest_run() -> ! {
             .signal(0b10)
             .unwrap_or_else(|error| panic!("N2 overflow trigger failed: {:?}", error.code()));
         assert!(matches!(
-            event_count.await_ge(u64::MAX - 2, EventCountKey::WAIT_INFINITE),
+            translation::event_count_await(ec_key, u64::MAX - 2),
             Err(CapError::CounterOverflow)
         ));
         assert_eq!(
@@ -1358,6 +1732,10 @@ pub fn kicktest_run() -> ! {
                 .unwrap_or_else(|error| panic!("fifth EventCount.Read failed: {:?}", error.code())),
             10
         );
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        translation::observe_source();
+        translation::assert_rounds();
+        assert_eq!(fixture_stack_state(), (boot_execution_sp, shared_trap_sp));
         // Bounce is parked on N2 for good; the boot domain resumed with the
         // error completion.
         {
@@ -1366,7 +1744,7 @@ pub fn kicktest_run() -> ! {
                 .threads
                 .get_live(usize::from(bounce_id.index))
                 .unwrap_or_else(|| panic!("Bounce Domain missing"));
-            assert!(matches!(bounce.context, ExecutionContext::Parked { .. }));
+            assert_bounce_parked_context(bounce, bounce_stack_bottom, bounce_stack_top);
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -1378,7 +1756,7 @@ pub fn kicktest_run() -> ! {
         {
             // Bounce is parked on N2 with a Waiting record: the canonical
             // teardown state of a blocked Thread.
-            let ExecutionContext::Parked { record, .. } = nucleus
+            let ExecutionContext::Parked { saved, record } = nucleus
                 .pools
                 .threads
                 .get_live(usize::from(bounce_id.index))
@@ -1451,6 +1829,17 @@ pub fn kicktest_run() -> ! {
                 Some(PendingState::Waiting)
             );
 
+            assert_eq!(
+                nucleus
+                    .pools
+                    .threads
+                    .get_live(usize::from(bounce_id.index))
+                    .expect("rejected retirement removed Bounce")
+                    .context,
+                ExecutionContext::Parked { saved, record }
+            );
+            assert_eq!(fixture_stack_state(), (boot_execution_sp, shared_trap_sp));
+
             // Retire Bounce through the real SVC path: the parked record is
             // cancelled and released, and no queued wakeup survives.
             ThreadKey::from_key(bounce_thread_key, DomainId(1))
@@ -1476,6 +1865,25 @@ pub fn kicktest_run() -> ! {
             // is stale: the identity no longer resolves, and a further Retire
             // through the same capability fails with a defined error.
             nucleus.pools.threads.validate(bounce_id).unwrap_err();
+            // Thread retirement does not retire its AddressSpace or reset the
+            // shared table's counters/backing; the binding remains live.
+            nucleus
+                .pools
+                .arch
+                .address_spaces
+                .validate(bounce_as_id)
+                .unwrap_or_else(|_| panic!("Thread retirement invalidated Bounce's AddressSpace"));
+            assert_eq!(
+                nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .get_live(usize::from(bounce_as_id.index))
+                    .expect("Thread retirement removed Bounce's AddressSpace")
+                    .keytable()
+                    .address(),
+                bounce_table_binding.address()
+            );
             assert!(
                 nucleus
                     .pools
@@ -1497,14 +1905,57 @@ pub fn kicktest_run() -> ! {
         // ─────────────────────────────────────────────────────────────────
         {
             // A fixture AddressSpace with its own root and ASID.
+            // Provision a distinct initialized table too; its Retype carve
+            // stays accounted and is never reclaimed/reinitialized, even
+            // after the AddressSpace pool slot is retired.
+            let fixture_table_key = untyped
+                .retype(
+                    ObjectType::KEY_TABLE,
+                    BOOT_TABLE_SIZE_BITS,
+                    TEST_TABLE_GUARD,
+                    1,
+                    &self_table,
+                    KeySlot(66).0,
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("retirement KeyTable Retype failed: {:?}", error.code())
+                });
+            let fixture_table_binding = {
+                // SAFETY: the live boot table is borrowed only for this lookup.
+                let entry = unsafe { &*(keytable_addr as *const KeyTable) }
+                    .lookup(fixture_table_key, BOOT_TABLE_GUARD)
+                    .unwrap_or_else(|_| panic!("retirement KeyTable capability missing"));
+                let address = entry
+                    .keytable_address()
+                    .unwrap_or_else(|_| panic!("retirement table capability has the wrong kind"));
+                // SAFETY: the kernel-issued address names the full initialized
+                // private Retype carve retained without relocation, reclaim,
+                // or reinitialization while any binding is live.
+                let binding = unsafe { (&*(address as *const KeyTable)).binding() };
+                assert_eq!(
+                    entry.keytable_guard_and_size().ok(),
+                    Some((TEST_TABLE_GUARD, binding.size_bits()))
+                );
+                binding
+            };
+            assert_ne!(
+                fixture_table_binding.address(),
+                boot_table_binding.address()
+            );
+            assert_ne!(
+                fixture_table_binding.address(),
+                bounce_table_binding.address()
+            );
+            assert_eq!(fixture_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
             let fixture_as_id = nucleus
                 .pools
                 .arch
                 .address_spaces
-                .allocate(ArchObjectsImpl::new_address_space())
+                .allocate(ArchObjectsImpl::new_address_space(fixture_table_binding))
                 .expect("no fixture AddressSpace slot")
                 .0;
-            assert_eq!(fixture_as_id.index, 1);
+            assert_eq!(fixture_as_id.index, 2);
             let fixture_as_key = {
                 // SAFETY: keytable_addr names the live carved boot KeyTable.
                 let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
@@ -1554,6 +2005,29 @@ pub fn kicktest_run() -> ! {
                 .unwrap_or_else(|error| {
                     panic!("fixture root PageTable.Map failed: {:?}", error.code())
                 });
+            // Preserve positive innermost-first L2/L1 teardown coverage on a
+            // disposable context, never on the source's executing ancestors.
+            let fixture_l1_key = untyped
+                .retype(
+                    ObjectType::PAGE_TABLE,
+                    12,
+                    0,
+                    2,
+                    &self_table,
+                    96,
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("fixture intermediates Retype failed: {:?}", error.code())
+                });
+            let fixture_l1 = PageTableKey::from_key(fixture_l1_key);
+            let fixture_l2 = PageTableKey::from_key(boot_key(97, fixture_l1_key.incarnation()));
+            fixture_l1
+                .map(fixture_root_pt_key, 0)
+                .unwrap_or_else(|error| panic!("fixture L1 Map failed: {:?}", error.code()));
+            fixture_l2
+                .map(fixture_l1_key, 0)
+                .unwrap_or_else(|error| panic!("fixture L2 Map failed: {:?}", error.code()));
             let fixture_bound_asid =
                 boot_asid_pool
                     .assign(fixture_as_key)
@@ -1561,7 +2035,7 @@ pub fn kicktest_run() -> ! {
                         panic!("fixture ASIDPool.Assign failed: {:?}", error.code())
                     });
             assert_eq!(
-                fixture_bound_asid, 2,
+                fixture_bound_asid, 3,
                 "the fixture binds the next free ASID"
             );
             assert!(matches!(
@@ -1571,11 +2045,41 @@ pub fn kicktest_run() -> ! {
 
             // Unmap the (empty) root, then retire: the ASID is released back
             // to the boot pool and the pool slot is reclaimed.
+            // First reject withdrawal of its nonempty ancestors, then empty
+            // the disposable chain innermost-first. This context never executes.
+            assert!(matches!(
+                fixture_l1.unmap(),
+                Err(CapError::InvalidOperation)
+            ));
+            assert!(matches!(
+                PageTableKey::from_key(fixture_root_pt_key).unmap(),
+                Err(CapError::InvalidOperation)
+            ));
+            fixture_l2
+                .unmap()
+                .unwrap_or_else(|error| panic!("fixture L2 Unmap failed: {:?}", error.code()));
+            fixture_l1
+                .unmap()
+                .unwrap_or_else(|error| panic!("fixture L1 Unmap failed: {:?}", error.code()));
             PageTableKey::from_key(fixture_root_pt_key)
                 .unmap()
                 .unwrap_or_else(|error| {
                     panic!("fixture root PageTable.Unmap failed: {:?}", error.code())
                 });
+            assert!(matches!(
+                PageTableKey::from_key(fixture_root_pt_key).unmap(),
+                Err(CapError::NotMapped)
+            ));
+            assert_eq!(
+                nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .get_live(2)
+                    .expect("fixture AS missing before retirement")
+                    .translation_root,
+                None
+            );
             fixture_as.retire().unwrap_or_else(|error| {
                 panic!("fixture AddressSpace.Retire failed: {:?}", error.code())
             });
@@ -1594,14 +2098,60 @@ pub fn kicktest_run() -> ! {
 
             // The released ASID is the next one granted: a third fixture
             // AddressSpace with a fresh root binds ASID 2 again.
+            // Implementation status: Bounce occupies pool index 1, so this
+            // AddressSpace is index 3. It gets a fresh table, not the retired
+            // fixture's retained carve; ASID reuse does not reset table identity.
+            // Implementation status update: retained Bounce owns ASID 2, so
+            // this disposable retirement fixture releases and rebinds ASID 3.
+            let rebind_table_key = untyped
+                .retype(
+                    ObjectType::KEY_TABLE,
+                    BOOT_TABLE_SIZE_BITS,
+                    TEST_TABLE_GUARD,
+                    1,
+                    &self_table,
+                    KeySlot(67).0,
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("rebind KeyTable Retype failed: {:?}", error.code())
+                });
+            let rebind_table_binding = {
+                // SAFETY: the live boot table is borrowed only for this lookup.
+                let entry = unsafe { &*(keytable_addr as *const KeyTable) }
+                    .lookup(rebind_table_key, BOOT_TABLE_GUARD)
+                    .unwrap_or_else(|_| panic!("rebind KeyTable capability missing"));
+                let address = entry
+                    .keytable_address()
+                    .unwrap_or_else(|_| panic!("rebind table capability has the wrong kind"));
+                // SAFETY: the kernel-issued address names the full initialized
+                // private Retype carve retained without relocation, reclaim,
+                // or reinitialization while any binding is live.
+                let binding = unsafe { (&*(address as *const KeyTable)).binding() };
+                assert_eq!(
+                    entry.keytable_guard_and_size().ok(),
+                    Some((TEST_TABLE_GUARD, binding.size_bits()))
+                );
+                binding
+            };
+            assert_ne!(rebind_table_binding.address(), boot_table_binding.address());
+            assert_ne!(
+                rebind_table_binding.address(),
+                bounce_table_binding.address()
+            );
+            assert_ne!(
+                rebind_table_binding.address(),
+                fixture_table_binding.address()
+            );
+            assert_eq!(rebind_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
             let rebind_as_id = nucleus
                 .pools
                 .arch
                 .address_spaces
-                .allocate(ArchObjectsImpl::new_address_space())
+                .allocate(ArchObjectsImpl::new_address_space(rebind_table_binding))
                 .expect("no rebind AddressSpace slot")
                 .0;
-            assert_eq!(rebind_as_id.index, 2);
+            assert_eq!(rebind_as_id.index, 3);
             let rebind_as_key = {
                 // SAFETY: keytable_addr names the live carved boot KeyTable.
                 let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
@@ -1646,7 +2196,7 @@ pub fn kicktest_run() -> ! {
                     panic!("rebind ASIDPool.Assign failed: {:?}", error.code())
                 });
             assert_eq!(
-                rebound_asid, 2,
+                rebound_asid, 3,
                 "the retired AddressSpace's ASID was released back to the pool"
             );
         }
@@ -1654,13 +2204,17 @@ pub fn kicktest_run() -> ! {
         // Build the intermediate chain: L1 under the root, L2 under L1,
         // L3 under L2, all selecting the slots for vaddr 0x1000_0000.
         let l1_pt = PageTableKey::from_key(l1_pt_key);
-        l1_pt
-            .map(root_pt_key, 0x1000_0000)
-            .unwrap_or_else(|error| panic!("L1 PageTable.Map failed: {:?}", error.code()));
+        // Implementation status: L1/L2 already serve the retained source
+        // image, stack and switch probe. Only this disposable test L3 is late.
+        assert!(matches!(
+            l1_pt.map(root_pt_key, 0x1000_0000),
+            Err(CapError::AlreadyMapped)
+        ));
         let l2_pt = PageTableKey::from_key(l2_pt_key);
-        l2_pt
-            .map(l1_pt_key, 0x1000_0000)
-            .unwrap_or_else(|error| panic!("L2 PageTable.Map failed: {:?}", error.code()));
+        assert!(matches!(
+            l2_pt.map(l1_pt_key, 0x1000_0000),
+            Err(CapError::AlreadyMapped)
+        ));
         let l3_pt = PageTableKey::from_key(l3_pt_key);
         l3_pt
             .map(l2_pt_key, 0x1000_0000)
@@ -1763,6 +2317,10 @@ pub fn kicktest_run() -> ! {
             assert!(pte & 0b1 != 0, "the PTE must be valid");
             assert!(pte & 0b10 != 0, "a level-3 entry must be a page descriptor");
             assert!(pte & (1 << 10) != 0, "the access flag must be set");
+            assert!(
+                pte & (1 << 11) != 0,
+                "a runtime TTBR0 page must be non-global (nG=1)"
+            );
             assert_eq!(
                 pte & (0b11 << 6),
                 0b01 << 6,
@@ -1837,6 +2395,10 @@ pub fn kicktest_run() -> ! {
                 block & 0b10 == 0,
                 "a level-2 entry must be a block descriptor"
             );
+            assert!(
+                block & (1 << 11) != 0,
+                "a runtime TTBR0 block must be non-global (nG=1)"
+            );
             assert_eq!(
                 block & (0b11 << 6),
                 0b11 << 6,
@@ -1862,113 +2424,77 @@ pub fn kicktest_run() -> ! {
         // SAFETY: both frames lie in the boot Untyped's committed range; the
         // direct map is live.
         unsafe {
-            *PhysAddr::new(frame_paddr)
+            PhysAddr::new(frame_paddr)
                 .user_to_kernel()
-                .as_mut_ptr::<u64>() = MAGIC_ORIGINAL;
-            *PhysAddr::new(second_frame_paddr)
+                .as_mut_ptr::<u64>()
+                .write_volatile(MAGIC_ORIGINAL);
+            PhysAddr::new(second_frame_paddr)
                 .user_to_kernel()
-                .as_mut_ptr::<u64>() = MAGIC_SECOND;
+                .as_mut_ptr::<u64>()
+                .write_volatile(MAGIC_SECOND);
         }
 
-        // Save the boot identity-map context so the test can restore it after
-        // the observation (deactivation is not a capability operation yet).
+        // Keep the already provisioned source context installed throughout
+        // these live remaps. Activation below is idempotent, not a late image
+        // mapping step; the ASID-0 bootstrap context is never restored.
         let boot_ttbr0 = TTBR0_EL1.get();
+        let boot_ttbr1 = TTBR1_EL1.get();
 
-        // The bootstrap caller (this test) executes in the low half through
-        // the boot identity map: its stack sits below the image base at
-        // 0x80000 and the kickstart image extends beyond the 2 MiB boundary.
+        // Read only the selected path through retained private table backing;
+        // no references survive a SVC. Bootstrap identity-block nG and invariant
+        // high vector/direct-map global checks ran before early activation.
+        // create_identity_mapping installs only 2 MiB blocks: no live bootstrap
+        // TTBR0 page exists to test map_page's TTBR0 branch.
+        let read_leaf = translation::read_leaf;
+
         // A real Domain's address space contains its own image and stack by
-        // construction, and the bootstrap caller is no exception — map its
-        // low-half working set into the boot Domain's context as two 2 MiB
-        // blocks (fabricated bootstrap-test fixtures naming the in-use
-        // physical range, like the misaligned-region fixture above), so
-        // execution can continue under the activated tables.
-        let low_block_keys: [RawKey; 2] = [
-            {
-                // SAFETY: keytable_addr names the live boot KeyTable.
-                let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
-                boot_table
-                    .insert(
-                        KeySlot(60),
-                        KeyEntry::new_frame(0, 21, false, Rights::all()),
-                        BOOT_TABLE_GUARD,
-                    )
-                    .unwrap_or_else(|_| panic!("low-half block A install failed"))
-            },
-            {
-                // SAFETY: see above.
-                let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
-                boot_table
-                    .insert(
-                        KeySlot(61),
-                        KeyEntry::new_frame(0x20_0000, 21, false, Rights::all()),
-                        BOOT_TABLE_GUARD,
-                    )
-                    .unwrap_or_else(|_| panic!("low-half block B install failed"))
-            },
-        ];
-        // The blocks are requested with the EXECUTE right (selected
-        // 2026-09-15): the bootstrap caller must keep executing inside its
-        // Domain's context, so its image is executable there.
-        for (block, vaddr) in low_block_keys.iter().zip([0_u64, 0x20_0000_u64]) {
-            FrameKey::from_key(*block)
-                .map(
-                    boot_as_key,
-                    vaddr,
-                    Rights(Rights::READ | Rights::WRITE | Rights::EXECUTE),
-                    0,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "low-half Frame.Map at {vaddr:#x} failed: {:?}",
-                        error.code()
-                    )
-                });
-        }
-        {
-            const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
-            // SAFETY: see above.
-            let read_entry = |paddr: u64, slot: usize| unsafe {
-                *(PhysAddr::new(paddr).user_to_kernel().as_ptr::<u64>()).add(slot)
-            };
-            let l0e = read_entry(root_paddr, 0);
-            let l1e = read_entry(l0e & ADDR_MASK, 0);
-            let l2_paddr = l1e & ADDR_MASK;
-            for (slot, base) in [(0, 0_u64), (1, 0x20_0000)] {
-                let block = read_entry(l2_paddr, slot);
-                assert_eq!(
-                    block & ADDR_MASK,
-                    base,
-                    "the low-half block must be identity"
-                );
-                assert!(block & 0b1 != 0, "the low-half block must be valid");
-                assert!(
-                    block & (1 << 53) == 0 && block & (1 << 54) == 0,
-                    "an EXECUTE-requested mapping must have UXN|PXN clear"
-                );
-                assert_eq!(
-                    block & (0b11 << 6),
-                    0,
-                    "a writable EXECUTE mapping must be kernel-privilege (AP=00)"
-                );
-            }
-        }
+        // construction, and the bootstrap caller is no exception. Its stack
+        // sits below the image base at 0x80000; the linked image extends beyond
+        // the 2 MiB boundary. Both were mapped before the first handoff using
+        // accounted retained pages, not fabricated two-block authority over
+        // unrelated occupied bytes. EXECUTE-requested image leaves have nG and
+        // UXN|PXN clear with trusted writable EL1 AP=00; stack leaves remain XN.
+        translation::verify_retained(&retained_init, root_paddr, bounce_root);
 
         // Activate through the real SVC path: the tables become hardware-live.
         boot_as
             .activate()
             .unwrap_or_else(|error| panic!("AddressSpace.Activate failed: {:?}", error.code()));
+        let active_ttbr0 = root_paddr | (u64::from(bound_asid) << 48);
+        assert_eq!(
+            TTBR0_EL1.get(),
+            active_ttbr0,
+            "activation must install the carved root with its bound ASID"
+        );
+        assert_eq!(active_ttbr0, boot_ttbr0, "later Activate is idempotent");
+        assert_eq!(
+            TCR_EL1.get() & (1 << 22),
+            0,
+            "TCR.A1 must select TTBR0's ASID for the warmed remap"
+        );
+        assert_eq!(
+            TTBR1_EL1.get(),
+            boot_ttbr1,
+            "the kernel map stays unchanged"
+        );
 
         // A load from the mapped virtual address now walks the AddressSpace's
         // tables: the marker written through the direct map must come back
         // through the level-3 page descriptor.
         // SAFETY: the activated translation context maps this virtual address
         // to the original frame; the boot test runs at EL1 with PAN inactive.
-        let observed = unsafe { *(0x1000_0000_u64 as *const u64) };
+        let observed = unsafe { (0x1000_0000_u64 as *const u64).read_volatile() };
         assert_eq!(
             observed, MAGIC_ORIGINAL,
             "the activated context must serve the real mapping"
         );
+
+        // Volatile accesses force real loads/stores rather than compiler
+        // reuse of a marker. Keep this root/ASID installed until both remaps
+        // have been observed: no reactivation or test-side TLBI can hide a
+        // missing or misencoded VA-scoped invalidation in Frame.Unmap.
+        // Hardware may evict a warmed translation; this is not a proof that
+        // unrelated VAs/ASIDs remain cached instead of a broader flush.
 
         // Unmapping a non-empty table is rejected: L3 still holds the page.
         assert!(matches!(l3_pt.unmap(), Err(CapError::InvalidOperation)));
@@ -1979,6 +2505,10 @@ pub fn kicktest_run() -> ! {
         // cached translation under the bound ASID (tlbi vae1is + dsb/isb) —
         // executing the real maintenance sequence here proves it is safe on
         // the live kernel context.
+        // SAFETY: the original page is still mapped; warm it again immediately
+        // before Unmap, after the rejection-path SVCs above.
+        let rewarmed = unsafe { (0x1000_0000_u64 as *const u64).read_volatile() };
+        assert_eq!(rewarmed, MAGIC_ORIGINAL);
         frame
             .unmap()
             .unwrap_or_else(|error| panic!("Frame.Unmap failed: {:?}", error.code()));
@@ -2008,9 +2538,23 @@ pub fn kicktest_run() -> ! {
                 0,
             )
             .unwrap_or_else(|error| panic!("second frame Frame.Map failed: {:?}", error.code()));
+        assert_eq!(
+            TTBR0_EL1.get(),
+            active_ttbr0,
+            "remap must not switch contexts"
+        );
+        {
+            let (level, pte) = read_leaf(active_ttbr0, 0x1000_0000);
+            assert_eq!(level, 3, "the replacement must be a page leaf");
+            assert_eq!(pte & 0x0000_FFFF_FFFF_F000, second_frame_paddr);
+            assert!(
+                pte & (1 << 11) != 0,
+                "the replacement page must be non-global"
+            );
+        }
         // SAFETY: the activated context now maps this virtual address to the
         // second frame; PAN is inactive at EL1.
-        let observed = unsafe { *(0x1000_0000_u64 as *const u64) };
+        let observed = unsafe { (0x1000_0000_u64 as *const u64).read_volatile() };
         assert_eq!(
             observed, MAGIC_SECOND,
             "the unmap's TLB invalidation must withdraw the stale translation"
@@ -2018,23 +2562,44 @@ pub fn kicktest_run() -> ! {
         FrameKey::from_key(second_frame_key)
             .unmap()
             .unwrap_or_else(|error| panic!("second frame Frame.Unmap failed: {:?}", error.code()));
-
-        // Restore the boot identity-map context; the remaining assertions walk
-        // tables through the direct map and need no live Domain context.
-        // SAFETY: the saved value is the boot TTBR0_EL1 installed by
-        // `enable_mmu_and_drop_to_el1`.
-        unsafe {
-            TTBR0_EL1.set(boot_ttbr0);
-            core::arch::asm!("isb", options(nostack));
+        // Repeat in the reverse direction while the second translation is
+        // warm: neither physical marker changes, only the same VA's backing.
+        frame
+            .map(
+                boot_as_key,
+                0x1000_0000,
+                Rights(Rights::READ | Rights::WRITE),
+                0,
+            )
+            .unwrap_or_else(|error| panic!("original frame remap failed: {:?}", error.code()));
+        assert_eq!(
+            TTBR0_EL1.get(),
+            active_ttbr0,
+            "reverse remap keeps the same ASID/root"
+        );
+        {
+            let (level, pte) = read_leaf(active_ttbr0, 0x1000_0000);
+            assert_eq!(level, 3);
+            assert_eq!(pte & 0x0000_FFFF_FFFF_F000, frame_paddr);
+            assert!(pte & (1 << 11) != 0, "the restored page must be non-global");
         }
+        // SAFETY: the still-active context maps the original frame again;
+        // the volatile load must not reuse the second frame's warmed result.
+        let observed = unsafe { (0x1000_0000_u64 as *const u64).read_volatile() };
+        assert_eq!(
+            observed, MAGIC_ORIGINAL,
+            "the second unmap must withdraw the warmed replacement translation"
+        );
+        frame.unmap().unwrap_or_else(|error| {
+            panic!("original frame final Unmap failed: {:?}", error.code())
+        });
+        assert_eq!(TTBR0_EL1.get(), active_ttbr0);
+        assert_eq!(TTBR1_EL1.get(), boot_ttbr1);
 
-        // Withdraw the caller's low-half blocks before the table teardown
-        // below: the L2 teardown requires an empty table.
-        for block in low_block_keys {
-            FrameKey::from_key(block)
-                .unmap()
-                .unwrap_or_else(|error| panic!("low-half Frame.Unmap failed: {:?}", error.code()));
-        }
+        // Keep the bound source root live. Never restore the raw ASID-0
+        // bootstrap TTBR while Thread metadata still names the ASID-1 source,
+        // and never withdraw its executing image or low SP_EL0 stack. Only
+        // disposable test mappings and their now-empty L3 are torn down.
 
         // With the original unmapped, the physical extent is free in this
         // Domain again: the derived capability now maps at the second address,
@@ -2080,18 +2645,13 @@ pub fn kicktest_run() -> ! {
         l3_pt
             .unmap()
             .unwrap_or_else(|error| panic!("L3 PageTable.Unmap failed: {:?}", error.code()));
-        l2_pt
-            .unmap()
-            .unwrap_or_else(|error| panic!("L2 PageTable.Unmap failed: {:?}", error.code()));
-        l1_pt
-            .unmap()
-            .unwrap_or_else(|error| panic!("L1 PageTable.Unmap failed: {:?}", error.code()));
-        root_pt
-            .unmap()
-            .unwrap_or_else(|error| panic!("root PageTable.Unmap failed: {:?}", error.code()));
-        // The root unmap withdrew the whole context: every cached translation
-        // under the bound ASID was invalidated (tlbi aside1is + dsb/isb).
-        assert!(matches!(root_pt.unmap(), Err(CapError::NotMapped)));
+        // Shared ancestors still carry the active image/stack/probe. Their
+        // empty-table guards must reject teardown; root withdrawal and whole-
+        // ASID invalidation are covered on the disposable retirement root above.
+        assert!(matches!(l2_pt.unmap(), Err(CapError::InvalidOperation)));
+        assert!(matches!(l1_pt.unmap(), Err(CapError::InvalidOperation)));
+        assert!(matches!(root_pt.unmap(), Err(CapError::InvalidOperation)));
+        assert_eq!(TTBR0_EL1.get(), active_ttbr0);
         {
             let address_space = nucleus
                 .pools
@@ -2099,12 +2659,20 @@ pub fn kicktest_run() -> ! {
                 .address_spaces
                 .get_live(0)
                 .unwrap_or_else(|| panic!("boot AddressSpace missing"));
-            assert_eq!(address_space.translation_root, None);
+            assert_eq!(address_space.translation_root, Some(root_paddr));
+            assert_eq!(address_space.asid, Some(bound_asid));
         }
 
         // Page-table pool accounting: a batch that cannot fit releases its
         // partially allocated metadata slots, and a later smaller batch
-        // succeeds (capacity 16, four tables carved so far).
+        // succeeds. Capacity is now exactly the retained source/Bounce tables,
+        // both disposable retirement roots and their teardown chain, this
+        // uninstalled L3 metadata, and
+        // twelve spare entries. Unmap does not release page-table pool entries.
+        assert_eq!(
+            nucleus.pools.arch.page_tables.len(),
+            page_table_capacity - 12
+        );
         assert!(matches!(
             untyped.retype(
                 ObjectType::PAGE_TABLE,
@@ -2129,6 +2697,9 @@ pub fn kicktest_run() -> ! {
             )
             .unwrap_or_else(|error| panic!("refill PageTable Retype failed: {:?}", error.code()));
         assert_eq!(refill.slot(), boot_slot(24));
+        assert_eq!(nucleus.pools.arch.page_tables.len(), page_table_capacity);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        translation::verify_retained(&retained_init, source_root, bounce_root);
         assert!(matches!(
             untyped.retype(
                 ObjectType::PAGE_TABLE,
@@ -2180,36 +2751,35 @@ const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 /// Bootstrap-era fixture mechanism, not the Phase 7 Activate contract: no
 /// budget, no EL0 entry, no legal-transition enforcement beyond what this
 /// path exercises.
+/// Implementation status: Bounce's Thread now names its own `AddressSpace` and
+/// its provisioned table, but still runs through the kernel high map without
+/// an actual translation-context switch. This is not a PPC migration trial.
+/// Implementation status update: the linked low image now runs under Bounce's
+/// independent ASID-2 root, selected by the parent scheduling path. The trusted
+/// high execution stack is retained; this remains a two-Thread test, not PPC.
+/// Implementation status: execution uses `EL1t`/`SP_EL0`, with the same shared
+/// high `SP_EL1` trap stack as the boot Thread and Thread-resident saved state.
 #[cfg(feature = "debug_kernel")]
 #[unsafe(no_mangle)]
 extern "C" fn bounce_entry() -> ! {
-    let n1 = NotificationKey::from_key(RawKey::from_parts(
-        TEST_TABLE_GUARD,
-        BOOT_TABLE_SIZE_BITS,
-        5,
-        1,
-    ));
-    let n2 = NotificationKey::from_key(RawKey::from_parts(
-        TEST_TABLE_GUARD,
-        BOOT_TABLE_SIZE_BITS,
-        6,
-        1,
-    ));
-    let ec = EventCountKey::from_key(RawKey::from_parts(
-        TEST_TABLE_GUARD,
-        BOOT_TABLE_SIZE_BITS,
-        7,
-        1,
-    ));
+    translation::observe_bounce();
+    let initial_stack_state = fixture_stack_state();
+    assert_eq!(
+        initial_stack_state.1,
+        FIXTURE_TRAP_SP.load(Ordering::Acquire)
+    );
+    let n1 = NotificationKey::from_key(RawKey::from_wire(BOUNCE_N1_KEY.load(Ordering::Acquire)));
+    let n2_key = RawKey::from_wire(BOUNCE_N2_KEY.load(Ordering::Acquire));
+    let ec = EventCountKey::from_key(RawKey::from_wire(BOUNCE_EC_KEY.load(Ordering::Acquire)));
     n1.signal(BOUNCE_MAGIC_BITS)
         .unwrap_or_else(|error| panic!("Bounce: Notification.Signal failed: {:?}", error.code()));
     // Serve one EventCount advance per N2 trigger, then park forever.
     for round in 0..2_u64 {
-        let trigger = n2
-            .wait(NotificationKey::WAIT_INFINITE)
-            .unwrap_or_else(|error| {
-                panic!("Bounce: round {round} wait failed: {:?}", error.code())
-            });
+        let trigger = translation::notification_wait(n2_key).unwrap_or_else(|error| {
+            panic!("Bounce: round {round} wait failed: {:?}", error.code())
+        });
+        assert_eq!(fixture_stack_state(), initial_stack_state);
+        translation::observe_bounce();
         let result = match trigger {
             // A plain +3 advance that satisfies the boot domain's target.
             0b1 => ec.advance(3),
@@ -2231,7 +2801,7 @@ extern "C" fn bounce_entry() -> ! {
     }
     // Park forever: this wait blocks, so the scheduler resumes the boot
     // domain. Reaching either arm below is a fixture failure.
-    match n2.wait(NotificationKey::WAIT_INFINITE) {
+    match translation::notification_wait(n2_key) {
         Ok(bits) => panic!("Bounce: unexpected wakeup with bits {bits:#x}"),
         Err(error) => panic!("Bounce: Notification.Wait failed: {:?}", error.code()),
     }
