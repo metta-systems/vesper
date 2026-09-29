@@ -35,7 +35,7 @@ Queued rendezvous is userspace composition over Invocation and
 | Op | Name | Status |
 |---|---|---|
 | `0` | Call | `x0` Invocation capability, `x1` operation ID `0`, `x2..x7` six `u64` arguments forwarded to the interface function; return mapping remains open. Call dispatch is not implemented. |
-| `1` | Return | Invoked on the fixed kernel-installed return key (a well-known KeySlot, empty function address, no target), which accepts only `Return` while normal Invocation capabilities accept only `Call`. Pops the invoking Thread's own continuation record and restores AddressSpace, SP, and PC, with return values in designated registers (mapping open). The return key resides at well-known Slot(1). Presence guarantee and validation rules (underflow, target liveness, frame skipping) remain open. Not implemented. |
+| `1` | Return | Invoked on the fixed kernel-installed return key (a well-known KeySlot, empty function address, no target), which accepts only `Return` while normal Invocation capabilities accept only `Call`. Pops the invoking Thread's own continuation record and restores AddressSpace, SP, and PC, with return values in designated registers (mapping open). The return key resides at well-known Slot(1). A `Return` that cannot complete its protocol is a fault to the Thread's fault handler — "illegal return" (depth-zero underflow) or "return target retired" (the record's AddressSpace no longer live) — with no pop; on a Call-only Invocation it is a recoverable `InvalidOperation`. Presence guarantee and return-value mapping remain open. Not implemented. |
 
 ## Contract details still to specify
 
@@ -48,14 +48,19 @@ rejection; the userspace entry stub provisions the target stack and the
 kernel validates it; return is the `Invocation.Return` operation on the
 fixed kernel-installed return key, popping the Thread's own record and
 restoring AddressSpace, SP, and PC with return values in designated
-registers.
+registers. A `Return` that cannot complete its protocol (depth-zero
+underflow; a target AddressSpace that is no longer live) is a fault to the
+Thread's fault handler, with no pop; on a Call-only Invocation it is a
+recoverable `InvalidOperation`.
 
 Still to specify:
 
 - Invocation derivation, rights attenuation, and caller badge semantics.
 - The exact invocation-stack record layout, depth, and identifiers, and
   nested/concurrent-call and bounded-resource rules.
-- The `Return` validation rules (underflow, target liveness, frame skipping).
+- The `Return` fault-handler binding, vector, and any resume-with-edited-state
+  semantics (D1's open fault-handling decision; NOVA's per-vector exception
+  portal is the strongest found precedent).
 - Return-value mapping, pointer/shared-memory rules, and whether capability
   transfer is supported.
 - Return, fault, cancellation, and Thread-teardown outcomes.
