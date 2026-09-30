@@ -1,14 +1,11 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-//
-// Copyright (c) 2021 Andre Richter <andre.o.richter@gmail.com>
-// Modifications
-// Copyright (c) 2021- Berkus <berkus+github@metta.systems>
+// SPDX-License-Identifier: BlueOak-1.0.0
+// Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 
 //
 // Pre-boot code.
 // Used only because Rust's abstract machine considers UB any access to statics
 // before statics have been initialized. This is exactly the case for the boot code.
-// So we avoid referencing any statics in the Rust code, and delegate the
+// So we avoid referencing any linker symbol statics from the Rust code, and delegate the
 // task to assembly piece instead.
 //
 
@@ -48,7 +45,7 @@
 /// Entrypoint of the processor.
 ///
 /// Parks all cores except core0 and checks if we started in EL2/EL3. If
-/// so, proceeds with setting up EL1.
+/// so, init BSS and enter Rust code.
 ///
 /// This is invoked from the linker script, does arch-specific init
 /// and passes control to the kernel main function in Rust.
@@ -70,9 +67,9 @@ _boot_cores:
 
     // Initialize BSS - prepare to fearlessly call into Rust code.
     // Assumptions: BSS start is u128-aligned, BSS end is u128-aligned.
-    // __BSS_START and __BSS_END are defined in linker script
-    ADR_REL x1, __BSS_START
-    ADR_REL x2, __BSS_END
+    // __BSS_START and __BSS_END are defined in the linker script
+    ADR_REL x1, __BSS_START // must be physical address!!!1
+    ADR_REL x2, __BSS_END   // must be physical address!!!1
 .L__bss_init_loop:
     cmp x1, x2
     b.eq .L_setup_stack
@@ -83,6 +80,7 @@ _boot_cores:
     ADR_ABS x1, __STACK_TOP
     mov sp, x1
 
+    // On entry, x0 contains DTB address
     bl _startup_in_rust
 
 .L_parking_loop:

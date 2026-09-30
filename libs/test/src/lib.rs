@@ -20,14 +20,14 @@ where
     T: Fn(),
 {
     fn run(&self) {
-        liblog::print!("*TEST* {}...\t", core::any::type_name::<T>());
+        liblog::print!("❓ {}...\t", core::any::type_name::<T>());
         self();
-        liblog::println!("[ok]\n");
+        liblog::println!("✅\n");
     }
 }
 
 pub fn test_runner(tests: &[&dyn TestFn]) {
-    liblog::println!("Running {} tests", tests.len());
+    liblog::println!("*TESTING* Running {} tests", tests.len());
     for test in tests {
         test.run();
     }

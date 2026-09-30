@@ -1,0 +1,746 @@
+# Lifetime and authority semantics
+
+## Status and relationship to the capability contract
+
+Design investigation and maintainer follow-up. **This document distinguishes maintainer-confirmed semantics from research, proposals, and unanswered questions.** The confirmed subset is recorded in the canonical contract; neither documenting an alternative nor citing seL4/Composite adopts it as Vesper policy. No new wire encoding or runtime implementation is introduced here.
+
+- [Nucleus capabilities](nucleus_capabilities.md) remains the canonical contract and decision register (D1–D9).
+- [Capability implementation plan](capabilities_implementation_plan.md) remains the dependency-ordered implementation checklist. The tasks here expand the lifecycle/authority work; they do not replace its phase ordering or mark existing tasks complete.
+- **Current code** describes the inspected implementation, not a desired contract. Recheck reachability and source details before implementing a slice.
+- **CONFIRMED** identifies maintainer-selected semantics, also reflected in the canonical contract. **INTERIM** identifies a temporary direction whose detailed enforcement still needs decisions.
+- **Recommendation** identifies a proposed direction, not an accepted decision. Alternatives are retained for context, not as competing implementation instructions.
+- **OPEN / DECISION REQUIRED** identifies an unanswered question that must be settled before dependent implementation.
+- All `- [ ]` items are outstanding decision, implementation, or validation work. Implementation tasks are conditional on the relevant decisions; alternative designs are not instructions to implement every option.
+
+When a decision is approved, record its chosen semantics, rationale, and compatibility impact in the canonical contract first, then reconcile this document and the implementation plan before changing dependent code.
+
+## Working hypothesis: thin handles, authoritative kernel checks
+
+The motivating position is that userspace representations should not closely track kernel object lifecycle: after an object is disposed, invoking its userspace capability should return an error.
+
+**CONFIRMED direction:** ordinary userspace handles need not monitor kernel object liveness; they name the capability incarnation obtained by the caller. The remaining qualification concerns mapped-memory APIs and precise completion contracts:
+
+> Userspace handles need not mirror liveness, provided the kernel validates the intended identity and authority on each invocation. Direct memory access and ownership-consuming operations need additional contracts.
+
+Not tracking whether an object is alive is different from not knowing which incarnation of an object or slot a handle names. A userspace liveness query is at most an observation; it cannot replace validation at the operation's authorization/commit boundary.
+
+The desired separation is:
+
+- A **handle** names the particular capability incarnation obtained by the caller, never an unrelated future occupant of its slot.
+- A **capability entry** carries authority over a resource or delegation scope.
+- A **resource** has independently managed identity, state, and physical lifetime.
+- An **in-flight operation or mapping** can retain dependencies after its initiating handle disappears.
+
+Phantom types improve ergonomics, not authority or lifetime enforcement. Copying a Rust handle is not kernel capability derivation.
+
+## 1. Stale handles and identity reuse
+
+### Slot-only counterexample and current status
+
+The original [`Key<T>`](../libs/object/src/key.rs) contained only `KeySlot` and `PhantomData<T>`. Its slot-only transport allowed this counterexample:
+
+1. Slot 12 contains Invocation A.
+2. Userspace retains a key naming slot 12.
+3. A's entry is deleted and the slot is reused for Invocation B.
+4. The retained key invokes slot 12 and can operate on B.
+
+Even a type check cannot distinguish two Invocations. This need not escalate authority across address spaces—B is already in the caller's table—but it can use replacement authority unintentionally. Thus stale invocation did not necessarily fail under the former slot-only representation.
+
+Implemented: RawKey carries slot/incarnation across included wrappers, transport and active dispatch. Table lookup/removal checks the expected incarnation; deletion retains its counter and replacement advances it only at commit. Tests cover same-kind replacement, stale removal, failed installation, null/occupied/bounds rejection, ownership preservation and slot-local exhaustion. Debug bootstrap hands over the actual issued key through a private one-shot EL1 bridge; the real SVC success/error path passes the bounded boot smoke test. This fixes slot reuse within the table lifetime, not independent object/thread retirement or reusable-metadata identity. Full evidence and limits are in the plan's key wire and slot-identity slice.
+
+### Alternatives and selected semantics
+
+The incarnation guarantee is now selected; a slot-only current-occupant API is not the chosen contract. **Maintainer clarification:** ordinary keys are local to the current Thread's implicit KeyTable and carry slot plus incarnation, not table identity or a guarded-table path. Numeric key transfer alone conveys no authority; authorized derivation/installation produces a recipient-local key. **Follow-up:** initially use a 32-bit slot and 32-bit incarnation, without freezing the total key size permanently. If type is embedded later, its 8 bits come from the slot field (24 slot bits, 32 incarnation bits), not incarnation. Capacity is fixed for now through an easily changed constant; runtime resizing is outside initial scope. **Approved packing:** slot in low 32 bits and incarnation in high 32 bits, with no initial type tag. Typed handles are non-owning. Live Threads may not rebind to a fresh logical invocation table with reset counters. Kernel allocation references use pool identity/index and 64-bit generation, with no generation wrap or metadata-identity reset; concrete ownership and Thread integration remain work. Independent shared-object lifetime validation remains required. Generation wrap must not silently resurrect stale identities; Move invalidates the source on commit and yields a destination-local key. The included ABI/bootstrap paths have migrated together without a slot-only fallback; excluded sketches remain unmigrated, unsupported design material.
+
+| Choice | Consequences | Complexity |
+|---|---|---|
+| Slots name their current occupant, like file descriptors | Accept reuse hazards; userspace coordinates slot ownership | Low kernel complexity |
+| Exclusive userspace slot allocator with owned slots and borrowed handles | Prevent accidental reuse while handles exist, provided every mutation follows that allocator | Medium; requires enforceable runtime discipline |
+| Kernel-checked slot incarnation supplied with invocation | Retained handles fail after replacement without monitoring liveness | Medium cross-layer change, including ABI/bootstrap |
+
+**CONFIRMED:** invocation through an altered or invalidated capability incarnation returns an explicit **inconsistency** error. Do not refresh a stale handle and retry against replacement authority silently. A userspace generation precheck alone leaves a check/use race; validation belongs in the invocation path. **Follow-up (3C=B):** one shared inconsistency error carries diagnostic reasons for stale slot incarnation, capability invalidation and underlying object retirement, without returning replacement keys or refreshing automatically. The approved key package now assigns InvalidKey/InconsistentKey/KeySlotExhausted statuses 26–28 and explicit reason/operand details, with key-shape/bounds/never-issued checks preceding incarnation mismatch, invalidation and object retirement. See the canonical contract for exact encoding and migration requirements.
+
+Authorized resource-state changes are not automatically capability replacement. In particular, origin-authorized Frame remapping is a valid operation even when mapping location changes. **Selected initial scope (3A=A):** no in-place rights/badge mutation. Derive attenuated authority into another slot and optionally delete the original; CopyDerive preserves badges and rebadging is deferred. Future in-place mutation semantics are not a prerequisite for this initial slice.
+
+**Selected exhaustion behavior (3B=A):** a slot unable to issue a fresh 32-bit incarnation is permanently unavailable for further installation within that table lifetime; existing-capability deletion remains possible and other slots remain usable. No silent wrap or whole-table retirement is implied. The approved key package starts unused counters at 0, issues 1 on first installation, advances only at successful installation, retains counters on deletion, and reports exhaustion with status 28. Replacing/rebinding the table must not reset stale-key protection.
+
+**INTERIM Frame deprovisioning direction:** fully revoke the capability and do not reuse that slot for Frames. This is not a general solution to object/slot identity; the restriction's lifetime, cross-table scope, exhaustion behavior, and whether another kind may occupy the slot need clarification.
+
+Three distinct identity problems must be covered:
+
+- **Slot incarnation:** whether a local handle refers to a replaced entry.
+- **Object/thread incarnation:** whether a kernel reference refers to recycled storage.
+- **Selective delegation-scope validity:** relevant only if one branch of capabilities to a still-live object must be revoked while other branches survive.
+
+Derived capabilities reference the same kernel object. An authoritative object-generation mismatch is sufficient to reject all old invocations of that retired object, without walking a capability ancestry chain. The branch distinction matters for selective revocation, not for detecting global object retirement. A generation is not a secret or a substitute for authorization, and object generation alone does not detect replacement of a slot with a different valid capability.
+
+**OPEN / DECISION REQUIRED — D3/D9:**
+
+- [ ] Implement the selected incarnation guarantee and define the shared inconsistency error without inventing an ad hoc status.
+  - [x] Implement and validate the slot-incarnation guarantee and shared error schema through host tests, QEMU storage/dispatch tests, real debug boot/SVC smoke test, full Clippy and full `just test`. Independent object lifetime validation remains pending.
+- [ ] Implement derivation-only authority attenuation for the initial slice, with no in-place rights/badge mutation; preserve ordinary object operations and valid Frame remapping as distinct from capability replacement.
+- [ ] Specify/enforce the interim Frame slot no-reuse restriction and its capacity/exhaustion policy.
+- [ ] Implement the selected implicit caller-table scope and receiver-local key creation through authorized derivation/installation; specify management operand/result encodings, constant-controlled capacity consumers, replacement/rebinding safety, and initial handoff; do not introduce runtime resizing in this slice.
+- [ ] Define object/thread allocation identities and their authoritative validation metadata.
+- [ ] Implement the approved packed 32-bit slot/32-bit incarnation fields without an initial type tag, increment-on-install, retained deletion counters and slot-local exhaustion. Implement the approved independent 64-bit allocation-generation model, metadata reuse rules and no-live-rebinding guarantee; integrate Thread identity coherently.
+- [ ] If the wire representation changes, specify coordinated migration, bootstrap encoding, and result/error schemas.
+
+## 2. Delete, revoke, retire, and reclaim are different operations
+
+The canonical contract already separates entry deletion from revocation and safe reuse. “Disposed” needs a more precise operation-specific meaning.
+
+| Term | Semantic distinction to preserve |
+|---|---|
+| Delete a capability | Remove this table entry; object-specific rules determine any additional cleanup |
+| Revoke a delegation scope | Prevent further use of the specified authority and its covered descendants |
+| Retire an object | Stop admitting new operations and resolve existing uses according to its contract |
+| Reclaim storage/backing | Reuse only after retained operations, mappings, hardware access, and other dependencies are retired |
+
+**Proposed internal resource lifecycle:**
+
+```text
+Live → Retiring → Quiescent → Reclaimed
+```
+
+Userspace need not duplicate this state machine. The kernel and any trusted resource manager need enforceable transitions. Authority retirement may precede physical reclamation, and revoking one delegation branch need not retire the shared object for other branches.
+
+### CONFIRMED: permission-based lifetime control and accepted leaks
+
+`Untyped.Retype` yields creation-origin capabilities with permission to control the created object's lifetime. The permission may be delegated to derived capabilities, for example when granting an object to a resource manager. Authorization depends on capability permissions, not on a distinct owner-object type or privileged manager identity.
+
+The creator retains control through its own capability until it destroys that capability. Donating object authority does not implicitly surrender the donor's control. Do not introduce a consuming client API that silently removes it. This statement concerns object delegation, not the unresolved CPU-budget semantics of Time.Donate.
+
+Object retirement and subtree revocation are different operations: the kernel retires the object; KeyMaster separately initiates subtree revocation/cleanup, which can run in the background once old object invocations are rejected. The tree does not have to be erased synchronously for generation-based rejection to work.
+
+Deleting the last retirement-authorized capability without retiring the resource may leak the retyped allocation forever. **That is accepted OS resource-management failure, not a kernel safety failure or a mandatory kernel recovery job.** Like a Rust memory leak, the allocation remains unavailable for conflicting reuse. Recovery/supervision policy, if desired, belongs to the OS.
+
+Orphan recovery or automatic final-capability retirement is not required. Capability reference counting alone would in any event not account for pending invocations, mappings, or internal relationships.
+
+A pin that keeps storage safe is **not** permission to continue using revoked authority. Physical lifetime and logical authorization must remain separate.
+
+**OPEN / DECISION REQUIRED — D2/D3/D7/D8:**
+
+- [ ] Define remaining per-kind deletion effects without imposing automatic final-capability retirement or mandatory leak recovery.
+- [ ] Assign and enforce delegable lifetime-control permission for Retype origins and derived caps; distinguish it from subtree-management and origin-remap authority.
+- [ ] Keep leak accounting/non-reuse correct; any manager-death recovery policy is an OS concern, not a prerequisite for kernel garbage collection.
+- [ ] Define invocation-versus-retirement ordering: admission, commit, already-committed effects, and the point after which new operations/derivations cannot proceed.
+- [ ] Define revoke completion: immediate invalidation versus full quiescence, bounded/incremental work, and how completion is observed.
+- [ ] Define outcomes for operations already pending when their capability, scope, resource, or thread is retired. Local slot deletion need not mean cancellation; the choice must be explicit.
+
+## 3. Guarded kernel access and storage lifetime
+
+### Current code
+
+- [`KeyEntry`](../kernel/nucleus/src/api/key_entry.rs) has a pointer-payload generation field, but constructors initialize it to zero and object access checks type rather than allocation generation/liveness.
+- `ObjectRef` (formerly `objects/object_ref.rs`) accepted `&T`, erased its lifetime, was copyable, and manufactured shared or mutable references based on a type tag. It is removed; it had no live call sites. The same lifetime-erasure hazard remains live in `KeyEntry::as_object`/`as_object_mut`, which dereference the entry's raw pointer directly.
+- [`ObjectPool`](../kernel/nucleus/src/objects/object_pool.rs) is a variable-size carved object: one carve from an Untyped's unused watermark range holds the per-slot authoritative metadata (`SlotMeta`: Free/Live/Retired + retained generation) followed by the object storage, sized solely by the creation capacity (bootstrap-only today; no fixed metadata bound).
+- [`KeyTable`](../kernel/nucleus/src/objects/key_table.rs) rejects null/occupied/out-of-bounds/exhausted insertion without changing occupancy or losing the submitted entry. Lookup/removal requires an incarnation-bearing selector, counters persist after deletion, and unrestricted mutable entry access is removed. All kernel pools (Thread, AddressSpace, Notification, EventCount, PageTable metadata, ASIDPool) are carved from the boot Untyped's unused watermark range by Kickstart as single variable-size regions with bootstrap-specified capacity; KeyTables are carved kernel-private objects created by runtime `Untyped.Retype`; pool retirement transitions and reuse validation still need authoritative lifetime handling.
+- The nucleus entry path uses [`IRQSafeNullLock`](../libs/locking/src/lib.rs), which masks interrupts rather than providing general multicore exclusion.
+
+Returning an error requires safe validation **before** dereferencing an object. Comparing against metadata in already-freed backing is not a valid generation check.
+
+### CONFIRMED: correctness before representation optimization
+
+Do not optimize around the current sizes/layouts of kernel objects, keys, or capability entries. Add, remove, or expand fields and introduce shared lifetime/mapping records as needed to reach consistent correctness. Existing compact/inline representations and 32-byte KeyEntry layout are not fixed design constraints. A separate later optimization pass should use measurements to decide whether packing, compression, indirection removal, or other changes offer worthwhile gains.
+
+Layout freedom does not remove layout obligations. Changes must update all affected calculations: physical versus metadata allocation, alignment, pool capacity/backing, table strides, DCB record/page views and page counts, initialization bounds, serialization/shared ABI consumers, and mandatory layout assertions/tests. Hardware-defined layouts and agreed wire IDs/encodings still require coordinated treatment; do not merely disable assertions to accommodate a new size.
+
+- [ ] Introduce the identity, mapping, synchronization, and lifetime fields required for correctness without preserving obsolete size targets.
+- [ ] Audit and update size-dependent allocation/capacity/stride/page-view calculations and cross-layer layout tests with each representation change.
+- [ ] After correctness is established, measure memory/performance costs and perform a separate optimization pass without weakening the contracts.
+
+### Selected guarded-access direction and remaining representation work
+
+**CONFIRMED:** enforce single-core kernel execution for the initial foundation and defer SMP. An owning kernel access context provides short-lived guarded references; pending work keeps checked identities/reservations. All managed storage/metadata originates from accounted Untypeds. When Retype creates a KeyTable, the kernel makes the backing private, including against the caller's direct access; the caller receives manipulation authority through a capability. **Retype clarification (5):** only an Untyped is a valid source; its unused watermark range has no outstanding access. Retype does not reuse an arbitrary live Frame/object or need to unmap earlier allocations. Enforce non-overlap and allocation provenance, then initialize the new KeyTable privately. Earlier allocations below the watermark may have their own live mappings; they are not the candidate allocation. Stable metadata placement, pool-backing ownership and transactional failure handling still need design. Any future reclamation/reset must complete access withdrawal before making a range available again, not turn ordinary Retype into a cleanup protocol. **Retype transaction status:** runtime `Untyped.Retype` implements validate → reserve → pre-validate → initialize/install → watermark-last commit with defensive rollback and encoding-granularity-preserving watermarks (`nucleus::api::untyped`); stable metadata placement for kinds beyond the KeyTable/Frame/PageTable allowlist and pool-backing ownership remain open (Frame and PageTable are on the creatable allowlist with inline/pool metadata and kernel-zeroed contents at retype). Device sources are rejected before reservation: no creatable kind is device-capable yet (per-kind device policy is D6). Extents are validated for representability (unrepresentable sizes/extents rejected with `InvalidSize`), and the absolute carve address (base + watermark) is aligned, not just the watermark.
+
+Typed pools remain a useful starting point, with representation free to change under the correctness-first rule:
+
+1. Persistent capabilities carry checked object identities, conceptually `(pool, index, generation)`.
+2. Authoritative allocation metadata records allocation, generation, and retirement state, with its own valid backing lifetime.
+3. An owning access context resolves identities and provides short-lived guarded access.
+4. Multi-object operations resolve same-table/same-object aliases explicitly.
+5. Object references and incompatible guards end before scheduling or context switching.
+6. Pending operations retain checked identities and explicit reservations, not borrowed Rust references.
+
+**SELECTED — D3 concrete guarded access:** capabilities store only a checked object identity (pool tag, pool index, allocation generation); entries hold no raw object pointer. The owning access context computes object addresses from pool bases after validating per-pool authoritative slot metadata (allocation state + generation + retirement), whose backing is stable and independent of object storage — validation always precedes dereference. The context is constructed once per invocation under the kernel lock, is `!Send`, and hands out guards that borrow it, so the borrow checker enforces guards ending before scheduling. Multi-operand operations use explicit pair-resolution forms that reject aliased mutable operands up front; a lock serializes executions but does not by itself prevent two operands within one execution from naming the same object. Mutable resolution exclusively borrows the pool for the invocation, so the borrow checker prevents holding two mutable guards into one pool; clients requiring two objects from the same pool must request them through the pair-resolution API (`resolve_pair_mut`) rather than sequential mutable resolution. One pool per type tag is the invariant making this sufficient; introducing multiple pools per type requires revisiting cross-pool alias enforcement (for example a runtime alias set). Single-core remains selected; SMP is not an open choice. **Remaining D3 work:** Untyped-backed pool ownership, kernel-private KeyTable backing, and safe pool-backing lifetime (Phase 5, with D1/D6 for protection bindings); thread lifecycle integration; per-kind access details. The boot Untyped allocation and the shared `RegionPayload::reserve` watermark-allocation primitive are established (Kickstart's `carve_region` and `ObjectPool::carve` carve the initial `Nucleus` and all six pools from the boot Untyped's unused watermark range; runtime Retype reserves through the same primitive); syscall entry resolves the caller's table through the `Access` context. The boot table is carved kernel-privately by Kickstart, runtime `Untyped.Retype` creates further tables from an Untyped's unused watermark range, and carved-table resolution uses address-guarded `resolve_carved` forms with alias rejection. Pool retirement/reuse semantics remain.
+
+- [ ] Establish Untyped-backed pool ownership, alignment, capacity, zero-sized-type policy, and charged metadata requirements; enforce unused-watermark/non-overlap/no-outstanding-access allocation and kernel-private KeyTable initialization. Do not add an unmap phase to ordinary Retype. (Carve primitives and the boot Untyped allocation are established in Kickstart's `bootstrap.rs`; runtime Retype carves KeyTables kernel-privately from an Untyped's unused watermark range with a transactional watermark-last commit and consecutive-carve non-overlap verification. 2026-09-26: every pool is a single variable-size carve — slot metadata plus object storage — from the boot Untyped through the shared `RegionPayload::reserve` primitive, with the capacity specified at creation and no fixed metadata bound; pool creation is bootstrap-only. Retirement, reuse validation, and the zero-sized policy remain.)
+- [x] Replace lifetime-erasing constructors and unrestricted object casts with access through the approved owning/locking context. (`ObjectRef` removed; `KeyEntry` stores `ObjectId` only; `Access` context hands out borrow-checked guards.)
+- [x] Implement allocated/incarnation/retirement checks before object dereference. (Per-pool `SlotMeta` state + generation validated before address computation; `Retired` represented, transition pending.)
+- [x] Enforce unique kernel type mappings and handle aliased operands without fabricating exclusivity. (Unique `PoolTag` per pooled type; `resolve_pair_mut`/`validate_pair` reject same-slot aliases before constructing references.)
+- [x] Make table insertion/removal/mutation preserve occupancy and slot-identity invariants. Validated with eight QEMU storage cases plus active-dispatch/ABI tests; management syscalls and object lifetime remain separate work.
+- [ ] Enforce the selected single-core/non-reentry boundary and ensure scheduling occurs after guards end. SMP synchronization is deferred; concurrent cross-core access is not supported by this foundation.
+
+## 4. Authority, delegation, badges, and revocation scopes
+
+### Per-operation authorization
+
+[`Rights`](../libs/object/src/rights.rs) aliases MAP, WRITE, and SEND to the same bit. Reusing bits across kinds is permissible; within a frame's semantics, permission to map must not accidentally imply write access.
+
+[`KeyTableKey::grant_to`](../libs/object/src/key_table.rs) currently requests `Rights::all()`. This is request encoding, not an approved authority-amplification rule. The eventual kernel handler must enforce the source authority ceiling.
+
+| Operation | Authority that must be established |
+|---|---|
+| Derive into another table | Source delegation permission, permitted attenuation, destination installation authority |
+| Map a frame | Backing access, target protection-context authority, requested permission/attribute ceiling |
+| Retire a resource | Explicit resource-management authority, not mere use permission |
+| Revoke descendants | Management authority over that delegation scope |
+| Transfer through IPC | Transfer permission and an authorized receiver destination |
+| Activate an address space | Mapping-context authority (`MAP`), a bound root and ASID; the execution-budget requirement lands with Phase 7 Thread control |
+
+**Interim Activate selection:** the active `AddressSpace.Activate` is the translation-context installation step only — `MAP` on the invoked AddressSpace capability (mapping-context authority, consistent with root installation and ASID binding), a bound root and ASID, and the current caller's own AddressSpace only. The execution-budget requirement lands with full Thread Start/Suspend/Resume (Phase 7, D8).
+
+**Recommendations:**
+
+- Full table management is stronger than accepting a capability into a reserved receive slot. Keep destination authority explicit; narrower installation windows are a possible later refinement.
+- Badges are authority metadata, not arbitrary caller identity. Define who may mint/rebadge a sender view; ordinary delegation must not silently allow impersonating another authority-bearing view.
+- Copy is per-kind: Untyped cannot duplicate independent allocation watermarks; Invocation derivation must not amplify its target or rights; Time must conserve budget. **Confirmed Frame rule:** checked Copy duplicates capability authority, not a live mapping association; it is not Map. B maps the same physical frame through a separate Map operation, potentially at a different virtual page/AddressSpace. A move preserves the binding needed for teardown.
+- Validate and reserve a destination before removing source authority. Resolve aliases before constructing references or mutating operands.
+
+**CONFIRMED clarification:** use the general capability authorization rule: appropriate permissions on the source/destination KeyTable capabilities authorize table management, with no special manager-identity cases. Kickstart establishes the first Untypeds covering available memory and initial tables for predefined Threads, then delegates onward; exact tables/slots and handoff records remain open. **Selected follow-up (4A=A, 4B=B, 4C=A, 4D=A):** source/target entry selectors include expected incarnation; table permissions separately authorize source derivation, source removal/move, destination installation and deletion. CopyDerive/Move require vacant destinations and return destination-local keys. Move to the same table/slot is rejected, not a no-op; different slots in one table remain supported. CopyDerive preserves badges and attenuates rights; Move preserves rights/per-capability state. Delete removes an entry without automatic object retirement and permits cleanup after object retirement when the slot incarnation and table-management authority still match. Pre-commit failure preserves authority/accounting. The initial target-kind allowlist is KeyTable and existing-debug-gated DebugConsole, not arbitrary kinds. Exact rights bits and wire packing remain open; the canonical contract records the logical operand/result schemas. Selective Revoke, mapping teardown, and PPC/Time-specific transitions remain deferred; this does not reject their intended functionality.
+
+**OPEN / DECISION REQUIRED — D4, plus D2/D3/D6/D8 where applicable:**
+
+- [ ] Define per-kind semantic rights and the operation-to-rights matrix before freezing bit assignments.
+- [ ] Define permitted attenuation of rights, extents, badges, budgets, and other per-kind authority.
+- [ ] Set badge width, zero-badge meaning, and mint/rebadge/notification-bit policies.
+- [x] Assign the selected separate table-management permissions and exact operation-to-rights combinations: KeyTable rights bits are `DERIVE` (0x1), `REMOVE` (0x2), `INSTALL` (0x4), bit 3 reserved. CopyDerive = source `DERIVE` + destination `INSTALL`; Move = source `DERIVE` + `REMOVE` + destination `INSTALL`; Delete = `REMOVE`. Enforcement in the kernel handler remains implementation work; narrower receive-slot windows remain a later refinement.
+- [ ] Specify Kickstart's initial Thread/AddressSpace/table capacities, slots/grants and incarnation-bearing handoff, keeping boot reservations/accounting correct and real KeyTable capabilities distinct from manager-service capabilities; settle Thread.Grant's relationship to KeyTable operations.
+- [x] Implement the selected KeyTable/debug-console CopyDerive/Move/Delete subset and transactional failures; settle other per-kind semantics before extending the allowlist. (Handler active for the caller's own table via `SELF_KEYTABLE` with atomic validate-commit and Move rollback; cross-table resolution is active on carved tables through `resolve_carved` guards; retired-object cleanup still awaits the retirement transition.)
+
+### Who tracks revocation?
+
+**CONFIRMED authority split:** userspace components granted management capabilities/rights may derive, install, and manage capabilities directly. They are also entrusted with the associated bookkeeping and form part of the TCB of that libOS composition, within their granted authority. There may be multiple managers or a hierarchy; that is policy, not a kernel-mandated topology. KeyMaster names a management role, not a unique kernel-recognized service.
+
+A Key selects a slot/incarnation; KeyTable capabilities provide authority for table operations. The existing Vesper abstraction already expresses the distinction between using an object and managing entries that name it. A component without direct management authority can call a manager service instead. A component explicitly granted direct derivation power is not required by the nucleus to register afterward with a central KeyMaster; its bookkeeping obligations belong to the entrusted composition.
+
+The kernel supplies checked source/destination authorization, per-kind transitions, rights attenuation, lifetime validity, and quiescence/reuse mechanisms. Composition-scoped TCB membership does not grant unconfined execution or bypass kernel memory protection. This is the selected **SPeCK-like resource-management model**, not wholesale adoption of Composite's layouts or every implementation detail. The table below lists alternatives; kernel-owned tree management and a mandatory kernel ancestry chain are not the chosen direction.
+
+| Model | Benefits | Costs |
+|---|---|---|
+| Composition chooses one entrusted manager | Smaller kernel derivation machinery; clients use its services | Direct management authority must be granted consistently with that policy; leaks/recovery remain OS concerns |
+| Kernel tracks derivation scopes | Supports direct delegation between mutually distrustful components | Charged metadata, traversal, bounded cancellation and reclamation |
+| Coarse allocation/delegation scopes | Simpler initial revocation mechanism | Broader disruption; less selective reclamation |
+
+**Selected split:** KeyMaster tracks the tree; derived caps across tables reference a common object identity. Kernel object retirement changes that object's validity/generation, rejecting all previous cap invocations. KeyMaster then cleans up dead entries and derivation metadata in the background. Shallow trees are a performance expectation, not a requirement to traverse ancestry on every invocation.
+
+An object-wide epoch does not provide selective branch-only invalidation while sibling caps to the same object remain valid. If that separate operation is required, KeyMaster must use an explicit invalidation protocol; the exact primitive/completion boundary remains open. Do not add kernel ancestry metadata as a presumed prerequisite for the already-selected object-retirement mechanism.
+
+Lazy object invalidation does not remove PTEs or cancel all retained work by itself. **The authorized library OS/resource manager owns unmap-before-invalidation orchestration.** Trust follows explicitly granted capabilities, not a blanket assumption that all Threads or libOS instances cooperate. It must not invalidate the only usable cleanup authority and then expect a malicious recipient to cooperate. Premature-reuse checks and the kernel/manager completion protocol remain D2/D6, but the D1 threat model requires confinement even when a recipient bypasses its libOS. Accepted allocation leaks must not become conflicting physical reuse.
+
+Granting direct management authority also entrusts the recipient with bookkeeping. Multiple or hierarchical managers distribute this responsibility through composition policy. No universal central registration protocol or name-based manager privilege is implied. Exact manager-side synchronization, partial-failure handling, and coordination remain work for the chosen composition, not a new kernel policy mandate.
+
+**OPEN / DECISION REQUIRED — D2:**
+
+- [ ] Specify/enforce management authority for each derivation/installation/transfer path, including source/destination table checks and per-kind attenuation; do not impose central post-hoc registration.
+- [ ] Define manager-side bookkeeping contracts for the selected libOS composition, including failure handling and any cross-manager/hierarchical coordination; granting direct derivation power entrusts that responsibility.
+- [ ] Implement shared-object validity checks across tables, and define stable authoritative metadata for inline Frame/Untyped regions as well as pooled objects.
+- [ ] Define the kernel-retirement/KeyMaster-cleanup notification or handoff, idempotent cleanup, and generation-safe metadata reuse.
+- [ ] Define selective subtree invalidation of a still-live shared object if required; do not assume the object-wide epoch preserves siblings.
+- [ ] Define which mappings and pending operations belong to a revoked scope, including derivations/transfers racing with revoke.
+- [ ] Implement invalidation and reclamation completion only after the selected scope and authority contracts are approved.
+
+## 5. Direct userspace memory access is not a fallible invocation
+
+### Current code and limitation
+
+Included [`DcbView`](../libs/object/src/domain.rs) constructs references into shared mapped memory. The [`Buffer` wrapper](../userspace/buffer/buffer.rs), intended functionality currently excluded from compilation, creates ordinary slices; it lives under `userspace/buffer/` because Buffer is a userspace/libOS construct.
+
+“Direct references” means `&[u8]`, `&mut [u8]`, or `&DomainControlBlock` produced by these userspace wrappers after mapping—not raw pointers granting authority across the kernel boundary. The control interface remains capability-based; subsequent loads/stores are not capability invocations and cannot return the inconsistency status.
+
+`MappedSlice` and `MappedSliceMut` already invoke Unmap on Drop. **Intended ownership design:** create and own a private capability/mapping inside the guard, allow no further derivations or independently usable management aliases, and release the mapping on Drop. The current sketch does not yet implement this: `map_slice[_mut](&self)` borrows an existing BufferKey and stores that borrow rather than creating/owning a dedicated capability.
+
+**CONFIRMED cleanup guarantee:** Drop uses an incarnation-bearing capability key and the necessary kernel checks. A stale key is rejected rather than allowed to unmap a replacement. This follows the general key contract, not a new destructor exception. Tests must establish it once the new keys exist; the current destructor discards errors. The private mapping design prevents another holder from independently remapping that same guard-owned association; its lifecycle must enforce this, rather than treating a normal remap as capability invalidation. A forgotten guard may leak, which is acceptable if it cannot cause invalid reuse.
+
+There are two different exclusivity questions: ownership of the capability/mapping, and access to the physical bytes. No derivations from the guard-owned capability addresses the first. It does not prove that the physical frame has no aliases in other AddressSpaces, ancestor retirement authority, or device writers. D1 now prohibits multiple virtual aliases within one AddressSpace, but permits cross-AddressSpace writable sharing.
+
+**CONFIRMED priority:** authorized revocation is the ultimate source of access validity and is not vetoed by a client holding a Rust borrow. Higher-level protocols coordinate safe use. Access after completed withdrawal to a still-unmapped address faults; the expected policy is likely termination of the offending Thread, with exact fault/supervisor semantics still open. Private mapping ownership does not prevent ancestor revocation. Revocation must retire hardware access, not just capability lookup, to supply this behavior.
+
+**Preferred Rust direction:** explicit unsafe caller obligations for reference-producing access, because the kernel cannot generally promise cross-AddressSpace exclusivity of shared resources. This is not a decision to make every mapping operation unsafe. The exact unsafe API and its full-borrow obligations remain to be designed; raw/fbuf protocol access may be preferable where an ordinary reference cannot be justified. Safe wrappers may exist only where they actually enforce stronger conditions. The kernel must remain memory-safe and isolate unrelated authority even if the application violates its unsafe contract.
+
+**Technical correction — read-only is not immutable backing:** read-only PTE permissions prevent stores through that particular mapping. For example, A can map frame F read-only while B maps F read-write; B's permitted write changes the bytes A observes. DMA and kernel writers can also change them. This is consistent with hardware read-only protection, but inconsistent with calling the backing immutable. A read-only DCB mapping updated by the kernel is an existing example. Ordinary `&[u8]` needs no conflicting mutation for its borrow, not merely an inability to write through A's PTE. An immutable-sharing mode must establish a stronger backing/protocol guarantee.
+
+**DEFERRED — stale raw pointers after VA reuse:** a capability generation is checked on invocation, not an ordinary load. If revoked address X is later mapped to accessible replacement backing, an old raw pointer X may access that replacement instead of faulting. The maintainer explicitly does not require X to remain inaccessible for the surviving Thread's lifetime: outside/higher-level mechanisms must prevent stale application accesses for now. Stronger temporal-address guarantees/quarantine are a far-future topic, not a current kernel implementation prerequisite. Frame-cap slot non-reuse is not virtual-address non-reuse. This deferral does not weaken kernel lifetime safety, generation checks, completed mapping withdrawal/TLB synchronization, or safe physical-resource reuse; it also does not make an invalid Rust reference sound.
+
+### What an ordinary `&[u8]` requires
+
+The standard library's [`slice::from_raw_parts` safety contract](https://doc.rust-lang.org/std/slice/fn.from_raw_parts.html#safety) is the relevant boundary when a mapping wrapper creates a slice. For `&'a [u8]` it requires:
+
+1. A non-null pointer, correctly aligned, valid to read all `len` bytes. Non-null/alignment still apply to empty slices; `u8` alignment is one byte.
+2. Consecutive initialized bytes in a single valid allocation, with correct bounds/provenance. Every initialized bit pattern is valid for `u8`, but uninitialized memory is not. Adjacent mappings/allocations are not automatically one Rust allocation. Physical contiguity is not required; the mapping abstraction must establish the virtual allocation it exposes.
+3. Total byte length at most `isize::MAX`, without address arithmetic wrapping.
+4. Memory that remains valid for the entire borrow: no deallocation, unmapping, or replacement that invalidates the reference while it is live. The wrapper must tie the slice lifetime to the actual access contract, not manufacture permanence.
+5. No mutation of those bytes for the borrow's duration. The documented interior-mutability exception concerns `UnsafeCell`; ordinary `u8` elements provide no such exception. A writer in another AddressSpace, DMA, or the kernel can violate this even if the observer's PTE is read-only. Multiple shared readers are allowed, but competing exclusive/mutating access is not.
+
+Wrapping backing in `UnsafeCell` does not permit returning an ordinary `&[u8]` and then mutating through other paths during that borrow. Expose a suitable cell/atomic/protocol interface, or establish a non-mutating access interval before creating the ordinary slice. `UnsafeCell` itself is not synchronization. An unsafe constructor assigns these obligations to the caller; it does not switch off Rust's reference rules.
+
+A possible fbuf read-phase protocol is: producer initializes/publishes bytes with appropriate ordering → reader obtains an access interval during which the payload stays valid and no participant modifies it → reader drops all ordinary slice borrows and releases/acknowledges the interval → producer may reuse/mutate the payload. Protocol state can use appropriate atomics separately from the borrowed payload. This is an implementation idea, not an approved fbuf wire/state machine; a peer that can ignore the protocol prevents an unconditional safe-reference promise. Lifetime and revocation coordination remain outside mechanisms under the selected unsafe direction.
+
+| Memory/access contract | Candidate Rust representation, not yet approved |
+|---|---|
+| Exclusively owned backing, with conflicting aliases/writers excluded for the borrow | Ordinary slices may be appropriate; mutable slices need physical-byte exclusivity, not just a private mapping |
+| Shared producer/consumer or concurrently updated memory | Protocol-specific APIs, atomics/appropriate interior mutability, or synchronized access guards; do not expose unrestricted ordinary slices |
+| Observation requiring a stable result rather than a live reference | Copy a synchronized snapshot into caller-owned memory |
+| DMA or MMIO | Device-specific access, ordering/cache-coherency and volatile requirements as applicable, not automatic `&mut [u8]` |
+
+Synchronization must cover every participant allowed to access the bytes. A userspace lock is insufficient if another authorized participant does not follow that protocol.
+
+| Alternative | Tradeoff |
+|---|---|
+| Raw mapping handles with explicitly unsafe access | Low wrapper complexity; caller bears documented safety obligations |
+| Coordinated access interval/pin | May support a stronger wrapper if compatible with the protocol, but must not give an uncooperative recipient a veto over authoritative revocation; pins alone do not establish exclusivity |
+| Copied, fallible observations | Avoid exposed persistent references; may require an agreed query operation and syscall cost |
+| Shared-memory-specific access protocols | Appropriate for atomics, producer/consumer data, DMA, or MMIO; not automatically ordinary Rust slices |
+
+**OPEN / DECISION REQUIRED — D1/D3/D5/D6/D7:** implement private guard-owned mappings and specify the preferred unsafe/fbuf protocols under authoritative revocation. All three sharing modes are required: exclusive ownership, immutable sharing, and synchronized mutable sharing. Scheduler-shared record pages and ordinary revocable buffers have different lifecycles; shared-page availability does not imply immutable contents.
+
+- [ ] Implement dedicated guard-owned capability/mapping creation and teardown with no derivation or management-handle escape; replace the existing shared BufferKey borrow.
+- [ ] Validate stale Drop rejection through the same incarnation checks as other invocations, and prevent independent remap of a live guard-owned association.
+- [ ] Define unsafe full-borrow validity obligations and fbuf coordination under ancestor revocation/object retirement without making client borrows veto revocation.
+- [ ] Select the reference-producing unsafe boundary and stronger safe wrappers, if any; state what physical-byte validity, aliasing, and writer guarantees each requires.
+- [ ] Define exclusive/immutable-shared/mutable-shared mode transitions and synchronization independently of per-mapping permissions, including writers in other AddressSpaces and DMA.
+- [ ] Define fault delivery and the likely Thread-termination policy after revoked access; distinguish capability inconsistency errors from CPU protection faults.
+- [ ] **Far-future, deferred:** revisit temporal-VA reuse/quarantine or stronger stale-pointer detection only in a separately scoped design. For now outside mechanisms prevent stale application accesses; this is not a dependency of the current capability/mapping refactor.
+- [ ] Define buffer lifetime and input stability across blocked operations, including copying, pinning, or revalidation where appropriate.
+- [ ] Keep arbitrary safe slice construction unavailable until validity, aliasing, and mutation guarantees are enforceable.
+
+## 6. Thread identity and DCB observation
+
+### Current code
+
+The current [`DcbPages`](../kernel/nucleus/src/objects/domain.rs) manager owns kernel addresses for pages and assigns global `DomainId`s; lookup checks page availability but not an allocated incarnation. The current shared ABI's `DcbView` maps a kernel-owned view read-only to userspace. These are implementation facts scheduled for removal, not the selected design. Current-thread lookup rejects absent identity rather than falling back to thread zero, but caller-origin binding, coherent Thread/TCB allocation, and incarnation-safe reuse remain unfinished.
+
+**CONFIRMED D5 direction:** remove `DcbPages`/`DcbView` and do not expose a global DCB view. A `Scheduler` capability marks a Thread authorized to schedule; it shares scheduler-owned Frame pages to the kernel using `Scheduler.ShareRegion`. The Frame must already be mapped into the scheduler's AddressSpace, each call shares one Frame, and conflicting re-share/replacement is rejected. Shared record pages are writable by their owning scheduler; kernel-only TCB/execution state remains separate and inaccessible. Start from the existing DcbPage/TCB division, with the exact field split explicitly TBD. The kernel locates records via a scheduler-declared fixed-stride table keyed by validated Thread identity/incarnation. Exact table declaration, page capacity/allocation, publication/snapshot protocol, record field semantics, event summaries, and safe reuse remain open. Composite's upcall-based scheduling and scheduler-owned thread structures (Parmer, TECS 2013) are design evidence, not a wire-contract source.
+
+Kickstart establishes the root scheduler before scheduling starts, so no pre-scheduler FIFO fallback is required. Scheduler capabilities are derivable for hierarchical scheduling. Only the root creates Threads; it may donate them to subordinate schedulers. Strict-tree enforcement and donation schemas/mechanisms are required but remain open. Core IDs are `Scheduler = 5` and `Brand = 6` in the grouped catalogue. Brand is intended for IPI and thread-handler upcalls; its exact identity/handler binding and relation to `IRQHandler` remain open, and implementation is deferred until IRQ work.
+
+**OPEN / DECISION REQUIRED — D3/D5, with D1/D7/D8 dependencies:**
+
+- [ ] Specify the fixed-stride scheduler table declaration, capacity/allocation, record placement and incarnation-safe reuse protocol.
+- [ ] Specify independently observable fields versus coherent snapshots, kernel/scheduler transition ownership, and a sound publication/synchronization mechanism.
+- [ ] Define exact `Scheduler.ShareRegion` wire arguments/results/rights and strict-tree Thread creation/donation enforcement.
+- [ ] Define event-summary indexing and integrate record retirement with Thread teardown.
+- [ ] Define legal Activate/Suspend/Resume transitions, preserving blocked continuations and execution-budget requirements.
+- [ ] Implement coherent thread allocation/retirement and bounds/allocation/incarnation checks.
+- [x] Reject absent caller identity instead of implicitly selecting thread zero. Validated by the six-case `just test-debug-console` QEMU harness (three new caller-context regressions), existing host ABI/client tests, full `just clippy`, `just fmt-check`, the debug-enabled coordinated build, and `just test-device`; see the plan's absent-caller rejection slice for coverage limits. Exception-origin binding and thread lifecycle remain separate work.
+
+## 7. Pending operations, PPC Invocation, and Time
+
+### Current code and reachability
+
+The Time object files are excluded because they do not compile as-is today. Notification and EventCount are Retype-creatable and active through real SVC dispatch, including the blocked-wait park/resume entry path (with EventCount broadcast wakeups and overflow error-completions exercising that foundation). `AddressSpace.CreateInvocation` constructs CALL-only Invocation capabilities through the real SVC path; PPC Invocation execution still has no call handler or migration implementation.
+
+The former synchronous message-rendezvous sketches are removed. The replacement PPC contract names a component API entry point in an AddressSpace and migrates the caller's Thread there; no server Thread is required. Construction uses the fixed `AddressSpace.CreateInvocation` schema/authority recorded below. Execution stack/context, register ABI, capability transfer, and failure/cancellation outcomes remain open; no extra function-pointer/entry validation is selected.
+
+For a blocked caller, “the next invocation fails” is inadequate: there may never be another invocation. Retirement must arrange an explicit continuation outcome. Revocation/timeout cannot undo already committed effects or imply that a delivered request was never processed.
+
+**CONFIRMED (D7):** PPC Invocation replaces the prior rendezvous/reply-object design. `AddressSpace.CreateInvocation` is operation `3`; `x2` carries the function address, `x3` the destination KeyTable capability, `x4` the vacant destination slot index, and `x5..x7` must be zero. It requires `GRANT` on the invoked AddressSpace and `INSTALL` on the destination KeyTable. Success returns the destination-table-local Invocation key in `x1` and zero in `x2`; failure preserves state and authority. The function address is stored as supplied without construction-time mapping/executable validation. Any component with these capabilities can construct an Invocation; the loader is not the exclusive exporter and may parse interface specifications and prepare/distribute exports as setup policy. Invocation identifies a component API entry point in a target AddressSpace; the caller's Thread migrates there, and no server Thread is named. The bounded pending-invocation records and their single-terminal-transition rule remain for Notification/EventCount waits. The `Invocation.Call` input ABI is selected as `x0` capability, `x1` operation ID `0`, and `x2..x7` six forwarded `u64` arguments. PPC stack/context, return-value mapping, entry/return mechanics, call lifecycle, invocation-time faults, cancellation, and teardown outcomes remain open. The selected relative timeout and teardown-cancellation rules apply to Notification.Wait and EventCount.Await, not yet to PPC.
+
+### CONFIRMED vocabulary for aborted work
+
+| Outcome | Meaning |
+|---|---|
+| Rejected before admission | This attempt did not start |
+| Cancelled before commit | The operation guarantees its defined commit did not occur; preparatory effects are not automatically erased |
+| Completed | The outcome is known, including a known operation-specific failure or explicitly reported partial result |
+| Outcome unknown | Work may have committed, but the observer cannot establish completion |
+
+These terms are adopted for discussion and operation contracts; they are not new numeric statuses or an approved wire result type. Authority validity is independent of outcome: revocation or a missing completion cannot prove that previously delivered work did not commit. The operation must define its commit point before it can promise cancellation-before-commit.
+
+**CONFIRMED boundary:** the nucleus provides local mechanisms only. It is not concerned with distributed or remote operations. Network services/libOS code may need request identities, retries, deduplication, durable outcome queries, or lease protocols; those are not kernel implementation tasks. A partitioned remote peer and a lost completion signal motivate “outcome unknown,” not new distributed responsibilities for the nucleus.
+
+**OPEN / DECISION REQUIRED — D3/D7/D8/D9:**
+
+- [ ] Define each local operation's commit point and which adopted outcome categories it can produce; select shared ABI encodings separately.
+- [x] Define timeout/cancellation semantics and terminal results for the blocking wait primitives. (Defined in the canonical contract for `Notification.Wait` and `EventCount.Await`; their infinite-wait blocking paths and terminal delivery are active. PPC Invocation lifecycle semantics remain separately open.)
+- [ ] Define PPC Invocation return/fault/cancellation/teardown semantics and the effect of target AddressSpace retirement during a call.
+- [ ] Define explicit deferred completion and bounded wait reservation, including Thread/capability/resource teardown. (Explicit deferred completion and bounded reservations are implemented and validated end-to-end for `Notification.Wait` and `EventCount.Await` — pending-pool capacity, per-object wait-queue capacity with before-admission rejection, and the park/resume entry path, with completed records carrying the full result shape so error wakeups (an overflowing advance) resume with their status. Thread-teardown-driven cancellation of all pending wait records is implemented — `Nucleus::cancel_thread_pending` removes the torn-down Thread's records from every wait queue, gives each its single terminal transition, releases it (a torn-down waiter never resumes), and purges any queued wakeup; validated by model tests and the boot fixture's teardown of a parked Thread, with no cancellation status crossing the wire. The teardown trigger is active as `Thread.Retire` (op 4, `RETIRE` right) through real SVC dispatch. PPC context and teardown handling remain separate open work.
+- [ ] Preserve source ownership on pre-commit failure; return it from consuming client APIs when retry remains possible.
+- [ ] Specify any PPC partial-completion states if the function/return transition can fail after externally visible effects.
+- [ ] Make destructors best-effort fallback, not the sole guarantee of releasing callers or recovering budget; cleanup must not target replacement slot incarnations.
+- [ ] Choose Time donation as loan versus transfer, unused-budget destination, provenance, deletion/expiry/cancellation outcomes, and multicore accounting.
+- [ ] Implement PPC Invocation on the shared context/completion foundation, maintain race-free notification/event-count waits, and conserve budget. (Race-free notification and event-count waits are implemented on the foundation — validate-before-reserve registration, one-consumer notification delivery, broadcast event-count wakeups with overflow error-completions, enforced single terminal transition, park/resume; PPC and budget conservation remain.)
+
+### PPC execution-context research (2026-09-28)
+
+Evidence for the selected PPC execution-context directions (canonical contract, communication section). Sources: Fluke 0.5 local sources (`kernel/csw.h`, `kernel/x86/nonblocking/{csw.c,trap.S}`, `kernel/ipc.c`, `kernel/ipc.h`, `kernel/pclsr_subr.c`, `kernel/preempt.h`, `kernel/wait.c`); Composite `gwsystems/composite` `main` (`src/kernel/capinv.c`, `src/kernel/include/inv.h`, `src/kernel/include/thd.h`, `src/components/lib/component/arch/x86_64/cos_asm_simple_stacks.h`, `src/components/lib/stubs/arch/x86_64/cos_asm_stubs.h`, `src/platform/i386/boot_comp.c`); prior-art survey (primary sources where reachable, memory otherwise, marked).
+
+#### Fluke 0.5: interrupt-kernel trap path; IPC is a handoff
+
+- `CONFIG_NONBLOCKING` selects an interrupt kernel: one kernel stack per CPU, set once at boot; `csw_switch` (`kernel/x86/nonblocking/csw.c`) performs no stack switch — page-directory switch plus a per-CPU current-thread pointer at a fixed offset from the per-CPU stack base.
+- The trap path (`kernel/x86/nonblocking/trap.S`) copies all GPRs into `TH_EXC_STATE` embedded in the thread struct; `return_to_user` reads them back from the (possibly different) current thread and `iret`s. The kernel stack holds nothing per-thread. Kernel-mode traps can only restart: kernel code cannot block or migrate. Interrupts nest on the single stack; unsafe work is deferred to preempters (`kernel/preempt.h`) running at return-to-user safe points.
+- Fluke IPC is a handoff, not same-thread migration: `ipc_call` ends in `thread_handoff(client, WAIT_IPC_CALL, server)` (`kernel/ipc.c`, `kernel/wait.c`); a separate server thread wakes with in-kernel registered landing state (`ipc_state`: `server_esp`, `server_*_eip` in `kernel/ipc.h`). No nested migration exists. Continuations are PCLSR-style (`kernel/pclsr_subr.c`): the kernel writes user-level entry-stub EIPs and processes `KR_*` restart codes; syscall EIPs are masked for restartability.
+- Adopted for PPC: per-thread exception state in the TCB, restart discipline, preempter-style deferred work. Fluke is not precedent for same-thread migration or nested PPC frames.
+
+#### Composite: invocation stack and sret mechanics (source-verified)
+
+- `sinv_call` (`src/kernel/include/inv.h`) pushes the client's IP/SP onto a bounded per-thread invocation stack in the TCB (`THD_INVSTK_MAXSZ 16`; `struct invstk_entry { comp_info, sp, ip, ulk_stkoff, protdom }`), switches page tables, redirects the trap-frame IP to the target entry, and passes a token (delivered in the SP register; the server stub immediately switches to a freelist stack). The kernel never switches SP: the client stub places its return address in the `invret` register; the callee's stack comes from a userspace per-component stack pool (`custom_acquire_stack`, `cos_asm_simple_stacks.h`), and the kernel only records and restores (ip, sp) pairs. Overflow fails at call time with an error to the caller.
+- `invstk_top` is cached in per-CPU `cos_cpu_local_info` and committed to the TCB on every thread switch (`thd_current_update`); full `pt_regs` are copied to the TCB on preemption. A preempted thread's later sret finds the right entry purely via the restored top — no matching or scanning.
+- sret invocation: the syscall register packs cap id and op (`(cap+1) << 16 | op`); cap id 0 is the hardwired `RET_CAP` sentinel. The fast path in `composite_syscall_handler` (`capinv.c`) executes `sret_ret` for cap 0 before any captbl lookup, so every component can return regardless of its capability table. The slow path handles an actual `CAP_SRET`-typed capability, but the cap pointer is not passed to `sret_ret` — no cap-versus-invstk check exists.
+- `cap_sret` is payload-less (`struct cap_sret { struct cap_header h; }`), minted exactly once at boot into the boot component's captbl (`sret_activate`, `src/platform/i386/boot_comp.c`); userspace cannot mint more (`CAPTBL_OP_SRETACTIVATE` returns `-EINVAL`). It is copyable but decorative.
+- `sret_ret` pops the invocation stack. Underflow yields a defined crash (`0xDEADDEAD` return value with ip=0/sp=0); a failed liveness check on the return-target component yields `-EFAULT` with the callee still executing; success switches page tables and protection domain, restores the saved (ip, sp), and moves the `invret` register into the return register. Validation is exactly: invstk non-empty, target alive. No per-invocation token, strict LIFO, and a double sret silently skips a frame.
+
+#### SPeCK paper versus implementation
+
+The SPeCK paper/dissertation could not be fetched in this pass; paper claims below are recollection, implementation claims above are source-verified. Recollection: SPeCK describes invocation as automatically creating a per-invocation return capability that authorizes the return. The implementation differs materially: per-invocation state lives in the TCB invstk entries, and the "return capability" is a static payload-less type plus the cap-0 sentinel that bypasses capability lookup entirely. The pre-SPeCK design (Composite dev manual: per-component ucap tables, `COS_THD_INV_FRAME` introspection) was replaced by typed capabilities plus the invstk. The ULK user-level invocation stack (user-writable `ulk_invstk`, MPK domain switches, kernel re-validation of every hop) postdates SPeCK. The real security property is per-thread kernel state: a thread can return only to its own invocation chain, never to a context it was not called into, and never from a non-top depth; a third party cannot complete another's call because any control transfer to it pushes a new frame.
+
+#### Thread-migration prior art
+
+Verified sources: Coyotos archive (`vsrinivas/coyotos` `src/web/docs/ukernel/irq-and-smp.xml`, `eros-comparison.xml`), the archived KeyKOS Architecture documentation (agorics.com via the Internet Archive: `architecture/{Domain.States,Intro.Domains,Messages,Three.Special}.html`), Gamsa's Tornado thesis (Ch. 5) and the Tornado OSDI'99 paper (Wayback of eecg.toronto.edu), the K42 source mirror (`github.com/jimix/k42`, branch `kitchsrc`: `lib/libc/sys/ppccore.H`, `os/kernel/init/ppcbak.H`, `DispatcherDefaultAsm.S`), the K42 EuroSys'06 and IBM SJ 44(2) papers, the Opal TOCS'94 paper (`homes.cs.washington.edu/~levy/opal.pdf`), Roscoe's and Barham's Cambridge theses (UCAM-CL-TR-376/-403) and the Nemesis JSAC'96 paper, the NOVA source (`github.com/udosteinberg/NOVA`, current release branch and the 2010-05-12 paper-era commit) plus the archived NUL userspace documentation, the Mungi PDX paper (IWOOS'96), multicians.org (gates, ring brackets, stacks), VMS privileged-code documentation, illumos doors (`door_call(3C)`, `sys/door.h`), seL4 manual (`seL4/seL4` `manual/parts/{ipc,threads}.tex`), Pistachio whitepaper. Others from memory, marked [M].
+
+| System | Same-thread migration? | Continuation | Target stack | Return | Kernel stack |
+|---|---|---|---|---|---|
+| LRPC (Bershad 1990) [M] | yes | cross-domain A-stack linkage (shared page) | server S-stack pool | kernel-mediated return trap | conventional |
+| Mach migrating RPC (Draves 1991; Ford/Lepreau 1994) [M] | yes | thread struct + kernel continuation record | server-provided pool | reply migrates thread back | per-CPU stack cache via continuations |
+| Spring shuttles (Sun 1993) [M] | yes | shuttle state + nucleus-recorded caller info | kernel-managed per-shuttle stack | door return | single-threaded nucleus, half-trap fast path |
+| KeyKOS/EROS [V] | processor migrates; the callee runs its own saved context — call/return with a first-class transferable resume key, not same-thread migration | caller's state in its own domain object; the linkage is the resume key held by the callee | callee's own stack (part of domain state) | invoke the resume key (single-use, all copies nulled) | atomic kernel (EROS/Coyotos line) |
+| Coyotos [V] | initially yes; abandoned for FCRBs — "no capability type analogous to a resume capability" | FCRB | callee's stack | FCRB reply | atomic kernel: deferred IRQs, at most one IRQ frame, stubborn locks |
+| seL4 MCS [V] | no — scheduling-context donation gives migration's benefit without moving the thread | blocked TCB + reply object | server's own stack | reply-object invocation | non-blocking, per-core |
+| L4 V2 long IPC [M] | no (handoff); kernel string copies faulted mid-copy — removed in V4 | TCB | n/a | reply rendezvous | per-thread kernel stacks |
+| Solaris doors [V] | no — pooled server threads | client blocked in kernel | server thread pool | door_return | conventional |
+| K42/Tornado [V] | migration semantics via per-call worker-thread handoff from per-(server,processor) pools | caller's Process Descriptor (PC+SP only; user saves the rest on its own stack) | kernel-mapped stack page from a per-processor pool, TLB-preloaded, recycled; permanent stacks opt-in per port | return trap with no register save; worker/stack/IN page returned to pools; resume after the call site | exception-level fast path: no locks, no shared data, per-processor replication |
+| Opal [V] | yes at the design level — the thread transfers control through a portal (prototype ran it as Mach RPC) | kernel keeps the thread (prototype: Mach blocking-RPC state) | SAS: stack addresses stay valid; entry at a fixed global VA with the domain's GP register | procedure return through the portal; check fields validated at call time | Mach-hosted prototype |
+| Nemesis [V] | no — deliberately anti-tunnelling: domain activations, event channels, shared buffers | blocked client thread's context in the domain's DCB context slots | server's own thread on its own stack; activation upcalls on a dedicated DCB stack | server sends an event and blocks; the kernel re-activates the client domain — every crossing pays the scheduler | no kernel threads; per-processor fixed kernel stack; 12-instruction first-level ISRs |
+| NOVA [V] | donation — a linked EC chain; the callee's time flows from the caller's scheduling context | `Exc_regs` embedded in the Ec object (kernel memory, written in place via TSS RSP0); kernel continuations are function pointers | destination EC's own user stack, fixed at EC creation; the kernel sets only the IP per call — the stub owns stack hygiene | REPLY syscall: UTCB copy + unlink + make-caller-current; the reply is an implicit per-call single slot in the callee EC; a double reply silently deschedules | one kernel stack per CPU since the 2010 era — an interrupt kernel |
+| Clouds [M; bibliography V] | yes — the thread itself, with its stack, migrates into the passive object's address space, even across machines | the thread's own traveling stack (ordinary frames) | the thread carries its stack; the kernel maps it into the target | ordinary procedure return (migrate back, pop the frame) | Ra kernel replicated per node |
+| Grasshopper [M; bibliography V] | yes — loci migrate between persistent domains | the locus's stack, itself a persistent object (durable across crashes) | the locus's own stack object mapped into the current domain | migrate back (pop the frame) | conventional, plus persistence machinery |
+| Mungi PDX [V] | domain union, not switch — the call runs in the union of a caller-chosen subset and a fixed PDX domain; implemented as a spawned thread (blocking RPC over L4) | caller blocked (L4 RPC state); domain setup cached across calls | the spawned task's stack | `PdxReturn` re-establishes the caller's original domain | L4-hosted |
+| Pebble portals [M] | yes | kernel-saved frame | target component's stack | portal return | conventional |
+
+Survey warnings carried into the design: L4 long IPC — never let the PPC path perform kernel-mediated copies that can take user page faults mid-invocation (large payloads travel through pre-shared memory, matching the fbuf direction); Mach migrating threads — foreign-thread stack provisioning, accounting, and faults in migrated frames were the recurring pain, while the kernel-continuation discipline survived into every modern kernel (hence: continuation Thread-resident before any switch); KeyKOS — single-use resume keys (all copies nulled on first invocation) prevent double return, at the cost of kernel tracking of every copy; Coyotos — resume keys were abandoned when SMP demux and richer delivery were needed, so the Invocation kind must leave room for a rendezvous-style object without breaking the return ABI; seL4 MCS — donation achieves migration's scheduling benefit without moving the thread, so PPC's payoff must come from what donation cannot give (zero-copy register ABI, no per-server Threads, true call/return nesting). K42/Tornado also uses the name PPC (Protected Procedure Call) — a searchability collision to be aware of.
+
+Cross-cutting from the second dig (2026-09-29): K42/Tornado shows that replicating every call-path resource per processor (no locks, no shared data) is what makes an exception-level fast path compatible with cross-domain calls, with MetaPort redirect-and-replay keeping exhaustion and first-use off that path; Nemesis supplies the crosstalk argument — a migrated thread's CPU accounting must stay with the client and the caller's scheduling entity must remain runnable (K42's dispatcher-stays-runnable is exactly that fix); NOVA is the only system found combining all four of vesper's selected directions and has run that way since 2010, with helping as its busy-callee policy and per-vector exception portals (keeper-editable, MTD-bounded fault state) as its fault-delivery answer.
+
+#### KeyKOS invocation model (verified)
+
+Verified from the archived KeyKOS Architecture documentation (agorics.com, via the Internet Archive): `architecture/Domain.States.html`, `architecture/Intro.Domains.html`, `architecture/Messages.html`, `architecture/Three.Special.html`.
+
+- A domain is the actor: sixteen general key slots plus special slots. The address slot holds the key to its address segment (its address space); the general registers, floating registers, and status live in its special slots as degenerate number keys — the full execution state is stored in the domain object itself.
+- A domain is always in one of three states — running, available, or waiting — and the state transition is determined solely by the invocation type, never by which key is invoked.
+- Two kinds of gate keys: a start key delivers only when the designated domain is available (otherwise the invoker queues — a domain is a serially reusable resource, so the kernel never allocates per-call stack frames or copes with storage exhaustion; reentrant services are factories that create a fresh domain per request). A resume key exists only to a waiting domain and is created by CALL.
+- Three invocation instructions: FORK leaves the invoker running (asynchronous); CALL leaves the invoker waiting and implicitly appends a resume key to the invoker as the last of the message's four keys (a message is a parameter word, up to a 4096-byte string, and four keys; the kernel does not buffer messages); RETURN leaves the invoker available and promptly dequeues one queued caller.
+- The return path is a first-class key, not kernel-internal state: the dynamic calling/called relationship "is represented by a key first held by the called domain. Most other capability systems represent this relationship in some sort of internal stack... the CALL operation, which is primitive, produces a message that contains an implicitly produced resume key to the CALLing domain... it may be passed to another domain, stored into an array of keys or anything else that may be done with a key."
+- Single use is enforced globally: "as a resume key is invoked, all resume keys to the designated domain disappear and are everywhere efficiently replaced by null keys" — double return is impossible even with copies; the kernel tracks every copy to null them simultaneously.
+- CALLing a resume key is co-routine linkage: the two domains swap states and each CALL mints a fresh resume key back, so producer/consumer streams need no buffering.
+- There is no kernel invocation stack: the call chain is distributed across waiting domains, each holding its own saved state, linked by resume keys held as ordinary keys; nesting depth is bounded by the number of domains.
+- Faults reuse the mechanism: a domain, segment, or meter keeper is CALLed with a service key and a resume key to the faulting domain, and resumes it by RETURN — the faulting domain never notices the interruption. Meters form the CPU-accounting chain; the meter keeper is CALLed with a resume key to the domain that exhausted its budget, so scheduling policy lives in domain code.
+
+Consequences for the return-operation decision (resolved 2026-09-29 in favor of a fixed well-known return key): KeyKOS is the canonical minted-return-capability design. It buys deferred return, delegated return (whoever holds the resume key completes the call), co-routine streaming, and fault delivery through the same primitive. It costs: kernel tracking of every resume-key copy to enforce single use; a serialized callee (no reentrancy — concurrency via domain factories); and no cheap LIFO pop — every return is a domain wakeup. Under vesper's selected kernel-internal invocation-stack direction, the deferred/delegated-return and co-routine patterns compose in userspace over Notification/EventCount instead. One gap to carry into D1's open fault-handling work: KeyKOS/EROS deliver a fault as a CALL carrying a resume key to the faulting domain; a fault in a migrated frame under the invocation-stack model has no transferable continuation, so keeper-style fault delivery needs its own answer (a Thread-control authority rather than a return key).
+
+The fixed-key form, combined with a context-redirecting return, is structurally single-use — without KeyKOS's copy tracking. `Return` rewrites the Thread's saved PC/SP/AS to the popped record's context and returns to user mode there, so the callee's continuation is abandoned at the first `Return`: the callee's code never executes again and cannot issue a second one (two adjacent `Return` instructions are dead code after the redirect), and the pop consumes the top record, so no record is popped twice or out of order. A third party cannot return either — the key is a well-known slot, not transferable per-invocation authority. A callee therefore holds exactly-once, return-to-immediate-caller authority by construction. The only misuse left is a stray `Return` issued by the *resumed* domain's own code (corrupted control flow within one domain), which is indistinguishable from that domain returning early and grants it nothing it did not already have; the kernel-detectable cases are depth-zero underflow and target-AddressSpace liveness — retirement being the one external event that can invalidate a saved continuation without the Thread's cooperation.
+
+#### Reference-implementation continuation and time-attribution mechanics (Composite, NOVA, seL4 MCS)
+
+Continuation records, as built:
+
+- **Composite**: `struct invstk_entry { struct comp_info comp_info; unsigned long sp, ip; unsigned long ulk_stkoff; prot_domain_t protdom; }` `HALF_CACHE_ALIGNED` (`thd.h`), `THD_INVSTK_MAXSZ 16`, `invstk[16]` plus a `u16 invstk_top` inline in the TCB; the top is cached per CPU (`cos_info->invstk_top`) and committed in `thd_current_update` (`prev->invstk_top = cos_info->invstk_top; …`), while preemption saves only `pt_regs` and touches no invstk entry. Push-full returns `-1` to the caller as a raw errno; pop-empty is a `0xDEADDEAD` sentinel with `ip = sp = 0`. The kernel writes only the callee's entry IP — the callee's SP comes from the callee's own stub (`custom_acquire_stack`) and is never validated. The token rides a register set by the stub at entry and read back at return.
+- **seL4 MCS**: `reply_t { tcb_t *replyTCB; call_stack_t replyPrev, replyNext; word_t padding; }` — four words, 32 B, retyped from a caller-held untyped into the caller's CSpace, so the kernel allocates nothing for it. The call chain is a doubly-linked list threaded through the SC itself (`sc->scReply` plus type/isHead-tagged `call_stack_t` links), which gives chain→SC in O(1) with no kernel-side stack. Single use is structural: `doReplyTransfer` begins with `if (reply->replyTCB == NULL || tsType(...) != BlockedOnReply) return;`, and mid-chain revocation is `reply_remove`. The Call copies *no registers at all* — the passive callee is its own TCB with its own saved `SP_EL0`/`ELR_EL1` and its own CSpace/VSpace roots.
+- **NOVA**: no per-call record — the donation is a `caller`/`callee` pointer pair per EC, the caller identity is a single implicit slot inside the callee, and the caller's SC stays current. Arguments move through a UTCB page copy bounded by the MTD (1–512 words). A double reply is not a defined error: it self-blocks the callee and leaks the donated SC out of the ready queue, an anti-pattern not to copy.
+
+Time attribution, as built:
+
+- **Composite**: a per-CPU `curr_tcap` plus a per-thread `tcap_res_t exec` accumulator; `sinv_call` touches no tcap state at all, so callee code running on the caller's thread is charged to the *thread's* tcap automatically. Consumption is quantum-granular; the hierarchy is a flat `delegations[16]` vector of `(tcap_uid, prio)`, refilled only by an explicit `tcap_delegate` syscall.
+- **seL4 MCS**: `schedContext_donate` moves the caller's SC onto the passive callee TCB (`callee->tcbSchedContext = sc; caller->tcbSchedContext = NULL`), and charging is the three-step kernel discipline `updateTimestamp()` (accumulate on entry) → `commitTime()` (charge `ksCurSC`, zero, never roll back) → `switchSchedContext()` (`ksCurSC = ksCurThread->tcbSchedContext`). Budget exhaustion mid-call is a *timeout fault to the server's own handler*, which still holds the client's reply object, so the chain survives.
+- **NOVA**: accounting happens only at dispatch (`current->used += now - current->last` in `Scheduler::schedule`), so mid-call time is charged at the next dispatch; 2010 made the LAPIC timer itself the budget deadline.
+
+Two consequences for the vesper record. First, correct *charging* needs nothing per-call: because the payer follows the thread in all three designs, a migrated thread's callee work is charged correctly by construction (Composite) or by moving the cap (seL4). The maintainer's transition-stamp requirement — stamp the caller's consumed time and mark the record "callee on caller's behalf" — is a *per-call observability* extension that no reference implementation has; it costs one 8-byte timestamp per frame, and the "on behalf" marker is just the record (caller AS + depth) with the thread's own DCB as payer. Second, all three references sidestep the hard part: their callee is a *separate* thread or EC that already owns its own CSpace roots, so none of them has to migrate a cspace. Vesper's callee is the caller's own Thread, so PPC must switch translation context *and* cspace on the way in, and the record must carry the caller's cspace to restore — while vesper's cspace is currently a raw kernel-window address on the Thread, which sits awkwardly with the D3 no-raw-pointer rule once it is copied per frame.
+
+#### K42/Tornado PPC (verified)
+
+Sources: Gamsa's Tornado thesis (Ch. 5), the Tornado OSDI'99 paper, the Hurricane-era ICPP'94 paper, the K42 EuroSys'06 and IBM SJ 44(2) papers, and the K42 source mirror.
+
+- The model is migration semantics implemented as worker-thread handoff: "we chose to implement the PPC by creating a new process in the callee protection domain to handle each call" — for exception isolation, stack security, and process-model fit. The kernel saves only PC+SP in the caller's Process Descriptor; user level saves the remaining registers on its own stack before trapping.
+- The fast path runs at exception level — no preemption, no locks, no shared virtual memory — so every resource it needs is replicated per processor: a PortID directly indexes a per-processor array of PortAnnexes, each holding that server's free worker pool on that processor; stack pages come from a per-processor physical pool, are TLB-preloaded, and are recycled between servers for cache warmth (with the explicit warning about untrusted servers sharing uncleared stacks; permanent stacks opt-in per port). Fixed 8KB stacks.
+- Parameters: up to eight register words pass for free; beyond that, page-size IN/OUT pages are remapped, not copied — nesting works because each level uses its own OUT page, with an IN/OUT swap optimization for pass-through chains.
+- Return is a dedicated trap with no register save (the worker is finished): unlink, transfer the callee's IN page back to the caller's OUT page, return worker/stack/page to their pools, resume after the call site. Slow paths (empty port, first use, remote redirect) are indistinguishable from the fast path and redirect to a MetaPort with pre-reserved resources that creates the missing worker and replays the call — keeping 133–227 µs first-use costs off the ~4.6 µs fast path.
+- Unification: interrupt dispatching, upcalls, and process creation are all PPC variants — "all processes, even the first process in a program, arise due to a PPC call."
+- K42 refinements: the PPC page — a per-processor physical page mapped read-write at a well-known virtual address into every process, treated as a register extension and preserved caller→callee→back; and "a thread making a PPC is blocked until the PPC returns, but its dispatcher remains runnable, allowing it to regain control and run other threads" — the Nemesis crosstalk fix.
+- Numbers (150 MHz R4400): call 377 instructions / 695 cycles; core ≈ 167 instructions, close to two one-way L4 calls on the same hardware.
+- Corrections to the earlier memory row: no "link tables" or "communal segments" exist in any reachable source (linkage records are LRPC's); the real structures are per-processor PortAnnex / call-descriptor / PPC-bak-page pools. Tornado's PPC is worker handoff, not literal migration, and K42 is not a single-address-space system.
+
+#### Opal portals (verified)
+
+Source: the Opal TOCS'94 paper (UW TR 93-04-02).
+
+- A portal is an entry point to a domain named by a plain 64-bit portalID that "can be freely passed between domains, and so anyone can try to call through a portal"; the thread transfers control into the domain, beginning at a global virtual address fixed by the portal's creator, with the domain's GP register initialized. Capabilities are 256-bit values (portalID + object address + randomized check field); servers multiplex objects through one portal, validate check fields at call time, and can deny access even through a valid capability.
+- Protected procedure call is the only way to cause code to execute in a child domain — there is no notion of "executing a program". Nesting and mutual calls are expected.
+- The unique offer: naming decoupled from protection — globally meaningful, freely passable entry names with server-side call-time validation, instead of unforgeable kernel-minted entry capabilities. The cost: every portal is a DoS target and validation sits on the callee's critical path.
+- Caution: the prototype had no native portals — it simulated them with Mach messages (133 µs cross-domain call versus 88 µs native Mach) — so its numbers must not be read as SAS-portal performance.
+
+#### Nemesis (verified)
+
+Sources: Roscoe's thesis (UCAM-CL-TR-376), the JSAC'96 paper, Barham's thesis (UCAM-CL-TR-403).
+
+- Nemesis explicitly rejects thread tunnelling: "since the thread has left the client domain, it has the same effect as having blocked as far as the client is concerned. All threads must now be scheduled by the kernel... Accounting information must be tied to kernel threads, leading to the crosstalk" — the coupling of data transfer and control transfer "can seriously impede application-specific scheduling."
+- Its alternative: domains are scheduled, not called. The kernel "consists almost entirely of interrupt and trap handlers; there are no kernel threads"; a system call builds a kernel stack frame in a fixed per-processor area. A domain gets DCB context slots (32 on Alpha) and is entered by an activation upcall on a dedicated DCB stack delivering time, deschedule reason, and slot index — usually into the domain's user-level scheduler. IPC is event channels plus shared buffers mapped read-only into the peer; the server runs its own thread on its own stack; every crossing pays the scheduler (null RPC ~30 µs, ~14 µs highly optimized).
+- The x86 call-gate/LDT story from the earlier memory row could not be confirmed and is partially contradicted: primary sources describe Alpha/MIPS/ARM implementations with a single-DTB-flush domain switch. Treat that memory as wrong.
+- Offers: the crosstalk argument as a design obligation (accounting follows the client; the caller's scheduling entity must stay runnable — K42's dispatcher split is the fix); a kernel shape independently convergent with the interrupt kernel (no kernel threads, per-processor fixed kernel stack, 12-instruction first-level ISRs delivering events into domains); gatekeeper heaps for revocable cross-domain sharing; and the structural alternative of pushing service code into client domains to avoid chains.
+
+#### NOVA (verified)
+
+Sources: the NOVA source (`github.com/udosteinberg/NOVA`, current release branch and the 2010-05-12 paper-era commit) and the archived NUL userspace documentation; the EuroSys'10 paper was not fetchable as text.
+
+- The closest living relative of the selected PPC directions, and an existence proof: NOVA has run since the paper era with one kernel execution stack per CPU, the user frame embedded in the Ec object (trap entry writes it in place via TSS RSP0), and function-pointer kernel continuations — an interrupt kernel in vesper's sense.
+- A portal call is a rendezvous: validate the portal capability (CALL permission, same CPU, destination EC free), link the ECs into a donation chain, set only the destination's IP (plus portal id and transfer descriptor), copy MTD-bounded message words between the kernel-allocated UTCBs, and make the callee current. Nothing else moves — each EC keeps its frame, UTCB, PD, and stack. "Donation" means the caller's scheduling context still funds execution: the scheduler walks the donation chain to find whose head to run.
+- The destination's user SP is a creation-time parameter, validated once; the kernel does not touch it per call — the userspace portal stub owns stack hygiene. Vesper's planned call-time stack validation is strictly stronger; NOVA shows the weaker check suffices in practice.
+- Return is the REPLY syscall: copy MTD-bounded words back, unlink, make the caller current; REPLY never returns to the callee. The reply is an implicit per-call single slot inside the callee EC (2010: a `Capability reply` field with a DISABLE_REPLYCAP call flag; today a plain `caller` pointer) — not user-transferable in the verified code. A double reply finds no caller and silently deschedules the callee.
+- A busy callee means no queuing: the caller helps — it parks with a retry continuation and either activates the callee (running the callee's own chain: nested donation) or parks its scheduling context on the callee's wakeup queue; a livelock detector (100 helps in 2010; preemption points today) bounds the loop.
+- Faults reuse the same mechanism as per-vector capabilities: a user-mode fault with vector V invokes the capability at `evt + V`; the faulting EC donates itself to the keeper, whose UTCB receives the faulting register state (transfer bounded by the portal's MTD); the keeper's REPLY writes its possibly-modified state back and resumes the faulting EC. The strongest found answer to the open migrated-frame fault-delivery question.
+- The EC/SC split makes "whose time does a donated call charge" an explicit, separate decision; capability transfer moved out of the call path into a separate synchronous take-grant syscall in current code; EC death propagates up the chain (the caller resumes with an error, or is killed if itself in a fault chain). NOVA now also runs on AArch64, and a formal-verification branch exists.
+
+#### Clouds and Grasshopper (bibliography verified; mechanisms from memory)
+
+- Clouds (Georgia Tech; Computing Systems 1989, IEEE Computer 1991): the pure "thread migrates to the data" model — objects are passive, a thread migrates into the object's address space to invoke an operation, carrying its own stack, which the kernel maps into the target; nested invocations deepen the one traveling stack; distribution extends this across machines. Negative lessons: carrying the caller's stack into the callee couples the domains (the callee can read caller stack contents), and nesting is unbounded.
+- Grasshopper (Sydney/Macquarie — not UNSW; Computing Systems 1994, POS-6 1994, CACM 1996): loci migrate between persistent domains; the locus's stack is itself a persistent object, so the cross-domain call chain is durable across crashes — the only system in this survey where continuations survive failure. The counter-lesson for a non-persistent kernel: durable call chains drag in checkpointing and a decade of consistency machinery; keep the invocation stack kernel-owned, bounded, and forgettable.
+
+#### Mungi PDX (verified)
+
+Source: the IWOOS'96 PDX paper.
+
+- Protection Domain Extension is domain union, not domain switch: a PDX call executes in the union of a caller-chosen subset of the caller's domain and a fixed domain associated with the procedure; on return the caller's original domain is re-established. Conceptually similar to IBM System/38 profile adoption. Implemented as a spawned thread doing blocking RPC over L4, with the domain setup cached across calls.
+- Offers: "callee gains a validated subset of the caller's rights for the duration of the call" as an alternative to capability-passing and to full domain switches; and kernel-invoked untrusted handlers via an empty capability list — a pattern for fault handlers.
+
+#### Hardware precedent: Multics gates and VMS change_mode (verified)
+
+- Multics originated the call gate: a gate segment with a vector of entries allowing controlled ring transfers, checked against per-segment ring brackets — three numbers (the highest ring that can write, read, and call-as-gate), making entry permission a distinct right from execute; each ring of each process has its own stack segment; the 645 simulated gates in software (the gatekeeper) before the 6180 did them in hardware.
+- VMS `change_mode` is the same shape: CHMx dispatches through SCB-indexed vectors to sanctioned entry points, each access mode has static per-process stacks, and previous-mode bits govern the return.
+- These are the hardware originals of "same thread crosses protection with a switched stack"; ring brackets are a compact precedent for separating entry permission from execute permission on an exported procedure.
+
+## 8. Memory reclamation and protection
+
+### Current code
+
+The active [`Frame` handler](../kernel/nucleus/src/api/arch/frame.rs) installs and withdraws real page/block descriptors through the target AddressSpace's tables, with the mapping identity (owning AddressSpace + full virtual address) recorded in the frame's inline payload. The transactional [`Untyped` retype handler](../kernel/nucleus/src/api/untyped.rs) commits its watermark last. There is no Buffer handler: Buffer is a userspace/libOS construct; the kernel maps Frames only. Remaining gaps: no shared Frame lifetime generation, no general teardown bookkeeping for partial map/unmap failures, and per-mapping metadata still lacks full target-context identity for revocation.
+
+**Recommendation:** durable mapping identity, transactional creation, and retained partial-teardown bookkeeping. Before reuse, complete required CPU TLB/device translation synchronization and sanitize fresh ordinary RAM crossing protection boundaries. Intentional content-preserving sharing and device memory require distinct treatment.
+
+The shared-address-space protection decision matters here: capability checks on syscalls cannot mediate arbitrary CPU loads/stores through installed translations. A common address namespace also does not imply that only one CPU can cache a translation.
+
+### CONFIRMED Frame mapping direction
+
+- **Copy is not Map.** Checked Copy creates another permitted capability to the same physical frame, without duplicating a live mapping association or installing a PTE. Separate Map creates that cap's mapping.
+- The same physical frame may be mapped at different virtual pages in different AddressSpaces through capabilities derived from the same origin; the same virtual address is preferred for fbufs and pointer sharing. A frame must not be mapped at two distinct virtual addresses within one AddressSpace. This must cover physical overlap through different caps or large/small frame aliases, not just duplicate handles. Simultaneous writable mappings across AddressSpaces are permitted with higher-level synchronization.
+- Unmap is mapping-local, whether invoked through origin A or derived B; it does not itself traverse descendants.
+- **Terminology:** “origin Unmap” means capability **Revoke on the origin**, as in seL4, not a stronger Frame.Unmap. Origin Revoke withdraws descendants while retaining the origin; removing the origin's own mapping/capability is separate. KeyMaster implements tree policy using kernel mechanisms; object retirement is still distinct.
+- Remapping is origin-authorized and remains a valid operation on the capability. The concrete effect on descendant mappings, and virtual relocation versus replacing physical backing, remain open.
+- For now, deprovisioning requires full revocation and no reuse of that slot for Frames; scope and capacity consequences need definition.
+- The libOS must perform the correct Unmap/retirement order. Kernel object invalidation rejects cap invocations; it is not automatic PTE teardown. KeyMaster's background cleanup is a separate responsibility.
+
+The current inline `RegionPayload` has physical address and compressed per-cap mapping state, but no shared Frame lifetime generation or full target-context identity. Add the authoritative frame/allocation lifetime and mapping metadata needed for correctness, freely changing object/key sizes or introducing shared records. Keeping extent metadata inline is optional, not a constraint. Audit size-dependent calculations and views whenever these layouts change, then optimize in a later measured pass.
+
+**OPEN / DECISION REQUIRED — D1/D2/D4/D6:**
+
+- [ ] Implement backends for the selected hostile-code threat model and AddressSpace = protection boundary; resolve per-target features without weakening confinement.
+- [ ] Define physical and metadata layouts, accounting, single/batch retype, and initialization/sanitization enforcement.
+- [ ] Define complete per-mapping identity, permissions/attributes, ASID ownership, and hardware-safe namespace reuse. (Mapping-context identity selected — the AddressSpace is the mapping context. ASID binding implemented — boot-provided pool with bitmap allocation (ASID 0 reserved for the kernel's boot context), `ASIDPool.Assign` wire schema with `GRANT`/`MAP` authority and failure atomicity, the bound ASID recorded on the AddressSpace, ASID-scoped TLB invalidation on unmap, and ASID release through `AddressSpace.Retire`. Complete per-mapping record contents, permissions/attributes, hardware-safe namespace reuse, and multi-pool partitioning remain open.)
+- [ ] Specify/implement separate Copy and Map schemas: Copy installs only the destination capability; Map validates target context, address, rights, and mapping state before installing a PTE.
+- [ ] Specify origin-capability Revoke orchestration, descendant mapping withdrawal, failure/partial completion, and prevention of racing remaps/derivations; keep local Unmap and origin removal distinct.
+- [ ] Specify virtual remap versus physical-backing replacement and whether derived mappings stay put, follow, or are withdrawn; origin permission alone is not a userspace pointer-lifetime proof.
+- [ ] Encode/enforce origin-only remap independently of delegable lifetime-control permission; a derived retirement-authorized capability does not thereby gain remap permission.
+- [ ] Define libOS Unmap-before-invalidation prerequisites and the kernel checks/trusted-manager obligations that prevent premature reuse.
+- [ ] Implement validate → reserve → initialize/prepare → commit for retype, mapping, and transfer, with rollback or explicit recoverable partial state.
+- [ ] Retain teardown bookkeeping until mapping/device invalidation completes; do not reset an allocation watermark as a substitute for revoke.
+- [ ] Implement backing reuse only after authority retirement, pending-use retirement, hardware synchronization, and required sanitization.
+
+### D1: selected protection and sharing architecture
+
+Maintainer answers to the D1 questionnaire establish the following direction. These are approved semantics, not implementation/test results.
+
+| Topic | Selected direction |
+|---|---|
+| Adversary | Arbitrary native code, including actively malicious code and deliberate confinement attacks |
+| Trust | Explicit capability scope; KeyMaster is entrusted with key/tree operations because it holds appropriate authority, not because of a kernel name-based exemption |
+| Protection unit | The AddressSpace is the protection-context boundary; separate AddressSpaces are independent |
+| Execution privilege | Everything except the nucleus is userspace by default; no unconfined service promotions initially |
+| Required confidentiality/integrity | Other AddressSpaces' memory absent granted access, and kernel-private memory always |
+| Single address space | Shared numerical meaning when correctly mapped, plus cheap sharing; a single root/no-switch execution is not required |
+| Preferred IPC payload path | fbufs mapped at matching addresses in peers, with pointer sharing and higher-level synchronization |
+| Intra-AddressSpace frame aliases | Prohibited: one physical frame must not have two distinct virtual addresses in one AddressSpace |
+| Cross-AddressSpace frame aliases | Different addresses permitted; matching addresses preferred |
+| Cross-AddressSpace writers | Permitted; fbuf protocols coordinate shared mutation |
+| Sharing modes | Exclusive, immutable-shared, and mutable-shared all required |
+| DMA | Trusted mediation or IOMMU confinement, depending on the platform |
+| Availability | libOS policy; nucleus provides resource isolation/abstraction and IPC mechanisms |
+| Timing/cache side channels | Deferred, but tracked in design; not part of the current confidentiality guarantee |
+| Revocation | Authoritative over client references; subsequent access to withdrawn/unmapped memory faults, with Thread termination the likely policy |
+| Rust shared-memory access | Preference for explicit unsafe caller obligations; exact reference/fbuf APIs remain open |
+| Hardware range | PowerPC G5 through current Intel, Armv9, RISC-V; potentially higher-end STM32 |
+| Fallback | Separate protected translation contexts, preserving shared-address conventions where possible |
+
+SPeCK-like userspace policy over kernel liveness/resource/quiescence mechanisms remains the selected architecture. Possession of a permission authorizes its specified operation; it does not imply that its arbitrary syscall inputs are safe, that it follows fbuf protocols, or that it may violate protection of unrelated objects. Applications can deliberately damage resources they are permitted to write/retire; such delegated power is not a confinement escape.
+
+Domain = VSpace is a semantic protection-unit decision, not permission to silently merge the current public type IDs or cast DomainId into an ASID. Internal object representation, execution-context relationships, and backend identity binding still require a coordinated design.
+
+### D1 clarifications and consistency checks
+
+**1. Read-only mapping versus immutable backing — technical correction.** The inability of A to store through its read-only PTE does not prevent B's writable PTE from changing the same frame. The read-only DCB view is also intentionally updated by the kernel. Consequently, immutable sharing requires more than read-only permissions at one observer. The record preserves the hardware write-protection requirement without adopting the incorrect inference of global immutability.
+
+**2. CONFIRMED — fbuf address agreement precedes mapping.** Fbuf setup establishes addresses suitable for all two-or-more participating AddressSpaces before installing mappings, and publishes pointers only after successful setup. F at X in A and Y in B is otherwise allowed, but passing pointer X to B does not work merely because B maps F at Y. The no-intra-AddressSpace-alias rule means B cannot keep Y and additionally map F at X. Address negotiation/reservation must resolve that conflict rather than silently relocate escaped pointers. Every shared pointer's pointee also needs the intended authorized mapping; mapping a pointer-containing buffer does not grant access to arbitrary targets.
+
+**Scope decision:** multi-node global/distributed address allocation is out of scope. Do not import a classical SASOS assumption that one coordinated 64-bit namespace covers local RAM, neighboring nodes' RAM, and allocated disk space. The maintainer has raised concerns about global reservation; the exact machine-local reservation/allocation model remains open rather than being silently replaced by a specific scheme. The current concrete requirement is participant-compatible fbuf addresses established before mapping.
+
+**3. DEFERRED — stronger raw-pointer temporal guarantees.** Completed hardware withdrawal can make stale accesses fault while addresses remain unmapped. Once X is legitimately reused for accessible memory, the old pointer X may access the replacement without a capability-generation check. The maintainer explicitly declines a lifetime-long inaccessible-address requirement: outside mechanisms must ensure no stale application accesses for now. Preserve stronger temporal-VA mechanisms as far-future research, not a current blocker. This is distinct from Frame-cap slot non-reuse and from mandatory present-day hardware withdrawal, remote TLB/in-flight synchronization, and physical reuse safety.
+
+**4. Unsafe Rust versus fault containment.** Unsafe shared-memory APIs can place validity, exclusivity, and synchronization obligations on their callers. They cannot promise ordinary Rust reference soundness if those obligations are violated; an eventual protection fault does not repair undefined behavior or compiler assumptions. That is an application/protocol error, but the nucleus must remain memory-safe and preserve confinement from malicious native code. Fbuf APIs need not expose ordinary references when the full-borrow guarantee is unavailable.
+
+**5. Hardware breadth — features are not uniform.** Separate translation contexts are an acceptable fallback, but MPU-only targets may isolate regions without supporting arbitrary virtual aliases or page-table-style remapping. Per-target support restrictions and whether a requested mapping mode is unsupported must be explicit. Software-mediated DMA requires exclusive control of programming paths/descriptors; giving an untrusted Thread raw device-programming authority can bypass mediation. This document does not claim all listed machines currently support the same features.
+
+**6. Availability policy versus resource enforcement.** Keeping recovery/admission policy in the libOS is consistent with the model. A malicious Thread may bypass its libOS, so the nucleus still must bound/charge its resource consumption and provide checked IPC/syscall failure rather than unbounded allocations or panics. Exact budget/quota and bounded-work mechanisms remain implementation work, not a new kernel scheduling-policy mandate.
+
+**7. CONFIRMED — direct derivation entails bookkeeping responsibility.** Applications granted explicit copying/derivation-management authority join the TCB of the particular libOS composition and are responsible for bookkeeping. Multiple managers or hierarchies are composition policy. The kernel provides mechanisms and checks authority; it does not impose a central registry or special KeyMaster identity. The remaining work is implementing operation schemas and composition-specific management protocols, not choosing between direct derivation and mandatory registration again.
+
+### D1 implementation and validation work
+
+- [ ] Implement fbuf address agreement for all participants before mapping; define reservation/conflict detection, stability during installation, and pre-publication failure cleanup. Keep the machine-local allocator choice explicit and multi-node global address allocation out of scope.
+- [x] Implement no-intra-AddressSpace-alias checks across physical overlaps, including distinct caps and large/small frame extents; define who enforces them so arbitrary native code cannot bypass the selected rule. (The kernel enforces the rule in the `Frame.Map` handler — the only mapping-installation path, unreachable without a capability invocation — ahead of the hardware transition: the arch layer walks the target AddressSpace's installed tables and rejects a candidate whose physical extent overlaps any live page/block descriptor with `PhysicalAlias` (status 30, detail 1 the conflicting physical base). The interval check covers distinct derived caps and mixed frame sizes by construction; cross-AddressSpace aliases remain distinct PTEs. Boot/host tests cover the derived-cap second-vaddr rejection and the post-unmap success. Mixed-size overlap and cross-AddressSpace success are covered by construction but not yet exercised — Retype carves disjoint extents and only the boot AddressSpace exists.)
+- [ ] Bind each AddressSpace to its independently protected backend context.
+- [ ] Define a target MMU/MPU/IOMMU, address-width, page/region-granularity, and DMA feature matrix; document unsupported modes rather than downgrade malicious-code confinement silently.
+- [ ] Specify kernel/userspace transitions and caller identity; remove bootstrap-only EL1/thread-zero assumptions before claiming user confinement.
+- [ ] Define revocation completion, fault delivery and likely Thread termination for access to withdrawn mappings. Do not require permanent inaccessible VAs or solve stale raw-pointer reuse in this slice; outside mechanisms own that prevention for now.
+- [ ] Implement fbuf sharing modes, synchronization, and preferred unsafe access contracts; distinguish read-only views from immutable backing.
+- [ ] Specify resource-accounting/bounded-work mechanisms supporting libOS policy against callers that bypass library wrappers.
+- [ ] Plan adversarial agent tasks and regression tests for unauthorized loads/stores, privileged operations, malformed invocations, cross-AddressSpace/key-table attacks, alias-rule bypass, DMA bypass, revocation races, and reuse.
+- [ ] Keep timing/cache side-channel exposure recorded as deferred rather than claiming it is solved by address-space isolation.
+
+### seL4 and Composite research: mapping authority versus object lifetime
+
+seL4 evidence is pinned to **16.0.0, AArch64** where implementation-specific. Composite evidence distinguishes the older memory-manager interface from SPeCK/current kernel mechanisms. These comparisons inform Vesper; they do not override the confirmed semantics above.
+
+#### seL4: one tracked mapping per frame cap, Copy then Map
+
+The [mapping tutorial](https://docs.sel4.systems/Tutorials/mapping.html#pages) and [16.0.0 VSpace manual](https://github.com/seL4/seL4/blob/16.0.0/manual/parts/vspace.tex) describe sharing by copying a frame capability and then mapping the copy in another VSpace. Physical contents are not copied.
+
+In [AArch64 `Arch_deriveCap`](https://github.com/seL4/seL4/blob/16.0.0/src/arch/arm/64/object/objecttype.c), deriving a frame cap clears its mapped ASID. Thus the new cap has no tracked active mapping; Copy alone does not install a destination PTE. It retains the frame identity and appropriately attenuated capability rights, not necessarily the source PTE's current narrower permissions.
+
+[AArch64 frame invocation](https://github.com/seL4/seL4/blob/16.0.0/src/arch/arm/64/kernel/vspace.c) establishes the following:
+
+| Operation | seL4 16.0.0 AArch64 behavior |
+|---|---|
+| Map an unmapped frame cap | Establish a mapping with the supplied VSpace authority and validated rights/attributes |
+| Map an already mapped cap at the same ASID/virtual address | May update its mapping rights/attributes, subject to checks |
+| Map an already mapped cap at a different ASID or virtual address | Rejected; unmap before relocation |
+| Page_Unmap on A or B | Remove only that cap's recorded mapping; clear its mapping state, leaving the frame cap usable |
+| Delete a mapped frame cap | Finalization unmaps that cap's recorded mapping, even if other frame caps survive |
+
+The separate-PTE assumption matters: two caps aimed at the same PTE do not create independent hardware mappings. The AArch64 mapping code also does not reject every occupied leaf destination, so generic API error descriptions must not be generalized into an unconditional overwrite prohibition.
+
+**Origin distinction:** seL4 does recognize original capabilities in its [capability derivation tree](https://github.com/seL4/seL4/blob/16.0.0/manual/parts/cspace.tex), but not as an origin-only permission for Frame Map/Unmap. For ordinary original frame A and derived B, further copies of B are derived siblings rather than arbitrary nested revocation roots. CNode_Revoke(A) deletes its descendants, with mapping cleanup, but retains A and A's distinct mapping. Page_Unmap(A) is not that operation: it leaves B's distinct mapping intact. Deleting A alone does not recursively delete B.
+
+Sources: [`CNodeCopy`, `cteRevoke`, and MDB handling](https://github.com/seL4/seL4/blob/16.0.0/src/object/cnode.c), [`Arch_finaliseCap`](https://github.com/seL4/seL4/blob/16.0.0/src/arch/arm/64/object/objecttype.c). seL4's ordinary object-lifetime model uses final capability deletion, not Vesper's explicit permission-based retirement with acceptable abandoned allocations. Covering Untyped revocation removes its descendants; subsequent Retype can reset/reuse the region once no children remain. Retyping with remaining children uses the watermark rather than reclaiming arbitrary holes. General-purpose RAM is cleared on reset; device memory is not. See [object/memory manual](https://github.com/seL4/seL4/blob/16.0.0/manual/parts/objects.tex) and [`untyped.c`](https://github.com/seL4/seL4/blob/16.0.0/src/object/untyped.c).
+
+**Lesson for Vesper:** Vesper adopts Copy-not-Map; broad origin withdrawal means cap-Revoke, not Page_Unmap. seL4 remains useful for per-cap mapping identity and the local-Unmap/origin-Revoke distinction. Its kernel-managed derivation, automatic deletion cleanup, final-cap lifetime rules, and remap authority need not be adopted: Vesper selects SPeCK-like manager/mechanism separation, permission-based object retirement, and accepted leaks.
+
+#### Older Composite: userspace mapping tree and recursive release
+
+The legacy [memory-manager interface](https://github.com/gwsystems/composite/blob/043980416d660da1e0910549aa3600e6b59ed055/src/components/interface/mem_mgr/mem_mgr.h) and [naive manager implementation](https://github.com/gwsystems/composite/blob/043980416d660da1e0910549aa3600e6b59ed055/src/components/implementation/mem_mgr/naive/mem_man.c) make the userspace responsibility concrete:
+
+| Operation with mapping A → B, B a leaf | Effect |
+|---|---|
+| mman_alias_page(A, B) | Install a child mapping to the same frame |
+| mman_release_page(B) | Remove B, retain A |
+| mman_release_page(A) | Remove A and B |
+| mman_revoke_page(A) | Remove descendants such as B, retain A |
+
+Userspace `struct mapping` contains the frame, component/address, and parent/child/sibling links. `mapping_del_children()` walks descendants; `mapping_del()` removes descendants and then the selected mapping. A non-leaf B release removes B's descendants too.
+
+The kernel operation named `COS_MMAP_REVOKE` removes one specified component/address mapping; it is not the recursive tree operation. See [legacy kernel implementation](https://github.com/gwsystems/composite/blob/043980416d660da1e0910549aa3600e6b59ed055/src/kernel/inv.c#L2841-L2912).
+
+**Lesson for Vesper:** the userspace recursion is useful precedent, but preserve the operation distinction: manager revoke retains the root, whereas release removes root and descendants. The maintainer's broad origin operation is cap-Revoke; it is not a special hardware origin-Unmap mode. Neither recursive operation is established here as an automatic side effect of merely changing a shared object generation.
+
+#### SPeCK/current Composite: liveness epochs plus separate mapping/reuse checks
+
+The primary [SPeCK paper, RTAS 2015](https://www2.seas.gwu.edu/~gparmer/publications/rtas15speck.pdf), sections IV-A/B and IV-E/F, assigns delegation/revocation policy to userspace management components and separates individual copy/deactivate mechanisms from higher-level management. It distinguishes kernel-reference quiescence from TLB quiescence; invalidation is not immediate physical reuse.
+
+Current source examined at [`3ef8f8c4d3296624640e6f3bd00801054d8350a3`](https://github.com/gwsystems/composite/commit/3ef8f8c4d3296624640e6f3bd00801054d8350a3):
+
+- [`liveness_tbl.h`](https://github.com/gwsystems/composite/blob/3ef8f8c4d3296624640e6f3bd00801054d8350a3/src/kernel/include/liveness_tbl.h) pairs stored `(id, epoch)` references with authoritative epochs/deactivation timestamps. Expiration changes the epoch; a concrete use is [component deactivation](https://github.com/gwsystems/composite/blob/3ef8f8c4d3296624640e6f3bd00801054d8350a3/src/kernel/include/component.h), checked by relevant [invocation paths](https://github.com/gwsystems/composite/blob/3ef8f8c4d3296624640e6f3bd00801054d8350a3/src/kernel/include/inv.h). This is precedent for stale-object rejection, not proof of one universal generation scheme for every object kind.
+- [`chal_pgtbl_cpy` and mapping deletion](https://github.com/gwsystems/composite/blob/3ef8f8c4d3296624640e6f3bd00801054d8350a3/src/platform/i386/chal_pgtbl.c) copy the source frame address into a distinct destination mapping and remove individual mappings. **Inference from these operations:** remapping A does not make B follow A's new mapping; B keeps its independently installed translation until explicitly changed/removed by the manager.
+- Removed PTEs carry quiescence metadata before slot reuse. [`retypetbl_retype2frame`](https://github.com/gwsystems/composite/blob/3ef8f8c4d3296624640e6f3bd00801054d8350a3/src/kernel/retype_tbl.c) checks mapping accounting and quiescence before frame retyping. Userspace ownership of the mapping tree therefore coexists with kernel reuse checks.
+- [`cap_cpy`](https://github.com/gwsystems/composite/blob/3ef8f8c4d3296624640e6f3bd00801054d8350a3/src/kernel/capinv.c#L249-L312) is type-specific; some copied table capabilities retain parent pointers/refcounts. Composite does not justify an absolute claim of no kernel dependency metadata, even though mapping-tree policy lives in userspace.
+
+**Limits:** component expiration does not itself sweep every PTE; the examined source does not establish Vesper's unmap-before-invalidation protocol or a universal background subtree worker. Some cleanup paths remain incomplete, including [`cos_mem_remove`](https://github.com/gwsystems/composite/blob/3ef8f8c4d3296624640e6f3bd00801054d8350a3/src/components/lib/kernel/cos_kernel_api.c#L1596-L1601). This was source/document inspection, not execution or a correctness audit; paper goals and current implementation coverage must not be conflated.
+
+#### Recent Composite activity and newer research
+
+The old SPeCK/PARSEC/C3 papers do not imply abandonment. The [official repository](https://github.com/gwsystems/composite) is not archived, and the already-inspected source pin [`3ef8f8c4d3296624640e6f3bd00801054d8350a3`](https://github.com/gwsystems/composite/commit/3ef8f8c4d3296624640e6f3bd00801054d8350a3) is a substantive merge dated **2026-08-31**. [PR #502](https://github.com/gwsystems/composite/pull/502) integrates generic guest-image builds, VMM I/O changes, and a networking-thread placement fix. [PR #498](https://github.com/gwsystems/composite/pull/498), merged **2026-02-18**, integrates Patina and VMX updates. These establish recent research development, not production support.
+
+Newer directly relevant primary work includes:
+
+| Work | Date | Relevance and limit |
+|---|---|---|
+| [Ch'i: Scaling Microkernel Capabilities in Cache-Incoherent Systems](https://faculty.cs.gwu.edu/gparmer/publications/chi20ross.pdf) | ROSS 2020 | Composite-based capability visibility/quiescence and safe reuse on incoherent systems; not a general derivation-tree policy |
+| [Practical Principle of Least Privilege for Secure Embedded Systems (Patina)](https://faculty.cs.gwu.edu/gparmer/publications/rtas21patina.pdf) | RTAS 2021 | Section IV-C directly discusses user-level capability-manager delegation/revocation policy and statically bounded tracking specialized for restricted sharing patterns; not arbitrary-depth tree management |
+| [Janus: OS Support for a Secure, Fast Control-Plane](https://faculty.cs.gwu.edu/gparmer/publications/rtas25janus.pdf) | RTAS 2025 | Composite capability-controlled fast paths using MPK; section III-E links capability revocation to removing fast-path callgate/dispatch access. Its threat model/backend cannot be assumed to satisfy Vesper D1 without review |
+| Byways: High-Performance, Isolated Network Functions for Multi-Tenant Cloud Servers | SoCC 2024 | BywayOS is built as components on Composite; evidence of continued systems research, not a completed general revocation service |
+| SPR: Shielded Processor Reservations with Bounded Management Overhead | RTAS 2025 | Composite implementation/evaluation of temporal-isolation mechanisms; not derivation bookkeeping |
+
+The latter two and other newer work are listed in the author's [publication catalogue](https://faculty.cs.gwu.edu/gparmer/pubs.html). Bibliography/site maintenance can lag actual development.
+
+**Maturity qualification:** the inspected repository still labels itself pre-alpha; public GitHub release/tag listings were empty at this check. Recent activity and papers establish that calling it abandoned is unsupported, but do not establish stable releases, long-term support, or completed failure-resilient revocation in current `capmgr/simple`. Patina is the most direct newer reference for the external-management question; the earlier source-level completeness caveats still apply.
+
+#### Implications and remaining implementation questions
+
+- Shared-object generation validation and KeyMaster-owned mapping trees are complementary, not competing mechanisms. No kernel ancestry walk is needed merely to reject all caps to a retired object.
+- Neither system demonstrates that changing one origin mapping automatically retargets already-installed aliases. Vesper must define that remap effect explicitly; origin-only authority controls who may request it, not how existing translations or Rust borrows change.
+- SPeCK is the selected architectural reference for resource management, with older Composite providing a concrete userspace mapping-tree example. An origin cap-Revoke can stop new descendant installations, enumerate/remove affected mappings, complete required synchronization, and invalidate/clean up descendant authority; retain origin authority unless a separate operation removes it. This is a proposed orchestration sequence, not an approved transaction/partial-completion schema.
+- Keep object retirement, selective subtree revocation, mapping release, and physical reuse separate in API descriptions. The trusted libOS owns correct sequencing; whether and how the kernel rejects unsafe premature reuse is still a Vesper design decision, with Composite accounting/quiescence checks as a concrete option.
+
+## 9. Complexity and suggested implementation order
+
+Relative engineering estimates include focused tests. They are not measured performance claims or schedule commitments; scope restrictions and protection/multicore choices can substantially change them.
+
+| Work | Complexity | Main cost |
+|---|---|---|
+| Thin fallible wrappers; preserve kernel errors | Small | Local client changes |
+| Guarded typed-pool identity and reuse checks | Medium | Storage and access APIs |
+| Incarnation-bearing userspace handles | Medium | Coordinated ABI, bootstrap, and wrapper migration |
+| Minimal transactional KeyTable operations | Medium | Rights matrix, aliases, failure atomicity |
+| Thread/DCB retirement and sound observation | Large | Shared-memory publication and cross-subsystem identity |
+| PPC Invocation context migration and pending-wait foundation | Very large | AddressSpace transition, continuation/stack state, cancellation, scheduler integration |
+| General selective revoke plus memory reclamation | Very large | Descendants, mappings, hardware, bounded completion |
+| Safe revocable mapping abstractions / multicore Time | Very large | Protection and concurrency contracts |
+
+Indexed capability/object identity validation can be constant-time in steady state; retiring the shared object does not inherently require an ancestry walk. Full reclamation scales with affected mappings, pending operations, and cleanup records. Recursive manager unmapping can cost O(number of affected mappings), independently of later background cap-slot cleanup. Initial serialization can simplify the implementation without erasing those responsibilities. The kernel is not required to detect or recover allocation leaks.
+
+Within the main implementation plan's dependency ordering, the next work is:
+
+- [ ] Implement incarnation-bearing keys, authoritative shared-object lifetime validation, and the agreed inconsistency behavior.
+- [ ] Implement delegable lifetime-control permission while preserving creator authority and accepted leak behavior.
+- [ ] Enforce explicit management authority and implement the retirement/background-cleanup handoff for the composition's entrusted managers, without requiring a singleton KeyMaster or central post-hoc registration.
+- [ ] Settle remaining selective-revocation and completion guarantees, including Unmap-before-invalidation and safe physical reuse.
+- [ ] Implement private guard-owned mapping lifecycles, investigate Rust mutability/shared-resource APIs, and define scheduler-shared record guarantees.
+- [ ] Resolve remaining namespace scope, common-address reservation/conflicts, and relocation policy under the selected cross-AddressSpace-alias/protected-context model; do not reopen the permitted aliasing modes.
+- [ ] Keep remaining decision approvals, schemas, and implementation evidence synchronized with the canonical contract and plan.
+- [ ] Implement guarded storage and the smallest approved KeyTable lifecycle first; leave unresolved revoke/derivation behavior unsupported.
+- [ ] Follow with thread/DCB, memory reclamation, deferred completion/IPC, and Time slices according to their actual prerequisites, not by enabling existing sketches wholesale.
+
+### Validation to carry out
+
+Use the repository's documented Justfile workflows. Pure ABI/model tests do not substitute for target validation of mapping, hardware synchronization, or blocked-call resumption.
+
+- [ ] Test stale slot/object/thread identities, same-type replacement, diagnostic inconsistency reasons, slot exhaustion with deletion still permitted, and generation/rebinding reuse safety.
+- [ ] Test one object retirement rejecting old derived caps in multiple tables while background tree cleanup has not yet run; distinguish selective branch revocation.
+- [ ] Test creator control surviving delegation, unauthorized retirement, and safe leaked allocations without automatic final-capability retirement.
+- [ ] Test same-table/same-object aliases, same-slot Move rejection, occupied destinations, stale management selectors, deletion of entries naming retired objects, null insertion, capacity exhaustion, and bookkeeping consistency.
+- [ ] Test rights attenuation, badge policy, explicit destination authority, and unauthorized retirement/revocation.
+- [ ] Inject failures before and after reservation; verify move/transfer/retype ownership and accounting preservation.
+- [ ] Test invoke/derive/transfer versus revoke ordering and the advertised revoke-completion boundary.
+- [ ] Test pending-operation cancellation, both IPC arrival orders, late replies, exactly-once completion, and thread teardown/reuse.
+- [ ] Test DCB layout, publication, mapping availability, identity reuse, and snapshot semantics.
+- [ ] Test partial mapping/unmapping, TLB/device-safe reuse, and cross-boundary RAM sanitization on the relevant target.
+- [ ] Test Copy creating no mapping, separate Map in different AddressSpaces/virtual pages, local Unmap versus origin cap-Revoke, origin-only remap, interim Frame slot non-reuse, and generation-checked stale guard cleanup.
+- [ ] Test guard-owned cap privacy/no derivation, ancestor-retirement integration, and the selected physical-byte exclusivity/shared-mutation contract.
+- [ ] Test size/alignment/capacity/stride and DCB page-view calculations after correctness-driven object/key layout changes.
+- [ ] Test the selected aborted-work categories against operation commit/cancellation boundaries; do not add network policy tests to the nucleus.
+- [ ] Test Time conservation, donor completion, deletion/expiry, and simultaneous-spending prevention once the budget contract is approved.
+- [ ] Audit every enabled wrapper for observable failures; do not return fake success or lose authority on pre-commit error.
+
+## Reachability boundary
+
+The active dispatcher supports the debug-gated console handler, Untyped Retype, KeyTable CopyDerive/Move/Delete, Notification Signal/Wait/Poll, EventCount Advance/Await/Read, and Thread.Retire (core), plus Frame Map/Unmap/GetAddress, PageTable Map/Unmap, AddressSpace Activate/Retire, and ASIDPool.Assign (arch). Time remains an excluded sketch; PPC Invocation is a selected but unimplemented contract. Exclusion or absence of code is not rejection of intended functionality. Storage, inline region helpers, and partial thread/DCB code are included, but inclusion is not proof of a supported end-to-end operation.
+
+Sources of reachability: [`api/mod.rs`](../kernel/nucleus/src/api/mod.rs), [`objects/mod.rs`](../kernel/nucleus/src/objects/mod.rs), and [`libs/object/src/lib.rs`](../libs/object/src/lib.rs). Recheck these before acting on this summary.
+
+No implementation task or architectural decision is completed merely by documenting it.
+
+**Summary recommendation:** keep userspace handles thin; put identity validation, authority enforcement, and retirement in the kernel. Add userspace ownership machinery where it protects slot management, transactional consumption, or direct memory access—not to mirror object liveness everywhere.

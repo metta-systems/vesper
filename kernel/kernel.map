@@ -1,0 +1,53 @@
+  [pa00_0000_0000 - pa00_0000_1000) |   4 KiB | (Used) C   RW PXN | Reserved
+  [pa00_0000_1000 - pa00_0008_0000) | 508 KiB | (Free) C   RW PXN | RAM
+  [pa00_0008_0000 - pa00_0020_0000) |   2 MiB | (Drop) C   RW PXN | Init_Thread
+  [pa00_0020_0000 - pa00_0020_7260) |  29 KiB | (Free) C   RW PXN | RAM
+  [pa00_0020_0000 - pa00_0020_7260) |  29 KiB | (Drop) C   RW PXN | DTB index
+  [pa00_0020_7260 - pa00_0040_0000) |   2 MiB | (Drop) C   RW PXN | Init_Thread
+  [pa00_0040_0000 - pa00_0040_3800) |  14 KiB | (Used) C   RO PX  | Nucleus code
+  [pa00_0040_3800 - pa00_0041_0000) |  50 KiB | (Drop) C   RW PXN | Init_Thread
+  [pa00_0041_0000 - pa00_0042_0000) |  64 KiB | (Used) C   RO PXN | Nucleus read-only data
+  [pa00_0042_0000 - pa00_0043_0000) |  64 KiB | (Used) C   RW PXN | Nucleus data
+  [pa00_0043_0000 - pa00_0044_0000) |  64 KiB | (Used) C   RW PXN | Nucleus BSS
+  [pa00_0044_0000 - pa00_004c_0000) | 512 KiB | (Used) C   RW PXN | Nucleus stack
+  [pa00_004c_0000 - pa00_004c_1000) |   4 KiB | (Drop) C   RW PXN | user L0
+  [pa00_004c_1000 - pa00_004c_2000) |   4 KiB | (Used) C   RW PXN | kernel L0
+  [pa00_004c_2000 - pa00_004c_3000) |   4 KiB | (Drop) C   RW PXN | Init_Thread identity mapping
+  [pa00_004c_3000 - pa00_004c_4000) |   4 KiB | (Drop) C   RW PXN | Init_Thread identity mapping
+  [pa00_004c_4000 - pa00_004c_5000) |   4 KiB | (Used) C   RW PXN | Nucleus section mapping
+  [pa00_004c_5000 - pa00_004c_6000) |   4 KiB | (Used) C   RW PXN | Nucleus section mapping
+  [pa00_004c_6000 - pa00_004c_7000) |   4 KiB | (Used) C   RW PXN | Nucleus section mapping
+  [pa00_004c_7000 - pa00_004c_8000) |   4 KiB | (Used) C   RW PXN | Nucleus phys memory mapping
+  [pa00_004c_8000 - pa00_004c_9000) |   4 KiB | (Used) C   RW PXN | Nucleus phys memory mapping
+  [pa00_004c_9000 - pa00_0800_0000) | 124 MiB | (Free) C   RW PXN | RAM
+  [pa00_0800_0000 - pa00_0801_2d8e) |  76 KiB | (Drop) C   RW PXN | DTB
+  [pa00_0801_2d8e - pa00_3c00_0000) | 832 MiB | (Free) C   RW PXN | RAM
+  [pa00_4000_0000 - pa00_4000_0100) | 256 B   | (Used) Dev RW PXN | local_intc
+  [pa00_7e00_4000 - pa00_7e00_4020) |  32 B   | (Used) Dev RW PXN | txp
+  [pa00_7e00_7000 - pa00_7e00_7f00) |   4 KiB | (Used) Dev RW PXN | dma
+  [pa00_7e00_9800 - pa00_7e00_9900) | 256 B   | (Used) Dev RW PXN | axiperf
+  [pa00_7e00_a000 - pa00_7e00_a024) |  36 B   | (Used) Dev RW PXN | watchdog
+  [pa00_7e00_b200 - pa00_7e00_b400) | 512 B   | (Used) Dev RW PXN | interrupt-controller
+  [pa00_7e00_b840 - pa00_7e00_b87c) |  60 B   | (Used) Dev RW PXN | mailbox
+  [pa00_7e00_b880 - pa00_7e00_b8c0) |  64 B   | (Used) Dev RW PXN | mailbox
+  [pa00_7e10_0000 - pa00_7e10_0114) | 276 B   | (Used) Dev RW PXN | watchdog
+  [pa00_7e10_1000 - pa00_7e10_3000) |   8 KiB | (Used) Dev RW PXN | cprman
+  [pa00_7e10_4000 - pa00_7e10_4010) |  16 B   | (Used) Dev RW PXN | rng
+  [pa00_7e20_0000 - pa00_7e20_1000) |   4 KiB | (Used) Dev RW PXN | gpiomem
+  [pa00_7e20_1000 - pa00_7e20_1200) | 512 B   | (Used) Dev RW PXN | serial
+  [pa00_7e20_3000 - pa00_7e20_3024) |  36 B   | (Used) Dev RW PXN | i2s
+  [pa00_7e20_6000 - pa00_7e20_6100) | 256 B   | (Used) Dev RW PXN | pixelvalve
+  [pa00_7e20_7000 - pa00_7e20_7100) | 256 B   | (Used) Dev RW PXN | pixelvalve
+  [pa00_7e20_c000 - pa00_7e20_c028) |  40 B   | (Used) Dev RW PXN | pwm
+  [pa00_7e21_2000 - pa00_7e21_2008) |   8 B   | (Used) Dev RW PXN | thermal
+  [pa00_7e21_5000 - pa00_7e21_5008) |   8 B   | (Used) Dev RW PXN | aux
+  [pa00_7e21_5040 - pa00_7e21_5080) |  64 B   | (Used) Dev RW PXN | serial
+  [pa00_7e30_0000 - pa00_7e30_0100) | 256 B   | (Used) Dev RW PXN | mmcnr
+  [pa00_7e40_0000 - pa00_7e40_6000) |  24 KiB | (Used) Dev RW PXN | hvs
+  [pa00_7e60_0000 - pa00_7e60_0100) | 256 B   | (Used) Dev RW PXN | firmwarekms
+  [pa00_7e80_6000 - pa00_7e80_7000) |   4 KiB | (Used) Dev RW PXN | vec
+  [pa00_7e80_7000 - pa00_7e80_7100) | 256 B   | (Used) Dev RW PXN | pixelvalve
+  [pa00_7e80_8000 - pa00_7e80_8100) | 256 B   | (Used) Dev RW PXN | hdmi
+  [pa00_7e90_2000 - pa00_7e90_2600) |   2 KiB | (Used) Dev RW PXN | hdmi
+  [pa00_7ec0_0000 - pa00_7ec0_1000) |   4 KiB | (Used) Dev RW PXN | v3d
+  [pa00_7ee0_8000 - pa00_7ee0_8100) | 256 B   | (Used) Dev RW PXN | axiperf

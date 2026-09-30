@@ -1,13 +1,12 @@
 [package]
-name = "liblog"
+name = "vesper-log"
 
-description = "Kernel logger modeled after log crate."
+description = "Vesper nanokernel logger modeled after log crate."
 
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
 edition = { workspace = true }
-homepage = { workspace = true }
 license = { workspace = true }
 readme = { workspace = true }
 repository = { workspace = true }
@@ -18,7 +17,13 @@ publish = false
 [badges]
 maintenance = { status = "experimental" }
 
-[dependencies]
+# [dependencies]
+# libtest = { workspace = true } cyclic dep
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

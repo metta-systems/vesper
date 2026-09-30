@@ -38,6 +38,10 @@ impl SerialOps for NullConsole {
         0
     }
 
+    fn read_byte_nonblocking(&self) -> Option<u8> {
+        None
+    }
+
     fn write_byte(&self, _byte: u8) {}
 
     fn flush(&self) {}

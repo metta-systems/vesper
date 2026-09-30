@@ -8,11 +8,14 @@
 //! Low-level boot of the ARMv8-A processor.
 //! <http://infocenter.arm.com/help/topic/com.arm.doc.dai0527a/DAI0527A_baremetal_boot_code_for_ARMv8_A_processors.pdf>
 
+//! Raspi kernel boot helper: <https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S>
+//! In particular, see `dtb_ptr32`
+
 use {
-    aarch64_cpu::{asm, registers::*},
-    core::{arch::global_asm, cell::UnsafeCell},
+    aarch64_cpu::registers::*,
+    core::arch::global_asm,
     libcpu::endless_sleep,
-    libplatform::platform::cpu::BOOT_CORE_ID,
+    libplatform::cpu::BOOT_CORE_ID,
     tock_registers::interfaces::{Readable, Writeable},
 };
 
@@ -24,11 +27,11 @@ macro_rules! entry {
         /// Only type-checks!
         #[unsafe(export_name = "main")]
         #[inline(always)]
-        pub unsafe fn __main() -> ! {
+        pub unsafe fn __main(dtb: u32) -> ! {
             // type check the given path
-            let f: unsafe fn() -> ! = $path;
+            let f: unsafe fn(u32) -> ! = $path;
 
-            unsafe { f() }
+            unsafe { f(dtb) }
         }
     };
 }
@@ -52,32 +55,19 @@ global_asm!(
 /// # Safety
 ///
 /// Totally unsafe! We're in the hardware land.
-/// We assume that no statics are accessed before transition to main from `reset()` function.
+/// We assume that no statics are accessed before transition to this fn.
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.boot")]
-pub unsafe extern "C" fn _startup_in_rust() -> ! {
-    // Can't match values with dots in match, so use intermediate consts.
+pub unsafe extern "C" fn _startup_in_rust(dtb: u32) -> ! {
+    // On entry, w0 should contain the dtb address.
+    // For non-primary cores it contains 0.
+
+    // Can't match values with dots in names in match, so use intermediate consts.
     #[cfg(feature = "qemu")]
     const EL3: u64 = CurrentEL::EL::EL3.value;
     const EL2: u64 = CurrentEL::EL::EL2.value;
-    const EL1: u64 = CurrentEL::EL::EL1.value;
 
-    shared_setup_and_enter_pre();
-
-    match CurrentEL.get() {
-        #[cfg(feature = "qemu")]
-        EL3 => setup_and_enter_el1_from_el3(),
-        EL2 => setup_and_enter_el1_from_el2(),
-        EL1 => reset(),
-        // if not core0 or not EL3/EL2/EL1, infinitely wait for events
-        _ => endless_sleep(),
-    }
-}
-
-#[unsafe(link_section = ".text.boot")]
-#[inline(always)]
-fn shared_setup_and_enter_pre() {
-    // Enable timer counter registers for EL1
+    // Enable timer counter registers for EL1 - FIXME can be done later after reset
     CNTHCTL_EL2.write(CNTHCTL_EL2::EL1PCEN::SET + CNTHCTL_EL2::EL1PCTEN::SET);
 
     // No virtual offset for reading the counters
@@ -96,58 +86,28 @@ fn shared_setup_and_enter_pre() {
             + SCTLR_EL1::SA0::Disable,
     );
 
-    // enable_armv6_unaligned_access();
+    // Same for SCTLR_EL2?
+    SCTLR_EL2.write(
+        SCTLR_EL2::I::NonCacheable
+            + SCTLR_EL2::C::NonCacheable
+            + SCTLR_EL2::M::Disable
+            + SCTLR_EL2::A::Disable
+            + SCTLR_EL2::SA::Disable,
+    );
 
     // Set Hypervisor Configuration Register (EL2)
     // Set EL1 execution state to AArch64
-    // @todo Explain the SWIO bit (SWIO hardwired on Pi3)
+    // @todo Explain the SWIO bit (SWIO is hardwired on RPi3)
     HCR_EL2.write(HCR_EL2::RW::EL1IsAarch64 + HCR_EL2::SWIO::SET);
     // @todo disable VM bit to prevent stage 2 MMU translations
-}
 
-#[unsafe(link_section = ".text.boot")]
-#[inline]
-fn shared_setup_and_enter_post() -> ! {
-    unsafe extern "Rust" {
-        // Stack top
-        static __STACK_TOP: UnsafeCell<()>;
+    match CurrentEL.get() {
+        #[cfg(feature = "qemu")]
+        EL3 => setup_and_enter_el2_from_el3(dtb),
+        EL2 => reset(dtb),
+        // Cannot configure memory mappings in all other cases, fail instead!
+        _ => endless_sleep(),
     }
-    // Set up SP_EL1 (stack pointer), which will be used by EL1 once
-    // we "return" to it.
-    // SAFETY: Pure asm.
-    unsafe {
-        SP_EL1.set(__STACK_TOP.get() as u64);
-    }
-
-    // Use `eret` to "return" to EL1. This will result in execution of
-    // `reset()` in EL1.
-    asm::eret()
-}
-
-/// Real hardware boot-up sequence.
-///
-/// Prepare and execute transition from EL2 to EL1.
-#[unsafe(link_section = ".text.boot")]
-#[inline]
-fn setup_and_enter_el1_from_el2() -> ! {
-    // Set Saved Program Status Register (EL2)
-    // Set up a simulated exception return.
-    //
-    // Fake a saved program status, where all interrupts were
-    // masked and SP_EL1 was used as a stack pointer.
-    SPSR_EL2.write(
-        SPSR_EL2::D::Masked
-            + SPSR_EL2::A::Masked
-            + SPSR_EL2::I::Masked
-            + SPSR_EL2::F::Masked
-            + SPSR_EL2::M::EL1h, // Use SP_EL1
-    );
-
-    // Make the Exception Link Register (EL2) point to reset().
-    #[allow(clippy::fn_to_numeric_cast_any)]
-    ELR_EL2.set(reset as *const () as u64);
-
-    shared_setup_and_enter_post()
 }
 
 /// QEMU boot-up sequence.
@@ -157,40 +117,69 @@ fn setup_and_enter_el1_from_el2() -> ! {
 /// section: 5.5.1
 /// However, GPU init code must be switching it down to EL2.
 /// QEMU can't emulate Raspberry Pi properly (no VC boot code), so it starts in EL3.
+/// FIXME: new qemu has seemingly fixed this, so probably not needed anymore, double check!
 ///
-/// Prepare and execute transition from EL3 to EL1.
+/// Prepare and execute transition from EL3 to EL2.
 /// (from https://github.com/s-matyukevich/raspberry-pi-os/blob/master/docs/lesson02/rpi-os.md)
 #[cfg(feature = "qemu")]
 #[unsafe(link_section = ".text.boot")]
 #[inline]
-fn setup_and_enter_el1_from_el3() -> ! {
-    // Set Secure Configuration Register (EL3)
+fn setup_and_enter_el2_from_el3(dtb: u32) -> ! {
+    // Set Secure Configuration Register in EL3.
     SCR_EL3.write(SCR_EL3::RW::NextELIsAarch64 + SCR_EL3::NS::NonSecure);
 
-    // Set Saved Program Status Register (EL3)
+    // Set Saved Program Status Register in EL3.
     // Set up a simulated exception return.
     //
     // Fake a saved program status, where all interrupts were
-    // masked and SP_EL1 was used as a stack pointer.
+    // masked and SP_EL2 was used as a stack pointer.
     SPSR_EL3.write(
         SPSR_EL3::D::Masked
             + SPSR_EL3::A::Masked
             + SPSR_EL3::I::Masked
             + SPSR_EL3::F::Masked
-            + SPSR_EL3::M::EL1h, // Use SP_EL1
+            + SPSR_EL3::M::EL2h, // Use SP_EL2
     );
 
-    // Make the Exception Link Register (EL3) point to reset().
+    // Make the Exception Link Register in EL3 point to reset().
     ELR_EL3.set(reset as *const () as u64);
 
-    shared_setup_and_enter_post()
+    unsafe extern "Rust" {
+        // Stack top
+        static __STACK_TOP: UnsafeCell<()>;
+    }
+    // Set up SP_EL2 (stack pointer), which will be used by EL2 once
+    // we "return" to it.
+    // SAFETY: Pure asm.
+    unsafe {
+        SP_EL2.set(__STACK_TOP.get() as u64);
+    }
+    // Use `eret` to "return" to EL2. This will result in execution of
+    // `reset()` in EL2.
+    // Load DTB address into w0 prior to eret.
+    unsafe {
+        core::arch::asm!("eret", in("w0") dtb);
+        core::hint::unreachable_unchecked()
+    }
 }
 
-fn reset() -> ! {
+// Enter Rust code in EL2.
+#[unsafe(link_section = ".text.boot")]
+fn reset(dtb: u32) -> ! {
     unsafe extern "Rust" {
-        fn main() -> !;
+        fn main(dtb: u32) -> !;
+    }
+
+    unsafe extern "Rust" {
+        // Stack top
+        static __STACK_TOP: core::cell::UnsafeCell<()>;
+    }
+    // Set up SP (stack pointer), which will be used by EL2 rust code.
+    // SAFETY: Pure asm.
+    unsafe {
+        SP.set(__STACK_TOP.get() as u64);
     }
 
     // SAFETY: We're getting to more safety right here!
-    unsafe { main() }
+    unsafe { main(dtb) }
 }

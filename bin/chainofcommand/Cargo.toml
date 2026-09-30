@@ -19,12 +19,12 @@ argh = { workspace = true }
 bytes = { workspace = true }
 crossterm = { workspace = true }
 futures = { workspace = true }
-futures-util = { workspace = true }
+# futures-util = { workspace = true }
 seahash = { workspace = true }
 tokio = { workspace = true }
 tokio-serial = { workspace = true }
 tokio-stream = { workspace = true }
-tokio-util = { workspace = true }
+# tokio-util = { workspace = true }
 
 # [lints.clippy]
 # needless_return = "allow" # clippy hallucinates like chatgpt
