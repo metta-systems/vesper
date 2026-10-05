@@ -7,7 +7,7 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 
 ## Start with the contract
 
-- Resolve every repository-relative path below against the **Vesper repository root**, not this skill's directory (`.claude/skills/capability-refactor`).
+- Resolve every repository-relative path below against the **Vesper repository root**, not this skill's directory (`.agents/skills/capability-refactor`).
 - Always read **both** `doc/nucleus_capabilities.md` (canonical contract) and `doc/capabilities_implementation_plan.md` (checkbox plan) first, before analysis or edits. If either is unavailable, ask the user rather than inventing its contents.
 - For lifetime, ownership, authority, delegation, revocation, or reclamation work, also read the relevant sections of `doc/lifetime-and-authority.md`. It records code-grounded alternatives, complexity estimates, explicit open decisions, and outstanding tasks; it supplements rather than supersedes the canonical contract and implementation plan.
 - Preserve user and concurrent-agent edits to these documents; coordinate overlapping changes and make focused updates rather than replacing either document wholesale.
