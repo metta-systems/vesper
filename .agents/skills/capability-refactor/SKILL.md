@@ -108,6 +108,7 @@ Vesper is a playground for nightly Rust features. Using the latest nightly-only 
 ## Use project tooling
 
 - **Vesper is a pure Rust repository. Write tooling in Rust.** Do not add or use Python, Ruby, JavaScript/TypeScript, or their runtimes for helper tools, code generation, test scaffolding, log parsing, or build/test workflows, including temporary or one-off scripts. Existing `just` recipes and minimal shell command orchestration remain the workflow entry points; implement any necessary helper logic in Rust.
+- **Never use Perl**, including `perl -pe`/`perl -i` one-liners for search-and-replace. Use the dedicated file-editing tools, `sed`, or other standard shell tools instead.
 - Prefer tests that validate their own results using Rust assertions and the existing test runner's exit status. Do not add external wrappers or success-marker parsers when the test itself can validate the behavior. Reuse existing infrastructure first; add a Rust helper only when genuinely necessary.
 - Vesper uses **JJ for version control and `just` for build, test, lint, and related workflows**. Run recipes from the repository root.
 - Read the current `Justfile` before selecting validation commands. Use `just --list` to discover public recipes and `just --dry-run <recipe>` to inspect expanded commands and prerequisites without executing them.
