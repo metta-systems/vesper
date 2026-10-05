@@ -30,5 +30,5 @@ pub use {
     nucleus_object::NucleusObject,
     object_pool::ObjectPool,
     sched::Scheduler,
-    thread::{ExecutionContext, Thread},
+    thread::{ExecutionContext, InvocationContinuation, InvocationStack, Thread},
 };

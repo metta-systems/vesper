@@ -449,16 +449,29 @@ fn invalid_stack_reasons_reject_full_width_extensions_without_operand_packing() 
 }
 
 #[test]
+fn nesting_depth_status_is_lossless_and_rejects_nonzero_detail_two() {
+    use vesper_objects::syscall_status::NESTING_DEPTH;
+
+    assert_eq!(NESTING_DEPTH, 33);
+    for count in [0, 1, 15, 16, u64::MAX] {
+        let wire = (33, count, 0);
+        assert_error!(
+            wire,
+            CapError::NestingDepth { count },
+            CapError::NestingDepth { count: actual } if actual == count
+        );
+    }
+    for detail in [1, 16, u64::MAX] {
+        assert_unknown_response((33, 16, detail));
+    }
+}
+
+#[test]
 fn invalid_stack_status_extensions_and_unsliced_ppc_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 32, u64::MAX, 1));
     }
-    for wire in [
-        (33, 16, 0),
-        (33, u64::MAX, u64::MAX),
-        (34, 0, 0),
-        (34, 0x1234_5678_9abc_def0, u64::MAX),
-    ] {
+    for wire in [(34, 0, 0), (34, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }

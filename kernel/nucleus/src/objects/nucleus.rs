@@ -162,6 +162,7 @@ impl<A: ArchObjects> Nucleus<A> {
         let (thread_id, _thread) = self.pools.threads.allocate(Thread {
             address_space,
             context: ExecutionContext::Running,
+            invocation_stack: crate::objects::InvocationStack::new(),
         })?;
         // Capability grants are provisioned once in the AddressSpace's table,
         // independently of creating any number of Threads executing there.
@@ -420,6 +421,7 @@ mod tests {
                 generation: 1,
             },
             context: ExecutionContext::Running,
+            invocation_stack: crate::objects::InvocationStack::new(),
         }
     }
 

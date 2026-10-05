@@ -208,8 +208,9 @@ validation with a defined error.
 
 ## TODOs
 
-- PPC invocation-stack, Call/Return dispatch/helper/wrapper, adapter,
-  statuses 33/34 and fault-delivery implementation. The active constructor
+- PPC Call/Return dispatch/helper/wrapper, adapter, status 34 and
+  fault-delivery implementation. The shared status 33 and inline depth-16
+  invocation-stack storage/layout are implemented; the active constructor
   and separately tested numeric SP helper do not implement Call admission.
 - Current-relative Return propagation through KeyTable management, independent
   of Call-only Invocation distribution — D4; no derivation/transfer expansion.

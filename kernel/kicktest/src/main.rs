@@ -397,7 +397,7 @@ pub fn kicktest_run() -> ! {
 
         assert_eq!(boot_as_id.index, 0);
         assert_eq!(nucleus.pools.threads.capacity(), 2);
-        assert!(ObjectPool::<Thread>::carve_size(2) <= 4096);
+        assert!(ObjectPool::<Thread>::carve_size(2) >= size_of::<Thread>() * 2);
         assert_eq!(nucleus.pools.arch.address_spaces.capacity(), 4);
         assert_eq!(
             nucleus.pools.arch.page_tables.capacity(),
@@ -2120,6 +2120,7 @@ pub fn kicktest_run() -> ! {
                 context: ExecutionContext::NotStarted {
                     saved: SavedContext::el1t(bounce_entry as *const () as u64, bounce_stack_top),
                 },
+                invocation_stack: nucleus::objects::InvocationStack::new(),
             })
             .unwrap_or_else(|| panic!("no Bounce Thread slot"));
         assert_eq!(bounce_id.index, 1);

@@ -46,6 +46,9 @@ pub const COUNTER_OVERFLOW: u64 = 31;
 /// Invalid Invocation stack extent, minimum headroom, or submitted SP.
 /// Detail 1 is the offending submitted value; detail 2 is an `InvalidStackReason`.
 pub const INVALID_STACK: u64 = 32;
+/// A Call would exceed the fixed depth-16 invocation continuation stack.
+/// Detail 1 is the current saved-continuation count; detail 2 is zero.
+pub const NESTING_DEPTH: u64 = 33;
 
 /// Field-specific Invocation stack diagnostics, carried as the complete `x2` word.
 ///

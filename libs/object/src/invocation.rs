@@ -1,5 +1,11 @@
 use crate::CapError;
 
+/// Maximum number of nested PPC continuations retained by one Thread.
+///
+/// This is a shared contract constant; storage and Call admission are separate
+/// implementation steps.
+pub const INVOCATION_STACK_DEPTH: usize = 16;
+
 /// Operations on a Call-only `Invocation` capability.
 /// Return is `Thread.Return` on the current-relative `CurrentReturnOnly` selector.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

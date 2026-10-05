@@ -177,7 +177,10 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, Objec
     let mut pt_backing = MaybeUninit::<[u128; PT_WORDS]>::uninit();
     let mut as_backing = MaybeUninit::<[u128; AS_WORDS]>::uninit();
     const _: () = {
-        assert!(ObjectPool::<Thread>::carve_size(THREAD_CAPACITY) <= 4096);
+        assert!(
+            ObjectPool::<Thread>::carve_size(THREAD_CAPACITY)
+                >= size_of::<Thread>() * THREAD_CAPACITY
+        );
         assert!(align_of::<[u128; THREAD_WORDS]>() >= ObjectPool::<Thread>::ALIGN);
         assert!(align_of::<[u128; PT_WORDS]>() >= ObjectPool::<Pt>::ALIGN);
         assert!(align_of::<[u128; AS_WORDS]>() >= ObjectPool::<As>::ALIGN);
@@ -343,6 +346,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
                 .allocate(Thread {
                     address_space: second_as,
                     context: crate::objects::ExecutionContext::Running,
+                    invocation_stack: crate::objects::InvocationStack::new(),
                 })
                 .expect("second thread allocation failed");
             nucleus.current_thread = Some(1);

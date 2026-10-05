@@ -1,8 +1,8 @@
 use {
     crate::objects::{NucleusObject, access::ObjectId},
     core::mem::{align_of, size_of},
-    libexception::arch::aarch64::SavedContext,
-    libobject::ObjectType,
+    libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
+    libobject::{INVOCATION_STACK_DEPTH, ObjectType},
 };
 
 // ====================
@@ -41,6 +41,122 @@ pub enum ExecutionContext {
     Running,
 }
 
+/// Kernel-owned continuation captured at a successful PPC Call.
+///
+/// The record is deliberately independent of the transient exception frame and
+/// target stack. Its exact shape is part of the storage contract; Call/Return
+/// admission and migration are separate work.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InvocationContinuation {
+    pub source_address_space: ObjectId,
+    pub source_pc: u64,
+    pub source_sp: u64,
+    pub stamp: u64,
+    pub source_spsr: u64,
+    pub source_origin: ExceptionOrigin,
+    pub source_x19_x30: [u64; 12],
+}
+
+impl InvocationContinuation {
+    pub const fn empty() -> Self {
+        Self {
+            source_address_space: ObjectId {
+                pool: crate::objects::access::PoolTag::AddressSpace,
+                index: 0,
+                generation: 0,
+            },
+            source_pc: 0,
+            source_sp: 0,
+            stamp: 0,
+            source_spsr: 0,
+            source_origin: ExceptionOrigin::CurrentSp0,
+            source_x19_x30: [0; 12],
+        }
+    }
+
+    pub fn from_saved(source_address_space: ObjectId, saved: SavedContext, stamp: u64) -> Self {
+        let mut source_x19_x30 = [0; 12];
+        source_x19_x30[..11].copy_from_slice(&saved.gpr[19..30]);
+        source_x19_x30[11] = saved.lr;
+        Self {
+            source_address_space,
+            source_pc: saved.elr_el1,
+            source_sp: saved.sp,
+            stamp,
+            source_spsr: saved.spsr_el1,
+            source_origin: saved.origin,
+            source_x19_x30,
+        }
+    }
+}
+
+/// Fixed-capacity, inline PPC continuation storage for one Thread.
+///
+/// It never allocates and a full push leaves the stack unchanged.
+/// This primitive is intentionally not wired to Call/Return yet.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InvocationStack {
+    records: [InvocationContinuation; INVOCATION_STACK_DEPTH],
+    len: u8,
+}
+
+impl InvocationStack {
+    pub const fn new() -> Self {
+        Self {
+            records: [InvocationContinuation::empty(); INVOCATION_STACK_DEPTH],
+            len: 0,
+        }
+    }
+
+    pub const fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub const fn is_full(&self) -> bool {
+        self.len as usize == INVOCATION_STACK_DEPTH
+    }
+
+    pub fn push(&mut self, record: InvocationContinuation) -> Result<(), ()> {
+        if self.is_full() {
+            return Err(());
+        }
+        self.records[self.len as usize] = record;
+        self.len += 1;
+        Ok(())
+    }
+
+    pub fn pop(&mut self) -> Option<InvocationContinuation> {
+        if self.is_empty() {
+            return None;
+        }
+        self.len -= 1;
+        let index = self.len as usize;
+        let record = self.records[index];
+        self.records[index] = InvocationContinuation::empty();
+        Some(record)
+    }
+
+    pub const fn top(&self) -> Option<&InvocationContinuation> {
+        if self.len == 0 {
+            None
+        } else {
+            Some(&self.records[self.len as usize - 1])
+        }
+    }
+}
+
+impl Default for InvocationStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The schedulable execution entity: a core kind that holds a capability
 /// to its `AddressSpace` (the protection/mapping context) and to its `KeyTable` (the `CSpace`
 /// equivalent), plus the kernel-private execution state.
@@ -52,7 +168,8 @@ pub enum ExecutionContext {
 /// The fully interrupt-kernel saved-context conversion remains separate work.
 /// Implementation status: this Thread now owns its saved context; trap-frame
 /// capture/restore and the shared per-core stack are entry/backend responsibilities.
-/// The bounded PPC invocation stack remains separate, unimplemented work.
+/// The bounded PPC invocation stack is inline below; Call/Return admission
+/// and migration remain separate work.
 ///
 /// The `DomainControlBlock` is user-visible and is defined in libobject.
 pub struct Thread {
@@ -77,12 +194,17 @@ pub struct Thread {
     /// Execution context for stopping and resuming this Thread (blocked
     /// callers park here; never-run threads carry their first-start entry).
     pub context: ExecutionContext,
+    /// Inline bounded PPC continuations; Call/Return does not use it yet.
+    pub invocation_stack: InvocationStack,
 }
 
-// Verify size for cache alignment
-// TODO const _: () = assert!(core::mem::size_of::<Thread>() == 4096);
-// Implementation status: page-fitting private state, not a page-sized object or
-// scheduler-shared record ABI. Pool accounting includes its own slot metadata.
+// The record and array sizes are part of the storage/accounting contract.
+const _: () = {
+    assert!(size_of::<InvocationContinuation>() == 144);
+    assert!(align_of::<InvocationContinuation>() == 8);
+    assert!(size_of::<InvocationStack>() >= 144 * INVOCATION_STACK_DEPTH);
+};
+// Thread backing is type-derived and is not required to fit in one page.
 const _: () = {
     assert!(size_of::<SavedContext>() == 280);
     assert!(align_of::<SavedContext>() == 8);
@@ -92,12 +214,8 @@ const _: () = {
         size_of::<ExecutionContext>()
             <= size_of::<SavedContext>() + size_of::<ObjectId>() + align_of::<SavedContext>()
     );
-    assert!(
-        size_of::<Thread>()
-            <= size_of::<SavedContext>() + 2 * size_of::<ObjectId>() + align_of::<SavedContext>()
-    );
-    assert!(size_of::<Thread>() <= 4096);
-    assert!(crate::objects::ObjectPool::<Thread>::carve_size(1) <= 4096);
+    assert!(size_of::<Thread>() >= size_of::<InvocationStack>());
+    assert!(crate::objects::ObjectPool::<Thread>::carve_size(1) >= size_of::<Thread>());
 };
 
 impl NucleusObject for Thread {
@@ -108,7 +226,7 @@ impl NucleusObject for Thread {
 #[cfg(test)]
 mod tests {
     use {
-        super::{ExecutionContext, Thread},
+        super::{ExecutionContext, InvocationContinuation, InvocationStack, Thread},
         crate::objects::{
             ObjectPool,
             access::{ObjectId, PoolTag},
@@ -141,6 +259,7 @@ mod tests {
         let thread = Thread {
             address_space: address_space(),
             context: ExecutionContext::NotStarted { saved: INITIAL },
+            invocation_stack: super::InvocationStack::new(),
         };
         let ExecutionContext::NotStarted { saved } = thread.context else {
             panic!("new Thread has no initial execution context")
@@ -168,6 +287,7 @@ mod tests {
                 saved: frame.save(),
                 record,
             },
+            invocation_stack: super::InvocationStack::new(),
         };
 
         // Reuse every byte of the transient frame for another execution context.
@@ -192,13 +312,54 @@ mod tests {
     }
 
     #[test_case]
+    fn invocation_continuation_captures_source_state_and_registers() {
+        let source = address_space();
+        let saved = saved_fixture(7);
+        let record = InvocationContinuation::from_saved(source, saved, 99);
+        assert_eq!(record.source_address_space, source);
+        assert_eq!(record.source_pc, saved.elr_el1);
+        assert_eq!(record.source_sp, saved.sp);
+        assert_eq!(record.stamp, 99);
+        assert_eq!(record.source_spsr, saved.spsr_el1);
+        assert_eq!(record.source_origin, saved.origin);
+        assert_eq!(&record.source_x19_x30[..11], &saved.gpr[19..30]);
+        assert_eq!(record.source_x19_x30[11], saved.lr);
+    }
+
+    #[test_case]
+    fn invocation_stack_is_bounded_and_lifo_without_allocation() {
+        let mut stack = InvocationStack::new();
+        assert!(stack.is_empty());
+        for stamp in 0..libobject::INVOCATION_STACK_DEPTH {
+            let mut record = InvocationContinuation::empty();
+            record.stamp = u64::try_from(stamp).unwrap();
+            assert!(stack.push(record).is_ok());
+            assert_eq!(stack.len(), stamp + 1);
+        }
+        assert!(stack.is_full());
+        let rejected = InvocationContinuation {
+            stamp: 0xfeed,
+            ..InvocationContinuation::empty()
+        };
+        assert!(stack.push(rejected).is_err());
+        assert_eq!(stack.top().unwrap().stamp, 15);
+        assert_eq!(stack.len(), libobject::INVOCATION_STACK_DEPTH);
+        for stamp in (0..libobject::INVOCATION_STACK_DEPTH).rev() {
+            assert_eq!(stack.top().unwrap().stamp, u64::try_from(stamp).unwrap());
+            assert_eq!(stack.pop().unwrap().stamp, u64::try_from(stamp).unwrap());
+        }
+        assert!(stack.is_empty());
+        assert!(stack.pop().is_none());
+    }
+
+    #[test_case]
     fn thread_pool_keeps_parked_contexts_isolated_across_slot_reuse() {
         const CAPACITY: usize = 4;
         const WORDS: usize = ObjectPool::<Thread>::carve_size(CAPACITY).div_ceil(size_of::<u128>());
         let mut backing = MaybeUninit::<[u128; WORDS]>::uninit();
         assert!(align_of::<[u128; WORDS]>() >= ObjectPool::<Thread>::ALIGN);
         assert!(size_of::<[u128; WORDS]>() >= ObjectPool::<Thread>::carve_size(CAPACITY));
-        assert!(ObjectPool::<Thread>::carve_size(CAPACITY) <= 4096);
+        assert!(ObjectPool::<Thread>::carve_size(CAPACITY) >= size_of::<Thread>() * CAPACITY);
         // SAFETY: type-derived, carve-aligned backing remains exclusively owned
         // here for the pool's lifetime. No object references escape the test.
         let mut pool =
@@ -218,6 +379,7 @@ mod tests {
                 .allocate(Thread {
                     address_space: address_space(),
                     context,
+                    invocation_stack: super::InvocationStack::new(),
                 })
                 .expect("type-derived pool backing lost capacity")
                 .0;
@@ -228,6 +390,7 @@ mod tests {
             pool.allocate(Thread {
                 address_space: address_space(),
                 context: ExecutionContext::Running,
+                invocation_stack: super::InvocationStack::new(),
             })
             .is_none()
         );
@@ -242,6 +405,7 @@ mod tests {
             .allocate(Thread {
                 address_space: address_space(),
                 context: ExecutionContext::NotStarted { saved: initial },
+                invocation_stack: super::InvocationStack::new(),
             })
             .unwrap();
         assert_eq!(replacement.index, identities[0].index);

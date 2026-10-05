@@ -28,7 +28,7 @@ pub use {
     asid_pool::{ASIDPoolKey, ASIDPoolOp},
     event_count::{EventCountKey, EventCountOp},
     frame::{FrameKey, FrameOp},
-    invocation::InvocationOp,
+    invocation::{INVOCATION_STACK_DEPTH, InvocationOp},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},
     notification::{NotificationKey, NotificationOp},
@@ -117,6 +117,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
                 value,
                 reason: InvalidStackReason::try_from(reason).ok()?,
             },
+            (code::NESTING_DEPTH, count, 0) => CapError::NestingDepth { count },
             _ => return None,
         })
     })();
@@ -192,6 +193,11 @@ pub enum CapError {
         /// The offending submitted value, not a computed difference.
         value: u64,
         reason: InvalidStackReason,
+    },
+    /// A Call reached the fixed invocation-stack depth before pushing a record.
+    /// `count` is the current saved-continuation count, not an attempted depth.
+    NestingDepth {
+        count: u64,
     },
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
@@ -284,6 +290,7 @@ impl CapError {
             CapError::InvalidStack { value, reason } => {
                 (code::INVALID_STACK, value, u64::from(reason as u8))
             }
+            CapError::NestingDepth { count } => (code::NESTING_DEPTH, count, 0),
             CapError::UnknownResponse {
                 status,
                 detail1,

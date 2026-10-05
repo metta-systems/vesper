@@ -21,8 +21,8 @@ use {
     nucleus::{
         api::key_entry::{KeyEntry, RegionPayload},
         objects::{
-            ArchObjects, ArchObjectsImpl, EventCount, ExecutionContext, KeyTable, Notification,
-            Nucleus, ObjectPool, PendingPool, Scheduler, Thread,
+            ArchObjects, ArchObjectsImpl, EventCount, ExecutionContext, InvocationStack, KeyTable,
+            Notification, Nucleus, ObjectPool, PendingPool, Scheduler, Thread,
             access::{ObjectId, PoolTag},
             arch::ArchPools,
             domain::DcbPages,
@@ -355,6 +355,7 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
         .allocate(Thread {
             address_space: boot_as_id,
             context: ExecutionContext::Running,
+            invocation_stack: InvocationStack::new(),
         })
         .expect("no boot Thread slot")
         .0;

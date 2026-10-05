@@ -81,8 +81,10 @@ before push or context switch; the source and existing records are preserved.
 It follows valid SP and target translation preparation under the admission-stage
 order below. `x1` reports the current saved-continuation count, equal to the
 maximum supported depth at exhaustion; `x2` is zero. The full array therefore
-returns `(x0, x1, x2) = (33, 16, 0)`, not attempted depth 17. Status/error,
-encoder/decoder, Call dispatch and tests are not implemented.
+returns `(x0, x1, x2) = (33, 16, 0)`, not attempted depth 17. The shared
+status/error encoder and lossless client decoder, plus inline depth-16 storage
+and layout tests, are implemented; Call dispatch and runtime depth admission
+remain unimplemented.
 
 Return underflow remains fault delivery with no pop, not `NestingDepth`.
 
@@ -98,8 +100,8 @@ root-exported `InvalidStackReason` are implemented. `CapError::code()` emits
 without narrowing. Zero, unknown IDs and high-bit extensions become
 `UnknownResponse`, preserving status and both details verbatim. The offending
 value remains full-width for every known reason. `NestingDepth` status 33
-(current/maximum count in `x1`, zero in `x2`) and `UnexpectedReturn` status 34
-remain unimplemented.
+(current/maximum count in `x1`, zero in `x2`) is implemented in the shared
+ABI/client decoder; `UnexpectedReturn` status 34 remains unimplemented.
 
 | ID in `x2` | Reason | Condition | Value in `x1` |
 |---:|---|---|---|
