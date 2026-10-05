@@ -2,7 +2,7 @@
 
 The design authority is [Nucleus capabilities: design contracts](nucleus_capabilities.md). This checklist turns those contracts into dependency-ordered work across `libs/object`, `libs/syscall`, `kernel/nucleus/src/api`, `kernel/nucleus/src/objects`, and the nucleus entry/scheduler/backend code.
 
-This is a TODO list, not a claim of implementation. The reference and initial checklist have been created; approval, reconciliation, and code validation remain work. Mark an item `- [x]` only after its stated outcome is implemented/reviewed and the relevant validation has actually passed. Record blocked or unrun validation rather than checking it off.
+This is a TODO list, not a claim of implementation. Historical implementation and validation narratives for completed slices live in [`capabilities-completed.md`](capabilities-completed.md); this file retains the active checklist, prerequisites, and concise links to those records. Mark an item `- [x]` only after its stated outcome is implemented/reviewed and the relevant validation has actually passed. Record blocked or unrun validation rather than checking it off.
 
 ## Working rules
 
@@ -13,7 +13,7 @@ This is a TODO list, not a claim of implementation. The reference and initial ch
 - Complete the affected shared definitions, client encoding/decoding, kernel authorization, state transitions, and tests together. Unsupported operations must remain explicit errors.
 - Preserve user work. This repository uses JJ: no raw Git, commits, history changes, new changes/branches, or pushes by default. Version-control mutation requires an explicit request.
 - Use **`just` for project build, test, formatting, and lint workflows**. Read the current `Justfile`; do not replace its recipes with hand-assembled Cargo/rustfmt commands or assume a native build validates the embedded target.
-- Keep completion evidence with the checklist or in the task report: recipes/checks actually run, outcomes, limitations, and follow-up blockers. Supplemental diagnostics and dry runs do not count as completed project validation.
+- Keep concise completion evidence in the checklist and move detailed historical records to [`capabilities-completed.md`](capabilities-completed.md): recipes/checks actually run, outcomes, limitations, and follow-up blockers. Supplemental diagnostics and dry runs do not count as completed project validation.
 - Keep [`doc/object_types/`](object_types/) current with every capability refactor: when a refactor invalidates a per-kind document, replace the no-longer-valid content with new data instead of layering amendments on top of stale text. The catalogue tables, wire IDs, operation lists, and status columns must describe the implemented reality after each slice. Documentation states the **current contract only** — no selection dates, no "selected/moved/renamed from" history, no "formerly…" chains; the contract and this plan carry the history.
 - There is no previous version of anything: once a change is approved, preserve no backwards compatibility, migration path, deprecated alias, or legacy behavior. Functionality can be completely removed and replaced when necessary; update all consumers in the same slice.
 
@@ -72,21 +72,7 @@ Recorded with 0.1; absorb into the contract reference's vocabulary section when 
 
 ### Domain split, Thread/AddressSpace, and ASIDControl slice validation (2026-09-21)
 
-Implemented the 0.1/0.2 resolutions across every layer, with no compatibility preserved for the prior numbering or the single-Domain model. The catalogues were renumbered exactly as the maintainer specified: core `Domain` (2) removed, `KeyTable` moved 3 → 2, `Thread` took 3; arch `VSpace` renamed `AddressSpace` (index 2) and `ASID` replaced by `ASIDControl` (index 4). The former `Domain` object split into the core `Thread` (`keytable_addr`, checked `address_space` identity, `ExecutionContext`) and the arch `AddressSpace` (`translation_root`, `asid`, behind the new `AddressSpaceObject` trait); `objects/domain.rs` keeps only the DCB machinery (names unchanged until D5). Operation division: `AddressSpace.Activate` 0 (arch dispatch; translation-context installation, current-caller-restricted) and the new `AddressSpace.Retire` 1 (whole-ASID invalidation, ASID release to the originating pool via the new `AsidPoolObject::release`, root/ASID fields cleared, pool slot reclaimed; own-context and root-installed rejections) landed in `api/arch/address_space.rs`; `Thread.Retire` 4 (thread-side teardown via `Nucleus::cancel_thread_pending`) landed in `api/thread.rs`; `Thread.Grant`/`Suspend`/`Resume` stay explicit `InvalidOperation`. `PageTable.Map` root installation, `Frame.Map`, and `ASIDPool.Assign` now target the AddressSpace kind; the frame payload's mapping record names the owning AddressSpace; `PtParent::Root` carries an address-space identity; the scheduler, pending-pool waiters, and `current_thread` are Thread-based. Kickstart carves both pools (threads 2, address spaces 3), creates a boot AddressSpace + boot Thread, installs the self-AddressSpace cap at the renamed `KeySlot::SELF_ADDRESS_SPACE` and a boot-Thread cap, and the boot test exercises the full matrix end-to-end: `Thread.Retire` (rights denial, self-retirement rejection, parked-thread teardown, stale-capability rejection) and `AddressSpace.Retire` (own-context rejection, root-installed rejection, ASID release proven by a rebind receiving the released ASID 2). Userspace gained `ThreadKey`/`ThreadOp` (op 0 was unassigned in this historical slice; the current contract and Phase 6 representation use Thread.Return 0) and `AddressSpaceKey`/`AddressSpaceOp` wrappers; the DCB direction (thread scheduling pages shared with the userspace scheduler, Composite-style) is recorded in the contract under D5. The superseded `api/arch/vspace.rs` and `objects/arch/vspace.rs` sketches were replaced by the real handler/object (their SetRoot/AssignASID/GetASID intent is captured by `PageTable.Map` root, `ASIDPool.Assign`, and the new handler). Docs were replaced, not amended: `core/domain.md` → `core/thread.md`, `arch/vspace.md` → `arch/address_space.md`, `arch/asid.md` → `arch/asid_control.md`, the README catalogue/diagram regenerated, and the mapping-family docs (`frame.md`, `page_table.md`, `asid_pool.md`, `key_table.md`, `untyped.md`, `notification.md`, `event_count.md`) updated to the AddressSpace/Thread vocabulary.
-
-| Recipe | Result and scope |
-|---|---|
-| `just test-object-host` | Passed 89 feature-off / 90 feature-on ABI/client tests, including the new Thread and AddressSpace wrapper/decoder tests and the renumbered catalogue pins (KeyTable 2, Thread 3, AddressSpace `0x82`, ASIDControl `0x84`) |
-| `just build rpi3 qemu` | Passed the coordinated nucleus + kickstart rebuild |
-| `just test-capability-boot` | Passed actual boot: Thread.Retire and AddressSpace.Retire end-to-end through the real SVC path, plus the full prior matrix (Retype, mapping, activation, park/resume) against the split objects |
-| `just test-untyped` / `just test-key-table` / `just test-debug-console` | Passed the embedded QEMU regression suites against the split pools and renumbered dispatch |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: one Thread per AddressSpace today — multiple threads per address space and cross-address-space Thread retirement orchestration land with Phase 7 scheduling; `AddressSpace.Retire` releases to the boot pool (index 0) — recording the originating pool per binding is part of the open multi-pool partitioning (D6); hardware-safe ASID reuse remains open (D6); the DCB/`DomainId` names are unchanged (D5 direction recorded, no rename this slice); `Thread.Grant`/`Suspend`/`Resume` remain explicit errors (Phase 7); exception-origin/caller binding and coherent current-thread identity remain Phase 3/4 work. The bounce fixture's stack-batch slot range (41–48) and the pool-refill vacancy range (24–35) now bound the boot test's ad-hoc slot allocations (50, 52–55).
-
-**Exit:** every Phase 0 change is implemented and validated, and the later phases' items no longer reference superseded behavior.
+> Detailed historical record: [capabilities-completed.md#domain-split-thread-addressspace-and-asidcontrol-slice-validation-2026-09-21](capabilities-completed.md#domain-split-thread-addressspace-and-asidcontrol-slice-validation-2026-09-21)
 
 ## Phase 1 — Confirm contracts and support boundaries
 
@@ -125,52 +111,15 @@ Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wir
 
 ### KeyTable operation-decoder slice validation
 
-Selected the smallest remaining KeyTable ABI prerequisite, not its lifecycle implementation. `KeyTableOp` now decodes the existing operation vocabulary through `TryFrom<u64>` and a delegating `TryFrom<u32>`, returning the existing `InvalidOperation` error for every other value. No wire IDs, client request/result encoding, authority rules, or object transitions changed. The kernel handler remains excluded; active dispatch still rejects KeyTable as unsupported. D1–D9 remain unchanged because no new operation schema or behavior is enabled.
-
-Three tests in the existing host harness pin all four operation IDs and the one-byte enum layout, reject every unassigned byte including `3`, and reject aliases with each high bit from 8 through 63 plus maximum-width values. Existing wrapper tests continue checking literal request encoding and error propagation.
-
-| Recipe | Result and scope |
-|---|---|
-| `just test-object-host` | Passed 30 feature-off / 31 feature-on tests |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed the RPi3/QEMU nucleus + kickstart build, all nine embedded configurations, and both host-harness feature states |
-
-Coverage limits: no QEMU runtime tests or full `just test` run for this pure decoder addition. The decoder is not wired into active KeyTable dispatch because the operations remain unsupported. Raw SVC entry still has panicking register conversions; this slice does not repair that boundary or complete full-width argument/slot/size decoding. General KeyTable activation still requires guarded storage/lifetime and approved D2–D4 authority/lifecycle semantics. Existing cache-access and toolchain future-compatibility warnings remain nonblocking. The parent decoding item remains unchecked.
+> Detailed historical record: [capabilities-completed.md#keytable-operation-decoder-slice-validation](capabilities-completed.md#keytable-operation-decoder-slice-validation)
 
 ### Scheduler and Brand catalogue-ID slice validation
 
-Registered `Scheduler = 9` and `Brand = 10` in the shared `CoreType` catalogue and added literal ABI expectations for their enum variants, aliases, wire values, display names, local-index conversion, and unsupported-core-type decoding. The existing exhaustive all-byte conversion tests now treat 9 and 10 as known kinds. This does not implement Scheduler operations, Brand behavior, wrappers, or kernel dispatch; those remain unsupported pending their separate schemas and vertical slices.
-
-| Recipe | Result and scope |
-|---|---|
-| `just test-object-host` | Passed 92 feature-off and 93 feature-on tests |
-| `just fmt-check` | Passed |
-| `just clippy` | Passed full recipe including configured embedded builds/configurations and both capability host-harness lint states |
-
-The embedded build scripts emitted non-fatal debug-map parse diagnostics while producing the nucleus/kickstart images; the recipe continued and completed successfully. This catalogue-only slice does not validate runtime dispatch or scheduler/Brand behavior.
+> Detailed historical record: [capabilities-completed.md#scheduler-and-brand-catalogue-id-slice-validation](capabilities-completed.md#scheduler-and-brand-catalogue-id-slice-validation)
 
 ### Catalogue slice validation
 
-The private catalogue macro now generates enums, aliases, checked local-index decoding, and typed-to-wire conversions. Existing public names remain; Time/Scheduler/Brand/Invocation/Notification/EventCount wire values follow the current canonical grouped IDs. No object handlers were enabled. The host test feature is opt-in so the standard harness is skipped by the existing freestanding test workflow; full ABI/client dependency separation remains unchecked.
-
-Validation uses the repository recipes from an AArch64 macOS host:
-
-| Recipe | Result and scope |
-|---|---|
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed the RPi3/QEMU nucleus + kickstart build, all seven embedded board/feature configurations, and capability host-test linting |
-| `just clippy-object-host` | Passed the focused capability host-harness lint check |
-| `just test-host` | Passed all 10 capability ABI tests; the host-tool harness completed with zero test cases |
-| `just test` | Passed device integration tests under QEMU, device doctest workflow, chainboot test recipe, and the host stage including all 10 capability ABI tests |
-
-The restored device harness uses current crate/API paths and explicit startup/panic dependencies. Its shared test startup enters EL1 from the boot helper's EL2 context before executing kernel-mode tests; production boot is unchanged. GPIO/MMIO and mailbox-format tests retain their assertions, with the mailbox-format test using local storage rather than requiring kernel DMA mappings.
-
-Coverage limits: the chainboot test recipe currently has no runnable test executable, the host tool has zero test cases, and passing the existing suite does not complete the later capability lifecycle/IPC work. Nonblocking compiler-cache access and toolchain/dependency future-compatibility warnings remain; they do not change recipe configuration or exit status.
-
-- [x] Validate the catalogue changes through `just fmt-check` and `just clippy`, including the configured build prerequisite and full embedded feature matrix.
-- [x] Run the capability host tests through `just test-object-host` (included in `just test-host` and `just test`) and the configured embedded test workflow; record the tested scope explicitly.
-
-**Exit:** kernel and client share unambiguous checked wire definitions, with ABI-only tests independent of target assembly. Later families extend this core rather than inventing another protocol.
+> Detailed historical record: [capabilities-completed.md#catalogue-slice-validation](capabilities-completed.md#catalogue-slice-validation)
 
 ## Phase 3 — Repair the active syscall/console path
 
@@ -194,87 +143,23 @@ Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contract
 
 ### Absent-caller rejection slice validation
 
-Removed the `unwrap_or(0)` fallback from both `Nucleus::current_domain_mut` and `current_dcb_mut`. Missing caller identity now returns `None`; active dispatch propagates the existing `InvalidDomain` status without consulting domain zero's table. The existing boot fixture explicitly selects its first domain after creation, preserving its debug invocation path without introducing a general bootstrap layout or activating Domain operations. Private-domain lookup still checks pool bounds/allocation. No shared ABI, transport, rights, or object layout changed.
-
-Three regression cases extend `kernel/nucleus/tests/debug_console.rs` using the production module trees and valid test-owned backing. They cover absent/cleared caller identity despite an installed domain-zero console, the existing error's wire/client round trip, explicit domain-zero dispatch, a distinct caller's empty table, unallocated/out-of-range/released private-domain IDs, and absent caller identity despite installed DCB records. The six-case QEMU harness failed before the production fix and passed afterward; an initial test compile error from consuming `CapError::code()` twice was corrected first.
-
-| Recipe | Result and scope |
-|---|---|
-| `just test-object-host` | Passed 30 feature-off / 31 feature-on ABI/client tests |
-| `just test-debug-console` | Passed all six cases under QEMU after the fix |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed configured RPi3/QEMU build, all nine embedded configurations, and both host-harness feature states |
-| `just build rpi3 qemu,debug_kernel` | Passed coordinated debug-enabled nucleus + kickstart release build |
-| `just test-device` | Passed existing QEMU device integration and doctest workflow |
-
-Coverage limits: these tests call production dispatch/accessors, not real SVC entry/return or the boot demonstration. Caller-origin binding, raw-register validation, domain incarnation/reuse, coherent private-domain/DCB allocation and DCB publication remain unfinished; the parent caller-context item stays unchecked. The test fixture does not claim Untyped-backed production storage or mapping isolation. Full `just test` was not run, and the Clippy recipe does not explicitly lint this embedded harness. Existing compiler-cache access and toolchain future-compatibility warnings remain nonblocking.
-
-Follow-up superseded by the approved key package: migrate directly to full-width incarnation-bearing keys and the agreed InvalidKey/InconsistentKey diagnostics, rather than introduce an intermediate malformed-slot ABI. Then finish checked entry/origin/caller binding before enabling the guarded KeyTable lifecycle.
+> Detailed historical record: [capabilities-completed.md#absent-caller-rejection-slice-validation](capabilities-completed.md#absent-caller-rejection-slice-validation)
 
 ### Debug-only availability slice validation
 
-The maintainer-approved scope retains the current pointer-based mechanism and defers safety/ABI changes. `debug_kernel` is opt-in in nucleus, kickstart, and the client library; kickstart forwards it to the client. Kernel dispatch/object code, the bootstrap console grant, the client wrapper, and boot calls are gated. Type `127` and Write `0` remain defined with the feature off. `qemu`/`jtag` do not imply availability, and Cargo's release profile does not disable an explicitly requested debug kernel.
-
-| Recipe | Result and scope |
-|---|---|
-| `just fmt-check` | Passed workspace formatting |
-| `just test-object-host` | Passed 11 tests feature-off and 12 feature-on; includes unchanged catalogue IDs, operation decoding, and feature-enabled handle construction without executing SVC |
-| `just clippy` | Passed after removing an unnecessary binding in the new host test; includes feature-off RPi3/QEMU nucleus + kickstart build, the original seven embedded configurations plus `debug_kernel` and `qemu,debug_kernel`, and both host feature states |
-| `just build rpi3 qemu,debug_kernel` | Passed coordinated feature-enabled nucleus + kickstart release build |
-| `just test-device` | Passed existing QEMU device integration tests and device doctest workflow, with `debug_kernel` off |
-
-Coverage limits: these checks do not validate runtime console authorization, pointer safety, error propagation, exception recovery, or the feature-enabled boot demonstration. No console-specific runtime tests were added. Deferred changes and alternatives are documented beside `api::debug_console::invoke`; the other Phase 3 items remain unchecked. Nonblocking compiler-cache access and toolchain future-compatibility warnings remain. The next prerequisite for general console support is an approved caller/authority and buffer-access contract, not another implicitly enabled operation.
+> Detailed historical record: [capabilities-completed.md#debug-only-availability-slice-validation](capabilities-completed.md#debug-only-availability-slice-validation)
 
 ### Stateless console access slice validation
 
-Removed both `as_object_mut::<DebugConsole>()` calls in active dispatch/handling. Core dispatch borrows the table entry read-only; the console handler accepts `&KeyEntry`, preserves type-mismatch checking/error precedence, decodes the existing operation, and calls the stateless writer without accessing the capability's object pointer. The debug gate, canonical IDs, pointer-based Write ABI, bootstrap grant, and client/transport behavior are unchanged. No new D1–D9 decision is implied.
-
-`kernel/nucleus/tests/debug_console.rs` compiles the production API/object module trees. Its three QEMU cases cover wrong-kind/null entries (including inline regions), invalid operations before touching deliberately invalid write arguments, shared entry borrows with unchanged metadata, and empty/invalid table lookup before an installed entry reaches the handler. `just test-debug-console` runs this opt-in harness and is included in `just test`.
-
-| Recipe | Result and scope |
-|---|---|
-| `just test-object-host` | Passed 11 feature-off and 12 feature-on ABI tests |
-| `just test-debug-console` | Passed the new three-case QEMU harness after fixing its feature attribute and non-Debug error handling |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed the configured build, all nine embedded configurations, and both host-test feature states |
-| `just build rpi3 qemu,debug_kernel` | Passed coordinated debug-enabled nucleus + kickstart release build |
-| `just test` | Passed device/doctest, chainboot, host, and new debug-console workflows; chainboot has no runnable test executable and the host tool has zero tests |
-
-Coverage limits: handler/lookup rejection tests are not SVC entry/return or successful-output integration tests. No general rights checks, caller context, user-copy safety, raw-register validation, client error propagation, or guarded object storage were introduced. The new embedded test harness is compiled/run by its test recipe; the existing Clippy recipe does not explicitly lint that harness. General console support still requires the approved caller/authority and buffer-access contracts. Compiler-cache access and toolchain/dependency future-compatibility warnings remain nonblocking. Only the pointer-reference removal item is completed by this slice.
+> Detailed historical record: [capabilities-completed.md#stateless-console-access-slice-validation](capabilities-completed.md#stateless-console-access-slice-validation)
 
 ### Domain client-result slice validation
 
-Follow-up: centralized all existing wire status numbers in `libs/object/src/syscall_status.rs`. Both the error encoder and decoder use these symbols, and nucleus uses the shared `SUCCESS` constant. Numeric meanings and unknown-response handling are unchanged; a literal ABI test pins every constant independently. Validation: `just test-object-host` passed 24 feature-off / 25 feature-on tests; `just fmt-check` and full `just clippy` passed after correcting a documentation lint. Target/QEMU runtime tests were not rerun for this symbolic-only follow-up.
-
-Selected the Domain portion of the included-wrapper repair: its four mutation wrappers now use the shared `decode_syscall_result`, preserving request encoding and returning specific kernel errors instead of collapsing every failure into `Unknown`. Kernel dispatch still returns `UnsupportedCoreType(Domain)` after successful lookup. No operation, rights policy, lifetime, DCB access, scheduling transition, or new wire schema was enabled; D1–D9 remain open as previously recorded.
-
-The decoder preserves success words and existing statuses 1–25, checks details before narrowing, and retains unknown/malformed responses verbatim in the client-only `UnknownResponse` variant. Its nonzero status cannot re-encode as success. Downstream exhaustive Rust matches need the added variant; no coordinated wire migration is required for this unchanged encoding.
-
-| Recipe | Result and scope |
-|---|---|
-| `just test-object-host` | Passed 23 feature-off / 24 feature-on tests, including nine result-decoder tests and three Domain wrapper tests |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed the configured RPi3/QEMU build, all nine embedded feature configurations, and both host-test states after fixing test-module visibility/configuration |
-| `just test-device` | Passed the existing QEMU device integration and device doctest workflow |
-
-The host harness compiles the actual Domain source with a test-only mock transport; it checks all four methods, full-width slot encoding, success, unsupported/lookup/rights errors, unknown statuses, malformed details, and unchanged handles. It never executes host SVC or dereferences DCB mappings. These are not real SVC/Domain lifecycle integration tests, and the AArch64 host cannot exercise a narrower-`usize` overflow branch. Compiler-cache access and toolchain future-compatibility warnings remain nonblocking. Full `just test` was not run for this slice. The remaining KeyTable result repair is recorded below; enabling Domain behavior still requires the guarded storage, authority, execution-context, completion, and time prerequisites.
+> Detailed historical record: [capabilities-completed.md#domain-client-result-slice-validation](capabilities-completed.md#domain-client-result-slice-validation)
 
 ### KeyTable client-result slice validation
 
-Selected the remaining syscall-backed KeyTable wrapper repair. `copy_derive`, `delete`, `revoke`, and `grant_to` now use the existing shared decoder; `grant_to` delegates to `copy_derive` with the same all-rights request. Nonzero statuses no longer become false success or collapse into `Unknown`. Signatures, operation IDs, slot encoding, and wire errors are unchanged. The kernel handler remains excluded and active dispatch still reports `UnsupportedCoreType(KeyTable)` after successful lookup. No authority, lifecycle, or D1–D9 decision was introduced.
-
-The existing host harness compiles the production KeyTable source with a test-only transport. Three new tests cover all four methods: full-width slot and rights encoding, exactly one call, success, unsupported/lookup/occupied-slot/rights errors, unknown statuses, malformed details, and unchanged handles. Literal expectations pin the used operation IDs and request masks without approving their eventual authority semantics.
-
-| Recipe | Result and scope |
-|---|---|
-| `just test-object-host` | Passed 27 feature-off / 28 feature-on tests after correcting the test's `Rights` construction |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed configured RPi3/QEMU build, all nine embedded feature configurations, and both host-test states after correcting a documentation lint |
-| `just test-device` | Passed existing QEMU device integration tests and device doctest workflow |
-
-Coverage limits: mock responses test client propagation, not kernel authorization, real SVC return, or table mutation/rollback. Full `just test` was not run. Existing compiler-cache access and toolchain/dependency future-compatibility warnings remain nonblocking. The no-op `transfer`, missing public handle construction, unused legacy `revoke` table argument, and unresolved all-rights delegation policy remain deferred. The parent wrapper-cleanup item stays unchecked because the no-op still exists. Enabling actual KeyTable operations next requires guarded storage/lifetime and approved D2–D4 lifecycle/authority semantics; this slice does not start that work.
-
-**Exit:** a real end-to-end operation demonstrates the standard decoding, authority, user-copy, and result pattern. Unsupported wrappers fail honestly.
+> Detailed historical record: [capabilities-completed.md#keytable-client-result-slice-validation](capabilities-completed.md#keytable-client-result-slice-validation)
 
 ## Phase 4 — Capability storage and domain lifetime
 
@@ -322,105 +207,27 @@ Guarded key-space package (selected 2026-09-23, not yet implemented): the key's 
 
 ### Key wire and slot-identity slice validation (2026-09-07)
 
-Implemented the approved RawKey encoding and non-owning typed handles, statuses 26–28 with lossless unknown-response decoding, included-client/transport migration, and full-width active key/op decoding. Table storage retains per-slot incarnation counters, rejects stale/deleted selectors, advances only on successful installation, allows final-incarnation deletion, and preserves entry ownership/accounting on insertion failure. Unrestricted mutable entry access is removed. CopyDerive clients encode the approved operands and return destination-local keys, but the management handler remains excluded; `transfer` returns explicit unsupported status. Console clients now propagate errors. Public Domain construction remains deferred to avoid exposing unfinished DCB observation safety.
-
-The private debug-gated one-shot EL1 boot bridge returns the actual console installation result. Kickstart extracts its retained executable symbol from the paired nucleus image; no fake initialization SVC, guessed incarnation, or runtime key-refresh API remains. The boot Domain pool now uses aligned `MaybeUninit<Domain>` backing in the reserved nucleus BSS, sized from Domain rather than the old `0x1000`/16-KiB fixture. The loader accounts the complete BSS and mapping extent. General Untyped-backed metadata/pool ownership is not completed by this fixture.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed feature-off/on ABI and client tests, including new key/error round trips and packed wrapper requests |
-| `just test-debug-console` | Passed 17 QEMU cases: nine handler/dispatch/caller cases and eight slot-storage cases |
-| `just build rpi3 qemu,debug_kernel` | Passed coordinated debug build and boot-symbol extraction |
-| `just test-capability-boot` | Passed actual issued-key handoff, successful Write through SVC and exact zero-incarnation InvalidKey response |
-| `just clippy-object-host` | Passed both host harness configurations |
-| `just clippy` | Passed both required paired-image builds, all nine embedded configurations and host harness linting |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed complete configured workflow, including the new bounded capability boot smoke test |
-
-Initial integration failures (CapError formatting and Clippy diagnostics) were fixed before the passing runs. Existing cache-access and Rust future-compatibility warnings remain nonblocking. No new nightly feature gates were added. Chainboot still has no runnable test executable and the host tool has zero test cases; the embedded regression harness is run by its recipe but not explicitly linted by Clippy.
-
-Coverage limits: ObjectRetired is encoded/decoded but authoritative shared-object generation checks are not implemented. General object/domain retirement, no-reset/rebinding enforcement for reusable storage, rights/management transitions, exception-origin classification, hostile-EL0 confinement, user-copy safety, DCB publication and revocation remain unfinished. The boot smoke test intentionally stops after its success marker; it does not validate subsequent scheduling. The larger parent identity/lifecycle items remain unchecked. Next prerequisite is concrete authoritative object metadata/backing and the guarded access API, followed by the remaining management rights/operation schemas—not another slot-only ABI repair.
+> Detailed historical record: [capabilities-completed.md#key-wire-and-slot-identity-slice-validation-2026-09-07](capabilities-completed.md#key-wire-and-slot-identity-slice-validation-2026-09-07)
 
 ### KeyTable management-schema slice validation (2026-09-07)
 
-Implemented the approved CopyDerive/Move/Delete wire schemas and table-permission rights matrix. Shared ABI gained `DERIVE`/`REMOVE`/`INSTALL` KeyTable-permission bits (per-kind interpretation, no renumbering) plus `Rights::has`/`permits`; clients gained a real `transfer` (Move) wrapper and schema-aligned `delete`, with `revoke` still unsupported. The kernel `api::key_table` handler decodes all three ops, checks table rights (CopyDerive = source DERIVE + destination INSTALL; Move = source DERIVE+REMOVE + destination INSTALL; Delete = REMOVE), enforces no-amplification, preserves badges on CopyDerive and full entry state on Move, rejects same-slot Move and occupied destinations, and rolls back the source on post-removal installation failure. Only the caller's own table (CAPTBL_SELF) is addressable; other KeyTable capabilities are rejected as unsupported rather than misresolved, pending pooled KeyTables. Revoke returns InvalidOperation.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed feature-off/on ABI and client tests (42 + 43), including Move request encoding and second-success-word handling |
-| `just test-key-table` | Passed 9 QEMU cases: attenuation/badge preservation, amplification rejection, source/destination rights matrix, occupied destination, non-allowlisted kind, Move state preservation + source invalidation, same-slot Move rejection, Delete without retirement + stale-selector protection, Revoke/cross-table rejection |
-| `just test-device` | Passed with the new test compiled under the default feature set (fixtures use the always-allowlisted KeyTable kind) |
-| `just clippy` | Passed full embedded matrix and host harness |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed complete configured workflow including the new `test-key-table` recipe |
-
-Coverage limits: cross-table CopyDerive/Move (distinct table objects) is rejected pending pooled-KeyTable `Access` resolution and alias-safe pair access; retired-object Delete cleanup has no retirement transition to test against yet; the Move rollback path re-inserts with a fresh incarnation (original source key stays invalidated) and is not separately asserted. Domain.Grant remains deferred. Next prerequisite is pooled KeyTables with cross-table resolution, then the Phase 5 memory vertical slice.
+> Detailed historical record: [capabilities-completed.md#keytable-management-schema-slice-validation-2026-09-07](capabilities-completed.md#keytable-management-schema-slice-validation-2026-09-07)
 
 ### Guarded access and object-identity slice validation (2026-09-07)
 
-Implemented the D3 concrete guarded-access selection. `KeyEntry` now stores only a checked `ObjectId` (pool tag, index, generation) — no raw object pointer — and `ObjectRef` plus `KeyEntry::as_object`/`as_object_mut` lifetime-erasing derefs are removed. `ObjectPool` carries authoritative per-slot `SlotMeta` (Free/Live/Retired + retained generation, no wrap, exhaustion prohibits reuse) with validation always preceding address computation. The new `Access` context is `!Send`, constructed per invocation under the kernel lock, and hands out borrow-checked `Guard`/`GuardMut`; `resolve_pair_mut` rejects same-slot aliases before constructing references. The debug console (stateless singleton, null identity, type-validated only) and the domain-pool fixture were migrated; the excluded `api/arch/vspace.rs` sketch is not compiled and keeps its design-intent form.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed feature-off/on ABI and client tests (43 + 44 cases) |
-| `just test-debug-console` | Passed 17 QEMU cases plus 5 new pool model tests (generation/reuse, stale identity, wrong-pool/out-of-bounds, pool + generation exhaustion, pair alias rejection) |
-| `just build rpi3 qemu` and `just build rpi3 qemu,debug_kernel` | Passed both configurations |
-| `just clippy` | Passed full embedded matrix and host harness |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed complete configured workflow |
-
-Coverage limits: `Retired` state and the `ObjectRetired` diagnostic are represented but no retirement transition sets them yet. Guards are constructed only in tests so far; syscall-entry adoption of `Access` for pooled objects awaits pooled object types beyond Domain. Untyped-backed pool ownership, kernel-private KeyTable backing, and safe pool-backing lifetime remain Phase 5. The domain-pool fixture still uses index-based `get_live`/`get_live_mut` bootstrap access rather than capability-carried identities. Next prerequisite is the CopyDerive/Move/Delete management schemas and rights, then the Phase 5 memory vertical slice.
-
-**Exit:** safe access no longer depends on type tags alone; domain identity and table membership have one enforced lifecycle. Features requiring unresolved revocation/protection decisions are not advertised as complete.
+> Detailed historical record: [capabilities-completed.md#guarded-access-and-object-identity-slice-validation-2026-09-07](capabilities-completed.md#guarded-access-and-object-identity-slice-validation-2026-09-07)
 
 ### Inert-nucleus bootstrap handoff slice validation (2026-09-12)
 
-Implemented the D4 bootstrap handoff: the nucleus is now inert at boot and performs no initialization. The nucleus object model is exposed as a lib (`kernel/nucleus/src/lib.rs`) so Kickstart (the one-time boot code) constructs the initial `Nucleus` in memory carved from a boot Untyped's unused watermark range (`kernel/kickstart/src/bootstrap.rs`), installs the boot Domain and initial grants (boot Untyped at `KeySlot::BOOT_UNTYPED`, debug console at `KeySlot::DEBUG_CONSOLE`), and records the carved address via the exported `nucleus_set_anchor` setter. The nucleus reads that anchor (`NUCLEUS`, an `AtomicUsize`) under a separate `KERNEL_LOCK` on every syscall. The old lazy `NUCLEUS` fixture, `BOOT_DOMAIN_STORAGE`, and the in-nucleus `nucleus_bootstrap_debug_console` ceremony are removed. `boot_info::alloc_region` gained a guard against underflow on free fragments smaller than the request.
-
-| Recipe | Observed result |
-|---|---|
-| `just build rpi3 qemu` | Passed (nucleus lib linked into kickstart; `nucleus_set_anchor` symbol extracted) |
-| `just test-capability-boot` | Passed actual boot: Kickstart carves the initial Nucleus, installs grants, sets the anchor; the debug console write succeeds through SVC and the zero-incarnation key is rejected |
-| `just test` | Passed complete configured workflow |
-| `just clippy` | Passed full embedded matrix and host harness |
-| `just fmt-check` | Passed workspace formatting |
-
-Coverage limits: only the boot Domain pool is carved; KeyTable pooling (kernel-private KeyTable backing via unused-watermark allocation) and the full Untyped-backed pool/metadata ownership semantics (retirement, reuse validation, zero-sized policy) remain Phase 5. The boot Untyped is a single fixed-size region; the exact predefined-Domain list, capacities, and incarnation-bearing handoff records are not written. `KERNEL_LOCK` is a separate static lock rather than a field of the carved Nucleus; the locking model is not revisited for SMP. Next prerequisite is pooled KeyTables with cross-table resolution, then the Phase 5 memory vertical slice.
+> Detailed historical record: [capabilities-completed.md#inert-nucleus-bootstrap-handoff-slice-validation-2026-09-12](capabilities-completed.md#inert-nucleus-bootstrap-handoff-slice-validation-2026-09-12)
 
 ### Pooled KeyTables and cross-table resolution slice validation (2026-09-12)
 
-Implemented the D3/D4 pooled-KeyTable foundation and cross-table management resolution. `NucleusPools` now owns a `keytables: ObjectPool<KeyTable>`; `Domain` references its capability table by `ObjectId` (`keytable_id`) instead of embedding it inline; Kickstart carves a boot KeyTable pool and installs the boot Domain's table there. The `api::key_table` handler now resolves the invoked source and destination table capabilities through the guarded `Access` context from the caller's own table, enabling `CopyDerive`/`Move`/`Delete` against distinct pooled tables. Same-object operands use a single mutable guard; distinct objects use the alias-rejecting `resolve_pair_mut` (CopyDerive) or a two-phase remove-then-install with source rollback (Move). Syscall entry (`handle_cap_invoke`) constructs the `Access` context and resolves the caller's table from the pool for dispatch, DebugConsole, and KeyTable paths.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-key-table` | Passed 12 QEMU cases: the prior same-table CopyDerive/Move/Delete/Revoke matrix plus cross-table CopyDerive, cross-table Move, and cross-table Move rollback on an occupied destination |
-| `just test-debug-console` | Passed the existing debug console/dispatch harness against the pooled caller table |
-| `just test-object-host` | Passed 42 feature-off / 43 feature-on ABI/client tests (unchanged) |
-| `just test-device` | Passed existing QEMU device integration and doctest workflow |
-| `just test-capability-boot` | Passed actual boot: Kickstart carves the KeyTable pool, installs the boot Domain's table, and the console write succeeds through SVC |
-| `just build rpi3 qemu` and `just build rpi3 qemu,debug_kernel` | Passed both configurations |
-| `just clippy` | Passed full embedded matrix and host harness |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed complete configured workflow |
-
-Coverage limits: retired-object Delete cleanup still awaits the retirement transition (no retirement path sets `Retired` yet). The boot KeyTable pool is carved at boot, not created by runtime Retype; kernel-private KeyTable backing via unused-watermark allocation and the full Untyped-backed pool/metadata ownership semantics remain Phase 5. The caller's own table is resolved through the pool on every invocation; no per-table caching or cross-pool alias set is added. `KERNEL_LOCK` remains a separate static lock; SMP is not revisited. Next prerequisite is the Phase 5 memory vertical slice.
+> Detailed historical record: [capabilities-completed.md#pooled-keytables-and-cross-table-resolution-slice-validation-2026-09-12](capabilities-completed.md#pooled-keytables-and-cross-table-resolution-slice-validation-2026-09-12)
 
 ### Guarded key-space package slice validation (2026-09-23)
 
-Implemented the selected guarded key-space package end-to-end. `KeyTable` is now a carved, variable-size object: a 32-byte header (owner, count, capacity exponent — authoritative for internal bounds) followed by `2^size_bits` `KeyEntry` slots and incarnation counters in the same carve (`KeyTable::carve_size`, `KeyTable::initialize` writing/zeroing the whole region); `size_bits` at Retype selects the capacity (1..=20, `InvalidSize` otherwise). The `KeyTablePayload` records `{address, guard, size_bits}` (kernel-visible only, copied verbatim by derivation), and the Retype `x3` word packs the userspace-chosen guard into bits 39:8 above the `size_bits` byte (bits 63:40 reserved zero; every other kind requires bits 63:8 zero; the guard must fit `32 − size_bits` bits). Key validation checks the guard after zero-incarnation and before indexing (`InvalidKey` reason `GuardMismatch = 4`): a matching guard implies an in-bounds index, so keys minted for one table never resolve in another even on equal slot and incarnation. `insert` mints keys carrying the installing table's guard; destination slot arguments stay bare indices. The syscall entry resolves a `CallerTable {addr, guard}` context once per invocation from the `SELF_KEYTABLE` capability (validated to name the caller's recorded table; a missing/mismatched self-capability rejects before any key validation — provisionally `InconsistentKey`/`CapabilityInvalidated`, exact status D9), threaded through every handler. A Retype batch is bounded to 256 objects (`InvalidOperation` otherwise; the transaction's defensive rollback records are stack arrays sized by the bound). Kickstart picks the boot table's guard (`0xC0F_FEE`, 256 entries) and the boot test's runtime-carved tables use a distinct guard; the Bounce fixture table gained its `SELF_KEYTABLE` capability (its EventCount moved from slot 3 to slot 4), and all hand-constructed boot keys are guard-aware (`RawKey::from_parts`). The shared ABI gained `InvalidKeyReason::GuardMismatch = 4`, `RawKey::from_parts(guard, size_bits, index, incarnation)`, and the `UntypedKey::retype` guard parameter.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed 92 feature-off and 93 debug-enabled ABI/client tests, including the new `GuardMismatch` reason pin, `from_parts` guard-packing round trips, and the Retype guard-into-`x3` encoding test |
-| `just test-untyped` | Passed 87 QEMU cases: the prior suites against guard-aware fixtures plus the new KeyTable-schema rejections (capacity-exponent bounds, guard-fit, reserved `x3` bits, non-KeyTable guard words, batch bound) and the object-model tests for the variable-size table (layout/carve-size, guard mismatch, per-table index bounds, self-capability read) |
-| `just test-key-table` | Passed 70 QEMU cases: the management matrix against distinct-guard fixtures, cross-table keys rejected with `GuardMismatch` in both directions, management selectors validating the guard, and the same-table/cross-table Move rollback paths on bare indices |
-| `just test-debug-console` | Passed 65 QEMU cases: literal-wire `GuardMismatch` precedence pins (zero-incarnation wins over a wrong guard; a wrong guard wins over never-issued), the self-capability-anchored invocation path, and the standalone guarded-table lookup test |
-| `just test-capability-boot` | Passed actual boot: KeyTable Retypes with packed guards through the real SVC path (the carved table's capability records `{guard, size_bits}`; the returned key carries the destination guard), the oversized-batch and oversized-carve rejections, cross-table CopyDerive with destination-guard keys, the Bounce fixture running under its own self-anchored guarded table, and the full mapping/teardown suites against guard-aware lookups |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: the boot table keeps 256 entries (the well-known slots and test destinations need no more); guard values are fixture-chosen, so no entropy question arises (per the userspace-supplied selection); the exact status for a missing/mismatched self-table capability remains D9; the maintainer's later review of the selected configuration (bare destination indices, guard-in-capability-only storage) is recorded as an open item. Next prerequisite is unchanged: the mapping-local Unmap versus origin-capability Revoke specification, or Phase 6's Invocation (thread-migration IPC) semantics definition.
+> Detailed historical record: [capabilities-completed.md#guarded-key-space-package-slice-validation-2026-09-23](capabilities-completed.md#guarded-key-space-package-slice-validation-2026-09-23)
 
 ## Phase 5 — Memory and safe reclamation vertical slice
 
@@ -453,135 +260,35 @@ Reference: [memory contracts](nucleus_capabilities.md#resource-storage-and-memor
 
 ### Untyped Retype and carved KeyTables slice validation (2026-09-14)
 
-Implemented the selected `Untyped.Retype` wire schema and the retype core. `nucleus::api::untyped` runs the transaction validate → reserve (extent representability, absolute carve-address alignment — base + watermark, not the watermark alone — and watermark-encoding-bounded fit) → destination-slot pre-validation (`KeyTable::check_insert` returns the same errors `insert` would: range, vacancy, incarnation capacity) → kernel-private object initialization and capability installation → watermark advance last, with defensive rollback of installed capabilities. Authority is `WRITE` on the invoked Untyped plus `INSTALL` on the destination table; the kind allowlist is `KeyTable` with `size_bits` zero, and every other kind is rejected. A device Untyped is rejected as a source for every creatable kind (per-kind device capability remains D6). KeyTables are no longer pooled: a `KeyTable` capability carries the carved object's kernel address in a per-kind `KeyTablePayload` (`KeyEntry::new_keytable`/`keytable_address`, `is_carved`), `Domain` references its table by address, and `Access::resolve_carved{,_mut,_pair_mut}` guard carved objects with same-address alias rejection; `KeyTable::advance_untyped_watermark` is the targeted commit mutation. Kickstart carves and initializes the boot table kernel-privately (`build_initial_nucleus`) and installs the self-table capability at `CAPTBL_SELF`. The userspace `UntypedKey::retype` wrapper encodes the schema through `protected_call6` and preserves kernel errors.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed 51 feature-off/on ABI/client tests, including the new Untyped operation-decoder and retype client wrapper tests |
-| `just test-key-table` | Passed 27 QEMU cases: the management matrix against carved tables plus the storage/pool model tests |
-| `just test-untyped` | Passed 22 QEMU cases: the included storage-model suite plus device-source rejection without state changes, rejection precedence over capacity validation and destination resolution, the RAM contrast reaching capacity validation, and unrepresentable size/extent plus watermark-encoding-bound rejections |
-| `just test-debug-console` | Passed the console/dispatch harness against the carved caller table |
-| `just test-capability-boot` | Passed actual boot: Retype through the real SVC path, cross-table CopyDerive into the new table, the three failure cases (invalid kind, occupied slot, insufficient memory), a second Retype plus post-carve derivation verifying consecutive-carve non-overlap, and a misaligned-base region carving an aligned, working table |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (includes the paired image builds) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: per-kind device capability and device allocation policy remain open — all creatable kinds are rejected from device sources (D6). Sanitization before cross-boundary exposure, frames, mapping, ASID, revocation/reclamation, and retirement transitions remain later Phase 5 work; only the `KeyTable` kind is creatable. The defensive mid-run insert-failure rollback is pre-validated away rather than separately exercised. The exact predefined-Domain list, capacities, and incarnation-bearing handoff records remain Phase 4 items. Next prerequisite is the frame/page-table backing and mapping vertical slice.
+> Detailed historical record: [capabilities-completed.md#untyped-retype-and-carved-keytables-slice-validation-2026-09-14](capabilities-completed.md#untyped-retype-and-carved-keytables-slice-validation-2026-09-14)
 
 ### Frame Retype and carve sanitization slice validation (2026-09-15)
 
-Extended the Retype allowlist with the `Frame` architecture kind (approved 2026-09-15). `nucleus::api::untyped` is now arch-typed (`invoke<A>`): `Frame`'s `size_bits` is validated by the target (`AArch64::validate_frame_size`: 12/21/30, `InvalidFrameSize` otherwise) before any source resolution; a frame is its own alignment (the absolute carve address is frame-aligned); the capability is inline (`KeyEntry::new_frame`) carrying the requested rights; the carve itself has no kernel object — instead the kernel sanitizes the frame by zeroing the carved contents before installing the capability and advancing the watermark (maintainer decision 2026-09-15). The transaction structure is unchanged: validate → reserve → destination pre-validation → initialize/install → watermark-last, with the defensive install rollback. Device Untypeds are rejected as frame sources like for every creatable kind. The embedded untyped test binary gained the frame rejection paths (nongranular sizes including 0, size rejection preceding source resolution, device frames, and the RAM contrast reaching capacity validation); the boot test carves 4 KiB and 2 MiB frames through the real SVC path, verifying the aligned carve addresses, full zeroing, exact watermark continuation (no gap/overlap), and the `InvalidFrameSize(13)` rejection.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-untyped` | Passed 26 QEMU cases: the prior 22 plus the four frame rejection paths |
-| `just test-capability-boot` | Passed actual boot: 4 KiB and 2 MiB frame carves through the real SVC path with sanitization, alignment, non-overlap, and `InvalidFrameSize(13)` assertions |
-| `just test-object-host` | Passed 52 feature-off and 53 debug-enabled ABI/client tests, including the new frame-kind encoding and `InvalidFrameSize` decode tests |
-| `just test-key-table` / `just test-debug-console` | Passed 27 + 24 QEMU regression cases against the arch-typed dispatch |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: per-kind device capability and device allocation policy remain open (all creatable kinds still reject device sources). Sanitization beyond Retype-carved Frames — intentional content-preserving sharing, device memory, other exposure paths — remains D6. Frame mapping, ASID, revocation/reclamation, and retirement transitions remain later Phase 5 work; the 1 GiB granule (size_bits 30) is validated by the arch layer and rejection tests but not exercised as a successful boot carve. Next prerequisite remains the mapping vertical slice: Buffer's kernel-versus-userspace role, mapping-context identity, and ASID capability versus VSpace-binding ownership (D6), then frame/page-table mapping with real PTE installation.
+> Detailed historical record: [capabilities-completed.md#frame-retype-and-carve-sanitization-slice-validation-2026-09-15](capabilities-completed.md#frame-retype-and-carve-sanitization-slice-validation-2026-09-15)
 
 ### PageTable Retype and the mapping vertical slice validation (2026-09-15)
 
-Implemented the selected mapping foundation (maintainer decisions 2026-09-15: explicit seL4-style table management, bootstrap-only explicit target `Domain` argument in `Frame.Map`, ASIDs deferred, boot root carved through the public Retype path). `PageTable` joined the Retype allowlist: a fixed architecture-validated 4 KiB carve (`InvalidSize` otherwise), sanitized (zeroed) like frames — stale descriptors would leak prior contents into hardware walks — with the capability as a checked pool identity over kernel metadata (`AArch64PageTable`: carve address, walk level, installation record `PtParent`). The metadata pool's backing is carved at bootstrap (`PoolCapacities.page_tables`, 16 slots) and its exhaustion is part of the Retype transaction: a batch that cannot fit releases its partially allocated slots before any carve write. `PageTable.Map` (op 0) installs a table into a parent named by capability type — a `Domain` capability with `MAP` installs the translation root (vaddr must be zero, root slot vacant), a `PageTable` capability installs one intermediate level (parent installed and below the leaf level, selected slot vacant, same-object alias rejected); `PageTable.Unmap` (op 1) requires an empty table and clears the parent reference (root unmap clears the Domain's `translation_root`). `Frame.Map` (op 0) resolves the target Domain capability, walks the installed tables, and writes the real page/block descriptor (4 KiB page at level 3, 2 MiB/1 GiB blocks at levels 2/1) with the permission ceiling (requested ⊆ frame rights, `READ` required, no execute — PXN|UXN, attrs zero = normal WB only) and vaddr validation (48-bit width, frame-aligned); `Frame.Unmap` (op 1) clears the descriptor through the frame's recorded mapping identity. A missing intermediate fails with the new `MissingIntermediate` status 29 (detail: faulting vaddr). The frame payload was restructured from the compressed `vaddr>>12` state to a dedicated `FramePayload` (paddr, full vaddr, owning Domain index+generation, size, flags) — 24 bytes inside the unchanged 32-byte slot. `Frame` joined the CopyDerive/Move/Delete allowlist with derived caps starting unmapped. The arch dispatch arms for `Frame` and `PageTable` are active; VSpace/ASID/I/O/IRQ handlers remain excluded sketches. Carved tables are not yet active in any hardware translation context, so unmap performs no TLB invalidation yet — this must become a real invalidation when Domain activation installs these tables into a TTBR. Userspace gained `FrameKey` (`map`/`unmap`/`get_extent`) and `PageTableKey` (`map`/`unmap`) wrappers preserving kernel errors.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed 61 feature-off and 62 debug-enabled ABI/client tests, including the new Frame/PageTable operation-decoder, `MissingIntermediate` round-trip, and wrapper wire-encoding tests |
-| `just test-untyped` | Passed 29 QEMU cases: the prior 26 plus PageTable size rejection, device-source rejection for PageTable carves, and pool-exhaustion rollback releasing partially allocated metadata slots |
-| `just test-capability-boot` | Passed actual boot: four PageTable carves through the real SVC path with sanitization, root installation into the boot Domain (via the new `SELF_DOMAIN` grant), the L1→L2→L3 chain, 4 KiB and 2 MiB frame mappings with hand-verified descriptor contents (valid/page-vs-block bits, AF, user RW/RO AP, PXN|UXN), double-map/missing-intermediate/misaligned/attrs rejections, derived-frame-unmapped, unmap clearing PTEs and records, empty-table-gated teardown of the whole chain, and pool-exhaustion rollback with a successful refill |
-| `just test-key-table` | Passed 27 QEMU cases: the management matrix plus the Frame-derivation behavior in the allowlist test (Untyped still rejected, mapped frame derives unmapped, original keeps its mapping) |
-| `just test-debug-console` | Passed the console/dispatch harness against the updated nucleus fixture |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: the no-two-VAs-per-Domain physical-overlap alias policy, fbuf setup, per-target MMU/IOMMU restrictions, origin-only remap semantics (Frame operation ID 3 is unassigned), ASID allocation/binding and TLB invalidation, revocation/reclamation, and retirement transitions remain later Phase 5 work. The explicit target-Domain argument in `Frame.Map` is bootstrap-era mechanism until syscall caller identity exists. The 1 GiB granule is validated and rejected in tests but not exercised as a successful boot carve. Next prerequisite is the alias policy (physical-overlap enforcement within one Domain) or the ASID/Domain-activation slice that makes these tables hardware-live.
+> Detailed historical record: [capabilities-completed.md#pagetable-retype-and-the-mapping-vertical-slice-validation-2026-09-15](capabilities-completed.md#pagetable-retype-and-the-mapping-vertical-slice-validation-2026-09-15)
 
 ### Alias-policy enforcement slice validation (2026-09-15)
 
-Implemented the selected alias policy — no two virtual addresses for overlapping physical backing within one Domain — ahead of the hardware transition. The arch layer gained `find_physical_overlap` (an `ArchObjects` associated function; the `AArch64` implementation walks every installed table from the target Domain's translation root, follows table descriptors recursively, and interval-checks each live block/page descriptor's physical extent against the candidate frame extent), and the `Frame.Map` handler rejects an overlapping candidate with the new `PhysicalAlias` status 30 (detail 1: the conflicting live mapping's physical base) before any descriptor write, so a rejection leaves every table and record unchanged. The check is physical, not capability-based — a derived capability naming an already-mapped frame is rejected at a second virtual address in the same Domain — and interval-based, so mixed frame sizes are covered by construction. It walks only the target Domain's root: cross-Domain aliases remain distinct PTEs and writable sharing is unaffected. The shared ABI gained `CapError::PhysicalAlias` (status 30; nonzero second detail words remain a lossless `UnknownResponse` fallback) and the userspace `FrameKey::map` wrapper preserves the kernel error.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed 63 feature-off and 64 debug-enabled ABI/client tests, including the new `PhysicalAlias` status pin (status 30, detail losslessness) and the frame wrapper error-preservation test |
-| `just test-capability-boot` | Passed actual boot: the derived frame capability's second-vaddr map rejected through the real SVC path with `PhysicalAlias` naming the original frame's physical base; after unmapping the original, the derived cap mapped successfully at the second address (hand-verified PTE) and unmapped cleanly, proving the policy tracks live physical mappings rather than capability identity; the disjoint 2 MiB mapping coexists throughout |
-| `just test-key-table` / `just test-untyped` / `just test-debug-console` | Passed 27 + 29 + 24 QEMU regression cases against the updated dispatch |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: only the boot Domain exists today (Domains are not Retype-creatable yet), so the cross-Domain alias success case is structurally guaranteed by the per-target-root walk but not exercised in boot; mixed-frame-size physical overlap is covered by the interval check by construction but not exercised, since Retype carves disjoint extents; overlap through device frames is unreachable because device sources reject Retype. Next prerequisite is the ASID/Domain-activation slice that installs these tables into a TTBR (making unmap's TLB invalidation real), or the mapping-local Unmap versus origin-capability Revoke specification.
+> Detailed historical record: [capabilities-completed.md#alias-policy-enforcement-slice-validation-2026-09-15](capabilities-completed.md#alias-policy-enforcement-slice-validation-2026-09-15)
 
 ### ASID allocation/binding and unmap TLB invalidation slice validation (2026-09-15)
 
-Implemented the selected ASID model (maintainer decisions 2026-09-15: boot-provided pool, invalidation executed now rather than gated on activation — with the maintainer's remark that gating may be more efficient long-term once Domain activation exists). `AArch64ASIDPool` is real kernel state — a 512-slot allocation bitmap with ASID 0 reserved for the kernel's own boot translation context — allocated in a new boot-carved `asid_pools` pool (`PoolCapacities.asid_pools`, one slot). Kickstart provisions the boot pool kernel-privately and installs its capability at the new well-known `KeySlot::BOOT_ASID_POOL` (13; slots 5–12 are the boot test's Retype destinations). `ASIDPool.Assign` (op 0; `x2` target Domain key, `x3..x7` zero) is the active dispatch arm for `ArchType::ASIDPool`: `GRANT` on the pool capability plus `MAP` on the Domain capability, target root required (`NotMapped`), one ASID per Domain (`AlreadyMapped`), allocation last so every rejection is failure-atomic, success returning the ASID in `x1`. The `Domain` object records the bound ASID alongside its translation root. `Frame.Unmap` now issues the by-address invalidation (`tlbi vae1is` with the ASID in bits 63:48, then `dsb sy`/`isb`) through the new `ArchObjects::invalidate_tlb_by_vaddr`, and root `PageTable.Unmap` issues the whole-ASID invalidation (`tlbi aside1is`) through `invalidate_tlb_asid`; a Domain without a bound ASID has no hardware context, so no invalidation is issued. The superseded `invoke_asid_pool`/`invoke_asid` trait shims were removed (dispatch goes through the API handler like Frame/PageTable); the excluded VSpace sketch and the reserved `ASID` kind are untouched. Userspace gained `ASIDPoolKey`/`ASIDPoolOp` with the `assign` wrapper preserving kernel errors and rejecting out-of-range success words.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed 67 feature-off and 68 debug-enabled ABI/client tests, including the new ASIDPool operation-decoder, assign wire-encoding/success-decode, out-of-range rejection, and error-preservation tests |
-| `just test-capability-boot` | Passed actual boot: `ASIDPool.Assign` through the real SVC path — pre-root `NotMapped`, non-Domain target `TypeMismatch`, successful bind of ASID 1 recorded on the boot Domain, double-assign `AlreadyMapped` — plus the existing unmap teardown now executing the real `tlbi vae1is`/`tlbi aside1is` sequences on the live kernel context without faulting |
-| `just test-untyped` / `just test-key-table` / `just test-debug-console` | Passed 29 + 27 + 24 QEMU regression cases against the updated dispatch and fixtures |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: ASID release on Domain teardown, hardware-safe ASID reuse, and multi-pool partitioning of the 16-bit ASID space remain open (D6) — there is no release operation, so exhaustion of the 512-ASID boot pool is unreachable in tests. The invalidation is correct-by-construction but the tables are still not installed in any TTBR (Domain activation is future work), so no test observes a stale translation actually being withdrawn; the maintainer's long-term option of gating invalidation on live installation remains recorded. Rights denial on `Assign` is checked in the kernel but not exercised in boot, because `ASIDPool` is not on the CopyDerive allowlist (per-kind policy) so no attenuated pool capability can be built there; the host wrapper test covers the error decoding. Next prerequisite is the Domain-activation slice that installs a bound root into a TTBR (making the invalidation observable and starting Phase 7's legal-transition work), or the mapping-local Unmap versus origin-capability Revoke specification.
+> Detailed historical record: [capabilities-completed.md#asid-allocation-binding-and-unmap-tlb-invalidation-slice-validation-2026-09-15](capabilities-completed.md#asid-allocation-binding-and-unmap-tlb-invalidation-slice-validation-2026-09-15)
 
 ### Domain activation, execute right, and observable TLB invalidation slice validation (2026-09-15)
 
-Implemented `Domain.Activate` (op 0, no arguments) as the translation-context installation step of activation (maintainer decision 2026-09-15), and — unblocked by the same decision — the frame `EXECUTE` right. `nucleus::api::domain` decodes op 0 only (Grant/Suspend/Resume return `InvalidOperation`), resolves the invoked Domain capability through the caller's table with `MAP` authority, requires a translation root and a bound ASID (`NotMapped` otherwise), restricts activation to the current Domain until scheduling exists (`InvalidOperation` otherwise), and commits through the new `ArchObjects::install_translation_context` — `TTBR0_EL1 ← root | asid << 63:48` with `dsb ish`/`isb` — idempotently. The `EXECUTE` right (bit 0x10, in `Rights::all()`) is requested through `Frame.Map`'s rights mask within the capability ceiling: with `WRITE` the arch layer installs kernel-privilege RW+X (AP=00 — EL1 cannot execute EL0-writable pages, the user-writable execute-never rule confirmed against QEMU's walk), without `WRITE` read-only executable at EL0 and EL1; without `EXECUTE` every mapping stays UXN|PXN. The bootstrap caller maps its own low-half image and stack (two fabricated 2 MiB frame fixtures, identity, RW+X) into the boot Domain's context before activating, so execution continues under the live tables — a real Domain's address space contains its own image and stack by construction. Two transport/entry bugs found and fixed en route: `protected_call0` now transmits zeros in all six argument registers (an unspecified register arrived as a defined-but-arbitrary argument, not "no argument" — with this fix the strict wire-argument convention selected the same day holds: unused words are zero on the wire and kernel-rejected otherwise, chosen over kernel-side ignoring as easier to validate and formalise), and the syscall entry distinguishes SVC from other synchronous exception classes (`ESR_EL1.EC` check) — previously a data/instruction abort was decoded as an invocation and re-executed forever with the "result" in x0..x2. Userspace gained `DomainKey::from_key` (public construction for the mutation path; the observation methods still require an established DCB mapping, D5) and the existing `activate` wrapper is now dispatched.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-capability-boot` | Passed actual boot: `Domain.Activate` through the real SVC path — pre-root and pre-ASID `NotMapped` rejections, then successful activation; the caller kept executing through the Domain's tables (kernel-privilege RW+X low-half blocks, hand-verified AP=00 and UXN|PXN clear); the live-context read returned the mapped frame's marker; `Frame.Unmap` withdrew the cached translation (the same-VA remap of different physical backing served the new contents, proving the invalidation); the boot identity context restored, the low-half blocks unmapped, and the existing teardown/pool-accounting assertions all passed |
-| `just test-object-host` | Passed 68 feature-off and 69 debug-enabled ABI/client tests, including the new `DomainKey::from_key` construction test and the updated `grant_to` prototype-rights pin (0x1F with `EXECUTE`) |
-| `just test-untyped` / `just test-key-table` / `just test-debug-console` | Passed 29 + 27 + 24 QEMU regression cases against the updated dispatch, rights, and arch layers |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: rights denial on `Activate` is checked in the kernel but not exercised in boot (the boot Domain cap carries `Rights::all()` and Domain is not on the CopyDerive allowlist); the non-current-Domain rejection is checked but unreachable in boot (only the boot Domain exists); ASID release/reuse, deactivation, and legal-transition enforcement remain open (D6/Phase 7); the `EXECUTE` right's user/privileged split is interim until EL0 entry exists. Next prerequisite is the mapping-local Unmap versus origin-capability Revoke specification, or Phase 7's full Activate/Suspend/Resume with execution contexts and budget.
+> Detailed historical record: [capabilities-completed.md#domain-activation-execute-right-and-observable-tlb-invalidation-slice-validation-2026-09-15](capabilities-completed.md#domain-activation-execute-right-and-observable-tlb-invalidation-slice-validation-2026-09-15)
 
 ### Untyped split slice validation (2026-09-23)
 
-Implemented the maintainer-selected Untyped→Untyped Retype (decisions 2026-09-23: device Untypeds may be split — the one device-source carve, `is_device` propagating, no bytes touched; a child smaller than the watermark encoding granularity is rejected with its own `size_bits` as `InvalidSize`). `nucleus::api::untyped` gained a `Carve::Untyped` arm: the child region is `2^size_bits` bytes (representability via checked shift), a region is its own alignment like a frame, the child watermark starts at zero, and the split initializes/sanitizes nothing — pure bookkeeping, since the bytes become observable only through later carves (a `Frame`/`PageTable` carve zeroes, a `KeyTable` carve writes the object). The capability is the inline `RegionPayload` via `KeyEntry::new_untyped` with the requested rights. The device-source rejection now exempts only `ObjectType::UNTYPED`; every other kind still rejects device sources before any reservation. The wrapper already carried the kind on the wire (`UntypedKey::retype` takes `ObjectType`), so no ABI change: its allowlist documentation was updated and a host encoding test added.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-object-host` | Passed 90 feature-off and 91 debug-enabled ABI/client tests, including the new Untyped-split kind/size encoding test |
-| `just test-untyped` | Passed 80 QEMU cases: the prior 73 plus seven split tests — success with child payload/watermark/parent-continuation assertions, batch non-gap/non-overlap, child-as-source (Notification carve and re-split), sub-granular and unrepresentable `size_bits` rejections, exact-fit/exhausted-source failure atomicity, occupied-destination pre-validation, and device-split flag propagation with the device child still rejecting a KeyTable carve |
-| `just test-capability-boot` | Passed actual boot: a two-child split through the real SVC path (hand-verified consecutive 4 KiB ranges at the aligned watermark continuation, zero child watermarks, parent advanced by exactly the two regions), a 4 KiB Frame carved from the second child landing at its base, and sub-granular/oversized rejections from the first child leaving it unchanged |
-| `just test-key-table` / `just test-debug-console` | Passed 65 + 62 QEMU regression cases against the updated dispatch |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: the boot test exercises RAM splits only — device splits are covered by the embedded harness (no device Untyped is granted at boot); the split does not track a parent/child derivation relation (no kernel derivation tree; D2/D6 reclamation depends on it), and CopyDerive of an Untyped remains rejected, so a child cannot be duplicated — only split. Reclamation/reset of a split region remains the accepted-leak model. Next prerequisite is unchanged: the mapping-local Unmap versus origin-capability Revoke specification, or Phase 6's Invocation (thread-migration IPC) semantics definition.
+> Detailed historical record: [capabilities-completed.md#untyped-split-slice-validation-2026-09-23](capabilities-completed.md#untyped-split-slice-validation-2026-09-23)
 
 ### Variable-capacity carved ObjectPools slice validation (2026-09-26)
 
-Implemented the maintainer-selected pool representation (decision 2026-09-26: pools are created kernel-privately by carving from an Untyped — the same internal unused-watermark allocation Retype performs, not a public capability invocation — with the maximum capacity specified at creation; bootstrap-only, runtime pool creation remains future work). `ObjectPool<T>` is now a variable-size carved object in the `tnu` KeyTable pattern: the carve holds the per-slot `SlotMeta` array followed by the object array — `capacity` slots of each, sized solely by the creation capacity — and the pool descriptor in the carved `Nucleus` points into it. `ObjectPool::carve(untyped, capacity)` reserves through the new shared `RegionPayload::reserve(align, total)` primitive (extent representability, absolute carve-address alignment with base-misalignment folding, watermark-encoding-bounded fit, pure calculation with the caller committing by advancing the watermark) and initializes the metadata kernel-privately (zeroed: every slot `Free`, generation 0); `ObjectPool::initialize(carve, capacity)` is the pointer-level constructor for fixtures. The fixed `MAX_POOL_SLOTS = 256` inline metadata bound is removed — capacity is bounded by the `u16` slot index (`MAX_CAPACITY = 65535`), the watermark encoding, and carve fit, rejected with `InvalidSize`/`InsufficientMemory` on failure with the Untyped unchanged. The runtime `Untyped.Retype` reserve phase and Kickstart's `carve_region` now delegate to the same primitive (error semantics preserved); `carve_pool` is removed and `build_initial_nucleus` carves all six pools through `ObjectPool::carve` with the `PoolCapacities` capacities. The scheduler queue keeps its own explicit kernel-internal bound (`Scheduler::CAPACITY = 256`), validated against the thread-pool capacity at bootstrap (a wake must never be dropped for lack of queue); `Nucleus::cancel_thread_pending` now scans each pool's carved `capacity()` instead of the removed fixed bound. The three nucleus fixtures (objects tests, debug-console, untyped) migrated to `initialize` with 16-byte-aligned carve-sized backings and fit assertions.
-
-| Recipe | Observed result |
-|---|---|
-| `just test-debug-console` | Passed the console/dispatch harness plus the migrated pool model tests and the new carve/reserve/layout/zero-capacity tests (carve-size alignment and meta-precedes-objects layout, initialize zeroing, capacity-bound and insufficient-memory rejections leaving the Untyped unchanged, base-misalignment folding, unrepresentable-extent rejections) |
-| `just test-untyped` | Passed 80 QEMU cases: the full Retype matrix against the shared reserve primitive, including the rejection precedence and failure-atomicity paths |
-| `just test-key-table` | Passed 65 QEMU regression cases against the updated pool layer |
-| `just test-capability-boot` | Passed actual boot: all six pools carved through `ObjectPool::carve` from the boot Untyped at bootstrap, then the full e2e suite — Retype, mapping chain, activation, TLB invalidation, teardown, and the page-table metadata pool exhaustion/refill — through the real SVC path |
-| `just test-object-host` | Passed 93 feature-off and 94 debug-enabled ABI/client tests (no ABI change; regression) |
-| `just clippy` | Passed the full embedded feature matrix and the host harness (paired image builds included) |
-| `just fmt-check` | Passed workspace formatting |
-| `just test` | Passed the complete configured workflow |
-
-Coverage limits: pool creation is bootstrap-only — a runtime pool-creation operation (and multi-pool identity, which `ObjectId`'s per-kind `PoolTag` cannot distinguish today) remains future work; the scheduler queue keeps its fixed 256-entry inline storage, so the thread pool is capped at 256 until the queue grows; `PendingPool` remains a separate fixed-capacity kernel-internal structure (never capability-addressed); retirement transitions, slot-reuse validation, and the zero-sized-type policy remain open. The `carve` success path is exercised end-to-end by boot (all six pools) rather than a unit test, since it needs the kernel direct map. Next prerequisite is unchanged: the mapping-local Unmap versus origin-capability Revoke specification, or Phase 6's Invocation (thread-migration IPC) semantics.
-
-**Deferred scope:** stronger temporal-VA quarantine/stale-pointer detection is far-future work, not an exit prerequisite. Revoked VAs need not remain inaccessible for a surviving Domain's lifetime. This does not defer kernel lifetime safety, capability incarnation checks, mapping withdrawal/TLB synchronization, or safe physical-resource reuse.
-
-**Exit:** the memory slice creates, uses, and retires resources without untracked mappings, overlapping allocations, leaked authority, or unsafe physical reuse; it does not promise stale raw pointers always fault after authorized VA reuse.
+> Detailed historical record: [capabilities-completed.md#variable-capacity-carved-objectpools-slice-validation-2026-09-26](capabilities-completed.md#variable-capacity-carved-objectpools-slice-validation-2026-09-26)
 
 ## Phase 6 — Deferred completion, asynchronous primitives, and IPC
 
@@ -711,146 +418,31 @@ Maintainer selection: `Invocation` is a Protected Procedure Call (PPC). It ident
 
 ### Invocation constructor/stack-contract slice validation (2026-10-05)
 
-Completed only authorized slice 1: `InvalidStack` status 32/reasons 1–12 and lossless full-width decoding; `AddressSpace.CreateInvocation(3)` with function/destination/slot/base/exclusive-end/minimum-headroom in x2..x7; private immutable validated `InvocationStackExtent` stored inline; capability/authority/live-target → nonzero-function → stack → destination admission order; and a separately tested numeric `validate_sp` helper. Construction performs no mapping walk, entry validation or allocation. The supported AArch64 low user interval is `[0, 1 << 48)`; base zero and exclusive end equal to the ceiling are numerically valid.
-
-Measured/asserted layouts: extent 24 B/alignment 8; Invocation payload and union 40 B; `KeyEntry` 64 B/alignment 32; unchanged `ThreadSelector` 12 B/alignment 4 and KeyTable header 32 B. A 256-entry table including counters carves 17,440 B. Bootstrap/Retype backing, strides and counters use type-derived sizing, with layout/carve/canary tests; there is no runtime allocation or forced packing to retain the former entry size.
-
-| Recipe | Observed result and scope |
-|---|---|
-| `just test-object-host` | Passed 113 feature-off / 114 debug-enabled ABI/client tests: literal status/reason IDs, full-width reason rejection, lossless unknown responses, six-register constructor encoding and error propagation |
-| `just test-key-table` | Passed 103 QEMU cases: every extent/SP reason, ordered multiply-invalid diagnostics, equality/sub-page/non-power-of-two/user-ceiling boundaries, per-Invocation minima, subtraction safety, immutable payload retention, unchanged distribution policy and grown carve/stride/counter/canary coverage |
-| `just test-debug-console` | Passed 101 QEMU cases: unchanged unsupported Invocation dispatch preserves the stored extent; existing caller/table/selector rejection and grown-table initialization/layout regressions pass |
-| `just test-untyped` | Passed QEMU Retype/accounting, rollback and existing state/scheduling regressions with the grown entry layout |
-| `just test-capability-boot` | Passed rebuilt Kicktest and QEMU exit: real-SVC reasons 1–9, exact offending values, authority/stale-target/function/extent/destination priority, occupied/never-issued-slot state preservation, full bootstrap table charge, and existing Notification/EventCount/root-ASID/remap/retirement/refill regressions |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed both paired build prerequisites, all nine embedded feature configurations and both host-harness configurations |
-
-The first boot run exposed a fixture's hard-coded 16 KiB Untyped, too small for the grown 17,440 B table; its backing now derives from the carve size plus alignment slack while preserving the misaligned-source rejection test. The first full lint attempt found two missing documentation-markdown backticks in that fixture; corrected, then the full recipe passed. Final host/embedded/boot recipes were rerun serially, because QEMU recipes share a log. Independent read-only code review found no blocking issues in constructor order/commit, union validity, full-width diagnostics, accounting or scope.
-
-No Call/Return execution, invstk storage, PPC wrapper/export adapter, fault path, distribution or statuses 33/34 is enabled. SP reasons 10–12 are numeric-helper evidence, not live Call admission; Call-stage readiness/depth priority, same-Thread Bounce and x9 feasibility remain unvalidated. Saved-source status inheritance and GPR/NZCV contracts are unchanged and still await execution implementation. Full `just test`, physical boards and protected EL0 were not run. Existing macOS debug-map/code-signing messages, manifest warnings and `core` future-incompatibility warnings were nonfatal. No dependencies, toolchain or feature-gate changes.
+> Detailed historical record: [capabilities-completed.md#invocation-constructor-stack-contract-slice-validation-2026-10-05](capabilities-completed.md#invocation-constructor-stack-contract-slice-validation-2026-10-05)
 
 ### Bounded invocation storage and depth-status slice validation (2026-10-05)
 
-Implemented only slice 2: shared `NESTING_DEPTH = 33` with lossless client encoding/decoding and a shared depth-16 constant; an inline `InvocationContinuation` record in each `Thread` containing source AddressSpace identity, source PC/SP, timestamp, raw SPSR, exception origin, and x19–x30; and a no-allocation `InvocationStack` primitive with bounded push, LIFO pop, top, and full-stack rejection preserving the submitted record. Call/Return dispatch, migration, restoration, fault behavior, and status 34 remain disabled.
-
-Layout/accounting assertions pin the continuation at 144 B/alignment 8, the fixed array at 16 records, and type-derived Thread pool carve calculations; previous one-page pool assumptions were removed rather than retained or weakened. Tests cover source-state/register capture, full-depth rejection and state preservation, LIFO behavior, empty pop, pool reuse, and the literal status `(33, 16, 0)` plus malformed detail handling.
-
-| Recipe | Observed result and scope |
-|---|---|
-| `just test-object-host` | Passed 115 ABI/client tests |
-| `just test-key-table` | Passed 105 embedded QEMU/kernel cases, including storage/layout and existing capability regressions |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed the configured embedded matrix and both host-harness feature states; existing non-fatal debug-map/future-incompatibility/dependency warnings remain |
-
-Coverage limits: no Call/Return admission, no context switch, no live depth rejection through syscall dispatch, no source restoration, no fault delivery, and no status 34. Broader `just test` validation was not run for this scoped storage/ABI slice.
+> Detailed historical record: [capabilities-completed.md#bounded-invocation-storage-and-depth-status-slice-validation-2026-10-05](capabilities-completed.md#bounded-invocation-storage-and-depth-status-slice-validation-2026-10-05)
 
 ### Current-relative Thread.Return representation validation (2026-10-05)
 
-Completed only the approved opcode, capability representation and bootstrap migration: `Thread.Return = 0`, Call-only `InvocationOp`, explicit `Named(ObjectId)` / `CurrentReturnOnly`, and `KeySlot::THREAD_RETURN = 1`. Every other slot and kind ID is unchanged. Invocation carries a mandatory nonzero function address; no optional sentinel or compatibility alias remains. The kernel-only return entry has no concrete identity or management rights. Named Return and current-relative management reject with `InvalidOperation`; Retire checks the selector before rights or identity resolution, including test-only all-rights variants. Guard/incarnation/SELF/current-AS lookup remains ordinary and the derivation allowlist is unchanged.
-
-| Recipe | Observed result and scope |
-|---|---|
-| `just test-object-host` | Passed 103 feature-off / 104 debug-enabled ABI/client tests: literal Thread/Invocation opcodes, full-width invalid/high-bit decoding, unchanged slot layout and slot-versus-packed-key distinction |
-| `just test-key-table` | Passed 93 QEMU cases, including eight new representation/constructor/allowlist regressions: named identity round trips, identity-less current selector, selector-preserving transforms, mandatory Invocation target, other-kind rejection, generic dedicated-payload rejection, size/alignment/stride, and unchanged CopyDerive/Move allowlist with failure atomicity |
-| `just test-debug-console` | Passed 99 QEMU cases, including three new production-dispatch regressions: two Threads sharing one sentinel, no Thread/context/pending/FIFO mutation on op 0–4 rejection even with altered rights, ordinary malformed/guard/stale/absent/foreign-AS lookup, and unsupported Invocation dispatch |
-| `just test-untyped` | Passed 102 QEMU allocation, rollback and existing state/scheduling regressions after typed-constructor call-site migration |
-| `just test-capability-boot` | Passed rebuilt Kicktest and QEMU exit: boot Slot(1) contains a Thread `CurrentReturnOnly` with zero rights and no identity/Invocation target; real SVC op 0–4 rejects; nonzero construction and zero-address failure atomicity preserve occupied and never-issued slots; existing Notification/EventCount/root-ASID/retirement/remap/refill regressions pass |
-| `just fmt-check` | Passed workspace formatting |
-| `just clippy` | Passed both paired build prerequisites, all nine embedded feature configurations and both host-harness configurations |
-
-Initial new-test compilation failures (using `Debug`-requiring Result assertions), boot-test transport references and missing documentation backticks/safety-comment placement were corrected before the passing runs. Existing macOS debug-map/code-signing messages, manifest unused-dependency warnings and `core` future-incompatibility warnings were nonfatal. Full `just test`, physical-board execution and protected EL0 tests were not run. This is representation/rejection evidence, not successful PPC: Return still rejects with `InvalidOperation`, Invocation dispatch remains unsupported, and no invstk/pop/migration, PPC wrapper/adapter, fault delivery or distribution was added. Future PPC must replace rejection-only boot assertions with actual nonlocal-completion tests. No new dependencies, toolchain changes, feature gates or runtime allocation.
+> Detailed historical record: [capabilities-completed.md#current-relative-thread-return-representation-validation-2026-10-05](capabilities-completed.md#current-relative-thread-return-representation-validation-2026-10-05)
 
 ### AddressSpace-associated KeyTable prerequisite validation (2026-10-02)
 
-Production changes: immutable binding + mandatory AS constructor association; incarnation-checked caller lookup and SELF capacity validation; removed `Thread.keytable_addr`; table-neutral internal Thread-creation fixture. Bootstrap and Bounce/retirement fixtures provision associations independently of Thread creation. The six new dispatch regressions include multiple Threads created through the same helper sharing one table without reinstalling console grants or consuming slot incarnations. Pool backing remains type-derived and fixture bounds/capacities are reconciled. No ABI IDs/operations, dependency/toolchain changes, or PPC execution path were added.
-
-All run serially from the repository root with 300 s per-command bounds; no timeouts:
-
-| Command | Observed result |
-|---|---|
-| `just test-object-host` | Passed: 96 feature-off / 97 feature-on |
-| `just test-debug-console` | Passed: 77 QEMU tests |
-| `just test-key-table` | Passed: 76 QEMU tests |
-| `just test-untyped` | Passed: 93 QEMU tests |
-| `just test-capability-boot` | Passed: rebuilt Kicktest and in-guest assertions; no aggregate count |
-| `just fmt-check` | Passed |
-| `just clippy` | Passed full nine-configuration embedded matrix, paired build prerequisites, and both host-harness configurations |
-
-Existing macOS debug-map/code-signing messages, manifest unused-dependency warnings, and `core` future-incompatibility warnings were nonfatal. The aggregate model item remains unchecked because the real translation-context migration trial has not run. Next prerequisite: Thread-resident saved-user-context/fully interrupt-kernel entry and actual context installation, before PPC dispatch; extent/SP/argument/result schemas and fault-handler delivery remain explicit architectural blockers for their dependent slices.
+> Detailed historical record: [capabilities-completed.md#addressspace-associated-keytable-prerequisite-validation-2026-10-02](capabilities-completed.md#addressspace-associated-keytable-prerequisite-validation-2026-10-02)
 
 ### AArch64 translation-switch prerequisite validation (2026-10-02)
 
-Production changes: bootstrap TTBR0 page/2 MiB block leaves and runtime TTBR0 page/block leaves set `nG`; invariant TTBR1 flags are unchanged. `TLBI VAE1IS` uses the shifted VA page number plus ASID, with `DSB ISHST` before VA/whole-ASID invalidation and existing completion barriers afterwards. New runtime table/leaf descriptors are published with `DSB ISHST` + `ISB` before further walks/access, including live remaps without reactivation. The descriptor encoder is factored without changing existing permission semantics or design-intent comments. No new ABI, runtime allocation, authority, toolchain, or feature gate.
-
-Three pure architecture regressions run in the existing embedded harnesses: two literal operand tests (VA-page encoding, offsets, ASID separation, high-address bits) and one page/2 MiB/1 GiB descriptor test across all four writable/executable combinations. Boot assertions check non-global bootstrap TTBR0 identity blocks, global TTBR1 vector/direct-map leaves, and non-global runtime page/block leaves. The live remap test uses volatile markers and observations in both directions at `0x1000_0000`, without reactivation or test-side TLBI, checking root/ASID and TTBR1 stability. The debug-only console import is feature-gated; the rewarmed read's safety comment is directly attached to its unsafe expression.
-
-Validation ran serially through the recipes, with 300 s command bounds and no timeouts. The embedded/boot checks, formatting, and full Clippy were repeated after adding descriptor publication ordering:
-
-| Command | Observed result |
-|---|---|
-| `just test-object-host` | Passed: 96 feature-off / 97 feature-on |
-| `just test-debug-console` | Passed: 80 QEMU tests |
-| `just test-key-table` | Passed: 79 QEMU tests |
-| `just test-untyped` | Passed: 96 QEMU tests |
-| `just test-capability-boot` | Passed: rebuilt Kicktest, in-guest assertions and successful semihosting exit |
-| `just fmt-check` | Passed |
-| `just clippy` | Passed full nine-configuration embedded matrix, paired builds, and both host-harness configurations |
-
-Coverage limits: the live bootstrap TTBR0 map contains only 2 MiB blocks, so bootstrap's TTBR0 page branch has no in-guest descriptor observation. The 1 GiB descriptor path has pure encoder coverage, not a live 1 GiB mapping. Hardware may evict warmed translations; the remap result alone cannot prove VA-only rather than broader invalidation, so literal operand tests independently pin the instruction operand. QEMU success is not a hardware ordering proof. Full Bounce root/ASID switching, Thread-resident continuation/shared-stack conversion, protected entry, and hardware ASID-width reconciliation remain unchecked; the fixture entry/image choice is now option A (trusted early EL1); EL0 component-image testing is deferred.
+> Detailed historical record: [capabilities-completed.md#aarch64-translation-switch-prerequisite-validation-2026-10-02](capabilities-completed.md#aarch64-translation-switch-prerequisite-validation-2026-10-02)
 
 ### Thread-resident continuation/shared-stack prerequisite validation (2026-10-03)
 
-Scope: the fully interrupt-kernel wait/entry prerequisite, not Invocation Call/Return or real source/Bounce translation switching. `SavedContext` owns all integer registers, PC, SP, raw SPSR and origin; transient exception frames have compile-time offsets supplied to assembly, bounded vector slots and origin-aware SP restore. `NotStarted` and `Parked` carry owned state. Nucleus selection rewrites the active frame after guards end instead of abandoning Rust stacks. Capability entry rejects kernel-stack origins before dispatch can reserve waits. The bounded fixture runnable queue is retained; this does not implement hierarchical scheduler/Time policy.
-
-Kickstart sets trusted execution SP_EL0 and high shared trap SP_EL1 before EL1t entry. The retained low execution stack is reserved before further boot allocations. The fixture's new 8-byte BSS exposed the boot loop's exact 16-byte endpoint assumption: initial boot runs timed out without guest output; the init linker now aligns BSS end and asserts both boundaries. No longer timeout was used as a substitute for fixing it. The first harness compile also caught three new test `Result::unwrap` calls on non-Debug `CapError`; they now report the error's code. New documentation/field lint failures were corrected before the full Clippy pass.
-
-Measured by Kicktest: `SavedContext` **280 B**, `ExecutionContext` **288 B**, `Thread` **296 B**, two-Thread carve **608 B**, four-Thread carve **1216 B**. Saved/Thread alignment is 8; transient frame size/alignment is 288/16. Production carve accounting already follows the type, and both enlarged fixture backings now do too. Three Thread tests cover initial state, full saved-context survival across transient-frame reuse, and pool-slot isolation/reuse. The depth-16 PPC array remains absent: combined layout/page fit is still an unchecked implementation obligation.
-
-Final checks ran serially through the recipes with 300 s bounds. The device/three nucleus harnesses/boot sequence was repeated after final code and lint fixes; no final timeouts:
-
-| Command | Observed result |
-|---|---|
-| `just test-object-host` | Passed: 96 feature-off / 97 feature-on |
-| `just test-device` | Passed integration tests and doctests, including all 6 exception context/layout tests |
-| `just test-debug-console` | Passed: 83 QEMU tests |
-| `just test-key-table` | Passed: 82 QEMU tests |
-| `just test-untyped` | Passed: 99 QEMU tests |
-| `just test-capability-boot` | Passed in-guest assertions and successful semihosting exit; repeated 0↔1 Thread switches, Notification bitmap success, EventCount success/overflow status 31, rejected/accepted retirement, intact parked contexts, distinct execution SPs and identical idle high trap SP |
-| `just clippy` | Passed full nine-configuration embedded matrix, both build prerequisites and host-harness configurations |
-| `just fmt-check` | Passed |
-
-Existing macOS debug-map/code-signing, manifest unused-dependency and `core` future-incompatibility messages were nonfatal. Saved-context tests exercise all integer fields by copy; the live wait fixture checks successful function resumption, SP/SPSR/origin, retained parked state and trap-stack reuse, not adversarial live values in every GPR. SPx capture/restore has layout/raw-copy coverage; actual nested IRQ handling and lower-EL0 migration have not run. No dependencies, toolchain changes, feature gates or public privileged Thread creation ABI were added.
-
-The source/Bounce provisioning and checked hardware installation prerequisite described here is completed by the next validation slice. It remains a two-Thread regression fixture, not the same-Thread PPC endpoint; the overarching migration item stays unchecked.
+> Detailed historical record: [capabilities-completed.md#thread-resident-continuation-shared-stack-prerequisite-validation-2026-10-03](capabilities-completed.md#thread-resident-continuation-shared-stack-prerequisite-validation-2026-10-03)
 
 ### Checked source/Bounce root-and-ASID switching validation (2026-10-04)
 
-Scope: Phase 6's two-Thread hardware-switch prerequisite. The new production `objects/resume.rs` checks AddressSpace incarnation, translation metadata, FIFO target context, incoming wait identity and target terminal completion before park/select mutation. Failure preserves contexts, pending records, FIFO and current selection; it does not roll back dispatch's already-admitted wait. Commit delivers/releases the target's terminal record, parks the source and selects the target. Entry installs copied prepared root/ASID only after Access/object guards and the kernel lock end, then restores the transient frame and unwinds normally. Activate uses that same preparation/post-guard installation boundary and traces success only after installation; no wire ABI changed. Prepared metadata is not a lifetime pin and is valid only for the immediate single-core, masked, non-reentrant install interval. General scheduler error/fault recovery and incarnation-bearing runnable identity remain open.
-
-Kickstart's `RetainedInitMemory` verifies the linked image and reserved source stack are occupied in `BOOT_INFO` and absent from free extents; content-preserving bootstrap grants never Retype live bytes. Kicktest provisions both complete low roots from charged tables, grants each retained image page once, CopyDerives peer authority, Maps independently and Moves mapped caps into an accounted archive table without losing mapping records. Source's `[0x1000,0x80000)` stack is **127 RW/XN pages**; Bounce retains its accounted **32 KiB** high execution stack. Source activation precedes every wait test and the first handoff. Later live remap tests keep executing ancestors installed; positive intermediate/root teardown uses a disposable AS, retirement releases/rebinds ASID **3**, and pool-refill accounting retains exact failure/commit regressions.
-
-Accounting uses `I` image pages and `N = ceil(image_end / 2 MiB)` image L3s per root (bounded at 8). Low leaf mappings are **`2I+129`**, including the 127 source-stack pages and two distinct probes. Archive occupancy is **`2I+127`**, with next-power-of-two capacity including reserved slot zero. PageTable metadata capacity is **`25+2N`**; **`13+2N`** entries are allocated before refill, leaving twelve. The observed image was **55 pages**, `N=1`: archive **237/256 entries**, **9248 B** carve; PageTable capacity **27**, pre-refill allocation **15**. Thread layouts remain saved **280 B**, context **288 B**, Thread **296 B**, two-slot carve **608 B**, four-slot **1216 B**; the PPC depth-16 array is not implemented or included in these measurements.
-
-Final review found missing `T0SZ`/`EPD0` validation: preparation now requires the backend's L0-rooted four-level 48-bit VA / 4 KiB TTBR0 profile, enabled walks, `A1=0`, no DS/LPA2, roots within configured/hardware PA widths and nonzero representable ASIDs. Existing pure tests use a compatible TCR, all other T0SZ values and EPD0 are rejected, and the serial MMU-off model fixture temporarily supplies/restores the supported TCR without installing its synthetic roots. The first stricter run exposed that fixture's reset TCR (`InvalidOperation`); correcting the fixture, rather than weakening the production check, made the final suites pass. Ten resume/activation model regressions plus three pure metadata tests cover failure atomicity and checked preparation.
-
-Final recipes ran serially from the repository root with 300 s command-group bounds; no timeouts:
-
-| Command | Observed result |
-|---|---|
-| `just test-object-host` | Passed: 96 feature-off / 97 feature-on |
-| `just test-debug-console` | Passed QEMU handler/storage, checked preparation and scheduling regressions |
-| `just test-key-table` | Passed QEMU identity/rights/storage and scheduling regressions |
-| `just test-untyped` | Passed QEMU allocation/rollback and scheduling regressions |
-| `just test-device` | Passed device/integration and doctest workflow, including exception context/layout and both feature-off nucleus harnesses |
-| `just test-capability-boot` | Passed rebuilt Kicktest, in-guest assertions and QEMU exit; source observations 4, Bounce observations 3, real roots/ASIDs 1/2, invariant TTBR1, own-key/foreign-guard checks, distinct warmed-VA backing reads/writes, SP/x19–x30 preservation, wait success/overflow and retirement/remap/refill regressions |
-| `just clippy` | Passed full nine-configuration embedded matrix, paired build prerequisites and both capability host-harness configurations |
-| `just fmt-check` | Passed workspace formatting |
-
-Existing macOS debug-map/code-signing messages, manifest unused-dependency warnings and `core` future-incompatibility warnings were nonfatal. Full `just test` (including chainboot/host tool) and physical-board execution were not run. The same-VA observations do not prove hardware kept warmed entries resident or distinguish scoped invalidation from broader flushing. This is trusted linked-image RW+X EL1 functionality, not hostile EL0 isolation. The 512-entry ASID allocator is not reconciled with the active 8-bit profile; preparation rejects unencodable ASIDs but does not change issuance. No runtime allocation, public privileged Thread creation ABI, dependencies, toolchain changes or feature gates were added.
-
-The approved representation-only Thread.Return opcode/selector/bootstrap migration is implemented and its scoped validation is recorded separately. This does not implement same-Thread PPC. Return-form propagation and Call Invocation distribution stay independently deferred, without arbitrary named-Thread allowlist approval. Next PPC step remains separate: the immediate ABI inventory is resolved; review the separate architectural prerequisites and agree a scoped implementation slice before implementation. Extent wire encoding and descending-stack SP endpoints with minimum headroom are selected; explicit validation diagnostics and target results are selected, and kernel-owned source x19–x30 preservation is selected. Target export-entry linkage is selected as a non-returning wrapper. Integer wrapper declarations are selected. x18 is caller-volatile. FP/SIMD is prohibited/trapped for the current slice. Kernel GPR/NZCV scrubbing is selected. Target-entry SPSR controls inherit saved source status except for cleared NZCV; implementation/validation remain pending. Complete architectural-state isolation, x9 transport feasibility/finalization and kernel-origin fault delivery remain outstanding; broader authority, memory/transfer and lifecycle choices remain separate. The depth-16 inline storage and combined Thread/page-fit verification remain implementation work, not authorization to bypass this decision pass. `Invocation` dispatch and the overarching C3 same-Thread migration item remain unchecked.
-
-**Exit:** blocking does not lose wakeups or invocation state; the migrated invocation's state, capability ownership, and return remain defined on success, failure, cancellation, and teardown; the userspace composition example demonstrates queued rendezvous over the kernel primitives. Optional optimizations are either validated or explicitly deferred.
+> Detailed historical record: [capabilities-completed.md#checked-source-bounce-root-and-asid-switching-validation-2026-10-04](capabilities-completed.md#checked-source-bounce-root-and-asid-switching-validation-2026-10-04)
 
 ## Phase 7 — Time and userspace scheduling
 
