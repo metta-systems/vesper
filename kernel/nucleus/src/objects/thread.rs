@@ -194,8 +194,8 @@ pub struct Thread {
     /// Execution context for stopping and resuming this Thread (blocked
     /// callers park here; never-run threads carry their first-start entry).
     pub context: ExecutionContext,
-    /// Inline bounded PPC continuations: `commit_call` pushes here (Call is not
-    /// dispatched yet); Return does not pop yet.
+    /// Inline bounded PPC continuations: `commit_call` pushes and
+    /// `commit_return` pops here, both through dispatched Call/Return.
     pub invocation_stack: InvocationStack,
 }
 

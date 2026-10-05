@@ -185,10 +185,11 @@ rule).
   `CurrentReturnOnly` Thread selector at `KeySlot::THREAD_RETURN` Slot(1),
   not a named Thread or an AddressSpace/function target. Its ordinary
   current-AS-table lookup and guard/incarnation/presence checks remain mandatory;
-  the AS-shared sentinel acts only on the invoking Thread. The selected
-  `Invocation.Call` contract requires the checks below; they are implemented
-  only as the separately tested numeric `InvocationStackExtent::validate_sp`
-  helper, not actual Call admission. On a future admitted `Invocation.Call`,
+  the AS-shared sentinel acts only on the invoking Thread. AddressSpace
+  provisioning (`KeyTable::bind_address_space`) installs it at Slot(1) before
+  the AddressSpace can be activated. Dispatched `Invocation.Call` admission
+  applies these checks to the saved x9 SP through
+  `InvocationStackExtent::validate_sp`. On `Invocation.Call`,
   require 16-byte-aligned `SP`, `base < SP <= end`, and `SP - base >= M` for
   an agreed positive minimum downward headroom. `SP = end` is allowed, but
   `SP = base` and insufficient headroom are rejected. `M` is the requirement
@@ -234,10 +235,9 @@ rule).
   remains `InvalidPointer`. The extent's private fields and read-only getters
   live in `objects/invocation.rs`; validation proves only numeric bounds and
   headroom, not mappings/writability or private stack ownership. `ThreadSelector` and the kernel-constructed
-  `CurrentReturnOnly` boot sentinel at Slot(1) are implemented.
-  `Thread.Return` currently returns `InvalidOperation`; its PPC
-  dispatch/helper/wrapper and migration remain unimplemented, without fake
-  success. Return-form propagation
+  `CurrentReturnOnly` sentinel, installed at Slot(1) by AddressSpace
+  provisioning, are implemented. Call and `Thread.Return` are dispatched with
+  same-Thread PPC migration, with userspace wrappers and the export adapter. Return-form propagation
   and Call-only Invocation distribution remain independently deferred, without
   broader named-Thread derivation/transfer approval. The active
   `AddressSpaceKey::create_invocation` wrapper appends `stack_base`,

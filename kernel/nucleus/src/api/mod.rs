@@ -1,9 +1,16 @@
 use {
     crate::objects::{
-        ArchObjects, KeyTable, Nucleus, access::Access, arch_objects::AddressSpaceObject,
-        key_table::CallerTable, resume::PreparedTranslationContext,
+        ArchObjects, KeyTable, Nucleus,
+        access::Access,
+        arch_objects::AddressSpaceObject,
+        invocation::{CommittedCall, CommittedReturn, ReturnRejection},
+        key_table::CallerTable,
+        resume::PreparedTranslationContext,
     },
-    libobject::{ArchType, CapError, CoreType, InconsistencyReason, ObjectType, RawKey},
+    libexception::arch::aarch64::SavedContext,
+    libobject::{
+        ArchType, CapError, CoreType, InconsistencyReason, ObjectType, RawKey, thread::ThreadOp,
+    },
     libqemu::semihosting as semi,
 };
 
@@ -41,11 +48,27 @@ pub enum InvokeOutcome {
     /// Checked own-AS activation; install at entry after all guards/lock end,
     /// then trace and return zeros. This is an internal outcome, not wire ABI.
     Activate(PreparedTranslationContext),
+    /// Committed PPC Call: the Thread migrated and its continuation is
+    /// pushed. Entry installs the target translation after all guards/lock
+    /// end, restores the scrubbed target-entry frame, then traces success.
+    Call(CommittedCall),
+    /// Committed `Thread.Return`: the top continuation is popped. Entry
+    /// installs the source translation after all guards/lock end, restores
+    /// the resumed source frame, then traces success.
+    Return(CommittedReturn),
 }
 
 // ═════════════════════════════
 // SYSCALL DISPATCH
 // ═════════════════════════════
+
+/// Every input comes from the caller's saved frame, never live registers:
+/// x0 key, x1 operation, x2..x7 operands; PPC Call also reads x9 (target SP).
+fn decode_invocation(saved: &SavedContext) -> (RawKey, u64, [u64; 6]) {
+    let mut operands = [0; 6];
+    operands.copy_from_slice(&saved.gpr[2..8]);
+    (RawKey::from_wire(saved.gpr[0]), saved.gpr[1], operands)
+}
 
 /// Main capability invocation handler with two-level dispatch.
 ///
@@ -58,10 +81,10 @@ pub enum InvokeOutcome {
 #[inline]
 pub fn handle_cap_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
-    key: RawKey,
-    op: u64,
-    args: &[u64; 6],
+    saved: &SavedContext,
 ) -> Result<InvokeOutcome, CapError> {
+    let (key, op, operands) = decode_invocation(saved);
+    let args = &operands;
     semi::println!(
         "🔄 handle_cap_invoke(key {key:?},op {op},args[{:x},{:x},{:x},{:x},{:x},{:x}])",
         args[0],
@@ -88,7 +111,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
         arch_invoke::<A>(nucleus, &access, caller, key, obj_type, op, args)
     } else {
         // Core dispatch (common path)
-        core_invoke::<A>(nucleus, &access, caller, key, obj_type, op, args)
+        core_invoke::<A>(nucleus, &access, caller, obj_type, saved)
     }
 }
 
@@ -142,11 +165,11 @@ fn core_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
     access: &Access,
     caller: CallerTable,
-    key: RawKey,
     obj_type: ObjectType,
-    op: u64,
-    args: &[u64; 6],
+    saved: &SavedContext,
 ) -> Result<InvokeOutcome, CapError> {
+    let (key, op, operands) = decode_invocation(saved);
+    let args = &operands;
     let core_type = CoreType::try_from(obj_type)?;
 
     semi::println!("🔄 core_invoke {key:?} / {core_type}:{op}");
@@ -166,8 +189,26 @@ fn core_invoke<A: ArchObjects>(
             crate::api::debug_console::invoke(entry, op, args[0], args[1])
                 .map(InvokeOutcome::Complete)
         }
+        // Opcode meaning follows the looked-up kind: op 0 on a Thread entry is
+        // Return (a named Thread is rejected there), never wrong-form Call.
+        CoreType::Thread if op == ThreadOp::Return as u64 => {
+            match crate::api::thread::return_from_call(access, caller, saved, nucleus) {
+                Ok(committed) => Ok(InvokeOutcome::Return(committed)),
+                Err(ReturnRejection::Error(error)) => Err(error),
+                // Maintainer-selected interim policy: kernel-origin fault
+                // delivery (D1/D7) is not designed, so an illegal return or a
+                // retired saved source halts the kernel. Nothing was popped.
+                Err(ReturnRejection::Fault(fault)) => {
+                    panic!("Thread.Return fault (interim halt policy): {fault:?}")
+                }
+            }
+        }
         CoreType::Thread => crate::api::thread::invoke(access, caller, key, op, args, nucleus)
             .map(InvokeOutcome::Complete),
+
+        CoreType::Invocation => {
+            crate::api::invocation::call(access, caller, saved, nucleus).map(InvokeOutcome::Call)
+        }
 
         CoreType::KeyTable => crate::api::key_table::invoke(access, caller, key, op, args)
             .map(InvokeOutcome::Complete),

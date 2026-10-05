@@ -97,15 +97,19 @@ by Thread/AddressSpace retirement under accepted-leak.
 the explicit `CurrentReturnOnly` selector, never `Named(ObjectId)`. The sentinel
 names no function, AddressSpace or concrete Thread, carries no management
 rights, rejects Grant/Suspend/Resume/Retire and `object_id` extraction, and
-permits only the invoking Thread's own current Return. Its AS-shared presence
-is libOS policy. It undergoes the same caller-AS/table/SELF, guard, incarnation,
+permits only the invoking Thread's own current Return. AddressSpace provisioning
+installs it: `KeyTable::bind_address_space`, the only issuer of the binding an
+AddressSpace is created from, adds it to a vacant never-issued Slot(1) (or
+accepts an existing first-incarnation sentinel), so every AddressSpace has it
+before it can be activated and its key is deterministic (table guard and size,
+Slot(1), incarnation `KeySlot::THREAD_RETURN_INCARNATION = 1`). A component may
+still delete its own. It undergoes the same caller-AS/table/SELF, guard, incarnation,
 bounds and entry-presence checks as any ordinary invocation: use the actual
 issued table-local packed key, not slot index 1 alone. `KeyEntry::new_thread_return`
-constructs the rights-empty sentinel, and Kickstart installs it in the boot
-table at Slot(1). Selector accessors and `ThreadOp::Return = 0` are implemented;
-`object_id` extraction on the sentinel returns `InvalidOperation`. Return
-currently returns `InvalidOperation`; PPC dispatch/helper/wrapper and migration
-remain unimplemented.
+constructs the rights-empty sentinel. Selector accessors and
+`ThreadOp::Return = 0` are implemented; `object_id` extraction on the sentinel
+returns `InvalidOperation`. `Thread.Return` is dispatched with same-Thread PPC
+migration.
 
 Other slot conventions are Null `0`, self AddressSpace `2`, parent Thread `3`,
 self KeyTable `4`, boot Untyped `5`, boot ASID pool `14`, and debug console `15`;

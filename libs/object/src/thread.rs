@@ -3,13 +3,13 @@ use {
         CapError, Key, KeySlot, RawKey, decode_syscall_result,
         domain::{DcbView, DomainId, DomainState},
     },
-    core::sync::atomic::Ordering,
+    core::{convert::Infallible, sync::atomic::Ordering},
 };
 
 #[cfg(not(test))]
-use libsyscall::{protected_call0, protected_call2};
+use libsyscall::{ppc_return, protected_call0, protected_call2};
 #[cfg(test)]
-use tests::{protected_call0, protected_call2};
+use tests::{ppc_return, protected_call0, protected_call2};
 
 #[cfg(test)]
 #[path = "../tests/support/thread.rs"]
@@ -25,7 +25,7 @@ pub enum ThreadOp {
     /// Return from the current invocation, popping the invoking Thread's own
     /// continuation record. Valid only on the kernel-installed
     /// `CurrentReturnOnly` entry at `KeySlot::THREAD_RETURN`, never a named
-    /// Thread entry; not yet dispatched by the kernel.
+    /// Thread entry. See [`ThreadReturnKey::return_from_invocation`].
     Return = 0,
     Grant = 1,   // Grant a capability to this thread's table
     Suspend = 2, // Suspend the thread
@@ -169,5 +169,66 @@ impl ThreadKey {
         // SAFETY: Unsafe call.
         let response = unsafe { protected_call0(self.key.to_wire(), ThreadOp::Retire as u64) };
         decode_syscall_result(response).map(|_| ())
+    }
+}
+
+/// Current-relative `Thread.Return` authority: the kernel-installed
+/// `CurrentReturnOnly` entry at `KeySlot::THREAD_RETURN` in the caller's own
+/// table. It names no Thread and carries no management rights.
+///
+/// Non-owning handle; presence of the sentinel is libOS policy.
+pub struct ThreadReturnKey {
+    key: Key<ThreadReturnType>,
+}
+
+enum ThreadReturnType {}
+
+impl ThreadReturnKey {
+    /// Construct a handle from the caller's own table-local packed Slot(1)
+    /// key, without validating it.
+    pub const fn from_key(key: RawKey) -> Self {
+        Self { key: Key::new(key) }
+    }
+
+    pub const fn raw(&self) -> RawKey {
+        self.key.raw()
+    }
+
+    /// `Thread.Return` (op 0): complete the current invocation, delivering
+    /// `(r0, r1)` to the immediate source as `x1`/`x2` with `SUCCESS` in `x0`.
+    ///
+    /// Success never returns locally. `Err` is an ordinary pre-commit
+    /// rejection (lookup, wrong form) with shared diagnostics and no pop; the
+    /// helper never traps or retries. A local `SUCCESS` cannot come from a
+    /// completed Return, so it is reported as `UnexpectedReturn` with the
+    /// local x1/x2 verbatim, never as `Ok`. Underflow and a retired source
+    /// are kernel-side faults, not `Err`.
+    ///
+    /// # Safety
+    /// A successful Return abandons this execution context: no destructor
+    /// or later code on this stack runs, and the target stack becomes free
+    /// for the target component's reuse.
+    pub unsafe fn return_from_invocation(&self, r0: u64, r1: u64) -> Result<Infallible, CapError> {
+        // SAFETY: forwarded caller contract; ppc_return declares every
+        // register a local response may rewrite.
+        let response = unsafe { ppc_return(self.key.to_wire(), r0, r1) };
+        match decode_syscall_result(response) {
+            Ok((word1, word2)) => Err(CapError::UnexpectedReturn { word1, word2 }),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl ThreadReturnKey {
+    /// The key the `AddressSpace` builder knows after provisioning: the
+    /// table's `guard` and `size_bits`, `KeySlot::THREAD_RETURN` and the
+    /// first-install incarnation. The builder passes it to component init.
+    pub const fn provisioned(guard: u32, size_bits: u8) -> Self {
+        Self::from_key(RawKey::from_parts(
+            guard,
+            size_bits,
+            KeySlot::THREAD_RETURN.0,
+            KeySlot::THREAD_RETURN_INCARNATION,
+        ))
     }
 }

@@ -341,7 +341,10 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     // never relocated, reclaimed, or reinitialized while a binding is live.
     let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
     // SAFETY: the initialized boot table has the retained backing described above.
-    let boot_table_binding = unsafe { boot_table.binding() };
+    // Provisioning installs the Slot(1) Return sentinel before the binding
+    // exists, so the boot AddressSpace has it before it can be activated.
+    let boot_table_binding = unsafe { boot_table.bind_address_space() }
+        .unwrap_or_else(|error| panic!("boot table provisioning failed: {:?}", error.code()));
     let boot_as_id = nucleus
         .pools
         .arch
@@ -381,18 +384,9 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
         .unwrap_or_else(|failure| {
             panic!("boot self-table install failed: {:?}", failure.error.code())
         });
-    // Current-relative Thread.Return authority at the well-known slot libOS
-    // compositions fill. It names no Thread and grants no management rights;
-    // its presence in a KeyTable is a composition invariant.
-    let _boot_return_key = boot_table
-        .insert(
-            KeySlot::THREAD_RETURN,
-            KeyEntry::new_thread_return(),
-            BOOT_TABLE_GUARD,
-        )
-        .unwrap_or_else(|failure| {
-            panic!("boot return-key install failed: {:?}", failure.error.code())
-        });
+    // Current-relative Thread.Return authority already sits at the well-known
+    // Slot(1): `bind_address_space` installed it during provisioning above. It
+    // names no Thread and grants no management rights.
     let boot_untyped_key = boot_table
         .insert(KeySlot::BOOT_UNTYPED, boot_untyped, BOOT_TABLE_GUARD)
         .unwrap_or_else(|failure| {

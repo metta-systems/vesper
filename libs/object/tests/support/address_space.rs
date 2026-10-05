@@ -366,7 +366,7 @@ fn create_invocation_preserves_unknown_statuses_and_extended_stack_reasons() {
         (32, u64::MAX, (1 << 32) | 12),
         (32, u64::MAX, (1 << 63) | 1),
         (32, u64::MAX, u64::MAX),
-        (34, u64::MAX, u64::MAX),
+        (35, u64::MAX, u64::MAX),
         (5, 0, 1),
         (26, 0x7654_3210_ffff_fffe, 0x0801),
     ] {

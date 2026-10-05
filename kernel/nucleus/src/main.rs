@@ -280,14 +280,10 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         return;
     }
 
-    let args = [
-        frame.gpr[2],
-        frame.gpr[3],
-        frame.gpr[4],
-        frame.gpr[5],
-        frame.gpr[6],
-        frame.gpr[7],
-    ];
+    // Dispatch reads every input from this copy of the saved frame,
+    // including PPC Call's x9 target SP; nothing after Rust entry uses live
+    // argument registers.
+    let saved = frame.save();
 
     // SAFETY: Unsafe.
     let outcome = unsafe {
@@ -297,7 +293,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
                 panic!("nucleus not booted by Kickstart")
             };
             // SAFETY: the anchor points at the live boot-carved Nucleus.
-            nucleus::api::handle_cap_invoke(unsafe { &mut *ptr }, key, op, &args)
+            nucleus::api::handle_cap_invoke(unsafe { &mut *ptr }, &saved)
         })
     };
 
@@ -318,6 +314,27 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         }
         Ok(nucleus::api::InvokeOutcome::Blocked(record)) => {
             park_and_resume(frame, record);
+            return;
+        }
+        Ok(nucleus::api::InvokeOutcome::Call(committed)) => {
+            // Committed under the lock: continuation pushed, Thread migrated.
+            // Guards and KERNEL_LOCK have ended; install the target context,
+            // then rewrite this transient frame with the scrubbed target
+            // entry. Vectors ERET into the target on the same Thread.
+            let translation = committed.translation;
+            ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
+            frame.restore(committed.target);
+            semi::println!("✅ Invocation::Call()");
+            return;
+        }
+        Ok(nucleus::api::InvokeOutcome::Return(committed)) => {
+            // Committed under the lock: top continuation popped, Thread back
+            // in its source AddressSpace. Install, then resume the source with
+            // SUCCESS/r0/r1 and its exact saved callee-saved state.
+            let translation = committed.translation;
+            ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
+            frame.restore(committed.resumed);
+            semi::println!("✅ Thread::Return()");
             return;
         }
         Err(e) => e.code(),

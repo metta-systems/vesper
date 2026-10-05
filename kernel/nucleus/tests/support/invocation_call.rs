@@ -1,4 +1,4 @@
-//! `Invocation.Call` admission/preparation and stage-5 commit tests.
+//! `Invocation.Call` admission/preparation/commit and `Thread.Return` tests.
 //! Roots below are checked metadata only; these tests never install TTBR0.
 
 use {
@@ -10,7 +10,10 @@ use {
             Nucleus,
             access::{Access, ObjectId},
             arch_objects::AddressSpaceObject,
-            invocation::{CallTarget, CommittedCall, InvocationStackExtent, PreparedCall},
+            invocation::{
+                CallTarget, CommittedCall, CommittedReturn, InvocationStackExtent, PreparedCall,
+                ReturnFault, ReturnRejection,
+            },
             key_table::CallerTable,
         },
     },
@@ -23,6 +26,7 @@ use {
 };
 
 const ROOT: u64 = 0x2100_0000;
+const SOURCE_ROOT: u64 = 0x2200_0000;
 const FUNCTION: u64 = 0x8_1000;
 const STACK_BASE: u64 = 0x1010;
 const STACK_END: u64 = 0x1080;
@@ -37,6 +41,9 @@ struct CallFixture {
     source_table: u64,
     target_table: u64,
     key: RawKey,
+    /// `CurrentReturnOnly` sentinel at Slot(1) in each AS table.
+    source_return_key: RawKey,
+    target_return_key: RawKey,
 }
 
 fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
@@ -60,6 +67,16 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
                 .unwrap();
             address_space.set_translation_root(Some(ROOT));
             address_space.set_asid(Some(2));
+            let source_address_space = nucleus
+                .pools
+                .arch
+                .address_spaces
+                .get_live_mut(usize::from(source_as.index))
+                .unwrap();
+            source_address_space.set_translation_root(Some(SOURCE_ROOT));
+            source_address_space.set_asid(Some(1));
+            let source_return_key = provisioned_return_key(source_table);
+            let target_return_key = provisioned_return_key(target_table);
             let extent = InvocationStackExtent::new(
                 STACK_BASE,
                 STACK_END,
@@ -84,6 +101,8 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
                     source_table,
                     target_table,
                     key,
+                    source_return_key,
+                    target_return_key,
                 },
             );
         },
@@ -683,4 +702,438 @@ fn fill_stack_one_more_unchecked(nucleus: &mut Nucleus<ArchObjectsImpl>) {
         ..InvocationContinuation::empty()
     };
     assert!(source_mut(nucleus).invocation_stack.push(record).is_ok());
+}
+
+// ═════════════════════════════
+// THREAD.RETURN
+// ═════════════════════════════
+
+/// The deterministic key of the Return sentinel that provisioning installed,
+/// checked to resolve to a `CurrentReturnOnly` entry.
+fn provisioned_return_key(table_address: u64) -> RawKey {
+    let key = RawKey::from_parts(
+        FIXTURE_GUARD,
+        SIZE_BITS,
+        KeySlot::THREAD_RETURN.0,
+        KeySlot::THREAD_RETURN_INCARNATION,
+    );
+    // SAFETY: serial fixture; the carved table is live and no other guard
+    // aliases it during this read.
+    let access = unsafe { Access::new() };
+    let table = access
+        .resolve_carved_mut::<KeyTable>(table_address)
+        .unwrap_or_else(|error| panic!("fixture table: {:?}", error.code()));
+    let entry = table
+        .lookup(key, FIXTURE_GUARD)
+        .unwrap_or_else(|error| panic!("provisioned Return key: {:?}", error.code()));
+    assert!(entry.is_thread_return_key());
+    key
+}
+
+/// A target-side Return frame: payload in x2/x3, `extra` in x4..x7, and
+/// target sentinels everywhere else that must never reach the source.
+fn return_frame(key: RawKey, payload: [u64; 2], extra: [u64; 4]) -> SavedContext {
+    let mut saved = SavedContext::el1t(FUNCTION + 0x40, LOWEST_SP - 16);
+    for (index, register) in saved.gpr.iter_mut().enumerate() {
+        *register = 0x7E00 + u64::try_from(index).unwrap();
+    }
+    saved.gpr[0] = key.to_wire();
+    saved.gpr[1] = 0;
+    saved.gpr[2] = payload[0];
+    saved.gpr[3] = payload[1];
+    saved.gpr[4..8].copy_from_slice(&extra);
+    saved.lr = 0x7E_0030;
+    saved.spsr_el1 |= 0x9000_0000;
+    saved
+}
+
+fn current_caller(nucleus: &Nucleus<ArchObjectsImpl>) -> CallerTable {
+    CallerTable {
+        addr: nucleus.current_thread_table_addr().unwrap(),
+        guard: FIXTURE_GUARD,
+    }
+}
+
+fn thread_return(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    saved: &SavedContext,
+) -> Result<CommittedReturn, ReturnRejection> {
+    let caller = current_caller(nucleus);
+    // SAFETY: serial fixture with exclusive nucleus/pool backing; no other
+    // access context or object/table guard overlaps this transaction.
+    let access = unsafe { Access::new() };
+    api::thread::return_from_call(&access, caller, saved, nucleus)
+}
+
+fn rejection_name(rejection: ReturnRejection) -> (u64, u64, u64) {
+    match rejection {
+        ReturnRejection::Error(error) => error.code(),
+        ReturnRejection::Fault(fault) => panic!("unexpected Return fault {fault:?}"),
+    }
+}
+
+fn returned(result: Result<CommittedReturn, ReturnRejection>) -> CommittedReturn {
+    result.unwrap_or_else(|rejection| match rejection {
+        ReturnRejection::Error(error) => panic!("valid Return rejected: {:?}", error.code()),
+        ReturnRejection::Fault(fault) => panic!("valid Return faulted: {fault:?}"),
+    })
+}
+
+/// Return is rejected with an ordinary error and nothing changes.
+fn return_rejected(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    fixture: &CallFixture,
+    saved: &SavedContext,
+    expected: (u64, u64, u64),
+) {
+    let before = snapshot(nucleus, fixture);
+    let rejection = thread_return(nucleus, saved).expect_err("rejected Return committed");
+    assert_eq!(rejection_name(rejection), expected);
+    assert_eq!(snapshot(nucleus, fixture), before);
+}
+
+/// Return is classified as a protocol fault, with no pop and no change.
+fn return_faulted(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    fixture: &CallFixture,
+    saved: &SavedContext,
+    expected: ReturnFault,
+) {
+    let before = snapshot(nucleus, fixture);
+    match thread_return(nucleus, saved).expect_err("faulting Return committed") {
+        ReturnRejection::Fault(fault) => assert_eq!(fault, expected),
+        ReturnRejection::Error(error) => {
+            panic!("Return fault reported as ordinary error {:?}", error.code())
+        }
+    }
+    assert_eq!(snapshot(nucleus, fixture), before);
+}
+
+#[test_case]
+fn call_then_return_restores_the_exact_source_context_and_table() {
+    with_call(|nucleus, fixture| {
+        fill_stack(nucleus, 2);
+        let before = snapshot(nucleus, &fixture);
+        let mut call_saved = call_frame(fixture.key, LOWEST_SP);
+        call_saved.spsr_el1 |= NZCV;
+        committed(call(nucleus, &fixture, &call_saved));
+        assert_eq!(
+            nucleus.current_thread_table_addr(),
+            Some(fixture.target_table)
+        );
+
+        let payload = [0xAAAA_0001, 0xBBBB_0002];
+        let saved = return_frame(fixture.target_return_key, payload, [1, 2, 3, 4]);
+        let commit = returned(thread_return(nucleus, &saved));
+        let resumed = commit.resumed;
+
+        assert_eq!(resumed.gpr[0], libobject::syscall_status::SUCCESS);
+        assert_eq!(resumed.gpr[1], payload[0]);
+        assert_eq!(resumed.gpr[2], payload[1]);
+        assert!(resumed.gpr[3..19].iter().all(|&register| register == 0));
+        assert_eq!(&resumed.gpr[19..30], &call_saved.gpr[19..30]);
+        assert_eq!(resumed.lr, call_saved.lr);
+        assert_eq!(resumed.sp, call_saved.sp);
+        assert_eq!(resumed.elr_el1, call_saved.elr_el1);
+        // Exact raw source SPSR, including its original NZCV.
+        assert_eq!(resumed.spsr_el1, call_saved.spsr_el1);
+        assert_eq!(resumed.origin, call_saved.origin);
+
+        assert_eq!(commit.translation.address_space(), fixture.source_as);
+        assert_eq!(commit.translation.root(), SOURCE_ROOT);
+        assert_eq!(commit.translation.asid(), 1);
+        assert_eq!(
+            u32::from(commit.source_thread.index),
+            nucleus.current_thread.unwrap()
+        );
+        // Back in the source AS and table, with the prior stack exactly restored.
+        assert_eq!(
+            nucleus.current_thread_table_addr(),
+            Some(fixture.source_table)
+        );
+        assert_eq!(snapshot(nucleus, &fixture), before);
+    });
+}
+
+#[test_case]
+fn return_ignores_x4_to_x7() {
+    let mut frames = [None; 3];
+    for (run, extra) in [[0; 4], [u64::MAX; 4], [0x4, 0, u64::MAX, 0x7777]]
+        .into_iter()
+        .enumerate()
+    {
+        with_call(|nucleus, fixture| {
+            committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+            let saved = return_frame(fixture.target_return_key, [5, 6], extra);
+            frames[run] = Some(returned(thread_return(nucleus, &saved)).resumed);
+            assert!(source_mut(nucleus).invocation_stack.is_empty());
+        });
+    }
+    assert!(frames[0].is_some());
+    assert_eq!(frames[0], frames[1]);
+    assert_eq!(frames[0], frames[2]);
+}
+
+#[test_case]
+fn nested_returns_pop_in_lifo_order() {
+    with_call(|nucleus, fixture| {
+        let first = call_frame(fixture.key, LOWEST_SP);
+        committed(call(nucleus, &fixture, &first));
+        let mut second = call_frame(fixture.key, STACK_END);
+        second.elr_el1 = 0x9_1000;
+        second.gpr[19] = 0x1919;
+        let prepared = admitted(prepare_direct(nucleus, fixture.target_as, &second));
+        committed(nucleus.commit_call(prepared));
+        assert_eq!(source_mut(nucleus).invocation_stack.len(), 2);
+
+        let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        let inner = returned(thread_return(nucleus, &saved));
+        assert_eq!(inner.resumed.elr_el1, 0x9_1000);
+        assert_eq!(inner.resumed.gpr[19], 0x1919);
+        // The inner Call was made from the target AS, so the Thread stays there.
+        assert_eq!(inner.translation.address_space(), fixture.target_as);
+        assert_eq!(source_mut(nucleus).address_space, fixture.target_as);
+
+        let outer = returned(thread_return(nucleus, &saved));
+        assert_eq!(outer.resumed.elr_el1, first.elr_el1);
+        assert_eq!(outer.translation.address_space(), fixture.source_as);
+        assert_eq!(source_mut(nucleus).address_space, fixture.source_as);
+        assert!(source_mut(nucleus).invocation_stack.is_empty());
+    });
+}
+
+#[test_case]
+fn underflow_is_an_illegal_return_fault_without_mutation() {
+    with_call(|nucleus, fixture| {
+        let saved = return_frame(fixture.source_return_key, [1, 2], [0; 4]);
+        return_faulted(nucleus, &fixture, &saved, ReturnFault::IllegalReturn);
+        // Also after a full round trip has emptied the stack again.
+        committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+        let target_saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        returned(thread_return(nucleus, &target_saved));
+        return_faulted(nucleus, &fixture, &saved, ReturnFault::IllegalReturn);
+    });
+}
+
+#[test_case]
+fn retired_source_is_a_return_target_retired_fault_without_pop() {
+    for reuse in [false, true] {
+        with_call(|nucleus, fixture| {
+            committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+            let binding = nucleus
+                .pools
+                .arch
+                .address_spaces
+                .get_live(usize::from(fixture.source_as.index))
+                .unwrap()
+                .keytable();
+            nucleus
+                .pools
+                .arch
+                .address_spaces
+                .deallocate(fixture.source_as)
+                .unwrap_or_else(|e| panic!("source AS retirement: {:?}", e.code()));
+            if reuse {
+                let mut replacement = ArchObjectsImpl::new_address_space(binding);
+                replacement.set_translation_root(Some(SOURCE_ROOT));
+                replacement.set_asid(Some(1));
+                let replacement_id = nucleus
+                    .pools
+                    .arch
+                    .address_spaces
+                    .allocate(replacement)
+                    .unwrap()
+                    .0;
+                assert_eq!(replacement_id.index, fixture.source_as.index);
+                assert_ne!(replacement_id, fixture.source_as);
+            }
+            let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+            return_faulted(nucleus, &fixture, &saved, ReturnFault::ReturnTargetRetired);
+            assert_eq!(source_mut(nucleus).invocation_stack.len(), 1);
+        });
+    }
+}
+
+#[test_case]
+fn live_but_unready_source_is_rejected_without_pop() {
+    with_call(|nucleus, fixture| {
+        committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+        nucleus
+            .pools
+            .arch
+            .address_spaces
+            .get_live_mut(usize::from(fixture.source_as.index))
+            .unwrap()
+            .set_asid(None);
+        let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        return_rejected(nucleus, &fixture, &saved, CapError::NotMapped.code());
+        assert_eq!(source_mut(nucleus).invocation_stack.len(), 1);
+    });
+}
+
+#[test_case]
+fn return_key_form_and_lookup_errors_precede_the_pop() {
+    with_call(|nucleus, fixture| {
+        committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+        let thread = {
+            let index = nucleus.current_thread.unwrap();
+            ObjectId {
+                pool: crate::objects::access::PoolTag::Thread,
+                index: u16::try_from(index).unwrap(),
+                generation: nucleus
+                    .pools
+                    .threads
+                    .generation_of(usize::try_from(index).unwrap())
+                    .unwrap(),
+            }
+        };
+        let named = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(20),
+                KeyEntry::new::<crate::objects::Thread>(thread, Rights::all(), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|error| panic!("named Thread install: {:?}", error.error.code()));
+
+        // A named Thread does not authorize Return.
+        let saved = return_frame(named, [1, 2], [0; 4]);
+        return_rejected(nucleus, &fixture, &saved, CapError::InvalidOperation.code());
+
+        // Thread management opcodes on the sentinel are not Return.
+        let mut saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        saved.gpr[1] = 4;
+        return_rejected(nucleus, &fixture, &saved, CapError::InvalidOperation.code());
+
+        // The Invocation key in the target table is not a Thread.
+        let wrong_kind = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(21),
+                KeyEntry::new_invocation(
+                    fixture.target_as,
+                    NonZero::new(FUNCTION).unwrap(),
+                    InvocationStackExtent::new(
+                        STACK_BASE,
+                        STACK_END,
+                        MINIMUM_HEADROOM,
+                        ArchObjectsImpl::USER_VA_END,
+                    )
+                    .unwrap_or_else(|error| panic!("extent: {:?}", error.code())),
+                ),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|error| panic!("Invocation install: {:?}", error.error.code()));
+        let saved = return_frame(wrong_kind, [1, 2], [0; 4]);
+        return_rejected(
+            nucleus,
+            &fixture,
+            &saved,
+            CapError::TypeMismatch {
+                expected: ObjectType::THREAD,
+                found: ObjectType::INVOCATION,
+            }
+            .code(),
+        );
+
+        // A stale incarnation and an empty-slot key keep their ordinary
+        // lookup failures.
+        let key = fixture.target_return_key;
+        let stale = RawKey::new(key.slot(), key.incarnation() + 1);
+        for candidate in [stale, RawKey::from_wire(0)] {
+            let expected = {
+                let table = nucleus.current_thread_table_mut().unwrap();
+                match table.lookup(candidate, FIXTURE_GUARD) {
+                    Ok(_) => panic!("fixture key unexpectedly valid"),
+                    Err(error) => error.with_key_operand(0).code(),
+                }
+            };
+            let saved = return_frame(candidate, [1, 2], [0; 4]);
+            return_rejected(nucleus, &fixture, &saved, expected);
+        }
+        assert_eq!(source_mut(nucleus).invocation_stack.len(), 1);
+    });
+}
+
+#[test_case]
+fn stale_prepared_return_is_rejected_without_mutation() {
+    for staleness in 0..3 {
+        with_call(|nucleus, fixture| {
+            committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+            let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+            let caller = current_caller(nucleus);
+            let prepared = {
+                // SAFETY: serial fixture; no overlapping access context.
+                let access = unsafe { Access::new() };
+                match api::thread::prepare_return(&access, caller, &saved, nucleus) {
+                    Ok(prepared) => prepared,
+                    Err(_) => panic!("valid Return not admitted"),
+                }
+            };
+            match staleness {
+                0 => fill_stack_one_more_unchecked(nucleus),
+                1 => source_mut(nucleus).address_space = fixture.source_as,
+                _ => {
+                    let other = nucleus.create_thread(fixture.source_as).unwrap();
+                    nucleus.current_thread = Some(u32::from(other.index));
+                }
+            }
+            let before = snapshot(nucleus, &fixture);
+            let error = nucleus
+                .commit_return(prepared)
+                .expect_err("stale Return description committed");
+            assert_eq!(error.code(), CapError::InvalidOperation.code());
+            assert_eq!(snapshot(nucleus, &fixture), before);
+        });
+    }
+}
+
+#[test_case]
+fn dispatch_routes_call_and_return_from_saved_frames() {
+    with_call(|nucleus, fixture| {
+        let before = snapshot(nucleus, &fixture);
+        let call_saved = call_frame(fixture.key, LOWEST_SP);
+        let call = match api::handle_cap_invoke(nucleus, &call_saved) {
+            Ok(api::InvokeOutcome::Call(committed)) => committed,
+            Ok(_) => panic!("Invocation.Call dispatched to a non-Call outcome"),
+            Err(error) => panic!("dispatched Call rejected: {:?}", error.code()),
+        };
+        assert_eq!(call.target.sp, LOWEST_SP);
+        assert_eq!(call.translation.address_space(), fixture.target_as);
+        assert_eq!(
+            nucleus.current_thread_table_addr(),
+            Some(fixture.target_table)
+        );
+
+        // The target's own Return frame, built from the scrubbed entry frame
+        // as target code would leave it before its Return SVC.
+        let mut return_saved = call.target;
+        return_saved.gpr[0] = fixture.target_return_key.to_wire();
+        return_saved.gpr[1] = 0;
+        return_saved.gpr[2] = 0x1111;
+        return_saved.gpr[3] = 0x2222;
+        let returned = match api::handle_cap_invoke(nucleus, &return_saved) {
+            Ok(api::InvokeOutcome::Return(committed)) => committed,
+            Ok(_) => panic!("Thread.Return dispatched to a non-Return outcome"),
+            Err(error) => panic!("dispatched Return rejected: {:?}", error.code()),
+        };
+        assert_eq!(&returned.resumed.gpr[0..3], &[0, 0x1111, 0x2222]);
+        assert_eq!(returned.resumed.elr_el1, call_saved.elr_el1);
+        assert_eq!(returned.resumed.spsr_el1, call_saved.spsr_el1);
+        assert_eq!(returned.translation.address_space(), fixture.source_as);
+        assert_eq!(snapshot(nucleus, &fixture), before);
+
+        // An op-0 dispatch through an empty key is an ordinary lookup
+        // rejection, never a Return fault.
+        let saved = return_frame(fixture.source_return_key, [0; 2], [0; 4]);
+        let mut empty_key = saved;
+        empty_key.gpr[0] = RawKey::from_wire(0).to_wire();
+        match api::handle_cap_invoke(nucleus, &empty_key) {
+            Err(error) => assert_ne!(error.code().0, 0),
+            Ok(_) => panic!("empty key dispatched successfully"),
+        }
+        assert_eq!(snapshot(nucleus, &fixture), before);
+    });
 }

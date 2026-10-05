@@ -32,11 +32,11 @@ ID never advertises implementation support.
 | Null | `0x00` | [null.md](core/null.md) | Active (always rejected) |
 | Untyped | `0x01` | [untyped.md](core/untyped.md) | Retype active |
 | KeyTable | `0x02` | [key_table.md](core/key_table.md) | AddressSpace-associated caller lookup; CopyDerive/Move/Delete active |
-| Thread | `0x03` | [thread.md](core/thread.md) | Named Thread Retire active; Return `0` only on `CurrentReturnOnly`, dispatch/helper/wrapper unimplemented; `ThreadSelector` and kernel-constructed boot Slot(1) sentinel implemented; Return currently `InvalidOperation`; Thread-resident wait continuations and checked fixture root/ASID switching on a shared trap stack |
+| Thread | `0x03` | [thread.md](core/thread.md) | Named Thread Retire active; Return `0` only on `CurrentReturnOnly`; active through real SVC dispatch (admission, pop/migration commit, entry-side install/restore/trace); classified faults halt the kernel under the interim policy (fault delivery D1/D7, helper/wrapper unimplemented); `ThreadSelector` and kernel-constructed boot Slot(1) sentinel implemented; Return currently `InvalidOperation`; Thread-resident wait continuations and checked fixture root/ASID switching on a shared trap stack |
 | Time | `0x04` | [time.md](core/time.md) | Excluded sketch |
 | Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | Contract selected; not implemented |
 | Brand | `0x06` | [brand.md](core/brand.md) | Contract direction recorded; implementation deferred to IRQ |
-| Invocation | `0x07` | [invocation.md](core/invocation.md) | Call-only `0` with mandatory `NonZero<u64>` function address; six-input capability construction and immutable validated extent/headroom implemented; target identity, mandatory nonzero entry and extent stored inline in a 40 B Invocation payload; target-entry dummy `x0`/`x1` plus in-place `x2..x7` arguments selected; two-u64 payload with source completion x0=SUCCESS/x1=r0/x2=r1 selected and `Thread.Return` `0` payload x2=r0/x3=r1 with packed key/op in x0/x1 selected with x4..x7 ignored and fallible Result<Infallible, CapError> Return helper selected with adapter Err routed to non-returning libOS fault handler plus original payload retained in a selected 16-byte aligned target-stack frame area (no kernel allocation/record growth; not implemented) with provisionally link-resolved userspace handler `vesper_thread_return_fault` with five-u64 extern-C non-returning ABI (status/detail1/detail2/original r0/original r1 in x0..x4; binding not frozen, not implemented); unexpected local Return SUCCESS becomes synthetic `UnexpectedReturn` status 34 with local x1/x2 diagnostics, routed with original payload to that handler (no unchanged-state/safe-retry guarantee; not implemented); per-procedure non-returning extern-C export wrapper entry selected (normal linked body call with target-local linkage; no extra kernel entry metadata/trampoline, not implemented); extern-C two-u64 repr-C body return in x0/x1 experimental pending end-to-end confirmation (not frozen/implemented); x9 SP transport provisionally selected pending end-to-end feasibility confirmation (not frozen/implemented); conservative x0..x17 raw-SVC compiler operands/clobbers plus caller-volatile x18 discarded clobbers selected (no extra results/record growth or reserved x18 role, fallible Return not noreturn; not implemented); integer-only execution/explicit FP-SIMD trapping selected for kernel/components and EL1t/EL0 (execution-fault classification, D1 delivery open; no vector/control-state storage; enforcement/validation pending); `InvalidStack` status 32 and root-exported `InvalidStackReason` IDs 1–12 implemented with lossless full-width decoding (0 invalid); ordered constructor admission and numeric extent/SP helpers implemented; non-committing Call admission/preparation (key/op/`CALL` → live target → saved-x9 SP → translation → depth) and stage-5 commit (continuation push, AS migration, scrubbed target-entry frame) implemented and tested but not dispatched until Return exists; `NestingDepth` status 33 with current/maximum count in x1 and zero in x2 implemented in the shared ABI/client decoder and enforced by Call preparation; kernel-owned source x19–x30 preservation and non-payload GPR/NZCV scrubbing selected (Call retains x2..x7, zeroes dummy x0/x1 and x8..x30, clears target NZCV after source save/x9 capture; Return delivers SUCCESS/r0/r1, zeroes x3..x18 and restores exact source x19..x30/context/raw SPSR including NZCV; recoverable local rejection unchanged, no userspace dummy/ignored-Return zeroing requirement; no extra fields/runtime allocation, measured 144 B record/2304 B depth-16 array per Thread with type-derived accounting; saved-source target-entry SPSR mode/masks/other non-NZCV control inheritance selected; TLS/debug/complete isolation open; not implemented/validated); PPC Call/Return not implemented |
+| Invocation | `0x07` | [invocation.md](core/invocation.md) | Call-only `0` with mandatory `NonZero<u64>` function address; six-input capability construction and immutable validated extent/headroom implemented; target identity, mandatory nonzero entry and extent stored inline in a 40 B Invocation payload; target-entry dummy `x0`/`x1` plus in-place `x2..x7` arguments selected; two-u64 payload with source completion x0=SUCCESS/x1=r0/x2=r1 selected and `Thread.Return` `0` payload x2=r0/x3=r1 with packed key/op in x0/x1 selected with x4..x7 ignored and fallible Result<Infallible, CapError> Return helper (`ThreadReturnKey::return_from_invocation`) implemented with adapter Err routed to non-returning libOS fault handler plus original payload retained in a selected 16-byte aligned target-stack frame area (no kernel allocation/record growth; not implemented) with provisionally link-resolved userspace handler `vesper_thread_return_fault` with five-u64 extern-C non-returning ABI (status/detail1/detail2/original r0/original r1 in x0..x4; binding not frozen, not implemented); unexpected local Return SUCCESS becomes synthetic `UnexpectedReturn` status 34 with local x1/x2 diagnostics, routed with original payload to that handler (no unchanged-state/safe-retry guarantee; status 34 and the helper check implemented, handler routing implemented); per-procedure non-returning extern-C export wrapper entry selected (normal linked body call with target-local linkage; no extra kernel entry metadata/trampoline, not implemented); extern-C two-u64 repr-C body return in x0/x1 experimental pending end-to-end confirmation (not frozen/implemented); x9 SP transport provisionally selected, implemented and confirmed feasible end-to-end (not frozen); conservative x0..x17 raw-SVC compiler operands/clobbers plus caller-volatile x18 discarded clobbers selected (no extra results/record growth or reserved x18 role, fallible Return not noreturn; not implemented); integer-only execution/explicit FP-SIMD trapping selected for kernel/components and EL1t/EL0 (execution-fault classification, D1 delivery open; no vector/control-state storage; enforcement/validation pending); `InvalidStack` status 32 and root-exported `InvalidStackReason` IDs 1–12 implemented with lossless full-width decoding (0 invalid); ordered constructor admission and numeric extent/SP helpers implemented; non-committing Call admission/preparation (key/op/`CALL` → live target → saved-x9 SP → translation → depth), commit (continuation push, AS migration, scrubbed target-entry frame) and entry-side install/restore/trace active through real SVC dispatch, with a same-Thread Call/Return round trip into Bounce validated in the boot fixture; `NestingDepth` status 33 with current/maximum count in x1 and zero in x2 implemented in the shared ABI/client decoder and enforced by Call preparation; kernel-owned source x19–x30 preservation and non-payload GPR/NZCV scrubbing selected (Call retains x2..x7, zeroes dummy x0/x1 and x8..x30, clears target NZCV after source save/x9 capture; Return delivers SUCCESS/r0/r1, zeroes x3..x18 and restores exact source x19..x30/context/raw SPSR including NZCV; recoverable local rejection unchanged, no userspace dummy/ignored-Return zeroing requirement; no extra fields/runtime allocation, measured 144 B record/2304 B depth-16 array per Thread with type-derived accounting; saved-source target-entry SPSR mode/masks/other non-NZCV control inheritance selected; TLS/debug/complete isolation open; not implemented/validated); PPC Call/Return dispatched (Return faults halt under the interim policy; Call wrapper, Return helper and export adapter implemented) |
 | Notification | `0x08` | [notification.md](core/notification.md) | Signal/Wait/Poll active |
 | EventCount | `0x09` | [event_count.md](core/event_count.md) | Advance/Await/Read active |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Debug-gated Write |
@@ -52,7 +52,7 @@ userspace/libOS construct over frame capabilities) and no `Domain` wire kind
 |---|---:|---|---|
 | Frame | `0x80` | [frame.md](arch/frame.md) | Map/Unmap/GetAddress active; non-global TTBR0 leaves and ordered VA-scoped invalidation |
 | PageTable | `0x81` | [page_table.md](arch/page_table.md) | Map/Unmap active; ordered whole-ASID root invalidation |
-| AddressSpace | `0x82` | [address_space.md](arch/address_space.md) | Immutable KeyTable binding/current-AS caller lookup; Activate installs after guards end; Retire/CreateInvocation active; six-input construction stores validated extent/headroom (`x5` base, `x6` exclusive end, `x7` minimum headroom in bytes), with status 32 diagnostics and authority/live-target → nonzero entry → stack predicates → destination admission; AArch64 user ceiling `1 << 48`; no PPC Call/Return |
+| AddressSpace | `0x82` | [address_space.md](arch/address_space.md) | Immutable KeyTable binding/current-AS caller lookup; Activate installs after guards end; Retire/CreateInvocation active; six-input construction stores validated extent/headroom (`x5` base, `x6` exclusive end, `x7` minimum headroom in bytes), with status 32 diagnostics and authority/live-target → nonzero entry → stack predicates → destination admission; AArch64 user ceiling `1 << 48`; Invocations it creates are callable through dispatched PPC Call |
 | ASIDPool | `0x83` | [asid_pool.md](arch/asid_pool.md) | Assign active (boot-provided); source/Bounce ASIDs 1/2 provisioned; full pool/hardware-width reconciliation pending |
 | ASIDControl | `0x84` | [asid_control.md](arch/asid_control.md) | Reserved |
 | IOSpace | `0x85` | [io_space.md](arch/io_space.md) | Deferred |
@@ -84,16 +84,17 @@ management operations and `object_id` extraction. Named Thread entries reject
 Return with `InvalidOperation`. It uses ordinary live-current-AS/table/SELF,
 guard, incarnation, bounds and presence checks, not a lookup bypass or magic
 raw key. All Threads in an AddressSpace share the sentinel, but it acts only
-on the invoking Thread's own top continuation; presence is libOS policy.
+on the invoking Thread's own top continuation; AddressSpace provisioning installs it before activation.
 Opcode zero on an Invocation means Call, not wrong-form Return. Unknown
-Invocation opcode `1` is `InvalidOperation` once Call dispatch is enabled;
-the kind currently remains unsupported. Return dispatch/helper/wrapper and
-PPC migration remain unimplemented. `ThreadSelector`, its kernel
+Invocation opcode `1` is `InvalidOperation` from the active Call handler.
+Call and Return dispatch with same-Thread PPC migration are implemented; Return
+faults halt the kernel under the interim policy. The userspace
+`InvocationKey::call` wrapper, `ThreadReturnKey` helper and `ppc_export!`
+export adapter are implemented. `ThreadSelector`, its kernel
 constructors/accessors, `ThreadOp::Return = 0` and boot Slot(1) installation are
 implemented. Current-relative `object_id` extraction returns `InvalidOperation`,
 and Retire rejects the sentinel before checking rights or extracting identity.
-Return currently returns `InvalidOperation`; Invocation dispatch remains
-unsupported. Return-form propagation and Call-only Invocation distribution
+Return through a named Thread returns `InvalidOperation`. Return-form propagation and Call-only Invocation distribution
 remain separately deferred, with no broader derivation or transfer permission.
 
 ```mermaid
@@ -106,9 +107,9 @@ flowchart TD
     D -- "core" --> E["core_invoke"]
     D -- "arch" --> F["arch_invoke"]
     E --> G{"CoreType match"}
-    G --> H["Untyped / Thread / KeyTable /<br/>Notification / EventCount /<br/>DebugConsole (debug_kernel)"]
+    G --> H["Untyped / Thread (incl. Return) / KeyTable /<br/>Invocation (Call) / Notification /<br/>EventCount / DebugConsole (debug_kernel)"]
     G --> I["Null → NullCapability"]
-    G --> J["Time / Scheduler / Brand /<br/>Invocation → UnsupportedCoreType"]
+    G --> J["Time / Scheduler / Brand →<br/>UnsupportedCoreType"]
     F --> K{"ArchType match"}
     K --> L["Frame / PageTable / AddressSpace /<br/>ASIDPool"]
     K --> M["ASIDControl / IO / IRQ →<br/>UnsupportedArchType"]
@@ -152,8 +153,8 @@ cancellation-resume encoding remains open — see the completion foundation in
 `minimum_headroom` to its function/destination/slot inputs and uses ordinary
 `protected_call6`. The kernel stores an immutable validated
 `InvocationStackExtent` inline with the target identity and nonzero entry.
-Its numeric `validate_sp` helper has dedicated tests but is not actual Call
-admission; Invocation dispatch remains unsupported. Construction does not
+Call admission applies its numeric `validate_sp` helper to the saved `x9`
+through the dispatched Call path. Construction does not
 prove mapped/writable stack backing or executable-entry validity. Statuses
 33/34, invocation-stack storage, Call/Return, PPC wrappers/adapters, faults and
 distribution remain deferred.

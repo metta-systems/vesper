@@ -33,10 +33,6 @@ Unanswered questions before implementing the scheduler record ABI:
 - **Other architectural state:** what TLS, debug and other non-GPR/control
   state must be initialized, preserved or isolated before protected EL0
   execution? GPR/NZCV scrubbing alone is not complete state isolation.
-- **Current-relative Return propagation (D4):** what per-kind restrictions
-  should govern propagation of `CurrentReturnOnly` through KeyTable management,
-  independently of Call-only Invocation distribution, without granting named
-  Thread control or authority over another Thread's continuation?
 - **Call-only Invocation distribution (D4):** what are the permitted
   derivation/CopyDerive restrictions, rights attenuation, and source badges?
 - **Shared memory and transfer:** pointer/shared-memory rules and whether
@@ -46,6 +42,15 @@ Unanswered questions before implementing the scheduler record ABI:
   the defined no-pop Return fault classification, what are the call lifecycle,
   cancellation, Thread/AddressSpace teardown, partial-completion, and other
   nested/concurrent-call rules beyond the fixed depth limit?
+- **Return-key handoff to component init:** the AddressSpace builder installs
+  the Slot(1) sentinel during provisioning and passes its deterministic key to
+  the component's init, which records it for the export adapter. Through what
+  channel does init receive it (entry register, init argument block, DCB
+  field), and is it part of the general init-handoff record?
+- **Return to a live but unready source:** if the top record's saved source
+  AddressSpace is still live but its root/ASID is missing or unencodable,
+  is that a third Return fault, a `ReturnTargetRetired` fault, or an ordinary
+  error? It currently surfaces as the preparation error without a pop.
 - **Scheduling attribution:** how should hierarchical schedulers observe and
   attribute migrated work beyond the source Thread's own DCB accounting?
 

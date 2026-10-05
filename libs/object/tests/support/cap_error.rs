@@ -467,11 +467,35 @@ fn nesting_depth_status_is_lossless_and_rejects_nonzero_detail_two() {
 }
 
 #[test]
-fn invalid_stack_status_extensions_and_unsliced_ppc_statuses_remain_unknown() {
+fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 32, u64::MAX, 1));
     }
-    for wire in [(34, 0, 0), (34, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(35, 0, 0), (35, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
+    }
+}
+
+#[test]
+fn unexpected_return_status_is_lossless_for_arbitrary_words() {
+    use vesper_objects::syscall_status::UNEXPECTED_RETURN;
+
+    assert_eq!(UNEXPECTED_RETURN, 34);
+    for (word1, word2) in [
+        (0, 0),
+        (1, u64::MAX),
+        (0x1234_5678_9abc_def0, 0x0fed_cba9_8765_4321),
+        (u64::MAX, u64::MAX),
+    ] {
+        assert_error!(
+            (34, word1, word2),
+            CapError::UnexpectedReturn { word1, word2 },
+            CapError::UnexpectedReturn { word1: first, word2: second }
+                if first == word1 && second == word2
+        );
+    }
+    // High-bit aliases of 34 are not this status.
+    for bit in 6..64 {
+        assert_unknown_response(((1_u64 << bit) | 34, 1, 2));
     }
 }

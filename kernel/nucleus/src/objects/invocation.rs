@@ -6,7 +6,8 @@
 //!
 //! `Nucleus::prepare_call` is the non-committing `Invocation.Call` admission
 //! and preparation primitive; `Nucleus::commit_call` is its stage-5 commit.
-//! Neither is wired to dispatch yet.
+//! `Nucleus::prepare_return`/`commit_return` are the matching `Thread.Return`
+//! primitives. `api::handle_cap_invoke` dispatches both.
 
 use {
     crate::objects::{
@@ -131,7 +132,7 @@ pub struct CallTarget {
 ///
 /// Implementation status: `Nucleus::commit_call` consumes this description.
 /// Translation install, frame rewrite and the success trace are entry duties;
-/// Call dispatch stays unsupported until `Thread.Return` exists.
+/// `core_invoke` dispatches Call through this path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PreparedCall {
     source_thread: ObjectId,
@@ -351,6 +352,218 @@ impl<A: ArchObjects> Nucleus<A> {
         Ok(CommittedCall {
             source_thread,
             target: prepared.target_entry_context(),
+            translation: prepared.translation,
+        })
+    }
+}
+
+// ═════════════════════════════
+// THREAD.RETURN
+// ═════════════════════════════
+
+/// Return protocol faults: classified, not delivered.
+///
+/// Neither is an ordinary recoverable error and neither pops the stack.
+/// Delivery to the Thread's fault handler (binding, vector, resumption) is
+/// the open D1/D7 fault decision. Until it is selected, dispatch halts the
+/// kernel on either fault (maintainer-selected interim policy); they never
+/// reach the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReturnFault {
+    /// Depth-zero underflow: no continuation to return to.
+    IllegalReturn,
+    /// The top record's source `AddressSpace` is no longer live.
+    ReturnTargetRetired,
+}
+
+/// Why a `Thread.Return` was not admitted.
+pub enum ReturnRejection {
+    /// Ordinary pre-commit rejection (lookup, form, kernel invariants);
+    /// recoverable through the shared status/detail encoding.
+    Error(CapError),
+    /// Protocol fault for the Thread's fault handler; never a wire error.
+    Fault(ReturnFault),
+}
+
+impl From<CapError> for ReturnRejection {
+    fn from(error: CapError) -> Self {
+        Self::Error(error)
+    }
+}
+
+/// A fully admitted, uncommitted `Thread.Return` description.
+///
+/// Producing this mutates nothing. Valid only within the serialized trap
+/// interval that produced it, like [`PreparedCall`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreparedReturn {
+    source_thread: ObjectId,
+    current_address_space: ObjectId,
+    continuation: InvocationContinuation,
+    translation: PreparedTranslationContext,
+    payload: [u64; 2],
+    depth: usize,
+}
+
+impl PreparedReturn {
+    pub const fn source_thread(&self) -> ObjectId {
+        self.source_thread
+    }
+
+    /// The top record this Return would pop.
+    pub const fn continuation(&self) -> &InvocationContinuation {
+        &self.continuation
+    }
+
+    /// Checked source root/ASID/table metadata to install after guards end.
+    pub const fn translation(&self) -> PreparedTranslationContext {
+        self.translation
+    }
+
+    /// Target-provided result words `(r0, r1)` from saved `x2`/`x3`.
+    pub const fn payload(&self) -> [u64; 2] {
+        self.payload
+    }
+
+    /// Saved-continuation count before the pop.
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// The resumed source frame: `x0 = SUCCESS`, `x1 = r0`, `x2 = r1`,
+    /// `x3..x18` zero, exact saved `x19..x30`, SP, PC, origin and raw SPSR
+    /// (including the source's original NZCV).
+    pub fn source_resume_context(&self) -> SavedContext {
+        let record = &self.continuation;
+        let mut gpr = [0; 30];
+        gpr[0] = libobject::syscall_status::SUCCESS;
+        gpr[1] = self.payload[0];
+        gpr[2] = self.payload[1];
+        gpr[19..30].copy_from_slice(&record.source_x19_x30[..11]);
+        SavedContext {
+            gpr,
+            lr: record.source_x19_x30[11],
+            spsr_el1: record.source_spsr,
+            elr_el1: record.source_pc,
+            sp: record.source_sp,
+            origin: record.source_origin,
+        }
+    }
+}
+
+/// A committed Return whose hardware installation/frame rewrite is still owed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommittedReturn {
+    pub source_thread: ObjectId,
+    pub resumed: SavedContext,
+    pub translation: PreparedTranslationContext,
+}
+
+impl<A: ArchObjects> Nucleus<A> {
+    /// Admit and prepare `Thread.Return` for the current Thread, after the API
+    /// layer resolved the `CurrentReturnOnly` key. Mutates nothing.
+    ///
+    /// Payload `r0`/`r1` is read from saved `x2`/`x3`; `x4..x7` are ignored.
+    /// Order: kernel invariants (`Error`), then underflow
+    /// (`Fault(IllegalReturn)`), then the top record's source identity
+    /// (`Fault(ReturnTargetRetired)`), then its translation readiness.
+    ///
+    /// Implementation status: a live source `AddressSpace` whose root/ASID is
+    /// missing or unencodable is not classified by the contract; it surfaces as
+    /// the preparation `Error` without a pop until a decision covers it.
+    pub fn prepare_return(
+        &self,
+        access: &Access,
+        saved: &SavedContext,
+    ) -> Result<PreparedReturn, ReturnRejection> {
+        if !execution_origin(saved.origin) {
+            return Err(CapError::InvalidDomain.into());
+        }
+        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
+        let current_index =
+            usize::try_from(current).map_err(|_invalid_index| CapError::InvalidDomain)?;
+        let thread = self
+            .pools
+            .threads
+            .get_live(current_index)
+            .ok_or(CapError::InvalidDomain)?;
+        if thread.context != ExecutionContext::Running {
+            return Err(CapError::InvalidOperation.into());
+        }
+        let source_thread = ObjectId {
+            pool: PoolTag::Thread,
+            index: u16::try_from(current_index).map_err(|_too_wide| CapError::InvalidDomain)?,
+            generation: self
+                .pools
+                .threads
+                .generation_of(current_index)
+                .ok_or(CapError::InvalidDomain)?,
+        };
+
+        let continuation = *thread
+            .invocation_stack
+            .top()
+            .ok_or(ReturnRejection::Fault(ReturnFault::IllegalReturn))?;
+        access
+            .resolve(
+                &self.pools.arch.address_spaces,
+                continuation.source_address_space,
+            )
+            .map_err(|_retired| ReturnRejection::Fault(ReturnFault::ReturnTargetRetired))?;
+        let translation = prepare_translation_context::<A>(
+            access,
+            &self.pools.arch.address_spaces,
+            continuation.source_address_space,
+        )?;
+
+        Ok(PreparedReturn {
+            source_thread,
+            current_address_space: thread.address_space,
+            continuation,
+            translation,
+            payload: [saved.gpr[2], saved.gpr[3]],
+            depth: thread.invocation_stack.len(),
+        })
+    }
+
+    /// Commit a prepared Return: pop the invoking Thread's own top record and
+    /// migrate it back into the source `AddressSpace` (and thus its table).
+    ///
+    /// A stale description (different current Thread incarnation, not
+    /// running, moved `AddressSpace`, changed depth or top record) is rejected
+    /// with `InvalidOperation` before any mutation. No hardware is touched.
+    /// Per-call time attribution from the record's stamp stays inert until
+    /// the Time subsystem exists.
+    pub fn commit_return(&mut self, prepared: PreparedReturn) -> Result<CommittedReturn, CapError> {
+        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
+        let source_thread = prepared.source_thread;
+        if u32::from(source_thread.index) != current {
+            return Err(CapError::InvalidOperation);
+        }
+        self.pools
+            .threads
+            .validate(source_thread)
+            .map_err(|_stale_thread| CapError::InvalidOperation)?;
+        let thread = self
+            .pools
+            .threads
+            .get_live_mut(usize::from(source_thread.index))
+            .ok_or(CapError::InvalidDomain)?;
+        if thread.context != ExecutionContext::Running
+            || thread.address_space != prepared.current_address_space
+            || thread.invocation_stack.len() != prepared.depth
+            || thread.invocation_stack.top() != Some(&prepared.continuation)
+        {
+            return Err(CapError::InvalidOperation);
+        }
+
+        // Commit: the checked top is popped and the Thread migrates back.
+        let popped = thread.invocation_stack.pop();
+        debug_assert_eq!(popped, Some(prepared.continuation));
+        thread.address_space = prepared.continuation.source_address_space;
+        Ok(CommittedReturn {
+            source_thread,
+            resumed: prepared.source_resume_context(),
             translation: prepared.translation,
         })
     }

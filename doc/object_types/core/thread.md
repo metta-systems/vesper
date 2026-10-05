@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x03` (core) |
 | Pool | `PoolTag::Thread` for `Named(ObjectId)`; `CurrentReturnOnly` names no pooled object |
-| Status | `ThreadSelector` and boot Slot(1) sentinel implemented; `Retire` active on named Threads; Grant/Suspend/Resume and `Return` `0` currently return `InvalidOperation`; PPC Return dispatch/helper/wrapper unimplemented |
+| Status | `ThreadSelector` and boot Slot(1) sentinel implemented; `Retire` active on named Threads; Grant/Suspend/Resume return `InvalidOperation`; `Return` `0` on `CurrentReturnOnly` is active through real SVC dispatch (pop, source restore, scrubbed result delivery); Return faults halt the kernel under the interim policy; fault delivery, fallible `ThreadReturnKey::return_from_invocation` helper and `ppc_export!` export adapter implemented |
 
 ## Purpose
 
@@ -34,7 +34,7 @@ carries no Thread-management rights, and rejects `object_id` extraction.
 current-AS-table-local packed return key, `x1 = 0`, and `x2`/`x3` carry the two
 payload words. `KeySlot::THREAD_RETURN` locates the kernel-constructed
 `CurrentReturnOnly` sentinel at Slot(1); Kickstart installs it in the boot table.
-Presence is libOS policy, not a kernel guarantee. All other slots and kind IDs
+AddressSpace provisioning installs it (`KeyTable::bind_address_space`) before the AddressSpace can be activated; a component may still delete its own sentinel. All other slots and kind IDs
 remain unchanged (`Thread = 3`, `Invocation = 7`).
 
 Ordinary lookup validates the invoking Thread's live current AddressSpace,
@@ -51,7 +51,7 @@ a fake concrete identity. Retire checks `CurrentReturnOnly` before testing
 `RETIRE` rights or extracting a named identity. Empty/stale/wrong-guard keys retain ordinary lookup failures.
 Invocation has only Call `0`; opcode zero on an Invocation means Call, not
 wrong-form Return, and unknown Invocation opcode `1` is `InvalidOperation`
-once its Call handler is enabled (the kind currently remains unsupported).
+(the Call handler is active).
 
 An admitted Return consumes only the immediate-source top continuation and
 restores the source context with the selected result/scrub rules below.
@@ -69,9 +69,34 @@ The common export adapter's result spill, clobbers and non-returning
 [Invocation PPC adapter contract](invocation.md#contract-details-still-to-specify).
 `ThreadOp::Return = 0`, `ThreadSelector`, kernel construction/accessors and
 bootstrap installation at `KeySlot::THREAD_RETURN` Slot(1) are implemented.
-Return currently yields `InvalidOperation`: PPC dispatch, helper/wrapper,
-adapters and migration are **unimplemented**, with no pop, switch or fake
-success. Current-relative Return propagation through KeyTable
+The kernel Return path:
+`api::thread::prepare_return` checks the op, ordinary lookup, Thread kind and
+`CurrentReturnOnly` form (the selector is the authority; the sentinel has no
+rights), then `Nucleus::prepare_return` classifies underflow as
+`ReturnFault::IllegalReturn` and a stale or reused saved source AddressSpace as
+`ReturnFault::ReturnTargetRetired`, neither popping. A live source whose
+root/ASID is missing or unencodable is not classified by the contract; it
+currently surfaces as the ordinary preparation error, also without a pop.
+`Nucleus::commit_return` re-checks the description (same Thread incarnation,
+running, same AddressSpace, depth and top record; stale is `InvalidOperation`
+with no mutation), pops the top record and migrates the Thread back to the
+source AddressSpace and table. The resumed frame carries `x0 = SUCCESS`,
+`x1 = r0`, `x2 = r1`, zero `x3..x18`, and the exact saved source
+`x19..x30`, SP, PC, origin and raw SPSR including NZCV; `x4..x7` are ignored.
+Return is dispatched: `core_invoke` routes op 0 on a Thread entry to
+`return_from_call`, and the SVC entry installs the source translation after
+guards and the lock end, restores the resumed frame and traces
+`✅ Thread::Return()`. Under the maintainer-selected interim policy, either
+classified fault (`IllegalReturn`, `ReturnTargetRetired`) halts the kernel with
+`panic!` and nothing is popped; real fault delivery (D1/D7) is not designed.
+`ThreadReturnKey::return_from_invocation(r0, r1) -> Result<Infallible, CapError>`
+(over `libsyscall::ppc_return`) is the low-level helper: success never returns
+locally, ordinary rejections come back as `Err`, and a local `SUCCESS` becomes
+`UnexpectedReturn` (status 34) with the local x1/x2. The common export adapter
+(`libobject::export::complete_export`, used by `ppc_export!`) loads the Return
+key recorded at component init, Returns through this helper, and on `Err`
+hands the error triple and the original words to the image-supplied
+`vesper_thread_return_fault`. Current-relative Return propagation through KeyTable
 management is deferred separately from Call-only Invocation distribution;
 neither broader named-Thread derivation nor transfer permissions are granted.
 

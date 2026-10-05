@@ -25,10 +25,15 @@ impl KeySlot {
     /// `CurrentReturnOnly` selector: no concrete Thread identity, function,
     /// `AddressSpace` target, or Thread-management rights. It accepts only
     /// `Thread.Return`, affecting only the invoking Thread's own continuation.
-    /// Use the actual table-local packed key, including guard and incarnation;
-    /// the slot number alone grants no authority. Presence is libOS policy.
-    /// Return dispatch is not yet implemented.
+    /// The `AddressSpace` builder installs it exactly once into the fresh table
+    /// before the `AddressSpace` can be activated, so its packed key is
+    /// deterministic: the table's guard and size, this slot and
+    /// [`KeySlot::THREAD_RETURN_INCARNATION`]. The slot number alone grants no
+    /// authority; a component may still delete its own sentinel.
     pub const THREAD_RETURN: KeySlot = KeySlot(1);
+    /// Incarnation of the provisioning-installed `THREAD_RETURN` sentinel: the
+    /// first install into a never-issued slot.
+    pub const THREAD_RETURN_INCARNATION: u32 = 1;
     pub const SELF_ADDRESS_SPACE: KeySlot = KeySlot(2);
     pub const PARENT_THREAD: KeySlot = KeySlot(3);
     // KeyTable layout with self-reference

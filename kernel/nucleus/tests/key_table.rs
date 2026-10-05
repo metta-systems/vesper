@@ -1517,3 +1517,86 @@ fn management_selectors_validate_the_guard() {
     // The occupant is untouched.
     assert!(fx.lookup(0, src).is_ok());
 }
+
+/// Snapshot of Slot(1): its entry kind/selector and the table's live count.
+fn return_slot_state(table: &KeyTable) -> (Option<bool>, usize) {
+    let key = RawKey::from_parts(
+        CALLER_GUARD,
+        SIZE_BITS,
+        KeySlot::THREAD_RETURN.0,
+        KeySlot::THREAD_RETURN_INCARNATION,
+    );
+    let sentinel = table
+        .lookup(key, CALLER_GUARD)
+        .ok()
+        .map(KeyEntry::is_thread_return_key);
+    (sentinel, table.len())
+}
+
+#[test_case]
+fn address_space_provisioning_installs_the_return_sentinel_once() {
+    let address = carve(0);
+    // SAFETY: freshly initialized fixture carve, exclusively owned here.
+    let table = unsafe { &mut *(address as *mut KeyTable) };
+    assert_eq!(return_slot_state(table), (None, 0));
+
+    // A fresh table gets the sentinel at the deterministic first incarnation.
+    // SAFETY: the fixture carve stays initialized at this address.
+    let binding = unsafe { table.bind_address_space() }
+        .unwrap_or_else(|error| panic!("fresh provisioning: {:?}", error.code()));
+    assert_eq!(binding.address(), address);
+    assert_eq!(binding.size_bits(), SIZE_BITS);
+    assert_eq!(return_slot_state(table), (Some(true), 1));
+
+    // Rebinding a table that already holds it changes nothing.
+    // SAFETY: as above.
+    let rebound = unsafe { table.bind_address_space() }
+        .unwrap_or_else(|error| panic!("rebinding: {:?}", error.code()));
+    assert_eq!(rebound, binding);
+    assert_eq!(return_slot_state(table), (Some(true), 1));
+}
+
+#[test_case]
+fn address_space_provisioning_rejects_a_foreign_or_reissued_slot_one() {
+    let address = carve(0);
+    // SAFETY: freshly initialized fixture carve, exclusively owned here.
+    let table = unsafe { &mut *(address as *mut KeyTable) };
+    let foreign = table
+        .insert(
+            KeySlot::THREAD_RETURN,
+            KeyEntry::new_keytable(address, CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
+            CALLER_GUARD,
+        )
+        .unwrap_or_else(|_| panic!("foreign Slot(1) entry"));
+    // SAFETY: the fixture carve stays initialized at this address.
+    let error = unsafe { table.bind_address_space() }.expect_err("foreign Slot(1) accepted");
+    assert_eq!(
+        error.code(),
+        CapError::SlotOccupied(KeySlot::THREAD_RETURN).code()
+    );
+    assert_eq!(return_slot_state(table), (Some(false), 1));
+
+    // Vacant but previously issued: the provisioned key would be stale.
+    table
+        .remove(foreign, CALLER_GUARD)
+        .unwrap_or_else(|_| panic!("foreign Slot(1) removal"));
+    // SAFETY: as above.
+    let error = unsafe { table.bind_address_space() }.expect_err("reissued Slot(1) accepted");
+    assert_eq!(error.code(), CapError::InvalidOperation.code());
+    assert_eq!(return_slot_state(table), (None, 0));
+
+    // A sentinel at a later incarnation is not the provisioned key either.
+    table
+        .insert(
+            KeySlot::THREAD_RETURN,
+            KeyEntry::new_thread_return(),
+            CALLER_GUARD,
+        )
+        .unwrap_or_else(|_| panic!("late sentinel"));
+    // SAFETY: as above.
+    let error = unsafe { table.bind_address_space() }.expect_err("late sentinel accepted");
+    assert_eq!(
+        error.code(),
+        CapError::SlotOccupied(KeySlot::THREAD_RETURN).code()
+    );
+}

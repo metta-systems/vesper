@@ -36,7 +36,7 @@ const SOURCE_PROBE_FRAME: u32 = 78;
 const BOUNCE_PROBE_FRAME: u32 = 79;
 const SOURCE_IMAGE_TABLES: u32 = 80;
 const BOUNCE_IMAGE_TABLES: u32 = 88;
-const PROBE_VA: u64 = 0x1800_0000;
+pub const PROBE_VA: u64 = 0x1800_0000;
 const SOURCE_MARKER: u64 = 0x5352_4300_0000_0000;
 const BOUNCE_MARKER: u64 = 0x424E_4300_0000_0000;
 
@@ -620,4 +620,27 @@ pub fn notification_wait(key: RawKey) -> Result<u64, CapError> {
 
 pub fn event_count_await(key: RawKey, target: u64) -> Result<u64, CapError> {
     wait_with_registers(key, EventCountOp::Await as u64, target, u64::MAX)
+}
+
+/// The bound source TTBR0 value (root | ASID 1).
+pub fn source_ttbr() -> u64 {
+    SOURCE_TTBR.load(Ordering::Acquire)
+}
+
+/// The bound Bounce TTBR0 value (root | ASID 2).
+pub fn bounce_ttbr() -> u64 {
+    BOUNCE_TTBR.load(Ordering::Acquire)
+}
+
+/// The Bounce probe page's first word, read through the invariant direct map
+/// without touching `PROBE_VA` or the observation round counters.
+pub fn bounce_probe_word() -> u64 {
+    // SAFETY: the retained, accounted Bounce probe Frame stays mapped in the
+    // high direct map for the fixture's lifetime.
+    unsafe {
+        PhysAddr::new(BOUNCE_BACKING.load(Ordering::Acquire))
+            .user_to_kernel()
+            .as_ptr::<u64>()
+            .read_volatile()
+    }
 }

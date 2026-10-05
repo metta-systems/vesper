@@ -32,8 +32,8 @@ use {
     },
     libaddress::PhysAddr,
     libobject::{
-        CapError, CoreType, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey,
-        Rights, decode_syscall_result,
+        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights,
+        decode_syscall_result,
         domain::{DcbPage, DomainId},
     },
     objects::{
@@ -112,8 +112,11 @@ fn carve(index: usize) -> KeyTableBinding {
         // fixture, and stays at its fixed address without relocation or
         // reclamation while any binding is live. No binding escapes the
         // fixture; subsequent tests reinitialize it only after this nucleus
-        // and all its AddressSpaces have been dropped.
-        table.binding()
+        // and all its AddressSpaces have been dropped. Provisioning installs
+        // the Slot(1) Return sentinel, as every AddressSpace builder must.
+        table
+            .bind_address_space()
+            .unwrap_or_else(|error| panic!("fixture table provisioning: {:?}", error.code()))
     }
 }
 
@@ -164,6 +167,21 @@ impl Nucleus<ArchObjectsImpl> {
         self.create_thread(address_space)?;
         Some(key)
     }
+}
+
+/// Dispatch through the production entry signature: every input is read from
+/// a synthetic saved frame, as the SVC entry passes its saved copy.
+fn cap_invoke(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    key: RawKey,
+    op: u64,
+    args: &[u64; 6],
+) -> Result<api::InvokeOutcome, CapError> {
+    let mut saved = libexception::arch::aarch64::SavedContext::el1t(0x8_0000, 0x9_0000);
+    saved.gpr[0] = key.to_wire();
+    saved.gpr[1] = op;
+    saved.gpr[2..8].copy_from_slice(args);
+    api::handle_cap_invoke(nucleus, &saved)
 }
 
 fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, ObjectId, ObjectId)) {
@@ -294,7 +312,7 @@ fn missing_caller_cannot_invoke_bootstrap_console() {
         let args = [u64::MAX; 6];
 
         assert!(nucleus.current_thread_mut().is_none());
-        let error = match api::handle_cap_invoke(nucleus, key, 1, &args) {
+        let error = match cap_invoke(nucleus, key, 1, &args) {
             Err(error) => error,
             Ok(_) => panic!("invocation without a caller succeeded"),
         };
@@ -310,17 +328,17 @@ fn missing_caller_cannot_invoke_bootstrap_console() {
         // path. Invalid op 1 proves dispatch without dereferencing write args.
         nucleus.current_thread = Some(0);
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, key, 1, &args),
+            cap_invoke(nucleus, key, 1, &args),
             Err(CapError::InvalidOperation)
         ));
         nucleus.current_thread = None;
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, key, 1, &args),
+            cap_invoke(nucleus, key, 1, &args),
             Err(CapError::InvalidDomain)
         ));
         // Caller validation also precedes malformed-key validation.
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, RawKey::from_wire(0), 0, &args),
+            cap_invoke(nucleus, RawKey::from_wire(0), 0, &args),
             Err(CapError::InvalidDomain)
         ));
     });
@@ -338,7 +356,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
                 nucleus.current_thread = Some(caller);
                 assert!(nucleus.current_thread_mut().is_none());
                 assert!(matches!(
-                    api::handle_cap_invoke(nucleus, key, 1, &args),
+                    cap_invoke(nucleus, key, 1, &args),
                     Err(CapError::InvalidDomain)
                 ));
             }
@@ -353,7 +371,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
                 })
                 .expect("second thread allocation failed");
             nucleus.current_thread = Some(1);
-            let diag = api::handle_cap_invoke(nucleus, key, 1, &args);
+            let diag = cap_invoke(nucleus, key, 1, &args);
             let words = match diag {
                 Ok(_) => panic!("second-table invocation succeeded"),
                 Err(error) => error.code(),
@@ -361,9 +379,10 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
             // NeverIssued in wire form: the console key's slot was never issued in
             // the second table.
             assert_eq!(words, (26, key.to_wire(), 3));
-            // The second table holds only its self-table capability: the console
-            // key (same guard, same slot number) was never issued there.
-            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
+            // The second table holds only its self-table capability and the
+            // provisioned Return sentinel: the console key (same guard, same
+            // slot number) was never issued there.
+            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 2);
             let id = ObjectId {
                 pool: PoolTag::Thread,
                 index: 1,
@@ -371,7 +390,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
             };
             assert!(nucleus.pools.threads.deallocate(id).is_ok());
             assert!(matches!(
-                api::handle_cap_invoke(nucleus, key, 1, &args),
+                cap_invoke(nucleus, key, 1, &args),
                 Err(CapError::InvalidDomain)
             ));
         },
@@ -528,6 +547,21 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
             index: u16::MAX,
             generation: u32::MAX,
         };
+        // Vacate the provisioned Slot(1) sentinel (a component may delete its
+        // own) so each row below can install its own Slot(1) variant.
+        nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .remove(
+                RawKey::from_parts(
+                    FIXTURE_GUARD,
+                    SIZE_BITS,
+                    KeySlot::THREAD_RETURN.0,
+                    KeySlot::THREAD_RETURN_INCARNATION,
+                ),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|error| panic!("provisioned sentinel removal: {:?}", error.code()));
         // Named Return rejection is independent of management rights and object
         // liveness. Current-relative management must reject before either check.
         for (slot, entry, last_op) in [
@@ -558,6 +592,13 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                 assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
                 for op in 0..=last_op {
                     for direct in [true, false] {
+                        // Dispatched Return on the sentinel by the running
+                        // caller at depth zero is an illegal-return fault,
+                        // which the interim policy turns into a kernel halt.
+                        // The parked caller is still rejected before that.
+                        if op == 0 && !direct && slot == KeySlot::THREAD_RETURN && caller == first {
+                            continue;
+                        }
                         // Zero operands are essential: Retire must reach the
                         // selector check, not reject nonzero reserved arguments.
                         let error = if direct {
@@ -579,7 +620,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                                 Ok(_) => panic!("Thread API unexpectedly succeeded"),
                             }
                         } else {
-                            match api::handle_cap_invoke(nucleus, key, op, &[0; 6]) {
+                            match cap_invoke(nucleus, key, op, &[0; 6]) {
                                 Err(error) => error,
                                 Ok(_) => panic!("Thread dispatch unexpectedly succeeded"),
                             }
@@ -694,11 +735,13 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
             let unguarded = RawKey::from_parts(0, SIZE_BITS, KeySlot::THREAD_RETURN.0, 1);
             let wrong_guard =
                 RawKey::from_parts(FIXTURE_GUARD ^ 1, SIZE_BITS, KeySlot::THREAD_RETURN.0, 1);
-            // Never issued, live, deleted, then replaced: Slot(1) has no special
-            // lookup bypass, and a stale key never gains the replacement's authority.
-            for phase in 0..4 {
+            // Provisioned live, deleted, then replaced: Slot(1) has no special
+            // lookup bypass, and a stale key never gains the replacement's
+            // authority. A provisioned table can no longer have a never-issued
+            // Slot(1): `bind_address_space` installed `issued` already.
+            for phase in 1..4 {
                 match phase {
-                    1 | 3 => {
+                    3 => {
                         let key = nucleus
                             .current_thread_table_mut()
                             .unwrap()
@@ -708,7 +751,7 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                                 FIXTURE_GUARD,
                             )
                             .unwrap_or_else(|_| panic!("Return capability installation"));
-                        assert_eq!(key, if phase == 1 { issued } else { replacement });
+                        assert_eq!(key, replacement);
                     }
                     2 => {
                         nucleus
@@ -720,11 +763,6 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                     _ => {}
                 }
                 let (old_words, next_words, live) = match phase {
-                    0 => (
-                        (26, issued.to_wire(), 3),
-                        (26, replacement.to_wire(), 3),
-                        None,
-                    ),
                     1 => ((8, 0, 0), (27, replacement.to_wire(), 1), Some(issued)),
                     2 => (
                         (27, issued.to_wire(), 2),
@@ -745,6 +783,13 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                         (replacement, next_words),
                     ] {
                         for op in [0, 4] {
+                            // Return through a live sentinel at depth zero is
+                            // an illegal-return fault: the interim policy halts
+                            // the kernel. Its classification is tested on the
+                            // primitive; Retire still checks the form here.
+                            if op == 0 && Some(key) == live {
+                                continue;
+                            }
                             assert_dispatch_error(nucleus, key, op, words);
                             assert_eq!(nucleus.current_thread, Some(u32::from(caller.index)));
                             assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
@@ -786,10 +831,15 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                         }
                     }
                 }
+                // The foreign AddressSpace's table was provisioned with its own
+                // sentinel under the same packed key. Retire reaches only the
+                // form check there (Return at depth zero would halt by policy),
+                // and the first table's replacement never authorizes it.
                 nucleus.current_thread = Some(u32::from(foreign.index));
                 assert_eq!(nucleus.current_thread_table_addr(), Some(second_table_addr));
-                assert_dispatch_error(nucleus, issued, 0, (26, issued.to_wire(), 3));
-                assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
+                assert_dispatch_error(nucleus, issued, 4, (8, 0, 0));
+                assert_dispatch_error(nucleus, replacement, 0, (27, replacement.to_wire(), 1));
+                assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 2);
                 nucleus.current_thread = Some(u32::from(first.index));
             }
         },
@@ -797,7 +847,7 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
 }
 
 #[test_case]
-fn mandatory_invocation_target_does_not_enable_ppc_dispatch() {
+fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
     with_nucleus(|nucleus, table_addr, _second, fixture_as, second_as| {
         let thread = nucleus.create_thread(fixture_as).expect("caller Thread");
         nucleus.current_thread = Some(u32::from(thread.index));
@@ -813,11 +863,32 @@ fn mandatory_invocation_target_does_not_enable_ppc_dispatch() {
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|_| panic!("Invocation capability installation"));
-        for op in [0, 1] {
-            assert!(matches!(
-                api::handle_cap_invoke(nucleus, key, op, &[0; 6]),
-                Err(CapError::UnsupportedCoreType(CoreType::Invocation))
-            ));
+        // Call dispatch is live. A zero saved x9 is an invalid SP, reported
+        // before the unready target translation; op 1 is not an Invocation op.
+        for (op, expected) in [
+            (
+                0,
+                CapError::InvalidStack {
+                    value: 0,
+                    reason: libobject::InvalidStackReason::SpOutOfRange,
+                }
+                .code(),
+            ),
+            (1, CapError::InvalidOperation.code()),
+        ] {
+            match cap_invoke(nucleus, key, op, &[0; 6]) {
+                Err(error) => assert_eq!(error.code(), expected),
+                Ok(_) => panic!("Invocation op {op} succeeded without a valid Call"),
+            }
+            assert!(
+                nucleus
+                    .pools
+                    .threads
+                    .get_live(usize::from(thread.index))
+                    .unwrap()
+                    .invocation_stack
+                    .is_empty()
+            );
             assert_eq!(nucleus.current_thread, Some(u32::from(thread.index)));
             assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
             assert_eq!(nucleus.pools.threads.len(), 1);
@@ -831,7 +902,7 @@ fn mandatory_invocation_target_does_not_enable_ppc_dispatch() {
             assert!(nucleus.pending.is_empty());
             assert!(nucleus.scheduler.is_empty());
             let table = nucleus.current_thread_table_mut().unwrap();
-            assert_eq!(table.len(), 2);
+            assert_eq!(table.len(), 3);
             let entry = table
                 .lookup(key, FIXTURE_GUARD)
                 .unwrap_or_else(|error| panic!("Invocation key preserved: {:?}", error.code()));
@@ -871,7 +942,7 @@ fn changing_thread_address_space_selects_its_table_on_the_next_dispatch() {
             nucleus.current_thread_mut().unwrap().address_space = second_as;
             assert_eq!(nucleus.current_thread_table_addr(), Some(second_table_addr));
             assert_dispatch_error(nucleus, issued, 0, (26, issued.to_wire(), 3));
-            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
+            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 2);
             let rights = Rights(Rights::READ);
             let second_key = nucleus
                 .current_thread_table_mut()
@@ -1008,7 +1079,7 @@ fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
             assert_eq!(nucleus.current_thread_table_addr(), Some(second_table_addr));
             assert_dispatch_error(nucleus, malformed, 0, (26, 0, 1));
             assert_dispatch_error(nucleus, issued, 0, (26, issued.to_wire(), 3));
-            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
+            assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 2);
         },
     );
 }
@@ -1194,7 +1265,7 @@ fn self_table_capability_remains_the_source_of_the_caller_guard() {
         assert_dispatch_error(nucleus, issued, 0, (26, issued.to_wire(), 4));
         assert_dispatch_error(nucleus, rebound_key, 1, (8, 0, 0));
         let table = nucleus.current_thread_table_mut().unwrap();
-        assert_eq!(table.len(), 2);
+        assert_eq!(table.len(), 3);
         assert_eq!(
             table.self_table_capability(),
             Some((table_addr, changed_guard, SIZE_BITS))
@@ -1286,9 +1357,9 @@ fn rejects_invalid_operations_through_shared_capability_borrows() {
 // Check every slot through the public API, including retained identity on deletion.
 // Only console metadata is inspected; no object pointer or write buffer is accessed.
 fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u16)>) {
-    // The fixture's self-table capability is always present alongside the
-    // console entry under test.
-    assert_eq!(table.len(), 1 + usize::from(live.is_some()));
+    // The fixture's self-table capability and provisioned Return sentinel
+    // are always present alongside the console entry under test.
+    assert_eq!(table.len(), 2 + usize::from(live.is_some()));
     match live {
         Some((rights, badge)) => {
             let cap = table
@@ -1315,12 +1386,13 @@ fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u16
     }
     let console_index = bare_index(key).0;
     let self_index = KeySlot::SELF_KEYTABLE.0;
+    let return_index = KeySlot::THREAD_RETURN.0;
     for index in 0..KeyTable::capacity_for(SIZE_BITS) {
-        // Skip the console slot and the fixture's self-table slot (both
-        // issued); every other correctly guarded probe is never issued.
-        if u32::try_from(index).unwrap() != console_index
-            && u32::try_from(index).unwrap() != self_index
-        {
+        // Skip the console slot, the fixture's self-table slot and the
+        // provisioned Return sentinel (all issued); every other correctly
+        // guarded probe is never issued.
+        let index_u32 = u32::try_from(index).unwrap();
+        if index_u32 != console_index && index_u32 != self_index && index_u32 != return_index {
             let probe = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, index as u32, 1);
             assert!(matches!(
                 table.lookup(probe, FIXTURE_GUARD),
@@ -1341,7 +1413,7 @@ fn assert_dispatch_error(
     expected: (u64, u64, u64),
 ) {
     // An erroneous Write dispatch must not get as far as copying these arguments.
-    let error = match api::handle_cap_invoke(nucleus, key, op, &[u64::MAX; 6]) {
+    let error = match cap_invoke(nucleus, key, op, &[u64::MAX; 6]) {
         Err(error) => error,
         Ok(_) => panic!("rejected invocation succeeded"),
     };

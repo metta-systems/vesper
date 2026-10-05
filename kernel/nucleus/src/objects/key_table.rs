@@ -123,14 +123,51 @@ impl KeyTable {
         self.size_bits
     }
 
-    /// Issue a persistent binding for `AddressSpace` provisioning.
+    /// Provision this table for an `AddressSpace` and issue its persistent
+    /// binding: the only way to obtain one.
+    ///
+    /// The `CurrentReturnOnly` Return sentinel is installed at
+    /// `KeySlot::THREAD_RETURN` before the binding exists, so every
+    /// `AddressSpace` has it before it can be activated. The sentinel carries no
+    /// unique information: a table already holding it at
+    /// `THREAD_RETURN_INCARNATION` (a rebinding after `AddressSpace`
+    /// retirement) is accepted unchanged. Any other Slot(1) state would make
+    /// the deterministic key wrong and is rejected without mutation: another
+    /// entry is `SlotOccupied`, a vacant but previously issued slot is
+    /// `InvalidOperation`.
     ///
     /// # Safety
     /// This must be a fully initialized carve, not a relocated header. Its
     /// entire backing must remain kernel-private, at this address, and must
     /// not be reclaimed or reinitialized while any copy of the binding lives.
     /// This obligation extends beyond the lifetime of this borrow.
-    pub unsafe fn binding(&self) -> KeyTableBinding {
+    pub unsafe fn bind_address_space(&mut self) -> Result<KeyTableBinding, CapError> {
+        let slot = KeySlot::THREAD_RETURN;
+        let idx = usize::try_from(slot.0)
+            .ok()
+            .filter(|&idx| idx < self.capacity())
+            .ok_or(CapError::InvalidSlot(slot))?;
+        let entry = self.entry(idx);
+        if entry.is_valid() {
+            if !entry.is_thread_return_key()
+                || self.incarnation_of(idx) != KeySlot::THREAD_RETURN_INCARNATION
+            {
+                return Err(CapError::SlotOccupied(slot));
+            }
+        } else if self.incarnation_of(idx) != KeySlot::THREAD_RETURN_INCARNATION - 1 {
+            return Err(CapError::InvalidOperation);
+        } else {
+            // The returned key is discarded; its guard bits are irrelevant here.
+            self.insert(slot, KeyEntry::new_thread_return(), 0)
+                .map_err(|failure| failure.error)?;
+        }
+        // SAFETY: forwarded caller contract on the retained, initialized carve.
+        Ok(unsafe { self.issue_binding() })
+    }
+
+    /// # Safety
+    /// See [`KeyTable::bind_address_space`].
+    unsafe fn issue_binding(&self) -> KeyTableBinding {
         KeyTableBinding {
             address: NonZero::new(core::ptr::from_ref(self) as u64)
                 .expect("a referenced table has a nonzero address"),

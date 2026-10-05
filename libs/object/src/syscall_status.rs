@@ -49,6 +49,10 @@ pub const INVALID_STACK: u64 = 32;
 /// A Call would exceed the fixed depth-16 invocation continuation stack.
 /// Detail 1 is the current saved-continuation count; detail 2 is zero.
 pub const NESTING_DEPTH: u64 = 33;
+/// A `Thread.Return` helper observed a local `SUCCESS` response, which a
+/// completed Return never produces. Userspace-synthesized protocol/invariant
+/// error, never emitted by the kernel: details are the local x1/x2 verbatim.
+pub const UNEXPECTED_RETURN: u64 = 34;
 
 /// Field-specific Invocation stack diagnostics, carried as the complete `x2` word.
 ///

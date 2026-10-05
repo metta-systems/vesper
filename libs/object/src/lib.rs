@@ -6,6 +6,7 @@ pub mod asid_pool;
 pub mod debug_console;
 pub mod domain;
 pub mod event_count;
+pub mod export;
 pub mod frame;
 pub mod invocation;
 pub mod key;
@@ -118,6 +119,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
                 reason: InvalidStackReason::try_from(reason).ok()?,
             },
             (code::NESTING_DEPTH, count, 0) => CapError::NestingDepth { count },
+            (code::UNEXPECTED_RETURN, word1, word2) => CapError::UnexpectedReturn { word1, word2 },
             _ => return None,
         })
     })();
@@ -198,6 +200,13 @@ pub enum CapError {
     /// `count` is the current saved-continuation count, not an attempted depth.
     NestingDepth {
         count: u64,
+    },
+    /// A `Thread.Return` helper received a local `SUCCESS`; a completed Return
+    /// resumes the source instead. Synthesized in userspace with the local
+    /// x1/x2 verbatim; it guarantees neither unchanged state nor safe retry.
+    UnexpectedReturn {
+        word1: u64,
+        word2: u64,
     },
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
@@ -291,6 +300,7 @@ impl CapError {
                 (code::INVALID_STACK, value, u64::from(reason as u8))
             }
             CapError::NestingDepth { count } => (code::NESTING_DEPTH, count, 0),
+            CapError::UnexpectedReturn { word1, word2 } => (code::UNEXPECTED_RETURN, word1, word2),
             CapError::UnknownResponse {
                 status,
                 detail1,

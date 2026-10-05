@@ -1,5 +1,6 @@
 use vesper_objects::{
     CapError, Key, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, decode_syscall_result, domain,
+    thread,
 };
 
 #[cfg(test)]
@@ -23,6 +24,14 @@ pub mod address_space_client;
 #[cfg(test)]
 #[path = "../src/thread.rs"]
 pub mod thread_client;
+
+#[cfg(test)]
+#[path = "../src/invocation.rs"]
+pub mod invocation_client;
+
+#[cfg(test)]
+#[path = "../src/export.rs"]
+pub mod export_client;
 
 #[cfg(test)]
 #[path = "../src/event_count.rs"]

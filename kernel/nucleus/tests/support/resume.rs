@@ -2,9 +2,9 @@
 //! Roots below are checked metadata only; these tests never install TTBR0.
 
 use {
-    super::{FIXTURE_GUARD, SIZE_BITS, with_nucleus},
+    super::{FIXTURE_GUARD, SIZE_BITS, cap_invoke, with_nucleus},
     crate::{
-        api::{self, InvokeOutcome, KeyEntry},
+        api::{InvokeOutcome, KeyEntry},
         objects::{
             ArchObjects, ArchObjectsImpl, ExecutionContext, Nucleus,
             access::{Access, ObjectId, PoolTag},
@@ -537,7 +537,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             use aarch64_cpu::registers::{Readable, TTBR0_EL1};
             TTBR0_EL1.get()
         };
-        let prepared = match api::handle_cap_invoke(nucleus, key, 0, &[0; 6]) {
+        let prepared = match cap_invoke(nucleus, key, 0, &[0; 6]) {
             Ok(InvokeOutcome::Activate(prepared)) => prepared,
             Err(e) => panic!("activation preparation: {:?}", e.code()),
             Ok(_) => panic!("activation reported completion before installing hardware"),
@@ -562,7 +562,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             .unwrap()
             .set_asid(None);
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, key, 0, &[0; 6]),
+            cap_invoke(nucleus, key, 0, &[0; 6]),
             Err(CapError::NotMapped)
         ));
         let foreign_key = nucleus
@@ -579,7 +579,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             )
             .unwrap_or_else(|e| panic!("foreign AS cap: {:?}", e.error.code()));
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, foreign_key, 0, &[0; 6]),
+            cap_invoke(nucleus, foreign_key, 0, &[0; 6]),
             Err(CapError::InvalidOperation)
         ));
         let no_map = nucleus
@@ -596,13 +596,13 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             )
             .unwrap_or_else(|e| panic!("attenuated AS cap: {:?}", e.error.code()));
         assert!(matches!(
-            api::handle_cap_invoke(nucleus, no_map, 0, &[0; 6]),
+            cap_invoke(nucleus, no_map, 0, &[0; 6]),
             Err(CapError::InsufficientRights)
         ));
         // Foreign guarded table selectors stay ordinary errors, not activation.
         let foreign_guard =
             RawKey::from_parts(FIXTURE_GUARD ^ 1, SIZE_BITS, 20, foreign_key.incarnation());
-        assert!(api::handle_cap_invoke(nucleus, foreign_guard, 0, &[0; 6]).is_err());
+        assert!(cap_invoke(nucleus, foreign_guard, 0, &[0; 6]).is_err());
         // SAFETY: exclusive serial fixture, dispatch's Access has ended.
         let access = unsafe { Access::new() };
         assert!(matches!(

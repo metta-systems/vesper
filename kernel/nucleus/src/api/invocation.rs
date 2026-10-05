@@ -7,8 +7,7 @@
 //!
 //! Implementation status: [`prepare_call`] is the non-committing admission
 //! stage; [`call`] adds the stage-5 commit (continuation push and Thread
-//! migration). Neither is dispatched: `core_invoke` keeps the Invocation kind
-//! unsupported until `Thread.Return` exists, so no Call strands its Thread.
+//! migration), which `core_invoke` dispatches for the Invocation kind.
 
 use {
     crate::objects::{
@@ -71,8 +70,7 @@ pub fn prepare_call<A: ArchObjects>(
 /// translation install, frame rewrite and success trace at entry, after all
 /// guards and the kernel lock end.
 ///
-/// Implementation status: not dispatched. Enabling Call through `core_invoke`
-/// waits for `Thread.Return`, so a migrated Thread is never stranded.
+/// Dispatched by `core_invoke` for the Invocation kind.
 pub fn call<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,

@@ -1,5 +1,5 @@
 use {
-    super::{DomainId, ThreadKey},
+    super::{DomainId, ThreadKey, ThreadReturnKey},
     std::cell::Cell,
     vesper_objects::{
         CapError, CoreType, InconsistencyReason, InvalidKeyReason, Key, KeySlot, RawKey,
@@ -25,6 +25,11 @@ pub(super) unsafe fn protected_call0(key: u64, op: u64) -> Response {
 
 pub(super) unsafe fn protected_call2(key: u64, op: u64, a0: u64, a1: u64) -> Response {
     respond((key, op, Some((a0, a1))))
+}
+
+/// Recording replacement for `libsyscall::ppc_return`: x2/x3 carry the payload.
+pub(super) unsafe fn ppc_return(key: u64, r0: u64, r1: u64) -> Response {
+    respond((key, 0, Some((r0, r1))))
 }
 
 fn invoke(op: u64, response: Response) -> Result<(), CapError> {
@@ -149,5 +154,54 @@ fn all_thread_wrappers_preserve_unknown_statuses_and_malformed_details() {
                 _ => panic!("lost error details for operation {op}"),
             }
         }
+    }
+}
+
+fn thread_return(response: Response, payload: (u64, u64)) -> (CapError, Request) {
+    let key = RawKey::new(KeySlot(0xC0FF_EE01), 1);
+    RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
+    // SAFETY: the recording transport performs no SVC; nothing is abandoned.
+    let result =
+        unsafe { ThreadReturnKey::from_key(key).return_from_invocation(payload.0, payload.1) };
+    let request = REQUEST.with(|recorded| recorded.take().expect("no syscall recorded"));
+    let Err(error) = result;
+    (error, request)
+}
+
+#[test]
+fn return_submits_packed_key_op_zero_and_ordered_payload() {
+    let (_, (key, op, payload)) = thread_return((8, 0, 0), (0x1111, 0x2222));
+    assert_eq!(key, RawKey::new(KeySlot(0xC0FF_EE01), 1).to_wire());
+    assert_eq!(op, 0);
+    assert_eq!(payload, Some((0x1111, 0x2222)));
+}
+
+#[test]
+fn return_rejections_keep_shared_diagnostics() {
+    let (error, _) = thread_return((8, 0, 0), (1, 2));
+    assert!(matches!(error, CapError::InvalidOperation));
+    let stale = RawKey::new(KeySlot(0xC0FF_EE01), 2).to_wire();
+    let (error, _) = thread_return((27, stale, 1), (1, 2));
+    assert!(matches!(
+        error,
+        CapError::InconsistentKey {
+            key,
+            reason: InconsistencyReason::SlotIncarnationMismatch,
+            operand: 0,
+        } if key.to_wire() == stale
+    ));
+    let (error, _) = thread_return((0x99, 7, 8), (1, 2));
+    assert!(matches!(error, CapError::UnknownResponse { .. }));
+}
+
+#[test]
+fn local_success_is_unexpected_return_with_local_words_never_ok() {
+    for words in [(0, 0), (0x1234, u64::MAX), (u64::MAX, 1)] {
+        let (error, _) = thread_return((0, words.0, words.1), (0xAAAA, 0xBBBB));
+        assert!(matches!(
+            error,
+            CapError::UnexpectedReturn { word1, word2 } if (word1, word2) == words
+        ));
+        assert_eq!(error.code(), (34, words.0, words.1));
     }
 }

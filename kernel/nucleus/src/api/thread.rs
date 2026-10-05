@@ -23,12 +23,20 @@
 //! `AddressSpace.Retire`.
 //!
 //! `Return` `0` is selected only for `CurrentReturnOnly`, not a named Thread.
-//! Its PPC continuation pop and nonlocal completion are not implemented;
-//! invocation currently fails with `InvalidOperation`, never fake success.
+//! Its admission, fault classification and pop/migration commit are
+//! implemented by [`prepare_return`]/[`return_from_call`], which `core_invoke`
+//! dispatches for op 0. Its faults halt the kernel under the interim policy
+//! until fault delivery (D1/D7) is designed.
 //! The current-relative form rejects management regardless of its rights.
 
 use {
-    crate::objects::{ArchObjects, KeyTable, Nucleus, access::Access, key_table::CallerTable},
+    crate::objects::{
+        ArchObjects, KeyTable, Nucleus,
+        access::Access,
+        invocation::{CommittedReturn, PreparedReturn, ReturnRejection},
+        key_table::CallerTable,
+    },
+    libexception::arch::aarch64::SavedContext,
     libobject::{CapError, ObjectType, RawKey, Rights, thread::ThreadOp},
     libqemu::semihosting as semi,
 };
@@ -47,8 +55,8 @@ pub fn invoke<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     match ThreadOp::try_from(op)? {
         ThreadOp::Retire => retire::<A>(access, caller, thread_key, args, nucleus),
-        // Return is current-relative, not named-Thread control. Its nonlocal
-        // completion requires PPC machinery that is not implemented yet.
+        // Return is current-relative, not named-Thread control. Dispatch routes
+        // op 0 to `return_from_call`; this handler rejects it if reached.
         ThreadOp::Return | ThreadOp::Grant | ThreadOp::Suspend | ThreadOp::Resume => {
             Err(CapError::InvalidOperation)
         }
@@ -124,4 +132,59 @@ fn retire<A: ArchObjects>(
         .map_err(|e| e.with_key_operand(0))?;
     semi::println!("✅ Thread::Retire()");
     Ok((0, 0))
+}
+
+/// Admit `Thread.Return` from the saved frame and prepare the pop/migration.
+///
+/// Inputs come only from the saved frame: `x0` target-table-local packed
+/// Slot(1) key, `x1` operation `0`, `x2`/`x3` payload; `x4..x7` are ignored.
+/// Ordinary lookup (table guard, incarnation, bounds, presence) applies; a
+/// named Thread entry is `InvalidOperation`. The sentinel carries no rights,
+/// so the `CurrentReturnOnly` selector itself is the authority.
+///
+/// Fault delivery for the classified underflow and retired-source faults is
+/// the open D1/D7 decision; dispatch currently halts on them (interim policy).
+pub fn prepare_return<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    saved: &SavedContext,
+    nucleus: &Nucleus<A>,
+) -> Result<PreparedReturn, ReturnRejection> {
+    let return_key = RawKey::from_wire(saved.gpr[0]);
+    if !matches!(ThreadOp::try_from(saved.gpr[1])?, ThreadOp::Return) {
+        return Err(CapError::InvalidOperation.into());
+    }
+    {
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let entry = caller_table
+            .lookup(return_key, caller.guard)
+            .map_err(|e| e.with_key_operand(0))?;
+        if entry.object_type() != ObjectType::THREAD {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::THREAD,
+                found: entry.object_type(),
+            }
+            .into());
+        }
+        if !entry.is_thread_return_key() {
+            return Err(CapError::InvalidOperation.into());
+        }
+    }
+    nucleus.prepare_return(access, saved)
+}
+
+/// Admit, prepare and commit `Thread.Return` in one serialized interval.
+///
+/// Every rejection or fault precedes the pop and preserves all state. On
+/// success the top record is popped and the Thread has migrated back to its
+/// source `AddressSpace`; the returned [`CommittedReturn`] still owes the
+/// translation install, frame rewrite and success trace at entry.
+pub fn return_from_call<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    saved: &SavedContext,
+    nucleus: &mut Nucleus<A>,
+) -> Result<CommittedReturn, ReturnRejection> {
+    let prepared = prepare_return(access, caller, saved, nucleus)?;
+    Ok(nucleus.commit_return(prepared)?)
 }

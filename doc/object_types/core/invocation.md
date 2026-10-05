@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x07` (core) |
 | Target | An exported component API entry point in an `AddressSpace` |
-| Status | Six-input construction, status 32 diagnostics and immutable validated stack extent/headroom are active; non-committing `Call` admission/preparation (`prepare_call`) and the stage-5 commit (`commit_call`: continuation push, AddressSpace migration, scrubbed target-entry frame) are implemented and tested but not dispatched; entry-side install/trace, `Call` dispatch and Return are not implemented |
+| Status | Six-input construction, status 32 diagnostics and immutable validated stack extent/headroom are active; `Call` is active through real SVC dispatch: admission/preparation (`prepare_call`), commit (`commit_call`: continuation push, AddressSpace migration, scrubbed target-entry frame), and entry-side install, frame restore and success trace; same-Thread Call/Return round trip validated in the boot fixture; `InvocationKey::call` wrapper and `ppc_export!` export adapter implemented |
 
 ## Purpose
 
@@ -51,8 +51,9 @@ operation `0` on the explicit `CurrentReturnOnly` Thread selector at
 AddressSpace or concrete Thread and carries no Thread-management rights.
 Ordinary current-AS-table lookup, SELF, guard, incarnation, bounds and presence
 checks apply; every Thread in the AS shares the sentinel, but it acts only on
-the invoking Thread's own top continuation. Presence is libOS composition
-policy, not a kernel guarantee. Overall call lifecycle behavior remains
+the invoking Thread's own top continuation. AddressSpace provisioning
+installs it before the AddressSpace can be activated; a component may still
+delete its own sentinel. Overall call lifecycle behavior remains
 unspecified. Return-form propagation and Call-only Invocation distribution are
 independent deferred decisions; no broader derivation/transfer permissions are
 implied.
@@ -68,8 +69,7 @@ Queued rendezvous is userspace composition over Invocation and
 
 Invocation is Call-only. Opcode `0` means Call, not wrong-form Return. Every
 other Invocation opcode, including `1`, is unknown and must yield
-`InvalidOperation` once Call dispatch is enabled; the Invocation kind currently
-remains unsupported. No Return opcode or compatibility alias exists here.
+`InvalidOperation` from the active Call handler. No Return opcode or compatibility alias exists here.
 Return operation, selector and validation rules belong to
 [`Thread.Return`](thread.md#return).
 
@@ -84,8 +84,7 @@ maximum supported depth at exhaustion; `x2` is zero. The full array therefore
 returns `(x0, x1, x2) = (33, 16, 0)`, not attempted depth 17. The shared
 status/error encoder and lossless client decoder, inline depth-16 storage and
 the non-committing Call preparation depth check are implemented: 15 saved
-records admit, 16 reject with `(33, 16, 0)`. Call dispatch remains
-unimplemented.
+records admit, 16 reject with `(33, 16, 0)` through the dispatched Call path.
 
 Return underflow remains fault delivery with no pop, not `NestingDepth`.
 
@@ -175,8 +174,7 @@ For active `AddressSpace.CreateInvocation`:
 4. Check destination-slot bounds, vacancy and installability.
 5. Install only after every check passes.
 
-For `Invocation.Call` admission (implemented as non-committing preparation,
-not dispatched):
+For `Invocation.Call` admission (implemented and dispatched):
 
 1. Validate the operation, Invocation key, Call-only form, applicable authority
    and live target identity.
@@ -216,10 +214,18 @@ frame (only `x2..x7` kept; `x0`/`x1`, `x8..x30` and LR zero; PC = entry;
 SP = saved `x9`; source SPSR with only NZCV cleared; origin unchanged) and the
 checked translation metadata. No hardware is touched by the commit.
 
-Not implemented: the entry-side TTBR0 install, frame restore and
-`✅ Invocation::Call()` trace, and dispatch through `core_invoke`. Call stays
-undispatched, reporting the Invocation kind unsupported, until `Thread.Return`
-exists, so a migrated Thread is never left without a return path.
+Call is dispatched. `handle_cap_invoke` reads every input from the saved-frame
+copy, and `core_invoke` routes the Invocation kind to `api::invocation::call`.
+After guards and the kernel lock end, the SVC entry installs the target
+translation, restores the scrubbed target-entry frame and traces
+`✅ Invocation::Call()`; the Thread resumes in the target on the same core
+stack. The matching [`Thread.Return`](thread.md#return) is dispatched too. The
+boot fixture runs a same-Thread round trip into the Bounce AddressSpace twice
+through real SVCs, checking target-entry registers, NZCV, DAIF and SP, the
+target root, Bounce-only probe backing, and the source's restored x19..x30,
+SP, NZCV and root. `InvocationKey::call(args, target_sp)` (over `libsyscall::ppc_call`) is the
+userspace Call wrapper; `ppc_export!` generates the export entry wrapper
+whose address `CreateInvocation` publishes.
 
 ## Non-payload GPR and condition-flag exposure
 
@@ -542,8 +548,10 @@ inline. Status 32 encoding/decoding and the numeric SP helper are implemented;
 dedicated ABI, wrapper, predicate, storage and construction regression tests
 exist. Test-run results are recorded in the implementation plan, not inferred
 from the presence of those tests.
-There is no `Call` wrapper or kernel handler, same-Thread PPC migration, or
-invocation stack. `Thread.Return` dispatch, its helper/wrapper and the common
-export adapter/fault path are also unimplemented. Invocation dispatch remains
-unsupported; a created Invocation cannot yet be called. `Thread.Return`
-currently returns `InvalidOperation`, with no pop, handoff or fake success.
+The kernel Call handler, same-Thread PPC migration, invocation stack and
+`Thread.Return` dispatch are implemented and exercised through real SVCs in the
+boot fixture, including through the userspace `InvocationKey::call` wrapper
+and the `ThreadReturnKey::return_from_invocation` helper, and through a
+compiled `ppc_export!` export including its fault-handler handoff.
+Kernel-origin fault delivery is not designed:
+Return faults halt the kernel under the interim policy.

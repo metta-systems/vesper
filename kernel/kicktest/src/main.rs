@@ -44,7 +44,7 @@ use {
         UntypedKey,
         address_space::AddressSpaceKey,
         domain::DomainId,
-        thread::{ThreadKey, ThreadOp},
+        thread::{ThreadKey, ThreadOp, ThreadReturnKey},
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -62,6 +62,7 @@ use {
 use libobject::DebugConsoleKey;
 
 #[cfg(feature = "debug_kernel")]
+mod ppc;
 mod translation;
 
 boot::entry!(boot_main);
@@ -1169,8 +1170,10 @@ pub fn kicktest_run() -> ! {
                     if expected == ObjectType::INVOCATION && found == ObjectType::THREAD
             ));
         }
+        // Return on the sentinel at depth zero is an illegal-return fault,
+        // which the interim policy turns into a kernel halt; the PPC round
+        // trip below exercises Return success instead.
         for op in [
-            ThreadOp::Return,
             ThreadOp::Grant,
             ThreadOp::Suspend,
             ThreadOp::Resume,
@@ -1994,7 +1997,11 @@ pub fn kicktest_run() -> ! {
         // SAFETY: Retype initialized the full private carve; its accounted
         // backing is never relocated, reclaimed, or reinitialized while the
         // binding is live, including after Bounce's Thread is retired.
-        let bounce_table_binding = unsafe { (&*(bounce_table_addr as *const KeyTable)).binding() };
+        let bounce_table_binding =
+            unsafe { (&mut *(bounce_table_addr as *mut KeyTable)).bind_address_space() }
+                .unwrap_or_else(|error| {
+                    panic!("Bounce table provisioning failed: {:?}", error.code())
+                });
         assert_ne!(bounce_table_binding.address(), boot_table_binding.address());
         assert_eq!(bounce_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
         let (bounce_as_id, bounce_as) = nucleus
@@ -2087,6 +2094,120 @@ pub fn kicktest_run() -> ! {
             Err(CapError::InvalidOperation)
         ));
         assert_eq!(TTBR0_EL1.get(), source_root | (u64::from(bound_asid) << 48));
+
+        // ─────────────────────────────────────────────────────────────────
+        // Same-Thread PPC Call/Return end-to-end into the Bounce AddressSpace
+        // ─────────────────────────────────────────────────────────────────
+
+        // Provisioning (`bind_address_space`) installed Bounce's Slot(1)
+        // sentinel before its AddressSpace existed. As Bounce's builder, this
+        // fixture knows the table's guard and size, so the Return key is
+        // deterministic; it hands the key to the component's init, which
+        // records it for the export adapter.
+        let ppc_return_key =
+            ThreadReturnKey::provisioned(TEST_TABLE_GUARD, BOOT_TABLE_SIZE_BITS).raw();
+        assert_eq!(ppc_return_key.slot(), test_slot(KeySlot::THREAD_RETURN.0));
+        {
+            // SAFETY: Bounce's retained initialized table; this read-only
+            // check overlaps no capability invocation.
+            let bounce_table = unsafe { &*(bounce_table_addr as *const KeyTable) };
+            let entry = bounce_table
+                .lookup(ppc_return_key, TEST_TABLE_GUARD)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "provisioned Return key does not resolve: {:?}",
+                        error.code()
+                    )
+                });
+            assert!(entry.is_thread_return_key());
+        }
+        ppc::component_init(ppc_return_key);
+        let ppc_key = AddressSpaceKey::from_key(bounce_as_key)
+            .create_invocation(
+                ppc::target_entry as *const () as u64,
+                &self_table,
+                KeySlot(200),
+                ppc::STACK_BASE,
+                ppc::STACK_END,
+                ppc::MINIMUM_HEADROOM,
+            )
+            .unwrap_or_else(|error| panic!("PPC CreateInvocation failed: {:?}", error.code()));
+        let boot_thread_index = usize::try_from(
+            nucleus
+                .current_thread
+                .unwrap_or_else(|| panic!("no current boot Thread")),
+        )
+        .unwrap_or_else(|_| panic!("boot Thread index out of range"));
+        let assert_boot_thread_home = |nucleus: &Nucleus<ArchObjectsImpl>| {
+            let boot_thread = nucleus
+                .pools
+                .threads
+                .get_live(boot_thread_index)
+                .unwrap_or_else(|| panic!("boot Thread missing"));
+            assert!(boot_thread.invocation_stack.is_empty());
+            assert_eq!(boot_thread.address_space, boot_as_id);
+        };
+
+        // Recoverable rejections through real dispatch: no push, no switch,
+        // no scrubbing, source registers intact.
+        for (op, sp, expected) in [
+            (
+                0,
+                ppc::STACK_END - 8,
+                CapError::InvalidStack {
+                    value: ppc::STACK_END - 8,
+                    reason: InvalidStackReason::SpMisaligned,
+                },
+            ),
+            (
+                0,
+                ppc::STACK_BASE + 16,
+                CapError::InvalidStack {
+                    value: ppc::STACK_BASE + 16,
+                    reason: InvalidStackReason::SpInsufficientHeadroom,
+                },
+            ),
+            (1, ppc::STACK_END, CapError::InvalidOperation),
+        ] {
+            ppc::assert_call_rejected(ppc_key, op, sp, expected);
+            assert_boot_thread_home(nucleus);
+            assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        }
+
+        // The real round trip, twice: the same Thread migrates into Bounce's
+        // root/ASID and table, Returns through Bounce's sentinel, and resumes
+        // here with SUCCESS/r0/r1 and its own x19-x30/SP/NZCV/root.
+        // The first pass uses the instrumented raw pair, the second the
+        // libobject `InvocationKey::call` / `ThreadReturnKey` wrappers.
+        for via_library in [false, true] {
+            let (probe_word, target_ttbr) = ppc::round_trip(ppc_key, via_library);
+            assert_eq!(target_ttbr, translation::bounce_ttbr());
+            assert_ne!(probe_word, 0);
+            assert_boot_thread_home(nucleus);
+            assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        }
+
+        // A compiled `ppc_export!` entry: wrapper → linked body → result
+        // spill → Return through the init-recorded key. The second pass makes
+        // init record a stale key, so the adapter's Return is rejected and the
+        // image's `vesper_thread_return_fault` gets the exact diagnostics and
+        // original words, then repairs by retrying Return with the right key.
+        let export_key = AddressSpaceKey::from_key(bounce_as_key)
+            .create_invocation(
+                ppc::export_entry as *const () as u64,
+                &self_table,
+                KeySlot(201),
+                ppc::STACK_BASE,
+                ppc::STACK_END,
+                ppc::MINIMUM_HEADROOM,
+            )
+            .unwrap_or_else(|error| panic!("export CreateInvocation failed: {:?}", error.code()));
+        for stale_init_key in [false, true] {
+            ppc::export_round_trip(export_key, ppc_return_key, stale_init_key);
+            assert_boot_thread_home(nucleus);
+            assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        }
+        semi::println!("PPC Call/Return round trips through Bounce passed");
 
         // An already-satisfied Wait consumes and returns the bits
         // immediately through the real SVC path.
@@ -2491,7 +2612,10 @@ pub fn kicktest_run() -> ! {
                 // SAFETY: the kernel-issued address names the full initialized
                 // private Retype carve retained without relocation, reclaim,
                 // or reinitialization while any binding is live.
-                let binding = unsafe { (&*(address as *const KeyTable)).binding() };
+                let binding = unsafe { (&mut *(address as *mut KeyTable)).bind_address_space() }
+                    .unwrap_or_else(|error| {
+                        panic!("fixture table provisioning failed: {:?}", error.code())
+                    });
                 assert_eq!(
                     entry.keytable_guard_and_size().ok(),
                     Some((TEST_TABLE_GUARD, binding.size_bits()))
@@ -2739,7 +2863,10 @@ pub fn kicktest_run() -> ! {
                 // SAFETY: the kernel-issued address names the full initialized
                 // private Retype carve retained without relocation, reclaim,
                 // or reinitialization while any binding is live.
-                let binding = unsafe { (&*(address as *const KeyTable)).binding() };
+                let binding = unsafe { (&mut *(address as *mut KeyTable)).bind_address_space() }
+                    .unwrap_or_else(|error| {
+                        panic!("fixture table provisioning failed: {:?}", error.code())
+                    });
                 assert_eq!(
                     entry.keytable_guard_and_size().ok(),
                     Some((TEST_TABLE_GUARD, binding.size_bits()))
