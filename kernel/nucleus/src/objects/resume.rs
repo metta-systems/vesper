@@ -225,7 +225,7 @@ impl<A: ArchObjects> Nucleus<A> {
     }
 }
 
-fn execution_origin(origin: ExceptionOrigin) -> bool {
+pub(crate) fn execution_origin(origin: ExceptionOrigin) -> bool {
     matches!(
         origin,
         ExceptionOrigin::CurrentSp0 | ExceptionOrigin::LowerAarch64

@@ -11,6 +11,7 @@ pub mod arch;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
 pub mod event_count;
+pub mod invocation;
 pub mod key_entry;
 pub mod key_table;
 pub mod notification;

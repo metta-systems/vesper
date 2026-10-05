@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x07` (core) |
 | Target | An exported component API entry point in an `AddressSpace` |
-| Status | Six-input construction, status 32 diagnostics and immutable validated stack extent/headroom are active; numeric SP helper implemented with dedicated tests, not Call admission; `Call` dispatch and PPC execution are not implemented |
+| Status | Six-input construction, status 32 diagnostics and immutable validated stack extent/headroom are active; non-committing `Call` admission/preparation (`prepare_call`) and the stage-5 commit (`commit_call`: continuation push, AddressSpace migration, scrubbed target-entry frame) are implemented and tested but not dispatched; entry-side install/trace, `Call` dispatch and Return are not implemented |
 
 ## Purpose
 
@@ -82,9 +82,10 @@ It follows valid SP and target translation preparation under the admission-stage
 order below. `x1` reports the current saved-continuation count, equal to the
 maximum supported depth at exhaustion; `x2` is zero. The full array therefore
 returns `(x0, x1, x2) = (33, 16, 0)`, not attempted depth 17. The shared
-status/error encoder and lossless client decoder, plus inline depth-16 storage
-and layout tests, are implemented; Call dispatch and runtime depth admission
-remain unimplemented.
+status/error encoder and lossless client decoder, inline depth-16 storage and
+the non-committing Call preparation depth check are implemented: 15 saved
+records admit, 16 reject with `(33, 16, 0)`. Call dispatch remains
+unimplemented.
 
 Return underflow remains fault delivery with no pop, not `NestingDepth`.
 
@@ -155,9 +156,9 @@ stack predicates; the admission-stage order below places those checks in the
 operation. `InvocationStackExtent::new` implements the construction predicates;
 `validate_sp` implements the SP predicates, with dedicated predicate/precedence
 tests. Construction checks precede installation and preserve state/authority
-on rejection. The SP helper has no state transition and is not wired into
-Call admission; source-context preservation and Call-stage priority still
-require actual Call dispatch and integration tests.
+on rejection. Call preparation applies `validate_sp` to the SP read from the
+saved frame's `x9`, never the live register, the source `SP` or neighbouring
+registers.
 
 ### Admission-stage order
 
@@ -174,7 +175,8 @@ For active `AddressSpace.CreateInvocation`:
 4. Check destination-slot bounds, vacancy and installability.
 5. Install only after every check passes.
 
-For selected, unimplemented `Invocation.Call` admission:
+For `Invocation.Call` admission (implemented as non-committing preparation,
+not dispatched):
 
 1. Validate the operation, Invocation key, Call-only form, applicable authority
    and live target identity.
@@ -191,10 +193,33 @@ invalid SP plus an unready translation context or full invocation depth reports
 `InvalidStack`. Translation-preparation failure precedes depth exhaustion once
 SP is valid. This selects no new authority bits, preparation-error meanings or
 lifecycle/fault semantics. The active constructor follows this order, including
-full-width destination-slot representability after extent validation. The SP
-helper does not resolve a target, prepare translation state or check depth:
-invalid-SP versus unready-target/full-depth priority and translation-before-depth
-priority remain selected contracts, not implemented Call admission.
+full-width destination-slot representability after extent validation.
+
+Call stages 1–4 are implemented by `api::invocation::prepare_call` (operation,
+key lookup, Invocation kind, `CALL` right) and `Nucleus::prepare_call` (live
+target identity, saved-`x9` SP, `prepare_translation_context`, depth). It
+returns a `PreparedCall` with the source Thread identity, the source
+continuation captured from the saved frame, checked target translation
+metadata, entry PC, target SP, the six `x2..x7` inputs and the current depth.
+It takes the nucleus by shared reference and mutates nothing on success or
+rejection: the source Thread, its invocation stack, target translation state,
+hardware TTBR0 and capability tables are unchanged.
+
+Stage 5 is `Nucleus::commit_call` (with `api::invocation::call` running all
+five stages). It first re-checks that the description is current (same
+current Thread incarnation, still running, still in the captured source
+AddressSpace, same stack depth), rejecting a stale one with
+`InvalidOperation` and no mutation. It then pushes the continuation and
+switches the Thread's AddressSpace to the target, so later key lookups use the
+target table. It returns a `CommittedCall` carrying the scrubbed target-entry
+frame (only `x2..x7` kept; `x0`/`x1`, `x8..x30` and LR zero; PC = entry;
+SP = saved `x9`; source SPSR with only NZCV cleared; origin unchanged) and the
+checked translation metadata. No hardware is touched by the commit.
+
+Not implemented: the entry-side TTBR0 install, frame restore and
+`✅ Invocation::Call()` trace, and dispatch through `core_invoke`. Call stays
+undispatched, reporting the Invocation kind unsupported, until `Thread.Return`
+exists, so a migrated Thread is never left without a return path.
 
 ## Non-payload GPR and condition-flag exposure
 

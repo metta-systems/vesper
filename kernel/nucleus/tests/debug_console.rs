@@ -21,6 +21,9 @@ mod objects;
 #[path = "support/resume.rs"]
 mod resume_tests;
 
+#[path = "support/invocation_call.rs"]
+mod invocation_call_tests;
+
 use {
     api::{KeyEntry, debug_console::invoke, key_entry::ThreadSelector},
     core::{
