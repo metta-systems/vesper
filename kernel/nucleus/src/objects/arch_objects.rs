@@ -128,6 +128,9 @@ pub trait ArchObjects: Sized + 'static {
     const FRAME_SIZES: &'static [FrameSize];
     const PT_LEVELS: usize;
     const PT_INDEX_BITS: usize;
+    /// Exclusive ceiling of the supported low user virtual-address interval.
+    /// Numeric Invocation stack validation uses this without a mapping walk.
+    const USER_VA_END: u64;
 
     // ─── Validation ───
 

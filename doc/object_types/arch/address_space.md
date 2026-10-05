@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x82` (arch index 2) |
 | Pool | `PoolTag::AddressSpace` (pool-backed kernel object; boot-carved) |
-| Status | Immutable KeyTable binding/current-AS caller lookup and checked fixture root/ASID switching active; `Activate` installs after guards end; `Retire` and `CreateInvocation` capability construction active; PPC Call/Return is not implemented |
+| Status | Immutable KeyTable binding/current-AS caller lookup and checked fixture root/ASID switching active; `Activate` installs after guards end; `Retire` and six-input `CreateInvocation` with validated extent/headroom and status 32 diagnostics active; PPC Call/Return is not implemented |
 
 ## Purpose
 
@@ -29,7 +29,7 @@ context would merge protection boundaries.
 |---|---|---|---|---|
 | `0` | Activate | no arguments (all zero) | `MAP` on the invoked AddressSpace | zeros; installs the bound translation root + ASID into the current hardware translation context (`TTBR0_EL1`) |
 | `1` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked AddressSpace | zeros; tears down the invoked AddressSpace |
-| `3` | CreateInvocation | `x2` nonzero function address, `x3` destination KeyTable capability, `x4` vacant destination slot index, `x5` stack base, `x6` exclusive stack end, `x7` positive minimum headroom as a direct `u64` byte count; byte extent `[base, end)`, reject `base >= end`; extent schema not yet implemented | `GRANT` on the invoked AddressSpace; `INSTALL` on the destination KeyTable | Destination-table-local Invocation key with `CALL` authority in result `x1`, zero in `x2`; a zero function address is rejected with `InvalidPointer` |
+| `3` | CreateInvocation | `x2` nonzero function address, `x3` destination KeyTable capability, `x4` vacant destination slot index, `x5` stack base, `x6` exclusive stack end, `x7` positive minimum headroom as a direct `u64` byte count; byte extent `[base, end)`, reject `base >= end`; active six-input schema | `GRANT` on the invoked AddressSpace; `INSTALL` on the destination KeyTable | Destination-table-local Invocation key with `CALL` authority in result `x1`, zero in `x2`; a zero function address is rejected with `InvalidPointer` |
 
 ### Activate
 
@@ -128,10 +128,14 @@ rule).
   does not undo dispatch's already admitted wait. The fixture treats an
   impossible preparation failure as an invariant failure, not wait completion
   or a recovery ABI.
-- Contract: `AddressSpace.CreateInvocation` (op `3`) creates an Invocation for
+- Active construction: `AddressSpace.CreateInvocation` (op `3`) creates an Invocation for
   a supplied function address and target stack extent, then installs it into a
   destination KeyTable. The extent is nonempty and wholly within the target
-  AddressSpace's user virtual-address range. Its encoding is `x5` base and
+  AddressSpace's user virtual-address range. AArch64 supplies
+  `ArchObjects::USER_VA_END = 1 << page_table::VA_BITS`, with `VA_BITS = 48`:
+  base must be below `1 << 48`, and exclusive end may equal that ceiling.
+  This is the low user interval, not the trusted Bounce fixture's high
+  direct-map execution-stack range. Its encoding is `x5` base and
   `x6` exclusive end: byte extent `[base, end)`, rejecting `base >= end`.
   The target component/export setup also supplies positive minimum downward
   headroom `M` as a direct `u64` byte count in `x7`, not a size exponent.
@@ -164,9 +168,10 @@ rule).
   then SP, translation readiness/encodability, depth capacity, and push/commit.
   Malformed values precede remaining destination/readiness/depth failures, but
   not authority/stale target failures. Every check is pre-commit.
-  This status/diagnostic contract is not yet implemented. The
-  target chooses the extent and minimum to match its stack-pool and concurrency
-  policy.
+  Status 32, root-exported `InvalidStackReason`, lossless full-width decoding,
+  and this constructor admission order are implemented. Call admission order
+  remains selected and unimplemented. The target chooses the extent and
+  minimum to match its stack-pool and concurrency policy.
   The installed capability carries the extent and minimum headroom, with
   only `CALL` authority; no fixed 4 KiB floor is selected. The
   operation requires `GRANT` on the invoked AddressSpace and `INSTALL` on the
@@ -180,7 +185,10 @@ rule).
   `CurrentReturnOnly` Thread selector at `KeySlot::THREAD_RETURN` Slot(1),
   not a named Thread or an AddressSpace/function target. Its ordinary
   current-AS-table lookup and guard/incarnation/presence checks remain mandatory;
-  the AS-shared sentinel acts only on the invoking Thread. On `Invocation.Call`,
+  the AS-shared sentinel acts only on the invoking Thread. The selected
+  `Invocation.Call` contract requires the checks below; they are implemented
+  only as the separately tested numeric `InvocationStackExtent::validate_sp`
+  helper, not actual Call admission. On a future admitted `Invocation.Call`,
   require 16-byte-aligned `SP`, `base < SP <= end`, and `SP - base >= M` for
   an agreed positive minimum downward headroom. `SP = end` is allowed, but
   `SP = base` and insufficient headroom are rejected. `M` is the requirement
@@ -195,7 +203,7 @@ rule).
   function's argument registers; target-entry `x0` and `x1` are two leading
   dummy arguments ignored by the target, while the six real `u64` inputs
   remain unchanged in `x2..x7`, without a register shuffle. None carries stack
-  yemetadata. The working SP transport is provisionally `x9`, supplied by the Call wrapper and read from saved `frame.gpr[9]` by the kernel, not live x9 after Rust entry. Keep the register unfrozen until end-to-end Call/Return confirms feasibility. The Call raw-SVC compiler declarations use x9 as an input with discarded output, alongside argument x3..x7 input/discarded outputs, x0..x2 input/results and x8/x10..x18 clobbers, with x18 selected as ordinary caller-volatile scratch and no kernel continuation field/reserved platform role; FP/SIMD is prohibited/trapped for the current integer-only slice (effective trap enforcement/validation pending); [non-payload GPR/NZCV scrubbing](../core/invocation.md#non-payload-gpr-and-condition-flag-exposure) is selected, not implemented or validated. No wrapper or end-to-end validation is claimed. Capability/authority
+  metadata. The working SP transport is provisionally `x9`, supplied by the Call wrapper and read from saved `frame.gpr[9]` by the kernel, not live x9 after Rust entry. Keep the register unfrozen until end-to-end Call/Return confirms feasibility. The Call raw-SVC compiler declarations use x9 as an input with discarded output, alongside argument x3..x7 input/discarded outputs, x0..x2 input/results and x8/x10..x18 clobbers, with x18 selected as ordinary caller-volatile scratch and no kernel continuation field/reserved platform role; FP/SIMD is prohibited/trapped for the current integer-only slice (effective trap enforcement/validation pending); [non-payload GPR/NZCV scrubbing](../core/invocation.md#non-payload-gpr-and-condition-flag-exposure) is selected, not implemented or validated. No wrapper or end-to-end validation is claimed. Capability/authority
   failures retain their existing errors; stack validation does not replace
   zero-function `InvalidPointer`, depth-exhaustion `NestingDepth`, or Return
   fault delivery.
@@ -221,17 +229,25 @@ rule).
   native body-result convention experimental; trusted EL1 fixture execution
   does not prove hostile-EL0 confinement.
 - Implementation status: `AddressSpace.CreateInvocation` stores a mandatory
-  `NonZero<u64>` function address in its CALL-only Invocation payload; zero
-  remains `InvalidPointer`. `ThreadSelector` and the kernel-constructed
+  `NonZero<u64>` function address, target AddressSpace identity and immutable
+  validated `InvocationStackExtent` in its 40 B CALL-only payload; zero
+  remains `InvalidPointer`. The extent's private fields and read-only getters
+  live in `objects/invocation.rs`; validation proves only numeric bounds and
+  headroom, not mappings/writability or private stack ownership. `ThreadSelector` and the kernel-constructed
   `CurrentReturnOnly` boot sentinel at Slot(1) are implemented.
   `Thread.Return` currently returns `InvalidOperation`; its PPC
   dispatch/helper/wrapper and migration remain unimplemented, without fake
   success. Return-form propagation
   and Call-only Invocation distribution remain independently deferred, without
   broader named-Thread derivation/transfer approval. The active
-  `AddressSpace.CreateInvocation` handler and userspace wrapper still require
-  `x5..x7` to be zero and do not store an extent; the selected extent schema is not implemented. AddressSpace-to-table
-  binding and lookup are active. PPC `Invocation.Call` is not implemented;
+  `AddressSpaceKey::create_invocation` wrapper appends `stack_base`,
+  `stack_end`, and `minimum_headroom` after function/destination/slot and
+  uses ordinary `protected_call6`, forwarding every operand unchanged.
+  Kernel validation owns the numeric invariants and installs the capability
+  only after all admission checks. `KeyPayload` is 40 B and `KeyEntry` is
+  64 B/alignment 32; type-derived KeyTable carves, accounting and fixture
+  backing include that stride. AddressSpace-to-table binding and lookup
+  are active. PPC `Invocation.Call` is not implemented;
   invocation-time fault behavior remains open. Source and Bounce have distinct
   AddressSpace/table identities and independently provisioned roots with ASIDs
   1 and 2. Source activation precedes the first handoff; capability lookup

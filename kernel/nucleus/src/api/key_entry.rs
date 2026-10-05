@@ -13,7 +13,7 @@
 // │    rights: Rights             (1 byte)       │
 // │    badge: u16                 (2 bytes)      │
 // ├──────────────────────────────────────────────┤
-// │  Payload — 24 bytes (union on obj_type)      │
+// │  Payload — 40 bytes (union on obj_type)      │
 // │                                              │
 // │  VARIANT A: Object identity (most types)     │
 // │    pool: PoolTag              (1 byte)       │
@@ -46,11 +46,12 @@
 // │  VARIANT F: Invocation                       │
 // │    function_address: NonZero<u64>            │
 // │    AddressSpace pool/index/generation        │
+// │    Stack base/end/minimum headroom (24 bytes)│
 // │                                              │
 // │  VARIANT G: Thread selector                  │
 // │    Named(ObjectId) | CurrentReturnOnly        │
 // └──────────────────────────────────────────────┘
-// Total: 28 bytes used, 32-byte aligned slot
+// Total: 48 bytes before tail padding, 64-byte slot aligned to 32 bytes
 //
 // Variant A stores a checked object identity (pool tag, index, generation),
 // never a raw pointer: the owning access context computes object addresses
@@ -61,6 +62,7 @@ use {
     crate::objects::{
         NucleusObject,
         access::{ObjectId, PoolTag},
+        invocation::InvocationStackExtent,
     },
     core::num::NonZero,
     libaddress::align,
@@ -166,7 +168,8 @@ pub struct InvocationPayload {
     pub address_space_index: u16,
     /// Target `AddressSpace` allocation generation.
     pub address_space_generation: u32,
-    pub _pad2: u64,
+    /// Numeric target stack contract, validated before construction.
+    pub stack_extent: InvocationStackExtent,
 }
 
 /// Payload for a `KeyTable` capability: a reference to the carved `KeyTable`
@@ -189,7 +192,7 @@ pub struct KeyTablePayload {
     pub _pad: [u8; 3],
 }
 
-/// 24-byte payload union, discriminated by `obj_type` in the header.
+/// 40-byte payload union, discriminated by `obj_type` in the header.
 #[repr(C)]
 #[derive(Clone, Copy)]
 union KeyPayload {
@@ -199,12 +202,12 @@ union KeyPayload {
     frame: FramePayload,
     keytable: KeyTablePayload,
     invocation: InvocationPayload,
-    null: [u8; 24],
+    null: [u8; 40],
 }
 
 /// A single entry in a thread's capability table (`KeyTable`).
 ///
-/// 28 bytes used in a 32-byte aligned slot.
+/// 48 bytes before tail padding in a 64-byte slot aligned to 32 bytes.
 /// Discriminated union: `obj_type` selects the payload variant.
 #[repr(C, align(32))]
 #[derive(Clone, Copy)]
@@ -216,12 +219,12 @@ pub struct KeyEntry {
 }
 
 // Verify sizes at compile time
-const _: () = assert!(core::mem::size_of::<KeyEntry>() == 32); // same as seL4
-const _: () = assert!(core::mem::size_of::<KeyPayload>() == 24);
+const _: () = assert!(core::mem::size_of::<KeyEntry>() == 64);
+const _: () = assert!(core::mem::size_of::<KeyPayload>() == 40);
 const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<FramePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
-const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 24);
+const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 40);
 const _: () = assert!(core::mem::size_of::<ThreadSelector>() == 12);
 const _: () = assert!(core::mem::align_of::<ThreadSelector>() == 4);
 const _: () = assert!(core::mem::align_of::<KeyEntry>() == 32);
@@ -243,7 +246,7 @@ impl KeyEntry {
             obj_type: ObjectType::NULL,
             rights: Rights::empty(),
             badge: 0,
-            payload: KeyPayload { null: [0_u8; 24] },
+            payload: KeyPayload { null: [0_u8; 40] },
         }
     }
 
@@ -390,8 +393,12 @@ impl KeyEntry {
 
     /// Create an `Invocation` capability targeting an entry point in an
     /// `AddressSpace`. The capability starts with `CALL` authority and no badge.
-    /// The nonzero entry address is mandatory by construction.
-    pub fn new_invocation(address_space: ObjectId, function_address: NonZero<u64>) -> Self {
+    /// The nonzero entry and validated numeric stack contract are mandatory.
+    pub fn new_invocation(
+        address_space: ObjectId,
+        function_address: NonZero<u64>,
+        stack_extent: InvocationStackExtent,
+    ) -> Self {
         debug_assert_eq!(address_space.pool, PoolTag::AddressSpace);
         Self {
             obj_type: ObjectType::INVOCATION,
@@ -404,7 +411,7 @@ impl KeyEntry {
                     _pad: 0,
                     address_space_index: address_space.index,
                     address_space_generation: address_space.generation,
-                    _pad2: 0,
+                    stack_extent,
                 },
             },
         }
@@ -627,6 +634,19 @@ impl KeyEntry {
             },
             payload.function_address,
         ))
+    }
+
+    /// Read the immutable numeric target stack contract of an `Invocation`.
+    pub fn invocation_stack_extent(&self) -> Result<InvocationStackExtent, CapError> {
+        if self.obj_type != ObjectType::INVOCATION {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::INVOCATION,
+                found: self.obj_type,
+            });
+        }
+        // SAFETY: Invocation constructors initialize the validated extent;
+        // the checked tag selects that payload, and no mutable accessor exposes it.
+        Ok(unsafe { self.payload.invocation.stack_extent })
     }
 
     /// Access the inline Frame payload, but only if this is a Frame.

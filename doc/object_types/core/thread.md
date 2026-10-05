@@ -111,8 +111,11 @@ validation with a defined error.
   `CurrentReturnOnly` has no object identity to resolve; its ordinary checked
   key lookup and selector handling are distinct from concrete-object access.
   The implemented `ThreadSelector` is `#[repr(C, u8)]`, 12 bytes with alignment
-  4, stored in the 24-byte payload union. `KeyEntry` is 32 bytes with alignment
-  32. `KeyEntry::from_id` returns `Result<KeyEntry, CapError>` and initializes
+  4, stored in the 40-byte payload union. `KeyEntry` is 64 bytes with alignment
+  32. The larger union holds the 40 B Invocation payload (target identity,
+  mandatory nonzero entry and immutable validated extent/headroom); the
+  Thread selector itself is unchanged. KeyTable backing/accounting uses the
+  actual 64 B stride. `KeyEntry::from_id` returns `Result<KeyEntry, CapError>` and initializes
   `ThreadSelector::Named(id)` for the Thread kind. `new_thread_return` creates
   the rights-empty sentinel; `thread_selector` and `is_thread_return_key` read
   its form without resolving a concrete object. `object_id` on
@@ -205,8 +208,9 @@ validation with a defined error.
 
 ## TODOs
 
-- PPC invocation-stack, Return dispatch/helper/wrapper, adapter and
-  fault-delivery implementation.
+- PPC invocation-stack, Call/Return dispatch/helper/wrapper, adapter,
+  statuses 33/34 and fault-delivery implementation. The active constructor
+  and separately tested numeric SP helper do not implement Call admission.
 - Current-relative Return propagation through KeyTable management, independent
   of Call-only Invocation distribution — D4; no derivation/transfer expansion.
 - Full Start/Suspend/Resume with legal state transitions, execution

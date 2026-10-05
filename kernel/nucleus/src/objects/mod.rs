@@ -6,6 +6,7 @@ pub mod completion;
 pub mod debug_console;
 pub mod domain;
 pub mod event_count;
+pub mod invocation;
 pub mod key_table;
 pub mod notification;
 pub mod nucleus;

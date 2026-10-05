@@ -40,6 +40,7 @@ use {
         arch_objects::AddressSpaceObject,
         completion::{PendingKind, PendingState},
         domain::DcbPages,
+        invocation::InvocationStackExtent,
         key_table::{CallerTable, KeyTableBinding},
         nucleus::NucleusPools,
     },
@@ -794,12 +795,14 @@ fn mandatory_invocation_target_does_not_enable_ppc_dispatch() {
         let thread = nucleus.create_thread(fixture_as).expect("caller Thread");
         nucleus.current_thread = Some(u32::from(thread.index));
         let function = NonZero::new(0x80000).unwrap();
+        let extent = InvocationStackExtent::new(0x1010, 0x1080, 48, ArchObjectsImpl::USER_VA_END)
+            .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()));
         let key = nucleus
             .current_thread_table_mut()
             .unwrap()
             .insert(
                 KeySlot(10),
-                KeyEntry::new_invocation(second_as, function),
+                KeyEntry::new_invocation(second_as, function, extent),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|_| panic!("Invocation capability installation"));
@@ -829,6 +832,15 @@ fn mandatory_invocation_target_does_not_enable_ppc_dispatch() {
                 entry.invocation_target(),
                 Ok(target) if target == (second_as, function)
             ));
+            assert_eq!(
+                entry
+                    .invocation_stack_extent()
+                    .unwrap_or_else(|error| panic!(
+                        "Invocation extent preserved: {:?}",
+                        error.code()
+                    )),
+                extent
+            );
             assert_eq!(entry.rights(), Rights(Rights::CALL));
             assert_eq!(entry.badge(), 0);
             assert!(!entry.is_thread_return_key());

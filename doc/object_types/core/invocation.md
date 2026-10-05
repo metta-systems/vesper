@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x07` (core) |
 | Target | An exported component API entry point in an `AddressSpace` |
-| Status | Capability construction is active; `Call` dispatch and PPC execution are not implemented |
+| Status | Six-input construction, status 32 diagnostics and immutable validated stack extent/headroom are active; numeric SP helper implemented with dedicated tests, not Call admission; `Call` dispatch and PPC execution are not implemented |
 
 ## Purpose
 
@@ -92,8 +92,14 @@ Return underflow remains fault delivery with no pop, not `NestingDepth`.
 submitted value in `x1` and a field-specific typed reason ID in `x2`, without
 operand packing. IDs below are the complete `x2` values; **0 is not a valid
 reason**. Predicate precedence is specified separately below; numeric IDs do
-not define it. Status 32 and its diagnostics are not yet implemented;
-`NestingDepth` has status 33, with current/maximum count in `x1` and zero in `x2`.
+not define it. Status 32, `CapError::InvalidStack { value, reason }`, and
+root-exported `InvalidStackReason` are implemented. `CapError::code()` emits
+`(32, value, reason_id)`; the shared decoder checks the entire `u64` reason
+without narrowing. Zero, unknown IDs and high-bit extensions become
+`UnknownResponse`, preserving status and both details verbatim. The offending
+value remains full-width for every known reason. `NestingDepth` status 33
+(current/maximum count in `x1`, zero in `x2`) and `UnexpectedReturn` status 34
+remain unimplemented.
 
 | ID in `x2` | Reason | Condition | Value in `x1` |
 |---:|---|---|---|
@@ -114,6 +120,10 @@ The exclusive end may equal the target user range's exclusive upper boundary;
 it need not name an accessible byte. Empty/inverted extents have distinct
 reasons; lower/upper SP-bound violations share `SpOutOfRange`. Relational
 failures report submitted `end`, `M` or `SP`, not computed differences.
+AArch64 supplies `ArchObjects::USER_VA_END = 1 << page_table::VA_BITS`, with
+`VA_BITS = 48`: the supported low user interval is `[0, 1 << 48)`, and the
+extent's exclusive end may equal `1 << 48`. This numeric ceiling does not
+admit the trusted Bounce fixture's high direct-map stack as a PPC user stack.
 
 ### Stack-validation order
 
@@ -129,7 +139,8 @@ For `AddressSpace.CreateInvocation`:
 5. `MinimumHeadroomMisaligned`.
 6. `MinimumHeadroomTooLarge`.
 
-For `Invocation.Call`:
+For the numeric `InvocationStackExtent::validate_sp` helper and the selected
+future `Invocation.Call` check:
 
 1. `SpMisaligned`.
 2. `SpOutOfRange`.
@@ -139,8 +150,12 @@ Check extent ordering before `end - base`, and SP bounds before `SP - base`.
 An equal, misaligned extent reports `ExtentEmpty`; a simultaneously misaligned
 and out-of-range SP reports `SpMisaligned`. This specifies the order among
 stack predicates; the admission-stage order below places those checks in the
-operation. Validation is pre-commit and preserves the selected state/authority
-guarantees; neither the validators nor precedence tests are implemented.
+operation. `InvocationStackExtent::new` implements the construction predicates;
+`validate_sp` implements the SP predicates, with dedicated predicate/precedence
+tests. Construction checks precede installation and preserve state/authority
+on rejection. The SP helper has no state transition and is not wired into
+Call admission; source-context preservation and Call-stage priority still
+require actual Call dispatch and integration tests.
 
 ### Admission-stage order
 
@@ -148,7 +163,7 @@ Capability/authority and live target identity are checked before supplied-value
 diagnostics. After those succeed, supplied values are checked before remaining
 destination/resource readiness. Stop at the first failed stage.
 
-For `AddressSpace.CreateInvocation`:
+For active `AddressSpace.CreateInvocation`:
 
 1. Validate the operation, required capabilities/types, `GRANT` on the invoked
    AddressSpace, `INSTALL` on the destination KeyTable and live target identity.
@@ -157,7 +172,7 @@ For `AddressSpace.CreateInvocation`:
 4. Check destination-slot bounds, vacancy and installability.
 5. Install only after every check passes.
 
-For `Invocation.Call`:
+For selected, unimplemented `Invocation.Call` admission:
 
 1. Validate the operation, Invocation key, Call-only form, applicable authority
    and live target identity.
@@ -173,9 +188,11 @@ An invalid extent plus an occupied destination reports `InvalidStack`; an
 invalid SP plus an unready translation context or full invocation depth reports
 `InvalidStack`. Translation-preparation failure precedes depth exhaustion once
 SP is valid. This selects no new authority bits, preparation-error meanings or
-lifecycle/fault semantics. The active constructor's early zero-function and
-slot-representability checks do not yet follow this order; constructor migration,
-Call dispatch and precedence tests remain unimplemented.
+lifecycle/fault semantics. The active constructor follows this order, including
+full-width destination-slot representability after extent validation. The SP
+helper does not resolve a target, prepare translation state or check depth:
+invalid-SP versus unready-target/full-depth priority and translation-before-depth
+priority remain selected contracts, not implemented Call admission.
 
 ## Non-payload GPR and condition-flag exposure
 
@@ -454,9 +471,30 @@ crosses the boundary. The handler returns `!`. This is not SVC or a new kernel
 fault operation. Original-payload retention uses the selected target-stack
 spill and entry/linkage uses the selected non-returning wrapper.
 FP/SIMD is prohibited/trapped for this slice; non-payload GPR/NZCV scrubbing is
-selected, with other target-entry SPSR controls and architectural-state isolation
-separately open. Scrubbing and PPC result transport are not implemented or
-validated.
+selected, as is saved-source target-entry SPSR mode/mask/non-NZCV control
+inheritance; TLS/debug/other architectural-state isolation remains open.
+Scrubbing, status inheritance and PPC result transport are not implemented
+or validated.
+
+## Kernel-level storage and numeric validation
+
+`kernel/nucleus/src/objects/invocation.rs` defines immutable
+`InvocationStackExtent::new(base, end, minimum_headroom, user_end_exclusive)`.
+Private `u64` fields hold the validated base, exclusive end and minimum;
+`base()`, `end()` and `minimum_headroom()` expose them without mutation.
+`validate_sp(sp)` checks alignment, `base < sp <= end` and `sp - base >= M`,
+in that order. Neither method walks mappings, allocates storage, proves
+writability/exclusivity, or admits a Call.
+
+The extent is 24 B/alignment 8. `InvocationPayload` is 40 B/alignment 8:
+nonzero entry at offset 0, target identity fields at offsets 8/10/12, and
+validated extent at offset 16. `KeyPayload` is 40 B, making `KeyEntry` 64 B
+with alignment 32 (64 B slot stride); the 32 B table header is unchanged.
+`KeyEntry::new_invocation` requires the validated extent alongside the target
+identity and mandatory `NonZero<u64>` entry. `invocation_stack_extent` reads
+it with a kind check. [KeyTable storage](key_table.md#kernel-level-implementation-details)
+and Untyped accounting use the actual entry size; a 256-entry carve is
+17,440 B including its header and separate incarnation counters.
 
 ## Implementation status
 
@@ -468,8 +506,15 @@ mandatory `NonZero<u64>` function address; zero is rejected as `InvalidPointer`.
 checked AddressSpace identity and nonzero entry address. Return authority is
 represented separately by `ThreadSelector::CurrentReturnOnly`, installed in
 the boot table at `KeySlot::THREAD_RETURN` Slot(1).
-The active extent schema still requires `x5..x7` zero and stores no target stack
-extent; extent/headroom migration remains unimplemented.
+`AddressSpaceKey::create_invocation(function_address, destination,
+destination_slot, stack_base, stack_end, minimum_headroom)` uses
+`protected_call6` and forwards all six operands unchanged. The active kernel
+validates authority/live target, nonzero entry and ordered extent/minimum
+predicates before destination admission, then installs the validated extent
+inline. Status 32 encoding/decoding and the numeric SP helper are implemented;
+dedicated ABI, wrapper, predicate, storage and construction regression tests
+exist. Test-run results are recorded in the implementation plan, not inferred
+from the presence of those tests.
 There is no `Call` wrapper or kernel handler, same-Thread PPC migration, or
 invocation stack. `Thread.Return` dispatch, its helper/wrapper and the common
 export adapter/fault path are also unimplemented. Invocation dispatch remains

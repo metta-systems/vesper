@@ -1,4 +1,6 @@
-use vesper_objects::{ArchType, CapError, CoreType, KeySlot, ObjectType, decode_syscall_result};
+use vesper_objects::{
+    ArchType, CapError, CoreType, InvalidStackReason, KeySlot, ObjectType, decode_syscall_result,
+};
 
 // Check literal wire values and the actual decoded variant independently.
 macro_rules! assert_error {
@@ -376,5 +378,87 @@ fn counter_overflow_pins_status_and_lossless_fallback() {
         assert_unknown_response((31, extra, 0));
         assert_unknown_response((31, 0, extra));
         assert_unknown_response((31, extra, extra));
+    }
+}
+
+const INVALID_STACK_REASONS: [(u64, InvalidStackReason); 12] = [
+    (1, InvalidStackReason::ExtentEmpty),
+    (2, InvalidStackReason::ExtentInverted),
+    (3, InvalidStackReason::BaseOutsideUserRange),
+    (4, InvalidStackReason::EndOutsideUserRange),
+    (5, InvalidStackReason::BaseMisaligned),
+    (6, InvalidStackReason::EndMisaligned),
+    (7, InvalidStackReason::MinimumHeadroomZero),
+    (8, InvalidStackReason::MinimumHeadroomMisaligned),
+    (9, InvalidStackReason::MinimumHeadroomTooLarge),
+    (10, InvalidStackReason::SpMisaligned),
+    (11, InvalidStackReason::SpOutOfRange),
+    (12, InvalidStackReason::SpInsufficientHeadroom),
+];
+
+#[test]
+fn invalid_stack_status_and_reason_ids_match_literal_wire_contract() {
+    assert_eq!(vesper_objects::syscall_status::INVALID_STACK, 32);
+    for (id, reason) in INVALID_STACK_REASONS {
+        assert_eq!(u64::from(reason as u8), id);
+        assert_eq!(InvalidStackReason::try_from(id), Ok(reason));
+    }
+}
+
+#[test]
+fn invalid_stack_encodes_and_decodes_every_reason_and_full_width_value() {
+    for (id, reason) in INVALID_STACK_REASONS {
+        for value in [0, 1, 0x1234_5678_9abc_def0, 1 << 63, u64::MAX] {
+            let wire = (32, value, id);
+            assert_error!(
+                wire,
+                CapError::InvalidStack { value, reason },
+                CapError::InvalidStack { value: actual_value, reason: actual_reason }
+                    if actual_value == value && actual_reason == reason
+            );
+            assert_eq!(decode_syscall_result(wire).err().unwrap().code(), wire);
+        }
+    }
+}
+
+#[test]
+fn invalid_stack_rejects_zero_and_every_unassigned_reason_byte_losslessly() {
+    for id in 0..=u64::from(u8::MAX) {
+        if !(1..=12).contains(&id) {
+            assert_eq!(InvalidStackReason::try_from(id), Err(()));
+            for value in [0, 0x1234_5678_9abc_def0, u64::MAX] {
+                assert_unknown_response((32, value, id));
+            }
+        }
+    }
+}
+
+#[test]
+fn invalid_stack_reasons_reject_full_width_extensions_without_operand_packing() {
+    for bit in 4..64 {
+        for low in 0..=12 {
+            let reason = (1_u64 << bit) | low;
+            assert_eq!(InvalidStackReason::try_from(reason), Err(()));
+            assert_unknown_response((32, 0xfedc_ba98_7654_3210, reason));
+        }
+    }
+    for reason in [256, 257, 0x0801, 0x0100_0001, u64::MAX] {
+        assert_eq!(InvalidStackReason::try_from(reason), Err(()));
+        assert_unknown_response((32, u64::MAX, reason));
+    }
+}
+
+#[test]
+fn invalid_stack_status_extensions_and_unsliced_ppc_statuses_remain_unknown() {
+    for bit in 6..64 {
+        assert_unknown_response(((1_u64 << bit) | 32, u64::MAX, 1));
+    }
+    for wire in [
+        (33, 16, 0),
+        (33, u64::MAX, u64::MAX),
+        (34, 0, 0),
+        (34, 0x1234_5678_9abc_def0, u64::MAX),
+    ] {
+        assert_unknown_response(wire);
     }
 }

@@ -35,6 +35,7 @@ pub use {
     object_type::{ArchType, CoreType, ObjectType},
     page_table::{PageTableKey, PageTableOp},
     rights::Rights,
+    syscall_status::InvalidStackReason,
     thread::{ThreadKey, ThreadOp},
     untyped::{UntypedKey, UntypedOp},
 };
@@ -112,6 +113,10 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::MISSING_INTERMEDIATE, vaddr, 0) => CapError::MissingIntermediate { vaddr },
             (code::PHYSICAL_ALIAS, paddr, 0) => CapError::PhysicalAlias { paddr },
             (code::COUNTER_OVERFLOW, 0, 0) => CapError::CounterOverflow,
+            (code::INVALID_STACK, value, reason) => CapError::InvalidStack {
+                value,
+                reason: InvalidStackReason::try_from(reason).ok()?,
+            },
             _ => return None,
         })
     })();
@@ -182,6 +187,12 @@ pub enum CapError {
     /// (selected 2026-09-18): the counter is unchanged and queued `Await`s
     /// complete with this same error.
     CounterOverflow,
+    /// Invalid Invocation stack extent, minimum headroom, or submitted SP.
+    InvalidStack {
+        /// The offending submitted value, not a computed difference.
+        value: u64,
+        reason: InvalidStackReason,
+    },
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
     UnknownResponse {
@@ -270,6 +281,9 @@ impl CapError {
             CapError::MissingIntermediate { vaddr } => (code::MISSING_INTERMEDIATE, vaddr, 0),
             CapError::PhysicalAlias { paddr } => (code::PHYSICAL_ALIAS, paddr, 0),
             CapError::CounterOverflow => (code::COUNTER_OVERFLOW, 0, 0),
+            CapError::InvalidStack { value, reason } => {
+                (code::INVALID_STACK, value, u64::from(reason as u8))
+            }
             CapError::UnknownResponse {
                 status,
                 detail1,

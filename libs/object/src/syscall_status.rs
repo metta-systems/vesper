@@ -43,3 +43,62 @@ pub const PHYSICAL_ALIAS: u64 = 30;
 /// (selected 2026-09-18): the counter is unchanged and every queued
 /// `Await` completes with this same error. Details are zero.
 pub const COUNTER_OVERFLOW: u64 = 31;
+/// Invalid Invocation stack extent, minimum headroom, or submitted SP.
+/// Detail 1 is the offending submitted value; detail 2 is an `InvalidStackReason`.
+pub const INVALID_STACK: u64 = 32;
+
+/// Field-specific Invocation stack diagnostics, carried as the complete `x2` word.
+///
+/// Zero is invalid. Numeric IDs do not define validation precedence, and no
+/// operand index is packed into the reason. Relational failures report the
+/// submitted value, not a computed extent length, headroom, or deficit.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum InvalidStackReason {
+    /// `end == base`; reports `end`.
+    ExtentEmpty = 1,
+    /// `end < base`; reports `end`.
+    ExtentInverted = 2,
+    /// Base lies outside the target user VA range; reports `base`.
+    BaseOutsideUserRange = 3,
+    /// Exclusive end exceeds the permitted user extent; reports `end`.
+    EndOutsideUserRange = 4,
+    /// Base is not 16-byte aligned; reports `base`.
+    BaseMisaligned = 5,
+    /// End is not 16-byte aligned; reports `end`.
+    EndMisaligned = 6,
+    /// Minimum downward headroom is zero; reports the submitted minimum.
+    MinimumHeadroomZero = 7,
+    /// Minimum headroom is not 16-byte aligned; reports the submitted minimum.
+    MinimumHeadroomMisaligned = 8,
+    /// Minimum headroom exceeds `end - base`; reports the submitted minimum.
+    MinimumHeadroomTooLarge = 9,
+    /// SP is not 16-byte aligned; reports the submitted SP.
+    SpMisaligned = 10,
+    /// `SP <= base` or `SP > end`; reports the submitted SP.
+    SpOutOfRange = 11,
+    /// In-range SP has less than the minimum headroom; reports the submitted SP.
+    SpInsufficientHeadroom = 12,
+}
+
+impl TryFrom<u64> for InvalidStackReason {
+    type Error = ();
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::ExtentEmpty),
+            2 => Ok(Self::ExtentInverted),
+            3 => Ok(Self::BaseOutsideUserRange),
+            4 => Ok(Self::EndOutsideUserRange),
+            5 => Ok(Self::BaseMisaligned),
+            6 => Ok(Self::EndMisaligned),
+            7 => Ok(Self::MinimumHeadroomZero),
+            8 => Ok(Self::MinimumHeadroomMisaligned),
+            9 => Ok(Self::MinimumHeadroomTooLarge),
+            10 => Ok(Self::SpMisaligned),
+            11 => Ok(Self::SpOutOfRange),
+            12 => Ok(Self::SpInsufficientHeadroom),
+            _ => Err(()),
+        }
+    }
+}

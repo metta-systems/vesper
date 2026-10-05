@@ -31,7 +31,7 @@ destination table unchanged.
 
 | Kind | `size_bits` | Carve |
 |---|---|---|
-| `KeyTable` | 1..=20 (capacity `2^size_bits` entries) | variable-size carve — header, entries, and counters written/zeroed at the carve; the userspace-chosen guard packed in `x3` bits 39:8 is recorded in the capability and fixed for the table's lifetime |
+| `KeyTable` | 1..=20 (capacity `2^size_bits` entries) | type-derived variable-size carve — 32 B header, 64 B entries and separate 4 B counters, rounded to alignment 32 (256 entries: 17,440 B); header/arrays written/zeroed at the carve; the userspace-chosen guard packed in `x3` bits 39:8 is recorded in the capability and fixed for the table's lifetime |
 | `Frame` | arch-validated (AArch64: 12/21/30) | raw physical region, zeroed (sanitized) before installation |
 | `PageTable` | fixed 12 (4 KiB) on AArch64 | zeroed hardware-format table; capability is a checked pool identity over kernel metadata |
 | `Notification` | reserved zero | no Untyped bytes; object allocated from the bootstrap-carved notification pool |
@@ -67,6 +67,17 @@ flowchart TD
     H --> OK["Return first key in x1"]
 ```
 
+- KeyTable reservation uses `KeyTable::carve_size(size_bits)` and the
+  actual table alignment, not an obsolete fixed entry size. The 40 B
+  Invocation/KeyPayload makes every `KeyEntry` 64 B/alignment 32; runtime
+  Retype and bootstrap/archive/fixture backing use that stride in full carve
+  accounting, counter offsets and initialization bounds. A capacity exponent
+  selects entries, not a byte-size power of two.
+- Invocation is not Retype-creatable: memory alone cannot mint its authority.
+  Active `AddressSpace.CreateInvocation` instead requires target `GRANT`
+  and destination `INSTALL`, then stores target identity, nonzero entry and
+  validated extent/headroom inline in the destination entry. This does not
+  allocate a separate Invocation pool or stack backing, nor enable PPC Call.
 - The watermark allocator only ever moves forward: previously allocated
   objects below the watermark are never eligible for re-retyping, and no
   reset/reclamation protocol exists (accepted-leak model).

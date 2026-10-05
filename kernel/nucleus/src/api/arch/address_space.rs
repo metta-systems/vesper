@@ -10,7 +10,8 @@
 //!   originating pool, root/ASID fields cleared, pool slot reclaimed.
 //!   Success returns zeros.
 //! - `CreateInvocation` `3`: `x2` nonzero function address, `x3` destination
-//!   `KeyTable` capability, `x4` vacant destination slot, `x5..x7` zero. Requires
+//!   `KeyTable` capability, `x4` vacant destination slot, `x5` stack base,
+//!   `x6` exclusive stack end, `x7` positive minimum headroom in bytes. Requires
 //!   `GRANT` on this `AddressSpace` and `INSTALL` on the destination `KeyTable`.
 //!   Installs an Invocation capability with only `CALL` authority; returns its
 //!   destination-local key in `x1` and zero in `x2`. The function address is
@@ -44,6 +45,7 @@ use {
             ArchObjects, KeyTable, Nucleus,
             access::Access,
             arch_objects::{AddressSpaceObject, AsidPoolObject},
+            invocation::InvocationStackExtent,
             key_table::CallerTable,
             resume::{PreparedTranslationContext, prepare_translation_context},
         },
@@ -107,23 +109,7 @@ fn create_invocation<A: ArchObjects>(
     args: &[u64; 6],
     nucleus: &Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
-    if args[3..].iter().any(|&arg| arg != 0) {
-        return Err(CapError::InvalidOperation);
-    }
-    // Invocation is Call-only with a mandatory nonzero entry. Userspace
-    // cannot construct current-relative Thread.Return authority here.
-    let Some(function_address) = NonZero::new(args[0]) else {
-        return Err(CapError::InvalidPointer);
-    };
     let destination_key = RawKey::from_wire(args[1]);
-    let destination_slot =
-        KeySlot(
-            u32::try_from(args[2]).map_err(|_truncated| CapError::InvalidKey {
-                key: destination_key,
-                reason: InvalidKeyReason::SlotOutOfRange,
-                operand: 4,
-            })?,
-        );
 
     let (address_space_id, destination) = {
         let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
@@ -157,7 +143,21 @@ fn create_invocation<A: ArchObjects>(
             .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, address_space_id)?;
     }
 
-    let invocation = KeyEntry::new_invocation(address_space_id, function_address);
+    // Supplied-value diagnostics follow authority/liveness, but precede
+    // destination admission. No entry/mapping validation is performed.
+    // Invocation is Call-only with a mandatory nonzero entry. Userspace
+    // cannot construct current-relative Thread.Return authority here.
+    let function_address = NonZero::new(args[0]).ok_or(CapError::InvalidPointer)?;
+    let stack_extent = InvocationStackExtent::new(args[3], args[4], args[5], A::USER_VA_END)?;
+    let destination_slot =
+        KeySlot(
+            u32::try_from(args[2]).map_err(|_truncated| CapError::InvalidKey {
+                key: destination_key,
+                reason: InvalidKeyReason::SlotOutOfRange,
+                operand: 4,
+            })?,
+        );
+    let invocation = KeyEntry::new_invocation(address_space_id, function_address, stack_extent);
     let mut destination_table = access.resolve_carved_mut::<KeyTable>(destination.address)?;
     destination_table
         .insert(destination_slot, invocation, destination.guard)

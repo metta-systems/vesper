@@ -84,6 +84,7 @@ impl ArchObjects for AArch64 {
 
     const PT_LEVELS: usize = 4;
     const PT_INDEX_BITS: usize = 9;
+    const USER_VA_END: u64 = 1_u64 << super::page_table::VA_BITS;
 
     fn validate_frame_size(size_bits: u8) -> Result<usize, CapError> {
         match size_bits {

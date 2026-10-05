@@ -662,8 +662,8 @@ mod tests {
             assert!(!table.entry(index).is_valid());
             assert_eq!(table.incarnation_of(index), 0);
         }
-        // The header is exactly one 32-byte KeyEntry-sized unit, and the
-        // carve covers header + entries + counters at that alignment.
+        // The header remains 32 bytes, independent of the 64-byte KeyEntry
+        // stride; the carve covers header + entries + counters at that alignment.
         assert_eq!(size_of::<KeyTable>(), 32);
         assert_eq!(align_of::<KeyTable>(), align_of::<KeyEntry>());
         assert_eq!(
@@ -675,6 +675,129 @@ mod tests {
         assert!(KeyTable::capacity_for(KeyTable::MIN_SIZE_BITS) >= 2);
         assert!(KeyTable::capacity_for(KeyTable::MAX_SIZE_BITS).is_power_of_two());
         assert!(usize::try_from(KeySlot::DEBUG_CONSOLE.0).unwrap() < CAPACITY);
+    }
+
+    #[test_case]
+    fn grown_entries_use_literal_carve_sizes_and_capacity_bounds() {
+        assert_eq!(size_of::<KeyEntry>(), 64);
+        assert_eq!(align_of::<KeyEntry>(), 32);
+        assert_eq!(size_of::<u32>(), 4);
+        assert_eq!(KeyTable::HEADER_SIZE, 32);
+        assert_eq!(KeyTable::MIN_SIZE_BITS, 1);
+        assert_eq!(KeyTable::MAX_SIZE_BITS, 20);
+        for (bits, capacity, unrounded, rounded) in [
+            (1, 2, 168, 192),
+            (2, 4, 304, 320),
+            (3, 8, 576, 576),
+            (8, 256, 17_440, 17_440),
+            (20, 1_048_576, 71_303_200, 71_303_200),
+        ] {
+            assert_eq!(KeyTable::capacity_for(bits), capacity);
+            assert_eq!(32 + capacity * (64 + 4), unrounded);
+            assert_eq!(KeyTable::carve_size(bits), rounded);
+        }
+        // Check every supported exponent without allocating a maximum table.
+        for bits in KeyTable::MIN_SIZE_BITS..=KeyTable::MAX_SIZE_BITS {
+            let unrounded = 32 + (1_usize << bits) * 68;
+            let rounded = KeyTable::carve_size(bits);
+            assert!(rounded >= unrounded);
+            assert!(rounded - unrounded < 32);
+            assert_eq!(rounded % 32, 0);
+        }
+    }
+
+    #[test_case]
+    fn literal_entry_and_counter_arrays_initialize_without_overlap_or_overrun() {
+        // Include a canary after even the largest exercised carve. Smaller
+        // capacity cases also expose the rounding tail (which is not an array).
+        static mut LAYOUT_BACKING: Backing<17_472> = Backing([0; 17_472]);
+        for (bits, capacity, counter_offset, array_end, carve_end) in [
+            (1, 2, 160, 168, 192),
+            (2, 4, 288, 304, 320),
+            (3, 8, 544, 576, 576),
+            (8, 256, 16_416, 17_440, 17_440),
+        ] {
+            // SAFETY: this serial test exclusively owns the aligned static
+            // backing; every exercised full carve plus its canary fits. The
+            // prior iteration's table borrow has ended before reinitialization.
+            let table = unsafe {
+                let ptr = (&raw mut LAYOUT_BACKING.0).cast::<u8>();
+                core::ptr::write_bytes(ptr, 0xA5, 17_472);
+                KeyTable::initialize(ptr, DomainId(42), bits);
+                &mut *ptr.cast::<KeyTable>()
+            };
+            let base = core::ptr::from_ref(table) as usize;
+            assert_eq!(base % 32, 0);
+            assert_eq!(table.owner(), DomainId(42));
+            assert_eq!(table.len(), 0);
+            assert_eq!(table.size_bits(), bits);
+            assert_eq!(table.capacity(), capacity);
+            assert_eq!(table.entries_base() as usize - base, 32);
+            assert_eq!(table.counters_base() as usize - base, counter_offset);
+            assert_eq!(32 + capacity * 64, counter_offset);
+            assert_eq!(counter_offset + capacity * 4, array_end);
+            assert_eq!(KeyTable::carve_size(bits), carve_end);
+            for index in 0..capacity {
+                assert_eq!(
+                    core::ptr::from_ref(table.entry(index)) as usize - base,
+                    32 + index * 64
+                );
+                assert!(!table.entry(index).is_valid());
+                assert_eq!(table.entry(index).object_type(), ObjectType::NULL);
+                assert_eq!(table.entry(index).rights(), Rights::empty());
+                assert_eq!(table.entry(index).badge(), 0);
+                assert_eq!(table.incarnation_of(index), 0);
+            }
+            assert_eq!(
+                core::ptr::from_ref(table.entry(capacity - 1)) as usize + 64,
+                table.counters_base() as usize
+            );
+            // SAFETY: both arrays were byte-initialized by initialize; this
+            // shared byte view stays within the exclusively owned static carve.
+            let initialized = unsafe {
+                core::slice::from_raw_parts(table.entries_base().cast::<u8>(), array_end - 32)
+            };
+            assert!(initialized.iter().all(|byte| *byte == 0));
+
+            let first = install(table, slot(0), frame(1));
+            let last = install(table, slot(capacity - 1), frame(2));
+            assert_eq!(first.incarnation(), 1);
+            assert_eq!(last.incarnation(), 1);
+            assert_eq!(table.len(), 2);
+            for index in 0..capacity {
+                let occupied = index == 0 || index == capacity - 1;
+                assert_eq!(table.entry(index).is_valid(), occupied);
+                assert_eq!(table.incarnation_of(index), u32::from(occupied));
+            }
+            assert_eq!(
+                entry_state(table.lookup(first, GUARD).unwrap_or_else(|error| {
+                    panic!("first entry after counter writes: {:?}", error.code())
+                })),
+                entry_state(&frame(1))
+            );
+            assert_eq!(
+                entry_state(table.lookup(last, GUARD).unwrap_or_else(|error| {
+                    panic!("last entry after counter writes: {:?}", error.code())
+                })),
+                entry_state(&frame(2))
+            );
+            remove(table, first);
+            remove(table, last);
+            assert_eq!(table.len(), 0);
+            assert_eq!(table.incarnation_of(0), 1);
+            assert_eq!(table.incarnation_of(capacity - 1), 1);
+            // SAFETY: the rounding tail and 32-byte canary are still inside the
+            // backing; no reference overlaps any mutation while they are read.
+            let untouched = unsafe {
+                core::slice::from_raw_parts(
+                    (base as *const u8).add(array_end),
+                    carve_end + 32 - array_end,
+                )
+            };
+            assert!(untouched.iter().all(|byte| *byte == 0xA5));
+            assert_eq!(table.owner(), DomainId(42));
+            assert_eq!(table.size_bits(), bits);
+        }
     }
 
     #[test_case]

@@ -88,7 +88,8 @@ stateDiagram-v2
 - IRQ identity delivery: notifications are the intended landing object for
   interrupt delivery, but no IRQ→Notification binding exists (see
   [irq_handler.md](../arch/irq_handler.md)).
-- Notification index/registration scheme versus 256-slot tables (D4).
+- Notification index/registration scheme versus variable-capacity KeyTables
+  (D4); a 64-bit pending bitmap cannot represent every possible slot.
 
 ## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
 

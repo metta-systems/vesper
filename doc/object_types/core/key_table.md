@@ -75,6 +75,16 @@ Rules:
 
 Storage (`kernel/nucleus/src/objects/key_table.rs`): a carved, variable-size object — a 32-byte header (owner `DomainId`, occupancy count, and the table's own `size_bits`, authoritative for internal bounds) followed by `2^size_bits` `KeyEntry` slots and `2^size_bits` `u32` incarnation counters in the same carve; the carve size is derived from `size_bits` (`KeyTable::carve_size`), and `KeyTable::initialize` writes the header and zeroes both arrays (a null `KeyEntry` is the all-zero value, so the carve is sanitized). A KeyTable capability references the carved object through a per-kind payload — `{address, guard, size_bits}` (`KeyTablePayload`) — resolved via `Access::resolve_carved{,_mut,_pair_mut}`; the payload is kernel-visible only and copied verbatim by derivation. The caller's own-table guard is sourced from its self-table capability at the well-known `SELF_KEYTABLE` slot, which must name the AddressSpace-bound table with the same capacity exponent as its binding and header; a missing or mismatched self-table capability rejects the invocation before any key validation (provisionally `InconsistentKey`/`CapabilityInvalidated`; the exact status is D9).
 
+The entry array uses a **64 B stride**, with separate **4 B** counters.
+`KeyTable::carve_size(size_bits)` rounds
+`HEADER_SIZE + 2^size_bits * (size_of::<KeyEntry>() + size_of::<u32>())`
+up to alignment 32. The header is 32 B; for 256 entries (`size_bits = 8`)
+the full carve is **17,440 B** (`32 + 256 * (64 + 4)`). Runtime Retype,
+Kickstart bootstrap, translation archive tables and fixture backing/strides
+use this type-derived calculation. Counter offsets and initialization bounds
+follow the same layout; entry growth changes storage charges, not slot count,
+key encoding, guards or incarnation behavior.
+
 `KeyTableBinding` stores a private nonzero address and capacity exponent, issued
 by `unsafe KeyTable::binding` only when the entire initialized private carve
 remains stable and neither reclaimed nor reinitialized for every retained copy.
@@ -134,13 +144,17 @@ flowchart TD
   type-checked transitions (`advance_untyped_watermark`,
   `record_frame_mapping`, `clear_frame_mapping`) that cannot change identity,
   rights, badge, or incarnation.
-- `KeyEntry` is 32 bytes with alignment 32 (compile-time assertions, "same as
-  seL4"): type byte, rights byte, `u16` badge, and a 24-byte payload union with
+- `KeyEntry` is 64 bytes with alignment 32 (compile-time assertions): type
+  byte, rights byte, `u16` badge, and a 40-byte payload union with
   object-identity, Thread-selector, region, frame, keytable-address, Invocation,
-  and null-byte variants. `ThreadSelector` is `#[repr(C, u8)]`, 12 bytes with
-  alignment 4; its forms are `Named(ObjectId)` and `CurrentReturnOnly`.
-  `InvocationPayload` is 24 bytes and stores a mandatory `NonZero<u64>`
-  function address plus checked target AddressSpace identity.
+  and null-byte variants. The aligned payload begins at offset 8; tail padding
+  makes the slot stride 64 B. `ThreadSelector` is `#[repr(C, u8)]`, 12 bytes
+  with alignment 4; its forms are `Named(ObjectId)` and `CurrentReturnOnly`.
+  `InvocationPayload` is 40 bytes/alignment 8 and stores a mandatory
+  `NonZero<u64>` function address, checked target AddressSpace identity and
+  immutable validated `InvocationStackExtent` (24 B/alignment 8). Other
+  payload sizes remain `RegionPayload` 16 B, `FramePayload` 24 B and
+  `KeyTablePayload` 16 B; none fixes the union or entry size.
 - `KeyEntry::from_id` returns `Result<KeyEntry, CapError>` and accepts only
   known identity-backed kinds. It rejects NULL, UNTYPED, FRAME, KEY_TABLE and
   INVOCATION with `InvalidObjectType` before payload initialization; those
@@ -189,8 +203,9 @@ flowchart TD
   radix-prefixed tree (`Key::KeyNode { next_node_ptr }`) — none of that is
   implemented.
 - Vault wiki: "Each slot requires **16 bytes** of physical memory" —
-  **mismatch**: the current `KeyEntry` is 32 bytes (asserted "same as seL4"),
-  plus a per-slot `u32` incarnation counter outside the entry.
+  **mismatch**: the current `KeyEntry` is 64 bytes/alignment 32,
+  plus a per-slot `u32` incarnation counter outside the entry and a shared
+  32 B table header. Storage is type-derived, not a fixed seL4-size target.
 - Vault wiki: minted capabilities tracked in a kernel **capability derivation
   tree (CDT)**; revoke "recursively removes any capabilities that were
   derived from the original" — **mismatch**: there is no kernel CDT; Revoke is
@@ -202,8 +217,9 @@ flowchart TD
   selected; do not infer them from the removed message-rendezvous sketches.
 - Vault wiki: "number of slots in a KeyNode must be a power of two" and is
   user-chosen at Retype — **consistent**: the capacity is `2^size_bits` with
-  `size_bits` 1–20 chosen at Retype (not yet implemented; the active table
-  is a fixed 256-slot `NUM_SLOTS` constant).
+  `size_bits` 1–20 chosen at Retype, implemented as a variable-size carve
+  with header-authoritative bounds; 256 entries is a fixture capacity,
+  not a universal table limit.
 - `Capabilities.md` (vault): seL4-style `cte` (cap table entry + mdb node)
   and `sameObjectAs` — **not implemented**: no MDB/ancestry metadata is
   stored; object identity is checked via pool generations instead.
