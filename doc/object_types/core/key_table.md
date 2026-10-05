@@ -61,7 +61,10 @@ Rules:
 - **Derivation allowlist**: `KeyTable`, `Frame`, and
   debug-gated `DebugConsole`. Frame CopyDerive produces an *unmapped* derived
   capability; Move preserves the mapping record; Delete of a mapped frame
-  leaves the mapping in place (accepted-leak).
+  leaves the mapping in place (accepted-leak). Current-relative
+  `CurrentReturnOnly` propagation and Call-only Invocation distribution are
+  separately deferred; the Return representation does not extend this allowlist
+  or approve arbitrary named-Thread derivation/transfer.
 - **Cross-table resolution**: both the invoked table and the
   destination table are resolved through the caller's own table, so
   CopyDerive/Move can target a table other than the caller's.
@@ -79,6 +82,25 @@ It carries no management authority or guard; SELF remains the guard source.
 The header's `owner: DomainId` is Retype bookkeeping provenance, not a checked
 AddressSpace owner or authorization mechanism. Table backing is not reclaimed
 by Thread/AddressSpace retirement under accepted-leak.
+
+`KeySlot::THREAD_RETURN` stays Slot(1) and locates a granted Thread entry with
+the explicit `CurrentReturnOnly` selector, never `Named(ObjectId)`. The sentinel
+names no function, AddressSpace or concrete Thread, carries no management
+rights, rejects Grant/Suspend/Resume/Retire and `object_id` extraction, and
+permits only the invoking Thread's own current Return. Its AS-shared presence
+is libOS policy. It undergoes the same caller-AS/table/SELF, guard, incarnation,
+bounds and entry-presence checks as any ordinary invocation: use the actual
+issued table-local packed key, not slot index 1 alone. `KeyEntry::new_thread_return`
+constructs the rights-empty sentinel, and Kickstart installs it in the boot
+table at Slot(1). Selector accessors and `ThreadOp::Return = 0` are implemented;
+`object_id` extraction on the sentinel returns `InvalidOperation`. Return
+currently returns `InvalidOperation`; PPC dispatch/helper/wrapper and migration
+remain unimplemented.
+
+Other slot conventions are Null `0`, self AddressSpace `2`, parent Thread `3`,
+self KeyTable `4`, boot Untyped `5`, boot ASID pool `14`, and debug console `15`;
+boot-table Retype test destinations remain `6–13`. No slot or kind ID changes
+are implied by current-relative Return.
 
 Slot lifecycle and lookup validation precedence:
 
@@ -112,9 +134,19 @@ flowchart TD
   type-checked transitions (`advance_untyped_watermark`,
   `record_frame_mapping`, `clear_frame_mapping`) that cannot change identity,
   rights, badge, or incarnation.
-- `KeyEntry` is 32 bytes (`size_of` asserted, "same as seL4"): type byte,
-  rights byte, `u16` badge, and a 24-byte payload union (object identity,
-  region, frame, or keytable-address variants).
+- `KeyEntry` is 32 bytes with alignment 32 (compile-time assertions, "same as
+  seL4"): type byte, rights byte, `u16` badge, and a 24-byte payload union with
+  object-identity, Thread-selector, region, frame, keytable-address, Invocation,
+  and null-byte variants. `ThreadSelector` is `#[repr(C, u8)]`, 12 bytes with
+  alignment 4; its forms are `Named(ObjectId)` and `CurrentReturnOnly`.
+  `InvocationPayload` is 24 bytes and stores a mandatory `NonZero<u64>`
+  function address plus checked target AddressSpace identity.
+- `KeyEntry::from_id` returns `Result<KeyEntry, CapError>` and accepts only
+  known identity-backed kinds. It rejects NULL, UNTYPED, FRAME, KEY_TABLE and
+  INVOCATION with `InvalidObjectType` before payload initialization; those
+  kinds use their dedicated constructors. Thread construction initializes
+  `ThreadSelector::Named(id)` rather than a generic object-identity union
+  member, so the kind always selects an initialized compatible payload.
 - Same-table operands use a single mutable guard; distinct tables use the
   alias-rejecting pair-resolution form (`resolve_carved_pair_mut`).
 
@@ -137,8 +169,11 @@ flowchart TD
   still-live object — D2 (rejected, not faked, until then).
 - Badge derivation and badge-zero semantics beyond Notification's selected
   hybrid — D4.
-- Bootstrap slot conventions (self thread, parent, self-table, manager) — D4
-  must define one layout; the current names are conflicting sketches.
+- Ownership of well-known `KeySlot` constants and remaining bootstrap
+  Thread/AddressSpace lists, capacities/grants and incarnation-bearing handoff
+  records — D4; the slot conventions above are fixed for this scope.
+- Current-relative Return propagation and Call-only Invocation distribution
+  restrictions — separate deferred D4 decisions, not allowlist/transfer approval.
 - Notification index/registration versus variable-capacity tables (a 64-bit
   pending bitmap does not fit every slot) — D4.
 - Untyped-backed pool/metadata ownership for tables — Phase 5.

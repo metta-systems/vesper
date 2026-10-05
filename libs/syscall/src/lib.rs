@@ -31,7 +31,9 @@
 // in x4, provisional rights in x5, and reserved-zero x6/x7. Success returns
 // the destination-local packed key in x1 with x2 zero. Invocation.Call uses
 // x0 for the capability, x1 for operation 0, and forwards x2..x7; PPC return
-// mapping and context switching are not implemented.
+// mapping and context switching are not implemented. Return is selected as
+// Thread.Return op 0 on CurrentReturnOnly (packed target-table key in x0,
+// r0/r1 in x2/x3); no PPC-specific transport wrapper is implemented here.
 
 /// Single syscall ABI
 ///

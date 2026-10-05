@@ -21,12 +21,14 @@ pub struct KeySlot(pub u32);
 // TODO: These consts should probably NOT be parts of KeySlot impl? They are part of libOS TCB layout and what's supplied by kickstart, so maybe only keep it in kickstart-related area.
 impl KeySlot {
     pub const NULL: KeySlot = KeySlot(0);
-    /// The fixed PPC return key: a kernel-installed Invocation capability
-    /// with an empty function address and no target, accepting only the
-    /// `Return` operation (normal Invocations accept only `Call`). Not yet
-    /// installed by bootstrap; the presence guarantee is an open contract
-    /// decision.
-    pub const INVOCATION_RETURN: KeySlot = KeySlot(1);
+    /// Slot for a kernel-installed current-relative Thread capability with the
+    /// `CurrentReturnOnly` selector: no concrete Thread identity, function,
+    /// `AddressSpace` target, or Thread-management rights. It accepts only
+    /// `Thread.Return`, affecting only the invoking Thread's own continuation.
+    /// Use the actual table-local packed key, including guard and incarnation;
+    /// the slot number alone grants no authority. Presence is libOS policy.
+    /// Return dispatch is not yet implemented.
+    pub const THREAD_RETURN: KeySlot = KeySlot(1);
     pub const SELF_ADDRESS_SPACE: KeySlot = KeySlot(2);
     pub const PARENT_THREAD: KeySlot = KeySlot(3);
     // KeyTable layout with self-reference

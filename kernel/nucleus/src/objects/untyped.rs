@@ -117,7 +117,7 @@ fn create_object<A: ArchObjects>(
                 size_bits,
                 &mut pools.arch,
             )?;
-            Ok(KeyEntry::from_id(obj_type, id, Rights::all(), 0))
+            KeyEntry::from_id(obj_type, id, Rights::all(), 0)
         }
 
         _ => Err(CapError::InvalidObjectType),

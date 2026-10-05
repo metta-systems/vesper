@@ -21,10 +21,15 @@
 //! implemented here. The invoked Thread's `AddressSpace` is untouched by
 //! Thread.Retire — address-space teardown is the separate
 //! `AddressSpace.Retire`.
+//!
+//! `Return` `0` is selected only for `CurrentReturnOnly`, not a named Thread.
+//! Its PPC continuation pop and nonlocal completion are not implemented;
+//! invocation currently fails with `InvalidOperation`, never fake success.
+//! The current-relative form rejects management regardless of its rights.
 
 use {
     crate::objects::{ArchObjects, KeyTable, Nucleus, access::Access, key_table::CallerTable},
-    libobject::{CapError, ObjectType, RawKey, Rights},
+    libobject::{CapError, ObjectType, RawKey, Rights, thread::ThreadOp},
     libqemu::semihosting as semi,
 };
 
@@ -40,9 +45,13 @@ pub fn invoke<A: ArchObjects>(
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
-    match op {
-        4 => retire::<A>(access, caller, thread_key, args, nucleus),
-        _ => Err(CapError::InvalidOperation),
+    match ThreadOp::try_from(op)? {
+        ThreadOp::Retire => retire::<A>(access, caller, thread_key, args, nucleus),
+        // Return is current-relative, not named-Thread control. Its nonlocal
+        // completion requires PPC machinery that is not implemented yet.
+        ThreadOp::Return | ThreadOp::Grant | ThreadOp::Suspend | ThreadOp::Resume => {
+            Err(CapError::InvalidOperation)
+        }
     }
 }
 
@@ -82,6 +91,11 @@ fn retire<A: ArchObjects>(
                 expected: ObjectType::THREAD,
                 found: entry.object_type(),
             });
+        }
+        // Selector restrictions are independent of rights: current-relative
+        // Return authority must never resolve or manage a named Thread.
+        if entry.is_thread_return_key() {
+            return Err(CapError::InvalidOperation);
         }
         // Delegable lifecycle-control authority (selected 2026-09-19, D4).
         if !entry.rights().has(Rights::RETIRE) {

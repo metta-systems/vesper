@@ -15,8 +15,8 @@
 //!   Installs an Invocation capability with only `CALL` authority; returns its
 //!   destination-local key in `x1` and zero in `x2`. The function address is
 //!   stored as supplied without mapping/executable validation; a zero address is
-//!   rejected with `InvalidPointer`, because the payload's absent form belongs to
-//!   the kernel-built fixed return key.
+//!   rejected with `InvalidPointer`. Invocation has a mandatory nonzero entry;
+//!   current-relative Thread.Return authority is kernel-constructed separately.
 //!
 //! Authority: `Activate` requires `MAP` on the invoked `AddressSpace`
 //! capability (authority over the mapping context, consistent with root
@@ -110,9 +110,8 @@ fn create_invocation<A: ArchObjects>(
     if args[3..].iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
-    // Every userspace-constructible Invocation carries a present entry: the
-    // absent form belongs to the fixed return key, which only the kernel
-    // builds, so a zero address cannot mint a lookalike.
+    // Invocation is Call-only with a mandatory nonzero entry. Userspace
+    // cannot construct current-relative Thread.Return authority here.
     let Some(function_address) = NonZero::new(args[0]) else {
         return Err(CapError::InvalidPointer);
     };

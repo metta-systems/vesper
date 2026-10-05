@@ -23,7 +23,6 @@ use {
     core::{
         arch::asm,
         mem::size_of,
-        num::NonZero,
         panic::PanicInfo,
         slice,
         sync::atomic::{AtomicU64, Ordering},
@@ -42,11 +41,13 @@ use {
     libobject::{
         ASIDPoolKey, CapError, EventCountKey, FrameKey, InvalidKeyReason, KeySlot, KeyTableKey,
         NotificationKey, ObjectType, PageTableKey, RawKey, Rights, UntypedKey,
-        address_space::AddressSpaceKey, domain::DomainId, thread::ThreadKey,
+        address_space::AddressSpaceKey,
+        domain::DomainId,
+        thread::{ThreadKey, ThreadOp},
     },
     libqemu::semihosting as semi,
     nucleus::{
-        api::key_entry::KeyEntry,
+        api::key_entry::{KeyEntry, ThreadSelector},
         objects::{
             ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, ObjectPool, Thread,
             access::{ObjectId, PoolTag},
@@ -1011,16 +1012,57 @@ pub fn kicktest_run() -> ! {
             Err(CapError::AlreadyMapped)
         ));
 
-        // The fixed PPC return key: Kickstart installs it at the well-known
-        // slot with no entry, so only `Return` (once PPC lands) applies.
+        // Kickstart installs current-relative Thread.Return authority, not a
+        // named Thread or an Invocation. Return execution still awaits PPC.
         {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
             let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
-            let return_key = boot_key(KeySlot::INVOCATION_RETURN.0, 1);
+            let return_key = boot_key(KeySlot::THREAD_RETURN.0, 1);
             let return_entry = boot_table
                 .lookup(return_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("return key missing from its well-known slot"));
-            assert!(return_entry.is_return_key());
+            assert_eq!(return_entry.object_type(), ObjectType::THREAD);
+            assert!(return_entry.is_thread_return_key());
+            assert!(matches!(
+                return_entry.thread_selector(),
+                Ok(ThreadSelector::CurrentReturnOnly)
+            ));
+            assert_eq!(return_entry.rights(), Rights::empty());
+            assert!(matches!(
+                return_entry.object_id(),
+                Err(CapError::InvalidOperation)
+            ));
+            assert!(matches!(
+                return_entry.invocation_target(),
+                Err(CapError::TypeMismatch { expected, found })
+                    if expected == ObjectType::INVOCATION && found == ObjectType::THREAD
+            ));
+        }
+        for op in [
+            ThreadOp::Return,
+            ThreadOp::Grant,
+            ThreadOp::Suspend,
+            ThreadOp::Resume,
+            ThreadOp::Retire,
+        ] {
+            let (status, word1, word2): (u64, u64, u64);
+            // SAFETY: test-only ordinary rejected SVC, not a PPC Return
+            // wrapper. No continuation or nonlocal completion is implemented.
+            unsafe {
+                asm!(
+                    "svc #0",
+                    inlateout("x0") boot_key(KeySlot::THREAD_RETURN.0, 1).to_wire() => status,
+                    inlateout("x1") op as u64 => word1,
+                    inlateout("x2") 0_u64 => word2,
+                    in("x3") 0_u64,
+                    in("x4") 0_u64,
+                    in("x5") 0_u64,
+                    in("x6") 0_u64,
+                    in("x7") 0_u64,
+                    options(nostack),
+                );
+            }
+            assert_eq!((status, word1, word2), CapError::InvalidOperation.code());
         }
 
         // AddressSpace.CreateInvocation installs a CALL-only capability into
@@ -1044,16 +1086,45 @@ pub fn kicktest_run() -> ! {
                 panic!("installed entry is not an Invocation");
             };
             assert_eq!(target, boot_as_id);
-            assert_eq!(function_address.map(NonZero::get), Some(0x1234));
+            assert_eq!(function_address.get(), 0x1234);
         }
 
-        // The return-key form is kernel-only: a zero function address cannot be
-        // supplied from userspace, so construction is rejected before anything
-        // is resolved or installed.
-        assert!(matches!(
-            boot_as.create_invocation(0, &self_table, KeySlot(62)),
-            Err(CapError::InvalidPointer)
-        ));
+        // Invocation always has a nonzero entry. A zero function address
+        // cannot construct an Invocation (or current-relative Thread authority)
+        // from userspace, and is rejected before resolution or installation.
+        let table_len_before_zero = {
+            // SAFETY: keytable_addr names the live carved boot KeyTable.
+            unsafe { &*(keytable_addr as *const KeyTable) }.len()
+        };
+        for slot in [KeySlot(62), KeySlot(63)] {
+            assert!(matches!(
+                boot_as.create_invocation(0, &self_table, slot),
+                Err(CapError::InvalidPointer)
+            ));
+        }
+        {
+            // SAFETY: keytable_addr names the live carved boot KeyTable.
+            let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+            assert_eq!(boot_table.len(), table_len_before_zero);
+            let existing = boot_table
+                .lookup(invocation_key, BOOT_TABLE_GUARD)
+                .unwrap_or_else(|error| {
+                    panic!("zero-address rejection lost cap: {:?}", error.code())
+                });
+            let target = existing
+                .invocation_target()
+                .unwrap_or_else(|error| panic!("Invocation payload changed: {:?}", error.code()));
+            assert_eq!(target.0, boot_as_id);
+            assert_eq!(target.1.get(), 0x1234);
+            assert_eq!(existing.rights(), Rights(Rights::CALL));
+            assert!(matches!(
+                boot_table.lookup(boot_key(63, 1), BOOT_TABLE_GUARD),
+                Err(CapError::InvalidKey {
+                    reason: InvalidKeyReason::NeverIssued,
+                    ..
+                })
+            ));
+        }
 
         // Export into a separate KeyTable as well; the result key must carry
         // that destination table's guard rather than the caller table's guard.
@@ -1087,7 +1158,7 @@ pub fn kicktest_run() -> ! {
                 panic!("cross-table export is not an Invocation");
             };
             assert_eq!(target, boot_as_id);
-            assert_eq!(function_address.map(NonZero::get), Some(0x5678));
+            assert_eq!(function_address.get(), 0x5678);
             assert_ne!(export_table_addr, boot_table_binding.address());
             let target_table = nucleus
                 .pools
@@ -1387,7 +1458,7 @@ pub fn kicktest_run() -> ! {
             let bounce_n1 = bounce_table
                 .insert(
                     KeySlot(5),
-                    KeyEntry::from_id(ObjectType::NOTIFICATION, n1_id, Rights::all(), 0),
+                    KeyEntry::new::<nucleus::objects::Notification>(n1_id, Rights::all(), 0),
                     TEST_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
@@ -1396,7 +1467,7 @@ pub fn kicktest_run() -> ! {
             let bounce_n2 = bounce_table
                 .insert(
                     KeySlot(6),
-                    KeyEntry::from_id(ObjectType::NOTIFICATION, n2_id, Rights::all(), 0),
+                    KeyEntry::new::<nucleus::objects::Notification>(n2_id, Rights::all(), 0),
                     TEST_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
@@ -1408,7 +1479,7 @@ pub fn kicktest_run() -> ! {
             let bounce_ec = bounce_table
                 .insert(
                     KeySlot(7),
-                    KeyEntry::from_id(ObjectType::EVENT_COUNT, ec_id, Rights::all(), 0),
+                    KeyEntry::new::<nucleus::objects::EventCount>(ec_id, Rights::all(), 0),
                     TEST_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {

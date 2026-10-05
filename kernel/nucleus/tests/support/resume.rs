@@ -15,7 +15,7 @@ use {
     },
     aarch64_cpu::registers::{Readable, SCTLR_EL1, TCR_EL1, Writeable},
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
-    libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, syscall_status},
+    libobject::{CapError, KeySlot, RawKey, Rights, syscall_status},
 };
 
 const ROOT: u64 = 0x2100_0000;
@@ -525,7 +525,11 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             .unwrap()
             .insert(
                 KeySlot::SELF_ADDRESS_SPACE,
-                KeyEntry::from_id(ObjectType::ADDRESS_SPACE, source_as, Rights::all(), 0),
+                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                    source_as,
+                    Rights::all(),
+                    0,
+                ),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|e| panic!("AS cap: {:?}", e.error.code()));
@@ -566,7 +570,11 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             .unwrap()
             .insert(
                 KeySlot(20),
-                KeyEntry::from_id(ObjectType::ADDRESS_SPACE, waits.target_as, Rights::all(), 0),
+                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
+                    waits.target_as,
+                    Rights::all(),
+                    0,
+                ),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|e| panic!("foreign AS cap: {:?}", e.error.code()));
@@ -579,8 +587,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             .unwrap()
             .insert(
                 KeySlot(21),
-                KeyEntry::from_id(
-                    ObjectType::ADDRESS_SPACE,
+                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
                     source_as,
                     Rights(Rights::READ),
                     0,

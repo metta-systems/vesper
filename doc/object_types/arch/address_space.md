@@ -174,9 +174,13 @@ rule).
   zero in `x2`, and emits `✅ AddressSpace::CreateInvocation()`; failure leaves
   state and authority unchanged. The function address is stored as supplied,
   with no construction-time mapping/executable validation. Its payload field is
-  `Option<NonZero<u64>>`: a zero address is rejected with `InvalidPointer`
-  because the absent form belongs to the fixed return key, which only the kernel
-  constructs (Kickstart installs it at well-known Slot(1)). On `Invocation.Call`,
+  mandatory `NonZero<u64>`: a zero address is rejected with `InvalidPointer`.
+  Invocation is Call-only `0`, with no optional entry or Return form.
+  [`Thread.Return`](../core/thread.md#return) `0` uses the separate
+  `CurrentReturnOnly` Thread selector at `KeySlot::THREAD_RETURN` Slot(1),
+  not a named Thread or an AddressSpace/function target. Its ordinary
+  current-AS-table lookup and guard/incarnation/presence checks remain mandatory;
+  the AS-shared sentinel acts only on the invoking Thread. On `Invocation.Call`,
   require 16-byte-aligned `SP`, `base < SP <= end`, and `SP - base >= M` for
   an agreed positive minimum downward headroom. `SP = end` is allowed, but
   `SP = base` and insufficient headroom are rejected. `M` is the requirement
@@ -213,9 +217,17 @@ rule).
   Scrubbing is not implemented or validated. x9 remains provisional and the
   native body-result convention experimental; trusted EL1 fixture execution
   does not prove hostile-EL0 confinement.
-- Implementation status: the active `AddressSpace.CreateInvocation` handler
-  and userspace wrapper still require `x5..x7` to be zero and do not store an
-  extent; the selected extent schema is not implemented. AddressSpace-to-table
+- Implementation status: `AddressSpace.CreateInvocation` stores a mandatory
+  `NonZero<u64>` function address in its CALL-only Invocation payload; zero
+  remains `InvalidPointer`. `ThreadSelector` and the kernel-constructed
+  `CurrentReturnOnly` boot sentinel at Slot(1) are implemented.
+  `Thread.Return` currently returns `InvalidOperation`; its PPC
+  dispatch/helper/wrapper and migration remain unimplemented, without fake
+  success. Return-form propagation
+  and Call-only Invocation distribution remain independently deferred, without
+  broader named-Thread derivation/transfer approval. The active
+  `AddressSpace.CreateInvocation` handler and userspace wrapper still require
+  `x5..x7` to be zero and do not store an extent; the selected extent schema is not implemented. AddressSpace-to-table
   binding and lookup are active. PPC `Invocation.Call` is not implemented;
   invocation-time fault behavior remains open. Source and Bounce have distinct
   AddressSpace/table identities and independently provisioned roots with ASIDs

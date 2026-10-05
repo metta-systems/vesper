@@ -188,27 +188,171 @@ mod tests {
     }
 
     #[test]
-    fn invocation_operations_match_existing_wire_ids() {
+    fn thread_operations_match_selected_wire_ids() {
+        use vesper_objects::thread::ThreadOp;
+
+        for (op, raw) in [
+            (ThreadOp::Return, 0_u32),
+            (ThreadOp::Grant, 1),
+            (ThreadOp::Suspend, 2),
+            (ThreadOp::Resume, 3),
+            (ThreadOp::Retire, 4),
+        ] {
+            assert_eq!(op as u32, raw);
+            assert_eq!(
+                ThreadOp::try_from(raw)
+                    .map(|decoded| decoded as u32)
+                    .map_err(CapError::code),
+                Ok(raw)
+            );
+            assert_eq!(
+                ThreadOp::try_from(u64::from(raw))
+                    .map(|decoded| decoded as u32)
+                    .map_err(CapError::code),
+                Ok(raw)
+            );
+        }
+        assert!(matches!(ThreadOp::try_from(0_u32), Ok(ThreadOp::Return)));
+        assert!(matches!(ThreadOp::try_from(0_u64), Ok(ThreadOp::Return)));
+        assert_eq!(size_of::<ThreadOp>(), 1);
+        assert_eq!(align_of::<ThreadOp>(), 1);
+    }
+
+    #[test]
+    fn thread_operations_reject_every_unassigned_byte() {
+        use vesper_objects::thread::ThreadOp;
+
+        for raw in 5_u32..=255 {
+            assert!(matches!(
+                ThreadOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+            assert!(matches!(
+                ThreadOp::try_from(u64::from(raw)),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+    }
+
+    #[test]
+    fn thread_operations_reject_high_bit_aliases_and_malformed_values() {
+        use vesper_objects::thread::ThreadOp;
+
+        for low in [0_u64, 1, 2, 3, 4] {
+            for bit in 8..64 {
+                let raw = low | (1_u64 << bit);
+                assert!(matches!(
+                    ThreadOp::try_from(raw),
+                    Err(CapError::InvalidOperation)
+                ));
+                if let Ok(raw) = u32::try_from(raw) {
+                    assert!(matches!(
+                        ThreadOp::try_from(raw),
+                        Err(CapError::InvalidOperation)
+                    ));
+                }
+            }
+        }
+        for raw in [u64::from(u32::MAX), u64::MAX] {
+            assert!(matches!(
+                ThreadOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        assert!(matches!(
+            ThreadOp::try_from(u32::MAX),
+            Err(CapError::InvalidOperation)
+        ));
+    }
+
+    #[test]
+    fn invocation_call_matches_selected_wire_id() {
         use vesper_objects::invocation::InvocationOp;
 
         assert_eq!(InvocationOp::Call as u8, 0);
         assert_eq!(InvocationOp::Call as u32, 0);
         assert!(matches!(
+            InvocationOp::try_from(0_u32),
+            Ok(InvocationOp::Call)
+        ));
+        assert!(matches!(
             InvocationOp::try_from(0_u64),
             Ok(InvocationOp::Call)
         ));
-        assert_eq!(InvocationOp::Return as u8, 1);
-        assert_eq!(InvocationOp::Return as u32, 1);
-        assert!(matches!(
-            InvocationOp::try_from(1_u64),
-            Ok(InvocationOp::Return)
-        ));
-        for value in [2, 255, 256, 1 << 32, u64::MAX] {
+        assert_eq!(size_of::<InvocationOp>(), 1);
+        assert_eq!(align_of::<InvocationOp>(), 1);
+    }
+
+    #[test]
+    fn invocation_operation_rejects_every_non_call_byte() {
+        use vesper_objects::invocation::InvocationOp;
+
+        for raw in 1_u32..=255 {
             assert!(matches!(
-                InvocationOp::try_from(value),
+                InvocationOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+            assert!(matches!(
+                InvocationOp::try_from(u64::from(raw)),
                 Err(CapError::InvalidOperation)
             ));
         }
+    }
+
+    #[test]
+    fn invocation_operation_rejects_high_bit_aliases_and_malformed_values() {
+        use vesper_objects::invocation::InvocationOp;
+
+        for low in [0_u64, 1] {
+            for bit in 8..64 {
+                let raw = low | (1_u64 << bit);
+                assert!(matches!(
+                    InvocationOp::try_from(raw),
+                    Err(CapError::InvalidOperation)
+                ));
+                if let Ok(raw) = u32::try_from(raw) {
+                    assert!(matches!(
+                        InvocationOp::try_from(raw),
+                        Err(CapError::InvalidOperation)
+                    ));
+                }
+            }
+        }
+        for raw in [u64::from(u32::MAX), u64::MAX] {
+            assert!(matches!(
+                InvocationOp::try_from(raw),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        assert!(matches!(
+            InvocationOp::try_from(u32::MAX),
+            Err(CapError::InvalidOperation)
+        ));
+    }
+
+    #[test]
+    fn thread_return_and_other_well_known_slots_match_selected_layout() {
+        use vesper_objects::KeySlot;
+
+        assert_eq!(KeySlot::NULL, KeySlot(0));
+        assert_eq!(KeySlot::THREAD_RETURN, KeySlot(1));
+        assert_eq!(KeySlot::SELF_ADDRESS_SPACE, KeySlot(2));
+        assert_eq!(KeySlot::PARENT_THREAD, KeySlot(3));
+        assert_eq!(KeySlot::SELF_KEYTABLE, KeySlot(4));
+        assert_eq!(KeySlot::BOOT_UNTYPED, KeySlot(5));
+        assert_eq!(KeySlot::BOOT_ASID_POOL, KeySlot(14));
+        assert_eq!(KeySlot::DEBUG_CONSOLE, KeySlot(15));
+    }
+
+    #[test]
+    fn thread_return_slot_is_not_a_packed_key() {
+        use vesper_objects::{KeySlot, RawKey};
+
+        const RETURN_KEY: RawKey = RawKey::from_parts(0xC0F_FEE, 8, KeySlot::THREAD_RETURN.0, 7);
+        assert_eq!(RETURN_KEY.to_wire(), 0x0000_0007_C0FF_EE01);
+        assert_eq!(RETURN_KEY.incarnation(), 7);
+        assert_eq!(RETURN_KEY.slot(), KeySlot(0xC0FF_EE01));
+        assert_ne!(RETURN_KEY.to_wire(), u64::from(KeySlot::THREAD_RETURN.0));
     }
 
     #[test]

@@ -18,9 +18,20 @@ mod api;
 mod objects;
 
 use {
-    api::KeyEntry,
+    api::{
+        KeyEntry,
+        key_entry::{FramePayload, InvocationPayload, ThreadSelector},
+    },
+    core::{
+        mem::{align_of, size_of},
+        num::NonZero,
+    },
     libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, domain::DomainId},
-    objects::{KeyTable, access::Access, key_table::CallerTable},
+    objects::{
+        KeyTable, Thread,
+        access::{Access, ObjectId, PoolTag},
+        key_table::CallerTable,
+    },
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -185,6 +196,206 @@ fn table_cap(addr: u64, rights: Rights, badge: u16) -> KeyEntry {
 
 fn args(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> [u64; 6] {
     [a0, a1, a2, a3, a4, a5]
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// THREAD / INVOCATION ENTRY REPRESENTATION
+// ═══════════════════════════════════════════════════════════════════
+
+#[test_case]
+fn named_thread_entries_round_trip_checked_identity() {
+    for id in [
+        ObjectId {
+            pool: PoolTag::Thread,
+            index: 0,
+            generation: 1,
+        },
+        ObjectId {
+            pool: PoolTag::Thread,
+            index: u16::MAX,
+            generation: u32::MAX,
+        },
+    ] {
+        for entry in [
+            KeyEntry::from_id(ObjectType::THREAD, id, Rights::all(), 0xBEEF)
+                .unwrap_or_else(|error| panic!("named Thread construction: {:?}", error.code())),
+            KeyEntry::new::<Thread>(id, Rights::all(), 0xBEEF),
+        ] {
+            assert!(entry.is_valid());
+            assert_eq!(entry.object_type(), ObjectType::THREAD);
+            assert!(matches!(
+                entry.thread_selector(),
+                Ok(ThreadSelector::Named(found)) if found == id
+            ));
+            assert!(matches!(entry.object_id(), Ok(found) if found == id));
+            assert!(!entry.is_thread_return_key());
+            assert_eq!(entry.rights(), Rights::all());
+            assert_eq!(entry.badge(), 0xBEEF);
+            let derived = entry.derive(Rights(Rights::RETIRE));
+            assert!(matches!(
+                derived.thread_selector(),
+                Ok(ThreadSelector::Named(found)) if found == id
+            ));
+            assert!(matches!(derived.object_id(), Ok(found) if found == id));
+            assert_eq!(derived.rights(), Rights(Rights::RETIRE));
+            assert_eq!(derived.badge(), 0xBEEF);
+        }
+    }
+}
+
+#[test_case]
+fn thread_return_entry_has_only_current_relative_selector() {
+    let entry = KeyEntry::new_thread_return();
+    assert!(entry.is_valid());
+    assert_eq!(entry.object_type(), ObjectType::THREAD);
+    assert!(matches!(
+        entry.thread_selector(),
+        Ok(ThreadSelector::CurrentReturnOnly)
+    ));
+    assert!(entry.is_thread_return_key());
+    assert_eq!(entry.rights(), Rights::empty());
+    assert_eq!(entry.badge(), 0);
+    assert!(matches!(entry.object_id(), Err(CapError::InvalidOperation)));
+    assert!(matches!(
+        entry.invocation_target(),
+        Err(CapError::TypeMismatch { expected, found })
+            if expected == ObjectType::INVOCATION && found == ObjectType::THREAD
+    ));
+    assert!(!entry.is_region());
+    assert!(!entry.is_carved());
+}
+
+#[test_case]
+fn thread_return_derivation_preserves_selector_without_authorizing_rights() {
+    let entry = KeyEntry::new_thread_return();
+    // derive is only a representation transform. The all-rights case is a
+    // test-only alteration, not permission to amplify or distribute authority.
+    for rights in [Rights::empty(), Rights::all()] {
+        let derived = entry.derive(rights);
+        assert_eq!(derived.object_type(), ObjectType::THREAD);
+        assert!(matches!(
+            derived.thread_selector(),
+            Ok(ThreadSelector::CurrentReturnOnly)
+        ));
+        assert!(derived.is_thread_return_key());
+        assert_eq!(derived.rights(), rights);
+        assert_eq!(derived.badge(), 0);
+        assert!(matches!(
+            derived.object_id(),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(matches!(
+            derived.invocation_target(),
+            Err(CapError::TypeMismatch { expected, found })
+                if expected == ObjectType::INVOCATION && found == ObjectType::THREAD
+        ));
+    }
+    assert_eq!(entry.rights(), Rights::empty());
+    assert_eq!(entry.badge(), 0);
+    assert!(entry.is_thread_return_key());
+}
+
+#[test_case]
+fn invocation_entries_require_and_preserve_nonzero_target() {
+    let address_space = ObjectId {
+        pool: PoolTag::AddressSpace,
+        index: u16::MAX,
+        generation: u32::MAX,
+    };
+    // These types pin both public signatures to a mandatory nonzero address.
+    let constructor: fn(ObjectId, NonZero<u64>) -> KeyEntry = KeyEntry::new_invocation;
+    for address in [1, 0x1234_5678_9ABC_DEF0, u64::MAX] {
+        let function = NonZero::new(address).unwrap();
+        let entry = constructor(address_space, function);
+        let target: (ObjectId, NonZero<u64>) = entry
+            .invocation_target()
+            .unwrap_or_else(|error| panic!("Invocation target: {:?}", error.code()));
+        assert_eq!(target, (address_space, function));
+        assert_eq!(entry.object_type(), ObjectType::INVOCATION);
+        assert_eq!(entry.rights(), Rights(Rights::CALL));
+        assert_eq!(entry.badge(), 0);
+        assert!(!entry.is_thread_return_key());
+        assert!(entry.object_id().is_err());
+        let derived = entry.derive(Rights::empty());
+        assert!(matches!(derived.invocation_target(), Ok(found) if found == target));
+        assert_eq!(derived.rights(), Rights::empty());
+        assert_eq!(derived.badge(), 0);
+        assert_eq!(entry.rights(), Rights(Rights::CALL));
+    }
+}
+
+#[test_case]
+fn thread_selector_rejects_non_thread_payloads() {
+    let address_space = ObjectId {
+        pool: PoolTag::AddressSpace,
+        index: 3,
+        generation: 7,
+    };
+    for entry in [
+        KeyEntry::null(),
+        KeyEntry::new_untyped(0x1000, 12, false, Rights::all()),
+        KeyEntry::new_frame(0x2000, 12, false, Rights::all()),
+        KeyEntry::new_keytable(TEST_BACKING, CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
+        KeyEntry::from_id(ObjectType::ADDRESS_SPACE, address_space, Rights::all(), 0)
+            .unwrap_or_else(|error| panic!("AddressSpace construction: {:?}", error.code())),
+        KeyEntry::new_invocation(address_space, NonZero::new(0x80000).unwrap()),
+    ] {
+        assert!(matches!(
+            entry.thread_selector(),
+            Err(CapError::TypeMismatch { expected, found })
+                if expected == ObjectType::THREAD && found == entry.object_type()
+        ));
+        assert!(!entry.is_thread_return_key());
+    }
+}
+
+#[test_case]
+fn identity_entry_constructor_rejects_dedicated_payload_kinds() {
+    for kind in [
+        ObjectType::NULL,
+        ObjectType::UNTYPED,
+        ObjectType::FRAME,
+        ObjectType::KEY_TABLE,
+        ObjectType::INVOCATION,
+    ] {
+        for id in [
+            ObjectId {
+                pool: PoolTag::Region,
+                index: 0,
+                generation: 0,
+            },
+            ObjectId {
+                pool: PoolTag::Thread,
+                index: u16::MAX,
+                generation: u32::MAX,
+            },
+        ] {
+            for rights in [Rights::empty(), Rights::all()] {
+                for badge in [0, 0xBEEF] {
+                    // Inspect only the constructor result: never read a dedicated
+                    // union payload that an identity constructor must not create.
+                    assert!(matches!(
+                        KeyEntry::from_id(kind, id, rights, badge),
+                        Err(CapError::InvalidObjectType(found)) if found == kind
+                    ));
+                }
+            }
+        }
+    }
+}
+
+#[test_case]
+fn thread_return_representation_preserves_entry_and_payload_layout() {
+    assert_eq!(size_of::<ThreadSelector>(), 12);
+    assert_eq!(align_of::<ThreadSelector>(), 4);
+    assert_eq!(size_of::<InvocationPayload>(), 24);
+    assert_eq!(align_of::<InvocationPayload>(), 8);
+    assert_eq!(size_of::<FramePayload>(), 24);
+    assert_eq!(size_of::<KeyEntry>(), 32);
+    assert_eq!(align_of::<KeyEntry>(), 32);
+    assert_eq!(size_of::<[KeyEntry; 2]>(), 64);
+    // The compiled production module also asserts its private KeyPayload union
+    // is 24 bytes; do not substitute a test-only mirror of that union.
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -369,6 +580,97 @@ fn copy_derive_rejects_occupied_destination_and_non_allowlisted_kinds() {
 // ═══════════════════════════════════════════════════════════════════
 // MOVE
 // ═══════════════════════════════════════════════════════════════════
+
+#[test_case]
+fn thread_and_invocation_entries_remain_outside_copy_derive_and_move_allowlist() {
+    let thread_id = ObjectId {
+        pool: PoolTag::Thread,
+        index: 1,
+        generation: 9,
+    };
+    let address_space = ObjectId {
+        pool: PoolTag::AddressSpace,
+        index: 2,
+        generation: 7,
+    };
+    for entry in [
+        KeyEntry::new::<Thread>(thread_id, Rights::all(), 0xBEEF),
+        KeyEntry::new_thread_return(),
+        KeyEntry::new_thread_return().derive(Rights::all()),
+        KeyEntry::new_invocation(address_space, NonZero::new(0x80000).unwrap()),
+    ] {
+        let mut fx = Fixture::new(FULL);
+        let src = fx.install(0, KeySlot(10), entry);
+        let dst_cap = fx.install(
+            0,
+            KeySlot(5),
+            table_cap(fx.dst_table_addr, Rights::all(), 0),
+        );
+        for (table_index, table_key) in [(0, fx.self_table_key), (1, dst_cap)] {
+            for op in [0, 1] {
+                // Empty requested rights isolate the kind allowlist from the
+                // independent attenuation check, including the rights-empty sentinel.
+                let call = args(src.to_wire(), table_key.to_wire(), 20, 0, 0, 0);
+                assert!(matches!(
+                    fx.invoke(fx.self_table_key, op, &call),
+                    Err(CapError::InvalidObjectType(found)) if found == entry.object_type()
+                ));
+                assert_eq!(fx.caller_len(), 3);
+                let source = fx
+                    .lookup(0, src)
+                    .unwrap_or_else(|_| panic!("source changed"));
+                assert_eq!(source.object_type(), entry.object_type());
+                assert_eq!(source.rights(), entry.rights());
+                assert_eq!(source.badge(), entry.badge());
+                if entry.object_type() == ObjectType::THREAD {
+                    assert_eq!(
+                        source.thread_selector().unwrap_or_else(|error| {
+                            panic!("source Thread selector: {:?}", error.code())
+                        }),
+                        entry.thread_selector().unwrap_or_else(|error| {
+                            panic!("original Thread selector: {:?}", error.code())
+                        })
+                    );
+                } else {
+                    assert_eq!(
+                        source.invocation_target().unwrap_or_else(|error| {
+                            panic!("source Invocation target: {:?}", error.code())
+                        }),
+                        entry.invocation_target().unwrap_or_else(|error| {
+                            panic!("original Invocation target: {:?}", error.code())
+                        })
+                    );
+                }
+                let probe = RawKey::from_parts(fx.table_guard(table_index), SIZE_BITS, 20, 1);
+                assert!(matches!(
+                    fx.lookup(table_index, probe),
+                    Err(CapError::InvalidKey {
+                        key,
+                        reason: libobject::InvalidKeyReason::NeverIssued,
+                        operand: 0,
+                    }) if key == probe
+                ));
+                assert_eq!(
+                    fx.lookup(0, fx.self_table_key)
+                        .unwrap_or_else(|error| panic!(
+                            "source table capability: {:?}",
+                            error.code()
+                        ))
+                        .rights(),
+                    Rights(FULL)
+                );
+                assert_eq!(
+                    fx.lookup(0, dst_cap)
+                        .unwrap_or_else(|error| {
+                            panic!("destination table capability: {:?}", error.code())
+                        })
+                        .rights(),
+                    Rights::all()
+                );
+            }
+        }
+    }
+}
 
 #[test_case]
 fn move_preserves_state_and_invalidates_source() {

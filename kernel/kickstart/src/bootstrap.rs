@@ -380,13 +380,13 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
         .unwrap_or_else(|failure| {
             panic!("boot self-table install failed: {:?}", failure.error.code())
         });
-    // The fixed PPC return key (selected 2026-09-29): an Invocation with no
-    // entry at the well-known slot libOS compositions fill. Only the `Return`
-    // operation applies; its presence in a KeyTable is a composition invariant.
+    // Current-relative Thread.Return authority at the well-known slot libOS
+    // compositions fill. It names no Thread and grants no management rights;
+    // its presence in a KeyTable is a composition invariant.
     let _boot_return_key = boot_table
         .insert(
-            KeySlot::INVOCATION_RETURN,
-            KeyEntry::new_invocation_return(),
+            KeySlot::THREAD_RETURN,
+            KeyEntry::new_thread_return(),
             BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {
@@ -462,7 +462,8 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
                 },
                 Rights::all(),
                 0,
-            ),
+            )
+            .unwrap_or_else(|error| panic!("debug console entry failed: {:?}", error.code())),
             BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {

@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Wire type | `0x03` (core) |
-| Pool | `PoolTag::Thread` (pool-backed kernel object) |
-| Status | Active: `Retire` (teardown); Grant/Suspend/Resume return defined errors |
+| Pool | `PoolTag::Thread` for `Named(ObjectId)`; `CurrentReturnOnly` names no pooled object |
+| Status | `ThreadSelector` and boot Slot(1) sentinel implemented; `Retire` active on named Threads; Grant/Suspend/Resume and `Return` `0` currently return `InvalidOperation`; PPC Return dispatch/helper/wrapper unimplemented |
 
 ## Purpose
 
@@ -12,26 +12,78 @@ A `Thread` is the schedulable execution entity that holds a capability to its
 `AddressSpace` (the protection/mapping context — Vesper's VSpace equivalent),
 plus kernel-private execution state. Ordinary capability invocations use the
 keytable associated with the Thread's current AddressSpace; all Threads in one
-AddressSpace share that keytable. Thread capabilities authorize control over
-that thread's lifecycle.
+AddressSpace share that keytable. Named Thread capabilities authorize control
+over that Thread's lifecycle through the explicit `Named(ObjectId)` selector.
+The separate `CurrentReturnOnly` selector authorizes only the invoking Thread's
+own current PPC return: it names no function, AddressSpace or concrete Thread,
+carries no Thread-management rights, and rejects `object_id` extraction.
 
 ## User-level visible operations
 
 | Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
 |---|---|---|---|---|
-| `0` | — | — | — | unassigned; activation is `AddressSpace.Activate`; `InvalidOperation` |
+| `0` | Return | `x2` first `u64` payload word, `x3` second; `x4..x7` ignored | Only `CurrentReturnOnly`, never `Named(ObjectId)`; no Thread-management rights | Contract: nonlocal source resumption with `x0 = SUCCESS`, `x1 = r0`, `x2 = r1`; currently `InvalidOperation`, PPC dispatch unimplemented |
 | `1` | Grant | — | — | `InvalidOperation` (unsupported; overlaps KeyTable delegation) |
 | `2` | Suspend | — | — | `InvalidOperation` (deferred, D7/D8) |
 | `3` | Resume | — | — | `InvalidOperation` (deferred, D7/D8) |
-| `4` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked Thread | zeros; tears down the invoked Thread |
+| `4` | Retire | no arguments (all zero) | `RETIRE` (`0x20`) on the invoked `Named(ObjectId)` Thread | zeros; tears down the invoked Thread |
+
+### Return
+
+`Thread.Return` uses the ordinary capability transport: `x0` is the actual
+current-AS-table-local packed return key, `x1 = 0`, and `x2`/`x3` carry the two
+payload words. `KeySlot::THREAD_RETURN` locates the kernel-constructed
+`CurrentReturnOnly` sentinel at Slot(1); Kickstart installs it in the boot table.
+Presence is libOS policy, not a kernel guarantee. All other slots and kind IDs
+remain unchanged (`Thread = 3`, `Invocation = 7`).
+
+Ordinary lookup validates the invoking Thread's live current AddressSpace,
+its bound KeyTable and SELF entry, table guard, slot bounds, incarnation and
+entry presence before selector/operation handling. There is no magic raw key,
+slot-only fallback or lookup bypass. All Threads in one AddressSpace share
+the sentinel, but it acts only on the invoking Thread's own current invocation
+stack. It grants no access to another Thread's continuation.
+
+A valid `Named(ObjectId)` entry rejects Return with `InvalidOperation`.
+`CurrentReturnOnly` rejects Grant/Suspend/Resume/Retire with `InvalidOperation`
+and rejects `object_id` extraction with `InvalidOperation`, without resolving
+a fake concrete identity. Retire checks `CurrentReturnOnly` before testing
+`RETIRE` rights or extracting a named identity. Empty/stale/wrong-guard keys retain ordinary lookup failures.
+Invocation has only Call `0`; opcode zero on an Invocation means Call, not
+wrong-form Return, and unknown Invocation opcode `1` is `InvalidOperation`
+once its Call handler is enabled (the kind currently remains unsupported).
+
+An admitted Return consumes only the immediate-source top continuation and
+restores the source context with the selected result/scrub rules below.
+Depth-zero underflow is the "illegal return" fault; a retired saved source
+AddressSpace is the "return target retired" fault. Neither pops the stack;
+Thread teardown releases the records. Kernel fault delivery/binding/resumption
+remain open, not ordinary helper-error paths.
+
+The low-level helper contract is `Result<core::convert::Infallible, CapError>`:
+correct success never returns locally, ordinary pre-commit rejection returns
+`Err` with shared diagnostics and no pop/migration, and unexpected local
+SUCCESS becomes `UnexpectedReturn` status 34 without a safe-retry guarantee.
+The common export adapter's result spill, clobbers and non-returning
+`vesper_thread_return_fault` handoff are described in the
+[Invocation PPC adapter contract](invocation.md#contract-details-still-to-specify).
+`ThreadOp::Return = 0`, `ThreadSelector`, kernel construction/accessors and
+bootstrap installation at `KeySlot::THREAD_RETURN` Slot(1) are implemented.
+Return currently yields `InvalidOperation`: PPC dispatch, helper/wrapper,
+adapters and migration are **unimplemented**, with no pop, switch or fake
+success. Current-relative Return propagation through KeyTable
+management is deferred separately from Call-only Invocation distribution;
+neither broader named-Thread derivation nor transfer permissions are granted.
 
 ### Retire
 
-Tears down the invoked Thread:
+Tears down the invoked named Thread:
 
 ```mermaid
 flowchart TD
-    A["Thread.Retire"] --> B{"RETIRE right on<br/>invoked Thread cap?"}
+    A["Thread.Retire"] --> S{"Named Thread selector?"}
+    S -- "CurrentReturnOnly" --> ES["InvalidOperation before rights or identity extraction"]
+    S -- "Named" --> B{"RETIRE right on invoked Thread cap?"}
     B -- "no" --> E1["InsufficientRights"]
     B -- "yes" --> C{"Target == current Thread?"}
     C -- "yes" --> E2["InvalidOperation<br/>(no sound return path yet)"]
@@ -53,9 +105,18 @@ validation with a defined error.
 
 ## Kernel-level implementation details
 
-- Pool-backed via `NucleusPools::threads`; capabilities store a checked
-  `ObjectId` (pool tag + index + generation), resolved through the guarded
-  `Access` context — never raw pointers.
+- Named Thread entries are pool-backed via `NucleusPools::threads`, with the
+  `Named(ObjectId)` selector carrying a checked pool tag + index + generation,
+  resolved through the guarded `Access` context — never raw pointers.
+  `CurrentReturnOnly` has no object identity to resolve; its ordinary checked
+  key lookup and selector handling are distinct from concrete-object access.
+  The implemented `ThreadSelector` is `#[repr(C, u8)]`, 12 bytes with alignment
+  4, stored in the 24-byte payload union. `KeyEntry` is 32 bytes with alignment
+  32. `KeyEntry::from_id` returns `Result<KeyEntry, CapError>` and initializes
+  `ThreadSelector::Named(id)` for the Thread kind. `new_thread_return` creates
+  the rights-empty sentinel; `thread_selector` and `is_thread_return_key` read
+  its form without resolving a concrete object. `object_id` on
+  `CurrentReturnOnly` returns `InvalidOperation`.
 - Current implementation fields (`kernel/nucleus/src/objects/thread.rs`):
   `address_space` (the checked identity of its `AddressSpace`, which selects
   the associated keytable), and `context`
@@ -141,6 +202,10 @@ validation with a defined error.
 
 ## TODOs
 
+- PPC invocation-stack, Return dispatch/helper/wrapper, adapter and
+  fault-delivery implementation.
+- Current-relative Return propagation through KeyTable management, independent
+  of Call-only Invocation distribution — D4; no derivation/transfer expansion.
 - Full Start/Suspend/Resume with legal state transitions, execution
   budget, and EL0 entry — Phase 7 (D7/D8).
 - Never-returns self-retirement (terminal entry-path work).

@@ -22,21 +22,25 @@ mod objects;
 mod resume_tests;
 
 use {
-    api::{KeyEntry, debug_console::invoke},
-    core::mem::{MaybeUninit, align_of, size_of},
+    api::{KeyEntry, debug_console::invoke, key_entry::ThreadSelector},
+    core::{
+        mem::{MaybeUninit, align_of, size_of},
+        num::NonZero,
+    },
     libaddress::PhysAddr,
     libobject::{
-        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights,
-        decode_syscall_result,
+        CapError, CoreType, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey,
+        Rights, decode_syscall_result,
         domain::{DcbPage, DomainId},
     },
     objects::{
-        ArchObjects, ArchObjectsImpl, KeyTable, Nucleus, ObjectPool, Thread,
+        ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, ObjectPool, Thread,
         access::{Access, ObjectId, PoolTag},
         arch::ArchPools,
         arch_objects::AddressSpaceObject,
+        completion::{PendingKind, PendingState},
         domain::DcbPages,
-        key_table::KeyTableBinding,
+        key_table::{CallerTable, KeyTableBinding},
         nucleus::NucleusPools,
     },
 };
@@ -55,6 +59,7 @@ fn console_entry(rights: Rights, badge: u16) -> KeyEntry {
         rights,
         badge,
     )
+    .unwrap_or_else(|error| panic!("console entry construction: {:?}", error.code()))
 }
 
 /// Fixed RAM address for test-carved `KeyTable`s (QEMU rpi3: 1 GiB RAM at 0).
@@ -464,6 +469,369 @@ fn threads_in_the_same_address_space_share_one_dispatch_table() {
                 replacement,
                 Some((rights, 91)),
             );
+        }
+    });
+}
+
+#[test_case]
+fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
+        let first = nucleus.create_thread(fixture_as).expect("first Thread");
+        let second = nucleus.create_thread(fixture_as).expect("second Thread");
+        let waiting = nucleus
+            .pending
+            .block(first, PendingKind::NotificationWait)
+            .unwrap_or_else(|error| panic!("waiting record: {:?}", error.code()));
+        let completed = nucleus
+            .pending
+            .block(second, PendingKind::EventCountAwait)
+            .unwrap_or_else(|error| panic!("completed record: {:?}", error.code()));
+        nucleus
+            .pending
+            .complete_with_status(completed, 31, 0x1234, 0x5678)
+            .unwrap_or_else(|error| panic!("completion: {:?}", error.code()));
+        let terminal = nucleus
+            .pending
+            .state(completed)
+            .unwrap_or_else(|error| panic!("terminal record snapshot: {:?}", error.code()));
+        let mut saved = libexception::arch::aarch64::SavedContext::el1t(0x80000, 0x90000);
+        saved.gpr = [0xA5A5; 30];
+        saved.lr = 0xBEEF;
+        saved.spsr_el1 |= 0xA000_0000;
+        let contexts = [
+            ExecutionContext::Running,
+            ExecutionContext::Parked {
+                saved,
+                record: completed,
+            },
+        ];
+        nucleus
+            .pools
+            .threads
+            .get_live_mut(usize::from(second.index))
+            .unwrap()
+            .context = contexts[1];
+        assert!(nucleus.scheduler.push(second.index));
+        assert!(nucleus.scheduler.push(first.index));
+        nucleus.current_thread = Some(u32::from(first.index));
+
+        let stale = ObjectId {
+            pool: PoolTag::Thread,
+            index: u16::MAX,
+            generation: u32::MAX,
+        };
+        // Named Return rejection is independent of management rights and object
+        // liveness. Current-relative management must reject before either check.
+        for (slot, entry, last_op) in [
+            (
+                KeySlot(10),
+                KeyEntry::new::<Thread>(second, Rights::all(), 0xBEEF),
+                0,
+            ),
+            (
+                KeySlot(11),
+                KeyEntry::new::<Thread>(stale, Rights::empty(), 0),
+                0,
+            ),
+            (KeySlot::THREAD_RETURN, KeyEntry::new_thread_return(), 4),
+            (
+                KeySlot::THREAD_RETURN,
+                KeyEntry::new_thread_return().derive(Rights::all()),
+                4,
+            ),
+        ] {
+            let key = nucleus
+                .current_thread_table_mut()
+                .unwrap()
+                .insert(slot, entry, FIXTURE_GUARD)
+                .unwrap_or_else(|_| panic!("Thread capability installation"));
+            for caller in [first, second] {
+                nucleus.current_thread = Some(u32::from(caller.index));
+                assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+                for op in 0..=last_op {
+                    for direct in [true, false] {
+                        // Zero operands are essential: Retire must reach the
+                        // selector check, not reject nonzero reserved arguments.
+                        let error = if direct {
+                            // SAFETY: the serial fixture owns exclusive nucleus
+                            // access; no Access or table/object guard overlaps.
+                            let access = unsafe { Access::new() };
+                            match api::thread::invoke(
+                                &access,
+                                CallerTable {
+                                    addr: table_addr,
+                                    guard: FIXTURE_GUARD,
+                                },
+                                key,
+                                op,
+                                &[0; 6],
+                                nucleus,
+                            ) {
+                                Err(error) => error,
+                                Ok(_) => panic!("Thread API unexpectedly succeeded"),
+                            }
+                        } else {
+                            match api::handle_cap_invoke(nucleus, key, op, &[0; 6]) {
+                                Err(error) => error,
+                                Ok(_) => panic!("Thread dispatch unexpectedly succeeded"),
+                            }
+                        };
+                        assert!(matches!(error, CapError::InvalidOperation));
+                        assert_eq!(error.code(), (8, 0, 0));
+                        assert_eq!(nucleus.current_thread, Some(u32::from(caller.index)));
+                        assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+                        assert_eq!(nucleus.pools.threads.len(), 2);
+                        for (id, context) in [first, second].into_iter().zip(contexts) {
+                            assert!(nucleus.pools.threads.validate(id).is_ok());
+                            let thread = nucleus
+                                .pools
+                                .threads
+                                .get_live(usize::from(id.index))
+                                .unwrap();
+                            assert_eq!(thread.address_space, fixture_as);
+                            assert_eq!(thread.context, context);
+                        }
+                        assert!(
+                            nucleus
+                                .pools
+                                .arch
+                                .address_spaces
+                                .validate(fixture_as)
+                                .is_ok()
+                        );
+                        assert_eq!(nucleus.pending.len(), 2);
+                        for (record, waiter, kind, state) in [
+                            (
+                                waiting,
+                                first,
+                                PendingKind::NotificationWait,
+                                PendingState::Waiting,
+                            ),
+                            (completed, second, PendingKind::EventCountAwait, terminal),
+                        ] {
+                            assert_eq!(
+                                nucleus.pending.waiter(record).unwrap_or_else(|error| {
+                                    panic!("pending waiter preserved: {:?}", error.code())
+                                }),
+                                waiter
+                            );
+                            assert_eq!(
+                                nucleus.pending.kind(record).unwrap_or_else(|error| {
+                                    panic!("pending kind preserved: {:?}", error.code())
+                                }),
+                                kind
+                            );
+                            assert_eq!(
+                                nucleus.pending.state(record).unwrap_or_else(|error| {
+                                    panic!("pending state preserved: {:?}", error.code())
+                                }),
+                                state
+                            );
+                        }
+                        assert_eq!(nucleus.scheduler.len(), 2);
+                        assert_eq!(nucleus.scheduler.peek(), Some(second.index));
+                        let table = nucleus.current_thread_table_mut().unwrap();
+                        assert_eq!(table.len(), 2);
+                        assert_eq!(
+                            table.self_table_capability(),
+                            Some((table_addr, FIXTURE_GUARD, SIZE_BITS))
+                        );
+                        let retained = table.lookup(key, FIXTURE_GUARD).unwrap_or_else(|error| {
+                            panic!("Thread key preserved: {:?}", error.code())
+                        });
+                        assert_eq!(
+                            retained.thread_selector().unwrap_or_else(|error| {
+                                panic!("retained Thread selector: {:?}", error.code())
+                            }),
+                            entry.thread_selector().unwrap_or_else(|error| {
+                                panic!("original Thread selector: {:?}", error.code())
+                            })
+                        );
+                        assert_eq!(retained.rights(), entry.rights());
+                        assert_eq!(retained.badge(), entry.badge());
+                        if entry.is_thread_return_key() {
+                            assert!(matches!(
+                                retained.object_id(),
+                                Err(CapError::InvalidOperation)
+                            ));
+                        }
+                    }
+                }
+            }
+            nucleus
+                .current_thread_table_mut()
+                .unwrap()
+                .remove(key, FIXTURE_GUARD)
+                .unwrap_or_else(|_| panic!("Thread capability cleanup"));
+        }
+        assert_eq!(nucleus.scheduler.pop(), Some(second.index));
+        assert_eq!(nucleus.scheduler.pop(), Some(first.index));
+        assert!(nucleus.scheduler.is_empty());
+    });
+}
+
+#[test_case]
+fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
+    with_nucleus(
+        |nucleus, table_addr, second_table_addr, fixture_as, second_as| {
+            let first = nucleus.create_thread(fixture_as).expect("first Thread");
+            let second = nucleus.create_thread(fixture_as).expect("second Thread");
+            let foreign = nucleus.create_thread(second_as).expect("foreign Thread");
+            nucleus.current_thread = Some(u32::from(first.index));
+            let issued = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::THREAD_RETURN.0, 1);
+            let replacement =
+                RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::THREAD_RETURN.0, 2);
+            let zero = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::THREAD_RETURN.0, 0);
+            let bare = RawKey::from_wire(u64::from(KeySlot::THREAD_RETURN.0));
+            let unguarded = RawKey::from_parts(0, SIZE_BITS, KeySlot::THREAD_RETURN.0, 1);
+            let wrong_guard =
+                RawKey::from_parts(FIXTURE_GUARD ^ 1, SIZE_BITS, KeySlot::THREAD_RETURN.0, 1);
+            // Never issued, live, deleted, then replaced: Slot(1) has no special
+            // lookup bypass, and a stale key never gains the replacement's authority.
+            for phase in 0..4 {
+                match phase {
+                    1 | 3 => {
+                        let key = nucleus
+                            .current_thread_table_mut()
+                            .unwrap()
+                            .insert(
+                                KeySlot::THREAD_RETURN,
+                                KeyEntry::new_thread_return(),
+                                FIXTURE_GUARD,
+                            )
+                            .unwrap_or_else(|_| panic!("Return capability installation"));
+                        assert_eq!(key, if phase == 1 { issued } else { replacement });
+                    }
+                    2 => {
+                        nucleus
+                            .current_thread_table_mut()
+                            .unwrap()
+                            .remove(issued, FIXTURE_GUARD)
+                            .unwrap_or_else(|_| panic!("Return capability removal"));
+                    }
+                    _ => {}
+                }
+                let (old_words, next_words, live) = match phase {
+                    0 => (
+                        (26, issued.to_wire(), 3),
+                        (26, replacement.to_wire(), 3),
+                        None,
+                    ),
+                    1 => ((8, 0, 0), (27, replacement.to_wire(), 1), Some(issued)),
+                    2 => (
+                        (27, issued.to_wire(), 2),
+                        (27, replacement.to_wire(), 1),
+                        None,
+                    ),
+                    3 => ((27, issued.to_wire(), 1), (8, 0, 0), Some(replacement)),
+                    _ => unreachable!(),
+                };
+                for caller in [first, second] {
+                    nucleus.current_thread = Some(u32::from(caller.index));
+                    for (key, words) in [
+                        (zero, (26, zero.to_wire(), 1)),
+                        (bare, (26, bare.to_wire(), 1)),
+                        (unguarded, (26, unguarded.to_wire(), 4)),
+                        (wrong_guard, (26, wrong_guard.to_wire(), 4)),
+                        (issued, old_words),
+                        (replacement, next_words),
+                    ] {
+                        for op in [0, 4] {
+                            assert_dispatch_error(nucleus, key, op, words);
+                            assert_eq!(nucleus.current_thread, Some(u32::from(caller.index)));
+                            assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+                            assert_eq!(nucleus.pools.threads.len(), 3);
+                            for (id, address_space) in [
+                                (first, fixture_as),
+                                (second, fixture_as),
+                                (foreign, second_as),
+                            ] {
+                                assert!(nucleus.pools.threads.validate(id).is_ok());
+                                let thread = nucleus
+                                    .pools
+                                    .threads
+                                    .get_live(usize::from(id.index))
+                                    .unwrap();
+                                assert_eq!(thread.address_space, address_space);
+                                assert_eq!(thread.context, ExecutionContext::Running);
+                            }
+                            assert!(nucleus.pending.is_empty());
+                            assert!(nucleus.scheduler.is_empty());
+                            let table = nucleus.current_thread_table_mut().unwrap();
+                            assert_eq!(table.len(), 1 + usize::from(live.is_some()));
+                            assert_eq!(
+                                table.self_table_capability(),
+                                Some((table_addr, FIXTURE_GUARD, SIZE_BITS))
+                            );
+                            if let Some(live) = live {
+                                let entry =
+                                    table.lookup(live, FIXTURE_GUARD).unwrap_or_else(|error| {
+                                        panic!("Return key preserved: {:?}", error.code())
+                                    });
+                                assert!(matches!(
+                                    entry.thread_selector(),
+                                    Ok(ThreadSelector::CurrentReturnOnly)
+                                ));
+                                assert_eq!(entry.rights(), Rights::empty());
+                                assert_eq!(entry.badge(), 0);
+                            }
+                        }
+                    }
+                }
+                nucleus.current_thread = Some(u32::from(foreign.index));
+                assert_eq!(nucleus.current_thread_table_addr(), Some(second_table_addr));
+                assert_dispatch_error(nucleus, issued, 0, (26, issued.to_wire(), 3));
+                assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 1);
+                nucleus.current_thread = Some(u32::from(first.index));
+            }
+        },
+    );
+}
+
+#[test_case]
+fn mandatory_invocation_target_does_not_enable_ppc_dispatch() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, second_as| {
+        let thread = nucleus.create_thread(fixture_as).expect("caller Thread");
+        nucleus.current_thread = Some(u32::from(thread.index));
+        let function = NonZero::new(0x80000).unwrap();
+        let key = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(10),
+                KeyEntry::new_invocation(second_as, function),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|_| panic!("Invocation capability installation"));
+        for op in [0, 1] {
+            assert!(matches!(
+                api::handle_cap_invoke(nucleus, key, op, &[0; 6]),
+                Err(CapError::UnsupportedCoreType(CoreType::Invocation))
+            ));
+            assert_eq!(nucleus.current_thread, Some(u32::from(thread.index)));
+            assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
+            assert_eq!(nucleus.pools.threads.len(), 1);
+            let retained = nucleus
+                .pools
+                .threads
+                .get_live(usize::from(thread.index))
+                .unwrap();
+            assert_eq!(retained.address_space, fixture_as);
+            assert_eq!(retained.context, ExecutionContext::Running);
+            assert!(nucleus.pending.is_empty());
+            assert!(nucleus.scheduler.is_empty());
+            let table = nucleus.current_thread_table_mut().unwrap();
+            assert_eq!(table.len(), 2);
+            let entry = table
+                .lookup(key, FIXTURE_GUARD)
+                .unwrap_or_else(|error| panic!("Invocation key preserved: {:?}", error.code()));
+            assert!(matches!(
+                entry.invocation_target(),
+                Ok(target) if target == (second_as, function)
+            ));
+            assert_eq!(entry.rights(), Rights(Rights::CALL));
+            assert_eq!(entry.badge(), 0);
+            assert!(!entry.is_thread_return_key());
         }
     });
 }

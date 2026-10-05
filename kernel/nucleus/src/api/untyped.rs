@@ -422,17 +422,17 @@ fn retype<A: ArchObjects>(
                 }
                 let id = pt_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
                     .expect("page-table metadata slot pre-allocated");
-                KeyEntry::from_id(ObjectType::PAGE_TABLE, id, requested, 0)
+                KeyEntry::new::<A::PageTable>(id, requested, 0)
             }
             Carve::Notification => {
                 let id = n_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
                     .expect("notification pool slot pre-allocated");
-                KeyEntry::from_id(ObjectType::NOTIFICATION, id, requested, 0)
+                KeyEntry::new::<crate::objects::Notification>(id, requested, 0)
             }
             Carve::EventCount => {
                 let id = ec_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
                     .expect("event-count pool slot pre-allocated");
-                KeyEntry::from_id(ObjectType::EVENT_COUNT, id, requested, 0)
+                KeyEntry::new::<crate::objects::EventCount>(id, requested, 0)
             }
             Carve::Untyped { .. } => {
                 // Pure bookkeeping: no initialization or sanitization (see

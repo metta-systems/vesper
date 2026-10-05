@@ -17,10 +17,16 @@ mod tests;
 
 /// `Thread` operations (the schedulable execution entity).
 ///
-/// Operation `0` is unassigned: activation is `AddressSpace.Activate` `0`
-/// on the `AddressSpace` kind. Do not silently reuse the number.
+/// `Return` is valid only on the current-relative `CurrentReturnOnly` selector;
+/// the management operations require a named Thread. Activation remains
+/// `AddressSpace.Activate` `0` on the `AddressSpace` kind.
 #[repr(u8)]
 pub enum ThreadOp {
+    /// Return from the current invocation, popping the invoking Thread's own
+    /// continuation record. Valid only on the kernel-installed
+    /// `CurrentReturnOnly` entry at `KeySlot::THREAD_RETURN`, never a named
+    /// Thread entry; not yet dispatched by the kernel.
+    Return = 0,
     Grant = 1,   // Grant a capability to this thread's table
     Suspend = 2, // Suspend the thread
     Resume = 3,  // Resume a suspended thread
@@ -32,6 +38,7 @@ impl TryFrom<u64> for ThreadOp {
 
     fn try_from(op: u64) -> Result<Self, Self::Error> {
         match op {
+            0 => Ok(Self::Return),
             1 => Ok(Self::Grant),
             2 => Ok(Self::Suspend),
             3 => Ok(Self::Resume),
@@ -41,8 +48,17 @@ impl TryFrom<u64> for ThreadOp {
     }
 }
 
-/// Thread capability — handle to an execution thread.
+impl TryFrom<u32> for ThreadOp {
+    type Error = CapError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::try_from(u64::from(value))
+    }
+}
+
+/// Named Thread capability — handle to an execution thread.
 /// State queries use the shared DCB (no syscall), mutations use `CapInvoke`.
+/// This management/DCB wrapper does not represent `CurrentReturnOnly` authority.
 /// `Retire` is dispatched: it tears a non-current Thread down under `RETIRE`
 /// authority. `Grant`, `Suspend`, and `Resume` remain unsupported by nucleus
 /// dispatch and their wrappers preserve the kernel's errors; they do not

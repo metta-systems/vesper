@@ -26,11 +26,6 @@ Unanswered questions before implementing the scheduler record ABI:
 
 ## D7: Protected Procedure Call (`Invocation`)
 
-Selected execution-context, stack-extent and `InvalidStack` error-family
-contracts, reason/value catalogue, reason IDs and status 32 are in the canonical
-contract, together with stack-predicate and admission-stage order.
-Research evidence and comparisons are in
-`doc/lifetime-and-authority.md` §7.
 
 ### Remaining PPC architectural decisions
 
@@ -42,17 +37,21 @@ Research evidence and comparisons are in
 - **Other architectural state:** what TLS, debug and other non-GPR/control
   state must be initialized, preserved or isolated before protected EL0
   execution? GPR/NZCV scrubbing alone is not complete state isolation.
-- **Authority:** Invocation derivation/CopyDerive restrictions, rights
-  attenuation, and source badges.
+- **Current-relative Return propagation (D4):** what per-kind restrictions
+  should govern propagation of `CurrentReturnOnly` through KeyTable management,
+  independently of Call-only Invocation distribution, without granting named
+  Thread control or authority over another Thread's continuation?
+- **Call-only Invocation distribution (D4):** what are the permitted
+  derivation/CopyDerive restrictions, rights attenuation, and source badges?
 - **Shared memory and transfer:** pointer/shared-memory rules and whether
   optional capability transfer is supported.
-- **Fault and lifecycle:** fault delivery/resumption for a migrated frame;
-  call/return behavior when an AddressSpace or Thread is retired; cancellation,
-  teardown, partial completion, and other nested/concurrent-call constraints
-  beyond the fixed depth limit.
-- **Scheduling attribution:** the Call-to-Return interval is stamped and is
-  currently attributed to the source Thread's own DCB; how hierarchical
-  schedulers should observe and attribute that work remains deferred.
+- **Fault and lifecycle:** how are faults in migrated frames delivered and
+  resumed, including the illegal-return and retired-saved-source faults? Beyond
+  the defined no-pop Return fault classification, what are the call lifecycle,
+  cancellation, Thread/AddressSpace teardown, partial-completion, and other
+  nested/concurrent-call rules beyond the fixed depth limit?
+- **Scheduling attribution:** how should hierarchical schedulers observe and
+  attribute migrated work beyond the source Thread's own DCB accounting?
 
 ## Other unanswered decisions
 

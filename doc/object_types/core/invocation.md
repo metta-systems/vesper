@@ -9,7 +9,8 @@
 ## Purpose
 
 An `Invocation` capability identifies an entry point in a component API within
-a target `AddressSpace` incarnation. It does not name a server `Thread`; the
+a target `AddressSpace` incarnation, with a mandatory `NonZero<u64>` function
+address and only `CALL` authority. It does not name a server `Thread`; the
 source `Thread` migrates into the target `AddressSpace`. Any component with
 `GRANT` authority on the target `AddressSpace` and `INSTALL` authority on a
 destination `KeyTable` can construct an `Invocation` through
@@ -38,17 +39,23 @@ Admission-stage placement is specified below. This checks numeric bounds/headroo
 not mappings, full-stack writability, or private stack-slot ownership. The operation stores
 the supplied function address without construction-time mapping or executable
 validation; zero
-is rejected with `InvalidPointer` because the payload's absent form
-belongs to the fixed return key, which only the kernel constructs. No
+is rejected with `InvalidPointer`. The function address is not optional, and
+Invocation has no Return form. No
 component-interface registry or additional function-pointer validation is
 required. A component loader may parse interface specifications and
 prepare/distribute exports as setup policy, installing them in a `KeyTable` it
 selects: the direct recipient's table or a namespace-like component's table for
-API discovery and joining. Return is the `Invocation.Return` operation on a
-fixed kernel-installed return key — an Invocation capability at well-known
-Slot(1) whose entry is absent, accepting only `Return`. Its presence in a
-KeyTable is a libOS composition invariant, not a kernel guarantee. Overall call
-lifecycle behavior remains unspecified.
+API discovery and joining. Return is [`Thread.Return`](thread.md#return)
+operation `0` on the explicit `CurrentReturnOnly` Thread selector at
+`KeySlot::THREAD_RETURN` Slot(1), never `Named(ObjectId)`. It names no function,
+AddressSpace or concrete Thread and carries no Thread-management rights.
+Ordinary current-AS-table lookup, SELF, guard, incarnation, bounds and presence
+checks apply; every Thread in the AS shares the sentinel, but it acts only on
+the invoking Thread's own top continuation. Presence is libOS composition
+policy, not a kernel guarantee. Overall call lifecycle behavior remains
+unspecified. Return-form propagation and Call-only Invocation distribution are
+independent deferred decisions; no broader derivation/transfer permissions are
+implied.
 
 Queued rendezvous is userspace composition over Invocation and
 `Notification`/`EventCount`; it is not a kernel object kind.
@@ -57,8 +64,14 @@ Queued rendezvous is userspace composition over Invocation and
 
 | Op | Name | Status |
 |---|---|---|
-| `0` | Call | `x0` Invocation capability, `x1` operation ID `0`, `x2..x7` six `u64` Call inputs; at target entry, the kernel zeroes dummy `x0`/`x1` and `x8..x30`, clears NZCV, and leaves the six real inputs unchanged in `x2..x7`, without a register shuffle or source-side dummy-zeroing requirement. Successful source resumption receives `x0 = SUCCESS (0)`, `x1 = r0`, `x2 = r1` for the two target-provided `u64` words, with kernel status separate from payload. The common native target-body return convention is experimental pending end-to-end confirmation; Return SVC carries the two payload words in x2/x3 and ignores x4..x7; the low-level helper exposes Result<Infallible, CapError>, and the common adapter reports Err with original payload to a non-returning libOS fault handler; userspace handler binding is provisionally link-resolved with the five-u64 extern-C non-returning ABI (status/detail1/detail2/original r0/original r1 in x0..x4); handler symbol is `vesper_thread_return_fault`. The working target-SP transport is provisionally `x9`, separate from target argument registers; the kernel consumes saved `frame.gpr[9]`. Keep x9 unfrozen until end-to-end Call/Return confirms feasibility; dispatch is not implemented. |
-| `1` | Return | SVC inputs: x0 packed return key resolved from the target KeyTable Slot(1) (not bare slot index 1), x1 op 1, x2 first payload word, x3 second; x4..x7 are ignored with no reserved-zero check or clearing requirement. Invoked on the fixed kernel-installed return key (a well-known KeySlot, empty function address, no target), which accepts only `Return` while normal Invocation capabilities accept only `Call`. Captures the payload before rewriting the frame, pops the invoking Thread's own continuation record and restores exact source x19..x30, AddressSpace, SP, PC, exception origin and raw SPSR including NZCV, with `x0 = SUCCESS (0)`, the first target-provided `u64` payload word in `x1`, the second in `x2`, and x3..x18 zeroed. Migration scrubbing does not apply to recoverable local rejection. The return key resides at well-known Slot(1). A `Return` that cannot complete its protocol is a fault to the Thread's fault handler — "illegal return" (depth-zero underflow) or "return target retired" (the record's AddressSpace no longer live) — with no pop; on a Call-only Invocation it is a recoverable `InvalidOperation`. Return-key presence is a libOS composition invariant, not a kernel guarantee; the common native target-body return convention is experimental pending end-to-end confirmation, the low-level helper exposes Result<Infallible, CapError>, with ordinary rejected calls returning Err and successful Return never returning locally; the common adapter reports Err with original payload to a non-returning libOS fault handler; userspace handler binding is provisionally link-resolved with the five-u64 extern-C non-returning ABI (status/detail1/detail2/original r0/original r1 in x0..x4); handler symbol is `vesper_thread_return_fault`. Not implemented. |
+| `0` | Call | `x0` Invocation capability, `x1` operation ID `0`, `x2..x7` six `u64` Call inputs; at target entry, the kernel zeroes dummy `x0`/`x1` and `x8..x30`, clears NZCV, and leaves the six real inputs unchanged in `x2..x7`, without a register shuffle or source-side dummy-zeroing requirement. Successful source resumption receives `x0 = SUCCESS (0)`, `x1 = r0`, `x2 = r1` for the two target-provided `u64` words, with kernel status separate from payload. The common native target-body return convention is experimental pending end-to-end confirmation; `Thread.Return` SVC carries the two payload words in x2/x3 and ignores x4..x7; the low-level helper exposes Result<Infallible, CapError>, and the common adapter reports Err with original payload to a non-returning libOS fault handler; userspace handler binding is provisionally link-resolved with the five-u64 extern-C non-returning ABI (status/detail1/detail2/original r0/original r1 in x0..x4); handler symbol is `vesper_thread_return_fault`. The working target-SP transport is provisionally `x9`, separate from target argument registers; the kernel consumes saved `frame.gpr[9]`. Keep x9 unfrozen until end-to-end Call/Return confirms feasibility; dispatch is not implemented. |
+
+Invocation is Call-only. Opcode `0` means Call, not wrong-form Return. Every
+other Invocation opcode, including `1`, is unknown and must yield
+`InvalidOperation` once Call dispatch is enabled; the Invocation kind currently
+remains unsupported. No Return opcode or compatibility alias exists here.
+Return operation, selector and validation rules belong to
+[`Thread.Return`](thread.md#return).
 
 ## Invocation-depth exhaustion
 
@@ -246,14 +259,16 @@ range only, not page mappings or full-stack writability. The SP handoff is
 separate from target function arguments: target-entry `x0` and `x1` are two
 leading dummy arguments ignored by the target; the six real `u64` inputs stay
 unchanged in `x2..x7`. Return is
-the `Invocation.Return` operation on the fixed kernel-installed return key,
-popping the Thread's own record and restoring AddressSpace, SP, and PC with
-return values in designated registers. A `Return` that cannot complete its
-protocol (depth-zero underflow; a target AddressSpace that is no longer live)
-is a fault to the Thread's fault handler, with no pop; on a Call-only
-Invocation it is a recoverable `InvalidOperation`. The blocked-wait
-continuation is implemented in Thread-resident `SavedContext` storage, so no
-kernel-stack frame carries a continuation for waits either. The PPC array
+`Thread.Return` operation `0` on the `CurrentReturnOnly` Thread sentinel,
+popping only the invoking Thread's own record and restoring source AddressSpace,
+SP, and PC with return values in designated registers. A Return that cannot
+complete its protocol (depth-zero underflow; a saved source AddressSpace that
+is no longer live) is a fault to the invoking Thread's fault handler, with no
+pop. Return on a valid named Thread entry is a recoverable `InvalidOperation`;
+`CurrentReturnOnly` rejects management operations and `object_id` extraction.
+Opcode zero on an ordinary Invocation is Call, not wrong-form Return. The
+blocked-wait continuation is implemented in Thread-resident `SavedContext`
+storage, so no kernel-stack frame carries a continuation for waits either. The PPC array
 itself is not implemented; actual combined Thread/page fit remains to be
 verified. The record's stamp brackets Call→Return and the
 elapsed time is attributed to the source Thread's own DCB; broader
@@ -271,7 +286,9 @@ Call/Return migration remain unimplemented.
 
 Still to specify:
 
-- Invocation derivation, rights attenuation, and source badge semantics.
+- Call-only Invocation distribution/derivation, rights attenuation, and source
+  badge semantics, independently of current-relative Return-form propagation
+  through KeyTable management. Neither is enabled by the representation change.
 
 
 - Other target-entry SPSR controls (execution mode and interrupt masks), TLS,
@@ -355,10 +372,11 @@ export wrapper calls an `extern "C"` body returning a `#[repr(C)]` struct with
 two ordered `u64` fields. AAPCS64 returns the first word in x0 and the second
 in x1, without a hidden result-buffer pointer. The adapter moves native x0/x1
 results into x2/x3 before loading Return key/op in x0/x1. Return's x0 is the
-packed key resolved from target-table Slot(1), not bare slot index 1; x1 is
-operation 1. The kernel consumes x2/x3 through the common operation-operand
-transport,
-then delivers the payload to source x1/x2 with independent SUCCESS in x0.
+packed `CurrentReturnOnly` Thread key resolved from target-table Slot(1)
+(`KeySlot::THREAD_RETURN`), not bare slot index 1; x1 is `Thread.Return`
+operation `0`. The kernel consumes x2/x3 through the common operation-operand
+transport, then delivers the payload to source x1/x2 with independent SUCCESS
+in x0.
 Return ignores x4..x7: their values do not affect admission, pop, switch or
 result delivery, carry no extra payload/capabilities, and need not be cleared.
 No reserved-zero check applies. Key/form, depth and saved-source-liveness
@@ -372,8 +390,9 @@ been confirmed end-to-end.
 
 The low-level Return helper exposes `Result<core::convert::Infallible, CapError>`.
 Successful Return abandons target execution, so no Ok value returns locally.
-An ordinary pre-commit rejection, such as an empty/stale/wrong-form key, returns
-Err through the shared error decoder with diagnostics and no pop/migration.
+An ordinary pre-commit rejection, such as an empty/stale key or Return on a
+named Thread entry, returns Err through the shared error decoder with
+diagnostics and no pop/migration.
 The helper does not automatically trap or reclassify ordinary errors as faults;
 libOS chooses diagnosis/recovery. Underflow and retired saved-source retain
 fault delivery with no pop, not ordinary helper Err. Never fabricate an
@@ -437,4 +456,18 @@ validated.
 
 ## Implementation status
 
-The shared `CoreType` catalogue recognizes Invocation at ID 7. `AddressSpace.CreateInvocation` currently constructs and installs CALL-only Invocation capabilities with a checked target AddressSpace identity and supplied function address; the address is an optional payload field (`Option<NonZero<u64>>`) whose absent form only the kernel builds, so a zero address is rejected with `InvalidPointer`. The active handler still requires `x5..x7` to be zero and the payload does not yet store the selected target stack extent. Kickstart installs the entry-absent return key at well-known Slot(1). There is no `Call` wrapper or kernel handler, same-Thread PPC context migration, or PPC return path; a created Invocation cannot yet be called, and `Return` on the return key is not dispatched yet.
+The shared `CoreType` catalogue recognizes Invocation at ID 7.
+`AddressSpace.CreateInvocation` construction is active, with a checked target
+AddressSpace identity and CALL-only authority. `InvocationPayload` stores a
+mandatory `NonZero<u64>` function address; zero is rejected as `InvalidPointer`.
+`InvocationOp` contains only Call `0`, and `invocation_target` returns the
+checked AddressSpace identity and nonzero entry address. Return authority is
+represented separately by `ThreadSelector::CurrentReturnOnly`, installed in
+the boot table at `KeySlot::THREAD_RETURN` Slot(1).
+The active extent schema still requires `x5..x7` zero and stores no target stack
+extent; extent/headroom migration remains unimplemented.
+There is no `Call` wrapper or kernel handler, same-Thread PPC migration, or
+invocation stack. `Thread.Return` dispatch, its helper/wrapper and the common
+export adapter/fault path are also unimplemented. Invocation dispatch remains
+unsupported; a created Invocation cannot yet be called. `Thread.Return`
+currently returns `InvalidOperation`, with no pop, handoff or fake success.

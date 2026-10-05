@@ -44,8 +44,11 @@
 // │    (all zeros)                               │
 // │                                              │
 // │  VARIANT F: Invocation                       │
-// │    function_address: Option<NonZero<u64>>    │
+// │    function_address: NonZero<u64>            │
 // │    AddressSpace pool/index/generation        │
+// │                                              │
+// │  VARIANT G: Thread selector                  │
+// │    Named(ObjectId) | CurrentReturnOnly        │
 // └──────────────────────────────────────────────┘
 // Total: 28 bytes used, 32-byte aligned slot
 //
@@ -61,7 +64,7 @@ use {
     },
     core::num::NonZero,
     libaddress::align,
-    libobject::{CapError, ObjectType, Rights},
+    libobject::{ArchType, CapError, CoreType, ObjectType, Rights},
 };
 
 /// Payload for identity-based capabilities (most object types).
@@ -73,6 +76,16 @@ struct ObjectPayload {
     index: u16,
     generation: u32,
     _pad2: u64,
+}
+
+/// A Thread capability either names an object for management or permits only
+/// the invoking Thread's own PPC Return. The current-relative form has no
+/// object identity and cannot be resolved through a pool.
+#[repr(C, u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadSelector {
+    Named(ObjectId),
+    CurrentReturnOnly,
 }
 
 /// Payload for inline Untyped capabilities.
@@ -143,11 +156,9 @@ pub struct FrameMapping {
 #[derive(Clone, Copy)]
 pub struct InvocationPayload {
     /// Interface entry address as supplied to `AddressSpace.CreateInvocation`.
-    /// `None` marks the fixed return key, which names no entry (and whose
-    /// target identity below is never resolved). The optional encoding
-    /// replaces a magic zero address, and only the kernel can build the
-    /// absent form: `CreateInvocation` rejects a zero address.
-    pub function_address: Option<NonZero<u64>>,
+    /// Invocation is Call-only; `CreateInvocation` rejects a zero address.
+    /// Current-relative Return authority is a separate Thread selector.
+    pub function_address: NonZero<u64>,
     /// Pool tag for the target `AddressSpace`.
     pub address_space_pool: u8,
     pub _pad: u8,
@@ -183,6 +194,7 @@ pub struct KeyTablePayload {
 #[derive(Clone, Copy)]
 union KeyPayload {
     obj: ObjectPayload,
+    thread: ThreadSelector,
     region: RegionPayload,
     frame: FramePayload,
     keytable: KeyTablePayload,
@@ -210,6 +222,9 @@ const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<FramePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
 const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 24);
+const _: () = assert!(core::mem::size_of::<ThreadSelector>() == 12);
+const _: () = assert!(core::mem::align_of::<ThreadSelector>() == 4);
+const _: () = assert!(core::mem::align_of::<KeyEntry>() == 32);
 
 /// Minimum alignment bits for watermark shift (16-byte alignment).
 const MIN_ALIGN_BITS: u32 = 4;
@@ -238,13 +253,47 @@ impl KeyEntry {
     /// the owning access context (see `doc/lifetime-and-authority.md` §3).
     pub fn new<T: NucleusObject>(id: ObjectId, rights: Rights, badge: u16) -> Self {
         debug_assert_eq!(id.pool, T::POOL);
-        Self::from_id(T::TYPE, id, rights, badge)
+        Self::from_id(T::TYPE, id, rights, badge).unwrap_or_else(|error| {
+            panic!("not an identity-backed object kind: {:?}", error.code())
+        })
     }
 
     /// Create an identity-based capability entry from a checked identity
     /// (for arch objects created via `ArchObjects::create_arch_object`).
-    pub fn from_id(obj_type: ObjectType, id: ObjectId, rights: Rights, badge: u16) -> Self {
-        Self {
+    /// Dedicated-payload kinds are rejected before constructing an entry;
+    /// the kind must never select an uninitialized or incompatible union member.
+    pub fn from_id(
+        obj_type: ObjectType,
+        id: ObjectId,
+        rights: Rights,
+        badge: u16,
+    ) -> Result<Self, CapError> {
+        if matches!(
+            obj_type,
+            ObjectType::NULL
+                | ObjectType::UNTYPED
+                | ObjectType::FRAME
+                | ObjectType::KEY_TABLE
+                | ObjectType::INVOCATION
+        ) {
+            return Err(CapError::InvalidObjectType(obj_type));
+        }
+        if obj_type.is_arch() {
+            ArchType::try_from(obj_type)?;
+        } else {
+            CoreType::try_from(obj_type)?;
+        }
+        if obj_type == ObjectType::THREAD {
+            return Ok(Self {
+                obj_type,
+                rights,
+                badge,
+                payload: KeyPayload {
+                    thread: ThreadSelector::Named(id),
+                },
+            });
+        }
+        Ok(Self {
             obj_type,
             rights,
             badge,
@@ -257,7 +306,7 @@ impl KeyEntry {
                     _pad2: 0,
                 },
             },
-        }
+        })
     }
 
     /// Create an inline Untyped capability (no pool allocation).
@@ -341,8 +390,7 @@ impl KeyEntry {
 
     /// Create an `Invocation` capability targeting an entry point in an
     /// `AddressSpace`. The capability starts with `CALL` authority and no badge.
-    /// The entry is present by construction; only `new_invocation_return` builds
-    /// the absent (return-key) form.
+    /// The nonzero entry address is mandatory by construction.
     pub fn new_invocation(address_space: ObjectId, function_address: NonZero<u64>) -> Self {
         debug_assert_eq!(address_space.pool, PoolTag::AddressSpace);
         Self {
@@ -351,7 +399,7 @@ impl KeyEntry {
             badge: 0,
             payload: KeyPayload {
                 invocation: InvocationPayload {
-                    function_address: Some(function_address),
+                    function_address,
                     address_space_pool: address_space.pool as u8,
                     _pad: 0,
                     address_space_index: address_space.index,
@@ -362,33 +410,39 @@ impl KeyEntry {
         }
     }
 
-    /// Create the fixed PPC return key: an `Invocation` with no entry, usable
-    /// only through the `Return` operation. It names no target `AddressSpace`
-    /// — the zeroed identity is never resolved, since `Return` pops the
-    /// invoking Thread's own continuation record — and carries no rights.
-    pub fn new_invocation_return() -> Self {
+    /// Create kernel-installed current-relative PPC Return authority.
+    /// It names no Thread, function or `AddressSpace` and grants no management
+    /// rights. Ordinary `KeyTable` lookup still applies before invocation.
+    pub fn new_thread_return() -> Self {
         Self {
-            obj_type: ObjectType::INVOCATION,
-            rights: Rights(0),
+            obj_type: ObjectType::THREAD,
+            rights: Rights::empty(),
             badge: 0,
             payload: KeyPayload {
-                invocation: InvocationPayload {
-                    function_address: None,
-                    address_space_pool: 0,
-                    _pad: 0,
-                    address_space_index: 0,
-                    address_space_generation: 0,
-                    _pad2: 0,
-                },
+                thread: ThreadSelector::CurrentReturnOnly,
             },
         }
     }
 
-    /// Whether this is the fixed return key: an `Invocation` with no entry.
-    pub fn is_return_key(&self) -> bool {
-        self.obj_type == ObjectType::INVOCATION
-            // SAFETY: the object-type check selects the invocation payload.
-            && unsafe { self.payload.invocation.function_address.is_none() }
+    /// Read a Thread entry's selector without resolving a named object.
+    pub fn thread_selector(&self) -> Result<ThreadSelector, CapError> {
+        if self.obj_type != ObjectType::THREAD {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::THREAD,
+                found: self.obj_type,
+            });
+        }
+        // SAFETY: Thread constructors initialize this variant, and the kind
+        // check selects it. Derivation preserves the selector verbatim.
+        Ok(unsafe { self.payload.thread })
+    }
+
+    /// Whether this entry permits only current-relative Thread.Return.
+    pub fn is_thread_return_key(&self) -> bool {
+        matches!(
+            self.thread_selector(),
+            Ok(ThreadSelector::CurrentReturnOnly)
+        )
     }
 
     /// Check if this is a Retype-created (carved) object kind.
@@ -445,6 +499,12 @@ impl KeyEntry {
     /// kinds — use `as_region()` / `keytable_address()` instead.
     #[inline]
     pub fn object_id(&self) -> Result<ObjectId, CapError> {
+        if self.obj_type == ObjectType::THREAD {
+            return match self.thread_selector()? {
+                ThreadSelector::Named(id) => Ok(id),
+                ThreadSelector::CurrentReturnOnly => Err(CapError::InvalidOperation),
+            };
+        }
         if self.is_region()
             || self.is_carved()
             || self.obj_type == ObjectType::INVOCATION
@@ -548,9 +608,9 @@ impl KeyEntry {
         Ok(unsafe { &mut self.payload.region })
     }
 
-    /// The `AddressSpace` identity and entry address of an `Invocation`. The
-    /// entry is `None` for the fixed return key.
-    pub fn invocation_target(&self) -> Result<(ObjectId, Option<NonZero<u64>>), CapError> {
+    /// The `AddressSpace` identity and mandatory entry address of a Call-only
+    /// `Invocation`.
+    pub fn invocation_target(&self) -> Result<(ObjectId, NonZero<u64>), CapError> {
         if self.obj_type != ObjectType::INVOCATION {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::INVOCATION,
