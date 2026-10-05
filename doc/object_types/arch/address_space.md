@@ -202,7 +202,10 @@ rule).
 - PPC migration-frame contract: on successful Call, first save the source
   continuation including x19..x30 and context, and consume provisional target
   SP from saved `frame.gpr[9]`. Retain real arguments x2..x7, zero dummy x0/x1
-  and x8..x30, clear target NZCV and install target execution SP/PC. No source
+  and x8..x30, clear target NZCV, inherit source saved SPSR mode/masks/other
+    non-NZCV controls, and install target execution SP/PC. Use saved admitted
+    source status, not live kernel-handler PSTATE; EL1t stays EL1t and EL0 stays
+    EL0. No source
   dummy-zeroing is required. Successful Return captures r0/r1 before rewriting
   the frame, delivers x0=SUCCESS/x1=r0/x2=r1, zeroes x3..x18, and restores exact
   saved source x19..x30, AddressSpace/SP/PC/origin and raw SPSR including NZCV;
@@ -211,10 +214,10 @@ rule).
   preservation/error contracts unchanged. Ignored Return x4..x7 need no
   userspace initialization or zeroing despite resumed-frame scrubbing. No extra
   continuation fields or runtime allocation are required; projected record/array
-  sizes remain 144 B/2304 B, unmeasured. This selects GPR/NZCV disclosure policy
-  only, not other target-entry SPSR bits (execution mode/masks), TLS, debug state
-  or complete architectural-state isolation; those remain separately open.
-  Scrubbing is not implemented or validated. x9 remains provisional and the
+  sizes remain 144 B/2304 B, unmeasured. GPR/NZCV disclosure policy and
+  saved-source status inheritance are selected; TLS, debug state and complete
+  architectural-state isolation remain open. Scrubbing and status inheritance
+  are not implemented or validated. x9 remains provisional and the
   native body-result convention experimental; trusted EL1 fixture execution
   does not prove hostile-EL0 confinement.
 - Implementation status: `AddressSpace.CreateInvocation` stores a mandatory

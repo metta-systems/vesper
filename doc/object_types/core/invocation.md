@@ -185,8 +185,11 @@ save the source continuation, including x19..x30 and source
 AddressSpace/SP/PC/origin/raw SPSR, and consume the provisional target SP from
 saved `frame.gpr[9]`. Then retain the six real inputs unchanged in x2..x7,
 zero dummy x0/x1 and all x8..x30, clear target-entry NZCV, and install the
-target execution SP and exported entry PC. There is no source-side dummy-zeroing
-requirement. Saved source x19..x30 remain kernel-private; incoming target x30
+target execution SP and exported entry PC. Target execution-status controls
+inherit the immediate source's saved admitted SPSR: execution mode, interrupt
+masks and all other non-NZCV controls are unchanged. Derive status from the
+saved frame, never live kernel-handler PSTATE or previous target state; EL1t
+stays EL1t and EL0 stays EL0. There is no source-side dummy-zeroing requirement. Saved source x19..x30 remain kernel-private; incoming target x30
 is zero because the non-returning export wrapper establishes its own
 body-return linkage with a normal call.
 
@@ -203,6 +206,7 @@ and raw SPSR, including the source's NZCV.
 | x8..x18 | Zero, including consumed x9 | Zero |
 | x19..x30 | Zero; source snapshot stays private | Exact saved source words |
 | NZCV | Zero | From raw saved source SPSR |
+| Other SPSR controls (mode / masks / supported bits) | Inherited from saved source SPSR | Exact raw saved source SPSR |
 | Execution SP / PC | Submitted target SP / exported entry | Saved source SP / return PC |
 
 Migration scrubbing does not apply to recoverable local Call/Return rejection;
@@ -213,11 +217,12 @@ resumed source frame.
 
 No extra continuation fields or runtime allocation are required. The projected
 record/array sizes remain 144 B/2304 B, not measured layouts. This policy
-addresses GPR/NZCV disclosure only. Other target-entry SPSR bits, including
-execution mode and interrupt masks, TLS, debug state and complete
-architectural-state isolation remain separately open; other SPSR controls must
-not be zeroed with NZCV or inherited accidentally. Trusted EL1 testing is not
-hostile-EL0 confinement. Scrubbing is selected, not implemented or validated;
+addresses GPR/NZCV disclosure only; deliberate saved-source status inheritance
+is also selected. Clearing NZCV must not zero other SPSR controls, and Return
+restores the exact raw saved source SPSR even if target code changed its status.
+TLS, debug state and complete architectural-state isolation remain open;
+FP/SIMD trap enforcement is separate. Trusted EL1 testing is not hostile-EL0
+confinement. Scrubbing and status inheritance are not implemented or validated;
 sentinel, nesting, rejection and end-to-end checks remain pending. The x9
 transport stays provisional and the native body-result convention experimental.
 
@@ -291,9 +296,8 @@ Still to specify:
   through KeyTable management. Neither is enabled by the representation change.
 
 
-- Other target-entry SPSR controls (execution mode and interrupt masks), TLS,
-  debug state and complete architectural-state isolation beyond the selected
-  GPR/NZCV exposure policy.
+- TLS, debug state and complete architectural-state isolation beyond the
+  selected GPR/NZCV exposure policy and saved-source status inheritance.
 - Nested/concurrent-call rules beyond the depth bound.
 - The `Return` fault-handler binding, vector, and any resume-with-edited-state
   semantics (D1's open fault-handling decision; NOVA's per-vector exception

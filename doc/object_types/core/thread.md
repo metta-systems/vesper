@@ -145,7 +145,10 @@ validation with a defined error.
   words. On successful Call, the kernel first saves the source continuation
   from the transient frame and consumes provisional target SP from saved
   `frame.gpr[9]`; it then retains real arguments x2..x7, zeroes dummy x0/x1
-  and x8..x30, clears target NZCV, and sets target execution SP/PC. No
+  and x8..x30, clears target NZCV, inherits source saved SPSR mode/masks/other
+    non-NZCV controls, and sets target execution SP/PC. Status comes from the
+    saved admitted source frame, not live kernel-handler PSTATE; Call changes
+    AddressSpace/keytable, not execution privilege. No
   source-side dummy-zeroing or source spill stub is required. Successful Return
   captures r0/r1 before rewriting the frame, delivers x0=SUCCESS/x1=r0/x2=r1,
   zeroes x3..x18, and restores exact source x19..x30, AddressSpace/SP/PC/origin
@@ -159,9 +162,9 @@ validation with a defined error.
   per-Thread page fit, pool stride/backing/accounting and fixture bounds are
   not validated. Storage comes from supplied Thread pool backing, without
   runtime kernel allocation. The record array, preservation and scrubbing are
-  selected, not implemented or validated. Only GPR/NZCV disclosure is addressed;
-  other target-entry SPSR bits (mode/masks), TLS, debug state and complete
-  architectural-state isolation remain separately open. x9 stays provisional
+  selected, not implemented or validated. Status inheritance is also selected,
+  with implementation/validation pending; TLS, debug state and complete
+  architectural-state isolation remain open. x9 stays provisional
   and the native body-result convention experimental.
 - `Nucleus::park_and_select` validates the target AddressSpace incarnation,
   root/ASID presence and backend encoding, saved execution state, and pending

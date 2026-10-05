@@ -29,11 +29,7 @@ Unanswered questions before implementing the scheduler record ABI:
 
 ### Remaining PPC architectural decisions
 
-- **Target execution status:** which non-NZCV target-entry SPSR controls
-  (execution mode, interrupt masks and supported control bits) should Call
-  install for the trusted EL1t fixture and eventual EL0 components? What is
-  target-owned versus Thread-owned, without blindly inheriting source control
-  bits or zeroing the whole SPSR?
+
 - **Other architectural state:** what TLS, debug and other non-GPR/control
   state must be initialized, preserved or isolated before protected EL0
   execution? GPR/NZCV scrubbing alone is not complete state isolation.
