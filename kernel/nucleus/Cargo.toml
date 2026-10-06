@@ -47,6 +47,7 @@ libmapping = { workspace = true }
 libobject = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
+owo-colors = { workspace = true }
 
 [dev-dependencies]
 libboot = { workspace = true }

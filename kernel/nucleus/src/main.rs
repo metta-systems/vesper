@@ -256,12 +256,15 @@ fn is_aarch64_svc() -> bool {
 // Kernel entry point
 //------------------------------------------------------------------------------
 
+use owo_colors::OwoColorize;
+
 #[unsafe(no_mangle)]
 extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     let key = RawKey::from_wire(frame.gpr[0]);
     let op = frame.gpr[1];
     semi::println!(
-        "➡️ CapInvoke SYSCALL(key: {key:?}, op: {op}) @ PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
+        "➡️  {}(key: {key:?}, op: {op}) @ PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
+        "CapInvoke SYSCALL".dimmed(),
         get_pc(),
         get_sp(),
         core::ptr::from_mut(frame) as u64,
@@ -309,7 +312,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
             // Trap entry masks interrupts; no scheduling/reentry occurs before
             // this immediate installation on the enforced single boot core.
             ArchObjectsImpl::install_translation_context(prepared.root(), prepared.asid());
-            semi::println!("✅ AddressSpace::Activate()");
+            semi::println!("{}", "✅ AddressSpace::Activate()".on_cyan());
             (syscall_status::SUCCESS, 0, 0)
         }
         Ok(nucleus::api::InvokeOutcome::Blocked(record)) => {
@@ -324,7 +327,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
             let translation = committed.translation;
             ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
             frame.restore(committed.target);
-            semi::println!("✅ Invocation::Call()");
+            semi::println!("{}", "✅ Invocation::Call()".on_cyan());
             return;
         }
         Ok(nucleus::api::InvokeOutcome::Return(committed)) => {
@@ -334,13 +337,16 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
             let translation = committed.translation;
             ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
             frame.restore(committed.resumed);
-            semi::println!("✅ Thread::Return()");
+            semi::println!("{}", "✅ Thread::Return()".on_cyan());
             return;
         }
         Err(e) => e.code(),
     };
     // Return values
-    semi::println!("⬅️ CapInvoke SYSCALL(Return {x0:#x}, {x1:#x}, {x2:#x})");
+    semi::println!(
+        "⬅️  {}(Return {x0:#x}, {x1:#x}, {x2:#x})",
+        "CapInvoke SYSCALL".dimmed()
+    );
     frame.gpr[0] = x0;
     frame.gpr[1] = x1;
     frame.gpr[2] = x2;

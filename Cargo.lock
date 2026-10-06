@@ -573,6 +573,7 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "cfg-if",
+ "owo-colors",
  "vesper-address",
  "vesper-boot",
  "vesper-console",
@@ -665,6 +666,12 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+
+[[package]]
+name = "owo-colors"
+version = "4.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
 
 [[package]]
 name = "parking_lot"

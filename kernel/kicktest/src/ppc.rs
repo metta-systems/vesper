@@ -19,7 +19,7 @@ use {
         sync::atomic::{AtomicBool, AtomicU64, Ordering},
     },
     libobject::{
-        CapError, InconsistencyReason, RawKey, decode_syscall_result,
+        CapError, DebugConsoleKey, InconsistencyReason, RawKey, decode_syscall_result,
         export::{self, PpcResult},
         invocation::InvocationKey,
         ppc_export,
@@ -38,6 +38,10 @@ const CAPTURE_BYTES: u64 = 272;
 
 /// Bounce-table-local `CurrentReturnOnly` key, recorded by [`component_init`].
 static RETURN_KEY: AtomicU64 = AtomicU64::new(0);
+/// Bounce-table-local `DebugConsole` key, recorded by [`component_init`].
+static DEBUG_CONSOLE_KEY: AtomicU64 = AtomicU64::new(0);
+/// Successful `DebugConsole` writes issued by [`export_body`] inside Bounce.
+static CONSOLE_WRITES: AtomicU64 = AtomicU64::new(0);
 static CAPTURE: [AtomicU64; CAPTURE_WORDS] = [const { AtomicU64::new(0) }; CAPTURE_WORDS];
 static ENTRY_SP: AtomicU64 = AtomicU64::new(0);
 /// Select the target's Return path: the library helper, or raw asm with junk
@@ -284,10 +288,12 @@ pub fn round_trip(key: RawKey, via_library: bool) -> (u64, u64) {
     delivered
 }
 
-/// The component's init, run with the Return key its `AddressSpace` builder
-/// passes in: record it for the raw test target and the export adapter.
-pub fn component_init(return_key: RawKey) {
+/// The component's init, run with the keys its `AddressSpace` builder passes
+/// in: record the Return key for the raw test target and the export adapter,
+/// and the `DebugConsole` key for the export body.
+pub fn component_init(return_key: RawKey, debug_console_key: RawKey) {
     RETURN_KEY.store(return_key.to_wire(), Ordering::Release);
+    DEBUG_CONSOLE_KEY.store(debug_console_key.to_wire(), Ordering::Release);
     export::init_return_key(&ThreadReturnKey::from_key(return_key));
 }
 
@@ -301,6 +307,15 @@ extern "C" fn export_body(
     input4: u64,
     input5: u64,
 ) -> PpcResult {
+    // A nested ordinary invocation from inside the migrated call: the key
+    // resolves in Bounce's own table. The kernel reads the string through
+    // the direct map at the pointer's numeric value (the source's image
+    // copy); Bounce maps an identical image copy at the same VA.
+    DebugConsoleKey::from_key(RawKey::from_wire(DEBUG_CONSOLE_KEY.load(Ordering::Acquire)))
+        .write("DEBCON| Bounce: PPC export body writing through its own DebugConsole key\n")
+        .unwrap_or_else(|error| panic!("Bounce DebugConsole write failed: {:?}", error.code()));
+    CONSOLE_WRITES.fetch_add(1, Ordering::AcqRel);
+
     PpcResult {
         r0: export_digest([input0, input1, input2, input3, input4, input5]),
         r1: TTBR0_EL1.get(),
@@ -358,16 +373,23 @@ pub extern "C" fn vesper_thread_return_fault(
 
 /// Call the compiled export. With `stale_init_key`, init records a stale
 /// Return key so the adapter's Return is rejected and the handler repairs.
-pub fn export_round_trip(key: RawKey, return_key: RawKey, stale_init_key: bool) {
+/// Either way the body writes once through Bounce's `DebugConsole` key.
+pub fn export_round_trip(
+    key: RawKey,
+    return_key: RawKey,
+    debug_console_key: RawKey,
+    stale_init_key: bool,
+) {
     let stale = RawKey::new(return_key.slot(), return_key.incarnation() + 1);
     if stale_init_key {
-        component_init(stale);
+        component_init(stale, debug_console_key);
         REPAIR_KEY.store(return_key.to_wire(), Ordering::Release);
     } else {
-        component_init(return_key);
+        component_init(return_key, debug_console_key);
         REPAIR_KEY.store(0, Ordering::Release);
     }
     FAULT_COUNT.store(0, Ordering::Release);
+    let writes_before = CONSOLE_WRITES.load(Ordering::Acquire);
     let args = [
         0x0101_0101,
         0xF0F0_0000_0000_0F0F,
@@ -387,6 +409,11 @@ pub fn export_round_trip(key: RawKey, return_key: RawKey, stale_init_key: bool) 
         "export body ran outside Bounce"
     );
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
+    assert_eq!(
+        CONSOLE_WRITES.load(Ordering::Acquire),
+        writes_before + 1,
+        "export body did not write through Bounce's DebugConsole key"
+    );
 
     let faults = FAULT_COUNT.load(Ordering::Acquire);
     if stale_init_key {
@@ -406,6 +433,6 @@ pub fn export_round_trip(key: RawKey, return_key: RawKey, stale_init_key: bool) 
     } else {
         assert_eq!(faults, 0, "successful export reached the fault handler");
     }
-    component_init(return_key);
+    component_init(return_key, debug_console_key);
     REPAIR_KEY.store(0, Ordering::Release);
 }

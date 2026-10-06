@@ -1982,6 +1982,24 @@ pub fn kicktest_run() -> ! {
             BOUNCE_EC_KEY.store(bounce_ec.to_wire(), Ordering::Release);
         }
 
+        // Bounce's DebugConsole: CopyDerive the boot grant into Bounce's
+        // table at the well-known slot through the real SVC path, attenuated
+        // to WRITE. The returned Bounce-local key goes to component init.
+        let bounce_debug_console_key = self_table
+            .copy_derive(
+                debug_console_key,
+                &KeyTableKey::from_key(bounce_table_key),
+                KeySlot::DEBUG_CONSOLE.0,
+                Rights(Rights::WRITE),
+            )
+            .unwrap_or_else(|error| {
+                panic!("Bounce DebugConsole CopyDerive failed: {:?}", error.code())
+            });
+        assert_eq!(
+            bounce_debug_console_key.slot(),
+            test_slot(KeySlot::DEBUG_CONSOLE.0)
+        );
+
         // Allocate Bounce's Thread and queue it runnable: it starts only
         // when the boot thread blocks. Bounce executes in the boot
         // AddressSpace (fixture threads need no private translation context).
@@ -2121,7 +2139,7 @@ pub fn kicktest_run() -> ! {
                 });
             assert!(entry.is_thread_return_key());
         }
-        ppc::component_init(ppc_return_key);
+        ppc::component_init(ppc_return_key, bounce_debug_console_key);
         let ppc_key = AddressSpaceKey::from_key(bounce_as_key)
             .create_invocation(
                 ppc::target_entry as *const () as u64,
@@ -2203,7 +2221,12 @@ pub fn kicktest_run() -> ! {
             )
             .unwrap_or_else(|error| panic!("export CreateInvocation failed: {:?}", error.code()));
         for stale_init_key in [false, true] {
-            ppc::export_round_trip(export_key, ppc_return_key, stale_init_key);
+            ppc::export_round_trip(
+                export_key,
+                ppc_return_key,
+                bounce_debug_console_key,
+                stale_init_key,
+            );
             assert_boot_thread_home(nucleus);
             assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
         }

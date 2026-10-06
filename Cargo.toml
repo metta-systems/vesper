@@ -108,6 +108,7 @@ minijinja = { version = "2", features = ["loader"] }
 # mixed
 #=======
 seahash = { version = "4.1" }
+owo-colors = { version = "4.4" }
 
 [profile.dev]
 # See https://github.com/rust-lang/cargo/issues/7359 about why panic=abort is not working here.
