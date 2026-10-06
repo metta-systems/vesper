@@ -53,6 +53,14 @@ Unanswered questions before implementing the scheduler record ABI:
   error? It currently surfaces as the preparation error without a pop.
 - **Scheduling attribution:** how should hierarchical schedulers observe and
   attribute migrated work beyond the source Thread's own DCB accounting?
+- **Freezing the provisional PPC conventions (D9):** the maintainer decides
+  when each becomes frozen ABI. Both work end-to-end through real Call/Return;
+  no validation or plan item gates either freeze, and work should not be
+  planned around them. "Provisional", "experimental" or "until field-tested"
+  in the documents means this maintainer decision.
+  - the `x9` Call-time target-SP register;
+  - the common native target-body return convention (`extern "C"` body
+    returning a `#[repr(C)]` two-`u64` struct in x0/x1).
 
 ## Other unanswered decisions
 

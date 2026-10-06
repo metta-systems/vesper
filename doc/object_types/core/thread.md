@@ -96,9 +96,9 @@ locally, ordinary rejections come back as `Err`, and a local `SUCCESS` becomes
 (`libobject::export::complete_export`, used by `ppc_export!`) loads the Return
 key recorded at component init, Returns through this helper, and on `Err`
 hands the error triple and the original words to the image-supplied
-`vesper_thread_return_fault`. Current-relative Return propagation through KeyTable
-management is deferred separately from Call-only Invocation distribution;
-neither broader named-Thread derivation nor transfer permissions are granted.
+`vesper_thread_return_fault`. The sentinel is installed by AddressSpace
+provisioning and is not propagated through KeyTable management; no named-Thread
+derivation or transfer permissions are granted.
 
 ### Retire
 
@@ -164,9 +164,9 @@ validation with a defined error.
   per-core SP_EL1 stack. The bounded wait/resume fixture switches between
   independently provisioned roots with source ASID 1 and Bounce ASID 2;
   source activation precedes the first handoff. This is internal fixture
-  scheduling, not public Thread control, same-Thread PPC migration, or
-  protected EL0 confinement. PPC invocation-stack storage and Call/Return
-  migration remain unimplemented.
+  scheduling, not public Thread control or protected EL0 confinement.
+  Same-Thread PPC Call/Return migrates between the same roots through the
+  invocation stack below.
 - PPC storage and [GPR/NZCV exposure contract](invocation.md#non-payload-gpr-and-condition-flag-exposure):
   depth-16 inline kernel-private continuation array with source AddressSpace
   identity, PC/SP, stamp, raw SPSR, exception origin and twelve source x19–x30
@@ -185,14 +185,13 @@ validation with a defined error.
   Migration scrubbing does not apply to recoverable local Call/Return rejection;
   existing preservation/error contracts are unchanged. Ignored Return x4..x7
   require no userspace initialization or zeroing despite successful resumed-frame
-  scrubbing. No extra fields are needed; projected record size remains 144 B,
-  array 2304 B per Thread, unmeasured. Actual complete Thread layout,
-  per-Thread page fit, pool stride/backing/accounting and fixture bounds are
-  not validated. Storage comes from supplied Thread pool backing, without
-  runtime kernel allocation. The record array, preservation and scrubbing are
-  selected, not implemented or validated. Status inheritance is also selected,
-  with implementation/validation pending; TLS, debug state and complete
-  architectural-state isolation remain open. x9 stays provisional
+  scrubbing. No extra fields are needed; the record is 144 B and the array
+  2304 B per Thread. Thread layout, pool stride/backing/accounting and fixture
+  bounds derive from the actual types. Storage comes from supplied Thread pool
+  backing, without runtime kernel allocation. The record array, preservation,
+  scrubbing and status inheritance are implemented and validated through real
+  Call/Return; TLS, debug state and complete architectural-state isolation
+  remain open. x9 stays provisional
   and the native body-result convention experimental.
 - `Nucleus::park_and_select` validates the target AddressSpace incarnation,
   root/ASID presence and backend encoding, saved execution state, and pending
@@ -233,12 +232,9 @@ validation with a defined error.
 
 ## TODOs
 
-- PPC Call/Return dispatch/helper/wrapper, adapter, status 34 and
-  fault-delivery implementation. The shared status 33 and inline depth-16
-  invocation-stack storage/layout are implemented; the active constructor
-  and separately tested numeric SP helper do not implement Call admission.
-- Current-relative Return propagation through KeyTable management, independent
-  of Call-only Invocation distribution — D4; no derivation/transfer expansion.
+- Return fault delivery (underflow, retired saved source) — D1/D7; currently
+  an interim kernel panic with nothing popped.
+- Per-call time attribution on Return from the record's Call stamp.
 - Full Start/Suspend/Resume with legal state transitions, execution
   budget, and EL0 entry — Phase 7 (D7/D8).
 - Never-returns self-retirement (terminal entry-path work).

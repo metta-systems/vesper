@@ -37,6 +37,11 @@ const BOUNCE_PROBE_FRAME: u32 = 79;
 const SOURCE_IMAGE_TABLES: u32 = 80;
 const BOUNCE_IMAGE_TABLES: u32 = 88;
 pub const PROBE_VA: u64 = 0x1800_0000;
+/// Bounce-only PPC target stack: `PPC_STACK_PAGES` accounted Frames mapped
+/// directly above the probe page, inside the same Bounce L3 table.
+pub const PPC_STACK_VA: u64 = PROBE_VA + PAGE;
+pub const PPC_STACK_PAGES: u64 = 2;
+const BOUNCE_PPC_STACK_FRAMES: u32 = 210;
 const SOURCE_MARKER: u64 = 0x5352_4300_0000_0000;
 const BOUNCE_MARKER: u64 = 0x424E_4300_0000_0000;
 
@@ -367,6 +372,38 @@ impl Provisioner<'_> {
                 .unwrap_or_else(|error| panic!("probe Frame.Map failed: {:?}", error.code()));
         }
         assert_ne!(physical[0], physical[1]);
+
+        // Bounce's PPC target stack: ordinary RW Frames in Bounce's root only.
+        // Whether target code fits in its published headroom is the
+        // component's concern (guard pages), not checked here.
+        let stack_count = u32::try_from(PPC_STACK_PAGES).unwrap();
+        let first_stack_frame = self
+            .untyped
+            .retype(
+                ObjectType::FRAME,
+                12,
+                0,
+                stack_count,
+                self.self_table,
+                BOUNCE_PPC_STACK_FRAMES,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("PPC stack Frame Retype failed: {:?}", error.code()));
+        for index in 0..stack_count {
+            let frame = boot_key(
+                BOUNCE_PPC_STACK_FRAMES + index,
+                first_stack_frame.incarnation(),
+            );
+            FrameKey::from_key(frame)
+                .map(
+                    self.bounce_as,
+                    PPC_STACK_VA + u64::from(index) * PAGE,
+                    Rights(Rights::READ | Rights::WRITE),
+                    0,
+                )
+                .unwrap_or_else(|error| panic!("PPC stack Frame.Map failed: {:?}", error.code()));
+        }
+
         let local_bounce_probe = self
             .self_table
             .copy_derive(

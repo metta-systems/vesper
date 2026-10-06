@@ -61,10 +61,10 @@ Rules:
 - **Derivation allowlist**: `KeyTable`, `Frame`, and
   debug-gated `DebugConsole`. Frame CopyDerive produces an *unmapped* derived
   capability; Move preserves the mapping record; Delete of a mapped frame
-  leaves the mapping in place (accepted-leak). Current-relative
-  `CurrentReturnOnly` propagation and Call-only Invocation distribution are
-  separately deferred; the Return representation does not extend this allowlist
-  or approve arbitrary named-Thread derivation/transfer.
+  leaves the mapping in place (accepted-leak). `CurrentReturnOnly` is not on
+  the allowlist: AddressSpace provisioning installs it. Call-only Invocation
+  distribution is deferred; neither extends this allowlist or approves
+  arbitrary named-Thread derivation/transfer.
 - **Cross-table resolution**: both the invoked table and the
   destination table are resolved through the caller's own table, so
   CopyDerive/Move can target a table other than the caller's.
@@ -190,8 +190,8 @@ flowchart TD
 - Ownership of well-known `KeySlot` constants and remaining bootstrap
   Thread/AddressSpace lists, capacities/grants and incarnation-bearing handoff
   records — D4; the slot conventions above are fixed for this scope.
-- Current-relative Return propagation and Call-only Invocation distribution
-  restrictions — separate deferred D4 decisions, not allowlist/transfer approval.
+- Call-only Invocation distribution restrictions — deferred D4 decision, not
+  allowlist/transfer approval.
 - Notification index/registration versus variable-capacity tables (a 64-bit
   pending bitmap does not fit every slot) — D4.
 - Untyped-backed pool/metadata ownership for tables — Phase 5.

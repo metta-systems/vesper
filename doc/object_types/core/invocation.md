@@ -53,10 +53,10 @@ Ordinary current-AS-table lookup, SELF, guard, incarnation, bounds and presence
 checks apply; every Thread in the AS shares the sentinel, but it acts only on
 the invoking Thread's own top continuation. AddressSpace provisioning
 installs it before the AddressSpace can be activated; a component may still
-delete its own sentinel. Overall call lifecycle behavior remains
-unspecified. Return-form propagation and Call-only Invocation distribution are
-independent deferred decisions; no broader derivation/transfer permissions are
-implied.
+delete its own sentinel. Because provisioning installs it, the sentinel is not
+propagated through KeyTable management. Overall call lifecycle behavior remains
+unspecified. Call-only Invocation distribution is a deferred decision; no
+broader derivation/transfer permissions are implied.
 
 Queued rendezvous is userspace composition over Invocation and
 `Notification`/`EventCount`; it is not a kernel object kind.
@@ -65,7 +65,7 @@ Queued rendezvous is userspace composition over Invocation and
 
 | Op | Name | Status |
 |---|---|---|
-| `0` | Call | `x0` Invocation capability, `x1` operation ID `0`, `x2..x7` six `u64` Call inputs; at target entry, the kernel zeroes dummy `x0`/`x1` and `x8..x30`, clears NZCV, and leaves the six real inputs unchanged in `x2..x7`, without a register shuffle or source-side dummy-zeroing requirement. Successful source resumption receives `x0 = SUCCESS (0)`, `x1 = r0`, `x2 = r1` for the two target-provided `u64` words, with kernel status separate from payload. The common native target-body return convention is experimental pending end-to-end confirmation; `Thread.Return` SVC carries the two payload words in x2/x3 and ignores x4..x7; the low-level helper exposes Result<Infallible, CapError>, and the common adapter reports Err with original payload to a non-returning libOS fault handler; userspace handler binding is provisionally link-resolved with the five-u64 extern-C non-returning ABI (status/detail1/detail2/original r0/original r1 in x0..x4); handler symbol is `vesper_thread_return_fault`. The working target-SP transport is provisionally `x9`, separate from target argument registers; the kernel consumes saved `frame.gpr[9]`. Keep x9 unfrozen until end-to-end Call/Return confirms feasibility; dispatch is not implemented. |
+| `0` | Call | `x0` Invocation capability, `x1` operation ID `0`, `x2..x7` six `u64` Call inputs; at target entry, the kernel zeroes dummy `x0`/`x1` and `x8..x30`, clears NZCV, and leaves the six real inputs unchanged in `x2..x7`, without a register shuffle or source-side dummy-zeroing requirement. Successful source resumption receives `x0 = SUCCESS (0)`, `x1 = r0`, `x2 = r1` for the two target-provided `u64` words, with kernel status separate from payload. The common native target-body return convention is experimental, with its freeze a pending maintainer decision; `Thread.Return` SVC carries the two payload words in x2/x3 and ignores x4..x7; the low-level helper exposes Result<Infallible, CapError>, and the common adapter reports Err with original payload to a non-returning libOS fault handler; userspace handler binding is provisionally link-resolved with the five-u64 extern-C non-returning ABI (status/detail1/detail2/original r0/original r1 in x0..x4); handler symbol is `vesper_thread_return_fault`. The working target-SP transport is provisionally `x9`, separate from target argument registers; the kernel consumes saved `frame.gpr[9]`. Freezing x9 is a pending maintainer decision. |
 
 Invocation is Call-only. Opcode `0` means Call, not wrong-form Return. Every
 other Invocation opcode, including `1`, is unknown and must yield
@@ -101,7 +101,8 @@ without narrowing. Zero, unknown IDs and high-bit extensions become
 `UnknownResponse`, preserving status and both details verbatim. The offending
 value remains full-width for every known reason. `NestingDepth` status 33
 (current/maximum count in `x1`, zero in `x2`) is implemented in the shared
-ABI/client decoder; `UnexpectedReturn` status 34 remains unimplemented.
+ABI/client decoder, as is the userspace-synthesized `UnexpectedReturn`
+status 34.
 
 | ID in `x2` | Reason | Condition | Value in `x1` |
 |---:|---|---|---|
@@ -141,8 +142,8 @@ For `AddressSpace.CreateInvocation`:
 5. `MinimumHeadroomMisaligned`.
 6. `MinimumHeadroomTooLarge`.
 
-For the numeric `InvocationStackExtent::validate_sp` helper and the selected
-future `Invocation.Call` check:
+For the numeric `InvocationStackExtent::validate_sp` helper used by the
+`Invocation.Call` check:
 
 1. `SpMisaligned`.
 2. `SpOutOfRange`.
@@ -265,15 +266,16 @@ Return still ignores submitted x4..x7 without userspace initialization or
 zeroing: input consumption is distinct from clearing x3..x18 in the successfully
 resumed source frame.
 
-No extra continuation fields or runtime allocation are required. The projected
-record/array sizes remain 144 B/2304 B, not measured layouts. This policy
+No extra continuation fields or runtime allocation are required. The measured
+record/array sizes are 144 B/2304 B. This policy
 addresses GPR/NZCV disclosure only; deliberate saved-source status inheritance
 is also selected. Clearing NZCV must not zero other SPSR controls, and Return
 restores the exact raw saved source SPSR even if target code changed its status.
 TLS, debug state and complete architectural-state isolation remain open;
 FP/SIMD trap enforcement is separate. Trusted EL1 testing is not hostile-EL0
-confinement. Scrubbing and status inheritance are not implemented or validated;
-sentinel, nesting, rejection and end-to-end checks remain pending. The x9
+confinement. Scrubbing and status inheritance are implemented and validated
+with distinct source/target sentinels, nesting and rejection unit tests, and
+the real Bounce round trip including the compiled export wrapper. The x9
 transport stays provisional and the native body-result convention experimental.
 
 ## Contract details still to specify
@@ -291,12 +293,12 @@ SUCCESS/r0/r1 in x0/x1/x2. Nested Calls keep one snapshot per immediate source;
 recoverable pre-commit Call rejection preserves source registers and records.
 No source spill stub is required and target code/direct Return is not trusted
 to preserve the source. Storage is inline in supplied Thread pool backing,
-without runtime kernel allocation. The projected record is 144 B and the
-record array 2304 B per Thread; actual combined Thread/pool layout and
-per-Thread page fit remain unverified. x18 is separately selected as caller-volatile and is not saved in the record;
+without runtime kernel allocation. The record is 144 B and the record array
+2304 B per Thread; Thread pool backing, stride and accounting derive from the
+actual types. x18 is separately selected as caller-volatile and is not saved in the record;
 FP/SIMD is prohibited/trapped for the current integer-only slice;
 [non-payload GPR/NZCV scrubbing](#non-payload-gpr-and-condition-flag-exposure)
-is selected, with implementation/validation pending. Call-time depth exhaustion is reported as
+is implemented. Call-time depth exhaustion is reported as
 `NestingDepth` (wire status 33; current/maximum count in `x1`, zero in `x2`). The target stack
 extent is selected and published at
 `AddressSpace.CreateInvocation`; `Call` must provide a 16-byte-aligned SP
@@ -324,27 +326,23 @@ pop. Return on a valid named Thread entry is a recoverable `InvalidOperation`;
 Opcode zero on an ordinary Invocation is Call, not wrong-form Return. The
 blocked-wait continuation is implemented in Thread-resident `SavedContext`
 storage, so no kernel-stack frame carries a continuation for waits either. The PPC array
-itself is not implemented; actual combined Thread/page fit remains to be
-verified. The record's stamp brackets Call→Return and the
-elapsed time is attributed to the source Thread's own DCB; broader
-hierarchical attribution is deferred.
+is implemented inline in each Thread. The record's stamp is taken at Call;
+attributing the elapsed time to the source Thread's own DCB on Return is not
+implemented yet, and broader hierarchical attribution is deferred.
 Each AddressSpace names exactly one keytable shared by its Threads. `Call`
 uses the target AddressSpace's keytable, and the continuation's source
 AddressSpace identity selects the keytable restored by `Return`. AddressSpace
 provisioning and ordinary caller lookup implement the immutable carved-table
-association. Checked root/ASID switching is implemented by the trusted
-source/Bounce two-Thread wait/resume fixture, using independently provisioned
-roots with ASIDs 1 and 2 and current-AS keytable resolution. This is EL1t
-execution on SP_EL0 with a shared high SP_EL1 trap stack, not protected EL0
-confinement or same-Thread PPC migration. The invocation stack and PPC
-Call/Return migration remain unimplemented.
+association. Checked root/ASID switching uses independently provisioned
+source/Bounce roots with ASIDs 1 and 2 and current-AS keytable resolution, both
+for the two-Thread wait/resume fixture and for same-Thread PPC Call/Return.
+This is EL1t execution on SP_EL0 with a shared high SP_EL1 trap stack, not
+protected EL0 confinement.
 
 Still to specify:
 
 - Call-only Invocation distribution/derivation, rights attenuation, and source
-  badge semantics, independently of current-relative Return-form propagation
-  through KeyTable management. Neither is enabled by the representation change.
-
+  badge semantics.
 
 - TLS, debug state and complete architectural-state isolation beyond the
   selected GPR/NZCV exposure policy and saved-source status inheritance.
@@ -375,7 +373,7 @@ The raw-SVC integer compiler declarations are conservative and explicit:
 Discarded outputs do not add result words or promise register preservation.
 Ignored Return x4..x7 need not be initialized/zeroed. Call's x9 is supplied in
 the SVC asm block and read from saved `frame.gpr[9]`, not live x9 after Rust;
-it remains provisional pending end-to-end confirmation. Rely on kernel-owned
+it remains provisional until the maintainer freezes it. Rely on kernel-owned
 x19..x30 preservation; add no x3..x17 continuation fields. Keep compiler
 memory/flags effects conservative, without nomem/readonly/pure/preserves_flags;
 initially omit nostack pending switched-stack validation. These memory effects
@@ -389,7 +387,9 @@ rely on it surviving Call. The kernel zeroes x18 at target entry and successful
 source resumption under the selected GPR/NZCV policy; other architectural-state
 isolation remains open. FP/SIMD use is prohibited/trapped for this slice as
 specified below.
-Wrapper/compiler and actual PPC validation are pending.
+Both wrappers are implemented and exercised through real PPC; inspection of
+optimized compiler output and live-value tests across deliberate target
+clobbers remain.
 
 The current slice is integer-only: kernel, component bodies, wrappers and
 linked runtime code retain the soft-float/no-FP-NEON build contract. Explicitly
@@ -402,8 +402,8 @@ userspace Return-error handler as a kernel-fault mechanism. Add no vector,
 FPCR/FPSR or other FP/SIMD saved state. Support is deferred until initialization,
 PPC/wait/scheduling preservation and isolation are designed with accounted
 backing. Trusted EL1 code must obey and not modify privileged trap controls;
-this fixture cannot prove hostile confinement. Trap enforcement, negative
-fault tests and compiler/PPC validation remain unimplemented/unverified.
+this fixture cannot prove hostile confinement. Trap enforcement and negative
+fault tests remain unimplemented.
 
 Common export setup supplies a per-procedure non-returning export wrapper's
 address to `AddressSpace.CreateInvocation`. The wrapper has an `extern "C"`
@@ -418,8 +418,8 @@ sequence, with no normal wrapper return, automatic retry
 or body rerun. No kernel-installed target return trampoline, new Invocation
 metadata or constructor operands are needed. This is a common userspace
 convention, not kernel signature/executable-entry validation; custom entries
-and direct Return remain possible. Wrapper/linking implementation and PPC
-validation are pending.
+and direct Return remain possible. `ppc_export!` generates this wrapper; it is
+validated through real same-Thread Calls into Bounce.
 
 The common native target-body return convention is experimental: the userspace
 export wrapper calls an `extern "C"` body returning a `#[repr(C)]` struct with
@@ -438,9 +438,9 @@ validation is unchanged. This input rule is separate from selected source
 preservation, wrapper clobbers and kernel zeroing of x3..x18 on successful source
 resumption; the adapter still need not initialize or clear ignored operands. The experimental native body-return
 convention is userspace policy, not kernel signature enforcement; direct Return
-remains possible. Keep that convention unfrozen until the compiled body,
-adapter, Call/Return and source delivery have
-been confirmed end-to-end.
+remains possible. A compiled body's results reach the source through the
+adapter and real Call/Return. Freezing the convention is a pending maintainer
+decision.
 
 The low-level Return helper exposes `Result<core::convert::Infallible, CapError>`.
 Successful Return abandons target execution, so no Ok value returns locally.
@@ -463,7 +463,8 @@ encode zero as UnknownResponse or automatically trap/retry. The ordinary
 syscall decoder still recognizes zero as success for other operations.
 The adapter passes this error plus the original body `(r0,r1)` to
 `vesper_thread_return_fault`; anomaly diagnostics do not replace that payload.
-Shared error/status, helper and adapter implementation/validation are pending.
+The shared status, helper and adapter are implemented; host tests cover the
+synthetic error and the boot fixture validates the handler handoff.
 
 On Err, the common export adapter transfers control to a libOS-supplied,
 non-returning fault handler with decoded error diagnostics and original
@@ -476,8 +477,11 @@ other adapter-frame overhead in the published stack requirement/headroom;
 this is not proof of mappings/writability or sufficient body/handler stack.
 No heap/kernel allocation, invocation-record fields or dedicated x19/x20
 retention requirement is introduced. Source preservation and wrapper clobbers
-follow their separate selected contracts; stack-pool reuse remains open. The spill is not
-implemented or validated. The handler must
+follow their separate selected contracts; stack-pool reuse remains open. The spill is
+implemented (`export::complete_with`). Whether the adapter and body fit in the
+published headroom is the component's concern; neither the kernel nor
+Kickstart checks it, and a component wanting overflow protection places guard
+pages around its stack extent. The handler must
 not return normally to the already-completed body/adapter. LibOS may diagnose,
 repair and explicitly retry Return, or terminate under its own policy; the
 adapter does not automatically retry or rerun the body. This is userspace
@@ -506,8 +510,8 @@ spill and entry/linkage uses the selected non-returning wrapper.
 FP/SIMD is prohibited/trapped for this slice; non-payload GPR/NZCV scrubbing is
 selected, as is saved-source target-entry SPSR mode/mask/non-NZCV control
 inheritance; TLS/debug/other architectural-state isolation remains open.
-Scrubbing, status inheritance and PPC result transport are not implemented
-or validated.
+Scrubbing, status inheritance and PPC result transport are implemented and
+validated through real Call/Return.
 
 ## Kernel-level storage and numeric validation
 
@@ -537,8 +541,9 @@ AddressSpace identity and CALL-only authority. `InvocationPayload` stores a
 mandatory `NonZero<u64>` function address; zero is rejected as `InvalidPointer`.
 `InvocationOp` contains only Call `0`, and `invocation_target` returns the
 checked AddressSpace identity and nonzero entry address. Return authority is
-represented separately by `ThreadSelector::CurrentReturnOnly`, installed in
-the boot table at `KeySlot::THREAD_RETURN` Slot(1).
+represented separately by `ThreadSelector::CurrentReturnOnly`, installed at
+`KeySlot::THREAD_RETURN` Slot(1) of every AddressSpace's table by
+`KeyTable::bind_address_space` during provisioning.
 `AddressSpaceKey::create_invocation(function_address, destination,
 destination_slot, stack_base, stack_end, minimum_headroom)` uses
 `protected_call6` and forwards all six operands unchanged. The active kernel

@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x82` (arch index 2) |
 | Pool | `PoolTag::AddressSpace` (pool-backed kernel object; boot-carved) |
-| Status | Immutable KeyTable binding/current-AS caller lookup and checked fixture root/ASID switching active; `Activate` installs after guards end; `Retire` and six-input `CreateInvocation` with validated extent/headroom and status 32 diagnostics active; PPC Call/Return is not implemented |
+| Status | Immutable KeyTable binding/current-AS caller lookup and checked fixture root/ASID switching active; `Activate` installs after guards end; `Retire` and six-input `CreateInvocation` with validated extent/headroom and status 32 diagnostics active; same-Thread PPC Call/Return active through real SVC dispatch |
 
 ## Purpose
 
@@ -204,7 +204,7 @@ rule).
   function's argument registers; target-entry `x0` and `x1` are two leading
   dummy arguments ignored by the target, while the six real `u64` inputs
   remain unchanged in `x2..x7`, without a register shuffle. None carries stack
-  metadata. The working SP transport is provisionally `x9`, supplied by the Call wrapper and read from saved `frame.gpr[9]` by the kernel, not live x9 after Rust entry. Keep the register unfrozen until end-to-end Call/Return confirms feasibility. The Call raw-SVC compiler declarations use x9 as an input with discarded output, alongside argument x3..x7 input/discarded outputs, x0..x2 input/results and x8/x10..x18 clobbers, with x18 selected as ordinary caller-volatile scratch and no kernel continuation field/reserved platform role; FP/SIMD is prohibited/trapped for the current integer-only slice (effective trap enforcement/validation pending); [non-payload GPR/NZCV scrubbing](../core/invocation.md#non-payload-gpr-and-condition-flag-exposure) is selected, not implemented or validated. No wrapper or end-to-end validation is claimed. Capability/authority
+  metadata. The working SP transport is provisionally `x9`, supplied by the Call wrapper and read from saved `frame.gpr[9]` by the kernel, not live x9 after Rust entry. Freezing the register is a pending maintainer decision. The Call raw-SVC compiler declarations use x9 as an input with discarded output, alongside argument x3..x7 input/discarded outputs, x0..x2 input/results and x8/x10..x18 clobbers, with x18 selected as ordinary caller-volatile scratch and no kernel continuation field/reserved platform role; FP/SIMD is prohibited/trapped for the current integer-only slice (effective trap enforcement/validation pending); [non-payload GPR/NZCV scrubbing](../core/invocation.md#non-payload-gpr-and-condition-flag-exposure) is implemented and validated through real Call/Return. Capability/authority
   failures retain their existing errors; stack validation does not replace
   zero-function `InvalidPointer`, depth-exhaustion `NestingDepth`, or Return
   fault delivery.
@@ -222,11 +222,10 @@ rule).
   not apply to recoverable local Call/Return rejection and leaves existing
   preservation/error contracts unchanged. Ignored Return x4..x7 need no
   userspace initialization or zeroing despite resumed-frame scrubbing. No extra
-  continuation fields or runtime allocation are required; projected record/array
-  sizes remain 144 B/2304 B, unmeasured. GPR/NZCV disclosure policy and
-  saved-source status inheritance are selected; TLS, debug state and complete
-  architectural-state isolation remain open. Scrubbing and status inheritance
-  are not implemented or validated. x9 remains provisional and the
+  continuation fields or runtime allocation are required; record/array
+  sizes are 144 B/2304 B. GPR/NZCV disclosure policy and
+  saved-source status inheritance are implemented; TLS, debug state and complete
+  architectural-state isolation remain open. x9 remains provisional and the
   native body-result convention experimental; trusted EL1 fixture execution
   does not prove hostile-EL0 confinement.
 - Implementation status: `AddressSpace.CreateInvocation` stores a mandatory
@@ -237,8 +236,9 @@ rule).
   headroom, not mappings/writability or private stack ownership. `ThreadSelector` and the kernel-constructed
   `CurrentReturnOnly` sentinel, installed at Slot(1) by AddressSpace
   provisioning, are implemented. Call and `Thread.Return` are dispatched with
-  same-Thread PPC migration, with userspace wrappers and the export adapter. Return-form propagation
-  and Call-only Invocation distribution remain independently deferred, without
+  same-Thread PPC migration, with userspace wrappers and the export adapter. The sentinel
+  is not propagated through KeyTable management; Call-only Invocation
+  distribution remains deferred, without
   broader named-Thread derivation/transfer approval. The active
   `AddressSpaceKey::create_invocation` wrapper appends `stack_base`,
   `stack_end`, and `minimum_headroom` after function/destination/slot and
@@ -247,12 +247,12 @@ rule).
   only after all admission checks. `KeyPayload` is 40 B and `KeyEntry` is
   64 B/alignment 32; type-derived KeyTable carves, accounting and fixture
   backing include that stride. AddressSpace-to-table binding and lookup
-  are active. PPC `Invocation.Call` is not implemented;
-  invocation-time fault behavior remains open. Source and Bounce have distinct
+  are active; Call fault behavior beyond recoverable admission rejection
+  remains open. Source and Bounce have distinct
   AddressSpace/table identities and independently provisioned roots with ASIDs
   1 and 2. Source activation precedes the first handoff; capability lookup
   resolves each selected Thread's current AddressSpace's table. This is a
-  trusted two-Thread EL1t fixture, not same-Thread PPC migration or protected
+  trusted EL1t fixture for two-Thread wait/resume and same-Thread PPC, not protected
   EL0 confinement.
 - Retype cannot create an AddressSpace (`InvalidObjectType`): bootstrap
   grants are the initial source of AddressSpace capabilities.

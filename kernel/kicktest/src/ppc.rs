@@ -1,18 +1,18 @@
 //! Same-Thread PPC Call/Return end-to-end through the real SVC path.
 //!
 //! The boot Thread calls an Invocation whose target is the Bounce
-//! `AddressSpace`. The target stack is the upper half of Bounce's probe page
-//! at `PROBE_VA`: a low user VA whose backing differs in the source root, so
-//! reading it proves the migration switched translation contexts. The target
-//! captures its entry registers, then issues a real `Thread.Return` through
-//! its own table's Slot(1) sentinel.
+//! `AddressSpace`. The target runs on Bounce's dedicated 8 KiB PPC stack and
+//! reads Bounce's probe page at `PROBE_VA`: a low user VA whose backing differs
+//! in the source root, so reading it proves the migration switched translation
+//! contexts. The target captures its entry registers, then issues a real
+//! `Thread.Return` through its own table's Slot(1) sentinel.
 //!
 //! This is a trusted `EL1t` functionality test of the provisional x9 transport,
 //! scrubbing, status inheritance and continuation restore; it is not
 //! hostile-EL0 confinement or FP/SIMD trap validation.
 
 use {
-    crate::translation::{self, PROBE_VA},
+    crate::translation::{self, PPC_STACK_PAGES, PPC_STACK_VA, PROBE_VA},
     aarch64_cpu::registers::{Readable, TTBR0_EL1},
     core::{
         arch::{asm, naked_asm},
@@ -27,9 +27,9 @@ use {
     },
 };
 
-/// Extent `[base, end)` inside Bounce's probe page, clear of its marker word.
-pub const STACK_BASE: u64 = PROBE_VA + 0x800;
-pub const STACK_END: u64 = PROBE_VA + 0x1000;
+/// Extent `[base, end)`: Bounce's dedicated PPC stack Frames.
+pub const STACK_BASE: u64 = PPC_STACK_VA;
+pub const STACK_END: u64 = PPC_STACK_VA + PPC_STACK_PAGES * 4096;
 pub const MINIMUM_HEADROOM: u64 = 0x400;
 
 /// Captured target-entry words: x0..x30, NZCV, DAIF.
@@ -101,9 +101,23 @@ extern "C" fn target_body(capture: *const u64) -> ! {
         });
         panic!("PPC target: library Return failed: {:?}", error.code());
     }
+    // SAFETY: success abandons this target context and resumes the source.
+    match decode_syscall_result(unsafe { raw_return(key, r0, r1) }) {
+        Ok(_) => panic!("PPC target: Thread.Return returned SUCCESS locally"),
+        Err(error) => panic!("PPC target: Thread.Return rejected: {:?}", error.code()),
+    }
+}
+
+/// Raw `Thread.Return` SVC with the junk [`IGNORED`] operands in x4..x7.
+/// Returns the local `(x0, x1, x2)` only when the kernel rejects the Return.
+///
+/// # Safety
+///
+/// Success abandons the calling target context and resumes the source.
+unsafe fn raw_return(key: u64, r0: u64, r1: u64) -> (u64, u64, u64) {
     let (status, word1, word2): (u64, u64, u64);
-    // SAFETY: raw Thread.Return SVC. Success never returns here: the kernel
-    // resumes the source. Every integer register it may clobber is declared.
+    // SAFETY: raw Thread.Return SVC; every integer register it may clobber is
+    // declared. The caller accepts that success never returns here.
     unsafe {
         asm!(
             "svc #0",
@@ -120,10 +134,141 @@ extern "C" fn target_body(capture: *const u64) -> ! {
             lateout("x16") _, lateout("x17") _, lateout("x18") _,
         );
     }
-    match decode_syscall_result((status, word1, word2)) {
-        Ok(_) => panic!("PPC target: Thread.Return returned SUCCESS locally"),
-        Err(error) => panic!("PPC target: Thread.Return rejected: {:?}", error.code()),
+    (status, word1, word2)
+}
+
+/// One rejected-Return case: a Bounce-table key and its expected error.
+pub struct RejectedReturn {
+    pub key: RawKey,
+    pub expected: CapError,
+}
+
+const REJECTION_CASES: usize = 5;
+static REJECTION_KEYS: [AtomicU64; REJECTION_CASES] =
+    [const { AtomicU64::new(0) }; REJECTION_CASES];
+/// Per case, the `(x0, x1, x2)` the target observed: helper words first,
+/// then the raw SVC's. The source asserts them after the Call completes.
+static REJECTION_RESULTS: [[AtomicU64; 6]; REJECTION_CASES] =
+    [const { [const { AtomicU64::new(0) }; 6] }; REJECTION_CASES];
+/// Rejected Return attempts after which the target still ran under its own
+/// root on its own stack (two per case: helper and raw SVC).
+static REJECTIONS_PRESERVED: AtomicU64 = AtomicU64::new(0);
+const REJECTION_PAYLOAD: (u64, u64) = (0x5EC0_0001, 0x5EC0_0002);
+
+/// Target entry for [`return_rejection_trip`]: an ordinary export-shaped
+/// entry (two dummy and six real arguments) that never returns normally.
+/// It only records what it observes; the source asserts.
+pub extern "C" fn rejection_entry(
+    _dummy0: u64,
+    _dummy1: u64,
+    _input0: u64,
+    _input1: u64,
+    _input2: u64,
+    _input3: u64,
+    _input4: u64,
+    _input5: u64,
+) -> ! {
+    let (r0, r1) = REJECTION_PAYLOAD;
+    let target_ttbr = TTBR0_EL1.get();
+    let target_sp = current_sp();
+    let note_preserved = || {
+        if TTBR0_EL1.get() == target_ttbr && current_sp() == target_sp {
+            REJECTIONS_PRESERVED.fetch_add(1, Ordering::AcqRel);
+        }
+    };
+    for (key, results) in REJECTION_KEYS.iter().zip(REJECTION_RESULTS.iter()) {
+        let key = key.load(Ordering::Acquire);
+
+        // The library helper decodes the rejection into Err.
+        // SAFETY: a rejected Return leaves this target context intact.
+        let Err(error) = (unsafe {
+            ThreadReturnKey::from_key(RawKey::from_wire(key)).return_from_invocation(r0, r1)
+        });
+        let helper = error.code();
+        note_preserved();
+
+        // Raw SVC with nonzero junk x4..x7.
+        // SAFETY: as above; this key is expected to be rejected.
+        let raw = unsafe { raw_return(key, r0, r1) };
+        note_preserved();
+
+        for (slot, word) in results
+            .iter()
+            .zip([helper.0, helper.1, helper.2, raw.0, raw.1, raw.2])
+        {
+            slot.store(word, Ordering::Release);
+        }
     }
+
+    // The continuation survived every rejection: a valid Return completes.
+    // SAFETY: completing this Call abandons the target stack and context.
+    let Err(error) = (unsafe {
+        ThreadReturnKey::from_key(RawKey::from_wire(RETURN_KEY.load(Ordering::Acquire)))
+            .return_from_invocation(r0, r1)
+    });
+    panic!(
+        "PPC target: valid Return after rejections failed: {:?}",
+        error.code()
+    );
+}
+
+fn current_sp() -> u64 {
+    let sp: u64;
+    // SAFETY: reads the current stack pointer only.
+    unsafe {
+        asm!("mov {sp}, sp", sp = out(reg) sp, options(nomem, nostack, preserves_flags));
+    }
+    sp
+}
+
+/// Call `key` (an Invocation of [`rejection_entry`]); inside Bounce the
+/// target attempts Return with every rejected `cases` key, through both the
+/// helper and raw SVC with junk x4..x7, then Returns validly. Every rejection
+/// must decode to the expected error and leave the target's root and stack
+/// unchanged; the valid Return proves the continuation survived.
+pub fn return_rejection_trip(key: RawKey, cases: [RejectedReturn; REJECTION_CASES]) {
+    for (case, key_slot) in cases.iter().zip(REJECTION_KEYS.iter()) {
+        key_slot.store(case.key.to_wire(), Ordering::Release);
+    }
+    for results in &REJECTION_RESULTS {
+        for slot in results {
+            slot.store(0, Ordering::Release);
+        }
+    }
+    REJECTIONS_PRESERVED.store(0, Ordering::Release);
+    // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
+    // fixture's Invocations; nothing else uses it during the Call.
+    let delivered = unsafe { InvocationKey::from_key(key).call([0; 6], STACK_END) }
+        .unwrap_or_else(|error| panic!("rejection Call failed: {:?}", error.code()));
+    assert_eq!(
+        delivered, REJECTION_PAYLOAD,
+        "valid Return after rejections"
+    );
+    assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
+
+    for (case, results) in cases.into_iter().zip(REJECTION_RESULTS.iter()) {
+        let observed: [u64; 6] =
+            core::array::from_fn(|index| results[index].load(Ordering::Acquire));
+        let expected = case.expected.code();
+        let expected = [expected.0, expected.1, expected.2];
+        assert_eq!(
+            observed[..3],
+            expected,
+            "helper Return rejection for {:?}",
+            case.key
+        );
+        assert_eq!(
+            observed[3..],
+            expected,
+            "raw Return rejection with junk x4..x7 for {:?}",
+            case.key
+        );
+    }
+    assert_eq!(
+        REJECTIONS_PRESERVED.load(Ordering::Acquire),
+        2 * u64::try_from(REJECTION_CASES).unwrap_or(0),
+        "a rejected Return changed the target root or stack"
+    );
 }
 
 /// Raw source-side outcome of one Call SVC.
@@ -249,7 +394,7 @@ pub fn round_trip(key: RawKey, via_library: bool) -> (u64, u64) {
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
     RETURN_VIA_LIBRARY.store(via_library, Ordering::Release);
     let delivered = if via_library {
-        // SAFETY: STACK_END lies in the Bounce probe page reserved for this
+        // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
         // fixture's Invocation; nothing else uses it during the Call.
         unsafe { InvocationKey::from_key(key).call(args, STACK_END) }
             .unwrap_or_else(|error| panic!("library PPC Call failed: {:?}", error.code()))
@@ -398,7 +543,7 @@ pub fn export_round_trip(
         0x1234_5678_9ABC_DEF0,
         7,
     ];
-    // SAFETY: STACK_END lies in the Bounce probe page reserved for this
+    // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
     // fixture's Invocations; nothing else uses it during the Call.
     let (r0, r1) = unsafe { InvocationKey::from_key(key).call(args, STACK_END) }
         .unwrap_or_else(|error| panic!("export Call failed: {:?}", error.code()));

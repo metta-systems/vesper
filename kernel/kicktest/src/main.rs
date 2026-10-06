@@ -39,9 +39,9 @@ use {
     libcpu::endless_sleep,
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
     libobject::{
-        ASIDPoolKey, CapError, EventCountKey, FrameKey, InvalidKeyReason, InvalidStackReason,
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, PageTableKey, RawKey, Rights,
-        UntypedKey,
+        ASIDPoolKey, CapError, EventCountKey, FrameKey, InconsistencyReason, InvalidKeyReason,
+        InvalidStackReason, KeySlot, KeyTableKey, NotificationKey, ObjectType, PageTableKey,
+        RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,
         domain::DomainId,
         thread::{ThreadKey, ThreadOp, ThreadReturnKey},
@@ -2230,6 +2230,94 @@ pub fn kicktest_run() -> ! {
             assert_boot_thread_home(nucleus);
             assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
         }
+
+        // Rejected Returns from inside a migrated call: every bad key, through
+        // the library helper and through raw SVC with junk x4..x7, yields the
+        // ordinary lookup/operation error and leaves the target running in
+        // Bounce on its own stack with the continuation intact; a valid Return
+        // then completes the Call. Return on a named Thread needs a named
+        // entry in Bounce's table: Thread is not on the CopyDerive allowlist,
+        // so the bootstrap grants it kernel-privately, like the N1/N2 grants.
+        let bounce_named_thread_key = {
+            // SAFETY: both initialized private tables have retained accounted
+            // carves; neither borrow survives a capability invocation.
+            let boot_thread_id = unsafe { &*(keytable_addr as *const KeyTable) }
+                .lookup(boot_key(50, 1), BOOT_TABLE_GUARD)
+                .and_then(KeyEntry::object_id)
+                .unwrap_or_else(|_| panic!("boot Thread entry missing"));
+            // SAFETY: as above; exclusively borrowed for this bootstrap grant.
+            unsafe { &mut *(bounce_table_addr as *mut KeyTable) }
+                .insert(
+                    KeySlot(9),
+                    KeyEntry::new::<Thread>(boot_thread_id, Rights::all(), 0),
+                    TEST_TABLE_GUARD,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "Bounce named Thread grant failed: {:?}",
+                        failure.error.code()
+                    )
+                })
+        };
+        let rejection_key = AddressSpaceKey::from_key(bounce_as_key)
+            .create_invocation(
+                ppc::rejection_entry as *const () as u64,
+                &self_table,
+                KeySlot(202),
+                ppc::STACK_BASE,
+                ppc::STACK_END,
+                ppc::MINIMUM_HEADROOM,
+            )
+            .unwrap_or_else(|error| {
+                panic!("rejection CreateInvocation failed: {:?}", error.code())
+            });
+        let zero_incarnation = RawKey::new(ppc_return_key.slot(), 0);
+        let never_issued = RawKey::new(test_slot(10), 1);
+        let wrong_guard = RawKey::new(boot_slot(KeySlot::THREAD_RETURN.0), 1);
+        let stale = RawKey::new(ppc_return_key.slot(), ppc_return_key.incarnation() + 1);
+        ppc::return_rejection_trip(
+            rejection_key,
+            [
+                ppc::RejectedReturn {
+                    key: zero_incarnation,
+                    expected: CapError::InvalidKey {
+                        key: zero_incarnation,
+                        reason: InvalidKeyReason::ZeroIncarnation,
+                        operand: 0,
+                    },
+                },
+                ppc::RejectedReturn {
+                    key: never_issued,
+                    expected: CapError::InvalidKey {
+                        key: never_issued,
+                        reason: InvalidKeyReason::NeverIssued,
+                        operand: 0,
+                    },
+                },
+                ppc::RejectedReturn {
+                    key: wrong_guard,
+                    expected: CapError::InvalidKey {
+                        key: wrong_guard,
+                        reason: InvalidKeyReason::GuardMismatch,
+                        operand: 0,
+                    },
+                },
+                ppc::RejectedReturn {
+                    key: stale,
+                    expected: CapError::InconsistentKey {
+                        key: stale,
+                        reason: InconsistencyReason::SlotIncarnationMismatch,
+                        operand: 0,
+                    },
+                },
+                ppc::RejectedReturn {
+                    key: bounce_named_thread_key,
+                    expected: CapError::InvalidOperation,
+                },
+            ],
+        );
+        assert_boot_thread_home(nucleus);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
         semi::println!("PPC Call/Return round trips through Bounce passed");
 
         // An already-satisfied Wait consumes and returns the bits
