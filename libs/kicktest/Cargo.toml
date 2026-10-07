@@ -25,6 +25,7 @@ kickstart = { path = "../../kernel/kickstart" }
 libaddress = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
+libimage = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }

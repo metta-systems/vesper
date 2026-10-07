@@ -70,6 +70,25 @@ impl SavedContext {
             origin: ExceptionOrigin::CurrentSp0,
         }
     }
+
+    /// Initial context for unprivileged `EL0t` execution on `SP_EL0`.
+    ///
+    /// All GPRs and LR are zero except `x0 = argument`; D, A, I and F are
+    /// masked (EL0 cannot unmask them: `SCTLR_EL1.UMA` traps DAIF access).
+    /// The caller supplies a PC and a 16-byte-aligned SP that are mapped
+    /// EL0-accessible in the Thread's `AddressSpace`.
+    pub const fn el0(pc: u64, sp: u64, argument: u64) -> Self {
+        let mut gpr = [0; 30];
+        gpr[0] = argument;
+        Self {
+            gpr,
+            lr: 0,
+            spsr_el1: 0x3c0,
+            elr_el1: pc,
+            sp,
+            origin: ExceptionOrigin::LowerAarch64,
+        }
+    }
 }
 
 /// The exception context as it is stored on the stack on exception entry.

@@ -1,87 +1,16 @@
 // kickstart/src/loader.rs
 // TODO: replace semi::prints with logger output
 
+pub use libimage::{LoadableSection, SectionMeta};
 use {
     crate::{
         embed::KERNEL,
-        memory::{Alloc, BootAllocator, KernelLayout, MemoryPermissions},
+        memory::{Alloc, BootAllocator, KernelLayout},
     },
     core::ptr,
     libaddress::{PhysAddr, VirtAddr},
     libqemu::semihosting as semi,
 };
-
-/// Metadata for a kernel section
-#[derive(Debug, Clone, Copy)]
-pub struct SectionMeta {
-    /// Section name (for debugging)
-    pub name: &'static str,
-    /// Virtual address in kernel's higher-half address space
-    pub virt_addr: u64,
-    /// Size of section in bytes
-    pub size: usize,
-    /// Required alignment in bytes
-    pub alignment: u64,
-    /// Memory protection permissions
-    pub permissions: MemoryPermissions,
-}
-
-impl SectionMeta {
-    /// Calculate offset from kernel virtual base
-    pub const fn offset_from_base(&self, virt_base: u64) -> u64 {
-        self.virt_addr - virt_base
-    }
-
-    /// Calculate physical address given kernel physical base
-    pub const fn phys_addr(&self, kernel_phys_base: u64, kernel_virt_base: u64) -> u64 {
-        kernel_phys_base + self.offset_from_base(kernel_virt_base)
-    }
-
-    /// Number of 4KB pages needed
-    pub const fn page_count(&self) -> usize {
-        self.size.div_ceil(0x1000)
-    }
-}
-
-/// Complete kernel image information
-#[derive(Debug)]
-pub struct ImageInfo {
-    /// Virtual base address (higher-half) -- FIXME: don't need this necessarily
-    pub virt_base: u64,
-    /// Loadable sections with their binary data
-    pub sections: &'static [LoadableSection],
-    /// BSS section metadata (no binary data - must be zeroed)
-    pub bss: SectionMeta,
-    /// BSS section metadata (no binary data - must be zeroed)
-    pub stack_virt_bottom: u64,
-    /// Exception vector table metadata (to set up VBAR)
-    pub vectors: SectionMeta,
-}
-
-impl ImageInfo {
-    /// Total size needed for kernel in physical memory (all sections + BSS)
-    pub fn total_size(&self) -> usize {
-        let mut max_end: u64 = 0;
-
-        for section in self.sections {
-            let end = section.meta.virt_addr + section.meta.size as u64;
-            max_end = max_end.max(end);
-        }
-
-        let bss_end = self.bss.virt_addr + self.bss.size as u64;
-        max_end = max_end.max(bss_end);
-
-        let size = usize::try_from(max_end - self.virt_base).unwrap();
-        (size + 0xFFF) & !0xFFF // FIXME: aligned to a page size
-    }
-}
-
-/// A loadable section with its binary content
-#[derive(Debug)]
-pub struct LoadableSection {
-    pub meta: SectionMeta,
-    pub data: &'static [u8], // or Option<&'static [u8]>?
-}
 
 pub fn load_kernel(allocator: &mut BootAllocator) -> Result<KernelLayout, &'static str> {
     let total_size = KERNEL.total_size();

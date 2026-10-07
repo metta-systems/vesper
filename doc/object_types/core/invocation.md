@@ -136,16 +136,15 @@ migrated. `Thread.Return` ignores `x4..x7`.
   provisional; freezing either is a maintainer decision.
 - The entry address is stored as supplied; the kernel validates neither its
   mapping nor that it is executable.
-- Execution so far is trusted `EL1t`; nothing here is a hostile-EL0
-  confinement claim.
-- `libobject::export` keeps one Return key per image, so a test image hosts
-  one PPC-target component.
+- Calls work the same from `EL1t` and EL0: the target runs at the caller's
+  EL. A fault in an EL0 target still halts the kernel (no fault delivery).
+- `libobject::export` keeps one Return key per image: one PPC-target
+  component per image (each component is now its own image).
 
 ## TODOs
 
 - Return fault delivery (underflow, retired source) — D1/D7; currently an
   interim kernel panic with nothing popped.
-- EL0 execution of components.
 - Effective FP/SIMD trapping for the integer-only slice; TLS, debug and other
   architectural-state isolation.
 - Invocation distribution: CopyDerive restrictions, rights attenuation,

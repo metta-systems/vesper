@@ -103,12 +103,16 @@ retired Thread's capabilities fail pool validation.
 
 - `RETIRE` is delegable like any other right: lifetime control follows
   capabilities, not an owner identity.
-- Execution so far is trusted `EL1t` on `SP_EL0`; there is no EL0 entry yet.
+- A Thread starts either as `EL1t` (`SavedContext::el1t`) or unprivileged at
+  EL0 (`SavedContext::el0`, with one argument word in `x0`); EL0 cannot
+  unmask interrupts. Only the bootstrap builder creates Threads today.
 
 ## TODOs
 
 - Return fault delivery — D1/D7.
-- EL0 execution; Start/Suspend/Resume with legal state transitions and budget
+- Fault delivery for EL0 Threads (aborts, undefined instructions), which
+  currently halt the kernel — D1.
+- Start/Suspend/Resume with legal state transitions and budget
   (D7/D8).
 - Thread creation ABI.
 - Self-retirement (never returns).

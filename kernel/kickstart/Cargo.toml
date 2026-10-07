@@ -37,6 +37,7 @@ libaddress = { workspace = true }
 libboot = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
+libimage = { workspace = true }
 liblog = { workspace = true }
 liblocking = { workspace = true }
 libmachine = { workspace = true }
@@ -51,10 +52,7 @@ shrinkwraprs = { version = "0.3", default-features = false }
 fdt-rs = { version = "=0.4.4", default-features = false }
 
 [build-dependencies]
-goblin = { workspace = true }
-build-rs = { workspace = true }
-build-print = { workspace = true }
-minijinja = { workspace = true }
+libimage-build = { workspace = true }
 
 [lib]
 # Boot code runs on the boot path; it is exercised by the QEMU boot workflows

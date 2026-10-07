@@ -1,0 +1,32 @@
+[package]
+name = "endpoint-component"
+
+description = "Passive EL0 rendezvous endpoint of endpoint-test: exports send, receive and reply_receive."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+qemu = ["libuser/qemu"]
+
+[dependencies]
+endpoint-protocol = { path = "../protocol" }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+
+[[bin]]
+name = "endpoint-component"
+test = false
+
+[lints]
+workspace = true

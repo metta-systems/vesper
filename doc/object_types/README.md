@@ -103,4 +103,7 @@ Thread is selected, and the waiter later resumes with its terminal result.
 the handler validates and prepares the target root and ASID, and the SVC entry
 installs `TTBR0_EL1` only after object guards and the kernel lock are
 released, then returns through `ERET` on the single per-core kernel stack.
-Execution is currently trusted `EL1t` on `SP_EL0`; there is no EL0 entry yet.
+Threads run either as trusted `EL1t` on `SP_EL0` (the test builders) or
+unprivileged at EL0; both enter the kernel through the same SVC path. A
+non-SVC exception from EL0 (abort, undefined instruction) still halts the
+kernel: fault delivery is not designed.

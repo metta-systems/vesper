@@ -30,11 +30,13 @@ qemu = [
 [dependencies]
 aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
+endpoint-protocol = { path = "../../../userspace/tests/endpoint/protocol" }
 kickstart = { path = "../../kickstart" }
 libaddress = { workspace = true }
 libboot = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
+libimage = { workspace = true }
 libkicktest = { workspace = true }
 libmachine = { workspace = true }
 libobject = { workspace = true }
@@ -42,6 +44,9 @@ libobject = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 nucleus = { path = "../../nucleus" }
+
+[build-dependencies]
+libimage-build = { workspace = true }
 
 [[bin]]
 name = "endpoint-test"

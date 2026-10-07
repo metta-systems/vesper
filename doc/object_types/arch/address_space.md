@@ -110,7 +110,8 @@ Every failure leaves the destination slot and all authority unchanged.
 ## TODOs
 
 - An `AddressSpace` creation ABI.
-- EL0 execution of the Threads in an `AddressSpace`.
+- Per-segment kernel-execute protection: EL0-executable pages are also
+  EL1-executable (PXN clear); PAN is not enabled.
 - Hardware-safe ASID reuse and partitioning the ASID space across pools — D6
   (the eventual home of `ASIDControl`).
 - Reclaiming table backing on retirement — D3.

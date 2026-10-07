@@ -25,6 +25,7 @@
 pub mod builder;
 pub mod component;
 pub mod keys;
+pub mod loader;
 pub mod paging;
 pub mod threads;
 

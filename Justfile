@@ -13,6 +13,7 @@ rpi4_dtb          := justfile_directory() / 'targets/bcm2711-rpi-4-b.dtb'
 
 nucleus_link    := 'libs/platform/src/raspberrypi/linker/nucleus.ld'
 init_link       := 'libs/platform/src/raspberrypi/linker/kickstart.ld'
+user_link       := 'userspace/runtime/user.ld'
 test_link       := 'libs/platform/src/raspberrypi/linker/test.ld'
 chainboot_link  := 'bin/chainboot/src/link.ld'
 
@@ -38,7 +39,7 @@ chainboot_serial := '/dev/tty.SLAB_USBtoUART'
 chainboot_baud   := '115200'
 
 # QEMU option fragments
-qemu_base_opts    := '-M ' + qemu_machine + ' -chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -object monitor-hmp,chardev=char0,id=mon0 -serial chardev:char0 -semihosting-config enable=on,chardev=char0'
+qemu_base_opts    := '-M ' + qemu_machine + ' -chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -object monitor-hmp,chardev=char0,id=mon0 -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0'
 qemu_disasm       := '-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin'
 qemu_gdb_opts     := '-gdb tcp::5555 -S'
 qemu_test_opts    := '-nographic'
@@ -82,9 +83,13 @@ build-kicktest board='rpi3' features='qemu,debug_kernel': (_cross-build 'nucleus
     {{ objcopy }} --strip-all -O binary "{{ kicktest_elf }}" "{{ kicktest_bin }}"
     @echo "{{ok_label}} kicktest built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
+# Build the EL0 userspace components (linked with the userspace runtime's user.ld)
+[group("emu")]
+build-components board='rpi3' features='qemu': (_cross-build 'hello' board user_link features) (_cross-build 'endpoint-client' board user_link features) (_cross-build 'endpoint-component' board user_link features) (_cross-build 'endpoint-server' board user_link features)
+
 # Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
 [group("emu")]
-build-endpoint-test board='rpi3' features='qemu': (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'endpoint-test' board init_link features)
+build-endpoint-test board='rpi3' features='qemu': (_cross-build 'nucleus' board nucleus_link features) (build-components board features) (_cross-build 'endpoint-test' board init_link features)
     {{ objcopy }} --strip-all -O binary "{{ endpoint_test_elf }}" "{{ endpoint_test_bin }}"
     @echo "{{ok_label}} endpoint-test built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
@@ -248,11 +253,11 @@ alias t := test
 test-device:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=chainboot
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=chainboot
 
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=chainboot
+    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=chainboot
 
 # Test the debug-only nucleus console handler in QEMU (rpi3)
 [group("emu")]
@@ -341,12 +346,12 @@ _clippy-cross features='' board='rpi3':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand \
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build \
       -- --deny warnings --allow deprecated
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') (build 'rpi3' 'qemu,debug_kernel') (_clippy-cross 'debug_kernel' 'rpi3') (_clippy-cross 'qemu,debug_kernel' 'rpi3') clippy-object-host
+clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') (build 'rpi3' 'qemu,debug_kernel') (_clippy-cross 'debug_kernel' 'rpi3') (_clippy-cross 'qemu,debug_kernel' 'rpi3') clippy-object-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
@@ -362,9 +367,10 @@ clippy-object-host:
     cargo clippy -p vesper-objects --features=host-tests,debug_kernel --test object_type \
       -- --deny warnings --allow deprecated
 
-# Clippy for chainofcommand (host tool)
+# Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]
 _clippy-coc:
+    cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated
     cargo clippy -p chainofcommand -- --deny warnings --allow deprecated
 
 # === Maintenance & Tools ===

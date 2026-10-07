@@ -34,3 +34,31 @@ pub fn spawn(
     );
     thread
 }
+
+/// Like [`spawn`], but the Thread starts unprivileged at `EL0t`, with
+/// `argument` in `x0`. `entry` and `stack_top` must be EL0-accessible in
+/// `address_space`.
+pub fn spawn_el0(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    address_space: ObjectId,
+    entry: u64,
+    stack_top: u64,
+    argument: u64,
+) -> ObjectId {
+    let (thread, _) = nucleus
+        .pools
+        .threads
+        .allocate(Thread {
+            address_space,
+            context: ExecutionContext::NotStarted {
+                saved: SavedContext::el0(entry, stack_top, argument),
+            },
+            invocation_stack: InvocationStack::new(),
+        })
+        .expect("no fixture Thread slot");
+    assert!(
+        nucleus.scheduler.push(thread.index),
+        "fixture Thread did not queue"
+    );
+    thread
+}

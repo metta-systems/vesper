@@ -91,50 +91,31 @@ impl BootAllocator {
     }
 }
 
-/// Memory protection flags
-#[derive(Debug, Clone, Copy)]
-pub struct MemoryPermissions {
-    pub readable: bool,
-    pub writable: bool,
-    pub executable: bool,
-}
+/// Memory protection flags (shared with the image descriptions).
+pub use libimage::Permissions as MemoryPermissions;
 
-impl core::fmt::Display for MemoryPermissions {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{}{}{}",
-            if self.readable { "R" } else { "-" },
-            if self.writable { "W" } else { "-" },
-            if self.executable { "X" } else { "-" }
-        )
+/// `AArch64` page-table flags for a boot mapping with `permissions`.
+pub const fn pte_flags(permissions: MemoryPermissions) -> u64 {
+    let mut flags = 0_u64;
+
+    // Access flag (must be set)
+    flags |= 1 << 10; // AF
+
+    // Shareability (inner shareable for normal memory)
+    flags |= 0b11 << 8; // SH
+
+    // Access permissions
+    if !permissions.writable {
+        flags |= 0b10 << 6; // AP[2:1] = read-only
     }
-}
 
-impl MemoryPermissions {
-    /// Convert to `AArch64` page table flags
-    pub const fn as_pte_flags(self) -> u64 {
-        let mut flags = 0_u64;
-
-        // Access flag (must be set)
-        flags |= 1 << 10; // AF
-
-        // Shareability (inner shareable for normal memory)
-        flags |= 0b11 << 8; // SH
-
-        // Access permissions
-        if !self.writable {
-            flags |= 0b10 << 6; // AP[2:1] = read-only
-        }
-
-        // Execute never flags
-        if !self.executable {
-            flags |= 1 << 53; // PXN
-            flags |= 1 << 54; // UXN
-        }
-
-        flags
+    // Execute never flags
+    if !permissions.executable {
+        flags |= 1 << 53; // PXN
+        flags |= 1 << 54; // UXN
     }
+
+    flags
 }
 
 /// Layout of the loaded kernel in physical memory

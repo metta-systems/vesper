@@ -57,8 +57,8 @@ flowchart TD
 Temporary debug-only leeway is not a safety or isolation guarantee. Known
 limitations, deliberately retained for now (scoped D4/D9):
 
-- Callers are trusted `EL1t` code (possibly migrated into another
-  `AddressSpace`), not EL0; permitted origins are not classified.
+- Callers may be `EL1t` or EL0 code, possibly migrated into another
+  `AddressSpace`; permitted origins are not classified.
 - The pointer is treated as a physical address and read through the direct
   map, unchecked — not caller virtual memory with authorized, bounded access.
   It works today only because the test kernels map the retained image at its

@@ -14,6 +14,8 @@ members = [
   "libs/cpu",
   "libs/driver",
   "libs/exception",
+  "libs/image",
+  "libs/image-build",
   "libs/kicktest",
   "libs/kernel-state",
   "libs/local-irq",
@@ -31,6 +33,13 @@ members = [
   "libs/syscall",
   "libs/test",
   "libs/time",
+  # Userspace
+  "userspace/runtime",
+  "userspace/tests/endpoint/client",
+  "userspace/tests/endpoint/endpoint",
+  "userspace/tests/endpoint/protocol",
+  "userspace/tests/endpoint/server",
+  "userspace/tests/hello",
 ]
 resolver = "3"
 
@@ -63,6 +72,8 @@ libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdriver = { path = "libs/driver", package = "vesper-drivers" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
+libimage = { path = "libs/image", package = "vesper-image" }
+libimage-build = { path = "libs/image-build", package = "vesper-image-build" }
 libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
 liblocking = { path = "libs/locking", package = "vesper-locking" }
@@ -79,6 +90,7 @@ libqemu = { path = "libs/qemu", package = "vesper-qemu" }
 libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
+libuser = { path = "userspace/runtime", package = "vesper-user-runtime" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 # safe-mmio = { version = "0.3" }
@@ -104,9 +116,8 @@ tokio-stream = { version = "0.1" }
 # build.rs
 #==========
 goblin = { version = "0.10" }
-build-rs = { version = "0.3" }
-build-print = { version = "1.0" }
 minijinja = { version = "2", features = ["loader"] }
+toml = { version = "1.1" }
 #=======
 # mixed
 #=======

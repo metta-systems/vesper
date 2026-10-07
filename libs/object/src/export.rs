@@ -147,6 +147,13 @@ macro_rules! ppc_export {
             input4: u64,
             input5: u64,
         ) -> ! {
+            // The image's export table: `vesper-image-build` reads this
+            // record from the ELF `.exports` section to publish the entry.
+            #[cfg(target_os = "vesper")]
+            #[used]
+            #[unsafe(link_section = ".exports")]
+            static EXPORT: $crate::export::ExportRecord =
+                $crate::export::ExportRecord::new(stringify!($entry), $entry);
             let result: $crate::export::PpcResult =
                 $body(dummy0, dummy1, input0, input1, input2, input3, input4, input5);
             // SAFETY: this wrapper is only ever entered by Invocation.Call.
@@ -154,6 +161,43 @@ macro_rules! ppc_export {
         }
     };
 }
+
+/// Bytes of an export's name in an [`ExportRecord`] (NUL-padded).
+pub const EXPORT_NAME_BYTES: usize = 32;
+
+/// One entry of an image's `.exports` section: a NUL-padded name and the
+/// entry address. `vesper-image-build` parses this exact layout.
+#[repr(C)]
+pub struct ExportRecord {
+    name: [u8; EXPORT_NAME_BYTES],
+    entry: extern "C" fn(u64, u64, u64, u64, u64, u64, u64, u64) -> !,
+}
+
+impl ExportRecord {
+    /// A record for `entry` named `name` (at most [`EXPORT_NAME_BYTES`] bytes).
+    pub const fn new(
+        name: &str,
+        entry: extern "C" fn(u64, u64, u64, u64, u64, u64, u64, u64) -> !,
+    ) -> Self {
+        let bytes = name.as_bytes();
+        assert!(
+            bytes.len() <= EXPORT_NAME_BYTES,
+            "export name exceeds EXPORT_NAME_BYTES"
+        );
+        let mut stored = [0; EXPORT_NAME_BYTES];
+        let mut index = 0;
+        while index < bytes.len() {
+            stored[index] = bytes[index];
+            index += 1;
+        }
+        Self {
+            name: stored,
+            entry,
+        }
+    }
+}
+
+const _: () = assert!(size_of::<ExportRecord>() == EXPORT_NAME_BYTES + 8);
 
 #[cfg(test)]
 #[path = "../tests/support/export.rs"]

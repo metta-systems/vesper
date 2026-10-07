@@ -32,6 +32,16 @@ SECTIONS
         /* Embedded kernel will be here via include_bytes! */
     }
 
+    /* Bundled userspace components: page-aligned, page-padded segments that
+     * the builder maps in place as Frames (see vesper-image-build). */
+    .components : ALIGN(4K)
+    {
+        __COMPONENTS_START = .;
+        KEEP(*(.components))
+        . = ALIGN(4K);
+        __COMPONENTS_END = .;
+    }
+
     .data : ALIGN(4K)
     {
         *(.data .data.*)
@@ -62,5 +72,7 @@ SECTIONS
         *(.comment)
         *(.note*)
         *(.eh_frame*)
+        /* Export tables matter only in userspace component images. */
+        *(.exports)
     }
 }

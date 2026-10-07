@@ -17,7 +17,9 @@
 /// 0xFFFF_0000_0000_0000  └─────────────────────┘
 /// ```
 use {
-    crate::memory::{Alloc, BootAllocator, KernelLayout, MemoryPermissions, SectionMapping},
+    crate::memory::{
+        Alloc, BootAllocator, KernelLayout, MemoryPermissions, SectionMapping, pte_flags,
+    },
     core::ptr,
     libaddress::{PhysAddr, VirtAddr},
     libqemu::semihosting as semi,
@@ -123,7 +125,7 @@ impl<'a> MmuSetup<'a> {
         perms: MemoryPermissions,
         usage: (&'static str, Alloc),
     ) -> Result<(), &'static str> {
-        let pte_flags = perms.as_pte_flags() | flags::ATTR_NORMAL;
+        let pte_flags = pte_flags(perms) | flags::ATTR_NORMAL;
         self.map_page_with_flags(ttbr, virt, phys, pte_flags, perms, usage)
     }
 
@@ -183,7 +185,7 @@ impl<'a> MmuSetup<'a> {
             return Err("2MB block mapping requires 2MB alignment");
         }
 
-        let pte_flags = perms.as_pte_flags() | flags::ATTR_NORMAL;
+        let pte_flags = pte_flags(perms) | flags::ATTR_NORMAL;
 
         let (l0_phys, pte_flags) = match ttbr {
             Ttbr::Ttbr0 => (self.ttbr0_l0, pte_flags | flags::NG),
@@ -432,7 +434,7 @@ pub fn create_device_mapping(
         let pa = phys.as_u64() + offset;
 
         // Use device memory attributes
-        let pte_flags = perms.as_pte_flags() | flags::ATTR_DEVICE;
+        let pte_flags = pte_flags(perms) | flags::ATTR_DEVICE;
         // PageFlags::KERNEL_RW | PageFlags::DEVICE_nGnRnE,
         setup.map_page_with_flags(
             Ttbr::Ttbr1,
