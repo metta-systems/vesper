@@ -46,8 +46,8 @@ exactly as described in [Invocation](invocation.md#register-state-across-a-migra
 | Empty, stale or wrong-guard key | Ordinary lookup error; nothing popped |
 | Return on a `Named` Thread | `InvalidOperation` |
 | Grant/Suspend/Resume/Retire on `CurrentReturnOnly` | `InvalidOperation` |
-| Empty invocation stack (`IllegalReturn`) | Fault; interim policy halts the kernel, nothing popped |
-| Source `AddressSpace` retired (`ReturnTargetRetired`) | Fault; interim policy halts the kernel, nothing popped |
+| Empty invocation stack (`IllegalReturn`) | Fault (kind 1) at the Return's `svc`, [delivered](#fault-delivery); nothing popped |
+| Source `AddressSpace` retired (`ReturnTargetRetired`) | Fault (kind 2) at the Return's `svc`, [delivered](#fault-delivery); nothing popped |
 
 `ThreadReturnKey::return_from_invocation(r0, r1)` returns
 `Result<Infallible, CapError>`: success never returns, ordinary rejections are
@@ -71,14 +71,64 @@ flowchart TD
 
 The `AddressSpace` and its table are untouched; their teardown is
 [`AddressSpace.Retire`](../arch/address_space.md). Later invocations of the
-retired Thread's capabilities fail pool validation.
+retired Thread's capabilities fail pool validation. Retiring a Thread that is
+inside a fault handler frees that handler. Retire is how a `Faulted` Thread
+is cleaned up.
+
+### Fault delivery
+
+A fault — any synchronous non-SVC exception from EL0, or a Return protocol
+fault — is delivered as a synchronous upcall on the faulting Thread: the
+kernel performs a forced `Invocation.Call` into the `Invocation` at
+`KeySlot::FAULT_HANDLER` (Slot 16) in the table of the `AddressSpace` the
+Thread is executing in. The handler runs with the faulting Thread's priority
+and budget, on its Invocation's stack (SP at the extent end), and receives:
+
+| Input | Contents |
+|---|---|
+| `x2` | Fault kind (`libobject::fault::FaultKind`): `0` CPU exception, `1` `IllegalReturn`, `2` `ReturnTargetRetired` |
+| `x3` | `ESR_EL1` (0 for a Return fault) |
+| `x4` | `FAR_EL1` (0 for a Return fault) |
+| `x5` | Faulting PC (a Return fault's `svc`) |
+| `x6` | Faulting SP |
+| `x7` | Invocation depth at the fault |
+
+The handler ends with an ordinary `Thread.Return`; `r0` selects the action
+(`FaultAction`):
+
+| `r0` | Action |
+|---|---|
+| `0` | Retry: resume the exact faulting state |
+| `1` | Skip: resume at the next instruction |
+| `2` (or any other value) | Terminate: park the Thread as `Faulted` |
+
+A fault nobody takes parks the Thread as `Faulted` (never runnable again),
+counts it on the faulting `AddressSpace` and schedules the next Thread:
+
+| Unhandled when | |
+|---|---|
+| No handler | The slot is empty or holds no `Invocation` with `CALL` |
+| Handler busy | The `AddressSpace`'s handler is still running another fault |
+| Fault inside the handler | The Thread already has a fault being handled (one level) |
+| Call rejected | The forced Call fails the ordinary Call rules (full invocation stack, handler stack) |
+
+Faults in trusted `EL1t` code halt the kernel.
 
 ## Kernel-level implementation details
 
 - `Thread` (`kernel/nucleus/src/objects/thread.rs`) holds `address_space`
   (the checked identity of the `AddressSpace` it currently executes in),
-  `context` (`NotStarted` / `Running` / `Parked`) and the depth-16 invocation
-  stack. There is no per-Thread table address.
+  `context` (`NotStarted` / `Running` / `Parked` / `Faulted`), the depth-16
+  invocation stack and `fault`, the fault being handled (`ThreadFault`: the
+  complete faulting state, the `AddressSpace` whose handler took it, and the
+  stack depth of its fault continuation). There is no per-Thread table
+  address.
+- Fault delivery (`objects/fault.rs`): `Nucleus::deliver_fault` builds a Call
+  frame from the faulting state (inputs in `x2..x7`, the handler extent end
+  as `x9`) and runs `prepare_call`/`commit_call`; `commit_return` recognizes
+  the fault continuation by its depth and resumes from the fault frame; the
+  unhandled path and the terminate action use `park_faulted_and_select`.
+  Exercised by `kernel/tests/fault-test` and `kernel/tests/fp-trap-test`.
 - Saved state is Thread-resident: a 288-byte `SavedContext` (all integer
   registers, SP, PC, raw SPSR, exception origin and the EL0 TLS register
   `TPIDR_EL0`, which the exception frame carries). A blocking SVC copies the
@@ -115,9 +165,9 @@ retired Thread's capabilities fail pool validation.
 
 ## TODOs
 
-- Return fault delivery — D1/D7.
-- Fault delivery for EL0 Threads (aborts, undefined instructions), which
-  currently halt the kernel — D1.
+- Fault-delivery refinements — D1: a per-`AddressSpace` fault queue instead
+  of unhandled-while-busy; resuming with edited registers; more than one fault
+  level per Thread.
 - Start/Suspend/Resume with legal state transitions and budget
   (D7/D8).
 - Thread creation ABI.

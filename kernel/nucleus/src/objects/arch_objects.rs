@@ -110,6 +110,15 @@ pub trait AddressSpaceObject: NucleusObject {
     /// Record or clear the bound ASID (`ASIDPool.Assign` /
     /// `AddressSpace.Retire`).
     fn set_asid(&mut self, asid: Option<u16>);
+    /// Whether this `AddressSpace`'s fault handler is running a delivered
+    /// fault (from delivery until its Return, or until the handling Thread is
+    /// itself parked as faulted). A fault here while busy is unhandled.
+    fn fault_handler_busy(&self) -> bool;
+    fn set_fault_handler_busy(&mut self, busy: bool);
+    /// Faults in this `AddressSpace` that no handler took (kernel-private,
+    /// for tracing).
+    fn unhandled_faults(&self) -> u64;
+    fn count_unhandled_fault(&mut self);
 }
 
 /// Architecture abstraction trait - extended with invoke methods.

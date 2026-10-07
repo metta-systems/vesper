@@ -131,7 +131,57 @@ impl<A: ArchObjects> Nucleus<A> {
         {
             return Err(CapError::InvalidOperation);
         }
+        self.switch_away(
+            access,
+            current,
+            current_index,
+            &ExecutionContext::Parked { saved, record },
+        )
+    }
 
+    /// Stop the current Thread for good after an unhandled fault (or a fault
+    /// handler's terminate action) and select the next runnable Thread.
+    ///
+    /// `saved` is the faulting state, kept in the `Faulted` context for
+    /// inspection. Like [`Nucleus::park_and_select`], every fallible check
+    /// precedes commitment, and entry installs the returned translation.
+    pub fn park_faulted_and_select(
+        &mut self,
+        access: &Access,
+        saved: SavedContext,
+    ) -> Result<PreparedResume, CapError> {
+        if !execution_origin(saved.origin) {
+            return Err(CapError::InvalidDomain);
+        }
+        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
+        let current_index =
+            usize::try_from(current).map_err(|_invalid_index| CapError::InvalidDomain)?;
+        let current_thread = self
+            .pools
+            .threads
+            .get_live(current_index)
+            .ok_or(CapError::InvalidDomain)?;
+        if current_thread.context != ExecutionContext::Running {
+            return Err(CapError::InvalidOperation);
+        }
+        self.switch_away(
+            access,
+            current,
+            current_index,
+            &ExecutionContext::Faulted { saved },
+        )
+    }
+
+    /// Validate the FIFO front, then store `parked` as the current Thread's
+    /// context and make the front current. The caller has validated the
+    /// current Thread; nothing is mutated before the last fallible check.
+    fn switch_away(
+        &mut self,
+        access: &Access,
+        current: u32,
+        current_index: usize,
+        parked: &ExecutionContext,
+    ) -> Result<PreparedResume, CapError> {
         // Peek is sufficient only because validation and dequeue share this
         // exclusive transaction. The queue still carries indices, not Thread
         // incarnations; general scheduler identity/reuse remains D3/D5 work.
@@ -181,7 +231,10 @@ impl<A: ArchObjects> Nucleus<A> {
                 };
                 (saved, Some((record, completion, result1)))
             }
-            ExecutionContext::Running => return Err(CapError::InvalidOperation),
+            // A faulted Thread is never queued; finding one is corruption.
+            ExecutionContext::Running | ExecutionContext::Faulted { .. } => {
+                return Err(CapError::InvalidOperation);
+            }
         };
         if !execution_origin(restored.origin) {
             return Err(CapError::InvalidDomain);
@@ -203,7 +256,7 @@ impl<A: ArchObjects> Nucleus<A> {
             .threads
             .get_live_mut(current_index)
             .expect("validated current Thread")
-            .context = ExecutionContext::Parked { saved, record };
+            .context = *parked;
         assert_eq!(
             self.scheduler.pop(),
             Some(next),

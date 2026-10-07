@@ -14,6 +14,7 @@ use {
         paging::{AP_MASK, AP_RO_USER, AP_RW_USER, LEAF_SPAN, PAGE, PXN, UXN, read_leaf},
     },
     kickstart::bootstrap::BOOT_TABLE_GUARD,
+    libaddress::PhysAddr,
     libimage::{ComponentImage, PAGE_BYTES, Permissions},
     libobject::{FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights},
     nucleus::objects::KeyTable,
@@ -264,5 +265,22 @@ impl Builder<'_> {
             bottom,
             top: bottom + u64::from(pages) * PAGE,
         }
+    }
+}
+
+/// Write `value` at the start of the builder-owned page at `paddr` (a
+/// component's init page), through the kernel direct map.
+///
+/// The page must be a freshly retyped Frame the builder owns, written before
+/// the component runs; `T` must fit in the page.
+pub fn write_init<T>(paddr: u64, value: T) {
+    const { assert!(core::mem::size_of::<T>() <= 4096) };
+    // SAFETY: per the contract above, `paddr` names an accounted page nobody
+    // else accesses yet, and the direct map covers it.
+    unsafe {
+        PhysAddr::new(paddr)
+            .user_to_kernel()
+            .as_mut_ptr::<T>()
+            .write_volatile(value);
     }
 }

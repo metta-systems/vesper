@@ -202,7 +202,8 @@ impl ThreadReturnKey {
     /// helper never traps or retries. A local `SUCCESS` cannot come from a
     /// completed Return, so it is reported as `UnexpectedReturn` with the
     /// local x1/x2 verbatim, never as `Ok`. Underflow and a retired source
-    /// are kernel-side faults, not `Err`.
+    /// are kernel-side faults, not `Err`: they are delivered to the fault
+    /// handler (see [`crate::fault`]).
     ///
     /// # Safety
     /// A successful Return abandons this execution context: no destructor

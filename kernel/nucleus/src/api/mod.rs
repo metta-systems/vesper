@@ -3,13 +3,14 @@ use {
         ArchObjects, KeyTable, Nucleus,
         access::Access,
         arch_objects::AddressSpaceObject,
-        invocation::{CommittedCall, CommittedReturn, ReturnRejection},
+        invocation::{CommittedCall, CommittedReturn, ReturnFault, ReturnRejection},
         key_table::CallerTable,
         resume::PreparedTranslationContext,
     },
     libexception::arch::aarch64::SavedContext,
     libobject::{
-        ArchType, CapError, CoreType, InconsistencyReason, ObjectType, RawKey, thread::ThreadOp,
+        ArchType, CapError, CoreType, InconsistencyReason, ObjectType, RawKey, fault::FaultKind,
+        thread::ThreadOp,
     },
     libqemu::semihosting as semi,
 };
@@ -56,6 +57,9 @@ pub enum InvokeOutcome {
     /// installs the source translation after all guards/lock end, restores
     /// the resumed source frame, then traces success.
     Return(CommittedReturn),
+    /// `Thread.Return` hit a protocol fault (nothing popped). Entry delivers
+    /// it to the fault handler as a fault at the Return's `svc`.
+    Fault(libobject::fault::FaultKind),
 }
 
 // ═════════════════════════════
@@ -195,12 +199,11 @@ fn core_invoke<A: ArchObjects>(
             match crate::api::thread::return_from_call(access, caller, saved, nucleus) {
                 Ok(committed) => Ok(InvokeOutcome::Return(committed)),
                 Err(ReturnRejection::Error(error)) => Err(error),
-                // Maintainer-selected interim policy: kernel-origin fault
-                // delivery (D1/D7) is not designed, so an illegal return or a
-                // retired saved source halts the kernel. Nothing was popped.
-                Err(ReturnRejection::Fault(fault)) => {
-                    panic!("Thread.Return fault (interim halt policy): {fault:?}")
-                }
+                // Protocol faults go to the fault handler; nothing was popped.
+                Err(ReturnRejection::Fault(fault)) => Ok(InvokeOutcome::Fault(match fault {
+                    ReturnFault::IllegalReturn => FaultKind::IllegalReturn,
+                    ReturnFault::ReturnTargetRetired => FaultKind::ReturnTargetRetired,
+                })),
             }
         }
         CoreType::Thread => crate::api::thread::invoke(access, caller, key, op, args, nucleus)

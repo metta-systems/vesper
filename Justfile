@@ -32,6 +32,8 @@ kicktest_elf    := justfile_directory() / 'target' / target / 'release/kicktest'
 kicktest_bin    := justfile_directory() / 'target/kicktest.bin'
 endpoint_test_elf := justfile_directory() / 'target' / target / 'release/endpoint-test'
 endpoint_test_bin := justfile_directory() / 'target/endpoint-test.bin'
+fault_test_elf  := justfile_directory() / 'target' / target / 'release/fault-test'
+fault_test_bin  := justfile_directory() / 'target/fault-test.bin'
 fp_trap_test_elf := justfile_directory() / 'target' / target / 'release/fp-trap-test'
 fp_trap_test_bin := justfile_directory() / 'target/fp-trap-test.bin'
 chainboot_elf   := justfile_directory() / 'target' / target / 'release/chainboot'
@@ -87,7 +89,7 @@ build-kicktest board='rpi3' features='qemu,debug_kernel': (_cross-build 'nucleus
 
 # Build the EL0 userspace components (linked with the userspace runtime's user.ld)
 [group("emu")]
-build-components board='rpi3' features='qemu': (_cross-build 'hello' board user_link features) (_cross-build 'endpoint-client' board user_link features) (_cross-build 'endpoint-component' board user_link features) (_cross-build 'endpoint-server' board user_link features) (_cross-build 'fp-probe' board user_link features)
+build-components board='rpi3' features='qemu': (_cross-build 'hello' board user_link features) (_cross-build 'endpoint-client' board user_link features) (_cross-build 'endpoint-component' board user_link features) (_cross-build 'endpoint-server' board user_link features) (_cross-build 'fp-probe' board user_link features) (_cross-build 'fault-faulter' board user_link features) (_cross-build 'fault-bare' board user_link features)
 
 # Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
 [group("emu")]
@@ -100,6 +102,12 @@ build-endpoint-test board='rpi3' features='qemu': (_cross-build 'nucleus' board 
 build-fp-trap-test board='rpi3': (_cross-build 'nucleus' board nucleus_link 'qemu,fp_trap_test') (build-components board 'qemu') (_cross-build 'fp-trap-test' board init_link 'qemu,fp_trap_test')
     {{ objcopy }} --strip-all -O binary "{{ fp_trap_test_elf }}" "{{ fp_trap_test_bin }}"
     @echo "{{ok_label}} fp-trap-test built for {{ board }}"
+
+# Build the fault-test e2e kernel (fault delivery to EL0 fault handlers)
+[group("emu")]
+build-fault-test board='rpi3': (_cross-build 'nucleus' board nucleus_link 'qemu') (build-components board 'qemu') (_cross-build 'fault-test' board init_link 'qemu')
+    {{ objcopy }} --strip-all -O binary "{{ fault_test_elf }}" "{{ fault_test_bin }}"
+    @echo "{{ok_label}} fault-test built for {{ board }}"
 
 # === Chainboot ===
 
@@ -252,7 +260,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("emu")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability-boot test-endpoint test-fp-trap
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability-boot test-endpoint test-fp-trap test-fault
 
 alias t := test
 
@@ -323,6 +331,16 @@ _rebuild-fp-trap-test-kernel:
 [group("emu")]
 test-fp-trap: _rebuild-fp-trap-test-kernel
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ fp_trap_test_bin }}"
+
+# Rebuild fault-test unconditionally (nested for the same reason as above).
+[private]
+_rebuild-fault-test-kernel:
+    {{ just_executable() }} build-fault-test rpi3
+
+# Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread; in-guest assertions and QEMU exit status are the result
+[group("emu")]
+test-fault: _rebuild-fault-test-kernel
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ fault_test_bin }}"
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 [group("emu")]
@@ -434,7 +452,7 @@ fmt-check:
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
 [group("maintenance")]
-audit-fp-simd: (build-kicktest 'rpi3' 'qemu,debug_kernel') (build-endpoint-test 'rpi3' 'qemu')
+audit-fp-simd: (build-kicktest 'rpi3' 'qemu,debug_kernel') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
     artifacts="{{ justfile_directory() }}/target/{{ target }}/release"
@@ -442,7 +460,7 @@ audit-fp-simd: (build-kicktest 'rpi3' 'qemu,debug_kernel') (build-endpoint-test 
     # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
     fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
     failed=0
-    for image in nucleus kickstart kicktest endpoint-test hello endpoint-client endpoint-component endpoint-server; do
+    for image in nucleus kickstart kicktest endpoint-test fault-test hello endpoint-client endpoint-component endpoint-server fault-faulter fault-bare; do
         # Symbol names in <…> are not operands.
         found=$(rust-objdump -d --no-show-raw-insn "${artifacts}/${image}" | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
         if [ -n "${found}" ]; then

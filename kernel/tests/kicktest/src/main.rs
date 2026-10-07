@@ -321,7 +321,7 @@ fn assert_source_selected(
 // DTB should be available to this code through BOOT_INFO records.
 pub fn kicktest_run() -> ! {
     semi::println!("kicktest_run: enabled MMU and dropped to EL1");
-    libkicktest::assert_fp_simd_trapped();
+    libkicktest::assert_fp_simd_trapped(); // TODO: should be in fp-trap-test
     libkicktest::assert_el0_visible_state();
     print_my_sp();
     #[cfg(feature = "debug_kernel")]

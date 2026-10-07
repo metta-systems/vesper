@@ -7,6 +7,7 @@ pub mod debug_console;
 pub mod domain;
 pub mod event_count;
 pub mod export;
+pub mod fault;
 pub mod frame;
 pub mod invocation;
 pub mod key;

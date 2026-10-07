@@ -316,6 +316,55 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
 
 [[package]]
+name = "fault-bare"
+version = "0.0.1"
+dependencies = [
+ "fault-protocol",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "fault-faulter"
+version = "0.0.1"
+dependencies = [
+ "fault-protocol",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "fault-protocol"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "tock-registers",
+]
+
+[[package]]
+name = "fault-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "fault-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "fdt-rs"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -79,8 +79,11 @@ Every failure leaves the destination slot and all authority unchanged.
 - Pool-backed via `ArchPools::address_spaces`; capabilities hold a checked
   `ObjectId`.
 - Kernel-private state (`kernel/nucleus/src/objects/arch/address_space.rs`):
-  `translation_root`, `asid`, and an immutable `KeyTableBinding` (carve address
-  and capacity exponent). `ArchObjects::new_address_space` requires the
+  `translation_root`, `asid`, an immutable `KeyTableBinding` (carve address
+  and capacity exponent), and fault-delivery state: whether its fault handler
+  (the `Invocation` at `KeySlot::FAULT_HANDLER` in its table) is busy with a
+  delivered fault, and a count of faults here that no handler took
+  ([fault delivery](../core/thread.md#fault-delivery)). `ArchObjects::new_address_space` requires the
   binding, which only `KeyTable::bind_address_space` issues — installing the
   `Thread.Return` sentinel at Slot 1 as it does. There is no rebinding.
 - Caller dispatch validates the current Thread's `AddressSpace` before using

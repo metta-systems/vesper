@@ -46,6 +46,10 @@ impl KeySlot {
     /// at the first free well-known slot after them.
     pub const BOOT_ASID_POOL: KeySlot = KeySlot(14);
     pub const DEBUG_CONSOLE: KeySlot = KeySlot(15);
+    /// This `AddressSpace`'s fault handler: an `Invocation` capability the
+    /// kernel Calls on a faulting Thread (see [`crate::fault`]). An empty slot,
+    /// or any other kind, means faults here are unhandled.
+    pub const FAULT_HANDLER: KeySlot = KeySlot(16);
     // ... other well-known slots
 }
 

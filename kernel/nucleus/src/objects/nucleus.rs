@@ -163,6 +163,7 @@ impl<A: ArchObjects> Nucleus<A> {
             address_space,
             context: ExecutionContext::Running,
             invocation_stack: crate::objects::InvocationStack::new(),
+            fault: None,
         })?;
         // Capability grants are provisioned once in the AddressSpace's table,
         // independently of creating any number of Threads executing there.
@@ -422,6 +423,7 @@ mod tests {
             },
             context: ExecutionContext::Running,
             invocation_stack: crate::objects::InvocationStack::new(),
+            fault: None,
         }
     }
 

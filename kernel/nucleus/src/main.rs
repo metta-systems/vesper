@@ -32,16 +32,21 @@ use {
         time::Duration,
     },
     libcpu::endless_sleep,
-    libexception::arch::aarch64::{ExceptionContext, ExceptionOrigin},
+    libexception::arch::aarch64::{ExceptionContext, ExceptionOrigin, SavedContext},
     liblocking::{IRQSafeNullLock, interface::Mutex},
     liblog::{info, println, warn},
     libmapping::AccessPermissions,
-    libobject::{ArchType, CapError, KeySlot, RawKey, syscall_status},
+    libobject::{
+        ArchType, CapError, KeySlot, RawKey,
+        fault::{FaultInfo, FaultKind},
+        syscall_status,
+    },
     libqemu::semihosting as semi,
     nucleus::objects::{
         ArchObjects, ArchObjectsImpl, Nucleus,
         access::{Access, ObjectId},
         completion::PendingKind,
+        fault::FaultDelivery,
     },
 };
 
@@ -207,15 +212,39 @@ extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
 
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
-    // See `current_elx_synchronous`: only an SVC is a capability invocation.
-    #[cfg(feature = "fp_trap_test")]
-    if absorb_fp_simd_trap(e) {
+    // Only an SVC is a capability invocation; every other synchronous
+    // exception from EL0 is a fault, delivered to the fault handler.
+    if !is_aarch64_svc() {
+        use aarch64_cpu::registers::{ESR_EL1, FAR_EL1, Readable};
+
+        let faulting = e.save();
+        let info = FaultInfo {
+            kind: FaultKind::CpuException,
+            esr: ESR_EL1.get(),
+            far: FAR_EL1.get(),
+            pc: faulting.elr_el1,
+            sp: faulting.sp,
+            depth: current_invocation_depth(),
+        };
+        deliver_fault(e, &faulting, info);
         return;
     }
-    if !is_aarch64_svc() {
-        default_exception_handler(e);
-    }
     cap_invoke_handler(e);
+}
+
+/// The current Thread's invocation depth, for fault reports (0 if unknown).
+fn current_invocation_depth() -> u64 {
+    KERNEL_LOCK
+        .lock(|()| {
+            let nucleus = nucleus_anchor()?;
+            // SAFETY: the anchor names the live Nucleus; the lock serializes
+            // this read.
+            let nucleus = unsafe { &*nucleus };
+            let index = usize::try_from(nucleus.current_thread?).ok()?;
+            let thread = nucleus.pools.threads.get_live(index)?;
+            u64::try_from(thread.invocation_stack.len()).ok()
+        })
+        .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
@@ -247,11 +276,11 @@ extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
     default_exception_handler(e);
 }
 
-/// Test-only stand-in for fault delivery (`fp-trap-test`): absorb an FP/SIMD
-/// access trap (`ESR_EL1.EC` 0x07) by handing its syndrome back to the
-/// faulting code in `x0` and resuming after the trapping instruction, so the
-/// probe can check the classification itself. Real fault delivery is the open
-/// D1 decision; production builds halt on this trap like any other fault.
+/// Test-only hook for trusted `EL1t` code (`fp-trap-test`): faults in `EL1t` code
+/// halt the kernel (fault delivery covers EL0 only), so to check that FP/SIMD
+/// traps at `EL1t` this absorbs an FP/SIMD access trap (`ESR_EL1.EC` 0x07) by
+/// handing its syndrome back to the faulting code in `x0` and resuming after
+/// the trapping instruction. Production builds halt on it like any `EL1t` fault.
 #[cfg(feature = "fp_trap_test")]
 fn absorb_fp_simd_trap(e: &mut ExceptionContext) -> bool {
     use aarch64_cpu::registers::{ESR_EL1, Readable};
@@ -362,10 +391,38 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
             semi::println!("{}", "✅ Invocation::Call()".on_cyan());
             return;
         }
+        Ok(nucleus::api::InvokeOutcome::Return(committed)) if committed.terminate => {
+            // A fault handler chose to terminate its faulting Thread.
+            semi::println!("{}", "✅ Thread::Return()".on_cyan());
+            terminate_faulted(frame, &committed.resumed);
+            return;
+        }
+        Ok(nucleus::api::InvokeOutcome::Fault(kind)) => {
+            // A Return protocol fault, delivered like any EL0 fault. Faults in
+            // trusted EL1t code halt the kernel.
+            assert!(
+                frame.origin == ExceptionOrigin::LowerAarch64,
+                "Thread.Return fault in trusted EL1t code: {kind:?}"
+            );
+            // The fault is at the Return's `svc`: ELR already points past it.
+            let mut faulting = saved;
+            faulting.elr_el1 = faulting.elr_el1.wrapping_sub(4);
+            let info = FaultInfo {
+                kind,
+                esr: 0,
+                far: 0,
+                pc: faulting.elr_el1,
+                sp: faulting.sp,
+                depth: current_invocation_depth(),
+            };
+            deliver_fault(frame, &faulting, info);
+            return;
+        }
         Ok(nucleus::api::InvokeOutcome::Return(committed)) => {
             // Committed under the lock: top continuation popped, Thread back
             // in its source AddressSpace. Install, then resume the source with
-            // SUCCESS/r0/r1 and its exact saved callee-saved state.
+            // SUCCESS/r0/r1 and its exact saved callee-saved state (or, ending
+            // a fault handler, the faulting state as its action selects).
             let translation = committed.translation;
             ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
             frame.restore(committed.resumed);
@@ -428,6 +485,17 @@ fn park_and_resume(frame: &mut ExceptionContext, record: ObjectId) {
             error.code()
         )
     });
+    resume_selected(frame, &resumed, "parked");
+}
+
+/// Install and enter the Thread a scheduling transaction selected: rewrite
+/// the transient frame with its context and trace the switch. `why` names
+/// what happened to the Thread that stopped.
+fn resume_selected(
+    frame: &mut ExceptionContext,
+    resumed: &nucleus::objects::resume::PreparedResume,
+    why: &str,
+) {
     let current = resumed.current;
     let next = resumed.next;
     let restored = resumed.saved;
@@ -456,10 +524,80 @@ fn park_and_resume(frame: &mut ExceptionContext, record: ObjectId) {
         }
     }
     semi::println!(
-        "🔄 context switch: thread {current} parked, resuming thread {next} @ SP {:#x}, PC {:#x}",
+        "🔄 context switch: thread {current} {why}, resuming thread {next} @ SP {:#x}, PC {:#x}",
         restored.sp,
         restored.elr_el1,
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FAULT DELIVERY
+// ═══════════════════════════════════════════════════════════════════
+
+/// Deliver a fault on the current Thread: a synchronous upcall into its
+/// `AddressSpace`'s fault handler, or — if nobody takes it — park the Thread
+/// as faulted and resume the next one. `faulting` is the complete faulting
+/// state (for a Return fault, with PC at its `svc`).
+fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: FaultInfo) {
+    semi::println!(
+        "⚠️  fault {:?} at PC {:#x}, ESR {:#x}, FAR {:#x}, depth {}",
+        info.kind,
+        info.pc,
+        info.esr,
+        info.far,
+        info.depth
+    );
+    let delivery = KERNEL_LOCK.lock(|()| {
+        let Some(nucleus_ptr) = nucleus_anchor() else {
+            panic!("nucleus not booted by Kickstart")
+        };
+        // SAFETY: the anchor names the retained boot-carved Nucleus; the
+        // kernel lock gives exclusive access for this transaction.
+        let nucleus = unsafe { &mut *nucleus_ptr };
+        // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other
+        // Access or guard overlaps this transaction.
+        let access = unsafe { Access::new() };
+        nucleus.deliver_fault(&access, *faulting, info)
+    });
+    match delivery {
+        Ok(FaultDelivery::Handler(committed)) => {
+            let translation = committed.translation;
+            ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
+            frame.restore(committed.target);
+            semi::println!("{}", "✅ fault delivered to its handler".on_cyan());
+        }
+        Ok(FaultDelivery::Unhandled(resumed)) => {
+            semi::println!("⛔ unhandled fault: thread parked as faulted");
+            resume_selected(frame, &resumed, "faulted");
+        }
+        // Nothing is left to run (or scheduling state is corrupt).
+        Err(error) => panic!("fault left nothing to run: {:?}", error.code()),
+    }
+}
+
+/// A fault handler returned with the terminate action: park the Thread as
+/// faulted with its faulting state and resume the next one.
+fn terminate_faulted(frame: &mut ExceptionContext, faulting: &SavedContext) {
+    let resumed = KERNEL_LOCK.lock(|()| {
+        let Some(nucleus_ptr) = nucleus_anchor() else {
+            panic!("nucleus not booted by Kickstart")
+        };
+        // SAFETY: as in `deliver_fault`.
+        let nucleus = unsafe { &mut *nucleus_ptr };
+        // SAFETY: as in `deliver_fault`.
+        let access = unsafe { Access::new() };
+        let current = nucleus.current_thread.map(|index| index as usize);
+        current
+            .ok_or(CapError::InvalidDomain)
+            .and_then(|current| nucleus.park_faulted(&access, current, *faulting))
+    });
+    match resumed {
+        Ok(resumed) => {
+            semi::println!("⛔ fault handler terminated the thread");
+            resume_selected(frame, &resumed, "terminated");
+        }
+        Err(error) => panic!("fault left nothing to run: {:?}", error.code()),
+    }
 }
 
 fn get_pc() -> u64 {

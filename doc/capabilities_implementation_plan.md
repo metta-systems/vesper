@@ -210,7 +210,6 @@ Reference: [Time contracts](nucleus_capabilities.md#time-and-userspace-schedulin
 - [ ] Run the accumulated ABI/model suite, appropriate target builds, and QEMU integration suite; record unavailable validation separately.
 - [ ] Revisit open D1–D9 entries; mark decisions resolved only with their chosen contract/rationale, and keep deferred features visibly unsupported.
 - [ ] Complete the init handoff: define/build ELF-module AddressSpaces and Threads, well-known keyspace grants, untyped delegation/accounting, read-only module image caps, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
-  - [ ] Contain EL0 faults: a non-SVC exception from EL0 still halts the kernel; needs the fault-delivery decision (D1).
   - [ ] Replace the fixture init page with the init-handoff design (keys, parameters) once selected.
   - [ ] Copy a component's `.data` per instance before loading the same component twice; it is currently mapped in place from the bundle.
   - [ ] Move the kicktest fixtures (Bounce, PPC tests) onto EL0 components where they do not need EL1 register access.

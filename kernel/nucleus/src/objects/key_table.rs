@@ -363,6 +363,30 @@ impl KeyTable {
         Some((address, guard, size_bits))
     }
 
+    /// The fault handler at the well-known `FAULT_HANDLER` slot: the target of
+    /// a valid `Invocation` capability carrying `CALL`, or `None` (no handler)
+    /// when the slot is beyond capacity, vacant, invalidated, of another kind
+    /// or lacks `CALL`. The kernel reads it directly — a fault carries no key.
+    pub fn fault_handler(&self) -> Option<crate::objects::invocation::CallTarget> {
+        let idx = usize::try_from(KeySlot::FAULT_HANDLER.0).ok()?;
+        if idx >= self.capacity() {
+            return None;
+        }
+        let entry = self.entry(idx);
+        if !entry.is_valid()
+            || entry.object_type() != ObjectType::INVOCATION
+            || !entry.rights().has(libobject::Rights::CALL)
+        {
+            return None;
+        }
+        let (address_space, function_address) = entry.invocation_target().ok()?;
+        Some(crate::objects::invocation::CallTarget {
+            address_space,
+            function_address,
+            stack_extent: entry.invocation_stack_extent().ok()?,
+        })
+    }
+
     /// Pre-validate that a new valid entry may be installed at `slot` (a bare
     /// index), returning the same error `insert` would return for it: range,
     /// vacancy, and remaining incarnation capacity.

@@ -37,9 +37,13 @@ Unanswered questions before implementing the scheduler record ABI:
   derivation/CopyDerive restrictions, rights attenuation, and source badges?
 - **Shared memory and transfer:** pointer/shared-memory rules and whether
   optional capability transfer is supported.
-- **Fault and lifecycle:** how are faults in migrated frames delivered and
-  resumed, including the illegal-return and retired-saved-source faults? Beyond
-  the defined no-pop Return fault classification, what are the call lifecycle,
+- **Fault delivery refinements (D1):** the mechanism and its details are
+  selected (see the contract). Open: a small per-AddressSpace fault queue that
+  runs handlers one after another instead of treating a fault during a busy
+  handler as unhandled; resuming with edited registers; more than one fault
+  level per Thread.
+- **Fault and lifecycle:** beyond the defined no-pop Return fault
+  classification and the selected delivery mechanism, what are the call lifecycle,
   cancellation, Thread/AddressSpace teardown, partial-completion, and other
   nested/concurrent-call rules beyond the fixed depth limit?
 - **Return-key handoff to component init:** the AddressSpace builder installs

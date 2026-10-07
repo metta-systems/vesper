@@ -17,7 +17,7 @@ use {
     },
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
-    libobject::{CapError, InvalidStackReason},
+    libobject::{CapError, InvalidStackReason, fault::FaultAction},
 };
 
 /// An immutable, validated target stack extent and downward headroom requirement.
@@ -363,13 +363,12 @@ impl<A: ArchObjects> Nucleus<A> {
 // THREAD.RETURN
 // ═════════════════════════════
 
-/// Return protocol faults: classified, not delivered.
+/// Return protocol faults, classified here and delivered by entry.
 ///
-/// Neither is an ordinary recoverable error and neither pops the stack.
-/// Delivery to the Thread's fault handler (binding, vector, resumption) is
-/// the open D1/D7 fault decision. Until it is selected, dispatch halts the
-/// kernel on either fault (maintainer-selected interim policy); they never
-/// reach the wire.
+/// Neither is an ordinary recoverable error and neither pops the stack; they
+/// never reach the wire. Entry delivers them to the fault handler of the
+/// `AddressSpace` the Thread executes in, as a fault at the Return's `svc`
+/// (see `objects::fault`). In trusted `EL1t` code they halt the kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReturnFault {
     /// Depth-zero underflow: no continuation to return to.
@@ -460,6 +459,10 @@ pub struct CommittedReturn {
     pub source_thread: ObjectId,
     pub resumed: SavedContext,
     pub translation: PreparedTranslationContext,
+    /// The Return ended a fault handler with the terminate action: instead of
+    /// resuming, entry parks the Thread as faulted with `resumed` (its
+    /// faulting state).
+    pub terminate: bool,
 }
 
 impl<A: ArchObjects> Nucleus<A> {
@@ -564,10 +567,31 @@ impl<A: ArchObjects> Nucleus<A> {
         let popped = thread.invocation_stack.pop();
         debug_assert_eq!(popped, Some(prepared.continuation));
         thread.address_space = prepared.continuation.source_address_space;
+
+        // Popping the fault continuation ends the fault handler: resume from
+        // the fault frame as the handler's action selects, and free it.
+        let handled_fault = thread.fault.filter(|fault| fault.depth == prepared.depth);
+        let Some(fault) = handled_fault else {
+            return Ok(CommittedReturn {
+                source_thread,
+                resumed: prepared.source_resume_context(),
+                translation: prepared.translation,
+                terminate: false,
+            });
+        };
+        thread.fault = None;
+        let mut resumed = fault.frame;
+        let action = FaultAction::from_wire(prepared.payload[0]);
+        if action == FaultAction::Skip {
+            // Every A64 instruction is four bytes.
+            resumed.elr_el1 = resumed.elr_el1.wrapping_add(4);
+        }
+        self.set_fault_handler_busy(fault.address_space, false);
         Ok(CommittedReturn {
             source_thread,
-            resumed: prepared.source_resume_context(),
+            resumed,
             translation: prepared.translation,
+            terminate: action == FaultAction::Terminate,
         })
     }
 }

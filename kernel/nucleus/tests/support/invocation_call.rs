@@ -6,10 +6,11 @@ use {
     crate::{
         api::{self, KeyEntry},
         objects::{
-            ArchObjects, ArchObjectsImpl, InvocationContinuation, InvocationStack, KeyTable,
-            Nucleus,
+            ArchObjects, ArchObjectsImpl, ExecutionContext, InvocationContinuation,
+            InvocationStack, KeyTable, Nucleus, ThreadFault,
             access::{Access, ObjectId},
             arch_objects::AddressSpaceObject,
+            fault::FaultDelivery,
             invocation::{
                 CallTarget, CommittedCall, CommittedReturn, InvocationStackExtent, PreparedCall,
                 ReturnFault, ReturnRejection,
@@ -22,6 +23,7 @@ use {
     libexception::arch::aarch64::SavedContext,
     libobject::{
         CapError, INVOCATION_STACK_DEPTH, InvalidStackReason, KeySlot, ObjectType, RawKey, Rights,
+        fault::{FaultAction, FaultInfo, FaultKind},
     },
 };
 
@@ -1205,5 +1207,289 @@ fn dispatch_routes_call_and_return_from_saved_frames() {
             Ok(_) => panic!("empty key dispatched successfully"),
         }
         assert_eq!(snapshot(nucleus, &fixture), before);
+    });
+}
+
+// ═════════════════════════════
+// FAULT DELIVERY
+// ═════════════════════════════
+
+/// The faulting instruction's PC in the fault tests.
+const FAULT_PC: u64 = 0x9_1230;
+
+/// Install a fault handler Invocation (into the target `AddressSpace`, with
+/// the fixture stack extent) at `FAULT_HANDLER` in the current Thread's table.
+fn install_fault_handler(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
+    let extent = InvocationStackExtent::new(
+        STACK_BASE,
+        STACK_END,
+        MINIMUM_HEADROOM,
+        ArchObjectsImpl::USER_VA_END,
+    )
+    .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()));
+    nucleus
+        .current_thread_table_mut()
+        .unwrap()
+        .insert(
+            KeySlot::FAULT_HANDLER,
+            KeyEntry::new_invocation(fixture.target_as, NonZero::new(FUNCTION).unwrap(), extent),
+            FIXTURE_GUARD,
+        )
+        .unwrap_or_else(|error| panic!("fault handler install: {:?}", error.error.code()));
+}
+
+/// A faulting EL0 frame with distinct values in every register.
+fn faulting_frame() -> SavedContext {
+    let mut saved = SavedContext::el0(FAULT_PC, STACK_END - 0x20, 0);
+    for (index, register) in saved.gpr.iter_mut().enumerate() {
+        *register = 0xFA00 + u64::try_from(index).unwrap();
+    }
+    saved.lr = 0xFA_0030;
+    saved.spsr_el1 |= 0x2000_0000;
+    saved.tpidr_el0 = 0x7150_FA17;
+    saved
+}
+
+fn fault_info(depth: u64) -> FaultInfo {
+    FaultInfo {
+        kind: FaultKind::CpuException,
+        esr: 0xF200_0007,
+        far: 0xDEAD_0000,
+        pc: FAULT_PC,
+        sp: STACK_END - 0x20,
+        depth,
+    }
+}
+
+fn deliver(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    faulting: SavedContext,
+    info: FaultInfo,
+) -> FaultDelivery {
+    // SAFETY: serial fixture with exclusive nucleus/pool backing; no other
+    // access context or object/table guard overlaps this transaction.
+    let access = unsafe { Access::new() };
+    nucleus
+        .deliver_fault(&access, faulting, info)
+        .unwrap_or_else(|error| panic!("fault delivery failed: {:?}", error.code()))
+}
+
+fn handler_state(nucleus: &Nucleus<ArchObjectsImpl>, address_space: ObjectId) -> (bool, u64) {
+    let space = nucleus
+        .pools
+        .arch
+        .address_spaces
+        .get_live(usize::from(address_space.index))
+        .unwrap();
+    (space.fault_handler_busy(), space.unhandled_faults())
+}
+
+/// Queue a never-run Thread so an unhandled fault has somewhere to switch.
+fn queue_next_thread(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) -> u16 {
+    let next = nucleus.create_thread(fixture.source_as).unwrap();
+    nucleus
+        .pools
+        .threads
+        .get_live_mut(usize::from(next.index))
+        .unwrap()
+        .context = ExecutionContext::NotStarted {
+        saved: SavedContext::el0(0xA_0000, STACK_END, 0),
+    };
+    assert!(nucleus.scheduler.push(next.index));
+    next.index
+}
+
+fn expect_unhandled(
+    delivery: FaultDelivery,
+    nucleus: &Nucleus<ArchObjectsImpl>,
+    faulted: u32,
+    faulting: SavedContext,
+    next: u16,
+) {
+    let FaultDelivery::Unhandled(resumed) = delivery else {
+        panic!("the fault must be unhandled");
+    };
+    assert_eq!(resumed.current, faulted);
+    assert_eq!(resumed.next, next);
+    let thread = nucleus
+        .pools
+        .threads
+        .get_live(usize::try_from(faulted).unwrap())
+        .unwrap();
+    assert_eq!(
+        thread.context,
+        ExecutionContext::Faulted { saved: faulting }
+    );
+    assert_eq!(thread.fault, None);
+    assert_eq!(nucleus.current_thread, Some(u32::from(next)));
+}
+
+#[test_case]
+fn fault_enters_the_handler_with_the_fault_words_at_its_stack_top() {
+    with_call(|nucleus, fixture| {
+        install_fault_handler(nucleus, &fixture);
+        let faulting = faulting_frame();
+        let info = fault_info(0);
+        let FaultDelivery::Handler(committed) = deliver(nucleus, faulting, info) else {
+            panic!("the fault must reach the handler");
+        };
+        let target = committed.target;
+        assert_eq!(&target.gpr[2..8], &info.to_arguments());
+        assert_eq!(&target.gpr[0..2], &[0, 0]);
+        assert!(target.gpr[8..].iter().all(|&register| register == 0));
+        assert_eq!(target.sp, STACK_END, "the handler starts at its stack top");
+        assert_eq!(target.elr_el1, FUNCTION);
+        assert_eq!(
+            target.origin, faulting.origin,
+            "the handler runs at the faulting EL"
+        );
+        assert_eq!(target.tpidr_el0, 0);
+        assert_eq!(committed.translation.address_space(), fixture.target_as);
+
+        let thread = source_mut(nucleus);
+        assert_eq!(thread.address_space, fixture.target_as);
+        assert_eq!(thread.invocation_stack.len(), 1);
+        assert_eq!(
+            thread.fault,
+            Some(ThreadFault {
+                frame: faulting,
+                address_space: fixture.source_as,
+                depth: 1,
+            })
+        );
+        assert_eq!(handler_state(nucleus, fixture.source_as), (true, 0));
+    });
+}
+
+#[test_case]
+fn handler_return_actions_resume_or_terminate_and_free_the_handler() {
+    for (action, expected_pc, terminate) in [
+        (FaultAction::Retry as u64, FAULT_PC, false),
+        (FaultAction::Skip as u64, FAULT_PC + 4, false),
+        (FaultAction::Terminate as u64, FAULT_PC, true),
+        // Unknown actions terminate.
+        (7, FAULT_PC, true),
+    ] {
+        with_call(|nucleus, fixture| {
+            install_fault_handler(nucleus, &fixture);
+            let faulting = faulting_frame();
+            let FaultDelivery::Handler(_) = deliver(nucleus, faulting, fault_info(0)) else {
+                panic!("the fault must reach the handler");
+            };
+            let saved = return_frame(fixture.target_return_key, [action, 0x55], [1, 2, 3, 4]);
+            let committed = returned(thread_return(nucleus, &saved));
+
+            let mut expected = faulting;
+            expected.elr_el1 = expected_pc;
+            assert_eq!(committed.resumed, expected, "action {action}");
+            assert_eq!(committed.terminate, terminate, "action {action}");
+            assert_eq!(committed.translation.address_space(), fixture.source_as);
+            let thread = source_mut(nucleus);
+            assert_eq!(thread.fault, None);
+            assert_eq!(thread.address_space, fixture.source_as);
+            assert_eq!(thread.invocation_stack.len(), 0);
+            assert_eq!(handler_state(nucleus, fixture.source_as), (false, 0));
+        });
+    }
+}
+
+#[test_case]
+fn an_ordinary_return_inside_the_handler_does_not_end_the_fault() {
+    with_call(|nucleus, fixture| {
+        install_fault_handler(nucleus, &fixture);
+        let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
+            panic!("the fault must reach the handler");
+        };
+        // The handler makes its own Call and Returns from it: depth 2 → 1.
+        committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+        let saved = return_frame(fixture.target_return_key, [0xAA, 0xBB], [1, 2, 3, 4]);
+        let committed = returned(thread_return(nucleus, &saved));
+        assert!(!committed.terminate);
+        assert_eq!(committed.resumed.gpr[1], 0xAA, "an ordinary Return result");
+        let thread = source_mut(nucleus);
+        assert!(thread.fault.is_some(), "the fault is still being handled");
+        assert_eq!(thread.invocation_stack.len(), 1);
+        assert_eq!(handler_state(nucleus, fixture.source_as), (true, 0));
+    });
+}
+
+#[test_case]
+fn a_fault_without_a_handler_parks_the_thread_and_counts_it() {
+    with_call(|nucleus, fixture| {
+        let faulted = nucleus.current_thread.unwrap();
+        let next = queue_next_thread(nucleus, &fixture);
+        let faulting = faulting_frame();
+        let delivery = deliver(nucleus, faulting, fault_info(0));
+        expect_unhandled(delivery, nucleus, faulted, faulting, next);
+        assert_eq!(handler_state(nucleus, fixture.source_as), (false, 1));
+    });
+}
+
+#[test_case]
+fn a_fault_while_the_handler_is_busy_is_unhandled() {
+    with_call(|nucleus, fixture| {
+        install_fault_handler(nucleus, &fixture);
+        nucleus
+            .pools
+            .arch
+            .address_spaces
+            .get_live_mut(usize::from(fixture.source_as.index))
+            .unwrap()
+            .set_fault_handler_busy(true);
+        let faulted = nucleus.current_thread.unwrap();
+        let next = queue_next_thread(nucleus, &fixture);
+        let faulting = faulting_frame();
+        let delivery = deliver(nucleus, faulting, fault_info(0));
+        expect_unhandled(delivery, nucleus, faulted, faulting, next);
+        // Still busy: the handler belongs to whoever holds it.
+        assert_eq!(handler_state(nucleus, fixture.source_as), (true, 1));
+    });
+}
+
+#[test_case]
+fn a_fault_inside_the_handler_is_unhandled_and_frees_the_handler() {
+    with_call(|nucleus, fixture| {
+        install_fault_handler(nucleus, &fixture);
+        let faulted = nucleus.current_thread.unwrap();
+        let next = queue_next_thread(nucleus, &fixture);
+        let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
+            panic!("the first fault must reach the handler");
+        };
+        // The handler (running in the target AddressSpace) faults itself.
+        let mut nested = faulting_frame();
+        nested.elr_el1 = FUNCTION + 0x10;
+        let delivery = deliver(nucleus, nested, fault_info(1));
+        expect_unhandled(delivery, nucleus, faulted, nested, next);
+        // Counted where it happened; the held handler is free again.
+        assert_eq!(handler_state(nucleus, fixture.target_as), (false, 1));
+        assert_eq!(handler_state(nucleus, fixture.source_as), (false, 0));
+    });
+}
+
+#[test_case]
+fn a_fault_with_a_full_invocation_stack_is_unhandled() {
+    with_call(|nucleus, fixture| {
+        install_fault_handler(nucleus, &fixture);
+        fill_stack(nucleus, INVOCATION_STACK_DEPTH);
+        let faulted = nucleus.current_thread.unwrap();
+        let next = queue_next_thread(nucleus, &fixture);
+        let faulting = faulting_frame();
+        let delivery = deliver(nucleus, faulting, fault_info(16));
+        expect_unhandled(delivery, nucleus, faulted, faulting, next);
+        assert_eq!(handler_state(nucleus, fixture.source_as), (false, 1));
+    });
+}
+
+#[test_case]
+fn releasing_a_thread_fault_frees_its_handler() {
+    with_call(|nucleus, fixture| {
+        install_fault_handler(nucleus, &fixture);
+        let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
+            panic!("the fault must reach the handler");
+        };
+        let index = usize::try_from(nucleus.current_thread.unwrap()).unwrap();
+        nucleus.release_thread_fault(index);
+        assert_eq!(source_mut(nucleus).fault, None);
+        assert_eq!(handler_state(nucleus, fixture.source_as), (false, 0));
     });
 }

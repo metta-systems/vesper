@@ -125,6 +125,8 @@ fn retire<A: ArchObjects>(
     // retired) fails the cancellation's pool validation with a defined
     // error.
     nucleus.cancel_thread_pending(thread_id)?;
+    // A Thread retired inside a fault handler frees that handler.
+    nucleus.release_thread_fault(usize::from(thread_id.index));
     nucleus
         .pools
         .threads

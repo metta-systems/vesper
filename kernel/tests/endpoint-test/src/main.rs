@@ -49,7 +49,7 @@ use {
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::{Component, ttbr},
         keys::{SlotCursor, boot_key},
-        loader::{UserStack, verify_component},
+        loader::{UserStack, verify_component, write_init},
         paging::{ADDR_MASK, PAGE, find_leaf, image_table_count, read_leaf},
         threads,
     },
@@ -121,18 +121,6 @@ fn stack(
         );
     }
     stack
-}
-
-/// Write `value` into the builder-owned page at `paddr` (an init page).
-fn write_init<T>(paddr: u64, value: T) {
-    // SAFETY: `paddr` names a freshly retyped, accounted Frame the builder
-    // owns; the component does not run until after this write.
-    unsafe {
-        PhysAddr::new(paddr)
-            .user_to_kernel()
-            .as_mut_ptr::<T>()
-            .write_volatile(value);
-    }
 }
 
 /// Bootstrap grant of a Notification into `component`'s table at `slot`.

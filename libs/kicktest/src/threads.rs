@@ -26,6 +26,7 @@ pub fn spawn(
                 saved: SavedContext::el1t(entry, stack_top),
             },
             invocation_stack: InvocationStack::new(),
+            fault: None,
         })
         .expect("no fixture Thread slot");
     assert!(
@@ -54,6 +55,7 @@ pub fn spawn_el0(
                 saved: SavedContext::el0(entry, stack_top, argument),
             },
             invocation_stack: InvocationStack::new(),
+            fault: None,
         })
         .expect("no fixture Thread slot");
     assert!(

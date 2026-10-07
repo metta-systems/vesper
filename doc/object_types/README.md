@@ -105,5 +105,7 @@ installs `TTBR0_EL1` only after object guards and the kernel lock are
 released, then returns through `ERET` on the single per-core kernel stack.
 Threads run either as trusted `EL1t` on `SP_EL0` (the test builders) or
 unprivileged at EL0; both enter the kernel through the same SVC path. A
-non-SVC exception from EL0 (abort, undefined instruction) still halts the
-kernel: fault delivery is not designed.
+non-SVC exception from EL0 is a fault, delivered to the faulting
+`AddressSpace`'s fault handler on the faulting Thread (see
+[Thread: fault delivery](core/thread.md#fault-delivery)); a fault in trusted
+`EL1t` code halts the kernel.

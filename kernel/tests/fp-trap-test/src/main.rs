@@ -9,13 +9,16 @@
 //! FP/SIMD instructions trap to EL1 from EL1 and EL0. This kernel executes one
 //! FP/SIMD instruction (see `fp-trap-protocol`) twice:
 //!
-//! - in the trusted `EL1t` boot Thread;
-//! - in the EL0 `fp-probe` component, in its own `AddressSpace`.
+//! - in the trusted `EL1t` boot Thread, where faults halt the kernel, so the
+//!   nucleus is built with its test-only `fp_trap_test` hook that hands the
+//!   syndrome back instead;
+//! - in the EL0 `fp-probe` component, in its own `AddressSpace`, where the
+//!   trap is delivered to the component's own fault handler (installed at
+//!   `KeySlot::FAULT_HANDLER`), which records the syndrome and skips the
+//!   instruction.
 //!
 //! Each must trap with `ESR_EL1.EC` 0x07 — an execution fault, not an
-//! Invocation error and never an automatic enable. The nucleus is built with
-//! its test-only `fp_trap_test` hook, which hands the syndrome back to the
-//! probe instead of halting; real fault delivery is the open D1 decision.
+//! Invocation error and never an automatic enable.
 //!
 //! Runs on the real Kickstart boot path; in-guest assertions and the QEMU
 //! semihosting exit status are the result (`just test-fp-trap`).
@@ -27,16 +30,18 @@ mod components {
 
 use {
     aarch64_cpu::registers::{Readable, TTBR0_EL1},
-    fp_trap_protocol::{TRAPPED_BIT, probe, trapped},
+    fp_trap_protocol::{INIT_VA, ProbeInit, STACK_REGION, TRAPPED_BIT, probe, trapped},
     kickstart::{
-        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory},
+        bootstrap::{
+            BOOT_TABLE_SIZE_BITS, PoolCapacities, bootstrap_nucleus, retained_init_memory,
+        },
         kickstart_init_el2,
     },
     libkicktest::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::ttbr,
         keys::{SlotCursor, boot_key},
-        loader::verify_component,
+        loader::{verify_component, write_init},
         paging::{PAGE, find_leaf, image_table_count},
         threads,
     },
@@ -47,16 +52,16 @@ use {
     libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::KeyEntry,
-        objects::{KeyTable, Notification},
+        objects::{KeyTable, Notification, arch_objects::AddressSpaceObject},
     },
 };
 
 const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 const PROBE_GUARD: u32 = 0x0F_9701;
-/// The probe's stack span, clear of its image at the link base.
-const STACK_REGION: u64 = 0x3000_0000;
-/// Pages in the probe's stack (it also gets a guard page on both sides).
+/// Pages in each probe stack (each also gets a guard page on both sides).
 const STACK_PAGES: u32 = 4;
+/// Headroom the fault handler's Invocation requires below its SP.
+const MINIMUM_HEADROOM: u64 = 0x400;
 /// Fixture boot-table slots start clear of the well-known bootstrap slots.
 const FIRST_FIXTURE_SLOT: u32 = 64;
 /// Where the probe finds its Notification key.
@@ -93,8 +98,8 @@ pub fn run() -> ! {
         notifications: 1,
         event_counts: 0,
         // builder: root/L1/L2 and image L3s; probe: root/L1/L2, image span,
-        // stack region
-        page_tables: 3 + image_tables + 5,
+        // stack region, init page
+        page_tables: 3 + image_tables + 6,
         asid_pools: 1,
     });
     let (nucleus, keytable_addr, builder_as) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
@@ -140,13 +145,17 @@ pub fn run() -> ! {
     );
     let probe_ttbr = ttbr(nucleus, probe_component.address_space);
     verify_component(probe_ttbr, &components::PROBE);
+    // The probe's main stack and its fault handler's stack, each guarded.
     let mut stacks = builder.stack_region(&probe_component, STACK_REGION, &mut slots);
-    let stack = builder.user_stack(&mut stacks, STACK_PAGES, &mut slots);
-    for guard in [stack.bottom - PAGE, stack.top] {
-        assert!(
-            find_leaf(probe_ttbr, guard).is_none(),
-            "stack guard page at {guard:#x} must be unmapped"
-        );
+    let main_stack = builder.user_stack(&mut stacks, STACK_PAGES, &mut slots);
+    let handler_stack = builder.user_stack(&mut stacks, STACK_PAGES, &mut slots);
+    for stack in [main_stack, handler_stack] {
+        for guard in [stack.bottom - PAGE, stack.top] {
+            assert!(
+                find_leaf(probe_ttbr, guard).is_none(),
+                "stack guard page at {guard:#x} must be unmapped"
+            );
+        }
     }
 
     let result_notification = untyped
@@ -171,12 +180,43 @@ pub fn run() -> ! {
             probe_component.guard,
         )
         .unwrap_or_else(|failure| panic!("Notification grant failed: {:?}", failure.error.code()));
-    threads::spawn_el0(
+    let init_page = builder.private_pages(
+        probe_component.address_space_key,
+        probe_component.l2,
+        INIT_VA,
+        1,
+        &mut slots,
+    );
+    write_init(
+        init_page,
+        ProbeInit {
+            result: probe_key.to_wire(),
+            guard: u64::from(PROBE_GUARD),
+            size_bits: u64::from(BOOT_TABLE_SIZE_BITS),
+        },
+    );
+    // The probe's own fault handler, at the well-known slot of its table.
+    AddressSpaceKey::from_key(probe_component.address_space_key)
+        .create_invocation(
+            components::PROBE
+                .export("fault_entry")
+                .expect("fp-probe exports its fault handler"),
+            &probe_component.table(),
+            KeySlot::FAULT_HANDLER,
+            handler_stack.bottom,
+            handler_stack.top,
+            MINIMUM_HEADROOM,
+        )
+        .unwrap_or_else(|error| {
+            panic!("fault handler CreateInvocation failed: {:?}", error.code())
+        });
+
+    let probe_thread = threads::spawn_el0(
         nucleus,
         probe_component.address_space,
         components::PROBE.entry.expect("fp-probe has an entry"),
-        stack.top,
-        probe_key.to_wire(),
+        main_stack.top,
+        0,
     );
     let bits = NotificationKey::from_key(result_notification)
         .wait(NotificationKey::WAIT_INFINITE)
@@ -185,7 +225,25 @@ pub fn run() -> ! {
         bits, TRAPPED_BIT,
         "an FP/SIMD instruction at EL0 must trap as an FP/SIMD access"
     );
-    semi::println!("FP/SIMD instruction trapped at EL0");
+    // The handler skipped the instruction and Returned: nothing is left of
+    // the fault, and nothing went unhandled.
+    let thread = nucleus
+        .pools
+        .threads
+        .get_live(usize::from(probe_thread.index))
+        .expect("probe Thread missing");
+    assert_eq!(thread.fault, None, "the handled fault must be released");
+    assert_eq!(thread.address_space, probe_component.address_space);
+    assert_eq!(thread.invocation_stack.len(), 0);
+    let space = nucleus
+        .pools
+        .arch
+        .address_spaces
+        .get_live(usize::from(probe_component.address_space.index))
+        .expect("probe AddressSpace missing");
+    assert!(!space.fault_handler_busy());
+    assert_eq!(space.unhandled_faults(), 0);
+    semi::println!("FP/SIMD instruction trapped at EL0 and was handled by its component");
 
     semi::println!("FP/SIMD trapping at EL1t and EL0 passed");
     cfg_if::cfg_if! {

@@ -39,6 +39,25 @@ pub enum ExecutionContext {
     /// Currently executing, or a fixture thread with no execution context:
     /// no saved state to restore.
     Running,
+    /// Stopped by an unhandled fault (or a handler's terminate action) and
+    /// never runnable again; `saved` is the faulting state, kept for
+    /// inspection until `Thread.Retire`.
+    Faulted { saved: SavedContext },
+}
+
+/// A fault being handled on this Thread: the one fault level a Thread has.
+///
+/// Delivery pushes an ordinary continuation for the handler Call; `depth` is
+/// the invocation-stack length with that continuation on top, so the Return
+/// that pops it resumes from `frame` instead of the continuation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThreadFault {
+    /// The complete state of the faulting instruction.
+    pub frame: SavedContext,
+    /// The `AddressSpace` whose handler took the fault (and is busy).
+    pub address_space: ObjectId,
+    /// Stack length while the fault continuation is on top.
+    pub depth: usize,
 }
 
 /// Kernel-owned continuation captured at a successful PPC Call.
@@ -201,6 +220,8 @@ pub struct Thread {
     /// Inline bounded PPC continuations: `commit_call` pushes and
     /// `commit_return` pops here, both through dispatched Call/Return.
     pub invocation_stack: InvocationStack,
+    /// The fault being handled, if any (one level per Thread).
+    pub fault: Option<ThreadFault>,
 }
 
 // The record and array sizes are part of the storage/accounting contract.
@@ -265,6 +286,7 @@ mod tests {
             address_space: address_space(),
             context: ExecutionContext::NotStarted { saved: INITIAL },
             invocation_stack: super::InvocationStack::new(),
+            fault: None,
         };
         let ExecutionContext::NotStarted { saved } = thread.context else {
             panic!("new Thread has no initial execution context")
@@ -293,6 +315,7 @@ mod tests {
                 record,
             },
             invocation_stack: super::InvocationStack::new(),
+            fault: None,
         };
 
         // Reuse every byte of the transient frame for another execution context.
@@ -385,6 +408,7 @@ mod tests {
                     address_space: address_space(),
                     context,
                     invocation_stack: super::InvocationStack::new(),
+                    fault: None,
                 })
                 .expect("type-derived pool backing lost capacity")
                 .0;
@@ -396,6 +420,7 @@ mod tests {
                 address_space: address_space(),
                 context: ExecutionContext::Running,
                 invocation_stack: super::InvocationStack::new(),
+                fault: None,
             })
             .is_none()
         );
@@ -411,6 +436,7 @@ mod tests {
                 address_space: address_space(),
                 context: ExecutionContext::NotStarted { saved: initial },
                 invocation_stack: super::InvocationStack::new(),
+                fault: None,
             })
             .unwrap();
         assert_eq!(replacement.index, identities[0].index);

@@ -359,6 +359,7 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
             address_space: boot_as_id,
             context: ExecutionContext::Running,
             invocation_stack: InvocationStack::new(),
+            fault: None,
         })
         .expect("no boot Thread slot")
         .0;

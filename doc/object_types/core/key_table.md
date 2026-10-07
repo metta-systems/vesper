@@ -65,6 +65,7 @@ reserved for table administration.
 | 5 | Boot Untyped |
 | 14 | Boot ASID pool |
 | 15 | Debug console |
+| 16 | `KeySlot::FAULT_HANDLER`: this `AddressSpace`'s fault handler, an `Invocation` the kernel Calls on a faulting Thread ([fault delivery](thread.md#fault-delivery)); empty means faults here are unhandled |
 
 ## Kernel-level implementation details
 

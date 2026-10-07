@@ -368,6 +368,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
                     address_space: second_as,
                     context: crate::objects::ExecutionContext::Running,
                     invocation_stack: crate::objects::InvocationStack::new(),
+                    fault: None,
                 })
                 .expect("second thread allocation failed");
             nucleus.current_thread = Some(1);

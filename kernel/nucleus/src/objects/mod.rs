@@ -6,6 +6,7 @@ pub mod completion;
 pub mod debug_console;
 pub mod domain;
 pub mod event_count;
+pub mod fault;
 pub mod invocation;
 pub mod key_table;
 pub mod notification;
@@ -30,5 +31,5 @@ pub use {
     nucleus_object::NucleusObject,
     object_pool::ObjectPool,
     sched::Scheduler,
-    thread::{ExecutionContext, InvocationContinuation, InvocationStack, Thread},
+    thread::{ExecutionContext, InvocationContinuation, InvocationStack, Thread, ThreadFault},
 };

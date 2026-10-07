@@ -35,6 +35,10 @@ pub struct AArch64AddressSpace {
     /// `AddressSpace.Retire` releases a
     /// bound ASID back to its originating pool.
     pub asid: Option<u16>,
+    /// The fault handler is running a delivered fault.
+    fault_handler_busy: bool,
+    /// Faults here that no handler took.
+    unhandled_faults: u64,
 }
 
 impl AArch64AddressSpace {
@@ -43,6 +47,8 @@ impl AArch64AddressSpace {
             keytable,
             translation_root: None,
             asid: None,
+            fault_handler_busy: false,
+            unhandled_faults: 0,
         }
     }
 }
@@ -71,5 +77,21 @@ impl crate::objects::arch_objects::AddressSpaceObject for AArch64AddressSpace {
 
     fn set_asid(&mut self, asid: Option<u16>) {
         self.asid = asid;
+    }
+
+    fn fault_handler_busy(&self) -> bool {
+        self.fault_handler_busy
+    }
+
+    fn set_fault_handler_busy(&mut self, busy: bool) {
+        self.fault_handler_busy = busy;
+    }
+
+    fn unhandled_faults(&self) -> u64 {
+        self.unhandled_faults
+    }
+
+    fn count_unhandled_fault(&mut self) {
+        self.unhandled_faults = self.unhandled_faults.saturating_add(1);
     }
 }
