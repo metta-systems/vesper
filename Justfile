@@ -32,6 +32,8 @@ kicktest_elf    := justfile_directory() / 'target' / target / 'release/kicktest'
 kicktest_bin    := justfile_directory() / 'target/kicktest.bin'
 endpoint_test_elf := justfile_directory() / 'target' / target / 'release/endpoint-test'
 endpoint_test_bin := justfile_directory() / 'target/endpoint-test.bin'
+fp_trap_test_elf := justfile_directory() / 'target' / target / 'release/fp-trap-test'
+fp_trap_test_bin := justfile_directory() / 'target/fp-trap-test.bin'
 chainboot_elf   := justfile_directory() / 'target' / target / 'release/chainboot'
 chainboot_bin   := justfile_directory() / 'target/chainboot.bin'
 
@@ -85,13 +87,19 @@ build-kicktest board='rpi3' features='qemu,debug_kernel': (_cross-build 'nucleus
 
 # Build the EL0 userspace components (linked with the userspace runtime's user.ld)
 [group("emu")]
-build-components board='rpi3' features='qemu': (_cross-build 'hello' board user_link features) (_cross-build 'endpoint-client' board user_link features) (_cross-build 'endpoint-component' board user_link features) (_cross-build 'endpoint-server' board user_link features)
+build-components board='rpi3' features='qemu': (_cross-build 'hello' board user_link features) (_cross-build 'endpoint-client' board user_link features) (_cross-build 'endpoint-component' board user_link features) (_cross-build 'endpoint-server' board user_link features) (_cross-build 'fp-probe' board user_link features)
 
 # Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
 [group("emu")]
 build-endpoint-test board='rpi3' features='qemu': (_cross-build 'nucleus' board nucleus_link features) (build-components board features) (_cross-build 'endpoint-test' board init_link features)
     {{ objcopy }} --strip-all -O binary "{{ endpoint_test_elf }}" "{{ endpoint_test_bin }}"
     @echo "{{ok_label}} endpoint-test built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
+
+# Build the fp-trap-test negative e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook)
+[group("emu")]
+build-fp-trap-test board='rpi3': (_cross-build 'nucleus' board nucleus_link 'qemu,fp_trap_test') (build-components board 'qemu') (_cross-build 'fp-trap-test' board init_link 'qemu,fp_trap_test')
+    {{ objcopy }} --strip-all -O binary "{{ fp_trap_test_elf }}" "{{ fp_trap_test_bin }}"
+    @echo "{{ok_label}} fp-trap-test built for {{ board }}"
 
 # === Chainboot ===
 
@@ -244,7 +252,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("emu")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability-boot test-endpoint
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability-boot test-endpoint test-fp-trap
 
 alias t := test
 
@@ -306,6 +314,16 @@ _rebuild-endpoint-test-kernel:
 test-endpoint: _rebuild-endpoint-test-kernel
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ endpoint_test_bin }}"
 
+# Rebuild fp-trap-test unconditionally (nested for the same reason as above).
+[private]
+_rebuild-fp-trap-test-kernel:
+    {{ just_executable() }} build-fp-trap-test rpi3
+
+# Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t and at EL0; in-guest assertions and QEMU exit status are the result
+[group("emu")]
+test-fp-trap: _rebuild-fp-trap-test-kernel
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ fp_trap_test_bin }}"
+
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 [group("emu")]
 test-chainboot:
@@ -351,7 +369,7 @@ _clippy-cross features='' board='rpi3':
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') (build 'rpi3' 'qemu,debug_kernel') (_clippy-cross 'debug_kernel' 'rpi3') (_clippy-cross 'qemu,debug_kernel' 'rpi3') clippy-object-host
+clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_clippy-cross '' 'rpi3') (_clippy-cross '' 'rpi4') (_clippy-cross 'noserial' 'rpi3') (_clippy-cross 'qemu' 'rpi3') (_clippy-cross 'noserial,qemu' 'rpi3') (_clippy-cross 'jtag' 'rpi3') (_clippy-cross 'noserial,jtag' 'rpi3') (build 'rpi3' 'qemu,debug_kernel') (_clippy-cross 'debug_kernel' 'rpi3') (_clippy-cross 'qemu,debug_kernel' 'rpi3') (_clippy-cross 'qemu,fp_trap_test' 'rpi3') clippy-object-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
@@ -413,9 +431,33 @@ clean:
 fmt-check:
     cargo +nightly fmt -- --check
 
+# Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
+# FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
+[group("maintenance")]
+audit-fp-simd: (build-kicktest 'rpi3' 'qemu,debug_kernel') (build-endpoint-test 'rpi3' 'qemu')
+    #!/usr/bin/env bash
+    set -euo pipefail
+    artifacts="{{ justfile_directory() }}/target/{{ target }}/release"
+    # An instruction line whose mnemonic is an FP one (f…), or whose operands name an
+    # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
+    fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
+    failed=0
+    for image in nucleus kickstart kicktest endpoint-test hello endpoint-client endpoint-component endpoint-server; do
+        # Symbol names in <…> are not operands.
+        found=$(rust-objdump -d --no-show-raw-insn "${artifacts}/${image}" | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
+        if [ -n "${found}" ]; then
+            echo "❌ ${image} contains FP/SIMD instructions:"
+            echo "${found}"
+            failed=1
+        else
+            echo "{{ ok_label }} ${image}: integer-only"
+        fi
+    done
+    exit "${failed}"
+
 # Run lint tasks
 [group("maintenance")]
-lint: fmt-check clippy _clippy-coc
+lint: fmt-check clippy _clippy-coc audit-fp-simd
 
 # Run pre-push local checks
 [group("ci")]

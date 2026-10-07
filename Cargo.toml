@@ -4,6 +4,7 @@ members = [
   "kernel/kickstart",
   "kernel/tests/kicktest",
   "kernel/tests/endpoint-test",
+  "kernel/tests/fp-trap-test",
   "bin/chainboot",
   "bin/chainofcommand",
   # Libraries
@@ -39,6 +40,8 @@ members = [
   "userspace/tests/endpoint/endpoint",
   "userspace/tests/endpoint/protocol",
   "userspace/tests/endpoint/server",
+  "userspace/tests/fp-trap/probe",
+  "userspace/tests/fp-trap/protocol",
   "userspace/tests/hello",
 ]
 resolver = "3"
@@ -58,7 +61,7 @@ version = "0.0.1"
 #========
 # target
 #========
-aarch64-cpu = { version = "11.2" }
+aarch64-cpu = { version = "11.2", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
 arbitrary-int = { version = "2.1", default-features = false }
 bitbybit  = { version = "2.0" }
 # bitflags = { version = "2.10" }

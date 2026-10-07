@@ -20,6 +20,7 @@ debug_kernel = ["kickstart/debug_kernel", "libobject/debug_kernel", "nucleus/deb
 qemu = ["kickstart/qemu", "nucleus/qemu"]
 
 [dependencies]
+aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
 kickstart = { path = "../../kernel/kickstart" }
 libaddress = { workspace = true }

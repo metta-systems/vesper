@@ -153,6 +153,10 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
     // syscall: its context would re-execute the faulting instruction with
     // the "syscall result" written into x0..x2, looping forever. Route it
     // to the default handler, which reports the exception and halts.
+    #[cfg(feature = "fp_trap_test")]
+    if absorb_fp_simd_trap(e) {
+        return;
+    }
     if !is_aarch64_svc() {
         default_exception_handler(e);
     }
@@ -204,6 +208,10 @@ extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
     // See `current_elx_synchronous`: only an SVC is a capability invocation.
+    #[cfg(feature = "fp_trap_test")]
+    if absorb_fp_simd_trap(e) {
+        return;
+    }
     if !is_aarch64_svc() {
         default_exception_handler(e);
     }
@@ -237,6 +245,30 @@ extern "C" fn lower_aarch32_irq(e: &mut ExceptionContext) {
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
     default_exception_handler(e);
+}
+
+/// Test-only stand-in for fault delivery (`fp-trap-test`): absorb an FP/SIMD
+/// access trap (`ESR_EL1.EC` 0x07) by handing its syndrome back to the
+/// faulting code in `x0` and resuming after the trapping instruction, so the
+/// probe can check the classification itself. Real fault delivery is the open
+/// D1 decision; production builds halt on this trap like any other fault.
+#[cfg(feature = "fp_trap_test")]
+fn absorb_fp_simd_trap(e: &mut ExceptionContext) -> bool {
+    use aarch64_cpu::registers::{ESR_EL1, Readable};
+
+    if !ESR_EL1.matches_all(ESR_EL1::EC::TrappedFP) {
+        return false;
+    }
+    semi::println!(
+        "🧪 FP/SIMD access trapped from {:?} at {:#x}, ESR {:#x}",
+        e.origin,
+        e.elr_el1,
+        ESR_EL1.get()
+    );
+    e.gpr[0] = ESR_EL1.get();
+    // Every A64 instruction is four bytes; the trap is taken before it executes.
+    e.elr_el1 += 4;
+    true
 }
 
 /// Whether the synchronous exception being handled is an SVC instruction

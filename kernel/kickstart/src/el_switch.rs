@@ -5,11 +5,38 @@ use {
     aarch64_cpu::{
         asm::{self, barrier},
         registers::{
-            ELR_EL2, HCR_EL2, MAIR_EL1, ReadWriteable, SCTLR_EL1, SP_EL0, SP_EL1, SPSR_EL1,
-            SPSR_EL2, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
+            CPACR_EL1, CPTR_EL2, ELR_EL2, HCR_EL2, MAIR_EL1, ReadWriteable, SCTLR_EL1, SP_EL0,
+            SP_EL1, SPSR_EL1, SPSR_EL2, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
         },
     },
 };
+
+/// Establish the integer-only FP/SIMD policy before anything runs at EL1 or
+/// EL0: architectural reset leaves these controls UNKNOWN, so they are set
+/// explicitly. Any FP/SIMD instruction (and, with SVE, any SVE instruction)
+/// at EL1 or EL0 then traps to EL1 with `ESR_EL1.EC` 0x07 (0x19 for SVE) — an
+/// execution fault, never an automatic enable.
+fn configure_fp_simd_traps() {
+    // EL2 traps nothing, so FP/SIMD trapping is governed by `CPACR_EL1` alone
+    // and traps are taken to EL1, where the nucleus handles them; nothing
+    // handles a trap taken to EL2. `HCR_EL2.E2H` is 0 (written above), which
+    // selects this field layout. `TZ` and `TSM` are RES1 on the supported
+    // ARMv8.0 cores (no SVE/SME), so they are written as 1; on a core with
+    // SVE/SME they would route those traps to EL2 — selecting them by the
+    // core's features belongs to runtime Arm version detection.
+    CPTR_EL2.write(
+        CPTR_EL2::TCPAC::NoTrap
+            + CPTR_EL2::TTA::NoTrap
+            + CPTR_EL2::RES1_13::SET
+            + CPTR_EL2::TSM::Trap
+            + CPTR_EL2::TFP::NoTrap
+            + CPTR_EL2::RES1_9::SET
+            + CPTR_EL2::TZ::Trap
+            + CPTR_EL2::RES1_7_0::SET,
+    );
+    CPACR_EL1.write(CPACR_EL1::FPEN::TrapEl0El1 + CPACR_EL1::ZEN::TrapEl0El1);
+    barrier::isb(barrier::SY);
+}
 
 /// Configure and enable the MMU, set `VBAR_EL1`, then drop to EL1
 ///
@@ -59,6 +86,8 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     // @todo Explain the SWIO bit (SWIO hardwired on Pi3)
     HCR_EL2.write(HCR_EL2::RW::EL1IsAarch64 + HCR_EL2::SWIO::SET);
     // @todo disable VM bit to prevent stage 2 MMU translations
+
+    configure_fp_simd_traps();
 
     // ═══════════════════════════════════════════════════════════
     // STEP 2: Set up VBAR_EL1 (Exception Vector Base Address)

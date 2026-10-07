@@ -29,7 +29,23 @@ pub mod loader;
 pub mod paging;
 pub mod threads;
 
-use {core::panic::PanicInfo, libqemu::semihosting as semi};
+use {
+    aarch64_cpu::registers::{CPACR_EL1, Readable},
+    core::panic::PanicInfo,
+    libqemu::semihosting as semi,
+};
+
+/// Check the effective FP/SIMD policy before any component runs: Kickstart
+/// must have left `CPACR_EL1` trapping FP/SIMD (and SVE) at both EL1 and EL0.
+/// (`CPTR_EL2` is not readable from EL1; that FP/SIMD traps reach EL1 is shown
+/// by `fp-trap-test`.)
+pub fn assert_fp_simd_trapped() {
+    assert!(
+        CPACR_EL1.matches_all(CPACR_EL1::FPEN::TrapEl0El1 + CPACR_EL1::ZEN::TrapEl0El1),
+        "FP/SIMD must trap at EL1 and EL0 (CPACR_EL1 = {:#x})",
+        CPACR_EL1.get()
+    );
+}
 
 #[panic_handler]
 // Without `qemu`, semihosting printing compiles away and `info` is unused.

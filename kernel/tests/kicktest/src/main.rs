@@ -321,6 +321,7 @@ fn assert_source_selected(
 // DTB should be available to this code through BOOT_INFO records.
 pub fn kicktest_run() -> ! {
     semi::println!("kicktest_run: enabled MMU and dropped to EL1");
+    libkicktest::assert_fp_simd_trapped();
     print_my_sp();
     #[cfg(feature = "debug_kernel")]
     let (boot_execution_sp, shared_trap_sp) = {

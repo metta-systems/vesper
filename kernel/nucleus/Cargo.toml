@@ -20,6 +20,8 @@ maintenance = { status = "experimental" }
 default = []
 # Opt in to debug-only kernel capabilities; never enable in production kernels.
 debug_kernel = []
+# Test-only: absorb FP/SIMD access traps for `fp-trap-test` (see `absorb_fp_simd_trap`); never enable in production kernels.
+fp_trap_test = []
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["libmachine/jtag"]

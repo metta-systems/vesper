@@ -1,0 +1,21 @@
+[package]
+name = "fp-trap-protocol"
+
+description = "The FP/SIMD trap probe shared by fp-trap-test's EL1t boot Thread and its EL0 component."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+tock-registers = { workspace = true }
+
+[lints]
+workspace = true

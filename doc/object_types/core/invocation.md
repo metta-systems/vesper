@@ -138,6 +138,12 @@ migrated. `Thread.Return` ignores `x4..x7`.
   mapping nor that it is executable.
 - Calls work the same from `EL1t` and EL0: the target runs at the caller's
   EL. A fault in an EL0 target still halts the kernel (no fault delivery).
+- Execution is integer-only: there is no FP/SIMD state in a continuation.
+  Kickstart sets `CPTR_EL2`/`CPACR_EL1` so any FP/SIMD instruction at EL1 or
+  EL0 traps to EL1 (`ESR_EL1.EC` 0x07) as an execution fault, which currently
+  halts the kernel like any other fault. Exercised by `kernel/tests/fp-trap-test`;
+  `just audit-fp-simd` checks that the linked images contain no FP/SIMD
+  instructions.
 - `libobject::export` keeps one Return key per image: one PPC-target
   component per image (each component is now its own image).
 
@@ -145,8 +151,7 @@ migrated. `Thread.Return` ignores `x4..x7`.
 
 - Return fault delivery (underflow, retired source) — D1/D7; currently an
   interim kernel panic with nothing popped.
-- Effective FP/SIMD trapping for the integer-only slice; TLS, debug and other
-  architectural-state isolation.
+- TLS, debug and other architectural-state isolation.
 - Invocation distribution: CopyDerive restrictions, rights attenuation,
   badges — D4.
 - Pointer and shared-memory arguments; capability transfer.
