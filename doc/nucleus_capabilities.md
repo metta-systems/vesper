@@ -206,7 +206,7 @@ Kernel and userspace changes to IDs, layouts, and meaning are coordinated migrat
 
 ### Object operation baseline
 
-The following preserves existing operation declarations as a starting vocabulary. Except for console write, it is not a claim of end-to-end support. Entries labeled deferred or unresolved require contract decisions before activation; do not silently reuse their numbers.
+The following is the operation-ID vocabulary per family. It records numbering and contract qualifications, not implementation status: per-kind status is tracked in the [object-types catalogue](object_types/README.md). Entries labeled deferred or unresolved require contract decisions before activation; do not silently reuse their numbers.
 
 | Family | Existing operation IDs / intended vocabulary | Contract qualification |
 |---|---|---|

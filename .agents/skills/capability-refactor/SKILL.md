@@ -17,6 +17,14 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 - Never renumber silently. For an approved regrouping, record the new core and/or architecture mapping in `doc/nucleus_capabilities.md` first, reconcile the implementation plan, then migrate the shared catalogue, dispatch, errors, literal ABI tests, and object-type documentation together. Do not preserve prior IDs, aliases, or reserved-slot assumptions as backwards compatibility unless the maintainer explicitly selects that policy.
 - Treat disagreement between the canonical contract, `CoreType`/`ArchType`, and implementation as a discrepancy to resolve explicitly. Existing numeric mappings remain authoritative only until an approved contract change replaces them; do not infer that they are immutable.
 
+## Standing practices
+
+These apply to every slice and are never "done"; they are not plan checkboxes.
+
+- **One design authority.** `doc/nucleus_capabilities.md` is the single consolidated reference. Record the maintainer's amendments there, as dated maintainer decisions, with matching updates to the analysis document and plan. Never revive the retired `kernel/nucleus/design.md`, and never start a second design document that competes with the contract.
+- **Name each slice's prerequisite decisions.** Before implementing a slice, identify which D1–D9 decisions it depends on and confirm they are settled in the contract. Leave unrelated decisions explicitly open, parked in `doc/followup.md`, rather than blocking all progress on them or guessing their answers.
+- **Keep sketches and unimplemented operations labeled.** Research examples, excluded sketches and unimplemented operations must be clearly labeled as such in code and documents. When the corresponding code is reconciled, remove the diagrams and comments that now conflict with it and look authoritative, subject to "Preserve design-intent comments" below.
+
 ## Keep object-types documentation current
 
 - `doc/object_types/` is the per-kind user-facing reference and must be kept up to date as part of every capability refactor. When a refactor invalidates a per-kind document (kind split, rename, renumbering, operation/status change), replace the no-longer-valid content with new data; do not layer amendments, dated notes, or "formerly…" asides on top of stale documentation.
