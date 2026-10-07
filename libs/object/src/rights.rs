@@ -9,13 +9,12 @@ impl Rights {
     pub const RECV: u8 = 0x1;
     pub const CALL: u8 = 0x4;
     pub const GRANT: u8 = 0x8;
-    /// Execute permission for frame mappings (selected 2026-09-15): a
-    /// `Frame.Map` requested with `EXECUTE` — within the frame capability's
-    /// rights — clears PXN|UXN for the installed descriptor. Interim AP
-    /// semantics: with `WRITE` the mapping is kernel-privilege RW+X (EL0
-    /// denied — EL1 cannot execute EL0-writable pages); without `WRITE` it is
-    /// read-only executable at EL0 and EL1. Splitting user/privileged
-    /// execute is future work with EL0 entry (D6).
+    /// Execute permission for frame mappings: a `Frame.Map` requested with
+    /// `EXECUTE` — within the frame capability's rights — makes the installed
+    /// descriptor executable at exactly one exception level. With `WRITE` the
+    /// mapping is kernel-privilege RW+X, executable at EL1 only (EL0 denied,
+    /// UXN — EL1 cannot execute EL0-writable pages); without `WRITE` it is
+    /// read-only and executable at EL0 only (PXN).
     pub const EXECUTE: u8 = 0x10;
 
     /// Thread lifecycle control: a `Thread.Retire`

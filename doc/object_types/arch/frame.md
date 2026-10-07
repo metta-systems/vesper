@@ -34,10 +34,17 @@ distinct PTEs.
   aligned to the frame size; the walk requires every intermediate table to be
   present (`MissingIntermediate` with the faulting address otherwise).
 - **Permission ceiling**: the requested mask must be a subset of the frame
-  capability's rights. `EXECUTE` (within the ceiling) clears PXN|UXN; without
-  it every mapping stays execute-never. Interim AP semantics: `EXECUTE` +
-  `WRITE` maps kernel-privilege RW+X (AP=00, EL0 denied — W^X preserved);
-  `EXECUTE` without `WRITE` maps read-only executable at EL0 and EL1.
+  capability's rights. Without `EXECUTE` every mapping is execute-never
+  (PXN|UXN). With it the mapping is executable at exactly one level:
+
+  | Requested | AP | PXN | UXN | Executable at |
+  |---|---|---|---|---|
+  | `READ` | `11` (EL0+EL1 read-only) | 1 | 1 | — |
+  | `READ`+`WRITE` | `01` (EL0+EL1 read/write) | 1 | 1 | — |
+  | `READ`+`EXECUTE` | `11` (EL0+EL1 read-only) | 1 | 0 | EL0 only |
+  | `READ`+`WRITE`+`EXECUTE` | `00` (EL1 read/write) | 0 | 1 | EL1 only |
+
+  W^X holds at both levels, and EL1 never executes a page EL0 can map.
 - **Alias policy**: the frame's physical extent must not overlap any live
   mapping in the target AddressSpace, whatever capability installed it
   (`PhysicalAlias` with the conflicting physical base otherwise). The check is

@@ -8,7 +8,7 @@
 use {
     crate::{
         keys::{SlotCursor, boot_key},
-        paging::{ADDR_MASK, LEAF_SPAN, PAGE, image_table_count, read_leaf},
+        paging::{ADDR_MASK, AP_MASK, LEAF_SPAN, PAGE, PXN, UXN, image_table_count, read_leaf},
     },
     kickstart::bootstrap::{BOOT_TABLE_GUARD, RetainedInitMemory},
     libaddress::PhysAddr,
@@ -411,9 +411,9 @@ pub fn verify_retained_image(retained: &RetainedInitMemory, roots: &[u64]) {
             assert_eq!(leaf & ADDR_MASK, paddr);
             assert_ne!(leaf & (1 << 11), 0);
             assert_eq!(
-                leaf & ((1 << 53) | (1 << 54) | (3 << 6)),
-                0,
-                "trusted RW+X image must execute at EL1, not grant EL0 RW+X"
+                leaf & (PXN | UXN | AP_MASK),
+                UXN,
+                "trusted RW+X image must execute at EL1 only: AP=00, PXN clear, UXN set"
             );
         }
     }

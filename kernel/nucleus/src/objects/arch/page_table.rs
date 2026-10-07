@@ -241,11 +241,12 @@ fn walk_to_leaf(root_paddr: u64, vaddr: u64, size_bits: u8) -> Result<u64, CapEr
 ///
 /// `vaddr` must be inside the supported virtual-address width and aligned to
 /// the frame size; the leaf slot must be vacant. Permissions: `writable`
-/// selects read/write versus read-only; `executable` (the `EXECUTE` right,
-/// selected 2026-09-15) clears the PXN|UXN execute-never bits. A writable
-/// executable mapping is kernel-privilege (AP=00, EL0 denied): EL1 cannot
-/// execute EL0-writable pages, and EL0 must not execute writable pages
-/// either (W^X). Without `EXECUTE` every mapping stays PXN|UXN.
+/// selects read/write versus read-only; `executable` (the `EXECUTE` right)
+/// makes the mapping executable at exactly one exception level. A writable
+/// executable mapping is kernel-privilege (AP=00, EL0 denied, UXN): EL1
+/// cannot execute EL0-writable pages, and EL0 must not execute writable pages
+/// either (W^X). A read-only executable mapping is EL0-executable only (AP=11,
+/// PXN). Without `EXECUTE` every mapping stays PXN|UXN.
 pub fn install_frame_pte(
     root_paddr: u64,
     vaddr: u64,
@@ -288,21 +289,19 @@ fn publish_descriptor_store() {
 
 /// Encode a TTBR0 leaf without accessing its backing table.
 fn frame_descriptor(frame_paddr: u64, leaf: u8, writable: bool, executable: bool) -> u64 {
-    let ap = match (writable, executable) {
-        // Kernel-privilege RW+X: EL1 cannot execute EL0-writable pages (the
-        // architectural user-writable execute-never rule), so a writable
-        // executable mapping denies EL0 (AP=00). This is the bootstrap
-        // caller's image case.
-        (true, true) => pte::AP_RW_EL1,
-        (true, false) => pte::AP_RW_USER,
-        // Read-only executable at EL0 and EL1 (AP=11): not EL0-writable, so
-        // the privileged fetch is not execute-never'd either.
-        (false, _) => pte::AP_RO_USER,
+    let (ap, execute_never) = match (writable, executable) {
+        // Kernel-privilege RW+X, executable at EL1 only: EL1 cannot execute
+        // EL0-writable pages (the architectural user-writable execute-never
+        // rule), so it denies EL0 data access (AP=00), and UXN keeps EL0 from
+        // fetching it — AP=00 alone does not stop an EL0 instruction fetch.
+        // This is the bootstrap caller's image case.
+        (true, true) => (pte::AP_RW_EL1, pte::UXN),
+        // Read-only, executable at EL0 only (AP=11, PXN): EL1 never executes
+        // code an EL0 component can map.
+        (false, true) => (pte::AP_RO_USER, pte::PXN),
+        (true, false) => (pte::AP_RW_USER, pte::PXN | pte::UXN),
+        (false, false) => (pte::AP_RO_USER, pte::PXN | pte::UXN),
     };
-    // Execute-never unless the mapping was requested with the `EXECUTE`
-    // right (selected 2026-09-15): one bit grants both privileged and
-    // unprivileged execute for now.
-    let execute_never = if executable { 0 } else { pte::PXN | pte::UXN };
     // Level 3 uses page descriptors (bit 1 set); levels 1–2 use block
     // descriptors (bit 1 clear).
     let descriptor_bit = if leaf == 3 { pte::DESCRIPTOR } else { 0 };

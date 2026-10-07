@@ -100,18 +100,20 @@ Every failure leaves the destination slot and all authority unchanged.
 - `Activate`, root `PageTable.Map`, `Frame.Map` and `ASIDPool.Assign` all
   require `MAP` on the `AddressSpace`: one permission for the mapping family.
 - An `AddressSpace` must map whatever its Threads execute and touch. The test
-  kernels map the retained image (the same physical pages, RW+X) into every
-  root, the low boot stack into the boot root, and party-private regions into
-  one root each; high direct-map execution stacks and the shared trap stack
-  are valid in every root.
+  kernels map the retained image (the same physical pages, RW+X at EL1 only)
+  into every fixture root, the low boot stack into the boot root, and
+  party-private regions into one root each; high direct-map execution stacks
+  and the shared trap stack are valid in every root.
 - seL4 on ARM has no distinct VSpace kind; Vesper's explicit `AddressSpace`
   holding root and ASID is deliberate.
 
 ## TODOs
 
 - An `AddressSpace` creation ABI.
-- Per-segment kernel-execute protection: EL0-executable pages are also
-  EL1-executable (PXN clear); PAN is not enabled.
+- PAN (EL1 data access to EL0 pages): EL1 can still read and write EL0
+  pages. The supported cores (ARMv8.0) lack FEAT_PAN; it is to be enabled
+  under runtime Arm version detection (see the implementation plan), and also
+  requires the EL1t boot Thread to stop using its EL0-accessible low stack.
 - Hardware-safe ASID reuse and partitioning the ASID space across pools — D6
   (the eventual home of `ASIDControl`).
 - Reclaiming table backing on retirement — D3.

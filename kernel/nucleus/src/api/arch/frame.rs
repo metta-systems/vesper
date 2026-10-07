@@ -9,9 +9,9 @@
 //!   populate an `AddressSpace` before its Thread can run; self-context mapping
 //!   is the intended ordinary path once syscall caller identity exists. The
 //!   requested rights must be a subset of the frame capability's rights
-//!   (permission ceiling); requesting `EXECUTE` (within the ceiling) clears
-//!   PXN|UXN for the descriptor, and without it every mapping stays
-//!   execute-never (selected 2026-09-15). The walk requires every
+//!   (permission ceiling); requesting `EXECUTE` (within the ceiling) makes
+//!   the mapping executable — at EL1 only with `WRITE`, at EL0 only without
+//!   it — and without it every mapping stays execute-never. The walk requires every
 //!   intermediate table to be present. The
 //!   alias policy is enforced ahead of the hardware transition: the frame's
 //!   physical extent must not overlap any live mapping in the target

@@ -49,7 +49,7 @@ use {
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::{Component, ttbr},
         keys::{SlotCursor, boot_key},
-        loader::UserStack,
+        loader::{UserStack, verify_component},
         paging::{ADDR_MASK, PAGE, find_leaf, image_table_count, read_leaf},
         threads,
     },
@@ -99,6 +99,7 @@ fn load(
     // The table archiving the image page capabilities gets its own guard,
     // derived from the component's.
     builder.load_component(&component, image, guard ^ 0x80_0000, slots);
+    verify_component(ttbr(nucleus, component.address_space), image);
     component
 }
 

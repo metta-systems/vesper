@@ -6,6 +6,15 @@ pub const PAGE: u64 = 4096;
 /// The span one L3 table covers.
 pub const LEAF_SPAN: u64 = 2 * 1024 * 1024;
 pub const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
+/// Descriptor AP[2:1]: `0b00` EL1 read/write, `0b01` EL0+EL1 read/write,
+/// `0b11` EL0+EL1 read-only.
+pub const AP_MASK: u64 = 0b11 << 6;
+pub const AP_RW_USER: u64 = 0b01 << 6;
+pub const AP_RO_USER: u64 = 0b11 << 6;
+/// Privileged (EL1) execute never.
+pub const PXN: u64 = 1 << 53;
+/// Unprivileged (EL0) execute never.
+pub const UXN: u64 = 1 << 54;
 
 /// Walk a retained root to the descriptor translating `vaddr`, without
 /// holding references across SVCs. Returns the level and descriptor of the

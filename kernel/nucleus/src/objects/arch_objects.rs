@@ -214,10 +214,10 @@ pub trait ArchObjects: Sized + 'static {
     /// Install the page/block descriptor for a frame mapping. `vaddr` must be
     /// inside the supported virtual-address width and aligned to the frame
     /// size; the leaf slot must be vacant. `writable` selects read/write
-    /// versus read-only; `executable` clears the execute-never bits (the
-    /// `EXECUTE` right, selected 2026-09-15 — without it every mapping stays
-    /// UXN|PXN). A writable executable mapping is kernel-privilege (EL0
-    /// denied): EL1 cannot execute EL0-writable pages.
+    /// versus read-only; `executable` (the `EXECUTE` right — without it every
+    /// mapping stays UXN|PXN) makes the mapping executable at one exception
+    /// level: a writable executable mapping at EL1 only (EL0 denied, UXN),
+    /// a read-only executable mapping at EL0 only (PXN).
     fn install_frame_pte(
         root_paddr: u64,
         vaddr: u64,

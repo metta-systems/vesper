@@ -11,7 +11,7 @@ use {
         builder::Builder,
         component::Component,
         keys::SlotCursor,
-        paging::{LEAF_SPAN, PAGE},
+        paging::{AP_MASK, AP_RO_USER, AP_RW_USER, LEAF_SPAN, PAGE, PXN, UXN, read_leaf},
     },
     kickstart::bootstrap::BOOT_TABLE_GUARD,
     libimage::{ComponentImage, PAGE_BYTES, Permissions},
@@ -27,6 +27,60 @@ fn segment_rights(permissions: Permissions) -> Rights {
         (true, false) => Rights(Rights::READ | Rights::WRITE),
         (false, false) => Rights(Rights::READ),
         (true, true) => panic!("a component segment may not be both writable and executable"),
+    }
+}
+
+/// The descriptor bits (AP, PXN, UXN) a segment's pages must carry: code is
+/// read-only and executable at EL0 only, never at EL1; data is never
+/// executable at either level.
+fn expected_descriptor_bits(permissions: Permissions) -> u64 {
+    match (permissions.writable, permissions.executable) {
+        (false, true) => AP_RO_USER | PXN,
+        (true, false) => AP_RW_USER | PXN | UXN,
+        (false, false) => AP_RO_USER | PXN | UXN,
+        (true, true) => panic!("a component segment may not be both writable and executable"),
+    }
+}
+
+/// Check every page `image` occupies in the `AddressSpace` with translation
+/// base `ttbr` carries its segment's EL0 permissions, and that none of them
+/// is executable at EL1.
+pub fn verify_component(ttbr: u64, image: &ComponentImage) {
+    let bss = image.bss.map(|bss| {
+        let data = Permissions {
+            readable: true,
+            writable: true,
+            executable: false,
+        };
+        (bss.virt_addr, bss.page_count() as u64, data)
+    });
+    let ranges = image
+        .segments
+        .iter()
+        .map(|segment| {
+            (
+                segment.meta.virt_addr,
+                segment.data.len() as u64 / PAGE,
+                segment.meta.permissions,
+            )
+        })
+        .chain(bss);
+    for (start, pages, permissions) in ranges {
+        let expected = expected_descriptor_bits(permissions);
+        for vaddr in (0..pages).map(|index| start + index * PAGE) {
+            let (level, leaf) = read_leaf(ttbr, vaddr);
+            assert_eq!(
+                level, 3,
+                "{} page {vaddr:#x} must be a page leaf",
+                image.name
+            );
+            assert_eq!(
+                leaf & (AP_MASK | PXN | UXN),
+                expected,
+                "{} page {vaddr:#x} has the wrong EL0/EL1 permissions",
+                image.name
+            );
+        }
     }
 }
 
