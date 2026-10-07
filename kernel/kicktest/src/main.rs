@@ -23,7 +23,6 @@ use {
     core::{
         arch::asm,
         mem::{align_of, size_of},
-        panic::PanicInfo,
         slice,
         sync::atomic::{AtomicU64, Ordering},
     },
@@ -38,6 +37,11 @@ use {
     libboot as boot,
     libcpu::endless_sleep,
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
+    libkicktest::{
+        builder::Builder,
+        keys::{SlotCursor, boot_key, boot_slot, table_slot},
+        threads,
+    },
     libobject::{
         ASIDPoolKey, CapError, EventCountKey, FrameKey, InconsistencyReason, InvalidKeyReason,
         InvalidStackReason, KeySlot, KeyTableKey, NotificationKey, ObjectType, PageTableKey,
@@ -73,38 +77,15 @@ fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, kicktest_run as *const u8 as u64)
 }
 
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    semi::println!("PANICKED: {info}");
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "qemu")] {
-            libqemu::semihosting::exit_failure()
-        } else {
-            endless_sleep()
-        }
-    }
-}
-
 /// The guard Kickstart picks for the tables the boot test carves at runtime
 /// (guarded key-space package, selected 2026-09-23): distinct from the boot
 /// table's guard so cross-table key confusion is exercised. Fits the 24 guard
 /// bits of a 256-entry table's table-relative address.
 const TEST_TABLE_GUARD: u32 = 0xFEE_D42;
 
-/// Compose a boot-table key from a bare slot index and incarnation: the boot
-/// guard packed above the index.
-fn boot_key(slot: u32, incarnation: u32) -> RawKey {
-    RawKey::from_parts(BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, slot, incarnation)
-}
-
-/// The boot-table slot half for a bare index (the guard packed above it).
-fn boot_slot(index: u32) -> KeySlot {
-    KeySlot((BOOT_TABLE_GUARD << u32::from(BOOT_TABLE_SIZE_BITS)) | index)
-}
-
 /// The slot half of a key in one of the boot test's runtime-carved tables.
 fn test_slot(index: u32) -> KeySlot {
-    KeySlot((TEST_TABLE_GUARD << u32::from(BOOT_TABLE_SIZE_BITS)) | index)
+    table_slot(TEST_TABLE_GUARD, index)
 }
 
 /// Ordinary construction SVC with full-width operands, including slots the
@@ -482,6 +463,12 @@ pub fn kicktest_run() -> ! {
         // boot Untyped's unused watermark range).
         let untyped = UntypedKey::from_key(boot_untyped_key);
         let self_table = KeyTableKey::from_key(self_table_key);
+        let builder = Builder {
+            untyped: &untyped,
+            self_table: &self_table,
+            boot_table_addr: keytable_addr,
+            retained: &retained_init,
+        };
         let new_table_key = untyped
             .retype(
                 ObjectType::KEY_TABLE,
@@ -1855,32 +1842,11 @@ pub fn kicktest_run() -> ! {
         // Implementation status: these accounted frames now hold Bounce's
         // EL1t execution stack on SP_EL0, not a per-Thread kernel trap stack.
         // All SVC handlers use the shared high SP_EL1 stack observed above.
-        let bounce_stack_key = untyped
-            .retype(
-                ObjectType::FRAME,
-                12,
-                0,
-                8,
-                &self_table,
-                KeySlot(41).0,
-                Rights::all(),
-            )
-            .unwrap_or_else(|error| panic!("Bounce stack Retype failed: {:?}", error.code()));
-        let (bounce_stack_paddr, _bounce_stack_size) = FrameKey::from_key(bounce_stack_key)
-            .get_extent()
-            .unwrap_or_else(|error| panic!("Bounce stack GetExtent failed: {:?}", error.code()));
-        let bounce_stack_bottom = PhysAddr::new(bounce_stack_paddr).user_to_kernel().as_u64();
-        let bounce_stack_top = bounce_stack_bottom + 8 * 4096;
-        assert_eq!(bounce_stack_top & 15, 0);
+        // Eight contiguous accounted Frames at boot slots 41–48, used through
+        // the high direct map (the builder checks contiguity).
+        let bounce_stack = builder.execution_stack(8, &mut SlotCursor::starting_at(41));
+        let (bounce_stack_bottom, bounce_stack_top) = (bounce_stack.bottom, bounce_stack.top);
         assert_ne!(bounce_stack_top, shared_trap_sp);
-        for index in 0..8_u32 {
-            let frame = FrameKey::from_key(boot_key(41 + index, bounce_stack_key.incarnation()));
-            assert_eq!(
-                frame.get_extent().ok(),
-                Some((bounce_stack_paddr + u64::from(index) * 4096, 4096)),
-                "Bounce execution stack must be eight contiguous accounted Frames"
-            );
-        }
 
         // Bounce's capability table, carved through the public Retype path.
         // The fixture's slots (40–48) sit outside the later pool-refill
@@ -2070,10 +2036,7 @@ pub fn kicktest_run() -> ! {
             key
         };
         let bounce_root_key = translation::Provisioner {
-            untyped: &untyped,
-            self_table: &self_table,
-            boot_table_addr: keytable_addr,
-            retained: &retained_init,
+            builder: &builder,
             source_as: boot_as_key,
             bounce_as: bounce_as_key,
         }
@@ -2362,19 +2325,13 @@ pub fn kicktest_run() -> ! {
             Err(CapError::InvalidOperation)
         ));
         assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
-        let (bounce_id, _bounce_thread) = nucleus
-            .pools
-            .threads
-            .allocate(Thread {
-                address_space: bounce_as_id,
-                context: ExecutionContext::NotStarted {
-                    saved: SavedContext::el1t(bounce_entry as *const () as u64, bounce_stack_top),
-                },
-                invocation_stack: nucleus::objects::InvocationStack::new(),
-            })
-            .unwrap_or_else(|| panic!("no Bounce Thread slot"));
+        let bounce_id = threads::spawn(
+            nucleus,
+            bounce_as_id,
+            bounce_entry as *const () as u64,
+            bounce_stack_top,
+        );
         assert_eq!(bounce_id.index, 1);
-        assert!(nucleus.scheduler.push(bounce_id.index));
 
         // The boot thread blocks on N1: this SVC does not return — the
         // kernel parks it, starts Bounce (which signals N1 and parks on N2),

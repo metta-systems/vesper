@@ -29,6 +29,8 @@ kernel_elf      := justfile_directory() / 'target' / target / 'release/kickstart
 kernel_bin      := justfile_directory() / 'target/kernel.bin'
 kicktest_elf    := justfile_directory() / 'target' / target / 'release/kicktest'
 kicktest_bin    := justfile_directory() / 'target/kicktest.bin'
+endpoint_test_elf := justfile_directory() / 'target' / target / 'release/endpoint-test'
+endpoint_test_bin := justfile_directory() / 'target/endpoint-test.bin'
 chainboot_elf   := justfile_directory() / 'target' / target / 'release/chainboot'
 chainboot_bin   := justfile_directory() / 'target/chainboot.bin'
 
@@ -79,6 +81,12 @@ alias b := build
 build-kicktest board='rpi3' features='qemu,debug_kernel': (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'kicktest' board init_link features)
     {{ objcopy }} --strip-all -O binary "{{ kicktest_elf }}" "{{ kicktest_bin }}"
     @echo "{{ok_label}} kicktest built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
+
+# Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
+[group("emu")]
+build-endpoint-test board='rpi3' features='qemu': (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'endpoint-test' board init_link features)
+    {{ objcopy }} --strip-all -O binary "{{ endpoint_test_elf }}" "{{ endpoint_test_bin }}"
+    @echo "{{ok_label}} endpoint-test built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
 # === Chainboot ===
 
@@ -231,7 +239,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("emu")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability-boot
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability-boot test-endpoint
 
 alias t := test
 
@@ -282,6 +290,16 @@ _rebuild-boot-test-kernel:
 [group("emu")]
 test-capability-boot: _rebuild-boot-test-kernel
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kicktest_bin }}"
+
+# Rebuild endpoint-test unconditionally (nested for the same reason as above).
+[private]
+_rebuild-endpoint-test-kernel:
+    {{ just_executable() }} build-endpoint-test rpi3 qemu
+
+# Boot endpoint-test: client, endpoint and server AddressSpaces rendezvous through PPC; in-guest assertions and QEMU exit status are the result
+[group("emu")]
+test-endpoint: _rebuild-endpoint-test-kernel
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ endpoint_test_bin }}"
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 [group("emu")]

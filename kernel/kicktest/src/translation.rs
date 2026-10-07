@@ -3,9 +3,11 @@
 //! This is a two-Thread functional fixture, not PPC or an EL0 confinement proof.
 //! All low leaves are explicit capability mappings. TTBR1 remains the invariant
 //! kernel/direct map, including Bounce's accounted high `SP_EL0` stack.
+//! The generic provisioning steps live in `libkicktest`.
 
+pub use libkicktest::paging::read_leaf;
 use {
-    super::{BOOT_TABLE_GUARD, boot_key},
+    super::kicktest_run,
     aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1},
     core::{
         arch::asm,
@@ -14,17 +16,19 @@ use {
     kickstart::bootstrap::RetainedInitMemory,
     libaddress::PhysAddr,
     libexception::arch::aarch64::SavedContext,
+    libkicktest::{
+        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        keys::boot_key,
+        paging::{ADDR_MASK, PAGE, image_table_count},
+    },
     libobject::{
-        CapError, EventCountOp, FrameKey, InvalidKeyReason, KeySlot, KeyTableKey, NotificationOp,
-        ObjectType, PageTableKey, RawKey, Rights, UntypedKey, decode_syscall_result,
+        CapError, EventCountOp, FrameKey, InvalidKeyReason, KeyTableKey, NotificationOp, RawKey,
+        Rights, decode_syscall_result,
     },
     libqemu::semihosting as semi,
-    nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
+    nucleus::objects::KeyTable,
 };
 
-const PAGE: u64 = 4096;
-const LEAF_SPAN: u64 = 2 * 1024 * 1024;
-const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
 const IMAGE_TABLE_GUARD: u32 = 0x135;
 const IMAGE_TABLE_SLOT: u32 = 68;
 const SOURCE_SCRATCH: u32 = 70;
@@ -63,54 +67,12 @@ pub fn page_table_capacity(retained: &RetainedInitMemory) -> usize {
     25 + 2 * image_table_count(retained)
 }
 
-fn image_table_count(retained: &RetainedInitMemory) -> usize {
-    let (start, end) = retained.image();
-    let (stack_start, stack_end) = retained.stack();
-    assert_eq!(start, 0x80000, "fixture expects the linked init base");
-    assert_eq!(stack_start, PAGE);
-    assert_eq!(stack_end, start);
-    let count = usize::try_from(end.div_ceil(LEAF_SPAN)).unwrap();
-    assert!(
-        count <= 8,
-        "image exceeds the fixture's eight L3 slots per root"
-    );
-    count
-}
-
-/// Walk retained bootstrap/runtime tables without holding references over SVC.
-pub fn read_leaf(ttbr: u64, vaddr: u64) -> (u32, u64) {
-    let mut table_paddr = ttbr & ADDR_MASK;
-    for level in 0..4 {
-        let slot = ((vaddr >> (39 - 9 * level)) & 0x1ff) as usize;
-        // SAFETY: callers supply retained roots; every subsequent page is a
-        // valid table descriptor in accounted private backing. Slots are 9-bit.
-        let entry = unsafe {
-            PhysAddr::new(table_paddr)
-                .user_to_kernel()
-                .as_ptr::<u64>()
-                .add(slot)
-                .read_volatile()
-        };
-        assert!(entry & 1 != 0, "missing L{level} descriptor for {vaddr:#x}");
-        if level == 3 {
-            assert_eq!(entry & 3, 3);
-            return (level, entry);
-        }
-        if entry & 2 == 0 {
-            assert_ne!(level, 0);
-            return (level, entry);
-        }
-        table_paddr = entry & ADDR_MASK;
-    }
-    unreachable!("four-level walk must reach a leaf")
-}
-
 /// Preserve bootstrap nG/global coverage before replacing its ASID-0 root.
 pub fn observe_bootstrap() {
     let ttbr0 = TTBR0_EL1.get();
     let ttbr1 = TTBR1_EL1.get();
     assert_eq!(ttbr0 >> 48, 0, "bootstrap is the reserved ASID-0 context");
-    let pc = super::kicktest_run as *const u8 as u64;
+    let pc = kicktest_run as *const u8 as u64;
     let (level, leaf) = read_leaf(ttbr0, pc);
     assert_eq!(level, 2);
     assert_eq!(leaf & 3, 1);
@@ -128,223 +90,60 @@ pub fn observe_bootstrap() {
     KERNEL_TTBR.store(ttbr1, Ordering::Release);
 }
 
-/// Explicit, bounded boot provisioning through existing wrappers. The direct
-/// table address is used only for bootstrap-origin grants, never across SVC.
+/// Source/Bounce provisioning on top of the shared [`Builder`]: the image
+/// closure in both roots, the probe pages and Bounce's PPC stack.
 pub struct Provisioner<'a> {
-    pub untyped: &'a UntypedKey,
-    pub self_table: &'a KeyTableKey,
-    pub boot_table_addr: u64,
-    pub retained: &'a RetainedInitMemory,
+    pub builder: &'a Builder<'a>,
     pub source_as: RawKey,
     pub bounce_as: RawKey,
 }
 
 impl Provisioner<'_> {
-    fn carve_tables(&self, first: u32, count: u32) -> RawKey {
-        self.untyped
-            .retype(
-                ObjectType::PAGE_TABLE,
-                12,
-                0,
-                count,
-                self.self_table,
-                first,
-                Rights::all(),
-            )
-            .unwrap_or_else(|error| panic!("fixture PageTable Retype failed: {:?}", error.code()))
-    }
-
-    fn map_table(key: RawKey, parent: RawKey, vaddr: u64) {
-        PageTableKey::from_key(key)
-            .map(parent, vaddr)
-            .unwrap_or_else(|error| panic!("fixture PageTable.Map failed: {:?}", error.code()));
-    }
-
-    /// Populate both complete image closures and the retained source stack.
-    /// The mapped source origin and separately derived Bounce cap are moved
-    /// into a charged archive table, preserving every mapping record. Scratch
-    /// slots are reused with their returned incarnations, never guessed keys.
-    /// Move is not Frame deprovisioning: no backing, capability, or mapping is
-    /// discarded, revoked, reset, or reclaimed by this scratch-slot transport.
+    /// Populate both complete image closures and the retained source stack,
+    /// then the per-root probe pages and Bounce's PPC stack.
     pub fn provision(&self, source_prefix: [RawKey; 3], bounce_table: RawKey) -> RawKey {
-        let count = image_table_count(self.retained);
-        let bounce_prefix = self.carve_tables(BOUNCE_ROOT, 3);
-        Self::map_table(bounce_prefix, self.bounce_as, 0);
+        let builder = self.builder;
+        let count = image_table_count(builder.retained);
+        let bounce_prefix = builder.carve_tables(BOUNCE_ROOT, 3);
+        Builder::map_table(bounce_prefix, self.bounce_as, 0);
         let bounce_l1 = boot_key(BOUNCE_ROOT + 1, bounce_prefix.incarnation());
         let bounce_l2 = boot_key(BOUNCE_ROOT + 2, bounce_prefix.incarnation());
-        Self::map_table(bounce_l1, bounce_prefix, 0);
-        Self::map_table(bounce_l2, bounce_l1, 0);
-        Self::map_table(source_prefix[1], source_prefix[0], 0);
-        Self::map_table(source_prefix[2], source_prefix[1], 0);
-        for (first, parent) in [
-            (SOURCE_IMAGE_TABLES, source_prefix[2]),
-            (BOUNCE_IMAGE_TABLES, bounce_l2),
-        ] {
-            let tables = self.carve_tables(first, u32::try_from(count).unwrap());
-            for index in 0..count {
-                Self::map_table(
-                    boot_key(first + u32::try_from(index).unwrap(), tables.incarnation()),
-                    parent,
-                    u64::try_from(index).unwrap() * LEAF_SPAN,
-                );
-            }
-        }
+        Builder::map_table(bounce_l1, bounce_prefix, 0);
+        Builder::map_table(bounce_l2, bounce_l1, 0);
+        Builder::map_table(source_prefix[1], source_prefix[0], 0);
+        Builder::map_table(source_prefix[2], source_prefix[1], 0);
+        let image = builder.map_retained_image(
+            &[
+                ImageTarget {
+                    address_space: self.source_as,
+                    l2: source_prefix[2],
+                    first_table_slot: SOURCE_IMAGE_TABLES,
+                },
+                ImageTarget {
+                    address_space: self.bounce_as,
+                    l2: bounce_l2,
+                    first_table_slot: BOUNCE_IMAGE_TABLES,
+                },
+            ],
+            &ImageArchive {
+                slot: IMAGE_TABLE_SLOT,
+                guard: IMAGE_TABLE_GUARD,
+                grant_scratch: SOURCE_SCRATCH,
+                copy_scratch: BOUNCE_SCRATCH,
+            },
+        );
 
-        let (image_start, image_end) = self.retained.image();
-        let (stack_start, stack_end) = self.retained.stack();
-        let image_pages = (image_end - image_start) / PAGE;
-        let stack_pages = (stack_end - stack_start) / PAGE;
-        let entries = 1 + 2 * image_pages + stack_pages; // slot zero is reserved
-        let bits = u8::try_from(entries.next_power_of_two().trailing_zeros()).unwrap();
-        let archive_key = self
-            .untyped
-            .retype(
-                ObjectType::KEY_TABLE,
-                bits,
-                IMAGE_TABLE_GUARD,
-                1,
-                self.self_table,
-                IMAGE_TABLE_SLOT,
-                Rights::all(),
-            )
-            .unwrap_or_else(|error| panic!("image archive Retype failed: {:?}", error.code()));
-        let archive = KeyTableKey::from_key(archive_key);
-        let (archive_addr, source_id, bounce_id) = {
-            // SAFETY: retained initialized boot table, borrowed only to copy
-            // bootstrap-issued authority metadata before the mapping calls.
-            let table = unsafe { &*(self.boot_table_addr as *const KeyTable) };
-            let entry = table
-                .lookup(archive_key, BOOT_TABLE_GUARD)
-                .unwrap_or_else(|error| {
-                    panic!("archive authority lookup failed: {:?}", error.code())
-                });
-            assert_eq!(
-                entry.keytable_guard_and_size().ok(),
-                Some((IMAGE_TABLE_GUARD, bits))
-            );
-            let archive_addr = entry
-                .keytable_address()
-                .unwrap_or_else(|error| panic!("archive is not a KeyTable: {:?}", error.code()));
-            let source_id = table
-                .lookup(self.source_as, BOOT_TABLE_GUARD)
-                .and_then(KeyEntry::object_id)
-                .unwrap_or_else(|error| {
-                    panic!("source identity lookup failed: {:?}", error.code())
-                });
-            let bounce_id = table
-                .lookup(self.bounce_as, BOOT_TABLE_GUARD)
-                .and_then(KeyEntry::object_id)
-                .unwrap_or_else(|error| {
-                    panic!("Bounce identity lookup failed: {:?}", error.code())
-                });
-            (archive_addr, source_id, bounce_id)
-        };
-        let mut next_slot = 1;
-        for (start, end, shared) in [
-            (image_start, image_end, true),
-            (stack_start, stack_end, false),
-        ] {
-            for paddr in (start..end).step_by(usize::try_from(PAGE).unwrap()) {
-                let source = {
-                    // SAFETY: this is the initialized private boot carve. No
-                    // table reference survives the following capability calls.
-                    let table = unsafe { &mut *(self.boot_table_addr as *mut KeyTable) };
-                    self.retained.grant_page(
-                        table,
-                        KeySlot(SOURCE_SCRATCH),
-                        BOOT_TABLE_GUARD,
-                        paddr,
-                    )
-                };
-                let bounce = shared.then(|| {
-                    self.self_table
-                        .copy_derive(source, self.self_table, BOUNCE_SCRATCH, Rights::all())
-                        .unwrap_or_else(|error| {
-                            panic!("image CopyDerive failed: {:?}", error.code())
-                        })
-                });
-                if let Some(key) = bounce {
-                    // Copy did not install a descriptor or inherit a mapping.
-                    assert!(matches!(
-                        FrameKey::from_key(key).unmap(),
-                        Err(CapError::NotMapped)
-                    ));
-                }
-                let rights =
-                    Rights(Rights::READ | Rights::WRITE | if shared { Rights::EXECUTE } else { 0 });
-                for (key, target) in [(Some(source), self.source_as), (bounce, self.bounce_as)] {
-                    if let Some(key) = key {
-                        FrameKey::from_key(key)
-                            .map(target, paddr, rights, 0)
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "retained Frame.Map at {paddr:#x} failed: {:?}",
-                                    error.code()
-                                )
-                            });
-                        let archived = self
-                            .self_table
-                            .transfer(key, &archive, next_slot)
-                            .unwrap_or_else(|error| {
-                                panic!("mapped image Move failed: {:?}", error.code())
-                            });
-                        // SAFETY: archive_addr came from the live capability to
-                        // the full private Retype carve. This borrow ends before
-                        // the next SVC; Move must preserve the mapping record.
-                        let table = unsafe { &*(archive_addr as *const KeyTable) };
-                        let frame = table
-                            .lookup(archived, IMAGE_TABLE_GUARD)
-                            .and_then(KeyEntry::as_frame)
-                            .unwrap_or_else(|error| {
-                                panic!("archived mapping missing: {:?}", error.code())
-                            });
-                        let mapping = frame.mapping().expect("Move lost the mapping record");
-                        assert_eq!(frame.paddr, paddr);
-                        assert_eq!(mapping.vaddr, paddr);
-                        assert_eq!(
-                            mapping.address_space,
-                            if target == self.source_as {
-                                source_id
-                            } else {
-                                bounce_id
-                            }
-                        );
-                        next_slot += 1;
-                    }
-                }
-            }
-        }
-        assert_eq!(u64::from(next_slot), entries);
-        {
-            // SAFETY: full initialized retained private archive carve; no SVC
-            // or mutable table access occurs while this borrow is live.
-            let table = unsafe { &*(archive_addr as *const KeyTable) };
-            assert_eq!(table.capacity(), 1_usize << bits);
-            assert_eq!(u64::try_from(table.len()).unwrap(), entries - 1);
-        }
-
-        Self::map_table(
-            self.carve_tables(SOURCE_PROBE_TABLE, 1),
+        Builder::map_table(
+            builder.carve_tables(SOURCE_PROBE_TABLE, 1),
             source_prefix[2],
             PROBE_VA,
         );
-        Self::map_table(
-            self.carve_tables(BOUNCE_PROBE_TABLE, 1),
+        Builder::map_table(
+            builder.carve_tables(BOUNCE_PROBE_TABLE, 1),
             bounce_l2,
             PROBE_VA,
         );
-        let source_probe = self
-            .untyped
-            .retype(
-                ObjectType::FRAME,
-                12,
-                0,
-                2,
-                self.self_table,
-                SOURCE_PROBE_FRAME,
-                Rights::all(),
-            )
-            .unwrap_or_else(|error| panic!("probe Frame Retype failed: {:?}", error.code()));
+        let source_probe = builder.retype_frames(SOURCE_PROBE_FRAME, 2);
         let bounce_probe = boot_key(BOUNCE_PROBE_FRAME, source_probe.incarnation());
         let mut physical = [0; 2];
         for (index, (key, target, marker)) in [
@@ -354,10 +153,7 @@ impl Provisioner<'_> {
         .into_iter()
         .enumerate()
         {
-            let (paddr, size) = FrameKey::from_key(key)
-                .get_extent()
-                .unwrap_or_else(|error| panic!("probe GetExtent failed: {:?}", error.code()));
-            assert_eq!(size, PAGE);
+            let paddr = Builder::frame_paddr(key);
             physical[index] = paddr;
             // SAFETY: this freshly sanitized Frame is accounted and retained;
             // the trusted fixture accesses it via the invariant direct map.
@@ -377,34 +173,17 @@ impl Provisioner<'_> {
         // Whether target code fits in its published headroom is the
         // component's concern (guard pages), not checked here.
         let stack_count = u32::try_from(PPC_STACK_PAGES).unwrap();
-        let first_stack_frame = self
-            .untyped
-            .retype(
-                ObjectType::FRAME,
-                12,
-                0,
-                stack_count,
-                self.self_table,
-                BOUNCE_PPC_STACK_FRAMES,
-                Rights::all(),
-            )
-            .unwrap_or_else(|error| panic!("PPC stack Frame Retype failed: {:?}", error.code()));
-        for index in 0..stack_count {
-            let frame = boot_key(
-                BOUNCE_PPC_STACK_FRAMES + index,
-                first_stack_frame.incarnation(),
-            );
-            FrameKey::from_key(frame)
-                .map(
-                    self.bounce_as,
-                    PPC_STACK_VA + u64::from(index) * PAGE,
-                    Rights(Rights::READ | Rights::WRITE),
-                    0,
-                )
-                .unwrap_or_else(|error| panic!("PPC stack Frame.Map failed: {:?}", error.code()));
-        }
+        let first_stack_frame = builder.retype_frames(BOUNCE_PPC_STACK_FRAMES, stack_count);
+        Builder::map_frames(
+            BOUNCE_PPC_STACK_FRAMES,
+            first_stack_frame.incarnation(),
+            stack_count,
+            self.bounce_as,
+            PPC_STACK_VA,
+            Rights(Rights::READ | Rights::WRITE),
+        );
 
-        let local_bounce_probe = self
+        let local_bounce_probe = builder
             .self_table
             .copy_derive(
                 bounce_probe,
@@ -417,13 +196,18 @@ impl Provisioner<'_> {
         BOUNCE_BACKING.store(physical[1], Ordering::Release);
         SOURCE_KEY.store(source_probe.to_wire(), Ordering::Release);
         BOUNCE_KEY.store(local_bounce_probe.to_wire(), Ordering::Release);
+        let (image_start, image_end) = builder.retained.image();
+        let (stack_start, stack_end) = builder.retained.stack();
         semi::println!(
-            "Translation backing: image=[{image_start:#x},{image_end:#x}) {image_pages} pages x2; source stack=[{stack_start:#x},{stack_end:#x}) {stack_pages} pages; archive=2^{bits} entries, occupied={}, carve={} bytes; installed_tables={}, metadata_entries={}, capacity={}",
-            entries - 1,
-            KeyTable::carve_size(bits),
+            "Translation backing: image=[{image_start:#x},{image_end:#x}) {} pages x2; source stack=[{stack_start:#x},{stack_end:#x}) {} pages; archive=2^{} entries, occupied={}, carve={} bytes; installed_tables={}, metadata_entries={}, capacity={}",
+            image.image_pages,
+            image.stack_pages,
+            image.archive_bits,
+            image.archived,
+            KeyTable::carve_size(image.archive_bits),
             8 + 2 * count,
             9 + 2 * count,
-            page_table_capacity(self.retained)
+            page_table_capacity(builder.retained)
         );
         bounce_prefix
     }
@@ -431,29 +215,7 @@ impl Provisioner<'_> {
 
 /// Verify the full page-granular dependency closure before either root runs.
 pub fn verify_retained(retained: &RetainedInitMemory, source_root: u64, bounce_root: u64) {
-    let (image_start, image_end) = retained.image();
-    let (stack_start, stack_end) = retained.stack();
-    for root in [source_root, bounce_root] {
-        for paddr in (image_start..image_end).step_by(usize::try_from(PAGE).unwrap()) {
-            let (level, leaf) = read_leaf(root, paddr);
-            assert_eq!(level, 3);
-            assert_eq!(leaf & ADDR_MASK, paddr);
-            assert_ne!(leaf & (1 << 11), 0);
-            assert_eq!(
-                leaf & ((1 << 53) | (1 << 54) | (3 << 6)),
-                0,
-                "trusted RW+X image must execute at EL1, not grant EL0 RW+X"
-            );
-        }
-    }
-    for paddr in (stack_start..stack_end).step_by(usize::try_from(PAGE).unwrap()) {
-        let (level, leaf) = read_leaf(source_root, paddr);
-        assert_eq!(level, 3);
-        assert_eq!(leaf & ADDR_MASK, paddr);
-        assert_ne!(leaf & (1 << 11), 0);
-        assert_eq!(leaf & (3 << 6), 1 << 6);
-        assert_eq!(leaf & ((1 << 53) | (1 << 54)), (1 << 53) | (1 << 54));
-    }
+    verify_retained_image(retained, &[source_root, bounce_root]);
 }
 
 /// Publish exact bound contexts before the first runnable handoff.

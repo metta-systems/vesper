@@ -244,6 +244,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6419a5c75e40011b9fe0174db3fe24006ab122fbe1b7e9cc5974b338a755c76"
 
 [[package]]
+name = "endpoint-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-kicktest",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -438,6 +457,7 @@ dependencies = [
  "vesper-boot",
  "vesper-cpu",
  "vesper-exceptions",
+ "vesper-kicktest",
  "vesper-log",
  "vesper-machines",
  "vesper-objects",
@@ -1176,6 +1196,21 @@ dependencies = [
 [[package]]
 name = "vesper-kernel-state"
 version = "0.0.1"
+
+[[package]]
+name = "vesper-kicktest"
+version = "0.0.1"
+dependencies = [
+ "cfg-if",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
 
 [[package]]
 name = "vesper-local-irq"

@@ -3,6 +3,7 @@ members = [
   "kernel/nucleus",
   "kernel/kickstart",
   "kernel/kicktest",
+  "kernel/endpoint-test",
   "bin/chainboot",
   "bin/chainofcommand",
   # Libraries
@@ -13,6 +14,7 @@ members = [
   "libs/cpu",
   "libs/driver",
   "libs/exception",
+  "libs/kicktest",
   "libs/kernel-state",
   "libs/local-irq",
   "libs/locking",
@@ -61,6 +63,7 @@ libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdriver = { path = "libs/driver", package = "vesper-drivers" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
+libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
 liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
