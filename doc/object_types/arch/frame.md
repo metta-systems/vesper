@@ -27,10 +27,9 @@ distinct PTEs.
 
 ### Map details
 
-- **The explicit target-AddressSpace argument is bootstrap-era mechanism**: it lets
-  an authorized builder populate an AddressSpace before its Thread
-  can run; self-context mapping is the intended ordinary path once syscall
-  caller identity exists.
+- **Explicit target**: Map names the target `AddressSpace`, so a builder
+  holding `MAP` on it can populate an `AddressSpace` before any of its Threads
+  run.
 - The virtual address must be inside the supported VA width (48-bit) and
   aligned to the frame size; the walk requires every intermediate table to be
   present (`MissingIntermediate` with the faulting address otherwise).
@@ -59,17 +58,12 @@ carved region is **zeroed (sanitized) by the kernel inside the retype
 transaction** before capability installation, so a fresh frame never carries
 prior-owner or kernel data.
 
-The trusted bootstrap builder also issues content-preserving Frame grants
-over already-accounted retained init image/stack pages. These occupied bytes
-are not Retype sources and remain reserved while execution or mappings
-survive. CopyDerive supplies separate unmapped capabilities for Bounce's
-shared image pages; explicit Map installs distinct PTEs in the source/Bounce
-roots. Move into an accounted archive KeyTable preserves each mapping record;
-scratch-slot reuse neither deprovisions the Frames nor reclaims their backing.
-Both low roots map the complete linked image with `EXECUTE` authority; the
-retained source execution stack is read/write, execute-never. Bounce's
-accounted SP_EL0 execution stack uses the invariant high direct map, separate
-from the shared high SP_EL1 trap stack.
+The bootstrap builder also issues content-preserving Frame grants over the
+retained init image and boot stack (`RetainedInitMemory::grant_page`); those
+occupied bytes are never Retype sources. Each image page is granted once,
+CopyDerived for every other root, mapped at its identity VA in each, and the
+mapped capabilities are moved into an archive table, which keeps their mapping
+records.
 
 ```mermaid
 flowchart TD
@@ -85,19 +79,10 @@ flowchart TD
 
 - Unmap verifies the descriptor still points at this frame before clearing
   (`InvalidOperation` otherwise), then invalidates the TLB entry by virtual
-  address under the owning AddressSpace's ASID — observable on the live context
-  (the boot test maps, activates, reads, unmaps, remaps different backing at
-  the same address, then remaps the original backing and checks both markers
-  with volatile loads without switching the installed context). Descriptor
-  stores are ordered before `TLBI VAE1IS`; its operand carries the ASID in
-  bits 63:48 and `VA[55:12]` in bits 43:0. Completion barriers precede further
-  access.
-- The two-Thread source/Bounce fixture also uses distinct physical backing at
-  the same warmed low VA under independent roots with ASIDs 1 and 2. Its
-  volatile observations follow checked wait/resume installation, without
-  test-side switching, reactivation, or TLBI. This is separate from the
-  same-context unmap/remap path above and does not establish PPC migration or
-  protected EL0 confinement.
+  address under the owning `AddressSpace`'s ASID, so a remap of the same VA in
+  the live context sees the new backing. Descriptor stores are ordered before
+  `TLBI VAE1IS` (ASID in bits 63:48, `VA[55:12]` in bits 43:0), followed by
+  completion barriers.
 - Descriptor mechanics live in the arch layer
   (`kernel/nucleus/src/objects/arch/page_table.rs`): level-3 page descriptors
   for 4 KiB, level-2/1 block descriptors for 2 MiB/1 GiB; MAIR index 0
@@ -135,31 +120,3 @@ flowchart TD
 - Cache/device attribute dimension beyond "zero = normal cacheable" — D6.
 - Splitting user/privileged execute authority with EL0 entry — D6.
 - Precise no-reuse scope for deprovisioned frame slots — D3/D6.
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- `Memory.md` (vault): device untyped → device frames, with restrictions
-  ("cannot be set as thread IPC buffers, or used in the creation of an ASID
-  pool") — **mismatch**: device frames cannot be created at all today
-  (Retype rejects device sources); the vault's device-frame restrictions
-  (IPC buffers, ASID pools) are not yet representable. Also note the vault
-  assumes per-domain IPC buffers exist — they do not yet (D5/D6).
-- `Vesper.md` (vault): single-address-space "sharing a buffer is nearly as
-  simple as passing out its address" — **divergence**: under the selected
-  D1 architecture sharing is by frame capability + Map into each
-  participant's AddressSpace; numeric pointer possession grants nothing. The vault
-  note is a policy vision, not the current mechanism.
-- `API/fbufs.md` (vault): BufferCap over frames, same-address fbuf sharing,
-  scatter-gather — **consistent as a userspace composition** over the frame
-  primitive (Buffer is not a kernel object — a userspace/libOS construct
-  over frame capabilities); none of the vault's higher-level patterns are
-  implemented in the kernel, by design.
-- `Vesper Capabilities (from wiki).md` (vault): "protection domains …
-  manipulation of default memory access rights and capabilities for
-  accessing this memory from the outside" — **partially realized**: mapping
-  rights are bounded by the frame capability's rights and the target
-  AddressSpace's `MAP` authority; there is no "access from the outside" operation
-  on a mapped frame other than capability derivation.
-- `Prototype.md` (vault): `cap_small_frame_cap`/`cap_frame_cap` as separate
-  kinds — **superseded**: one `Frame` kind with architecture-validated
-  `size_bits` (12/21/30) covers all sizes.

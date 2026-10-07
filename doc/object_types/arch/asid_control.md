@@ -46,13 +46,3 @@ operation.
 - None active. Activation would require: a contract for pool
   creation/partitioning (D6), hardware-safe ASID reuse rules, and operation
   schemas (D4/D9).
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- `seL4 Capabilities.md` / `API/seL4 API.md` (vault): seL4 has both
-  `seL4_ARM_ASIDControl` and `seL4_ARM_ASIDPool` capabilities — **partial
-  divergence**: Vesper implements only the pool kind; the control kind is
-  reserved here. No vault note requires a per-ASID capability, so the
-  reservation is a conservative placeholder rather than a conflict.
-- `Prototype.md` (vault): `cap_asid_control_cap = 11` — numbering superseded
-  by the canonical arch baseline (ASIDControl = `0x84`).

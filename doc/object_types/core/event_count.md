@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Wire type | `0x07` (core) |
+| Wire type | `0x09` (core) |
 | Pool | `PoolTag::EventCount` (bootstrap-carved pool; Retype-creatable) |
 | Status | Active: Advance/Await/Read through real SVC dispatch, including blocking Await |
 
@@ -49,25 +49,24 @@ flowchart TD
 - **Broadcast wakeups**: an advance completes *every* queued `Await` whose
   target it satisfies, each resumed with the new value — the deliberate
   counterpart to Notification's one-consumer delivery.
-- **Overflow policy** : the counter never wraps and
-  never saturates. An overflowing advance returns the shared
+- **Overflow**: the counter never wraps and never saturates. An overflowing advance returns the shared
   `CounterOverflow` error (status 31, zero details), leaves the counter
   unchanged, and completes every queued `Await` with the same error so
   waiters observe the producer's failure instead of blocking indefinitely;
   a woken waiter may re-`Await`.
 - **Blocking path**: as with Notification, a would-block `Await` reports
   `InvokeOutcome::Blocked`; the entry copies the caller's execution context
-  into Thread storage. Resume rewrites the current transient trap frame and
-  returns normally through `ERET` on the shared per-core kernel stack,
-  delivering the terminal result — including error wakeups (status 31), since
-  the completed pending record carries the full result shape (status + two
-  words). Validated end-to-end via the debug-gated Bounce fixture.
+  into Thread storage. Resume rewrites the transient trap frame and returns
+  through `ERET` on the per-core kernel stack, delivering the terminal result
+  — including error wakeups (status 31). A Thread may also await while
+  migrated into a PPC target. Exercised by `kernel/tests/kicktest` and
+  `kernel/tests/endpoint-test`.
 - **Bounded queues**: a full await queue rejects before admission
   (`PoolExhausted`) with no record to roll back.
 - **Teardown**: object teardown cancels queued waiters; domain teardown
   (`remove_waiter`) unqueues only the torn-down Thread's records, driven by
   `Thread.Retire`.
-- **Memory ordering** : kernel-mediated release/acquire
+- **Memory ordering**: kernel-mediated release/acquire
   — `Advance` is a release on the producer's behalf; observing the value
   (wakeup, satisfied await, Read) is an acquire. DMA/device writes excluded.
 
@@ -85,23 +84,3 @@ flowchart TD
 - Finite timeouts once the time subsystem exists (D8); currently rejected
   with a defined error.
 - Wakeup summary agreement with DCB semantics (D5).
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- `API/fbufs.md` (vault): Nemesis `IO_Channel` with `put_ec`/`get_ec`
-  Event_Counts for ring-buffer flow control, and the vault's
-  "BufferCap + EventCountCap" design with produced/consumed counters —
-  **consistent in intent**: the implemented EventCount is exactly the
-  primitive that vault pattern needs. **Divergence in the surrounding
-  design**: the vault's `BufferCap` kernel object does not exist — Buffer
-  is not a kernel catalogue kind (a userspace/libOS construct over frame
-  capabilities); the fbuf composition is frames + EventCount caps.
-- `Vesper.md` (vault): "efficient data passing between protection domains" —
-  **half-realized**: the EventCount half of the fbuf pattern exists; the
-  shared-frame mapping half exists (Frame.Map across Domains); the
-  higher-level fbuf protocol (same-address agreement, ownership modes) is
-  libOS policy and unimplemented.
-- No other vault note covers EventCount; the primitive originates from
-  Nemesis (via the fbufs analysis) rather than the seL4-derived notes, and
-  nothing in the vault contradicts the selected overflow/broadcast
-  contracts.

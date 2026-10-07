@@ -33,9 +33,7 @@ contract is selected.
 - `ArchType::IRQControl` is defined in the catalogue;
   `ArchObjects::invoke_irq_control` provides the default
   `UnsupportedArchType` rejection. No object struct, pool, or handler exists.
-- As with [IRQHandler](irq_handler.md), no interrupt-controller HAL exists;
-  the vault's `Interrupts.md` research note is the intended implementation
-  basis.
+- As with [IRQHandler](irq_handler.md), no interrupt-controller HAL exists.
 - The issuance flow would presumably mirror the boot-grant model: Kickstart
   holds the control capability (or grants it to a userspace interrupt
   manager), which then hands out per-line handlers — but no bootstrap layout
@@ -58,19 +56,3 @@ contract is selected.
   revocation of issued handlers, and interaction with the KeyTable
   derivation allowlist (handlers are not on the CopyDerive allowlist today)
   — D4/D9, blocked on the interrupt-controller HAL.
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- `Vesper Capabilities (from wiki).md` (vault): "System support for
-  interrupts includes **enabling/disabling appropriate interrupt lines** and
-  access to capabilities that will be called when interrupts arrive" — the
-  enable/disable half maps to this control kind; **unimplemented**.
-- `seL4 Capabilities.md` / `API/seL4 API.md` (vault): seL4's
-  `seL4_IRQControl.Get` issuance model — the intended template; no contract
-  selected in Vesper yet.
-- `Interrupts.md` (vault): the HAL research checklist underpins both IRQ
-  kinds; entirely unimplemented (see [irq_handler.md](irq_handler.md) for the
-  itemized gap).
-- `Prototype.md` (vault): `cap_irq_control_cap = 14`,
-  `cap_irq_handler_cap = 30` — numbering superseded by the canonical arch
-  baseline (`0x88` / `0x87`).

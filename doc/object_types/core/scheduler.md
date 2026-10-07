@@ -3,59 +3,50 @@
 | | |
 |---|---|
 | Wire type | `0x05` (core) |
-| Associated object | A `Thread` authorized to act as a user-space scheduler |
-| Status | Contract selected; not implemented |
+| Associated object | A `Thread` authorized to act as a userspace scheduler |
+| Status | Contract direction recorded; not implemented (dispatch returns `UnsupportedCoreType`) |
 
 ## Purpose
 
-A `Scheduler` capability marks a Thread that may perform scheduler operations.
-Schedulers own the pages containing their scheduling records and explicitly
-share those pages with the kernel. There is no publicly visible global DCB
-view. Scheduler policy remains in userspace; kernel-only TCB and execution
-state remains private.
+A `Scheduler` capability marks a Thread that may perform scheduler
+operations. Scheduling policy lives in userspace: a scheduler owns the pages
+holding its Threads' scheduling records and shares them with the kernel
+explicitly. There is no global DCB view, and kernel-only Thread and execution
+state stays private.
 
-Scheduler capabilities are derivable to support hierarchical schedulers. The
-root scheduler is established during boot before scheduling begins and is the
-only scheduler that creates Threads. It may donate Threads to subordinate
-schedulers. The kernel must enforce a strict scheduler tree; the exact
-creation, donation, and tree-maintenance schemas remain to be specified.
+Scheduler capabilities derive into a strict tree for hierarchical scheduling.
+The root scheduler, established at boot, is the only one that creates Threads;
+it may donate Threads to subordinate schedulers.
 
 ## User-level visible operations
 
-| Op | Name | Selected behavior |
+| Op | Name | Intended behavior |
 |---|---|---|
-| TBD | ShareRegion | Share one Frame page, already mapped into the scheduler's AddressSpace, with the kernel. Conflicting re-share/replacement is rejected. The operation ID, register schema, rights, results, and errors remain open. |
+| TBD | ShareRegion | Share one Frame page, already mapped into the scheduler's `AddressSpace`, with the kernel; a conflicting re-share or replacement is rejected |
 
-## Shared scheduling records
+No operation ID, register schema, rights or error set is selected yet.
 
-The kernel locates a Thread's record in a scheduler-declared fixed-stride
-table, using a kernel-validated Thread identity/incarnation. The scheduler can
-write any bytes in pages it maps. The initial record division starts from the
-existing `DcbPage`/TCB division: record bytes are scheduler-writable, while
-kernel-only TCB/execution state is not exposed in the shared pages. Exact
-field semantics and which transitions the kernel validates remain open.
+## Kernel-level implementation details
 
-Table declaration, page capacity, allocation, publication/snapshot semantics,
-event-summary indexing, and record retirement/reuse are not yet specified.
-Implementations must reject stale Thread identities and must not permit a
-record for a retired Thread incarnation to identify a replacement Thread.
+- Nothing is implemented: no ABI wrapper, handler, shared-region state or tree
+  enforcement.
+- The kernel's FIFO runnable queue is bootstrap machinery that stands in until
+  scheduler upcalls exist.
+- Intended record lookup: a scheduler-declared fixed-stride table, indexed by
+  a kernel-validated Thread identity and incarnation. Record bytes are
+  scheduler-writable; a record for a retired Thread incarnation must never
+  identify its replacement.
 
-## Bootstrap and implementation status
+## Sidenotes
 
-Kickstart establishes the root scheduler before scheduling starts; this
-contract does not require a kernel FIFO fallback before then. The kernel's
-current FIFO scheduling mechanism remains bootstrap implementation machinery
-until scheduler upcalls are implemented. No `Scheduler` ABI wrapper, API
-handler, shared-region state, or tree enforcement is implemented yet.
+- The initial record layout starts from the existing `DcbPage`/TCB division:
+  scheduler-visible fields in the shared pages, kernel-only state private.
 
 ## TODOs
 
-- Define exact ShareRegion argument/result/rights schema and table descriptor.
-- Specify and implement root-only Thread creation, Thread donation, and strict
-tree enforcement.
-- Define record fields, publication/snapshot protocol, event summaries, and
+- ShareRegion's schema and the table descriptor — D5.
+- Root-only Thread creation, Thread donation and strict tree enforcement.
+- Record fields, publication/snapshot protocol, event summaries, and
   teardown/reuse rules.
-- Connect Thread allocation/retirement and notification/block accounting to
-  scheduler-shared records.
-- Implement userspace encoding, kernel authorization/object transitions, and
-  ABI and target tests as coherent vertical slices.
+- Connecting Thread allocation/retirement, wait accounting and per-call PPC
+  time attribution to the shared records.

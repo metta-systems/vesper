@@ -44,12 +44,3 @@ range), but no contract is selected.
 - Everything, contingent on an x86 target existing at all: operation schemas
   (read/write widths, port ranges), authority model, and trap/emulation
   mechanism (`io_bitmap` in the TSS on x86) — no decision is scheduled.
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- No vault note mentions I/O ports; the vault research is AArch64/RPi-focused
-  (`aarch64 registers.md`, RPi platform code). The kind exists purely to
-  keep the shared catalogue complete for other targets — no discrepancy to
-  review, but also no desired-capability backing. If Vesper commits to
-  AArch64-only, this kind could be a candidate for reassignment (an explicit
-  decision, per the numbering rules).

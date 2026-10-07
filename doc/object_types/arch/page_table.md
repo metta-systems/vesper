@@ -93,20 +93,14 @@ descriptor still points at this table, then clears it.
 
 - The AddressSpace is the mapping context (see
   [address_space.md](address_space.md)).
-- Carved tables become hardware-live through `AddressSpace.Activate` or
-  checked wait/resume selection. Both paths prepare validated translation
-  metadata and install `TTBR0_EL1` with the bound ASID after object/Access
-  guards and the kernel lock end. The copied metadata does not pin backing;
-  immediate installation relies on the serialized single-core, masked,
-  non-reentrant trap interval, and later/asynchronous use needs fresh validation.
-- Unmap invalidation runs whenever the owning AddressSpace has a bound ASID;
-  restricting it based on hardware installation state remains an optimization,
-  not implemented behavior.
-- The fixture retains the source's executing image/stack ancestors and bound
-  root. Positive innermost-first intermediate/root teardown uses a disposable,
-  nonexecuting AddressSpace; disposable test mappings and their empty L3 can
-  be removed without withdrawing the source's live image/stack. Unmap clears
-  installation state but does not release page-table metadata pool entries.
+- Carved tables become hardware-live when their `AddressSpace` is installed in
+  `TTBR0_EL1`: by `AddressSpace.Activate`, by scheduling a Thread, or by a PPC
+  Call or Return. Each path validates the context first and installs it after
+  guards and the kernel lock are released.
+- Unmap invalidates whenever the owning `AddressSpace` has a bound ASID, even
+  if that context is not currently installed.
+- Unmap clears installation state but does not release the page-table
+  metadata pool entry.
 
 ## TODOs
 
@@ -116,23 +110,3 @@ descriptor still points at this table, then clears it.
 - Block-descriptor mappings (2 MiB/1 GiB frames) install at levels 1–2; any
   additional per-level policy is future work.
 - Multi-level table pools' Untyped-backed backing ownership — Phase 5.
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- `seL4 Capabilities.md` / `API/seL4 API.md` (vault): seL4-style explicit
-  page-table management (`seL4 ARM PageTable Map/Unmap`) — **consistent**:
-  the implemented model is deliberately seL4-like (explicit installation,
-  no implicit kernel allocation, vacant-slot checks).
-- `Memory.md` (vault): "all objects consume a fixed amount of memory once
-  created" — **consistent**: a 4 KiB carve per table, charged to the
-  caller's Untyped.
-- `Prototype.md` (vault): `cap_page_table_cap` / `cap_page_directory_cap` as
-  separate kinds — **superseded**: one `PageTable` kind with a per-object
-  `level` (0 = root … 3 = leaf) covers the hierarchy; there is no separate
-  page-directory kind.
-- `Vesper.md` (vault): guarded page tables are mentioned in the vault only
-  as a *capability-space* technique (KeyNodes), not for memory translation —
-  no conflict; memory translation uses plain multi-level tables.
-- `seL4 Kernel boot sequence.md` (vault): boot creates initial page tables
-  kernel-privately — **consistent**: Kickstart boot-carves the kernel's own
-  tables; user-visible tables come from Retype.

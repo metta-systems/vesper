@@ -38,8 +38,9 @@ lookup error).
   semihosting `sys_write0`. **Actual output currently requires `qemu`**;
   enabling `debug_kernel` alone does not add a hardware output backend.
 - Bootstrap: Kickstart installs the console capability at
-  `KeySlot::DEBUG_CONSOLE` (slot 14) with `Rights::all()` when the feature is
-  on.
+  `KeySlot::DEBUG_CONSOLE` (slot 15) with `Rights::all()` when the feature is
+  on. It is on the CopyDerive allowlist, so a builder can grant it to another
+  `AddressSpace`'s table.
 
 ```mermaid
 flowchart TD
@@ -56,10 +57,13 @@ flowchart TD
 Temporary debug-only leeway is not a safety or isolation guarantee. Known
 limitations, deliberately retained for now (scoped D4/D9):
 
-- The active caller is trusted EL1h boot code, not yet an EL0 domain;
-  permitted origins are not classified.
-- The pointer is treated as a physical/direct-map address with unchecked
-  copying — not caller virtual memory with authorized, bounded access.
+- Callers are trusted `EL1t` code (possibly migrated into another
+  `AddressSpace`), not EL0; permitted origins are not classified.
+- The pointer is treated as a physical address and read through the direct
+  map, unchecked — not caller virtual memory with authorized, bounded access.
+  It works today only because the test kernels map the retained image at its
+  identity VA in every root; a buffer in an `AddressSpace`-private page would
+  be read from the wrong memory.
 - C-string limitations: no byte/UTF-8 definition, embedded-NUL or empty-input
   behavior, maximum length, or partial-output semantics; the 4096-byte buffer
   needs terminator space and has no length check.
@@ -78,18 +82,3 @@ explicit caller/rights, bounded caller-authorized memory access with fault
 recovery, defined byte/length/partial-output semantics, checked
 exception/argument decoding, and observable results (D1/D3/D4/D6/D9 remain
 open beyond this limited availability decision).
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- **No vault counterpart**: the `🧠 Vesper` vault notes describe no console
-  or debug-output capability. DebugConsole is a Vesper-specific debug
-  addition; nothing in the vault conflicts with it, and nothing in the vault
-  depends on it.
-- Indirect consistency check: `Vesper.md` (vault) "narrow(est possible)
-  kernel API — everything is invoked via capabilities" — the console follows
-  the single capability-invocation syscall rather than a separate debug
-  syscall, which keeps the API surface narrow even in debug builds.
-- `Kernel and module testing.md` / `Debugging` vault notes (unchecked todo
-  lists) expect debug output during bring-up; the semihosting-only backend
-  means non-QEMU targets (real hardware, JTAG) currently get no output —
-  a practical gap to keep in mind when reviewing debug workflows.

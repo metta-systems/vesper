@@ -67,17 +67,11 @@ flowchart TD
     H --> OK["Return first key in x1"]
 ```
 
-- KeyTable reservation uses `KeyTable::carve_size(size_bits)` and the
-  actual table alignment, not an obsolete fixed entry size. The 40 B
-  Invocation/KeyPayload makes every `KeyEntry` 64 B/alignment 32; runtime
-  Retype and bootstrap/archive/fixture backing use that stride in full carve
-  accounting, counter offsets and initialization bounds. A capacity exponent
-  selects entries, not a byte-size power of two.
+- KeyTable reservation uses `KeyTable::carve_size(size_bits)` and the table's
+  alignment; `size_bits` selects the entry count, not a byte size.
 - Invocation is not Retype-creatable: memory alone cannot mint its authority.
-  Active `AddressSpace.CreateInvocation` instead requires target `GRANT`
-  and destination `INSTALL`, then stores target identity, nonzero entry and
-  validated extent/headroom inline in the destination entry. This does not
-  allocate a separate Invocation pool or stack backing, nor enable PPC Call.
+  [`AddressSpace.CreateInvocation`](../arch/address_space.md) creates it
+  inline in the destination entry, with no pool or stack backing.
 - The watermark allocator only ever moves forward: previously allocated
   objects below the watermark are never eligible for re-retyping, and no
   reset/reclamation protocol exists (accepted-leak model).
@@ -116,33 +110,3 @@ flowchart TD
 - Batch partial-result contracts beyond all-or-nothing, if ever needed — D6.
 - General Untyped-backed pools for kernel-private storage (beyond the
   bootstrap-carved notification/event-count pools) — Phase 5 work.
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- `Memory.md` (vault): "Untyped Memory regions can then be **split into
-  smaller regions** or other kernel objects using `Untyped.Retype()`" —
-  **consistent**: the Untyped split is implemented; `size_bits` selects the
-  child region (`2^size_bits` bytes, at least the watermark encoding
-  granularity), the child watermark starts at zero, and the split is pure
-  bookkeeping.
-- `Memory.md` (vault): "Device untyped objects can only be retyped into
-  **frames or other untyped objects**" — **partially consistent**: device
-  Untypeds can be split into device Untypeds (the flag propagates), but the
-  device-frame path remains unimplemented (per-kind device policy is D6).
-- `Memory.md` (vault): "The user-level application that creates an object …
-  receives **full authority** over the resulting object" — **divergence**:
-  current Retype installs the *requested* rights (`x7`), which may be a subset;
-  this is finer-grained than the vault note, not a conflict, but the vault
-  text should not be read as guaranteeing `Rights::all()` on creation.
-- `Memory.md` (vault): "children of the original untyped memory object" — the
-  current implementation does not track a parent/child derivation relation
-  between Untyped and retyped objects (no kernel derivation tree; D2/D6
-  reclamation depends on it). Bookkeeping is delegated to userspace managers.
-- `Vesper.md` (vault): "after boot-up kernel does not allocate any memory
-  itself" — **consistent** in spirit: all object storage is charged to an
-  authorized Untyped carve; the bootstrap-carved notification/event-count
-  pools are boot-time carving, not runtime kernel allocation.
-- `Vesper Capabilities (from wiki).md` (vault): "managers of untyped memory to
-  destroy the objects in that memory so it can be retyped" via revoke —
-  **mismatch**: no destroy/reclaim path exists; the watermark never rewinds
-  (accepted leak). Safe reclamation remains open (D2/D6).

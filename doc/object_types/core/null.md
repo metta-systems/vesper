@@ -54,14 +54,3 @@ valid on it.
 
 - None specific to this kind. Bootstrap slot conventions (which slot, if any,
   permanently holds Null) are part of D4's bootstrap-layout decision.
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- The vault's `Capabilities/Prototype.md` sketch lists `Null` as a `Key`
-  variant and `cap_null_cap = 0` in an seL4-inspired numbering — consistent
-  with the current wire ID 0. The old sketch's other kind IDs were superseded by the grouped catalogue in
-  `nucleus_capabilities.md`; only Null kept its value.
-- The vault wiki notes describe null as "the slot may or may not contain a
-  capability" — the current implementation additionally distinguishes
-  *never-issued* and *invalidated* slots via incarnations, which the vault
-  notes do not model. No conflict, just a refinement.

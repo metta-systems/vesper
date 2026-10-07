@@ -47,19 +47,3 @@ bootstrap, and dispatch rejects it with `UnsupportedArchType`
   not discharge them), and the operation schemas — D1/D6/D9.
 - Requires target hardware support (SMMU on AArch64) before any slice can
   land.
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- `Vesper.md` (vault): "Interrupts come from hardware … kernel is responsible
-  for translating them into invocations of the device drivers' handlers" —
-  related but distinct: that note is about interrupt delivery (see
-  [irq_handler.md](irq_handler.md)); DMA *access* mediation is the IOSpace
-  half. Neither is implemented.
-- `Memory.md` (vault): device memory as a distinct untyped type with
-  kernel-enforced usage restrictions — **direction consistent** (device
-  sources are rejected by Retype today), but the vault has no IOMMU/IOSpace
-  concept; the DMA-mediation requirement comes from the D1 selection in
-  `nucleus_capabilities.md` instead.
-- No vault note covers device-to-memory translation; this kind currently has
-  no desired-capability design behind it beyond the one-line D1 requirement —
-  worth a vault note of its own before any implementation work starts.

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Wire type | `0x06` (core) |
+| Wire type | `0x08` (core) |
 | Pool | `PoolTag::Notification` (bootstrap-carved pool; Retype-creatable) |
 | Status | Active: Signal/Wait/Poll through real SVC dispatch, including blocking Wait |
 
@@ -53,10 +53,10 @@ stateDiagram-v2
   race-free).
 - **Blocking path**: a would-block `Wait` returns `InvokeOutcome::Blocked`;
   the syscall entry copies execution state into the caller's Thread and
-  selects through the bounded runnable-thread fixture scheduler. Resume
-  injects the completed bitmap into the current transient trap frame; the
-  handler unwinds normally to `ERET` on the shared per-core kernel stack. Validated end-to-end by the debug-gated Bounce fixture
-  in `just test-capability-boot`.
+  selects the next runnable Thread. Resume injects the completed bitmap into
+  the transient trap frame and returns through `ERET` on the per-core kernel
+  stack. A Thread may also wait while migrated into a PPC target. Exercised by
+  `kernel/tests/kicktest` and `kernel/tests/endpoint-test`.
 - **Bounded queues**: the wait reservation is validated before admission — a
   full queue rejects with `PoolExhausted` before any record is registered,
   so nothing leaks.
@@ -65,7 +65,7 @@ stateDiagram-v2
   (`remove_waiter` + `PendingPool::teardown_waiter`) unqueues only the
   torn-down Thread's records, preserving FIFO order of the survivors, and is
   driven by `Thread.Retire` via `Nucleus::cancel_thread_pending`.
-- **Memory ordering** : kernel-mediated release/acquire
+- **Memory ordering**: kernel-mediated release/acquire
   — a `Signal` acts as a release on the caller's behalf; observing the
   bitmap (wakeup, satisfied wait, Poll) acts as an acquire. DMA/device writes
   are not covered.
@@ -90,25 +90,3 @@ stateDiagram-v2
   [irq_handler.md](../arch/irq_handler.md)).
 - Notification index/registration scheme versus variable-capacity KeyTables
   (D4); a 64-bit pending bitmap cannot represent every possible slot.
-
-## Cross-reference: implementation vs. desired capabilities (🧠 Vesper vault)
-
-- `IPC and PPC/IPC and PPC.md` (vault wiki section): notifications as
-  coalesced signal targets — **consistent**: the implemented
-  bitmap-coalescing, wait-consumes semantics match the seL4-style intent.
-- Vault: notifications are the destination for IRQ delivery ("Interrupts …
-  translating them into invocations of the device drivers' handlers",
-  `Vesper.md`) — **gap**: no interrupt-controller HAL or IRQ binding exists
-  (`Interrupts.md` vault note is an unchecked todo list); the Notification
-  object is ready to be the target, but nothing delivers to it yet.
-- `Vesper Capabilities (from wiki).md` (vault): capabilities can be "sent via
-  IPC" — **open**: Notification remains data-free; PPC Invocation
-  capability-transfer semantics have not been selected.
-- `API/fbufs.md` (vault): `irq_notify` notification in the NetRxChannel
-  pattern — **consistent as a composition pattern**: the vault's intended
-  use (IRQ → notification → worker inspects ring) is exactly the
-  "waking workers to inspect a queue" composition; the kernel primitive
-  exists, the IRQ half does not.
-- No vault note contradicts the one-consumer selection; the vault wiki does
-  not specify waiter-delivery policy, so the selection fills a gap rather
-  than diverging.
