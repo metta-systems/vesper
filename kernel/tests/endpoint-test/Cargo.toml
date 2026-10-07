@@ -1,7 +1,7 @@
 [package]
-name = "kicktest"
+name = "endpoint-test"
 
-description = "Vesper end-to-end runtime/bootup test kernel (reuses the kickstart boot path)."
+description = "Vesper end-to-end test kernel: a third-party rendezvous endpoint component between client and server AddressSpaces, over PPC Invocation, Notification and EventCount."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -15,14 +15,10 @@ version = { workspace = true }
 
 [features]
 default = []
-# The e2e capability suite runs through the debug-only console/demonstration
-# gates of the shared boot path.
 debug_kernel = ["kickstart/debug_kernel", "libkicktest/debug_kernel", "libobject/debug_kernel", "nucleus/debug_kernel"]
-# Enable JTAG debugging of the test kernel - enable jtag helpers and
-# block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["kickstart/jtag"]
 noserial = []
-# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
+# Build for running under QEMU with semihosting, so exit reports the result.
 qemu = [
   "kickstart/qemu",
   "libexception/qemu",
@@ -34,23 +30,22 @@ qemu = [
 [dependencies]
 aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
-kickstart = { path = "../kickstart" }
+kickstart = { path = "../../kickstart" }
 libaddress = { workspace = true }
 libboot = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
 libkicktest = { workspace = true }
-liblog = { workspace = true }
 libmachine = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
 libqemu = { workspace = true }
-nucleus = { path = "../nucleus" }
+nucleus = { path = "../../nucleus" }
 
 [[bin]]
-name = "kicktest"
-test = false  # the e2e assertions run in-guest through `just test-capability-boot`
+name = "endpoint-test"
+test = false  # the e2e assertions run in-guest through `just test-endpoint`
 
 [lints]
 workspace = true
