@@ -16,6 +16,8 @@ use {
     aarch64_cpu::registers::{Readable, TTBR0_EL1},
     core::{
         arch::{asm, naked_asm},
+        cell::UnsafeCell,
+        hint::black_box,
         sync::atomic::{AtomicBool, AtomicU64, Ordering},
     },
     libobject::{
@@ -42,6 +44,9 @@ static RETURN_KEY: AtomicU64 = AtomicU64::new(0);
 static DEBUG_CONSOLE_KEY: AtomicU64 = AtomicU64::new(0);
 /// Successful `DebugConsole` writes issued by [`export_body`] inside Bounce.
 static CONSOLE_WRITES: AtomicU64 = AtomicU64::new(0);
+/// The dummy x0/x1 words the last [`export_body`] received, OR-ed together:
+/// the kernel zeroes them and the wrapper passes them through unshuffled.
+static BODY_DUMMIES: AtomicU64 = AtomicU64::new(u64::MAX);
 static CAPTURE: [AtomicU64; CAPTURE_WORDS] = [const { AtomicU64::new(0) }; CAPTURE_WORDS];
 static ENTRY_SP: AtomicU64 = AtomicU64::new(0);
 /// Select the target's Return path: the library helper, or raw asm with junk
@@ -442,9 +447,12 @@ pub fn component_init(return_key: RawKey, debug_console_key: RawKey) {
     export::init_return_key(&ThreadReturnKey::from_key(return_key));
 }
 
-/// The compiled export's body: an ordinary `extern "C"` function returning
+/// The compiled export's body: an ordinary `extern "C"` function taking the
+/// entry's eight arguments (two dummies, six real inputs) and returning
 /// its two result words in x0/x1. r1 reports the translation it ran under.
 extern "C" fn export_body(
+    dummy0: u64,
+    dummy1: u64,
     input0: u64,
     input1: u64,
     input2: u64,
@@ -460,6 +468,7 @@ extern "C" fn export_body(
         .write("DEBCON| Bounce: PPC export body writing through its own DebugConsole key\n")
         .unwrap_or_else(|error| panic!("Bounce DebugConsole write failed: {:?}", error.code()));
     CONSOLE_WRITES.fetch_add(1, Ordering::AcqRel);
+    BODY_DUMMIES.store(dummy0 | dummy1, Ordering::Release);
 
     PpcResult {
         r0: export_digest([input0, input1, input2, input3, input4, input5]),
@@ -535,6 +544,7 @@ pub fn export_round_trip(
     }
     FAULT_COUNT.store(0, Ordering::Release);
     let writes_before = CONSOLE_WRITES.load(Ordering::Acquire);
+    BODY_DUMMIES.store(u64::MAX, Ordering::Release);
     let args = [
         0x0101_0101,
         0xF0F0_0000_0000_0F0F,
@@ -559,6 +569,11 @@ pub fn export_round_trip(
         writes_before + 1,
         "export body did not write through Bounce's DebugConsole key"
     );
+    assert_eq!(
+        BODY_DUMMIES.load(Ordering::Acquire),
+        0,
+        "body did not receive the kernel-zeroed dummy x0/x1 unshuffled"
+    );
 
     let faults = FAULT_COUNT.load(Ordering::Acquire);
     if stale_init_key {
@@ -580,4 +595,107 @@ pub fn export_round_trip(
     }
     component_init(return_key, debug_console_key);
     REPAIR_KEY.store(0, Ordering::Release);
+}
+
+/// Plain (non-atomic) memory the clobber target writes and the source reads
+/// back after the Call: the wrappers must not claim `nomem`/`readonly`.
+struct MemoryWitness(UnsafeCell<u64>);
+
+// SAFETY: only the single boot Thread touches it, before and after its own
+// Call and from the migrated target in between; never concurrently.
+unsafe impl Sync for MemoryWitness {}
+
+static MEMORY_WITNESS: MemoryWitness = MemoryWitness(UnsafeCell::new(0));
+const WITNESS_VALUE: u64 = 0x5717;
+const CLOBBER_PAYLOAD: (u64, u64) = (0xC0B1, 0xC0B2);
+
+/// Target entry that writes [`MEMORY_WITNESS`], then fills every general
+/// register it may touch with garbage, sets all NZCV flags, and Returns by
+/// raw SVC. The source's live values must survive through the wrapper's
+/// declarations and the kernel's x19..x30/NZCV restore and x3..x18 zeroing.
+#[unsafe(naked)]
+pub extern "C" fn clobber_entry() -> ! {
+    naked_asm!(
+        "adrp x10, {witness}",
+        "add x10, x10, :lo12:{witness}",
+        "mov x11, #{witness_value}",
+        "str x11, [x10]",
+        "mov x4, #0x0404", "mov x5, #0x0505", "mov x6, #0x0606", "mov x7, #0x0707",
+        "mov x8, #0x0808", "mov x9, #0x0909", "mov x10, #0x1010", "mov x11, #0x1111",
+        "mov x12, #0x1212", "mov x13, #0x1313", "mov x14, #0x1414", "mov x15, #0x1515",
+        "mov x16, #0x1616", "mov x17, #0x1717", "mov x18, #0x1818", "mov x19, #0x1919",
+        "mov x20, #0x2020", "mov x21, #0x2121", "mov x22, #0x2222", "mov x23, #0x2323",
+        "mov x24, #0x2424", "mov x25, #0x2525", "mov x26, #0x2626", "mov x27, #0x2727",
+        "mov x28, #0x2828", "mov x29, #0x2929", "mov x30, #0x3030",
+        "mov x0, #0xf0000000",
+        "msr nzcv, x0",
+        "adrp x0, {key}",
+        "ldr x0, [x0, :lo12:{key}]",
+        "mov x1, #0",
+        "mov x2, #{r0}",
+        "mov x3, #{r1}",
+        "svc #0",
+        // A rejected Return falls through: stop loudly.
+        "brk #0x1",
+        witness = sym MEMORY_WITNESS,
+        witness_value = const WITNESS_VALUE,
+        key = sym RETURN_KEY,
+        r0 = const CLOBBER_PAYLOAD.0,
+        r1 = const CLOBBER_PAYLOAD.1,
+    )
+}
+
+/// Keep twenty compiler-allocated values live across one
+/// `InvocationKey::call` into [`clobber_entry`]: some land in callee-saved
+/// registers, the rest spill to the stack, by the compiler's own choice.
+/// Every one must survive, as must the source's flags-independent state,
+/// and the target's plain memory write must be visible afterwards.
+#[inline(never)]
+pub fn live_values_trip(key: RawKey) {
+    macro_rules! live {
+        ($($name:ident = $seed:expr),* $(,)?) => {
+            $(let $name: u64 = black_box($seed);)*
+            // SAFETY: single-Thread access; see `MemoryWitness`.
+            unsafe { MEMORY_WITNESS.0.get().write(0) };
+            // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved
+            // for this fixture's Invocations; nothing else uses it.
+            let delivered = unsafe { InvocationKey::from_key(key).call([0; 6], STACK_END) }
+                .unwrap_or_else(|error| panic!("clobber Call failed: {:?}", error.code()));
+            $(assert_eq!(
+                black_box($name),
+                $seed,
+                concat!("live value `", stringify!($name), "` lost across Call")
+            );)*
+            assert_eq!(delivered, CLOBBER_PAYLOAD, "clobber target payload");
+        };
+    }
+    live!(
+        v00 = 0xA000_0000_0000_0000,
+        v01 = 0xA101,
+        v02 = 0xA202,
+        v03 = 0xA303,
+        v04 = 0xA404,
+        v05 = 0xA505,
+        v06 = 0xA606,
+        v07 = 0xA707,
+        v08 = 0xA808,
+        v09 = 0xA909,
+        v10 = 0xAA0A,
+        v11 = 0xAB0B,
+        v12 = 0xAC0C,
+        v13 = 0xAD0D,
+        v14 = 0xAE0E,
+        v15 = 0xAF0F,
+        v16 = 0xB010,
+        v17 = 0xB111,
+        v18 = 0xB212,
+        v19 = 0xB313,
+    );
+    // SAFETY: single-Thread access; the Call has completed.
+    let witness = unsafe { MEMORY_WITNESS.0.get().read() };
+    assert_eq!(
+        witness, WITNESS_VALUE,
+        "target's plain memory write not observed"
+    );
+    assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
 }

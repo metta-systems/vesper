@@ -2318,6 +2318,24 @@ pub fn kicktest_run() -> ! {
         );
         assert_boot_thread_home(nucleus);
         assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+
+        // Wrapper declarations under deliberate target clobbers: the target
+        // fills x4..x30 and NZCV with garbage and writes plain memory; the
+        // source's compiler-allocated live values must all survive the
+        // `InvocationKey::call` wrapper, and the memory write must be seen.
+        let clobber_key = AddressSpaceKey::from_key(bounce_as_key)
+            .create_invocation(
+                ppc::clobber_entry as *const () as u64,
+                &self_table,
+                KeySlot(203),
+                ppc::STACK_BASE,
+                ppc::STACK_END,
+                ppc::MINIMUM_HEADROOM,
+            )
+            .unwrap_or_else(|error| panic!("clobber CreateInvocation failed: {:?}", error.code()));
+        ppc::live_values_trip(clobber_key);
+        assert_boot_thread_home(nucleus);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
         semi::println!("PPC Call/Return round trips through Bounce passed");
 
         // An already-satisfied Wait consumes and returns the bits

@@ -226,9 +226,37 @@ fn reject_preserved(
     saved: &SavedContext,
     expected: CapError,
 ) {
+    reject_preserved_code(nucleus, fixture, saved, expected.code());
+}
+
+fn reject_preserved_code(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    fixture: &CallFixture,
+    saved: &SavedContext,
+    expected: (u64, u64, u64),
+) {
     let (result, before) = prepare(nucleus, fixture, saved);
     let error = result.expect_err("rejected Call admission prepared a migration");
-    assert_eq!(error.code(), expected.code());
+    assert_eq!(error.code(), expected);
+    assert_eq!(snapshot(nucleus, fixture), before);
+}
+
+/// The same rejection through the production SVC dispatch entry
+/// (`api::handle_cap_invoke`, as `main.rs` calls it with the saved frame):
+/// caller-table resolution from the current Thread, kind routing, admission
+/// and commit. A rejected Call must report the same error and commit nothing
+/// — no continuation push, no AddressSpace switch, no table or TTBR0 change.
+fn dispatch_rejected(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    fixture: &CallFixture,
+    saved: &SavedContext,
+    expected: (u64, u64, u64),
+) {
+    let before = snapshot(nucleus, fixture);
+    let Err(error) = api::handle_cap_invoke(nucleus, saved) else {
+        panic!("dispatched Call committed despite a rejected admission");
+    };
+    assert_eq!(error.code(), expected);
     assert_eq!(snapshot(nucleus, fixture), before);
 }
 
@@ -332,7 +360,9 @@ fn invalid_sp_is_reported_before_unready_translation_or_full_depth() {
                     fill_stack(nucleus, INVOCATION_STACK_DEPTH);
                 }
                 let saved = call_frame(fixture.key, submitted);
-                reject_preserved(nucleus, &fixture, &saved, invalid_stack(submitted, reason));
+                let expected = invalid_stack(submitted, reason).code();
+                reject_preserved_code(nucleus, &fixture, &saved, expected);
+                dispatch_rejected(nucleus, &fixture, &saved, expected);
             });
         }
     }
@@ -358,7 +388,9 @@ fn translation_failure_is_reported_before_depth_exhaustion() {
             address_space.set_translation_root(root);
             address_space.set_asid(asid);
             let saved = call_frame(fixture.key, LOWEST_SP);
-            reject_preserved(nucleus, &fixture, &saved, expected);
+            let expected = expected.code();
+            reject_preserved_code(nucleus, &fixture, &saved, expected);
+            dispatch_rejected(nucleus, &fixture, &saved, expected);
         });
     }
 }
@@ -380,7 +412,32 @@ fn depth_sixteen_is_rejected_with_current_count_and_fifteen_is_admitted() {
             &saved,
             CapError::NestingDepth { count: 16 },
         );
+        dispatch_rejected(
+            nucleus,
+            &fixture,
+            &saved,
+            CapError::NestingDepth { count: 16 }.code(),
+        );
         assert_eq!(source_mut(nucleus).invocation_stack.len(), 16);
+    });
+}
+
+/// Positive control for the dispatch-level rejections: at depth 15 the same
+/// saved frame through `api::handle_cap_invoke` commits the Call — the
+/// sixteenth continuation is pushed and the Thread migrates to the target.
+#[test_case]
+fn dispatched_call_at_depth_fifteen_commits() {
+    with_call(|nucleus, fixture| {
+        fill_stack(nucleus, INVOCATION_STACK_DEPTH - 1);
+        let saved = call_frame(fixture.key, LOWEST_SP);
+        match api::handle_cap_invoke(nucleus, &saved) {
+            Ok(api::InvokeOutcome::Call(_)) => {}
+            Ok(_) => panic!("dispatched Call produced a non-Call outcome"),
+            Err(error) => panic!("dispatched Call rejected: {:?}", error.code()),
+        }
+        let source = source_mut(nucleus);
+        assert_eq!(source.invocation_stack.len(), INVOCATION_STACK_DEPTH);
+        assert_eq!(source.address_space, fixture.target_as);
     });
 }
 

@@ -7,9 +7,10 @@
 //! the open init-handoff design.
 //!
 //! Each exported procedure gets a non-returning `extern "C"` wrapper from
-//! [`ppc_export!`](crate::ppc_export): it takes two ignored dummy words and the
-//! six real inputs (`x2..x7`), calls its linked body normally, and completes
-//! the invocation with [`complete_export`]. A Return the kernel rejects goes,
+//! [`ppc_export!`](crate::ppc_export): it takes two dummy words and the six
+//! real inputs (`x2..x7`), calls its linked body normally with the same eight
+//! arguments in the same registers, and completes the invocation with
+//! [`complete_export`]. A Return the kernel rejects goes,
 //! with the body's original result words, to the image-supplied non-returning
 //! handler `vesper_thread_return_fault`; the adapter never retries the Return
 //! or re-runs the body.
@@ -125,18 +126,20 @@ pub unsafe fn complete_with(
 /// Define a PPC export entry wrapper for a linked body.
 ///
 /// `ppc_export!(pub fn entry => body);` generates
-/// `extern "C" fn entry(_: u64, _: u64, a0..a5: u64) -> !`, whose address is
+/// `extern "C" fn entry(dummy0, dummy1, a0..a5: u64) -> !`, whose address is
 /// what `AddressSpace.CreateInvocation` publishes. The body is an
-/// `extern "C" fn(u64, u64, u64, u64, u64, u64) -> PpcResult`, called
-/// normally so its linkage is target-local. The kernel enters the wrapper
+/// `extern "C" fn(u64, u64, u64, u64, u64, u64, u64, u64) -> PpcResult`
+/// taking the same two leading dummies (x0/x1, zeroed by the kernel) and the
+/// six real inputs in x2..x7. The wrapper calls it normally, with no register
+/// shuffle, so its linkage is target-local. The kernel enters the wrapper
 /// with a zero x30, so the wrapper never returns normally.
 #[macro_export]
 macro_rules! ppc_export {
     ($(#[$meta:meta])* $visibility:vis fn $entry:ident => $body:path) => {
         $(#[$meta])*
         $visibility extern "C" fn $entry(
-            _dummy0: u64,
-            _dummy1: u64,
+            dummy0: u64,
+            dummy1: u64,
             input0: u64,
             input1: u64,
             input2: u64,
@@ -145,7 +148,7 @@ macro_rules! ppc_export {
             input5: u64,
         ) -> ! {
             let result: $crate::export::PpcResult =
-                $body(input0, input1, input2, input3, input4, input5);
+                $body(dummy0, dummy1, input0, input1, input2, input3, input4, input5);
             // SAFETY: this wrapper is only ever entered by Invocation.Call.
             unsafe { $crate::export::complete_export(result) }
         }

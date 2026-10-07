@@ -299,7 +299,9 @@ pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
 /// to the compiler's conservative defaults (no `nomem`, `readonly`, `pure`,
 /// `preserves_flags`), and `nostack` is deliberately omitted: the migrated
 /// target runs on its own stack, but the source frame is not asserted
-/// untouched for this initial wrapper.
+/// untouched. These stay conservative by choice: the target writes memory the
+/// source reads afterwards, so `nomem`/`readonly` would be wrong, and the
+/// small gain from `nostack` is not worth an untested claim.
 ///
 /// # Safety
 /// The caller supplies a valid Invocation key and a target SP satisfying the

@@ -387,9 +387,9 @@ rely on it surviving Call. The kernel zeroes x18 at target entry and successful
 source resumption under the selected GPR/NZCV policy; other architectural-state
 isolation remains open. FP/SIMD use is prohibited/trapped for this slice as
 specified below.
-Both wrappers are implemented and exercised through real PPC; inspection of
-optimized compiler output and live-value tests across deliberate target
-clobbers remain.
+Both wrappers are implemented and exercised through real PPC. Optimized
+call sites keep nothing live in x3..x18 across the SVC, and compiler-allocated
+live values survive a target that garbages x4..x30 and NZCV.
 
 The current slice is integer-only: kernel, component bodies, wrappers and
 linked runtime code retain the soft-float/no-FP-NEON build contract. Explicitly
