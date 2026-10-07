@@ -21,7 +21,9 @@
 
 use {
     core::sync::atomic::{AtomicU64, Ordering},
-    endpoint_protocol::{BAD_REPLY, DOORBELL_BIT, EndpointInit, QUEUE_FULL, init},
+    endpoint_protocol::{
+        BAD_REPLY, DOORBELL_BIT, ENDPOINT_TLS, EndpointInit, QUEUE_FULL, init, set_tls, tls,
+    },
     libobject::{
         EventCountKey, NotificationKey, RawKey,
         export::{self, PpcResult},
@@ -46,9 +48,14 @@ fn slot(ticket: u64) -> usize {
     usize::try_from((ticket - 1) % QUEUE_SLOTS).unwrap_or(0)
 }
 
-/// This component's init page; also records the export adapter's Return
-/// key (idempotent, so every procedure can call it on entry).
+/// Procedure entry: checks the call arrived with TLS scrubbed to 0 (the
+/// caller's value never reaches the endpoint), then sets the endpoint's own
+/// value, which Return must discard. Returns this component's init page and
+/// records the export adapter's Return key (idempotent, so every procedure
+/// can call it on entry).
 fn setup() -> &'static EndpointInit {
+    assert_eq!(tls(), 0, "endpoint: entered with the caller's TLS");
+    set_tls(ENDPOINT_TLS);
     // SAFETY: the builder fills this component's init page with an
     // `EndpointInit` before any Invocation can reach it.
     let init: &EndpointInit = unsafe { init() };
@@ -84,6 +91,8 @@ fn receive(init: &EndpointInit) -> PpcResult {
         doorbell(init)
             .wait(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("endpoint: doorbell wait failed: {:?}", error.code()));
+        // Other Threads ran (and entered the endpoint) while this one blocked.
+        assert_eq!(tls(), ENDPOINT_TLS, "endpoint: TLS lost across a block");
     }
 }
 
@@ -114,6 +123,7 @@ extern "C" fn send_body(
     done(init)
         .await_ge(ticket, EventCountKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("endpoint: done await failed: {:?}", error.code()));
+    assert_eq!(tls(), ENDPOINT_TLS, "endpoint: TLS lost across a block");
     PpcResult {
         r0: ticket,
         r1: REPLIES[slot(ticket)].load(Ordering::Acquire),

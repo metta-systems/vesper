@@ -7,7 +7,10 @@
 //! init-handoff design: the builder writes each component's keys and
 //! parameters into a page mapped at [`INIT_VA`] in that component only.
 
-use core::sync::atomic::AtomicU64;
+use {
+    aarch64_cpu::registers::{Readable, TPIDR_EL0, Writeable},
+    core::sync::atomic::AtomicU64,
+};
 
 /// Each component's init page (written by the builder before the component
 /// runs).
@@ -71,6 +74,25 @@ pub struct ClientInit {
 #[repr(C)]
 pub struct ClientReport {
     pub replies: [[[AtomicU64; 2]; 2]; 2],
+}
+
+/// Each party's own EL0 TLS (`TPIDR_EL0`) value. TLS is per Thread, and a
+/// PPC target is entered with 0 and cannot change its caller's value, so each
+/// party checks its own value survives every call and block.
+/// Client Thread `index` uses `CLIENT_TLS + index`.
+pub const CLIENT_TLS: u64 = 0x7150_C1E0_0000_0000;
+pub const SERVER_TLS: u64 = 0x7150_5E40_0000_0000;
+/// What the endpoint sets while running a migrated call; never seen by callers.
+pub const ENDPOINT_TLS: u64 = 0x7150_E4D0_0000_0000;
+
+/// This Thread's EL0 TLS register.
+pub fn tls() -> u64 {
+    TPIDR_EL0.get()
+}
+
+/// Set this Thread's EL0 TLS register.
+pub fn set_tls(value: u64) {
+    TPIDR_EL0.set(value);
 }
 
 /// This component's init page.

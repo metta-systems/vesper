@@ -257,6 +257,9 @@ dependencies = [
 [[package]]
 name = "endpoint-protocol"
 version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+]
 
 [[package]]
 name = "endpoint-server"

@@ -52,12 +52,14 @@ pub struct SavedContext {
     pub sp: u64,
     /// Vector group / return stack selection.
     pub origin: ExceptionOrigin,
+    /// EL0 read/write thread-local storage register: per-Thread state.
+    pub tpidr_el0: u64,
 }
 
 impl SavedContext {
     /// Initial context for trusted `EL1t` bootstrap/fixture execution on `SP_EL0`.
     ///
-    /// All GPRs and LR are zero; D, A, I and F are masked. This constructs
+    /// All GPRs, LR and TLS are zero; D, A, I and F are masked. This constructs
     /// internal execution state, not a public privileged-Thread creation ABI.
     /// The caller supplies a valid PC and a mapped, 16-byte-aligned stack SP.
     pub const fn el1t(pc: u64, sp: u64) -> Self {
@@ -68,12 +70,13 @@ impl SavedContext {
             elr_el1: pc,
             sp,
             origin: ExceptionOrigin::CurrentSp0,
+            tpidr_el0: 0,
         }
     }
 
     /// Initial context for unprivileged `EL0t` execution on `SP_EL0`.
     ///
-    /// All GPRs and LR are zero except `x0 = argument`; D, A, I and F are
+    /// All GPRs, LR and TLS are zero except `x0 = argument`; D, A, I and F are
     /// masked (EL0 cannot unmask them: `SCTLR_EL1.UMA` traps DAIF access).
     /// The caller supplies a PC and a 16-byte-aligned SP that are mapped
     /// EL0-accessible in the Thread's `AddressSpace`.
@@ -87,6 +90,7 @@ impl SavedContext {
             elr_el1: pc,
             sp,
             origin: ExceptionOrigin::LowerAarch64,
+            tpidr_el0: 0,
         }
     }
 }
@@ -110,8 +114,9 @@ pub struct ExceptionContext {
     pub sp: u64,
     /// Vector group / return stack selection.
     pub origin: ExceptionOrigin,
-    /// Explicit zero padding keeps the frame and its stack allocation 16-byte aligned.
-    pub padding: u64,
+    /// EL0 read/write thread-local storage register, saved on entry and
+    /// restored on `eret` (it also keeps the frame a multiple of 16 bytes).
+    pub tpidr_el0: u64,
 }
 
 const _: () = {
@@ -125,7 +130,7 @@ const _: () = {
     assert!(offset_of!(ExceptionContext, elr_el1) == 256);
     assert!(offset_of!(ExceptionContext, sp) == 264);
     assert!(offset_of!(ExceptionContext, origin) == 272);
-    assert!(offset_of!(ExceptionContext, padding) == 280);
+    assert!(offset_of!(ExceptionContext, tpidr_el0) == 280);
     assert!(size_of::<ExceptionContext>() == 288);
     assert!(align_of::<ExceptionContext>() == 16);
     assert!(offset_of!(SavedContext, gpr) == 0);
@@ -134,7 +139,8 @@ const _: () = {
     assert!(offset_of!(SavedContext, elr_el1) == 256);
     assert!(offset_of!(SavedContext, sp) == 264);
     assert!(offset_of!(SavedContext, origin) == 272);
-    assert!(size_of::<SavedContext>() == 280);
+    assert!(offset_of!(SavedContext, tpidr_el0) == 280);
+    assert!(size_of::<SavedContext>() == 288);
     assert!(align_of::<SavedContext>() == 8);
 };
 
@@ -147,7 +153,7 @@ impl From<SavedContext> for ExceptionContext {
             elr_el1: saved.elr_el1,
             sp: saved.sp,
             origin: saved.origin,
-            padding: 0,
+            tpidr_el0: saved.tpidr_el0,
         }
     }
 }
@@ -162,6 +168,7 @@ impl ExceptionContext {
             elr_el1: self.elr_el1,
             sp: self.sp,
             origin: self.origin,
+            tpidr_el0: self.tpidr_el0,
         }
     }
 

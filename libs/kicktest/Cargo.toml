@@ -33,5 +33,10 @@ libprint = { workspace = true }
 libqemu = { workspace = true }
 nucleus = { path = "../../kernel/nucleus" }
 
+[lib]
+# Boot-test scaffolding; exercised by the e2e test kernels, not a harness.
+test = false
+harness = false
+
 [lints]
 workspace = true

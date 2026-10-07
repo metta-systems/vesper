@@ -73,7 +73,7 @@ core::arch::global_asm!(
     context_elr = const core::mem::offset_of!(ExceptionContext, elr_el1),
     context_sp = const core::mem::offset_of!(ExceptionContext, sp),
     context_origin = const core::mem::offset_of!(ExceptionContext, origin),
-    context_padding = const core::mem::offset_of!(ExceptionContext, padding),
+    context_tpidr_el0 = const core::mem::offset_of!(ExceptionContext, tpidr_el0),
     origin_current_sp0 = const ExceptionOrigin::CurrentSp0 as u64,
     origin_current_spx = const ExceptionOrigin::CurrentSpx as u64,
     origin_lower_aarch64 = const ExceptionOrigin::LowerAarch64 as u64,

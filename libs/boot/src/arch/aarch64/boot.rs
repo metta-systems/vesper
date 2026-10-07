@@ -101,6 +101,24 @@ pub unsafe extern "C" fn _startup_in_rust(dtb: u32) -> ! {
     HCR_EL2.write(HCR_EL2::RW::EL1IsAarch64 + HCR_EL2::SWIO::SET);
     // @todo disable VM bit to prevent stage 2 MMU translations
 
+    // Trap nothing to EL2: FP/SIMD trapping is then governed by `CPACR_EL1`
+    // alone and traps are taken to EL1, where the kernel handles them; nothing
+    // handles a trap taken to EL2. `HCR_EL2.E2H` is 0 (written above), which
+    // selects this field layout. `TZ` and `TSM` are RES1 on the supported
+    // ARMv8.0 cores (no SVE/SME), so they are written as 1; on a core with
+    // SVE/SME they would route those traps to EL2 — selecting them by the
+    // core's features belongs to runtime Arm version detection.
+    CPTR_EL2.write(
+        CPTR_EL2::TCPAC::NoTrap
+            + CPTR_EL2::TTA::NoTrap
+            + CPTR_EL2::RES1_13::SET
+            + CPTR_EL2::TSM::Trap
+            + CPTR_EL2::TFP::NoTrap
+            + CPTR_EL2::RES1_9::SET
+            + CPTR_EL2::TZ::Trap
+            + CPTR_EL2::RES1_7_0::SET,
+    );
+
     match CurrentEL.get() {
         #[cfg(feature = "qemu")]
         EL3 => setup_and_enter_el2_from_el3(dtb),

@@ -56,6 +56,8 @@ pub struct InvocationContinuation {
     pub source_spsr: u64,
     pub source_origin: ExceptionOrigin,
     pub source_x19_x30: [u64; 12],
+    /// The source's EL0 TLS: the target is entered with zero, Return restores this.
+    pub source_tpidr_el0: u64,
 }
 
 impl InvocationContinuation {
@@ -72,6 +74,7 @@ impl InvocationContinuation {
             source_spsr: 0,
             source_origin: ExceptionOrigin::CurrentSp0,
             source_x19_x30: [0; 12],
+            source_tpidr_el0: 0,
         }
     }
 
@@ -87,6 +90,7 @@ impl InvocationContinuation {
             source_spsr: saved.spsr_el1,
             source_origin: saved.origin,
             source_x19_x30,
+            source_tpidr_el0: saved.tpidr_el0,
         }
     }
 }
@@ -201,13 +205,13 @@ pub struct Thread {
 
 // The record and array sizes are part of the storage/accounting contract.
 const _: () = {
-    assert!(size_of::<InvocationContinuation>() == 144);
+    assert!(size_of::<InvocationContinuation>() == 152);
     assert!(align_of::<InvocationContinuation>() == 8);
-    assert!(size_of::<InvocationStack>() >= 144 * INVOCATION_STACK_DEPTH);
+    assert!(size_of::<InvocationStack>() >= 152 * INVOCATION_STACK_DEPTH);
 };
 // Thread backing is type-derived and is not required to fit in one page.
 const _: () = {
-    assert!(size_of::<SavedContext>() == 280);
+    assert!(size_of::<SavedContext>() == 288);
     assert!(align_of::<SavedContext>() == 8);
     assert!(align_of::<Thread>() == 8);
     assert!(size_of::<ExecutionContext>() >= size_of::<SavedContext>() + size_of::<ObjectId>());

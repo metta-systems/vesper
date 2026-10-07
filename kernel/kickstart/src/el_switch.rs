@@ -5,36 +5,55 @@ use {
     aarch64_cpu::{
         asm::{self, barrier},
         registers::{
-            CPACR_EL1, CPTR_EL2, ELR_EL2, HCR_EL2, MAIR_EL1, ReadWriteable, SCTLR_EL1, SP_EL0,
-            SP_EL1, SPSR_EL1, SPSR_EL2, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
+            CNTKCTL_EL1, CPACR_EL1, ELR_EL2, HCR_EL2, MAIR_EL1, MDSCR_EL1, PMUSERENR_EL0,
+            ReadWriteable, SCTLR_EL1, SP_EL0, SP_EL1, SPSR_EL1, SPSR_EL2, TCR_EL1, TPIDR_EL0,
+            TPIDRRO_EL0, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
         },
     },
 };
 
 /// Establish the integer-only FP/SIMD policy before anything runs at EL1 or
-/// EL0: architectural reset leaves these controls UNKNOWN, so they are set
+/// EL0: architectural reset leaves this control UNKNOWN, so it is set
 /// explicitly. Any FP/SIMD instruction (and, with SVE, any SVE instruction)
 /// at EL1 or EL0 then traps to EL1 with `ESR_EL1.EC` 0x07 (0x19 for SVE) — an
-/// execution fault, never an automatic enable.
+/// execution fault, never an automatic enable. (`libboot`'s
+/// `_startup_in_rust` has already cleared the `CPTR_EL2` traps, so these
+/// traps are taken to EL1.)
 fn configure_fp_simd_traps() {
-    // EL2 traps nothing, so FP/SIMD trapping is governed by `CPACR_EL1` alone
-    // and traps are taken to EL1, where the nucleus handles them; nothing
-    // handles a trap taken to EL2. `HCR_EL2.E2H` is 0 (written above), which
-    // selects this field layout. `TZ` and `TSM` are RES1 on the supported
-    // ARMv8.0 cores (no SVE/SME), so they are written as 1; on a core with
-    // SVE/SME they would route those traps to EL2 — selecting them by the
-    // core's features belongs to runtime Arm version detection.
-    CPTR_EL2.write(
-        CPTR_EL2::TCPAC::NoTrap
-            + CPTR_EL2::TTA::NoTrap
-            + CPTR_EL2::RES1_13::SET
-            + CPTR_EL2::TSM::Trap
-            + CPTR_EL2::TFP::NoTrap
-            + CPTR_EL2::RES1_9::SET
-            + CPTR_EL2::TZ::Trap
-            + CPTR_EL2::RES1_7_0::SET,
-    );
     CPACR_EL1.write(CPACR_EL1::FPEN::TrapEl0El1 + CPACR_EL1::ZEN::TrapEl0El1);
+    barrier::isb(barrier::SY);
+}
+
+/// Establish the selected EL0-visible architectural state (see the contract's
+/// "Selected EL0-visible architectural state"): reset leaves all of it
+/// UNKNOWN.
+///
+/// - TLS: `TPIDR_EL0` starts at 0 (from here on it is per-Thread state carried
+///   by the exception frame); `TPIDRRO_EL0` is 0 and nothing else writes it.
+///   Linux uses `TPIDRRO_EL0` to publish identity that EL0 may read but not
+///   change — a possible future use, not selected.
+/// - Generic timer: EL0 may read the virtual counter (and `CNTFRQ_EL0`) only;
+///   the physical counter and every timer trap, and no event stream runs.
+/// - Debug: EL0 access to the debug communications channel traps; software
+///   debug (breakpoints, watchpoints, single step) stays disabled.
+/// - Performance monitors: every EL0 access traps.
+fn configure_el0_visible_state() {
+    TPIDR_EL0.set(0);
+    TPIDRRO_EL0.set(0);
+    CNTKCTL_EL1.write(
+        CNTKCTL_EL1::EL0PTEN::TrappedPhysical
+            + CNTKCTL_EL1::EL0VTEN::TrappedVirtual
+            + CNTKCTL_EL1::EVNTEN::Disable
+            + CNTKCTL_EL1::EL0VCTEN::TrappedNone
+            + CNTKCTL_EL1::EL0PCTEN::TrappedFreqPct,
+    );
+    MDSCR_EL1.write(MDSCR_EL1::TDCC::SET);
+    PMUSERENR_EL0.write(
+        PMUSERENR_EL0::ER::TrappedUnlessEnabled
+            + PMUSERENR_EL0::CR::TrappedUnlessEnabled
+            + PMUSERENR_EL0::SW::TrappedUnlessEnabled
+            + PMUSERENR_EL0::EN::TrappedUnlessEnabled,
+    );
     barrier::isb(barrier::SY);
 }
 
@@ -88,6 +107,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     // @todo disable VM bit to prevent stage 2 MMU translations
 
     configure_fp_simd_traps();
+    configure_el0_visible_state();
 
     // ═══════════════════════════════════════════════════════════
     // STEP 2: Set up VBAR_EL1 (Exception Vector Base Address)

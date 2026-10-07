@@ -30,7 +30,9 @@ pub mod paging;
 pub mod threads;
 
 use {
-    aarch64_cpu::registers::{CPACR_EL1, Readable},
+    aarch64_cpu::registers::{
+        CNTKCTL_EL1, CPACR_EL1, MDSCR_EL1, PMUSERENR_EL0, Readable, TPIDRRO_EL0,
+    },
     core::panic::PanicInfo,
     libqemu::semihosting as semi,
 };
@@ -44,6 +46,44 @@ pub fn assert_fp_simd_trapped() {
         CPACR_EL1.matches_all(CPACR_EL1::FPEN::TrapEl0El1 + CPACR_EL1::ZEN::TrapEl0El1),
         "FP/SIMD must trap at EL1 and EL0 (CPACR_EL1 = {:#x})",
         CPACR_EL1.get()
+    );
+}
+
+/// Check the selected EL0-visible architectural state Kickstart established:
+/// read-only TLS zero, EL0 limited to reading the virtual counter, EL0
+/// performance-monitor and debug-channel access trapped, software debug off.
+pub fn assert_el0_visible_state() {
+    assert_eq!(TPIDRRO_EL0.get(), 0, "TPIDRRO_EL0 must be zero");
+    assert!(
+        CNTKCTL_EL1.matches_all(
+            CNTKCTL_EL1::EL0PTEN::TrappedPhysical
+                + CNTKCTL_EL1::EL0VTEN::TrappedVirtual
+                + CNTKCTL_EL1::EVNTEN::Disable
+                + CNTKCTL_EL1::EL0VCTEN::TrappedNone
+                + CNTKCTL_EL1::EL0PCTEN::TrappedFreqPct
+        ),
+        "EL0 may only read the virtual counter (CNTKCTL_EL1 = {:#x})",
+        CNTKCTL_EL1.get()
+    );
+    assert!(
+        MDSCR_EL1.matches_all(
+            MDSCR_EL1::TDCC::SET
+                + MDSCR_EL1::MDE::CLEAR
+                + MDSCR_EL1::KDE::CLEAR
+                + MDSCR_EL1::SS::CLEAR
+        ),
+        "EL0 debug-channel access must trap, software debug off (MDSCR_EL1 = {:#x})",
+        MDSCR_EL1.get()
+    );
+    assert!(
+        PMUSERENR_EL0.matches_all(
+            PMUSERENR_EL0::ER::TrappedUnlessEnabled
+                + PMUSERENR_EL0::CR::TrappedUnlessEnabled
+                + PMUSERENR_EL0::SW::TrappedUnlessEnabled
+                + PMUSERENR_EL0::EN::TrappedUnlessEnabled
+        ),
+        "EL0 performance-monitor access must trap (PMUSERENR_EL0 = {:#x})",
+        PMUSERENR_EL0.get()
     );
 }
 

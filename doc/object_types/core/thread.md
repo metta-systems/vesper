@@ -79,8 +79,9 @@ retired Thread's capabilities fail pool validation.
   (the checked identity of the `AddressSpace` it currently executes in),
   `context` (`NotStarted` / `Running` / `Parked`) and the depth-16 invocation
   stack. There is no per-Thread table address.
-- Saved state is Thread-resident: a 280-byte `SavedContext` (all integer
-  registers, SP, PC, raw SPSR, exception origin). A blocking SVC copies the
+- Saved state is Thread-resident: a 288-byte `SavedContext` (all integer
+  registers, SP, PC, raw SPSR, exception origin and the EL0 TLS register
+  `TPIDR_EL0`, which the exception frame carries). A blocking SVC copies the
   caller's state into its Thread, selects the next runnable Thread, rewrites
   the transient trap frame and returns through `ERET` on the single per-core
   kernel stack.
@@ -105,7 +106,12 @@ retired Thread's capabilities fail pool validation.
   capabilities, not an owner identity.
 - A Thread starts either as `EL1t` (`SavedContext::el1t`) or unprivileged at
   EL0 (`SavedContext::el0`, with one argument word in `x0`); EL0 cannot
-  unmask interrupts. Only the bootstrap builder creates Threads today.
+  unmask interrupts. Both start with TLS zero. Only the bootstrap builder
+  creates Threads today.
+- EL0 sees a fixed set of other architectural state, the same for every
+  Thread: `TPIDRRO_EL0` is zero, the virtual counter (`CNTVCT_EL0`,
+  `CNTFRQ_EL0`) is readable, and the physical counter, timers, performance
+  monitors, debug communications channel and FP/SIMD all trap.
 
 ## TODOs
 

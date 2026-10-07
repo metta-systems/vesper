@@ -34,7 +34,9 @@ fn exception_context_layout_matches_vector_frame() {
     assert_eq!(offset_of!(ExceptionContext, elr_el1), 256);
     assert_eq!(offset_of!(ExceptionContext, sp), 264);
     assert_eq!(offset_of!(ExceptionContext, origin), 272);
-    assert_eq!(size_of::<SavedContext>(), 280);
+    assert_eq!(offset_of!(ExceptionContext, tpidr_el0), 280);
+    assert_eq!(offset_of!(SavedContext, tpidr_el0), 280);
+    assert_eq!(size_of::<SavedContext>(), 288);
     assert_eq!(align_of::<SavedContext>(), 8);
 }
 
@@ -61,6 +63,7 @@ fn saved_context_el1t_initializes_masked_execution_state() {
     assert_eq!(SAVED.elr_el1, PC);
     assert_eq!(SAVED.sp, SP);
     assert_eq!(SAVED.origin, ExceptionOrigin::CurrentSp0);
+    assert_eq!(SAVED.tpidr_el0, 0);
     assert_eq!(ExceptionContext::from(SAVED).save(), SAVED);
 }
 
@@ -84,6 +87,7 @@ fn saved_context_round_trips_registers_status_sp_and_origin() {
                 elr_el1: 0x0000_0000_8123_4560,
                 sp: 0xffff_0000_8765_4320,
                 origin,
+                tpidr_el0: 0x7150_0000_0000_0000 | spsr_el1,
             };
             for (index, register) in expected.gpr.iter_mut().enumerate() {
                 *register = 0xa5a5_5a5a_0000_0000 | u64::try_from(index).unwrap();
@@ -98,6 +102,7 @@ fn saved_context_round_trips_registers_status_sp_and_origin() {
             assert_eq!(frame.elr_el1, expected.elr_el1);
             assert_eq!(frame.sp, expected.sp);
             assert_eq!(frame.origin, origin);
+            assert_eq!(frame.tpidr_el0, expected.tpidr_el0);
             assert_eq!(frame.save(), expected);
 
             let mut second_frame = ExceptionContext::from(SavedContext::el1t(4, 16));

@@ -10,7 +10,9 @@
 
 use {
     core::sync::atomic::Ordering,
-    endpoint_protocol::{CLIENT_REQUESTS, ClientInit, ClientReport, REPORT_VA, init},
+    endpoint_protocol::{
+        CLIENT_REQUESTS, CLIENT_TLS, ClientInit, ClientReport, REPORT_VA, init, set_tls, tls,
+    },
     libobject::{NotificationKey, RawKey, invocation::InvocationKey},
     libuser::{self as component, semihosting as semi},
 };
@@ -26,6 +28,8 @@ fn main(index: u64) -> ! {
     let report = unsafe { &*(REPORT_VA as *const ClientReport) };
     let client = usize::try_from(index).unwrap_or(usize::MAX);
     let send = InvocationKey::from_key(RawKey::from_wire(init.send[client]));
+    let own_tls = CLIENT_TLS + index;
+    set_tls(own_tls);
     for (row, &request) in CLIENT_REQUESTS[client].iter().enumerate() {
         semi::println!("client {index}: sending {request:#x} at EL0");
         // SAFETY: the endpoint stack published with this client's Invocation
@@ -33,6 +37,9 @@ fn main(index: u64) -> ! {
         let (ticket, reply) =
             unsafe { send.call([request, 0, 0, 0, 0, 0], init.stack_end[client]) }
                 .unwrap_or_else(|error| panic!("client {index}: send failed: {:?}", error.code()));
+        // The call migrated into the endpoint and blocked there: this Thread's
+        // TLS must be its own again, whatever the endpoint and the server set.
+        assert_eq!(tls(), own_tls, "client {index}: TLS not restored");
         report.replies[client][row][0].store(ticket, Ordering::Relaxed);
         report.replies[client][row][1].store(reply, Ordering::Release);
     }

@@ -13,7 +13,7 @@
 .equ CONTEXT_ELR, {context_elr}
 .equ CONTEXT_SP, {context_sp}
 .equ CONTEXT_ORIGIN, {context_origin}
-.equ CONTEXT_PADDING, {context_padding}
+.equ CONTEXT_TPIDR_EL0, {context_tpidr_el0}
 .equ ORIGIN_CURRENT_SP0, {origin_current_sp0}
 .equ ORIGIN_CURRENT_SPX, {origin_current_spx}
 .equ ORIGIN_LOWER_AARCH64, {origin_lower_aarch64}
@@ -62,7 +62,9 @@
     mov    x2,  #\origin
     str    x1,       [sp, #CONTEXT_SP]
     str    x2,       [sp, #CONTEXT_ORIGIN]
-    str    xzr,      [sp, #CONTEXT_PADDING]
+    // Per-Thread EL0 TLS travels with the frame (saved/switched/scrubbed by Rust).
+    mrs    x1,  TPIDR_EL0
+    str    x1,       [sp, #CONTEXT_TPIDR_EL0]
 
     mov    x0,  sp
     bl     \handler
@@ -143,6 +145,8 @@ __restore_context:
     ldp    x2,  x3,  [sp, #CONTEXT_SPSR]
     msr    SPSR_EL1, x2
     msr    ELR_EL1, x3
+    ldr    x2,       [sp, #CONTEXT_TPIDR_EL0]
+    msr    TPIDR_EL0, x2
 
     ldr    x0,       [sp, #CONTEXT_SP]
     ldr    x1,       [sp, #CONTEXT_ORIGIN]

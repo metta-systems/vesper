@@ -85,6 +85,7 @@ table and the hardware context unchanged.
 | NZCV | Clear | The source's |
 | Other SPSR bits | Inherited from the source (same EL and masks) | The source's exact SPSR |
 | SP / PC | Submitted SP / entry | Source SP / after the Call SVC |
+| `TPIDR_EL0` (TLS) | Zero | The source's (the target's value is discarded) |
 
 Rejected Calls and Returns are ordinary errors: nothing is scrubbed or
 migrated. `Thread.Return` ignores `x4..x7`.
@@ -111,9 +112,9 @@ migrated. `Thread.Return` ignores `x4..x7`.
   target `AddressSpace` identity and an immutable validated
   `InvocationStackExtent` (24 B), inside the 64 B `KeyEntry`.
 - **Invocation stack:** each Thread carries a depth-16 inline array of
-  kernel-private continuation records (144 B each, 2304 B total): source
-  `AddressSpace`, return PC, SP, raw SPSR, exception origin, a Call time stamp
-  and `x19..x30`. No runtime allocation; Thread pool backing is sized from the
+  kernel-private continuation records (152 B each, 2432 B total): source
+  `AddressSpace`, return PC, SP, raw SPSR, exception origin, a Call time stamp,
+  `x19..x30` and `TPIDR_EL0`. No runtime allocation; Thread pool backing is sized from the
   type.
 - **Call:** `api::invocation::call` runs `Nucleus::prepare_call` (read-only:
   live target, `x9` from the saved frame, translation, depth) then
@@ -139,7 +140,7 @@ migrated. `Thread.Return` ignores `x4..x7`.
 - Calls work the same from `EL1t` and EL0: the target runs at the caller's
   EL. A fault in an EL0 target still halts the kernel (no fault delivery).
 - Execution is integer-only: there is no FP/SIMD state in a continuation.
-  Kickstart sets `CPTR_EL2`/`CPACR_EL1` so any FP/SIMD instruction at EL1 or
+  The boot path sets `CPTR_EL2`/`CPACR_EL1` so any FP/SIMD instruction at EL1 or
   EL0 traps to EL1 (`ESR_EL1.EC` 0x07) as an execution fault, which currently
   halts the kernel like any other fault. Exercised by `kernel/tests/fp-trap-test`;
   `just audit-fp-simd` checks that the linked images contain no FP/SIMD
@@ -151,7 +152,8 @@ migrated. `Thread.Return` ignores `x4..x7`.
 
 - Return fault delivery (underflow, retired source) — D1/D7; currently an
   interim kernel panic with nothing popped.
-- TLS, debug and other architectural-state isolation.
+- Complete architectural-state isolation beyond the selected TLS, counter,
+  debug-channel and FP/SIMD controls.
 - Invocation distribution: CopyDerive restrictions, rights attenuation,
   badges — D4.
 - Pointer and shared-memory arguments; capability transfer.

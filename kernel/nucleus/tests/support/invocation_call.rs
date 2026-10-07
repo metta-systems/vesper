@@ -542,6 +542,9 @@ fn admitted(result: Result<PreparedCall, CapError>) -> PreparedCall {
 
 /// SPSR condition flags N, Z, C and V.
 const NZCV: u64 = 0xF000_0000;
+/// A source Thread's EL0 TLS value, and one a target sets during a call.
+const SOURCE_TLS: u64 = 0x7150_0000_0000_1500;
+const TARGET_TLS: u64 = 0x7a40_0000_0000_7a40;
 
 fn caller(fixture: &CallFixture) -> CallerTable {
     CallerTable {
@@ -638,6 +641,7 @@ fn target_entry_frame_keeps_only_inputs_and_inherits_non_nzcv_status() {
         let mut saved = call_frame(fixture.key, LOWEST_SP);
         // Every condition flag and an unmasked IRQ bit set in the source.
         saved.spsr_el1 = (saved.spsr_el1 | NZCV) & !0x80;
+        saved.tpidr_el0 = SOURCE_TLS;
         let target = committed(call(nucleus, &fixture, &saved)).target;
 
         assert_eq!(&target.gpr[0..2], &[0, 0]);
@@ -652,6 +656,7 @@ fn target_entry_frame_keeps_only_inputs_and_inherits_non_nzcv_status() {
         assert_eq!(target.spsr_el1, saved.spsr_el1 & !NZCV);
         assert_eq!(target.spsr_el1 & 0x3c0, saved.spsr_el1 & 0x3c0);
         assert_eq!(target.origin, saved.origin);
+        assert_eq!(target.tpidr_el0, 0, "the source's TLS leaked to the target");
 
         // The source keeps every scrubbed value privately in its record.
         let record = *source_mut(nucleus).invocation_stack.top().unwrap();
@@ -660,6 +665,7 @@ fn target_entry_frame_keeps_only_inputs_and_inherits_non_nzcv_status() {
         assert_eq!(record.source_x19_x30[11], saved.lr);
         assert_eq!(record.source_pc, saved.elr_el1);
         assert_eq!(record.source_sp, saved.sp);
+        assert_eq!(record.source_tpidr_el0, SOURCE_TLS);
     });
 }
 
@@ -873,6 +879,7 @@ fn call_then_return_restores_the_exact_source_context_and_table() {
         let before = snapshot(nucleus, &fixture);
         let mut call_saved = call_frame(fixture.key, LOWEST_SP);
         call_saved.spsr_el1 |= NZCV;
+        call_saved.tpidr_el0 = SOURCE_TLS;
         committed(call(nucleus, &fixture, &call_saved));
         assert_eq!(
             nucleus.current_thread_table_addr(),
@@ -880,7 +887,9 @@ fn call_then_return_restores_the_exact_source_context_and_table() {
         );
 
         let payload = [0xAAAA_0001, 0xBBBB_0002];
-        let saved = return_frame(fixture.target_return_key, payload, [1, 2, 3, 4]);
+        let mut saved = return_frame(fixture.target_return_key, payload, [1, 2, 3, 4]);
+        // The target sets its own TLS during the call; Return discards it.
+        saved.tpidr_el0 = TARGET_TLS;
         let commit = returned(thread_return(nucleus, &saved));
         let resumed = commit.resumed;
 
@@ -895,6 +904,10 @@ fn call_then_return_restores_the_exact_source_context_and_table() {
         // Exact raw source SPSR, including its original NZCV.
         assert_eq!(resumed.spsr_el1, call_saved.spsr_el1);
         assert_eq!(resumed.origin, call_saved.origin);
+        assert_eq!(
+            resumed.tpidr_el0, SOURCE_TLS,
+            "Return must restore the source's TLS"
+        );
 
         assert_eq!(commit.translation.address_space(), fixture.source_as);
         assert_eq!(commit.translation.root(), SOURCE_ROOT);

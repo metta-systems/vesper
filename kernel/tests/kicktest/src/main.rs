@@ -322,6 +322,7 @@ fn assert_source_selected(
 pub fn kicktest_run() -> ! {
     semi::println!("kicktest_run: enabled MMU and dropped to EL1");
     libkicktest::assert_fp_simd_trapped();
+    libkicktest::assert_el0_visible_state();
     print_my_sp();
     #[cfg(feature = "debug_kernel")]
     let (boot_execution_sp, shared_trap_sp) = {

@@ -17,5 +17,10 @@ version = { workspace = true }
 aarch64-cpu = { workspace = true }
 tock-registers = { workspace = true }
 
+[lib]
+# EL0-only no_std code: no test harness or panic handler on the target.
+test = false
+harness = false
+
 [lints]
 workspace = true

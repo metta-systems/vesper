@@ -399,8 +399,10 @@ mod tests {
             for (writable, executable, ap, xn) in [
                 (false, false, 0b11 << 6, (1 << 53) | (1 << 54)),
                 (true, false, 0b01 << 6, (1 << 53) | (1 << 54)),
-                (false, true, 0b11 << 6, 0),
-                (true, true, 0, 0),
+                // Read-only code executes at EL0 only (PXN).
+                (false, true, 0b11 << 6, 1 << 53),
+                // RW+X executes at EL1 only (UXN), EL0 has no access.
+                (true, true, 0, 1 << 54),
             ] {
                 let descriptor =
                     frame_descriptor(base, leaf_level(size_bits), writable, executable);

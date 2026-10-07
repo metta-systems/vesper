@@ -8,7 +8,7 @@
 //! the work here, with a salt only this `AddressSpace` can read.
 
 use {
-    endpoint_protocol::{ServerInit, init, work as server_work},
+    endpoint_protocol::{SERVER_TLS, ServerInit, init, set_tls, tls, work as server_work},
     libobject::{RawKey, invocation::InvocationKey},
     libuser::{self as component, semihosting as semi},
 };
@@ -26,10 +26,13 @@ fn main(_argument: u64) -> ! {
     // SAFETY: the builder fills this component's init page with a
     // `ServerInit` before starting the server.
     let init: &ServerInit = unsafe { init() };
+    set_tls(SERVER_TLS);
     semi::println!("server: receiving at EL0");
     let (mut ticket, mut request) = call(init.receive, [0; 6], init.stack_end);
     loop {
-        // Back in the server's own AddressSpace: only it can read the salt.
+        // Back in the server's own AddressSpace: only it can read the salt, and
+        // its own TLS is restored whatever the endpoint set during the call.
+        assert_eq!(tls(), SERVER_TLS, "server: TLS not restored");
         let reply = server_work(request, init.salt);
         (ticket, request) = call(
             init.reply_receive,

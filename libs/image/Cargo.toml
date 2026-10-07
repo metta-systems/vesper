@@ -13,5 +13,10 @@ readme = { workspace = true }
 repository = { workspace = true }
 version = { workspace = true }
 
+[lib]
+# Shared no_std image descriptions with no tests of their own.
+test = false
+harness = false
+
 [lints]
 workspace = true

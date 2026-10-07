@@ -13,5 +13,13 @@ readme = { workspace = true }
 repository = { workspace = true }
 version = { workspace = true }
 
+[dependencies]
+aarch64-cpu = { workspace = true }
+
+[lib]
+# EL0-only no_std code: no test harness or panic handler on the target.
+test = false
+harness = false
+
 [lints]
 workspace = true

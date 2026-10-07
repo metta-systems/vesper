@@ -175,6 +175,7 @@ fn assert_parked_el0(
 pub fn run() -> ! {
     semi::println!("endpoint-test: enabled MMU and dropped to EL1");
     libkicktest::assert_fp_simd_trapped();
+    libkicktest::assert_el0_visible_state();
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
     let boot = bootstrap_nucleus(&PoolCapacities {

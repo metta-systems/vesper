@@ -19,7 +19,11 @@ use {
 };
 
 const ROOT: u64 = 0x2100_0000;
-const SOURCE_SAVED: SavedContext = SavedContext::el1t(0x80000, 0x90000);
+/// Each Thread carries its own EL0 TLS (`TPIDR_EL0`) through park and resume.
+const SOURCE_SAVED: SavedContext = SavedContext {
+    tpidr_el0: 0x7150_0000_0000_1500,
+    ..SavedContext::el1t(0x80000, 0x90000)
+};
 
 fn target_saved() -> SavedContext {
     let mut saved = SavedContext::el1t(0xA0000, 0xB0000);
@@ -28,6 +32,7 @@ fn target_saved() -> SavedContext {
     }
     saved.lr = 0xD0000;
     saved.spsr_el1 |= 0xA000_0000;
+    saved.tpidr_el0 = 0x7a40_0000_0000_7a40;
     saved
 }
 

@@ -280,7 +280,8 @@ impl PreparedCall {
     /// and `x8..x30` (including the consumed `x9` and `x18`) are zero. PC is the
     /// Invocation entry, SP the validated target SP. SPSR inherits the saved
     /// source mode, masks and other controls with only NZCV cleared; the
-    /// exception origin is unchanged, so Call never changes privilege.
+    /// exception origin is unchanged, so Call never changes privilege. TLS
+    /// (`TPIDR_EL0`) is zero: the source's value is saved in the continuation.
     pub fn target_entry_context(&self) -> SavedContext {
         let mut gpr = [0; 30];
         gpr[2..8].copy_from_slice(&self.arguments);
@@ -291,6 +292,7 @@ impl PreparedCall {
             elr_el1: self.entry_pc.get(),
             sp: self.target_sp,
             origin: self.continuation.source_origin,
+            tpidr_el0: 0,
         }
     }
 }
@@ -431,8 +433,8 @@ impl PreparedReturn {
     }
 
     /// The resumed source frame: `x0 = SUCCESS`, `x1 = r0`, `x2 = r1`,
-    /// `x3..x18` zero, exact saved `x19..x30`, SP, PC, origin and raw SPSR
-    /// (including the source's original NZCV).
+    /// `x3..x18` zero, exact saved `x19..x30`, SP, PC, origin, raw SPSR
+    /// (including the source's original NZCV) and TLS (`TPIDR_EL0`).
     pub fn source_resume_context(&self) -> SavedContext {
         let record = &self.continuation;
         let mut gpr = [0; 30];
@@ -447,6 +449,7 @@ impl PreparedReturn {
             elr_el1: record.source_pc,
             sp: record.source_sp,
             origin: record.source_origin,
+            tpidr_el0: record.source_tpidr_el0,
         }
     }
 }

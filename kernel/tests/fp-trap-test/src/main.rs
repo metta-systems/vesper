@@ -5,9 +5,9 @@
 
 //! fp-trap-test: the integer-only FP/SIMD policy is enforced by hardware.
 //!
-//! Kickstart configures `CPTR_EL2`/`CPACR_EL1` so FP/SIMD instructions trap to
-//! EL1 from EL1 and EL0. This kernel executes one FP/SIMD instruction (see
-//! `fp-trap-protocol`) twice:
+//! The boot path (`libboot`, Kickstart) configures `CPTR_EL2`/`CPACR_EL1` so
+//! FP/SIMD instructions trap to EL1 from EL1 and EL0. This kernel executes one
+//! FP/SIMD instruction (see `fp-trap-protocol`) twice:
 //!
 //! - in the trusted `EL1t` boot Thread;
 //! - in the EL0 `fp-probe` component, in its own `AddressSpace`.
@@ -71,6 +71,7 @@ fn boot_main(dtb: u32) -> ! {
 pub fn run() -> ! {
     semi::println!("fp-trap-test: enabled MMU and dropped to EL1");
     libkicktest::assert_fp_simd_trapped();
+    libkicktest::assert_el0_visible_state();
 
     // ── EL1t: the trusted boot Thread itself ──────────────────────────────
     let result = probe();
