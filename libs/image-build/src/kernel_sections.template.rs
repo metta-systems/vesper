@@ -24,7 +24,7 @@ pub const {{section.meta_name}}: SectionMeta = SectionMeta {
     virt_addr: {{section.virt_addr | address}},
     size: {{section.size | hex}},
     alignment: {{section.align | hex}},
-    permissions: Permissions { readable: {{section.r}}, writable: {{section.w}}, executable: {{section.x}} },
+    permissions: Permissions { readable: {{section.r|bool}}, writable: {{section.w|bool}}, executable: {{section.x|bool}} },
 };
 {% endfor %}
 

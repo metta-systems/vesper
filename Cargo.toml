@@ -69,7 +69,7 @@ version = "0.0.1"
 # target
 #========
 aarch64-cpu = { version = "11.2", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
-arbitrary-int = { version = "2.1", default-features = false }
+arbitrary-int = { version = "2.2", default-features = false }
 bitbybit  = { version = "2.0" }
 # bitflags = { version = "2.10" }
 # buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
@@ -113,20 +113,20 @@ usize_conversions = { version = "0.2" }
 #======
 anyhow = { version = "1.0" }
 argh = { version = "0.1" }
-bytes = { version = "1.11" }
+bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
 # futures-util = { version = "0.3", features = ["io"] }
 # serialport = { version = "4.0" }
-tokio = { version = "1.49", features = ["full"] }
-tokio-serial = { version = "5.4" }
+tokio = { version = "1.53", features = ["full"] }
+tokio-serial = { version = "5.5" }
 tokio-stream = { version = "0.1" }
 # tokio-util = { version = "0.7", features = ["codec", "io"] }
 #==========
 # build.rs
 #==========
 goblin = { version = "0.10" }
-minijinja = { version = "2", features = ["loader"] }
+minijinja = { version = "3" }
 toml = { version = "1.1" }
 #=======
 # mixed

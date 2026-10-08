@@ -271,7 +271,7 @@ fn load_manifest(manifest: &str) -> (PathBuf, toml::Table) {
 /// manifest's `[nucleus] binary`: the section blobs, their metadata, and
 /// `KERNEL: libimage::KernelImage`.
 pub fn generate_kernel(manifest: &str) {
-    use minijinja::{Environment, context};
+    use minijinja::{Environment, context, syntax::SyntaxConfig};
 
     let (manifest_path, table) = load_manifest(manifest);
     let binary = table
@@ -331,9 +331,17 @@ pub fn generate_kernel(manifest: &str) {
         .expect("the nucleus must export nucleus_set_anchor");
 
     let mut environment = Environment::new();
-    environment.set_trim_blocks(true);
+    environment.set_syntax(
+        SyntaxConfig::builder()
+            .trim_blocks(true)
+            .build()
+            .expect("valid template syntax"),
+    );
     environment.add_filter("address", |value: usize| format!("0x{value:016X}"));
     environment.add_filter("hex", |value: usize| format!("0x{value:X}"));
+    // minijinja renders booleans Python-style (`True`/`False`); this replaces
+    // the builtin `bool` filter to emit Rust literals.
+    environment.add_filter("bool", |value: bool| value.to_string());
     environment
         .add_template("sections", include_str!("kernel_sections.template.rs"))
         .expect("valid kernel template");
