@@ -213,7 +213,7 @@ impl Fixture {
     }
 }
 
-/// Encode Retype's approved wire schema (see `doc/nucleus_capabilities.md`):
+/// Encode Retype's approved wire schema (see `doc/capabilities-contract.md`):
 /// `x2` object kind, `x3` `size_bits` with the table guard packed in bits 39:8
 /// (KeyTable kind only; zero for every other kind), `x4` count, `x5`
 /// destination-table key, `x6` first destination slot, `x7` requested rights.

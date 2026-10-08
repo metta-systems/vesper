@@ -1,10 +1,10 @@
-# Pending architectural decisions
+# Capabilities decisions
 
 This file is only a parking lot for **unanswered architectural or contract
-questions**. Settled decisions belong in `doc/nucleus_capabilities.md` and, where
-lifetime/authority analysis is relevant, `doc/lifetime-and-authority.md`.
+questions**. Settled decisions belong in `doc/capabilities-contract.md` and, where
+their reasoning is relevant, `doc/capabilities-design.md`.
 Implementation, validation, and integration work belongs in
-`doc/capabilities_implementation_plan.md`. Remove an item here once it is
+`doc/capabilities-implementation-plan.md`. Remove an item here once it is
 resolved and recorded in its architectural document.
 
 The [Future work](#future-work) section at the end is separate: ideas we might
@@ -126,7 +126,7 @@ needs them.
   inaccessible for a surviving Thread's lifetime, or stronger stale-pointer
   detection. Today the kernel gives no such guarantee and outside mechanisms
   own the prevention (contract, [protection requirements and
-  boundaries](nucleus_capabilities.md#protection-requirements-and-boundaries)).
+  boundaries](capabilities-contract.md#protection-requirements-and-boundaries)).
   Would need its own separately scoped design.
 - **Six-word PPC result payload:** widening the PPC result from two to six
   `u64` words if component interfaces need more register-only results. Would

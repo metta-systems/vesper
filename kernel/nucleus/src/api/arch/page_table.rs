@@ -1,7 +1,7 @@
 //! `PageTable.Map`/`Unmap`: installation of explicitly managed translation
 //! tables (selected 2026-09-15).
 //!
-//! Wire schemas (see `doc/nucleus_capabilities.md`):
+//! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `Map` `0`: `x2` parent key, `x3` virtual address, `x4..x7` zero. The
 //!   parent capability's type selects the installation: an `AddressSpace`
 //!   capability installs the translation root (the virtual address must be

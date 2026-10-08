@@ -9,7 +9,7 @@
 //! the excluded `api/notification.rs` until the Signal authority decision
 //! (D4) is settled; this object is the state core only.
 //!
-//! Contract (see `doc/nucleus_capabilities.md`): `Signal` ORs authorized
+//! Contract (see `doc/capabilities-contract.md`): `Signal` ORs authorized
 //! bits and wakes at most one waiter, which consumes the delivered bitmap
 //! (one-consumer; broadcast-style observation uses `EventCount` independent
 //! readers); `Wait` blocks until bits are pending and consumes them; `Poll`

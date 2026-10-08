@@ -6,9 +6,9 @@ one document per kind. Each document follows the same structure: **name**,
 details**, **sidenotes** and **TODOs**. The documents describe the system as
 it is now; history and rationale live in the contract and the plan.
 
-Contract sources: [`doc/nucleus_capabilities.md`](../nucleus_capabilities.md)
-(design contracts and decision register), [`doc/lifetime-and-authority.md`](../lifetime-and-authority.md)
-(lifetime/authority semantics), [`doc/capabilities_implementation_plan.md`](../capabilities_implementation_plan.md)
+Contract sources: [`doc/capabilities-contract.md`](../capabilities-contract.md)
+(design contracts and decision register), [`doc/capabilities-design.md`](../capabilities-design.md)
+(design rationale), [`doc/capabilities-implementation-plan.md`](../capabilities-implementation-plan.md)
 (slice plan and validation status).
 
 ## Wire encoding

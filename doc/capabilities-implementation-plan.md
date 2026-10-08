@@ -1,6 +1,6 @@
-# Capability implementation plan
+# Capabilities implementation plan
 
-The design authority is [Nucleus capabilities: design contracts](nucleus_capabilities.md). This checklist turns those contracts into dependency-ordered work across `libs/object`, `libs/syscall`, `kernel/nucleus/src/api`, `kernel/nucleus/src/objects`, and the nucleus entry/scheduler/backend code.
+The design authority is [capabilities contract](capabilities-contract.md). This checklist turns those contracts into dependency-ordered work across `libs/object`, `libs/syscall`, `kernel/nucleus/src/api`, `kernel/nucleus/src/objects`, and the nucleus entry/scheduler/backend code.
 
 This is a TODO list, not a claim of implementation. This file holds only open work. A finished item leaves it as a one-line marker in [`capabilities-completed.md`](capabilities-completed.md); details live in the contract and history in version control. Mark an item `- [x]` only after its stated outcome is implemented/reviewed and the relevant validation has actually passed. Record blocked or unrun validation rather than checking it off.
 
@@ -51,23 +51,33 @@ Choose the appropriate scope and report it accurately. Missing tools, failed pre
 
 When a needed focused test has no recipe, propose a small `Justfile` addition rather than inventing a parallel workflow. Explicitly approved ad hoc diagnostics may provide supplemental evidence, but never replace configured project checks.
 
+## Remaining-work complexity
+
+Relative engineering estimates including focused tests; not schedule commitments.
+
+| Work | Complexity | Main cost |
+|---|---|---|
+| Retirement of the remaining kinds and scheduler-shared records | Large | Shared-memory publication and cross-subsystem identity |
+| General selective revoke plus memory reclamation | Very large | Descendants, mappings, hardware, bounded completion |
+| Safe revocable mapping abstractions / multicore Time | Very large | Protection and concurrency contracts |
+
 ## Phase 1 — Confirm contracts and support boundaries
 
-Reference: [status](nucleus_capabilities.md#status-and-authority), [responsibilities](nucleus_capabilities.md#target-responsibilities), [decision register](nucleus_capabilities.md#decision-register). Open D1–D9 questions are in [`followup.md`](followup.md).
+Reference: [status](capabilities-contract.md#status-and-authority), [responsibilities](capabilities-contract.md#target-responsibilities), [decision register](capabilities-contract.md#decision-register). Open D1–D9 questions are in [`capabilities-decisions.md`](capabilities-decisions.md).
 
 - [ ] Define adversarial agent/test work against confinement: libOS bypass, malicious syscall inputs, alias-rule bypass, DMA programming bypass, and revocation/reuse races. Side-channel resistance stays deferred.
 
 ## Phase 2 — One shared, testable ABI
 
-Reference: [type numbering](nucleus_capabilities.md#object-type-numbering), [wire contracts](nucleus_capabilities.md#invocation-and-wire-contracts). Prerequisite: Phase 1 scope; D9 where schemas change.
+Reference: [type numbering](capabilities-contract.md#object-type-numbering), [wire contracts](capabilities-contract.md#invocation-and-wire-contracts). Prerequisite: Phase 1 scope; D9 where schemas change.
 
-**Phase complete** (2026-10-08): every item has moved to [`capabilities-completed.md`](capabilities-completed.md#phase-2--one-shared-testable-abi). Version/support discovery for separately built components is parked in [`followup.md`](followup.md) under D9.
+**Phase complete:** every item has moved to [`capabilities-completed.md`](capabilities-completed.md#phase-2--one-shared-testable-abi). Version/support discovery for separately built components is parked in [`capabilities-decisions.md`](capabilities-decisions.md) under D9.
 
 ## Phase 3 — Repair the active syscall/console path
 
-Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contracts), [authorization](nucleus_capabilities.md#authorization). Prerequisites: relevant Phase 2 definitions; console authority decision under D4.
+Reference: [wire contracts](capabilities-contract.md#invocation-and-wire-contracts), [authorization](capabilities-contract.md#authorization). Prerequisites: relevant Phase 2 definitions; console authority decision under D4.
 
-**Parked** (2026-10-08, maintainer decision): DebugConsole stays a debug-only prototype. Every remaining item below is console general-availability work. It waits on the console byte-transport decision parked in [`followup.md`](followup.md) under D1/D6/D9 and does not block later phases.
+**Parked** (maintainer decision): DebugConsole stays a debug-only prototype. Every remaining item below is console general-availability work. It waits on the console byte-transport decision parked in [`capabilities-decisions.md`](capabilities-decisions.md) under D1/D6/D9 and does not block later phases.
 
 - [ ] Route user-copy fault recovery through the correct exception path, without recursive capability dispatch. Lands with the console's checked user-memory access below.
 - [ ] Define the console operation's authority, byte/string/NUL behavior, maximum length or chunking policy, and pointer semantics.
@@ -77,7 +87,7 @@ Reference: [wire contracts](nucleus_capabilities.md#invocation-and-wire-contract
 
 ## Phase 4 — Capability storage and Thread lifetime
 
-Reference: [vocabulary and identity](nucleus_capabilities.md#vocabulary-and-identity), [authority, slots, and capability lifecycle](nucleus_capabilities.md#authority-slots-and-capability-lifecycle), [allocation and representation](nucleus_capabilities.md#allocation-and-representation), [Thread and AddressSpace contracts](nucleus_capabilities.md#thread-and-addressspace-contracts). Prerequisites: D2–D5 as applicable.
+Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-identity), [authority, slots, and capability lifecycle](capabilities-contract.md#authority-slots-and-capability-lifecycle), [allocation and representation](capabilities-contract.md#allocation-and-representation), [Thread and AddressSpace contracts](capabilities-contract.md#thread-and-addressspace-contracts). Prerequisites: D2–D5 as applicable.
 
 ### Keys, identity and retirement
 
@@ -103,13 +113,13 @@ Reference: [vocabulary and identity](nucleus_capabilities.md#vocabulary-and-iden
 
 ## Phase 5 — Memory and safe reclamation
 
-Reference: [memory contracts](nucleus_capabilities.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
+Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
 
 - [ ] Separate backing size/alignment from descriptor storage and slot quotas, with provenance, for kinds outside the kernel object pools.
 - [ ] Define the device-memory policy per kind (today every device source is rejected except an Untyped split) and the sanitization duties beyond Retype-carved Frames and PageTables, distinguishing intentional content-preserving sharing.
 - [ ] Implement mapping-local Unmap versus origin-capability Revoke of descendants: retain the origin, define partial completion, and prevent racing mapping installation.
 - [ ] Encode and enforce origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no-Frame-slot-reuse rule.
-- [ ] Implement the revocation/reclamation completion protocol: Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
+- [ ] Implement the revocation/reclamation completion protocol: teardown bookkeeping retained across partial map/unmap failures, Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
 - [ ] Implement fbuf setup that agrees addresses for every participant before mapping, with reservation/conflict handling and rollback before pointers are published.
 - [ ] Implement exclusive, immutable-shared and mutable-shared modes with explicit transitions, and `MappedSlice` ownership of a private, non-derivable capability and mapping with incarnation-checked Drop cleanup.
 - [ ] Define per-target MMU/MPU/IOMMU, address-width and DMA restrictions, with a protected-context fallback that never downgrades hostile-code isolation.
@@ -118,7 +128,7 @@ Reference: [memory contracts](nucleus_capabilities.md#resource-storage-and-memor
 
 ## Phase 6 — Deferred completion and IPC
 
-Reference: [communication](nucleus_capabilities.md#communication-and-deferred-completion). Prerequisites: D4/D7/D9.
+Reference: [communication](capabilities-contract.md#communication-and-deferred-completion). Prerequisites: D4/D7/D9.
 
 - [ ] Apply the aborted-work vocabulary (rejected before admission / cancelled before commit / completed / outcome unknown) to each operation's commit point, and define its wire representation.
 - [ ] Define stable user-record decoding and buffer/mapping lifetime across blocking; test adversarial mutation and unmap during pending operations.
@@ -129,7 +139,7 @@ Reference: [communication](nucleus_capabilities.md#communication-and-deferred-co
 
 ## Phase 7 — Time and userspace scheduling
 
-Reference: [Time contracts](nucleus_capabilities.md#time-and-userspace-scheduling). Prerequisites: D2/D4/D8/D9 (open questions in [`followup.md`](followup.md)).
+Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduling). Prerequisites: D2/D4/D8/D9 (open questions in [`capabilities-decisions.md`](capabilities-decisions.md)).
 
 - [ ] Separate Time-object storage from issuance of positive CPU budget; keep budget provenance and conservation.
 - [ ] Implement Split/Merge/Query with explicit slots, checked results, transactional failures and no double accounting.

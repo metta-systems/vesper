@@ -1,4 +1,4 @@
-# Nucleus capabilities: design contracts
+# Capabilities contract
 
 ## Status and authority
 
@@ -8,7 +8,7 @@ This is the implementation reference for Vesper's capability system across the s
 - **Baseline** means a documented existing convention to reconcile across layers, not proof of support or correctness.
 - **Open decision** means a choice that must be settled before the dependent feature is implemented. Recommendations are not silently binding decisions.
 
-When implementation and this document disagree, record the discrepancy and migrate the code deliberately. Do not silently change the contract to match a stub. Architectural changes require an explicit decision here and corresponding updates to the [implementation plan](capabilities_implementation_plan.md). This document states the current contract; its history is in version control.
+When implementation and this document disagree, record the discrepancy and migrate the code deliberately. Do not silently change the contract to match a stub. Architectural changes require an explicit decision here and corresponding updates to the [implementation plan](capabilities-implementation-plan.md). This document states the current contract; its history is in version control.
 
 ## Key tenets
 
@@ -56,9 +56,9 @@ A shared namespace is not itself an isolation mechanism. MTE/PAC alone are not s
 
 Fbuf setup negotiates addresses suitable for all participating AddressSpaces before mapping, rather than attempting to reconcile conflicting placements after pointers escape. For F at X in A and Y in B, pointer X is not usable by B merely because B maps F at Y; the no-intra-AddressSpace-alias rule prevents simply adding X while retaining Y. Reservation/conflict handling and the exact machine-local allocation scheme remain D1/D6. Multi-node global/distributed address-space allocation is explicitly out of scope; do not assume a classical SASOS namespace spanning other nodes' RAM or allocated disk space. Global machine-local reservation has raised concerns but is not yet selected or categorically replaced by a particular allocator.
 
-Authoritative revocation must withdraw the relevant access even if clients retain pointers. Subsequent access to a withdrawn, still-unmapped address faults; Thread termination is the expected policy direction, while fault delivery/termination details remain open. **Stale raw pointers after VA reuse:** a revoked virtual address need not remain inaccessible for the lifetime of a surviving Thread. Capability generations are checked on invocation, not on ordinary CPU loads, so once the address is legitimately reused an old raw pointer may reach the replacement mapping without faulting. Outside/higher-level mechanisms prevent such stale application accesses; stronger kernel guarantees are [future work](followup.md#future-work). Frame-capability slot non-reuse is not virtual-address non-reuse. None of this relaxes kernel memory safety, authority and generation checks, completed hardware withdrawal/TLB synchronization, or safe physical-resource reuse, and it does not make an invalid Rust reference sound.
+Authoritative revocation must withdraw the relevant access even if clients retain pointers. Subsequent access to a withdrawn, still-unmapped address faults; Thread termination is the expected policy direction, while fault delivery/termination details remain open. **Stale raw pointers after VA reuse:** a revoked virtual address need not remain inaccessible for the lifetime of a surviving Thread. Capability generations are checked on invocation, not on ordinary CPU loads, so once the address is legitimately reused an old raw pointer may reach the replacement mapping without faulting. Outside/higher-level mechanisms prevent such stale application accesses; stronger kernel guarantees are [future work](capabilities-decisions.md#future-work). Frame-capability slot non-reuse is not virtual-address non-reuse. None of this relaxes kernel memory safety, authority and generation checks, completed hardware withdrawal/TLB synchronization, or safe physical-resource reuse, and it does not make an invalid Rust reference sound.
 
-Read-only mapping permissions prevent writes **through that mapping**; they do not make the backing immutable if another AddressSpace has a writable mapping or a device/kernel writer updates it. For ordinary `&[u8]`, the Rust contract additionally requires readable, initialized, properly bounded memory in one valid allocation, remaining valid and unmodified for the borrow. Multiple shared readers are permitted; conflicting mutation or exclusive access is not. These are reference-construction/usage obligations, not conditions that per-mapping permissions establish by themselves. Exact requirements, source references, immutable-sharing transitions, and fbuf protocols are discussed in [Lifetime and authority semantics](lifetime-and-authority.md).
+Read-only mapping permissions prevent writes **through that mapping**; they do not make the backing immutable if another AddressSpace has a writable mapping or a device/kernel writer updates it. For ordinary `&[u8]`, the Rust contract additionally requires readable, initialized, properly bounded memory in one valid allocation, remaining valid and unmodified for the borrow. Multiple shared readers are permitted; conflicting mutation or exclusive access is not. These are reference-construction/usage obligations, not conditions that per-mapping permissions establish by themselves. Exact requirements, source references, immutable-sharing transitions, and fbuf protocols are discussed in [capabilities design](capabilities-design.md).
 
 Bootstrap is explicit: Kickstart is authorized to establish the first Untypeds covering available memory and initial KeyTables for predefined Threads, then hand authority onward to the components/Threads running the system. This is bootstrap authority, not permission for arbitrary runtime callers to manufacture Untypeds. Boot allocations and reserved/live regions must remain accounted for and unavailable for conflicting allocation; exact initial Thread/AddressSpace lists, table capacities/slots, and incarnation-bearing handoff records remain to be specified. Well-known slots are conventions for locating granted capabilities, never a way to manufacture them. Debug-console authority is an explicit bootstrap/delegation choice, not an entitlement implied by knowing its slot.
 
@@ -189,7 +189,7 @@ For the approved AArch64 control-call transport (coordinated migration from the 
 
 The exception entry validates the exception class and permitted origin before capability dispatch. **The SVC immediate is ignored** (maintainer decision, 2026-10-08): there is exactly one syscall, capability invocation, and there will not be more, so every `svc #n` is the same invocation. Wrappers emit `#0`. Giving the immediate any meaning requires a contract revision first. Other faults follow their own exception path; a user-copy fault must not recursively become a capability invocation.
 
-Extended IPC outputs are [future work](followup.md#future-work).
+Extended IPC outputs are [future work](capabilities-decisions.md#future-work).
 
 Every operation's shared contract must specify: ID, argument widths and units, caller-relative slot interpretation, required authority, result shape, blocking behavior, ownership changes, and failure/partial-completion behavior. Pointer arguments specify virtual versus physical address, length, direction of access, and record layout. Ordinary buffers are caller virtual memory, not unchecked physical addresses. Validate access against the caller's protection/authority context, not just whether the kernel can dereference an address. Define input stability across validation/use and buffer lifetime across blocking; copying, pinning, or revalidation are implementation choices, but mutable user records cannot change the authorized request unnoticed (D1/D6/D7).
 
@@ -326,7 +326,7 @@ The following logical schemas retain operation IDs and require atomic, ownership
 - An object-wide generation cannot selectively invalidate one branch while retaining other capabilities to the same object. The mechanism and completion contract for selective subtree revocation without object retirement remain open (D2); do not impose kernel ancestry metadata or claim object generations solve this different operation.
 - The library OS/authorized resource manager is responsible for correct unmap-before-invalidation orchestration. Trust follows granted management authority, not every Thread's use of a libOS. Invalidating capability authority before withdrawing installed access is a resource-management error in that entrusted layer, not a requirement for a recipient to cooperate after invalidation. Kernel mapping primitives supply hardware transitions; premature-reuse checks, retirement prerequisites, and the manager/kernel completion handshake remain D2/D6. Malicious recipients must not defeat completed access revocation or gain access to unrelated reallocated backing. System-wide safe reuse still requires withdrawal of stale mappings and in-flight access.
 
-See [Lifetime and authority semantics](lifetime-and-authority.md) for the decision history, seL4/Composite comparison, and outstanding implementation work.
+See [capabilities design](capabilities-design.md) for the reasoning and [capabilities research](capabilities-research.md) for the seL4/Composite comparison.
 
 Kernel object generations and domain reuse protection are distinct from revocation scopes. Persistent handles must not manufacture shared or exclusive Rust references without an owning/locking access context. Resolve aliases before operations involving two capabilities that may name the same table or object (D3).
 
@@ -451,7 +451,7 @@ Do not preserve the obsolete 128-byte DCB / 32-per-4-KiB assumptions or current 
 
 ## Communication and deferred completion
 
-Communication is two kernel mechanisms: blocking waits on `Notification`/`EventCount`, and the Protected Procedure Call (`Invocation`). Queued rendezvous, reply objects and message passing are userspace compositions over them. Open D7 questions are tracked in [`followup.md`](followup.md).
+Communication is two kernel mechanisms: blocking waits on `Notification`/`EventCount`, and the Protected Procedure Call (`Invocation`). Queued rendezvous, reply objects and message passing are userspace compositions over them. Open D7 questions are tracked in [`capabilities-decisions.md`](capabilities-decisions.md).
 
 ### Blocking and continuations
 
@@ -485,7 +485,7 @@ Signal/Advance/Poll/Read do not block but can fail validation/authorization. A `
 
 An `Invocation` capability identifies an entry point in a target AddressSpace. `Invocation.Call` migrates the calling Thread into that AddressSpace; `Thread.Return` migrates it back. No server Thread exists, and there is no reply capability: Return on the current-relative return key is the only return path. Each AddressSpace has exactly one KeyTable, shared by its Threads; Call switches translation context and KeyTable to the target's, and Return restores the source's (resolved from the source AddressSpace saved in the continuation). Nesting is Composite-style: a bounded per-Thread stack of continuations.
 
-**Provisional conventions.** Two conventions work end-to-end but are not frozen ABI: the `x9` Call-time target-SP transport, and the experimental native body return (an `extern "C"` body returning a `#[repr(C)]` struct of two `u64` in `x0`/`x1`). Freezing each is a maintainer decision ([`followup.md`](followup.md)); nothing else gates it.
+**Provisional conventions.** Two conventions work end-to-end but are not frozen ABI: the `x9` Call-time target-SP transport, and the experimental native body return (an `extern "C"` body returning a `#[repr(C)]` struct of two `u64` in `x0`/`x1`). Freezing each is a maintainer decision ([`capabilities-decisions.md`](capabilities-decisions.md)); nothing else gates it.
 
 #### Construction: `AddressSpace.CreateInvocation` (op 3)
 
@@ -571,7 +571,7 @@ Inputs: `x0` the caller-table-local packed key of `KeySlot::THREAD_RETURN` (Slot
 | Return on a named Thread entry; Grant/Suspend/Resume/Retire on `CurrentReturnOnly` | `InvalidOperation` |
 | Empty, stale or wrong-guard key | Ordinary lookup error |
 
-These two faults have no recoverable path: without a valid continuation the Thread cannot continue after Return. Thread teardown releases the records. A live saved source whose translation context is not ready currently fails with the ordinary preparation error and no pop (classification open, see [`followup.md`](followup.md)). In trusted EL1t code both faults halt the kernel.
+These two faults have no recoverable path: without a valid continuation the Thread cannot continue after Return. Thread teardown releases the records. A live saved source whose translation context is not ready currently fails with the ordinary preparation error and no pop (classification open, see [`capabilities-decisions.md`](capabilities-decisions.md)). In trusted EL1t code both faults halt the kernel.
 
 #### Userspace conventions
 
@@ -652,7 +652,7 @@ Resolve the decisions needed by a slice before enabling it. An unrelated open de
 | D8 | Time | [Time and userspace scheduling](#time-and-userspace-scheduling) (sketch) | Budget issuance, donation as loan or transfer, unused-budget return, split/merge/expiry, units and clocks, multicore accounting | Time/scheduler vertical slice |
 | D9 | ABI evolution | [Invocation and wire contracts](#invocation-and-wire-contracts); [object type numbering](#object-type-numbering) | Status for a missing or mismatched self-table capability; wait-operation errors; version discovery for separately built components | Freezing new schemas; separately deployed consumers |
 
-Detailed open questions are tracked in [`followup.md`](followup.md).
+Detailed open questions are tracked in [`capabilities-decisions.md`](capabilities-decisions.md).
 
 ## Definition of a supported operation
 
@@ -660,4 +660,4 @@ A supported operation has one shared schema; a client that preserves results; ch
 
 Safety comments describe actual invariants and their owner, not just that a call is unsafe. Layout and round-trip assertions remain enabled. Tests include malformed and adversarial requests, aliasing/identity reuse, capacity failures, cancellation, and rollback where applicable.
 
-Follow the [implementation plan](capabilities_implementation_plan.md) in small dependency-respecting slices. The repository skill at `.agents/skills/capability-refactor/SKILL.md` describes the working procedure; it does not replace the contracts in this document.
+Follow the [implementation plan](capabilities-implementation-plan.md) in small dependency-respecting slices. The repository skill at `.agents/skills/capability-refactor/SKILL.md` describes the working procedure; it does not replace the contracts in this document.

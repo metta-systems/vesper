@@ -1,7 +1,7 @@
 //! `EventCount` operations: `Advance`/`Await`/`Read` (Phase 6 vertical,
 //! 2026-09-18).
 //!
-//! Wire schema (see `doc/nucleus_capabilities.md`):
+//! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Advance` `0`: `x2` delta (nonzero), `x3..x7` zero. Adds the delta and
 //!   completes every queued `Await` whose target the new value satisfies
 //!   (broadcast wakeups; each is resumed with the new value). Success

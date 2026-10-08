@@ -1,7 +1,7 @@
 //! `Notification` operations: `Signal`/`Wait`/`Poll` (Phase 6 vertical,
 //! 2026-09-16).
 //!
-//! Wire schema (see `doc/nucleus_capabilities.md`):
+//! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Signal` `0`: `x2` bits — used when the capability badge is zero —
 //!   `x3..x7` zero. ORs the authorized bits into the bitmap and wakes at
 //!   most one waiter (one-consumer delivery, selected 2026-09-16). Success

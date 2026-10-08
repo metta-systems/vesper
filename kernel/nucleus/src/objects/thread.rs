@@ -186,7 +186,7 @@ impl Default for InvocationStack {
 ///
 /// Implementation status: the carved `KeyTable` is associated with the
 /// `AddressSpace`, not stored separately in each Thread. It is resolved through
-/// the guarded `Access` context (see `doc/lifetime-and-authority.md` §3).
+/// the guarded `Access` context (see `doc/capabilities-design.md` §3).
 /// Placement of its userspace capability in the DCB's fixed slots remains D5.
 /// The fully interrupt-kernel saved-context conversion remains separate work.
 /// Implementation status: this Thread now owns its saved context; trap-frame

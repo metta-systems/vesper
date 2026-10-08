@@ -1,7 +1,7 @@
 //! `Frame.Map`/`Unmap`/`GetAddress`: real descriptor installation through the
 //! target `AddressSpace`'s translation context (selected 2026-09-15).
 //!
-//! Wire schemas (see `doc/nucleus_capabilities.md`):
+//! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `Map` `0`: `x2` target `AddressSpace` key, `x3` virtual address, `x4`
 //!   requested rights, `x5` attributes (zero = normal write-back cacheable;
 //!   other values rejected), `x6..x7` zero. **The explicit target-`AddressSpace`

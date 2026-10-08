@@ -51,7 +51,7 @@ use {
 
 // The debug console is a stateless singleton, not a pool object; its entry
 // carries a null identity and is validated by type only (see the debug-only
-// exception in doc/nucleus_capabilities.md).
+// exception in doc/capabilities-contract.md).
 fn console_entry(rights: Rights, badge: u16) -> KeyEntry {
     KeyEntry::from_id(
         ObjectType::DEBUG_CONSOLE,

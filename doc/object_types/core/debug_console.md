@@ -80,6 +80,6 @@ reinterpret `Write` = 0.
 General availability is parked on the byte-transport decision (D1/D6/D9):
 pointer-based Write with checked caller-authorized memory access and copy-fault
 recovery, or a register-inline byte operation that never reads user memory.
-See Phase 3 of the [implementation plan](../../capabilities_implementation_plan.md#phase-3--repair-the-active-syscallconsole-path).
+See Phase 3 of the [implementation plan](../../capabilities-implementation-plan.md#phase-3--repair-the-active-syscallconsole-path).
 Either way it then needs an explicit caller/console right (D4) and defined
 byte, length and partial-output semantics.

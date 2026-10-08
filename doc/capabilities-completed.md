@@ -1,6 +1,6 @@
-# Completed capability work
+# Capabilities completed
 
-Short markers of what is done, grouped by plan phase. Each line says what exists and where it is exercised. Rationale and details are in the [contract](nucleus_capabilities.md); the history of how each piece landed is in version control.
+Short markers of what is done, grouped by plan phase. Each line says what exists and where it is exercised. Rationale and details are in the [contract](capabilities-contract.md); the history of how each piece landed is in version control.
 
 ## Object-types review
 

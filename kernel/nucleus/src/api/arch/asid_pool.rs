@@ -1,6 +1,6 @@
 //! `ASIDPool.Assign`: capability-protected ASID binding (selected 2026-09-15).
 //!
-//! Wire schema (see `doc/nucleus_capabilities.md`):
+//! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Assign` `0`: `x2` target `AddressSpace` key, `x3..x7` zero. Allocates the
 //!   lowest free ASID from the invoked pool and binds it to the target
 //!   `AddressSpace`'s translation root. Success returns the ASID in `x1` and

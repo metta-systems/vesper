@@ -1,6 +1,6 @@
 //! `Invocation.Call` admission and preparation (PPC).
 //!
-//! Wire schema (see `doc/nucleus_capabilities.md`): `x0` Invocation key,
+//! Wire schema (see `doc/capabilities-contract.md`): `x0` Invocation key,
 //! `x1` operation `0` (Call), `x2..x7` six `u64` Call inputs, and the
 //! provisional target-SP transport in `x9`. Every input is read from the
 //! caller's saved exception frame, never from live registers.

@@ -11,7 +11,7 @@ use {
 // Debug-only prototype: compiled only with the opt-in `debug_kernel` feature.
 // This is not a generally available service or a safe interface for untrusted
 // callers. The maintainer has explicitly retained the current mechanism for now;
-// see doc/nucleus_capabilities.md, "DebugConsole debug-only exception".
+// see doc/capabilities-contract.md, "DebugConsole debug-only exception".
 //
 // Deferred repairs before general availability (not approved ABI changes):
 // - Establish an explicit caller/principal and console-write right/bootstrap

@@ -253,7 +253,7 @@ impl KeyEntry {
     /// Create an identity-based capability entry (most object types).
     ///
     /// The entry stores only the checked `ObjectId`; dereferencing requires
-    /// the owning access context (see `doc/lifetime-and-authority.md` §3).
+    /// the owning access context (see `doc/capabilities-design.md` §3).
     pub fn new<T: NucleusObject>(id: ObjectId, rights: Rights, badge: u16) -> Self {
         debug_assert_eq!(id.pool, T::POOL);
         Self::from_id(T::TYPE, id, rights, badge).unwrap_or_else(|error| {
@@ -455,7 +455,7 @@ impl KeyEntry {
     /// Check if this is a Retype-created (carved) object kind.
     ///
     /// Carved objects are addressed directly through a per-type payload rather
-    /// than a pooled identity; see `doc/lifetime-and-authority.md` §3.
+    /// than a pooled identity; see `doc/capabilities-design.md` §3.
     #[inline]
     pub fn is_carved(&self) -> bool {
         self.obj_type == ObjectType::KEY_TABLE

@@ -259,7 +259,7 @@ pub trait ArchObjects: Sized + 'static {
     ///
     /// Returns the created object's type and its checked identity.
     /// Dereferencing the identity requires the owning access context
-    /// (see `doc/lifetime-and-authority.md` §3).
+    /// (see `doc/capabilities-design.md` §3).
     fn create_arch_object(
         arch_type: ArchType,
         phys_addr: PhysAddr,

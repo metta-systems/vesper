@@ -17,7 +17,7 @@
 //! through a single mutable guard; distinct objects use the alias-rejecting
 //! pair-resolution form.
 //!
-//! Wire schemas (see `doc/nucleus_capabilities.md`):
+//! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `CopyDerive` `0`: `x2` source selector, `x3` destination-table key,
 //!   `x4` vacant destination slot, `x5` requested rights; `x6..x7` zero.
 //!   Returns the destination-local packed key in `x1`, zero in `x2`.

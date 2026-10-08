@@ -1,6 +1,6 @@
 //! `AddressSpace.Activate`/`Retire` and Invocation-capability construction.
 //!
-//! Wire schemas (see `doc/nucleus_capabilities.md`):
+//! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `Activate` `0`: no arguments (`x2..x7` zero). Installs the invoked
 //!   `AddressSpace`'s bound translation root into the current hardware
 //!   translation context (`TTBR0_EL1` with the bound ASID). Success returns

@@ -38,7 +38,7 @@ valid on it.
   `KeyTable::lookup` reports an invalidated slot through the shared
   `InconsistentKey` diagnostics rather than returning a null entry as usable.
 - Slot 0 of the bootstrap layout is conventionally named Null
-  (`nucleus_capabilities.md` § "Slot conventions" — a bootstrap sketch, not a
+  (`capabilities-contract.md` § "Slot conventions" — a bootstrap sketch, not a
   contract).
 
 ## Sidenotes

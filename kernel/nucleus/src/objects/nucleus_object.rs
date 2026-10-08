@@ -33,7 +33,7 @@
 // └─────────────────────────────────────────────────────────────────────┘
 
 // Object kind catalogues and wire IDs live in libobject::object_type.
-// The cross-layer contract is documented in doc/nucleus_capabilities.md.
+// The cross-layer contract is documented in doc/capabilities-contract.md.
 
 // ═══════════════════════════════════════════════════════════════════
 // KERNEL OBJECT TRAIT
