@@ -126,7 +126,7 @@ migrated. `Thread.Return` ignores `x4..x7`.
 - **Blocking while migrated:** a Thread inside a target may wait on a
   `Notification` or `EventCount`; its wait continuation is a separate
   Thread-resident slot, and resumption reinstalls the target it is in.
-- **Validation:** `kernel/tests/kicktest` (same-Thread round trips into Bounce,
+- **Validation:** `kernel/tests/ppc-test` (construction, same-Thread round trips into Bounce,
   register and scrub checks, rejections, compiled exports) and
   `kernel/tests/endpoint-test` (three `AddressSpace`s, Threads blocking inside
   the endpoint); admission priorities in the `debug_console` unit tests.

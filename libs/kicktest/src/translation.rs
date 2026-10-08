@@ -3,11 +3,16 @@
 //! This is a two-Thread functional fixture, not PPC or an EL0 confinement proof.
 //! All low leaves are explicit capability mappings. TTBR1 remains the invariant
 //! kernel/direct map, including Bounce's accounted high `SP_EL0` stack.
-//! The generic provisioning steps live in `libkicktest`.
+//! The generic provisioning steps live in [`crate::builder`]; [`crate::bounce`]
+//! builds the Bounce fixture on top of this module.
 
-pub use libkicktest::paging::read_leaf;
+pub use crate::paging::read_leaf;
 use {
-    super::kicktest_run,
+    crate::{
+        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        keys::boot_key,
+        paging::{ADDR_MASK, PAGE, image_table_count},
+    },
     aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1},
     core::{
         arch::asm,
@@ -16,17 +21,11 @@ use {
     kickstart::bootstrap::RetainedInitMemory,
     libaddress::PhysAddr,
     libexception::arch::aarch64::SavedContext,
-    libkicktest::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
-        keys::boot_key,
-        paging::{ADDR_MASK, PAGE, image_table_count},
-    },
     libobject::{
         CapError, EventCountOp, FrameKey, InvalidKeyReason, KeyTableKey, NotificationOp, RawKey,
         Rights, decode_syscall_result,
     },
     libqemu::semihosting as semi,
-    nucleus::objects::KeyTable,
 };
 
 const IMAGE_TABLE_GUARD: u32 = 0x135;
@@ -68,11 +67,12 @@ pub fn page_table_capacity(retained: &RetainedInitMemory) -> usize {
 }
 
 /// Preserve bootstrap nG/global coverage before replacing its ASID-0 root.
-pub fn observe_bootstrap() {
+/// `code` is an address in the running low image (the test kernel's entry).
+pub fn observe_bootstrap(code: u64) {
     let ttbr0 = TTBR0_EL1.get();
     let ttbr1 = TTBR1_EL1.get();
     assert_eq!(ttbr0 >> 48, 0, "bootstrap is the reserved ASID-0 context");
-    let pc = kicktest_run as *const u8 as u64;
+    let pc = code;
     let (level, leaf) = read_leaf(ttbr0, pc);
     assert_eq!(level, 2);
     assert_eq!(leaf & 3, 1);
@@ -103,7 +103,6 @@ impl Provisioner<'_> {
     /// then the per-root probe pages and Bounce's PPC stack.
     pub fn provision(&self, source_prefix: [RawKey; 3], bounce_table: RawKey) -> RawKey {
         let builder = self.builder;
-        let count = image_table_count(builder.retained);
         let bounce_prefix = builder.carve_tables(BOUNCE_ROOT, 3);
         Builder::map_table(bounce_prefix, self.bounce_as, 0);
         let bounce_l1 = boot_key(BOUNCE_ROOT + 1, bounce_prefix.incarnation());
@@ -196,19 +195,26 @@ impl Provisioner<'_> {
         BOUNCE_BACKING.store(physical[1], Ordering::Release);
         SOURCE_KEY.store(source_probe.to_wire(), Ordering::Release);
         BOUNCE_KEY.store(local_bounce_probe.to_wire(), Ordering::Release);
-        let (image_start, image_end) = builder.retained.image();
-        let (stack_start, stack_end) = builder.retained.stack();
-        semi::println!(
-            "Translation backing: image=[{image_start:#x},{image_end:#x}) {} pages x2; source stack=[{stack_start:#x},{stack_end:#x}) {} pages; archive=2^{} entries, occupied={}, carve={} bytes; installed_tables={}, metadata_entries={}, capacity={}",
-            image.image_pages,
-            image.stack_pages,
-            image.archive_bits,
-            image.archived,
-            KeyTable::carve_size(image.archive_bits),
-            8 + 2 * count,
-            9 + 2 * count,
-            page_table_capacity(builder.retained)
-        );
+        // One archived capability per mapped page per root: the image in both
+        // roots, the source stack in the source root only.
+        assert_eq!(image.archived, 2 * image.image_pages + image.stack_pages);
+        #[cfg(feature = "qemu")]
+        {
+            let count = image_table_count(builder.retained);
+            let (image_start, image_end) = builder.retained.image();
+            let (stack_start, stack_end) = builder.retained.stack();
+            semi::println!(
+                "Translation backing: image=[{image_start:#x},{image_end:#x}) {} pages x2; source stack=[{stack_start:#x},{stack_end:#x}) {} pages; archive=2^{} entries, occupied={}, carve={} bytes; installed_tables={}, metadata_entries={}, capacity={}",
+                image.image_pages,
+                image.stack_pages,
+                image.archive_bits,
+                image.archived,
+                nucleus::objects::KeyTable::carve_size(image.archive_bits),
+                8 + 2 * count,
+                9 + 2 * count,
+                page_table_capacity(builder.retained)
+            );
+        }
         bounce_prefix
     }
 }

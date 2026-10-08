@@ -56,7 +56,7 @@ libimage-build = { workspace = true }
 
 [lib]
 # Boot code runs on the boot path; it is exercised by the QEMU boot workflows
-# (just qemu, just test-capability-boot via kicktest), never on the host.
+# (just qemu, and the kernel/tests e2e kernels via just test), never on the host.
 # Doctests stay off too: the module docs are design diagrams, not host-runnable
 # snippets (as a bin crate this never had doctests either).
 test = false
@@ -64,7 +64,7 @@ doctest = false
 
 [[bin]]
 name = "kickstart"
-test = false  # the real boot kernel; e2e tests live in the kicktest crate
+test = false  # the real boot kernel; e2e tests live in the kernel/tests crates
 
 [lints]
 workspace = true

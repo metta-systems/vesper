@@ -4,9 +4,9 @@
 
 //! Shared scaffolding for Vesper's end-to-end boot-test kernels.
 //!
-//! `kicktest` and `endpoint-test` both run on the real Kickstart boot path and
-//! then build their fixtures through ordinary capability invocations from the
-//! boot Thread. This crate holds what they share:
+//! The test kernels under `kernel/tests` all run on the real Kickstart boot
+//! path and then build their fixtures through ordinary capability invocations
+//! from the boot Thread. This crate holds what they share:
 //!
 //! - [`keys`]: boot-table and component-table key/slot composition;
 //! - [`paging`]: page-table walking and retained-image geometry;
@@ -14,6 +14,10 @@
 //!   retained init image mapped into several roots, high execution stacks;
 //! - [`component`]: a complete component `AddressSpace` with its own table,
 //!   root and ASID;
+//! - [`loader`]: loading bundled EL0 components and their guarded stacks;
+//! - [`bounce`] and [`translation`]: the Bounce fixture — a second trusted
+//!   `EL1t` context in its own `AddressSpace` — and the two-root translation
+//!   provisioning and observations it runs on;
 //! - [`threads`]: fixture Threads queued runnable by the bootstrap builder;
 //! - the panic handler, reporting through QEMU semihosting.
 //!
@@ -22,12 +26,14 @@
 //! outside the `CopyDerive` allowlist) where no public ABI exists yet, and says
 //! so at each use.
 
+pub mod bounce;
 pub mod builder;
 pub mod component;
 pub mod keys;
 pub mod loader;
 pub mod paging;
 pub mod threads;
+pub mod translation;
 
 use {
     aarch64_cpu::registers::{

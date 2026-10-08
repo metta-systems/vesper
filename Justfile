@@ -28,8 +28,6 @@ volume          := env('VOLUME', '/Volumes/BOOT')
 
 kernel_elf      := justfile_directory() / 'target' / target / 'release/kickstart'
 kernel_bin      := justfile_directory() / 'target/kernel.bin'
-kicktest_elf    := justfile_directory() / 'target' / target / 'release/kicktest'
-kicktest_bin    := justfile_directory() / 'target/kicktest.bin'
 endpoint_test_elf := justfile_directory() / 'target' / target / 'release/endpoint-test'
 endpoint_test_bin := justfile_directory() / 'target/endpoint-test.bin'
 fault_test_elf  := justfile_directory() / 'target' / target / 'release/fault-test'
@@ -80,12 +78,6 @@ build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link featu
     @echo "{{ok_label}} kernel built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
 alias b := build
-
-# Build the kicktest e2e boot-test kernel (features: 'qemu,debug_kernel' for the full e2e suite)
-[group("emu")]
-build-kicktest board='rpi3' features='qemu,debug_kernel': (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'kicktest' board init_link features)
-    {{ objcopy }} --strip-all -O binary "{{ kicktest_elf }}" "{{ kicktest_bin }}"
-    @echo "{{ok_label}} kicktest built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
 # Build the EL0 userspace components (linked with the userspace runtime's user.ld)
 [group("emu")]
@@ -260,7 +252,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("emu")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability-boot test-endpoint test-fp-trap test-fault
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-endpoint test-fp-trap test-fault
 
 alias t := test
 
@@ -296,21 +288,41 @@ test-untyped:
     cargo test -p nucleus --test untyped {{ target_json }} \
       --features=qemu {{ rust_std }}
 
-# Rebuild the e2e boot-test kernel (kicktest) unconditionally.
-#
-# Deliberately a nested `just` invocation, not a `(build-kicktest ...)`
-# dependency: just deduplicates same-argument recipe dependencies within one
-# invocation, so in `just ci` (clean lint build test) a plain dependency here
-# could be skipped as already run, leaving `target/kicktest.bin` stale. The
-# nested invocation always runs and refreshes the image.
+# Build one Kickstart-based e2e test kernel without bundled components:
+# the nucleus, then `crate` linked as the init image, then its raw binary.
 [private]
-_rebuild-boot-test-kernel:
-    {{ just_executable() }} build-kicktest rpi3 qemu,debug_kernel
+_build-test-kernel crate board='rpi3' features='qemu,debug_kernel': (_cross-build 'nucleus' board nucleus_link features) (_cross-build crate board init_link features)
+    {{ objcopy }} --strip-all -O binary "{{ justfile_directory() / 'target' / target / 'release' / crate }}" "{{ justfile_directory() / 'target' / crate + '.bin' }}"
+    @echo "{{ok_label}} {{ crate }} built for {{ board }} [{{ features }}]"
 
-# Boot the kicktest e2e kernel; in-guest assertions and QEMU exit status validate handoff and SVC results
+# Rebuild `crate` unconditionally and boot it; in-guest assertions and the
+# QEMU exit status are the result.
+#
+# The rebuild is deliberately a nested `just` invocation, not a recipe
+# dependency: just deduplicates same-argument recipe dependencies within one
+# invocation, so in `just ci` (clean lint build test) a plain dependency could
+# be skipped as already run, leaving the kernel image stale. The nested
+# invocation always runs and refreshes the image.
+[private]
+_run-test-kernel crate:
+    {{ just_executable() }} _build-test-kernel {{ crate }}
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ justfile_directory() / 'target' / crate + '.bin' }}"
+
+# Boot capability-test: boot-table invariants, debug console key, KeyTable/Frame Retype, Untyped split
 [group("emu")]
-test-capability-boot: _rebuild-boot-test-kernel
-    {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kicktest_bin }}"
+test-capability: (_run-test-kernel 'capability-test')
+
+# Boot ppc-test: Invocation construction and same-Thread PPC Call/Return into the Bounce AddressSpace
+[group("emu")]
+test-ppc: (_run-test-kernel 'ppc-test')
+
+# Boot sync-test: Notification, EventCount, blocking waits through the Bounce Thread, Thread.Retire
+[group("emu")]
+test-sync: (_run-test-kernel 'sync-test')
+
+# Boot memory-test: PageTable/Frame mapping, alias policy, ASIDs, activation and TLB invalidation, AddressSpace.Retire
+[group("emu")]
+test-memory: (_run-test-kernel 'memory-test')
 
 # Rebuild endpoint-test unconditionally (nested for the same reason as above).
 [private]
@@ -452,7 +464,7 @@ fmt-check:
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
 [group("maintenance")]
-audit-fp-simd: (build-kicktest 'rpi3' 'qemu,debug_kernel') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
+audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
     artifacts="{{ justfile_directory() }}/target/{{ target }}/release"
@@ -460,7 +472,7 @@ audit-fp-simd: (build-kicktest 'rpi3' 'qemu,debug_kernel') (build-fault-test 'rp
     # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
     fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
     failed=0
-    for image in nucleus kickstart kicktest endpoint-test fault-test hello endpoint-client endpoint-component endpoint-server fault-faulter fault-bare; do
+    for image in nucleus kickstart capability-test memory-test sync-test ppc-test endpoint-test fault-test hello endpoint-client endpoint-component endpoint-server fault-faulter fault-bare; do
         # Symbol names in <…> are not operands.
         found=$(rust-objdump -d --no-show-raw-insn "${artifacts}/${image}" | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
         if [ -n "${found}" ]; then

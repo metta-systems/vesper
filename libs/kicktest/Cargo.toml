@@ -1,7 +1,7 @@
 [package]
 name = "vesper-kicktest"
 
-description = "Shared boot-test scaffolding for Vesper e2e test kernels (kicktest, endpoint-test): key helpers, retained-image/AddressSpace provisioning, fixture Threads and the panic handler."
+description = "Shared boot-test scaffolding for Vesper e2e test kernels (kernel/tests/*): key helpers, retained-image/AddressSpace provisioning, component loading, the Bounce fixture, fixture Threads and the panic handler."
 
 authors = { workspace = true }
 categories = { workspace = true }

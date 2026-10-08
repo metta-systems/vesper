@@ -266,7 +266,7 @@ pub fn retained_init_memory() -> RetainedInitMemory {
 
 /// The boot-time kernel state the post-boot continuation continues from.
 ///
-/// Shared by the real kickstart kernel and the kicktest e2e boot-test kernel:
+/// Shared by the real kickstart kernel and the `kernel/tests` e2e kernels:
 /// everything here is real boot state (no test fixtures), sized by the
 /// [`PoolCapacities`] the caller passes to [`bootstrap_nucleus`].
 pub struct BootState {
@@ -299,9 +299,9 @@ pub struct BootState {
 /// anchor the inert nucleus reads on syscall entry.
 ///
 /// The `capacities` size the carved pools for the caller's continuation: the
-/// real kickstart passes its own needs; kicktest passes the e2e suite's
-/// fixture extents (a Bounce Thread, fixture `AddressSpace`s, and the
-/// mapping-chain page-table pool).
+/// real kickstart passes its own needs; each e2e test kernel passes its own
+/// fixture extents (fixture Threads and `AddressSpace`s, Notifications and
+/// `EventCounts`, page tables).
 pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     // Allocate a power-of-2 boot region for the boot Untyped.
     let boot_region = BOOT_INFO

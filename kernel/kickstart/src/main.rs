@@ -5,8 +5,8 @@
 
 //! The real Vesper startup kernel: initialize the machine, build the initial
 //! kernel state, and — as the boot path grows — bring up the whole system.
-//! The e2e runtime/bootup tests that used to live here moved to the separate
-//! `kicktest` kernel, which reuses the shared boot code from the `kickstart`
+//! The e2e runtime/bootup tests live in the separate test kernels under
+//! `kernel/tests`, which reuse the shared boot code from the `kickstart`
 //! library crate.
 
 // Init-thread process.

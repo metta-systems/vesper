@@ -1,14 +1,16 @@
-//! Vesper boot library, shared by the two boot-kernel images:
+//! Vesper boot library, shared by the boot-kernel images:
 //!
 //! - **kickstart** — the real startup kernel that initializes the machine and
 //!   will eventually bring up the whole system;
-//! - **kicktest** — the e2e runtime/bootup-test kernel that reuses this boot
-//!   path and runs the capability end-to-end suite against the real SVC path.
+//! - the **e2e test kernels** under `kernel/tests` (capability, memory, sync,
+//!   ppc, endpoint, fp-trap and fault tests), which reuse this boot path and
+//!   run their suites against the real SVC path.
 //!
 //! Everything here is real boot machinery: early EL2 init, device-tree
 //! parsing, nucleus image loading and mapping, the EL1 transition, and (in
 //! [`bootstrap`]) construction of the initial kernel state. Test fixtures and
-//! the e2e suite live in the kicktest crate, never here.
+//! the e2e suites live in `libkicktest` and the test-kernel crates, never
+//! here.
 
 #![no_std]
 #![allow(unused)]
@@ -65,8 +67,8 @@ fn dump_memory_map() {
 ///
 /// `run_entry` is the virtual address of the post-boot continuation that runs
 /// after the MMU is enabled and execution has dropped to EL1 (the boot image's
-/// own run function, e.g. kickstart's `kickstart_run` or kicktest's
-/// `kicktest_run`).
+/// own run function, e.g. kickstart's `kickstart_run` or a test kernel's
+/// `run`).
 /// Implementation status: this trusted linked continuation runs at `EL1t` on the
 /// existing low boot stack (`SP_EL0`); exceptions use the allocated high per-core
 /// kernel stack (`SP_EL1`). Protected EL0 component entry remains separate work.

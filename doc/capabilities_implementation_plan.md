@@ -27,8 +27,7 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 |---|---|
 | `just build` | Build nucleus and kickstart and produce the kernel binary; defaults to RPi4/hardware |
 | `just build rpi3 qemu` | Build the RPi3/QEMU kernel configuration without starting QEMU |
-| `just build-kicktest` | Build the kicktest e2e boot-test kernel image (nucleus + kicktest, which rebuilds the shared kickstart boot library); defaults to RPi3/QEMU with the full e2e suite |
-| `just build-endpoint-test` | Build the endpoint-test e2e kernel image (nucleus + endpoint-test, sharing `libkicktest` scaffolding with kicktest); defaults to RPi3/QEMU |
+| `just build-endpoint-test` | Build the endpoint-test e2e kernel image (nucleus + endpoint-test and its bundled components, sharing `libkicktest` scaffolding with the other test kernels); defaults to RPi3/QEMU |
 | `just fmt-check` | Workspace formatting check using the configured nightly toolchain |
 | `just clippy` | RPi3/QEMU feature-off and debug-enabled build prerequisites, all nine embedded configurations, and capability host-test linting |
 | `just clippy-pre-push` | Default features on RPi3 and RPi4 plus capability host-test linting; not the full embedded matrix |
@@ -36,12 +35,15 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just lint` | Formatting, full embedded Clippy workflow, and host-tool Clippy |
 | `just test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
 | `just test-debug-console` | Debug-enabled nucleus handler and slot-identity regression tests under QEMU; included in `just test` |
-| `just test-capability-boot` | Boot the kicktest e2e kernel (a separate test binary reusing the real kickstart boot path); the full capability suite through the real SVC path with in-guest assertions and QEMU exit status, included in `just test` |
+| `just test-capability`, `test-memory`, `test-sync`, `test-ppc` | Boot one e2e test kernel each (separate binaries reusing the real kickstart boot path, sharing `libkicktest`): capability handoff and Retype; translation tables, mappings, activation and AddressSpace retirement; Notification/EventCount and blocking through the Bounce fixture Thread; Invocation construction and PPC Call/Return into Bounce. In-guest assertions and the QEMU exit status are the result; all included in `just test` |
 | `just test-endpoint` | Boot the endpoint-test e2e kernel: client, rendezvous-endpoint and server `AddressSpace`s meet through PPC `Invocation`s, blocking inside the endpoint; in-guest assertions and the QEMU exit status are the result; included in `just test` |
+| `just test-fp-trap` | Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t (test-only nucleus hook) and at EL0 (delivered to the component's fault handler); included in `just test` |
+| `just test-fault` | Boot fault-test: EL0 fault delivery — skip, retry, terminate, Return faults, and every unhandled case parking the Thread as faulted; included in `just test` |
+| `just audit-fp-simd` | Disassemble every image that runs under the integer-only policy and reject FP/SIMD instructions; part of `just lint` |
 | `just test-chainboot` | Chainboot tests with its own linker script and target runner |
 | `just test-object-host` | Opt-in capability ABI integration tests on the native host (currently AArch64) |
 | `just test-host` | Capability ABI tests, then native `chainofcommand` tests |
-| `just test` | Device, chainboot, capability-host, host-tool, debug handler/storage, capability boot and endpoint workflows |
+| `just test` | Device, chainboot, capability-host, host-tool, debug handler/storage, and every e2e test kernel (capability, memory, sync, ppc, endpoint, fp-trap, fault) |
 | `just pre-push` | Formatting, shortened Clippy, and tests; does not itself push anything |
 | `just ci` | Cleanup, lint, build, and tests; do not invoke its cleanup as an incidental check |
 
@@ -212,7 +214,7 @@ Reference: [Time contracts](nucleus_capabilities.md#time-and-userspace-schedulin
 - [ ] Complete the init handoff: define/build ELF-module AddressSpaces and Threads, well-known keyspace grants, untyped delegation/accounting, read-only module image caps, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
   - [ ] Replace the fixture init page with the init-handoff design (keys, parameters) once selected.
   - [ ] Copy a component's `.data` per instance before loading the same component twice; it is currently mapped in place from the bundle.
-  - [ ] Move the kicktest fixtures (Bounce, PPC tests) onto EL0 components where they do not need EL1 register access.
+  - [ ] Move the Bounce fixture (sync-test, ppc-test, via `libkicktest::bounce`) onto EL0 components where it does not need EL1 register access.
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`), so the kernel enables protections the running core supports instead of assuming the ARMv8.0-A baseline of the supported Cortex-A53/A72 boards.
   - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN (ARMv8.1+): set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN` so every exception entry to EL1 sets it, so EL1 cannot silently access EL0 pages. Prerequisite: the EL1t boot Thread must stop using its EL0-accessible low stack (or move to EL0). Validate on a core that has FEAT_PAN (e.g. a QEMU `virt` machine with a newer CPU model), with an EL1 access to an EL0 page that faults.
   - [ ] Select `CPTR_EL2.TZ`/`TSM` by the core's features: `libboot`'s `_startup_in_rust` writes them as 1 (RES1 on the ARMv8.0 cores); on a core with SVE (`ID_AA64PFR0_EL1.SVE`) or SME (`ID_AA64PFR1_EL1.SME`) they must be cleared so SVE/SME traps reach EL1 through `CPACR_EL1.ZEN`/`SMEN` instead of an unhandled EL2.

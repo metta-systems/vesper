@@ -2,7 +2,10 @@
 members = [
   "kernel/nucleus",
   "kernel/kickstart",
-  "kernel/tests/kicktest",
+  "kernel/tests/memory-test",
+  "kernel/tests/ppc-test",
+  "kernel/tests/sync-test",
+  "kernel/tests/capability-test",
   "kernel/tests/endpoint-test",
   "kernel/tests/fault-test",
   "kernel/tests/fp-trap-test",

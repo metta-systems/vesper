@@ -59,7 +59,7 @@ flowchart TD
   into Thread storage. Resume rewrites the transient trap frame and returns
   through `ERET` on the per-core kernel stack, delivering the terminal result
   — including error wakeups (status 31). A Thread may also await while
-  migrated into a PPC target. Exercised by `kernel/tests/kicktest` and
+  migrated into a PPC target. Exercised by `kernel/tests/sync-test` and
   `kernel/tests/endpoint-test`.
 - **Bounded queues**: a full await queue rejects before admission
   (`PoolExhausted`) with no record to roll back.

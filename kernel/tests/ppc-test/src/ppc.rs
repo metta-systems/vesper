@@ -12,7 +12,6 @@
 //! hostile-EL0 confinement or FP/SIMD trap validation.
 
 use {
-    crate::translation::{self, PPC_STACK_PAGES, PPC_STACK_VA, PROBE_VA},
     aarch64_cpu::registers::{Readable, TTBR0_EL1},
     core::{
         arch::{asm, naked_asm},
@@ -20,6 +19,7 @@ use {
         hint::black_box,
         sync::atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    libkicktest::translation::{self, PPC_STACK_PAGES, PPC_STACK_VA, PROBE_VA},
     libobject::{
         CapError, DebugConsoleKey, InconsistencyReason, RawKey, decode_syscall_result,
         export::{self, PpcResult},
@@ -101,9 +101,9 @@ extern "C" fn target_body(capture: *const u64) -> ! {
     let key = RETURN_KEY.load(Ordering::Acquire);
     if RETURN_VIA_LIBRARY.load(Ordering::Acquire) {
         // SAFETY: completing this Call abandons the target stack and context.
-        let Err(error) = (unsafe {
+        let Err(error) = unsafe {
             ThreadReturnKey::from_key(RawKey::from_wire(key)).return_from_invocation(r0, r1)
-        });
+        };
         panic!("PPC target: library Return failed: {:?}", error.code());
     }
     // SAFETY: success abandons this target context and resumes the source.
@@ -186,9 +186,9 @@ pub extern "C" fn rejection_entry(
 
         // The library helper decodes the rejection into Err.
         // SAFETY: a rejected Return leaves this target context intact.
-        let Err(error) = (unsafe {
+        let Err(error) = unsafe {
             ThreadReturnKey::from_key(RawKey::from_wire(key)).return_from_invocation(r0, r1)
-        });
+        };
         let helper = error.code();
         note_preserved();
 
@@ -207,10 +207,10 @@ pub extern "C" fn rejection_entry(
 
     // The continuation survived every rejection: a valid Return completes.
     // SAFETY: completing this Call abandons the target stack and context.
-    let Err(error) = (unsafe {
+    let Err(error) = unsafe {
         ThreadReturnKey::from_key(RawKey::from_wire(RETURN_KEY.load(Ordering::Acquire)))
             .return_from_invocation(r0, r1)
-    });
+    };
     panic!(
         "PPC target: valid Return after rejections failed: {:?}",
         error.code()
@@ -518,10 +518,10 @@ pub extern "C" fn vesper_thread_return_fault(
     );
     // SAFETY: still inside the failed export on this Thread; a successful
     // Return abandons this handler's stack.
-    let Err(error) = (unsafe {
+    let Err(error) = unsafe {
         ThreadReturnKey::from_key(RawKey::from_wire(repair))
             .return_from_invocation(original_r0, original_r1)
-    });
+    };
     panic!("PPC export: repair Return failed: {:?}", error.code());
 }
 

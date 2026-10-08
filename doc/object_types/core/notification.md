@@ -56,7 +56,7 @@ stateDiagram-v2
   selects the next runnable Thread. Resume injects the completed bitmap into
   the transient trap frame and returns through `ERET` on the per-core kernel
   stack. A Thread may also wait while migrated into a PPC target. Exercised by
-  `kernel/tests/kicktest` and `kernel/tests/endpoint-test`.
+  `kernel/tests/sync-test` and `kernel/tests/endpoint-test`.
 - **Bounded queues**: the wait reservation is validated before admission — a
   full queue rejects with `PoolExhausted` before any record is registered,
   so nothing leaks.

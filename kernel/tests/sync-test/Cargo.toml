@@ -1,7 +1,7 @@
 [package]
-name = "kicktest"
+name = "sync-test"
 
-description = "Vesper end-to-end runtime/bootup test kernel (reuses the kickstart boot path)."
+description = "Vesper end-to-end test kernel: Notification and EventCount, blocking waits through the Bounce fixture Thread, and Thread.Retire."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -49,8 +49,8 @@ libqemu = { workspace = true }
 nucleus = { path = "../../nucleus" }
 
 [[bin]]
-name = "kicktest"
-test = false  # the e2e assertions run in-guest through `just test-capability-boot`
+name = "sync-test"
+test = false  # the e2e assertions run in-guest through `just test-sync`
 
 [lints]
 workspace = true
