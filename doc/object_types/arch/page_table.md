@@ -3,110 +3,46 @@
 | | |
 |---|---|
 | Wire type | `0x81` (arch index 1) |
-| Pool | `PoolTag::PageTable` (pooled kernel metadata; 4 KiB hardware table carved from Untyped) |
-| Status | Active: Map/Unmap (explicitly managed translation tables) |
+| Backing | A 4 KiB table carved from an Untyped by Retype |
+| Status | Map, Unmap |
 
 ## Purpose
 
-A `PageTable` capability names one Retype-carved 4 KiB hardware-format
-translation table plus kernel metadata (carve address, walk level,
-installation record). Intermediate page tables are **explicitly managed,
-seL4-style**: the kernel never allocates translation structures implicitly,
-so every byte of a translation context is charged to a Retype carve. A
-AddressSpace's translation root is also a PageTable capability, installed against
-the AddressSpace.
+A PageTable is one 4 KiB hardware translation table (512 entries). The kernel never creates translation tables on its own: a component builds each AddressSpace's translation tree from PageTables it creates with Retype, so all translation memory is accounted to an Untyped. The tree has four levels; a level-0 table is the AddressSpace's root.
 
-## User-level visible operations
+## Operations
 
-| Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
+| Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| `0` | Map | `x2` parent key, `x3` virtual address, `x4..x7` zero | `MAP` on the *parent* capability | zeros |
-| `1` | Unmap | no arguments | (via the invoked table's installation) | zeros |
+| 0 | Map | `x2` parent (AddressSpace or PageTable), `x3` virtual address | `MAP` on the parent | — |
+| 1 | Unmap | — | — | — |
 
-### Map — installation selected by parent capability type
+### Map
 
-```mermaid
-flowchart TD
-    PT["PageTable.Map(table, parent, vaddr)"] --> Q{"Parent type?"}
-    Q -- "AddressSpace cap" --> R{"vaddr == 0?<br/>root slot vacant?<br/>table uninstalled?"}
-    R -- "no" --> E1["defined error"]
-    R -- "yes" --> RC["Record root on AddressSpace,<br/>install_root(address_space) level 0"]
-    Q -- "PageTable cap" --> I{"parent installed,<br/>level < 3,<br/>slot vacant?"}
-    I -- "no" --> E2["NotMapped /<br/>InvalidOperation / AlreadyMapped"]
-    I -- "yes" --> IC["install_table_entry:<br/>write table descriptor,<br/>record parent+slot, level = parent+1"]
-```
+Installs the table under the parent named by `x2`:
 
-- **Root installation** (parent = AddressSpace capability): the virtual address is
-  meaningless for a whole-context root and must be zero; the AddressSpace's root
-  slot must be vacant and the table uninstalled (`AlreadyMapped`
-  otherwise).
-- **Intermediate installation** (parent = PageTable capability): the parent
-  must be installed and below the leaf level (a level-3 table holds page
-  descriptors; nothing may be installed beneath it); the slot selected by
-  the virtual address must be vacant. Mapping a table into itself is
-  rejected via alias-safe pair resolution.
+- **Parent is an AddressSpace:** the table becomes that AddressSpace's root (level 0). `x3` must be 0, and the AddressSpace must have no root yet.
+- **Parent is a PageTable:** the table is installed in the parent's entry that covers `x3`, one level below the parent. The parent must itself be installed, must not be a level-3 table, and the entry must be empty.
+
+Install tables from the root downwards: level 0, then levels 1, 2 and 3 as needed. [Frames](frame.md#map) map at level 3 (4 KiB), level 2 (2 MiB) or level 1 (1 GiB).
+
+| Error | Cause |
+|---|---|
+| `INSUFFICIENT_RIGHTS` | The parent capability lacks `MAP` |
+| `ALREADY_MAPPED` | This table is already installed, the AddressSpace already has a root, or the parent entry is in use |
+| `NOT_MAPPED` | The parent PageTable is not installed |
+| `INVALID_OPERATION` | Nonzero `x3` for a root, a level-3 parent, mapping a table into itself, or a nonzero unused argument |
+| `INVALID_OBJECT_TYPE`, `TYPE_MISMATCH` | `x2` is neither an AddressSpace nor a PageTable |
 
 ### Unmap
 
-The table must be installed and **empty** (every descriptor zero — a non-empty
-table would orphan its children). Unmapping the root clears the AddressSpace's
-translation-root field and invalidates every cached translation under the
-AddressSpace's bound ASID (if any); unmapping an intermediate verifies the parent
-descriptor still points at this table, then clears it.
+Removes the table from its parent. The table must be empty. Unmapping a root detaches it from its AddressSpace and flushes every TLB entry tagged with that AddressSpace's ASID.
 
-## Kernel-level implementation details
+| Error | Cause |
+|---|---|
+| `NOT_MAPPED` | The table is not installed |
+| `INVALID_OPERATION` | The table still has entries |
 
-- Creation: `Untyped.Retype` with fixed `size_bits` 12 (4 KiB) on AArch64;
-  the carved table is **zeroed (sanitized)** — stale descriptors would leak
-  prior contents into hardware walks — and the capability is a checked pool
-  identity over kernel metadata, not an inline region.
-- Metadata (`kernel/nucleus/src/objects/arch/page_table.rs`):
-  `AArch64PageTable { paddr, level, parent: PtParent }` where `PtParent` is
-  `Uninstalled` / `Root { address_space }` / `Table { parent_paddr, slot }`. The
-  metadata (carve address, level, installation record) is the mapping
-  identity: enough to locate and retire the real descriptor.
-- Hardware format: AArch64 Stage 1, 4 KiB granule, 48-bit VA, 9-bit indices
-  (512 entries per table), L0-rooted four-level TTBR0 walk. Checked context
-  preparation requires `T0SZ=16`, `EPD0=0`, `A1=0`, and no DS/LPA2; it rejects
-  unsupported profiles, unencodable roots, and unsupported configured/hardware
-  PA or ASID widths before installation (see
-  [AddressSpace.Activate](address_space.md#activate)). 4 KiB pages install page
-  descriptors at level 3, 2 MiB blocks at level 2, 1 GiB blocks at level 1.
-  Descriptor bits match the boot-time configuration
-  (MAIR index 0 = normal write-back cacheable). TTBR0 leaves are non-global
-  (`nG=1`); table descriptors do not carry this leaf attribute. Invariant
-  bootstrap TTBR1 kernel mappings remain global. Installation publishes
-  each new table/leaf descriptor with `DSB ISHST` and `ISB` before further
-  translation walks; exception return alone does not complete the store.
-- Raw tables are reached through the direct map (`raw_table`); the safety
-  contract requires the address to name a live carved table page (never
-  freed under the accepted-leak model).
-- Walk mechanics: `walk_to_leaf` follows installed table descriptors; a
-  missing level fails with `MissingIntermediate`; a block descriptor covering
-  the range means the address is already mapped (`AlreadyMapped`).
-- An intermediate table's descriptors are all zero when uninstalled
-  (required), so no cached translation can exist beneath it and no
-  invalidation is needed there; root unmap invalidates the whole ASID with
-  descriptor stores ordered before TLBI and completion barriers before reuse.
+## Implementation
 
-## Sidenotes
-
-- The AddressSpace is the mapping context (see
-  [address_space.md](address_space.md)).
-- Carved tables become hardware-live when their `AddressSpace` is installed in
-  `TTBR0_EL1`: by `AddressSpace.Activate`, by scheduling a Thread, or by a PPC
-  Call or Return. Each path validates the context first and installs it after
-  guards and the kernel lock are released.
-- Unmap invalidates whenever the owning `AddressSpace` has a bound ASID, even
-  if that context is not currently installed.
-- Unmap clears installation state but does not release the page-table
-  metadata pool entry.
-
-## TODOs
-
-- Interaction of root/intermediate unmap with in-flight access and eventual
-  table reclamation — D2/D6 (carved tables leak under the accepted-leak
-  model).
-- Block-descriptor mappings (2 MiB/1 GiB frames) install at levels 1–2; any
-  additional per-level policy is future work.
-- Multi-level table pools' Untyped-backed backing ownership — Phase 5.
+Retype zeroes a PageTable before handing it out. The format is AArch64 stage 1 with a 4 KiB granule and 48-bit virtual addresses. Unmap leaves the table's memory allocated, so it can be installed again.

@@ -95,7 +95,7 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Report a stale or retired pooled object as `InconsistentKey`/`ObjectRetired` instead of `InvalidOperation` (`ObjectPool::check`).
 - [ ] Give carved objects (KeyTables, Frames) a retirement identity so retirement rejects old capabilities in every table without an ancestry walk.
 - [ ] Implement permission-based retirement for the remaining kinds (only Thread and AddressSpace have `Retire`); test that creator control survives delegation and that accepted leaks cause no automatic destruction or conflicting reuse.
-- [ ] Extend KeyTable Delete beyond the KeyTable/DebugConsole allowlist so entries naming retired objects can be removed while the slot incarnation still matches; test it after Thread and AddressSpace retirement.
+- [ ] Test KeyTable Delete of entries naming retired Threads and AddressSpaces (Delete accepts any kind and checks only the slot incarnation).
 - [ ] Define the retirement-to-background-cleanup handoff to entrusted managers (no central post-hoc registration).
 - [ ] Track the current Thread as an incarnation-checked identity, not a bare pool index (`Nucleus::current_thread`).
 - [ ] Settle pool retirement, reuse validation and the zero-sized-type policy for `ObjectPool`; create pools at runtime, not only at bootstrap.

@@ -3,111 +3,56 @@
 | | |
 |---|---|
 | Wire type | `0x01` (core) |
-| Pool | none — inline region payload in `KeyEntry` |
-| Status | Active: `Retype` handler with KeyTable/Frame/PageTable/Notification/EventCount/Untyped allowlist |
+| Backing | A physical memory region of `2^size_bits` bytes, described inline in the capability |
+| Status | Retype |
 
 ## Purpose
 
-An `Untyped` capability represents authority over a contiguous range of
-currently unallocated physical memory (`2^size_bits` bytes, up to 1 GiB). It
-is the sole source for creating new kernel objects: `Untyped.Retype` carves
-objects from the region's unused watermark range and installs capabilities for
-them into a destination `KeyTable`. The kernel never allocates memory for
-kernel objects on its own after boot — all object storage is charged to an
-authorized Untyped carve.
+An Untyped capability grants authority over a region of unallocated physical memory. It is the only way to create kernel objects: `Retype` carves new objects from the region and installs capabilities for them into a KeyTable. The boot Untyped is handed to the first component at `KeySlot::BOOT_UNTYPED` (slot 5).
 
-## User-level visible operations
+## Operations
 
-| Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
+| Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| `0` | Retype | `x2` object kind, `x3` `size_bits` with the table guard packed in bits 39:8 (`KeyTable` kind only; zero for every other kind), `x4` count (≤ 256), `x5` destination-table key, `x6` first destination slot (bare index), `x7` requested rights | `WRITE` on the invoked Untyped, `INSTALL` on the destination-table capability | First destination-local key in `x1`, zero in `x2`; remaining keys occupy consecutive slots |
+| 0 | Retype | `x2` kind, `x3` size (and guard), `x4` count, `x5` destination table, `x6` first slot, `x7` rights | `WRITE` on the Untyped, `INSTALL` on the destination table | `x1` key of the first new capability |
 
-Batch semantics are **all-or-nothing**: every destination slot is
-pre-validated (range, vacancy, remaining incarnation capacity) before any
-object is initialized; any failure leaves the Untyped's accounting and the
-destination table unchanged.
+### Retype
 
-### Creatable kinds and sizes
+| Register | Meaning |
+|---|---|
+| `x2` | Wire type of the objects to create |
+| `x3` | Bits 7–0: `size_bits`. Bits 39–8: the new table's guard (KeyTable only). All other bits zero |
+| `x4` | Number of objects, 1–256 |
+| `x5` | Key of the destination KeyTable |
+| `x6` | First destination slot, as a bare index |
+| `x7` | Rights for the new capabilities (any subset of `0x3F`) |
 
-| Kind | `size_bits` | Carve |
+Retype creates `count` objects and installs their capabilities into consecutive destination slots starting at `x6`. It succeeds completely or changes nothing.
+
+| Kind | `size_bits` | Result |
 |---|---|---|
-| `KeyTable` | 1..=20 (capacity `2^size_bits` entries) | type-derived variable-size carve — 32 B header, 64 B entries and separate 4 B counters, rounded to alignment 32 (256 entries: 17,440 B); header/arrays written/zeroed at the carve; the userspace-chosen guard packed in `x3` bits 39:8 is recorded in the capability and fixed for the table's lifetime |
-| `Frame` | arch-validated (AArch64: 12/21/30) | raw physical region, zeroed (sanitized) before installation |
-| `PageTable` | fixed 12 (4 KiB) on AArch64 | zeroed hardware-format table; capability is a checked pool identity over kernel metadata |
-| `Notification` | reserved zero | no Untyped bytes; object allocated from the bootstrap-carved notification pool |
-| `EventCount` | reserved zero | no Untyped bytes; object allocated from the bootstrap-carved event-count pool |
-| `Untyped` | ≥ 4 (region ≥ 16 bytes, the watermark encoding granularity) | split: pure bookkeeping — no bytes initialized or sanitized; child watermark starts at zero; `is_device` propagates |
+| KeyTable | 1–20; capacity `2^size_bits` entries | An empty table. The guard must fit in `32 − size_bits` bits and is fixed for the table's lifetime |
+| Frame | 12, 21 or 30 (4 KiB, 2 MiB, 1 GiB) | Zeroed physical memory, aligned to its size |
+| PageTable | 12 | A zeroed 4 KiB translation table |
+| Notification | 0 | A Notification with no pending bits |
+| EventCount | 0 | An EventCount at 0 |
+| Untyped | At least 4 (16 bytes) | A smaller Untyped covering part of the region |
 
-Every other kind is rejected with `InvalidObjectType`, including `Thread`
-and `AddressSpace` (cannot be carved from memory). A **device Untyped is not
-a valid source for any creatable kind except the `Untyped` split**: the
-split touches no bytes and propagates `is_device` to the children, while
-every other kind is rejected with `InvalidObjectType` before any
-reservation.
+Other kinds fail with `INVALID_OBJECT_TYPE`. A device Untyped can only be split into smaller device Untypeds; every other kind from a device Untyped fails with `INVALID_OBJECT_TYPE`.
 
-## Kernel-level implementation details
+| Error | Cause |
+|---|---|
+| `INVALID_OBJECT_TYPE` | The kind cannot be created from memory, or the source is device memory |
+| `INVALID_SIZE` | `size_bits` out of range for the kind; for a KeyTable, a guard too wide for its size or `x3` bits 63–40 set |
+| `INVALID_FRAME_SIZE` | Frame `size_bits` other than 12, 21 or 30 |
+| `INVALID_OPERATION` | Count 0 or above 256; `x3` bits above 7 set for a kind other than KeyTable; a kind, slot or rights word that does not fit its field; undefined rights bits |
+| `INSUFFICIENT_RIGHTS` | Missing `WRITE` on the Untyped or `INSTALL` on the destination |
+| `INSUFFICIENT_MEMORY` | The objects do not fit in the remaining region |
+| `POOL_EXHAUSTED` | No free Notification, EventCount or PageTable slot in the kernel pool |
+| `INVALID_SLOT`, `SLOT_OCCUPIED`, `KEY_SLOT_EXHAUSTED` | A destination slot is out of range, occupied, or has used up its incarnations |
 
-The capability *is* the object: an Untyped stores its `RegionPayload` inline
-in the `KeyEntry` — physical base, allocation watermark (state), `size_bits`,
-and an `is_device` flag. There is no separate kernel structure, pool slot, or
-pointer indirection (`kernel/nucleus/src/api/key_entry.rs`;
-the Retype transaction lives in `kernel/nucleus/src/api/untyped.rs`).
+## Implementation
 
-```mermaid
-flowchart TD
-    A["Validate args<br/>(kind, size_bits, count, rights)"] --> B{"Kind allowlisted?<br/>Non-device source?<br/>(Untyped split exempt)"}
-    B -- "no" --> E1["InvalidObjectType"]
-    B -- "yes" --> C["Pre-validate all destination slots<br/>(range, vacancy, incarnation headroom)"]
-    C -- "fail" --> E2["defined key/slot error"]
-    C -- "ok" --> D["Reserve watermark range<br/>(align up to object size)"]
-    D -- "does not fit" --> E3["InsufficientMemory"]
-    D -- "fits" --> F["Initialize objects<br/>(write KeyTable / zero Frame+PageTable /<br/>allocate pool identity / split Untyped:<br/>bookkeeping only)"]
-    F --> G["Install capabilities into<br/>destination slots"]
-    G --> H["Advance watermark last"]
-    H --> OK["Return first key in x1"]
-```
+An Untyped tracks a watermark: Retype allocates from the unused part of the region above it and only ever moves it forward. Memory below the watermark is never handed out again, even after the objects created there are retired. Each new object is aligned to its own alignment (a Frame to its size), and the watermark advances in 16-byte steps.
 
-- KeyTable reservation uses `KeyTable::carve_size(size_bits)` and the table's
-  alignment; `size_bits` selects the entry count, not a byte size.
-- Invocation is not Retype-creatable: memory alone cannot mint its authority.
-  [`AddressSpace.CreateInvocation`](../arch/address_space.md) creates it
-  inline in the destination entry, with no pool or stack backing.
-- The watermark allocator only ever moves forward: previously allocated
-  objects below the watermark are never eligible for re-retyping, and no
-  reset/reclamation protocol exists (accepted-leak model).
-- Watermark encoding has 16-byte granularity (`MIN_ALIGN`); the absolute
-  carve address is aligned up to the object's alignment, and the usable range
-  ends where the watermark encoding does.
-- Region extents are validated before reservation: unrepresentable sizes or
-  base+size beyond the physical address space fail with `InvalidSize`.
-- The commit step on the caller's own table is
-  `KeyTable::advance_untyped_watermark` — a targeted mutation that changes
-  only the watermark, never identity/rights/badge/incarnation.
-- The nucleus itself is boot-carved from a boot Untyped by Kickstart
-  (inert-nucleus handoff); the boot Untyped is granted at
-  `KeySlot::BOOT_UNTYPED`.
-
-## Sidenotes
-
-- Only an Untyped can be a Retype source; the watermark invariant concerns the
-  *candidate allocation*, not a claim that all earlier allocations are
-  unmapped.
-- Requested rights (`x7`) are installed on the created capabilities, subject to
-  per-kind interpretation; Retype-origin capabilities carry delegable
-  lifetime-control permission. A word with any bit outside `Rights::all()`
-  (`0x3F`) is rejected with `InvalidOperation`.
-- Sanitization: the kernel zeroes Retype-carved Frame and PageTable contents
-  inside the transaction, before capability installation and watermark
-  commit, so a fresh object never leaks prior-owner or kernel data.
-- An `Untyped` split initializes nothing: the child's bytes become
-  observable only through later carves, each of which already initializes
-  or zeroes (a Frame or PageTable is zeroed, a KeyTable is written). A
-  child smaller than the watermark encoding granularity is rejected with
-  `InvalidSize` — its committed carve ends could not stay encodable.
-
-## TODOs
-
-- Per-kind device policy (device frames, device-capable kinds) — D6.
-- Batch partial-result contracts beyond all-or-nothing, if ever needed — D6.
-- General Untyped-backed pools for kernel-private storage (beyond the
-  bootstrap-carved notification/event-count pools) — Phase 5 work.
+KeyTables, Frames, PageTables and child Untypeds take their memory from the region. Notifications and EventCounts take no memory from the region; each takes a slot in a kernel pool created at boot. A PageTable also takes a slot in the PageTable pool.

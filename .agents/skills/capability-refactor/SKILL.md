@@ -28,28 +28,28 @@ These apply to every slice and are never "done"; they are not plan checkboxes.
 
 ## Keep object-types documentation current
 
-`doc/object_types/` is the per-kind user-facing reference: a short, up-to-date picture of the system as it is now. Keep it current in every capability refactor — update it in the same slice as the code change. When a refactor invalidates a page (kind split, rename, renumbering, operation or status change), replace the stale content outright; do not layer amendments, dated notes or "formerly…" asides on top. Documentation describing superseded behavior is a defect, not a historical record.
+`doc/object_types/` is the **user-facing technical reference** for the object kinds: what each kind is for and how to invoke it, as currently implemented. Write it for a component author, not for the people building the kernel. Update it in the same slice as any code change that affects a kind. When a page goes stale, rewrite the affected sections from the code; never append corrections, dated notes or "formerly…" asides to old text.
 
 **Structure.**
 
-- `README.md` has exactly these sections: an intro (the page structure and the contract sources), **Wire encoding**, **Catalogue** (core and arch tables) and **Invocation model** (the register ABI, the dispatch diagram, and one short paragraph on blocking and translation-context switches). Per-kind detail never lives in the README.
-- Catalogue status cells are one short line: which operations are active, rejected, reserved or deferred. No implementation narrative, validation evidence or open-decision lists in a cell.
-- Every per-kind page has, in this order: an H1 with the kind name; a header table (wire type; pool, target or associated object; a one-line status); **Purpose**; **User-level visible operations** (an op table — op, name, wire schema, authority, success result — then per-operation subsections as needed); **Kernel-level implementation details**; **Sidenotes**; **TODOs**. No other top-level sections ("Implementation status", "Contract details still to specify" and the like are not allowed). Omit a section that would have nothing in it; the remaining sections keep this order.
+- `README.md` has an intro (what the pages cover), **Wire encoding**, **Catalogue** (core and arch tables) and **Invocation model** (register ABI, dispatch diagram, one short paragraph on blocking and address-space switches). Per-kind detail never lives in the README.
+- Catalogue status cells are one short line: which operations work, or that the kind is not implemented.
+- Every per-kind page has, in this order: an H1 with the kind name; a header table (wire type; backing or associated object; one-line status); **Purpose**; **Operations** (an op table — op, name, arguments, required rights, result — then one subsection per operation with registers, behavior and errors); **Implementation** (only what a user benefits from knowing: backing, limits, observable effects). A short **Planned changes** section is allowed only for a significant, concrete planned change; describe it in a sentence or two. Omit any section with nothing in it. There are no Sidenotes or TODO sections.
 
 **Content.**
 
-- **Current state only.** No dates, no "selected/moved/renamed from" history, no "formerly X" chains, no change logs, test logs or fixture narratives. A reader needs to know what a kind *is* and *does* now. History and rationale live in the contract and the plan.
-- **One home per fact.** State each rule once, on the page of the kind that owns it, and link from elsewhere: Invocation owns PPC stack extents, error codes, admission order and register state across a migration; Thread owns `Thread.Return`; KeyTable owns the well-known slot table. Do not restate another kind's contract.
-- **Be concise.** Prefer tables for errors, outcomes and slot layouts. Mention a test kernel only to say where a behavior is exercised.
-- **Open work goes in TODOs**, with its D-number where one applies. Provisional conventions (for example the `x9` SP transport) are noted in Sidenotes as "freezing is a maintainer decision", never as a validation milestone.
-- **Verify facts when touching a page.** Check wire IDs, op numbers, slot numbers, error statuses and function names against the code; fix any error found, wherever it is on the page.
+- **Describe the current implementation.** No history (dates, "selected", "moved", "renamed", "replaced"), no change logs, no test logs, no planned work beyond a brief Planned changes section.
+- **No internal process language.** No decision IDs (D1–D9), "maintainer decision", "provisional", "freezing", "contract", "selection", "slice", "fixture", "sketch", and no editorial asides such as "deliberate sentinel" or "through real SVC dispatch".
+- **Plain technical statements.** State what something is and does. Do not use "not X, but Y" or "X, not Y" contrasts; say what it is, and state a limitation as its own sentence when the user needs it.
+- **One home per fact.** State each rule once, on the page of the kind that owns it, and link from elsewhere: Invocation owns PPC stack extents, admission order and register state across a call; Thread owns `Thread.Return` and fault delivery; KeyTable owns the well-known slot table; the README owns status codes and the register ABI.
+- **Be concise.** Prefer tables for registers, errors, outcomes and slot layouts.
+- **Verify facts when touching a page.** Check wire IDs, op numbers, registers, rights, slot numbers, error statuses and function names against the code, and fix any error found anywhere on the page.
 
 **Allowed references.**
 
-- Other `doc/object_types/` pages, linked by anchors that exist. When renaming a heading, update every link to its anchor.
-- The contract (`doc/capabilities-contract.md`), `doc/capabilities-design.md`, `doc/capabilities-research.md` and the implementation plan.
-- Source paths in this repository (`kernel/`, `libs/`, `kernel/tests/…`) and hardware or architecture concepts.
-- **Not allowed:** private research notes such as the `🧠 Vesper` Obsidian vault, the completed-work list (`doc/capabilities-completed.md`), and dated decision records. These pages compare the implementation against nothing but the current contract.
+- Other `doc/object_types/` pages, by anchors that exist. When renaming a heading, update every link to it.
+- Source paths in this repository (`kernel/`, `libs/`, `userspace/`) and hardware or architecture concepts.
+- **Not allowed:** any internal capability document (`doc/capabilities-*.md`), private research notes, and decision records. The capability documents are internal work documents and must not leak into the user documentation.
 
 ## No backwards compatibility
 

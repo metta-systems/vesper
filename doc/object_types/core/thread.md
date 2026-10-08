@@ -3,176 +3,81 @@
 | | |
 |---|---|
 | Wire type | `0x03` (core) |
-| Pool | `PoolTag::Thread` for `Named(ObjectId)`; `CurrentReturnOnly` names no pooled object |
-| Status | Active: Return (on `CurrentReturnOnly`) and Retire (on named Threads); Grant/Suspend/Resume return `InvalidOperation` |
+| Backing | Kernel Thread pool, created at boot |
+| Status | Return, Retire |
 
 ## Purpose
 
-A `Thread` is the schedulable execution entity. It executes in exactly one
-`AddressSpace` at a time — its home, or a PPC target it has migrated into —
-and capability invocations resolve through that `AddressSpace`'s table, which
-all of its Threads share. A Thread capability carries one of two selectors:
+A Thread is a schedulable flow of execution. At any moment it runs in one AddressSpace — its own, or the target of an [Invocation](invocation.md) it has called into — and resolves keys in that AddressSpace's KeyTable.
 
-- `Named(ObjectId)` names a concrete Thread and authorizes control over it
-  (currently teardown).
-- `CurrentReturnOnly` is the PPC return sentinel: it names no Thread,
-  function or `AddressSpace`, carries no rights, and acts only on the
-  invoking Thread's own top continuation.
+A Thread capability takes one of two forms:
 
-## User-level visible operations
+- **Named** — refers to a specific Thread and allows controlling it.
+- **Return key** — refers to no particular Thread. It lets the invoking Thread return from its current [Invocation](invocation.md) call. Every AddressSpace has one at `KeySlot::THREAD_RETURN` (slot 1).
 
-| Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
+## Operations
+
+| Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| `0` | Return | `x2` = `r0`, `x3` = `r1`; `x4..x7` ignored | `CurrentReturnOnly` only | Never returns locally: the source resumes with `x0 = 0`, `x1 = r0`, `x2 = r1` |
-| `1` | Grant | — | — | `InvalidOperation` |
-| `2` | Suspend | — | — | `InvalidOperation` |
-| `3` | Resume | — | — | `InvalidOperation` |
-| `4` | Retire | no arguments | `RETIRE` on a `Named` Thread | zeros; tears the Thread down |
+| 0 | Return | `x2` `r0`, `x3` `r1` | Return key | Does not return; the caller of the Invocation resumes |
+| 1 | Grant | — | — | Not implemented: `INVALID_OPERATION` |
+| 2 | Suspend | — | — | Not implemented: `INVALID_OPERATION` |
+| 3 | Resume | — | — | Not implemented: `INVALID_OPERATION` |
+| 4 | Retire | — | `RETIRE` on a named Thread | — |
 
 ### Return
 
-`x0` is the caller's packed key to the sentinel. AddressSpace provisioning
-(`KeyTable::bind_address_space`) installs it at `KeySlot::THREAD_RETURN`
-(Slot 1) before the `AddressSpace` can be activated, so the key is known to
-the component's builder: `ThreadReturnKey::provisioned(guard, size_bits)`.
-Ordinary lookup applies — guard, bounds, incarnation, presence; there is no
-lookup bypass. Every Thread in the `AddressSpace` uses the same sentinel.
+Ends the current Invocation call and resumes the Thread in the AddressSpace it called from, with `x0 = 0`, `x1 = r0`, `x2 = r1`; see [Invocation](invocation.md#register-state) for the full register state. `x0` holds the key of slot 1 in the current AddressSpace's table, and `x4..x7` are ignored.
 
-Return pops the invoking Thread's top continuation and resumes the source
-exactly as described in [Invocation](invocation.md#register-state-across-a-migration).
+The key is the same for every Thread in the AddressSpace: `ThreadReturnKey::provisioned(guard, size_bits)` builds it from the table's guard and size, since slot 1 always holds incarnation 1. A component that deletes its slot 1 entry can no longer return.
 
 | Situation | Outcome |
 |---|---|
-| Empty, stale or wrong-guard key | Ordinary lookup error; nothing popped |
-| Return on a `Named` Thread | `InvalidOperation` |
-| Grant/Suspend/Resume/Retire on `CurrentReturnOnly` | `InvalidOperation` |
-| Empty invocation stack (`IllegalReturn`) | Fault (kind 1) at the Return's `svc`, [delivered](#fault-delivery); nothing popped |
-| Source `AddressSpace` retired (`ReturnTargetRetired`) | Fault (kind 2) at the Return's `svc`, [delivered](#fault-delivery); nothing popped |
+| Key fails lookup | Key error; the call is not ended |
+| Return on a named Thread | `INVALID_OPERATION` |
+| No call to return from | Fault, kind 1 (`IllegalReturn`) |
+| The calling AddressSpace has been retired | Fault, kind 2 (`ReturnTargetRetired`) |
 
-`ThreadReturnKey::return_from_invocation(r0, r1)` returns
-`Result<Infallible, CapError>`: success never returns, ordinary rejections are
-`Err`, and a local `SUCCESS` becomes `UnexpectedReturn` (status 34).
+The two faults are reported at the Return's `svc` through [fault delivery](#fault-delivery); the call is not ended.
+
+`ThreadReturnKey::return_from_invocation(r0, r1)` wraps Return. It returns `Result<Infallible, CapError>`: on success it does not return; a rejection is `Err`; a local `SUCCESS` status is reported as `CapError::UnexpectedReturn` (status 34).
 
 ### Retire
 
-```mermaid
-flowchart TD
-    A["Thread.Retire"] --> S{"Named selector?"}
-    S -- "CurrentReturnOnly" --> ES["InvalidOperation"]
-    S -- "Named" --> B{"RETIRE right?"}
-    B -- "no" --> E1["InsufficientRights"]
-    B -- "yes" --> C{"Target is the current Thread?"}
-    C -- "yes" --> E2["InvalidOperation"]
-    C -- "no" --> D["Cancel the Thread's pending waits"]
-    D --> E["Purge its queued wakeup"]
-    E --> F["Free the Thread-pool slot"]
-    F --> OK["Return zeros"]
-```
+Tears down a named Thread other than the caller: cancels its pending waits, removes it from the run queue and frees its slot in the Thread pool. Later invocations through any capability to it fail. The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
 
-The `AddressSpace` and its table are untouched; their teardown is
-[`AddressSpace.Retire`](../arch/address_space.md). Later invocations of the
-retired Thread's capabilities fail pool validation. Retiring a Thread that is
-inside a fault handler frees that handler. Retire is how a `Faulted` Thread
-is cleaned up.
-
-### Fault delivery
-
-A fault — any synchronous non-SVC exception from EL0, or a Return protocol
-fault — is delivered as a synchronous upcall on the faulting Thread: the
-kernel performs a forced `Invocation.Call` into the `Invocation` at
-`KeySlot::FAULT_HANDLER` (Slot 16) in the table of the `AddressSpace` the
-Thread is executing in. The handler runs with the faulting Thread's priority
-and budget, on its Invocation's stack (SP at the extent end), and receives:
-
-| Input | Contents |
+| Error | Cause |
 |---|---|
-| `x2` | Fault kind (`libobject::fault::FaultKind`): `0` CPU exception, `1` `IllegalReturn`, `2` `ReturnTargetRetired` |
+| `INSUFFICIENT_RIGHTS` | The capability lacks `RETIRE` |
+| `INVALID_OPERATION` | The target is the calling Thread, the capability is the return key, or an argument is nonzero |
+
+## Fault delivery
+
+A synchronous exception from EL0 other than `svc` (data or instruction abort, alignment fault, undefined instruction, FP/SIMD use, `brk` and the like), or a failed Return, is a fault. The kernel delivers it by making the faulting Thread itself call the Invocation at `KeySlot::FAULT_HANDLER` (slot 16) of the AddressSpace it is running in. The handler runs on the faulting Thread, with SP at the top of the Invocation's stack extent, and receives:
+
+| Register | Contents |
+|---|---|
+| `x2` | Fault kind (`FaultKind`): 0 CPU exception, 1 `IllegalReturn`, 2 `ReturnTargetRetired` |
 | `x3` | `ESR_EL1` (0 for a Return fault) |
 | `x4` | `FAR_EL1` (0 for a Return fault) |
-| `x5` | Faulting PC (a Return fault's `svc`) |
+| `x5` | Faulting PC |
 | `x6` | Faulting SP |
 | `x7` | Invocation depth at the fault |
 
-The handler ends with an ordinary `Thread.Return`; `r0` selects the action
-(`FaultAction`):
+The handler finishes with an ordinary `Thread.Return`; `r0` selects what happens next (`FaultAction`):
 
 | `r0` | Action |
 |---|---|
-| `0` | Retry: resume the exact faulting state |
-| `1` | Skip: resume at the next instruction |
-| `2` (or any other value) | Terminate: park the Thread as `Faulted` |
+| 0 | Retry: resume the faulting instruction with the saved state |
+| 1 | Skip: resume at the next instruction |
+| 2 or any other value | Terminate: the Thread becomes `Faulted` |
 
-A fault nobody takes parks the Thread as `Faulted` (never runnable again),
-counts it on the faulting `AddressSpace` and schedules the next Thread:
+After a Return fault, use skip or terminate; retry repeats the failing Return.
 
-| Unhandled when | |
-|---|---|
-| No handler | The slot is empty or holds no `Invocation` with `CALL` |
-| Handler busy | The `AddressSpace`'s handler is still running another fault |
-| Fault inside the handler | The Thread already has a fault being handled (one level) |
-| Call rejected | The forced Call fails the ordinary Call rules (full invocation stack, handler stack) |
+A fault is unhandled when slot 16 holds no usable Invocation, when this AddressSpace's handler is already handling another fault, when the Thread faults again inside its own handler, or when the forced call itself fails (for example, the invocation stack is full). An unhandled fault leaves the Thread `Faulted`: it never runs again, and the kernel runs the next Thread. A `Faulted` Thread is removed with Retire.
 
-Faults in trusted `EL1t` code halt the kernel.
+## Implementation
 
-## Kernel-level implementation details
+Threads are created by the boot code; `Untyped.Retype` cannot create them. A Thread starts either at EL0 or, for trusted boot code, at EL1 using `SP_EL0`. Its saved state (all general registers, SP, PC, flags and `TPIDR_EL0`) lives in the Thread, so a blocked Thread holds no kernel stack. Each Thread has room for 16 nested Invocation calls.
 
-- `Thread` (`kernel/nucleus/src/objects/thread.rs`) holds `address_space`
-  (the checked identity of the `AddressSpace` it currently executes in),
-  `context` (`NotStarted` / `Running` / `Parked` / `Faulted`), the depth-16
-  invocation stack and `fault`, the fault being handled (`ThreadFault`: the
-  complete faulting state, the `AddressSpace` whose handler took it, and the
-  stack depth of its fault continuation). There is no per-Thread table
-  address.
-- Fault delivery (`objects/fault.rs`): `Nucleus::deliver_fault` builds a Call
-  frame from the faulting state (inputs in `x2..x7`, the handler extent end
-  as `x9`) and runs `prepare_call`/`commit_call`; `commit_return` recognizes
-  the fault continuation by its depth and resumes from the fault frame; the
-  unhandled path and the terminate action use `park_faulted_and_select`.
-  Exercised by `kernel/tests/fault-test` and `kernel/tests/fp-trap-test`.
-- Saved state is Thread-resident: a 288-byte `SavedContext` (all integer
-  registers, SP, PC, raw SPSR, exception origin and the EL0 TLS register
-  `TPIDR_EL0`, which the exception frame carries). A blocking SVC copies the
-  caller's state into its Thread, selects the next runnable Thread, rewrites
-  the transient trap frame and returns through `ERET` on the single per-core
-  kernel stack.
-- `Nucleus::park_and_select` validates the selected Thread's
-  `AddressSpace`, root and ASID before committing; the SVC entry installs that
-  translation after guards and the kernel lock are released.
-- `ThreadSelector` is 12 bytes in the `KeyEntry` payload union; `object_id`
-  on `CurrentReturnOnly` is `InvalidOperation`.
-- Return: `api::thread::prepare_return` (lookup, kind, selector) →
-  `Nucleus::prepare_return` (classifies the two faults) → `commit_return`
-  (re-validates, pops, migrates back to the source `AddressSpace`). The SVC
-  entry installs the source translation, restores the frame and traces
-  `✅ Thread::Return()`.
-- Retire: `Nucleus::cancel_thread_pending`, then pool deallocation.
-- Threads are created by the bootstrap builder; `Untyped.Retype` cannot create
-  a Thread (`InvalidObjectType`).
-- Without a current Thread an invocation fails with `InvalidDomain`.
-
-## Sidenotes
-
-- `RETIRE` is delegable like any other right: lifetime control follows
-  capabilities, not an owner identity.
-- A Thread starts either as `EL1t` (`SavedContext::el1t`) or unprivileged at
-  EL0 (`SavedContext::el0`, with one argument word in `x0`); EL0 cannot
-  unmask interrupts. Both start with TLS zero. Only the bootstrap builder
-  creates Threads today.
-- EL0 sees a fixed set of other architectural state, the same for every
-  Thread: `TPIDRRO_EL0` is zero, the virtual counter (`CNTVCT_EL0`,
-  `CNTFRQ_EL0`) is readable, and the physical counter, timers, performance
-  monitors, debug communications channel and FP/SIMD all trap.
-
-## TODOs
-
-- Fault-delivery refinements — D1: a per-`AddressSpace` fault queue instead
-  of unhandled-while-busy; resuming with edited registers; more than one fault
-  level per Thread.
-- Start/Suspend/Resume with legal state transitions and budget
-  (D7/D8).
-- Thread creation ABI.
-- Self-retirement (never returns).
-- Scheduler-shared Thread records and `Scheduler.ShareRegion` — D5.
-- A current-Thread identity that carries its own generation.
-- Per-call time attribution on Return.
-- `Thread.Grant` versus KeyTable CopyDerive — D4.
+At EL0, a Thread can read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) and its own `TPIDR_EL0`; `TPIDRRO_EL0` reads as zero. The physical counter, timers, performance monitors, the debug communications channel and FP/SIMD trap as faults.

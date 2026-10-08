@@ -3,90 +3,48 @@
 | | |
 |---|---|
 | Wire type | `0x08` (core) |
-| Pool | `PoolTag::Notification` (bootstrap-carved pool; Retype-creatable) |
-| Status | Active: Signal/Wait/Poll through real SVC dispatch, including blocking Wait |
+| Backing | Kernel Notification pool; created by `Untyped.Retype` |
+| Status | Signal, Wait, Poll |
 
 ## Purpose
 
-A `Notification` is a word-sized coalescing signal bitmap with one-consumer
-waiter delivery: asynchronous, non-queuing event notification. Repeated
-signals to a bit coalesce; a `Wait` blocks until bits are pending and then
-consumes them. Typical uses: IRQ identity, completion signaling, waking
-workers to inspect a queue. Broadcast-style observation is served by
-`EventCount` instead, by design.
+A Notification is a 64-bit set of pending signal bits. Signalling ORs bits into the set; repeated signals of the same bit merge into one. A waiter takes all pending bits at once and clears them. Use it to report events such as completions or interrupts, or to wake a worker to look at a shared queue. When several readers must each see every update, use an [EventCount](event_count.md).
 
-## User-level visible operations
+## Operations
 
-| Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
+| Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| `0` | Signal | `x2` bits (used when the capability badge is zero); `x3..x7` zero | `SEND` | zeros; ORs the authorized bits and wakes at most one waiter |
-| `1` | Wait | `x2` timeout (ns; `u64::MAX` = infinite; zero/finite invalid until the time subsystem exists); `x3..x7` zero | `RECV` | Pending bits in `x1` (consumed); blocks when none pending |
-| `2` | Poll | no arguments | `RECV` | Pending bits in `x1` (consumed), zero = none; never blocks |
+| 0 | Signal | `x2` bits | `SEND` | — |
+| 1 | Wait | `x2` timeout | `RECV` | `x1` the pending bits |
+| 2 | Poll | — | `RECV` | `x1` the pending bits, or 0 |
 
-Signal-bits hybrid: a badged capability signals its
-badge; an unbadged one (badge zero — what Retype installs) signals the
-caller-supplied argument. `NotificationKey::WAIT_INFINITE` (`u64::MAX`) is the
-userspace encoding of an infinite wait.
+`SEND` is rights bit 1 and `RECV` is bit 0.
 
-## Kernel-level implementation details
+### Signal
 
-Pool-backed kernel metadata (`kernel/nucleus/src/objects/notification.rs`):
-a `u64` coalescing bitmap plus a bounded FIFO `WaitQueue`. The capability is
-a checked pool identity resolved through the guarded `Access` context.
-Retype installs it from the bootstrap-carved notification pool with
-`size_bits` reserved zero (no Untyped bytes carved).
+ORs bits into the Notification. A capability with a nonzero badge signals its badge and ignores `x2`; a capability with badge zero signals `x2`. If a Thread is waiting, the oldest waiter receives all pending bits and resumes; the others keep waiting.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Empty : created
-    Empty --> Pending : Signal (no waiter)<br/>bits OR in, coalesce
-    Pending --> Empty : Wait (already satisfied)<br/>or Poll consumes bits
-    Empty --> WaiterQueued : Wait (no bits)<br/>caller parks
-    WaiterQueued --> Empty : Signal delivers bitmap<br/>to front waiter (one consumer)
-    WaiterQueued --> Empty : teardown cancels<br/>queued waiters
-```
+### Wait
 
-- **One-consumer delivery**: at most one waiter wakes per signal; the front
-  (oldest) waiter's pending record completes with the delivered bitmap and
-  its thread becomes runnable. Invariant: `state` is nonzero only while no
-  waiter is queued (single-core execution under the kernel lock keeps this
-  race-free).
-- **Blocking path**: a would-block `Wait` returns `InvokeOutcome::Blocked`;
-  the syscall entry copies execution state into the caller's Thread and
-  selects the next runnable Thread. Resume injects the completed bitmap into
-  the transient trap frame and returns through `ERET` on the per-core kernel
-  stack. A Thread may also wait while migrated into a PPC target. Exercised by
-  `kernel/tests/sync-test` and `kernel/tests/endpoint-test`.
-- **Bounded queues**: the wait reservation is validated before admission — a
-  full queue rejects with `PoolExhausted` before any record is registered,
-  so nothing leaks.
-- **Teardown**: object teardown (`cancel_waiters`) gives every queued record
-  its single terminal transition (`Cancelled`); domain teardown
-  (`remove_waiter` + `PendingPool::teardown_waiter`) unqueues only the
-  torn-down Thread's records, preserving FIFO order of the survivors, and is
-  driven by `Thread.Retire` via `Nucleus::cancel_thread_pending`.
-- **Memory ordering**: kernel-mediated release/acquire
-  — a `Signal` acts as a release on the caller's behalf; observing the
-  bitmap (wakeup, satisfied wait, Poll) acts as an acquire. DMA/device writes
-  are not covered.
+Returns and clears all pending bits. If none are pending, the caller blocks until a Signal arrives. `x2` is the timeout; only `u64::MAX` (wait forever, `NotificationKey::WAIT_INFINITE`) is accepted.
 
-## Sidenotes
+### Poll
 
-- Rights reuse per kind: `SEND` = bit 1, `RECV` = bit 0 (the same positions as
-  `WRITE`/`READ` with per-kind meaning, permitted by the contract).
-- Do not promise both "consumes all bits" and "delivers those bits to every
-  waiter" — the one-consumer contract is deliberate; use `EventCount` for
-  broadcast.
-- Wakeup summary updates must agree with DCB semantics (D5).
+Returns and clears all pending bits without blocking; `x1` is 0 if none were pending.
 
-## TODOs
+### Errors
 
-- Badge derivation (D4) activates the badge path of the signal hybrid;
-  currently only the argument path is reachable.
-- Finite timeouts once the time subsystem exists (D8); currently rejected
-  with a defined error rather than pretending to time out.
-- IRQ identity delivery: notifications are the intended landing object for
-  interrupt delivery, but no IRQ→Notification binding exists (see
-  [irq_handler.md](../arch/irq_handler.md)).
-- Notification index/registration scheme versus variable-capacity KeyTables
-  (D4); a 64-bit pending bitmap cannot represent every possible slot.
+| Error | Cause |
+|---|---|
+| `INSUFFICIENT_RIGHTS` | Missing `SEND` or `RECV` |
+| `INVALID_OPERATION` | A timeout other than `u64::MAX`, or a nonzero unused argument |
+| `POOL_EXHAUSTED` | Too many Threads already waiting on this Notification |
+| `TYPE_MISMATCH` | The key does not name a Notification |
+
+## Implementation
+
+Bits written to shared memory before a Signal are visible to the Thread that receives those bits through Wait or Poll. Retiring a waiting Thread removes it from the queue.
+
+## Planned changes
+
+Finite timeouts for Wait, once the kernel has a clock.

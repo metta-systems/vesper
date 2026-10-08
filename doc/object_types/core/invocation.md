@@ -3,160 +3,88 @@
 | | |
 |---|---|
 | Wire type | `0x07` (core) |
-| Target | An exported entry point in a target `AddressSpace` |
-| Status | Active: Call through real SVC dispatch; created by [`AddressSpace.CreateInvocation`](../arch/address_space.md) |
+| Backing | Stored in the capability: target AddressSpace, entry address, stack extent |
+| Status | Call |
 
 ## Purpose
 
-An `Invocation` capability names one exported procedure of a component: a
-target `AddressSpace` incarnation, a mandatory nonzero entry address and the
-stack extent the component publishes for it. It carries only `CALL` authority
-and names no server Thread — this is a Protected Procedure Call: the calling
-Thread itself migrates into the target `AddressSpace`, runs the procedure, and
-comes back through [`Thread.Return`](thread.md#return) on the
-`CurrentReturnOnly` sentinel. Synchronous rendezvous between client and
-server Threads is a userspace composition over Invocation, `Notification` and
-`EventCount`, not a kernel kind (see `kernel/tests/endpoint-test`).
+An Invocation is a callable entry point in another component. Calling it moves the calling Thread into the target AddressSpace, where it runs the entry function on a stack the target provides; [`Thread.Return`](thread.md#return) brings it back with two result words. No server Thread is involved: the caller's own Thread executes the target code, using the target's KeyTable while it is there.
 
-## User-level visible operations
+Invocations are created by [`AddressSpace.CreateInvocation`](../arch/address_space.md#createinvocation) and carry only the `CALL` right. Request queues and server Threads can be built in userspace on top of Invocation, Notification and EventCount; `kernel/tests/endpoint-test` shows one.
 
-| Op | Name | Wire schema | Authority | Success result |
+## Operations
+
+| Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| `0` | Call | `x2..x7` six `u64` inputs; `x9` target SP | `CALL` | Source resumes with `x0 = 0`, `x1 = r0`, `x2 = r1` — the two words the target Returns |
+| 0 | Call | `x2..x7` six arguments, `x9` target stack pointer | `CALL` | `x1` `r0`, `x2` `r1` returned by the target |
 
-Every other opcode is `InvalidOperation`. Invocation has no Return opcode.
+Any other operation fails with `INVALID_OPERATION`.
 
-### Stack extent and SP
+### Call
 
-`CreateInvocation` publishes `[base, end)` (`x5`, `x6`) and a positive minimum
-headroom `M` in bytes (`x7`). `base`, `end` and `M` are multiples of 16; the
-extent lies in the target user range `[0, 1 << 48)`, is nonempty and holds `M`.
-At Call the submitted SP must be 16-byte aligned with `base < SP <= end` and
-`SP - base >= M`; an empty descending stack starts at `end`. These are numeric
-checks only: the kernel does not walk mappings or check writability. Whether
-the procedure fits in `M` is the component's concern, protected by its own
-guard pages.
+The caller passes six `u64` arguments in `x2..x7` and the stack pointer the target should start with in `x9`. The Thread then runs the target entry with the register state below. When the target calls `Thread.Return(r0, r1)`, the caller resumes after its `svc` with `x0 = 0`, `x1 = r0`, `x2 = r1`.
 
-### Errors
+A call can nest: code running inside a target can call further Invocations, up to 16 levels deep. A call at depth 16 fails with `NESTING_DEPTH` (`x1` = 16).
 
-| Status | Meaning | `x1` / `x2` |
-|---|---|---|
-| `INVALID_STACK = 32` | A stack predicate failed (construction or Call) | Offending value / reason ID below |
-| `NESTING_DEPTH = 33` | The caller's depth-16 invocation stack is full | Current count (16) / `0` |
-| `UNEXPECTED_RETURN = 34` | Userspace-synthesized: a Return helper saw a local `SUCCESS` | Local `x1` / `x2` |
-| `InvalidPointer` | Zero entry address at construction | — |
+## Stack extent
 
-| ID | Reason | Condition | Value |
+Each Invocation carries the stack extent `[base, end)` and minimum headroom `M` its target published at creation. `base`, `end` and `M` are multiples of 16, the extent lies in the user address range `[0, 2^48)`, and `0 < M <= end - base`.
+
+The stack pointer passed in `x9` must be 16-byte aligned, with `base < SP <= end` and `SP - base >= M`. A fresh stack starts at `SP = end`. The kernel checks these numbers only; the target is responsible for mapping the stack and for guard pages around it.
+
+### `InvalidStack`
+
+Stack checks fail with `INVALID_STACK` (status 32), the offending value in `x1` and a reason in `x2`:
+
+| Reason | Name | Condition | `x1` |
 |---:|---|---|---|
 | 1 | `ExtentEmpty` | `end == base` | `end` |
 | 2 | `ExtentInverted` | `end < base` | `end` |
-| 3 | `BaseOutsideUserRange` | base outside the user range | `base` |
-| 4 | `EndOutsideUserRange` | end beyond the user range | `end` |
-| 5 | `BaseMisaligned` | base not 16-byte aligned | `base` |
-| 6 | `EndMisaligned` | end not 16-byte aligned | `end` |
+| 3 | `BaseOutsideUserRange` | `base` outside the user range | `base` |
+| 4 | `EndOutsideUserRange` | `end` beyond the user range | `end` |
+| 5 | `BaseMisaligned` | `base` not 16-byte aligned | `base` |
+| 6 | `EndMisaligned` | `end` not 16-byte aligned | `end` |
 | 7 | `MinimumHeadroomZero` | `M == 0` | `M` |
 | 8 | `MinimumHeadroomMisaligned` | `M` not 16-byte aligned | `M` |
 | 9 | `MinimumHeadroomTooLarge` | `M > end - base` | `M` |
-| 10 | `SpMisaligned` | SP not 16-byte aligned | `SP` |
-| 11 | `SpOutOfRange` | `SP <= base` or `SP > end` | `SP` |
-| 12 | `SpInsufficientHeadroom` | `SP - base < M` | `SP` |
+| 10 | `SpMisaligned` | SP not 16-byte aligned | SP |
+| 11 | `SpOutOfRange` | `SP <= base` or `SP > end` | SP |
+| 12 | `SpInsufficientHeadroom` | `SP - base < M` | SP |
 
-Reason `0` and unknown IDs decode as `UnknownResponse`. Construction checks
-reasons 1–9 in table order and stops at the first; Call checks 10–12 in order.
+CreateInvocation checks reasons 1–9 and Call checks 10–12, each in table order, reporting the first that fails.
 
-Admission order — each stage before the next, all before any state changes:
+## Check order
 
-- **CreateInvocation:** operation, capabilities and authority, live target →
-  nonzero entry → extent/headroom → destination slot → install.
-- **Call:** operation, key, `CALL`, live target → SP → target translation
-  readiness → invocation depth → commit.
+Each operation stops at the first failing check and changes nothing:
 
-Every rejection leaves the caller, its invocation stack, the destination
-table and the hardware context unchanged.
+- **CreateInvocation:** keys, kinds and rights; the target AddressSpace is live → entry address is nonzero (`INVALID_POINTER`) → stack extent → destination slot.
+- **Call:** key and `CALL` right; the target AddressSpace is live → stack pointer → the target's translation root and ASID are ready → invocation depth.
 
-### Register state across a migration
+## Register state
 
-| State | Target entry (after Call) | Source resumption (after Return) |
+| State | Target entry after Call | Caller after Return |
 |---|---|---|
-| `x0`/`x1` | Zero (two dummy arguments) | `SUCCESS` / `r0` |
-| `x2..x7` | The six inputs, unchanged | `x2 = r1`; `x3..x7` zero |
-| `x8..x18` | Zero (including the consumed `x9`) | Zero |
-| `x19..x30` | Zero | Exactly as the source had them |
-| NZCV | Clear | The source's |
-| Other SPSR bits | Inherited from the source (same EL and masks) | The source's exact SPSR |
-| SP / PC | Submitted SP / entry | Source SP / after the Call SVC |
-| `TPIDR_EL0` (TLS) | Zero | The source's (the target's value is discarded) |
+| `x0`, `x1` | Zero (two unused arguments) | 0 / `r0` |
+| `x2` | First argument | `r1` |
+| `x3..x7` | Remaining arguments | Zero |
+| `x8..x18` | Zero | Zero |
+| `x19..x30` | Zero | As before the Call |
+| NZCV | Zero | As before the Call |
+| Exception level, interrupt masks | As in the caller | As before the Call |
+| `TPIDR_EL0` | Zero | As before the Call |
+| SP, PC | `x9`, entry address | As before the Call, PC after the `svc` |
 
-Rejected Calls and Returns are ordinary errors: nothing is scrubbed or
-migrated. `Thread.Return` ignores `x4..x7`.
+A rejected Call or Return is an ordinary error: the registers follow the usual [invocation rules](../README.md#registers) and the Thread stays where it was.
 
-### Userspace convention
+## Userspace support
 
-- `InvocationKey::call(args, target_sp)` over `libsyscall::ppc_call`, and
-  `ThreadReturnKey::return_from_invocation(r0, r1) -> Result<Infallible, CapError>`
-  over `ppc_return`. Both declare `x0..x18` conservatively and leave memory,
-  flags and the stack unconstrained; `x18` is caller-volatile.
-- `ppc_export!(entry => body)` generates the entry `CreateInvocation`
-  publishes: an `extern "C"` function of eight `u64`s (two dummies, six inputs)
-  that never returns normally. It calls the body with the same eight arguments
-  in the same registers; the body returns a `#[repr(C)]` `PpcResult { r0, r1 }`
-  in `x0`/`x1`.
-- The adapter spills `(r0, r1)` to a 16-byte stack slot, Returns through the
-  key recorded by `export::init_return_key`, and on a rejected Return calls
-  the image-supplied `vesper_thread_return_fault(status, detail1, detail2, r0, r1) -> !`.
-  It never retries or re-runs the body.
+- `InvocationKey::call(args, target_sp)` and `ThreadReturnKey::return_from_invocation(r0, r1)` in `libs/object` wrap Call and Return. The raw `libsyscall::ppc_call` and `ppc_return` declare `x0..x18` as clobbered.
+- `ppc_export!(entry => body)` generates an entry function to pass to CreateInvocation. The entry takes eight `u64` arguments (two unused, then the six call arguments) and calls `body` with them. `body` returns `PpcResult { r0, r1 }`, which the entry hands to Return using the key recorded by `export::init_return_key`. If Return is rejected, the entry calls `vesper_thread_return_fault(status, detail1, detail2, r0, r1)`, which the component image must provide.
 
-## Kernel-level implementation details
+## Implementation
 
-- **Capability:** `InvocationPayload` (40 B) holds the nonzero entry, the
-  target `AddressSpace` identity and an immutable validated
-  `InvocationStackExtent` (24 B), inside the 64 B `KeyEntry`.
-- **Invocation stack:** each Thread carries a depth-16 inline array of
-  kernel-private continuation records (152 B each, 2432 B total): source
-  `AddressSpace`, return PC, SP, raw SPSR, exception origin, a Call time stamp,
-  `x19..x30` and `TPIDR_EL0`. No runtime allocation; Thread pool backing is sized from the
-  type.
-- **Call:** `api::invocation::call` runs `Nucleus::prepare_call` (read-only:
-  live target, `x9` from the saved frame, translation, depth) then
-  `commit_call`, which re-validates, pushes the record and switches the
-  Thread's `AddressSpace`, so later lookups use the target's table. The SVC
-  entry installs the target translation after guards and the kernel lock are
-  released, restores the scrubbed frame and traces `✅ Invocation::Call()`.
-  Everything runs on the per-core kernel stack; no continuation lives there.
-- **Blocking while migrated:** a Thread inside a target may wait on a
-  `Notification` or `EventCount`; its wait continuation is a separate
-  Thread-resident slot, and resumption reinstalls the target it is in.
-- **Validation:** `kernel/tests/ppc-test` (construction, same-Thread round trips into Bounce,
-  register and scrub checks, rejections, compiled exports) and
-  `kernel/tests/endpoint-test` (three `AddressSpace`s, Threads blocking inside
-  the endpoint); admission priorities in the `debug_console` unit tests.
+Each Thread holds a 16-entry stack of call records (source AddressSpace, return PC and SP, flags, `x19..x30`, `TPIDR_EL0`), so the kernel allocates nothing per call. The entry address is stored as given; the kernel does not check that it is mapped or executable. A fault while running inside a target goes to the target AddressSpace's fault handler. A Thread may block on a Notification or EventCount while inside a target.
 
-## Sidenotes
+## Planned changes
 
-- The `x9` SP transport and the two-word body-return convention are
-  provisional; freezing either is a maintainer decision.
-- The entry address is stored as supplied; the kernel validates neither its
-  mapping nor that it is executable.
-- Calls work the same from `EL1t` and EL0: the target runs at the caller's
-  EL. A fault inside a migrated call goes to the target `AddressSpace`'s fault
-  handler — fault delivery is itself a forced Call (see
-  [Thread: fault delivery](thread.md#fault-delivery)).
-- Execution is integer-only: there is no FP/SIMD state in a continuation.
-  The boot path sets `CPTR_EL2`/`CPACR_EL1` so any FP/SIMD instruction at EL1 or
-  EL0 traps to EL1 (`ESR_EL1.EC` 0x07) as an execution fault, delivered like
-  any other fault. Exercised by `kernel/tests/fp-trap-test`;
-  `just audit-fp-simd` checks that the linked images contain no FP/SIMD
-  instructions.
-- `libobject::export` keeps one Return key per image: one PPC-target
-  component per image (each component is now its own image).
-
-## TODOs
-
-- Complete architectural-state isolation beyond the selected TLS, counter,
-  debug-channel and FP/SIMD controls.
-- Invocation distribution: CopyDerive restrictions, rights attenuation,
-  badges — D4.
-- Pointer and shared-memory arguments; capability transfer.
-- Cancellation and teardown of a Thread blocked inside a migrated call;
-  nested and concurrent-call rules beyond the depth bound.
-- Per-call time attribution on Return (needs the Time subsystem).
+The `x9` stack-pointer register and the two-word `PpcResult` return convention may still change.

@@ -3,47 +3,9 @@
 | | |
 |---|---|
 | Wire type | `0x85` (arch index 5) |
-| Pool | none |
-| Status | Deferred: dispatch returns `UnsupportedArchType` |
+| Backing | None |
+| Status | Not implemented |
 
 ## Purpose
 
-`IOSpace` is the registered kind for an I/O address space / device-translation
-context — the capability family that would gate DMA-capable device access to
-memory (an SMMU/IOMMU-backed translation context on AArch64). It exists in the
-catalogue because D1's selected protection architecture includes "DMA
-mediation/IOMMU" as a protection requirement: devices must not be able to
-bypass protection boundaries by writing memory directly.
-
-## User-level visible operations
-
-None. The kind is not creatable (`Untyped.Retype` rejects it), not granted at
-bootstrap, and dispatch rejects it with `UnsupportedArchType`
-(`ArchObjects::invoke_io_space` provides the default rejection).
-
-## Kernel-level implementation details
-
-- `ArchType::IOSpace` is defined in the catalogue
-  (`libs/object/src/object_type.rs`); no object struct, pool, or handler
-  exists beyond the default trait rejection in
-  `kernel/nucleus/src/objects/arch_objects.rs`.
-- No IOMMU/SMMU driver or mediation path exists in the kernel today.
-
-## Sidenotes
-
-- The selected D1 architecture defers side channels but keeps DMA
-  mediation/IOMMU as a protection requirement; this kind is the catalogue
-  anchor for that requirement.
-- Device memory policy more broadly (device Untypeds, device frames) is D6;
-  whatever IOSpace becomes, its authority must originate from authorized
-  hardware-resource assignment, not arbitrary retype.
-
-## TODOs
-
-- Everything: whether IOSpace is an SMMU context object, how device
-  assignments are authorized, how DMA completion interacts with the
-  kernel-mediated release/acquire memory-ordering contract (devices carry
-  their own cache-coherency and completion obligations — a syscall alone does
-  not discharge them), and the operation schemas — D1/D6/D9.
-- Requires target hardware support (SMMU on AArch64) before any slice can
-  land.
+An IOSpace will be the translation context a device sees for DMA, backed by an IOMMU (an SMMU on AArch64), so that devices can reach only the memory granted to them. Invoking an IOSpace capability fails with `UNSUPPORTED_ARCH_TYPE`.

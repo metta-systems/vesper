@@ -3,120 +3,48 @@
 | | |
 |---|---|
 | Wire type | `0x82` (arch index 2) |
-| Pool | `PoolTag::AddressSpace` (pool-backed; allocated by the bootstrap builder) |
-| Status | Active: Activate, Retire, CreateInvocation |
+| Backing | Kernel AddressSpace pool, created at boot |
+| Status | Activate, Retire, CreateInvocation |
 
 ## Purpose
 
-An `AddressSpace` is the protection boundary and hardware translation context
-— Vesper's equivalent of seL4's VSpace. It holds the translation root, the
-bound ASID and the binding to its one capability table, which all Threads
-executing in it share. A [`Thread`](../core/thread.md) executes in one
-`AddressSpace` at a time; PPC moves a Thread into a target `AddressSpace` and
-back. Sharing between `AddressSpace`s maps the same Frames into each one
-(distinct PTEs); two parties never share a translation context.
+An AddressSpace is a protection domain: a translation root, the ASID bound to it, and one KeyTable shared by every Thread running in it. Threads in different AddressSpaces cannot see each other's memory unless both map the same Frame. A Thread runs in one AddressSpace at a time and moves between them with [Invocation](../core/invocation.md) calls.
 
-## User-level visible operations
+## Operations
 
-| Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
+| Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| `0` | Activate | none | `MAP` | zeros; installs this root and ASID into `TTBR0_EL1` |
-| `1` | Retire | none | `RETIRE` | zeros; tears the `AddressSpace` down |
-| `2` | — | unassigned | — | `InvalidOperation` |
-| `3` | CreateInvocation | `x2` entry address, `x3` destination-table key, `x4` vacant destination slot, `x5` stack base, `x6` stack end, `x7` minimum headroom (bytes) | `GRANT` on this `AddressSpace`, `INSTALL` on the destination | Destination-local `Invocation` key (`CALL` only) in `x1`, zero in `x2` |
+| 0 | Activate | — | `MAP` | — |
+| 1 | Retire | — | `RETIRE` | — |
+| 3 | CreateInvocation | `x2` entry, `x3` destination table, `x4` destination slot, `x5` stack base, `x6` stack end, `x7` minimum headroom | `GRANT` on the AddressSpace, `INSTALL` on the destination | `x1` new Invocation key |
 
 ### Activate
 
-Requires an installed root *and* a bound ASID (`NotMapped` otherwise), and
-only the caller's own `AddressSpace` may be activated (`InvalidOperation`).
-It is idempotent. The handler returns checked metadata through the internal
-`InvokeOutcome::Activate`; the SVC entry writes `TTBR0_EL1` after guards and
-the kernel lock are released, then traces `✅ AddressSpace::Activate()`.
+Installs this AddressSpace's translation root and ASID into the hardware (`TTBR0_EL1`). Only the caller's own AddressSpace can be activated. It needs a root ([`PageTable.Map`](page_table.md#map)) and an ASID ([`ASIDPool.Assign`](asid_pool.md)) first. Activating an already active AddressSpace has no further effect.
 
-Supported AArch64 profile: L0-rooted, four-level, 48-bit TTBR0 walks
-(`T0SZ=16`, `EPD0=0`, `A1=0`, 4 KiB granule, no DS/LPA2). The root must be
-4 KiB aligned and fit the configured PA width (at most 48 bits, not beyond the
-hardware's). ASIDs are nonzero and fit the configured width (1–255, or 1–65535
-where 16-bit ASIDs are supported).
-
-| Failure | Error |
+| Error | Cause |
 |---|---|
-| Stale or invalid `AddressSpace` | `InvalidDomain` |
-| No root or no ASID | `NotMapped` |
-| Root not encodable | `InvalidPointer` |
-| Unsupported profile or PA/ASID configuration | `InvalidOperation` |
+| `INSUFFICIENT_RIGHTS` | The capability lacks `MAP` |
+| `NOT_MAPPED` | No root or no ASID |
+| `INVALID_OPERATION` | Not the caller's own AddressSpace, or the root or ASID does not fit the hardware configuration |
+| `INVALID_POINTER` | The root address cannot be encoded |
+| `INVALID_DOMAIN` | The AddressSpace no longer exists |
+
+The supported AArch64 configuration is a four-level, 48-bit translation with a 4 KiB granule. ASIDs are 1–255, or 1–65535 where the hardware supports 16-bit ASIDs.
 
 ### Retire
 
-```mermaid
-flowchart TD
-    A["AddressSpace.Retire"] --> B{"RETIRE right?"}
-    B -- "no" --> E1["InsufficientRights"]
-    B -- "yes" --> C{"The caller's own AddressSpace?"}
-    C -- "yes" --> E2["InvalidOperation"]
-    C -- "no" --> D{"Root still installed?"}
-    D -- "yes" --> E3["InvalidOperation (unmap the root first)"]
-    D -- "no" --> F["Invalidate the whole ASID"]
-    F --> G["Release the ASID to its pool"]
-    G --> H["Clear root/ASID, free the pool slot"]
-    H --> OK["Return zeros"]
-```
+Destroys an AddressSpace other than the caller's. Its root must be unmapped first ([`PageTable.Unmap`](page_table.md#unmap) on the root). Retire flushes every TLB entry tagged with its ASID, returns the ASID to its pool and frees the AddressSpace. Threads still in it fail on their next invocation; retire them with [`Thread.Retire`](../core/thread.md#retire).
 
-Threads still referencing a retired `AddressSpace` fail validation on their
-next resolution. The table carve is not reclaimed.
+| Error | Cause |
+|---|---|
+| `INSUFFICIENT_RIGHTS` | The capability lacks `RETIRE` |
+| `INVALID_OPERATION` | It is the caller's own AddressSpace, or its root is still installed |
 
 ### CreateInvocation
 
-Creates an [`Invocation`](../core/invocation.md) for an entry point in this
-`AddressSpace` and installs it into the destination table. The entry address
-must be nonzero (`InvalidPointer`) and is stored as supplied. The stack extent
-and headroom rules, the `InvalidStack` (status 32) reasons and the admission
-order are specified in [Invocation](../core/invocation.md#stack-extent-and-sp).
-Every failure leaves the destination slot and all authority unchanged.
+Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSpace on the stack extent `[x5, x6)` with minimum headroom `x7` bytes, and installs it into slot `x4` of the table named by `x3`. The new capability carries only `CALL`. The entry address must be nonzero (`INVALID_POINTER`); the stack rules and errors are on the [Invocation](../core/invocation.md#stack-extent) page. Failures leave the destination table unchanged.
 
-## Kernel-level implementation details
+## Implementation
 
-- Pool-backed via `ArchPools::address_spaces`; capabilities hold a checked
-  `ObjectId`.
-- Kernel-private state (`kernel/nucleus/src/objects/arch/address_space.rs`):
-  `translation_root`, `asid`, an immutable `KeyTableBinding` (carve address
-  and capacity exponent), and fault-delivery state: whether its fault handler
-  (the `Invocation` at `KeySlot::FAULT_HANDLER` in its table) is busy with a
-  delivered fault, and a count of faults here that no handler took
-  ([fault delivery](../core/thread.md#fault-delivery)). `ArchObjects::new_address_space` requires the
-  binding, which only `KeyTable::bind_address_space` issues — installing the
-  `Thread.Return` sentinel at Slot 1 as it does. There is no rebinding.
-- Caller dispatch validates the current Thread's `AddressSpace` before using
-  its table, and checks the Slot-4 self-table capability against the binding.
-- Retire releases the ASID to its originating pool (the boot pool is the only
-  one) after the whole-ASID invalidation.
-- TTBR0 leaves are non-global (`nG`), so cached translations are ASID-tagged;
-  TTBR1's kernel mappings are global.
-- Scheduling a Thread validates its `AddressSpace`, root and ASID before
-  committing; the translation is installed after guards and the lock are
-  released.
-- `Untyped.Retype` cannot create an `AddressSpace` (`InvalidObjectType`); the
-  bootstrap builder allocates them.
-
-## Sidenotes
-
-- `Activate`, root `PageTable.Map`, `Frame.Map` and `ASIDPool.Assign` all
-  require `MAP` on the `AddressSpace`: one permission for the mapping family.
-- An `AddressSpace` must map whatever its Threads execute and touch. The test
-  kernels map the retained image (the same physical pages, RW+X at EL1 only)
-  into every fixture root, the low boot stack into the boot root, and
-  party-private regions into one root each; high direct-map execution stacks
-  and the shared trap stack are valid in every root.
-- seL4 on ARM has no distinct VSpace kind; Vesper's explicit `AddressSpace`
-  holding root and ASID is deliberate.
-
-## TODOs
-
-- An `AddressSpace` creation ABI.
-- PAN (EL1 data access to EL0 pages): EL1 can still read and write EL0
-  pages. The supported cores (ARMv8.0) lack FEAT_PAN; it is to be enabled
-  under runtime Arm version detection (see the implementation plan), and also
-  requires the EL1t boot Thread to stop using its EL0-accessible low stack.
-- Hardware-safe ASID reuse and partitioning the ASID space across pools — D6
-  (the eventual home of `ASIDControl`).
-- Reclaiming table backing on retirement — D3.
+AddressSpaces are created by the boot code; `Untyped.Retype` cannot create them. When an AddressSpace is created, its KeyTable gets the [return key](../core/thread.md#return) in slot 1. Its translation-table leaves are tagged with its ASID, so switching AddressSpaces needs no TLB flush. The AddressSpace also records whether its fault handler is busy and how many faults went unhandled; see [fault delivery](../core/thread.md#fault-delivery). Retire does not free the KeyTable's memory.

@@ -3,84 +3,49 @@
 | | |
 |---|---|
 | Wire type | `0x09` (core) |
-| Pool | `PoolTag::EventCount` (bootstrap-carved pool; Retype-creatable) |
-| Status | Active: Advance/Await/Read through real SVC dispatch, including blocking Await |
+| Backing | Kernel EventCount pool; created by `Untyped.Retype` |
+| Status | Advance, Await, Read |
 
 ## Purpose
 
-An `EventCount` is a monotonic `u64` progress counter with threshold waits:
-producers `Advance` the counter; consumers `Await` until
-`value >= target` or `Read` the current value. Unlike a Notification, advances
-do not coalesce and readers do not consume the counter — each reader maintains
-an independent position. This is the primitive for producer/consumer
-backpressure, streaming, and per-reader progress tracking (e.g. ring-buffer
-produced/consumed counters in the fbuf direction).
+An EventCount is a 64-bit counter that only increases. Producers advance it; consumers wait until it reaches a value or read it. Each consumer keeps its own position, and reading or waiting does not change the counter, so any number of readers can follow the same producer. Typical uses are ring buffers (counting produced and consumed slots) and progress tracking. For one-shot signals, use a [Notification](notification.md).
 
-## User-level visible operations
+## Operations
 
-| Op | Name | Wire schema (`x2..x7`) | Authority | Success result |
+| Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| `0` | Advance | `x2` delta (nonzero); `x3..x7` zero | `SEND` | New value in `x1`; completes every queued `Await` whose target the new value satisfies |
-| `1` | Await | `x2` target, `x3` timeout (ns; `u64::MAX` = infinite; zero/finite invalid until the time subsystem exists); `x4..x7` zero | `RECV` | Current value in `x1` (already-satisfied path); blocks otherwise |
-| `2` | Read | no arguments | `RECV` | Current value in `x1`; never blocks |
+| 0 | Advance | `x2` delta | `SEND` | `x1` the new value |
+| 1 | Await | `x2` target, `x3` timeout | `RECV` | `x1` the current value |
+| 2 | Read | — | `RECV` | `x1` the current value |
 
-`EventCountKey::WAIT_INFINITE` (`u64::MAX`) is the userspace encoding of an
-infinite wait.
+`SEND` is rights bit 1 and `RECV` is bit 0.
 
-## Kernel-level implementation details
+### Advance
 
-Pool-backed kernel metadata (`kernel/nucleus/src/objects/event_count.rs`): a
-monotonic `u64` value plus a bounded `AwaitQueue` of pending-invocation
-records. The capability is a checked pool identity resolved through the
-guarded `Access` context. Retype installs it from the bootstrap-carved
-event-count pool with `size_bits` reserved zero (no Untyped bytes carved).
+Adds `x2` (nonzero) to the counter and wakes every Thread waiting for a target the new value has reached. If the sum would exceed `u64::MAX`, Advance fails with `COUNTER_OVERFLOW` (status 31), the counter stays unchanged, and every waiting Thread also resumes with `COUNTER_OVERFLOW`.
 
-```mermaid
-flowchart TD
-    A["Advance(delta)"] --> B{"delta != 0?"}
-    B -- "no" --> E["InvalidOperation"]
-    B -- "yes" --> C{"value + delta<br/>overflows u64?"}
-    C -- "yes" --> D["CounterOverflow (status 31);<br/>counter unchanged;<br/>error-complete every queued Await"]
-    C -- "no" --> F["value += delta"]
-    F --> G["Complete every satisfied Await<br/>in queue order, with the new value"]
-    G --> H["Return new value"]
-```
+### Await
 
-- **Broadcast wakeups**: an advance completes *every* queued `Await` whose
-  target it satisfies, each resumed with the new value — the deliberate
-  counterpart to Notification's one-consumer delivery.
-- **Overflow**: the counter never wraps and never saturates. An overflowing advance returns the shared
-  `CounterOverflow` error (status 31, zero details), leaves the counter
-  unchanged, and completes every queued `Await` with the same error so
-  waiters observe the producer's failure instead of blocking indefinitely;
-  a woken waiter may re-`Await`.
-- **Blocking path**: as with Notification, a would-block `Await` reports
-  `InvokeOutcome::Blocked`; the entry copies the caller's execution context
-  into Thread storage. Resume rewrites the transient trap frame and returns
-  through `ERET` on the per-core kernel stack, delivering the terminal result
-  — including error wakeups (status 31). A Thread may also await while
-  migrated into a PPC target. Exercised by `kernel/tests/sync-test` and
-  `kernel/tests/endpoint-test`.
-- **Bounded queues**: a full await queue rejects before admission
-  (`PoolExhausted`) with no record to roll back.
-- **Teardown**: object teardown cancels queued waiters; domain teardown
-  (`remove_waiter`) unqueues only the torn-down Thread's records, driven by
-  `Thread.Retire`.
-- **Memory ordering**: kernel-mediated release/acquire
-  — `Advance` is a release on the producer's behalf; observing the value
-  (wakeup, satisfied await, Read) is an acquire. DMA/device writes excluded.
+Returns at once if the counter is already at least `x2`; otherwise blocks until an Advance reaches it. `x3` is the timeout; only `u64::MAX` (wait forever, `EventCountKey::WAIT_INFINITE`) is accepted.
 
-## Sidenotes
+### Read
 
-- Rights reuse per kind: `Advance` requires `SEND`, `Await`/`Read` require
-  `RECV` (per-kind bit reuse, as with Notification).
-- `Await` target zero is trivially satisfied (returns the current value);
-  `Advance` delta zero is invalid.
-- Signal/Advance/Poll-analogues (`Read`) do not block but can still fail
-  validation/authorization.
+Returns the current value without blocking. `EventCountReader` in `libs/object` tracks a reader's own position on top of Read and Await.
 
-## TODOs
+### Errors
 
-- Finite timeouts once the time subsystem exists (D8); currently rejected
-  with a defined error.
-- Wakeup summary agreement with DCB semantics (D5).
+| Error | Cause |
+|---|---|
+| `INSUFFICIENT_RIGHTS` | Missing `SEND` or `RECV` |
+| `INVALID_OPERATION` | Delta 0, a timeout other than `u64::MAX`, or a nonzero unused argument |
+| `COUNTER_OVERFLOW` | The advance would exceed `u64::MAX` |
+| `POOL_EXHAUSTED` | Too many Threads already waiting on this EventCount |
+| `TYPE_MISMATCH` | The key does not name an EventCount |
+
+## Implementation
+
+Data written to shared memory before an Advance is visible to a Thread that observes the new value through Await or Read. Retiring a waiting Thread removes it from the queue.
+
+## Planned changes
+
+Finite timeouts for Await, once the kernel has a clock.
