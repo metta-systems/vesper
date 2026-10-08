@@ -323,7 +323,7 @@ fn retype<A: ArchObjects>(
                 Some((id, _)) => pt_ids[index] = Some(id),
                 None => {
                     for id in pt_ids[..index].iter().flatten().copied() {
-                        drop(nucleus.pools.arch.page_tables.deallocate(id));
+                        let _rolled_back = nucleus.pools.arch.page_tables.deallocate(id);
                     }
                     return Err(CapError::PoolExhausted);
                 }
@@ -339,7 +339,7 @@ fn retype<A: ArchObjects>(
                 Some((id, _)) => n_ids[index] = Some(id),
                 None => {
                     for id in n_ids[..index].iter().flatten().copied() {
-                        drop(nucleus.pools.notifications.deallocate(id));
+                        let _rolled_back = nucleus.pools.notifications.deallocate(id);
                     }
                     return Err(CapError::PoolExhausted);
                 }
@@ -355,7 +355,7 @@ fn retype<A: ArchObjects>(
                 Some((id, _)) => ec_ids[index] = Some(id),
                 None => {
                     for id in ec_ids[..index].iter().flatten().copied() {
-                        drop(nucleus.pools.event_counts.deallocate(id));
+                        let _rolled_back = nucleus.pools.event_counts.deallocate(id);
                     }
                     return Err(CapError::PoolExhausted);
                 }
@@ -456,13 +456,13 @@ fn retype<A: ArchObjects>(
                     drop(dst_table.remove(*key, dst_cap.guard));
                 }
                 for id in pt_ids.iter().flatten().copied() {
-                    drop(nucleus.pools.arch.page_tables.deallocate(id));
+                    let _rolled_back = nucleus.pools.arch.page_tables.deallocate(id);
                 }
                 for id in n_ids.iter().flatten().copied() {
-                    drop(nucleus.pools.notifications.deallocate(id));
+                    let _rolled_back = nucleus.pools.notifications.deallocate(id);
                 }
                 for id in ec_ids.iter().flatten().copied() {
-                    drop(nucleus.pools.event_counts.deallocate(id));
+                    let _rolled_back = nucleus.pools.event_counts.deallocate(id);
                 }
                 return Err(failure.error.with_key_operand(6));
             }

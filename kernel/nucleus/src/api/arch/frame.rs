@@ -41,7 +41,7 @@
 use {
     crate::objects::{
         ArchObjects, KeyTable, Nucleus, access::Access, arch_objects::AddressSpaceObject,
-        key_table::CallerTable,
+        key_table::CallerTable, object_pool::IdentityError,
     },
     libobject::{CapError, FrameOp, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -134,8 +134,9 @@ fn map<A: ArchObjects>(
     };
 
     // Resolve the target AddressSpace and its translation root.
-    let address_space =
-        access.resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, as_id)?;
+    let address_space = access
+        .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, as_id)
+        .map_err(|error| error.for_key(as_key, 2))?;
     let root = address_space
         .translation_root()
         .ok_or(CapError::MissingIntermediate { vaddr })?;
@@ -204,7 +205,8 @@ fn unmap<A: ArchObjects>(
     // Resolve the recorded owning AddressSpace (generation-checked) and its
     // root.
     let address_space = access
-        .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, mapping.address_space)?;
+        .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, mapping.address_space)
+        .map_err(IdentityError::internal)?;
     let root = address_space
         .translation_root()
         .ok_or(CapError::InvalidOperation)?;

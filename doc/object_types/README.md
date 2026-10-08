@@ -132,6 +132,8 @@ Any key argument can fail lookup. Lookup checks, in this order:
 
 `x2` bits 15–8 hold the index of the argument register that carried the failing key (`0` for `x0`).
 
+When an operation uses the object a capability names, it checks after the kind and rights checks that the object still exists. If the object was retired, the operation fails with `INCONSISTENT_KEY`, reason 3 `ObjectRetired`, against the key that named it. An [Invocation](core/invocation.md#call) whose target AddressSpace was retired fails this way on the Invocation key.
+
 ### Dispatch
 
 ```mermaid

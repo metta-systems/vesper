@@ -28,7 +28,7 @@ Installs this AddressSpace's translation root and ASID into the hardware (`TTBR0
 | `NOT_MAPPED` | No root or no ASID |
 | `INVALID_OPERATION` | Not the caller's own AddressSpace, or the root or ASID does not fit the hardware configuration |
 | `INVALID_POINTER` | The root address cannot be encoded |
-| `INVALID_DOMAIN` | The AddressSpace no longer exists |
+| `INCONSISTENT_KEY` | The AddressSpace was retired (`ObjectRetired`) |
 
 The supported AArch64 configuration is a four-level, 48-bit translation with a 4 KiB granule. ASIDs are 1–255, or 1–65535 where the hardware supports 16-bit ASIDs.
 
@@ -40,6 +40,7 @@ Destroys an AddressSpace other than the caller's. Its root must be unmapped firs
 |---|---|
 | `INSUFFICIENT_RIGHTS` | The capability lacks `RETIRE` |
 | `INVALID_OPERATION` | It is the caller's own AddressSpace, or its root is still installed |
+| `INCONSISTENT_KEY` | The AddressSpace was already retired (`ObjectRetired`) |
 
 ### CreateInvocation
 

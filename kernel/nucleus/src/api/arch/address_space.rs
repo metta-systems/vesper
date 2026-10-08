@@ -140,7 +140,8 @@ fn create_invocation<A: ArchObjects>(
     // itself is intentionally stored without mapping or executable validation.
     {
         let _target = access
-            .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, address_space_id)?;
+            .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, address_space_id)
+            .map_err(|error| error.for_key(as_key, 0))?;
     }
 
     // Supplied-value diagnostics follow authority/liveness, but precede
@@ -185,6 +186,14 @@ fn activate<A: ArchObjects>(
 
     // Authority over the mapping context.
     let as_id = resolve(access, caller, as_key, Rights::MAP)?;
+    // A retired AddressSpace is reported against its key before it is
+    // compared with the caller's own.
+    nucleus
+        .pools
+        .arch
+        .address_spaces
+        .validate(as_id)
+        .map_err(|error| error.for_key(as_key, 0))?;
 
     // Bootstrap-era restriction: only the current caller's own AddressSpace
     // activates. Switching the caller's own hardware context to a different
@@ -257,8 +266,9 @@ fn retire<A: ArchObjects>(
     // translation structures: they are torn down first through the
     // empty-table-gated `PageTable.Unmap` path.
     let bound_asid = {
-        let mut address_space =
-            access.resolve_mut::<A::AddressSpace>(&mut nucleus.pools.arch.address_spaces, as_id)?;
+        let mut address_space = access
+            .resolve_mut::<A::AddressSpace>(&mut nucleus.pools.arch.address_spaces, as_id)
+            .map_err(|error| error.for_key(as_key, 0))?;
         if address_space.translation_root().is_some() {
             return Err(CapError::InvalidOperation);
         }
@@ -286,7 +296,7 @@ fn retire<A: ArchObjects>(
         .arch
         .address_spaces
         .deallocate(as_id)
-        .map_err(|e| e.with_key_operand(0))?;
+        .map_err(|error| error.for_key(as_key, 0))?;
     semi::println!("✅ AddressSpace::Retire()");
     Ok((0, 0))
 }

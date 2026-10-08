@@ -574,7 +574,8 @@ mod tests {
 
     // Inline Frames are inert metadata fixtures here: no mapping, physical-memory
     // access, object dereference, or claim that Frame lifecycle APIs are enabled.
-    // ObjectRetired is schema-only at this stage; these tests cover slot identity.
+    // ObjectRetired comes from pool validation (see the `object_pool` tests);
+    // these tests cover slot identity.
     fn frame(marker: u32) -> KeyEntry {
         let mut entry = KeyEntry::new_frame(
             u64::from(marker) << 12,

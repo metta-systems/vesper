@@ -57,8 +57,8 @@ CreateInvocation checks reasons 1–9 and Call checks 10–12, each in table ord
 
 Each operation stops at the first failing check and changes nothing:
 
-- **CreateInvocation:** keys, kinds and rights; the target AddressSpace is live → entry address is nonzero (`INVALID_POINTER`) → stack extent → destination slot.
-- **Call:** key and `CALL` right; the target AddressSpace is live → stack pointer → the target's translation root and ASID are ready → invocation depth.
+- **CreateInvocation:** keys, kinds and rights; the target AddressSpace is live (`INCONSISTENT_KEY`, `ObjectRetired`) → entry address is nonzero (`INVALID_POINTER`) → stack extent → destination slot.
+- **Call:** key and `CALL` right; the target AddressSpace is live (`INCONSISTENT_KEY`, `ObjectRetired`) → stack pointer → the target's translation root and ASID are ready → invocation depth.
 
 ## Register state
 

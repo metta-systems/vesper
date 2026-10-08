@@ -91,8 +91,6 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 
 ### Keys, identity and retirement
 
-- [ ] Widen kernel allocation generations to the contract's 64 bits (`ObjectId`/pool metadata use `u32` today; exhaustion already retires the slot instead of wrapping).
-- [ ] Report a stale or retired pooled object as `InconsistentKey`/`ObjectRetired` instead of `InvalidOperation` (`ObjectPool::check`).
 - [ ] Give carved objects (KeyTables, Frames) a retirement identity so retirement rejects old capabilities in every table without an ancestry walk.
 - [ ] Implement permission-based retirement for the remaining kinds (only Thread and AddressSpace have `Retire`); test that creator control survives delegation and that accepted leaks cause no automatic destruction or conflicting reuse.
 - [ ] Test KeyTable Delete of entries naming retired Threads and AddressSpaces (Delete accepts any kind and checks only the slot incarnation).

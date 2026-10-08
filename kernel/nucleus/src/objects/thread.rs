@@ -429,7 +429,7 @@ mod tests {
         }
 
         pool.deallocate(identities[0])
-            .unwrap_or_else(|error| panic!("Thread deallocation failed: {:?}", error.code()));
+            .unwrap_or_else(|error| panic!("Thread deallocation failed: {error:?}"));
         let initial = SavedContext::el1t(0xB0_0000, 0xC0_0000);
         let (replacement, _) = pool
             .allocate(Thread {
@@ -452,10 +452,10 @@ mod tests {
             assert_eq!(pool.get_live(index).unwrap().context, *expected);
         }
         pool.deallocate(replacement)
-            .unwrap_or_else(|error| panic!("replacement deallocation failed: {:?}", error.code()));
+            .unwrap_or_else(|error| panic!("replacement deallocation failed: {error:?}"));
         for identity in identities.iter().skip(1) {
             pool.deallocate(*identity)
-                .unwrap_or_else(|error| panic!("Thread deallocation failed: {:?}", error.code()));
+                .unwrap_or_else(|error| panic!("Thread deallocation failed: {error:?}"));
         }
     }
 }

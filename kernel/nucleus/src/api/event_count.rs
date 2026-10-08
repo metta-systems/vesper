@@ -78,8 +78,9 @@ pub fn invoke<A: ArchObjects>(
             if args[1..].iter().any(|&arg| arg != 0) {
                 return Err(CapError::InvalidOperation);
             }
-            let mut event_count =
-                access.resolve_mut::<EventCount>(&mut nucleus.pools.event_counts, id)?;
+            let mut event_count = access
+                .resolve_mut::<EventCount>(&mut nucleus.pools.event_counts, id)
+                .map_err(|error| error.for_key(key, 0))?;
             match event_count.advance(args[0], &mut nucleus.pending)? {
                 AdvanceOutcome::Advanced { new_value, woken } => {
                     // Broadcast wakeups: every satisfied waiter's thread
@@ -122,8 +123,9 @@ pub fn invoke<A: ArchObjects>(
             // entry parks the caller and switches; the caller's return
             // happens when the record completes.
             let waiter = current_waiter(nucleus)?;
-            let mut event_count =
-                access.resolve_mut::<EventCount>(&mut nucleus.pools.event_counts, id)?;
+            let mut event_count = access
+                .resolve_mut::<EventCount>(&mut nucleus.pools.event_counts, id)
+                .map_err(|error| error.for_key(key, 0))?;
             match event_count.await_ge(args[0], waiter, &mut nucleus.pending)? {
                 AwaitOutcome::Ready(value) => {
                     semi::println!("✅ EventCount::Await(0x{value:x})");
@@ -142,8 +144,9 @@ pub fn invoke<A: ArchObjects>(
             if args.iter().any(|&arg| arg != 0) {
                 return Err(CapError::InvalidOperation);
             }
-            let mut event_count =
-                access.resolve_mut::<EventCount>(&mut nucleus.pools.event_counts, id)?;
+            let mut event_count = access
+                .resolve_mut::<EventCount>(&mut nucleus.pools.event_counts, id)
+                .map_err(|error| error.for_key(key, 0))?;
             let value = event_count.read();
             semi::println!("✅ EventCount::Read(0x{value:x})");
             Ok(InvokeOutcome::Complete((value, 0)))

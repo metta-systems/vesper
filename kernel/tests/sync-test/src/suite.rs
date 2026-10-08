@@ -22,8 +22,8 @@ use {
         threads, translation,
     },
     libobject::{
-        CapError, EventCountKey, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
-        UntypedKey, domain::DomainId, thread::ThreadKey,
+        CapError, EventCountKey, InconsistencyReason, KeySlot, KeyTableKey, NotificationKey,
+        ObjectType, RawKey, Rights, UntypedKey, domain::DomainId, thread::ThreadKey,
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -593,10 +593,19 @@ pub fn run() {
                 .get_live(usize::from(bounce_id.index))
                 .is_none()
         );
-        assert!(matches!(
-            ThreadKey::from_key(bounce_thread_key, DomainId(1)).retire(),
-            Err(CapError::InvalidOperation)
-        ));
+        // Its capability still passes key lookup, but names a retired
+        // object: Retire reports that against the invoked key.
+        assert_eq!(
+            ThreadKey::from_key(bounce_thread_key, DomainId(1))
+                .retire()
+                .map_err(CapError::code),
+            Err(CapError::InconsistentKey {
+                key: bounce_thread_key,
+                reason: InconsistencyReason::ObjectRetired,
+                operand: 0,
+            }
+            .code())
+        );
     }
 
     semi::println!("Synchronization suite passed");

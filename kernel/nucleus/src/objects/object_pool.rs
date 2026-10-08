@@ -4,12 +4,62 @@ use {
         objects::{NucleusObject, access::ObjectId},
     },
     libaddress::PhysAddr,
-    libobject::CapError,
+    libobject::{CapError, InconsistencyReason, RawKey},
 };
 
 // ═══════════════════════════════════════════════════════════════════
 // OBJECT POOLS
 // ═══════════════════════════════════════════════════════════════════
+
+/// Why a checked identity failed validation against pool metadata.
+///
+/// Pools do not know which submitted key carried an identity, so this error
+/// is not a wire status. Call sites convert it explicitly: [`Self::for_key`]
+/// where a capability key supplied the identity, [`Self::internal`] where
+/// the kernel holds the identity itself. There is deliberately no `From`
+/// conversion into `CapError`, so `?` cannot drop the key attribution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityError {
+    /// The identity names another pool or a slot beyond the capacity. Only
+    /// the kernel mints identities, so this is a kernel bookkeeping fault.
+    Malformed,
+    /// The named object is no longer live: its slot is free, retired, or
+    /// holds a later allocation.
+    Retired,
+}
+
+impl IdentityError {
+    /// Attribute the failure to the capability key that carried the
+    /// identity: a no-longer-live object is `InconsistentKey`/`ObjectRetired`
+    /// on input register `operand`.
+    #[must_use]
+    pub fn for_key(self, key: RawKey, operand: u8) -> CapError {
+        match self {
+            Self::Retired => CapError::InconsistentKey {
+                key,
+                reason: InconsistencyReason::ObjectRetired,
+                operand,
+            },
+            Self::Malformed => CapError::InvalidOperation,
+        }
+    }
+
+    /// Report a failure of an identity the kernel holds itself, with no
+    /// submitted key to attribute it to.
+    #[must_use]
+    pub fn internal(self) -> CapError {
+        CapError::InvalidOperation
+    }
+}
+
+/// Why a pair resolution failed: which operand's identity, or an alias.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PairIdentityError {
+    First(IdentityError),
+    Second(IdentityError),
+    /// Both operands name the same object.
+    Aliased,
+}
 
 /// Authoritative lifecycle state of one pool slot.
 ///
@@ -246,7 +296,7 @@ impl<T: NucleusObject> ObjectPool<T> {
     ///
     /// Checks allocation state and generation against authoritative metadata
     /// before computing the address; never inspects the object storage.
-    pub fn validate(&self, id: ObjectId) -> Result<*const T, CapError> {
+    pub fn validate(&self, id: ObjectId) -> Result<*const T, IdentityError> {
         self.check(id)?;
         // SAFETY: check() proved the slot is Live with matching generation,
         // so the backing holds a live T.
@@ -254,7 +304,7 @@ impl<T: NucleusObject> ObjectPool<T> {
     }
 
     /// Validate an identity and return an exclusive pointer to the live object.
-    pub fn validate_mut(&mut self, id: ObjectId) -> Result<*mut T, CapError> {
+    pub fn validate_mut(&mut self, id: ObjectId) -> Result<*mut T, IdentityError> {
         self.check(id)?;
         // SAFETY: check() proved liveness; the &mut self borrow guarantees no
         // other guard into this pool is constructed through this reference.
@@ -270,12 +320,12 @@ impl<T: NucleusObject> ObjectPool<T> {
         &mut self,
         first: ObjectId,
         second: ObjectId,
-    ) -> Result<(*mut T, *const T), CapError> {
+    ) -> Result<(*mut T, *const T), PairIdentityError> {
         if first.index == second.index {
-            return Err(CapError::InvalidOperation);
+            return Err(PairIdentityError::Aliased);
         }
-        self.check(first)?;
-        self.check(second)?;
+        self.check(first).map_err(PairIdentityError::First)?;
+        self.check(second).map_err(PairIdentityError::Second)?;
         // SAFETY: both identities are Live and name distinct slots, so the
         // computed pointers are disjoint.
         Ok(unsafe {
@@ -289,7 +339,7 @@ impl<T: NucleusObject> ObjectPool<T> {
     /// Deallocate an object, retaining its generation for stale-handle
     /// rejection. The slot becomes Free and may be reallocated with an
     /// advanced generation.
-    pub fn deallocate(&mut self, id: ObjectId) -> Result<(), CapError> {
+    pub fn deallocate(&mut self, id: ObjectId) -> Result<(), IdentityError> {
         self.check(id)?;
         let slot = usize::from(id.index);
         self.meta_mut(slot).state = SlotState::Free;
@@ -355,22 +405,22 @@ impl<T: NucleusObject> ObjectPool<T> {
     }
 
     /// Shared metadata check: pool tag, slot bounds, liveness, generation.
-    fn check(&self, id: ObjectId) -> Result<(), CapError> {
+    fn check(&self, id: ObjectId) -> Result<(), IdentityError> {
         if id.pool != T::POOL {
-            return Err(CapError::InvalidOperation);
+            return Err(IdentityError::Malformed);
         }
         // Bounds precede any pointer arithmetic into the carve.
         let slot = usize::from(id.index);
         if slot >= self.capacity() {
-            return Err(CapError::InvalidOperation);
+            return Err(IdentityError::Malformed);
         }
         let meta = self.meta(slot);
         // A Live slot with a matching generation is the only success case.
-        // Retired, Free, and stale-generation identities are all rejected;
-        // distinct inconsistency diagnostics are follow-up work.
+        // Free, retired and later-generation slots all mean the named object
+        // is gone.
         match meta.state {
             SlotState::Live if meta.generation == id.generation => Ok(()),
-            _ => Err(CapError::InvalidOperation),
+            _ => Err(IdentityError::Retired),
         }
     }
 }
@@ -378,7 +428,7 @@ impl<T: NucleusObject> ObjectPool<T> {
 #[cfg(test)]
 mod tests {
     use {
-        super::{ObjectPool, SlotState},
+        super::{IdentityError, ObjectPool, PairIdentityError, SlotState},
         crate::{
             api::key_entry::RegionPayload,
             objects::{
@@ -387,7 +437,7 @@ mod tests {
             },
         },
         core::mem::MaybeUninit,
-        libobject::{CapError, ObjectType},
+        libobject::{CapError, InconsistencyReason, ObjectType, RawKey},
     };
 
     struct Dummy(u32);
@@ -482,12 +532,12 @@ mod tests {
         let first = alloc(&mut pool, 1);
         dealloc(&mut pool, first);
         // The stale identity names a Free slot and must be rejected.
-        assert!(pool.validate(first).is_err());
+        assert_eq!(pool.validate(first).err(), Some(IdentityError::Retired));
         let second = alloc(&mut pool, 2);
         assert_eq!(second.index, first.index);
         assert_eq!(second.generation, 2);
         // The stale identity must not resolve to the replacement occupant.
-        assert!(pool.validate(first).is_err());
+        assert_eq!(pool.validate(first).err(), Some(IdentityError::Retired));
         assert!(pool.validate(second).is_ok());
         dealloc(&mut pool, second);
     }
@@ -499,10 +549,16 @@ mod tests {
         let id = alloc(&mut pool, 1);
         let mut wrong_pool = id;
         wrong_pool.pool = PoolTag::KeyTable;
-        assert!(pool.validate(wrong_pool).is_err());
+        assert_eq!(
+            pool.validate(wrong_pool).err(),
+            Some(IdentityError::Malformed)
+        );
         let mut out_of_bounds = id;
         out_of_bounds.index = 5;
-        assert!(pool.validate(out_of_bounds).is_err());
+        assert_eq!(
+            pool.validate(out_of_bounds).err(),
+            Some(IdentityError::Malformed)
+        );
         dealloc(&mut pool, id);
     }
 
@@ -573,7 +629,10 @@ mod tests {
         let first = alloc(&mut pool, 1);
         let second = alloc(&mut pool, 2);
         // Same-slot aliases are rejected before constructing references.
-        assert!(pool.validate_pair(first, first).is_err());
+        assert_eq!(
+            pool.validate_pair(first, first).err(),
+            Some(PairIdentityError::Aliased)
+        );
         // Distinct live slots resolve to disjoint pointers.
         let (mut_ptr, shared_ptr) = match pool.validate_pair(first, second) {
             Ok(pair) => pair,
@@ -582,6 +641,51 @@ mod tests {
         assert_ne!(mut_ptr as usize, shared_ptr as usize);
         dealloc(&mut pool, first);
         dealloc(&mut pool, second);
+    }
+
+    #[test_case]
+    fn pair_resolution_names_the_failing_operand() {
+        let mut backing = MaybeUninit::<Backing>::uninit();
+        let mut pool = pool(&mut backing, 3);
+        let live = alloc(&mut pool, 1);
+        let retired = alloc(&mut pool, 2);
+        dealloc(&mut pool, retired);
+        assert_eq!(
+            pool.validate_pair(retired, live).err(),
+            Some(PairIdentityError::First(IdentityError::Retired))
+        );
+        assert_eq!(
+            pool.validate_pair(live, retired).err(),
+            Some(PairIdentityError::Second(IdentityError::Retired))
+        );
+        dealloc(&mut pool, live);
+    }
+
+    #[test_case]
+    fn retired_identity_is_attributed_to_the_submitted_key() {
+        let key = RawKey::new(libobject::KeySlot(7), 3);
+        let wire = IdentityError::Retired.for_key(key, 2).code();
+        assert_eq!(
+            wire,
+            CapError::InconsistentKey {
+                key,
+                reason: InconsistencyReason::ObjectRetired,
+                operand: 2,
+            }
+            .code()
+        );
+        // Wire layout: status 27, the submitted key, reason 3 with the
+        // operand register in bits 8–15.
+        assert_eq!(wire, (27, key.to_wire(), 3 | (2 << 8)));
+        // A malformed identity is a kernel fault, not a key diagnostic.
+        assert_eq!(
+            IdentityError::Malformed.for_key(key, 2).code(),
+            CapError::InvalidOperation.code()
+        );
+        assert_eq!(
+            IdentityError::Retired.internal().code(),
+            CapError::InvalidOperation.code()
+        );
     }
 
     #[test_case]

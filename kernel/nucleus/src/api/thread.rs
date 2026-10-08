@@ -111,6 +111,13 @@ fn retire<A: ArchObjects>(
         }
         entry.object_id().map_err(|e| e.with_key_operand(0))?
     };
+    // A retired Thread is reported against its key before it is compared
+    // with the caller.
+    nucleus
+        .pools
+        .threads
+        .validate(thread_id)
+        .map_err(|error| error.for_key(thread_key, 0))?;
 
     // The caller must be a surviving Thread: retiring the current Thread
     // from inside its own invocation has no sound return path yet
@@ -121,9 +128,7 @@ fn retire<A: ArchObjects>(
     }
 
     // Cancel-then-deallocate: the pending records and queued wakeups go
-    // first, then the pool slot is reclaimed. A stale identity (already
-    // retired) fails the cancellation's pool validation with a defined
-    // error.
+    // first, then the pool slot is reclaimed.
     nucleus.cancel_thread_pending(thread_id)?;
     // A Thread retired inside a fault handler frees that handler.
     nucleus.release_thread_fault(usize::from(thread_id.index));
@@ -131,7 +136,7 @@ fn retire<A: ArchObjects>(
         .pools
         .threads
         .deallocate(thread_id)
-        .map_err(|e| e.with_key_operand(0))?;
+        .map_err(|error| error.for_key(thread_key, 0))?;
     semi::println!("✅ Thread::Retire()");
     Ok((0, 0))
 }

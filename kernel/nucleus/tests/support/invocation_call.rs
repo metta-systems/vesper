@@ -22,7 +22,8 @@ use {
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
     libobject::{
-        CapError, INVOCATION_STACK_DEPTH, InvalidStackReason, KeySlot, ObjectType, RawKey, Rights,
+        CapError, INVOCATION_STACK_DEPTH, InconsistencyReason, InvalidStackReason, KeySlot,
+        ObjectType, RawKey, Rights,
         fault::{FaultAction, FaultInfo, FaultKind},
     },
 };
@@ -469,7 +470,7 @@ fn stale_target_identity_precedes_invalid_sp() {
                 .arch
                 .address_spaces
                 .deallocate(fixture.target_as)
-                .unwrap_or_else(|e| panic!("AS retirement: {:?}", e.code()));
+                .unwrap_or_else(|e| panic!("AS retirement: {e:?}"));
             if reuse {
                 let mut replacement = ArchObjectsImpl::new_address_space(binding);
                 replacement.set_translation_root(Some(ROOT));
@@ -485,7 +486,16 @@ fn stale_target_identity_precedes_invalid_sp() {
             }
             fill_stack(nucleus, INVOCATION_STACK_DEPTH);
             let saved = call_frame(fixture.key, STACK_BASE);
-            reject_preserved(nucleus, &fixture, &saved, CapError::InvalidDomain);
+            reject_preserved(
+                nucleus,
+                &fixture,
+                &saved,
+                CapError::InconsistentKey {
+                    key: fixture.key,
+                    reason: InconsistencyReason::ObjectRetired,
+                    operand: 0,
+                },
+            );
         });
     }
 }
@@ -1004,7 +1014,7 @@ fn retired_source_is_a_return_target_retired_fault_without_pop() {
                 .arch
                 .address_spaces
                 .deallocate(fixture.source_as)
-                .unwrap_or_else(|e| panic!("source AS retirement: {:?}", e.code()));
+                .unwrap_or_else(|e| panic!("source AS retirement: {e:?}"));
             if reuse {
                 let mut replacement = ArchObjectsImpl::new_address_space(binding);
                 replacement.set_translation_root(Some(SOURCE_ROOT));

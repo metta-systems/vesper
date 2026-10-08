@@ -98,10 +98,12 @@ fn assign<A: ArchObjects>(
     // Resolve the pool and the target AddressSpace (distinct pools, no alias)
     // and validate the binding preconditions. Allocation is the last failing
     // step; the commit below cannot fail.
-    let mut pool =
-        access.resolve_mut::<A::ASIDPool>(&mut nucleus.pools.arch.asid_pools, pool_id)?;
-    let mut address_space =
-        access.resolve_mut::<A::AddressSpace>(&mut nucleus.pools.arch.address_spaces, as_id)?;
+    let mut pool = access
+        .resolve_mut::<A::ASIDPool>(&mut nucleus.pools.arch.asid_pools, pool_id)
+        .map_err(|error| error.for_key(pool_key, 0))?;
+    let mut address_space = access
+        .resolve_mut::<A::AddressSpace>(&mut nucleus.pools.arch.address_spaces, as_id)
+        .map_err(|error| error.for_key(as_key, 2))?;
     if address_space.translation_root().is_none() {
         return Err(CapError::NotMapped);
     }

@@ -44,12 +44,13 @@ The two faults are reported at the Return's `svc` through [fault delivery](#faul
 
 ### Retire
 
-Tears down a named Thread other than the caller: cancels its pending waits, removes it from the run queue and frees its slot in the Thread pool. Later invocations through any capability to it fail. The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
+Tears down a named Thread other than the caller: cancels its pending waits, removes it from the run queue and frees its slot in the Thread pool. Later invocations through any capability to it fail with `INCONSISTENT_KEY` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
 
 | Error | Cause |
 |---|---|
 | `INSUFFICIENT_RIGHTS` | The capability lacks `RETIRE` |
 | `INVALID_OPERATION` | The target is the calling Thread, the capability is the return key, or an argument is nonzero |
+| `INCONSISTENT_KEY` | The Thread was already retired (`ObjectRetired`) |
 
 ## Fault delivery
 

@@ -17,7 +17,7 @@ use {
     },
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
-    libobject::{CapError, InvalidStackReason, fault::FaultAction},
+    libobject::{CapError, InvalidStackReason, RawKey, fault::FaultAction},
 };
 
 /// An immutable, validated target stack extent and downward headroom requirement.
@@ -190,7 +190,8 @@ impl<A: ArchObjects> Nucleus<A> {
     /// the six Call inputs from saved `x2..x7`. Stage order follows the
     /// selected admission order after key/operation/authority checks:
     ///
-    /// 1. live target `AddressSpace` identity (`InvalidDomain`);
+    /// 1. live target `AddressSpace` identity (`InconsistentKey`/`ObjectRetired`
+    ///    on the Invocation key in `x0`);
     /// 2. ordered SP predicates (`InvalidStack`);
     /// 3. target translation-context readiness/encodability;
     /// 4. invocation-stack capacity (`NestingDepth { count }`).
@@ -231,7 +232,7 @@ impl<A: ArchObjects> Nucleus<A> {
         // Stage 1: stale or reused target identity precedes supplied values.
         access
             .resolve(&self.pools.arch.address_spaces, target.address_space)
-            .map_err(|_invalid_identity| CapError::InvalidDomain)?;
+            .map_err(|error| error.for_key(RawKey::from_wire(saved.gpr[0]), 0))?;
 
         // Stage 2: the submitted SP, from the saved frame only.
         let target_sp = saved.gpr[9];

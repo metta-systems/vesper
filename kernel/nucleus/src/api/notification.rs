@@ -84,8 +84,9 @@ pub fn invoke<A: ArchObjects>(
             } else {
                 args[0]
             };
-            let mut notification =
-                access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
+            let mut notification = access
+                .resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)
+                .map_err(|error| error.for_key(key, 0))?;
             // One-consumer delivery: the front waiter's record completes
             // with the delivered bitmap and its thread becomes runnable.
             if let Some(record) = notification.signal(bits, &mut nucleus.pending)? {
@@ -114,8 +115,9 @@ pub fn invoke<A: ArchObjects>(
             // syscall entry parks the caller and switches; the caller's
             // return happens when the record completes.
             let waiter = current_waiter(nucleus)?;
-            let mut notification =
-                access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
+            let mut notification = access
+                .resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)
+                .map_err(|error| error.for_key(key, 0))?;
             match notification.wait(waiter, &mut nucleus.pending)? {
                 crate::objects::notification::WaitOutcome::Ready(bits) => {
                     semi::println!("✅ Notification::Wait(0x{bits:x})");
@@ -136,8 +138,9 @@ pub fn invoke<A: ArchObjects>(
             if args.iter().any(|&arg| arg != 0) {
                 return Err(CapError::InvalidOperation);
             }
-            let mut notification =
-                access.resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)?;
+            let mut notification = access
+                .resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)
+                .map_err(|error| error.for_key(key, 0))?;
             let bits = notification.poll();
             semi::println!("✅ Notification::Poll(0x{bits:x})");
             Ok(InvokeOutcome::Complete((bits, 0)))

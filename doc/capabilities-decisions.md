@@ -131,6 +131,13 @@ needs them.
 - **Six-word PPC result payload:** widening the PPC result from two to six
   `u64` words if component interfaces need more register-only results. Would
   need a coordinated change to the Return transport, wrappers and decoders.
+- **64-bit allocation generations:** explore whether widening kernel
+  allocation generations (`ObjectId`, pool slot metadata and pending-record
+  generations) from 32 to 64 bits is feasible and worthwhile. A slot
+  exhausting its generation is retired from reuse today; 64 bits would make
+  that unreachable in practice, at the cost of larger identities in every
+  capability entry, pool metadata record and pending record. Would need a
+  measured look at those layouts and the `KeyEntry` payload size.
 - **Kernel-published identity in `TPIDRRO_EL0`:** using the EL0 read-only,
   EL1-writable register to publish per-Thread identity to userspace, as Linux
   does for per-CPU data. Today it is always zero.

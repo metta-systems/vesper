@@ -233,7 +233,7 @@ fn resume_rejects_retired_and_reused_as_before_consuming_completed_wait() {
                 .arch
                 .address_spaces
                 .deallocate(waits.target_as)
-                .unwrap_or_else(|e| panic!("AS retirement: {:?}", e.code()));
+                .unwrap_or_else(|e| panic!("AS retirement: {e:?}"));
             if reuse {
                 let mut replacement = ArchObjectsImpl::new_address_space(binding);
                 replacement.set_translation_root(Some(ROOT));

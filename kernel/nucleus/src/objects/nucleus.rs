@@ -2,7 +2,8 @@ use {
     crate::objects::{
         ArchObjects, EventCount, KeyTable, Notification, ObjectPool, PendingPool, Scheduler,
         Thread, access::ObjectId, arch::ArchPools, arch_objects::AddressSpaceObject,
-        domain::DcbPages, key_table::KeyTableBinding, thread::ExecutionContext,
+        domain::DcbPages, key_table::KeyTableBinding, object_pool::IdentityError,
+        thread::ExecutionContext,
     },
     core::sync::atomic::Ordering,
     libobject::{
@@ -266,7 +267,10 @@ impl<A: ArchObjects> Nucleus<A> {
     pub fn cancel_thread_pending(&mut self, thread: ObjectId) -> Result<(), CapError> {
         // Teardown cancels pending records while the Thread slot is live; a
         // stale identity means the caller tore the Thread down out of order.
-        self.pools.threads.validate(thread)?;
+        self.pools
+            .threads
+            .validate(thread)
+            .map_err(IdentityError::internal)?;
 
         // Every live synchronization object stops holding the Thread's
         // records. The scan is bounded by each pool's carved capacity;

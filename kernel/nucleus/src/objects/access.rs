@@ -14,7 +14,10 @@
 //! front.
 
 use {
-    crate::objects::{NucleusObject, object_pool::ObjectPool},
+    crate::objects::{
+        NucleusObject,
+        object_pool::{IdentityError, ObjectPool, PairIdentityError},
+    },
     core::marker::PhantomData,
     libobject::CapError,
 };
@@ -209,7 +212,7 @@ impl<'ctx> Access<'ctx> {
         &self,
         pool: &'ctx ObjectPool<T>,
         id: ObjectId,
-    ) -> Result<Guard<'ctx, T>, CapError> {
+    ) -> Result<Guard<'ctx, T>, IdentityError> {
         let obj = pool.validate(id)?;
         // SAFETY: validate() checked allocation state and generation; the
         // pool borrow ties backing lifetime to 'ctx.
@@ -225,7 +228,7 @@ impl<'ctx> Access<'ctx> {
         &self,
         pool: &'ctx mut ObjectPool<T>,
         id: ObjectId,
-    ) -> Result<GuardMut<'ctx, T>, CapError> {
+    ) -> Result<GuardMut<'ctx, T>, IdentityError> {
         let obj = pool.validate_mut(id)?;
         // SAFETY: validate_mut() checked metadata and yields the only mutable
         // pointer to this slot; the exclusive pool borrow prevents a second
@@ -247,10 +250,10 @@ impl<'ctx> Access<'ctx> {
         pool: &'ctx mut ObjectPool<T>,
         first: ObjectId,
         second: ObjectId,
-    ) -> Result<(GuardMut<'ctx, T>, Guard<'ctx, T>), CapError> {
+    ) -> Result<(GuardMut<'ctx, T>, Guard<'ctx, T>), PairIdentityError> {
         if first == second {
             // Kernel-internal alias rejection: not a wire status of its own.
-            return Err(CapError::InvalidOperation);
+            return Err(PairIdentityError::Aliased);
         }
         let (first_ptr, second_ptr) = pool.validate_pair(first, second)?;
         // SAFETY: validate_pair checked both identities and established that

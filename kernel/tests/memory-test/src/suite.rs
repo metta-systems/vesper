@@ -25,8 +25,9 @@ use {
         translation,
     },
     libobject::{
-        ASIDPoolKey, CapError, FrameKey, InvalidKeyReason, KeySlot, KeyTableKey, ObjectType,
-        PageTableKey, RawKey, Rights, UntypedKey, address_space::AddressSpaceKey,
+        ASIDPoolKey, CapError, FrameKey, InconsistencyReason, InvalidKeyReason, KeySlot,
+        KeyTableKey, ObjectType, PageTableKey, RawKey, Rights, UntypedKey,
+        address_space::AddressSpaceKey,
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -570,12 +571,23 @@ pub fn run() {
             .address_spaces
             .validate(fixture_as_id)
             .unwrap_err();
-        // The retired AddressSpace's capability is stale: a further Retire
-        // fails with a defined error.
-        assert!(matches!(
-            fixture_as.retire(),
-            Err(CapError::InvalidOperation)
-        ));
+        // The retired AddressSpace's capability names an object that no
+        // longer exists: Retire and Activate through it report the retirement
+        // against the invoked key.
+        let retired_target = CapError::InconsistentKey {
+            key: fixture_as_key,
+            reason: InconsistencyReason::ObjectRetired,
+            operand: 0,
+        }
+        .code();
+        assert_eq!(
+            fixture_as.retire().map_err(CapError::code),
+            Err(retired_target)
+        );
+        assert_eq!(
+            fixture_as.activate().map_err(CapError::code),
+            Err(retired_target)
+        );
 
         // Reuse this genuinely retired target: capability incarnation is
         // unchanged, but its pooled AddressSpace identity is no longer live.
@@ -585,10 +597,12 @@ pub fn run() {
             invocation_destination_state(keytable_addr, invocation_key, KeySlot(250));
         for function in [0, 0x5678] {
             for slot in [KeySlot(62), KeySlot(250)] {
-                assert!(matches!(
-                    fixture_as.create_invocation(function, &self_table, slot, 0x1001, 0x1001, 0,),
-                    Err(CapError::InvalidOperation)
-                ));
+                assert_eq!(
+                    fixture_as
+                        .create_invocation(function, &self_table, slot, 0x1001, 0x1001, 0)
+                        .map_err(CapError::code),
+                    Err(retired_target)
+                );
                 assert_eq!(
                     invocation_destination_state(keytable_addr, invocation_key, KeySlot(250)),
                     before_stale_rejections
@@ -606,7 +620,7 @@ pub fn run() {
                         0
                     ]
                 ),
-                CapError::InvalidOperation.code()
+                retired_target
             );
             assert_eq!(
                 invocation_destination_state(keytable_addr, invocation_key, KeySlot(250)),
