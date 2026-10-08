@@ -12,12 +12,10 @@ use {
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         keys::boot_key,
         paging::{ADDR_MASK, PAGE, image_table_count},
+        registers,
     },
     aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1},
-    core::{
-        arch::asm,
-        sync::atomic::{AtomicU64, Ordering},
-    },
+    core::sync::atomic::{AtomicU64, Ordering},
     kickstart::bootstrap::RetainedInitMemory,
     libaddress::PhysAddr,
     libexception::arch::aarch64::SavedContext,
@@ -341,19 +339,16 @@ fn observe(bounce: bool) {
 }
 
 /// Observe the same live sentinels in a parked Thread's owned continuation.
-/// This complements the assembly checks performed after actual resumption.
+/// This complements the [`registers`] checks performed after actual
+/// resumption.
 pub fn assert_parked_registers(saved: &SavedContext, key: RawKey) {
-    assert_eq!(saved.gpr[19], key.to_wire());
-    for (index, expected) in [
-        0x2020, 0x2121, 0x2222, 0x2323, 0x2424, 0x2525, 0x2626, 0x2727, 0x2828,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        assert_eq!(saved.gpr[20 + index], expected);
+    for index in (8..=18).chain(20..=28) {
+        assert_eq!(saved.gpr[index], registers::marker(index));
     }
+    assert_eq!(saved.gpr[19], key.to_wire());
     assert_eq!(saved.gpr[29], saved.sp);
-    assert_eq!(saved.lr, 0x3030);
+    assert_eq!(saved.lr, registers::marker(30));
+    assert_eq!(saved.spsr_el1 & 0xF000_0000, registers::NZCV_PATTERN);
 }
 
 pub fn assert_rounds() {
@@ -361,62 +356,15 @@ pub fn assert_rounds() {
     assert_eq!(BOUNCE_ROUNDS.load(Ordering::Acquire), 3);
 }
 
-/// Test-local ordinary wait transport, not an Invocation/PPC ABI. Spill the
-/// compiler's x19-x30, put the caller-local wait key in x19, live sentinels in
-/// x20-x28/x30 and the exact SVC execution SP in x29. Verify them against a
-/// private execution-stack copy before restoring the compiler's
-/// registers. No source continuation lives on `SP_EL1`; this spill is userspace.
-#[inline(never)]
+/// Test-local ordinary wait transport, not an Invocation/PPC ABI: one
+/// [`registers::invoke`], asserting that the wait's resumption preserved
+/// every register outside `x0..x2`, SP and NZCV. No source continuation lives
+/// on `SP_EL1`; the probe's spill is userspace.
 fn wait_with_registers(key: RawKey, op: u64, arg0: u64, arg1: u64) -> Result<u64, CapError> {
-    let status: u64;
-    let word1: u64;
-    let word2: u64;
-    let intact: u64;
-    // SAFETY: the entire aligned 112-byte execution-stack spill is created and
-    // removed in this block; original callee-saved registers/LR are restored
-    // before Rust resumes. SVC uses the existing two-word wait ABI. x8/x9 and
-    // flags are declared clobbered, and all unused argument words are zero.
-    unsafe {
-        asm!(
-            "sub sp, sp, #112",
-            "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]",
-            "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]",
-            "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]",
-            "str x0, [sp, #96]", "mov x19, x0", "mov x20, #0x2020", "mov x21, #0x2121",
-            "mov x22, #0x2222", "mov x23, #0x2323", "mov x24, #0x2424",
-            "mov x25, #0x2525", "mov x26, #0x2626", "mov x27, #0x2727",
-            "mov x28, #0x2828", "mov x29, sp", "mov x30, #0x3030",
-            "svc #0",
-            "mov x8, #0", "ldr x9, [sp, #96]", "cmp x19, x9", "b.ne 2f",
-            "mov x9, #0x2020", "cmp x20, x9", "b.ne 2f",
-            "mov x9, #0x2121", "cmp x21, x9", "b.ne 2f",
-            "mov x9, #0x2222", "cmp x22, x9", "b.ne 2f",
-            "mov x9, #0x2323", "cmp x23, x9", "b.ne 2f",
-            "mov x9, #0x2424", "cmp x24, x9", "b.ne 2f",
-            "mov x9, #0x2525", "cmp x25, x9", "b.ne 2f",
-            "mov x9, #0x2626", "cmp x26, x9", "b.ne 2f",
-            "mov x9, #0x2727", "cmp x27, x9", "b.ne 2f",
-            "mov x9, #0x2828", "cmp x28, x9", "b.ne 2f",
-            "mov x9, sp", "cmp x29, x9", "b.ne 2f",
-            "mov x9, #0x3030", "cmp x30, x9", "b.ne 2f", "mov x8, #1",
-            "2:",
-            "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]",
-            "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]",
-            "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]",
-            "add sp, sp, #112",
-            inlateout("x0") key.to_wire() => status,
-            inlateout("x1") op => word1,
-            inlateout("x2") arg0 => word2,
-            in("x3") arg1, in("x4") 0_u64, in("x5") 0_u64,
-            in("x6") 0_u64, in("x7") 0_u64,
-            lateout("x8") intact, lateout("x9") _,
-        );
-    }
-    assert_eq!(
-        intact, 1,
-        "wait resumption corrupted execution SP or x19-x30"
-    );
-    decode_syscall_result((status, word1, word2)).map(|(value, _)| value)
+    let submitted = [arg0, arg1, 0, 0, 0, 0];
+    let observed = registers::invoke(key, op, submitted);
+    observed.assert_preserved(key, submitted);
+    decode_syscall_result(observed.result()).map(|(value, _)| value)
 }
 
 pub fn notification_wait(key: RawKey) -> Result<u64, CapError> {

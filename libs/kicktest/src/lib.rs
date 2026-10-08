@@ -19,6 +19,7 @@
 //!   `EL1t` context in its own `AddressSpace` — and the two-root translation
 //!   provisioning and observations it runs on;
 //! - [`threads`]: fixture Threads queued runnable by the bootstrap builder;
+//! - [`registers`]: the register-preservation probe for ordinary invocations;
 //! - the panic handler, reporting through QEMU semihosting.
 //!
 //! Everything here is trusted `EL1t` fixture code. It uses bootstrap-only
@@ -32,6 +33,7 @@ pub mod component;
 pub mod keys;
 pub mod loader;
 pub mod paging;
+pub mod registers;
 pub mod threads;
 pub mod translation;
 

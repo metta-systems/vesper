@@ -1,3 +1,5 @@
+use crate::CapError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rights(pub u8);
 
@@ -46,6 +48,19 @@ impl Rights {
     }
     pub fn bits(&self) -> u8 {
         self.0
+    }
+
+    /// Decode a full-width requested-rights argument word.
+    ///
+    /// Rejects, with `InvalidOperation`, any bit outside [`Rights::all`]:
+    /// high bits that narrowing would drop and undefined bits a creation
+    /// path would otherwise install verbatim.
+    pub fn from_wire(word: u64) -> Result<Rights, CapError> {
+        u8::try_from(word)
+            .ok()
+            .filter(|bits| bits & !Self::all().0 == 0)
+            .map(Rights)
+            .ok_or(CapError::InvalidOperation)
     }
 
     /// Whether `self` has every permission bit in `required`.

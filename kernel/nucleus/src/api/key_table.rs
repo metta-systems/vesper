@@ -72,7 +72,7 @@ fn copy_derive(
             operand: 4,
         })?,
     );
-    let requested = Rights(u8::try_from(args[3]).map_err(|_truncated| CapError::InvalidOperation)?);
+    let requested = Rights::from_wire(args[3])?;
     if args[4] != 0 || args[5] != 0 {
         return Err(CapError::InvalidOperation);
     }

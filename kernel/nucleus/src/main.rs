@@ -302,7 +302,9 @@ fn absorb_fp_simd_trap(e: &mut ExceptionContext) -> bool {
 
 /// Whether the synchronous exception being handled is an SVC instruction
 /// executed in `AArch64` state — the only exception class that carries a
-/// capability invocation.
+/// capability invocation. The SVC immediate is deliberately ignored: there is
+/// one syscall, so every `svc #n` is the same invocation (see the contract's
+/// ordinary control invocation baseline).
 fn is_aarch64_svc() -> bool {
     use aarch64_cpu::registers::{ESR_EL1, Readable};
 

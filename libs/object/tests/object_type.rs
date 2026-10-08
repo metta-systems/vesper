@@ -393,6 +393,133 @@ mod tests {
         }
     }
 
+    /// Every byte decodes to exactly the `assigned` IDs; every other byte,
+    /// every single high bit, and every high-bit alias of an assigned ID is
+    /// rejected before narrowing.
+    fn assert_operation_decoder_is_exact<Op: TryFrom<u64, Error = CapError>>(assigned: &[u64]) {
+        for raw in 0_u64..=255 {
+            let decoded = Op::try_from(raw);
+            if assigned.contains(&raw) {
+                assert!(decoded.is_ok(), "assigned op {raw} rejected");
+            } else {
+                assert!(
+                    matches!(decoded, Err(CapError::InvalidOperation)),
+                    "unassigned op {raw} accepted"
+                );
+            }
+        }
+        for bit in 8..64 {
+            assert!(matches!(
+                Op::try_from(1_u64 << bit),
+                Err(CapError::InvalidOperation)
+            ));
+            for &id in assigned {
+                assert!(matches!(
+                    Op::try_from(id | (1_u64 << bit)),
+                    Err(CapError::InvalidOperation)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn frame_operation_decoder_is_exact() {
+        assert_operation_decoder_is_exact::<vesper_objects::frame::FrameOp>(&[0, 1, 2]);
+    }
+
+    #[test]
+    fn page_table_operation_decoder_is_exact() {
+        assert_operation_decoder_is_exact::<vesper_objects::page_table::PageTableOp>(&[0, 1]);
+    }
+
+    #[test]
+    fn asid_pool_operation_decoder_is_exact() {
+        assert_operation_decoder_is_exact::<vesper_objects::asid_pool::ASIDPoolOp>(&[0]);
+    }
+
+    #[test]
+    fn address_space_operation_decoder_is_exact() {
+        assert_operation_decoder_is_exact::<vesper_objects::address_space::AddressSpaceOp>(&[
+            0, 1, 3,
+        ]);
+    }
+
+    #[test]
+    fn notification_operation_decoder_is_exact() {
+        assert_operation_decoder_is_exact::<vesper_objects::notification::NotificationOp>(&[
+            0, 1, 2,
+        ]);
+    }
+
+    #[test]
+    fn rights_bits_match_literal_wire_values() {
+        use vesper_objects::Rights;
+
+        assert_eq!(Rights::READ, 0x01);
+        assert_eq!(Rights::WRITE, 0x02);
+        assert_eq!(Rights::MAP, 0x02);
+        assert_eq!(Rights::SEND, 0x02);
+        assert_eq!(Rights::RECV, 0x01);
+        assert_eq!(Rights::CALL, 0x04);
+        assert_eq!(Rights::GRANT, 0x08);
+        assert_eq!(Rights::EXECUTE, 0x10);
+        assert_eq!(Rights::RETIRE, 0x20);
+        assert_eq!(Rights::DERIVE, 0x01);
+        assert_eq!(Rights::REMOVE, 0x02);
+        assert_eq!(Rights::INSTALL, 0x04);
+        assert_eq!(Rights::empty().bits(), 0);
+        assert_eq!(
+            Rights::all().bits(),
+            Rights::READ
+                | Rights::WRITE
+                | Rights::CALL
+                | Rights::GRANT
+                | Rights::EXECUTE
+                | Rights::RETIRE
+        );
+    }
+
+    #[test]
+    fn rights_wire_decoding_accepts_only_defined_bits() {
+        use vesper_objects::Rights;
+
+        for word in 0_u64..=0x3F {
+            assert!(matches!(
+                Rights::from_wire(word),
+                Ok(rights) if u64::from(rights.bits()) == word
+            ));
+        }
+        for word in 0x40_u64..=0xFF {
+            assert!(matches!(
+                Rights::from_wire(word),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        for bit in 8..64 {
+            for valid in [0_u64, 0x01, 0x3F] {
+                assert!(matches!(
+                    Rights::from_wire(valid | (1_u64 << bit)),
+                    Err(CapError::InvalidOperation)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn rights_permit_exactly_subsets() {
+        use vesper_objects::Rights;
+
+        for held in 0_u8..=0x3F {
+            for requested in 0_u8..=0x3F {
+                assert_eq!(
+                    Rights(held).permits(Rights(requested)),
+                    requested & !held == 0
+                );
+                assert_eq!(Rights(held).has(requested), held & requested == requested);
+            }
+        }
+    }
+
     #[test]
     fn notification_operations_match_existing_wire_ids() {
         use vesper_objects::notification::NotificationOp;

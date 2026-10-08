@@ -17,9 +17,9 @@ use {
 // - Establish an explicit caller/principal and console-write right/bootstrap
 //   grant; do not infer domain zero from no current domain. The active caller is
 //   trusted EL1h boot code, not yet an EL0 domain. Define permitted origins.
-// - Classify EC/SVC immediate before dispatch; reject oversized raw slots/ops
-//   without panics. Route non-SVC faults separately, and never recursively invoke
-//   capabilities on a copy fault while nucleus/object guards are held.
+// - Never recursively invoke capabilities on a copy fault while nucleus/object
+//   guards are held. Entry already checks the exception class and origin and
+//   ignores the SVC immediate (there is one syscall).
 // - Treat input as caller virtual memory, not PhysAddr plus a direct-map offset.
 //   Authorize the whole readable range against the caller, check length/overflow,
 //   stabilize backing/mappings and snapshot input, and provide scoped copy-fault

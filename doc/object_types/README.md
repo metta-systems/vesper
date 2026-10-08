@@ -77,6 +77,10 @@ Argument words an operation does not use are sent as zero and rejected when
 nonzero, unless the operation says otherwise (`Thread.Return` ignores
 `x4..x7`; `Invocation.Call` also reads `x9`).
 
+An ordinary invocation writes only `x0..x2`: `x3..x30`, SP and NZCV come back
+unchanged, whether it succeeds, fails, or blocks and resumes later. PPC Call and
+Return have their own register contract (see [Invocation](core/invocation.md)).
+
 ```mermaid
 flowchart TD
     A["SVC #0 entry"] --> B["Validate exception class,<br/>SVC immediate, origin"]

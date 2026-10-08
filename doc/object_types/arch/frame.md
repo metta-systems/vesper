@@ -34,7 +34,8 @@ distinct PTEs.
   aligned to the frame size; the walk requires every intermediate table to be
   present (`MissingIntermediate` with the faulting address otherwise).
 - **Permission ceiling**: the requested mask must be a subset of the frame
-  capability's rights. Without `EXECUTE` every mapping is execute-never
+  capability's rights. A rights word with any bit outside `Rights::all()`
+  (`0x3F`) is malformed and rejected with `InvalidOperation`. Without `EXECUTE` every mapping is execute-never
   (PXN|UXN). With it the mapping is executable at exactly one level:
 
   | Requested | AP | PXN | UXN | Executable at |

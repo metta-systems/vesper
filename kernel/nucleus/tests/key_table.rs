@@ -938,6 +938,37 @@ fn copy_derive_rejects_rights_amplification() {
     assert_eq!(fx.caller_len(), 2); // self-table + source
 }
 
+/// Undefined requested-rights bits are malformed input, rejected before
+/// authority checks rather than reported as an amplification attempt.
+#[test_case]
+fn copy_derive_rejects_undefined_rights_bits() {
+    let mut fx = Fixture::new(FULL);
+    let src = fx.install(
+        0,
+        KeySlot(10),
+        table_cap(fx.dst_table_addr, Rights::all(), 0),
+    );
+    for rights_word in [0x40_u64, 0x80, 0xFF, 1 << 8, u64::MAX] {
+        let result = fx.invoke(
+            fx.self_table_key,
+            0,
+            &args(
+                src.to_wire(),
+                fx.self_table_key.to_wire(),
+                20,
+                rights_word,
+                0,
+                0,
+            ),
+        );
+        assert!(
+            matches!(result, Err(CapError::InvalidOperation)),
+            "rights word {rights_word:#x} must be rejected"
+        );
+    }
+    assert_eq!(fx.caller_len(), 2); // self-table + source
+}
+
 #[test_case]
 fn copy_derive_requires_derive_on_source_and_install_on_destination() {
     // Source table without DERIVE.

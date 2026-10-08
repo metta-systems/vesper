@@ -78,11 +78,7 @@ fn map<A: ArchObjects>(
 ) -> Result<(u64, u64), CapError> {
     let as_key = RawKey::from_wire(args[0]);
     let vaddr = args[1];
-    let requested = Rights(
-        u8::try_from(args[2])
-            .ok()
-            .ok_or(CapError::InvalidOperation)?,
-    );
+    let requested = Rights::from_wire(args[2])?;
     let attrs = args[3];
     if args[4] != 0 || args[5] != 0 {
         return Err(CapError::InvalidOperation);

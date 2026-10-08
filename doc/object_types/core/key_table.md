@@ -36,7 +36,8 @@ Management rights: bit 0 `DERIVE`, bit 1 `REMOVE`, bit 2 `INSTALL`; bit 3 is
 reserved for table administration.
 
 - **No amplification**: requested rights must be a subset of the source's
-  (`InsufficientRights`).
+  (`InsufficientRights`). A rights word with any bit outside `Rights::all()`
+  (`0x3F`) is malformed and rejected first, with `InvalidOperation`.
 - **Vacant destinations**: an occupied slot fails with `SlotOccupied`; Move
   onto its own slot is rejected.
 - **Checked keys**: source and target keys carry guard, slot and incarnation;

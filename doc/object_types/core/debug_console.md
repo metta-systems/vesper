@@ -77,8 +77,9 @@ reinterpret `Write` = 0.
 
 ## TODOs
 
-General availability requires the normal supported-operation criteria:
-explicit caller/rights, bounded caller-authorized memory access with fault
-recovery, defined byte/length/partial-output semantics, checked
-exception/argument decoding, and observable results (D1/D3/D4/D6/D9 remain
-open beyond this limited availability decision).
+General availability is parked on the byte-transport decision (D1/D6/D9):
+pointer-based Write with checked caller-authorized memory access and copy-fault
+recovery, or a register-inline byte operation that never reads user memory.
+See Phase 3 of the [implementation plan](../../capabilities_implementation_plan.md#phase-3--repair-the-active-syscallconsole-path).
+Either way it then needs an explicit caller/console right (D4) and defined
+byte, length and partial-output semantics.

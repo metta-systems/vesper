@@ -680,5 +680,52 @@ pub fn run() {
         assert_eq!((status, word1, word2), CapError::InvalidOperation.code());
     }
 
+    assert_ordinary_calls_preserve_registers(self_table_key);
+
     semi::println!("Capability suite passed");
+}
+
+/// An ordinary invocation writes only `x0..x2`: every other register, SP and
+/// NZCV survive both success and rejection (the blocking-resume case is
+/// checked by `sync-test` through the same probe).
+fn assert_ordinary_calls_preserve_registers(self_table_key: RawKey) {
+    use {libkicktest::registers, libobject::KeyTableOp};
+
+    const PROBE_SLOT: u32 = 100;
+
+    // Success with a result word: CopyDerive the self-table capability.
+    let copy_args = [
+        self_table_key.to_wire(),
+        self_table_key.to_wire(),
+        u64::from(PROBE_SLOT),
+        u64::from(Rights::DERIVE),
+        0,
+        0,
+    ];
+    let copied = registers::invoke(self_table_key, KeyTableOp::CopyDerive as u64, copy_args);
+    copied.assert_preserved(self_table_key, copy_args);
+    let (status, derived_word, second_word) = copied.result();
+    assert_eq!((status, second_word), (0, 0));
+    let derived_key = RawKey::from_wire(derived_word);
+    assert_eq!(derived_key.slot(), boot_slot(PROBE_SLOT));
+
+    // Success with zero result words: Delete it again.
+    let delete_args = [derived_key.to_wire(), 0, 0, 0, 0, 0];
+    let deleted = registers::invoke(self_table_key, KeyTableOp::Delete as u64, delete_args);
+    deleted.assert_preserved(self_table_key, delete_args);
+    assert_eq!(deleted.result(), (0, 0, 0));
+
+    // Rejection with zero details: an unassigned KeyTable operation.
+    let unassigned = registers::invoke(self_table_key, 3, [0; 6]);
+    unassigned.assert_preserved(self_table_key, [0; 6]);
+    assert_eq!(unassigned.result(), CapError::InvalidOperation.code());
+
+    // Rejection with detail words: Delete through the now-stale key.
+    let stale = registers::invoke(self_table_key, KeyTableOp::Delete as u64, delete_args);
+    stale.assert_preserved(self_table_key, delete_args);
+    let (status, detail1, _) = stale.result();
+    assert_ne!(status, 0);
+    assert_eq!(detail1, derived_key.to_wire());
+
+    semi::println!("✅ ordinary invocations preserve x3..x30, SP and NZCV");
 }

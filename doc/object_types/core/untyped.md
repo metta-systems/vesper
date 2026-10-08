@@ -94,7 +94,8 @@ flowchart TD
   unmapped.
 - Requested rights (`x7`) are installed on the created capabilities, subject to
   per-kind interpretation; Retype-origin capabilities carry delegable
-  lifetime-control permission.
+  lifetime-control permission. A word with any bit outside `Rights::all()`
+  (`0x3F`) is rejected with `InvalidOperation`.
 - Sanitization: the kernel zeroes Retype-carved Frame and PageTable contents
   inside the transaction, before capability installation and watermark
   commit, so a fresh object never leaks prior-owner or kernel data.

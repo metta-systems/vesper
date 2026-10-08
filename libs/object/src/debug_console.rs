@@ -9,11 +9,8 @@ use crate::{Key, RawKey, decode_syscall_result};
 /// Debug-only prototype console wrapper, available with opt-in `debug_kernel`.
 ///
 /// Not a general service or a safety/isolation guarantee: retains unchecked
-/// pointer-based writes and discarded kernel errors for trusted debugging only.
-///
-/// Implementation status: the discarded-error description above is historical;
-/// `write` now decodes and propagates kernel errors through `decode_syscall_result`.
-/// The pointer-based debug mechanism and semihosting diagnostic remain unchanged.
+/// pointer-based writes for trusted debugging only. `write` decodes and
+/// propagates kernel errors through `decode_syscall_result`.
 #[cfg(feature = "debug_kernel")]
 pub struct DebugConsoleKey {
     key: Key<DebugConsoleType>,
@@ -70,12 +67,6 @@ impl DebugConsoleKey {
                 s.len() as u64,
             )
         };
-        libqemu::semihosting::println!(
-            "Userspace return from DebugConsoleOp::Write with result ({}, {}, {})",
-            status,
-            result0,
-            result1
-        );
         decode_syscall_result((status, result0, result1)).map(|_| ())
     }
 }

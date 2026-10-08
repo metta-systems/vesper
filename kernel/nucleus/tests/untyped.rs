@@ -1572,6 +1572,35 @@ fn retype_rejects_guard_words_for_non_keytable_kinds() {
     assert_eq!(fx.len(), before);
 }
 
+/// Requested rights outside `Rights::all()` are malformed input: Retype
+/// installs the requested mask verbatim on the new origin capability, so an
+/// undefined bit must never reach the table.
+#[test_case]
+fn retype_rejects_undefined_rights_bits() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let before = fx.len();
+
+    for rights_word in [0x40_u64, 0x80, 0xFF, 1 << 8, u64::MAX] {
+        let mut args = retype_args(
+            ObjectType::FRAME,
+            12,
+            0,
+            1,
+            fx.self_key,
+            KeySlot(40),
+            Rights::empty(),
+        );
+        args[5] = rights_word;
+        let result = fx.invoke(ram, UntypedOp::Retype as u64, &args);
+        assert!(
+            matches!(result, Err(CapError::InvalidOperation)),
+            "rights word {rights_word:#x} must be rejected"
+        );
+    }
+    assert_eq!(fx.len(), before);
+}
+
 /// A Retype batch is bounded (`MAX_RETYPE_BATCH`, 256): the transaction's
 /// defensive rollback records are stack arrays sized by the bound. Larger
 /// counts are malformed input.

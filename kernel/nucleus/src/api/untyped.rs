@@ -161,11 +161,7 @@ fn retype<A: ArchObjects>(
             .ok()
             .ok_or(CapError::InvalidOperation)?,
     );
-    let requested = Rights(
-        u8::try_from(args[5])
-            .ok()
-            .ok_or(CapError::InvalidOperation)?,
-    );
+    let requested = Rights::from_wire(args[5])?;
 
     // Kind allowlist and per-kind sizing: only KeyTable bookkeeping storage,
     // raw Frame regions, and PageTable translation storage are creatable from

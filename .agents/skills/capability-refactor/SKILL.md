@@ -9,9 +9,10 @@ description: Guide one incremental Vesper capability refactor across shared ABI,
 
 - Resolve every repository-relative path below against the **Vesper repository root**, not this skill's directory (`.agents/skills/capability-refactor`).
 - Always read **both** `doc/nucleus_capabilities.md` (canonical contract) and `doc/capabilities_implementation_plan.md` (checkbox plan) first, before analysis or edits. If either is unavailable, ask the user rather than inventing its contents.
-- For lifetime, ownership, authority, delegation, revocation, or reclamation work, also read the relevant sections of `doc/lifetime-and-authority.md`. It records code-grounded alternatives, complexity estimates, explicit open decisions, and outstanding tasks; it supplements rather than supersedes the canonical contract and implementation plan.
+- For lifetime, ownership, authority, delegation, revocation, or reclamation work, also read the relevant sections of `doc/lifetime-and-authority.md`. It records code-grounded analysis, research and complexity estimates, linking to the plan for tasks and to `followup.md` for open decisions; it supplements rather than supersedes the canonical contract and implementation plan.
 - Preserve user and concurrent-agent edits to these documents; coordinate overlapping changes and make focused updates rather than replacing either document wholesale.
-- `doc/followup.md` is exclusively a parking lot for **unanswered architectural/contract decisions**. Do not keep resolved directions, settled decision recaps, implementation TODOs, code-audit tasks, or optional refactoring chores there. When a decision is resolved, record it in the canonical contract (and relevant lifetime/authority analysis), then remove the resolved item from `followup.md`. Put implementation, testing, and integration work in `doc/capabilities_implementation_plan.md`.
+- `doc/followup.md` is exclusively a parking lot for **unanswered architectural/contract decisions**. Do not keep resolved directions, settled decision recaps, implementation TODOs, code-audit tasks, or optional refactoring chores there. When a decision is resolved, record it in the canonical contract (and relevant lifetime/authority analysis), then remove the resolved item from `followup.md`. Put implementation, testing, and integration work in `doc/capabilities_implementation_plan.md`. The one exception is the **Future work** section at the end of `followup.md`: ideas the project might or might not pursue later (for example extended `x1..x7` IPC outputs). Future work needs no near-term decision. Do not present it as a decision blocker, do not let it constrain current contracts or tests, and do not plan around it. Describe each future-work idea only in that section. Elsewhere, at most leave a one-line link to it where the idea is relevant. Do not restate or paraphrase it across documents.
+- Tasks live only in `doc/capabilities_implementation_plan.md`; open decisions only in `doc/followup.md`; selected contracts only in `doc/nucleus_capabilities.md`. Other documents (including `doc/lifetime-and-authority.md`) link to them instead of restating them. When a plan item is finished, replace it with a one-line marker in `doc/capabilities-completed.md` (what exists and where it is exercised). Do not copy narratives, dated decision logs or replaced text anywhere: version control keeps the history.
 - Distinguish accepted contracts, proposals, open decisions, and implementation status. Existing code and unchecked plan items are not architectural approval.
 - Use the canonical `CoreType` numeric IDs, not legacy `ObjectType` constants. Core and architecture kind IDs are not compatibility constraints: the maintainer may reassign either catalogue to group kinds by functionality/category. Architecture wire IDs retain the high-bit category marker (`0x80`), but architecture-local indices may also be reassigned.
 - Never renumber silently. For an approved regrouping, record the new core and/or architecture mapping in `doc/nucleus_capabilities.md` first, reconcile the implementation plan, then migrate the shared catalogue, dispatch, errors, literal ABI tests, and object-type documentation together. Do not preserve prior IDs, aliases, or reserved-slot assumptions as backwards compatibility unless the maintainer explicitly selects that policy.
@@ -48,7 +49,7 @@ These apply to every slice and are never "done"; they are not plan checkboxes.
 - Other `doc/object_types/` pages, linked by anchors that exist. When renaming a heading, update every link to its anchor.
 - The contract (`doc/nucleus_capabilities.md`), `doc/lifetime-and-authority.md` and the implementation plan.
 - Source paths in this repository (`kernel/`, `libs/`, `kernel/tests/…`) and hardware or architecture concepts.
-- **Not allowed:** private research notes such as the `🧠 Vesper` Obsidian vault, the history archive (`doc/capabilities-completed.md`), and dated decision records. These pages compare the implementation against nothing but the current contract.
+- **Not allowed:** private research notes such as the `🧠 Vesper` Obsidian vault, the completed-work list (`doc/capabilities-completed.md`), and dated decision records. These pages compare the implementation against nothing but the current contract.
 
 ## No backwards compatibility
 
@@ -59,7 +60,7 @@ These apply to every slice and are never "done"; they are not plan checkboxes.
 
 Check the documents' decision status and dependencies for the selected item:
 
-- **D1:** selected protection/threat model and shared-address-space semantics; remaining backend, machine-local namespace-conflict, and fault-delivery details. Multi-node global address allocation is out of scope; stronger stale-raw-pointer protection across VA reuse is far-future work.
+- **D1:** selected protection/threat model and shared-address-space semantics; remaining backend, machine-local namespace-conflict, and fault-delivery details. Multi-node global address allocation is out of scope.
 - **D2:** selected management-authority/bookkeeping split; remaining revocation, completion, and reuse mechanisms.
 - **D3:** ownership and lifetime.
 - **D4:** authority, badges, and bootstrap.
@@ -75,7 +76,7 @@ For lifecycle and authority changes, consult the **CONFIRMED**, **INTERIM**, and
 
 Preserve the approved management authority split: KeyTable capabilities/rights authorize direct derivation, installation, and management; recipients also own the bookkeeping obligations and join the TCB of that libOS composition. Multiple managers or hierarchies are userspace policy. KeyMaster is a role, not a kernel-special singleton; do not add mandatory central post-hoc registration or reopen this settled choice. Remaining operation schemas, rights bits, and composition-specific synchronization/recovery are implementation work.
 
-Fbuf setup must establish suitable addresses for all participating AddressSpaces before mapping. Do not add multi-node global address allocation. Stronger temporal-VA quarantine/stale-pointer prevention is explicitly deferred; outside mechanisms prevent stale application accesses for now, and revoked addresses need not remain inaccessible for a surviving Thread's lifetime. Do not reintroduce that work as a current blocker or confuse its deferral with relaxing kernel memory safety, capability incarnation checks, hardware/TLB withdrawal, or safe physical-resource reuse.
+Fbuf setup must establish suitable addresses for all participating AddressSpaces before mapping. Do not add multi-node global address allocation. Stale raw-pointer protection after VA reuse is future work (`doc/followup.md`), never a current blocker; the contract states the current rule and what it does not relax.
 
 ## Pick one incremental slice
 

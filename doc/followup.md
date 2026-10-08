@@ -7,6 +7,11 @@ Implementation, validation, and integration work belongs in
 `doc/capabilities_implementation_plan.md`. Remove an item here once it is
 resolved and recorded in its architectural document.
 
+The [Future work](#future-work) section at the end is separate: ideas we might
+or might not pursue depending on how the project develops. They need no
+near-term decision, do not constrain current contracts or tests, and are not
+plan items.
+
 ## D5: scheduler-shared thread records
 
 Unanswered questions before implementing the scheduler record ABI:
@@ -68,12 +73,64 @@ Unanswered questions before implementing the scheduler record ABI:
 
 ## Other unanswered decisions
 
+- **D1:** machine-local namespace and address-reservation conflicts for shared
+  addresses (fbufs, common mappings), and which protection features each
+  target backend must provide; resource-accounting and bounded-work mechanisms
+  that hold even when a caller bypasses its libOS.
+- **D2:** the bookkeeping, failure and coordination protocol between the
+  managers of a libOS composition (multiple or hierarchical KeyMasters), and
+  the completion handshake for retirement followed by background cleanup;
+  invocation-versus-retirement ordering (after which point new operations and
+  derivations cannot proceed) and how revoke completion is observed.
 - **D2/D6:** selective invalidation of a branch of derived capabilities while
   the shared object remains live, including completion and safe-reuse rules.
+- **D4:** per-kind semantic rights and the operation-to-rights matrix before
+  bit assignments freeze; permitted attenuation of rights, extents, badges and
+  budgets; badge width, zero-badge meaning, and mint/rebadge policy.
 - **D4/bootstrap:** ownership of well-known `KeySlot` constants—shared object
   API versus bootstrap/libOS composition layout.
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
-- **D8:** Time operation schemas and conservation rules: Donate consumed-self
-  semantics, Split destination-slot behavior, Merge/Query, and unused-budget
-  return on deletion/drop.
+- **D8:** budget issuance and replenishment authority; donation as loan or
+  transfer, including Donate's consumed-self semantics; unused-budget return
+  on deletion, drop and yield; compatible Merge
+  conditions and expiry; Split destination-slot behavior and Query; wire and
+  internal time units, the monotonic deadline clock, rounding/overflow, and
+  multicore budget ownership.
+- **D9:** ABI version and optional-operation discovery for separately built
+  components: how a component learns the running kernel's ABI revision and
+  supported operations, and what happens on a mismatch. Not needed while
+  everything is rebuilt together from one tree.
+- **D1/D6/D9 — DebugConsole byte transport (parked):** how a generally
+  available console receives its bytes. (A) keep the pointer-based Write: the
+  nucleus needs checked user-memory reads (caller-AddressSpace authorization,
+  input snapshot, copy-fault recovery), which no other operation currently
+  needs. (B) a register-inline operation, e.g. a length plus up to 40 bytes in
+  `x3..x7` with client chunking, so the nucleus never reads user memory. Until
+  this is decided the console stays a debug-only prototype.
+
+## Future work
+
+Not decisions to make now and not planned work; revisit only if the project
+needs them.
+
+- **Extended IPC outputs (`x1..x7`) and a per-thread IPC buffer:** returning
+  more than two result words from a capability invocation, with message
+  spill to a per-thread buffer. Today every ordinary invocation writes only
+  `x0..x2` and preserves everything else (contract, ordinary control
+  invocation baseline); adopting extended outputs would be a contract revision
+  of that rule.
+- **Temporal-VA protection for stale raw pointers:** kernel guarantees that an
+  old raw pointer cannot reach replacement memory after its virtual address is
+  legitimately reused — address quarantine, keeping revoked addresses
+  inaccessible for a surviving Thread's lifetime, or stronger stale-pointer
+  detection. Today the kernel gives no such guarantee and outside mechanisms
+  own the prevention (contract, [protection requirements and
+  boundaries](nucleus_capabilities.md#protection-requirements-and-boundaries)).
+  Would need its own separately scoped design.
+- **Six-word PPC result payload:** widening the PPC result from two to six
+  `u64` words if component interfaces need more register-only results. Would
+  need a coordinated change to the Return transport, wrappers and decoders.
+- **Kernel-published identity in `TPIDRRO_EL0`:** using the EL0 read-only,
+  EL1-writable register to publish per-Thread identity to userspace, as Linux
+  does for per-CPU data. Today it is always zero.
