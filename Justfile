@@ -84,19 +84,19 @@ alias b := build
 build-components board='rpi3' features='qemu': (_cross-build 'hello' board user_link features) (_cross-build 'endpoint-client' board user_link features) (_cross-build 'endpoint-component' board user_link features) (_cross-build 'endpoint-server' board user_link features) (_cross-build 'fp-probe' board user_link features) (_cross-build 'fault-faulter' board user_link features) (_cross-build 'fault-bare' board user_link features)
 
 # Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
-[group("emu")]
+[group("test")]
 build-endpoint-test board='rpi3' features='qemu': (_cross-build 'nucleus' board nucleus_link features) (build-components board features) (_cross-build 'endpoint-test' board init_link features)
     {{ objcopy }} --strip-all -O binary "{{ endpoint_test_elf }}" "{{ endpoint_test_bin }}"
     @echo "{{ok_label}} endpoint-test built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
 
 # Build the fp-trap-test negative e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook)
-[group("emu")]
+[group("test")]
 build-fp-trap-test board='rpi3': (_cross-build 'nucleus' board nucleus_link 'qemu,fp_trap_test') (build-components board 'qemu') (_cross-build 'fp-trap-test' board init_link 'qemu,fp_trap_test')
     {{ objcopy }} --strip-all -O binary "{{ fp_trap_test_elf }}" "{{ fp_trap_test_bin }}"
     @echo "{{ok_label}} fp-trap-test built for {{ board }}"
 
 # Build the fault-test e2e kernel (fault delivery to EL0 fault handlers)
-[group("emu")]
+[group("test")]
 build-fault-test board='rpi3': (_cross-build 'nucleus' board nucleus_link 'qemu') (build-components board 'qemu') (_cross-build 'fault-test' board init_link 'qemu')
     {{ objcopy }} --strip-all -O binary "{{ fault_test_elf }}" "{{ fault_test_bin }}"
     @echo "{{ok_label}} fault-test built for {{ board }}"
@@ -251,13 +251,13 @@ alias ocd := openocd
 # === Testing ===
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
-[group("emu")]
+[group("test")]
 test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-endpoint test-fp-trap test-fault
 
 alias t := test
 
 # Run device crate tests in QEMU (rpi3) --verbose
-[group("emu")]
+[group("test")]
 test-device:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
@@ -268,21 +268,21 @@ test-device:
     --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=chainboot
 
 # Test the debug-only nucleus console handler in QEMU (rpi3)
-[group("emu")]
+[group("test")]
 test-debug-console:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test -p nucleus --test debug_console {{ target_json }} \
       --features=qemu,debug_kernel {{ rust_std }}
 
 # Test the nucleus KeyTable management handler in QEMU (rpi3)
-[group("emu")]
+[group("test")]
 test-key-table:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test -p nucleus --test key_table {{ target_json }} \
       --features=qemu,debug_kernel {{ rust_std }}
 
 # Test the nucleus Untyped Retype handler in QEMU (rpi3)
-[group("emu")]
+[group("test")]
 test-untyped:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ test_link }}" \
     cargo test -p nucleus --test untyped {{ target_json }} \
@@ -309,19 +309,19 @@ _run-test-kernel crate:
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ justfile_directory() / 'target' / crate + '.bin' }}"
 
 # Boot capability-test: boot-table invariants, debug console key, KeyTable/Frame Retype, Untyped split
-[group("emu")]
+[group("test")]
 test-capability: (_run-test-kernel 'capability-test')
 
 # Boot ppc-test: Invocation construction and same-Thread PPC Call/Return into the Bounce AddressSpace
-[group("emu")]
+[group("test")]
 test-ppc: (_run-test-kernel 'ppc-test')
 
 # Boot sync-test: Notification, EventCount, blocking waits through the Bounce Thread, Thread.Retire
-[group("emu")]
+[group("test")]
 test-sync: (_run-test-kernel 'sync-test')
 
 # Boot memory-test: PageTable/Frame mapping, alias policy, ASIDs, activation and TLB invalidation, AddressSpace.Retire
-[group("emu")]
+[group("test")]
 test-memory: (_run-test-kernel 'memory-test')
 
 # Rebuild endpoint-test unconditionally (nested for the same reason as above).
@@ -330,7 +330,7 @@ _rebuild-endpoint-test-kernel:
     {{ just_executable() }} build-endpoint-test rpi3 qemu
 
 # Boot endpoint-test: client, endpoint and server AddressSpaces rendezvous through PPC; in-guest assertions and QEMU exit status are the result
-[group("emu")]
+[group("test")]
 test-endpoint: _rebuild-endpoint-test-kernel
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ endpoint_test_bin }}"
 
@@ -340,7 +340,7 @@ _rebuild-fp-trap-test-kernel:
     {{ just_executable() }} build-fp-trap-test rpi3
 
 # Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t and at EL0; in-guest assertions and QEMU exit status are the result
-[group("emu")]
+[group("test")]
 test-fp-trap: _rebuild-fp-trap-test-kernel
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ fp_trap_test_bin }}"
 
@@ -350,24 +350,24 @@ _rebuild-fault-test-kernel:
     {{ just_executable() }} build-fault-test rpi3
 
 # Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread; in-guest assertions and QEMU exit status are the result
-[group("emu")]
+[group("test")]
 test-fault: _rebuild-fault-test-kernel
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_test_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ fault_test_bin }}"
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
-[group("emu")]
+[group("test")]
 test-chainboot:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ chainboot_link }}" \
     cargo test {{ target_json }} --features=qemu {{ rust_std }} \
       -p chainboot
 
 # Run capability and host tool tests natively
-[group("emu")]
+[group("test")]
 test-host: test-object-host
     cargo test -p chainofcommand
 
 # Run the opt-in capability ABI tests on the native host (currently AArch64)
-[group("emu")]
+[group("test")]
 test-object-host:
     RUSTFLAGS="{{ fixed_rustflags }}" \
     cargo test -p vesper-objects --features=host-tests --test object_type
@@ -418,10 +418,8 @@ clippy-object-host:
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]
 _clippy-coc:
-    cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated
+    cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated # FIXME Shouldn't be here!
     cargo clippy -p chainofcommand -- --deny warnings --allow deprecated
-
-# === Maintenance & Tools ===
 
 # Build and disassemble kernel
 [group("debug")]
@@ -435,6 +433,8 @@ cb-hopper: (build-chainboot 'rpi3' 'qemu')
     #hopper --loader RAW --plugin arm --cpu aarch64 --variant generic --base-address 0x80000 --executable "{{ chainboot_bin }}"
 
 alias cb-disasm := cb-hopper
+
+# === Maintenance & Tools ===
 
 # Build and print all symbols
 [group("maintenance")]
@@ -463,7 +463,7 @@ fmt-check:
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
-[group("maintenance")]
+[group("test")]
 audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
