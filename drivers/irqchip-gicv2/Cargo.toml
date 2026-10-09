@@ -1,0 +1,41 @@
+[package]
+name = "irqchip-gicv2"
+
+description = "Privileged interrupt-controller component for the Arm GICv2 (GIC-400: Raspberry Pi 4 and 5), built on the arm-gic crate."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+# Opt in to standard host integration tests of the controller logic.
+host-tests = []
+
+[dependencies]
+arm-gic = { workspace = true }
+libirqchip = { workspace = true }
+
+[dev-dependencies]
+tock-registers = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "irqchip-gicv2"
+test = false
+
+[[test]]
+name = "gicv2"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

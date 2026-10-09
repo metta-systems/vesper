@@ -27,7 +27,7 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 # EL0 userspace components, linked with the userspace runtime's user.ld
 user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
-privileged_components := 'irqchip-bcm2836'
+privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -46,7 +46,9 @@ chainboot_serial := '/dev/tty.SLAB_USBtoUART'
 chainboot_baud   := '115200'
 
 # QEMU option fragments
-qemu_base_opts    := '-M ' + qemu_machine + ' -chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -object monitor-hmp,chardev=char0,id=mon0 -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0'
+# Console, monitor and semihosting wiring shared by every QEMU run
+qemu_io_opts      := '-chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -object monitor-hmp,chardev=char0,id=mon0 -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0'
+qemu_base_opts    := '-M ' + qemu_machine + ' ' + qemu_io_opts
 qemu_disasm       := '-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin'
 qemu_gdb_opts     := '-gdb tcp::5555 -S'
 qemu_test_opts    := '-nographic'
@@ -261,7 +263,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("test")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-endpoint test-fp-trap test-fault
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-endpoint test-fp-trap test-fault
 
 alias t := test
 
@@ -312,9 +314,11 @@ _build-test-kernel crate board='rpi3' features='qemu,debug_kernel': (_cross-buil
 # be skipped as already run, leaving the kernel image stale. The nested
 # invocation always runs and refreshes the image.
 [private]
-_run-test-kernel crate build=('_build-test-kernel ' + crate):
+_run-test-kernel crate build=('_build-test-kernel ' + crate) board='rpi3':
     {{ just_executable() }} {{ build }}
-    {{ qemu_test }} -kernel "{{ justfile_directory() / 'target' / crate + '.bin' }}"
+    {{ qemu }} -M {{ if board == 'rpi3' { 'raspi3b' } else { 'raspi4b' } }} {{ qemu_io_opts }} {{ qemu_test_opts }} \
+      -dtb "{{ if board == 'rpi3' { rpi3_dtb } else { rpi4_dtb } }}" \
+      -kernel "{{ justfile_directory() / 'target' / crate + '.bin' }}"
 
 # Boot capability-test: boot-table invariants, debug console key, KeyTable/Frame Retype, Untyped split
 [group("test")]
@@ -327,6 +331,10 @@ test-ppc: (_run-test-kernel 'ppc-test')
 # Boot preempt-test: interrupt-controller component, kernel timer tick and round-robin preemption of Threads that never yield
 [group("test")]
 test-preempt: (_run-test-kernel 'preempt-test' 'build-preempt-test')
+
+# Boot preempt-test on the Raspberry Pi 4 machine: the same image, ticking through the GICv2 component
+[group("test")]
+test-preempt-rpi4: (_run-test-kernel 'preempt-test' 'build-preempt-test rpi4' 'rpi4')
 
 # Boot sync-test: Notification, EventCount, blocking waits through the Bounce Thread, Thread.Retire
 [group("test")]
@@ -373,7 +381,7 @@ test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vespe
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
 [group("test")]
-test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836')
+test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2')
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -419,7 +427,7 @@ clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 
 
 # Lint the boot-platform host tests
 [group("maintenance")]
-clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836')
+clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2')
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]

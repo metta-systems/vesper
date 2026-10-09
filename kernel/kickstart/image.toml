@@ -12,3 +12,7 @@ binary = "nucleus"
 [[privileged]]
 name = "bcm2836"
 binary = "irqchip-bcm2836"
+
+[[privileged]]
+name = "gicv2"
+binary = "irqchip-gicv2"
