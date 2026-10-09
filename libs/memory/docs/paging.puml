@@ -1,0 +1,40 @@
+@startuml
+'https://plantuml.com/object-diagram
+
+object GiantPage
+object GiantPage_2
+object LargePage
+object Page
+object Page_2
+object Unmapped
+
+map L1PageUpperDirectory_2 {
+  entry0 *--> GiantPage_2
+  entry1 *--> Unmapped
+}
+
+map L3PageTable {
+  entry0 *--> Page
+  entry1 *--> Page_2
+}
+
+map L2PageDirectory {
+  entry0 *-> L3PageTable
+  entry1 *--> LargePage
+}
+
+map L1PageUpperDirectory {
+  entry0 *-> L2PageDirectory
+  entry1 *--> GiantPage
+}
+
+map L0PageGlobalDirectory {
+  entry0 *-> L1PageUpperDirectory
+  entry1 *--> L1PageUpperDirectory_2
+}
+
+map VirtSpace {
+  root *-> L0PageGlobalDirectory
+}
+
+@enduml

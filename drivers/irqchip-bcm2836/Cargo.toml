@@ -1,0 +1,40 @@
+[package]
+name = "irqchip-bcm2836"
+
+description = "Privileged interrupt-controller component for the BCM2836/7 local controller and the cascaded BCM2835 ARM-control block (Raspberry Pi 3)."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+# Opt in to standard host integration tests of the register logic.
+host-tests = []
+
+[dependencies]
+libaddress = { workspace = true }
+libirqchip = { workspace = true }
+libmmio = { workspace = true }
+tock-registers = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "irqchip-bcm2836"
+test = false
+
+[[test]]
+name = "bcm2836"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

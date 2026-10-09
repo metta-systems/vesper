@@ -1,13 +1,12 @@
 [package]
-name = "libboot"
+name = "vesper-boot"
 
-description = "Kernel boot code"
+description = "Vesper nanokernel boot PIE section."
 
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
 edition = { workspace = true }
-homepage = { workspace = true }
 license = { workspace = true }
 readme = { workspace = true }
 repository = { workspace = true }
@@ -23,6 +22,11 @@ aarch64-cpu = { workspace = true }
 libcpu = { workspace = true }
 libplatform = { workspace = true }
 tock-registers = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

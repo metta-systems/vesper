@@ -3,4 +3,4 @@
 pipelining = true
 
 [target.aarch64-metta-none-eabi]
-runner = "cargo make qemu-test-runner"
+runner = "just _test-runner"

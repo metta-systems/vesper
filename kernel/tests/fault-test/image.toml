@@ -1,0 +1,12 @@
+# What fault-test bundles (see vesper-image-build): its EL0 components.
+# `binary` is the cargo binary name, built with userspace/runtime/user.ld.
+
+[[component]]
+name = "faulter"
+binary = "fault-faulter"
+active = true
+
+[[component]]
+name = "bare"
+binary = "fault-bare"
+active = true

@@ -1,0 +1,18 @@
+# What kickstart embeds (see vesper-image-build). `binary` is the cargo
+# binary name, built with the nucleus linker script.
+
+[nucleus]
+binary = "nucleus"
+
+# Privileged (EL1) components, built position-independent with
+# drivers/privileged.ld (`just build-privileged`). Kickstart loads the
+# interrupt controller whose `compatible` list matches the device tree's root
+# interrupt controller; one image carries them all.
+
+[[privileged]]
+name = "bcm2836"
+binary = "irqchip-bcm2836"
+
+[[privileged]]
+name = "gicv2"
+binary = "irqchip-gicv2"

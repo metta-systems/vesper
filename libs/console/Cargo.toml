@@ -1,13 +1,12 @@
 [package]
-name = "libconsole"
+name = "vesper-console"
 
-description = "Console functions."
+description = "Vesper nanokernel console functions."
 
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
 edition = { workspace = true }
-homepage = { workspace = true }
 license = { workspace = true }
 readme = { workspace = true }
 repository = { workspace = true }
@@ -23,14 +22,19 @@ default = []
 qemu = []
 
 [dependencies]
-aarch64-cpu = { workspace = true }
+# aarch64-cpu = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
+libprint = { workspace = true }
 libqemu = { workspace = true }
-libtime = { workspace = true }
+# libtime = { workspace = true }
 
+# libtest = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
 [lib]
 test = false
+harness = false
 
 [lints]
 workspace = true

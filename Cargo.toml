@@ -1,34 +1,70 @@
 [workspace]
 members = [
-  "nucleus",
+  "kernel/nucleus",
+  "kernel/kickstart",
+  "kernel/tests/memory-test",
+  "kernel/tests/ppc-test",
+  "kernel/tests/sync-test",
+  "kernel/tests/capability-test",
+  "kernel/tests/endpoint-test",
+  "kernel/tests/fault-test",
+  "kernel/tests/fp-trap-test",
+  "kernel/tests/preempt-test",
   "bin/chainboot",
   "bin/chainofcommand",
+  # Privileged components
+  "drivers/irqchip-bcm2836",
+  "drivers/irqchip-gicv2",
   # Libraries
+  "libs/address",
+  "libs/alloc",
   "libs/boot",
   "libs/console",
   "libs/cpu",
+  "libs/devicetree",
   "libs/driver",
   "libs/exception",
+  "libs/image",
+  "libs/image-build",
+  "libs/irqchip",
+  "libs/kicktest",
   "libs/kernel-state",
   "libs/local-irq",
   "libs/locking",
   "libs/log",
   "libs/machine",
+  "libs/mapping",
   "libs/memory",
+  "libs/mmio",
+  "libs/object",
   "libs/platform",
   "libs/primitives",
+  "libs/print",
   "libs/qemu",
+  "libs/syscall",
   "libs/test",
   "libs/time",
+  # Userspace
+  "userspace/runtime",
+  "userspace/tests/endpoint/client",
+  "userspace/tests/endpoint/endpoint",
+  "userspace/tests/endpoint/protocol",
+  "userspace/tests/endpoint/server",
+  "userspace/tests/fault/bare",
+  "userspace/tests/fault/faulter",
+  "userspace/tests/fault/protocol",
+  "userspace/tests/fp-trap/probe",
+  "userspace/tests/fp-trap/protocol",
+  "userspace/tests/hello",
+  "userspace/tests/preempt/spinner",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
 categories = ["embedded", "no-std", "os"]
 documentation = "https://docs.metta.systems/vesper"
 edition = "2024"
-homepage = "https://github.com/metta-systems/vesper"
 license = "BlueOak-1.0.0"
 publish = false
 readme = "README.md"
@@ -39,53 +75,74 @@ version = "0.0.1"
 #========
 # target
 #========
-aarch64-cpu = { version = "11.2" }
-bit_field = { version = "0.10" }
-bitflags = { version = "2.10" }
-buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
+arm-gic = { version = "0.10", default-features = false }
+aarch64-cpu = { version = "11.2", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
+arbitrary-int = { version = "2.2", default-features = false }
+bitbybit  = { version = "2.0" }
+# bitflags = { version = "2.10" }
+# buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
-libboot = { path = "libs/boot" }
-libconsole = { path = "libs/console" }
-libcpu = { path = "libs/cpu" }
-libdriver = { path = "libs/driver" }
-libexception = { path = "libs/exception" }
-libkernel-state = { path = "libs/kernel-state" }
-liblocal-irq = { path = "libs/local-irq" }
-liblocking = { path = "libs/locking" }
-liblog = { path = "libs/log" }
-libmachine = { path = "libs/machine" }
-libmemory = { path = "libs/memory" }
-libplatform = { path = "libs/platform" }
-libprimitives = { path = "libs/primitives" }
-libqemu = { path = "libs/qemu" }
-libtest = { path = "libs/test" }
-libtime = { path = "libs/time" }
+libaddress = { path = "libs/address", package = "vesper-address" }
+# liballoc = { path = "libs/alloc", package = "vesper-alloc" }
+libboot = { path = "libs/boot", package = "vesper-boot" }
+libconsole = { path = "libs/console", package = "vesper-console" }
+libcpu = { path = "libs/cpu", package = "vesper-cpu" }
+libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
+libdriver = { path = "libs/driver", package = "vesper-drivers" }
+libexception = { path = "libs/exception", package = "vesper-exceptions" }
+libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
+libimage = { path = "libs/image", package = "vesper-image" }
+libimage-build = { path = "libs/image-build", package = "vesper-image-build" }
+libirqchip = { path = "libs/irqchip", package = "vesper-irqchip" }
+libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
+liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
+liblocking = { path = "libs/locking", package = "vesper-locking" }
+liblog = { path = "libs/log", package = "vesper-log" }
+libmachine = { path = "libs/machine", package = "vesper-machines" }
+libmapping = { path = "libs/mapping", package = "vesper-mapping" }
+# libmemory = { path = "libs/memory", package = "vesper-memory" }
+libmmio = { path = "libs/mmio", package = "vesper-mmio" }
+libobject = { path = "libs/object", package = "vesper-objects" }
+libplatform = { path = "libs/platform", package = "vesper-platforms" }
+libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
+libprint = { path = "libs/print", package = "vesper-print" }
+libqemu = { path = "libs/qemu", package = "vesper-qemu" }
+libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
+libtest = { path = "libs/test", package = "vesper-tests" }
+libtime = { path = "libs/time", package = "vesper-time" }
+libuser = { path = "userspace/runtime", package = "vesper-user-runtime" }
+num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
-qemu-exit = { version = "3.0" }
-snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
+# safe-mmio = { version = "0.3" }
+snafu = { version = "0.9", default-features = false }
+# static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
-ux = { version = "0.1", default-features = false }
 #======
 # host
 #======
 anyhow = { version = "1.0" }
 argh = { version = "0.1" }
-bytes = { version = "1.11" }
+bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
-futures-util = { version = "0.3", features = ["io"] }
-tokio = { version = "1.49", features = ["full"] }
-tokio-serial = { version = "5.4" }
+# futures-util = { version = "0.3", features = ["io"] }
+# serialport = { version = "4.0" }
+tokio = { version = "1.53", features = ["full"] }
+tokio-serial = { version = "5.5" }
 tokio-stream = { version = "0.1" }
-tokio-util = { version = "0.7", features = ["codec", "io"] }
+# tokio-util = { version = "0.7", features = ["codec", "io"] }
+#==========
+# build.rs
+#==========
+goblin = { version = "0.10" }
+minijinja = { version = "3" }
+toml = { version = "1.1" }
 #=======
 # mixed
 #=======
 seahash = { version = "4.1" }
-
-[patch.crates-io]
-serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = "macos-ENOTTY-fix" }
+owo-colors = { version = "4.4" }
 
 [profile.dev]
 # See https://github.com/rust-lang/cargo/issues/7359 about why panic=abort is not working here.
@@ -98,7 +155,7 @@ codegen-units = 1
 debug = true
 lto = true
 opt-level = 's'
-panic = "abort"
+# panic = "abort" # - debug in qemu - wanna see panics
 
 [profile.release-fast]
 codegen-units = 16
@@ -156,7 +213,6 @@ float_cmp_const = "deny"
 fn_params_excessive_bools = "deny"
 fn_to_numeric_cast_any = "deny"
 format_push_string = "deny"
-from_iter_instead_of_collect = "deny"
 get_unwrap = "deny"
 if_not_else = "deny"
 if_then_some_else_none = "deny"

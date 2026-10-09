@@ -1,0 +1,2 @@
+- [x] Expand to include PowerPC 
+- [ ] Expand to include other granule sizes (16K and 64K for arm, to test how it scales)
