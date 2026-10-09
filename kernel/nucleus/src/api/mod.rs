@@ -89,26 +89,26 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 ) -> Result<InvokeOutcome, CapError> {
     let (key, op, operands) = decode_invocation(saved);
     let args = &operands;
-    semi::println!(
-        "🔄 handle_cap_invoke(key {key:?},op {op},args[{:x},{:x},{:x},{:x},{:x},{:x}])",
-        args[0],
-        args[1],
-        args[2],
-        args[3],
-        args[4],
-        args[5]
-    );
+    // semi::println!(
+    //     "🔄 handle_cap_invoke(key {key:?},op {op},args[{:x},{:x},{:x},{:x},{:x},{:x}])",
+    //     args[0],
+    //     args[1],
+    //     args[2],
+    //     args[3],
+    //     args[4],
+    //     args[5]
+    // );
     // SAFETY: the caller holds the kernel lock for the whole invocation and
     // constructs no overlapping access context.
     let access = unsafe { Access::new() };
     let caller = caller_table(nucleus, &access, key)?;
     let obj_type = {
         let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
-        semi::println!("handle_cap_invoke(got entry)");
+        // semi::println!("handle_cap_invoke(got entry)");
         caller_table.lookup(key, caller.guard)?.object_type()
     };
 
-    semi::println!("handle_cap_invoke(resolved obj_type {})", obj_type.as_u8());
+    // semi::println!("handle_cap_invoke(resolved obj_type {})", obj_type.as_u8());
 
     if core::hint::unlikely(obj_type.is_arch()) {
         // Architecture-specific dispatch (less common path)
@@ -171,7 +171,7 @@ fn core_invoke<A: ArchObjects>(
     let args = &operands;
     let core_type = CoreType::try_from(obj_type)?;
 
-    semi::println!("🔄 core_invoke {key:?} / {core_type}:{op}");
+    // semi::println!("🔄 core_invoke {key:?} / {core_type}:{op}");
 
     match core_type {
         CoreType::Null => Err(CapError::NullCapability),
@@ -271,7 +271,7 @@ fn arch_invoke<A: ArchObjects>(
 ) -> Result<InvokeOutcome, CapError> {
     let arch_type = ArchType::try_from(obj_type)?;
 
-    semi::println!("🔄 arch_invoke {key:?} / {arch_type}:{op}");
+    // semi::println!("🔄 arch_invoke {key:?} / {arch_type}:{op}");
 
     match arch_type {
         ArchType::Frame => {

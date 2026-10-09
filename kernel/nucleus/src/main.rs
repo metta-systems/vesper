@@ -349,13 +349,13 @@ use owo_colors::OwoColorize;
 extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
     let key = RawKey::from_wire(frame.gpr[0]);
     let op = frame.gpr[1];
-    semi::println!(
-        "➡️  {}(key: {key:?}, op: {op}) @ PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
-        "CapInvoke SYSCALL".dimmed(),
-        get_pc(),
-        get_sp(),
-        core::ptr::from_mut(frame) as u64,
-    );
+    // semi::println!(
+    //     "➡️  {}(key: {key:?}, op: {op}) @ PC {:#016X}, SP {:#016X}, exception frame @ {:#016X}",
+    //     "CapInvoke SYSCALL".dimmed(),
+    //     get_pc(),
+    //     get_sp(),
+    //     core::ptr::from_mut(frame) as u64,
+    // );
 
     // SP_EL1 belongs to the active kernel, not a schedulable caller. Gate
     // provenance before dispatch can reserve a pending record or mutate queues.
@@ -458,10 +458,10 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         Err(e) => e.code(),
     };
     // Return values
-    semi::println!(
-        "⬅️  {}(Return {x0:#x}, {x1:#x}, {x2:#x})",
-        "CapInvoke SYSCALL".dimmed()
-    );
+    // semi::println!(
+    //     "⬅️  {}(Return {x0:#x}, {x1:#x}, {x2:#x})",
+    //     "CapInvoke SYSCALL".dimmed()
+    // );
     frame.gpr[0] = x0;
     frame.gpr[1] = x1;
     frame.gpr[2] = x2;
