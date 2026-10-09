@@ -35,7 +35,7 @@ Moves the entry to the destination slot, keeping its rights, badge and state (a 
 
 ### Delete
 
-Removes the entry. The object it named is unaffected: deleting a capability neither retires the object nor unmaps a Frame. Delete accepts an entry of any kind.
+Removes the entry. The object it named is unaffected: deleting a capability neither retires the object nor unmaps a Frame. Delete accepts an entry of any kind, including one whose object has been retired.
 
 ### Errors
 

@@ -12,7 +12,7 @@
 use {
     crate::objects::{
         ArchObjects, ExecutionContext, InvocationContinuation, Nucleus,
-        access::{Access, ObjectId, PoolTag},
+        access::{Access, ObjectId},
         resume::{PreparedTranslationContext, execution_origin, prepare_translation_context},
     },
     core::num::NonZero,
@@ -208,26 +208,11 @@ impl<A: ArchObjects> Nucleus<A> {
         if !execution_origin(saved.origin) {
             return Err(CapError::InvalidDomain);
         }
-        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
-        let current_index =
-            usize::try_from(current).map_err(|_invalid_index| CapError::InvalidDomain)?;
-        let source = self
-            .pools
-            .threads
-            .get_live(current_index)
-            .ok_or(CapError::InvalidDomain)?;
+        let source_thread = self.current_thread_id()?;
+        let source = self.current_thread_ref()?;
         if source.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
-        let source_thread = ObjectId {
-            pool: PoolTag::Thread,
-            index: u16::try_from(current_index).map_err(|_too_wide| CapError::InvalidDomain)?,
-            generation: self
-                .pools
-                .threads
-                .generation_of(current_index)
-                .ok_or(CapError::InvalidDomain)?,
-        };
 
         // Stage 1: stale or reused target identity precedes supplied values.
         access
@@ -324,7 +309,7 @@ impl<A: ArchObjects> Nucleus<A> {
     pub fn commit_call(&mut self, prepared: PreparedCall) -> Result<CommittedCall, CapError> {
         let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
         let source_thread = prepared.source_thread;
-        if u32::from(source_thread.index) != current {
+        if source_thread != current {
             return Err(CapError::InvalidOperation);
         }
         self.pools
@@ -486,26 +471,11 @@ impl<A: ArchObjects> Nucleus<A> {
         if !execution_origin(saved.origin) {
             return Err(CapError::InvalidDomain.into());
         }
-        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
-        let current_index =
-            usize::try_from(current).map_err(|_invalid_index| CapError::InvalidDomain)?;
-        let thread = self
-            .pools
-            .threads
-            .get_live(current_index)
-            .ok_or(CapError::InvalidDomain)?;
+        let source_thread = self.current_thread_id()?;
+        let thread = self.current_thread_ref()?;
         if thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation.into());
         }
-        let source_thread = ObjectId {
-            pool: PoolTag::Thread,
-            index: u16::try_from(current_index).map_err(|_too_wide| CapError::InvalidDomain)?,
-            generation: self
-                .pools
-                .threads
-                .generation_of(current_index)
-                .ok_or(CapError::InvalidDomain)?,
-        };
 
         let continuation = *thread
             .invocation_stack
@@ -544,7 +514,7 @@ impl<A: ArchObjects> Nucleus<A> {
     pub fn commit_return(&mut self, prepared: PreparedReturn) -> Result<CommittedReturn, CapError> {
         let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
         let source_thread = prepared.source_thread;
-        if u32::from(source_thread.index) != current {
+        if source_thread != current {
             return Err(CapError::InvalidOperation);
         }
         self.pools

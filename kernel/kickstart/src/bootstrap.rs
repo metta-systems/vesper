@@ -328,8 +328,6 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
 
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.
     let nucleus: &'static mut Nucleus<ArchObjectsImpl> = unsafe { &mut *nucleus_ptr };
-    // The boot Thread is the first (index 0) allocation; make it current.
-    nucleus.current_thread = Some(0);
 
     // Allocate the boot AddressSpace (the protection/mapping context) and the
     // boot Thread that executes in it; the Thread's KeyTable was carved and
@@ -363,6 +361,8 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
         })
         .expect("no boot Thread slot")
         .0;
+    // The boot Thread is the first allocation; make it current.
+    nucleus.current_thread = Some(boot_thread_id);
 
     // Install the boot Thread's self-table capability, its AddressSpace
     // (the bootstrap-era mapping context for `PageTable.Map`/`Frame.Map`),

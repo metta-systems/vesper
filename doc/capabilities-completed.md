@@ -41,6 +41,8 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] KeyTable CopyDerive/Move/Delete with separate `DERIVE`/`REMOVE`/`INSTALL` rights, incarnation-checked selectors, vacant destinations, atomic cross-table updates and Move rollback (`test-key-table`).
 - [x] Pooled objects carry generation-checked identities (`ObjectPool`, one variable-size carve per pool from the boot Untyped).
 - [x] A capability naming a no-longer-live pooled object fails with `InconsistentKey`/`ObjectRetired` on its key (`IdentityError::for_key`); exercised by `sync-test`, `memory-test`, the Call fixture in `test-debug-console` and the `ObjectPool` unit tests.
+- [x] KeyTable Delete removes entries naming retired Threads and AddressSpaces without resolving the object; the deleted key then reports `CapabilityInvalidated` (`sync-test`, `memory-test`).
+- [x] The current Thread is an incarnation-checked identity (`Nucleus::current_thread: Option<ObjectId>`, read through `current_thread_id`/`current_thread_ref`); stale generations select no Thread, table or DCB (`test-debug-console`).
 - [x] `Thread.Retire` (op 4, `RETIRE`) cancels the Thread's pending waits and frees its slot; `AddressSpace.Retire` (op 1) invalidates its ASID and releases it (`sync-test`, `memory-test`).
 - [x] Inert-nucleus boot: Kickstart carves the `Nucleus`, the boot Thread/AddressSpace and table, and installs the boot grants.
 - [x] Scheduler and Brand wire IDs registered (`Scheduler = 5`, `Brand = 6`) with no handlers.

@@ -198,18 +198,7 @@ fn activate<A: ArchObjects>(
     // Bootstrap-era restriction: only the current caller's own AddressSpace
     // activates. Switching the caller's own hardware context to a different
     // address space is a scheduling transition that does not exist yet.
-    let current_thread = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
-    let current_as = {
-        let index = usize::try_from(current_thread)
-            .ok()
-            .ok_or(CapError::InvalidDomain)?;
-        let thread = nucleus
-            .pools
-            .threads
-            .get_live(index)
-            .ok_or(CapError::InvalidDomain)?;
-        thread.address_space
-    };
+    let current_as = nucleus.current_thread_ref()?.address_space;
     if as_id != current_as {
         return Err(CapError::InvalidOperation);
     }
@@ -246,18 +235,7 @@ fn retire<A: ArchObjects>(
 
     // The caller must be a surviving user of a different address space:
     // retiring the current caller's own context has no sound return path.
-    let current_thread = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
-    let current_as = {
-        let index = usize::try_from(current_thread)
-            .ok()
-            .ok_or(CapError::InvalidDomain)?;
-        let thread = nucleus
-            .pools
-            .threads
-            .get_live(index)
-            .ok_or(CapError::InvalidDomain)?;
-        thread.address_space
-    };
+    let current_as = nucleus.current_thread_ref()?.address_space;
     if as_id == current_as {
         return Err(CapError::InvalidOperation);
     }

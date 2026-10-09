@@ -394,6 +394,17 @@ impl<T: NucleusObject> ObjectPool<T> {
         (meta.state == SlotState::Live).then_some(meta.generation)
     }
 
+    /// The checked identity of the live object at `index`, for kernel paths
+    /// that select an object by slot (scheduler selection, bootstrap) and
+    /// carry it on as an identity from then on.
+    pub fn live_identity(&self, index: usize) -> Option<ObjectId> {
+        Some(ObjectId {
+            pool: T::POOL,
+            index: u16::try_from(index).ok()?,
+            generation: self.generation_of(index)?,
+        })
+    }
+
     /// Number of live objects.
     pub fn len(&self) -> usize {
         usize::from(self.count)

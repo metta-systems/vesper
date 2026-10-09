@@ -61,7 +61,7 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
             let source = nucleus
                 .create_thread(source_as)
                 .expect("source Thread allocation");
-            nucleus.current_thread = Some(u32::from(source.index));
+            nucleus.current_thread = Some(source);
             let address_space = nucleus
                 .pools
                 .arch
@@ -133,7 +133,7 @@ fn call_frame(key: RawKey, target_sp: u64) -> SavedContext {
 }
 
 fn source_mut(nucleus: &mut Nucleus<ArchObjectsImpl>) -> &mut crate::objects::Thread {
-    let index = usize::try_from(nucleus.current_thread.unwrap()).unwrap();
+    let index = usize::from(nucleus.current_thread.unwrap().index);
     nucleus.pools.threads.get_live_mut(index).unwrap()
 }
 
@@ -165,7 +165,7 @@ fn table_digest(address: u64) -> u64 {
 
 #[derive(Debug, PartialEq, Eq)]
 struct Snapshot {
-    current_thread: Option<u32>,
+    current_thread: Option<ObjectId>,
     source_address_space: ObjectId,
     source_context: crate::objects::ExecutionContext,
     source_stack: InvocationStack,
@@ -290,13 +290,13 @@ fn call_preparation_describes_the_migration_without_mutating_anything() {
         assert_eq!(source_mut(nucleus).invocation_stack.len(), 3);
 
         let current = nucleus.current_thread.unwrap();
-        assert_eq!(u32::from(prepared.source_thread().index), current);
+        assert_eq!(prepared.source_thread(), current);
         assert_eq!(
             Some(prepared.source_thread().generation),
             nucleus
                 .pools
                 .threads
-                .generation_of(usize::try_from(current).unwrap())
+                .generation_of(usize::from(current.index))
         );
         assert_eq!(prepared.entry_pc().get(), FUNCTION);
         assert_eq!(prepared.target_sp(), LOWEST_SP);
@@ -627,10 +627,7 @@ fn call_commit_pushes_continuation_and_migrates_into_the_target_table() {
             nucleus.current_thread_table_addr(),
             Some(fixture.target_table)
         );
-        assert_eq!(
-            u32::from(commit.source_thread.index),
-            nucleus.current_thread.unwrap()
-        );
+        assert_eq!(Some(commit.source_thread), nucleus.current_thread);
         assert_eq!(commit.translation.address_space(), fixture.target_as);
         assert_eq!(commit.translation.root(), ROOT);
         assert_eq!(commit.translation.asid(), 2);
@@ -732,7 +729,7 @@ fn stale_prepared_call_is_rejected_without_mutation() {
                 // A different Thread is current.
                 _ => {
                     let other = nucleus.create_thread(fixture.source_as).unwrap();
-                    nucleus.current_thread = Some(u32::from(other.index));
+                    nucleus.current_thread = Some(other);
                 }
             }
             let before = snapshot(nucleus, &fixture);
@@ -924,10 +921,7 @@ fn call_then_return_restores_the_exact_source_context_and_table() {
         assert_eq!(commit.translation.address_space(), fixture.source_as);
         assert_eq!(commit.translation.root(), SOURCE_ROOT);
         assert_eq!(commit.translation.asid(), 1);
-        assert_eq!(
-            u32::from(commit.source_thread.index),
-            nucleus.current_thread.unwrap()
-        );
+        assert_eq!(Some(commit.source_thread), nucleus.current_thread);
         // Back in the source AS and table, with the prior stack exactly restored.
         assert_eq!(
             nucleus.current_thread_table_addr(),
@@ -1057,18 +1051,7 @@ fn live_but_unready_source_is_rejected_without_pop() {
 fn return_key_form_and_lookup_errors_precede_the_pop() {
     with_call(|nucleus, fixture| {
         committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
-        let thread = {
-            let index = nucleus.current_thread.unwrap();
-            ObjectId {
-                pool: crate::objects::access::PoolTag::Thread,
-                index: u16::try_from(index).unwrap(),
-                generation: nucleus
-                    .pools
-                    .threads
-                    .generation_of(usize::try_from(index).unwrap())
-                    .unwrap(),
-            }
-        };
+        let thread = nucleus.current_thread.unwrap();
         let named = nucleus
             .current_thread_table_mut()
             .unwrap()
@@ -1159,7 +1142,7 @@ fn stale_prepared_return_is_rejected_without_mutation() {
                 1 => source_mut(nucleus).address_space = fixture.source_as,
                 _ => {
                     let other = nucleus.create_thread(fixture.source_as).unwrap();
-                    nucleus.current_thread = Some(u32::from(other.index));
+                    nucleus.current_thread = Some(other);
                 }
             }
             let before = snapshot(nucleus, &fixture);
@@ -1331,7 +1314,10 @@ fn expect_unhandled(
         ExecutionContext::Faulted { saved: faulting }
     );
     assert_eq!(thread.fault, None);
-    assert_eq!(nucleus.current_thread, Some(u32::from(next)));
+    assert_eq!(
+        nucleus.current_thread,
+        nucleus.pools.threads.live_identity(usize::from(next))
+    );
 }
 
 #[test_case]
@@ -1426,7 +1412,7 @@ fn an_ordinary_return_inside_the_handler_does_not_end_the_fault() {
 #[test_case]
 fn a_fault_without_a_handler_parks_the_thread_and_counts_it() {
     with_call(|nucleus, fixture| {
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = u32::from(nucleus.current_thread.unwrap().index);
         let next = queue_next_thread(nucleus, &fixture);
         let faulting = faulting_frame();
         let delivery = deliver(nucleus, faulting, fault_info(0));
@@ -1446,7 +1432,7 @@ fn a_fault_while_the_handler_is_busy_is_unhandled() {
             .get_live_mut(usize::from(fixture.source_as.index))
             .unwrap()
             .set_fault_handler_busy(true);
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = u32::from(nucleus.current_thread.unwrap().index);
         let next = queue_next_thread(nucleus, &fixture);
         let faulting = faulting_frame();
         let delivery = deliver(nucleus, faulting, fault_info(0));
@@ -1460,7 +1446,7 @@ fn a_fault_while_the_handler_is_busy_is_unhandled() {
 fn a_fault_inside_the_handler_is_unhandled_and_frees_the_handler() {
     with_call(|nucleus, fixture| {
         install_fault_handler(nucleus, &fixture);
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = u32::from(nucleus.current_thread.unwrap().index);
         let next = queue_next_thread(nucleus, &fixture);
         let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
             panic!("the first fault must reach the handler");
@@ -1481,7 +1467,7 @@ fn a_fault_with_a_full_invocation_stack_is_unhandled() {
     with_call(|nucleus, fixture| {
         install_fault_handler(nucleus, &fixture);
         fill_stack(nucleus, INVOCATION_STACK_DEPTH);
-        let faulted = nucleus.current_thread.unwrap();
+        let faulted = u32::from(nucleus.current_thread.unwrap().index);
         let next = queue_next_thread(nucleus, &fixture);
         let faulting = faulting_frame();
         let delivery = deliver(nucleus, faulting, fault_info(16));
@@ -1497,7 +1483,7 @@ fn releasing_a_thread_fault_frees_its_handler() {
         let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
             panic!("the fault must reach the handler");
         };
-        let index = usize::try_from(nucleus.current_thread.unwrap()).unwrap();
+        let index = usize::from(nucleus.current_thread.unwrap().index);
         nucleus.release_thread_fault(index);
         assert_eq!(source_mut(nucleus).fault, None);
         assert_eq!(handler_state(nucleus, fixture.source_as), (false, 0));

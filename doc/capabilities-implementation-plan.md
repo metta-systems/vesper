@@ -93,9 +93,8 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 
 - [ ] Give carved objects (KeyTables, Frames) a retirement identity so retirement rejects old capabilities in every table without an ancestry walk.
 - [ ] Implement permission-based retirement for the remaining kinds (only Thread and AddressSpace have `Retire`); test that creator control survives delegation and that accepted leaks cause no automatic destruction or conflicting reuse.
-- [ ] Test KeyTable Delete of entries naming retired Threads and AddressSpaces (Delete accepts any kind and checks only the slot incarnation).
 - [ ] Define the retirement-to-background-cleanup handoff to entrusted managers (no central post-hoc registration).
-- [ ] Track the current Thread as an incarnation-checked identity, not a bare pool index (`Nucleus::current_thread`).
+- [ ] Hold retired pooled objects in `SlotState::Retired` until manager cleanup completes ([contract](capabilities-contract.md#lifecycle-and-authority-contract)): `Thread.Retire` and `AddressSpace.Retire` retire the slot instead of freeing it (today `ObjectPool::deallocate` marks it `Free` and nothing sets `Retired`), `ObjectPool::allocate` never reuses a `Retired` slot, and only the cleanup handoff above returns a slot to `Free`. Rollback of a failed Retype still frees directly. Test that a retired slot is not reallocated before cleanup, that its stale keys report `ObjectRetired` before and after release, and that pool exhaustion counts held slots. Prerequisite: the handoff item above (D2 completion handshake).
 - [ ] Settle pool retirement, reuse validation and the zero-sized-type policy for `ObjectPool`; create pools at runtime, not only at bootstrap.
 - [ ] After implementation experience, review the guarded key-space configuration (per-table guards, bare destination slots, guard-in-capability storage sourced from `SELF_KEYTABLE`) and confirm or revise it.
 
@@ -106,6 +105,7 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private.
 - [ ] Implement hierarchical Scheduler derivation, root-only Thread creation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
 - [ ] Move notification and block-reason accounting into the shared records, with event-summary indexing and Thread-retirement cleanup.
+- [ ] Carry incarnation-checked Thread identities in the kernel run queue: `Scheduler` still queues bare pool indices, and selection mints the current Thread's identity from the live slot (`ObjectPool::live_identity`).
 - [ ] Test scheduler/Frame authority, mapped and unmapped ShareRegion inputs, re-share rejection, stride placement, identity reuse, tree constraints, root creation/donation, publication/reuse and Thread teardown; run target checks for record access and kernel-private state isolation.
 - [ ] Implement Brand once its binding is selected, in the IRQ slice.
 

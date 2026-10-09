@@ -122,8 +122,7 @@ fn retire<A: ArchObjects>(
     // The caller must be a surviving Thread: retiring the current Thread
     // from inside its own invocation has no sound return path yet
     // (never-returns self-retirement is contract-recorded follow-up).
-    let current = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
-    if u32::from(thread_id.index) == current {
+    if thread_id == nucleus.current_thread_id()? {
         return Err(CapError::InvalidOperation);
     }
 

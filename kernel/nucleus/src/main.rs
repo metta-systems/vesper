@@ -240,8 +240,7 @@ fn current_invocation_depth() -> u64 {
             // SAFETY: the anchor names the live Nucleus; the lock serializes
             // this read.
             let nucleus = unsafe { &*nucleus };
-            let index = usize::try_from(nucleus.current_thread?).ok()?;
-            let thread = nucleus.pools.threads.get_live(index)?;
+            let thread = nucleus.current_thread_ref().ok()?;
             u64::try_from(thread.invocation_stack.len()).ok()
         })
         .unwrap_or(0)
@@ -588,10 +587,9 @@ fn terminate_faulted(frame: &mut ExceptionContext, faulting: &SavedContext) {
         let nucleus = unsafe { &mut *nucleus_ptr };
         // SAFETY: as in `deliver_fault`.
         let access = unsafe { Access::new() };
-        let current = nucleus.current_thread.map(|index| index as usize);
-        current
-            .ok_or(CapError::InvalidDomain)
-            .and_then(|current| nucleus.park_faulted(&access, current, *faulting))
+        nucleus.current_thread_id().and_then(|current| {
+            nucleus.park_faulted(&access, usize::from(current.index), *faulting)
+        })
     });
     match resumed {
         Ok(resumed) => {

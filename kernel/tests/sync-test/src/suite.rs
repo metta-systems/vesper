@@ -606,6 +606,48 @@ pub fn run() {
             }
             .code())
         );
+
+        // KeyTable Delete removes the entry naming the retired Thread: it
+        // checks only the slot incarnation and never resolves the object.
+        let occupied_before = {
+            // SAFETY: retained boot table, borrowed only between SVCs.
+            unsafe { &*(keytable_addr as *const KeyTable) }.len()
+        };
+        KeyTableKey::from_key(self_table_key)
+            .delete(bounce_thread_key)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Delete of a retired Thread's entry failed: {:?}",
+                    error.code()
+                )
+            });
+        assert_eq!(
+            // SAFETY: as above.
+            unsafe { &*(keytable_addr as *const KeyTable) }.len(),
+            occupied_before - 1
+        );
+        // The deleted key now fails lookup ahead of the object check, both
+        // when invoked and when passed to a second Delete.
+        let deleted = |operand| {
+            CapError::InconsistentKey {
+                key: bounce_thread_key,
+                reason: InconsistencyReason::CapabilityInvalidated,
+                operand,
+            }
+            .code()
+        };
+        assert_eq!(
+            ThreadKey::from_key(bounce_thread_key, DomainId(1))
+                .retire()
+                .map_err(CapError::code),
+            Err(deleted(0))
+        );
+        assert_eq!(
+            KeyTableKey::from_key(self_table_key)
+                .delete(bounce_thread_key)
+                .map_err(CapError::code),
+            Err(deleted(2))
+        );
     }
 
     semi::println!("Synchronization suite passed");

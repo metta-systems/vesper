@@ -154,7 +154,6 @@ impl<A: ArchObjects> Nucleus<A> {
     }
 
     fn current_index(&self) -> Result<usize, CapError> {
-        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
-        usize::try_from(current).map_err(|_invalid_index| CapError::InvalidDomain)
+        Ok(usize::from(self.current_thread_id()?.index))
     }
 }

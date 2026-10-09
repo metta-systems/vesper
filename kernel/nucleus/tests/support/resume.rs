@@ -91,7 +91,7 @@ fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
                 .unwrap();
             address_space.set_translation_root(Some(ROOT));
             address_space.set_asid(Some(2));
-            nucleus.current_thread = Some(u32::from(source.index));
+            nucleus.current_thread = Some(source);
             assert!(nucleus.scheduler.push(target.index));
             assert!(nucleus.scheduler.push(2));
             test(
@@ -142,7 +142,7 @@ fn reject_unchanged(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits, expec
     };
     let error = result.expect_err("rejected scheduling metadata succeeded");
     assert_eq!(error.code(), expected.code());
-    assert_eq!(nucleus.current_thread, Some(u32::from(waits.source.index)));
+    assert_eq!(nucleus.current_thread, Some(waits.source));
     assert_eq!(nucleus.current_thread_table_addr(), table_before);
     assert_eq!(
         nucleus
@@ -442,7 +442,7 @@ fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result(
             resumed.completion.unwrap().kind,
             PendingKind::EventCountAwait
         );
-        assert_eq!(nucleus.current_thread, Some(u32::from(waits.target.index)));
+        assert_eq!(nucleus.current_thread, Some(waits.target));
         assert_eq!(
             nucleus.current_thread_table_addr(),
             Some(target_binding.address())
@@ -555,7 +555,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             use aarch64_cpu::registers::{Readable, TTBR0_EL1};
             assert_eq!(TTBR0_EL1.get(), ttbr_before);
         }
-        assert_eq!(nucleus.current_thread, Some(u32::from(waits.source.index)));
+        assert_eq!(nucleus.current_thread, Some(waits.source));
         assert_eq!(nucleus.pending.len(), 2);
         assert_eq!(nucleus.scheduler.len(), 2);
         // Same prepared helper also rejects missing metadata through Activate.

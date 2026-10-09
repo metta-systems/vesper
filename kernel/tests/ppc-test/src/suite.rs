@@ -761,12 +761,12 @@ pub fn run() {
             ppc::MINIMUM_HEADROOM,
         )
         .unwrap_or_else(|error| panic!("PPC CreateInvocation failed: {:?}", error.code()));
-    let boot_thread_index = usize::try_from(
+    let boot_thread_index = usize::from(
         nucleus
             .current_thread
-            .unwrap_or_else(|| panic!("no current boot Thread")),
-    )
-    .unwrap_or_else(|_| panic!("boot Thread index out of range"));
+            .unwrap_or_else(|| panic!("no current boot Thread"))
+            .index,
+    );
     let assert_boot_thread_home = |nucleus: &Nucleus<ArchObjectsImpl>| {
         let boot_thread = nucleus
             .pools

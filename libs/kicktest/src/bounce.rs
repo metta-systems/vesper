@@ -129,7 +129,10 @@ pub fn assert_source_selected(
     root: u64,
     asid: u16,
 ) {
-    assert_eq!(nucleus.current_thread, Some(0));
+    assert_eq!(
+        nucleus.current_thread,
+        nucleus.pools.threads.live_identity(0)
+    );
     let thread = nucleus
         .pools
         .threads

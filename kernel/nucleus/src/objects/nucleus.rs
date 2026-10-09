@@ -68,8 +68,10 @@ pub struct NucleusPools<A: ArchObjects> {
 pub struct Nucleus<A: ArchObjects> {
     /// All object pools
     pub pools: NucleusPools<A>,
-    /// Currently running thread
-    pub current_thread: Option<u32 /*ThreadId*/>, // FIXME: not option, always something (Idle or other)
+    /// Currently running thread, as a checked identity: every read validates
+    /// its generation against the thread pool, so a retired or reused slot is
+    /// never mistaken for the current Thread.
+    pub current_thread: Option<ObjectId>, // FIXME: not option, always something (Idle or other)
     /// DCB shared pages
     pub dcb_pages: DcbPages,
     /// Pending-invocation records for blocked callers (completion
@@ -97,11 +99,32 @@ impl<A: ArchObjects> Nucleus<A> {
         0
     }
 
+    /// The current Thread's checked identity. `InvalidDomain` when no Thread
+    /// is current or the recorded identity no longer names a live Thread.
+    pub fn current_thread_id(&self) -> Result<ObjectId, CapError> {
+        let id = self.current_thread.ok_or(CapError::InvalidDomain)?;
+        self.pools
+            .threads
+            .validate(id)
+            .map_err(|_stale_current| CapError::InvalidDomain)?;
+        Ok(id)
+    }
+
+    /// The current Thread, after identity validation; see
+    /// [`Self::current_thread_id`].
+    pub fn current_thread_ref(&self) -> Result<&Thread, CapError> {
+        let id = self.current_thread_id()?;
+        self.pools
+            .threads
+            .get_live(usize::from(id.index))
+            .ok_or(CapError::InvalidDomain)
+    }
+
     /// Nucleus-private thread data, like keytables
     pub fn current_thread_mut(&mut self) -> Option<&mut Thread> {
         // need objects::Thread here, not DCB! or a tuple
-        let id = self.current_thread?;
-        self.pools.threads.get_live_mut(usize::try_from(id).ok()?)
+        let id = self.current_thread_id().ok()?;
+        self.pools.threads.get_live_mut(usize::from(id.index))
     }
 
     /// Shared access to the current thread's capability table.
@@ -125,8 +148,7 @@ impl<A: ArchObjects> Nucleus<A> {
     }
 
     fn current_thread_table_binding(&self) -> Option<KeyTableBinding> {
-        let id = self.current_thread?;
-        let thread = self.pools.threads.get_live(usize::try_from(id).ok()?)?;
+        let thread = self.current_thread_ref().ok()?;
         self.pools
             .arch
             .address_spaces
@@ -144,8 +166,8 @@ impl<A: ArchObjects> Nucleus<A> {
     /// User-visible DCB
     pub fn current_dcb_mut(&mut self) -> Option<&mut DomainControlBlock> {
         // need objects::Thread here, not DCB! or a tuple
-        let id = self.current_thread?;
-        self.dcb_pages.get_mut(DomainId(id))
+        let id = self.current_thread_id().ok()?;
+        self.dcb_pages.get_mut(DomainId(u32::from(id.index)))
     }
 
     // TODO: Testing fixture

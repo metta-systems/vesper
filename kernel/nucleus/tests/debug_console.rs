@@ -326,7 +326,7 @@ fn missing_caller_cannot_invoke_bootstrap_console() {
 
         // Explicitly selecting the existing boot fixture preserves its debug
         // path. Invalid op 1 proves dispatch without dereferencing write args.
-        nucleus.current_thread = Some(0);
+        nucleus.current_thread = nucleus.pools.threads.live_identity(0);
         assert!(matches!(
             cap_invoke(nucleus, key, 1, &args),
             Err(CapError::InvalidOperation)
@@ -352,7 +352,27 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
                 .create_console_thread(fixture_as)
                 .expect("bootstrap console key missing");
             let args = [u64::MAX; 6];
-            for caller in [1, 2, u32::MAX] {
+            // Unallocated slots, an out-of-range index, and a stale generation
+            // of the live console Thread all name no current Thread.
+            let console_thread = nucleus.pools.threads.live_identity(0).unwrap();
+            for caller in [
+                ObjectId {
+                    index: 1,
+                    ..console_thread
+                },
+                ObjectId {
+                    index: 2,
+                    ..console_thread
+                },
+                ObjectId {
+                    index: u16::MAX,
+                    ..console_thread
+                },
+                ObjectId {
+                    generation: console_thread.generation + 1,
+                    ..console_thread
+                },
+            ] {
                 nucleus.current_thread = Some(caller);
                 assert!(nucleus.current_thread_mut().is_none());
                 assert!(matches!(
@@ -371,7 +391,7 @@ fn dispatch_uses_only_the_explicit_allocated_caller_table() {
                     fault: None,
                 })
                 .expect("second thread allocation failed");
-            nucleus.current_thread = Some(1);
+            nucleus.current_thread = nucleus.pools.threads.live_identity(1);
             let diag = cap_invoke(nucleus, key, 1, &args);
             let words = match diag {
                 Ok(_) => panic!("second-table invocation succeeded"),
@@ -404,7 +424,7 @@ fn threads_in_the_same_address_space_share_one_dispatch_table() {
         let issued = nucleus
             .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
-        nucleus.current_thread = Some(0);
+        nucleus.current_thread = nucleus.pools.threads.live_identity(0);
         let self_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
         let original_console_id = {
             let table = nucleus.current_thread_table_mut().unwrap();
@@ -425,8 +445,12 @@ fn threads_in_the_same_address_space_share_one_dispatch_table() {
         assert_eq!(second_thread.index, 1);
         assert_eq!(second_thread.generation, 1);
         assert_eq!(nucleus.pools.threads.len(), 2);
-        assert_eq!(nucleus.current_thread, Some(0));
-        for caller in [0, u32::from(second_thread.index)] {
+        assert_eq!(
+            nucleus.current_thread,
+            nucleus.pools.threads.live_identity(0)
+        );
+        let first_thread = nucleus.pools.threads.live_identity(0).unwrap();
+        for caller in [first_thread, second_thread] {
             nucleus.current_thread = Some(caller);
             assert_eq!(
                 nucleus.current_thread_mut().unwrap().address_space,
@@ -475,7 +499,7 @@ fn threads_in_the_same_address_space_share_one_dispatch_table() {
             }
         }
 
-        nucleus.current_thread = Some(0);
+        nucleus.current_thread = nucleus.pools.threads.live_identity(0);
         let rights = Rights(Rights::READ);
         let replacement = {
             let table = nucleus.current_thread_table_mut().unwrap();
@@ -487,7 +511,8 @@ fn threads_in_the_same_address_space_share_one_dispatch_table() {
                 .unwrap_or_else(|_| panic!("shared console replacement failed"))
         };
         assert_eq!(replacement.incarnation(), issued.incarnation() + 1);
-        for caller in [0, u32::from(second_thread.index)] {
+        let first_thread = nucleus.pools.threads.live_identity(0).unwrap();
+        for caller in [first_thread, second_thread] {
             nucleus.current_thread = Some(caller);
             assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
             assert_dispatch_error(nucleus, issued, 0, (27, issued.to_wire(), 1));
@@ -541,7 +566,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
             .context = contexts[1];
         assert!(nucleus.scheduler.push(second.index));
         assert!(nucleus.scheduler.push(first.index));
-        nucleus.current_thread = Some(u32::from(first.index));
+        nucleus.current_thread = Some(first);
 
         let stale = ObjectId {
             pool: PoolTag::Thread,
@@ -589,7 +614,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                 .insert(slot, entry, FIXTURE_GUARD)
                 .unwrap_or_else(|_| panic!("Thread capability installation"));
             for caller in [first, second] {
-                nucleus.current_thread = Some(u32::from(caller.index));
+                nucleus.current_thread = Some(caller);
                 assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
                 for op in 0..=last_op {
                     for direct in [true, false] {
@@ -628,7 +653,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                         };
                         assert!(matches!(error, CapError::InvalidOperation));
                         assert_eq!(error.code(), (8, 0, 0));
-                        assert_eq!(nucleus.current_thread, Some(u32::from(caller.index)));
+                        assert_eq!(nucleus.current_thread, Some(caller));
                         assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
                         assert_eq!(nucleus.pools.threads.len(), 2);
                         for (id, context) in [first, second].into_iter().zip(contexts) {
@@ -727,7 +752,7 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
             let first = nucleus.create_thread(fixture_as).expect("first Thread");
             let second = nucleus.create_thread(fixture_as).expect("second Thread");
             let foreign = nucleus.create_thread(second_as).expect("foreign Thread");
-            nucleus.current_thread = Some(u32::from(first.index));
+            nucleus.current_thread = Some(first);
             let issued = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::THREAD_RETURN.0, 1);
             let replacement =
                 RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::THREAD_RETURN.0, 2);
@@ -774,7 +799,7 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                     _ => unreachable!(),
                 };
                 for caller in [first, second] {
-                    nucleus.current_thread = Some(u32::from(caller.index));
+                    nucleus.current_thread = Some(caller);
                     for (key, words) in [
                         (zero, (26, zero.to_wire(), 1)),
                         (bare, (26, bare.to_wire(), 1)),
@@ -792,7 +817,7 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                                 continue;
                             }
                             assert_dispatch_error(nucleus, key, op, words);
-                            assert_eq!(nucleus.current_thread, Some(u32::from(caller.index)));
+                            assert_eq!(nucleus.current_thread, Some(caller));
                             assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
                             assert_eq!(nucleus.pools.threads.len(), 3);
                             for (id, address_space) in [
@@ -836,12 +861,12 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                 // sentinel under the same packed key. Retire reaches only the
                 // form check there (Return at depth zero would halt by policy),
                 // and the first table's replacement never authorizes it.
-                nucleus.current_thread = Some(u32::from(foreign.index));
+                nucleus.current_thread = Some(foreign);
                 assert_eq!(nucleus.current_thread_table_addr(), Some(second_table_addr));
                 assert_dispatch_error(nucleus, issued, 4, (8, 0, 0));
                 assert_dispatch_error(nucleus, replacement, 0, (27, replacement.to_wire(), 1));
                 assert_eq!(nucleus.current_thread_table_mut().unwrap().len(), 2);
-                nucleus.current_thread = Some(u32::from(first.index));
+                nucleus.current_thread = Some(first);
             }
         },
     );
@@ -851,7 +876,7 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
 fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
     with_nucleus(|nucleus, table_addr, _second, fixture_as, second_as| {
         let thread = nucleus.create_thread(fixture_as).expect("caller Thread");
-        nucleus.current_thread = Some(u32::from(thread.index));
+        nucleus.current_thread = Some(thread);
         let function = NonZero::new(0x80000).unwrap();
         let extent = InvocationStackExtent::new(0x1010, 0x1080, 48, ArchObjectsImpl::USER_VA_END)
             .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()));
@@ -890,7 +915,7 @@ fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
                     .invocation_stack
                     .is_empty()
             );
-            assert_eq!(nucleus.current_thread, Some(u32::from(thread.index)));
+            assert_eq!(nucleus.current_thread, Some(thread));
             assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
             assert_eq!(nucleus.pools.threads.len(), 1);
             let retained = nucleus
@@ -934,7 +959,7 @@ fn changing_thread_address_space_selects_its_table_on_the_next_dispatch() {
             let issued = nucleus
                 .create_console_thread(fixture_as)
                 .expect("bootstrap console key missing");
-            nucleus.current_thread = Some(0);
+            nucleus.current_thread = nucleus.pools.threads.live_identity(0);
             assert_dispatch_error(nucleus, issued, 1, (8, 0, 0));
             assert_eq!(nucleus.current_thread_table_addr(), Some(table_addr));
 
@@ -995,7 +1020,7 @@ fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
             let issued = nucleus
                 .create_console_thread(fixture_as)
                 .expect("bootstrap console key missing");
-            nucleus.current_thread = Some(0);
+            nucleus.current_thread = nucleus.pools.threads.live_identity(0);
             let self_key =
                 RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
             nucleus
@@ -1131,7 +1156,7 @@ fn fixture_thread_creation_rejects_stale_address_space_without_allocating() {
         // did not allocate a Thread even temporarily, or consume its identity.
         assert_eq!(nucleus.pools.threads.generation_of(0), Some(1));
         assert_eq!(issued.incarnation(), 1);
-        nucleus.current_thread = Some(0);
+        nucleus.current_thread = nucleus.pools.threads.live_identity(0);
         assert_eq!(
             nucleus.current_thread_mut().unwrap().address_space,
             replacement_as
@@ -1153,7 +1178,7 @@ fn mismatched_self_table_address_or_size_rejects_dispatch_without_changes() {
             let issued = nucleus
                 .create_console_thread(fixture_as)
                 .expect("bootstrap console key missing");
-            nucleus.current_thread = Some(0);
+            nucleus.current_thread = nucleus.pools.threads.live_identity(0);
             let mut self_key =
                 RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
             for (address, size_bits) in [
@@ -1241,7 +1266,7 @@ fn self_table_capability_remains_the_source_of_the_caller_guard() {
         let issued = nucleus
             .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
-        nucleus.current_thread = Some(0);
+        nucleus.current_thread = nucleus.pools.threads.live_identity(0);
         let self_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
         let changed_guard = FIXTURE_GUARD ^ 1;
         // Deliberately replace private fixture metadata to test the lookup
@@ -1285,7 +1310,7 @@ fn missing_caller_cannot_select_an_existing_dcb() {
     // This page is used only by this test, once in the serial QEMU harness.
     // Static backing satisfies DcbPages' retained-reference lifetime.
     static mut PAGE: DcbPage = DcbPage::new();
-    with_nucleus(|nucleus, _table_addr, _second, _fixture_as, _second_as| {
+    with_nucleus(|nucleus, _table_addr, _second, fixture_as, _second_as| {
         let page = &raw mut PAGE;
         // SAFETY: PAGE is initialized, aligned, static, and exclusively accessed
         // through this DcbPages instance. Tests run with identity-mapped RAM;
@@ -1297,13 +1322,25 @@ fn missing_caller_cannot_select_an_existing_dcb() {
         assert_eq!(first, DomainId(0));
         assert_eq!(second, DomainId(1));
         assert!(nucleus.current_dcb_mut().is_none());
-        for id in [first, second] {
-            nucleus.current_thread = Some(id.0);
+        // A DCB is selected through a live current Thread identity.
+        let first_thread = nucleus
+            .create_thread(fixture_as)
+            .expect("first thread allocation failed");
+        let second_thread = nucleus
+            .create_thread(fixture_as)
+            .expect("second thread allocation failed");
+        for (thread, id) in [(first_thread, first), (second_thread, second)] {
+            assert_eq!(u32::from(thread.index), id.0);
+            nucleus.current_thread = Some(thread);
             assert_eq!(nucleus.current_dcb_mut().unwrap().id, id);
         }
         nucleus.current_thread = None;
         assert!(nucleus.current_dcb_mut().is_none());
-        nucleus.current_thread = Some(u32::MAX);
+        // A stale generation of a live slot selects nothing.
+        nucleus.current_thread = Some(ObjectId {
+            generation: first_thread.generation + 1,
+            ..first_thread
+        });
         assert!(nucleus.current_dcb_mut().is_none());
     });
 }
@@ -1427,7 +1464,7 @@ fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
         let issued = nucleus
             .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
-        nucleus.current_thread = Some(0);
+        nucleus.current_thread = nucleus.pools.threads.live_identity(0);
         // Literal wire words deliberately avoid deriving expectations from the
         // encoder under test. Zero incarnation wins even over a wrong guard;
         // with a nonzero table guard, every address whose guard bits do not
@@ -1485,7 +1522,7 @@ fn production_dispatch_rejects_every_operation_bit_without_changing_table() {
         let issued = nucleus
             .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
-        nucleus.current_thread = Some(0);
+        nucleus.current_thread = nucleus.pools.threads.live_identity(0);
         // Write is zero: every individual set bit is invalid, including all
         // aliases that narrowing to u8/u16/u32 would turn back into Write.
         for op in (0..64).map(|bit| 1_u64 << bit).chain([u64::MAX]) {
@@ -1522,7 +1559,7 @@ fn production_dispatch_rejects_deleted_and_same_type_replaced_keys() {
         let old = nucleus
             .create_console_thread(fixture_as)
             .expect("bootstrap console key missing");
-        nucleus.current_thread = Some(0);
+        nucleus.current_thread = nucleus.pools.threads.live_identity(0);
         assert_dispatch_error(nucleus, old, 1, (8, 0, 0));
         assert_console_table(
             nucleus.current_thread_table_mut().unwrap(),

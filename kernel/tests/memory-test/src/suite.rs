@@ -637,6 +637,43 @@ pub fn run() {
             assert_eq!(entry.rights(), Rights::all());
         }
 
+        // KeyTable Delete removes the entry naming the retired AddressSpace:
+        // it checks only the slot incarnation and never resolves the object.
+        let occupied_before = {
+            // SAFETY: retained boot table, borrowed only between SVCs.
+            unsafe { &*(keytable_addr as *const KeyTable) }.len()
+        };
+        KeyTableKey::from_key(self_table_key)
+            .delete(fixture_as_key)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Delete of a retired AddressSpace's entry failed: {:?}",
+                    error.code()
+                )
+            });
+        assert_eq!(
+            // SAFETY: as above.
+            unsafe { &*(keytable_addr as *const KeyTable) }.len(),
+            occupied_before - 1
+        );
+        // The deleted key now fails lookup ahead of the object check, both
+        // when invoked and when passed to a second Delete.
+        let deleted = |operand| {
+            CapError::InconsistentKey {
+                key: fixture_as_key,
+                reason: InconsistencyReason::CapabilityInvalidated,
+                operand,
+            }
+            .code()
+        };
+        assert_eq!(fixture_as.retire().map_err(CapError::code), Err(deleted(0)));
+        assert_eq!(
+            KeyTableKey::from_key(self_table_key)
+                .delete(fixture_as_key)
+                .map_err(CapError::code),
+            Err(deleted(2))
+        );
+
         // The released ASID is the next one granted: a third fixture
         // AddressSpace with a fresh root binds ASID 2 again.
         // Implementation status: Bounce occupies pool index 1, so this

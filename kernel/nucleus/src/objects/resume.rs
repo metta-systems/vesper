@@ -109,9 +109,8 @@ impl<A: ArchObjects> Nucleus<A> {
         if !execution_origin(saved.origin) {
             return Err(CapError::InvalidDomain);
         }
-        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
-        let current_index =
-            usize::try_from(current).map_err(|_invalid_index| CapError::InvalidDomain)?;
+        let current = self.current_thread_id()?;
+        let current_index = usize::from(current.index);
         let current_thread = self
             .pools
             .threads
@@ -153,9 +152,8 @@ impl<A: ArchObjects> Nucleus<A> {
         if !execution_origin(saved.origin) {
             return Err(CapError::InvalidDomain);
         }
-        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
-        let current_index =
-            usize::try_from(current).map_err(|_invalid_index| CapError::InvalidDomain)?;
+        let current = self.current_thread_id()?;
+        let current_index = usize::from(current.index);
         let current_thread = self
             .pools
             .threads
@@ -178,7 +176,7 @@ impl<A: ArchObjects> Nucleus<A> {
     fn switch_away(
         &mut self,
         access: &Access,
-        current: u32,
+        current: ObjectId,
         current_index: usize,
         parked: &ExecutionContext,
     ) -> Result<PreparedResume, CapError> {
@@ -187,6 +185,12 @@ impl<A: ArchObjects> Nucleus<A> {
         // incarnations; general scheduler identity/reuse remains D3/D5 work.
         let next = self.scheduler.peek().ok_or(CapError::InvalidOperation)?;
         let next_index = usize::from(next);
+        // The selected Thread becomes current as a checked identity.
+        let next_thread = self
+            .pools
+            .threads
+            .live_identity(next_index)
+            .ok_or(CapError::InvalidDomain)?;
         let target = self
             .pools
             .threads
@@ -267,9 +271,9 @@ impl<A: ArchObjects> Nucleus<A> {
             .get_live_mut(next_index)
             .expect("validated target Thread")
             .context = ExecutionContext::Running;
-        self.current_thread = Some(u32::from(next));
+        self.current_thread = Some(next_thread);
         Ok(PreparedResume {
-            current,
+            current: u32::from(current.index),
             next,
             saved: restored,
             translation,

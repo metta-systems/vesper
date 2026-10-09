@@ -135,12 +135,7 @@ fn caller_table<A: ArchObjects>(
     invoked: RawKey,
 ) -> Result<CallerTable, CapError> {
     let binding = {
-        let index = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
-        let thread = nucleus
-            .pools
-            .threads
-            .get_live(usize::try_from(index).map_err(|_invalid_index| CapError::InvalidDomain)?)
-            .ok_or(CapError::InvalidDomain)?;
+        let thread = nucleus.current_thread_ref()?;
         let address_space = access
             .resolve(&nucleus.pools.arch.address_spaces, thread.address_space)
             .map_err(|_invalid_address_space| CapError::InvalidDomain)?;
@@ -257,26 +252,10 @@ pub(crate) fn wake_waiter<A: ArchObjects>(
 
 /// The current thread's incarnation-checked identity, for wait
 /// registration.
-///
-/// The current-thread tracking is index-only today; the generation is read
-/// from the authoritative threads-pool metadata so a stale identity can
-/// never be registered. Coherent current-thread identity carrying its own
-/// generation remains Phase 4 work.
 pub(crate) fn current_waiter<A: ArchObjects>(
     nucleus: &Nucleus<A>,
 ) -> Result<crate::objects::access::ObjectId, CapError> {
-    let index = nucleus.current_thread.ok_or(CapError::InvalidDomain)?;
-    let index = usize::try_from(index).ok().ok_or(CapError::InvalidDomain)?;
-    let generation = nucleus
-        .pools
-        .threads
-        .generation_of(index)
-        .ok_or(CapError::InvalidDomain)?;
-    Ok(crate::objects::access::ObjectId {
-        pool: crate::objects::access::PoolTag::Thread,
-        index: u16::try_from(index).map_err(|_too_wide| CapError::InvalidDomain)?,
-        generation,
-    })
+    nucleus.current_thread_id()
 }
 
 /// Architecture-specific dispatch - defined per architecture
