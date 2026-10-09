@@ -67,6 +67,36 @@ fn saved_context_el1t_initializes_masked_execution_state() {
     assert_eq!(ExceptionContext::from(SAVED).save(), SAVED);
 }
 
+/// `SPSR_EL1.I`: the IRQ mask bit.
+const SPSR_IRQ_MASK: u64 = 1 << 7;
+
+#[test_case]
+fn saved_context_el0_takes_irqs_with_debug_serror_and_fiq_masked() {
+    const PC: u64 = 0x40_0000;
+    const SP: u64 = 0x80_0000;
+    const SAVED: SavedContext = SavedContext::el0(PC, SP, 0x1234);
+
+    assert_eq!(SAVED.spsr_el1, 0x340);
+    assert_eq!(SAVED.spsr_el1 & SPSR_IRQ_MASK, 0, "EL0 must be preemptible");
+    assert_eq!(SAVED.spsr_el1 & 0xf, 0x0, "EL0t");
+    assert_eq!(SAVED.gpr[0], 0x1234);
+    assert_eq!(SAVED.origin, ExceptionOrigin::LowerAarch64);
+}
+
+#[test_case]
+fn saved_context_el1t_interruptible_differs_only_in_the_irq_mask() {
+    const PC: u64 = 0x8_1000;
+    const SP: u64 = 0x8_2000;
+    const MASKED: SavedContext = SavedContext::el1t(PC, SP);
+    const INTERRUPTIBLE: SavedContext = SavedContext::el1t_interruptible(PC, SP);
+
+    assert_eq!(INTERRUPTIBLE.spsr_el1, 0x344);
+    assert_eq!(INTERRUPTIBLE.spsr_el1 | SPSR_IRQ_MASK, MASKED.spsr_el1);
+    assert_eq!(INTERRUPTIBLE.origin, ExceptionOrigin::CurrentSp0);
+    assert_eq!(INTERRUPTIBLE.elr_el1, PC);
+    assert_eq!(INTERRUPTIBLE.sp, SP);
+}
+
 #[test_case]
 fn saved_context_round_trips_registers_status_sp_and_origin() {
     let origins = [

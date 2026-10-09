@@ -3,3 +3,12 @@
 
 [nucleus]
 binary = "nucleus"
+
+# Privileged (EL1) components, built position-independent with
+# drivers/privileged.ld (`just build-privileged`). Kickstart loads the
+# interrupt controller whose `compatible` list matches the device tree's root
+# interrupt controller; one image carries them all.
+
+[[privileged]]
+name = "bcm2836"
+binary = "irqchip-bcm2836"

@@ -1,0 +1,22 @@
+[package]
+name = "vesper-irqchip"
+
+description = "ABI between the nucleus and privileged interrupt-controller components."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[lib]
+test = false
+harness = false
+
+[lints]
+workspace = true

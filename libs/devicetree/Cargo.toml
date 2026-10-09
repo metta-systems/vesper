@@ -1,0 +1,34 @@
+[package]
+name = "vesper-devicetree"
+
+description = "Vesper device tree helpers: cell sizes, `reg` decoding, `ranges` translation and `compatible` matching."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+[dependencies]
+fdt-rs = { version = "=0.4.4", default-features = false }
+
+# Keep the freestanding library harness disabled; host integration tests opt in above.
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "devicetree"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

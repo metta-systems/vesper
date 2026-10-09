@@ -620,3 +620,197 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
         ));
     });
 }
+
+/// Map the source `AddressSpace` so Threads there can be selected, and make
+/// the FIFO tail Thread (index 2, in the source `AddressSpace`) the idle Thread.
+fn with_idle(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> ObjectId {
+    let source_as = nucleus
+        .pools
+        .threads
+        .get_live(usize::from(waits.source.index))
+        .unwrap()
+        .address_space;
+    let address_space = nucleus
+        .pools
+        .arch
+        .address_spaces
+        .get_live_mut(usize::from(source_as.index))
+        .unwrap();
+    address_space.set_translation_root(Some(ROOT + 0x1000));
+    address_space.set_asid(Some(1));
+    let idle = nucleus.pools.threads.live_identity(2).unwrap();
+    nucleus.pools.threads.get_live_mut(2).unwrap().context = ExecutionContext::NotStarted {
+        saved: SavedContext::el1t_interruptible(0xE0000, 0xF0000),
+    };
+    nucleus.idle_thread = Some(idle);
+    idle
+}
+
+/// The interrupted state of a preempted source Thread.
+const PREEMPTED_SAVED: SavedContext = SavedContext {
+    gpr: [0x5A; 30],
+    ..SavedContext::el0(0x40_1000, 0x80_0000, 0)
+};
+
+#[test_case]
+fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
+    with_resume(|nucleus, waits| {
+        nucleus
+            .pools
+            .threads
+            .get_live_mut(usize::from(waits.target.index))
+            .unwrap()
+            .context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("preemption: {:?}", e.code()))
+                .expect("another Thread is runnable")
+        };
+        assert_eq!(resumed.current, u32::from(waits.source.index));
+        assert_eq!(resumed.next, waits.target.index);
+        // A preempted Thread owes no completion: its registers come back as-is.
+        assert_eq!(resumed.saved, target_saved());
+        assert_eq!(resumed.completion, None);
+        assert_eq!(nucleus.current_thread, Some(waits.target));
+        assert_eq!(
+            nucleus
+                .pools
+                .threads
+                .get_live(usize::from(waits.source.index))
+                .unwrap()
+                .context,
+            ExecutionContext::Preempted {
+                saved: PREEMPTED_SAVED
+            }
+        );
+        // The preempted Thread queues behind the former FIFO tail.
+        assert_eq!(nucleus.scheduler.pop(), Some(2));
+        assert_eq!(nucleus.scheduler.pop(), Some(waits.source.index));
+        assert!(nucleus.scheduler.is_empty());
+        // Unrelated pending records are untouched.
+        assert_eq!(nucleus.pending.len(), 2);
+    });
+}
+
+#[test_case]
+fn preemption_with_nothing_runnable_keeps_the_current_thread() {
+    with_resume(|nucleus, waits| {
+        while nucleus.scheduler.pop().is_some() {}
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("preemption: {:?}", e.code()))
+        };
+        assert_eq!(resumed, None);
+        assert_eq!(nucleus.current_thread, Some(waits.source));
+        assert_eq!(
+            nucleus
+                .pools
+                .threads
+                .get_live(usize::from(waits.source.index))
+                .unwrap()
+                .context,
+            ExecutionContext::Running
+        );
+        assert!(nucleus.scheduler.is_empty());
+    });
+}
+
+#[test_case]
+fn preemption_rejects_kernel_mode_state_without_changes() {
+    with_resume(|nucleus, waits| {
+        let kernel_mode = SavedContext {
+            origin: ExceptionOrigin::CurrentSpx,
+            ..PREEMPTED_SAVED
+        };
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let result = {
+            let access = unsafe { Access::new() };
+            nucleus.preempt_and_select(&access, kernel_mode)
+        };
+        assert_eq!(
+            result.expect_err("kernel-mode preemption").code(),
+            CapError::InvalidDomain.code()
+        );
+        assert_eq!(nucleus.current_thread, Some(waits.source));
+        assert_eq!(nucleus.scheduler.len(), 2);
+    });
+}
+
+#[test_case]
+fn parking_with_nothing_runnable_selects_the_idle_thread() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        while nucleus.scheduler.pop().is_some() {}
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .park_and_select(&access, SOURCE_SAVED, waits.incoming)
+                .unwrap_or_else(|e| panic!("park onto idle: {:?}", e.code()))
+        };
+        assert_eq!(resumed.next, idle.index);
+        assert_eq!(
+            resumed.saved,
+            SavedContext::el1t_interruptible(0xE0000, 0xF0000)
+        );
+        assert_eq!(nucleus.current_thread, Some(idle));
+        assert!(nucleus.idle_is_current());
+        // The idle Thread is never queued.
+        assert!(nucleus.scheduler.is_empty());
+    });
+}
+
+#[test_case]
+fn preempting_idle_selects_the_woken_thread_and_never_queues_idle() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        // Idle is running; only the target is runnable.
+        while nucleus.scheduler.pop().is_some() {}
+        nucleus
+            .pools
+            .threads
+            .get_live_mut(usize::from(idle.index))
+            .unwrap()
+            .context = ExecutionContext::Running;
+        nucleus.current_thread = Some(idle);
+        nucleus
+            .pools
+            .threads
+            .get_live_mut(usize::from(waits.target.index))
+            .unwrap()
+            .context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        assert!(nucleus.scheduler.push(waits.target.index));
+
+        let idle_saved = SavedContext::el1t_interruptible(0xE0004, 0xF0000);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, idle_saved)
+                .unwrap_or_else(|e| panic!("preempt idle: {:?}", e.code()))
+                .expect("the target is runnable")
+        };
+        assert_eq!(resumed.next, waits.target.index);
+        assert!(!nucleus.idle_is_current());
+        assert!(nucleus.scheduler.is_empty());
+        assert_eq!(
+            nucleus
+                .pools
+                .threads
+                .get_live(usize::from(idle.index))
+                .unwrap()
+                .context,
+            ExecutionContext::Preempted { saved: idle_saved }
+        );
+    });
+}

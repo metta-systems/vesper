@@ -24,6 +24,11 @@ pub fn handler(info: &PanicInfo) -> ! {
     // Protect against panic infinite loops if any of the following code panics itself.
     panic_prevent_reenter();
     print_panic_info(info);
+    // Under QEMU a panic ends the run with a failure status, so test runs
+    // report it instead of hanging.
+    #[cfg(feature = "qemu")]
+    libqemu::semihosting::exit_failure();
+    #[cfg(not(feature = "qemu"))]
     libcpu::endless_sleep()
 }
 

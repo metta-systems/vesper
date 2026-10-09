@@ -312,7 +312,9 @@ fn call_preparation_describes_the_migration_without_mutating_anything() {
             prepared.translation().keytable().address(),
             fixture.target_table
         );
-        let expected = InvocationContinuation::from_saved(fixture.source_as, saved, 0);
+        // The stamp is the real clock at preparation.
+        let stamp = prepared.continuation().stamp;
+        let expected = InvocationContinuation::from_saved(fixture.source_as, saved, stamp);
         assert_eq!(*prepared.continuation(), expected);
         assert_eq!(prepared.continuation().source_pc, 0x9_0000);
         assert_eq!(prepared.continuation().source_sp, STACK_END);
@@ -614,7 +616,17 @@ fn call_commit_pushes_continuation_and_migrates_into_the_target_table() {
         assert_eq!(source.address_space, fixture.target_as);
         assert_eq!(source.context, before.source_context);
         assert_eq!(source.invocation_stack.len(), 3);
-        assert_eq!(*source.invocation_stack.top().unwrap(), expected);
+        // The commit stamps the continuation with the real clock, after the
+        // preparation `expected` came from: equal except for a later stamp.
+        let top = *source.invocation_stack.top().unwrap();
+        assert!(top.stamp >= expected.stamp, "continuation stamp went back");
+        assert_eq!(
+            InvocationContinuation {
+                stamp: expected.stamp,
+                ..top
+            },
+            expected
+        );
         assert_eq!(expected.source_address_space, fixture.source_as);
         // Earlier records are untouched beneath the new top.
         let mut below = source.invocation_stack;

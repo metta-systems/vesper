@@ -83,6 +83,31 @@ pub unsafe extern "C" fn nucleus_set_anchor(ptr: *mut Nucleus<nucleus::objects::
     }
 }
 
+/// Install the privileged interrupt-controller component kickstart loaded,
+/// and return its physical timer line, or `u32::MAX` if it was refused.
+///
+/// # Safety
+/// Boot-only, once, from the single boot core with interrupts masked, after
+/// kickstart mapped the component and its MMIO as `handoff` describes.
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.bootstrap")]
+pub unsafe extern "C" fn nucleus_set_platform(handoff: *const libirqchip::PlatformHandoff) -> u32 {
+    // SAFETY: the caller's contract.
+    match unsafe { nucleus::platform::install(&*handoff) } {
+        Ok(line) => {
+            // The nucleus owns the tick from now on; it is taken whenever a
+            // Thread runs with interrupts unmasked.
+            nucleus::timer::arm_next_tick();
+            nucleus::platform::unmask(line);
+            line
+        }
+        Err(error) => {
+            warn!("Interrupt controller refused: {error:?}");
+            u32::MAX
+        }
+    }
+}
+
 /// The boot-carved [`Nucleus`], or `None` before Kickstart records it.
 pub fn nucleus_anchor() -> Option<*mut Nucleus<nucleus::objects::ArchObjectsImpl>> {
     let addr = NUCLEUS.load(Ordering::Relaxed);
@@ -137,7 +162,8 @@ extern "C" fn current_el0_synchronous(e: &mut ExceptionContext) {
 
 #[unsafe(no_mangle)]
 extern "C" fn current_el0_irq(e: &mut ExceptionContext) {
-    current_elx_irq(e);
+    // An interruptible trusted `EL1t` Thread (e.g. idle).
+    handle_irq(e);
 }
 
 #[unsafe(no_mangle)]
@@ -195,9 +221,8 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
 
 #[unsafe(no_mangle)]
 extern "C" fn current_elx_irq(e: &mut ExceptionContext) {
-    // -- @todo
-    // let token = unsafe { &exception::asynchronous::IRQContext::new() };
-    // exception::asynchronous::irq_manager().handle_pending_irqs(token);
+    // The nucleus runs with interrupts masked: an IRQ taken on SP_EL1 means
+    // kernel code unmasked them, which is a bug.
     default_exception_handler(e);
 }
 
@@ -248,7 +273,7 @@ fn current_invocation_depth() -> u64 {
 
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_irq(e: &mut ExceptionContext) {
-    default_exception_handler(e);
+    handle_irq(e);
 }
 
 #[unsafe(no_mangle)]
@@ -443,6 +468,67 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// INTERRUPTS
+// ═══════════════════════════════════════════════════════════════════
+
+/// Upper bound on lines claimed per interrupt entry, so a misbehaving
+/// controller cannot keep the nucleus in the handler.
+const MAX_CLAIMS_PER_ENTRY: usize = 64;
+
+/// Interrupt entry from an interruptible Thread: claim and handle every
+/// pending line through the interrupt-controller component, then, on a
+/// timer tick (or when idle was interrupted), preempt the current Thread.
+///
+/// The timer line re-arms the tick. Every other line is masked: binding
+/// lines to Notifications (`IRQHandler`) is not implemented yet.
+fn handle_irq(frame: &mut ExceptionContext) {
+    assert!(
+        frame.origin != ExceptionOrigin::CurrentSpx,
+        "kernel-mode execution cannot be interrupted"
+    );
+    let timer_line = nucleus::platform::physical_timer_line();
+    let mut ticked = false;
+    for _ in 0..MAX_CLAIMS_PER_ENTRY {
+        let Some(line) = nucleus::platform::claim() else {
+            break;
+        };
+        if Some(line) == timer_line {
+            nucleus::timer::arm_next_tick();
+            ticked = true;
+        } else {
+            nucleus::platform::mask(line);
+            warn!("Masked unbound interrupt line {line}");
+        }
+        nucleus::platform::complete(line);
+    }
+
+    let saved = frame.save();
+    let resumed = KERNEL_LOCK.lock(|()| {
+        let Some(nucleus_ptr) = nucleus_anchor() else {
+            panic!("nucleus not booted by Kickstart")
+        };
+        // SAFETY: the anchor names the retained boot-carved Nucleus, and the
+        // kernel lock gives exclusive access for this scheduling transaction.
+        let nucleus = unsafe { &mut *nucleus_ptr };
+        if ticked {
+            nucleus.ticks += 1;
+        }
+        if !ticked && !nucleus.idle_is_current() {
+            return Ok(None);
+        }
+        // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other
+        // Access or guard overlaps this transaction.
+        let access = unsafe { Access::new() };
+        nucleus.preempt_and_select(&access, saved)
+    });
+    match resumed {
+        Ok(Some(resumed)) => install_selected(frame, &resumed),
+        Ok(None) => {}
+        Err(error) => panic!("preemption scheduling invariant failed: {:?}", error.code()),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // CONTEXT SWITCHING (completion foundation, 2026-09-16)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -476,8 +562,9 @@ fn park_and_resume(frame: &mut ExceptionContext, record: ObjectId) {
         nucleus.park_and_select(&access, saved, record)
     });
 
-    // No timer exists to wake a wholly blocked fixture: halt honestly,
-    // rather than returning fake success to a blocked caller. Scheduler-error
+    // With nothing runnable the idle Thread is selected; a boot without one
+    // has nothing to run when every Thread blocks: halt honestly, rather
+    // than returning fake success to a blocked caller. Scheduler-error
     // recovery/fault delivery has no ABI yet; trusted fixture corruption is an
     // invariant failure, after a failure-atomic preparation (not a lost wait).
     let resumed = resumed.unwrap_or_else(|error| {
@@ -487,6 +574,25 @@ fn park_and_resume(frame: &mut ExceptionContext, record: ObjectId) {
         )
     });
     resume_selected(frame, &resumed, "parked");
+}
+
+/// Install the Thread a scheduling transaction selected and rewrite the
+/// transient frame with its context, without tracing (the preemption path).
+fn install_selected(
+    frame: &mut ExceptionContext,
+    resumed: &nucleus::objects::resume::PreparedResume,
+) {
+    // Only copied prepared metadata and the transient frame are live here;
+    // no Thread or object guard crosses hardware installation or ERET.
+    // High kernel code and shared high SP_EL1 remain mapped by TTBR1. The
+    // single-core, masked trap path cannot retire/rebind between prepare and
+    // install; this is not a reusable lifetime pin for asynchronous work.
+    ArchObjectsImpl::install_translation_context(
+        resumed.translation.root(),
+        resumed.translation.asid(),
+    );
+    // SP_EL1 is reclaimed by normal unwinding, with no kernel stack switch.
+    frame.restore(resumed.saved);
 }
 
 /// Install and enter the Thread a scheduling transaction selected: rewrite
@@ -500,17 +606,7 @@ fn resume_selected(
     let current = resumed.current;
     let next = resumed.next;
     let restored = resumed.saved;
-    // Only copied prepared metadata and the transient frame are live here;
-    // no Thread or object guard crosses hardware installation or ERET.
-    // High kernel code and shared high SP_EL1 remain mapped by TTBR1. The
-    // single-core, masked trap path cannot retire/rebind between prepare and
-    // install; this is not a reusable lifetime pin for asynchronous work.
-    ArchObjectsImpl::install_translation_context(
-        resumed.translation.root(),
-        resumed.translation.asid(),
-    );
-    // SP_EL1 is reclaimed by normal unwinding, with no kernel stack switch.
-    frame.restore(restored);
+    install_selected(frame, resumed);
     if let Some(completion) = resumed.completion {
         let kind = match completion.kind {
             PendingKind::NotificationWait => "Notification::Wait",

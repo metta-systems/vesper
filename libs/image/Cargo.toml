@@ -13,10 +13,18 @@ readme = { workspace = true }
 repository = { workspace = true }
 version = { workspace = true }
 
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+# Keep the freestanding library harness disabled; host integration tests opt in above.
 [lib]
-# Shared no_std image descriptions with no tests of their own.
 test = false
 harness = false
+
+[[test]]
+name = "privileged"
+required-features = ["host-tests"]
 
 [lints]
 workspace = true

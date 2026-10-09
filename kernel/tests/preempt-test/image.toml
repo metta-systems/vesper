@@ -1,0 +1,8 @@
+# What preempt-test bundles (see vesper-image-build): its userspace
+# components. `binary` is the cargo binary name, built with
+# userspace/runtime/user.ld.
+
+[[component]]
+name = "spinner"
+binary = "preempt-spinner"
+active = true

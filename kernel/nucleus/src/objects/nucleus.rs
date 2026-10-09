@@ -82,6 +82,11 @@ pub struct Nucleus<A: ArchObjects> {
     /// (completion foundation, 2026-09-16). Kernel mechanism only;
     /// scheduling policy stays in userspace.
     pub scheduler: Scheduler,
+    /// The idle Thread, if boot created one: selected when nothing else is
+    /// runnable and never queued.
+    pub idle_thread: Option<ObjectId>,
+    /// Preemption-timer ticks taken since boot.
+    pub ticks: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -94,9 +99,11 @@ impl<A: ArchObjects> Nucleus<A> {
         0
     }
 
+    /// Monotonic time since the counter started, from the kernel-owned
+    /// physical counter.
     #[expect(clippy::unused_self)]
     pub fn current_time_ns(&self) -> u64 {
-        0
+        crate::timer::now_ns()
     }
 
     /// The current Thread's checked identity. `InvalidDomain` when no Thread
@@ -421,6 +428,8 @@ mod tests {
                 dcb_pages: crate::objects::domain::DcbPages::new(),
                 pending: PendingPool::new(),
                 scheduler: Scheduler::new(),
+                idle_thread: None,
+                ticks: 0,
                 pools: NucleusPools {
                     threads: ObjectPool::initialize(thread_ptr, 3),
                     notifications: ObjectPool::initialize(notification_ptr, 2),

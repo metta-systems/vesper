@@ -243,12 +243,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "either"
-version = "1.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
-
-[[package]]
 name = "endian-type-rs"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -581,12 +575,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f56a2d0bc861f9165be4eb3442afd3c236d8a98afd426f65d92324ae1091a484"
+name = "irqchip-bcm2836"
+version = "0.0.1"
 dependencies = [
- "either",
+ "tock-registers",
+ "vesper-address",
+ "vesper-irqchip",
+ "vesper-mmio",
 ]
 
 [[package]]
@@ -595,16 +590,16 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "cfg-if",
- "fdt-rs",
  "nucleus",
- "shrinkwraprs",
  "snafu",
  "vesper-address",
  "vesper-boot",
  "vesper-cpu",
+ "vesper-devicetree",
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",
+ "vesper-irqchip",
  "vesper-locking",
  "vesper-log",
  "vesper-machines",
@@ -757,6 +752,7 @@ dependencies = [
  "vesper-console",
  "vesper-cpu",
  "vesper-exceptions",
+ "vesper-irqchip",
  "vesper-locking",
  "vesper-log",
  "vesper-machines",
@@ -899,6 +895,35 @@ dependencies = [
  "vesper-exceptions",
  "vesper-kicktest",
  "vesper-log",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "preempt-spinner"
+version = "0.0.1"
+dependencies = [
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "preempt-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
  "vesper-machines",
  "vesper-objects",
  "vesper-print",
@@ -1071,19 +1096,6 @@ dependencies = [
  "scopeguard",
  "unescaper",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "shrinkwraprs"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e63e6744142336dfb606fe2b068afa2e1cca1ee6a5d8377277a92945d81fa331"
-dependencies = [
- "bitflags 1.3.2",
- "itertools",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -1422,6 +1434,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-devicetree"
+version = "0.0.1"
+dependencies = [
+ "fdt-rs",
+]
+
+[[package]]
 name = "vesper-drivers"
 version = "0.0.1"
 dependencies = [
@@ -1455,6 +1474,10 @@ dependencies = [
  "minijinja",
  "toml",
 ]
+
+[[package]]
+name = "vesper-irqchip"
+version = "0.0.1"
 
 [[package]]
 name = "vesper-kernel-state"

@@ -129,6 +129,24 @@ impl<'a> MmuSetup<'a> {
         self.map_page_with_flags(ttbr, virt, phys, pte_flags, perms, usage)
     }
 
+    /// Map a 4KB kernel-half page of a privileged component. The page is
+    /// never executable at EL0 (UXN), whatever `perms` allow at EL1.
+    pub fn map_privileged_page(
+        &mut self,
+        virt: VirtAddr,
+        phys: PhysAddr,
+        perms: MemoryPermissions,
+        usage: (&'static str, Alloc),
+    ) -> Result<(), &'static str> {
+        let pte_flags = pte_flags(perms) | flags::ATTR_NORMAL | flags::UXN;
+        self.map_page_with_flags(Ttbr::Ttbr1, virt, phys, pte_flags, perms, usage)
+    }
+
+    /// The boot allocator the page tables are carved from.
+    pub fn allocator(&mut self) -> &mut BootAllocator {
+        self.allocator
+    }
+
     /// Map a 4KB page with raw PTE flags
     fn map_page_with_flags(
         &mut self,

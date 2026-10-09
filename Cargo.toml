@@ -9,18 +9,23 @@ members = [
   "kernel/tests/endpoint-test",
   "kernel/tests/fault-test",
   "kernel/tests/fp-trap-test",
+  "kernel/tests/preempt-test",
   "bin/chainboot",
   "bin/chainofcommand",
+  # Privileged components
+  "drivers/irqchip-bcm2836",
   # Libraries
   "libs/address",
   "libs/alloc",
   "libs/boot",
   "libs/console",
   "libs/cpu",
+  "libs/devicetree",
   "libs/driver",
   "libs/exception",
   "libs/image",
   "libs/image-build",
+  "libs/irqchip",
   "libs/kicktest",
   "libs/kernel-state",
   "libs/local-irq",
@@ -50,6 +55,7 @@ members = [
   "userspace/tests/fp-trap/probe",
   "userspace/tests/fp-trap/protocol",
   "userspace/tests/hello",
+  "userspace/tests/preempt/spinner",
 ]
 resolver = "3"
 
@@ -79,11 +85,13 @@ libaddress = { path = "libs/address", package = "vesper-address" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
+libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
 libdriver = { path = "libs/driver", package = "vesper-drivers" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
 libimage = { path = "libs/image", package = "vesper-image" }
 libimage-build = { path = "libs/image-build", package = "vesper-image-build" }
+libirqchip = { path = "libs/irqchip", package = "vesper-irqchip" }
 libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
 liblocking = { path = "libs/locking", package = "vesper-locking" }

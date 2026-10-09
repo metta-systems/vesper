@@ -329,6 +329,9 @@ pub fn generate_kernel(manifest: &str) {
     let (nucleus_set_anchor_virt, _) = image
         .symbol("nucleus_set_anchor")
         .expect("the nucleus must export nucleus_set_anchor");
+    let (nucleus_set_platform_virt, _) = image
+        .symbol("nucleus_set_platform")
+        .expect("the nucleus must export nucleus_set_platform");
 
     let mut environment = Environment::new();
     environment.set_syntax(
@@ -359,10 +362,274 @@ pub fn generate_kernel(manifest: &str) {
                 },
                 stack_virt_bottom,
                 nucleus_set_anchor_virt,
+                nucleus_set_platform_virt,
             })
         })
         .expect("kernel template renders");
     fs::write(out.join("kernel_sections.rs"), rendered).expect("cannot write kernel_sections.rs");
+}
+
+// ─── Privileged components ──────────────────────────────────────────────
+
+/// One `PT_LOAD` segment of a privileged component.
+#[derive(Debug)]
+pub struct PrivilegedSegment {
+    /// Offset from the image base (the component is linked at 0)
+    pub offset: u64,
+    /// In-memory size; bytes past `data` are zeroed
+    pub mem_size: u64,
+    pub writable: bool,
+    pub executable: bool,
+    /// File-backed content
+    pub data: Vec<u8>,
+}
+
+/// The parts of a position-independent privileged component ELF the bundler uses.
+#[derive(Debug)]
+pub struct PrivilegedElf {
+    pub segments: Vec<PrivilegedSegment>,
+    /// `(offset, addend)` of every `R_AARCH64_RELATIVE` relocation
+    pub relocations: Vec<(u64, u64)>,
+    /// Offset of the operation table (`libirqchip::OPS_SYMBOL`)
+    pub ops_offset: u64,
+    /// Device tree `compatible` strings, in kind order
+    pub compatible: Vec<String>,
+}
+
+impl PrivilegedElf {
+    /// Read a privileged component linked with `drivers/privileged.ld`.
+    ///
+    /// # Panics
+    ///
+    /// If the file is not a PIE `AArch64` ELF linked at 0 with page-aligned
+    /// segments, has any relocation other than `R_AARCH64_RELATIVE`, or lacks
+    /// the operation table or the `compatible` list.
+    pub fn read(path: &Path) -> Self {
+        use goblin::elf::{
+            program_header::{PF_W, PF_X, PT_INTERP, PT_LOAD},
+            reloc::R_AARCH64_RELATIVE,
+        };
+
+        let display = path.display();
+        let bytes =
+            fs::read(path).unwrap_or_else(|error| panic!("cannot read ELF {display}: {error}"));
+        let elf = Elf::parse(&bytes)
+            .unwrap_or_else(|error| panic!("cannot parse ELF {display}: {error}"));
+        assert!(elf.is_64, "{display} must be ELF64");
+        assert_eq!(
+            elf.header.e_machine, EM_AARCH64,
+            "{display} must be AArch64"
+        );
+        assert!(
+            !elf.program_headers
+                .iter()
+                .any(|header| header.p_type == PT_INTERP),
+            "{display} must not request an interpreter"
+        );
+        assert!(
+            elf.libraries.is_empty(),
+            "{display} must not depend on shared libraries"
+        );
+
+        let segments: Vec<_> = elf
+            .program_headers
+            .iter()
+            .filter(|header| header.p_type == PT_LOAD && header.p_memsz > 0)
+            .map(|header| {
+                assert_eq!(
+                    header.p_vaddr % PAGE_SIZE,
+                    0,
+                    "{display}: segments must be page-aligned (use drivers/privileged.ld)"
+                );
+                let start = usize::try_from(header.p_offset).unwrap_or(usize::MAX);
+                let end = start + usize::try_from(header.p_filesz).unwrap_or(usize::MAX);
+                PrivilegedSegment {
+                    offset: header.p_vaddr,
+                    mem_size: header.p_memsz,
+                    writable: header.p_flags & PF_W != 0,
+                    executable: header.p_flags & PF_X != 0,
+                    data: bytes[start..end].to_vec(),
+                }
+            })
+            .collect();
+        assert!(
+            segments
+                .iter()
+                .all(|segment| !(segment.writable && segment.executable)),
+            "{display}: a segment is both writable and executable"
+        );
+
+        assert_eq!(
+            elf.dynrels.len() + elf.pltrelocs.len(),
+            0,
+            "{display}: only RELA dynamic relocations are supported"
+        );
+        let relocations = elf
+            .dynrelas
+            .iter()
+            .map(|relocation| {
+                assert_eq!(
+                    relocation.r_type, R_AARCH64_RELATIVE,
+                    "{display}: relocation at 0x{:X} is not R_AARCH64_RELATIVE",
+                    relocation.r_offset
+                );
+                let addend = relocation.r_addend.unwrap_or(0);
+                let addend = u64::try_from(addend)
+                    .unwrap_or_else(|_| panic!("{display}: negative relocation addend {addend}"));
+                assert!(
+                    segments.iter().any(|segment| segment.writable
+                        && (segment.offset..segment.offset + segment.mem_size)
+                            .contains(&relocation.r_offset)),
+                    "{display}: relocation at 0x{:X} is outside the writable segment",
+                    relocation.r_offset
+                );
+                (relocation.r_offset, addend)
+            })
+            .collect();
+
+        let ops_offset = elf
+            .syms
+            .iter()
+            .find(|symbol| elf.strtab.get_at(symbol.st_name) == Some("IRQCHIP_OPS"))
+            .map_or_else(
+                || panic!("{display}: missing the IRQCHIP_OPS operation table"),
+                |symbol| symbol.st_value,
+            );
+
+        let compatible = elf
+            .section_headers
+            .iter()
+            .find(|header| elf.shdr_strtab.get_at(header.sh_name) == Some(".irqchip_compatible"))
+            .map(|header| {
+                let start = usize::try_from(header.sh_offset).unwrap_or(usize::MAX);
+                let end = start + usize::try_from(header.sh_size).unwrap_or(usize::MAX);
+                bytes[start..end]
+                    .split(|&byte| byte == 0)
+                    .filter(|entry| !entry.is_empty())
+                    .map(|entry| {
+                        std::str::from_utf8(entry)
+                            .unwrap_or_else(|_| panic!("{display}: compatible is not UTF-8"))
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .filter(|compatible| !compatible.is_empty())
+            .unwrap_or_else(|| panic!("{display}: missing the .irqchip_compatible list"));
+
+        Self {
+            segments,
+            relocations,
+            ops_offset,
+            compatible,
+        }
+    }
+}
+
+/// Bundle the `[[privileged]]` entries of `manifest` (relative to the crate)
+/// into `$OUT_DIR/privileged.rs`: one `pub static <NAME>:
+/// libimage::PrivilegedImage` per component plus `pub static PRIVILEGED:
+/// &[&PrivilegedImage]`, empty when the manifest lists none.
+///
+/// Each entry names the component (`name`, an identifier) and its cargo
+/// `binary`, built with `drivers/privileged.ld` as a PIE.
+pub fn bundle_privileged(manifest: &str) {
+    let (manifest_path, table) = load_manifest(manifest);
+    let out = out_dir();
+
+    let mut code = String::from(
+        "// Generated by vesper-image-build from the image manifest. Do not edit.\n\n\
+         #[allow(unused)]\n\
+         use libimage::{LoadableSection, Permissions, PrivilegedImage, Relocation, SectionMeta};\n\n",
+    );
+    let mut names = Vec::new();
+    let entries = table
+        .get("privileged")
+        .and_then(toml::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for entry in &entries {
+        let field = |key: &str| {
+            entry
+                .get(key)
+                .and_then(toml::Value::as_str)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{}: a [[privileged]] entry has no {key}",
+                        manifest_path.display()
+                    )
+                })
+        };
+        let name = field("name");
+        assert!(
+            name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "{}: privileged component name `{name}` must be an identifier",
+            manifest_path.display()
+        );
+        let binary = field("binary");
+        let image = PrivilegedElf::read(&find_artifact(binary));
+        let stem = name.to_uppercase();
+
+        let mut segments = String::new();
+        for (index, segment) in image.segments.iter().enumerate() {
+            let bin_file = format!("privileged_{name}_{index}.bin");
+            fs::write(out.join(&bin_file), &segment.data)
+                .unwrap_or_else(|error| panic!("cannot write {bin_file}: {error}"));
+            let blob = format!("{stem}_SEGMENT_{index}");
+            emit!(
+                code,
+                "static {blob}: [u8; {len}] = *include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{bin_file}\"));\n",
+                len = segment.data.len()
+            );
+            emit!(
+                segments,
+                "        LoadableSection {{ meta: SectionMeta {{ name: \"segment {index}\", virt_addr: 0x{offset:X}, size: 0x{size:X}, alignment: 0x{PAGE_SIZE:X}, permissions: Permissions {{ readable: true, writable: {writable}, executable: {executable} }} }}, data: &{blob} }},\n",
+                offset = segment.offset,
+                size = segment.mem_size,
+                writable = segment.writable,
+                executable = segment.executable,
+            );
+        }
+        let relocations: String = image
+            .relocations
+            .iter()
+            .map(|(offset, addend)| {
+                format!("        Relocation {{ offset: 0x{offset:X}, addend: 0x{addend:X} }},\n")
+            })
+            .collect();
+        let compatible: String = image
+            .compatible
+            .iter()
+            .map(|entry| format!("\"{entry}\", "))
+            .collect();
+        println!(
+            "cargo::warning=info: Bundled privileged {name} ({binary}): {} segments, {} relocations, drives [{}]",
+            image.segments.len(),
+            image.relocations.len(),
+            image.compatible.join(", ")
+        );
+        emit!(
+            code,
+            "\n/// Privileged component `{name}` (`{binary}`).\n\
+             pub static {stem}: PrivilegedImage = PrivilegedImage {{\n\
+             \x20   name: \"{name}\",\n\
+             \x20   compatible: &[{compatible}],\n\
+             \x20   segments: &[\n{segments}    ],\n\
+             \x20   relocations: &[\n{relocations}    ],\n\
+             \x20   ops_offset: 0x{ops_offset:X},\n}};\n\n",
+            ops_offset = image.ops_offset,
+        );
+        names.push(stem);
+    }
+    emit!(
+        code,
+        "/// Every bundled privileged component, in manifest order.\npub static PRIVILEGED: &[&PrivilegedImage] = &[{}];\n",
+        names
+            .iter()
+            .map(|name| format!("&{name}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    fs::write(out.join("privileged.rs"), code).expect("cannot write privileged.rs");
 }
 
 // ─── Components ─────────────────────────────────────────────────────────

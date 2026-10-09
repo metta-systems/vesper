@@ -456,7 +456,7 @@ Communication is two kernel mechanisms: blocking waits on `Notification`/`EventC
 
 ### Blocking and continuations
 
-The kernel keeps one stack per core and never keeps a Thread's continuation on it. A blocking wait copies the caller's saved user context (registers, SP, ELR, SPSR, origin, `TPIDR_EL0`) into the Thread (`ExecutionContext::Parked`, with the pending-record identity), selects another Thread, rewrites the transient exception frame and unwinds normally to `ERET`. Wake-up restores the parked context with the terminal result in `x0..x2`; teardown drops it. Capability entry admits only execution-stack origins (`CurrentSp0` fixture code or lower `AArch64`) and rejects `CurrentSpx` with `InvalidDomain` before any wait is admitted; kernel-mode traps cannot block. Interrupt-time work that cannot finish on the per-core stack is deferred to return-to-user safe points (not yet implemented).
+The kernel keeps one stack per core and never keeps a Thread's continuation on it. A blocking wait copies the caller's saved user context (registers, SP, ELR, SPSR, origin, `TPIDR_EL0`) into the Thread (`ExecutionContext::Parked`, with the pending-record identity), selects another Thread, rewrites the transient exception frame and unwinds normally to `ERET`. Wake-up restores the parked context with the terminal result in `x0..x2`; teardown drops it. Capability entry admits only execution-stack origins (`CurrentSp0` fixture code or lower `AArch64`) and rejects `CurrentSpx` with `InvalidDomain` before any wait is admitted; kernel-mode traps cannot block. A timer tick preempts the same way: the interrupted context is copied into the Thread (`ExecutionContext::Preempted`), the Thread is requeued behind the runnable FIFO and the front is selected; when nothing is runnable the idle Thread runs (it is never queued). Interrupt-time work that cannot finish on the per-core stack is deferred to return-to-user safe points (not yet implemented).
 
 ### Wait, timeout, and cancellation
 
@@ -590,6 +590,7 @@ These are libOS conventions over the kernel ABI, not kernel enforcement; a compo
 - **`TPIDR_EL0`:** saved per Thread; zero at target entry, restored on Return, zero for a never-run Thread.
 - **`TPIDRRO_EL0`:** zero; nothing writes it.
 - **Timer and counter (`CNTKCTL_EL1`):** EL0 may read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) only; physical counter and all timers are kernel-owned. `CNTVOFF_EL2 = 0`, so virtual equals physical.
+- **Interrupts (`SPSR_EL1.I`):** EL0 Threads run with IRQs unmasked, so the nucleus can preempt them; D, A and F stay masked. The nucleus itself and trusted `EL1t` Threads run masked, except Threads created interruptible (the idle Thread).
 - **PMU (`PMUSERENR_EL0`) and debug channel (`MDSCR_EL1.TDCC`):** EL0 access traps; no software breakpoints, watchpoints or step.
 - Complete architectural-state isolation beyond this list remains open.
 
@@ -626,6 +627,8 @@ Authority validity and operation outcome are separate: revoking authority does n
 ## Time and userspace scheduling
 
 Time is a first-class capability to a bounded CPU budget, not just a timer object. Userspace schedulers implement policy, distribute budget hierarchically, and observe DCBs. The nucleus enforces budget consumption, deadlines, preemption, and authorized transitions.
+
+The nucleus owns the tick: the EL1 non-secure physical timer (`CNTP`), whose interrupt it takes through the privileged interrupt-controller component (see [`irq-controller-placement.md`](irq-controller-placement.md) and [`object_types/arch/irq_handler.md`](object_types/arch/irq_handler.md)). Implementation status: a fixed 10 ms periodic tick preempts round-robin, and `current_time_ns()` reads the physical counter; budgets, deadlines, tickless programming and the operations below are not implemented.
 
 - **Donate** authorizes execution of a target using a defined budget and can suspend the donor until yield, exhaustion, cancellation, or another specified completion.
 - **Split** creates a child budget in an explicit destination, reducing the parent's remaining amount only on commit.

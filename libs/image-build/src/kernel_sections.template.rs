@@ -51,6 +51,9 @@ pub const VECTORS_META: SectionMeta = SectionMeta {
 /// Exported setter that records the boot-carved Nucleus address.
 pub const NUCLEUS_SET_ANCHOR_VIRT: u64 = {{nucleus_set_anchor_virt | address}};
 
+/// Exported boot-only installer of the privileged interrupt-controller component.
+pub const NUCLEUS_SET_PLATFORM_VIRT: u64 = {{nucleus_set_platform_virt | address}};
+
 // ═══════════════════════════════════════════════════════════════
 // Combined kernel sections
 // ═══════════════════════════════════════════════════════════════

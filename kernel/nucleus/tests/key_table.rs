@@ -17,6 +17,11 @@ mod api;
 #[path = "../src/objects/mod.rs"]
 mod objects;
 
+// Only the clock is used here; the tick is armed by the nucleus binary.
+#[allow(dead_code)]
+#[path = "../src/timer.rs"]
+mod timer;
+
 use {
     api::{
         KeyEntry,

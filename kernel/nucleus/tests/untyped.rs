@@ -24,6 +24,11 @@ mod api;
 #[path = "../src/objects/mod.rs"]
 mod objects;
 
+// Only the clock is used here; the tick is armed by the nucleus binary.
+#[allow(dead_code)]
+#[path = "../src/timer.rs"]
+mod timer;
+
 use {
     api::KeyEntry,
     core::mem::MaybeUninit,
@@ -120,6 +125,8 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             dcb_pages: DcbPages::new(),
             pending: crate::objects::PendingPool::new(),
             scheduler: crate::objects::Scheduler::new(),
+            idle_thread: None,
+            ticks: 0,
             pools: NucleusPools {
                 threads: ObjectPool::initialize(pool_ptr, 0),
                 notifications: ObjectPool::initialize(notification_pool_ptr, 2),

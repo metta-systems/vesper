@@ -40,6 +40,10 @@
 pub mod api;
 /// Nucleus object implementations.
 pub mod objects;
+/// The privileged interrupt-controller component.
+pub mod platform;
+/// The kernel-owned preemption timer.
+pub mod timer;
 
 // Root-level re-exports the object modules reference via `crate::…`; the bin
 // previously supplied these through its own `use` statements.

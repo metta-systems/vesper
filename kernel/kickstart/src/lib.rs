@@ -15,7 +15,6 @@
 #![no_std]
 #![allow(unused)]
 #![feature(format_args_nl)]
-#![feature(try_find)] // For DeviceTree iterators
 
 mod boot_info;
 pub mod bootstrap;
@@ -25,21 +24,16 @@ mod embed;
 mod loader;
 mod memory;
 mod paging;
+mod privileged;
 mod qsort;
 
 use {
     crate::{
         boot_info::BOOT_INFO,
-        device_tree::{DeviceTree, DeviceTreeProp},
         memory::{Alloc, BootAllocator},
     },
     aarch64_cpu::registers::{Readable, SPSR_EL2, Writeable},
     core::{cell::UnsafeCell, slice},
-    fdt_rs::{
-        base::DevTree,
-        error::DevTreeError,
-        prelude::{FallibleIterator, PropReader},
-    },
     libaddress::{PhysAddr, VirtAddr},
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
@@ -141,32 +135,13 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     semi::println!("🥾 Parsing device tree...");
 
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
-    let device_tree =
-        unsafe { DevTree::from_raw_pointer(dtb_ptr).expect("🥾 DeviceTree failed to read") };
+    let device_tree = unsafe { device_tree::index(dtb_ptr, &mut allocator) };
 
-    let layout = DeviceTree::layout(device_tree).expect("🥾 Couldn't calculate DeviceTree index");
-
-    let block = allocator
-        .alloc_aligned(
-            layout.size(),
-            layout.align(),
-            ("DTB index", Alloc::Droppable),
-        )
-        .expect("🥾 Couldn't allocate DeviceTree index");
-    // SAFETY: Unsafe call.
-    let raw_slice = unsafe { core::slice::from_raw_parts_mut(block.as_mut_ptr(), layout.size()) };
-
-    let device_tree =
-        DeviceTree::new(device_tree, raw_slice).expect("🥾 Couldn't initialize indexed DeviceTree");
-
-    let board = device_tree.get_prop_by_path("/model").unwrap().str();
-    if let Ok(board_name) = board {
+    if let Some(board_name) = device_tree.model() {
         semi::println!("🥾 Running on {board_name}");
     }
 
-    // let mut dumper = device_tree.dumper(0);
-    // dumper.dump_metadata();
-    // dumper.dump_root().expect("oof");
+    // libdevicetree::dump(&device_tree, &mut writer).expect("oof");
 
     // To init memory allocation we need to parse memory regions from dtb and add the regions to
     // available memory regions list. Then initial BootRegionAllocator will get memory from these
@@ -179,36 +154,21 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     // 2. From those read reg entries, using `/#address-cells` and `/#size-cells` as units
     // 3. Union of all these reg entries will be the available memory. Enter it as mem-regions.
 
-    let res: Result<_, DevTreeError> = device_tree
-        .props()
-        .try_find(|p| Ok(p.name()? == "device_type" && p.str()? == "memory"));
-    let mem_prop = res.unwrap().expect("🌴 Unable to find memory node.");
-    let _mem_node = mem_prop.node();
-    // let parent_node = mem_node.parent_node();
-
     // reg == region, usually defines LOC+SIZE unless #size-cells is set to 0
     // can also be reg = <0x7e100000 0x00000114 0x7e00a000 0x00000024 >; to define two locations
-    let reg_prop = device_tree
-        .get_prop_by_path("/memory@0/reg")
-        .expect("🌴 Unable to figure out memory-reg");
-
-    semi::println!(
-        "🌴 Found memnode with reg prop: name {:?}, size {}",
-        reg_prop.name(),
-        reg_prop.length()
-    );
-
-    let reg_prop = DeviceTreeProp::new(reg_prop);
-
     let mut total_memory = 0;
 
-    for (mem_addr, mem_size) in reg_prop.payload_pairs_iter() {
-        semi::println!("🌴 Memory {} KiB at offset {}", mem_size / 1024, mem_addr);
-        total_memory += mem_size;
+    for region in device_tree.memory() {
+        semi::println!(
+            "🌴 Memory {} KiB at offset {}",
+            region.size / 1024,
+            region.start
+        );
+        total_memory += region.size;
         BOOT_INFO.lock(|bi| {
             bi.insert_free_region(
-                PhysAddr::new(mem_addr),
-                PhysAddr::new(mem_addr + mem_size),
+                PhysAddr::new(region.start),
+                PhysAddr::new(region.start + region.size),
                 AttributeFields::default(),
                 "RAM",
             )
@@ -217,14 +177,16 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     }
 
     // 4. List unusable memory, and remove it from the memory regions for the allocator.
-    for entry in device_tree.fdt().reserved_entries() {
-        let size: u64 = entry.size.into();
-        let address: u64 = entry.address.into();
-        semi::println!("🌴 Reserved memory {size:?} bytes at {address:?}");
+    for region in device_tree.reserved_memory() {
+        semi::println!(
+            "🌴 Reserved memory {:?} bytes at {:?}",
+            region.size,
+            region.start
+        );
         BOOT_INFO.lock(|bi| {
             bi.insert_used_region(
-                PhysAddr::new(entry.address.into()),
-                PhysAddr::new(u64::from(entry.address) + u64::from(entry.size)),
+                PhysAddr::new(region.start),
+                PhysAddr::new(region.start + region.size),
                 AttributeFields::default(),
                 "Reserved",
             )
@@ -253,7 +215,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     //   memreserve = <0x3b400000 0x04c00000 >;
 
     // Iterate compatible nodes (example):
-    for entry in device_tree.compatible_nodes("arm,pl011") {
+    for entry in device_tree.index().compatible_nodes("arm,pl011") {
         semi::println!(
             "🌴 PL011 device {:?}",
             entry.name() /*, entry.address*/
@@ -263,13 +225,13 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     // 6. Also, remove the DTB memory region + index
     semi::println!(
         "🌴 DTB region {} bytes at {:#016x}",
-        device_tree.fdt().totalsize(),
+        device_tree.total_size(),
         dtb_ptr as usize
     ); // also include the raw_slice allocated bit
     BOOT_INFO.lock(|bi| {
         bi.insert_used_region(
             PhysAddr::new(dtb_ptr as u64),
-            PhysAddr::new(dtb_ptr as u64 + device_tree.fdt().totalsize() as u64),
+            PhysAddr::new(dtb_ptr as u64 + device_tree.total_size() as u64),
             AttributeFields {
                 droppable: true,
                 ..Default::default()
@@ -319,38 +281,16 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     // To add later: clocks and interrupts, if any
     // Print "-" prefix is status = disabled;
 
-    for entry in device_tree.nodes() {
-        if let Some(item) = entry.props().find(|p| p.name() == Ok("reg")) {
-            let compat_names = entry
-                .props()
-                .find(|p| p.name() == Ok("compatible"))
-                .and_then(|prop| prop.str().ok())
-                .unwrap_or("");
-            let phandle = entry
-                .props()
-                .find(|p| p.name() == Ok("phandle"))
-                .and_then(|prop| prop.phandle(0).ok());
-            let disabled = entry
-                .props()
-                .find(|p| p.name() == Ok("status"))
-                .and_then(|prop| prop.str().ok())
-                .is_some_and(|value| value == "disabled");
-            let name = entry.name().unwrap();
-            let name = name.split_once('@').unwrap_or((name, "")).0;
-
-            let reg_prop = DeviceTreeProp::new(item);
-            for (mem_base, mem_size) in reg_prop.payload_pairs_iter() {
-                nodes[num_nodes] = Node {
-                    start: mem_base,
-                    size: mem_size,
-                    name,
-                    compat: compat_names,
-                    disabled,
-                    phandle: phandle.unwrap_or_default(),
-                };
-                num_nodes += 1;
-            }
-        }
+    for device in device_tree.devices() {
+        nodes[num_nodes] = Node {
+            start: device.region.start,
+            size: device.region.size,
+            name: device.name,
+            compat: device.compatible,
+            disabled: !device.enabled,
+            phandle: device.phandle.unwrap_or_default(),
+        };
+        num_nodes += 1;
     }
 
     let mut nodes = &mut nodes[..num_nodes];
@@ -371,10 +311,17 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             node.compat
         );
 
-        if node.name != "memory" && node.name != "gpio" && node.name != "mmc" && node.name != "smi"
+        if !node.disabled
+            && node.name != "memory"
+            && node.name != "gpio"
+            && node.name != "mmc"
+            && node.name != "smi"
         {
+            // Device tree nodes may share registers (e.g. on the RPi4 an
+            // interrupt controller inside the HDMI block): the first node
+            // records the region, later overlapping ones are only reported.
             BOOT_INFO.lock(|bi| {
-                bi.insert_used_region(
+                if let Err(error) = bi.insert_used_region(
                     PhysAddr::new(node.start),
                     PhysAddr::new(node.start + node.size),
                     AttributeFields {
@@ -382,8 +329,9 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
                         ..AttributeFields::default()
                     },
                     node.name,
-                )
-                .expect("🌴 Cannot insert driver region in boot_info");
+                ) {
+                    semi::println!("🌴 Not recording {} region: {error:?}", node.name);
+                }
             });
         }
     }
@@ -391,11 +339,19 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     semi::println!();
     semi::println!();
 
-    for entry in device_tree.nodes() {
+    for entry in device_tree.index().nodes() {
         if entry.name() == Ok("chosen") {
             semi::println!("🌴 Found /chosen node");
         }
     }
+
+    // Pick the interrupt controller component while the device tree index is
+    // live; it is loaded once the kernel half is laid out.
+    let irqchip_plan = privileged::plan(&device_tree, embed::privileged::PRIVILEGED)
+        .inspect_err(|reason| {
+            semi::println!("🥾 No interrupt controller: {reason}");
+        })
+        .ok();
 
     // unsafe {
     //     BOOT_INFO.dtb_size = dtb.total_size();
@@ -510,6 +466,12 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     )
     .expect("🥾 Failed to create kernel mapping");
     semi::println!("🥾 Higher-half mapped the nucleus");
+
+    if let Some(plan) = &irqchip_plan {
+        let handoff = privileged::load(plan, &mut mmu_setup)
+            .expect("🥾 Failed to load the interrupt controller component");
+        privileged::record(&handoff);
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Interlude: Print the BOOT_INFO region map

@@ -170,9 +170,60 @@ impl<A: ArchObjects> Nucleus<A> {
         )
     }
 
-    /// Validate the FIFO front, then store `parked` as the current Thread's
-    /// context and make the front current. The caller has validated the
-    /// current Thread; nothing is mutated before the last fallible check.
+    /// Preemption-timer tick: if another Thread is runnable, stop the current
+    /// one as `Preempted` with its interrupted state `saved`, select the FIFO
+    /// front and requeue the current Thread behind it (the idle Thread is
+    /// never queued). `None` means the current Thread keeps running.
+    ///
+    /// Like [`Nucleus::park_and_select`], every fallible check precedes
+    /// commitment, and entry installs the returned translation.
+    pub fn preempt_and_select(
+        &mut self,
+        access: &Access,
+        saved: SavedContext,
+    ) -> Result<Option<PreparedResume>, CapError> {
+        if !execution_origin(saved.origin) {
+            return Err(CapError::InvalidDomain);
+        }
+        let current = self.current_thread_id()?;
+        let current_index = usize::from(current.index);
+        let current_thread = self
+            .pools
+            .threads
+            .get_live(current_index)
+            .ok_or(CapError::InvalidDomain)?;
+        if current_thread.context != ExecutionContext::Running {
+            return Err(CapError::InvalidOperation);
+        }
+        if self.scheduler.is_empty() {
+            return Ok(None);
+        }
+        let current_is_idle = self.idle_thread == Some(current);
+        let resumed = self.switch_away(
+            access,
+            current,
+            current_index,
+            &ExecutionContext::Preempted { saved },
+        )?;
+        // switch_away dequeued the front, so the queue has room.
+        if !current_is_idle {
+            assert!(
+                self.scheduler.push(current.index),
+                "preempted Thread did not requeue"
+            );
+        }
+        Ok(Some(resumed))
+    }
+
+    /// Whether the idle Thread is current.
+    pub fn idle_is_current(&self) -> bool {
+        self.idle_thread.is_some() && self.idle_thread == self.current_thread
+    }
+
+    /// Validate the FIFO front (or, if nothing is queued, the idle Thread),
+    /// then store `parked` as the current Thread's context and make the
+    /// selected Thread current. The caller has validated the current Thread;
+    /// nothing is mutated before the last fallible check.
     fn switch_away(
         &mut self,
         access: &Access,
@@ -183,7 +234,19 @@ impl<A: ArchObjects> Nucleus<A> {
         // Peek is sufficient only because validation and dequeue share this
         // exclusive transaction. The queue still carries indices, not Thread
         // incarnations; general scheduler identity/reuse remains D3/D5 work.
-        let next = self.scheduler.peek().ok_or(CapError::InvalidOperation)?;
+        let queued = self.scheduler.peek();
+        let next = match (queued, self.idle_thread) {
+            (Some(next), _) => next,
+            // Nothing is runnable: fall back to the idle Thread.
+            (None, Some(idle)) if idle != current => {
+                self.pools
+                    .threads
+                    .validate(idle)
+                    .map_err(|_stale_idle| CapError::InvalidDomain)?;
+                idle.index
+            }
+            (None, _) => return Err(CapError::InvalidOperation),
+        };
         let next_index = usize::from(next);
         // The selected Thread becomes current as a checked identity.
         let next_thread = self
@@ -202,7 +265,9 @@ impl<A: ArchObjects> Nucleus<A> {
             target.address_space,
         )?;
         let (mut restored, terminal) = match target.context {
-            ExecutionContext::NotStarted { saved } => (saved, None),
+            ExecutionContext::NotStarted { saved } | ExecutionContext::Preempted { saved } => {
+                (saved, None)
+            }
             ExecutionContext::Parked { saved, record } => {
                 // Wakeup enqueues the Thread only after the pending record's
                 // single terminal transition. Deliver its full result shape,
@@ -261,11 +326,13 @@ impl<A: ArchObjects> Nucleus<A> {
             .get_live_mut(current_index)
             .expect("validated current Thread")
             .context = *parked;
-        assert_eq!(
-            self.scheduler.pop(),
-            Some(next),
-            "validated scheduler front changed"
-        );
+        if queued.is_some() {
+            assert_eq!(
+                self.scheduler.pop(),
+                Some(next),
+                "validated scheduler front changed"
+            );
+        }
         self.pools
             .threads
             .get_live_mut(next_index)

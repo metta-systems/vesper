@@ -1,5 +1,5 @@
 use {
-    aarch64_cpu::registers::{ESR_EL1, FAR_EL1, Readable},
+    aarch64_cpu::registers::{ESR_EL1, FAR_EL1, Readable, SPSR_EL1},
     core::{
         fmt,
         mem::{align_of, offset_of, size_of},
@@ -56,17 +56,31 @@ pub struct SavedContext {
     pub tpidr_el0: u64,
 }
 
+/// `SPSR_EL1` debug, `SError` and FIQ masks: every initial context keeps them.
+const SPSR_MASK_DAF: u64 =
+    SPSR_EL1::D::Masked.value | SPSR_EL1::A::Masked.value | SPSR_EL1::F::Masked.value;
+
+/// Initial `EL1t` state with every exception masked (non-interruptible).
+const SPSR_EL1T_MASKED: u64 = SPSR_MASK_DAF | SPSR_EL1::I::Masked.value | SPSR_EL1::M::EL1t.value;
+
+/// Initial `EL1t` state that takes IRQs (preemptible).
+const SPSR_EL1T_INTERRUPTIBLE: u64 = SPSR_MASK_DAF | SPSR_EL1::M::EL1t.value;
+
+/// Initial `EL0t` state: IRQs unmasked, so the nucleus can preempt it.
+const SPSR_EL0T: u64 = SPSR_MASK_DAF | SPSR_EL1::M::EL0t.value;
+
 impl SavedContext {
     /// Initial context for trusted `EL1t` bootstrap/fixture execution on `SP_EL0`.
     ///
-    /// All GPRs, LR and TLS are zero; D, A, I and F are masked. This constructs
-    /// internal execution state, not a public privileged-Thread creation ABI.
-    /// The caller supplies a valid PC and a mapped, 16-byte-aligned stack SP.
+    /// All GPRs, LR and TLS are zero; D, A, I and F are masked, so the Thread
+    /// runs until it blocks. This constructs internal execution state, not a
+    /// public privileged-Thread creation ABI. The caller supplies a valid PC
+    /// and a mapped, 16-byte-aligned stack SP.
     pub const fn el1t(pc: u64, sp: u64) -> Self {
         Self {
             gpr: [0; 30],
             lr: 0,
-            spsr_el1: 0x3c4,
+            spsr_el1: SPSR_EL1T_MASKED,
             elr_el1: pc,
             sp,
             origin: ExceptionOrigin::CurrentSp0,
@@ -74,10 +88,19 @@ impl SavedContext {
         }
     }
 
+    /// Like [`Self::el1t`], but IRQs are unmasked: the nucleus may interrupt
+    /// and preempt the Thread (e.g. the idle Thread waiting in `wfi`).
+    pub const fn el1t_interruptible(pc: u64, sp: u64) -> Self {
+        let mut context = Self::el1t(pc, sp);
+        context.spsr_el1 = SPSR_EL1T_INTERRUPTIBLE;
+        context
+    }
+
     /// Initial context for unprivileged `EL0t` execution on `SP_EL0`.
     ///
-    /// All GPRs, LR and TLS are zero except `x0 = argument`; D, A, I and F are
-    /// masked (EL0 cannot unmask them: `SCTLR_EL1.UMA` traps DAIF access).
+    /// All GPRs, LR and TLS are zero except `x0 = argument`. IRQs are
+    /// unmasked so the nucleus can preempt the Thread; D, A and F stay masked
+    /// (EL0 cannot change any of them: `SCTLR_EL1.UMA` traps DAIF access).
     /// The caller supplies a PC and a 16-byte-aligned SP that are mapped
     /// EL0-accessible in the Thread's `AddressSpace`.
     pub const fn el0(pc: u64, sp: u64, argument: u64) -> Self {
@@ -86,7 +109,7 @@ impl SavedContext {
         Self {
             gpr,
             lr: 0,
-            spsr_el1: 0x3c0,
+            spsr_el1: SPSR_EL0T,
             elr_el1: pc,
             sp,
             origin: ExceptionOrigin::LowerAarch64,

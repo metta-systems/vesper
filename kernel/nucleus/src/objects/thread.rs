@@ -36,6 +36,9 @@ pub enum ExecutionContext {
         saved: SavedContext,
         record: ObjectId,
     },
+    /// Runnable, stopped by the preemption timer: `saved` is the complete
+    /// interrupted state, restored as-is (no completion is owed).
+    Preempted { saved: SavedContext },
     /// Currently executing, or a fixture thread with no execution context:
     /// no saved state to restore.
     Running,

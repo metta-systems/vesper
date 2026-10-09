@@ -42,6 +42,7 @@ libaddress = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
+libirqchip = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 libmachine = { workspace = true }

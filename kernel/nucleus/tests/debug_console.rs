@@ -18,6 +18,11 @@ mod api;
 #[path = "../src/objects/mod.rs"]
 mod objects;
 
+// Only the clock is used here; the tick is armed by the nucleus binary.
+#[allow(dead_code)]
+#[path = "../src/timer.rs"]
+mod timer;
+
 #[path = "support/resume.rs"]
 mod resume_tests;
 
@@ -252,6 +257,8 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, Objec
         dcb_pages: DcbPages::new(),
         pending: crate::objects::PendingPool::new(),
         scheduler: crate::objects::Scheduler::new(),
+        idle_thread: None,
+        ticks: 0,
     };
     // One fixture AddressSpace shared by the fixture Threads: these tests
     // never resolve translation state.

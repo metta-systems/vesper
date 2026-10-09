@@ -13,11 +13,17 @@
 //! transactional) is separate; see `nucleus::api::untyped`.
 
 use {
-    crate::{boot_info::BOOT_INFO, embed::NUCLEUS_SET_ANCHOR_VIRT, print_my_sp},
+    crate::{
+        boot_info::BOOT_INFO,
+        embed::{NUCLEUS_SET_ANCHOR_VIRT, NUCLEUS_SET_PLATFORM_VIRT},
+        print_my_sp, privileged,
+    },
     core::cell::UnsafeCell,
     libaddress::PhysAddr,
+    libexception::arch::aarch64::SavedContext,
     liblocking::interface::Mutex,
     libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, domain::DomainId},
+    libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::{KeyEntry, RegionPayload},
         objects::{
@@ -140,6 +146,8 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         dcb_pages: DcbPages::new(),
         pending: PendingPool::new(),
         scheduler: Scheduler::new(),
+        idle_thread: None,
+        ticks: 0,
         pools: NucleusPools::<A> {
             threads,
             notifications,
@@ -302,6 +310,50 @@ pub struct BootState {
 /// real kickstart passes its own needs; each e2e test kernel passes its own
 /// fixture extents (fixture Threads and `AddressSpace`s, Notifications and
 /// `EventCounts`, page tables).
+/// Execution stack of the idle Thread. It only runs `wfi`; interrupts are
+/// taken on the shared `SP_EL1` trap stack.
+#[repr(C, align(16))]
+struct IdleStack(UnsafeCell<[u8; IDLE_STACK_BYTES]>);
+
+const IDLE_STACK_BYTES: usize = 1024;
+
+// SAFETY: only the idle Thread uses the stack, through its SP.
+unsafe impl Sync for IdleStack {}
+
+static IDLE_STACK: IdleStack = IdleStack(UnsafeCell::new([0; IDLE_STACK_BYTES]));
+
+/// The idle Thread's body: wait for the next interrupt, forever.
+extern "C" fn idle_loop() -> ! {
+    loop {
+        aarch64_cpu::asm::wfi();
+    }
+}
+
+/// Create the idle Thread in `address_space` (which must map the boot image):
+/// an interruptible `EL1t` Thread the nucleus selects when nothing else is
+/// runnable and never queues. Needs a free Thread pool slot.
+pub fn spawn_idle(nucleus: &mut Nucleus<ArchObjectsImpl>, address_space: ObjectId) -> ObjectId {
+    assert!(
+        nucleus.idle_thread.is_none(),
+        "the idle Thread already exists"
+    );
+    let stack_top = IDLE_STACK.0.get() as u64 + IDLE_STACK_BYTES as u64;
+    let (idle, _) = nucleus
+        .pools
+        .threads
+        .allocate(Thread {
+            address_space,
+            context: ExecutionContext::NotStarted {
+                saved: SavedContext::el1t_interruptible(idle_loop as *const () as u64, stack_top),
+            },
+            invocation_stack: InvocationStack::new(),
+            fault: None,
+        })
+        .expect("no Thread slot for the idle Thread");
+    nucleus.idle_thread = Some(idle);
+    idle
+}
+
 pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     // Allocate a power-of-2 boot region for the boot Untyped.
     let boot_region = BOOT_INFO
@@ -474,6 +526,27 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
             NUCLEUS_SET_ANCHOR_VIRT,
         );
         setter(nucleus_ptr);
+    }
+
+    // Install the interrupt controller kickstart loaded, now that the kernel
+    // half is live.
+    if let Some(handoff) = privileged::handoff() {
+        // SAFETY: the paired nucleus is mapped; the installer is a boot-only
+        // one-shot call before any interrupt is unmasked, and `handoff`
+        // describes the component and MMIO kickstart mapped.
+        let timer_line = unsafe {
+            let install = core::mem::transmute::<
+                u64,
+                unsafe extern "C" fn(*const libirqchip::PlatformHandoff) -> u32,
+            >(NUCLEUS_SET_PLATFORM_VIRT);
+            install(handoff)
+        };
+        assert_ne!(
+            timer_line,
+            u32::MAX,
+            "the nucleus refused the interrupt controller"
+        );
+        semi::println!("🥾 Interrupt controller installed, physical timer line {timer_line}");
     }
     print_my_sp();
 
