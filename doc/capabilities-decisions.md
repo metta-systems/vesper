@@ -23,10 +23,12 @@ Unanswered questions before implementing the scheduler record ABI:
 - What are the exact shared-record fields and kernel-versus-scheduler
   transition rules, publication/snapshot protocol, event-summary indexing,
   and record retirement/reuse behavior?
-- What are the Thread creation and donation schemas, and how is strict-tree
+- What are the Retype-created Thread configuration and start schemas
+  (AddressSpace, entry, stack, Time), the scheduler donation schema, and how is strict-tree
   scheduler ownership enforced?
-- What precisely does a `Brand` name, how is its handler bound, and how does it
-  relate to `IRQHandler`?
+- Where does the dispatch operation (Thread, Time, priority, timeout) live
+  (Scheduler, Thread or Time), and how are block and expiry events posted to
+  the scheduler Thread through its records?
 
 
 ## D7: Protected Procedure Call (`Invocation`)
@@ -91,12 +93,14 @@ Unanswered questions before implementing the scheduler record ABI:
   API versus bootstrap/libOS composition layout.
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
-- **D8:** budget issuance and replenishment authority; donation as loan or
-  transfer, including Donate's consumed-self semantics; unused-budget return
-  on deletion, drop and yield; compatible Merge
-  conditions and expiry; Split destination-slot behavior and Query; wire and
-  internal time units, the monotonic deadline clock, rounding/overflow, and
-  multicore budget ownership.
+- **D8:** whether the root budget is infinite or a large finite amount (both
+  are buildable through the Kickstart `infinite-boot-time` feature) and who
+  replenishes a finite one; what happens to remaining budget when a Time is
+  deleted; dispatch register schema and protection against races between
+  user-level dispatch and kernel events (Composite's scheduling token); clock
+  source and rounding of charged time.
+- **IRQ follow-up:** whether a Thread may bind one Notification for both
+  PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built
   components: how a component learns the running kernel's ABI revision and
   supported operations, and what happens on a mismatch. Not needed while

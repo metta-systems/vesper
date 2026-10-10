@@ -311,7 +311,7 @@ impl<T: NucleusObject> ObjectPool<T> {
         Ok(unsafe { self.base.add(usize::from(id.index)) })
     }
 
-    /// Validate two distinct identities, returning mutable and shared pointers.
+    /// Validate two distinct identities, returning disjoint mutable pointers.
     ///
     /// Rejects same-slot aliases: two operands within one execution may name
     /// the same object, and an outer lock does not make two simultaneous
@@ -320,7 +320,7 @@ impl<T: NucleusObject> ObjectPool<T> {
         &mut self,
         first: ObjectId,
         second: ObjectId,
-    ) -> Result<(*mut T, *const T), PairIdentityError> {
+    ) -> Result<(*mut T, *mut T), PairIdentityError> {
         if first.index == second.index {
             return Err(PairIdentityError::Aliased);
         }

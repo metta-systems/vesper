@@ -103,18 +103,18 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Remove `DcbPages`/`DcbView`, the global DCB view, `libs/object/src/domain.rs` and the duplicated `USER_BASE`/`MAX_DOMAINS` constants; replace them with scheduler-owned shared records behind shared constants and size/offset assertions.
 - [ ] Implement `Scheduler.ShareRegion` across shared ABI, wrapper, dispatch and object state: one already scheduler-mapped Frame per call, reject conflicting re-share, check Scheduler and Frame authority.
 - [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private.
-- [ ] Implement hierarchical Scheduler derivation, root-only Thread creation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
+- [ ] Implement hierarchical Scheduler derivation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
 - [ ] Move notification and block-reason accounting into the shared records, with event-summary indexing and Thread-retirement cleanup.
 - [ ] Carry incarnation-checked Thread identities in the kernel run queue: `Scheduler` still queues bare pool indices, and selection mints the current Thread's identity from the live slot (`ObjectPool::live_identity`).
 - [ ] Test scheduler/Frame authority, mapped and unmapped ShareRegion inputs, re-share rejection, stride placement, identity reuse, tree constraints, root creation/donation, publication/reuse and Thread teardown; run target checks for record access and kernel-private state isolation.
-- [ ] Implement Brand once its binding is selected, in the IRQ slice.
 
 ## Phase 5 — Memory and safe reclamation
 
 Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
 
 - [ ] Separate backing size/alignment from descriptor storage and slot quotas, with provenance, for kinds outside the kernel object pools.
-- [ ] Define the device-memory policy per kind (today every device source is rejected except an Untyped split) and the sanitization duties beyond Retype-carved Frames and PageTables, distinguishing intentional content-preserving sharing.
+- [ ] Retype device Frames from device Untypeds (no zeroing, `is_device` recorded, device attributes and never executable on Map), and have Kickstart hand out device Untypeds for device-tree MMIO ranges, excluding kernel-owned ranges (interrupt controller, per-core timer/mailbox block); test that no handed-out device Untyped overlaps them.
+- [ ] Define the sanitization duties beyond Retype-carved Frames and PageTables, distinguishing intentional content-preserving sharing.
 - [ ] Implement mapping-local Unmap versus origin-capability Revoke of descendants: retain the origin, define partial completion, and prevent racing mapping installation.
 - [ ] Encode and enforce origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no-Frame-slot-reuse rule.
 - [ ] Implement the revocation/reclamation completion protocol: teardown bookkeeping retained across partial map/unmap failures, Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
@@ -135,17 +135,28 @@ Reference: [communication](capabilities-contract.md#communication-and-deferred-c
 - [ ] Specify nested/concurrent-call rules beyond the fixed depth, shared-memory rules, optional capability transfer, call cancellation/teardown (including target AddressSpace retirement during a call), and any partial-completion states after visible effects.
 - [ ] Complete architectural-state isolation beyond the selected TLS, timer/counter, PMU, debug-channel and FP/SIMD controls before protected EL0 claims.
 
+### Interrupt delivery
+
+Reference: [IRQ delivery](capabilities-contract.md#irq-delivery). Order toward the PL011 driver: Retype-created Threads, device Frames (Phase 5), then the items below.
+
+- [ ] Add the nucleus IRQ table (bound Notification identity and badge per line, sized by the component's `line_count`); `handle_irq` signals a bound line's Notification, masks it and ends the interrupt, and masks and ends unbound lines.
+- [ ] Implement `IRQControl.Issue` (specifier → line through `xlate`, trigger from the specifier, one live IRQHandler per line, nucleus timer line refused) and `IRQHandler.SetNotification`/`Clear`/`Ack`, with shared ABI, wrappers, rights checks and success traces; deleting the IRQHandler clears and masks the line.
+- [ ] Install IRQControl as a Kickstart boot key; later hand it to `irq-manager`.
+- [ ] Test issue/bind/clear/ack, double issue, wrong-kind and missing-`SEND` Notification keys and stale identities in nucleus unit tests; run an EL0 receiver Thread that waits on a bound line, acks and observes repeated deliveries on raspi3b and raspi4b.
+- [ ] Retype Threads from Untyped, with configuration (AddressSpace, entry, stack, Time) and start operations; schema in [`capabilities-decisions.md`](capabilities-decisions.md) (D5).
+- [ ] Driver matching: `compatible` link section in EL0 driver binaries, `[[driver]]` manifest entries, Kickstart loading one driver per matching enabled node with its device Untyped, IRQHandlers and Time.
+- [ ] Port the PL011 UART to an EL0 driver component (`drivers/uart-pl011`) that retypes its receiver Thread and device Frame, binds its interrupt and serves receive and transmit by interrupts; `uart-test` runs it in loopback on raspi3b and raspi4b.
+
 ## Phase 7 — Time and userspace scheduling
 
 Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduling). Prerequisites: D2/D4/D8/D9 (open questions in [`capabilities-decisions.md`](capabilities-decisions.md)).
 
-- [ ] Separate Time-object storage from issuance of positive CPU budget; keep budget provenance and conservation.
-- [ ] Implement Split/Merge/Query with explicit slots, checked results, transactional failures and no double accounting.
-- [ ] Implement donation, preemption, cancellation and donor resumption through the shared completion mechanism.
+- [ ] Implement per-dispatch execution: dispatch (Thread, Time, priority, timeout), charging the current Time, one-shot timer programming in place of the periodic tick, and block/expiry switching to the scheduler Thread with an event in its records.
+- [ ] Give receiver Threads their own Time and decide wake-time preemption by priority-chain comparison (Notification and IRQ delivery).
 - [ ] Implement Thread Start/Suspend/Resume with initialized contexts, explicit authority, legal transitions and preserved blocked completions and budget; never-returning self-retirement.
 - [ ] Align consumed/remaining/activation/deadline observations with the scheduler records; charge PPC per-call time on Return once a real clock exists (`current_time_ns()` returns zero today).
 - [ ] Provide client ownership APIs that preserve budget on pre-commit errors without relying on destructor side effects.
-- [ ] Test conservation, insufficient budget, failed split/donation, incompatible merge, expiry, cancellation, nested delegation and simultaneous spending; run target scheduling tests with a userspace policy example.
+- [ ] Test conservation, insufficient budget, failed transfer, incompatible merge, expiry, cancellation, nested delegation and simultaneous spending; run target scheduling tests with a userspace policy example.
 
 **Exit:** storage cannot mint execution authority; delegated time is spent at most once; execution, observation and ownership agree across layers.
 

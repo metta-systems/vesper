@@ -191,6 +191,7 @@ pub fn run() -> ! {
         // the boot Thread's wake-up
         notifications: 1,
         event_counts: 0,
+        times: 1,
         // builder: root/L1/L2 and image L3s; EL0 spinner: root/L1/L2, image
         // span, stack region, counter page
         page_tables: 3 + image_tables + 6,

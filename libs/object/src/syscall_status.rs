@@ -53,6 +53,12 @@ pub const NESTING_DEPTH: u64 = 33;
 /// completed Return never produces. Userspace-synthesized protocol/invariant
 /// error, never emitted by the kernel: details are the local x1/x2 verbatim.
 pub const UNEXPECTED_RETURN: u64 = 34;
+/// A finite source Time holds less budget than a `Time.Transfer` asks for.
+/// Detail 1 is the source's remaining budget in nanoseconds; detail 2 is zero.
+pub const INSUFFICIENT_BUDGET: u64 = 35;
+/// A `Time.Transfer` would leave the destination with more
+/// than 16 priority-chain entries. Details are zero.
+pub const PRIORITY_CHAIN_FULL: u64 = 36;
 
 /// Field-specific Invocation stack diagnostics, carried as the complete `x2` word.
 ///

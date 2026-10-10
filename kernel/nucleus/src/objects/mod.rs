@@ -16,6 +16,7 @@ pub mod object_pool;
 pub mod resume;
 pub mod sched;
 pub mod thread;
+pub mod time;
 
 #[cfg(feature = "debug_kernel")]
 pub use debug_console::DebugConsole;
@@ -32,4 +33,5 @@ pub use {
     object_pool::ObjectPool,
     sched::Scheduler,
     thread::{ExecutionContext, InvocationContinuation, InvocationStack, Thread, ThreadFault},
+    time::Time,
 };

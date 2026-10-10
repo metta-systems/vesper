@@ -18,17 +18,17 @@
 // │  • Thread                        • PageTable (translation table)    │
 // │  • Time                          • AddressSpace (translation root)  │
 // │  • Scheduler                     • ASIDPool (ASID allocation)       │
-// │  • Brand                         • IOSpace (SMMU for devices)       │
-// │  • Invocation                  x86_64:                              │
-// │  • Notification                  • Frame (4KB, 2MB, 1GB pages)      │
-// │  • EventCount                    • PageTable (PML4/PDPT/PD/PT)      │
-// │                                  • VSpace (CR3 root)                │
+// │  • Invocation                    • IOSpace (SMMU for devices)       │
+// │  • Notification                x86_64:                              │
+// │  • EventCount                    • Frame (4KB, 2MB, 1GB pages)      │
+// │  • IRQControl                    • PageTable (PML4/PDPT/PD/PT)      │
+// │  • IRQHandler                    • AddressSpace (CR3 root)          │
 // │                                  • IOPort (x86 I/O ports)           │
 // │                                  • IOSpace (VT-d for devices)       │
 // │                                RISC-V:                              │
 // │                                  • Frame (4KB, 2MB, 1GB)            │
 // │                                  • PageTable (Sv39/Sv48)            │
-// │                                  • VSpace (satp root)               │
+// │                                  • AddressSpace (satp root)         │
 // │                                                                     │
 // └─────────────────────────────────────────────────────────────────────┘
 

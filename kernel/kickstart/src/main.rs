@@ -92,6 +92,7 @@ pub fn kickstart_run() -> ! {
         address_spaces: 1,
         notifications: 0,
         event_counts: 0,
+        times: 1,
         page_tables: 0,
         asid_pools: 1,
     });
@@ -215,8 +216,8 @@ pub fn kickstart_run() -> ! {
     // semi::println!("🥾 Switching to init domain...");
     // semi::println!("════════════════════════════✂️🥾🥾🥾🥾🥾✂️═══════════════════════════════");
 
-    // // Create initial time budget for init
-    // let init_time = TimeCap::create_root(INIT_TIME_BUDGET_US);
+    // // Init runs on the boot Time (KeySlot::BOOT_TIME)
+    // let init_time = TimeKey::from_key(boot_key(KeySlot::BOOT_TIME.0, 1));
 
     // // Finally: switch to userspace init
     // // This replaces TTBR0 with init's page tables
@@ -444,7 +445,7 @@ fn setup_init_keyspace(thread: &ThreadRef) {
     keyspace.insert(KEYSPACE_SLOT_SELF, thread.self_cap());
 
     // Slot 2: Parent domain cap (for init, this is invalid/null)
-    // Slot 3: Current TimeCap (kernel sets this on activation)
+    // Slot 17: the boot Time (KeySlot::BOOT_TIME)
 
     // Slots 0x10-0x1F: Will be filled with notification caps
     // Slots 0x20-0x2F: Will be filled with event count caps
@@ -556,19 +557,19 @@ fn mark_init_memory_reclaimable(boot_info: &BootInfo, untypeds_list: ) {
 // ─────────────────────────────────────────────────────────────────────
 
 /// Final step: switch to init domain with initial time budget
-fn switch_to_domain(domain: DomainRef, time: TimeCap) -> ! {
+fn switch_to_domain(domain: DomainRef, time: TimeKey) -> ! {
     // Update domain state 💫
     {
         let dcb = domain.dcb_mut();
         dcb.state
             .store(DomainState::Running as u32, Ordering::Release);
         dcb.time_remaining_ns
-            .store(time.remaining_us() * 1000, Ordering::Relaxed);
+            .store(time.query().budget_ns, Ordering::Relaxed);
         dcb.activation_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    // Set current time cap in init's cspace
-    domain.cspace().insert(CSPACE_SLOT_CURRENT_TIME, time);
+    // Install the Time init runs on in its key table
+    domain.cspace().insert(KeySlot::BOOT_TIME, time);
 
     // Setup TTBR0 for user space
     let ttbr0 = domain.page_tables().root_phys();

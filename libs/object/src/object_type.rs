@@ -136,14 +136,16 @@ define_object_types! {
         Time => TIME = 4,
         /// Authority for a Thread to act as a user-space scheduler.
         Scheduler => SCHEDULER = 5,
-        /// Target identity for future IPI and thread-handler upcalls.
-        Brand => BRAND = 6,
         /// Protected Procedure Call capability for an exported component API.
-        Invocation => INVOCATION = 7,
+        Invocation => INVOCATION = 6,
         /// Coalescing notification.
-        Notification => NOTIFICATION = 8,
+        Notification => NOTIFICATION = 7,
         /// Monotonic event count.
-        EventCount => EVENT_COUNT = 9,
+        EventCount => EVENT_COUNT = 8,
+        /// Issues `IRQHandler` capabilities for interrupt lines.
+        IRQControl => IRQ_CONTROL = 9,
+        /// One interrupt line: binds it to a Notification and acknowledges it.
+        IRQHandler => IRQ_HANDLER = 10,
         /// Debug console; availability is a separate policy decision.
         DebugConsole => DEBUG_CONSOLE = 127,
     }
@@ -160,8 +162,6 @@ define_object_types! {
         IOSpace => IO_SPACE = 5,
         /// x86 I/O ports.
         IOPort => IO_PORT = 6,
-        IRQHandler => IRQ_HANDLER = 7,
-        IRQControl => IRQ_CONTROL = 8,
     }
 }
 

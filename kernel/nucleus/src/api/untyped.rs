@@ -20,7 +20,8 @@
 //! bootstrap-carved notification pool and the capability is a checked pool
 //! identity), `EventCount` (pure kernel synchronization state, added 2026-09-18:
 //! same pool-backed carve — no Untyped bytes, the object is allocated from the
-//! bootstrap-carved event-count pool), and `Untyped` itself (added 2026-09-23:
+//! bootstrap-carved event-count pool), `Time` (an empty budget on the
+//! creating core, same pool-backed carve from the Time pool), and `Untyped` itself (added 2026-09-23:
 //! a split into smaller Untypeds — the child region is `2^size_bits` bytes, at
 //! least the watermark encoding granularity, its own alignment, with the child
 //! watermark starting at zero; no bytes are initialized or sanitized because
@@ -46,7 +47,7 @@ use {
             key_table::resolve_table_cap,
         },
         objects::{
-            ArchObjects, EventCount, KeyTable, Notification, Nucleus,
+            ArchObjects, EventCount, KeyTable, Notification, Nucleus, Time,
             access::{Access, ObjectId},
             key_table::CallerTable,
         },
@@ -109,6 +110,10 @@ enum Carve {
     /// bootstrap-carved event-count pool and the capability is a checked
     /// pool identity over it.
     EventCount,
+    /// A `Time`: an empty budget (zero budget, empty priority chain) on the
+    /// creating core. No Untyped bytes are carved (`size_bits` zero); the
+    /// object is allocated from the bootstrap-carved Time pool.
+    Time,
     /// A carved `Untyped`: a child region of `bytes` bytes split off from the
     /// source. No bytes are initialized or sanitized — an Untyped's contents
     /// are never directly exposed; they become observable only through later
@@ -201,6 +206,12 @@ fn retype<A: ArchObjects>(
             }
             Carve::EventCount
         }
+        ObjectType::TIME => {
+            if size_bits != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::Time
+        }
         ObjectType::UNTYPED => {
             // A split (selected 2026-09-23): the child is its own region of
             // `2^size_bits` bytes. A region smaller than the watermark
@@ -269,7 +280,7 @@ fn retype<A: ArchObjects>(
     // A frame, a page table, and a split-off Untyped are each their own
     // alignment; a KeyTable's carve size and alignment derive from its
     // capacity exponent (at least the watermark encoding granularity); a
-    // Notification and an EventCount carve no bytes.
+    // Notification, an EventCount and a Time carve no bytes.
     let (obj_size, align) = match carve {
         Carve::KeyTable { size_bits } => (
             u64::try_from(KeyTable::carve_size(size_bits)).unwrap(),
@@ -281,7 +292,7 @@ fn retype<A: ArchObjects>(
         }
         // Zero bytes at unit alignment: the watermark computation is a
         // no-op and the commit below re-advances it to the same value.
-        Carve::Notification | Carve::EventCount => (0, 1),
+        Carve::Notification | Carve::EventCount | Carve::Time => (0, 1),
     };
     let total = obj_size
         .checked_mul(u64::from(count))
@@ -362,6 +373,23 @@ fn retype<A: ArchObjects>(
             }
         }
     }
+    let mut time_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
+        [const { None }; MAX_RETYPE_BATCH_LEN];
+    if matches!(carve, Carve::Time) {
+        let core = nucleus.current_cpu();
+        for i in 0..u64::from(count) {
+            let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
+            match nucleus.pools.times.allocate(Time::empty(core)) {
+                Some((id, _)) => time_ids[index] = Some(id),
+                None => {
+                    for id in time_ids[..index].iter().flatten().copied() {
+                        let _rolled_back = nucleus.pools.times.deallocate(id);
+                    }
+                    return Err(CapError::PoolExhausted);
+                }
+            }
+        }
+    }
 
     // Phase 4+5 — initialize each object kernel-privately in the carved region
     // and install its capability. The region is not yet committed (watermark
@@ -430,6 +458,11 @@ fn retype<A: ArchObjects>(
                     .expect("event-count pool slot pre-allocated");
                 KeyEntry::new::<crate::objects::EventCount>(id, requested, 0)
             }
+            Carve::Time => {
+                let id = time_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
+                    .expect("time pool slot pre-allocated");
+                KeyEntry::new::<Time>(id, requested, 0)
+            }
             Carve::Untyped { .. } => {
                 // Pure bookkeeping: no initialization or sanitization (see
                 // the `Carve::Untyped` note). The child's extent is
@@ -464,6 +497,9 @@ fn retype<A: ArchObjects>(
                 for id in ec_ids.iter().flatten().copied() {
                     let _rolled_back = nucleus.pools.event_counts.deallocate(id);
                 }
+                for id in time_ids.iter().flatten().copied() {
+                    let _rolled_back = nucleus.pools.times.deallocate(id);
+                }
                 return Err(failure.error.with_key_operand(6));
             }
         }
@@ -487,6 +523,7 @@ fn retype<A: ArchObjects>(
         Carve::PageTable { .. } => "PageTable",
         Carve::Notification => "Notification",
         Carve::EventCount => "EventCount",
+        Carve::Time => "Time",
         Carve::Untyped { .. } => "Untyped",
     };
     semi::println!("✅ Untyped::Retype({kind_name}, count {count})");

@@ -8,7 +8,8 @@
 use {
     core::sync::atomic::{AtomicU64, Ordering},
     kickstart::bootstrap::{
-        BOOT_TABLE_GUARD, BootState, PoolCapacities, bootstrap_nucleus, retained_init_memory,
+        BOOT_TABLE_GUARD, BOOT_TIME_BUDGET_NS, BootState, PoolCapacities, bootstrap_nucleus,
+        retained_init_memory,
     },
     libexception::arch::aarch64::ExceptionOrigin,
     libkicktest::{
@@ -23,7 +24,10 @@ use {
     },
     libobject::{
         CapError, EventCountKey, InconsistencyReason, KeySlot, KeyTableKey, NotificationKey,
-        ObjectType, RawKey, Rights, UntypedKey, domain::DomainId, thread::ThreadKey,
+        ObjectType, RawKey, Rights, TimeKey, UntypedKey,
+        domain::DomainId,
+        thread::ThreadKey,
+        time::{DEFAULT_PRIORITY, HIGHEST_PRIORITY, INFINITE_BUDGET, LOWEST_PRIORITY, TimeQuery},
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -40,13 +44,15 @@ pub fn run() {
     let retained_init = retained_init_memory();
     translation::observe_bootstrap(crate::run as *const u8 as u64);
     // The boot and Bounce Threads and AddressSpaces; two plain Notifications
-    // plus N1/N2; one EventCount; the source and Bounce root prefixes, both
-    // image closures and both probe tables.
+    // plus N1/N2; one EventCount; the boot Time plus two Retyped Times; the
+    // source and Bounce root prefixes, both image closures and both probe
+    // tables.
     let boot = bootstrap_nucleus(&PoolCapacities {
         threads: 2,
         address_spaces: 2,
         notifications: 4,
         event_counts: 1,
+        times: 3,
         page_tables: 8 + 2 * image_table_count(&retained_init),
         asid_pools: 1,
     });
@@ -56,6 +62,7 @@ pub fn run() {
         boot_as_id,
         self_table_key,
         boot_untyped_key,
+        boot_time_key,
         debug_console_key,
     } = boot;
     let boot_table_binding = nucleus
@@ -87,11 +94,11 @@ pub fn run() {
             0,
             2,
             &self_table,
-            KeySlot(16).0,
+            KeySlot(24).0,
             Rights::all(),
         )
         .unwrap_or_else(|error| panic!("notification Retype failed: {:?}", error.code()));
-    assert_eq!(notification_key.slot(), boot_slot(16));
+    assert_eq!(notification_key.slot(), boot_slot(24));
 
     // A nonzero size_bits is rejected before any pool slot is taken.
     assert!(matches!(
@@ -130,6 +137,8 @@ pub fn run() {
             .unwrap_or_else(|error| panic!("second Notification.Poll failed: {:?}", error.code())),
         0
     );
+
+    time_operations(&untyped, &self_table, boot_time_key);
 
     // Wait tests follow complete source/Bounce provisioning below, so even
     // the already-satisfied/rejected waits enter from the bound source root.
@@ -748,4 +757,103 @@ extern "C" fn bounce_entry() -> ! {
         Ok(bits) => panic!("Bounce: unexpected wakeup with bits {bits:#x}"),
         Err(error) => panic!("Bounce: Notification.Wait failed: {:?}", error.code()),
     }
+}
+
+/// `Time` through the real SVC path: the boot Time, two Retype-created Times,
+/// Transfer down a two-level chain, the rejected transfers, and Merge back to
+/// the boot Time with the budget conserved.
+fn time_operations(untyped: &UntypedKey, self_table: &KeyTableKey, boot_time_key: RawKey) {
+    let boot_time = TimeKey::from_key(boot_time_key);
+    let initial = boot_time
+        .query()
+        .unwrap_or_else(|error| panic!("boot Time.Query failed: {:?}", error.code()));
+    assert_eq!(
+        initial,
+        TimeQuery {
+            budget_ns: BOOT_TIME_BUDGET_NS,
+            priority: HIGHEST_PRIORITY,
+        }
+    );
+
+    // Two empty Times; neither consumes Untyped bytes.
+    let child_key = untyped
+        .retype(
+            ObjectType::TIME,
+            0,
+            0,
+            2,
+            self_table,
+            KeySlot(26).0,
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("Time Retype failed: {:?}", error.code()));
+    assert_eq!(child_key.slot(), boot_slot(26));
+    let child = TimeKey::from_key(child_key);
+    let grandchild = TimeKey::from_key(boot_key(27, child_key.incarnation()));
+    let empty = TimeQuery {
+        budget_ns: 0,
+        priority: LOWEST_PRIORITY,
+    };
+    let query = |time: &TimeKey| {
+        time.query()
+            .unwrap_or_else(|error| panic!("Time.Query failed: {:?}", error.code()))
+    };
+    assert_eq!(query(&child), empty);
+    assert_eq!(query(&grandchild), empty);
+
+    // Root → child → grandchild, each recording its sender's priority.
+    boot_time
+        .transfer(&child, 1_000_000, DEFAULT_PRIORITY)
+        .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
+    child
+        .transfer(&grandchild, 400_000, DEFAULT_PRIORITY + 1)
+        .unwrap_or_else(|error| panic!("nested Time.Transfer failed: {:?}", error.code()));
+    assert_eq!(
+        query(&child),
+        TimeQuery {
+            budget_ns: 600_000,
+            priority: DEFAULT_PRIORITY,
+        }
+    );
+    assert_eq!(
+        query(&grandchild),
+        TimeQuery {
+            budget_ns: 400_000,
+            priority: DEFAULT_PRIORITY + 1,
+        }
+    );
+    if BOOT_TIME_BUDGET_NS != INFINITE_BUDGET {
+        assert_eq!(query(&boot_time).budget_ns, BOOT_TIME_BUDGET_NS - 1_000_000);
+    }
+
+    // More than a finite source holds, and the same Time twice, change
+    // nothing.
+    assert!(matches!(
+        child.transfer(&grandchild, 600_001, 1),
+        Err(CapError::InsufficientBudget { remaining: 600_000 })
+    ));
+    assert!(matches!(
+        child.transfer(&child, 1, 1),
+        Err(CapError::InvalidOperation)
+    ));
+    assert_eq!(query(&child).budget_ns, 600_000);
+
+    // Merge everything back: the boot budget is whole again and both
+    // children are empty. Both merges are merges back, so the boot Time
+    // keeps its own priority.
+    boot_time
+        .merge(&grandchild)
+        .unwrap_or_else(|error| panic!("Time.Merge failed: {:?}", error.code()));
+    boot_time
+        .merge(&child)
+        .unwrap_or_else(|error| panic!("second Time.Merge failed: {:?}", error.code()));
+    assert_eq!(query(&child), empty);
+    assert_eq!(query(&grandchild), empty);
+    assert_eq!(
+        query(&boot_time),
+        TimeQuery {
+            budget_ns: BOOT_TIME_BUDGET_NS,
+            priority: HIGHEST_PRIORITY,
+        }
+    );
 }

@@ -58,6 +58,10 @@ pub mod page_table_client;
 pub mod untyped_client;
 
 #[cfg(test)]
+#[path = "../src/time.rs"]
+pub mod time_client;
+
+#[cfg(test)]
 mod tests {
     use core::mem::{align_of, size_of};
 
@@ -351,6 +355,8 @@ mod tests {
         assert_eq!(KeySlot::BOOT_UNTYPED, KeySlot(5));
         assert_eq!(KeySlot::BOOT_ASID_POOL, KeySlot(14));
         assert_eq!(KeySlot::DEBUG_CONSOLE, KeySlot(15));
+        assert_eq!(KeySlot::FAULT_HANDLER, KeySlot(16));
+        assert_eq!(KeySlot::BOOT_TIME, KeySlot(17));
     }
 
     #[test]
@@ -623,10 +629,11 @@ mod tests {
             (CoreType::Thread, "Thread"),
             (CoreType::Time, "Time"),
             (CoreType::Scheduler, "Scheduler"),
-            (CoreType::Brand, "Brand"),
             (CoreType::Invocation, "Invocation"),
             (CoreType::Notification, "Notification"),
             (CoreType::EventCount, "EventCount"),
+            (CoreType::IRQControl, "IRQControl"),
+            (CoreType::IRQHandler, "IRQHandler"),
             (CoreType::DebugConsole, "DebugConsole"),
         ] {
             assert_eq!(name(kind), expected);
@@ -639,8 +646,6 @@ mod tests {
             (ArchType::ASIDControl, "ASIDControl"),
             (ArchType::IOSpace, "IOSpace"),
             (ArchType::IOPort, "IOPort"),
-            (ArchType::IRQHandler, "IRQHandler"),
-            (ArchType::IRQControl, "IRQControl"),
         ] {
             assert_eq!(name(kind), expected);
         }
@@ -701,22 +706,23 @@ mod tests {
     }
 
     // Literal ABI oracles: do not derive these IDs from the production catalogue.
-    const CORE_TYPES: [(CoreType, ObjectType, u8); 11] = [
+    const CORE_TYPES: [(CoreType, ObjectType, u8); 12] = [
         (CoreType::Null, ObjectType::NULL, 0),
         (CoreType::Untyped, ObjectType::UNTYPED, 1),
         (CoreType::KeyTable, ObjectType::KEY_TABLE, 2),
         (CoreType::Thread, ObjectType::THREAD, 3),
         (CoreType::Time, ObjectType::TIME, 4),
         (CoreType::Scheduler, ObjectType::SCHEDULER, 5),
-        (CoreType::Brand, ObjectType::BRAND, 6),
-        (CoreType::Invocation, ObjectType::INVOCATION, 7),
-        (CoreType::Notification, ObjectType::NOTIFICATION, 8),
-        (CoreType::EventCount, ObjectType::EVENT_COUNT, 9),
+        (CoreType::Invocation, ObjectType::INVOCATION, 6),
+        (CoreType::Notification, ObjectType::NOTIFICATION, 7),
+        (CoreType::EventCount, ObjectType::EVENT_COUNT, 8),
+        (CoreType::IRQControl, ObjectType::IRQ_CONTROL, 9),
+        (CoreType::IRQHandler, ObjectType::IRQ_HANDLER, 10),
         (CoreType::DebugConsole, ObjectType::DEBUG_CONSOLE, 127),
     ];
 
     // Architecture entries carry both the category-local index and the wire ID.
-    const ARCH_TYPES: [(ArchType, ObjectType, u8, u8); 9] = [
+    const ARCH_TYPES: [(ArchType, ObjectType, u8, u8); 7] = [
         (ArchType::Frame, ObjectType::FRAME, 0, 0x80),
         (ArchType::PageTable, ObjectType::PAGE_TABLE, 1, 0x81),
         (ArchType::AddressSpace, ObjectType::ADDRESS_SPACE, 2, 0x82),
@@ -724,8 +730,6 @@ mod tests {
         (ArchType::ASIDControl, ObjectType::ASID_CONTROL, 4, 0x84),
         (ArchType::IOSpace, ObjectType::IO_SPACE, 5, 0x85),
         (ArchType::IOPort, ObjectType::IO_PORT, 6, 0x86),
-        (ArchType::IRQHandler, ObjectType::IRQ_HANDLER, 7, 0x87),
-        (ArchType::IRQControl, ObjectType::IRQ_CONTROL, 8, 0x88),
     ];
 
     #[test]
@@ -844,7 +848,7 @@ mod tests {
     #[test]
     fn constructors_and_accessors_work_in_const_contexts() {
         const CORE: ObjectType = ObjectType::from_core(CoreType::Time);
-        const ARCH: ObjectType = ObjectType::from_arch(ArchType::IRQControl);
+        const ARCH: ObjectType = ObjectType::from_arch(ArchType::IOPort);
         const CORE_WIRE: u8 = CORE.as_u8();
         const ARCH_WIRE: u8 = ARCH.as_u8();
         const CORE_INDEX: u8 = CORE.index();
@@ -852,12 +856,12 @@ mod tests {
         const CORE_CATEGORY: (bool, bool) = (CORE.is_core(), CORE.is_arch());
         const ARCH_CATEGORY: (bool, bool) = (ARCH.is_core(), ARCH.is_arch());
         const CORE_LOCAL: u8 = CoreType::Time.as_u8();
-        const ARCH_LOCAL: u8 = ArchType::IRQControl.as_u8();
+        const ARCH_LOCAL: u8 = ArchType::IOPort.as_u8();
 
         assert_eq!(CORE, ObjectType::TIME);
-        assert_eq!(ARCH, ObjectType::IRQ_CONTROL);
+        assert_eq!(ARCH, ObjectType::IO_PORT);
         assert_eq!((CORE_WIRE, CORE_INDEX, CORE_LOCAL), (4, 4, 4));
-        assert_eq!((ARCH_WIRE, ARCH_INDEX, ARCH_LOCAL), (0x88, 8, 8));
+        assert_eq!((ARCH_WIRE, ARCH_INDEX, ARCH_LOCAL), (0x86, 6, 6));
         assert_eq!(CORE_CATEGORY, (true, false));
         assert_eq!(ARCH_CATEGORY, (false, true));
     }

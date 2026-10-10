@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Wire type | `0x09` (core) |
+| Wire type | `0x08` (core) |
 | Backing | Kernel EventCount pool; created by `Untyped.Retype` |
 | Status | Advance, Await, Read |
 

@@ -22,13 +22,17 @@ use {
     libaddress::PhysAddr,
     libexception::arch::aarch64::SavedContext,
     liblocking::interface::Mutex,
-    libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, domain::DomainId},
+    libobject::{
+        CapError, KeySlot, ObjectType, RawKey, Rights,
+        domain::DomainId,
+        time::{Budget, HIGHEST_PRIORITY, INFINITE_BUDGET},
+    },
     libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::{KeyEntry, RegionPayload},
         objects::{
             ArchObjects, ArchObjectsImpl, EventCount, ExecutionContext, InvocationStack, KeyTable,
-            Notification, Nucleus, ObjectPool, PendingPool, Scheduler, Thread,
+            Notification, Nucleus, ObjectPool, PendingPool, Scheduler, Thread, Time,
             access::{ObjectId, PoolTag},
             arch::ArchPools,
             domain::DcbPages,
@@ -41,6 +45,17 @@ use {
 /// state: 16 MiB, sized for the nucleus, its pools, the boot `KeyTable`, and
 /// the runtime Retype carves the boot continuation performs.
 const BOOT_UNTYPED_SIZE_BITS: u8 = 24;
+
+/// Budget of the boot Time at `KeySlot::BOOT_TIME`: infinite with the
+/// `infinite-boot-time` feature, otherwise a large finite amount (one hour of
+/// CPU time). Nothing replenishes a finite boot budget yet.
+#[cfg(feature = "infinite-boot-time")]
+pub const BOOT_TIME_BUDGET_NS: Budget = INFINITE_BUDGET;
+/// Budget of the boot Time at `KeySlot::BOOT_TIME`: infinite with the
+/// `infinite-boot-time` feature, otherwise a large finite amount (one hour of
+/// CPU time). Nothing replenishes a finite boot budget yet.
+#[cfg(not(feature = "infinite-boot-time"))]
+pub const BOOT_TIME_BUDGET_NS: Budget = 3_600 * 1_000_000_000;
 
 /// Alignment for every boot carve. Page alignment guarantees the 16-byte
 /// watermark granularity and object alignment for all pool types.
@@ -77,6 +92,10 @@ pub struct PoolCapacities {
     /// `Untyped.Retype` (allowlisted 2026-09-18); the pool backing is
     /// charged here, at bootstrap.
     pub event_counts: usize,
+    /// Number of `Time` slots in the initial Time pool. Bootstrap takes one
+    /// for the boot Time, so this must be at least 1; the rest back
+    /// `Untyped.Retype` of Times.
+    pub times: usize,
     /// Number of page-table metadata slots in the initial architecture
     /// page-table pool. The pool holds only kernel metadata (carve address,
     /// installation record); the 4 KiB tables themselves are Retype carves
@@ -125,6 +144,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     let address_spaces = ObjectPool::<A::AddressSpace>::carve(boot, capacities.address_spaces)?;
     let notifications = ObjectPool::<Notification>::carve(boot, capacities.notifications)?;
     let event_counts = ObjectPool::<EventCount>::carve(boot, capacities.event_counts)?;
+    let times = ObjectPool::<Time>::carve(boot, capacities.times)?;
     let page_tables = ObjectPool::<A::PageTable>::carve(boot, capacities.page_tables)?;
     let asid_pools = ObjectPool::<A::ASIDPool>::carve(boot, capacities.asid_pools)?;
 
@@ -152,6 +172,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
             threads,
             notifications,
             event_counts,
+            times,
             // SAFETY: the architecture pool backings were carved above from
             // the boot Untyped's unused watermark range and are exclusively
             // owned.
@@ -291,6 +312,8 @@ pub struct BootState {
     pub self_table_key: RawKey,
     /// Key of the boot Untyped grant (slot `BOOT_UNTYPED`).
     pub boot_untyped_key: RawKey,
+    /// Key of the boot Time grant (slot `BOOT_TIME`).
+    pub boot_time_key: RawKey,
     /// Key of the debug console grant (slot `DEBUG_CONSOLE`), `debug_kernel`
     /// only.
     #[cfg(feature = "debug_kernel")]
@@ -303,7 +326,7 @@ pub struct BootState {
 /// Carves the boot Untyped, builds the initial [`Nucleus`] and its pools,
 /// allocates the boot `AddressSpace` and boot Thread, installs the bootstrap
 /// grants (self-table, boot Untyped, self-AddressSpace, boot Thread, boot ASID
-/// pool, and the debug console under `debug_kernel`), and records the nucleus
+/// pool, boot Time, and the debug console under `debug_kernel`), and records the nucleus
 /// anchor the inert nucleus reads on syscall entry.
 ///
 /// The `capacities` size the carved pools for the caller's continuation: the
@@ -495,6 +518,29 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
             panic!("boot ASID-pool install failed: {:?}", failure.error.code())
         });
 
+    // Provision the boot Time: the root budget on core 0, whose chain names
+    // itself at the most urgent priority. Retype only creates empty Times,
+    // so every other budget is transferred out of this one.
+    let boot_time_id = nucleus
+        .pools
+        .times
+        .allocate(Time::empty(0))
+        .expect("no boot Time slot")
+        .0;
+    *nucleus
+        .pools
+        .times
+        .get_live_mut(usize::from(boot_time_id.index))
+        .expect("boot Time just allocated") =
+        Time::root(0, boot_time_id, BOOT_TIME_BUDGET_NS, HIGHEST_PRIORITY);
+    let boot_time_key = boot_table
+        .insert(
+            KeySlot::BOOT_TIME,
+            KeyEntry::new::<Time>(boot_time_id, Rights::all(), 0),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| panic!("boot Time install failed: {:?}", failure.error.code()));
+
     // Install the debug console grant (debug_kernel), the boot Thread's
     // console authority.
     #[cfg(feature = "debug_kernel")]
@@ -556,6 +602,7 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
         boot_as_id,
         self_table_key,
         boot_untyped_key,
+        boot_time_key,
         #[cfg(feature = "debug_kernel")]
         debug_console_key,
     }

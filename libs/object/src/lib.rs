@@ -18,6 +18,7 @@ pub mod page_table;
 pub mod rights;
 pub mod syscall_status;
 pub mod thread;
+pub mod time;
 pub mod untyped;
 
 use syscall_status as code;
@@ -39,6 +40,7 @@ pub use {
     rights::Rights,
     syscall_status::InvalidStackReason,
     thread::{ThreadKey, ThreadOp},
+    time::{TimeKey, TimeOp},
     untyped::{UntypedKey, UntypedOp},
 };
 
@@ -121,6 +123,8 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             },
             (code::NESTING_DEPTH, count, 0) => CapError::NestingDepth { count },
             (code::UNEXPECTED_RETURN, word1, word2) => CapError::UnexpectedReturn { word1, word2 },
+            (code::INSUFFICIENT_BUDGET, remaining, 0) => CapError::InsufficientBudget { remaining },
+            (code::PRIORITY_CHAIN_FULL, 0, 0) => CapError::PriorityChainFull,
             _ => return None,
         })
     })();
@@ -209,6 +213,13 @@ pub enum CapError {
         word1: u64,
         word2: u64,
     },
+    /// A finite source Time holds less budget than the requested transfer.
+    InsufficientBudget {
+        /// The source's remaining budget in nanoseconds.
+        remaining: u64,
+    },
+    /// The destination Time's priority chain would exceed 16 entries.
+    PriorityChainFull,
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
     UnknownResponse {
@@ -302,6 +313,8 @@ impl CapError {
             }
             CapError::NestingDepth { count } => (code::NESTING_DEPTH, count, 0),
             CapError::UnexpectedReturn { word1, word2 } => (code::UNEXPECTED_RETURN, word1, word2),
+            CapError::InsufficientBudget { remaining } => (code::INSUFFICIENT_BUDGET, remaining, 0),
+            CapError::PriorityChainFull => (code::PRIORITY_CHAIN_FULL, 0, 0),
             CapError::UnknownResponse {
                 status,
                 detail1,

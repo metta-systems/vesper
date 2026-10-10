@@ -18,7 +18,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] One canonical `CoreType`/`ArchType` catalogue (`0x80` arch bit, category-local indices distinct from wire IDs) with exhaustive literal tests over all 256 bytes.
 - [x] Full-width operation decoding for every kind (unassigned IDs and high-bit aliases rejected); checked narrowing of slots, sizes and kinds; nonzero unused words rejected.
 - [x] `Rights::from_wire` rejects undefined rights bits before authority checks in CopyDerive, Retype and `Frame.Map` (closed a Retype hole that minted bits 6–7).
-- [x] Shared status codes 0–34 with one encoder/decoder pair; anything unrepresentable decodes losslessly as `UnknownResponse`; no per-family error spaces.
+- [x] Shared status codes 0–36 with one encoder/decoder pair; anything unrepresentable decodes losslessly as `UnknownResponse`; no per-family error spaces.
 - [x] Operation schemas and unassigned IDs recorded; strict wire-argument convention (unused words zero).
 - [x] User-visible records (`PpcResult`, `ResultSpill`, `ExportRecord`) carry const layout assertions.
 - [x] Current-consumer compatibility policy: rebuild everything together; unsupported operations show up as errors.
@@ -45,7 +45,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] The current Thread is an incarnation-checked identity (`Nucleus::current_thread: Option<ObjectId>`, read through `current_thread_id`/`current_thread_ref`); stale generations select no Thread, table or DCB (`test-debug-console`).
 - [x] `Thread.Retire` (op 4, `RETIRE`) cancels the Thread's pending waits and frees its slot; `AddressSpace.Retire` (op 1) invalidates its ASID and releases it (`sync-test`, `memory-test`).
 - [x] Inert-nucleus boot: Kickstart carves the `Nucleus`, the boot Thread/AddressSpace and table, and installs the boot grants.
-- [x] Scheduler and Brand wire IDs registered (`Scheduler = 5`, `Brand = 6`) with no handlers.
+- [x] Scheduler, IRQControl and IRQHandler registered as core wire kinds (`5`, `9`, `10`) with no handlers; there is no Brand kind (`libs/object` catalogue tests).
 
 ## Phase 5 — Memory and safe reclamation
 
@@ -70,6 +70,11 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] Per-call timestamp in each continuation record (charging inert until a clock exists).
 - [x] Queued-rendezvous endpoint example as a userspace composition over Invocation and Notification/EventCount (`test-endpoint`).
 - [x] Fault delivery: synchronous upcall into `KeySlot::FAULT_HANDLER`, retry/skip/terminate, unhandled faults park the Thread as `Faulted` (`test-fault`).
+
+## Phase 7 — Time and userspace scheduling
+
+- [x] Pool-backed Time objects: Retype creates an empty Time on the creating core; the boot Time at `KeySlot::BOOT_TIME` holds the only initial budget (finite by default, infinite with `infinite-boot-time`) (`kernel/nucleus/src/objects/time.rs`; nucleus `untyped` tests, `sync-test`).
+- [x] `Time.Transfer`/`Merge`/`Query` with the 16-entry priority chain, per-core checks, `INSUFFICIENT_BUDGET`/`PRIORITY_CHAIN_FULL` and all-or-nothing updates (`libs/object/src/time.rs`, `kernel/nucleus/src/api/time.rs`; host ABI tests, nucleus `time` and `untyped` tests, `sync-test`).
 
 ## Final integration
 

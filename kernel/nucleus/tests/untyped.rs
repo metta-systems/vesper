@@ -32,7 +32,9 @@ mod timer;
 use {
     api::KeyEntry,
     core::mem::MaybeUninit,
-    libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, UntypedOp, domain::DomainId},
+    libobject::{
+        CapError, KeySlot, ObjectType, RawKey, Rights, TimeOp, UntypedOp, domain::DomainId,
+    },
     // `Nucleus` is not used directly here: binding it at the crate root lets
     // the included production tree resolve `crate::Nucleus`
     // (objects/arch/aarch64_objects.rs, as the nucleus lib re-exports it).
@@ -99,6 +101,14 @@ static mut NOTIFICATION_POOL_MEM: [u128; 16] = [0; 16];
 /// successful EventCount Retype is also exercisable MMU-off.
 static mut EVENT_COUNT_POOL_MEM: [u128; 32] = [0; 32];
 
+/// Backing for the fixture's Time pool: exactly three slots, so the Retype
+/// pool-exhaustion rollback is observable and the Time operation tests have
+/// a root plus two Times. A Time writes no Untyped bytes, so Retype and the
+/// operations are exercisable MMU-off.
+const TIME_POOL_WORDS: usize =
+    ObjectPool::<crate::objects::Time>::carve_size(3).div_ceil(core::mem::size_of::<u128>());
+static mut TIME_POOL_MEM: [u128; TIME_POOL_WORDS] = [0; TIME_POOL_WORDS];
+
 /// A minimal fixture nucleus. Tests run sequentially and each fixture
 /// re-initializes the same static storage before use.
 fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
@@ -111,6 +121,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
         let pool_ptr = (&raw mut POOL_MEM).cast::<u8>();
         let notification_pool_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
         let event_count_pool_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
+        let time_pool_ptr = (&raw mut TIME_POOL_MEM).cast::<u8>();
         assert!(ObjectPool::<AArch64PageTable>::carve_size(1) <= core::mem::size_of::<[u128; 8]>());
         assert!(
             ObjectPool::<crate::objects::Notification>::carve_size(2)
@@ -131,6 +142,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
                 threads: ObjectPool::initialize(pool_ptr, 0),
                 notifications: ObjectPool::initialize(notification_pool_ptr, 2),
                 event_counts: ObjectPool::initialize(event_count_pool_ptr, 2),
+                times: ObjectPool::initialize(time_pool_ptr, 3),
                 arch: ArchPools::new(
                     ObjectPool::initialize(pool_ptr, 1),
                     // Zero capacity: these MMU-off rejection-path tests never
@@ -1633,4 +1645,231 @@ fn retype_rejects_batches_beyond_the_bound() {
     assert!(matches!(result, Err(CapError::InvalidOperation)));
     assert_eq!(fx.len(), before);
     assert!(fx.nucleus.pools.notifications.is_empty());
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TIME
+// ═══════════════════════════════════════════════════════════════
+
+/// Retype creates empty Times on the current core from the Time pool,
+/// consuming no Untyped bytes.
+#[test_case]
+fn retype_time_installs_empty_pool_backed_times() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let first = fx
+        .invoke(
+            ram,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::TIME,
+                0,
+                0,
+                2,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("time retype failed: {:?}", e.code()));
+    let entry = fx
+        .lookup(RawKey::from_wire(first.0))
+        .unwrap_or_else(|_| panic!("time entry missing"));
+    assert_eq!(entry.object_type(), ObjectType::TIME);
+    let id = entry
+        .object_id()
+        .unwrap_or_else(|_| panic!("time entry is not a pool identity"));
+    assert_eq!(id.pool, crate::objects::access::PoolTag::Time);
+    let time = fx
+        .nucleus
+        .pools
+        .times
+        .get_live(usize::from(id.index))
+        .unwrap_or_else(|| panic!("time not live"));
+    assert_eq!(time.budget_ns(), 0);
+    assert_eq!(time.core(), 0);
+    assert!(time.chain().entries().is_empty());
+    assert_eq!(fx.nucleus.pools.times.len(), 2);
+}
+
+/// `size_bits` is reserved zero for Time, pool exhaustion rolls back, and a
+/// device Untyped cannot create one.
+#[test_case]
+fn retype_time_rejects_size_bits_exhaustion_and_device_sources() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let device = fx.install(KeySlot(31), device_untyped(24));
+    let before = fx.len();
+    let retype = |fx: &mut Fixture, source, size_bits, count| {
+        fx.invoke(
+            source,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::TIME,
+                size_bits,
+                0,
+                count,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        )
+    };
+    assert!(matches!(
+        retype(&mut fx, ram, 12, 1),
+        Err(CapError::InvalidSize(12))
+    ));
+    assert!(matches!(
+        retype(&mut fx, ram, 0, 4),
+        Err(CapError::PoolExhausted)
+    ));
+    assert!(matches!(
+        retype(&mut fx, device, 0, 1),
+        Err(CapError::InvalidObjectType(ObjectType::TIME))
+    ));
+    assert_eq!(fx.len(), before);
+    assert!(fx.nucleus.pools.times.is_empty());
+}
+
+impl Fixture {
+    /// Install a root Time (budget `budget_ns`, chain naming itself at
+    /// priority 0) at `slot` with `rights`, as Kickstart does for the boot
+    /// Time.
+    fn install_root_time(&mut self, slot: KeySlot, budget_ns: u64, rights: Rights) -> RawKey {
+        let (id, _) = self
+            .nucleus
+            .pools
+            .times
+            .allocate(crate::objects::Time::empty(0))
+            .unwrap_or_else(|| panic!("no Time slot"));
+        *self
+            .nucleus
+            .pools
+            .times
+            .get_live_mut(usize::from(id.index))
+            .unwrap_or_else(|| panic!("time not live")) =
+            crate::objects::Time::root(0, id, budget_ns, 0);
+        self.install(slot, KeyEntry::new::<crate::objects::Time>(id, rights, 0))
+    }
+
+    /// Install an empty Time at `slot`.
+    fn install_empty_time(&mut self, slot: KeySlot) -> RawKey {
+        let (id, _) = self
+            .nucleus
+            .pools
+            .times
+            .allocate(crate::objects::Time::empty(0))
+            .unwrap_or_else(|| panic!("no Time slot"));
+        self.install(
+            slot,
+            KeyEntry::new::<crate::objects::Time>(id, Rights::all(), 0),
+        )
+    }
+
+    /// Invoke the Time handler against the fixture.
+    fn invoke_time(
+        &mut self,
+        key: RawKey,
+        op: u64,
+        args: &[u64; 6],
+    ) -> Result<(u64, u64), CapError> {
+        // SAFETY: test-only; no overlapping access context.
+        let access = unsafe { Access::new() };
+        let caller = crate::objects::key_table::CallerTable {
+            addr: self.table_addr,
+            guard: FIXTURE_GUARD,
+        };
+        api::time::invoke::<ArchObjectsImpl>(&access, caller, key, op, args, self.nucleus)
+    }
+
+    fn query(&mut self, key: RawKey) -> (u64, u64) {
+        self.invoke_time(key, TimeOp::Query as u64, &[0; 6])
+            .unwrap_or_else(|e| panic!("query failed: {:?}", e.code()))
+    }
+}
+
+/// Transfer moves budget and records the sender's priority; Merge moves
+/// everything back and empties the source.
+#[test_case]
+fn time_transfer_query_and_merge_conserve_budget() {
+    let mut fx = Fixture::new(FULL);
+    let root = fx.install_root_time(KeySlot(17), 1_000, Rights::all());
+    let child = fx.install_empty_time(KeySlot(40));
+
+    assert_eq!(fx.query(root), (1_000, 0));
+    assert_eq!(fx.query(child), (0, u64::from(u16::MAX)));
+
+    fx.invoke_time(
+        root,
+        TimeOp::Transfer as u64,
+        &[child.to_wire(), 400, 0x8000, 0, 0, 0],
+    )
+    .unwrap_or_else(|e| panic!("transfer failed: {:?}", e.code()));
+    assert_eq!(fx.query(root), (600, 0));
+    assert_eq!(fx.query(child), (400, 0x8000));
+
+    fx.invoke_time(
+        root,
+        TimeOp::Merge as u64,
+        &[child.to_wire(), 0, 0, 0, 0, 0],
+    )
+    .unwrap_or_else(|e| panic!("merge failed: {:?}", e.code()));
+    assert_eq!(fx.query(root), (1_000, 0));
+    assert_eq!(fx.query(child), (0, u64::from(u16::MAX)));
+}
+
+/// Every rejected Transfer leaves both Times unchanged.
+#[test_case]
+fn time_transfer_failures_change_nothing() {
+    let mut fx = Fixture::new(FULL);
+    let root = fx.install_root_time(KeySlot(17), 100, Rights::all());
+    let child = fx.install_empty_time(KeySlot(40));
+    let read_only = fx.install_root_time(KeySlot(41), 100, Rights(Rights::READ));
+    let transfer = |fx: &mut Fixture, source: RawKey, args: [u64; 6]| {
+        fx.invoke_time(source, TimeOp::Transfer as u64, &args)
+    };
+    let to_child = child.to_wire();
+    let table_key = fx.self_key.to_wire();
+
+    assert!(matches!(
+        transfer(&mut fx, root, [to_child, 101, 1, 0, 0, 0]),
+        Err(CapError::InsufficientBudget { remaining: 100 })
+    ));
+    assert!(matches!(
+        transfer(&mut fx, root, [to_child, 0, 1, 0, 0, 0]),
+        Err(CapError::InvalidOperation)
+    ));
+    assert!(matches!(
+        transfer(&mut fx, root, [to_child, 1, 0x1_0000, 0, 0, 0]),
+        Err(CapError::InvalidOperation)
+    ));
+    assert!(matches!(
+        transfer(&mut fx, root, [to_child, 1, 1, 1, 0, 0]),
+        Err(CapError::InvalidOperation)
+    ));
+    // The same Time as both operands.
+    assert!(matches!(
+        transfer(&mut fx, root, [root.to_wire(), 1, 1, 0, 0, 0]),
+        Err(CapError::InvalidOperation)
+    ));
+    // WRITE is needed on the source and on the destination.
+    assert!(matches!(
+        transfer(&mut fx, read_only, [to_child, 1, 1, 0, 0, 0]),
+        Err(CapError::InsufficientRights)
+    ));
+    assert!(matches!(
+        transfer(&mut fx, root, [read_only.to_wire(), 1, 1, 0, 0, 0]),
+        Err(CapError::InsufficientRights)
+    ));
+    // The destination must be a Time.
+    assert!(matches!(
+        transfer(&mut fx, root, [table_key, 1, 1, 0, 0, 0]),
+        Err(CapError::TypeMismatch {
+            expected: ObjectType::TIME,
+            ..
+        })
+    ));
+
+    assert_eq!(fx.query(root), (100, 0));
+    assert_eq!(fx.query(child), (0, u64::from(u16::MAX)));
 }

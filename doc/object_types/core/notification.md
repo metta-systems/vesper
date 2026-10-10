@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Wire type | `0x08` (core) |
+| Wire type | `0x07` (core) |
 | Backing | Kernel Notification pool; created by `Untyped.Retype` |
 | Status | Signal, Wait, Poll |
 

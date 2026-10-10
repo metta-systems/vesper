@@ -1,7 +1,7 @@
 use {
     crate::objects::{
         ArchObjects, EventCount, KeyTable, Notification, ObjectPool, PendingPool, Scheduler,
-        Thread, access::ObjectId, arch::ArchPools, arch_objects::AddressSpaceObject,
+        Thread, Time, access::ObjectId, arch::ArchPools, arch_objects::AddressSpaceObject,
         domain::DcbPages, key_table::KeyTableBinding, object_pool::IdentityError,
         thread::ExecutionContext,
     },
@@ -24,7 +24,7 @@ use {
 //  │  │   ├── keytables: carved by Retype (no pool; see api::untyped)     │
 //  │  │   ├── notifications: ObjectPool<Notification>                    │
 //  │  │   ├── event_counts: ObjectPool<EventCount>                       │
-//  │  │   ├── time slices: future budget storage                        │
+//  │  │   ├── times: ObjectPool<Time>                                    │
 //  │  │   │                                                              │
 //  │  │   └── arch: ArchPools<A>                                         │
 //  │  │       ├── frames: inline regions (no pool)                       │
@@ -58,7 +58,10 @@ pub struct NucleusPools<A: ArchObjects> {
     /// `Untyped.Retype` (allowlisted 2026-09-18) from this bootstrap-carved
     /// pool; the capability is a checked pool identity.
     pub event_counts: ObjectPool<EventCount>,
-    // pub time_slices: ObjectPool<TimeSlice>,
+    /// `Time` budgets: pure kernel state, allocated by `Untyped.Retype` from
+    /// this bootstrap-carved pool (the boot Time included); the capability is
+    /// a checked pool identity.
+    pub times: ObjectPool<Time>,
 
     // ─── Architecture-Specific Pools ───
     pub arch: ArchPools<A>,
@@ -434,6 +437,8 @@ mod tests {
                     threads: ObjectPool::initialize(thread_ptr, 3),
                     notifications: ObjectPool::initialize(notification_ptr, 2),
                     event_counts: ObjectPool::initialize(event_count_ptr, 1),
+                    // Zero capacity: these tests never create a Time.
+                    times: ObjectPool::initialize(arch_ptr, 0),
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.
                     arch: ArchPools::new(

@@ -99,7 +99,6 @@ pub enum BlockReason {
     None = 0,
     Notification = 1, // Waiting on NotificationKey::wait()
     EventCount = 2,   // Waiting on EventCountKey::await_ge()
-    TimeDonation = 6, // Donated time, waiting for return
 }
 
 // pub enum DeactivateReason {

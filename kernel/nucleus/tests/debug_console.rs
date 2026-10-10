@@ -241,6 +241,9 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, Objec
             event_counts: unsafe {
                 ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 0)
             },
+            // SAFETY: zero-capacity pool: this test never allocates or
+            // invokes Time objects.
+            times: unsafe { ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 0) },
             // SAFETY: the page-table, address-space, and ASID-pool backings are
             // exclusively owned by this fixture; this test does not invoke
             // arch objects (the ASID pool has zero capacity for the same

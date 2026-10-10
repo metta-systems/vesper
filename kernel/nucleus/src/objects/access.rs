@@ -47,6 +47,9 @@ pub enum PoolTag {
     /// `EventCount` synchronization objects (pool-backed kernel metadata,
     /// 2026-09-18): monotonic counters with target waits.
     EventCount = 4,
+    /// `Time` budgets (pool-backed kernel metadata): a budget and a priority
+    /// chain.
+    Time = 5,
     // Arch pool tags are appended after core tags. Values are kernel-internal
     // and may be renumbered between builds; they are never serialized.
     PageTable = 16,
@@ -69,6 +72,7 @@ impl PoolTag {
             2 => Self::Pending,
             3 => Self::Notification,
             4 => Self::EventCount,
+            5 => Self::Time,
             16 => Self::PageTable,
             17 => Self::AddressSpace,
             18 => Self::ASIDPool,
@@ -259,6 +263,29 @@ impl<'ctx> Access<'ctx> {
         // SAFETY: validate_pair checked both identities and established that
         // the slots are distinct, so the pointers are disjoint.
         Ok(unsafe { (GuardMut::new(first_ptr), Guard::new(second_ptr)) })
+    }
+
+    /// Resolve two operands of the same pool for update, rejecting
+    /// same-object aliases: as [`Self::resolve_pair_mut`], with both guards
+    /// exclusive (a Time transfer changes both Times).
+    #[expect(
+        clippy::unused_self,
+        reason = "the context receiver ties guard lifetimes to the locked invocation"
+    )]
+    pub fn resolve_pair_both_mut<T: NucleusObject>(
+        &self,
+        pool: &'ctx mut ObjectPool<T>,
+        first: ObjectId,
+        second: ObjectId,
+    ) -> Result<(GuardMut<'ctx, T>, GuardMut<'ctx, T>), PairIdentityError> {
+        if first == second {
+            // Kernel-internal alias rejection: not a wire status of its own.
+            return Err(PairIdentityError::Aliased);
+        }
+        let (first_ptr, second_ptr) = pool.validate_pair(first, second)?;
+        // SAFETY: validate_pair checked both identities and established that
+        // the slots are distinct, so the pointers are disjoint.
+        Ok(unsafe { (GuardMut::new(first_ptr), GuardMut::new(second_ptr)) })
     }
 
     /// Resolve a carved (Retype-created) object address to a shared guard.

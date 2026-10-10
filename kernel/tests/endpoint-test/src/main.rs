@@ -175,6 +175,7 @@ pub fn run() -> ! {
         notifications: 4,
         // endpoint done
         event_counts: 1,
+        times: 1,
         // builder: root/L1/L2 and image L3s; each of the four components:
         // root/L1/L2, image span, stack region; client/endpoint/server: init
         page_tables: 3 + image_tables + 4 * 5 + 3,

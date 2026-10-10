@@ -174,6 +174,7 @@ pub fn run() -> ! {
         // done, block, park
         notifications: 3,
         event_counts: 0,
+        times: 1,
         // builder: root/L1/L2 and image L3s; faulter: root/L1/L2, image span,
         // stack region, init page; bare: root/L1/L2, image span, stack region
         page_tables: 3 + image_tables + 6 + 5,

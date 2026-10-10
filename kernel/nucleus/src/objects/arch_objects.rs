@@ -283,22 +283,4 @@ pub trait ArchObjects: Sized + 'static {
     ) -> Result<(u64, u64), CapError> {
         Err(CapError::UnsupportedArchType(ArchType::IOSpace))
     }
-
-    fn invoke_irq_handler(
-        _entry: &mut KeyEntry,
-        _op: u32,
-        _args: &[u64; 6],
-        _nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError> {
-        Err(CapError::UnsupportedArchType(ArchType::IRQHandler))
-    }
-
-    fn invoke_irq_control(
-        _entry: &mut KeyEntry,
-        _op: u32,
-        _args: &[u64; 6],
-        _nucleus: &mut Nucleus<Self>,
-    ) -> Result<(u64, u64), CapError> {
-        Err(CapError::UnsupportedArchType(ArchType::IRQControl))
-    }
 }

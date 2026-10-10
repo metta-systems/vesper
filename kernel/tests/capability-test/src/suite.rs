@@ -42,6 +42,7 @@ pub fn run() {
         address_spaces: 1,
         notifications: 0,
         event_counts: 0,
+        times: 1,
         page_tables: 0,
         asid_pools: 1,
     });
@@ -52,6 +53,7 @@ pub fn run() {
         self_table_key,
         boot_untyped_key,
         debug_console_key,
+        ..
     } = boot;
 
     assert_eq!(boot_as_id.index, 0);

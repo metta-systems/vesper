@@ -127,6 +127,7 @@ pub fn run() {
         address_spaces: 4,
         notifications: 0,
         event_counts: 0,
+        times: 1,
         page_tables: page_table_capacity,
         asid_pools: 1,
     });
@@ -137,6 +138,7 @@ pub fn run() {
         self_table_key,
         boot_untyped_key,
         debug_console_key,
+        ..
     } = boot;
     let boot_table_binding = nucleus
         .pools

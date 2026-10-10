@@ -133,15 +133,15 @@ fn literal_error_baseline_encodes_and_decodes_real_variants() {
         CapError::UnknownCoreType(126)
     );
     assert_error!(
-        (16, 9, 0),
+        (16, 8, 0),
         CapError::UnsupportedCoreType(CoreType::EventCount),
         CapError::UnsupportedCoreType(CoreType::EventCount)
     );
     assert_error!((17, 4, 0), CapError::NotArchType(ObjectType::TIME), CapError::NotArchType(t) if t == ObjectType::TIME);
     assert_error!(
-        (18, 9, 0),
-        CapError::UnknownArchType(9),
-        CapError::UnknownArchType(9)
+        (18, 7, 0),
+        CapError::UnknownArchType(7),
+        CapError::UnknownArchType(7)
     );
     assert_error!(
         (19, 2, 0),
@@ -150,13 +150,13 @@ fn literal_error_baseline_encodes_and_decodes_real_variants() {
     );
     assert_error!((20, 0xff, 0), CapError::InvalidObjectType(ObjectType::from(0xff)), CapError::InvalidObjectType(t) if t.as_u8() == 0xff);
     assert_error!(
-        (21, 9, 0x88),
+        (21, 8, 0x86),
         CapError::TypeMismatch {
             expected: ObjectType::EVENT_COUNT,
-            found: ObjectType::IRQ_CONTROL,
+            found: ObjectType::IO_PORT,
         },
         CapError::TypeMismatch { expected, found }
-            if expected == ObjectType::EVENT_COUNT && found == ObjectType::IRQ_CONTROL
+            if expected == ObjectType::EVENT_COUNT && found == ObjectType::IO_PORT
     );
     assert_error!(
         (22, 0, 0),
@@ -233,7 +233,7 @@ fn raw_type_details_preserve_every_byte_including_unknown_indices() {
                 if expected == object && found == ObjectType::ADDRESS_SPACE
         );
         assert_error!(
-            (21, 9, detail),
+            (21, 8, detail),
             CapError::TypeMismatch { expected: ObjectType::EVENT_COUNT, found: object },
             CapError::TypeMismatch { expected, found }
                 if expected == ObjectType::EVENT_COUNT && found == object
@@ -250,10 +250,11 @@ fn unsupported_types_decode_only_known_local_indices() {
         (3, CoreType::Thread),
         (4, CoreType::Time),
         (5, CoreType::Scheduler),
-        (6, CoreType::Brand),
-        (7, CoreType::Invocation),
-        (8, CoreType::Notification),
-        (9, CoreType::EventCount),
+        (6, CoreType::Invocation),
+        (7, CoreType::Notification),
+        (8, CoreType::EventCount),
+        (9, CoreType::IRQControl),
+        (10, CoreType::IRQHandler),
         (127, CoreType::DebugConsole),
     ];
     let arch_types = [
@@ -264,8 +265,6 @@ fn unsupported_types_decode_only_known_local_indices() {
         (4, ArchType::ASIDControl),
         (5, ArchType::IOSpace),
         (6, ArchType::IOPort),
-        (7, ArchType::IRQHandler),
-        (8, ArchType::IRQControl),
     ];
     for detail in 0..=255 {
         if let Some((_, kind)) = core_types.iter().find(|entry| entry.0 == detail) {
@@ -276,7 +275,7 @@ fn unsupported_types_decode_only_known_local_indices() {
         if let Some((_, kind)) = arch_types.iter().find(|entry| entry.0 == detail) {
             assert_error!((19, detail, 0), CapError::UnsupportedArchType(*kind), CapError::UnsupportedArchType(t) if t == *kind);
         } else {
-            // Full architecture wire IDs (0x80..=0x88) are not local indices.
+            // Full architecture wire IDs (0x80..=0x86) are not local indices.
             assert_unknown_response((19, detail, 0));
         }
     }
@@ -471,7 +470,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 32, u64::MAX, 1));
     }
-    for wire in [(35, 0, 0), (35, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(37, 0, 0), (37, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -497,5 +496,29 @@ fn unexpected_return_status_is_lossless_for_arbitrary_words() {
     // High-bit aliases of 34 are not this status.
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 34, 1, 2));
+    }
+}
+
+#[test]
+fn time_budget_statuses_round_trip_and_reject_unused_details() {
+    use vesper_objects::syscall_status::{INSUFFICIENT_BUDGET, PRIORITY_CHAIN_FULL};
+
+    assert_eq!(INSUFFICIENT_BUDGET, 35);
+    assert_eq!(PRIORITY_CHAIN_FULL, 36);
+    for remaining in [0, 1, 0x1234_5678_9abc_def0, u64::MAX - 1] {
+        assert_error!(
+            (35, remaining, 0),
+            CapError::InsufficientBudget { remaining },
+            CapError::InsufficientBudget { remaining: actual } if actual == remaining
+        );
+        assert_unknown_response((35, remaining, 1));
+    }
+    assert_error!(
+        (36, 0, 0),
+        CapError::PriorityChainFull,
+        CapError::PriorityChainFull
+    );
+    for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
+        assert_unknown_response((36, detail1, detail2));
     }
 }

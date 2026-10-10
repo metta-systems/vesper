@@ -19,15 +19,16 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | Untyped | `0x01` | [untyped.md](core/untyped.md) | Retype |
 | KeyTable | `0x02` | [key_table.md](core/key_table.md) | CopyDerive, Move, Delete |
 | Thread | `0x03` | [thread.md](core/thread.md) | Return, Retire |
-| Time | `0x04` | [time.md](core/time.md) | Not implemented |
+| Time | `0x04` | [time.md](core/time.md) | Transfer, Merge, Query |
 | Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | Not implemented |
-| Brand | `0x06` | [brand.md](core/brand.md) | Not implemented |
-| Invocation | `0x07` | [invocation.md](core/invocation.md) | Call |
-| Notification | `0x08` | [notification.md](core/notification.md) | Signal, Wait, Poll |
-| EventCount | `0x09` | [event_count.md](core/event_count.md) | Advance, Await, Read |
+| Invocation | `0x06` | [invocation.md](core/invocation.md) | Call |
+| Notification | `0x07` | [notification.md](core/notification.md) | Signal, Wait, Poll |
+| EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
+| IRQControl | `0x09` | [irq_control.md](core/irq_control.md) | Not implemented |
+| IRQHandler | `0x0a` | [irq_handler.md](core/irq_handler.md) | Not implemented |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Write (debug kernels only) |
 
-Indices 10–126 are unassigned.
+Indices 11–126 are unassigned.
 
 ### Architecture kinds
 
@@ -40,10 +41,8 @@ Indices 10–126 are unassigned.
 | ASIDControl | `0x84` | [asid_control.md](arch/asid_control.md) | Not implemented |
 | IOSpace | `0x85` | [io_space.md](arch/io_space.md) | Not implemented |
 | IOPort | `0x86` | [io_port.md](arch/io_port.md) | x86 only; not available on AArch64 |
-| IRQHandler | `0x87` | [irq_handler.md](arch/irq_handler.md) | Not implemented |
-| IRQControl | `0x88` | [irq_control.md](arch/irq_control.md) | Not implemented |
 
-Indices 9–127 are unassigned. Invoking a kind that is not implemented fails with `UNSUPPORTED_CORE_TYPE` or `UNSUPPORTED_ARCH_TYPE`.
+Indices 7–127 are unassigned. Invoking a kind that is not implemented fails with `UNSUPPORTED_CORE_TYPE` or `UNSUPPORTED_ARCH_TYPE`.
 
 ## Invocation model
 
@@ -114,6 +113,8 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 32 | `INVALID_STACK` | offending value | reason, see [Invocation](core/invocation.md#invalidstack) |
 | 33 | `NESTING_DEPTH` | saved continuations | 0 |
 | 34 | `UNEXPECTED_RETURN` | local `x1` | local `x2` |
+| 35 | `INSUFFICIENT_BUDGET` | the source Time's remaining budget | 0 |
+| 36 | `PRIORITY_CHAIN_FULL` | 0 | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 
@@ -145,11 +146,11 @@ flowchart TD
     C --> D{"Architecture kind?"}
     D -- "no" --> E["Core handler"]
     D -- "yes" --> F["Architecture handler"]
-    E --> G["Untyped, KeyTable, Thread, Invocation,<br/>Notification, EventCount, DebugConsole"]
+    E --> G["Untyped, KeyTable, Thread, Time, Invocation,<br/>Notification, EventCount, DebugConsole"]
     E --> I["Null → NULL_CAPABILITY"]
-    E --> J["Time, Scheduler, Brand →<br/>UNSUPPORTED_CORE_TYPE"]
+    E --> J["Scheduler, IRQControl, IRQHandler →<br/>UNSUPPORTED_CORE_TYPE"]
     F --> L["Frame, PageTable, AddressSpace, ASIDPool"]
-    F --> M["ASIDControl, IO, IRQ →<br/>UNSUPPORTED_ARCH_TYPE"]
+    F --> M["ASIDControl, IOSpace, IOPort →<br/>UNSUPPORTED_ARCH_TYPE"]
 ```
 
 ### Blocking and address-space switches

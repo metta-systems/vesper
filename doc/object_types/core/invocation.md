@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Wire type | `0x07` (core) |
+| Wire type | `0x06` (core) |
 | Backing | Stored in the capability: target AddressSpace, entry address, stack extent |
 | Status | Call |
 

@@ -26,6 +26,9 @@ fp_trap_test = []
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["libmachine/jtag"]
 noserial = [] #"libplatform/noserial"
+# Kickstart's boot Time budget switch; declared here because `just build`
+# passes one feature list to both nucleus and kickstart. Nucleus ignores it.
+infinite-boot-time = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = [
   "libconsole/qemu",

@@ -24,6 +24,7 @@ pub mod key_entry;
 pub mod key_table;
 pub mod notification;
 pub mod thread;
+pub mod time;
 pub mod untyped;
 
 pub use key_entry::KeyEntry;
@@ -219,10 +220,9 @@ fn core_invoke<A: ArchObjects>(
             crate::api::event_count::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
-        // CoreType::Time => {
-        //     let time = entry.as_object_mut::<TimeSlice>()?;
-        //     api::time::invoke(time, entry.rights(), op, args, nucleus)
-        // }
+        CoreType::Time => crate::api::time::invoke::<A>(access, caller, key, op, args, nucleus)
+            .map(InvokeOutcome::Complete),
+
         _ => Err(CapError::UnsupportedCoreType(core_type)),
     }
 }
