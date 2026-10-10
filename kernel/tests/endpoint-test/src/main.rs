@@ -61,7 +61,8 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjectsImpl, ExecutionContext, KeyTable, Notification, Nucleus, access::ObjectId,
+            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, access::ObjectId,
+            thread::ThreadId,
         },
     },
 };
@@ -126,15 +127,11 @@ fn stack(
 /// Bootstrap grant of a Notification into `component`'s table at `slot`.
 /// Notification is off the `CopyDerive` allowlist, so the builder installs the
 /// second capability kernel-privately.
-fn grant_notification(component: &Component, object: ObjectId, slot: u32) -> RawKey {
+fn grant_notification(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
     // SAFETY: the component's retained initialized table, exclusively
     // borrowed for this bootstrap grant; no capability invocation overlaps it.
     unsafe { &mut *(component.table_addr as *mut KeyTable) }
-        .insert(
-            KeySlot(slot),
-            KeyEntry::new::<Notification>(object, Rights::all(), 0),
-            component.guard,
-        )
+        .insert(KeySlot(slot), entry, component.guard)
         .unwrap_or_else(|failure| panic!("Notification grant failed: {:?}", failure.error.code()))
 }
 
@@ -142,15 +139,11 @@ fn grant_notification(component: &Component, object: ObjectId, slot: u32) -> Raw
 /// `address_space`, with `depth` continuations, at EL0.
 fn assert_parked_el0(
     nucleus: &Nucleus<ArchObjectsImpl>,
-    thread: ObjectId,
+    thread: ThreadId,
     address_space: ObjectId,
     depth: usize,
 ) {
-    let parked = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(thread.index))
-        .expect("Thread missing");
+    let parked = nucleus.thread(thread).expect("Thread missing");
     assert_eq!(parked.address_space, address_space);
     assert_eq!(parked.invocation_stack.len(), depth);
     let ExecutionContext::Parked { saved, .. } = parked.context else {
@@ -167,15 +160,8 @@ pub fn run() -> ! {
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
     let boot = bootstrap_nucleus(&PoolCapacities {
-        // builder, hello, two clients, server
-        threads: 5,
         // builder, client, endpoint, server, hello
         address_spaces: 5,
-        // endpoint doorbell, clients done, clients park, hello
-        notifications: 4,
-        // endpoint done
-        event_counts: 1,
-        times: 1,
         // builder: root/L1/L2 and image L3s; each of the four components:
         // root/L1/L2, image span, stack region; client/endpoint/server: init
         page_tables: 3 + image_tables + 4 * 5 + 3,
@@ -282,9 +268,10 @@ pub fn run() -> ! {
         &mut slots,
     );
     let hello_done = notification(&self_table, slots.take(1));
-    let hello_key = grant_notification(&hello, builder.object_id(hello_done), 5);
+    let hello_key = grant_notification(&hello, builder.entry(hello_done), 5);
     let hello_thread = threads::spawn_el0(
         nucleus,
+        &builder,
         hello.address_space,
         components::HELLO.entry.expect("hello has an entry"),
         hello_stack.top,
@@ -363,7 +350,7 @@ pub fn run() -> ! {
         export("send_entry", &client_table, 6, client1_stack),
     ];
     let clients_done = notification(&self_table, slots.take(1));
-    let clients_done_key = grant_notification(&client, builder.object_id(clients_done), 7);
+    let clients_done_key = grant_notification(&client, builder.entry(clients_done), 7);
     let clients_park = notification(&client_table, 8);
     let client_pages =
         builder.private_pages(client.address_space_key, client.l2, INIT_VA, 2, &mut slots);
@@ -420,6 +407,7 @@ pub fn run() -> ! {
         );
         threads::spawn_el0(
             nucleus,
+            &builder,
             client.address_space,
             components::CLIENT.entry.expect("client has an entry"),
             thread_stack.top,
@@ -428,6 +416,7 @@ pub fn run() -> ! {
     });
     let server_thread = threads::spawn_el0(
         nucleus,
+        &builder,
         server.address_space,
         components::SERVER.entry.expect("server has an entry"),
         server_thread_stack.top,

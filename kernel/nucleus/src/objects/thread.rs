@@ -1,5 +1,9 @@
 use {
-    crate::objects::{NucleusObject, access::ObjectId},
+    crate::objects::{
+        NucleusObject,
+        access::ObjectId,
+        carved::{CarvedId, CarvedObject},
+    },
     core::mem::{align_of, size_of},
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
     libobject::{INVOCATION_STACK_DEPTH, ObjectType},
@@ -21,6 +25,12 @@ use {
 /// inline in the Thread; a trap frame is transient and owns no continuation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecutionContext {
+    /// Created by `Untyped.Retype` and not configured: no `AddressSpace`, no
+    /// execution state, never runnable.
+    Inactive,
+    /// Configured by the root Scheduler and not started yet: it first runs
+    /// `saved` once `Scheduler.StartThread` makes it runnable.
+    Configured { saved: SavedContext },
     /// The thread has never run: start it at `pc` with a full-descending
     /// kernel stack whose top is `stack_top`.
     /// Implementation status: `saved` supplies the initial PC and execution SP,
@@ -225,6 +235,40 @@ pub struct Thread {
     pub invocation_stack: InvocationStack,
     /// The fault being handled, if any (one level per Thread).
     pub fault: Option<ThreadFault>,
+    /// The next Thread in the runnable queue while this one is queued: the
+    /// queue links through the Thread objects, so it needs no storage of its
+    /// own however many Threads exist.
+    pub run_next: Option<ThreadId>,
+    /// Whether this Thread is in the runnable queue.
+    pub queued: bool,
+    /// The Thread's own Time, recorded by `Scheduler.ConfigureThread`. Kernel
+    /// bookkeeping, not authority: a Thread migrates between `AddressSpace`s
+    /// and owns no `KeyTable`, so its binding cannot be a key. A retired Time
+    /// fails validation, leaving the Thread unbound.
+    pub time: Option<CarvedId>,
+    /// The Scheduler that configured the Thread (bookkeeping, as `time`).
+    pub scheduler: Option<CarvedId>,
+}
+
+/// Kernel identity of a Thread: its carved identity. Holding one grants
+/// nothing; authority over a Thread is a key in a `KeyTable`.
+pub type ThreadId = CarvedId;
+
+impl Thread {
+    /// A Thread in `address_space` with execution state `context`, an empty
+    /// invocation stack, no fault and not queued.
+    pub const fn new(address_space: ObjectId, context: ExecutionContext) -> Self {
+        Self {
+            address_space,
+            context,
+            invocation_stack: InvocationStack::new(),
+            fault: None,
+            run_next: None,
+            queued: false,
+            time: None,
+            scheduler: None,
+        }
+    }
 }
 
 // The record and array sizes are part of the storage/accounting contract.
@@ -244,23 +288,22 @@ const _: () = {
             <= size_of::<SavedContext>() + size_of::<ObjectId>() + align_of::<SavedContext>()
     );
     assert!(size_of::<Thread>() >= size_of::<InvocationStack>());
-    assert!(crate::objects::ObjectPool::<Thread>::carve_size(1) >= size_of::<Thread>());
 };
 
 impl NucleusObject for Thread {
     const TYPE: ObjectType = ObjectType::THREAD;
-    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::Thread;
 }
+
+impl CarvedObject for Thread {}
 
 #[cfg(test)]
 mod tests {
     use {
         super::{ExecutionContext, InvocationContinuation, InvocationStack, Thread},
         crate::objects::{
-            ObjectPool,
             access::{ObjectId, PoolTag},
+            carved::Carved,
         },
-        core::mem::{MaybeUninit, align_of, size_of},
         libexception::arch::aarch64::{ExceptionContext, ExceptionOrigin, SavedContext},
     };
 
@@ -290,6 +333,10 @@ mod tests {
             context: ExecutionContext::NotStarted { saved: INITIAL },
             invocation_stack: super::InvocationStack::new(),
             fault: None,
+            run_next: None,
+            queued: false,
+            time: None,
+            scheduler: None,
         };
         let ExecutionContext::NotStarted { saved } = thread.context else {
             panic!("new Thread has no initial execution context")
@@ -319,6 +366,10 @@ mod tests {
             },
             invocation_stack: super::InvocationStack::new(),
             fault: None,
+            run_next: None,
+            queued: false,
+            time: None,
+            scheduler: None,
         };
 
         // Reuse every byte of the transient frame for another execution context.
@@ -384,81 +435,44 @@ mod tests {
     }
 
     #[test_case]
-    fn thread_pool_keeps_parked_contexts_isolated_across_slot_reuse() {
-        const CAPACITY: usize = 4;
-        const WORDS: usize = ObjectPool::<Thread>::carve_size(CAPACITY).div_ceil(size_of::<u128>());
-        let mut backing = MaybeUninit::<[u128; WORDS]>::uninit();
-        assert!(align_of::<[u128; WORDS]>() >= ObjectPool::<Thread>::ALIGN);
-        assert!(size_of::<[u128; WORDS]>() >= ObjectPool::<Thread>::carve_size(CAPACITY));
-        assert!(ObjectPool::<Thread>::carve_size(CAPACITY) >= size_of::<Thread>() * CAPACITY);
-        // SAFETY: type-derived, carve-aligned backing remains exclusively owned
-        // here for the pool's lifetime. No object references escape the test.
-        let mut pool =
-            unsafe { ObjectPool::<Thread>::initialize(backing.as_mut_ptr().cast(), CAPACITY) };
-        let mut identities = [address_space(); CAPACITY];
-        let mut contexts = [ExecutionContext::Running; CAPACITY];
-        for index in 0..CAPACITY {
-            let context = ExecutionContext::Parked {
-                saved: saved_fixture(u64::try_from(index + 1).unwrap()),
-                record: ObjectId {
-                    pool: PoolTag::Pending,
-                    index: u16::try_from(index).unwrap(),
-                    generation: 10 + u32::try_from(index).unwrap(),
-                },
-            };
-            identities[index] = pool
-                .allocate(Thread {
-                    address_space: address_space(),
-                    context,
-                    invocation_stack: super::InvocationStack::new(),
-                    fault: None,
-                })
-                .expect("type-derived pool backing lost capacity")
-                .0;
-            contexts[index] = context;
-        }
-        assert_eq!(pool.capacity(), CAPACITY);
-        assert!(
-            pool.allocate(Thread {
-                address_space: address_space(),
-                context: ExecutionContext::Running,
-                invocation_stack: super::InvocationStack::new(),
-                fault: None,
-            })
-            .is_none()
-        );
-        for (index, expected) in contexts.iter().enumerate() {
-            assert_eq!(pool.get_live(index).unwrap().context, *expected);
+    fn carved_threads_keep_parked_contexts_isolated_and_retire_alone() {
+        #[repr(C, align(64))]
+        struct Backing([u8; 2 * STRIDE]);
+        const STRIDE: usize = Carved::<Thread>::SIZE.next_multiple_of(64);
+        let mut backing = Backing([0; 2 * STRIDE]);
+        let base = backing.0.as_mut_ptr();
+        let contexts = [1, 2].map(|seed| ExecutionContext::Parked {
+            saved: saved_fixture(seed),
+            record: ObjectId {
+                pool: PoolTag::Pending,
+                index: u16::try_from(seed).unwrap(),
+                generation: 10,
+            },
+        });
+        // SAFETY: the backing is exclusively owned, 64-byte aligned and holds
+        // two strides.
+        let ids = unsafe {
+            [
+                Carved::<Thread>::initialize(base, Thread::new(address_space(), contexts[0])),
+                Carved::<Thread>::initialize(
+                    base.add(STRIDE),
+                    Thread::new(address_space(), contexts[1]),
+                ),
+            ]
+        };
+        for (id, expected) in ids.iter().zip(contexts) {
+            // SAFETY: the identities were issued for this backing.
+            let thread = unsafe { &*Carved::<Thread>::validate(*id).ok().unwrap() };
+            assert_eq!(thread.context, expected);
+            assert!(!thread.queued);
         }
 
-        pool.deallocate(identities[0])
-            .unwrap_or_else(|error| panic!("Thread deallocation failed: {error:?}"));
-        let initial = SavedContext::el1t(0xB0_0000, 0xC0_0000);
-        let (replacement, _) = pool
-            .allocate(Thread {
-                address_space: address_space(),
-                context: ExecutionContext::NotStarted { saved: initial },
-                invocation_stack: super::InvocationStack::new(),
-                fault: None,
-            })
-            .unwrap();
-        assert_eq!(replacement.index, identities[0].index);
-        assert_ne!(replacement.generation, identities[0].generation);
-        assert!(pool.validate(identities[0]).is_err());
-        assert_eq!(
-            pool.get_live(usize::from(replacement.index))
-                .unwrap()
-                .context,
-            ExecutionContext::NotStarted { saved: initial }
-        );
-        for (index, expected) in contexts.iter().enumerate().skip(1) {
-            assert_eq!(pool.get_live(index).unwrap().context, *expected);
-        }
-        pool.deallocate(replacement)
-            .unwrap_or_else(|error| panic!("replacement deallocation failed: {error:?}"));
-        for identity in identities.iter().skip(1) {
-            pool.deallocate(*identity)
-                .unwrap_or_else(|error| panic!("Thread deallocation failed: {error:?}"));
-        }
+        // SAFETY: as above; no reference is live.
+        unsafe { Carved::<Thread>::retire(ids[0]) }.ok().unwrap();
+        // SAFETY: as above.
+        assert!(unsafe { Carved::<Thread>::validate(ids[0]) }.is_err());
+        // SAFETY: as above.
+        let survivor = unsafe { &*Carved::<Thread>::validate(ids[1]).ok().unwrap() };
+        assert_eq!(survivor.context, contexts[1]);
     }
 }

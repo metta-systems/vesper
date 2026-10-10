@@ -79,6 +79,11 @@ impl TryFrom<u32> for UntypedOp {
 // rejected: one region must not gain independent allocation watermarks.
 
 impl UntypedKey {
+    /// The wire encoding of the underlying key.
+    pub const fn to_wire(&self) -> u64 {
+        self.key.to_wire()
+    }
+
     /// Construct a non-owning handle without installing or validating authority.
     pub const fn from_key(key: RawKey) -> Self {
         Self { key: Key::new(key) }

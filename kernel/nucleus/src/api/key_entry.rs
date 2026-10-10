@@ -50,6 +50,11 @@
 // │                                              │
 // │  VARIANT G: Thread selector                  │
 // │    Named(ObjectId) | CurrentReturnOnly        │
+// │                                              │
+// │  VARIANT H: Untyped-carved object            │
+// │    (Notification, EventCount, Time)          │
+// │    address: u64               (8 bytes)       │
+// │    generation: u32            (4 bytes)       │
 // └──────────────────────────────────────────────┘
 // Total: 48 bytes before tail padding, 64-byte slot aligned to 32 bytes
 //
@@ -62,7 +67,9 @@ use {
     crate::objects::{
         NucleusObject,
         access::{ObjectId, PoolTag},
+        carved::CarvedId,
         invocation::InvocationStackExtent,
+        thread::ThreadId,
     },
     core::num::NonZero,
     libaddress::align,
@@ -86,7 +93,7 @@ struct ObjectPayload {
 #[repr(C, u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThreadSelector {
-    Named(ObjectId),
+    Named(ThreadId),
     CurrentReturnOnly,
 }
 
@@ -192,6 +199,16 @@ pub struct KeyTablePayload {
     pub _pad: [u8; 3],
 }
 
+/// Payload for an Untyped-carved object (Notification, `EventCount`, Time):
+/// its [`CarvedId`] without the kind, which lives in the entry header.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CarvedPayload {
+    address: u64,
+    generation: u32,
+    _pad: u32,
+}
+
 /// 40-byte payload union, discriminated by `obj_type` in the header.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -201,6 +218,7 @@ union KeyPayload {
     region: RegionPayload,
     frame: FramePayload,
     keytable: KeyTablePayload,
+    carved: CarvedPayload,
     invocation: InvocationPayload,
     null: [u8; 40],
 }
@@ -224,10 +242,22 @@ const _: () = assert!(core::mem::size_of::<KeyPayload>() == 40);
 const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<FramePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
+const _: () = assert!(core::mem::size_of::<CarvedPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 40);
-const _: () = assert!(core::mem::size_of::<ThreadSelector>() == 12);
-const _: () = assert!(core::mem::align_of::<ThreadSelector>() == 4);
+const _: () = assert!(core::mem::size_of::<ThreadSelector>() == 24);
+const _: () = assert!(core::mem::align_of::<ThreadSelector>() == 8);
 const _: () = assert!(core::mem::align_of::<KeyEntry>() == 32);
+
+/// Kinds whose capabilities carry a [`CarvedId`] (`CarvedPayload`).
+fn is_carved_object_kind(kind: ObjectType) -> bool {
+    matches!(
+        kind,
+        ObjectType::NOTIFICATION
+            | ObjectType::EVENT_COUNT
+            | ObjectType::TIME
+            | ObjectType::SCHEDULER
+    )
+}
 
 /// Minimum alignment bits for watermark shift (16-byte alignment).
 const MIN_ALIGN_BITS: u32 = 4;
@@ -278,23 +308,15 @@ impl KeyEntry {
                 | ObjectType::FRAME
                 | ObjectType::KEY_TABLE
                 | ObjectType::INVOCATION
-        ) {
+                | ObjectType::THREAD
+        ) || is_carved_object_kind(obj_type)
+        {
             return Err(CapError::InvalidObjectType(obj_type));
         }
         if obj_type.is_arch() {
             ArchType::try_from(obj_type)?;
         } else {
             CoreType::try_from(obj_type)?;
-        }
-        if obj_type == ObjectType::THREAD {
-            return Ok(Self {
-                obj_type,
-                rights,
-                badge,
-                payload: KeyPayload {
-                    thread: ThreadSelector::Named(id),
-                },
-            });
         }
         Ok(Self {
             obj_type,
@@ -385,6 +407,43 @@ impl KeyEntry {
         self.obj_type != ObjectType::NULL
     }
 
+    /// Create a capability for an Untyped-carved object; the kind comes from
+    /// its identity.
+    pub fn new_carved(id: CarvedId, rights: Rights, badge: u16) -> Self {
+        debug_assert!(is_carved_object_kind(id.kind));
+        Self {
+            obj_type: id.kind,
+            rights,
+            badge,
+            payload: KeyPayload {
+                carved: CarvedPayload {
+                    address: id.address,
+                    generation: id.generation,
+                    _pad: 0,
+                },
+            },
+        }
+    }
+
+    /// The identity of an Untyped-carved object (Notification, `EventCount`,
+    /// Time); `TypeMismatch` for any other kind. Resolving it goes through
+    /// the access context, which checks the object's header.
+    pub fn carved_id(&self) -> Result<CarvedId, CapError> {
+        if !is_carved_object_kind(self.obj_type) {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::NOTIFICATION,
+                found: self.obj_type,
+            });
+        }
+        // SAFETY: carved-object kinds are only constructed by `new_carved`.
+        let carved = unsafe { self.payload.carved };
+        Ok(CarvedId {
+            kind: self.obj_type,
+            address: carved.address,
+            generation: carved.generation,
+        })
+    }
+
     /// Check if this is an inline region type (Untyped or Frame).
     #[inline]
     pub fn is_region(&self) -> bool {
@@ -417,6 +476,18 @@ impl KeyEntry {
         }
     }
 
+    /// Create a named Thread capability.
+    pub fn new_thread(id: ThreadId, rights: Rights, badge: u16) -> Self {
+        Self {
+            obj_type: ObjectType::THREAD,
+            rights,
+            badge,
+            payload: KeyPayload {
+                thread: ThreadSelector::Named(id),
+            },
+        }
+    }
+
     /// Create kernel-installed current-relative PPC Return authority.
     /// It names no Thread, function or `AddressSpace` and grants no management
     /// rights. Ordinary `KeyTable` lookup still applies before invocation.
@@ -442,6 +513,15 @@ impl KeyEntry {
         // SAFETY: Thread constructors initialize this variant, and the kind
         // check selects it. Derivation preserves the selector verbatim.
         Ok(unsafe { self.payload.thread })
+    }
+
+    /// The Thread a named Thread capability names; `InvalidOperation` for the
+    /// current-relative Return key, `TypeMismatch` for another kind.
+    pub fn thread_id(&self) -> Result<ThreadId, CapError> {
+        match self.thread_selector()? {
+            ThreadSelector::Named(id) => Ok(id),
+            ThreadSelector::CurrentReturnOnly => Err(CapError::InvalidOperation),
+        }
     }
 
     /// Whether this entry permits only current-relative Thread.Return.
@@ -506,14 +586,10 @@ impl KeyEntry {
     /// kinds — use `as_region()` / `keytable_address()` instead.
     #[inline]
     pub fn object_id(&self) -> Result<ObjectId, CapError> {
-        if self.obj_type == ObjectType::THREAD {
-            return match self.thread_selector()? {
-                ThreadSelector::Named(id) => Ok(id),
-                ThreadSelector::CurrentReturnOnly => Err(CapError::InvalidOperation),
-            };
-        }
         if self.is_region()
+            || self.obj_type == ObjectType::THREAD
             || self.is_carved()
+            || is_carved_object_kind(self.obj_type)
             || self.obj_type == ObjectType::INVOCATION
             || self.obj_type == ObjectType::NULL
         {

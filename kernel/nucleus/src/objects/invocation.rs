@@ -14,6 +14,7 @@ use {
         ArchObjects, ExecutionContext, InvocationContinuation, Nucleus,
         access::{Access, ObjectId},
         resume::{PreparedTranslationContext, execution_origin, prepare_translation_context},
+        thread::ThreadId,
     },
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
@@ -135,7 +136,7 @@ pub struct CallTarget {
 /// `core_invoke` dispatches Call through this path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PreparedCall {
-    source_thread: ObjectId,
+    source_thread: ThreadId,
     continuation: InvocationContinuation,
     translation: PreparedTranslationContext,
     entry_pc: NonZero<u64>,
@@ -145,8 +146,8 @@ pub struct PreparedCall {
 }
 
 impl PreparedCall {
-    /// Incarnation-checked identity of the migrating (current) Thread.
-    pub const fn source_thread(&self) -> ObjectId {
+    /// Checked identity of the migrating (current) Thread.
+    pub const fn source_thread(&self) -> ThreadId {
         self.source_thread
     }
 
@@ -290,7 +291,7 @@ impl PreparedCall {
 /// `target` into the transient frame, and only then emits the success trace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommittedCall {
-    pub source_thread: ObjectId,
+    pub source_thread: ThreadId,
     pub target: SavedContext,
     pub translation: PreparedTranslationContext,
 }
@@ -312,15 +313,9 @@ impl<A: ArchObjects> Nucleus<A> {
         if source_thread != current {
             return Err(CapError::InvalidOperation);
         }
-        self.pools
-            .threads
-            .validate(source_thread)
-            .map_err(|_stale_thread| CapError::InvalidOperation)?;
         let source = self
-            .pools
-            .threads
-            .get_live_mut(usize::from(source_thread.index))
-            .ok_or(CapError::InvalidDomain)?;
+            .thread_mut(source_thread)
+            .ok_or(CapError::InvalidOperation)?;
         if source.context != ExecutionContext::Running
             || source.address_space != prepared.continuation.source_address_space
             || source.invocation_stack.len() != prepared.depth
@@ -384,7 +379,7 @@ impl From<CapError> for ReturnRejection {
 /// interval that produced it, like [`PreparedCall`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PreparedReturn {
-    source_thread: ObjectId,
+    source_thread: ThreadId,
     current_address_space: ObjectId,
     continuation: InvocationContinuation,
     translation: PreparedTranslationContext,
@@ -393,7 +388,7 @@ pub struct PreparedReturn {
 }
 
 impl PreparedReturn {
-    pub const fn source_thread(&self) -> ObjectId {
+    pub const fn source_thread(&self) -> ThreadId {
         self.source_thread
     }
 
@@ -442,7 +437,7 @@ impl PreparedReturn {
 /// A committed Return whose hardware installation/frame rewrite is still owed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommittedReturn {
-    pub source_thread: ObjectId,
+    pub source_thread: ThreadId,
     pub resumed: SavedContext,
     pub translation: PreparedTranslationContext,
     /// The Return ended a fault handler with the terminate action: instead of
@@ -517,15 +512,9 @@ impl<A: ArchObjects> Nucleus<A> {
         if source_thread != current {
             return Err(CapError::InvalidOperation);
         }
-        self.pools
-            .threads
-            .validate(source_thread)
-            .map_err(|_stale_thread| CapError::InvalidOperation)?;
         let thread = self
-            .pools
-            .threads
-            .get_live_mut(usize::from(source_thread.index))
-            .ok_or(CapError::InvalidDomain)?;
+            .thread_mut(source_thread)
+            .ok_or(CapError::InvalidOperation)?;
         if thread.context != ExecutionContext::Running
             || thread.address_space != prepared.current_address_space
             || thread.invocation_stack.len() != prepared.depth

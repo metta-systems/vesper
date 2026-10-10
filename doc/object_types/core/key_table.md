@@ -70,6 +70,7 @@ Each table also has a guard, chosen at Retype and fixed for the table's lifetime
 | 15 | `KeySlot::DEBUG_CONSOLE` | Debug console (debug kernels) |
 | 16 | `KeySlot::FAULT_HANDLER` | This AddressSpace's fault handler, an Invocation; see [fault delivery](thread.md#fault-delivery) |
 | 17 | `KeySlot::BOOT_TIME` | Boot [Time](time.md) (first component) |
+| 18 | `KeySlot::ROOT_SCHEDULER` | Root [Scheduler](scheduler.md) (first component) |
 
 ## Implementation
 

@@ -43,16 +43,10 @@ pub fn run() {
     let (boot_execution_sp, shared_trap_sp) = record_fixture_stacks();
     let retained_init = retained_init_memory();
     translation::observe_bootstrap(crate::run as *const u8 as u64);
-    // The boot and Bounce Threads and AddressSpaces; two plain Notifications
-    // plus N1/N2; one EventCount; the boot Time plus two Retyped Times; the
-    // source and Bounce root prefixes, both image closures and both probe
-    // tables.
+    // The boot and Bounce AddressSpaces; the source and Bounce root
+    // prefixes, both image closures and both probe tables.
     let boot = bootstrap_nucleus(&PoolCapacities {
-        threads: 2,
         address_spaces: 2,
-        notifications: 4,
-        event_counts: 1,
-        times: 3,
         page_tables: 8 + 2 * image_table_count(&retained_init),
         asid_pools: 1,
     });
@@ -64,6 +58,7 @@ pub fn run() {
         boot_untyped_key,
         boot_time_key,
         debug_console_key,
+        ..
     } = boot;
     let boot_table_binding = nucleus
         .pools
@@ -108,7 +103,7 @@ pub fn run() {
             0,
             1,
             &self_table,
-            KeySlot(18).0,
+            KeySlot(28).0,
             Rights::all(),
         ),
         Err(CapError::InvalidSize(12))
@@ -154,7 +149,7 @@ pub fn run() {
             0,
             1,
             &self_table,
-            KeySlot(18).0,
+            KeySlot(28).0,
             Rights::all(),
         )
         .unwrap_or_else(|error| panic!("N1 Retype failed: {:?}", error.code()));
@@ -205,43 +200,28 @@ pub fn run() {
     {
         // SAFETY: the boot table is the live carved boot KeyTable.
         let boot_table_ref = unsafe { &*(keytable_addr as *const KeyTable) };
-        let n1_id = boot_table_ref
+        let n1_entry = *boot_table_ref
             .lookup(n1_key, BOOT_TABLE_GUARD)
-            .and_then(KeyEntry::object_id)
-            .unwrap_or_else(|_| panic!("N1 entry missing or not a pool identity"));
-        let n2_id = boot_table_ref
+            .unwrap_or_else(|_| panic!("N1 entry missing"));
+        let n2_entry = *boot_table_ref
             .lookup(n2_key, BOOT_TABLE_GUARD)
-            .and_then(KeyEntry::object_id)
-            .unwrap_or_else(|_| panic!("N2 entry missing or not a pool identity"));
-        let ec_id = boot_table_ref
+            .unwrap_or_else(|_| panic!("N2 entry missing"));
+        let ec_entry = *boot_table_ref
             .lookup(ec_key, BOOT_TABLE_GUARD)
-            .and_then(KeyEntry::object_id)
-            .unwrap_or_else(|_| panic!("EC entry missing or not a pool identity"));
+            .unwrap_or_else(|_| panic!("EC entry missing"));
         // SAFETY: Bounce's table is the freshly carved, live KeyTable.
         let bounce_table = unsafe { &mut *(bounce_table_addr as *mut KeyTable) };
         let bounce_n1 = bounce_table
-            .insert(
-                KeySlot(5),
-                KeyEntry::new::<nucleus::objects::Notification>(n1_id, Rights::all(), 0),
-                TEST_TABLE_GUARD,
-            )
+            .insert(KeySlot(5), n1_entry, TEST_TABLE_GUARD)
             .unwrap_or_else(|failure| panic!("Bounce N1 grant failed: {:?}", failure.error.code()));
         let bounce_n2 = bounce_table
-            .insert(
-                KeySlot(6),
-                KeyEntry::new::<nucleus::objects::Notification>(n2_id, Rights::all(), 0),
-                TEST_TABLE_GUARD,
-            )
+            .insert(KeySlot(6), n2_entry, TEST_TABLE_GUARD)
             .unwrap_or_else(|failure| panic!("Bounce N2 grant failed: {:?}", failure.error.code()));
         // The EventCount sits at slot 7: slots 1–4 are the well-known
         // layout (return key, self AddressSpace, parent Thread, self
         // KeyTable) and must not be disturbed by fixture grants.
         let bounce_ec = bounce_table
-            .insert(
-                KeySlot(7),
-                KeyEntry::new::<nucleus::objects::EventCount>(ec_id, Rights::all(), 0),
-                TEST_TABLE_GUARD,
-            )
+            .insert(KeySlot(7), ec_entry, TEST_TABLE_GUARD)
             .unwrap_or_else(|failure| panic!("Bounce EC grant failed: {:?}", failure.error.code()));
         // Hand over the actual recipient-local keys, including returned
         // incarnations; slot conventions alone cannot mint authority.
@@ -275,11 +255,11 @@ pub fn run() {
     assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
     let bounce_id = threads::spawn(
         nucleus,
+        &builder,
         bounce_as_id,
         bounce_entry as *const () as u64,
         bounce_stack_top,
     );
-    assert_eq!(bounce_id.index, 1);
 
     // The boot thread blocks on N1: this SVC does not return — the
     // kernel parks it, starts Bounce (which signals N1 and parks on N2),
@@ -293,9 +273,7 @@ pub fn run() {
     // Bounce is parked on N2; the boot thread resumed with the bits.
     let first_bounce_parked = {
         let bounce = nucleus
-            .pools
-            .threads
-            .get_live(usize::from(bounce_id.index))
+            .thread(bounce_id)
             .unwrap_or_else(|| panic!("Bounce Domain missing"));
         assert_bounce_parked_context(bounce, bounce_stack_bottom, bounce_stack_top);
         assert_eq!(bounce.address_space, bounce_as_id);
@@ -383,9 +361,7 @@ pub fn run() {
     // remain unchanged, not merely its completion-result registers.
     assert_eq!(
         nucleus
-            .pools
-            .threads
-            .get_live(usize::from(bounce_id.index))
+            .thread(bounce_id)
             .expect("parked Bounce missing")
             .context,
         first_bounce_parked
@@ -417,9 +393,7 @@ pub fn run() {
     assert_eq!(fixture_stack_state(), (boot_execution_sp, shared_trap_sp));
     assert_bounce_parked_context(
         nucleus
-            .pools
-            .threads
-            .get_live(usize::from(bounce_id.index))
+            .thread(bounce_id)
             .expect("Bounce missing after successful Await"),
         bounce_stack_bottom,
         bounce_stack_top,
@@ -451,9 +425,7 @@ pub fn run() {
     // error completion.
     {
         let bounce = nucleus
-            .pools
-            .threads
-            .get_live(usize::from(bounce_id.index))
+            .thread(bounce_id)
             .unwrap_or_else(|| panic!("Bounce Domain missing"));
         assert_bounce_parked_context(bounce, bounce_stack_bottom, bounce_stack_top);
     }
@@ -468,9 +440,7 @@ pub fn run() {
         // Bounce is parked on N2 with a Waiting record: the canonical
         // teardown state of a blocked Thread.
         let ExecutionContext::Parked { saved, record } = nucleus
-            .pools
-            .threads
-            .get_live(usize::from(bounce_id.index))
+            .thread(bounce_id)
             .unwrap_or_else(|| panic!("Bounce Domain missing"))
             .context
         else {
@@ -493,7 +463,7 @@ pub fn run() {
             let full = boot_table
                 .insert(
                     KeySlot(38),
-                    KeyEntry::new::<Thread>(bounce_id, Rights::all(), 0),
+                    KeyEntry::new_thread(bounce_id, Rights::all(), 0),
                     BOOT_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
@@ -502,7 +472,7 @@ pub fn run() {
             let limited = boot_table
                 .insert(
                     KeySlot(39),
-                    KeyEntry::new::<Thread>(bounce_id, Rights(Rights::READ), 0),
+                    KeyEntry::new_thread(bounce_id, Rights(Rights::READ), 0),
                     BOOT_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
@@ -542,9 +512,7 @@ pub fn run() {
 
         assert_eq!(
             nucleus
-                .pools
-                .threads
-                .get_live(usize::from(bounce_id.index))
+                .thread(bounce_id)
                 .expect("rejected retirement removed Bounce")
                 .context,
             ExecutionContext::Parked { saved, record }
@@ -557,7 +525,7 @@ pub fn run() {
             .retire()
             .unwrap_or_else(|error| panic!("Bounce Retire failed: {:?}", error.code()));
         assert!(nucleus.pending.is_empty());
-        assert!(nucleus.scheduler.is_empty());
+        assert!(nucleus.run_queue.is_empty());
         // The released record's identity is stale.
         nucleus.pending.state(record).unwrap_err();
 
@@ -572,10 +540,10 @@ pub fn run() {
             .unwrap_or_else(|error| panic!("post-retire Wait failed: {:?}", error.code()));
         assert_eq!(bits, 0b100);
 
-        // The retired Thread's pool slot is reclaimed and its capability
+        // The retired Thread's generation is bumped and its capability
         // is stale: the identity no longer resolves, and a further Retire
         // through the same capability fails with a defined error.
-        nucleus.pools.threads.validate(bounce_id).unwrap_err();
+        assert!(nucleus.thread(bounce_id).is_none());
         // Thread retirement does not retire its AddressSpace or reset the
         // shared table's counters/backing; the binding remains live.
         nucleus
@@ -595,13 +563,7 @@ pub fn run() {
                 .address(),
             bounce_table_binding.address()
         );
-        assert!(
-            nucleus
-                .pools
-                .threads
-                .get_live(usize::from(bounce_id.index))
-                .is_none()
-        );
+        assert!(nucleus.thread(bounce_id).is_none());
         // Its capability still passes key lookup, but names a retired
         // object: Retire reports that against the invoked key.
         assert_eq!(

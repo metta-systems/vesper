@@ -50,10 +50,7 @@ use {
         address_space::AddressSpaceKey,
     },
     libqemu::semihosting as semi,
-    nucleus::{
-        api::key_entry::KeyEntry,
-        objects::{KeyTable, Notification, arch_objects::AddressSpaceObject},
-    },
+    nucleus::objects::{KeyTable, arch_objects::AddressSpaceObject},
 };
 
 const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
@@ -91,13 +88,7 @@ pub fn run() -> ! {
     let image_tables = image_table_count(&retained);
     let boot = bootstrap_nucleus(&PoolCapacities {
         // builder, probe
-        threads: 2,
-        // builder, probe
         address_spaces: 2,
-        // probe result
-        notifications: 1,
-        event_counts: 0,
-        times: 1,
         // builder: root/L1/L2 and image L3s; probe: root/L1/L2, image span,
         // stack region, init page
         page_tables: 3 + image_tables + 6,
@@ -177,7 +168,7 @@ pub fn run() -> ! {
     let probe_key = unsafe { &mut *(probe_component.table_addr as *mut KeyTable) }
         .insert(
             KeySlot(PROBE_NOTIFICATION_SLOT),
-            KeyEntry::new::<Notification>(builder.object_id(result_notification), Rights::all(), 0),
+            builder.entry(result_notification),
             probe_component.guard,
         )
         .unwrap_or_else(|failure| panic!("Notification grant failed: {:?}", failure.error.code()));
@@ -214,6 +205,7 @@ pub fn run() -> ! {
 
     let probe_thread = threads::spawn_el0(
         nucleus,
+        &builder,
         probe_component.address_space,
         components::PROBE.entry.expect("fp-probe has an entry"),
         main_stack.top,
@@ -228,11 +220,7 @@ pub fn run() -> ! {
     );
     // The handler skipped the instruction and Returned: nothing is left of
     // the fault, and nothing went unhandled.
-    let thread = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(probe_thread.index))
-        .expect("probe Thread missing");
+    let thread = nucleus.thread(probe_thread).expect("probe Thread missing");
     assert_eq!(thread.fault, None, "the handled fault must be released");
     assert_eq!(thread.address_space, probe_component.address_space);
     assert_eq!(thread.invocation_stack.len(), 0);

@@ -621,7 +621,9 @@ fn resume_selected(
         }
     }
     semi::println!(
-        "🔄 context switch: thread {current} {why}, resuming thread {next} @ SP {:#x}, PC {:#x}",
+        "🔄 context switch: thread {:#x} {why}, resuming thread {:#x} @ SP {:#x}, PC {:#x}",
+        current.address,
+        next.address,
         restored.sp,
         restored.elr_el1,
     );
@@ -683,9 +685,9 @@ fn terminate_faulted(frame: &mut ExceptionContext, faulting: &SavedContext) {
         let nucleus = unsafe { &mut *nucleus_ptr };
         // SAFETY: as in `deliver_fault`.
         let access = unsafe { Access::new() };
-        nucleus.current_thread_id().and_then(|current| {
-            nucleus.park_faulted(&access, usize::from(current.index), *faulting)
-        })
+        nucleus
+            .current_thread_id()
+            .and_then(|current| nucleus.park_faulted(&access, current, *faulting))
     });
     match resumed {
         Ok(resumed) => {

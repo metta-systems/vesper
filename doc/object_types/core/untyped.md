@@ -37,6 +37,7 @@ Retype creates `count` objects and installs their capabilities into consecutive 
 | Notification | 0 | A Notification with no pending bits |
 | EventCount | 0 | An EventCount at 0 |
 | Time | 0 | An empty Time on the creating core: zero budget, empty priority chain |
+| Thread | 0 | An inert Thread: no AddressSpace or execution state until the root [Scheduler](scheduler.md) configures and starts it |
 | Untyped | At least 4 (16 bytes) | A smaller Untyped covering part of the region |
 
 Other kinds fail with `INVALID_OBJECT_TYPE`. A device Untyped can only be split into smaller device Untypeds; every other kind from a device Untyped fails with `INVALID_OBJECT_TYPE`.
@@ -49,11 +50,11 @@ Other kinds fail with `INVALID_OBJECT_TYPE`. A device Untyped can only be split 
 | `INVALID_OPERATION` | Count 0 or above 256; `x3` bits above 7 set for a kind other than KeyTable; a kind, slot or rights word that does not fit its field; undefined rights bits |
 | `INSUFFICIENT_RIGHTS` | Missing `WRITE` on the Untyped or `INSTALL` on the destination |
 | `INSUFFICIENT_MEMORY` | The objects do not fit in the remaining region |
-| `POOL_EXHAUSTED` | No free Notification, EventCount, Time or PageTable slot in the kernel pool |
+| `POOL_EXHAUSTED` | No free slot in the kernel PageTable pool |
 | `INVALID_SLOT`, `SLOT_OCCUPIED`, `KEY_SLOT_EXHAUSTED` | A destination slot is out of range, occupied, or has used up its incarnations |
 
 ## Implementation
 
 An Untyped tracks a watermark: Retype allocates from the unused part of the region above it and only ever moves it forward. Memory below the watermark is never handed out again, even after the objects created there are retired. Each new object is aligned to its own alignment (a Frame to its size), and the watermark advances in 16-byte steps.
 
-KeyTables, Frames, PageTables and child Untypeds take their memory from the region. Notifications, EventCounts and Times take no memory from the region; each takes a slot in a kernel pool created at boot. A PageTable also takes a slot in the PageTable pool.
+Every object Retype creates takes its memory from the region, so the number of objects a component can create is bounded by the memory it holds. The memory of a KeyTable, Notification, EventCount, Time or Thread holds kernel state that the caller cannot read or map. A PageTable also takes a slot in the kernel PageTable pool.

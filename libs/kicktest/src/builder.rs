@@ -215,6 +215,16 @@ impl Builder<'_> {
             .unwrap_or_else(|error| panic!("identity lookup failed: {:?}", error.code()))
     }
 
+    /// A copy of the boot-table capability `key`, for a bootstrap grant of
+    /// the same object into another table.
+    pub fn entry(&self, key: RawKey) -> KeyEntry {
+        // SAFETY: as in `object_id`.
+        let table = unsafe { &*(self.boot_table_addr as *const KeyTable) };
+        *table
+            .lookup(key, BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("entry lookup failed: {:?}", error.code()))
+    }
+
     /// Kernel-window address of the carved table a boot-table capability
     /// names.
     pub fn table_address(&self, key: RawKey) -> u64 {

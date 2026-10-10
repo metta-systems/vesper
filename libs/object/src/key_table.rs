@@ -53,6 +53,9 @@ impl KeySlot {
     /// The boot Time (Kickstart grant): the root CPU budget on core 0, whose
     /// priority chain names itself at priority 0.
     pub const BOOT_TIME: KeySlot = KeySlot(17);
+    /// The root Scheduler (Kickstart grant): the only authority that
+    /// configures and starts Retype-created Threads.
+    pub const ROOT_SCHEDULER: KeySlot = KeySlot(18);
     // ... other well-known slots
 }
 

@@ -4,7 +4,7 @@
 //! The chain holds one (scheduler, priority) entry for each scheduler the
 //! budget passed through, in the order the budget arrived; the last entry is
 //! the scheduler that most recently gave this Time budget. A scheduler is
-//! named by the incarnation-checked identity of the Time its budget came
+//! named by the carved identity (address and generation) of the Time its budget came
 //! from. A lower priority number is more urgent.
 //!
 //! Budget only moves: [`Time::transfer`] and [`Time::merge`] compute both new
@@ -13,8 +13,8 @@
 
 use {
     crate::objects::{
-        NucleusObject,
-        access::{ObjectId, PoolTag},
+        NucleusObject, Thread,
+        carved::{Carved, CarvedId, CarvedObject},
     },
     libobject::{
         CapError, ObjectType,
@@ -26,7 +26,7 @@ use {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChainEntry {
     /// The Time the scheduler gave budget from.
-    pub scheduler: ObjectId,
+    pub scheduler: CarvedId,
     pub priority: Priority,
 }
 
@@ -42,9 +42,9 @@ impl PriorityChain {
     pub const fn new() -> Self {
         Self {
             entries: [ChainEntry {
-                scheduler: ObjectId {
-                    pool: PoolTag::Region,
-                    index: 0,
+                scheduler: CarvedId {
+                    kind: ObjectType::TIME,
+                    address: 0,
                     generation: 0,
                 },
                 priority: LOWEST_PRIORITY,
@@ -65,7 +65,7 @@ impl PriorityChain {
             .map_or(LOWEST_PRIORITY, |entry| entry.priority)
     }
 
-    fn position(&self, scheduler: ObjectId) -> Option<usize> {
+    fn position(&self, scheduler: CarvedId) -> Option<usize> {
         self.entries()
             .iter()
             .position(|entry| entry.scheduler == scheduler)
@@ -100,7 +100,7 @@ impl PriorityChain {
 
     /// This chain with `scheduler` at `priority` as its last entry, moving an
     /// existing entry for that scheduler to the end.
-    fn with_last(&self, scheduler: ObjectId, priority: Priority) -> Result<Self, CapError> {
+    fn with_last(&self, scheduler: CarvedId, priority: Priority) -> Result<Self, CapError> {
         let mut result = *self;
         if let Some(index) = result.position(scheduler) {
             result.entries.copy_within(index + 1..result.len, index);
@@ -126,6 +126,10 @@ pub struct Time {
     core: usize,
     budget_ns: Budget,
     chain: PriorityChain,
+    /// The Thread this Time is bound to by `Scheduler.ConfigureThread`, if
+    /// any. While that Thread is live the Time is its own: no budget leaves
+    /// it and no other Thread can be bound to it.
+    bound: Option<CarvedId>,
 }
 
 impl Time {
@@ -136,12 +140,13 @@ impl Time {
             core,
             budget_ns: 0,
             chain: PriorityChain::new(),
+            bound: None,
         }
     }
 
     /// The root Time: `budget_ns` on `core`, with a chain naming itself
     /// (`own_id`) at `priority`. Only the boot code creates one.
-    pub fn root(core: usize, own_id: ObjectId, budget_ns: Budget, priority: Priority) -> Self {
+    pub fn root(core: usize, own_id: CarvedId, budget_ns: Budget, priority: Priority) -> Self {
         let mut chain = PriorityChain::new();
         chain.entries[0] = ChainEntry {
             scheduler: own_id,
@@ -152,6 +157,7 @@ impl Time {
             core,
             budget_ns,
             chain,
+            bound: None,
         }
     }
 
@@ -168,6 +174,22 @@ impl Time {
         &self.chain
     }
 
+    /// Whether this Time is bound to a Thread that is still live. A binding
+    /// to a retired Thread no longer counts.
+    pub fn is_bound(&self) -> bool {
+        self.bound.is_some_and(|thread| {
+            // SAFETY: the recorded identity was a live carved Thread when it
+            // was bound, and carved memory is never freed; validation checks
+            // its header before anything else.
+            unsafe { Carved::<Thread>::validate(thread) }.is_ok()
+        })
+    }
+
+    /// Bind this Time to `thread`. The caller checked [`Self::is_bound`].
+    pub fn bind(&mut self, thread: CarvedId) {
+        self.bound = Some(thread);
+    }
+
     /// Priority at the most recent scheduler, [`LOWEST_PRIORITY`] when the
     /// chain is empty.
     pub fn priority(&self) -> Priority {
@@ -179,7 +201,7 @@ impl Time {
     /// (source, destination) states; the caller commits both or neither.
     pub fn transfer(
         source: &Self,
-        source_id: ObjectId,
+        source_id: CarvedId,
         destination: &Self,
         amount: Budget,
         priority: Priority,
@@ -206,6 +228,7 @@ impl Time {
         let new_destination = Self {
             core: destination.core,
             budget_ns: destination_budget,
+            bound: destination.bound,
             chain,
         };
         Ok((new_source, new_destination))
@@ -231,6 +254,7 @@ impl Time {
                 core: destination.core,
                 budget_ns,
                 chain,
+                bound: destination.bound,
             },
             Self::empty(source.core),
         ))
@@ -251,26 +275,23 @@ impl Time {
 
 impl NucleusObject for Time {
     const TYPE: ObjectType = ObjectType::TIME;
-    const POOL: PoolTag = PoolTag::Time;
 }
+
+impl CarvedObject for Time {}
 
 #[cfg(test)]
 mod tests {
     use {
         super::{ChainEntry, Time},
-        crate::objects::access::{ObjectId, PoolTag},
+        crate::objects::carved::{CarvedId, test_id},
         libobject::{
-            CapError, syscall_status,
+            CapError, ObjectType, syscall_status,
             time::{INFINITE_BUDGET, LOWEST_PRIORITY, MAX_PRIORITY_CHAIN},
         },
     };
 
-    fn time_id(index: u16) -> ObjectId {
-        ObjectId {
-            pool: PoolTag::Time,
-            index,
-            generation: 1,
-        }
+    fn time_id(index: u16) -> CarvedId {
+        test_id(ObjectType::TIME, 0x1000 + u64::from(index) * 0x100)
     }
 
     fn entry(index: u16, priority: u16) -> ChainEntry {

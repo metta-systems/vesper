@@ -119,15 +119,11 @@ pub fn run() {
     let retained_init = retained_init_memory();
     let page_table_capacity = translation::page_table_capacity(&retained_init);
     translation::observe_bootstrap(crate::run as *const u8 as u64);
-    // The boot Thread; the boot, Bounce and two retirement-fixture
+    // The boot, Bounce and two retirement-fixture
     // AddressSpaces; every page table the suite carves (see
     // `translation::page_table_capacity`).
     let boot = bootstrap_nucleus(&PoolCapacities {
-        threads: 1,
         address_spaces: 4,
-        notifications: 0,
-        event_counts: 0,
-        times: 1,
         page_tables: page_table_capacity,
         asid_pools: 1,
     });

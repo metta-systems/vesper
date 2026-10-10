@@ -47,8 +47,10 @@ use {
             key_table::resolve_table_cap,
         },
         objects::{
-            ArchObjects, EventCount, KeyTable, Notification, Nucleus, Time,
+            ArchObjects, EventCount, ExecutionContext, KeyTable, Notification, Nucleus, Thread,
+            Time,
             access::{Access, ObjectId},
+            carved::{Carved, CarvedId, CarvedObject},
             key_table::CallerTable,
         },
     },
@@ -121,6 +123,10 @@ enum Carve {
     /// of which sanitizes in its own transaction. The capability stores the
     /// region inline and the child's watermark starts at zero (fully unused).
     Untyped { bytes: usize },
+    /// An inert `Thread`: no `AddressSpace`, no execution state, never
+    /// runnable until the root Scheduler configures and starts it. Carved from
+    /// the Untyped (`size_bits` zero).
+    Thread,
 }
 
 /// `Retype` `0`: carve `count` objects of one kind from the Untyped's unused
@@ -212,6 +218,12 @@ fn retype<A: ArchObjects>(
             }
             Carve::Time
         }
+        ObjectType::THREAD => {
+            if size_bits != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::Thread
+        }
         ObjectType::UNTYPED => {
             // A split (selected 2026-09-23): the child is its own region of
             // `2^size_bits` bytes. A region smaller than the watermark
@@ -290,9 +302,10 @@ fn retype<A: ArchObjects>(
             let size = u64::try_from(bytes).unwrap();
             (size, size)
         }
-        // Zero bytes at unit alignment: the watermark computation is a
-        // no-op and the commit below re-advances it to the same value.
-        Carve::Notification | Carve::EventCount | Carve::Time => (0, 1),
+        Carve::Notification => carved_layout::<Notification>(),
+        Carve::EventCount => carved_layout::<EventCount>(),
+        Carve::Time => carved_layout::<Time>(),
+        Carve::Thread => carved_layout::<Thread>(),
     };
     let total = obj_size
         .checked_mul(u64::from(count))
@@ -314,9 +327,9 @@ fn retype<A: ArchObjects>(
         dst_table.check_insert(slot)?;
     }
 
-    // Phase 3.5 — for pool-backed kinds (PageTable metadata, Notification
-    // state), allocate the kernel pool slots before any memory is touched.
-    // Pool backing is explicitly charged at bootstrap; on exhaustion the
+    // Phase 3.5 — for a PageTable, allocate its kernel metadata slot before
+    // any memory is touched (its metadata pool is charged at bootstrap until
+    // it is carved like the other kinds); on exhaustion the
     // already-taken slots are released, leaving every part of the
     // transaction unchanged.
     let mut pt_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
@@ -341,61 +354,13 @@ fn retype<A: ArchObjects>(
             }
         }
     }
-    let mut n_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
-        [const { None }; MAX_RETYPE_BATCH_LEN];
-    if matches!(carve, Carve::Notification) {
-        for i in 0..u64::from(count) {
-            let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
-            match nucleus.pools.notifications.allocate(Notification::new()) {
-                Some((id, _)) => n_ids[index] = Some(id),
-                None => {
-                    for id in n_ids[..index].iter().flatten().copied() {
-                        let _rolled_back = nucleus.pools.notifications.deallocate(id);
-                    }
-                    return Err(CapError::PoolExhausted);
-                }
-            }
-        }
-    }
-    let mut ec_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
-        [const { None }; MAX_RETYPE_BATCH_LEN];
-    if matches!(carve, Carve::EventCount) {
-        for i in 0..u64::from(count) {
-            let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
-            match nucleus.pools.event_counts.allocate(EventCount::new()) {
-                Some((id, _)) => ec_ids[index] = Some(id),
-                None => {
-                    for id in ec_ids[..index].iter().flatten().copied() {
-                        let _rolled_back = nucleus.pools.event_counts.deallocate(id);
-                    }
-                    return Err(CapError::PoolExhausted);
-                }
-            }
-        }
-    }
-    let mut time_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
-        [const { None }; MAX_RETYPE_BATCH_LEN];
-    if matches!(carve, Carve::Time) {
-        let core = nucleus.current_cpu();
-        for i in 0..u64::from(count) {
-            let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
-            match nucleus.pools.times.allocate(Time::empty(core)) {
-                Some((id, _)) => time_ids[index] = Some(id),
-                None => {
-                    for id in time_ids[..index].iter().flatten().copied() {
-                        let _rolled_back = nucleus.pools.times.deallocate(id);
-                    }
-                    return Err(CapError::PoolExhausted);
-                }
-            }
-        }
-    }
 
     // Phase 4+5 — initialize each object kernel-privately in the carved region
     // and install its capability. The region is not yet committed (watermark
     // unchanged); stale writes are overwritten by the next carve if the
     // transaction aborts.
     let base = untyped.paddr + u64::try_from(reservation.start).unwrap();
+    let core = nucleus.current_cpu();
     let mut installed: [RawKey; MAX_RETYPE_BATCH_LEN] =
         [RawKey::new(KeySlot(0), 0); MAX_RETYPE_BATCH_LEN];
     let mut installed_count = 0_usize;
@@ -448,21 +413,35 @@ fn retype<A: ArchObjects>(
                     .expect("page-table metadata slot pre-allocated");
                 KeyEntry::new::<A::PageTable>(id, requested, 0)
             }
-            Carve::Notification => {
-                let id = n_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
-                    .expect("notification pool slot pre-allocated");
-                KeyEntry::new::<crate::objects::Notification>(id, requested, 0)
-            }
-            Carve::EventCount => {
-                let id = ec_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
-                    .expect("event-count pool slot pre-allocated");
-                KeyEntry::new::<crate::objects::EventCount>(id, requested, 0)
-            }
-            Carve::Time => {
-                let id = time_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
-                    .expect("time pool slot pre-allocated");
-                KeyEntry::new::<Time>(id, requested, 0)
-            }
+            Carve::Notification => KeyEntry::new_carved(
+                // SAFETY: as for `carve_object`.
+                unsafe { carve_object(paddr, Notification::new()) },
+                requested,
+                0,
+            ),
+            Carve::EventCount => KeyEntry::new_carved(
+                // SAFETY: as for `carve_object`.
+                unsafe { carve_object(paddr, EventCount::new()) },
+                requested,
+                0,
+            ),
+            Carve::Time => KeyEntry::new_carved(
+                // SAFETY: as for `carve_object`.
+                unsafe { carve_object(paddr, Time::empty(core)) },
+                requested,
+                0,
+            ),
+            Carve::Thread => KeyEntry::new_thread(
+                // SAFETY: as for `carve_object`.
+                unsafe {
+                    carve_object(
+                        paddr,
+                        Thread::new(ObjectId::UNBOUND, ExecutionContext::Inactive),
+                    )
+                },
+                requested,
+                0,
+            ),
             Carve::Untyped { .. } => {
                 // Pure bookkeeping: no initialization or sanitization (see
                 // the `Carve::Untyped` note). The child's extent is
@@ -491,15 +470,6 @@ fn retype<A: ArchObjects>(
                 for id in pt_ids.iter().flatten().copied() {
                     let _rolled_back = nucleus.pools.arch.page_tables.deallocate(id);
                 }
-                for id in n_ids.iter().flatten().copied() {
-                    let _rolled_back = nucleus.pools.notifications.deallocate(id);
-                }
-                for id in ec_ids.iter().flatten().copied() {
-                    let _rolled_back = nucleus.pools.event_counts.deallocate(id);
-                }
-                for id in time_ids.iter().flatten().copied() {
-                    let _rolled_back = nucleus.pools.times.deallocate(id);
-                }
                 return Err(failure.error.with_key_operand(6));
             }
         }
@@ -524,9 +494,34 @@ fn retype<A: ArchObjects>(
         Carve::Notification => "Notification",
         Carve::EventCount => "EventCount",
         Carve::Time => "Time",
+        Carve::Thread => "Thread",
         Carve::Untyped { .. } => "Untyped",
     };
     semi::println!("✅ Untyped::Retype({kind_name}, count {count})");
 
     Ok((first_key.ok_or(CapError::InvalidOperation)?.to_wire(), 0))
+}
+
+/// Size and alignment one carved `T` takes from an Untyped: the carved
+/// record, aligned to at least the watermark granularity.
+fn carved_layout<T: CarvedObject>() -> (u64, u64) {
+    let align = Carved::<T>::ALIGN.max(MIN_ALIGN);
+    (
+        u64::try_from(Carved::<T>::SIZE.next_multiple_of(align)).unwrap(),
+        u64::try_from(align).unwrap(),
+    )
+}
+
+/// Write `object` as a fresh carved record at physical address `paddr` and
+/// return its identity.
+///
+/// # Safety
+/// `paddr` must start a region of the invoking Untyped's unused watermark
+/// range sized and aligned by [`carved_layout`], exclusively owned by this
+/// Retype and ordinary RAM (device sources are rejected before carving).
+unsafe fn carve_object<T: CarvedObject>(paddr: u64, object: T) -> CarvedId {
+    let address = PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>();
+    // SAFETY: forwarded caller guarantee; the direct map makes the region
+    // kernel-writable.
+    unsafe { Carved::<T>::initialize(address, object) }
 }

@@ -62,6 +62,10 @@ pub mod untyped_client;
 pub mod time_client;
 
 #[cfg(test)]
+#[path = "../src/scheduler.rs"]
+pub mod scheduler_client;
+
+#[cfg(test)]
 mod tests {
     use core::mem::{align_of, size_of};
 
@@ -357,6 +361,7 @@ mod tests {
         assert_eq!(KeySlot::DEBUG_CONSOLE, KeySlot(15));
         assert_eq!(KeySlot::FAULT_HANDLER, KeySlot(16));
         assert_eq!(KeySlot::BOOT_TIME, KeySlot(17));
+        assert_eq!(KeySlot::ROOT_SCHEDULER, KeySlot(18));
     }
 
     #[test]

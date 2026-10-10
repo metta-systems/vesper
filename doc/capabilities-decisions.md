@@ -23,8 +23,7 @@ Unanswered questions before implementing the scheduler record ABI:
 - What are the exact shared-record fields and kernel-versus-scheduler
   transition rules, publication/snapshot protocol, event-summary indexing,
   and record retirement/reuse behavior?
-- What are the Retype-created Thread configuration and start schemas
-  (AddressSpace, entry, stack, Time), the scheduler donation schema, and how is strict-tree
+- What is the scheduler donation schema, and how is strict-tree
   scheduler ownership enforced?
 - Where does the dispatch operation (Thread, Time, priority, timeout) live
   (Scheduler, Thread or Time), and how are block and expiry events posted to
@@ -40,6 +39,10 @@ Unanswered questions before implementing the scheduler record ABI:
 - **Other architectural state:** what TLS, debug and other non-GPR/control
   state must be initialized, preserved or isolated before protected EL0
   execution? GPR/NZCV scrubbing alone is not complete state isolation.
+- **Invocation creation through Retype:** should `AddressSpace.CreateInvocation`
+  become Retype-style, like Thread creation (an inert object from Retype, made
+  usable by the authority that owns it)? To be looked at; the maintainer
+  leans towards switching.
 - **Call-only Invocation distribution (D4):** what are the permitted
   derivation/CopyDerive restrictions, rights attenuation, and source badges?
 - **Shared memory and transfer:** pointer/shared-memory rules and whether
@@ -142,6 +145,14 @@ needs them.
   that unreachable in practice, at the cost of larger identities in every
   capability entry, pool metadata record and pending record. Would need a
   measured look at those layouts and the `KeyEntry` payload size.
+- **Continuing carved-object generations across re-carving:** instead of a
+  fresh header starting at the first generation, investigate whether
+  re-carving could read the previous header's generation and continue from
+  it. It would need the old generation to survive reclamation (the bytes
+  are not sanitized, or the generation is kept elsewhere), a rule for memory
+  re-carved at a different offset or as a different kind, and a check that it
+  adds protection beyond the retire-time bump and completed cleanup that the
+  contract already relies on.
 - **Kernel-published identity in `TPIDRRO_EL0`:** using the EL0 read-only,
   EL1-writable register to publish per-Thread identity to userspace, as Linux
   does for per-CPU data. Today it is always zero.

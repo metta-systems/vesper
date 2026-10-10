@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Wire type | `0x08` (core) |
-| Backing | Kernel EventCount pool; created by `Untyped.Retype` |
+| Backing | Kernel object carved from an Untyped by `Untyped.Retype` |
 | Status | Advance, Await, Read |
 
 ## Purpose

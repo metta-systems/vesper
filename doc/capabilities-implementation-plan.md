@@ -103,7 +103,7 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Remove `DcbPages`/`DcbView`, the global DCB view, `libs/object/src/domain.rs` and the duplicated `USER_BASE`/`MAX_DOMAINS` constants; replace them with scheduler-owned shared records behind shared constants and size/offset assertions.
 - [ ] Implement `Scheduler.ShareRegion` across shared ABI, wrapper, dispatch and object state: one already scheduler-mapped Frame per call, reject conflicting re-share, check Scheduler and Frame authority.
 - [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private.
-- [ ] Implement hierarchical Scheduler derivation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
+- [ ] Implement hierarchical Scheduler derivation, root-only Thread creation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
 - [ ] Move notification and block-reason accounting into the shared records, with event-summary indexing and Thread-retirement cleanup.
 - [ ] Carry incarnation-checked Thread identities in the kernel run queue: `Scheduler` still queues bare pool indices, and selection mints the current Thread's identity from the live slot (`ObjectPool::live_identity`).
 - [ ] Test scheduler/Frame authority, mapped and unmapped ShareRegion inputs, re-share rejection, stride placement, identity reuse, tree constraints, root creation/donation, publication/reuse and Thread teardown; run target checks for record access and kernel-private state isolation.
@@ -137,13 +137,13 @@ Reference: [communication](capabilities-contract.md#communication-and-deferred-c
 
 ### Interrupt delivery
 
-Reference: [IRQ delivery](capabilities-contract.md#irq-delivery). Order toward the PL011 driver: Retype-created Threads, device Frames (Phase 5), then the items below.
+Reference: [IRQ delivery](capabilities-contract.md#irq-delivery). Order toward the PL011 driver: device Frames (Phase 5), then the items below.
 
 - [ ] Add the nucleus IRQ table (bound Notification identity and badge per line, sized by the component's `line_count`); `handle_irq` signals a bound line's Notification, masks it and ends the interrupt, and masks and ends unbound lines.
 - [ ] Implement `IRQControl.Issue` (specifier → line through `xlate`, trigger from the specifier, one live IRQHandler per line, nucleus timer line refused) and `IRQHandler.SetNotification`/`Clear`/`Ack`, with shared ABI, wrappers, rights checks and success traces; deleting the IRQHandler clears and masks the line.
 - [ ] Install IRQControl as a Kickstart boot key; later hand it to `irq-manager`.
 - [ ] Test issue/bind/clear/ack, double issue, wrong-kind and missing-`SEND` Notification keys and stale identities in nucleus unit tests; run an EL0 receiver Thread that waits on a bound line, acks and observes repeated deliveries on raspi3b and raspi4b.
-- [ ] Retype Threads from Untyped, with configuration (AddressSpace, entry, stack, Time) and start operations; schema in [`capabilities-decisions.md`](capabilities-decisions.md) (D5).
+- [ ] Carve PageTable metadata and AddressSpaces from the invoking Untyped (carved-object identity) and remove their boot pools; keep failure atomicity and watermark accounting.
 - [ ] Driver matching: `compatible` link section in EL0 driver binaries, `[[driver]]` manifest entries, Kickstart loading one driver per matching enabled node with its device Untyped, IRQHandlers and Time.
 - [ ] Port the PL011 UART to an EL0 driver component (`drivers/uart-pl011`) that retypes its receiver Thread and device Frame, binds its interrupt and serves receive and transmit by interrupts; `uart-test` runs it in loopback on raspi3b and raspi4b.
 

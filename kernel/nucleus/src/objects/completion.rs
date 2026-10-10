@@ -18,7 +18,11 @@
 //! This module enforces that rule as a state machine.
 
 use {
-    crate::objects::access::{ObjectId, PoolTag},
+    crate::objects::{
+        access::{ObjectId, PoolTag},
+        carved::CarvedId,
+        thread::ThreadId,
+    },
     libobject::{CapError, syscall_status},
 };
 
@@ -76,15 +80,18 @@ pub enum PendingState {
 pub struct PendingInvocation {
     /// The blocked domain (domains-pool identity, stored verbatim and
     /// validated against the pool when the record is resolved at wake time).
-    waiter: ObjectId,
+    waiter: ThreadId,
     /// What the invocation waits on.
     kind: PendingKind,
+    /// The carved synchronization object whose wait queue holds the record,
+    /// so teardown can find it without scanning every object.
+    object: CarvedId,
     state: PendingState,
 }
 
 impl PendingInvocation {
     /// The blocked domain's identity (validated at wake time).
-    pub fn waiter(&self) -> ObjectId {
+    pub fn waiter(&self) -> ThreadId {
         self.waiter
     }
 
@@ -96,6 +103,11 @@ impl PendingInvocation {
     /// The terminal state machine state.
     pub fn state(&self) -> PendingState {
         self.state
+    }
+
+    /// The synchronization object whose wait queue holds the record.
+    pub fn object(&self) -> CarvedId {
+        self.object
     }
 }
 
@@ -144,7 +156,12 @@ impl PendingPool {
     /// The waiter identity is stored verbatim; it is incarnation-checked
     /// against the domains pool when the record is resolved at wake time.
     /// Fails with `PoolExhausted` when every slot is live or exhausted.
-    pub fn block(&mut self, waiter: ObjectId, kind: PendingKind) -> Result<ObjectId, CapError> {
+    pub fn block(
+        &mut self,
+        waiter: ThreadId,
+        kind: PendingKind,
+        object: CarvedId,
+    ) -> Result<ObjectId, CapError> {
         let slot = (0..Self::CAPACITY)
             .map(|i| (self.next_free + i) % Self::CAPACITY)
             .find(|&slot| self.records[slot].is_none() && self.generations[slot] != u32::MAX)
@@ -155,6 +172,7 @@ impl PendingPool {
         self.generations[slot] += 1;
         self.records[slot] = Some(PendingInvocation {
             waiter,
+            object,
             kind,
             state: PendingState::Waiting,
         });
@@ -221,7 +239,7 @@ impl PendingPool {
     }
 
     /// The waiter identity stored in a live record.
-    pub fn waiter(&self, id: ObjectId) -> Result<ObjectId, CapError> {
+    pub fn waiter(&self, id: ObjectId) -> Result<ThreadId, CapError> {
         self.live(id).map(PendingInvocation::waiter)
     }
 
@@ -265,6 +283,17 @@ impl PendingPool {
         }
     }
 
+    /// The objects whose wait queues hold `waiter`'s still-waiting records,
+    /// in pool order. A Thread waits on at most one object at a time today,
+    /// but nothing here relies on that.
+    pub fn waited_objects(&self, waiter: ThreadId) -> impl Iterator<Item = CarvedId> + '_ {
+        self.records
+            .iter()
+            .flatten()
+            .filter(move |record| record.waiter == waiter && record.state == PendingState::Waiting)
+            .map(|record| record.object)
+    }
+
     /// Domain-teardown sweep: give every live record naming `waiter` its
     /// terminal disposition and release it.
     ///
@@ -280,7 +309,7 @@ impl PendingPool {
     /// This is the domain-teardown path, distinct from object teardown
     /// (`Notification::cancel_waiters` and `EventCount::cancel_waiters`),
     /// whose waiters are still alive and resume with their outcome.
-    pub fn teardown_waiter(&mut self, waiter: ObjectId) -> Result<usize, CapError> {
+    pub fn teardown_waiter(&mut self, waiter: ThreadId) -> Result<usize, CapError> {
         let mut released = 0;
         for slot in 0..Self::CAPACITY {
             // `PendingInvocation` is `Copy`: extract by value so the pool can
@@ -458,7 +487,7 @@ impl WaitQueue {
     /// gives them their terminal transition and releases them, because a
     /// torn-down waiter never resumes to consume an outcome. Returns how
     /// many records were unqueued.
-    pub fn remove_waiter(&mut self, waiter: ObjectId, pending: &PendingPool) -> usize {
+    pub fn remove_waiter(&mut self, waiter: ThreadId, pending: &PendingPool) -> usize {
         let live = self.len;
         let mut kept = 0;
         let mut removed = 0;
@@ -491,22 +520,30 @@ impl WaitQueue {
 mod tests {
     use {
         super::{PendingKind, PendingPool, PendingState, WaitQueue},
-        crate::objects::access::{ObjectId, PoolTag},
-        libobject::{CapError, syscall_status},
+        crate::objects::{
+            access::{ObjectId, PoolTag},
+            carved::{CarvedId, test_id},
+            thread::ThreadId,
+        },
+        libobject::{CapError, ObjectType, syscall_status},
     };
+
+    /// The Notification the records wait on (never resolved here).
+    fn object() -> CarvedId {
+        test_id(ObjectType::NOTIFICATION, 0x1000)
+    }
 
     /// A stand-in waiter identity: a domains-pool identity as stored by
     /// `block`.
-    fn waiter(index: u16) -> ObjectId {
-        ObjectId {
-            pool: PoolTag::Thread,
-            index,
-            generation: 1,
-        }
+    fn waiter(index: u16) -> ThreadId {
+        test_id(
+            libobject::ObjectType::THREAD,
+            0x10_0000 + u64::from(index) * 0x1000,
+        )
     }
 
     fn block(pool: &mut PendingPool, index: u16) -> ObjectId {
-        match pool.block(waiter(index), PendingKind::NotificationWait) {
+        match pool.block(waiter(index), PendingKind::NotificationWait, object()) {
             Ok(id) => id,
             Err(_) => panic!("block failed"),
         }
@@ -640,7 +677,7 @@ mod tests {
         }
         assert_eq!(pool.len(), PendingPool::CAPACITY);
         assert!(matches!(
-            pool.block(waiter(255), PendingKind::NotificationWait),
+            pool.block(waiter(255), PendingKind::NotificationWait, object()),
             Err(CapError::PoolExhausted)
         ));
     }

@@ -1,6 +1,7 @@
 pub mod access;
 pub mod arch;
 pub mod arch_objects;
+pub mod carved;
 pub mod completion;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
@@ -15,6 +16,7 @@ pub mod nucleus_object;
 pub mod object_pool;
 pub mod resume;
 pub mod sched;
+pub mod scheduler;
 pub mod thread;
 pub mod time;
 
@@ -31,7 +33,8 @@ pub use {
     nucleus::Nucleus,
     nucleus_object::NucleusObject,
     object_pool::ObjectPool,
-    sched::Scheduler,
+    sched::RunQueue,
+    scheduler::Scheduler,
     thread::{ExecutionContext, InvocationContinuation, InvocationStack, Thread, ThreadFault},
     time::Time,
 };

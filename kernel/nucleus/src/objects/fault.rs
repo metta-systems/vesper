@@ -20,6 +20,7 @@ use {
         invocation::{CallTarget, CommittedCall},
         key_table::KeyTable,
         resume::PreparedResume,
+        thread::ThreadId,
     },
     libexception::arch::aarch64::SavedContext,
     libobject::{CapError, fault::FaultInfo},
@@ -49,12 +50,8 @@ impl<A: ArchObjects> Nucleus<A> {
         faulting: SavedContext,
         info: FaultInfo,
     ) -> Result<FaultDelivery, CapError> {
-        let current_index = self.current_index()?;
-        let thread = self
-            .pools
-            .threads
-            .get_live(current_index)
-            .ok_or(CapError::InvalidDomain)?;
+        let current = self.current_thread_id()?;
+        let thread = self.thread(current).ok_or(CapError::InvalidDomain)?;
         if thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
@@ -74,11 +71,7 @@ impl<A: ArchObjects> Nucleus<A> {
             call_frame.gpr[9] = target.stack_extent.end();
             if let Ok(prepared) = self.prepare_call(access, &call_frame, target) {
                 let committed = self.commit_call(prepared)?;
-                let thread = self
-                    .pools
-                    .threads
-                    .get_live_mut(current_index)
-                    .ok_or(CapError::InvalidDomain)?;
+                let thread = self.thread_mut(current).ok_or(CapError::InvalidDomain)?;
                 thread.fault = Some(ThreadFault {
                     frame: faulting,
                     address_space: faulting_address_space,
@@ -92,7 +85,7 @@ impl<A: ArchObjects> Nucleus<A> {
         if let Some(space) = self.live_address_space_mut(faulting_address_space) {
             space.count_unhandled_fault();
         }
-        self.park_faulted(access, current_index, faulting)
+        self.park_faulted(access, current, faulting)
             .map(FaultDelivery::Unhandled)
     }
 
@@ -102,17 +95,17 @@ impl<A: ArchObjects> Nucleus<A> {
     pub fn park_faulted(
         &mut self,
         access: &Access,
-        current_index: usize,
+        current: ThreadId,
         faulting: SavedContext,
     ) -> Result<PreparedResume, CapError> {
-        self.release_thread_fault(current_index);
+        self.release_thread_fault(current);
         self.park_faulted_and_select(access, faulting)
     }
 
     /// Drop the fault a Thread is handling, freeing its handler. Called when
     /// the Thread stops for good (parked as faulted, or retired).
-    pub fn release_thread_fault(&mut self, thread_index: usize) {
-        let Some(thread) = self.pools.threads.get_live_mut(thread_index) else {
+    pub fn release_thread_fault(&mut self, thread: ThreadId) {
+        let Some(thread) = self.thread_mut(thread) else {
             return;
         };
         if let Some(fault) = thread.fault.take() {
@@ -151,9 +144,5 @@ impl<A: ArchObjects> Nucleus<A> {
         let pool = &mut self.pools.arch.address_spaces;
         pool.validate(id).ok()?;
         pool.get_live_mut(usize::from(id.index))
-    }
-
-    fn current_index(&self) -> Result<usize, CapError> {
-        Ok(usize::from(self.current_thread_id()?.index))
     }
 }

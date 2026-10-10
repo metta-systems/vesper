@@ -37,7 +37,9 @@ use {
         sync::atomic::{AtomicPtr, AtomicU64, Ordering},
     },
     kickstart::{
-        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory, spawn_idle},
+        bootstrap::{
+            BOOT_TABLE_GUARD, PoolCapacities, bootstrap_nucleus, retained_init_memory, spawn_idle,
+        },
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
@@ -54,9 +56,13 @@ use {
     libobject::{
         KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,
+        scheduler::{SchedulerKey, ThreadStart},
     },
     libqemu::semihosting as semi,
-    nucleus::objects::{ArchObjectsImpl, ExecutionContext, Nucleus},
+    nucleus::{
+        api::key_entry::KeyEntry,
+        objects::{ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus},
+    },
 };
 
 libboot::entry!(boot_main);
@@ -183,15 +189,8 @@ pub fn run() -> ! {
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
     let boot = bootstrap_nucleus(&PoolCapacities {
-        // boot, idle, two EL1t spinners and the checker in the builder's
-        // AddressSpace; the EL0 spinner in its own
-        threads: 6,
         // builder, EL0 spinner
         address_spaces: 2,
-        // the boot Thread's wake-up
-        notifications: 1,
-        event_counts: 0,
-        times: 1,
         // builder: root/L1/L2 and image L3s; EL0 spinner: root/L1/L2, image
         // span, stack region, counter page
         page_tables: 3 + image_tables + 6,
@@ -277,22 +276,56 @@ pub fn run() -> ! {
     START_TICKS.store(ticks(), Ordering::Relaxed);
     let time_before = nucleus.current_time_ns();
 
-    let idle = spawn_idle(nucleus, boot_as_id);
+    let idle = spawn_idle(
+        nucleus,
+        keytable_addr,
+        RawKey::from_wire(untyped.to_wire()),
+        boot_as_id,
+    );
     let entries = [
         spinner_a as *const () as u64,
         spinner_b as *const () as u64,
         checker as *const () as u64,
     ];
     for (entry, stack) in entries.into_iter().zip(&STACKS) {
-        threads::spawn_interruptible(nucleus, boot_as_id, entry, stack.top());
+        threads::spawn_interruptible(nucleus, &builder, boot_as_id, entry, stack.top());
     }
-    let el0_spinner = threads::spawn_el0(
-        nucleus,
-        spinner.address_space,
-        components::SPINNER.entry.expect("the spinner has an entry"),
-        stack.top,
-        COUNTER_VA,
-    );
+    // The EL0 spinner goes through the public path: Retype an inert Thread,
+    // then the root Scheduler configures it on the boot Time and starts it.
+    let spinner_thread_slot = slots.take(1);
+    let spinner_thread_key = untyped
+        .retype(
+            ObjectType::THREAD,
+            0,
+            0,
+            1,
+            &self_table,
+            spinner_thread_slot,
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("Thread Retype failed: {:?}", error.code()));
+    let root_scheduler = SchedulerKey::from_key(boot.root_scheduler_key);
+    root_scheduler
+        .configure_thread(
+            spinner_thread_key,
+            spinner.address_space_key,
+            ThreadStart {
+                entry: components::SPINNER.entry.expect("the spinner has an entry"),
+                stack_pointer: stack.top,
+                argument: COUNTER_VA,
+            },
+            boot.boot_time_key,
+        )
+        .unwrap_or_else(|error| panic!("ConfigureThread failed: {:?}", error.code()));
+    root_scheduler
+        .start_thread(spinner_thread_key)
+        .unwrap_or_else(|error| panic!("StartThread failed: {:?}", error.code()));
+    // SAFETY: the boot table is the live carved boot KeyTable; this read-only
+    // borrow ends before any capability invocation.
+    let el0_spinner = unsafe { &*(keytable_addr as *const KeyTable) }
+        .lookup(spinner_thread_key, BOOT_TABLE_GUARD)
+        .and_then(KeyEntry::thread_id)
+        .unwrap_or_else(|error| panic!("spinner Thread key lookup failed: {:?}", error.code()));
     semi::println!("preempt-test: spinners, checker and idle started; parking");
 
     // Park until the checker wakes us: only preemption lets it run.
@@ -331,9 +364,7 @@ pub fn run() -> ! {
     // The EL0 spinner never blocks: it can only have stopped through a tick
     // taken at EL0, its complete user state saved for the next slice.
     let el0_thread = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(el0_spinner.index))
+        .thread(el0_spinner)
         .expect("EL0 spinner Thread missing");
     let ExecutionContext::Preempted { saved } = el0_thread.context else {
         panic!("the EL0 spinner is not preempted: {:?}", el0_thread.context);

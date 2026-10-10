@@ -20,7 +20,9 @@
 use {
     crate::objects::{
         NucleusObject,
+        carved::{CarvedId, CarvedObject},
         completion::{PendingKind, PendingPool},
+        thread::ThreadId,
     },
     libobject::{CapError, ObjectType, syscall_status},
 };
@@ -98,7 +100,7 @@ impl AwaitQueue {
     /// (`PendingPool::teardown_waiter`) gives the unqueued records their
     /// terminal transition and releases them. Returns how many records were
     /// unqueued.
-    fn remove_waiter(&mut self, waiter: ObjectId, pending: &PendingPool) -> usize {
+    fn remove_waiter(&mut self, waiter: ThreadId, pending: &PendingPool) -> usize {
         let live = self.len;
         let mut kept = 0;
         let mut removed = 0;
@@ -198,8 +200,9 @@ pub struct EventCount {
 
 impl NucleusObject for EventCount {
     const TYPE: ObjectType = ObjectType::EVENT_COUNT;
-    const POOL: PoolTag = PoolTag::EventCount;
 }
+
+impl CarvedObject for EventCount {}
 
 impl EventCount {
     pub const fn new() -> Self {
@@ -291,10 +294,13 @@ impl EventCount {
     /// The queue reservation is validated before the record is registered,
     /// so a full queue rejects the attempt before admission with no record
     /// to roll back.
+    /// `own` is this `EventCount`'s carved identity, recorded in the pending
+    /// record so Thread teardown can find the queue holding it.
     pub fn await_ge(
         &mut self,
+        own: CarvedId,
         target: u64,
-        waiter: ObjectId,
+        waiter: ThreadId,
         pending: &mut PendingPool,
     ) -> Result<AwaitOutcome, CapError> {
         if self.value >= target {
@@ -303,7 +309,7 @@ impl EventCount {
         if self.waiters.is_full() {
             return Err(CapError::PoolExhausted);
         }
-        let record = pending.block(waiter, PendingKind::EventCountAwait)?;
+        let record = pending.block(waiter, PendingKind::EventCountAwait, own)?;
         // The reservation was validated above and the kernel lock excludes
         // concurrent admission, so this cannot fail; if it ever does,
         // abandon the registered record rather than leaking its pool slot.
@@ -340,7 +346,7 @@ impl EventCount {
     /// (`PendingPool::teardown_waiter`) instead of being left terminal for a
     /// resume that never happens. Returns how many of the waiter's records
     /// were unqueued.
-    pub fn remove_waiter(&mut self, waiter: ObjectId, pending: &PendingPool) -> usize {
+    pub fn remove_waiter(&mut self, waiter: ThreadId, pending: &PendingPool) -> usize {
         self.waiters.remove_waiter(waiter, pending)
     }
 }
@@ -351,17 +357,23 @@ mod tests {
         super::{AdvanceOutcome, AwaitOutcome, EventCount, WokenRecords},
         crate::objects::{
             access::{ObjectId, PoolTag},
+            carved::{CarvedId, test_id},
             completion::{PendingPool, PendingState},
+            thread::ThreadId,
         },
         libobject::{CapError, syscall_status},
     };
 
-    fn waiter(index: u16) -> ObjectId {
-        ObjectId {
-            pool: PoolTag::Thread,
-            index,
-            generation: 1,
-        }
+    /// The object under test's identity, recorded in pending records.
+    fn own() -> CarvedId {
+        test_id(libobject::ObjectType::EVENT_COUNT, 0x1000)
+    }
+
+    fn waiter(index: u16) -> ThreadId {
+        test_id(
+            libobject::ObjectType::THREAD,
+            0x10_0000 + u64::from(index) * 0x1000,
+        )
     }
 
     /// Block a waiter on `target` and return its pending-record identity.
@@ -371,7 +383,7 @@ mod tests {
         index: u16,
         target: u64,
     ) -> ObjectId {
-        match event_count.await_ge(target, waiter(index), pending) {
+        match event_count.await_ge(own(), target, waiter(index), pending) {
             Ok(AwaitOutcome::Blocked(record)) => record,
             _ => panic!("await should block"),
         }
@@ -425,7 +437,7 @@ mod tests {
         let mut event_count = EventCount::new();
 
         assert_eq!(
-            event_count.await_ge(0, waiter(0), &mut pending).ok(),
+            event_count.await_ge(own(), 0, waiter(0), &mut pending).ok(),
             Some(AwaitOutcome::Ready(0))
         );
         assert!(pending.is_empty());
@@ -438,7 +450,9 @@ mod tests {
 
         assert!(event_count.advance(12, &mut pending).is_ok());
         assert_eq!(
-            event_count.await_ge(10, waiter(0), &mut pending).ok(),
+            event_count
+                .await_ge(own(), 10, waiter(0), &mut pending)
+                .ok(),
             Some(AwaitOutcome::Ready(12))
         );
         // Awaiting does not consume the counter.
@@ -590,7 +604,7 @@ mod tests {
         // The next await is rejected before admission: no record registered,
         // nothing to roll back.
         assert!(matches!(
-            event_count.await_ge(100, waiter(255), &mut pending),
+            event_count.await_ge(own(), 100, waiter(255), &mut pending),
             Err(CapError::PoolExhausted)
         ));
         assert_eq!(pending.len(), before);

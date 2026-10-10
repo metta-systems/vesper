@@ -23,6 +23,7 @@ pub mod invocation;
 pub mod key_entry;
 pub mod key_table;
 pub mod notification;
+pub mod scheduler;
 pub mod thread;
 pub mod time;
 pub mod untyped;
@@ -220,8 +221,14 @@ fn core_invoke<A: ArchObjects>(
             crate::api::event_count::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
-        CoreType::Time => crate::api::time::invoke::<A>(access, caller, key, op, args, nucleus)
-            .map(InvokeOutcome::Complete),
+        CoreType::Time => {
+            crate::api::time::invoke(access, caller, key, op, args).map(InvokeOutcome::Complete)
+        }
+
+        CoreType::Scheduler => {
+            crate::api::scheduler::invoke::<A>(access, caller, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
+        }
 
         _ => Err(CapError::UnsupportedCoreType(core_type)),
     }
@@ -229,32 +236,29 @@ fn core_invoke<A: ArchObjects>(
 
 /// Mark the thread of a completed record runnable.
 ///
-/// The waiter identity is incarnation-checked against the threads pool
-/// before enqueueing; a stale identity (thread torn down) releases the
-/// terminal record instead — its waiter will never resume.
+/// The waiter identity is checked against the Thread's header before
+/// enqueueing; a stale identity (thread torn down) releases the terminal
+/// record instead — its waiter will never resume.
 pub(crate) fn wake_waiter<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
     record: crate::objects::access::ObjectId,
 ) -> Result<(), CapError> {
     let waiter = nucleus.pending.waiter(record)?;
-    if nucleus.pools.threads.validate(waiter).is_ok() {
-        // The queue is sized to hold every thread-pool slot; a full queue is
-        // a kernel bookkeeping bug, not an expected condition.
-        assert!(
-            nucleus.scheduler.push(waiter.index),
-            "runnable queue overflow"
-        );
+    if nucleus.thread(waiter).is_some() {
+        // A completed record's waiter is parked, so it is not already queued;
+        // a refused push is a kernel bookkeeping bug.
+        assert!(nucleus.run_queue.push(waiter), "woken Thread did not queue");
     } else if nucleus.pending.release(record).is_err() {
         panic!("failed to release a completed record with a stale waiter");
     }
     Ok(())
 }
 
-/// The current thread's incarnation-checked identity, for wait
+/// The current thread's checked identity, for wait
 /// registration.
 pub(crate) fn current_waiter<A: ArchObjects>(
     nucleus: &Nucleus<A>,
-) -> Result<crate::objects::access::ObjectId, CapError> {
+) -> Result<crate::objects::thread::ThreadId, CapError> {
     nucleus.current_thread_id()
 }
 

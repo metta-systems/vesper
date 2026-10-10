@@ -20,7 +20,7 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | KeyTable | `0x02` | [key_table.md](core/key_table.md) | CopyDerive, Move, Delete |
 | Thread | `0x03` | [thread.md](core/thread.md) | Return, Retire |
 | Time | `0x04` | [time.md](core/time.md) | Transfer, Merge, Query |
-| Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | Not implemented |
+| Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | ConfigureThread, StartThread (root Scheduler) |
 | Invocation | `0x06` | [invocation.md](core/invocation.md) | Call |
 | Notification | `0x07` | [notification.md](core/notification.md) | Signal, Wait, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
@@ -146,9 +146,9 @@ flowchart TD
     C --> D{"Architecture kind?"}
     D -- "no" --> E["Core handler"]
     D -- "yes" --> F["Architecture handler"]
-    E --> G["Untyped, KeyTable, Thread, Time, Invocation,<br/>Notification, EventCount, DebugConsole"]
+    E --> G["Untyped, KeyTable, Thread, Time, Scheduler,<br/>Invocation, Notification, EventCount, DebugConsole"]
     E --> I["Null → NULL_CAPABILITY"]
-    E --> J["Scheduler, IRQControl, IRQHandler →<br/>UNSUPPORTED_CORE_TYPE"]
+    E --> J["IRQControl, IRQHandler →<br/>UNSUPPORTED_CORE_TYPE"]
     F --> L["Frame, PageTable, AddressSpace, ASIDPool"]
     F --> M["ASIDControl, IOSpace, IOPort →<br/>UNSUPPORTED_ARCH_TYPE"]
 ```

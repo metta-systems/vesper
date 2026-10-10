@@ -35,8 +35,9 @@ use {
         CapError, InvalidStackReason, KeySlot, ObjectType, RawKey, Rights, domain::DomainId,
     },
     objects::{
-        ArchObjects, ArchObjectsImpl, KeyTable, Thread,
+        ArchObjects, ArchObjectsImpl, KeyTable,
         access::{Access, ObjectId, PoolTag},
+        carved::{CarvedId, test_id},
         invocation::InvocationStackExtent,
         key_table::CallerTable,
     },
@@ -235,43 +236,39 @@ fn assert_invalid_stack<T>(
 // ═══════════════════════════════════════════════════════════════════
 
 #[test_case]
-fn named_thread_entries_round_trip_checked_identity() {
+fn named_thread_entries_round_trip_carved_identity() {
     for id in [
-        ObjectId {
-            pool: PoolTag::Thread,
-            index: 0,
-            generation: 1,
-        },
-        ObjectId {
-            pool: PoolTag::Thread,
-            index: u16::MAX,
+        test_id(ObjectType::THREAD, 0x1000),
+        CarvedId {
+            kind: ObjectType::THREAD,
+            address: u64::MAX & !0x3F,
             generation: u32::MAX,
         },
     ] {
-        for entry in [
-            KeyEntry::from_id(ObjectType::THREAD, id, Rights::all(), 0xBEEF)
-                .unwrap_or_else(|error| panic!("named Thread construction: {:?}", error.code())),
-            KeyEntry::new::<Thread>(id, Rights::all(), 0xBEEF),
-        ] {
-            assert!(entry.is_valid());
-            assert_eq!(entry.object_type(), ObjectType::THREAD);
-            assert!(matches!(
-                entry.thread_selector(),
-                Ok(ThreadSelector::Named(found)) if found == id
-            ));
-            assert!(matches!(entry.object_id(), Ok(found) if found == id));
-            assert!(!entry.is_thread_return_key());
-            assert_eq!(entry.rights(), Rights::all());
-            assert_eq!(entry.badge(), 0xBEEF);
-            let derived = entry.derive(Rights(Rights::RETIRE));
-            assert!(matches!(
-                derived.thread_selector(),
-                Ok(ThreadSelector::Named(found)) if found == id
-            ));
-            assert!(matches!(derived.object_id(), Ok(found) if found == id));
-            assert_eq!(derived.rights(), Rights(Rights::RETIRE));
-            assert_eq!(derived.badge(), 0xBEEF);
-        }
+        let entry = KeyEntry::new_thread(id, Rights::all(), 0xBEEF);
+        assert!(entry.is_valid());
+        assert_eq!(entry.object_type(), ObjectType::THREAD);
+        assert!(matches!(
+            entry.thread_selector(),
+            Ok(ThreadSelector::Named(found)) if found == id
+        ));
+        assert!(matches!(entry.thread_id(), Ok(found) if found == id));
+        // A Thread is not a pool object.
+        assert!(matches!(
+            entry.object_id(),
+            Err(CapError::TypeMismatch { .. })
+        ));
+        assert!(!entry.is_thread_return_key());
+        assert_eq!(entry.rights(), Rights::all());
+        assert_eq!(entry.badge(), 0xBEEF);
+        let derived = entry.derive(Rights(Rights::RETIRE));
+        assert!(matches!(
+            derived.thread_selector(),
+            Ok(ThreadSelector::Named(found)) if found == id
+        ));
+        assert!(matches!(derived.thread_id(), Ok(found) if found == id));
+        assert_eq!(derived.rights(), Rights(Rights::RETIRE));
+        assert_eq!(derived.badge(), 0xBEEF);
     }
 }
 
@@ -287,7 +284,11 @@ fn thread_return_entry_has_only_current_relative_selector() {
     assert!(entry.is_thread_return_key());
     assert_eq!(entry.rights(), Rights::empty());
     assert_eq!(entry.badge(), 0);
-    assert!(matches!(entry.object_id(), Err(CapError::InvalidOperation)));
+    assert!(matches!(entry.thread_id(), Err(CapError::InvalidOperation)));
+    assert!(matches!(
+        entry.object_id(),
+        Err(CapError::TypeMismatch { .. })
+    ));
     assert!(matches!(
         entry.invocation_target(),
         Err(CapError::TypeMismatch { expected, found })
@@ -313,8 +314,12 @@ fn thread_return_derivation_preserves_selector_without_authorizing_rights() {
         assert_eq!(derived.rights(), rights);
         assert_eq!(derived.badge(), 0);
         assert!(matches!(
-            derived.object_id(),
+            derived.thread_id(),
             Err(CapError::InvalidOperation)
+        ));
+        assert!(matches!(
+            derived.object_id(),
+            Err(CapError::TypeMismatch { .. })
         ));
         assert!(matches!(
             derived.invocation_target(),
@@ -422,6 +427,11 @@ fn identity_entry_constructor_rejects_dedicated_payload_kinds() {
         ObjectType::FRAME,
         ObjectType::KEY_TABLE,
         ObjectType::INVOCATION,
+        ObjectType::THREAD,
+        ObjectType::NOTIFICATION,
+        ObjectType::EVENT_COUNT,
+        ObjectType::TIME,
+        ObjectType::SCHEDULER,
     ] {
         for id in [
             ObjectId {
@@ -430,7 +440,7 @@ fn identity_entry_constructor_rejects_dedicated_payload_kinds() {
                 generation: 0,
             },
             ObjectId {
-                pool: PoolTag::Thread,
+                pool: PoolTag::AddressSpace,
                 index: u16::MAX,
                 generation: u32::MAX,
             },
@@ -451,8 +461,8 @@ fn identity_entry_constructor_rejects_dedicated_payload_kinds() {
 
 #[test_case]
 fn thread_return_representation_preserves_entry_and_payload_layout() {
-    assert_eq!(size_of::<ThreadSelector>(), 12);
-    assert_eq!(align_of::<ThreadSelector>(), 4);
+    assert_eq!(size_of::<ThreadSelector>(), 24);
+    assert_eq!(align_of::<ThreadSelector>(), 8);
     assert_eq!(size_of::<InvocationStackExtent>(), 24);
     assert_eq!(align_of::<InvocationStackExtent>(), 8);
     assert_eq!(size_of::<InvocationPayload>(), 40);
@@ -557,15 +567,7 @@ fn invocation_getters_reject_every_non_invocation_payload() {
         KeyEntry::new_frame(0x2000, 12, false, Rights::all()),
         KeyEntry::new_keytable(TEST_BACKING, CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
         KeyEntry::new_thread_return(),
-        KeyEntry::new::<Thread>(
-            ObjectId {
-                pool: PoolTag::Thread,
-                index: 1,
-                generation: 9,
-            },
-            Rights::all(),
-            0xBEEF,
-        ),
+        KeyEntry::new_thread(test_id(ObjectType::THREAD, 0x1000), Rights::all(), 0xBEEF),
         KeyEntry::from_id(
             ObjectType::ADDRESS_SPACE,
             ObjectId {
@@ -1088,18 +1090,14 @@ fn copy_derive_rejects_occupied_destination_and_non_allowlisted_kinds() {
 
 #[test_case]
 fn thread_and_invocation_entries_remain_outside_copy_derive_and_move_allowlist() {
-    let thread_id = ObjectId {
-        pool: PoolTag::Thread,
-        index: 1,
-        generation: 9,
-    };
+    let thread_id = test_id(ObjectType::THREAD, 0x1000);
     let address_space = ObjectId {
         pool: PoolTag::AddressSpace,
         index: 2,
         generation: 7,
     };
     for entry in [
-        KeyEntry::new::<Thread>(thread_id, Rights::all(), 0xBEEF),
+        KeyEntry::new_thread(thread_id, Rights::all(), 0xBEEF),
         KeyEntry::new_thread_return(),
         KeyEntry::new_thread_return().derive(Rights::all()),
         KeyEntry::new_invocation(

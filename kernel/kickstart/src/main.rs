@@ -88,11 +88,7 @@ pub fn kickstart_run() -> ! {
     // The real boot's own extents: the boot Thread, its AddressSpace, and the
     // boot ASID pool. Everything else is carved at runtime through Retype.
     let _boot_state = bootstrap_nucleus(&PoolCapacities {
-        threads: 1,
         address_spaces: 1,
-        notifications: 0,
-        event_counts: 0,
-        times: 1,
         page_tables: 0,
         asid_pools: 1,
     });

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Wire type | `0x04` (core) |
-| Backing | Kernel Time pool; created by `Untyped.Retype` |
+| Backing | Kernel object carved from an Untyped by `Untyped.Retype` |
 | Status | Transfer, Merge, Query |
 
 ## Purpose
@@ -45,7 +45,7 @@ Returns the remaining budget in `x1` and, in `x2`, the priority at the last chai
 |---|---|
 | `INSUFFICIENT_BUDGET` (35) | A finite source holds less than the amount; `x1` is its remaining budget |
 | `PRIORITY_CHAIN_FULL` (36) | Transfer only: the destination's chain would exceed 16 entries |
-| `INVALID_OPERATION` | Amount 0, priority above `0xFFFF`, the same Time as both operands, Times on different cores, a finite sum reaching `u64::MAX`, or a nonzero unused argument |
+| `INVALID_OPERATION` | Amount 0, priority above `0xFFFF`, the same Time as both operands, Times on different cores, a finite sum reaching `u64::MAX`, a nonzero unused argument, or budget taken out of a Time bound to a live Thread |
 | `INSUFFICIENT_RIGHTS` | Missing `WRITE` on either Time, or `READ` for Query |
 | `TYPE_MISMATCH` | A key does not name a Time |
 
@@ -53,7 +53,9 @@ Every failure leaves both Times unchanged.
 
 ## Implementation
 
-`Untyped.Retype` creates an empty Time on the creating core. It takes no memory from the region; each Time takes a slot in a kernel pool created at boot.
+A Time bound to a Thread by [`Scheduler.ConfigureThread`](scheduler.md#configurethread) is that Thread's own while the Thread is live: Transfer and Merge can add budget to it but cannot take any out, and no other Thread can be bound to it. Once the Thread is retired the Time can be drained or bound again.
+
+`Untyped.Retype` creates an empty Time on the creating core, carved from the Untyped's memory.
 
 The first component receives the boot Time at `KeySlot::BOOT_TIME` (17): core 0, a chain naming itself at priority `0`, and a budget of one hour of CPU time. A kernel built with the `infinite-boot-time` feature gives it an infinite budget instead.
 

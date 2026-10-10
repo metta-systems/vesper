@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Wire type | `0x07` (core) |
-| Backing | Kernel Notification pool; created by `Untyped.Retype` |
+| Backing | Kernel object carved from an Untyped by `Untyped.Retype` |
 | Status | Signal, Wait, Poll |
 
 ## Purpose

@@ -10,6 +10,7 @@ use {
         arch_objects::AddressSpaceObject,
         completion::{PendingKind, PendingState},
         key_table::KeyTableBinding,
+        thread::ThreadId,
     },
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
     libobject::CapError,
@@ -85,8 +86,8 @@ pub struct ResumeCompletion {
 /// No borrowed Thread, `AddressSpace`, pending record, or trap frame survives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PreparedResume {
-    pub current: u32,
-    pub next: u16,
+    pub current: ThreadId,
+    pub next: ThreadId,
     pub saved: SavedContext,
     pub translation: PreparedTranslationContext,
     pub completion: Option<ResumeCompletion>,
@@ -110,32 +111,17 @@ impl<A: ArchObjects> Nucleus<A> {
             return Err(CapError::InvalidDomain);
         }
         let current = self.current_thread_id()?;
-        let current_index = usize::from(current.index);
-        let current_thread = self
-            .pools
-            .threads
-            .get_live(current_index)
-            .ok_or(CapError::InvalidDomain)?;
+        let current_thread = self.thread(current).ok_or(CapError::InvalidDomain)?;
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
-        let current_waiter = self.pending.waiter(record)?;
-        self.pools
-            .threads
-            .validate(current_waiter)
-            .map_err(|_invalid_waiter| CapError::InvalidDomain)?;
-        if current_waiter.pool != PoolTag::Thread
-            || usize::from(current_waiter.index) != current_index
+        if self.pending.waiter(record)? != current
+            || self.pending.state(record)? != PendingState::Waiting
             || self.pending.state(record)? != PendingState::Waiting
         {
             return Err(CapError::InvalidOperation);
         }
-        self.switch_away(
-            access,
-            current,
-            current_index,
-            &ExecutionContext::Parked { saved, record },
-        )
+        self.switch_away(access, current, &ExecutionContext::Parked { saved, record })
     }
 
     /// Stop the current Thread for good after an unhandled fault (or a fault
@@ -153,21 +139,11 @@ impl<A: ArchObjects> Nucleus<A> {
             return Err(CapError::InvalidDomain);
         }
         let current = self.current_thread_id()?;
-        let current_index = usize::from(current.index);
-        let current_thread = self
-            .pools
-            .threads
-            .get_live(current_index)
-            .ok_or(CapError::InvalidDomain)?;
+        let current_thread = self.thread(current).ok_or(CapError::InvalidDomain)?;
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
-        self.switch_away(
-            access,
-            current,
-            current_index,
-            &ExecutionContext::Faulted { saved },
-        )
+        self.switch_away(access, current, &ExecutionContext::Faulted { saved })
     }
 
     /// Preemption-timer tick: if another Thread is runnable, stop the current
@@ -186,29 +162,19 @@ impl<A: ArchObjects> Nucleus<A> {
             return Err(CapError::InvalidDomain);
         }
         let current = self.current_thread_id()?;
-        let current_index = usize::from(current.index);
-        let current_thread = self
-            .pools
-            .threads
-            .get_live(current_index)
-            .ok_or(CapError::InvalidDomain)?;
+        let current_thread = self.thread(current).ok_or(CapError::InvalidDomain)?;
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
-        if self.scheduler.is_empty() {
+        if self.run_queue.is_empty() {
             return Ok(None);
         }
         let current_is_idle = self.idle_thread == Some(current);
-        let resumed = self.switch_away(
-            access,
-            current,
-            current_index,
-            &ExecutionContext::Preempted { saved },
-        )?;
-        // switch_away dequeued the front, so the queue has room.
+        let resumed = self.switch_away(access, current, &ExecutionContext::Preempted { saved })?;
+        // switch_away dequeued the front, and a running Thread is never queued.
         if !current_is_idle {
             assert!(
-                self.scheduler.push(current.index),
+                self.run_queue.push(current),
                 "preempted Thread did not requeue"
             );
         }
@@ -227,38 +193,20 @@ impl<A: ArchObjects> Nucleus<A> {
     fn switch_away(
         &mut self,
         access: &Access,
-        current: ObjectId,
-        current_index: usize,
+        current: ThreadId,
         parked: &ExecutionContext,
     ) -> Result<PreparedResume, CapError> {
         // Peek is sufficient only because validation and dequeue share this
-        // exclusive transaction. The queue still carries indices, not Thread
-        // incarnations; general scheduler identity/reuse remains D3/D5 work.
-        let queued = self.scheduler.peek();
+        // exclusive transaction.
+        let queued = self.run_queue.peek();
         let next = match (queued, self.idle_thread) {
             (Some(next), _) => next,
             // Nothing is runnable: fall back to the idle Thread.
-            (None, Some(idle)) if idle != current => {
-                self.pools
-                    .threads
-                    .validate(idle)
-                    .map_err(|_stale_idle| CapError::InvalidDomain)?;
-                idle.index
-            }
+            (None, Some(idle)) if idle != current => idle,
             (None, _) => return Err(CapError::InvalidOperation),
         };
-        let next_index = usize::from(next);
         // The selected Thread becomes current as a checked identity.
-        let next_thread = self
-            .pools
-            .threads
-            .live_identity(next_index)
-            .ok_or(CapError::InvalidDomain)?;
-        let target = self
-            .pools
-            .threads
-            .get_live(next_index)
-            .ok_or(CapError::InvalidDomain)?;
+        let target = self.thread(next).ok_or(CapError::InvalidDomain)?;
         let translation = prepare_translation_context::<A>(
             access,
             &self.pools.arch.address_spaces,
@@ -272,12 +220,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 // Wakeup enqueues the Thread only after the pending record's
                 // single terminal transition. Deliver its full result shape,
                 // including operation-specific errors such as Await overflow.
-                let waiter = self.pending.waiter(record)?;
-                self.pools
-                    .threads
-                    .validate(waiter)
-                    .map_err(|_invalid_waiter| CapError::InvalidDomain)?;
-                if usize::from(waiter.index) != next_index {
+                if self.pending.waiter(record)? != next {
                     return Err(CapError::InvalidOperation);
                 }
                 let (status, result0, result1) = match self.pending.state(record)? {
@@ -300,8 +243,12 @@ impl<A: ArchObjects> Nucleus<A> {
                 };
                 (saved, Some((record, completion, result1)))
             }
-            // A faulted Thread is never queued; finding one is corruption.
-            ExecutionContext::Running | ExecutionContext::Faulted { .. } => {
+            // Faulted, inert and configured-but-unstarted Threads are never
+            // queued; finding one is corruption.
+            ExecutionContext::Running
+            | ExecutionContext::Faulted { .. }
+            | ExecutionContext::Inactive
+            | ExecutionContext::Configured { .. } => {
                 return Err(CapError::InvalidOperation);
             }
         };
@@ -321,26 +268,22 @@ impl<A: ArchObjects> Nucleus<A> {
         } else {
             None
         };
-        self.pools
-            .threads
-            .get_live_mut(current_index)
+        self.thread_mut(current)
             .expect("validated current Thread")
             .context = *parked;
         if queued.is_some() {
             assert_eq!(
-                self.scheduler.pop(),
+                self.run_queue.pop(),
                 Some(next),
                 "validated scheduler front changed"
             );
         }
-        self.pools
-            .threads
-            .get_live_mut(next_index)
+        self.thread_mut(next)
             .expect("validated target Thread")
             .context = ExecutionContext::Running;
-        self.current_thread = Some(next_thread);
+        self.current_thread = Some(next);
         Ok(PreparedResume {
-            current: u32::from(current.index),
+            current,
             next,
             saved: restored,
             translation,

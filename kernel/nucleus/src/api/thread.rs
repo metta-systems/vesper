@@ -31,8 +31,9 @@
 
 use {
     crate::objects::{
-        ArchObjects, KeyTable, Nucleus,
+        ArchObjects, KeyTable, Nucleus, Thread,
         access::Access,
+        carved::Carved,
         invocation::{CommittedReturn, PreparedReturn, ReturnRejection},
         key_table::CallerTable,
     },
@@ -67,12 +68,11 @@ pub fn invoke<A: ArchObjects>(
 ///
 /// Teardown scope: cancel every pending record naming the Thread as waiter
 /// and purge its queued wakeup (`Nucleus::cancel_thread_pending`), then
-/// deallocate the Thread-pool slot — the contract's teardown-before-reuse
-/// rule. Carved backing (keytable, kernel stack) stays leaked per
-/// accepted-leak; the `AddressSpace` is untouched (its teardown is the
-/// separate `AddressSpace.Retire`); the DCB is untouched (D5). Subsequent
-/// invocations of the retired Thread's capabilities fail pool validation
-/// with a defined error.
+/// retire the carved Thread, which bumps its generation so every capability
+/// still naming it fails with `ObjectRetired` — the contract's
+/// teardown-before-reuse rule. Its memory stays with the Untyped it was
+/// carved from; the `AddressSpace` is untouched (its teardown is the separate
+/// `AddressSpace.Retire`); the DCB is untouched (D5).
 /// Implementation status: the keytable backing belongs to the retained
 /// `AddressSpace` association. No per-Thread kernel stack exists; retirement
 /// drops its private saved context after cancelling its pending records.
@@ -109,14 +109,12 @@ fn retire<A: ArchObjects>(
         if !entry.rights().has(Rights::RETIRE) {
             return Err(CapError::InsufficientRights);
         }
-        entry.object_id().map_err(|e| e.with_key_operand(0))?
+        entry.thread_id().map_err(|e| e.with_key_operand(0))?
     };
     // A retired Thread is reported against its key before it is compared
     // with the caller.
-    nucleus
-        .pools
-        .threads
-        .validate(thread_id)
+    // SAFETY: Thread identities name carved records that are never freed.
+    unsafe { Carved::<Thread>::validate(thread_id) }
         .map_err(|error| error.for_key(thread_key, 0))?;
 
     // The caller must be a surviving Thread: retiring the current Thread
@@ -126,16 +124,13 @@ fn retire<A: ArchObjects>(
         return Err(CapError::InvalidOperation);
     }
 
-    // Cancel-then-deallocate: the pending records and queued wakeups go
-    // first, then the pool slot is reclaimed.
+    // Cancel-then-retire: the pending records and queued wakeups go first,
+    // then the Thread is retired.
     nucleus.cancel_thread_pending(thread_id)?;
     // A Thread retired inside a fault handler frees that handler.
-    nucleus.release_thread_fault(usize::from(thread_id.index));
-    nucleus
-        .pools
-        .threads
-        .deallocate(thread_id)
-        .map_err(|error| error.for_key(thread_key, 0))?;
+    nucleus.release_thread_fault(thread_id);
+    // SAFETY: as above; no reference to the Thread is live here.
+    unsafe { Carved::<Thread>::retire(thread_id) }.map_err(|error| error.for_key(thread_key, 0))?;
     semi::println!("✅ Thread::Retire()");
     Ok((0, 0))
 }

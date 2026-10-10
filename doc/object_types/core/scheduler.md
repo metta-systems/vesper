@@ -3,11 +3,43 @@
 | | |
 |---|---|
 | Wire type | `0x05` (core) |
-| Backing | None |
-| Status | Not implemented |
+| Backing | Kernel object carved from the boot Untyped by Kickstart |
+| Status | ConfigureThread, StartThread (root Scheduler) |
 
 ## Purpose
 
-A Scheduler capability will mark a Thread as a userspace scheduler. A scheduler will share pages with the kernel holding the scheduling records of its Threads, so it can make scheduling decisions without a system call per Thread. Scheduler capabilities will form a tree: the root scheduler creates Threads and can hand them to subordinate schedulers. Invoking a Scheduler capability fails with `UNSUPPORTED_CORE_TYPE`.
+A Scheduler capability is the authority to make Threads run. A Thread created by [`Untyped.Retype`](untyped.md#retype) is inert: it has no AddressSpace and no execution state, and it never runs. Only the root Scheduler turns it into a Thread that runs, by configuring it and then starting it. The first component receives the root Scheduler at `KeySlot::ROOT_SCHEDULER` (18).
 
-Until then, the kernel runs Threads in first-in, first-out order.
+## Operations
+
+| Op | Name | Arguments | Rights | Result |
+|---|---|---|---|---|
+| 0 | ShareRegion | — | — | Always `INVALID_OPERATION` |
+| 1 | ConfigureThread | `x2` Thread, `x3` AddressSpace, `x4` entry, `x5` stack pointer, `x6` Time, `x7` argument | `WRITE` on the Scheduler, Thread and Time; `MAP` on the AddressSpace | — |
+| 2 | StartThread | `x2` Thread | `WRITE` on the Scheduler and Thread | — |
+
+`READ` is rights bit 0, `WRITE` and `MAP` are bit 1. `SchedulerKey` in `libs/object` wraps both operations.
+
+### ConfigureThread
+
+Binds the inert Thread `x2` to the AddressSpace `x3`, an EL0 start state (entry `x4`, stack pointer `x5`, `x0` set to `x7` on first entry) and its own Time `x6`. The Thread records the Time it runs on and the Scheduler that configured it, and the Time becomes the Thread's own: while the Thread is live no budget can be taken out of it and no other Thread can be bound to it (see [Time](time.md#implementation)). The caller keeps the Time capability. Nothing charges the Time yet.
+
+| Error | Cause |
+|---|---|
+| `INVALID_OPERATION` | The Thread is not inert (already configured or started); the entry is not 4-byte aligned or not below the end of the user address range; the stack pointer is not 16-byte aligned or above that end; the Time belongs to another core or is already bound to a live Thread |
+| `NOT_MAPPED` | The AddressSpace has no translation root |
+| `NO_ASID_ASSIGNED` | The AddressSpace has no ASID |
+| `INSUFFICIENT_RIGHTS` | A missing right, or the Scheduler is not the root |
+| `TYPE_MISMATCH` | A key names the wrong kind |
+
+### StartThread
+
+Makes the configured Thread `x2` runnable; it first runs its configured start state. `x3..x7` must be zero. A Thread that is inert or already started fails with `INVALID_OPERATION`.
+
+## Implementation
+
+The root Scheduler is the only Scheduler; `Untyped.Retype` cannot create one. Started Threads join the kernel's first-in, first-out run queue.
+
+## Planned changes
+
+Scheduler derivation and handing Threads to subordinate schedulers, and `ShareRegion` for the scheduling records a scheduler shares with the kernel.

@@ -1,66 +1,75 @@
 //! Fixture Threads queued runnable by the bootstrap builder.
+//!
+//! Each Thread is carved from the boot Untyped kernel-privately (see
+//! `kickstart::bootstrap::carve_boot_object`); the fixture execution
+//! contexts (`EL1t`, a chosen entry and stack) have no public creation ABI.
 
 use {
+    crate::builder::Builder,
+    kickstart::bootstrap::carve_boot_object,
     libexception::arch::aarch64::SavedContext,
+    libobject::RawKey,
     nucleus::objects::{
-        ArchObjectsImpl, ExecutionContext, InvocationStack, Nucleus, Thread, access::ObjectId,
+        ArchObjectsImpl, ExecutionContext, Nucleus, Thread, access::ObjectId, thread::ThreadId,
     },
 };
 
-/// Allocate a Thread in `address_space` that starts at `entry` as `EL1t` on
-/// `stack_top`, and queue it runnable. It first runs when the current Thread
-/// blocks. Thread creation has no public ABI yet, so the builder does this
-/// kernel-privately.
-pub fn spawn(
+/// Carve a Thread in `address_space` that first runs `saved`, and queue it
+/// runnable.
+fn spawn_with(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
+    builder: &Builder<'_>,
     address_space: ObjectId,
-    entry: u64,
-    stack_top: u64,
-) -> ObjectId {
-    let (thread, _) = nucleus
-        .pools
-        .threads
-        .allocate(Thread {
+    saved: &SavedContext,
+) -> ThreadId {
+    let thread = carve_boot_object(
+        builder.boot_table_addr,
+        RawKey::from_wire(builder.untyped.to_wire()),
+        Thread::new(
             address_space,
-            context: ExecutionContext::NotStarted {
-                saved: SavedContext::el1t(entry, stack_top),
-            },
-            invocation_stack: InvocationStack::new(),
-            fault: None,
-        })
-        .expect("no fixture Thread slot");
+            ExecutionContext::NotStarted { saved: *saved },
+        ),
+    );
     assert!(
-        nucleus.scheduler.push(thread.index),
+        nucleus.run_queue.push(thread),
         "fixture Thread did not queue"
     );
     thread
+}
+
+/// Carve a Thread in `address_space` that starts at `entry` as `EL1t` on
+/// `stack_top`, and queue it runnable. It first runs when the current Thread
+/// blocks.
+pub fn spawn(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    builder: &Builder<'_>,
+    address_space: ObjectId,
+    entry: u64,
+    stack_top: u64,
+) -> ThreadId {
+    spawn_with(
+        nucleus,
+        builder,
+        address_space,
+        &SavedContext::el1t(entry, stack_top),
+    )
 }
 
 /// Like [`spawn`], but the Thread takes interrupts, so the nucleus preempts
 /// it on every tick instead of letting it run until it blocks.
 pub fn spawn_interruptible(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
+    builder: &Builder<'_>,
     address_space: ObjectId,
     entry: u64,
     stack_top: u64,
-) -> ObjectId {
-    let (thread, _) = nucleus
-        .pools
-        .threads
-        .allocate(Thread {
-            address_space,
-            context: ExecutionContext::NotStarted {
-                saved: SavedContext::el1t_interruptible(entry, stack_top),
-            },
-            invocation_stack: InvocationStack::new(),
-            fault: None,
-        })
-        .expect("no fixture Thread slot");
-    assert!(
-        nucleus.scheduler.push(thread.index),
-        "fixture Thread did not queue"
-    );
-    thread
+) -> ThreadId {
+    spawn_with(
+        nucleus,
+        builder,
+        address_space,
+        &SavedContext::el1t_interruptible(entry, stack_top),
+    )
 }
 
 /// Like [`spawn`], but the Thread starts unprivileged at `EL0t`, with
@@ -68,26 +77,16 @@ pub fn spawn_interruptible(
 /// `address_space`.
 pub fn spawn_el0(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
+    builder: &Builder<'_>,
     address_space: ObjectId,
     entry: u64,
     stack_top: u64,
     argument: u64,
-) -> ObjectId {
-    let (thread, _) = nucleus
-        .pools
-        .threads
-        .allocate(Thread {
-            address_space,
-            context: ExecutionContext::NotStarted {
-                saved: SavedContext::el0(entry, stack_top, argument),
-            },
-            invocation_stack: InvocationStack::new(),
-            fault: None,
-        })
-        .expect("no fixture Thread slot");
-    assert!(
-        nucleus.scheduler.push(thread.index),
-        "fixture Thread did not queue"
-    );
-    thread
+) -> ThreadId {
+    spawn_with(
+        nucleus,
+        builder,
+        address_space,
+        &SavedContext::el0(entry, stack_top, argument),
+    )
 }

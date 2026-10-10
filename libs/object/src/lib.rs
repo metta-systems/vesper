@@ -16,6 +16,7 @@ pub mod notification;
 pub mod object_type;
 pub mod page_table;
 pub mod rights;
+pub mod scheduler;
 pub mod syscall_status;
 pub mod thread;
 pub mod time;
@@ -38,6 +39,7 @@ pub use {
     object_type::{ArchType, CoreType, ObjectType},
     page_table::{PageTableKey, PageTableOp},
     rights::Rights,
+    scheduler::{SchedulerKey, SchedulerOp},
     syscall_status::InvalidStackReason,
     thread::{ThreadKey, ThreadOp},
     time::{TimeKey, TimeOp},

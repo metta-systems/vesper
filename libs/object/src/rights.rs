@@ -23,8 +23,8 @@ impl Rights {
     /// invocation requires `RETIRE` on the invoked Thread capability.
     /// Delegable like other capability permissions — retirement authority
     /// follows capability permissions, not a privileged owner identity.
-    /// Carving a Thread from Untyped stays unrepresentable (Retype rejects
-    /// the kind), so bootstrap grants are the initial source of this right.
+    /// `Untyped.Retype` grants it like any requested right to the Threads it
+    /// creates; bootstrap grants carry it for the boot Threads.
     pub const RETIRE: u8 = 0x20;
 
     // ── KeyTable-management permissions (per-kind interpretation) ──

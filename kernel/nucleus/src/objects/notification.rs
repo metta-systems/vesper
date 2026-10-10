@@ -19,7 +19,9 @@
 use {
     crate::objects::{
         NucleusObject,
+        carved::{CarvedId, CarvedObject},
         completion::{PendingKind, PendingPool, WaitQueue},
+        thread::ThreadId,
     },
     libobject::{CapError, ObjectType},
 };
@@ -55,8 +57,9 @@ pub enum WaitOutcome {
 
 impl NucleusObject for Notification {
     const TYPE: ObjectType = ObjectType::NOTIFICATION;
-    const POOL: PoolTag = PoolTag::Notification;
 }
+
+impl CarvedObject for Notification {}
 
 impl Notification {
     pub const fn new() -> Self {
@@ -107,9 +110,12 @@ impl Notification {
     /// The queue reservation is validated before the record is registered,
     /// so a full queue rejects the attempt before admission with no record
     /// to roll back.
+    /// `own` is this Notification's carved identity, recorded in the pending
+    /// record so Thread teardown can find the queue holding it.
     pub fn wait(
         &mut self,
-        waiter: ObjectId,
+        own: CarvedId,
+        waiter: ThreadId,
         pending: &mut PendingPool,
     ) -> Result<WaitOutcome, CapError> {
         if self.state != 0 {
@@ -120,7 +126,7 @@ impl Notification {
             if self.waiters.is_full() {
                 return Err(CapError::PoolExhausted);
             }
-            let record = pending.block(waiter, PendingKind::NotificationWait)?;
+            let record = pending.block(waiter, PendingKind::NotificationWait, own)?;
             // The reservation was validated above and the kernel lock
             // excludes concurrent admission, so this cannot fail; if it ever
             // does, abandon the registered record rather than leaking its
@@ -166,7 +172,7 @@ impl Notification {
     /// the pending-pool teardown sweep (`PendingPool::teardown_waiter`)
     /// instead of being left terminal for a resume that never happens.
     /// Returns how many of the waiter's records were unqueued.
-    pub fn remove_waiter(&mut self, waiter: ObjectId, pending: &PendingPool) -> usize {
+    pub fn remove_waiter(&mut self, waiter: ThreadId, pending: &PendingPool) -> usize {
         self.waiters.remove_waiter(waiter, pending)
     }
 }
@@ -177,17 +183,23 @@ mod tests {
         super::{Notification, WaitOutcome},
         crate::objects::{
             access::{ObjectId, PoolTag},
+            carved::{CarvedId, test_id},
             completion::{PendingKind, PendingPool, PendingState, WaitQueue},
+            thread::ThreadId,
         },
         libobject::{CapError, syscall_status},
     };
 
-    fn waiter(index: u16) -> ObjectId {
-        ObjectId {
-            pool: PoolTag::Thread,
-            index,
-            generation: 1,
-        }
+    /// The object under test's identity, recorded in pending records.
+    fn own() -> CarvedId {
+        test_id(libobject::ObjectType::NOTIFICATION, 0x1000)
+    }
+
+    fn waiter(index: u16) -> ThreadId {
+        test_id(
+            libobject::ObjectType::THREAD,
+            0x10_0000 + u64::from(index) * 0x1000,
+        )
     }
 
     /// Block a waiter and return its pending-record identity.
@@ -196,7 +208,7 @@ mod tests {
         pending: &mut PendingPool,
         index: u16,
     ) -> ObjectId {
-        match notification.wait(waiter(index), pending) {
+        match notification.wait(own(), waiter(index), pending) {
             Ok(WaitOutcome::Blocked(record)) => record,
             _ => panic!("wait should block"),
         }
@@ -224,7 +236,7 @@ mod tests {
         // Already-satisfied wait: the bits are consumed and returned without
         // registering a record.
         assert_eq!(
-            notification.wait(waiter(0), &mut pending).ok(),
+            notification.wait(own(), waiter(0), &mut pending).ok(),
             Some(WaitOutcome::Ready(0b101))
         );
         assert_eq!(notification.pending_bits(), 0);
@@ -315,7 +327,7 @@ mod tests {
         // The next wait is rejected before admission: no record registered,
         // nothing to roll back.
         assert!(matches!(
-            notification.wait(waiter(255), &mut pending),
+            notification.wait(own(), waiter(255), &mut pending),
             Err(CapError::PoolExhausted)
         ));
         assert_eq!(pending.len(), before);

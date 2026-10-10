@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Wire type | `0x03` (core) |
-| Backing | Kernel Thread pool, created at boot |
+| Backing | Kernel object carved from an Untyped; boot creates the first ones |
 | Status | Return, Retire |
 
 ## Purpose
@@ -44,7 +44,7 @@ The two faults are reported at the Return's `svc` through [fault delivery](#faul
 
 ### Retire
 
-Tears down a named Thread other than the caller: cancels its pending waits, removes it from the run queue and frees its slot in the Thread pool. Later invocations through any capability to it fail with `INCONSISTENT_KEY` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
+Tears down a named Thread other than the caller: cancels its pending waits, removes it from the run queue and retires it: every capability to it, including copies, then fails with `INCONSISTENT_KEY` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
 
 | Error | Cause |
 |---|---|
@@ -79,6 +79,6 @@ A fault is unhandled when slot 16 holds no usable Invocation, when this AddressS
 
 ## Implementation
 
-Threads are created by the boot code; `Untyped.Retype` cannot create them. A Thread starts either at EL0 or, for trusted boot code, at EL1 using `SP_EL0`. Its saved state (all general registers, SP, PC, flags and `TPIDR_EL0`) lives in the Thread, so a blocked Thread holds no kernel stack. Each Thread has room for 16 nested Invocation calls.
+A component creates a Thread with [`Untyped.Retype`](untyped.md#retype), which carves it from the Untyped's memory. The new Thread is inert until the root [Scheduler](scheduler.md) configures it (AddressSpace, EL0 entry and stack, its own Time) and starts it. The boot code carves the first Threads from the boot Untyped. The run queue links through the Threads themselves, so it has no fixed size. A Thread starts either at EL0 or, for trusted boot code, at EL1 using `SP_EL0`. Its saved state (all general registers, SP, PC, flags and `TPIDR_EL0`) lives in the Thread, so a blocked Thread holds no kernel stack. Each Thread has room for 16 nested Invocation calls.
 
 At EL0, a Thread can read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) and its own `TPIDR_EL0`; `TPIDRRO_EL0` reads as zero. The physical counter, timers, performance monitors, the debug communications channel and FP/SIMD trap as faults.

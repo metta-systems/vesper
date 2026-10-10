@@ -61,11 +61,7 @@ pub fn invoke<A: ArchObjects>(
                 found: entry.object_type(),
             });
         }
-        (
-            entry.object_id().map_err(|e| e.with_key_operand(0))?,
-            entry.rights(),
-            entry.badge(),
-        )
+        (entry.carved_id()?, entry.rights(), entry.badge())
     };
 
     match op {
@@ -85,7 +81,7 @@ pub fn invoke<A: ArchObjects>(
                 args[0]
             };
             let mut notification = access
-                .resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)
+                .resolve_object::<Notification>(id)
                 .map_err(|error| error.for_key(key, 0))?;
             // One-consumer delivery: the front waiter's record completes
             // with the delivered bitmap and its thread becomes runnable.
@@ -116,9 +112,9 @@ pub fn invoke<A: ArchObjects>(
             // return happens when the record completes.
             let waiter = current_waiter(nucleus)?;
             let mut notification = access
-                .resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)
+                .resolve_object::<Notification>(id)
                 .map_err(|error| error.for_key(key, 0))?;
-            match notification.wait(waiter, &mut nucleus.pending)? {
+            match notification.wait(id, waiter, &mut nucleus.pending)? {
                 crate::objects::notification::WaitOutcome::Ready(bits) => {
                     semi::println!("✅ Notification::Wait(0x{bits:x})");
                     Ok(InvokeOutcome::Complete((bits, 0)))
@@ -139,7 +135,7 @@ pub fn invoke<A: ArchObjects>(
                 return Err(CapError::InvalidOperation);
             }
             let mut notification = access
-                .resolve_mut::<Notification>(&mut nucleus.pools.notifications, id)
+                .resolve_object::<Notification>(id)
                 .map_err(|error| error.for_key(key, 0))?;
             let bits = notification.poll();
             semi::println!("✅ Notification::Poll(0x{bits:x})");

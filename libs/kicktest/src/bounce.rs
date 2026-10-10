@@ -129,15 +129,9 @@ pub fn assert_source_selected(
     root: u64,
     asid: u16,
 ) {
-    assert_eq!(
-        nucleus.current_thread,
-        nucleus.pools.threads.live_identity(0)
-    );
     let thread = nucleus
-        .pools
-        .threads
-        .get_live(0)
-        .expect("source Thread missing");
+        .current_thread_ref()
+        .unwrap_or_else(|_| panic!("source Thread missing"));
     assert_eq!(thread.address_space, source);
     assert_eq!(thread.context, ExecutionContext::Running);
     nucleus

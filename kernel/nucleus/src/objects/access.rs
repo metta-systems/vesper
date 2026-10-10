@@ -16,6 +16,7 @@
 use {
     crate::objects::{
         NucleusObject,
+        carved::{Carved, CarvedId, CarvedObject},
         object_pool::{IdentityError, ObjectPool, PairIdentityError},
     },
     core::marker::PhantomData,
@@ -35,21 +36,11 @@ use {
 pub enum PoolTag {
     /// Marker for inline region types (Untyped, Frame) that are never pooled.
     Region = 255,
-    Thread = 0,
     KeyTable = 1,
     /// Kernel-internal pending-invocation records (completion foundation,
     /// 2026-09-16). Never capability-addressed; the tag exists so record
     /// identities reuse the checked `ObjectId` shape.
     Pending = 2,
-    /// Notification synchronization objects (pool-backed kernel metadata;
-    /// the pool itself is carved when the Retype allowlist arm activates).
-    Notification = 3,
-    /// `EventCount` synchronization objects (pool-backed kernel metadata,
-    /// 2026-09-18): monotonic counters with target waits.
-    EventCount = 4,
-    /// `Time` budgets (pool-backed kernel metadata): a budget and a priority
-    /// chain.
-    Time = 5,
     // Arch pool tags are appended after core tags. Values are kernel-internal
     // and may be renumbered between builds; they are never serialized.
     PageTable = 16,
@@ -67,12 +58,8 @@ impl PoolTag {
     /// which no pooled type uses, so validation against `T::POOL` rejects them.
     pub fn from_raw(raw: u8) -> Self {
         match raw {
-            0 => Self::Thread,
             1 => Self::KeyTable,
             2 => Self::Pending,
-            3 => Self::Notification,
-            4 => Self::EventCount,
-            5 => Self::Time,
             16 => Self::PageTable,
             17 => Self::AddressSpace,
             18 => Self::ASIDPool,
@@ -100,6 +87,17 @@ pub struct ObjectId {
     pub index: u16,
     /// Expected allocation generation of that slot.
     pub generation: u32,
+}
+
+impl ObjectId {
+    /// Names no object: an inert Thread's `AddressSpace` before
+    /// `Scheduler.ConfigureThread`. It carries the `Region` tag, which no pool
+    /// accepts, so validating it always fails.
+    pub const UNBOUND: Self = Self {
+        pool: PoolTag::Region,
+        index: 0,
+        generation: 0,
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -265,26 +263,49 @@ impl<'ctx> Access<'ctx> {
         Ok(unsafe { (GuardMut::new(first_ptr), Guard::new(second_ptr)) })
     }
 
-    /// Resolve two operands of the same pool for update, rejecting
-    /// same-object aliases: as [`Self::resolve_pair_mut`], with both guards
-    /// exclusive (a Time transfer changes both Times).
+    /// Resolve a carved object's identity to an exclusive guard after reading
+    /// its header (kind, live state, generation).
+    ///
+    /// Carved identities are minted only by Retype or boot code, and carved
+    /// memory is never freed while reclamation does not exist, so the address
+    /// always names a carved record; the header check rejects a retired or
+    /// re-carved object. As with pools, two operands that may name the same
+    /// object must use [`Self::resolve_object_pair_mut`].
     #[expect(
         clippy::unused_self,
         reason = "the context receiver ties guard lifetimes to the locked invocation"
     )]
-    pub fn resolve_pair_both_mut<T: NucleusObject>(
+    pub fn resolve_object<T: CarvedObject>(
         &self,
-        pool: &'ctx mut ObjectPool<T>,
-        first: ObjectId,
-        second: ObjectId,
+        id: CarvedId,
+    ) -> Result<GuardMut<'ctx, T>, IdentityError> {
+        // SAFETY: carved identities name kernel-issued, never-freed records.
+        let object = unsafe { Carved::<T>::validate(id)? };
+        // SAFETY: validated above; the kernel lock serializes the invocation.
+        Ok(unsafe { GuardMut::new(object) })
+    }
+
+    /// Resolve two carved operands for update, rejecting same-object aliases.
+    #[expect(
+        clippy::unused_self,
+        reason = "the context receiver ties guard lifetimes to the locked invocation"
+    )]
+    pub fn resolve_object_pair_mut<T: CarvedObject>(
+        &self,
+        first: CarvedId,
+        second: CarvedId,
     ) -> Result<(GuardMut<'ctx, T>, GuardMut<'ctx, T>), PairIdentityError> {
-        if first == second {
+        if first.address == second.address {
             // Kernel-internal alias rejection: not a wire status of its own.
             return Err(PairIdentityError::Aliased);
         }
-        let (first_ptr, second_ptr) = pool.validate_pair(first, second)?;
-        // SAFETY: validate_pair checked both identities and established that
-        // the slots are distinct, so the pointers are disjoint.
+        // SAFETY: carved identities name kernel-issued, never-freed records.
+        let first_ptr =
+            unsafe { Carved::<T>::validate(first) }.map_err(PairIdentityError::First)?;
+        // SAFETY: as above.
+        let second_ptr =
+            unsafe { Carved::<T>::validate(second) }.map_err(PairIdentityError::Second)?;
+        // SAFETY: distinct addresses name distinct carved records.
         Ok(unsafe { (GuardMut::new(first_ptr), GuardMut::new(second_ptr)) })
     }
 

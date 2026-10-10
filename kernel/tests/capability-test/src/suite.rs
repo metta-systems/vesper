@@ -21,7 +21,7 @@ use {
     libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::{KeyEntry, ThreadSelector},
-        objects::{KeyTable, ObjectPool, Thread, arch_objects::AddressSpaceObject},
+        objects::{KeyTable, arch_objects::AddressSpaceObject},
     },
 };
 
@@ -36,13 +36,9 @@ fn test_slot(index: u32) -> KeySlot {
 }
 
 pub fn run() {
-    // Only the boot Thread and AddressSpace exist; Retype needs no other pool.
+    // Only the boot AddressSpace exists; Retype needs no other pool.
     let boot = bootstrap_nucleus(&PoolCapacities {
-        threads: 1,
         address_spaces: 1,
-        notifications: 0,
-        event_counts: 0,
-        times: 1,
         page_tables: 0,
         asid_pools: 1,
     });
@@ -58,8 +54,6 @@ pub fn run() {
 
     assert_eq!(boot_as_id.index, 0);
     // Bootstrap sizes every pool exactly as requested.
-    assert_eq!(nucleus.pools.threads.capacity(), 1);
-    assert!(ObjectPool::<Thread>::carve_size(2) >= size_of::<Thread>() * 2);
     assert_eq!(nucleus.pools.arch.address_spaces.capacity(), 1);
     assert_eq!(nucleus.pools.arch.page_tables.capacity(), 0);
     let boot_table_binding = nucleus
@@ -169,7 +163,7 @@ pub fn run() {
     // Validation failures leave the Untyped and destination unchanged.
     assert!(matches!(
         untyped.retype(
-            ObjectType::THREAD,
+            ObjectType::SCHEDULER,
             0,
             0,
             1,
@@ -177,7 +171,7 @@ pub fn run() {
             KeySlot(7).0,
             Rights::all(),
         ),
-        Err(CapError::InvalidObjectType(ObjectType::THREAD))
+        Err(CapError::InvalidObjectType(ObjectType::SCHEDULER))
     ));
     assert!(matches!(
         untyped.retype(
@@ -644,7 +638,7 @@ pub fn run() {
         ));
         assert_eq!(return_entry.rights(), Rights::empty());
         assert!(matches!(
-            return_entry.object_id(),
+            return_entry.thread_id(),
             Err(CapError::InvalidOperation)
         ));
         assert!(matches!(

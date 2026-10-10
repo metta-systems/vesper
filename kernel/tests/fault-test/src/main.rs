@@ -59,8 +59,8 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjectsImpl, ExecutionContext, KeyTable, Notification, Nucleus, access::ObjectId,
-            arch_objects::AddressSpaceObject,
+            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, access::ObjectId,
+            arch_objects::AddressSpaceObject, thread::ThreadId,
         },
     },
 };
@@ -84,15 +84,11 @@ fn boot_main(dtb: u32) -> ! {
 /// Bootstrap grant of a Notification into `component`'s table at `slot`.
 /// Notification is off the `CopyDerive` allowlist, so the builder installs
 /// the component's capability kernel-privately.
-fn grant_notification(component: &Component, object: ObjectId, slot: u32) -> RawKey {
+fn grant_notification(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
     // SAFETY: the component's retained initialized table, exclusively
     // borrowed for this bootstrap grant; no capability invocation overlaps it.
     unsafe { &mut *(component.table_addr as *mut KeyTable) }
-        .insert(
-            KeySlot(slot),
-            KeyEntry::new::<Notification>(object, Rights::all(), 0),
-            component.guard,
-        )
+        .insert(KeySlot(slot), entry, component.guard)
         .unwrap_or_else(|failure| panic!("Notification grant failed: {:?}", failure.error.code()))
 }
 
@@ -105,10 +101,11 @@ fn spawn(
     component: &Component,
     image: &ComponentImage,
     role: u64,
-) -> ObjectId {
+) -> ThreadId {
     let stack = builder.user_stack(stacks, STACK_PAGES, slots);
     threads::spawn_el0(
         nucleus,
+        builder,
         component.address_space,
         image.entry.expect("component has an entry"),
         stack.top,
@@ -126,12 +123,8 @@ fn wait_for(done: &NotificationKey, expected: u64, what: &str) {
 
 /// The Thread must be stopped for good by a fault: `Faulted` at EL0, holding
 /// no fault.
-fn assert_faulted(nucleus: &Nucleus<ArchObjectsImpl>, thread: ObjectId, what: &str) {
-    let thread = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(thread.index))
-        .expect("Thread missing");
+fn assert_faulted(nucleus: &Nucleus<ArchObjectsImpl>, thread: ThreadId, what: &str) {
+    let thread = nucleus.thread(thread).expect("Thread missing");
     let ExecutionContext::Faulted { saved } = thread.context else {
         panic!("{what}: the Thread must be parked as faulted");
     };
@@ -166,15 +159,8 @@ pub fn run() -> ! {
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
     let boot = bootstrap_nucleus(&PoolCapacities {
-        // builder; faulter: sequence, terminate, nested, blocked, while-busy
-        // and four witnesses; bare
-        threads: 11,
         // builder, faulter, bare
         address_spaces: 3,
-        // done, block, park
-        notifications: 3,
-        event_counts: 0,
-        times: 1,
         // builder: root/L1/L2 and image L3s; faulter: root/L1/L2, image span,
         // stack region, init page; bare: root/L1/L2, image span, stack region
         page_tables: 3 + image_tables + 6 + 5,
@@ -256,9 +242,9 @@ pub fn run() -> ! {
     write_init(
         init_page,
         FaulterInit {
-            done: grant_notification(&faulter, builder.object_id(done), 5).to_wire(),
-            block: grant_notification(&faulter, builder.object_id(block), 6).to_wire(),
-            park: grant_notification(&faulter, builder.object_id(park), 7).to_wire(),
+            done: grant_notification(&faulter, builder.entry(done), 5).to_wire(),
+            block: grant_notification(&faulter, builder.entry(block), 6).to_wire(),
+            park: grant_notification(&faulter, builder.entry(park), 7).to_wire(),
             guard: u64::from(FAULTER_GUARD),
             size_bits: u64::from(BOOT_TABLE_SIZE_BITS),
         },
@@ -296,11 +282,7 @@ pub fn run() -> ! {
         ROLE_SEQUENCE,
     );
     wait_for(&done, SEQUENCE_BIT, "sequence");
-    let thread = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(sequence.index))
-        .expect("sequence Thread missing");
+    let thread = nucleus.thread(sequence).expect("sequence Thread missing");
     assert_eq!(thread.fault, None);
     assert_eq!(thread.invocation_stack.len(), 0);
     assert_eq!(fault_state(nucleus, faulter.address_space), (false, 0));
@@ -385,11 +367,7 @@ pub fn run() -> ! {
     assert_faulted(nucleus, while_busy, "busy");
     // The blocked handler still holds the AddressSpace's handler.
     assert_eq!(fault_state(nucleus, faulter.address_space), (true, 2));
-    let holder = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(blocked.index))
-        .expect("blocked Thread missing");
+    let holder = nucleus.thread(blocked).expect("blocked Thread missing");
     assert!(
         holder.fault.is_some(),
         "the blocked Thread is inside its handler"

@@ -1,9 +1,13 @@
 use {
     crate::objects::{
-        ArchObjects, EventCount, KeyTable, Notification, ObjectPool, PendingPool, Scheduler,
-        Thread, Time, access::ObjectId, arch::ArchPools, arch_objects::AddressSpaceObject,
-        domain::DcbPages, key_table::KeyTableBinding, object_pool::IdentityError,
-        thread::ExecutionContext,
+        ArchObjects, EventCount, KeyTable, Notification, PendingPool, RunQueue, Thread,
+        access::ObjectId,
+        arch::ArchPools,
+        arch_objects::AddressSpaceObject,
+        carved::Carved,
+        domain::DcbPages,
+        key_table::KeyTableBinding,
+        thread::{ExecutionContext, ThreadId},
     },
     core::sync::atomic::Ordering,
     libobject::{
@@ -20,11 +24,9 @@ use {
 //  │  │                                                                  │
 //  │  ├── pools: KernelPools<A>                                          │
 //  │  │   ├── untypeds: ObjectPool<Untyped>                              │
-//  │  │   ├── threads: ObjectPool<Thread>                                │
+//  │  │   ├── threads: carved by Retype                                  │
 //  │  │   ├── keytables: carved by Retype (no pool; see api::untyped)     │
-//  │  │   ├── notifications: ObjectPool<Notification>                    │
-//  │  │   ├── event_counts: ObjectPool<EventCount>                       │
-//  │  │   ├── times: ObjectPool<Time>                                    │
+//  │  │   ├── notifications, event_counts, times: carved by Retype     │
 //  │  │   │                                                              │
 //  │  │   └── arch: ArchPools<A>                                         │
 //  │  │       ├── frames: inline regions (no pool)                       │
@@ -47,21 +49,8 @@ use {
 pub struct NucleusPools<A: ArchObjects> {
     // ─── Core Object Pools ───
     // pub untypeds: ObjectPool<Untyped>,
-    /// Threads: the schedulable execution entities. Each Thread references
-    /// its `AddressSpace` and its carved `KeyTable`.
-    pub threads: ObjectPool<Thread>,
-    /// Notification synchronization objects: pure kernel state, allocated by
-    /// `Untyped.Retype` (allowlisted 2026-09-16) from this bootstrap-carved
-    /// pool; the capability is a checked pool identity.
-    pub notifications: ObjectPool<Notification>,
-    /// `EventCount` synchronization objects: pure kernel state, allocated by
-    /// `Untyped.Retype` (allowlisted 2026-09-18) from this bootstrap-carved
-    /// pool; the capability is a checked pool identity.
-    pub event_counts: ObjectPool<EventCount>,
-    /// `Time` budgets: pure kernel state, allocated by `Untyped.Retype` from
-    /// this bootstrap-carved pool (the boot Time included); the capability is
-    /// a checked pool identity.
-    pub times: ObjectPool<Time>,
+    // Threads, Notifications, EventCounts and Times are carved from Untyped
+    // memory by Retype and named by their carved identity.
 
     // ─── Architecture-Specific Pools ───
     pub arch: ArchPools<A>,
@@ -72,9 +61,9 @@ pub struct Nucleus<A: ArchObjects> {
     /// All object pools
     pub pools: NucleusPools<A>,
     /// Currently running thread, as a checked identity: every read validates
-    /// its generation against the thread pool, so a retired or reused slot is
+    /// its generation against the Thread's header, so a retired Thread is
     /// never mistaken for the current Thread.
-    pub current_thread: Option<ObjectId>, // FIXME: not option, always something (Idle or other)
+    pub current_thread: Option<ThreadId>, // FIXME: not option, always something (Idle or other)
     /// DCB shared pages
     pub dcb_pages: DcbPages,
     /// Pending-invocation records for blocked callers (completion
@@ -84,10 +73,10 @@ pub struct Nucleus<A: ArchObjects> {
     /// Runnable-domain queue: the minimal "run someone else" substrate
     /// (completion foundation, 2026-09-16). Kernel mechanism only;
     /// scheduling policy stays in userspace.
-    pub scheduler: Scheduler,
+    pub run_queue: RunQueue,
     /// The idle Thread, if boot created one: selected when nothing else is
     /// runnable and never queued.
-    pub idle_thread: Option<ObjectId>,
+    pub idle_thread: Option<ThreadId>,
     /// Preemption-timer ticks taken since boot.
     pub ticks: u64,
 }
@@ -109,32 +98,51 @@ impl<A: ArchObjects> Nucleus<A> {
         crate::timer::now_ns()
     }
 
-    /// The current Thread's checked identity. `InvalidDomain` when no Thread
-    /// is current or the recorded identity no longer names a live Thread.
-    pub fn current_thread_id(&self) -> Result<ObjectId, CapError> {
+    /// The current Thread's identity. `InvalidDomain` when no Thread is
+    /// current or the recorded identity no longer names a live Thread.
+    pub fn current_thread_id(&self) -> Result<ThreadId, CapError> {
         let id = self.current_thread.ok_or(CapError::InvalidDomain)?;
-        self.pools
-            .threads
-            .validate(id)
-            .map_err(|_stale_current| CapError::InvalidDomain)?;
+        self.thread(id).ok_or(CapError::InvalidDomain)?;
         Ok(id)
     }
 
     /// The current Thread, after identity validation; see
     /// [`Self::current_thread_id`].
     pub fn current_thread_ref(&self) -> Result<&Thread, CapError> {
-        let id = self.current_thread_id()?;
-        self.pools
-            .threads
-            .get_live(usize::from(id.index))
+        self.thread(self.current_thread_id()?)
             .ok_or(CapError::InvalidDomain)
     }
 
     /// Nucleus-private thread data, like keytables
     pub fn current_thread_mut(&mut self) -> Option<&mut Thread> {
-        // need objects::Thread here, not DCB! or a tuple
         let id = self.current_thread_id().ok()?;
-        self.pools.threads.get_live_mut(usize::from(id.index))
+        self.thread_mut(id)
+    }
+
+    /// The live Thread behind `id`, or `None` once it is retired.
+    #[expect(
+        clippy::unused_self,
+        reason = "the receiver ties the reference to the locked nucleus"
+    )]
+    pub fn thread(&self, id: ThreadId) -> Option<&Thread> {
+        // SAFETY: Thread identities name carved records that are never freed;
+        // the kernel lock serializes access, and the borrow of `self` bounds
+        // the reference.
+        unsafe { Carved::<Thread>::validate(id).ok().map(|thread| &*thread) }
+    }
+
+    /// Exclusive access to the live Thread behind `id`.
+    #[expect(
+        clippy::unused_self,
+        reason = "the receiver ties the reference to the locked nucleus"
+    )]
+    pub fn thread_mut(&mut self, id: ThreadId) -> Option<&mut Thread> {
+        // SAFETY: as in `thread`; `&mut self` makes the reference exclusive.
+        unsafe {
+            Carved::<Thread>::validate(id)
+                .ok()
+                .map(|thread| &mut *thread)
+        }
     }
 
     /// Shared access to the current thread's capability table.
@@ -173,34 +181,33 @@ impl<A: ArchObjects> Nucleus<A> {
         )
     }
 
-    /// User-visible DCB
-    pub fn current_dcb_mut(&mut self) -> Option<&mut DomainControlBlock> {
-        // need objects::Thread here, not DCB! or a tuple
-        let id = self.current_thread_id().ok()?;
-        self.dcb_pages.get_mut(DomainId(u32::from(id.index)))
-    }
-
-    // TODO: Testing fixture
-    pub fn create_thread(&mut self, address_space: ObjectId) -> Option<ObjectId> {
-        // Allocate the Thread itself; its capability table is a carved KeyTable
-        // provided by the caller (Retype or the boot carve), and its address
-        // space is the checked identity of a live AddressSpace.
-        // Implementation status: the AddressSpace already has its binding;
-        // Thread creation cannot supply or first-bind a different table.
+    /// Unit-test fixture: carve a running Thread in `address_space` from a
+    /// test arena standing in for Untyped memory.
+    #[cfg(test)]
+    pub fn create_thread(&mut self, address_space: ObjectId) -> Option<ThreadId> {
         self.pools
             .arch
             .address_spaces
             .validate(address_space)
             .ok()?;
-        let (thread_id, _thread) = self.pools.threads.allocate(Thread {
-            address_space,
-            context: ExecutionContext::Running,
-            invocation_stack: crate::objects::InvocationStack::new(),
-            fault: None,
-        })?;
-        // Capability grants are provisioned once in the AddressSpace's table,
-        // independently of creating any number of Threads executing there.
-        Some(thread_id)
+        let id = test_arena::carve(Thread::new(address_space, ExecutionContext::Running))?;
+        test_arena::record_thread(id);
+        Some(id)
+    }
+
+    /// Unit-test fixture: the `n`-th Thread [`Self::create_thread`] carved
+    /// since the last `test_arena::reset_threads`, while it is live.
+    #[cfg(test)]
+    pub fn fixture_thread(&self, n: usize) -> Option<ThreadId> {
+        test_arena::thread(n).filter(|id| self.thread(*id).is_some())
+    }
+
+    /// Unit-test fixture: how many fixture Threads are live.
+    #[cfg(test)]
+    pub fn fixture_thread_count(&self) -> usize {
+        (0..16)
+            .filter(|n| self.fixture_thread(*n).is_some())
+            .count()
     }
 
     /// Update the DCB when a thread is activated
@@ -296,32 +303,35 @@ impl<A: ArchObjects> Nucleus<A> {
     /// encodings stay open for the timeout and object-teardown paths, whose
     /// waiters do resume). DCB release and thread-slot deallocation are the
     /// teardown path's separate steps (Phase 7 Thread control).
-    pub fn cancel_thread_pending(&mut self, thread: ObjectId) -> Result<(), CapError> {
+    pub fn cancel_thread_pending(&mut self, thread: ThreadId) -> Result<(), CapError> {
         // Teardown cancels pending records while the Thread slot is live; a
         // stale identity means the caller tore the Thread down out of order.
-        self.pools
-            .threads
-            .validate(thread)
-            .map_err(IdentityError::internal)?;
+        self.thread(thread).ok_or(CapError::InvalidOperation)?;
 
-        // Every live synchronization object stops holding the Thread's
-        // records. The scan is bounded by each pool's carved capacity;
-        // `get_live_mut` rejects slots beyond it.
-        for slot in 0..self.pools.notifications.capacity() {
-            if let Some(notification) = self.pools.notifications.get_live_mut(slot) {
-                notification.remove_waiter(thread, &self.pending);
-            }
+        // Every synchronization object holding one of the Thread's waiting
+        // records stops holding it. Each record names its object, so no scan
+        // over all objects is needed; the walk is bounded by the pending pool.
+        let mut objects = [None; PendingPool::CAPACITY];
+        for (slot, object) in objects.iter_mut().zip(self.pending.waited_objects(thread)) {
+            *slot = Some(object);
         }
-        for slot in 0..self.pools.event_counts.capacity() {
-            if let Some(event_count) = self.pools.event_counts.get_live_mut(slot) {
-                event_count.remove_waiter(thread, &self.pending);
+        for object in objects.into_iter().flatten() {
+            // SAFETY: the identity comes from a pending record, which only a
+            // wait on a resolved carved object creates; carved memory is never
+            // freed. A retired object fails validation and holds no queue.
+            unsafe {
+                if let Ok(notification) = Carved::<Notification>::validate(object) {
+                    (*notification).remove_waiter(thread, &self.pending);
+                } else if let Ok(event_count) = Carved::<EventCount>::validate(object) {
+                    (*event_count).remove_waiter(thread, &self.pending);
+                }
             }
         }
 
         // Every record naming the Thread reaches its terminal disposition
         // and is released; every queued wakeup for it is purged.
         self.pending.teardown_waiter(thread)?;
-        self.scheduler.remove(thread.index);
+        self.run_queue.remove(thread);
         Ok(())
     }
 
@@ -375,31 +385,32 @@ pub enum FaultType {
 #[cfg(test)]
 mod tests {
     use {
-        super::{Nucleus, NucleusPools},
+        super::{Nucleus, NucleusPools, test_arena},
         crate::objects::{
-            ArchObjectsImpl, EventCount, Notification, ObjectPool, PendingPool, Scheduler, Thread,
+            ArchObjectsImpl, EventCount, Notification, ObjectPool, PendingPool, RunQueue, Thread,
             access::{ObjectId, PoolTag},
             arch::{AArch64PageTable, ArchPools},
+            carved::{Carved, CarvedId},
             completion::PendingState,
             event_count::{AdvanceOutcome, AwaitOutcome},
             notification::WaitOutcome,
-            thread::ExecutionContext,
+            thread::{ExecutionContext, ThreadId},
         },
         core::mem::MaybeUninit,
         libobject::syscall_status,
     };
 
-    // Backing bytes for the fixture's pools: three Thread slots, two
-    // Notification slots, one EventCount slot, and one page-table metadata
-    // slot (structural only; these tests never touch the arch pools).
-    // u128 elements give the 16-byte minimum carve alignment; each fixture
+    // Backing bytes for the fixture's one page-table metadata slot
+    // (structural only; these tests never touch the arch pools). u128
+    // elements give the 16-byte minimum carve alignment; the fixture
     // asserts the carve fits.
-    const THREAD_POOL_WORDS: usize =
-        ObjectPool::<Thread>::carve_size(3).div_ceil(core::mem::size_of::<u128>());
-    static mut THREAD_POOL_MEM: [u128; THREAD_POOL_WORDS] = [0; THREAD_POOL_WORDS];
-    static mut NOTIFICATION_POOL_MEM: [u128; 16] = [0; 16];
-    static mut EVENT_COUNT_POOL_MEM: [u128; 16] = [0; 16];
     static mut ARCH_POOL_MEM: [u128; 8] = [0; 8];
+
+    /// Backing for the carved Notification and `EventCount`, standing in for
+    /// Untyped memory.
+    #[repr(C, align(64))]
+    struct CarveBacking([u8; 1024]);
+    static mut CARVE_MEM: CarveBacking = CarveBacking([0; 1024]);
 
     /// A minimal fixture nucleus. Tests run sequentially and the fixture
     /// re-initializes the same static storage before use.
@@ -411,18 +422,7 @@ mod tests {
         // (edition 2024).
         unsafe {
             let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
-            let thread_ptr = (&raw mut THREAD_POOL_MEM).cast::<u8>();
-            let notification_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
-            let event_count_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
             let arch_ptr = (&raw mut ARCH_POOL_MEM).cast::<u8>();
-            assert!(
-                ObjectPool::<Thread>::carve_size(3)
-                    <= core::mem::size_of::<[u128; THREAD_POOL_WORDS]>()
-            );
-            assert!(
-                ObjectPool::<Notification>::carve_size(2) <= core::mem::size_of::<[u128; 16]>()
-            );
-            assert!(ObjectPool::<EventCount>::carve_size(1) <= core::mem::size_of::<[u128; 16]>());
             assert!(
                 ObjectPool::<AArch64PageTable>::carve_size(1) <= core::mem::size_of::<[u128; 8]>()
             );
@@ -430,15 +430,10 @@ mod tests {
                 current_thread: None,
                 dcb_pages: crate::objects::domain::DcbPages::new(),
                 pending: PendingPool::new(),
-                scheduler: Scheduler::new(),
+                run_queue: RunQueue::new(),
                 idle_thread: None,
                 ticks: 0,
                 pools: NucleusPools {
-                    threads: ObjectPool::initialize(thread_ptr, 3),
-                    notifications: ObjectPool::initialize(notification_ptr, 2),
-                    event_counts: ObjectPool::initialize(event_count_ptr, 1),
-                    // Zero capacity: these tests never create a Time.
-                    times: ObjectPool::initialize(arch_ptr, 0),
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.
                     arch: ArchPools::new(
@@ -452,34 +447,52 @@ mod tests {
         }
     }
 
-    fn thread_fixture() -> Thread {
-        Thread {
-            // Structural placeholder identity: these tests never resolve the
-            // address space.
-            address_space: ObjectId {
+    /// Carve a fresh Notification and `EventCount` into the fixture backing.
+    fn carve_objects() -> (CarvedId, CarvedId) {
+        // SAFETY: the backing is exclusively owned by the sequential tests and
+        // large and aligned enough for both records.
+        unsafe {
+            let base = (&raw mut CARVE_MEM).cast::<u8>();
+            let notification = Carved::<Notification>::initialize(base, Notification::new());
+            let event_count = Carved::<EventCount>::initialize(base.add(512), EventCount::new());
+            (notification, event_count)
+        }
+    }
+
+    /// The live object behind a carved identity from [`carve_objects`].
+    fn object<'a, T: crate::objects::carved::CarvedObject>(id: CarvedId) -> &'a mut T {
+        // SAFETY: the identity names a record carved into the fixture
+        // backing, and the tests hold one reference at a time.
+        unsafe {
+            &mut *Carved::<T>::validate(id)
+                .ok()
+                .expect("carved object is live")
+        }
+    }
+
+    /// Carve a running Thread in a structural `AddressSpace` (these tests
+    /// never resolve it) from the test arena.
+    fn carve_thread() -> ThreadId {
+        test_arena::carve(Thread::new(
+            ObjectId {
                 pool: PoolTag::AddressSpace,
                 index: 0,
                 generation: 1,
             },
-            context: ExecutionContext::Running,
-            invocation_stack: crate::objects::InvocationStack::new(),
-            fault: None,
-        }
+            ExecutionContext::Running,
+        ))
+        .expect("test arena exhausted")
     }
 
-    /// Block `waiter` on the notification at `notification`, returning its
+    /// Block `waiter` on the notification `notification`, returning its
     /// pending-record identity.
     fn block_on_notification(
         nucleus: &mut Nucleus<ArchObjectsImpl>,
-        notification: ObjectId,
-        waiter: ObjectId,
+        notification: CarvedId,
+        waiter: ThreadId,
     ) -> ObjectId {
-        let n = nucleus
-            .pools
-            .notifications
-            .get_live_mut(usize::from(notification.index))
-            .expect("notification is live");
-        match n.wait(waiter, &mut nucleus.pending) {
+        match object::<Notification>(notification).wait(notification, waiter, &mut nucleus.pending)
+        {
             Ok(WaitOutcome::Blocked(record)) => record,
             _ => panic!("wait should block"),
         }
@@ -492,51 +505,28 @@ mod tests {
         // Three threads: A and C block on a notification, B awaits an event
         // count. C is then woken but not resumed: its record completes and its
         // index is enqueued runnable (what `wake_waiter` does).
-        let (a, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
-        let (b, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
-        let (c, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
-        let (n, _) = nucleus
-            .pools
-            .notifications
-            .allocate(Notification::new())
-            .unwrap();
-        let (e, _) = nucleus
-            .pools
-            .event_counts
-            .allocate(EventCount::new())
-            .unwrap();
+        let a = carve_thread();
+        let b = carve_thread();
+        let c = carve_thread();
+        let (n, e) = carve_objects();
 
         // C queues first, then A: a signal delivers to C (one consumer).
         let record_c = block_on_notification(nucleus, n, c);
         let record_a = block_on_notification(nucleus, n, a);
-        let record_b = {
-            let ec = nucleus
-                .pools
-                .event_counts
-                .get_live_mut(usize::from(e.index))
-                .expect("event count is live");
-            match ec.await_ge(10, b, &mut nucleus.pending) {
-                Ok(AwaitOutcome::Blocked(record)) => record,
-                Ok(AwaitOutcome::Ready(_)) => panic!("await should block"),
-                Err(_) => panic!("await failed"),
-            }
+        let record_b = match object::<EventCount>(e).await_ge(e, 10, b, &mut nucleus.pending) {
+            Ok(AwaitOutcome::Blocked(record)) => record,
+            Ok(AwaitOutcome::Ready(_)) => panic!("await should block"),
+            Err(_) => panic!("await failed"),
         };
 
         // Wake C without resuming it: its record is Completed and its index
         // is queued runnable.
-        {
-            let ec = nucleus
-                .pools
-                .notifications
-                .get_live_mut(usize::from(n.index))
-                .expect("notification is live");
-            match ec.signal(0b1, &mut nucleus.pending) {
-                Ok(Some(woken)) => assert_eq!(woken, record_c),
-                _ => panic!("signal should wake C"),
-            }
+        match object::<Notification>(n).signal(0b1, &mut nucleus.pending) {
+            Ok(Some(woken)) => assert_eq!(woken, record_c),
+            _ => panic!("signal should wake C"),
         }
-        assert!(nucleus.scheduler.push(c.index));
-        assert_eq!(nucleus.scheduler.len(), 1);
+        assert!(nucleus.run_queue.push(c));
+        assert_eq!(nucleus.run_queue.len(), 1);
 
         // Teardown of A: its queued wait is cancelled and released; C's
         // completed record and queued wakeup, and B's await, are untouched.
@@ -556,19 +546,16 @@ mod tests {
             nucleus.pending.state(record_b).ok(),
             Some(PendingState::Waiting)
         );
-        assert_eq!(nucleus.scheduler.len(), 1);
+        assert_eq!(nucleus.run_queue.len(), 1);
 
         // The notification no longer holds A: the next signal delivers to no
         // one (the queue is empty), so the bits stay pending.
-        {
-            let ec = nucleus
-                .pools
-                .notifications
-                .get_live_mut(usize::from(n.index))
-                .expect("notification is live");
-            assert!(matches!(ec.signal(0b10, &mut nucleus.pending), Ok(None)));
-            assert_eq!(ec.pending_bits(), 0b10);
-        }
+        let notification = object::<Notification>(n);
+        assert!(matches!(
+            notification.signal(0b10, &mut nucleus.pending),
+            Ok(None)
+        ));
+        assert_eq!(notification.pending_bits(), 0b10);
 
         // Teardown of C: the completed-but-undelivered record is released and
         // the queued wakeup is purged.
@@ -576,7 +563,7 @@ mod tests {
             .cancel_thread_pending(c)
             .unwrap_or_else(|_| panic!("teardown of C failed"));
         assert!(nucleus.pending.state(record_c).is_err());
-        assert!(nucleus.scheduler.is_empty());
+        assert!(nucleus.run_queue.is_empty());
 
         // Teardown of B: the queued await is cancelled and released.
         nucleus
@@ -586,52 +573,101 @@ mod tests {
         assert!(nucleus.pending.is_empty());
 
         // The event count is fully usable: an advance wakes no one.
-        {
-            let ec = nucleus
-                .pools
-                .event_counts
-                .get_live_mut(usize::from(e.index))
-                .expect("event count is live");
-            match ec.advance(5, &mut nucleus.pending) {
-                Ok(AdvanceOutcome::Advanced { new_value, woken }) => {
-                    assert_eq!(woken.iter().count(), 0);
-                    assert_eq!(new_value, 5);
-                }
-                Ok(AdvanceOutcome::Overflow { .. }) => panic!("advance should not overflow"),
-                Err(_) => panic!("advance after teardown failed"),
+        match object::<EventCount>(e).advance(5, &mut nucleus.pending) {
+            Ok(AdvanceOutcome::Advanced { new_value, woken }) => {
+                assert_eq!(woken.iter().count(), 0);
+                assert_eq!(new_value, 5);
             }
+            Ok(AdvanceOutcome::Overflow { .. }) => panic!("advance should not overflow"),
+            Err(_) => panic!("advance after teardown failed"),
         }
     }
 
     #[test_case]
     fn thread_teardown_with_nothing_pending_is_a_no_op() {
         let nucleus = fixture_nucleus();
-        let (a, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
+        let a = carve_thread();
 
         // A live thread with nothing pending tears down cleanly.
         nucleus
             .cancel_thread_pending(a)
             .unwrap_or_else(|_| panic!("teardown with nothing pending failed"));
         assert!(nucleus.pending.is_empty());
-        assert!(nucleus.scheduler.is_empty());
+        assert!(nucleus.run_queue.is_empty());
     }
 
     #[test_case]
     fn thread_teardown_rejects_a_stale_thread_identity() {
         let nucleus = fixture_nucleus();
-        let (a, _) = nucleus.pools.threads.allocate(thread_fixture()).unwrap();
+        let a = carve_thread();
 
         // Teardown cancels pending records while the thread slot is live;
-        // after deallocation the identity is stale and out-of-order teardown
+        // after retirement the identity is stale and out-of-order teardown
         // is rejected.
         nucleus
             .cancel_thread_pending(a)
-            .unwrap_or_else(|_| panic!("teardown before deallocation failed"));
-        nucleus
-            .pools
-            .threads
-            .deallocate(a)
-            .unwrap_or_else(|_| panic!("thread deallocation failed"));
+            .unwrap_or_else(|_| panic!("teardown before retirement failed"));
+        // SAFETY: the identity names a test-arena record; nothing holds it.
+        unsafe { Carved::<Thread>::retire(a) }
+            .unwrap_or_else(|_| panic!("thread retirement failed"));
         assert!(nucleus.cancel_thread_pending(a).is_err());
+    }
+}
+
+/// Unit-test arena standing in for Untyped memory: fixtures carve Threads
+/// and other objects here. It only grows; each carve is a fresh record.
+#[cfg(test)]
+pub(crate) mod test_arena {
+    use {
+        crate::objects::carved::{Carved, CarvedId, CarvedObject},
+        core::sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    const BYTES: usize = 1 << 20;
+
+    #[repr(C, align(64))]
+    struct Arena([u8; BYTES]);
+
+    static mut ARENA: Arena = Arena([0; BYTES]);
+    static USED: AtomicUsize = AtomicUsize::new(0);
+
+    /// Fixture Threads carved since the last [`reset_threads`], in creation
+    /// order.
+    static mut THREADS: [Option<CarvedId>; 16] = [None; 16];
+
+    /// Forget the recorded fixture Threads (the arena itself never reuses
+    /// memory).
+    pub(crate) fn reset_threads() {
+        // SAFETY: tests run sequentially; nothing borrows the list across this.
+        unsafe { *(&raw mut THREADS) = [None; 16] };
+    }
+
+    /// Record a carved fixture Thread.
+    pub(crate) fn record_thread(id: CarvedId) {
+        // SAFETY: as in `reset_threads`.
+        let threads = unsafe { &mut *(&raw mut THREADS) };
+        let slot = threads
+            .iter_mut()
+            .find(|slot| slot.is_none())
+            .expect("too many fixture Threads");
+        *slot = Some(id);
+    }
+
+    /// The `n`-th fixture Thread carved since the last reset.
+    pub(crate) fn thread(n: usize) -> Option<CarvedId> {
+        // SAFETY: as in `reset_threads`.
+        unsafe { (*(&raw const THREADS)).get(n).copied().flatten() }
+    }
+
+    /// Carve `object` into the arena; `None` once the arena is full.
+    pub(crate) fn carve<T: CarvedObject>(object: T) -> Option<CarvedId> {
+        let size = Carved::<T>::SIZE.next_multiple_of(64);
+        let offset = USED.fetch_add(size, Ordering::Relaxed);
+        if offset + size > BYTES {
+            return None;
+        }
+        // SAFETY: each carve takes a fresh, 64-byte aligned range of the
+        // arena that nothing else names; tests run sequentially.
+        Some(unsafe { Carved::<T>::initialize((&raw mut ARENA).cast::<u8>().add(offset), object) })
     }
 }

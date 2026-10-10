@@ -311,7 +311,7 @@ impl<T: NucleusObject> ObjectPool<T> {
         Ok(unsafe { self.base.add(usize::from(id.index)) })
     }
 
-    /// Validate two distinct identities, returning disjoint mutable pointers.
+    /// Validate two distinct identities, returning mutable and shared pointers.
     ///
     /// Rejects same-slot aliases: two operands within one execution may name
     /// the same object, and an outer lock does not make two simultaneous
@@ -320,7 +320,7 @@ impl<T: NucleusObject> ObjectPool<T> {
         &mut self,
         first: ObjectId,
         second: ObjectId,
-    ) -> Result<(*mut T, *mut T), PairIdentityError> {
+    ) -> Result<(*mut T, *const T), PairIdentityError> {
         if first.index == second.index {
             return Err(PairIdentityError::Aliased);
         }
@@ -455,7 +455,7 @@ mod tests {
 
     impl NucleusObject for Dummy {
         const TYPE: ObjectType = ObjectType::THREAD;
-        const POOL: PoolTag = PoolTag::Thread;
+        const POOL: PoolTag = PoolTag::AddressSpace;
     }
 
     /// A 16-byte-aligned backing (the minimum carve alignment) large enough
@@ -526,7 +526,7 @@ mod tests {
         let mut backing = MaybeUninit::<Backing>::uninit();
         let mut pool = pool(&mut backing, 2);
         let id = alloc(&mut pool, 7);
-        assert_eq!(id.pool, PoolTag::Thread);
+        assert_eq!(id.pool, PoolTag::AddressSpace);
         assert_eq!(id.index, 0);
         assert_eq!(id.generation, 1);
         assert!(pool.validate(id).is_ok());

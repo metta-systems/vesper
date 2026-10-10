@@ -11,6 +11,7 @@ use {
             arch_objects::AddressSpaceObject,
             completion::{PendingKind, PendingState},
             resume::prepare_translation_context,
+            thread::ThreadId,
         },
     },
     aarch64_cpu::registers::{Readable, SCTLR_EL1, TCR_EL1, Writeable},
@@ -37,8 +38,10 @@ fn target_saved() -> SavedContext {
 }
 
 struct Waits {
-    source: ObjectId,
-    target: ObjectId,
+    source: ThreadId,
+    target: ThreadId,
+    /// The second queued Thread, behind `target`.
+    tail: ThreadId,
     incoming: ObjectId,
     terminal: ObjectId,
     target_as: ObjectId,
@@ -59,27 +62,30 @@ fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
             let target = nucleus
                 .create_thread(target_as)
                 .expect("target Thread allocation");
-            nucleus
+            let tail = nucleus
                 .create_thread(source_as)
                 .expect("FIFO tail Thread allocation");
             let incoming = nucleus
                 .pending
-                .block(source, PendingKind::NotificationWait)
+                .block(
+                    source,
+                    PendingKind::NotificationWait,
+                    crate::objects::carved::test_id(libobject::ObjectType::NOTIFICATION, 0),
+                )
                 .unwrap_or_else(|e| panic!("incoming wait: {:?}", e.code()));
             let terminal = nucleus
                 .pending
-                .block(target, PendingKind::EventCountAwait)
+                .block(
+                    target,
+                    PendingKind::EventCountAwait,
+                    crate::objects::carved::test_id(libobject::ObjectType::EVENT_COUNT, 0),
+                )
                 .unwrap_or_else(|e| panic!("target wait: {:?}", e.code()));
             nucleus
                 .pending
                 .complete_with_status(terminal, syscall_status::COUNTER_OVERFLOW, 0x1234, 0x5678)
                 .unwrap_or_else(|e| panic!("target completion: {:?}", e.code()));
-            nucleus
-                .pools
-                .threads
-                .get_live_mut(usize::from(target.index))
-                .unwrap()
-                .context = ExecutionContext::Parked {
+            nucleus.thread_mut(target).unwrap().context = ExecutionContext::Parked {
                 saved: target_saved(),
                 record: terminal,
             };
@@ -92,13 +98,14 @@ fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
             address_space.set_translation_root(Some(ROOT));
             address_space.set_asid(Some(2));
             nucleus.current_thread = Some(source);
-            assert!(nucleus.scheduler.push(target.index));
-            assert!(nucleus.scheduler.push(2));
+            assert!(nucleus.run_queue.push(target));
+            assert!(nucleus.run_queue.push(tail));
             test(
                 nucleus,
                 Waits {
                     source,
                     target,
+                    tail,
                     incoming,
                     terminal,
                     target_as,
@@ -110,18 +117,8 @@ fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
 }
 
 fn reject_unchanged(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits, expected: CapError) {
-    let source_before = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(waits.source.index))
-        .unwrap()
-        .context;
-    let target_before = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(waits.target.index))
-        .unwrap()
-        .context;
+    let source_before = nucleus.thread(waits.source).unwrap().context;
+    let target_before = nucleus.thread(waits.target).unwrap().context;
     let pending_len = nucleus.pending.len();
     let terminal_before = nucleus
         .pending
@@ -144,24 +141,8 @@ fn reject_unchanged(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits, expec
     assert_eq!(error.code(), expected.code());
     assert_eq!(nucleus.current_thread, Some(waits.source));
     assert_eq!(nucleus.current_thread_table_addr(), table_before);
-    assert_eq!(
-        nucleus
-            .pools
-            .threads
-            .get_live(usize::from(waits.source.index))
-            .unwrap()
-            .context,
-        source_before
-    );
-    assert_eq!(
-        nucleus
-            .pools
-            .threads
-            .get_live(usize::from(waits.target.index))
-            .unwrap()
-            .context,
-        target_before
-    );
+    assert_eq!(nucleus.thread(waits.source).unwrap().context, source_before);
+    assert_eq!(nucleus.thread(waits.target).unwrap().context, target_before);
     assert_eq!(nucleus.pending.len(), pending_len);
     if let Some((record, state)) = parked_before {
         assert_eq!(nucleus.pending.state(record).ok(), state);
@@ -180,17 +161,17 @@ fn reject_unchanged(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits, expec
             .unwrap_or_else(|e| panic!("terminal preserved: {:?}", e.code())),
         terminal_before
     );
-    assert_eq!(nucleus.scheduler.len(), 2);
-    assert_eq!(nucleus.scheduler.peek(), Some(waits.target.index));
-    assert_eq!(nucleus.scheduler.pop(), Some(waits.target.index));
-    assert_eq!(nucleus.scheduler.pop(), Some(2));
+    assert_eq!(nucleus.run_queue.len(), 2);
+    assert_eq!(nucleus.run_queue.peek(), Some(waits.target));
+    assert_eq!(nucleus.run_queue.pop(), Some(waits.target));
+    assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
 }
 
 #[test_case]
 fn resume_rejects_invalid_as_identity_before_consuming_any_state() {
     for identity in [
         ObjectId {
-            pool: PoolTag::Thread,
+            pool: PoolTag::PageTable,
             index: 1,
             generation: 1,
         },
@@ -206,12 +187,7 @@ fn resume_rejects_invalid_as_identity_before_consuming_any_state() {
         },
     ] {
         with_resume(|nucleus, waits| {
-            nucleus
-                .pools
-                .threads
-                .get_live_mut(usize::from(waits.target.index))
-                .unwrap()
-                .address_space = identity;
+            nucleus.thread_mut(waits.target).unwrap().address_space = identity;
             reject_unchanged(nucleus, &waits, CapError::InvalidDomain);
         });
     }
@@ -309,28 +285,20 @@ fn resume_rejects_incoherent_context_and_completion_before_commit() {
             match case {
                 0 => {
                     saved.origin = ExceptionOrigin::CurrentSpx;
-                    nucleus
-                        .pools
-                        .threads
-                        .get_live_mut(usize::from(waits.target.index))
-                        .unwrap()
-                        .context = ExecutionContext::Parked {
+                    nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Parked {
                         saved,
                         record: waits.terminal,
                     };
                 }
-                1 => {
-                    nucleus
-                        .pools
-                        .threads
-                        .get_live_mut(usize::from(waits.target.index))
-                        .unwrap()
-                        .context = ExecutionContext::Running
-                }
+                1 => nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Running,
                 2 | 5 => {
                     let waiting = nucleus
                         .pending
-                        .block(waits.target, PendingKind::EventCountAwait)
+                        .block(
+                            waits.target,
+                            PendingKind::EventCountAwait,
+                            crate::objects::carved::test_id(libobject::ObjectType::EVENT_COUNT, 0),
+                        )
                         .unwrap_or_else(|e| panic!("waiting record: {:?}", e.code()));
                     if case == 5 {
                         nucleus
@@ -338,23 +306,13 @@ fn resume_rejects_incoherent_context_and_completion_before_commit() {
                             .cancel(waiting)
                             .unwrap_or_else(|e| panic!("cancelled record: {:?}", e.code()));
                     }
-                    nucleus
-                        .pools
-                        .threads
-                        .get_live_mut(usize::from(waits.target.index))
-                        .unwrap()
-                        .context = ExecutionContext::Parked {
+                    nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Parked {
                         saved,
                         record: waiting,
                     };
                 }
                 3 => {
-                    nucleus
-                        .pools
-                        .threads
-                        .get_live_mut(usize::from(waits.target.index))
-                        .unwrap()
-                        .context = ExecutionContext::Parked {
+                    nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Parked {
                         saved,
                         record: ObjectId {
                             generation: 0,
@@ -363,12 +321,7 @@ fn resume_rejects_incoherent_context_and_completion_before_commit() {
                     }
                 }
                 _ => {
-                    nucleus
-                        .pools
-                        .threads
-                        .get_live_mut(usize::from(waits.target.index))
-                        .unwrap()
-                        .context = ExecutionContext::Parked {
+                    nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Parked {
                         saved,
                         record: waits.incoming,
                     }
@@ -390,12 +343,7 @@ fn resume_rejects_incoherent_context_and_completion_before_commit() {
 #[test_case]
 fn first_start_failure_preserves_its_initial_context_and_runnable_position() {
     with_resume(|nucleus, waits| {
-        nucleus
-            .pools
-            .threads
-            .get_live_mut(usize::from(waits.target.index))
-            .unwrap()
-            .context = ExecutionContext::NotStarted {
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::NotStarted {
             saved: target_saved(),
         };
         nucleus
@@ -431,8 +379,8 @@ fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result(
         assert_eq!(resumed.translation.root(), ROOT);
         assert_eq!(resumed.translation.asid(), 2);
         assert_eq!(resumed.translation.keytable(), target_binding);
-        assert_eq!(resumed.current, u32::from(waits.source.index));
-        assert_eq!(resumed.next, waits.target.index);
+        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.next, waits.target);
         let mut expected = target_saved();
         expected.gpr[0] = syscall_status::COUNTER_OVERFLOW;
         expected.gpr[1] = 0x1234;
@@ -448,42 +396,27 @@ fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result(
             Some(target_binding.address())
         );
         assert_eq!(
-            nucleus
-                .pools
-                .threads
-                .get_live(usize::from(waits.source.index))
-                .unwrap()
-                .context,
+            nucleus.thread(waits.source).unwrap().context,
             ExecutionContext::Parked {
                 saved: SOURCE_SAVED,
                 record: waits.incoming
             }
         );
         assert_eq!(
-            nucleus
-                .pools
-                .threads
-                .get_live(usize::from(waits.target.index))
-                .unwrap()
-                .context,
+            nucleus.thread(waits.target).unwrap().context,
             ExecutionContext::Running
         );
         assert!(nucleus.pending.state(waits.terminal).is_err());
         assert_eq!(nucleus.pending.len(), 1);
-        assert_eq!(nucleus.scheduler.pop(), Some(2));
-        assert!(nucleus.scheduler.is_empty());
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert!(nucleus.run_queue.is_empty());
     });
 }
 
 #[test_case]
 fn first_start_preparation_preserves_all_saved_registers_and_selects_its_table() {
     with_resume(|nucleus, waits| {
-        nucleus
-            .pools
-            .threads
-            .get_live_mut(usize::from(waits.target.index))
-            .unwrap()
-            .context = ExecutionContext::NotStarted {
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::NotStarted {
             saved: target_saved(),
         };
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
@@ -510,12 +443,7 @@ fn first_start_preparation_preserves_all_saved_registers_and_selects_its_table()
 #[test_case]
 fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_change() {
     with_resume(|nucleus, waits| {
-        let source_as = nucleus
-            .pools
-            .threads
-            .get_live(usize::from(waits.source.index))
-            .unwrap()
-            .address_space;
+        let source_as = nucleus.thread(waits.source).unwrap().address_space;
         let source_address_space = nucleus
             .pools
             .arch
@@ -557,7 +485,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
         }
         assert_eq!(nucleus.current_thread, Some(waits.source));
         assert_eq!(nucleus.pending.len(), 2);
-        assert_eq!(nucleus.scheduler.len(), 2);
+        assert_eq!(nucleus.run_queue.len(), 2);
         // Same prepared helper also rejects missing metadata through Activate.
         nucleus
             .pools
@@ -622,14 +550,9 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
 }
 
 /// Map the source `AddressSpace` so Threads there can be selected, and make
-/// the FIFO tail Thread (index 2, in the source `AddressSpace`) the idle Thread.
-fn with_idle(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> ObjectId {
-    let source_as = nucleus
-        .pools
-        .threads
-        .get_live(usize::from(waits.source.index))
-        .unwrap()
-        .address_space;
+/// the FIFO tail Thread (in the source `AddressSpace`) the idle Thread.
+fn with_idle(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> ThreadId {
+    let source_as = nucleus.thread(waits.source).unwrap().address_space;
     let address_space = nucleus
         .pools
         .arch
@@ -638,8 +561,8 @@ fn with_idle(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> ObjectId 
         .unwrap();
     address_space.set_translation_root(Some(ROOT + 0x1000));
     address_space.set_asid(Some(1));
-    let idle = nucleus.pools.threads.live_identity(2).unwrap();
-    nucleus.pools.threads.get_live_mut(2).unwrap().context = ExecutionContext::NotStarted {
+    let idle = waits.tail;
+    nucleus.thread_mut(idle).unwrap().context = ExecutionContext::NotStarted {
         saved: SavedContext::el1t_interruptible(0xE0000, 0xF0000),
     };
     nucleus.idle_thread = Some(idle);
@@ -655,12 +578,7 @@ const PREEMPTED_SAVED: SavedContext = SavedContext {
 #[test_case]
 fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
     with_resume(|nucleus, waits| {
-        nucleus
-            .pools
-            .threads
-            .get_live_mut(usize::from(waits.target.index))
-            .unwrap()
-            .context = ExecutionContext::Preempted {
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
             saved: target_saved(),
         };
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
@@ -671,27 +589,22 @@ fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
                 .unwrap_or_else(|e| panic!("preemption: {:?}", e.code()))
                 .expect("another Thread is runnable")
         };
-        assert_eq!(resumed.current, u32::from(waits.source.index));
-        assert_eq!(resumed.next, waits.target.index);
+        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.next, waits.target);
         // A preempted Thread owes no completion: its registers come back as-is.
         assert_eq!(resumed.saved, target_saved());
         assert_eq!(resumed.completion, None);
         assert_eq!(nucleus.current_thread, Some(waits.target));
         assert_eq!(
-            nucleus
-                .pools
-                .threads
-                .get_live(usize::from(waits.source.index))
-                .unwrap()
-                .context,
+            nucleus.thread(waits.source).unwrap().context,
             ExecutionContext::Preempted {
                 saved: PREEMPTED_SAVED
             }
         );
         // The preempted Thread queues behind the former FIFO tail.
-        assert_eq!(nucleus.scheduler.pop(), Some(2));
-        assert_eq!(nucleus.scheduler.pop(), Some(waits.source.index));
-        assert!(nucleus.scheduler.is_empty());
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.source));
+        assert!(nucleus.run_queue.is_empty());
         // Unrelated pending records are untouched.
         assert_eq!(nucleus.pending.len(), 2);
     });
@@ -700,7 +613,7 @@ fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
 #[test_case]
 fn preemption_with_nothing_runnable_keeps_the_current_thread() {
     with_resume(|nucleus, waits| {
-        while nucleus.scheduler.pop().is_some() {}
+        while nucleus.run_queue.pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
         let resumed = {
             let access = unsafe { Access::new() };
@@ -711,15 +624,10 @@ fn preemption_with_nothing_runnable_keeps_the_current_thread() {
         assert_eq!(resumed, None);
         assert_eq!(nucleus.current_thread, Some(waits.source));
         assert_eq!(
-            nucleus
-                .pools
-                .threads
-                .get_live(usize::from(waits.source.index))
-                .unwrap()
-                .context,
+            nucleus.thread(waits.source).unwrap().context,
             ExecutionContext::Running
         );
-        assert!(nucleus.scheduler.is_empty());
+        assert!(nucleus.run_queue.is_empty());
     });
 }
 
@@ -740,7 +648,7 @@ fn preemption_rejects_kernel_mode_state_without_changes() {
             CapError::InvalidDomain.code()
         );
         assert_eq!(nucleus.current_thread, Some(waits.source));
-        assert_eq!(nucleus.scheduler.len(), 2);
+        assert_eq!(nucleus.run_queue.len(), 2);
     });
 }
 
@@ -748,7 +656,7 @@ fn preemption_rejects_kernel_mode_state_without_changes() {
 fn parking_with_nothing_runnable_selects_the_idle_thread() {
     with_resume(|nucleus, waits| {
         let idle = with_idle(nucleus, &waits);
-        while nucleus.scheduler.pop().is_some() {}
+        while nucleus.run_queue.pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
         let resumed = {
             let access = unsafe { Access::new() };
@@ -756,7 +664,7 @@ fn parking_with_nothing_runnable_selects_the_idle_thread() {
                 .park_and_select(&access, SOURCE_SAVED, waits.incoming)
                 .unwrap_or_else(|e| panic!("park onto idle: {:?}", e.code()))
         };
-        assert_eq!(resumed.next, idle.index);
+        assert_eq!(resumed.next, idle);
         assert_eq!(
             resumed.saved,
             SavedContext::el1t_interruptible(0xE0000, 0xF0000)
@@ -764,7 +672,7 @@ fn parking_with_nothing_runnable_selects_the_idle_thread() {
         assert_eq!(nucleus.current_thread, Some(idle));
         assert!(nucleus.idle_is_current());
         // The idle Thread is never queued.
-        assert!(nucleus.scheduler.is_empty());
+        assert!(nucleus.run_queue.is_empty());
     });
 }
 
@@ -773,23 +681,13 @@ fn preempting_idle_selects_the_woken_thread_and_never_queues_idle() {
     with_resume(|nucleus, waits| {
         let idle = with_idle(nucleus, &waits);
         // Idle is running; only the target is runnable.
-        while nucleus.scheduler.pop().is_some() {}
-        nucleus
-            .pools
-            .threads
-            .get_live_mut(usize::from(idle.index))
-            .unwrap()
-            .context = ExecutionContext::Running;
+        while nucleus.run_queue.pop().is_some() {}
+        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
         nucleus.current_thread = Some(idle);
-        nucleus
-            .pools
-            .threads
-            .get_live_mut(usize::from(waits.target.index))
-            .unwrap()
-            .context = ExecutionContext::Preempted {
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
             saved: target_saved(),
         };
-        assert!(nucleus.scheduler.push(waits.target.index));
+        assert!(nucleus.run_queue.push(waits.target));
 
         let idle_saved = SavedContext::el1t_interruptible(0xE0004, 0xF0000);
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
@@ -800,16 +698,11 @@ fn preempting_idle_selects_the_woken_thread_and_never_queues_idle() {
                 .unwrap_or_else(|e| panic!("preempt idle: {:?}", e.code()))
                 .expect("the target is runnable")
         };
-        assert_eq!(resumed.next, waits.target.index);
+        assert_eq!(resumed.next, waits.target);
         assert!(!nucleus.idle_is_current());
-        assert!(nucleus.scheduler.is_empty());
+        assert!(nucleus.run_queue.is_empty());
         assert_eq!(
-            nucleus
-                .pools
-                .threads
-                .get_live(usize::from(idle.index))
-                .unwrap()
-                .context,
+            nucleus.thread(idle).unwrap().context,
             ExecutionContext::Preempted { saved: idle_saved }
         );
     });

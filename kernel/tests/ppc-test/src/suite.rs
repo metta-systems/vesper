@@ -31,7 +31,7 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, KeyTable, Nucleus, Thread, access::ObjectId,
+            ArchObjects, ArchObjectsImpl, KeyTable, Nucleus, access::ObjectId,
             arch_objects::AddressSpaceObject,
         },
     },
@@ -138,14 +138,10 @@ pub fn run() {
     let (_boot_execution_sp, shared_trap_sp) = record_fixture_stacks();
     let retained_init = retained_init_memory();
     translation::observe_bootstrap(crate::run as *const u8 as u64);
-    // The boot Thread only; the boot and Bounce AddressSpaces; the source and
-    // Bounce root prefixes, both image closures and both probe tables.
+    // The boot and Bounce AddressSpaces; the source and Bounce root prefixes,
+    // both image closures and both probe tables.
     let boot = bootstrap_nucleus(&PoolCapacities {
-        threads: 1,
         address_spaces: 2,
-        notifications: 0,
-        event_counts: 0,
-        times: 1,
         page_tables: 8 + 2 * image_table_count(&retained_init),
         asid_pools: 1,
     });
@@ -763,17 +759,12 @@ pub fn run() {
             ppc::MINIMUM_HEADROOM,
         )
         .unwrap_or_else(|error| panic!("PPC CreateInvocation failed: {:?}", error.code()));
-    let boot_thread_index = usize::from(
-        nucleus
-            .current_thread
-            .unwrap_or_else(|| panic!("no current boot Thread"))
-            .index,
-    );
+    let boot_thread_id = nucleus
+        .current_thread
+        .unwrap_or_else(|| panic!("no current boot Thread"));
     let assert_boot_thread_home = |nucleus: &Nucleus<ArchObjectsImpl>| {
         let boot_thread = nucleus
-            .pools
-            .threads
-            .get_live(boot_thread_index)
+            .thread(boot_thread_id)
             .unwrap_or_else(|| panic!("boot Thread missing"));
         assert!(boot_thread.invocation_stack.is_empty());
         assert_eq!(boot_thread.address_space, boot_as_id);
@@ -856,13 +847,13 @@ pub fn run() {
         // carves; neither borrow survives a capability invocation.
         let boot_thread_id = unsafe { &*(keytable_addr as *const KeyTable) }
             .lookup(boot_key(50, 1), BOOT_TABLE_GUARD)
-            .and_then(KeyEntry::object_id)
+            .and_then(KeyEntry::thread_id)
             .unwrap_or_else(|_| panic!("boot Thread entry missing"));
         // SAFETY: as above; exclusively borrowed for this bootstrap grant.
         unsafe { &mut *(bounce_table_addr as *mut KeyTable) }
             .insert(
                 KeySlot(9),
-                KeyEntry::new::<Thread>(boot_thread_id, Rights::all(), 0),
+                KeyEntry::new_thread(boot_thread_id, Rights::all(), 0),
                 TEST_TABLE_GUARD,
             )
             .unwrap_or_else(|failure| {

@@ -42,6 +42,7 @@ use {
         ArchObjectsImpl, KeyTable, Nucleus, ObjectPool,
         access::Access,
         arch::{AArch64PageTable, ArchPools},
+        carved::{Carved, CarvedId},
         domain::DcbPages,
         nucleus::NucleusPools,
     },
@@ -89,25 +90,12 @@ fn carve_table() -> u64 {
 /// paths).
 static mut POOL_MEM: [u128; 8] = [0; 8];
 
-/// Backing for the fixture's Notification pool: exactly two slots, so the
-/// Retype pool-exhaustion rollback is observable. A Notification carve
-/// writes no Untyped bytes (the object lives in this kernel pool), so the
-/// successful Notification Retype is also exercisable MMU-off.
-static mut NOTIFICATION_POOL_MEM: [u128; 16] = [0; 16];
-
-/// Backing for the fixture's EventCount pool: exactly two slots, so the
-/// Retype pool-exhaustion rollback is observable. An EventCount carve
-/// writes no Untyped bytes (the object lives in this kernel pool), so the
-/// successful EventCount Retype is also exercisable MMU-off.
-static mut EVENT_COUNT_POOL_MEM: [u128; 32] = [0; 32];
-
-/// Backing for the fixture's Time pool: exactly three slots, so the Retype
-/// pool-exhaustion rollback is observable and the Time operation tests have
-/// a root plus two Times. A Time writes no Untyped bytes, so Retype and the
-/// operations are exercisable MMU-off.
-const TIME_POOL_WORDS: usize =
-    ObjectPool::<crate::objects::Time>::carve_size(3).div_ceil(core::mem::size_of::<u128>());
-static mut TIME_POOL_MEM: [u128; TIME_POOL_WORDS] = [0; TIME_POOL_WORDS];
+/// Backing standing in for Untyped memory for the Time operation tests: a
+/// carved root Time plus two more. Retype itself writes through the direct
+/// map, which these MMU-off tests cannot reach, so they carve here directly.
+#[repr(C, align(64))]
+struct TimeBacking([u8; 4096]);
+static mut TIME_MEM: TimeBacking = TimeBacking([0; 4096]);
 
 /// A minimal fixture nucleus. Tests run sequentially and each fixture
 /// re-initializes the same static storage before use.
@@ -119,30 +107,15 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
     unsafe {
         let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
         let pool_ptr = (&raw mut POOL_MEM).cast::<u8>();
-        let notification_pool_ptr = (&raw mut NOTIFICATION_POOL_MEM).cast::<u8>();
-        let event_count_pool_ptr = (&raw mut EVENT_COUNT_POOL_MEM).cast::<u8>();
-        let time_pool_ptr = (&raw mut TIME_POOL_MEM).cast::<u8>();
         assert!(ObjectPool::<AArch64PageTable>::carve_size(1) <= core::mem::size_of::<[u128; 8]>());
-        assert!(
-            ObjectPool::<crate::objects::Notification>::carve_size(2)
-                <= core::mem::size_of::<[u128; 16]>()
-        );
-        assert!(
-            ObjectPool::<crate::objects::EventCount>::carve_size(2)
-                <= core::mem::size_of::<[u128; 32]>()
-        );
         nucleus_ptr.write(Nucleus {
             current_thread: None,
             dcb_pages: DcbPages::new(),
             pending: crate::objects::PendingPool::new(),
-            scheduler: crate::objects::Scheduler::new(),
+            run_queue: crate::objects::RunQueue::new(),
             idle_thread: None,
             ticks: 0,
             pools: NucleusPools {
-                threads: ObjectPool::initialize(pool_ptr, 0),
-                notifications: ObjectPool::initialize(notification_pool_ptr, 2),
-                event_counts: ObjectPool::initialize(event_count_pool_ptr, 2),
-                times: ObjectPool::initialize(time_pool_ptr, 3),
                 arch: ArchPools::new(
                     ObjectPool::initialize(pool_ptr, 1),
                     // Zero capacity: these MMU-off rejection-path tests never
@@ -747,258 +720,68 @@ fn retype_page_table_batch_releases_partial_pool_slots_on_exhaustion() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// NOTIFICATION RETYPE (allowlisted 2026-09-16)
+// NOTIFICATION, EVENTCOUNT AND TIME RETYPE (carved from the Untyped)
 // ═══════════════════════════════════════════════════════════════
 
-/// A Notification carve writes no Untyped bytes: the object is pure kernel
-/// state allocated from the bootstrap-carved pool, so the successful Retype
-/// is exercisable MMU-off. The capability is a checked pool identity.
+/// The kinds carved from the invoking Untyped's memory with `size_bits`
+/// reserved zero. Their successful Retype writes through the direct map, so
+/// it runs in the boot test kernels; these MMU-off tests cover the
+/// rejections, which happen before any byte is written.
+const CARVED_KINDS: [ObjectType; 4] = [
+    ObjectType::NOTIFICATION,
+    ObjectType::EVENT_COUNT,
+    ObjectType::TIME,
+    ObjectType::THREAD,
+];
+
+/// Nonzero `size_bits`, a device source and an Untyped too small for the
+/// batch are rejected with the table and the watermark unchanged.
 #[test_case]
-fn retype_notification_succeeds_and_installs_pool_identities() {
-    let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
-    let before = fx.len();
-
-    let result = fx.invoke(
-        ram,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::NOTIFICATION,
-            0,
-            0,
-            2,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    let (first_wire, second) =
-        result.unwrap_or_else(|e| panic!("notification retype failed: {:?}", e.code()));
-    assert_eq!(second, 0);
-    assert_eq!(fx.len(), before + 2);
-
-    // Both destination slots hold Notification identities that validate
-    // against the pool. The keys are destination-local with consecutive
-    // slots sharing the install incarnation.
-    let first = RawKey::from_wire(first_wire);
-    let second_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 41, first.incarnation());
-    for (key, slot) in [(first, KeySlot(40)), (second_key, KeySlot(41))] {
-        let entry = fx
-            .lookup(key)
-            .unwrap_or_else(|_| panic!("notification entry missing at {slot:?}"));
-        assert_eq!(entry.object_type(), ObjectType::NOTIFICATION);
-        let id = entry
-            .object_id()
-            .unwrap_or_else(|_| panic!("notification entry is not a pool identity"));
-        assert_eq!(id.pool, crate::objects::access::PoolTag::Notification);
-        assert!(fx.nucleus.pools.notifications.validate(id).is_ok());
+fn retype_carved_kinds_reject_size_bits_device_sources_and_small_untypeds() {
+    for kind in CARVED_KINDS {
+        let mut fx = Fixture::new(FULL);
+        let ram = fx.install(KeySlot(30), ram_untyped(24));
+        let device = fx.install(KeySlot(31), device_untyped(24));
+        // 64 bytes: smaller than any carved record.
+        let small = fx.install(KeySlot(32), ram_untyped(6));
+        let before = fx.len();
+        let retype = |fx: &mut Fixture, source, size_bits, count| {
+            fx.invoke(
+                source,
+                UntypedOp::Retype as u64,
+                &retype_args(
+                    kind,
+                    size_bits,
+                    0,
+                    count,
+                    fx.self_key,
+                    KeySlot(40),
+                    Rights::all(),
+                ),
+            )
+        };
+        assert!(matches!(
+            retype(&mut fx, ram, 12, 1),
+            Err(CapError::InvalidSize(12))
+        ));
+        assert!(matches!(
+            retype(&mut fx, device, 0, 1),
+            Err(CapError::InvalidObjectType(rejected)) if rejected == kind
+        ));
+        assert!(matches!(
+            retype(&mut fx, small, 0, 1),
+            Err(CapError::InsufficientMemory)
+        ));
+        assert_eq!(fx.len(), before);
+        for source in [ram, small] {
+            let region = fx
+                .lookup(source)
+                .unwrap_or_else(|_| panic!("untyped entry missing"))
+                .as_untyped()
+                .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+            assert_eq!(region.watermark_bytes(), 0);
+        }
     }
-
-    // No Untyped bytes were consumed: the watermark is unchanged.
-    let region = fx
-        .lookup(ram)
-        .unwrap_or_else(|_| panic!("ram entry missing"))
-        .as_untyped()
-        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
-    assert_eq!(region.watermark_bytes(), 0);
-}
-
-/// `size_bits` is reserved zero for Notification; other values are rejected
-/// before any pool slot is taken.
-#[test_case]
-fn retype_notification_rejects_nonzero_size_bits() {
-    let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
-    let before = fx.len();
-
-    let result = fx.invoke(
-        ram,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::NOTIFICATION,
-            12,
-            0,
-            1,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    assert!(matches!(result, Err(CapError::InvalidSize(12))));
-    assert_eq!(fx.len(), before);
-    assert!(fx.nucleus.pools.notifications.is_empty());
-}
-
-/// Pool exhaustion rolls the whole batch back: the already-taken slots are
-/// released and nothing is installed (the fixture pool holds two slots).
-#[test_case]
-fn retype_notification_pool_exhaustion_releases_partial_slots() {
-    let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
-    let before = fx.len();
-
-    // Three notifications cannot fit the two-slot fixture pool.
-    let result = fx.invoke(
-        ram,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::NOTIFICATION,
-            0,
-            0,
-            3,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    assert!(matches!(result, Err(CapError::PoolExhausted)));
-    assert_eq!(fx.len(), before);
-    assert!(fx.nucleus.pools.notifications.is_empty());
-
-    // The released slots are usable again: a batch of two now succeeds.
-    let result2 = fx.invoke(
-        ram,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::NOTIFICATION,
-            0,
-            0,
-            2,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    assert!(result2.is_ok());
-    assert_eq!(fx.nucleus.pools.notifications.len(), 2);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// EVENTCOUNT RETYPE (allowlisted 2026-09-18)
-// ═══════════════════════════════════════════════════════════════
-
-/// An EventCount carve writes no Untyped bytes: the object is pure kernel
-/// state allocated from the bootstrap-carved pool, so the successful Retype
-/// is exercisable MMU-off.
-#[test_case]
-fn retype_event_count_succeeds_and_installs_pool_identities() {
-    let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
-    let before = fx.len();
-
-    let result = fx.invoke(
-        ram,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::EVENT_COUNT,
-            0,
-            0,
-            2,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    let (first_wire, second) =
-        result.unwrap_or_else(|e| panic!("event-count retype failed: {:?}", e.code()));
-    assert_eq!(second, 0);
-    assert_eq!(fx.len(), before + 2);
-
-    // Both destination slots hold EventCount identities that validate
-    // against the pool. The keys are destination-local with consecutive
-    // slots sharing the install incarnation.
-    let first = RawKey::from_wire(first_wire);
-    let second_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 41, first.incarnation());
-    for (key, slot) in [(first, KeySlot(40)), (second_key, KeySlot(41))] {
-        let entry = fx
-            .lookup(key)
-            .unwrap_or_else(|_| panic!("event-count entry missing at {slot:?}"));
-        assert_eq!(entry.object_type(), ObjectType::EVENT_COUNT);
-        let id = entry
-            .object_id()
-            .unwrap_or_else(|_| panic!("event-count entry is not a pool identity"));
-        assert_eq!(id.pool, crate::objects::access::PoolTag::EventCount);
-        assert!(fx.nucleus.pools.event_counts.validate(id).is_ok());
-    }
-
-    // No Untyped bytes were consumed: the watermark is unchanged.
-    let region = fx
-        .lookup(ram)
-        .unwrap_or_else(|_| panic!("ram entry missing"))
-        .as_untyped()
-        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
-    assert_eq!(region.watermark_bytes(), 0);
-}
-
-/// `size_bits` is reserved zero for EventCount; other values are rejected
-/// before any pool slot is taken.
-#[test_case]
-fn retype_event_count_rejects_nonzero_size_bits() {
-    let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
-    let before = fx.len();
-
-    let result = fx.invoke(
-        ram,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::EVENT_COUNT,
-            12,
-            0,
-            1,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    assert!(matches!(result, Err(CapError::InvalidSize(12))));
-    assert_eq!(fx.len(), before);
-    assert!(fx.nucleus.pools.event_counts.is_empty());
-}
-
-/// Pool exhaustion releases the partially taken slots: the transaction
-/// leaves the pool and the destination table unchanged, and the released
-/// slots are usable again.
-#[test_case]
-fn retype_event_count_pool_exhaustion_releases_partial_slots() {
-    let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
-    let before = fx.len();
-
-    // Three event counts cannot fit the two-slot fixture pool.
-    let result = fx.invoke(
-        ram,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::EVENT_COUNT,
-            0,
-            0,
-            3,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    assert!(matches!(result, Err(CapError::PoolExhausted)));
-    assert_eq!(fx.len(), before);
-    assert!(fx.nucleus.pools.event_counts.is_empty());
-
-    // The released slots are usable again: a batch of two now succeeds.
-    let result2 = fx.invoke(
-        ram,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::EVENT_COUNT,
-            0,
-            0,
-            2,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    assert!(result2.is_ok());
-    assert_eq!(fx.nucleus.pools.event_counts.len(), 2);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1112,9 +895,8 @@ fn retype_untyped_batch_split_installs_consecutive_children() {
     assert_eq!(parent.watermark_bytes(), 3 * 256);
 }
 
-/// A split child is itself a working Retype source: a Notification carve
-/// (no bytes) and a further split both allocate from the child's own
-/// watermark range.
+/// A split child is itself a working Retype source: a further split
+/// allocates from the child's own watermark range.
 #[test_case]
 fn retype_untyped_split_child_is_a_working_source() {
     let mut fx = Fixture::new(FULL);
@@ -1136,33 +918,6 @@ fn retype_untyped_split_child_is_a_working_source() {
         )
         .unwrap_or_else(|e| panic!("untyped split failed: {:?}", e.code()));
     let child = RawKey::from_wire(child_wire);
-
-    // A Notification from the child consumes no child bytes.
-    let (notification_wire, _) = fx
-        .invoke(
-            child,
-            UntypedOp::Retype as u64,
-            &retype_args(
-                ObjectType::NOTIFICATION,
-                0,
-                0,
-                1,
-                fx.self_key,
-                KeySlot(41),
-                Rights::all(),
-            ),
-        )
-        .unwrap_or_else(|e| panic!("notification carve from child failed: {:?}", e.code()));
-    assert_eq!(
-        RawKey::from_wire(notification_wire).slot(),
-        KeySlot((FIXTURE_GUARD << u32::from(SIZE_BITS)) | 41)
-    );
-    let region = fx
-        .lookup(child)
-        .unwrap_or_else(|_| panic!("child entry missing"))
-        .as_untyped()
-        .unwrap_or_else(|_| panic!("child entry is not a region"));
-    assert_eq!(region.watermark_bytes(), 0);
 
     // A further split from the child carves the grandchild at the child's
     // own watermark and advances it.
@@ -1644,126 +1399,60 @@ fn retype_rejects_batches_beyond_the_bound() {
     );
     assert!(matches!(result, Err(CapError::InvalidOperation)));
     assert_eq!(fx.len(), before);
-    assert!(fx.nucleus.pools.notifications.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════
 // TIME
 // ═══════════════════════════════════════════════════════════════
 
-/// Retype creates empty Times on the current core from the Time pool,
-/// consuming no Untyped bytes.
-#[test_case]
-fn retype_time_installs_empty_pool_backed_times() {
-    let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
-    let first = fx
-        .invoke(
-            ram,
-            UntypedOp::Retype as u64,
-            &retype_args(
-                ObjectType::TIME,
-                0,
-                0,
-                2,
-                fx.self_key,
-                KeySlot(40),
-                Rights::all(),
-            ),
-        )
-        .unwrap_or_else(|e| panic!("time retype failed: {:?}", e.code()));
-    let entry = fx
-        .lookup(RawKey::from_wire(first.0))
-        .unwrap_or_else(|_| panic!("time entry missing"));
-    assert_eq!(entry.object_type(), ObjectType::TIME);
-    let id = entry
-        .object_id()
-        .unwrap_or_else(|_| panic!("time entry is not a pool identity"));
-    assert_eq!(id.pool, crate::objects::access::PoolTag::Time);
-    let time = fx
-        .nucleus
-        .pools
-        .times
-        .get_live(usize::from(id.index))
-        .unwrap_or_else(|| panic!("time not live"));
-    assert_eq!(time.budget_ns(), 0);
-    assert_eq!(time.core(), 0);
-    assert!(time.chain().entries().is_empty());
-    assert_eq!(fx.nucleus.pools.times.len(), 2);
-}
-
-/// `size_bits` is reserved zero for Time, pool exhaustion rolls back, and a
-/// device Untyped cannot create one.
-#[test_case]
-fn retype_time_rejects_size_bits_exhaustion_and_device_sources() {
-    let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
-    let device = fx.install(KeySlot(31), device_untyped(24));
-    let before = fx.len();
-    let retype = |fx: &mut Fixture, source, size_bits, count| {
-        fx.invoke(
-            source,
-            UntypedOp::Retype as u64,
-            &retype_args(
-                ObjectType::TIME,
-                size_bits,
-                0,
-                count,
-                fx.self_key,
-                KeySlot(40),
-                Rights::all(),
-            ),
-        )
-    };
-    assert!(matches!(
-        retype(&mut fx, ram, 12, 1),
-        Err(CapError::InvalidSize(12))
-    ));
-    assert!(matches!(
-        retype(&mut fx, ram, 0, 4),
-        Err(CapError::PoolExhausted)
-    ));
-    assert!(matches!(
-        retype(&mut fx, device, 0, 1),
-        Err(CapError::InvalidObjectType(ObjectType::TIME))
-    ));
-    assert_eq!(fx.len(), before);
-    assert!(fx.nucleus.pools.times.is_empty());
-}
+/// Bytes of [`TIME_MEM`] each fixture Time takes.
+const TIME_STRIDE: usize = 512;
 
 impl Fixture {
+    /// Carve `time` into fixture slot `index` of [`TIME_MEM`] (standing in
+    /// for an Untyped carve) and install its capability at `slot`.
+    fn install_time(
+        &mut self,
+        slot: KeySlot,
+        index: usize,
+        rights: Rights,
+        time: impl FnOnce(CarvedId) -> crate::objects::Time,
+    ) -> RawKey {
+        assert!(Carved::<crate::objects::Time>::SIZE <= TIME_STRIDE);
+        assert!((index + 1) * TIME_STRIDE <= core::mem::size_of::<TimeBacking>());
+        // SAFETY: the backing is exclusively owned by the sequential tests,
+        // each index is carved once per test, and the stride keeps records
+        // apart and 64-byte aligned.
+        let id = unsafe {
+            let address = (&raw mut TIME_MEM).cast::<u8>().add(index * TIME_STRIDE);
+            let id =
+                Carved::<crate::objects::Time>::initialize(address, crate::objects::Time::empty(0));
+            *Carved::<crate::objects::Time>::validate(id).expect("Time just carved") = time(id);
+            id
+        };
+        self.install(slot, KeyEntry::new_carved(id, rights, 0))
+    }
+
     /// Install a root Time (budget `budget_ns`, chain naming itself at
     /// priority 0) at `slot` with `rights`, as Kickstart does for the boot
     /// Time.
-    fn install_root_time(&mut self, slot: KeySlot, budget_ns: u64, rights: Rights) -> RawKey {
-        let (id, _) = self
-            .nucleus
-            .pools
-            .times
-            .allocate(crate::objects::Time::empty(0))
-            .unwrap_or_else(|| panic!("no Time slot"));
-        *self
-            .nucleus
-            .pools
-            .times
-            .get_live_mut(usize::from(id.index))
-            .unwrap_or_else(|| panic!("time not live")) =
-            crate::objects::Time::root(0, id, budget_ns, 0);
-        self.install(slot, KeyEntry::new::<crate::objects::Time>(id, rights, 0))
+    fn install_root_time(
+        &mut self,
+        slot: KeySlot,
+        index: usize,
+        budget_ns: u64,
+        rights: Rights,
+    ) -> RawKey {
+        self.install_time(slot, index, rights, |id| {
+            crate::objects::Time::root(0, id, budget_ns, 0)
+        })
     }
 
     /// Install an empty Time at `slot`.
-    fn install_empty_time(&mut self, slot: KeySlot) -> RawKey {
-        let (id, _) = self
-            .nucleus
-            .pools
-            .times
-            .allocate(crate::objects::Time::empty(0))
-            .unwrap_or_else(|| panic!("no Time slot"));
-        self.install(
-            slot,
-            KeyEntry::new::<crate::objects::Time>(id, Rights::all(), 0),
-        )
+    fn install_empty_time(&mut self, slot: KeySlot, index: usize) -> RawKey {
+        self.install_time(slot, index, Rights::all(), |_| {
+            crate::objects::Time::empty(0)
+        })
     }
 
     /// Invoke the Time handler against the fixture.
@@ -1779,7 +1468,7 @@ impl Fixture {
             addr: self.table_addr,
             guard: FIXTURE_GUARD,
         };
-        api::time::invoke::<ArchObjectsImpl>(&access, caller, key, op, args, self.nucleus)
+        api::time::invoke(&access, caller, key, op, args)
     }
 
     fn query(&mut self, key: RawKey) -> (u64, u64) {
@@ -1793,8 +1482,8 @@ impl Fixture {
 #[test_case]
 fn time_transfer_query_and_merge_conserve_budget() {
     let mut fx = Fixture::new(FULL);
-    let root = fx.install_root_time(KeySlot(17), 1_000, Rights::all());
-    let child = fx.install_empty_time(KeySlot(40));
+    let root = fx.install_root_time(KeySlot(17), 0, 1_000, Rights::all());
+    let child = fx.install_empty_time(KeySlot(40), 1);
 
     assert_eq!(fx.query(root), (1_000, 0));
     assert_eq!(fx.query(child), (0, u64::from(u16::MAX)));
@@ -1822,9 +1511,9 @@ fn time_transfer_query_and_merge_conserve_budget() {
 #[test_case]
 fn time_transfer_failures_change_nothing() {
     let mut fx = Fixture::new(FULL);
-    let root = fx.install_root_time(KeySlot(17), 100, Rights::all());
-    let child = fx.install_empty_time(KeySlot(40));
-    let read_only = fx.install_root_time(KeySlot(41), 100, Rights(Rights::READ));
+    let root = fx.install_root_time(KeySlot(17), 0, 100, Rights::all());
+    let child = fx.install_empty_time(KeySlot(40), 1);
+    let read_only = fx.install_root_time(KeySlot(41), 2, 100, Rights(Rights::READ));
     let transfer = |fx: &mut Fixture, source: RawKey, args: [u64; 6]| {
         fx.invoke_time(source, TimeOp::Transfer as u64, &args)
     };
