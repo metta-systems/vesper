@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x09` (core) |
 | Backing | None: the authority over every interrupt line |
-| Status | Issue |
+| Operations | Issue |
 
 ## Purpose
 
@@ -14,7 +14,7 @@ IRQControl issues [IRQHandler](irq_handler.md) capabilities: its holder decides 
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Issue | `x2` destination table, `x3` destination slot, `x4` cell count and controller, `x5..x7` specifier cells | `GRANT` on the IRQControl, `INSTALL` on the table | `x1` IRQHandler key, `x2` line |
+| 0 | Issue | `x2` destination table, `x3` destination slot, `x4` cell count and controller, `x5..x7` specifier cells | `Grant` on the IRQControl, `Install` on the table | `x1` IRQHandler key, `x2` line |
 
 `IrqControlKey::issue` in `libs/object` wraps the operation.
 
@@ -35,11 +35,11 @@ The line stays masked until the IRQHandler's first [Ack](irq_handler.md#ack).
 
 | Error | Cause |
 |---|---|
-| `IRQ_LINE_ACTIVE` | The line already has a live IRQHandler, or it is the kernel's timer line; detail 1 is the line |
-| `INVALID_OPERATION` | A cell count outside 1–3, an unknown controller, nonzero reserved bits or unused cells, a cell wider than 32 bits, a specifier the controller cannot decode, or a trigger the line cannot take |
-| `SLOT_OCCUPIED` | The destination slot holds a key |
-| `INSUFFICIENT_RIGHTS` | `GRANT` or `INSTALL` is missing |
-| `TYPE_MISMATCH` | `x2` is not a KeyTable |
+| `IrqLineActive` | The line already has a live IRQHandler, or it is the kernel's timer line; detail 1 is the line |
+| `InvalidOperation` | A cell count outside 1–3, an unknown controller, nonzero reserved bits or unused cells, a cell wider than 32 bits, a specifier the controller cannot decode, or a trigger the line cannot take |
+| `SlotOccupied` | The destination slot holds a key |
+| `InsufficientRights` | `GRANT` or `INSTALL` is missing |
+| `TypeMismatch` | `x2` is not a KeyTable |
 
 ## Implementation
 

@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x05` (core) |
 | Backing | Kernel object carved from the boot Untyped by Kickstart |
-| Status | ConfigureThread, StartThread (root Scheduler) |
+| Operations | ConfigureThread, StartThread (on root Scheduler) |
 
 ## Purpose
 
@@ -14,11 +14,11 @@ A Scheduler capability is the authority to make Threads run. A Thread created by
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | ShareRegion | — | — | Always `INVALID_OPERATION` |
-| 1 | ConfigureThread | `x2` Thread, `x3` AddressSpace, `x4` entry, `x5` stack pointer, `x6` Time, `x7` argument | `WRITE` on the Scheduler, Thread and Time; `MAP` on the AddressSpace | — |
-| 2 | StartThread | `x2` Thread | `WRITE` on the Scheduler and Thread | — |
+| 0 | ShareRegion | — | — | Not implemented: `InvalidOperation` |
+| 1 | ConfigureThread | `x2` Thread, `x3` AddressSpace, `x4` entry, `x5` stack pointer, `x6` Time, `x7` argument | `Write` on the Scheduler, Thread and Time; `Map` on the AddressSpace | — |
+| 2 | StartThread | `x2` Thread | `Write` on the Scheduler and Thread | — |
 
-`READ` is rights bit 0, `WRITE` and `MAP` are bit 1. `SchedulerKey` in `libs/object` wraps both operations.
+`Read` is rights bit 0, `Write` and `Map` are bit 1. `SchedulerKey` in `libs/object` wraps both operations.
 
 ### ConfigureThread
 
@@ -26,15 +26,15 @@ Binds the inert Thread `x2` to the AddressSpace `x3`, an EL0 start state (entry 
 
 | Error | Cause |
 |---|---|
-| `INVALID_OPERATION` | The Thread is not inert (already configured or started); the entry is not 4-byte aligned or not below the end of the user address range; the stack pointer is not 16-byte aligned or above that end; the Time belongs to another core or is already bound to a live Thread |
-| `NOT_MAPPED` | The AddressSpace has no translation root |
-| `NO_ASID_ASSIGNED` | The AddressSpace has no ASID |
-| `INSUFFICIENT_RIGHTS` | A missing right, or the Scheduler is not the root |
-| `TYPE_MISMATCH` | A key names the wrong kind |
+| `InvalidOperation` | The Thread is not inert (already configured or started); the entry is not 4-byte aligned or not below the end of the user address range; the stack pointer is not 16-byte aligned or above that end; the Time belongs to another core or is already bound to a live Thread |
+| `NotMapped` | The AddressSpace has no translation root |
+| `NoAsidAssigned` | The AddressSpace has no ASID |
+| `InsufficientRights` | A missing right, or the Scheduler is not the root |
+| `TypeMismatch` | A key names the wrong kind |
 
 ### StartThread
 
-Makes the configured Thread `x2` runnable; it first runs its configured start state. `x3..x7` must be zero. A Thread that is inert or already started fails with `INVALID_OPERATION`.
+Makes the configured Thread `x2` runnable; it first runs its configured start state. `x3..x7` must be zero. A Thread that is inert or already started fails with `InvalidOperation`.
 
 ## Implementation
 

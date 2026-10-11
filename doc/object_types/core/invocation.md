@@ -4,27 +4,27 @@
 |---|---|
 | Wire type | `0x06` (core) |
 | Backing | Stored in the capability: target AddressSpace, entry address, stack extent |
-| Status | Call |
+| Operations | Call |
 
 ## Purpose
 
 An Invocation is a callable entry point in another component. Calling it moves the calling Thread into the target AddressSpace, where it runs the entry function on a stack the target provides; [`Thread.Return`](thread.md#return) brings it back with two result words. No server Thread is involved: the caller's own Thread executes the target code, using the target's KeyTable while it is there.
 
-Invocations are created by [`AddressSpace.CreateInvocation`](../arch/address_space.md#createinvocation) and carry only the `CALL` right. Request queues and server Threads can be built in userspace on top of Invocation, Notification and EventCount; `kernel/tests/endpoint-test` shows one.
+Invocations are created by [`AddressSpace.CreateInvocation`](../arch/address_space.md#createinvocation) and carry only the `Call` right. Request queues and server Threads can be built in userspace on top of Invocation, Notification and EventCount; `kernel/tests/endpoint-test` shows one.
 
 ## Operations
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Call | `x2..x7` six arguments, `x9` target stack pointer | `CALL` | `x1` `r0`, `x2` `r1` returned by the target |
+| 0 | Call | `x2..x7` six arguments, `x9` target stack pointer | `Call` | `x1` `r0`, `x2` `r1` returned by the target |
 
-Any other operation fails with `INVALID_OPERATION`.
+Any other operation fails with `InvalidOperation`.
 
 ### Call
 
 The caller passes six `u64` arguments in `x2..x7` and the stack pointer the target should start with in `x9`. The Thread then runs the target entry with the register state below. When the target calls `Thread.Return(r0, r1)`, the caller resumes after its `svc` with `x0 = 0`, `x1 = r0`, `x2 = r1`.
 
-A call can nest: code running inside a target can call further Invocations, up to 16 levels deep. A call at depth 16 fails with `NESTING_DEPTH` (`x1` = 16).
+A call can nest: code running inside a target can call further Invocations, up to 16 levels deep. A call at depth 16 fails with `NestingDepth` (`x1` = 16).
 
 ## Stack extent
 
@@ -34,7 +34,7 @@ The stack pointer passed in `x9` must be 16-byte aligned, with `base < SP <= end
 
 ### `InvalidStack`
 
-Stack checks fail with `INVALID_STACK` (status 32), the offending value in `x1` and a reason in `x2`:
+Stack checks fail with `InvalidStack` (status 32), the offending value in `x1` and a reason in `x2`:
 
 | Reason | Name | Condition | `x1` |
 |---:|---|---|---|
@@ -57,8 +57,8 @@ CreateInvocation checks reasons 1–9 and Call checks 10–12, each in table ord
 
 Each operation stops at the first failing check and changes nothing:
 
-- **CreateInvocation:** keys, kinds and rights; the target AddressSpace is live (`INCONSISTENT_KEY`, `ObjectRetired`) → entry address is nonzero (`INVALID_POINTER`) → stack extent → destination slot.
-- **Call:** key and `CALL` right; the target AddressSpace is live (`INCONSISTENT_KEY`, `ObjectRetired`) → stack pointer → the target's translation root and ASID are ready → invocation depth.
+- **CreateInvocation:** keys, kinds and rights; the target AddressSpace is live (`InconsistentKey`, `ObjectRetired`) → entry address is nonzero (`InvalidPointer`) → stack extent → destination slot.
+- **Call:** key and `Call` right; the target AddressSpace is live (`InconsistentKey`, `ObjectRetired`) → stack pointer → the target's translation root and ASID are ready → invocation depth.
 
 ## Register state
 

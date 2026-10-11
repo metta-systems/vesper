@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x01` (core) |
 | Backing | A physical memory region of `2^size_bits` bytes, described inline in the capability |
-| Status | Retype |
+| Operations | Retype |
 
 ## Purpose
 
@@ -14,7 +14,7 @@ An Untyped capability grants authority over a region of unallocated physical mem
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Retype | `x2` kind, `x3` size (and guard), `x4` count, `x5` destination table, `x6` first slot, `x7` rights | `WRITE` on the Untyped, `INSTALL` on the destination table | `x1` key of the first new capability |
+| 0 | Retype | `x2` kind, `x3` size (and guard), `x4` count, `x5` destination table, `x6` first slot, `x7` rights | `Write` on the Untyped, `Install` on the destination table | `x1` key of the first new capability |
 
 ### Retype
 
@@ -40,18 +40,18 @@ Retype creates `count` objects and installs their capabilities into consecutive 
 | Thread | 0 | An inert Thread: no AddressSpace or execution state until the root [Scheduler](scheduler.md) configures and starts it |
 | Untyped | At least 4 (16 bytes) | A smaller Untyped covering part of the region |
 
-Other kinds fail with `INVALID_OBJECT_TYPE`. A device Untyped covers hardware registers: it can be split into smaller device Untypeds or carved into device [Frames](../arch/frame.md), which Retype never zeroes or otherwise touches. Every other kind from a device Untyped fails with `INVALID_OBJECT_TYPE`.
+Other kinds fail with `InvalidObjectType`. A device Untyped covers hardware registers: it can be split into smaller device Untypeds or carved into device [Frames](../arch/frame.md), which Retype never zeroes or otherwise touches. Every other kind from a device Untyped fails with `InvalidObjectType`.
 
 | Error | Cause |
 |---|---|
-| `INVALID_OBJECT_TYPE` | The kind cannot be created from memory, or the source is device memory and the kind is neither Untyped nor Frame |
-| `INVALID_SIZE` | `size_bits` out of range for the kind; for a KeyTable, a guard too wide for its size or `x3` bits 63–40 set |
-| `INVALID_FRAME_SIZE` | Frame `size_bits` other than 12, 21 or 30 |
-| `INVALID_OPERATION` | Count 0 or above 256; `x3` bits above 7 set for a kind other than KeyTable; a kind, slot or rights word that does not fit its field; undefined rights bits |
-| `INSUFFICIENT_RIGHTS` | Missing `WRITE` on the Untyped or `INSTALL` on the destination |
-| `INSUFFICIENT_MEMORY` | The objects do not fit in the remaining region |
-| `POOL_EXHAUSTED` | No free slot in the kernel PageTable pool |
-| `INVALID_SLOT`, `SLOT_OCCUPIED`, `KEY_SLOT_EXHAUSTED` | A destination slot is out of range, occupied, or has used up its incarnations |
+| `InvalidObjectType` | The kind cannot be created from memory, or the source is device memory and the kind is neither Untyped nor Frame |
+| `InvalidSize` | `size_bits` out of range for the kind; for a KeyTable, a guard too wide for its size or `x3` bits 63–40 set |
+| `InvalidFrameSize` | Frame `size_bits` other than 12, 21 or 30 |
+| `InvalidOperation` | Count 0 or above 256; `x3` bits above 7 set for a kind other than KeyTable; a kind, slot or rights word that does not fit its field; undefined rights bits |
+| `InsufficientRights` | Missing `Write` on the Untyped or `Install` on the destination |
+| `InsufficientMemory` | The objects do not fit in the remaining region |
+| `PoolExhausted` | No free slot in the kernel PageTable pool |
+| `InvalidSlot`, `SlotOccupied`, `KeySlotExhausted` | A destination slot is out of range, occupied, or has used up its incarnations |
 
 ## Implementation
 

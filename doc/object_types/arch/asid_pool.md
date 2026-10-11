@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x83` (arch index 3) |
 | Backing | Kernel ASID pool, created at boot |
-| Status | Assign |
+| Operations | Assign |
 
 ## Purpose
 
@@ -14,7 +14,7 @@ An ASIDPool hands out ASIDs (address-space identifiers) from a range of 512. The
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Assign | `x2` target AddressSpace | `GRANT` on the pool, `MAP` on the AddressSpace | `x1` the assigned ASID |
+| 0 | Assign | `x2` target AddressSpace | `Grant` on the pool, `Map` on the AddressSpace | `x1` the assigned ASID |
 
 ### Assign
 
@@ -22,12 +22,12 @@ Allocates a free ASID from the pool and binds it to the AddressSpace named by `x
 
 | Error | Cause |
 |---|---|
-| `INSUFFICIENT_RIGHTS` | The pool lacks `GRANT`, or the AddressSpace lacks `MAP` |
-| `NOT_MAPPED` | The AddressSpace has no root |
-| `ALREADY_MAPPED` | The AddressSpace already has an ASID |
-| `ASID_POOL_EXHAUSTED` | Every ASID in the pool is in use |
-| `TYPE_MISMATCH` | `x2` is not an AddressSpace |
-| `INVALID_OPERATION` | A nonzero unused argument |
+| `InsufficientRights` | The pool lacks `Grant`, or the AddressSpace lacks `Map` |
+| `NotMapped` | The AddressSpace has no root |
+| `AlreadyMapped` | The AddressSpace already has an ASID |
+| `AsidPoolExhausted` | Every ASID in the pool is in use |
+| `TypeMismatch` | `x2` is not an AddressSpace |
+| `InvalidOperation` | A nonzero unused argument |
 
 A failed Assign leaves the pool and the AddressSpace unchanged.
 

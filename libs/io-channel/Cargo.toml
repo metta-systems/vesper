@@ -1,7 +1,7 @@
 [package]
 name = "vesper-io-channel"
 
-description = "IO channels between a server, such as a driver, and its client: Rbufs-style FIFOs of IO_Rec packets describing buffers in a shared fbuf data area, with EventCounts to wait on."
+description = "IO channels (xbufs) between a server, such as a driver, and its client: Rbufs-style FIFOs of IO_Rec packets describing buffers in a shared fbuf data area, with EventCounts to wait on."
 
 authors = { workspace = true }
 categories = { workspace = true }

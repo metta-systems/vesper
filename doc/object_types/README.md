@@ -13,7 +13,7 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 
 ### Core kinds
 
-| Kind | Wire | Page | Status |
+| Kind | Wire | Page | Operations |
 |---|---:|---|---|
 | Null | `0x00` | [null.md](core/null.md) | Every invocation fails |
 | Untyped | `0x01` | [untyped.md](core/untyped.md) | Retype |
@@ -32,7 +32,7 @@ Indices 11–126 are unassigned.
 
 ### Architecture kinds
 
-| Kind | Wire | Page | Status on AArch64 |
+| Kind | Wire | Page | Operations on AArch64 |
 |---|---:|---|---|
 | Frame | `0x80` | [frame.md](arch/frame.md) | Map, Unmap, GetAddress |
 | PageTable | `0x81` | [page_table.md](arch/page_table.md) | Map, Unmap |
@@ -42,7 +42,7 @@ Indices 11–126 are unassigned.
 | IOSpace | `0x85` | [io_space.md](arch/io_space.md) | Not implemented |
 | IOPort | `0x86` | [io_port.md](arch/io_port.md) | x86 only; not available on AArch64 |
 
-Indices 7–127 are unassigned. Invoking a kind that is not implemented fails with `UNSUPPORTED_CORE_TYPE` or `UNSUPPORTED_ARCH_TYPE`.
+Indices 7–127 are unassigned. Invoking a kind that is not implemented fails with `UnsupportedCoreType` or `UnsupportedArchType`.
 
 ## Invocation model
 
@@ -58,7 +58,7 @@ Every operation is one `svc` instruction. The immediate is ignored; the userspac
 | Out | `x0` | Status; zero is success |
 | Out | `x1`, `x2` | Two result words on success, error details on failure |
 
-Argument words an operation does not use must be zero; a nonzero unused word fails with `INVALID_OPERATION`. Exceptions: `Thread.Return` ignores `x4..x7`, and `Invocation.Call` also reads `x9`.
+Argument words an operation does not use must be zero; a nonzero unused word fails with `InvalidOperation`. Exceptions: `Thread.Return` ignores `x4..x7`, and `Invocation.Call` also reads `x9`.
 
 An invocation writes only `x0..x2`. Every other register, SP and the NZCV flags are returned unchanged, whether the operation succeeds, fails, or blocks and resumes later. `Invocation.Call` and `Thread.Return` move the Thread between address spaces and have their own register rules; see [Invocation](core/invocation.md#register-state).
 
@@ -78,44 +78,44 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 
 | Status | Name | `x1` | `x2` |
 |---:|---|---|---|
-| 0 | `SUCCESS` | result | result |
-| 1 | `UNKNOWN` | 0 | 0 |
-| 2 | `NULL_CAPABILITY` | 0 | 0 |
-| 3 | `INVALID_DOMAIN` | 0 | 0 |
-| 4 | `INVALID_POINTER` | 0 | 0 |
-| 5 | `INSUFFICIENT_RIGHTS` | 0 | 0 |
-| 6 | `NOT_MAPPED` | 0 | 0 |
-| 7 | `ALREADY_MAPPED` | 0 | 0 |
-| 8 | `INVALID_OPERATION` | 0 | 0 |
-| 9 | `ASID_POOL_EXHAUSTED` | 0 | 0 |
-| 10 | `NO_ASID_ASSIGNED` | 0 | 0 |
-| 11 | `INVALID_SLOT` | slot | 0 |
-| 12 | `EMPTY_SLOT` | slot | 0 |
-| 13 | `SLOT_OCCUPIED` | slot | 0 |
-| 14 | `NOT_CORE_TYPE` | wire type | 0 |
-| 15 | `UNKNOWN_CORE_TYPE` | type byte | 0 |
-| 16 | `UNSUPPORTED_CORE_TYPE` | core index | 0 |
-| 17 | `NOT_ARCH_TYPE` | wire type | 0 |
-| 18 | `UNKNOWN_ARCH_TYPE` | type byte | 0 |
-| 19 | `UNSUPPORTED_ARCH_TYPE` | arch index | 0 |
-| 20 | `INVALID_OBJECT_TYPE` | wire type | 0 |
-| 21 | `TYPE_MISMATCH` | expected wire type | found wire type |
-| 22 | `INSUFFICIENT_MEMORY` | 0 | 0 |
-| 23 | `POOL_EXHAUSTED` | 0 | 0 |
-| 24 | `INVALID_SIZE` | size | 0 |
-| 25 | `INVALID_FRAME_SIZE` | size | 0 |
-| 26 | `INVALID_KEY` | submitted key | reason \| (argument register << 8) |
-| 27 | `INCONSISTENT_KEY` | submitted key | reason \| (argument register << 8) |
-| 28 | `KEY_SLOT_EXHAUSTED` | slot | 0 |
-| 29 | `MISSING_INTERMEDIATE` | virtual address | 0 |
-| 30 | `PHYSICAL_ALIAS` | physical base of the conflicting mapping | 0 |
-| 31 | `COUNTER_OVERFLOW` | 0 | 0 |
-| 32 | `INVALID_STACK` | offending value | reason, see [Invocation](core/invocation.md#invalidstack) |
-| 33 | `NESTING_DEPTH` | saved continuations | 0 |
-| 34 | `UNEXPECTED_RETURN` | local `x1` | local `x2` |
-| 35 | `INSUFFICIENT_BUDGET` | the source Time's remaining budget | 0 |
-| 36 | `PRIORITY_CHAIN_FULL` | 0 | 0 |
-| 37 | `IRQ_LINE_ACTIVE` | the line | 0 |
+| 0 | `Success` | result | result |
+| 1 | `Unknown` | 0 | 0 |
+| 2 | `NullCapability` | 0 | 0 |
+| 3 | `InvalidDomain` | 0 | 0 |
+| 4 | `InvalidPointer` | 0 | 0 |
+| 5 | `InsufficientRights` | 0 | 0 |
+| 6 | `NotMapped` | 0 | 0 |
+| 7 | `AlreadyMapped` | 0 | 0 |
+| 8 | `InvalidOperation` | 0 | 0 |
+| 9 | `AsidPoolExhausted` | 0 | 0 |
+| 10 | `NoAsidAssigned` | 0 | 0 |
+| 11 | `InvalidSlot` | slot | 0 |
+| 12 | `EmptySlot` | slot | 0 |
+| 13 | `SlotOccupied` | slot | 0 |
+| 14 | `NotCoreType` | wire type | 0 |
+| 15 | `UnknownCoreType` | type byte | 0 |
+| 16 | `UnsupportedCoreType` | core index | 0 |
+| 17 | `NotArchType` | wire type | 0 |
+| 18 | `UnknownArchType` | type byte | 0 |
+| 19 | `UnsupportedArchType` | arch index | 0 |
+| 20 | `InvalidObjectType` | wire type | 0 |
+| 21 | `TypeMismatch` | expected wire type | found wire type |
+| 22 | `InsufficientMemory` | 0 | 0 |
+| 23 | `PoolExhausted` | 0 | 0 |
+| 24 | `InvalidSize` | size | 0 |
+| 25 | `InvalidFrameSize` | size | 0 |
+| 26 | `InvalidKey` | submitted key | reason \| (argument register << 8) |
+| 27 | `InconsistentKey` | submitted key | reason \| (argument register << 8) |
+| 28 | `KeySlotExhausted` | slot | 0 |
+| 29 | `MissingIntermediate` | virtual address | 0 |
+| 30 | `PhysicalAlias` | physical base of the conflicting mapping | 0 |
+| 31 | `CounterOverflow` | 0 | 0 |
+| 32 | `InvalidStack` | offending value | reason, see [Invocation](core/invocation.md#invalidstack) |
+| 33 | `NestingDepth` | saved continuations | 0 |
+| 34 | `UnexpectedReturn` | local `x1` | local `x2` |
+| 35 | `InsufficientBudget` | the source Time's remaining budget | 0 |
+| 36 | `PriorityChainFull` | 0 | 0 |
+| 37 | `IrqLineActive` | the line | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 
@@ -125,16 +125,16 @@ Any key argument can fail lookup. Lookup checks, in this order:
 
 | Check | Error | Reason |
 |---|---|---|
-| Incarnation is nonzero | `INVALID_KEY` | 1 `ZeroIncarnation` |
-| Guard matches the table's guard | `INVALID_KEY` | 4 `GuardMismatch` |
-| Slot index is within the table's capacity | `INVALID_KEY` | 2 `SlotOutOfRange` |
-| A capability was ever installed in the slot | `INVALID_KEY` | 3 `NeverIssued` |
-| The slot still holds the same occupant | `INCONSISTENT_KEY` | 1 `SlotIncarnationMismatch` |
-| That occupant was not deleted or moved | `INCONSISTENT_KEY` | 2 `CapabilityInvalidated` |
+| Incarnation is nonzero | `InvalidKey` | 1 `ZeroIncarnation` |
+| Guard matches the table's guard | `InvalidKey` | 4 `GuardMismatch` |
+| Slot index is within the table's capacity | `InvalidKey` | 2 `SlotOutOfRange` |
+| A capability was ever installed in the slot | `InvalidKey` | 3 `NeverIssued` |
+| The slot still holds the same occupant | `InconsistentKey` | 1 `SlotIncarnationMismatch` |
+| That occupant was not deleted or moved | `InconsistentKey` | 2 `CapabilityInvalidated` |
 
 `x2` bits 15–8 hold the index of the argument register that carried the failing key (`0` for `x0`).
 
-When an operation uses the object a capability names, it checks after the kind and rights checks that the object still exists. If the object was retired, the operation fails with `INCONSISTENT_KEY`, reason 3 `ObjectRetired`, against the key that named it. An [Invocation](core/invocation.md#call) whose target AddressSpace was retired fails this way on the Invocation key.
+When an operation uses the object a capability names, it checks after the kind and rights checks that the object still exists. If the object was retired, the operation fails with `InconsistentKey`, reason 3 `ObjectRetired`, against the key that named it. An [Invocation](core/invocation.md#call) whose target AddressSpace was retired fails this way on the Invocation key.
 
 ### Dispatch
 

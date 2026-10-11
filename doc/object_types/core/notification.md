@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x07` (core) |
 | Backing | Kernel object carved from an Untyped by `Untyped.Retype` |
-| Status | Signal, Wait, Poll |
+| Operations | Signal, Wait, Poll |
 
 ## Purpose
 
@@ -14,11 +14,11 @@ A Notification is a 64-bit set of pending signal bits. Signalling ORs bits into 
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Signal | `x2` bits | `SEND` | — |
-| 1 | Wait | `x2` timeout | `RECV` | `x1` the pending bits |
-| 2 | Poll | — | `RECV` | `x1` the pending bits, or 0 |
+| 0 | Signal | `x2` bits | `Send` | — |
+| 1 | Wait | `x2` timeout | `Recv` | `x1` the pending bits |
+| 2 | Poll | — | `Recv` | `x1` the pending bits, or 0 |
 
-`SEND` is rights bit 1 and `RECV` is bit 0.
+`Send` is rights bit 1 and `Recv` is bit 0.
 
 ### Signal
 
@@ -36,10 +36,10 @@ Returns and clears all pending bits without blocking; `x1` is 0 if none were pen
 
 | Error | Cause |
 |---|---|
-| `INSUFFICIENT_RIGHTS` | Missing `SEND` or `RECV` |
-| `INVALID_OPERATION` | A timeout other than `u64::MAX`, or a nonzero unused argument |
-| `POOL_EXHAUSTED` | Too many Threads already waiting on this Notification |
-| `TYPE_MISMATCH` | The key does not name a Notification |
+| `InsufficientRights` | Missing `Send` or `Recv` |
+| `InvalidOperation` | A timeout other than `u64::MAX`, or a nonzero unused argument |
+| `PoolExhausted` | Too many Threads already waiting on this Notification |
+| `TypeMismatch` | The key does not name a Notification |
 
 ## Implementation
 

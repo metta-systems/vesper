@@ -4,7 +4,8 @@
 |---|---|
 | Wire type | `0x7f` (core) |
 | Backing | None |
-| Status | Write; debug kernels only |
+| Operations | Write |
+| Status | Debug kernels only |
 
 ## Purpose
 
@@ -22,7 +23,7 @@ Prints `x3` bytes starting at `x2`. `DebugConsoleKey::write(&str)` wraps it.
 
 - `x2` is read as a physical address. Write works only for buffers whose virtual address equals their physical address, as in the test kernels' images.
 - The length must be below 4096 bytes; a longer length halts the kernel.
-- The bytes must not contain a NUL byte; if they do, Write fails with `UNKNOWN`.
+- The bytes must not contain a NUL byte; if they do, Write fails with `Unknown`.
 - Output goes to the QEMU semihosting console and appears only when the kernel runs under QEMU.
 
 ## Implementation

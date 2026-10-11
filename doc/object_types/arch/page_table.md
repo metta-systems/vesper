@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x81` (arch index 1) |
 | Backing | A 4 KiB table carved from an Untyped by Retype |
-| Status | Map, Unmap |
+| Operations | Map, Unmap |
 
 ## Purpose
 
@@ -14,7 +14,7 @@ A PageTable is one 4 KiB hardware translation table (512 entries). The kernel ne
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Map | `x2` parent (AddressSpace or PageTable), `x3` virtual address | `MAP` on the parent | — |
+| 0 | Map | `x2` parent (AddressSpace or PageTable), `x3` virtual address | `Map` on the parent | — |
 | 1 | Unmap | — | — | — |
 
 ### Map
@@ -28,11 +28,11 @@ Install tables from the root downwards: level 0, then levels 1, 2 and 3 as neede
 
 | Error | Cause |
 |---|---|
-| `INSUFFICIENT_RIGHTS` | The parent capability lacks `MAP` |
-| `ALREADY_MAPPED` | This table is already installed, the AddressSpace already has a root, or the parent entry is in use |
-| `NOT_MAPPED` | The parent PageTable is not installed |
-| `INVALID_OPERATION` | Nonzero `x3` for a root, a level-3 parent, mapping a table into itself, or a nonzero unused argument |
-| `INVALID_OBJECT_TYPE`, `TYPE_MISMATCH` | `x2` is neither an AddressSpace nor a PageTable |
+| `InsufficientRights` | The parent capability lacks `Map` |
+| `AlreadyMapped` | This table is already installed, the AddressSpace already has a root, or the parent entry is in use |
+| `NotMapped` | The parent PageTable is not installed |
+| `InvalidOperation` | Nonzero `x3` for a root, a level-3 parent, mapping a table into itself, or a nonzero unused argument |
+| `InvalidObjectType`, `TypeMismatch` | `x2` is neither an AddressSpace nor a PageTable |
 
 ### Unmap
 
@@ -40,8 +40,8 @@ Removes the table from its parent. The table must be empty. Unmapping a root det
 
 | Error | Cause |
 |---|---|
-| `NOT_MAPPED` | The table is not installed |
-| `INVALID_OPERATION` | The table still has entries |
+| `NotMapped` | The table is not installed |
+| `InvalidOperation` | The table still has entries |
 
 ## Implementation
 

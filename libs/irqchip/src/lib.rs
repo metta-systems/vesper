@@ -16,7 +16,7 @@
 //! tree interrupt specifiers become lines through [`IrqChipOps::xlate`].
 
 /// Version of this ABI; [`IrqChipOps::abi_version`] must equal it.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 1;
 
 /// Name of the [`IrqChipOps`] static every IC component exports.
 pub const OPS_SYMBOL: &str = "IRQCHIP_OPS";

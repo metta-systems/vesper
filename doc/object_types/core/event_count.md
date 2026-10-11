@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x08` (core) |
 | Backing | Kernel object carved from an Untyped by `Untyped.Retype` |
-| Status | Advance, Await, Read |
+| Operations | Advance, Await, Read |
 
 ## Purpose
 
@@ -14,15 +14,15 @@ An EventCount is a 64-bit counter that only increases. Producers advance it; con
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Advance | `x2` delta | `SEND` | `x1` the new value |
-| 1 | Await | `x2` target, `x3` timeout | `RECV` | `x1` the current value |
-| 2 | Read | — | `RECV` | `x1` the current value |
+| 0 | Advance | `x2` delta | `Send` | `x1` the new value |
+| 1 | Await | `x2` target, `x3` timeout | `Receive` | `x1` the current value |
+| 2 | Read | — | `Receive` | `x1` the current value |
 
-`SEND` is rights bit 1 and `RECV` is bit 0.
+`Send` is rights bit 1 and `Receive` is bit 0.
 
 ### Advance
 
-Adds `x2` (nonzero) to the counter and wakes every Thread waiting for a target the new value has reached. If the sum would exceed `u64::MAX`, Advance fails with `COUNTER_OVERFLOW` (status 31), the counter stays unchanged, and every waiting Thread also resumes with `COUNTER_OVERFLOW`.
+Adds `x2` (nonzero) to the counter and wakes every Thread waiting for a target the new value has reached. If the sum would exceed `u64::MAX`, Advance fails with `CounterOverflow` (status 31), the counter stays unchanged, and every waiting Thread also resumes with `CounterOverflow`.
 
 ### Await
 
@@ -36,11 +36,11 @@ Returns the current value without blocking. `EventCountReader` in `libs/object` 
 
 | Error | Cause |
 |---|---|
-| `INSUFFICIENT_RIGHTS` | Missing `SEND` or `RECV` |
-| `INVALID_OPERATION` | Delta 0, a timeout other than `u64::MAX`, or a nonzero unused argument |
-| `COUNTER_OVERFLOW` | The advance would exceed `u64::MAX` |
-| `POOL_EXHAUSTED` | Too many Threads already waiting on this EventCount |
-| `TYPE_MISMATCH` | The key does not name an EventCount |
+| `InsufficientRights` | Missing `Send` or `Receive` |
+| `InvalidOperation` | Delta 0, a timeout other than `u64::MAX`, or a nonzero unused argument |
+| `CounterOverflow` | The advance would exceed `u64::MAX` |
+| `PoolExhausted` | Too many Threads already waiting on this EventCount |
+| `TypeMismatch` | The key does not name an EventCount |
 
 ## Implementation
 

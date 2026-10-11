@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x03` (core) |
 | Backing | Kernel object carved from an Untyped; boot creates the first ones |
-| Status | Return, Retire |
+| Operations | Return, Retire |
 
 ## Purpose
 
@@ -20,10 +20,10 @@ A Thread capability takes one of two forms:
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
 | 0 | Return | `x2` `r0`, `x3` `r1` | Return key | Does not return; the caller of the Invocation resumes |
-| 1 | Grant | — | — | Not implemented: `INVALID_OPERATION` |
-| 2 | Suspend | — | — | Not implemented: `INVALID_OPERATION` |
-| 3 | Resume | — | — | Not implemented: `INVALID_OPERATION` |
-| 4 | Retire | — | `RETIRE` on a named Thread | — |
+| 1 | Grant | — | — | Not implemented: `InvalidOperation` |
+| 2 | Suspend | — | — | Not implemented: `InvalidOperation` |
+| 3 | Resume | — | — | Not implemented: `InvalidOperation` |
+| 4 | Retire | — | `Retire` on a named Thread | — |
 
 ### Return
 
@@ -34,23 +34,23 @@ The key is the same for every Thread in the AddressSpace: `ThreadReturnKey::prov
 | Situation | Outcome |
 |---|---|
 | Key fails lookup | Key error; the call is not ended |
-| Return on a named Thread | `INVALID_OPERATION` |
+| Return on a named Thread | `InvalidOperation` |
 | No call to return from | Fault, kind 1 (`IllegalReturn`) |
 | The calling AddressSpace has been retired | Fault, kind 2 (`ReturnTargetRetired`) |
 
 The two faults are reported at the Return's `svc` through [fault delivery](#fault-delivery); the call is not ended.
 
-`ThreadReturnKey::return_from_invocation(r0, r1)` wraps Return. It returns `Result<Infallible, CapError>`: on success it does not return; a rejection is `Err`; a local `SUCCESS` status is reported as `CapError::UnexpectedReturn` (status 34).
+`ThreadReturnKey::return_from_invocation(r0, r1)` wraps Return. It returns `Result<Infallible, CapError>`: on success it does not return; a rejection is `Err`; a local `Success` status is reported as `CapError::UnexpectedReturn` (status 34).
 
 ### Retire
 
-Tears down a named Thread other than the caller: cancels its pending waits, removes it from the run queue and retires it: every capability to it, including copies, then fails with `INCONSISTENT_KEY` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
+Tears down a named Thread other than the caller: cancels its pending waits, removes it from the run queue and retires it: every capability to it, including copies, then fails with `InconsistentKey` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
 
 | Error | Cause |
 |---|---|
-| `INSUFFICIENT_RIGHTS` | The capability lacks `RETIRE` |
-| `INVALID_OPERATION` | The target is the calling Thread, the capability is the return key, or an argument is nonzero |
-| `INCONSISTENT_KEY` | The Thread was already retired (`ObjectRetired`) |
+| `InsufficientRights` | The capability lacks `Retire` |
+| `InvalidOperation` | The target is the calling Thread, the capability is the return key, or an argument is nonzero |
+| `InconsistentKey` | The Thread was already retired (`ObjectRetired`) |
 
 ## Fault delivery
 

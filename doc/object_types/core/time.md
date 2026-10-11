@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x04` (core) |
 | Backing | Kernel object carved from an Untyped by `Untyped.Retype` |
-| Status | Transfer, Merge, Query |
+| Operations | Transfer, Merge, Query |
 
 ## Purpose
 
@@ -16,11 +16,11 @@ Budgets are in nanoseconds. `u64::MAX` (`libobject::time::INFINITE_BUDGET`) is a
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Transfer | `x2` destination Time, `x3` amount, `x4` priority | `WRITE` on both Times | — |
-| 1 | Merge | `x2` source Time | `WRITE` on both Times | — |
-| 2 | Query | — | `READ` | `x1` budget, `x2` priority |
+| 0 | Transfer | `x2` destination Time, `x3` amount, `x4` priority | `Write` on both Times | — |
+| 1 | Merge | `x2` source Time | `Write` on both Times | — |
+| 2 | Query | — | `Read` | `x1` budget, `x2` priority |
 
-`READ` is rights bit 0 and `WRITE` is bit 1.
+`Read` is rights bit 0 and `Write` is bit 1.
 
 ### Transfer
 
@@ -33,7 +33,7 @@ Invoked on the source Time. Moves `x3` nanoseconds into the destination Time nam
 
 ### Merge
 
-Invoked on the destination Time. Moves all of the budget of the source Time named by `x2` into the invoked Time and leaves the source empty: zero budget and an empty chain. The invoked Time keeps its own chain, so the merged budget runs at its priority, and returning budget to a parent never lowers the parent's priority. The source's chain is discarded, except that an invoked Time with an empty chain, such as a new one, takes the source's chain. An infinite source makes the destination infinite. The emptied source stays in its slot until it is deleted.
+Invoked on the destination Time. Moves all of the budget of the source Time named by `x2` into the invoked Time and leaves the source empty: zero budget and an empty chain. The invoked Time keeps its own chain, so the merged budget runs at its priority, and returning budget to a parent never lowers the parent's priority. The source's chain is discarded, except that an invoked Time with an empty chain, such as a new one, takes the source's chain. An infinite source makes the destination infinite. The emptied source stays in its slot until it is deleted. A transfer from non-infinite source to non-infinite destination can not make destination infinite (it will saturate at `u64::MAX`-1).
 
 ### Query
 
@@ -43,11 +43,11 @@ Returns the remaining budget in `x1` and, in `x2`, the priority at the last chai
 
 | Error | Cause |
 |---|---|
-| `INSUFFICIENT_BUDGET` (35) | A finite source holds less than the amount; `x1` is its remaining budget |
-| `PRIORITY_CHAIN_FULL` (36) | Transfer only: the destination's chain would exceed 16 entries |
-| `INVALID_OPERATION` | Amount 0, priority above `0xFFFF`, the same Time as both operands, Times on different cores, a finite sum reaching `u64::MAX`, a nonzero unused argument, or budget taken out of a Time bound to a live Thread |
-| `INSUFFICIENT_RIGHTS` | Missing `WRITE` on either Time, or `READ` for Query |
-| `TYPE_MISMATCH` | A key does not name a Time |
+| `InsufficientBudget` (35) | A finite source holds less than the amount; `x1` is its remaining budget |
+| `PriorityChainFull` (36) | Transfer only: the destination's chain would exceed 16 entries |
+| `InvalidOperation` | Amount 0, priority above `0xFFFF`, the same Time as both operands, Times on different cores, a nonzero unused argument, or budget taken out of a Time bound to a live Thread |
+| `InsufficientRights` | Missing `Write` on either Time, or `Read` for Query |
+| `TypeMismatch` | A key does not name a Time |
 
 Every failure leaves both Times unchanged.
 

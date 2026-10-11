@@ -64,3 +64,15 @@ A crash inside a called component kills the caller's thread
 
 
 > Threads are created by the boot code; Untyped.Retype cannot create them.
+
+---
+
+`Untyped.Retype` cannot create AddressSpaces.
+
+---
+
+a finite sum reaching `u64::MAX`,  - currently in Time, but it should just saturate?
+
+---
+
+A PageTable also takes a slot in the kernel PageTable pool. - do we need this pool?
