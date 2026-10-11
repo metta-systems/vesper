@@ -1,7 +1,7 @@
 [package]
 name = "uart-pl011"
 
-description = "EL0 driver component for the Arm PL011 UART: serves a serial channel's transmit and receive rings from the UART's interrupts."
+description = "EL0 driver component for the Arm PL011 UART: serves a serial channel's transmit and receive IO channels from the UART's interrupts."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -21,6 +21,7 @@ host-tests = []
 qemu = ["libuser/qemu"]
 
 [dependencies]
+libio-channel = { workspace = true }
 libserial-channel = { workspace = true }
 tock-registers = { workspace = true }
 

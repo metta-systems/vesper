@@ -1566,6 +1566,7 @@ version = "0.0.1"
 dependencies = [
  "tock-registers",
  "vesper-device-driver",
+ "vesper-io-channel",
  "vesper-objects",
  "vesper-print",
  "vesper-serial-channel",
@@ -1588,6 +1589,7 @@ dependencies = [
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",
+ "vesper-io-channel",
  "vesper-kicktest",
  "vesper-machines",
  "vesper-objects",
@@ -1739,6 +1741,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-io-channel"
+version = "0.0.1"
+dependencies = [
+ "vesper-objects",
+]
+
+[[package]]
 name = "vesper-irqchip"
 version = "0.0.1"
 
@@ -1884,6 +1893,9 @@ version = "0.0.1"
 [[package]]
 name = "vesper-serial-channel"
 version = "0.0.1"
+dependencies = [
+ "vesper-io-channel",
+]
 
 [[package]]
 name = "vesper-syscalls"

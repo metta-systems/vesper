@@ -49,3 +49,5 @@ Data written to shared memory before an Advance is visible to a Thread that obse
 ## Planned changes
 
 Finite timeouts for Await, once the kernel has a clock.
+
+An [IRQHandler](irq_handler.md) target, as an alternative to a Notification: each interrupt advances the count, so a Thread sleeping on it learns from one wakeup how many events arrived ([plan](../../capabilities-implementation-plan.md#interrupt-delivery)).

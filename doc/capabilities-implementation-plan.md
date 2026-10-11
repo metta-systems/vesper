@@ -140,6 +140,7 @@ Reference: [communication](capabilities-contract.md#communication-and-deferred-c
 Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
 
 - [ ] Hand the boot IRQControl to an EL0 `irq-manager` component for good.
+- [ ] Let an IRQHandler deliver to an EventCount as well as a Notification, so an interrupt Thread can sleep on either: each delivery advances the count, and one wakeup can drain every event the advance delta reports (for example several received bytes at once) and advance the client's channel count in turn.
 - [ ] Carve PageTable metadata and AddressSpaces from the invoking Untyped (carved-object identity) and remove their boot pools; keep failure atomicity and watermark accounting.
 
 ## Phase 7 — Time and userspace scheduling

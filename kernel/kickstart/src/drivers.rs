@@ -13,7 +13,12 @@
 //!   *i* signalling bit *i*;
 //! - a RAM Untyped, a Time with the budget and priority of its manifest
 //!   entry, and one Thread configured on that Time and started at the
-//!   driver's entry with the init page's address in `x0`.
+//!   driver's entry with the init page's address in `x0`;
+//! - an `EventCount` for the driver's own Threads.
+//!
+//! Each further Thread the driver declares (`driver_threads!`) gets its own
+//! stack and a Time with the same budget and priority, and starts at its
+//! entry with the init page's address in `x0`, right after the first.
 //!
 //! A node whose registers touch a page the kernel keeps is skipped. Kickstart
 //! never calls into a driver.
@@ -37,7 +42,8 @@ use {
     },
     libdevice_driver::{
         DEVICE_WINDOW_VA, DevicePage, DriverInit, INIT_VA, Interrupt, MAX_DEVICE_PAGES,
-        MAX_INTERRUPTS, MAX_REGIONS, PAGE_FRAME, PAGE_UNTYPED, Region, STACK_REGION,
+        MAX_FURTHER_THREADS, MAX_INTERRUPTS, MAX_REGIONS, PAGE_FRAME, PAGE_UNTYPED, Region,
+        STACK_REGION,
     },
     libdevicetree::{
         Node,
@@ -96,13 +102,14 @@ impl BootKeys {
     }
 }
 
-/// A loaded driver instance, before its Thread starts.
+/// A loaded driver instance, before its Threads start.
 pub struct LoadedDriver<'a> {
     pub driver: &'static DriverImage,
     /// The node it drives
     pub node: &'a str,
     pub component: &'a Component,
-    /// The driver's Thread, in the boot table
+    /// The driver's first Thread, the one its interrupts wake, in the boot
+    /// table
     pub thread: RawKey,
     /// What the driver's init page holds
     pub init: &'a DriverInit,
@@ -380,7 +387,7 @@ fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
 }
 
 /// Load one instance of the bundled `drivers` per enabled device tree node
-/// they serve, call `before_start` with each one, then start its Thread.
+/// they serve, call `before_start` with each one, then start its Threads.
 /// Boot-table slots come from `slots`. Returns how many instances started.
 pub fn load_drivers(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
@@ -421,6 +428,15 @@ pub fn load_drivers(
         builder.load_component(&component, image, guard ^ 0x80_0000, slots);
         let mut stacks = builder.stack_region(&component, STACK_REGION, slots);
         let stack = builder.user_stack(&mut stacks, STACK_PAGES, slots);
+        assert!(
+            driver.threads.len() <= MAX_FURTHER_THREADS,
+            "🥾 driver {} declares too many Threads",
+            image.name
+        );
+        let mut further_stack_tops = [0; MAX_FURTHER_THREADS];
+        for top in further_stack_tops.iter_mut().take(driver.threads.len()) {
+            *top = builder.user_stack(&mut stacks, STACK_PAGES, slots).top;
+        }
         let init_page =
             builder.private_pages(component.address_space_key, component.l2, INIT_VA, 1, slots);
         Builder::map_table(
@@ -533,25 +549,53 @@ pub fn load_drivers(
                     panic!("🥾 driver {kind:?} Retype failed: {:?}", error.code())
                 })
         };
-        let thread = retype(ObjectType::THREAD);
-        let time = retype(ObjectType::TIME);
+        // A Thread on a Time of its own, starting at `entry` on `stack_top`;
+        // the Thread and the Time.
+        let mut configure_thread = |entry: u64, stack_top: u64| {
+            let thread = retype(ObjectType::THREAD);
+            let time = retype(ObjectType::TIME);
+            boot_time
+                .transfer(&TimeKey::from_key(time), driver.budget_ns, driver.priority)
+                .unwrap_or_else(|error| {
+                    panic!("🥾 driver Time.Transfer failed: {:?}", error.code())
+                });
+            root_scheduler
+                .configure_thread(
+                    thread,
+                    component.address_space_key,
+                    ThreadStart {
+                        entry,
+                        stack_pointer: stack_top,
+                        argument: INIT_VA,
+                    },
+                    time,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("🥾 driver ConfigureThread failed: {:?}", error.code())
+                });
+            (thread, time)
+        };
+        let (thread, time) =
+            configure_thread(image.entry.expect("a driver has an entry"), stack.top);
+        let mut further_threads = [None; MAX_FURTHER_THREADS];
+        for ((record, &entry), &stack_top) in further_threads
+            .iter_mut()
+            .zip(driver.threads)
+            .zip(&further_stack_tops)
+        {
+            *record = Some(configure_thread(entry, stack_top).0);
+        }
         let notification = retype(ObjectType::NOTIFICATION);
-        boot_time
-            .transfer(&TimeKey::from_key(time), driver.budget_ns, driver.priority)
-            .unwrap_or_else(|error| panic!("🥾 driver Time.Transfer failed: {:?}", error.code()));
-        root_scheduler
-            .configure_thread(
-                thread,
-                component.address_space_key,
-                ThreadStart {
-                    entry: image.entry.expect("a driver has an entry"),
-                    stack_pointer: stack.top,
-                    argument: INIT_VA,
-                },
-                time,
-            )
-            .unwrap_or_else(|error| panic!("🥾 driver ConfigureThread failed: {:?}", error.code()));
+        let event_count = retype(ObjectType::EVENT_COUNT);
         init.time = grant(&component, builder.entry(time), local_slot()).to_wire();
+        init.event_count = move_to(
+            builder,
+            &mut self_table,
+            &component,
+            event_count,
+            local_slot(),
+        )
+        .to_wire();
 
         // ── Interrupts ──────────────────────────────────────────────────
         let tree = device_tree::at_el1().index();
@@ -642,9 +686,11 @@ pub fn load_drivers(
             init: &init,
             first_free_slot: next_slot,
         });
-        root_scheduler
-            .start_thread(thread)
-            .unwrap_or_else(|error| panic!("🥾 driver StartThread failed: {:?}", error.code()));
+        for thread in core::iter::once(thread).chain(further_threads.into_iter().flatten()) {
+            root_scheduler
+                .start_thread(thread)
+                .unwrap_or_else(|error| panic!("🥾 driver StartThread failed: {:?}", error.code()));
+        }
         started += 1;
     }
     started

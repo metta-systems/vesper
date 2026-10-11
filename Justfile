@@ -123,7 +123,7 @@ build-driver-test board='rpi3': (build-components board 'qemu') (_build-test-ker
 [group("test")]
 build-irq-test board='rpi3': (build-components board 'qemu') (_build-test-kernel 'irq-test' board)
 
-# Build the uart-test e2e kernel (the PL011 driver component serving a client in loopback)
+# Build the uart-test e2e kernel (the PL011 driver component serving a client's IO channels in loopback)
 [group("test")]
 build-uart-test board='rpi3': (build-components board 'qemu') (_build-test-kernel 'uart-test' board)
 
@@ -363,7 +363,7 @@ test-driver: (_run-test-kernel 'driver-test' 'build-driver-test')
 [group("test")]
 test-driver-rpi4: (_run-test-kernel 'driver-test' 'build-driver-test rpi4' 'rpi4')
 
-# Boot uart-test: the PL011 driver component serves a client's transmit and receive rings in loopback by interrupts
+# Boot uart-test: the PL011 driver component's two Threads serve a client's transmit and receive IO channels in loopback by interrupts
 [group("test")]
 test-uart: (_run-test-kernel 'uart-test' 'build-uart-test')
 
@@ -424,7 +424,7 @@ test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vespe
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
 [group("test")]
-test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'uart-pl011' 'pl011')
+test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'uart-pl011' 'pl011')
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -470,7 +470,7 @@ clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 
 
 # Lint the boot-platform host tests
 [group("maintenance")]
-clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'uart-pl011' 'pl011')
+clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'uart-pl011' 'pl011')
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]

@@ -6,8 +6,9 @@
  * Each component runs in its own AddressSpace, so all of them share one link
  * base. Every segment starts on a page so the loader can map the bundled
  * pages in place as Frames with per-segment permissions; .bss is allocated
- * separately. .exports holds the PPC export records and .driver_compatible a
- * driver's compatible strings, both read by vesper-image-build.
+ * separately. .exports holds the PPC export records, .driver_compatible a
+ * driver's compatible strings and .driver_threads the entries of its further
+ * Threads, all read by vesper-image-build.
  */
 
 ENTRY(_start)
@@ -49,6 +50,12 @@ SECTIONS
     .driver_compatible :
     {
         KEEP(*(.driver_compatible))
+    }
+
+    /* The entry addresses of a driver's further Threads */
+    .driver_threads : ALIGN(8)
+    {
+        KEEP(*(.driver_threads))
     }
 
     /DISCARD/ :

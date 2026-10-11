@@ -6,16 +6,21 @@
 //! uart-test: the PL011 driver component serving a client in loopback.
 //!
 //! The image bundles the `uart-pl011` driver. Kickstart loads one instance,
-//! for the PL011 `uart0` of raspi3b and raspi4b. Before it starts, the boot
-//! Thread attaches to it as a client (see `libserial-channel`): it installs
-//! a channel page asking for loopback and a Notification for the driver to
-//! signal, and keeps a doorbell key to the driver's own Notification.
+//! for the PL011 `uart0` of raspi3b and raspi4b. Before its Threads start,
+//! the boot Thread attaches to it as a client (see `libserial-channel`): it
+//! installs a control page asking for loopback, the data area's Frames, and
+//! the channels' `EventCount`s.
 //!
 //! The boot Thread then streams [`MESSAGE_BYTES`] bytes of text through the
-//! channel's transmit ring, several times the ring and far more than the
-//! UART's FIFOs, ringing the doorbell as it queues them, and reads every
-//! byte back from the receive ring as the driver moves the looped-back bytes
-//! there from its receive interrupts. Nothing may be dropped or reordered.
+//! transmit channel, in packets of two records from a few buffers it reuses
+//! as they complete, far more than the UART's FIFOs hold. It keeps receive
+//! buffers submitted, checks every byte the driver stores in them from its
+//! receive interrupts, and resubmits each as it comes back. Nothing may be
+//! dropped or reordered, and every transmit packet must come back whole.
+//!
+//! The boot Thread reaches the data area through the kernel's view of
+//! physical memory, while every record it hands the driver names the
+//! agreed `DATA_AREA_VA` addresses the driver maps.
 //!
 //! In-guest assertions and the QEMU semihosting exit status are the result
 //! (`just test-uart`, `just test-uart-rpi4`).
@@ -38,18 +43,23 @@ use {
     libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::ttbr,
-        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
+        keys::{SlotCursor, boot_key},
         paging::image_table_count,
     },
     libdevice_driver::local_key,
+    libio_channel::{Event, IoRec, NoEvent, Packet, Producer, WaitError},
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
+        CapError, EventCountKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,
     },
     libqemu::semihosting as semi,
-    libserial_channel::{CHANNEL_FRAME_SLOT, CLIENT_SLOT, DOORBELL_BIT, LOOPBACK, SerialChannel},
+    libserial_channel::{
+        CONTROL_FRAME_SLOT, DATA_AREA, DATA_AREA_VA, DATA_FRAME_SLOT, DATA_PAGES, LOOPBACK,
+        RECEIVE_COMPLETED_SLOT, SLOTS, SerialChannel, TRANSMIT_COMPLETED_SLOT,
+        TRANSMIT_SUBMITTED_SLOT,
+    },
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
 };
 
@@ -71,6 +81,36 @@ const MESSAGE_BYTES: usize = 3000;
 /// Characters per line of the stream.
 const LINE_BYTES: usize = 64;
 
+/// Transmit buffers, each two records of [`TRANSMIT_RECORD_BYTES`] at the
+/// start of the data area, [`TRANSMIT_BUFFER_STRIDE`] apart.
+const TRANSMIT_BUFFERS: usize = 4;
+const TRANSMIT_RECORD_BYTES: u64 = 120;
+const TRANSMIT_BUFFER_STRIDE: u64 = 256;
+
+/// Receive buffers of one record of [`RECEIVE_BUFFER_BYTES`] each, from the
+/// middle of the data area.
+const RECEIVE_BUFFERS: usize = SLOTS / 2;
+const RECEIVE_BUFFER_BYTES: u64 = 64;
+const RECEIVE_AREA_VA: u64 = DATA_AREA_VA + DATA_PAGES as u64 * 4096 / 2;
+
+const _: () =
+    assert!(TRANSMIT_BUFFERS as u64 * TRANSMIT_BUFFER_STRIDE <= RECEIVE_AREA_VA - DATA_AREA_VA);
+const _: () = assert!(TRANSMIT_RECORD_BYTES * 2 <= TRANSMIT_BUFFER_STRIDE);
+// Every buffer of either kind can be out at once.
+const _: () = assert!(TRANSMIT_BUFFERS * 3 <= SLOTS && RECEIVE_BUFFERS * 2 <= SLOTS);
+
+/// An empty receive buffer, tagged with its index.
+fn receive_buffer(index: usize) -> Packet {
+    Packet::new(
+        index as u64,
+        &[IoRec {
+            base: RECEIVE_AREA_VA + index as u64 * RECEIVE_BUFFER_BYTES,
+            len: RECEIVE_BUFFER_BYTES,
+        }],
+    )
+    .expect("one record")
+}
+
 /// Byte `index` of the stream: lines of printable ASCII in an order a
 /// dropped or repeated byte shows up in. QEMU's PL011 also sends looped-back
 /// bytes to its console, so the stream stays readable there.
@@ -80,6 +120,110 @@ fn message_byte(index: usize) -> u8 {
     } else {
         // Below 95, so the conversion never fails.
         b' ' + u8::try_from(index.wrapping_mul(31).wrapping_add(7) % 95).unwrap_or_default()
+    }
+}
+
+/// The client's side of the stream: which bytes went out and came back.
+struct Stream<'data, Data: Fn(u64) -> *mut u8> {
+    /// The boot Thread's view of a data area address
+    data: &'data Data,
+    /// Bytes put in transmit packets
+    queued: usize,
+    /// Bytes checked from receive buffers
+    received: usize,
+    free_transmit: [bool; TRANSMIT_BUFFERS],
+    packets_sent: usize,
+    buffers_filled: usize,
+}
+
+impl<Data: Fn(u64) -> *mut u8> Stream<'_, Data> {
+    /// Whether a transmit packet is still out.
+    fn transmitting(&self) -> bool {
+        self.free_transmit.contains(&false)
+    }
+
+    /// Fill every free transmit buffer with the next bytes of the stream
+    /// and submit them.
+    fn queue(&mut self, submit: &mut Producer<'_, SLOTS, EventCountKey>) {
+        for (index, free) in self.free_transmit.iter_mut().enumerate() {
+            if !*free || self.queued >= MESSAGE_BYTES {
+                continue;
+            }
+            let base = DATA_AREA_VA + index as u64 * TRANSMIT_BUFFER_STRIDE;
+            let mut recs = [IoRec::default(); 2];
+            let mut count = 0;
+            for (rec, offset) in recs.iter_mut().zip([0, TRANSMIT_RECORD_BYTES]) {
+                let len = TRANSMIT_RECORD_BYTES.min((MESSAGE_BYTES - self.queued) as u64);
+                if len == 0 {
+                    break;
+                }
+                *rec = IoRec {
+                    base: base + offset,
+                    len,
+                };
+                for address in rec.base..rec.base + len {
+                    // SAFETY: the data area page is the boot Thread's, and
+                    // the driver holds no packet in this buffer.
+                    unsafe {
+                        (self.data)(address).write_volatile(message_byte(self.queued));
+                    }
+                    self.queued += 1;
+                }
+                count += 1;
+            }
+            let packet = Packet::new(index as u64, &recs[..count]).expect("one or two records");
+            submit.put(&packet).expect("room for every transmit buffer");
+            *free = false;
+        }
+        submit
+            .signal()
+            .unwrap_or_else(|error| panic!("transmit Advance failed: {:?}", error.code()));
+    }
+
+    /// A transmit packet came back: it must be whole.
+    fn sent(&mut self, packet: &Packet) {
+        let index = usize::try_from(packet.value()).expect("a buffer index");
+        assert!(
+            !self.free_transmit[index],
+            "transmit buffer {index} came back twice"
+        );
+        let base = DATA_AREA_VA + index as u64 * TRANSMIT_BUFFER_STRIDE;
+        for (rec, offset) in packet.recs().iter().zip([0, TRANSMIT_RECORD_BYTES]) {
+            assert_eq!(rec.base, base + offset, "a transmit record moved");
+            assert!(rec.len > 0, "a transmit record came back cut");
+        }
+        self.free_transmit[index] = true;
+        self.packets_sent += 1;
+    }
+
+    /// A receive buffer came back: check its bytes and resubmit it.
+    fn filled<Submitted: Event>(
+        &mut self,
+        packet: &Packet,
+        give_buffer: &mut Producer<'_, SLOTS, Submitted>,
+    ) {
+        let index = usize::try_from(packet.value()).expect("a buffer index");
+        let [rec] = packet.recs() else {
+            panic!("receive buffer {index} came back with other records");
+        };
+        let given = receive_buffer(index).recs()[0];
+        assert_eq!(rec.base, given.base, "receive buffer {index} moved");
+        assert!(rec.len <= given.len, "receive buffer {index} grew");
+        for offset in 0..rec.len {
+            // SAFETY: the driver gave the buffer back.
+            let byte = unsafe { (self.data)(rec.base + offset).read_volatile() };
+            assert_eq!(
+                byte,
+                message_byte(self.received),
+                "byte {} came back changed",
+                self.received
+            );
+            self.received += 1;
+        }
+        self.buffers_filled += 1;
+        give_buffer
+            .put(&receive_buffer(index))
+            .expect("room for every receive buffer");
     }
 }
 
@@ -136,29 +280,42 @@ pub fn run() -> ! {
         .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
 
     // ── The client's side of the channel ──────────────────────────────────
-    let channel_frame = builder.retype_frames(slots.take(1), 1);
-    let channel_paddr = Builder::frame_paddr(channel_frame);
+    let control_frame = builder.retype_frames(slots.take(1), 1);
+    let control_paddr = Builder::frame_paddr(control_frame);
     // SAFETY: a fresh, zeroed Frame the boot Thread holds; the direct map
     // covers it for the whole test, and the driver maps the same page.
     let channel =
-        unsafe { SerialChannel::at(PhysAddr::new(channel_paddr).user_to_kernel().as_u64()) };
+        unsafe { SerialChannel::at(PhysAddr::new(control_paddr).user_to_kernel().as_u64()) };
     channel.config.store(LOOPBACK, Ordering::Release);
-    let client = untyped
-        .retype(
-            ObjectType::NOTIFICATION,
-            0,
-            0,
-            1,
-            &self_table,
-            slots.take(1),
-            Rights::all(),
-        )
-        .unwrap_or_else(|error| panic!("client Notification Retype failed: {:?}", error.code()));
-    let client_id = builder
-        .entry(client)
-        .carved_id()
-        .unwrap_or_else(|error| panic!("client identity: {:?}", error.code()));
-    let doorbell_slot = slots.take(1);
+    let data_first = slots.take(DATA_PAGES);
+    let data_incarnation = builder.retype_frames(data_first, DATA_PAGES).incarnation();
+    let data_paddr = Builder::contiguous_frames(data_first, data_incarnation, DATA_PAGES);
+    // The boot Thread's view of the data area byte at `address`.
+    let data = |address: u64| {
+        assert!(DATA_AREA.contains(&IoRec {
+            base: address,
+            len: 1
+        }));
+        PhysAddr::new(data_paddr + (address - DATA_AREA_VA))
+            .user_to_kernel()
+            .as_u64() as *mut u8
+    };
+    let mut new_event_count = |what: &str| {
+        untyped
+            .retype(
+                ObjectType::EVENT_COUNT,
+                0,
+                0,
+                1,
+                &self_table,
+                slots.take(1),
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("{what} EventCount Retype failed: {:?}", error.code()))
+    };
+    let transmit_submitted = new_event_count("transmit submit");
+    let transmit_completed = new_event_count("transmit completion");
+    let receive_completed = new_event_count("receive completion");
 
     let _idle = spawn_idle(
         nucleus,
@@ -168,7 +325,6 @@ pub fn run() -> ! {
     );
 
     // ── Load the driver and attach before it starts ───────────────────────
-    let mut doorbell = None;
     let started = load_drivers(
         nucleus,
         &builder,
@@ -178,75 +334,109 @@ pub fn run() -> ! {
         |loaded: &LoadedDriver<'_>| {
             let init = loaded.init;
             assert_eq!(init.interrupts().len(), 1, "{}: one interrupt", loaded.node);
-            let frame = self_table
-                .copy_derive(
-                    channel_frame,
-                    &loaded.component.table(),
-                    CHANNEL_FRAME_SLOT,
-                    Rights(Rights::READ | Rights::WRITE),
-                )
-                .unwrap_or_else(|error| panic!("channel Frame copy failed: {:?}", error.code()));
-            assert_eq!(frame, local_key(init.table, CHANNEL_FRAME_SLOT));
-            // SAFETY: the driver's retained table, before its Thread runs;
+            let driver_table = loaded.component.table();
+            let give_frame = |frame: RawKey, slot: u32| {
+                let copy = self_table
+                    .copy_derive(
+                        frame,
+                        &driver_table,
+                        slot,
+                        Rights(Rights::READ | Rights::WRITE),
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("channel Frame copy failed: {:?}", error.code())
+                    });
+                assert_eq!(copy, local_key(init.table, slot));
+            };
+            give_frame(control_frame, CONTROL_FRAME_SLOT);
+            for page in 0..DATA_PAGES {
+                give_frame(
+                    boot_key(data_first + page, data_incarnation),
+                    DATA_FRAME_SLOT + page,
+                );
+            }
+            // SAFETY: the driver's retained table, before its Threads run;
             // no invocation overlaps these bootstrap grants.
             let driver_table = unsafe { &mut *(loaded.component.table_addr as *mut KeyTable) };
-            let signal = driver_table
-                .insert(
-                    KeySlot(CLIENT_SLOT),
-                    KeyEntry::new_carved(client_id, Rights(Rights::SEND), 1),
-                    loaded.component.guard,
-                )
-                .unwrap_or_else(|failure| {
-                    panic!("client key grant failed: {:?}", failure.error.code())
-                });
-            assert_eq!(signal, local_key(init.table, CLIENT_SLOT));
-            let wakeups = driver_table
-                .lookup(RawKey::from_wire(init.notification), loaded.component.guard)
-                .and_then(KeyEntry::carved_id)
-                .unwrap_or_else(|error| panic!("driver Notification: {:?}", error.code()));
-            // SAFETY: the live boot table, borrowed for this grant only.
-            doorbell = Some(
-                unsafe { &mut *(keytable_addr as *mut KeyTable) }
+            for (event_count, rights, slot) in [
+                (transmit_submitted, Rights::RECV, TRANSMIT_SUBMITTED_SLOT),
+                (transmit_completed, Rights::SEND, TRANSMIT_COMPLETED_SLOT),
+                (receive_completed, Rights::SEND, RECEIVE_COMPLETED_SLOT),
+            ] {
+                let id = builder
+                    .entry(event_count)
+                    .carved_id()
+                    .unwrap_or_else(|error| panic!("EventCount identity: {:?}", error.code()));
+                let key = driver_table
                     .insert(
-                        KeySlot(doorbell_slot),
-                        KeyEntry::new_carved(wakeups, Rights(Rights::SEND), DOORBELL_BIT),
-                        BOOT_TABLE_GUARD,
+                        KeySlot(slot),
+                        KeyEntry::new_carved(id, Rights(rights), 0),
+                        loaded.component.guard,
                     )
                     .unwrap_or_else(|failure| {
-                        panic!("doorbell grant failed: {:?}", failure.error.code())
-                    }),
-            );
+                        panic!("EventCount grant failed: {:?}", failure.error.code())
+                    });
+                assert_eq!(key, local_key(init.table, slot));
+            }
         },
     );
     assert_eq!(started, 1);
-    let doorbell = NotificationKey::from_key(doorbell.expect("the driver was loaded"));
-    let client = NotificationKey::from_key(client);
 
     // ── Stream through the loopback ───────────────────────────────────────
-    let (mut queued, mut received, mut wakeups) = (0, 0, 0_u32);
-    while received < MESSAGE_BYTES {
-        let before = queued;
-        while queued < MESSAGE_BYTES && channel.transmit.push(message_byte(queued)) {
-            queued += 1;
+    let (mut submit, mut sent) = channel.transmit.client(
+        EventCountKey::from_key(transmit_submitted),
+        EventCountKey::from_key(transmit_completed),
+    );
+    let (mut give_buffer, mut filled) = channel
+        .receive
+        .client(NoEvent, EventCountKey::from_key(receive_completed));
+    for index in 0..RECEIVE_BUFFERS {
+        give_buffer
+            .put(&receive_buffer(index))
+            .expect("room for every buffer");
+    }
+
+    let mut stream = Stream {
+        data: &data,
+        queued: 0,
+        received: 0,
+        free_transmit: [true; TRANSMIT_BUFFERS],
+        packets_sent: 0,
+        buffers_filled: 0,
+    };
+    let mut wakeups = 0_u32;
+    while stream.received < MESSAGE_BYTES || stream.transmitting() {
+        stream.queue(&mut submit);
+        let mut progressed = false;
+        while let Some(packet) = sent.get().expect("a consistent completion FIFO") {
+            stream.sent(&packet);
+            progressed = true;
         }
-        if queued != before {
-            doorbell
-                .signal(0)
-                .unwrap_or_else(|error| panic!("doorbell Signal failed: {:?}", error.code()));
+        while let Some(packet) = filled.get().expect("a consistent completion FIFO") {
+            stream.filled(&packet, &mut give_buffer);
+            progressed = true;
         }
-        while let Some(byte) = channel.receive.pop() {
-            assert_eq!(
-                byte,
-                message_byte(received),
-                "byte {received} came back changed"
-            );
-            received += 1;
+        if progressed {
+            continue;
         }
-        if received < MESSAGE_BYTES {
-            client
-                .wait(NotificationKey::WAIT_INFINITE)
-                .unwrap_or_else(|error| panic!("client Wait failed: {:?}", error.code()));
-            wakeups += 1;
+        assert_eq!(
+            channel.dropped.load(Ordering::Acquire),
+            0,
+            "no byte dropped"
+        );
+        // Bytes still in flight come back on the receive channel; otherwise
+        // the transmit buffers are what the stream waits for.
+        wakeups += 1;
+        let wait_failed = |error: WaitError<CapError>| match error {
+            WaitError::Corrupt => panic!("a garbled completion FIFO"),
+            WaitError::Event(error) => panic!("completion Await failed: {:?}", error.code()),
+        };
+        if stream.received < stream.queued {
+            let packet = filled.wait().unwrap_or_else(wait_failed);
+            stream.filled(&packet, &mut give_buffer);
+        } else {
+            let packet = sent.wait().unwrap_or_else(wait_failed);
+            stream.sent(&packet);
         }
     }
     assert_eq!(
@@ -254,10 +444,16 @@ pub fn run() -> ! {
         0,
         "no byte dropped"
     );
-    assert!(channel.transmit.is_empty() && channel.receive.is_empty());
-    // More bytes than the rings hold: the client had to wait for the driver.
+    assert_eq!(stream.received, MESSAGE_BYTES);
+    assert!(channel.transmit.submit.is_empty() && channel.transmit.complete.is_empty());
+    assert!(channel.receive.complete.is_empty());
+    // More bytes than the buffers hold: the client had to wait for the driver.
     assert!(wakeups > 0, "the client never waited for the driver");
-    semi::println!("uart-test: {MESSAGE_BYTES} bytes looped back, {wakeups} client wakeups");
+    semi::println!(
+        "uart-test: {MESSAGE_BYTES} bytes looped back in {} transmit packets and {} receive buffers, {wakeups} client waits",
+        stream.packets_sent,
+        stream.buffers_filled
+    );
 
     semi::println!("uart-test: ✅ PL011 driver served transmit and receive in loopback");
     cfg_if::cfg_if! {

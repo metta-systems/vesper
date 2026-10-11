@@ -1,7 +1,7 @@
 [package]
 name = "vesper-serial-channel"
 
-description = "What a serial driver and its client agree on: the shared channel page with its transmit and receive rings, and the keys a client installs in the driver's table."
+description = "What a serial driver and its client agree on: the control page with its transmit and receive IO channels, the data area's address, and the keys a client installs in the driver's table."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -13,6 +13,9 @@ repository = { workspace = true }
 version = { workspace = true }
 
 publish = false
+
+[dependencies]
+libio-channel = { workspace = true }
 
 [features]
 # Opt in to standard host integration tests, not the freestanding test-device workflow.

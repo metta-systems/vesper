@@ -1,0 +1,35 @@
+[package]
+name = "vesper-io-channel"
+
+description = "IO channels between a server, such as a driver, and its client: Rbufs-style FIFOs of IO_Rec packets describing buffers in a shared fbuf data area, with EventCounts to wait on."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+# EventCount keys only exist on Vesper; host tests bring their own events.
+[target.'cfg(target_os = "vesper")'.dependencies]
+libobject = { workspace = true }
+
+# Shared by EL0 servers and their clients; host integration tests opt in above.
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "io_channel"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

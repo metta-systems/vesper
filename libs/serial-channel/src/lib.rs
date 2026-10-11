@@ -1,121 +1,96 @@
 #![no_std]
 
-//! What a serial driver and its client agree on.
+//! What a serial driver and its client agree on: two IO channels
+//! (`libio-channel`) in one shared control page, a [`SerialChannel`], with
+//! the bytes themselves in a data area of [`DATA_PAGES`] pages mapped at
+//! [`DATA_AREA_VA`] on both sides.
 //!
-//! A client talks to a serial driver through one shared page, a
-//! [`SerialChannel`]: a [`Ring`] of bytes to transmit, which the client fills
-//! and the driver drains into the device, and a ring of received bytes, which
-//! the driver fills from the device and the client drains. An all-zero page
-//! is an empty channel, so a freshly retyped Frame needs no initialization.
+//! - `transmit` runs in transmit mode: the client submits packets of bytes
+//!   to send and gets each back once the driver handed all of it to the
+//!   device.
+//! - `receive` runs in receive mode: the client submits empty buffers and
+//!   gets them back holding received bytes, each record's `len` cut to the
+//!   bytes stored there. The driver returns a buffer as soon as the device
+//!   has nothing more to give, so a packet may come back part full. Bytes
+//!   that arrive while no buffer is submitted are dropped and counted in
+//!   [`SerialChannel::dropped`].
 //!
-//! The client attaches before the driver's Thread starts, by installing in
+//! The client attaches before the driver's Threads start, by installing in
 //! the driver's table:
 //!
-//! - at [`CHANNEL_FRAME_SLOT`], a read/write Frame holding the page; the
-//!   driver maps it itself;
-//! - at [`CLIENT_SLOT`], a Notification key (`SEND`) the driver signals
-//!   whenever it moved bytes in either ring.
+//! - at [`CONTROL_FRAME_SLOT`], a read/write Frame holding the control page;
+//! - from [`DATA_FRAME_SLOT`], [`DATA_PAGES`] read/write Frames holding the
+//!   data area, in address order;
+//! - at [`TRANSMIT_SUBMITTED_SLOT`], an `EventCount` key (`RECV`) the client
+//!   advances after submitting transmit packets;
+//! - at [`TRANSMIT_COMPLETED_SLOT`] and [`RECEIVE_COMPLETED_SLOT`],
+//!   `EventCount` keys (`SEND`) the driver advances after completing
+//!   packets of either channel.
 //!
-//! The client rings the driver's own Notification with a key badged
-//! [`DOORBELL_BIT`] after it queued bytes to transmit. A driver whose
-//! [`CHANNEL_FRAME_SLOT`] is empty has no client and only keeps its device
+//! Nobody sleeps on `receive.submit`: the driver looks for buffers when the
+//! device has received bytes, so submitting empties needs no signal.
+//!
+//! All Frames and `EventCount`s start out fresh: an all-zero page is an idle
+//! channel, and every count starts at zero. A driver whose
+//! [`CONTROL_FRAME_SLOT`] is empty has no client and only keeps its device
 //! quiet.
 
-use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+use {
+    core::sync::atomic::{AtomicU64, Ordering},
+    libio_channel::{Channel, DataArea},
+};
 
-/// Slot of the driver's table holding the channel page's Frame.
-pub const CHANNEL_FRAME_SLOT: u32 = 248;
-/// Slot of the driver's table holding the client's Notification key.
-pub const CLIENT_SLOT: u32 = 249;
-/// The bit a client's doorbell key signals on the driver's Notification. The
-/// driver's interrupts signal the bits from 0 up, so a serial device node
-/// has fewer than 15 interrupts.
-pub const DOORBELL_BIT: u16 = 1 << 15;
+/// Slot of the driver's table holding the control page's Frame.
+pub const CONTROL_FRAME_SLOT: u32 = 248;
+/// Slot of the driver's table holding the data area's first Frame.
+pub const DATA_FRAME_SLOT: u32 = 240;
+/// Slot of the driver's table holding the transmit channel's submit
+/// `EventCount`.
+pub const TRANSMIT_SUBMITTED_SLOT: u32 = 249;
+/// Slot of the driver's table holding the transmit channel's completion
+/// `EventCount`.
+pub const TRANSMIT_COMPLETED_SLOT: u32 = 250;
+/// Slot of the driver's table holding the receive channel's completion
+/// `EventCount`.
+pub const RECEIVE_COMPLETED_SLOT: u32 = 251;
+
+/// Pages of the data area.
+pub const DATA_PAGES: u32 = 4;
+
+/// Where the driver maps the control page: in its device window, above
+/// every register page (`libdevice-driver`).
+pub const CONTROL_VA: u64 = 0x3801_0000;
+
+/// Where both sides map the data area: the address every [`IoRec`] names.
+///
+/// [`IoRec`]: libio_channel::IoRec
+pub const DATA_AREA_VA: u64 = CONTROL_VA + 4096;
+
+/// The data area.
+pub const DATA_AREA: DataArea = DataArea {
+    base: DATA_AREA_VA,
+    len: DATA_PAGES as u64 * 4096,
+};
 
 /// [`SerialChannel::config`]: the device echoes every transmitted byte back
 /// to its own receiver instead of sending it out.
 pub const LOOPBACK: u64 = 1 << 0;
 
-/// Capacity of each ring, in bytes.
-pub const RING_BYTES: usize = 1024;
+/// Slots of each FIFO.
+pub const SLOTS: usize = 32;
 
-/// A single-producer, single-consumer byte ring in shared memory.
-///
-/// `written` and `read` count bytes ever written and read, wrapping; their
-/// difference is the fill level. Each side only advances its own counter, so
-/// a peer that corrupts the other's counter can only make the ring look full
-/// or empty, never index outside it.
-#[repr(C)]
-pub struct Ring {
-    written: AtomicU32,
-    read: AtomicU32,
-    data: [AtomicU8; RING_BYTES],
-}
-
-impl Ring {
-    pub const fn new() -> Self {
-        Self {
-            written: AtomicU32::new(0),
-            read: AtomicU32::new(0),
-            data: [const { AtomicU8::new(0) }; RING_BYTES],
-        }
-    }
-
-    /// Bytes waiting to be read.
-    pub fn len(&self) -> usize {
-        let written = self.written.load(Ordering::Acquire);
-        let read = self.read.load(Ordering::Acquire);
-        written.wrapping_sub(read) as usize
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Append `byte`, unless the ring is full. Producer side only.
-    pub fn push(&self, byte: u8) -> bool {
-        let written = self.written.load(Ordering::Relaxed);
-        let read = self.read.load(Ordering::Acquire);
-        if written.wrapping_sub(read) as usize >= RING_BYTES {
-            return false;
-        }
-        self.data[written as usize % RING_BYTES].store(byte, Ordering::Relaxed);
-        self.written
-            .store(written.wrapping_add(1), Ordering::Release);
-        true
-    }
-
-    /// Take the oldest byte, if any. Consumer side only.
-    pub fn pop(&self) -> Option<u8> {
-        let read = self.read.load(Ordering::Relaxed);
-        let written = self.written.load(Ordering::Acquire);
-        if read == written {
-            return None;
-        }
-        let byte = self.data[read as usize % RING_BYTES].load(Ordering::Relaxed);
-        self.read.store(read.wrapping_add(1), Ordering::Release);
-        Some(byte)
-    }
-}
-
-impl Default for Ring {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// The shared channel page.
+/// The shared control page.
 #[repr(C)]
 pub struct SerialChannel {
     /// Device options, written by the client before the driver starts
     /// ([`LOOPBACK`]).
     pub config: AtomicU64,
-    /// Received bytes the driver dropped because `receive` was full.
+    /// Received bytes the driver dropped for want of a receive buffer.
     pub dropped: AtomicU64,
     /// Bytes from the client to the device.
-    pub transmit: Ring,
+    pub transmit: Channel<SLOTS>,
     /// Bytes from the device to the client.
-    pub receive: Ring,
+    pub receive: Channel<SLOTS>,
 }
 
 const _: () = assert!(size_of::<SerialChannel>() <= 4096);
@@ -125,8 +100,8 @@ impl SerialChannel {
         Self {
             config: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
-            transmit: Ring::new(),
-            receive: Ring::new(),
+            transmit: Channel::new(),
+            receive: Channel::new(),
         }
     }
 

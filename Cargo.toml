@@ -33,6 +33,7 @@ members = [
   "libs/exception",
   "libs/image",
   "libs/image-build",
+  "libs/io-channel",
   "libs/irqchip",
   "libs/kicktest",
   "libs/kernel-state",
@@ -107,6 +108,7 @@ libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
 libimage = { path = "libs/image", package = "vesper-image" }
 libimage-build = { path = "libs/image-build", package = "vesper-image-build" }
+libio-channel = { path = "libs/io-channel", package = "vesper-io-channel" }
 libirqchip = { path = "libs/irqchip", package = "vesper-irqchip" }
 libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }

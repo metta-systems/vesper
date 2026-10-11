@@ -5,11 +5,19 @@
 //!
 //! The UART runs with its FIFOs on and three interrupt sources: receive
 //! (the receive FIFO reached its trigger level), receive timeout (bytes wait
-//! in a FIFO below the level) and, while the channel has bytes to send,
-//! transmit (the transmit FIFO drained to its level). [`Pl011::service`]
-//! moves bytes between the FIFOs and the channel's rings once per interrupt
-//! or doorbell; the line is level-triggered, so the transmit interrupt is
-//! masked whenever nothing waits to be sent.
+//! in a FIFO below the level) and transmit (the transmit FIFO drained
+//! through its level). The driver serves it from two Threads:
+//!
+//! - the interrupt Thread takes the pending sources
+//!   ([`Pl011::take_interrupts`]) and moves received bytes into the
+//!   client's receive buffers ([`Pl011::receive`] through a [`Receiver`]);
+//! - the transmit Thread writes the client's transmit packets to the FIFO
+//!   one burst at a time ([`Pl011::transmit`]), waiting for the transmit
+//!   interrupt between bursts.
+//!
+//! The two touch disjoint registers once the UART is configured: the
+//! interrupt Thread reads the data and status registers and clears
+//! interrupts, the transmit Thread writes the data register.
 //!
 //! The baud rate and the UART clock stay as the firmware set them: the
 //! driver rewrites only the line control, which latches the divisors
@@ -19,8 +27,9 @@
 //! BCM2835/BCM2711 ARM Peripherals manuals, QEMU `hw/char/pl011.c`.
 
 use {
-    core::sync::atomic::Ordering,
-    libserial_channel::SerialChannel,
+    core::sync::atomic::{AtomicU64, Ordering},
+    libio_channel::{Consumer, Corrupt, Cursor, DataArea, Event, NoEvent, Packet, Producer},
+    libserial_channel::{SLOTS, SerialChannel},
     tock_registers::{
         interfaces::{ReadWriteable, Readable, Writeable},
         register_bitfields, register_structs,
@@ -205,30 +214,123 @@ register_structs! {
 /// `PART_NUMBER0` of every PL011.
 pub const PART_NUMBER0: u32 = 0x11;
 
-/// Most bytes one [`Pl011::service`] pass takes from the receive FIFO: a
+/// Most bytes one [`Pl011::receive`] pass takes from the receive FIFO: a
 /// device that keeps receiving cannot hold the driver in one pass.
 pub const RECEIVE_BURST: usize = 32;
 
-/// Most bytes one [`Pl011::service`] pass writes to the transmit FIFO: half
-/// the shallowest FIFO, so in loopback the receive FIFO never overflows
-/// before the next pass drains it.
+/// Most bytes one [`Pl011::transmit`] burst writes to the transmit FIFO:
+/// half the shallowest FIFO, so in loopback the receive FIFO never
+/// overflows before the receive side drains it.
 pub const TRANSMIT_BURST: usize = 8;
 
-/// What one [`Pl011::service`] pass did.
+/// The interrupt sources [`Pl011::take_interrupts`] found pending.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Serviced {
-    /// Bytes moved from the receive FIFO to the channel
-    pub received: usize,
-    /// Bytes moved from the channel to the transmit FIFO
-    pub transmitted: usize,
-    /// Received bytes dropped because the channel's receive ring was full
+pub struct Interrupts {
+    /// Received bytes wait, or a receive error happened
+    pub receive: bool,
+    /// The transmit FIFO drained to its trigger level
+    pub transmit: bool,
+}
+
+/// What one [`Pl011::receive`] pass did.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Received {
+    /// Bytes stored in the client's receive buffers
+    pub stored: usize,
+    /// Bytes dropped for want of a receive buffer
     pub dropped: usize,
 }
 
-impl Serviced {
-    /// Whether the client has something new to look at.
-    pub fn moved_bytes(&self) -> bool {
-        self.received + self.transmitted > 0
+/// The driver's side of a serial channel's `receive` IO channel: it takes
+/// the empty buffers the client submits, fills them byte by byte, and
+/// completes them back.
+pub struct Receiver<'channel, Completed: Event> {
+    requests: Consumer<'channel, SLOTS, NoEvent>,
+    completions: Producer<'channel, SLOTS, Completed>,
+    dropped: &'channel AtomicU64,
+    area: DataArea,
+    /// The buffer being filled and how far
+    filling: Option<(Packet, Cursor)>,
+}
+
+impl<'channel, Completed: Event> Receiver<'channel, Completed> {
+    /// Serve `channel`'s receive side, advancing `completed` after
+    /// completing buffers, which must lie in `area`.
+    ///
+    /// # Safety
+    ///
+    /// `area` is mapped read/write for as long as the receiver is used.
+    pub unsafe fn new(
+        channel: &'channel SerialChannel,
+        completed: Completed,
+        area: DataArea,
+    ) -> Self {
+        let (requests, completions) = channel.receive.server(NoEvent, completed);
+        Self {
+            requests,
+            completions,
+            dropped: &channel.dropped,
+            area,
+            filling: None,
+        }
+    }
+
+    /// Give `packet` back to the client, cut to the bytes stored. A client
+    /// with more buffers out than the FIFO holds loses the extra ones.
+    fn complete(&mut self, mut packet: Packet, cursor: Cursor) {
+        cursor.cut(&mut packet);
+        let _lost = self.completions.put(&packet);
+    }
+
+    /// Store `byte` in the client's buffers; `false` if none is submitted.
+    fn store(&mut self, byte: u8) -> bool {
+        loop {
+            let (packet, mut cursor) = match self.filling.take() {
+                Some(filling) => filling,
+                None => match self.requests.get() {
+                    Ok(Some(packet)) if self.area.holds(&packet) => (packet, Cursor::START),
+                    // A buffer outside the data area comes back empty.
+                    Ok(Some(packet)) => {
+                        self.complete(packet, Cursor::START);
+                        continue;
+                    }
+                    Ok(None) | Err(Corrupt) => return false,
+                },
+            };
+            let Some(address) = cursor.next_address(&packet) else {
+                // A buffer without room comes back as it was.
+                self.complete(packet, cursor);
+                continue;
+            };
+            // SAFETY: `area` holds the packet and is mapped read/write
+            // (`Self::new`); the client gave the buffer to the driver until
+            // it comes back.
+            unsafe {
+                (address as *mut u8).write_volatile(byte);
+            }
+            if cursor.is_at_end(&packet) {
+                self.complete(packet, cursor);
+            } else {
+                self.filling = Some((packet, cursor));
+            }
+            return true;
+        }
+    }
+
+    /// Complete the buffer being filled, if anything was stored in it.
+    fn flush(&mut self) {
+        if let Some((packet, cursor)) = self.filling.take() {
+            if cursor.passed(&packet) > 0 {
+                self.complete(packet, cursor);
+            } else {
+                self.filling = Some((packet, cursor));
+            }
+        }
+    }
+
+    /// Tell the client about the buffers completed since the last signal.
+    pub fn signal(&mut self) -> Result<(), Completed::Error> {
+        self.completions.signal()
     }
 }
 
@@ -248,11 +350,14 @@ impl<'registers> Pl011<'registers> {
         self.registers.PeriphId0.read(PERIPH_ID0::PART_NUMBER0) == PART_NUMBER0
     }
 
-    /// Bring the UART up for interrupt-driven use: 8N1 with FIFOs, receive
-    /// and receive-timeout interrupts unmasked, the transmit interrupt
-    /// masked until there is something to send, DMA off, and the
-    /// transmitter and receiver on, looped back to each other if
+    /// Bring the UART up for interrupt-driven use: 8N1 with FIFOs, the
+    /// receive, receive-timeout and transmit interrupts unmasked, DMA off,
+    /// and the transmitter and receiver on, looped back to each other if
     /// `loopback`.
+    ///
+    /// The transmit interrupt rises only as the transmit FIFO drains
+    /// through its trigger level, and clearing it keeps it low until the
+    /// next time, so it stays unmasked: an idle transmitter raises nothing.
     pub fn configure(&self, loopback: bool) {
         let registers = self.registers;
         registers.Control.write(CR::UARTEN::Disabled);
@@ -279,7 +384,7 @@ impl<'registers> Pl011<'registers> {
             .write(IFLS::RXIFLSEL::OneEighth + IFLS::TXIFLSEL::OneEighth);
         registers
             .InterruptMaskSetClear
-            .write(INT::RX::SET + INT::RT::SET);
+            .write(INT::RX::SET + INT::RT::SET + INT::TX::SET);
         registers.Control.write(
             CR::UARTEN::Enabled
                 + CR::TXE::Enabled
@@ -299,49 +404,62 @@ impl<'registers> Pl011<'registers> {
         self.registers.Control.write(CR::UARTEN::Disabled);
     }
 
-    /// Move bytes between the FIFOs and `channel`: clear the pending
-    /// interrupts, take up to [`RECEIVE_BURST`] received bytes, give the
-    /// transmit FIFO up to [`TRANSMIT_BURST`] bytes, and unmask the transmit
-    /// interrupt exactly while bytes remain to be sent.
-    ///
-    /// The interrupts are cleared first: a byte arriving after its FIFO was
-    /// drained raises them again.
-    pub fn service(&self, channel: &SerialChannel) -> Serviced {
-        let registers = self.registers;
-        let mut serviced = Serviced::default();
-        registers.InterruptClear.write(INT::ALL::SET);
+    /// Clear the pending interrupt sources and say which they were. Only
+    /// the sources read are cleared, so one rising meanwhile stays pending.
+    pub fn take_interrupts(&self) -> Interrupts {
+        let pending = self.registers.MaskedInterruptStatus.extract();
+        self.registers.InterruptClear.set(pending.get());
+        Interrupts {
+            receive: pending.matches_any(&[
+                INT::RX::SET,
+                INT::RT::SET,
+                INT::OE::SET,
+                INT::BE::SET,
+                INT::PE::SET,
+                INT::FE::SET,
+            ]),
+            transmit: pending.is_set(INT::TX),
+        }
+    }
 
-        while serviced.received + serviced.dropped < RECEIVE_BURST
-            && !registers.Flag.is_set(FR::RXFE)
-        {
+    /// Move up to [`RECEIVE_BURST`] bytes from the receive FIFO into the
+    /// client's buffers through `receiver`, counting the ones without a
+    /// buffer as dropped, then complete the buffer being filled: the device
+    /// has nothing more for now, so the client gets what arrived.
+    pub fn receive<Completed: Event>(&self, receiver: &mut Receiver<'_, Completed>) -> Received {
+        let registers = self.registers;
+        let mut pass = Received::default();
+        while pass.stored + pass.dropped < RECEIVE_BURST && !registers.Flag.is_set(FR::RXFE) {
             // DATA is 8 bits wide, so the conversion never fails.
             let byte = u8::try_from(registers.Data.read(DR::DATA)).unwrap_or_default();
-            if channel.receive.push(byte) {
-                serviced.received += 1;
+            if receiver.store(byte) {
+                pass.stored += 1;
             } else {
-                serviced.dropped += 1;
+                pass.dropped += 1;
             }
         }
-        if serviced.dropped > 0 {
-            channel
+        if pass.dropped > 0 {
+            receiver
                 .dropped
-                .fetch_add(serviced.dropped as u64, Ordering::Relaxed);
+                .fetch_add(pass.dropped as u64, Ordering::Relaxed);
         }
+        receiver.flush();
+        pass
+    }
 
-        while serviced.transmitted < TRANSMIT_BURST && !registers.Flag.is_set(FR::TXFF) {
-            let Some(byte) = channel.transmit.pop() else {
+    /// Write the bytes `next` yields to the transmit FIFO until
+    /// [`TRANSMIT_BURST`] were written, the FIFO is full, or `next` runs
+    /// dry; how many were written. `next` is only asked for a byte the FIFO
+    /// has room for.
+    pub fn transmit(&self, mut next: impl FnMut() -> Option<u8>) -> usize {
+        let mut written = 0;
+        while written < TRANSMIT_BURST && !self.registers.Flag.is_set(FR::TXFF) {
+            let Some(byte) = next() else {
                 break;
             };
-            registers.Data.write(DR::DATA.val(u32::from(byte)));
-            serviced.transmitted += 1;
+            self.registers.Data.write(DR::DATA.val(u32::from(byte)));
+            written += 1;
         }
-        registers
-            .InterruptMaskSetClear
-            .modify(if channel.transmit.is_empty() {
-                INT::TX::CLEAR
-            } else {
-                INT::TX::SET
-            });
-        serviced
+        written
     }
 }

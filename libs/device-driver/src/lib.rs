@@ -18,7 +18,14 @@
 //!   driver's Notification, interrupt *i* signalling bit *i*; each handler is
 //!   enabled by its first `Ack`;
 //! - the Notification, a RAM Untyped, the driver's Time, its `AddressSpace`
-//!   and its own table.
+//!   and its own table;
+//! - an `EventCount` only the driver's own Threads hold, for them to hand
+//!   work to each other.
+//!
+//! A driver that needs more Threads than its interrupt Thread declares their
+//! entries with [`driver_threads!`]. Kickstart starts each on its own stack
+//! and Time with the init page's address in `x0`, alongside the first one;
+//! only the first Thread receives the interrupts.
 
 use libobject::{CapError, FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey};
 
@@ -36,6 +43,30 @@ macro_rules! driver_compatible {
         #[used]
         static DRIVER_COMPATIBLE: [u8; DRIVER_COMPATIBLE_LIST.len()] =
             *DRIVER_COMPATIBLE_LIST.as_bytes().first_chunk().unwrap();
+    };
+}
+
+/// Name of the section holding the entries of a driver's further Threads.
+pub const THREADS_SECTION: &str = ".driver_threads";
+
+/// Most Threads of one driver besides the first.
+pub const MAX_FURTHER_THREADS: usize = 4;
+
+/// Declare the entries of the driver's further Threads, each a
+/// `fn(u64) -> !` receiving the init page's address like the first Thread's
+/// entry.
+#[macro_export]
+macro_rules! driver_threads {
+    ($($entry:path),+ $(,)?) => {
+        #[cfg_attr(target_os = "vesper", unsafe(link_section = ".driver_threads"))]
+        #[used]
+        static DRIVER_THREADS: [extern "C" fn(u64) -> !; [$(stringify!($entry)),+].len()] = [$({
+            extern "C" fn thread_entry(init_va: u64) -> ! {
+                $entry(init_va)
+            }
+            thread_entry
+        }),+];
+        const _: () = assert!(DRIVER_THREADS.len() <= $crate::MAX_FURTHER_THREADS);
     };
 }
 
@@ -110,8 +141,10 @@ pub struct DriverInit {
     pub memory: u64,
     /// Bytes `memory` covers
     pub memory_size: u64,
-    /// The Time the driver's Thread runs on
+    /// The Time the driver's first Thread runs on
     pub time: u64,
+    /// An `EventCount` only the driver's Threads hold (`SEND | RECV`)
+    pub event_count: u64,
     pub region_count: u64,
     pub page_count: u64,
     pub interrupt_count: u64,
@@ -133,6 +166,7 @@ impl DriverInit {
         memory: 0,
         memory_size: 0,
         time: 0,
+        event_count: 0,
         region_count: 0,
         page_count: 0,
         interrupt_count: 0,

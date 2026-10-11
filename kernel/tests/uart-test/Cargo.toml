@@ -1,7 +1,7 @@
 [package]
 name = "uart-test"
 
-description = "Vesper end-to-end test kernel: the PL011 driver component, loaded by Kickstart, serves a client's serial channel in loopback through its receive and transmit interrupts."
+description = "Vesper end-to-end test kernel: the PL011 driver component, loaded by Kickstart, serves a client's serial IO channels in loopback through its receive and transmit interrupts."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -38,15 +38,16 @@ libboot = { workspace = true }
 libcomponent-loader = { workspace = true }
 libcpu = { workspace = true }
 libdevice-driver = { workspace = true }
-libserial-channel = { workspace = true }
 libexception = { workspace = true }
 libimage = { workspace = true }
+libio-channel = { workspace = true }
 libkicktest = { workspace = true }
 libmachine = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
 libqemu = { workspace = true }
+libserial-channel = { workspace = true }
 nucleus = { path = "../../nucleus" }
 
 [build-dependencies]

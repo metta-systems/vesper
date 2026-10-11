@@ -1,95 +1,86 @@
-//! Host tests of the serial channel rings.
+//! Host tests of the serial channel's layout and agreements.
 
 #[cfg(test)]
 mod tests {
     use {
         core::sync::atomic::Ordering,
-        vesper_serial_channel::{RING_BYTES, Ring, SerialChannel},
+        libio_channel::{IoRec, NoEvent, Packet},
+        vesper_serial_channel::{
+            CONTROL_FRAME_SLOT, CONTROL_VA, DATA_AREA, DATA_AREA_VA, DATA_FRAME_SLOT, DATA_PAGES,
+            LOOPBACK, RECEIVE_COMPLETED_SLOT, SerialChannel, TRANSMIT_COMPLETED_SLOT,
+            TRANSMIT_SUBMITTED_SLOT,
+        },
     };
 
     #[test]
-    fn a_ring_returns_bytes_in_order() {
-        let ring = Ring::new();
-        assert!(ring.is_empty());
-        for byte in [0_u8, 1, 0xff, 7] {
-            assert!(ring.push(byte));
-        }
-        assert_eq!(ring.len(), 4);
-        assert_eq!(ring.pop(), Some(0));
-        assert_eq!(ring.pop(), Some(1));
-        assert_eq!(ring.pop(), Some(0xff));
-        assert_eq!(ring.pop(), Some(7));
-        assert_eq!(ring.pop(), None);
-    }
-
-    #[test]
-    fn a_full_ring_refuses_bytes_until_one_is_read() {
-        let ring = Ring::new();
-        for index in 0..RING_BYTES {
-            assert!(ring.push(index.to_le_bytes()[0]));
-        }
-        assert_eq!(ring.len(), RING_BYTES);
-        assert!(!ring.push(0xaa));
-        assert_eq!(ring.pop(), Some(0));
-        assert!(ring.push(0xaa));
-        assert!(!ring.push(0xbb));
-    }
-
-    #[test]
-    fn a_ring_wraps_around_many_times() {
-        let ring = Ring::new();
-        let mut expected = 0_u32;
-        let mut written = 0_u32;
-        for _ in 0..10 {
-            while ring.push(written.to_le_bytes()[0]) {
-                written += 1;
-            }
-            while let Some(byte) = ring.pop() {
-                assert_eq!(byte, expected.to_le_bytes()[0]);
-                expected += 1;
-            }
-        }
-        assert_eq!(expected, written);
-        assert!(written as usize >= 10 * RING_BYTES);
-    }
-
-    #[test]
-    fn the_counters_wrap_around_u32() {
-        let ring = Ring::new();
-        // Start both counters just below the wrap.
-        // SAFETY: a `Ring` is `repr(C)` with the two counters first.
-        let counters = unsafe { &*(&raw const ring).cast::<[core::sync::atomic::AtomicU32; 2]>() };
-        counters[0].store(u32::MAX - 1, Ordering::Relaxed);
-        counters[1].store(u32::MAX - 1, Ordering::Relaxed);
-        assert!(ring.is_empty());
-        for byte in 0..4 {
-            assert!(ring.push(byte));
-        }
-        assert_eq!(ring.len(), 4);
-        for byte in 0..4 {
-            assert_eq!(ring.pop(), Some(byte));
-        }
-        assert!(ring.is_empty());
-    }
-
-    #[test]
-    fn a_corrupt_counter_never_overfills_the_ring() {
-        let ring = Ring::new();
-        // SAFETY: as in `the_counters_wrap_around_u32`.
-        let counters = unsafe { &*(&raw const ring).cast::<[core::sync::atomic::AtomicU32; 2]>() };
-        // A consumer claiming to have read far ahead of the producer.
-        counters[1].store(5_000, Ordering::Relaxed);
-        assert!(!ring.push(1));
-    }
-
-    #[test]
-    fn a_zeroed_page_is_an_empty_channel() {
-        // SAFETY: every field of a channel is an atomic integer, for which
-        // zero is a valid value.
-        let channel: SerialChannel = unsafe { core::mem::zeroed() };
-        assert!(channel.transmit.is_empty());
-        assert!(channel.receive.is_empty());
-        assert!(!channel.has(vesper_serial_channel::LOOPBACK));
+    fn an_all_zero_page_is_an_idle_channel() {
+        let page = vec![0_u64; 4096 / 8];
+        // SAFETY: a zeroed, aligned page that outlives the channel's use.
+        let channel = unsafe { SerialChannel::at(page.as_ptr() as u64) };
+        assert!(!channel.has(LOOPBACK));
         assert_eq!(channel.dropped.load(Ordering::Relaxed), 0);
+        for fifo in [
+            &channel.transmit.submit,
+            &channel.transmit.complete,
+            &channel.receive.submit,
+            &channel.receive.complete,
+        ] {
+            assert!(fifo.is_empty());
+        }
+    }
+
+    #[test]
+    fn the_client_sets_options_before_the_driver_starts() {
+        let channel = SerialChannel::new();
+        channel.config.store(LOOPBACK, Ordering::Release);
+        assert!(channel.has(LOOPBACK));
+    }
+
+    #[test]
+    fn the_data_area_follows_the_control_page() {
+        assert_eq!(DATA_AREA_VA, CONTROL_VA + 4096);
+        assert_eq!(DATA_AREA.base, DATA_AREA_VA);
+        assert_eq!(DATA_AREA.len, u64::from(DATA_PAGES) * 4096);
+        assert!(DATA_AREA.contains(&IoRec {
+            base: DATA_AREA_VA + u64::from(DATA_PAGES) * 4096 - 1,
+            len: 1,
+        }));
+        assert!(!DATA_AREA.contains(&IoRec {
+            base: CONTROL_VA,
+            len: 1,
+        }));
+    }
+
+    #[test]
+    fn the_client_keys_take_distinct_slots() {
+        let data_slots = DATA_FRAME_SLOT..DATA_FRAME_SLOT + DATA_PAGES;
+        let others = [
+            CONTROL_FRAME_SLOT,
+            TRANSMIT_SUBMITTED_SLOT,
+            TRANSMIT_COMPLETED_SLOT,
+            RECEIVE_COMPLETED_SLOT,
+        ];
+        for (index, slot) in others.iter().enumerate() {
+            assert!(!data_slots.contains(slot));
+            assert!(!others[index + 1..].contains(slot));
+            assert!(*slot < 256, "a driver table has 256 slots");
+        }
+    }
+
+    #[test]
+    fn both_channels_carry_packets_independently() {
+        let channel = SerialChannel::new();
+        let bytes = Packet::new(
+            1,
+            &[IoRec {
+                base: DATA_AREA_VA,
+                len: 5,
+            }],
+        )
+        .expect("a packet");
+        let (mut transmit, _) = channel.transmit.client(NoEvent, NoEvent);
+        transmit.put(&bytes).expect("room");
+        assert!(channel.receive.submit.is_empty());
+        assert_eq!(channel.transmit.submit.get(), Ok(Some(bytes)));
     }
 }

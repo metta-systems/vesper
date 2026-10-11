@@ -148,6 +148,9 @@ pub struct DriverImage {
     pub budget_ns: u64,
     /// Size exponent of each instance's RAM Untyped
     pub memory_bits: u8,
+    /// Entries of the further Threads each instance runs besides the one
+    /// at the component's entry
+    pub threads: &'static [u64],
 }
 
 impl DriverImage {

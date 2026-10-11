@@ -79,6 +79,8 @@ pub struct ElfImage {
     /// Device tree `compatible` strings from a driver's `.driver_compatible`
     /// section (empty for other components)
     pub driver_compatible: Vec<String>,
+    /// Entry addresses from a driver's `.driver_threads` section
+    pub driver_threads: Vec<u64>,
 }
 
 impl ElfImage {
@@ -108,6 +110,7 @@ impl ElfImage {
         let mut bss = None;
         let mut exports = Vec::new();
         let mut driver_compatible = Vec::new();
+        let mut driver_threads = Vec::new();
         for header in &elf.section_headers {
             let Some(name) = elf.shdr_strtab.get_at(header.sh_name) else {
                 continue;
@@ -119,6 +122,10 @@ impl ElfImage {
             };
             if name == ".driver_compatible" {
                 driver_compatible = parse_strings(&content(), path);
+                continue;
+            }
+            if name == ".driver_threads" {
+                driver_threads = parse_addresses(&content(), path);
                 continue;
             }
             if name == ".exports" {
@@ -162,6 +169,7 @@ impl ElfImage {
             symbols,
             exports,
             driver_compatible,
+            driver_threads,
         }
     }
 
@@ -184,6 +192,20 @@ fn parse_strings(content: &[u8], path: &Path) -> Vec<String> {
                 .unwrap_or_else(|_| panic!("{}: a string is not UTF-8", path.display()))
                 .to_string()
         })
+        .collect()
+}
+
+/// The little-endian addresses of a section such as `.driver_threads`.
+fn parse_addresses(content: &[u8], path: &Path) -> Vec<u64> {
+    let (addresses, rest) = content.as_chunks::<8>();
+    assert!(
+        rest.is_empty(),
+        "{}: malformed address table",
+        path.display()
+    );
+    addresses
+        .iter()
+        .map(|bytes| u64::from_le_bytes(*bytes))
         .collect()
 }
 
@@ -806,8 +828,9 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
 /// `pub static <NAME>: libimage::ComponentImage`, plus
 /// `pub static COMPONENTS: &[&ComponentImage]`. A driver is an active
 /// component plus a `pub static <NAME>_DRIVER: libimage::DriverImage` with
-/// the strings of its `.driver_compatible` section, its `priority`, its
-/// `budget_ns` and its `memory` size, all listed in
+/// the strings of its `.driver_compatible` section, the entries of its
+/// `.driver_threads` section, its `priority`, its `budget_ns` and its
+/// `memory` size, all listed in
 /// `pub static DRIVERS: &[&DriverImage]`. The bundling image's linker
 /// script must place `.components` page-aligned inside its retained image.
 pub fn bundle_components(manifest: &str) {
@@ -849,13 +872,19 @@ pub fn bundle_components(manifest: &str) {
              \x20   compatible: &[{compatible}],\n\
              \x20   priority: 0x{priority:X},\n\
              \x20   budget_ns: {budget},\n\
-             \x20   memory_bits: {memory_bits},\n}};\n",
+             \x20   memory_bits: {memory_bits},\n\
+             \x20   threads: &[{threads}],\n}};\n",
             name = driver.component.name,
             binary = driver.component.binary,
             list = image.driver_compatible.join(", "),
             priority = driver.priority,
             budget = driver.budget_ns,
             memory_bits = driver.memory_bits,
+            threads = image
+                .driver_threads
+                .iter()
+                .map(|entry| format!("0x{entry:X}, "))
+                .collect::<String>(),
         );
         names.push(stem.clone());
         drivers.push(format!("&{stem}_DRIVER"));
