@@ -35,6 +35,7 @@ cfg-if = { workspace = true }
 kickstart = { path = "../../kickstart" }
 libaddress = { workspace = true }
 libboot = { workspace = true }
+libcomponent-loader = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
 libimage = { workspace = true }

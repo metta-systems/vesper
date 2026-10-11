@@ -4,9 +4,8 @@
 use {
     crate::{
         builder::Builder,
-        keys::{SlotCursor, table_key},
+        keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, SlotCursor, table_key},
     },
-    kickstart::bootstrap::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS},
     libobject::{KeySlot, KeyTableKey, ObjectType, RawKey, Rights},
     nucleus::{
         api::key_entry::KeyEntry,

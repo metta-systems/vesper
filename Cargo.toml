@@ -20,6 +20,7 @@ members = [
   "libs/address",
   "libs/alloc",
   "libs/boot",
+  "libs/component-loader",
   "libs/console",
   "libs/cpu",
   "libs/devicetree",
@@ -88,6 +89,7 @@ cfg-if = { version = "1.0" }
 libaddress = { path = "libs/address", package = "vesper-address" }
 # liballoc = { path = "libs/alloc", package = "vesper-alloc" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
+libcomponent-loader = { path = "libs/component-loader", package = "vesper-component-loader" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }

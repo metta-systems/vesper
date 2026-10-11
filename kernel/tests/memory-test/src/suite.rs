@@ -11,19 +11,17 @@
 use {
     aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
     core::{arch::asm, slice},
-    kickstart::bootstrap::{
-        BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, BootState, PoolCapacities, bootstrap_nucleus,
-        retained_init_memory,
-    },
+    kickstart::bootstrap::{BootState, PoolCapacities, bootstrap_nucleus, retained_init_memory},
     libaddress::PhysAddr,
+    libcomponent_loader::{
+        builder::Builder,
+        keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, boot_key, boot_slot},
+    },
     libkicktest::{
         bounce::{
             self, SourceChain, TEST_TABLE_GUARD, assert_source_selected, record_fixture_stacks,
         },
-        builder::Builder,
-        devices,
-        keys::{boot_key, boot_slot},
-        translation,
+        devices, translation,
     },
     libobject::{
         ASIDPoolKey, CapError, FrameKey, InconsistencyReason, InvalidKeyReason, KeySlot,

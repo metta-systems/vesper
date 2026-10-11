@@ -9,17 +9,16 @@ use {
     crate::ppc,
     aarch64_cpu::registers::{Readable, TCR_EL1},
     core::arch::asm,
-    kickstart::bootstrap::{
-        BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, BootState, PoolCapacities, bootstrap_nucleus,
-        retained_init_memory,
+    kickstart::bootstrap::{BootState, PoolCapacities, bootstrap_nucleus, retained_init_memory},
+    libcomponent_loader::{
+        builder::Builder,
+        keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, boot_key, boot_slot},
+        paging::image_table_count,
     },
     libkicktest::{
         bounce::{
             self, TEST_TABLE_GUARD, assert_source_selected, record_fixture_stacks, test_slot,
         },
-        builder::Builder,
-        keys::{boot_key, boot_slot},
-        paging::image_table_count,
         translation,
     },
     libobject::{

@@ -9,17 +9,16 @@
 //! `AddressSpace`. Everything here is bootstrap-era fixture mechanism.
 
 use {
-    crate::{
-        builder::{Builder, ExecutionStack},
-        keys::{SlotCursor, boot_key, table_slot},
-        translation,
-    },
+    crate::translation,
     aarch64_cpu::registers::{Readable, TTBR0_EL1},
     core::{
         arch::asm,
         sync::atomic::{AtomicU64, Ordering},
     },
-    kickstart::bootstrap::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS},
+    libcomponent_loader::{
+        builder::{Builder, ExecutionStack},
+        keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key, table_slot},
+    },
     libobject::{
         ASIDPoolKey, CapError, KeySlot, KeyTableKey, ObjectType, PageTableKey, RawKey, Rights,
         address_space::AddressSpaceKey,

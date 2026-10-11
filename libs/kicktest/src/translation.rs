@@ -3,21 +3,21 @@
 //! This is a two-Thread functional fixture, not PPC or an EL0 confinement proof.
 //! All low leaves are explicit capability mappings. TTBR1 remains the invariant
 //! kernel/direct map, including Bounce's accounted high `SP_EL0` stack.
-//! The generic provisioning steps live in [`crate::builder`]; [`crate::bounce`]
-//! builds the Bounce fixture on top of this module.
+//! The generic provisioning steps live in `libcomponent_loader::builder`;
+//! [`crate::bounce`] builds the Bounce fixture on top of this module.
 
-pub use crate::paging::read_leaf;
+pub use libcomponent_loader::paging::read_leaf;
 use {
-    crate::{
+    crate::registers,
+    aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1},
+    core::sync::atomic::{AtomicU64, Ordering},
+    libaddress::PhysAddr,
+    libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         keys::boot_key,
         paging::{ADDR_MASK, PAGE, image_table_count},
-        registers,
+        retained::RetainedInitMemory,
     },
-    aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1},
-    core::sync::atomic::{AtomicU64, Ordering},
-    kickstart::bootstrap::RetainedInitMemory,
-    libaddress::PhysAddr,
     libexception::arch::aarch64::SavedContext,
     libobject::{
         CapError, EventCountOp, FrameKey, InvalidKeyReason, KeyTableKey, NotificationOp, RawKey,

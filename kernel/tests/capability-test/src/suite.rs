@@ -9,11 +9,11 @@ use {
         mem::{align_of, size_of},
         slice,
     },
-    kickstart::bootstrap::{
-        BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, BootState, PoolCapacities, bootstrap_nucleus,
-    },
+    kickstart::bootstrap::{BootState, PoolCapacities, bootstrap_nucleus},
     libaddress::{PhysAddr, VirtAddr},
-    libkicktest::keys::{boot_key, boot_slot, table_slot},
+    libcomponent_loader::keys::{
+        BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, boot_key, boot_slot, table_slot,
+    },
     libobject::{
         CapError, DebugConsoleKey, InvalidKeyReason, KeySlot, KeyTableKey, ObjectType, RawKey,
         Rights, UntypedKey, thread::ThreadOp,

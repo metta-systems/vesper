@@ -32,19 +32,17 @@ use {
     aarch64_cpu::registers::{Readable, TTBR0_EL1},
     fp_trap_protocol::{INIT_VA, ProbeInit, STACK_REGION, TRAPPED_BIT, probe, trapped},
     kickstart::{
-        bootstrap::{
-            BOOT_TABLE_SIZE_BITS, PoolCapacities, bootstrap_nucleus, retained_init_memory,
-        },
+        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory},
         kickstart_init_el2,
     },
-    libkicktest::{
+    libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::ttbr,
-        keys::{SlotCursor, boot_key},
+        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
         loader::{verify_component, write_init},
         paging::{PAGE, find_leaf, image_table_count},
-        threads,
     },
+    libkicktest::threads,
     libobject::{
         KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
         address_space::AddressSpaceKey,

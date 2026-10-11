@@ -37,23 +37,21 @@ use {
         sync::atomic::{AtomicPtr, AtomicU64, Ordering},
     },
     kickstart::{
-        bootstrap::{
-            BOOT_TABLE_GUARD, PoolCapacities, bootstrap_nucleus, retained_init_memory, spawn_idle,
-        },
+        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory, spawn_idle},
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
-    libexception::arch::aarch64::ExceptionOrigin,
-    // `libkicktest` supplies the panic handler.
-    libkicktest::{
+    libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::ttbr,
-        devices,
+        keys::BOOT_TABLE_GUARD,
         keys::{SlotCursor, boot_key, boot_slot},
         loader::verify_component,
         paging::image_table_count,
-        threads,
     },
+    libexception::arch::aarch64::ExceptionOrigin,
+    // `libkicktest` supplies the panic handler.
+    libkicktest::{devices, threads},
     libobject::{
         KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,

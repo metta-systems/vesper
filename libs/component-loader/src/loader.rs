@@ -10,10 +10,9 @@ use {
     crate::{
         builder::Builder,
         component::Component,
-        keys::SlotCursor,
+        keys::{BOOT_TABLE_GUARD, SlotCursor},
         paging::{AP_MASK, AP_RO_USER, AP_RW_USER, LEAF_SPAN, PAGE, PXN, UXN, read_leaf},
     },
-    kickstart::bootstrap::BOOT_TABLE_GUARD,
     libaddress::PhysAddr,
     libimage::{ComponentImage, PAGE_BYTES, Permissions},
     libobject::{FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights},

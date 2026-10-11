@@ -1,6 +1,6 @@
 //! Page-table walking and the retained init image's geometry.
 
-use {kickstart::bootstrap::RetainedInitMemory, libaddress::PhysAddr};
+use {crate::retained::RetainedInitMemory, libaddress::PhysAddr};
 
 pub const PAGE: u64 = 4096;
 /// The span one L3 table covers.
@@ -54,17 +54,17 @@ pub fn read_leaf(ttbr: u64, vaddr: u64) -> (u32, u64) {
 }
 
 /// Number of L3 tables (2 MiB spans) the retained image and low stack need
-/// per root, checking the linked layout the fixtures expect.
+/// per root, checking the linked layout the builder expects.
 pub fn image_table_count(retained: &RetainedInitMemory) -> usize {
     let (start, end) = retained.image();
     let (stack_start, stack_end) = retained.stack();
-    assert_eq!(start, 0x80000, "fixture expects the linked init base");
+    assert_eq!(start, 0x80000, "the builder expects the linked init base");
     assert_eq!(stack_start, PAGE);
     assert_eq!(stack_end, start);
     let count = usize::try_from(end.div_ceil(LEAF_SPAN)).unwrap_or(usize::MAX);
     assert!(
         count <= 8,
-        "image exceeds the fixture's eight L3 slots per root"
+        "image exceeds the builder's eight L3 slots per root"
     );
     count
 }

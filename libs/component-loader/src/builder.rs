@@ -1,16 +1,16 @@
 //! Bootstrap provisioning through ordinary capability invocations.
 //!
-//! The boot Thread builds fixture translation contexts with `Untyped.Retype`,
+//! The boot Thread builds translation contexts with `Untyped.Retype`,
 //! `PageTable.Map`, `Frame.Map`, `CopyDerive` and `Move` on its own table.
 //! The direct boot-table address is used only for bootstrap-origin grants and
 //! read-only identity lookups, never held across an SVC.
 
 use {
     crate::{
-        keys::{SlotCursor, boot_key},
+        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
         paging::{ADDR_MASK, AP_MASK, LEAF_SPAN, PAGE, PXN, UXN, image_table_count, read_leaf},
+        retained::RetainedInitMemory,
     },
-    kickstart::bootstrap::{BOOT_TABLE_GUARD, RetainedInitMemory},
     libaddress::PhysAddr,
     libobject::{
         ASIDPoolKey, CapError, FrameKey, KeySlot, KeyTableKey, ObjectType, PageTableKey, RawKey,
@@ -80,7 +80,7 @@ impl Builder<'_> {
                 first,
                 Rights::all(),
             )
-            .unwrap_or_else(|error| panic!("fixture PageTable Retype failed: {:?}", error.code()))
+            .unwrap_or_else(|error| panic!("boot PageTable Retype failed: {:?}", error.code()))
     }
 
     /// Install `table` under `parent` (a page table or, for a root, an
@@ -88,7 +88,7 @@ impl Builder<'_> {
     pub fn map_table(table: RawKey, parent: RawKey, vaddr: u64) {
         PageTableKey::from_key(table)
             .map(parent, vaddr)
-            .unwrap_or_else(|error| panic!("fixture PageTable.Map failed: {:?}", error.code()));
+            .unwrap_or_else(|error| panic!("boot PageTable.Map failed: {:?}", error.code()));
     }
 
     /// Retype `count` 4 KiB Frames into consecutive boot slots.
@@ -103,7 +103,7 @@ impl Builder<'_> {
                 first,
                 Rights::all(),
             )
-            .unwrap_or_else(|error| panic!("fixture Frame Retype failed: {:?}", error.code()))
+            .unwrap_or_else(|error| panic!("boot Frame Retype failed: {:?}", error.code()))
     }
 
     /// Physical base of `count` consecutive Frames starting at boot slot
@@ -114,7 +114,7 @@ impl Builder<'_> {
             assert_eq!(
                 Self::frame_paddr(boot_key(first + index, incarnation)),
                 base + u64::from(index) * PAGE,
-                "fixture Frames must be contiguous"
+                "boot Frames must be contiguous"
             );
         }
         base
@@ -141,7 +141,7 @@ impl Builder<'_> {
         for index in 0..count {
             FrameKey::from_key(boot_key(first + index, incarnation))
                 .map(target, vaddr + u64::from(index) * PAGE, rights, 0)
-                .unwrap_or_else(|error| panic!("fixture Frame.Map failed: {:?}", error.code()));
+                .unwrap_or_else(|error| panic!("boot Frame.Map failed: {:?}", error.code()));
         }
     }
 

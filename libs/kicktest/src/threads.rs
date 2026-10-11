@@ -5,8 +5,8 @@
 //! contexts (`EL1t`, a chosen entry and stack) have no public creation ABI.
 
 use {
-    crate::builder::Builder,
     kickstart::bootstrap::carve_boot_object,
+    libcomponent_loader::builder::Builder,
     libexception::arch::aarch64::SavedContext,
     libobject::RawKey,
     nucleus::objects::{

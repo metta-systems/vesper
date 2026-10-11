@@ -36,21 +36,19 @@ use {
         ROLE_TERMINATE, ROLE_WHILE_BUSY, ROLE_WITNESS, SEQUENCE_BIT, STACK_REGION, WITNESS_BIT,
     },
     kickstart::{
-        bootstrap::{
-            BOOT_TABLE_SIZE_BITS, PoolCapacities, bootstrap_nucleus, retained_init_memory,
-        },
+        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory},
         kickstart_init_el2,
+    },
+    libcomponent_loader::{
+        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        component::{Component, ttbr},
+        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
+        loader::{StackRegion, verify_component, write_init},
+        paging::image_table_count,
     },
     libexception::arch::aarch64::ExceptionOrigin,
     libimage::ComponentImage,
-    libkicktest::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
-        component::{Component, ttbr},
-        keys::{SlotCursor, boot_key},
-        loader::{StackRegion, verify_component, write_init},
-        paging::image_table_count,
-        threads,
-    },
+    libkicktest::threads,
     libobject::{
         KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,

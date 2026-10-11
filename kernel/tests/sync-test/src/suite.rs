@@ -8,8 +8,12 @@
 use {
     core::sync::atomic::{AtomicU64, Ordering},
     kickstart::bootstrap::{
-        BOOT_TABLE_GUARD, BOOT_TIME_BUDGET_NS, BootState, PoolCapacities, bootstrap_nucleus,
-        retained_init_memory,
+        BOOT_TIME_BUDGET_NS, BootState, PoolCapacities, bootstrap_nucleus, retained_init_memory,
+    },
+    libcomponent_loader::{
+        builder::Builder,
+        keys::{BOOT_TABLE_GUARD, boot_key, boot_slot},
+        paging::image_table_count,
     },
     libexception::arch::aarch64::ExceptionOrigin,
     libkicktest::{
@@ -17,9 +21,6 @@ use {
             self, TEST_TABLE_GUARD, assert_source_selected, fixture_stack_state, fixture_trap_sp,
             record_fixture_stacks,
         },
-        builder::Builder,
-        keys::{boot_key, boot_slot},
-        paging::image_table_count,
         threads, translation,
     },
     libobject::{

@@ -37,6 +37,7 @@ aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
 libaddress = { workspace = true }
 libboot = { workspace = true }
+libcomponent-loader = { workspace = true }
 libcpu = { workspace = true }
 libdevicetree = { workspace = true }
 libexception = { workspace = true }

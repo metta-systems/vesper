@@ -2,15 +2,13 @@
 //! Untypeds Kickstart hands out.
 
 use {
-    crate::keys::boot_key,
     core::{
         cell::UnsafeCell,
         sync::atomic::{AtomicBool, Ordering},
     },
-    kickstart::bootstrap::{
-        BOOT_TABLE_GUARD, device_tree_blob, device_untypeds, kernel_owned_device_ranges,
-    },
+    kickstart::bootstrap::{device_tree_blob, device_untypeds, kernel_owned_device_ranges},
     libaddress::PhysAddr,
+    libcomponent_loader::keys::{BOOT_TABLE_GUARD, boot_key},
     libdevicetree::DeviceTree,
     libobject::RawKey,
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},

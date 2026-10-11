@@ -6,15 +6,11 @@
 //!
 //! The test kernels under `kernel/tests` all run on the real Kickstart boot
 //! path and then build their fixtures through ordinary capability invocations
-//! from the boot Thread. This crate holds what they share:
+//! from the boot Thread, with the provisioning steps of `libcomponent_loader`.
+//! This crate holds what only the tests share:
 //!
-//! - [`keys`]: boot-table and component-table key/slot composition;
-//! - [`paging`]: page-table walking and retained-image geometry;
-//! - [`builder`]: bootstrap provisioning — page-table chains, Frames, the
-//!   retained init image mapped into several roots, high execution stacks;
-//! - [`component`]: a complete component `AddressSpace` with its own table,
-//!   root and ASID;
-//! - [`loader`]: loading bundled EL0 components and their guarded stacks;
+//! - [`devices`]: the boot device tree read again at EL1, and checks on the
+//!   device Untypeds;
 //! - [`bounce`] and [`translation`]: the Bounce fixture — a second trusted
 //!   `EL1t` context in its own `AddressSpace` — and the two-root translation
 //!   provisioning and observations it runs on;
@@ -28,12 +24,7 @@
 //! so at each use.
 
 pub mod bounce;
-pub mod builder;
-pub mod component;
 pub mod devices;
-pub mod keys;
-pub mod loader;
-pub mod paging;
 pub mod registers;
 pub mod threads;
 pub mod translation;

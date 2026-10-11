@@ -33,23 +33,23 @@ use {
     irq_protocol::{INIT_VA, IRQ_BADGE, ROUNDS, ReceiverInit, STACK_REGION},
     kickstart::{
         bootstrap::{
-            BOOT_TABLE_GUARD, PoolCapacities, bootstrap_nucleus, interrupt_controllers,
-            retained_init_memory, spawn_idle,
+            PoolCapacities, bootstrap_nucleus, interrupt_controllers, retained_init_memory,
+            spawn_idle,
         },
         kickstart_init_el2,
+    },
+    libcomponent_loader::{
+        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        component::{Component, ttbr},
+        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
+        loader::{verify_component, write_init},
+        paging::image_table_count,
     },
     libdevicetree::{
         interrupts::{TimerInterrupt, root_interrupt_controller, timer_interrupt},
         is_enabled, is_interrupt_controller, node_by_phandle, phandle,
     },
-    libkicktest::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
-        component::{Component, ttbr},
-        devices,
-        keys::{SlotCursor, boot_key},
-        loader::{verify_component, write_init},
-        paging::image_table_count,
-    },
+    libkicktest::devices,
     libobject::{
         CapError, InconsistencyReason, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey,
         NotificationKey, ObjectType, RawKey, Rights, TimeKey, UntypedKey,

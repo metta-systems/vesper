@@ -37,22 +37,20 @@ use {
         ServerInit, work as check_work,
     },
     kickstart::{
-        bootstrap::{
-            BOOT_TABLE_SIZE_BITS, PoolCapacities, bootstrap_nucleus, retained_init_memory,
-        },
+        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory},
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
-    libexception::arch::aarch64::ExceptionOrigin,
-    libimage::ComponentImage,
-    libkicktest::{
+    libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::{Component, ttbr},
-        keys::{SlotCursor, boot_key},
+        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
         loader::{UserStack, verify_component, write_init},
         paging::{ADDR_MASK, PAGE, find_leaf, image_table_count, read_leaf},
-        threads,
     },
+    libexception::arch::aarch64::ExceptionOrigin,
+    libimage::ComponentImage,
+    libkicktest::threads,
     libobject::{
         KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,
@@ -109,7 +107,7 @@ fn stack(
     builder: &Builder<'_>,
     nucleus: &Nucleus<ArchObjectsImpl>,
     component: &Component,
-    region: &mut libkicktest::loader::StackRegion,
+    region: &mut libcomponent_loader::loader::StackRegion,
     pages: u32,
     slots: &mut SlotCursor,
 ) -> UserStack {

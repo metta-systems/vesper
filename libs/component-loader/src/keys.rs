@@ -1,13 +1,22 @@
-//! Key and slot composition for the boot table and fixture-carved tables.
+//! The boot table's layout and key/slot composition for the boot table and
+//! the tables carved for components.
 //!
 //! A packed key's table-relative address is the table's guard above a
-//! `size_bits`-wide slot index. Every table the test kernels carve uses the
+//! `size_bits`-wide slot index. Every table carved for a component uses the
 //! boot table's size, [`BOOT_TABLE_SIZE_BITS`].
 
-use {
-    kickstart::bootstrap::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS},
-    libobject::{KeySlot, RawKey},
-};
+use libobject::{KeySlot, RawKey};
+
+/// The boot Thread's `KeyTable` capacity exponent: 256 entries (the historical
+/// fixed size; the well-known bootstrap slots and the boot test's Retype
+/// destinations fit comfortably).
+pub const BOOT_TABLE_SIZE_BITS: u8 = 8;
+
+/// The boot table's guard (guarded key-space package, selected 2026-09-23):
+/// Kickstart picks a nonzero value so every hand-constructed boot key
+/// exercises the guard machinery. It fits the 24 guard bits of a 256-entry
+/// table's table-relative address.
+pub const BOOT_TABLE_GUARD: u32 = 0xC0F_FEE;
 
 /// The slot half of a key in a table with `guard` (the guard packed above
 /// the bare `index`).
@@ -30,7 +39,7 @@ pub fn boot_slot(index: u32) -> KeySlot {
     table_slot(BOOT_TABLE_GUARD, index)
 }
 
-/// Hands out consecutive bare boot-table slot indices for a fixture's
+/// Hands out consecutive bare boot-table slot indices for a builder's
 /// Retype destinations and bootstrap grants, so a test does not hard-code
 /// every slot. Callers pick a starting index clear of the well-known
 /// bootstrap slots.
@@ -49,7 +58,7 @@ impl SlotCursor {
         self.next = first + count;
         assert!(
             self.next <= 1 << BOOT_TABLE_SIZE_BITS,
-            "fixture boot-table slots exhausted"
+            "boot-table slots exhausted"
         );
         first
     }

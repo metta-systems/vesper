@@ -20,6 +20,10 @@ use {
     },
     core::cell::UnsafeCell,
     libaddress::PhysAddr,
+    libcomponent_loader::{
+        keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS},
+        retained::RetainedInitMemory,
+    },
     libexception::arch::aarch64::SavedContext,
     liblocking::interface::Mutex,
     libmapping::MemAttributes,
@@ -98,17 +102,6 @@ pub struct PoolCapacities {
     pub asid_pools: usize,
 }
 
-/// The boot Thread's `KeyTable` capacity exponent: 256 entries (the historical
-/// fixed size; the well-known bootstrap slots and the boot test's Retype
-/// destinations fit comfortably).
-pub const BOOT_TABLE_SIZE_BITS: u8 = 8;
-
-/// The boot table's guard (guarded key-space package, selected 2026-09-23):
-/// Kickstart picks a nonzero value so every hand-constructed boot key
-/// exercises the guard machinery. It fits the 24 guard bits of a 256-entry
-/// table's table-relative address.
-pub const BOOT_TABLE_GUARD: u32 = 0xC0F_FEE;
-
 /// Build the initial [`Nucleus`] in memory carved from the boot Untyped.
 ///
 /// Carves the `Nucleus` struct region, the Thread and `AddressSpace` pool
@@ -164,64 +157,6 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     Ok((nucleus_ptr, keytable_ptr as u64))
 }
 
-/// Accounted linked init image and retained low `EL1t` execution stack.
-///
-/// These occupied boot extents are not allocation sources: Retype would zero
-/// live code/data/stack. The bootstrap builder may issue content-preserving
-/// Frame authority over their pages instead. They remain reserved in `BOOT_INFO`
-/// and must never be reclaimed while either execution or a mapping survives.
-pub struct RetainedInitMemory {
-    image: (u64, u64),
-    stack: (u64, u64),
-}
-
-impl RetainedInitMemory {
-    /// Page-aligned physical/identity-virtual bounds of the entire linked image,
-    /// including text, rodata (and embedded dependencies), data and BSS.
-    pub fn image(&self) -> (u64, u64) {
-        self.image
-    }
-
-    /// Page-aligned bounds of the reserved low `SP_EL0` execution stack.
-    pub fn stack(&self) -> (u64, u64) {
-        self.stack
-    }
-
-    /// Issue one bootstrap-origin Frame grant without initializing its contents.
-    ///
-    /// The one-time builder issues each retained page once, then uses checked
-    /// `CopyDerive` for peers. This is boot authority, not a runtime creation ABI;
-    /// it neither creates an `Untyped` over occupied bytes nor advances an
-    /// unrelated allocation watermark. Mapping and derivation remain separate.
-    pub fn grant_page(
-        &self,
-        table: &mut KeyTable,
-        slot: KeySlot,
-        guard: u32,
-        paddr: u64,
-    ) -> RawKey {
-        assert_eq!(paddr & 4095, 0, "retained Frame must be page-aligned");
-        let end = paddr
-            .checked_add(4096)
-            .expect("retained Frame extent overflow");
-        assert!(
-            [self.image, self.stack]
-                .iter()
-                .any(|&(start, limit)| start <= paddr && end <= limit),
-            "Frame grant must lie wholly inside retained init backing"
-        );
-        table
-            .insert(
-                slot,
-                KeyEntry::new_frame(paddr, 12, false, Rights::all()),
-                guard,
-            )
-            .unwrap_or_else(|failure| {
-                panic!("retained Frame grant failed: {:?}", failure.error.code())
-            })
-    }
-}
-
 /// Discover retained init backing from linker bounds and verify boot accounting.
 ///
 /// The Kickstart overlay already reserves the linked image; the execution
@@ -268,7 +203,7 @@ pub fn retained_init_memory() -> RetainedInitMemory {
             })
         }));
     });
-    RetainedInitMemory { image, stack }
+    RetainedInitMemory::new(image, stack)
 }
 
 /// The boot-time kernel state the post-boot continuation continues from.
