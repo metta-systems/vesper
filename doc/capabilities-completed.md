@@ -91,6 +91,8 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] `libdevicetree::interrupts`: generic timer, root controller, controller listing and per-node interrupts (`interrupts` with inherited `interrupt-parent`, or `interrupts-extended`) resolved to controller phandle and cells; Kickstart plans its controllers with it and records the DTB location in `BOOT_INFO` (`libkicktest::devices::device_tree` reads it again at EL1; `devicetree` host tests, `irq-test` takes its timer specifiers from the device tree).
 - [x] `libcomponent-loader`: boot-table keys, the builder, component AddressSpaces and the EL0 image loader, shared by Kickstart and the test kernels (`libs/component-loader`; every e2e test kernel).
 - [x] Driver matching: `driver_compatible!` (`.driver_compatible` section) and the `DriverInit` init page (`libs/device-driver`), `[[driver]]` manifest entries with priority, budget and memory (`DriverImage`), and `kickstart::drivers::load_drivers` loading one instance per enabled matching node with page-sized device Untypeds or shared device Frame copies, IRQHandlers bound to one Notification, a RAM Untyped, a Time and a started Thread (`driver-test` probe driver on rpi3 and rpi4).
+- [x] PL011 EL0 driver component (`drivers/uart-pl011`) carving its device Frame and serving a client's `libserial-channel` transmit/receive rings from its interrupts and a doorbell; the GICv2 component routes SPIs to the booting core (`pl011`, `serial_channel` and `gicv2` host tests; `uart-test` loopback on rpi3 and rpi4).
+- [x] Kickstart's real boot path loads the bundled drivers (`[[driver]]` in `kernel/kickstart/image.toml`, `just build-drivers`) and parks the boot Thread.
 
 ## Final integration
 

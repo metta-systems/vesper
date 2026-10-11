@@ -20,7 +20,7 @@
 //! - the Notification, a RAM Untyped, the driver's Time, its `AddressSpace`
 //!   and its own table.
 
-use libobject::{CapError, FrameKey, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey};
+use libobject::{CapError, FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey};
 
 /// Name of the section holding a driver's NUL-terminated `compatible`
 /// strings.
@@ -218,6 +218,17 @@ pub fn map_device_pages(init: &DriverInit) -> Result<u64, CapError> {
         )?;
     }
     Ok(slot)
+}
+
+/// Width of a driver table's slot index (its tables are 256 entries).
+const SLOT_BITS: u32 = 8;
+
+/// A key to `slot` of the driver's own table, whose key is `table`, as
+/// installed into a fresh slot (first incarnation): how a driver names what
+/// its loader or a client put at a slot both agreed on.
+pub fn local_key(table: u64, slot: u32) -> RawKey {
+    let guard_bits = RawKey::from_wire(table).slot().0 & !((1 << SLOT_BITS) - 1);
+    RawKey::new(KeySlot(guard_bits | slot), 1)
 }
 
 /// Where [`map_device_pages`] maps the page at `index` of `init.pages()`.

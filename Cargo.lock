@@ -325,6 +325,7 @@ dependencies = [
 name = "driver-protocol"
 version = "0.0.1"
 dependencies = [
+ "vesper-device-driver",
  "vesper-objects",
 ]
 
@@ -1560,6 +1561,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
+name = "uart-pl011"
+version = "0.0.1"
+dependencies = [
+ "tock-registers",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-channel",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "uart-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-component-loader",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+ "vesper-serial-channel",
+]
+
+[[package]]
 name = "unescaper"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1842,6 +1879,10 @@ dependencies = [
 
 [[package]]
 name = "vesper-qemu"
+version = "0.0.1"
+
+[[package]]
+name = "vesper-serial-channel"
 version = "0.0.1"
 
 [[package]]

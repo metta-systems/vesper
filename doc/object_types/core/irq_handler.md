@@ -57,7 +57,7 @@ The interrupt controller is driven by a **privileged component**: a position-ind
 | `drivers/irqchip-bcm2836` | BCM2836 local controller with the cascaded BCM2835 ARM-control block | Raspberry Pi 3 | Local hwirq, then `32 + 32 * bank + irq` |
 | `drivers/irqchip-gicv2` (on the `arm-gic` crate) | GIC-400 | Raspberry Pi 4 and 5 | INTIDs |
 
-The GICv2 component uses only the Non-secure view: it acknowledges and ends interrupts through the banked `GICC_IAR`/`GICC_EOIR`, which serve Group 1 there, the group the firmware assigns. Running Non-secure on real hardware is not verified yet; QEMU's raspi4b GIC has no Security Extensions.
+The GICv2 component routes every shared peripheral interrupt (SPI) to the booting core when it binds. It uses only the Non-secure view: it acknowledges and ends interrupts through the banked `GICC_IAR`/`GICC_EOIR`, which serve Group 1 there, the group the firmware assigns. Running Non-secure on real hardware is not verified yet; QEMU's raspi4b GIC has no Security Extensions.
 
 ## Implementation
 

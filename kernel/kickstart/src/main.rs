@@ -40,14 +40,33 @@
 // - threads (first version - threads are in-process, kernel has no idea)
 // - scheduler (invokes process upcall key)
 
+mod components {
+    //! Bundled driver components (generated from `image.toml`).
+    include!(concat!(env!("OUT_DIR"), "/components.rs"));
+}
+
 use {
     cfg_if::cfg_if,
     kickstart::{
-        bootstrap::{PoolCapacities, bootstrap_nucleus},
+        bootstrap::{
+            BootState, PoolCapacities, bootstrap_nucleus, device_untypeds, retained_init_memory,
+            spawn_idle,
+        },
+        drivers::{BootKeys, instance_count, load_drivers},
         kickstart_init_el2, print_my_sp,
     },
     libboot as boot,
+    libcomponent_loader::{
+        builder::{Builder, ImageArchive, ImageTarget},
+        keys::{SlotCursor, boot_key},
+        paging::image_table_count,
+        retained::RetainedInitMemory,
+    },
     libcpu::endless_sleep,
+    libobject::{
+        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
+        address_space::AddressSpaceKey,
+    },
     libqemu::semihosting as semi,
 };
 
@@ -85,13 +104,21 @@ pub fn kickstart_run() -> ! {
     // Build the initial kernel state in carved memory (inert nucleus).
     // ─────────────────────────────────────────────────────────────────────
 
-    // The real boot's own extents: the boot Thread, its AddressSpace, and the
-    // boot ASID pool. Everything else is carved at runtime through Retype.
-    let _boot_state = bootstrap_nucleus(&PoolCapacities {
-        address_spaces: 1,
-        page_tables: 0,
+    // The real boot's own extents: the boot Thread and its AddressSpace, the
+    // boot ASID pool, and an AddressSpace and page tables for the builder and
+    // each bundled driver instance. Everything else is carved at runtime
+    // through Retype.
+    let instances = instance_count(components::DRIVERS);
+    let retained = retained_init_memory();
+    let image_tables = image_table_count(&retained);
+    let boot_state = bootstrap_nucleus(&PoolCapacities {
+        address_spaces: 1 + instances,
+        // builder: root/L1/L2 and image L3s; each driver: root/L1/L2, image
+        // span, stack region, init page, device window
+        page_tables: 3 + image_tables + instances * 8,
         asid_pools: 1,
     });
+    let park = start_drivers(boot_state, &retained, instances);
 
     // ─────────────────────────────────────────────────────────────────────
     // Initialize kernel subsystems
@@ -222,12 +249,11 @@ pub fn kickstart_run() -> ! {
     // switch_to_domain(init_domain, init_time);
     print_my_sp();
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "qemu")] {
-            libqemu::semihosting::exit_success()
-        } else {
-            endless_sleep()
-        }
+    // Nothing else runs on the boot Thread yet: park it for good, leaving the
+    // core to the drivers and the idle Thread.
+    semi::println!("🥾 Boot Thread parked");
+    loop {
+        let _never = park.wait(NotificationKey::WAIT_INFINITE);
     }
 
     // kernel_init_mmio_va_allocator()
@@ -287,6 +313,85 @@ pub fn kickstart_run() -> ! {
     //     info!("🥾 Spinning for 1 second");
     //     libtime::time::time_manager().spin_for(Duration::from_secs(1));
     // }
+}
+
+/// First boot `KeyTable` slot the builder carves into.
+const FIRST_BUILDER_SLOT: u32 = 64;
+
+/// Guard of the `KeyTable` archiving the builder's image Frames.
+const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
+
+/// Give the boot Thread a builder `AddressSpace`, start the idle Thread, and
+/// load and start the bundled drivers, one instance per enabled device tree
+/// node they serve (`instances` of them). Returns a Notification nobody
+/// signals, for the boot Thread to park on.
+fn start_drivers(
+    boot: BootState,
+    retained: &RetainedInitMemory,
+    instances: usize,
+) -> NotificationKey {
+    let keys = BootKeys::of(&boot);
+    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
+    let untyped = UntypedKey::from_key(keys.untyped);
+    let self_table = KeyTableKey::from_key(keys.self_table);
+    let builder = Builder {
+        untyped: &untyped,
+        self_table: &self_table,
+        boot_table_addr: keytable_addr,
+        retained,
+    };
+    let devices = device_untypeds();
+    let mut slots =
+        SlotCursor::starting_at(FIRST_BUILDER_SLOT).avoiding(devices.first_slot, devices.count);
+
+    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
+    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
+    Builder::assign_asid(builder_as_key);
+    builder.map_retained_image(
+        &[ImageTarget {
+            address_space: builder_as_key,
+            l2: builder_l2,
+            first_table_slot: slots
+                .take(u32::try_from(image_table_count(retained)).unwrap_or(u32::MAX)),
+        }],
+        &ImageArchive {
+            slot: slots.take(1),
+            guard: BUILDER_ARCHIVE_GUARD,
+            grant_scratch: slots.take(1),
+            copy_scratch: slots.take(1),
+        },
+    );
+    AddressSpaceKey::from_key(builder_as_key)
+        .activate()
+        .unwrap_or_else(|error| panic!("🥾 builder Activate failed: {:?}", error.code()));
+
+    let park = untyped
+        .retype(
+            ObjectType::NOTIFICATION,
+            0,
+            0,
+            1,
+            &self_table,
+            slots.take(1),
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("🥾 park Notification Retype failed: {:?}", error.code()));
+    let _idle = spawn_idle(nucleus, keytable_addr, keys.untyped, boot_as_id);
+
+    let started = load_drivers(
+        nucleus,
+        &builder,
+        keys,
+        components::DRIVERS,
+        &mut slots,
+        |_loaded| {},
+    );
+    assert_eq!(
+        started, instances,
+        "🥾 every planned driver instance starts"
+    );
+    semi::println!("🥾 Started {started} driver instances");
+    NotificationKey::from_key(park)
 }
 
 /*

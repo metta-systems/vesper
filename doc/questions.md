@@ -1,3 +1,14 @@
+UART driver's client interface chosen without you
+  The plan only says the PL011 driver "serves receive and transmit by interrupts". It never says how other programs send it bytes or get bytes back. The main agent mentioned its choice in one line and went ahead:
+  - A shared page with two byte queues: one queue carries bytes to send, the other carries bytes received. The page is mapped into both the driver and its client.
+  - Wake-up signals both ways: the client signals the driver's Notification when it queues bytes. The driver signals the client's Notification when new bytes arrive.
+  - The client hands the driver these keys at fixed slots in the driver's key table before the driver starts.
+  - It ruled out PPC calls into the driver and a driver-only self-test.
+
+  It isn't recording this in your contract. Still, every future serial client will be built on it, so check that this is the interface you want before the test and the real boot path depend on it.
+
+---
+
 ### 2. Finish the already-started interrupt-kernel foundation
 
 Integrate the new exception carrier into Thread/main/bootstrap:

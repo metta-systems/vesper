@@ -503,7 +503,7 @@ Signal/Advance/Poll/Read do not block but can fail validation/authorization. A `
   - **Handoff:** Kickstart retypes an init page, writes a record with the driver's keys and the node's register ranges and interrupts, maps it into the driver at a fixed address and passes that address in `x0` on the Thread's first entry. Kickstart never calls into the driver.
 - **Brand.** There is no separate event-target kind: a Notification plus its receiver Thread and that Thread's Time cover what a brand named.
 
-Implementation status: the IRQ table, `IRQControl.Issue` and the four `IRQHandler` operations are implemented; Kickstart carves the table from the boot Untyped, sized by the component's line count, and installs IRQControl at `KeySlot::IRQ_CONTROL`. Driver matching and loading are implemented (`kickstart::drivers`); the real boot path bundles no driver yet. The `irq-manager` component does not exist, and a woken receiver joins the runnable FIFO.
+Implementation status: the IRQ table, `IRQControl.Issue` and the four `IRQHandler` operations are implemented; Kickstart carves the table from the boot Untyped, sized by the component's line count, and installs IRQControl at `KeySlot::IRQ_CONTROL`. Driver matching and loading are implemented (`kickstart::drivers`); the real boot path loads the bundled PL011 driver (`drivers/uart-pl011`). The `irq-manager` component does not exist, and a woken receiver joins the runnable FIFO.
 
 ### Invocation: Protected Procedure Call
 

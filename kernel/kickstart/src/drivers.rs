@@ -221,6 +221,13 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
     (instances, count)
 }
 
+/// How many instances [`load_drivers`] loads for `drivers`: one per enabled
+/// node they serve, skipping the nodes it cannot load. For sizing the boot
+/// pools before the nucleus exists.
+pub fn instance_count(drivers: &[&'static DriverImage]) -> usize {
+    plan(drivers).1
+}
+
 /// One piece of device memory Kickstart holds: an Untyped in the boot table
 /// and how much of it is carved.
 #[derive(Clone, Copy)]

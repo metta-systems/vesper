@@ -58,7 +58,8 @@ mod tests {
             (0x100 => ISENABLER: [ReadWrite<u32>; 32]),
             (0x180 => ICENABLER: [ReadWrite<u32>; 32]),
             (0x200 => _pending_and_active),
-            (0x400 => _priorities_and_targets),
+            (0x400 => _priorities),
+            (0x800 => ITARGETSR: [ReadWrite<u32>; 256]),
             (0xC00 => ICFGR: [ReadWrite<u32>; 64]),
             (0xD00 => _reserved),
             (0xF00 => _sgir),
@@ -151,6 +152,37 @@ mod tests {
         assert!(distributor.CTLR.is_set(GICD_CTLR::ENABLE_GRP0));
         assert!(cpu_interface.CTLR.is_set(GICC_CTLR::ENABLE));
         assert_eq!(cpu_interface.PMR.read(GICC_PMR::PRIORITY), 0xff);
+    }
+
+    #[test]
+    fn init_routes_every_spi_to_the_booting_cpu() {
+        let (distributor, distributor_region) = device::<DistributorDevice>();
+        let (_cpu_interface, cpu_interface_region) = device::<CpuInterfaceDevice>();
+        // 64 lines (ITLinesNumber 1); this core is CPU interface 2, as the
+        // banked SGI/PPI targets report.
+        distributor.TYPER.set(1);
+        distributor.ITARGETSR[0].set(0x0404_0404);
+        // SAFETY: the blocks are leaked, so they live for 'static.
+        let _gic = unsafe { Gic400::new(&config(&[distributor_region, cpu_interface_region])) }
+            .expect("valid config");
+        // INTIDs 32-63: words 8-15, one target byte each.
+        assert!(
+            distributor.ITARGETSR[8..16]
+                .iter()
+                .all(|targets| targets.get() == 0x0404_0404)
+        );
+        assert_eq!(distributor.ITARGETSR[16].get(), 0, "no line above 63");
+    }
+
+    #[test]
+    fn a_uniprocessor_gic_gets_no_targets() {
+        let (_gic, distributor, _cpu_interface) = gic();
+        assert!(
+            distributor
+                .ITARGETSR
+                .iter()
+                .all(|targets| targets.get() == 0)
+        );
     }
 
     #[test]

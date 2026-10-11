@@ -87,10 +87,39 @@ fn block<T>(region: Option<&MmioRegion>) -> Result<*mut T, ConfigError> {
     Ok(region.virt as *mut T)
 }
 
+/// Target every SPI below `lines` at the CPU interface of the core running
+/// this, the one `GICD_ITARGETSR0`-`7` (read-only and banked per core)
+/// report for its SGIs and PPIs. SPI targets reset to no core, and an SPI
+/// without a target is never forwarded. A uniprocessor GIC reads zero there
+/// and ignores the target registers, so nothing is written.
+///
+/// # Safety
+///
+/// `distributor` maps the distributor for EL1, and nothing else accesses it
+/// during the call.
+unsafe fn route_spis_to_this_cpu(distributor: *mut Gicd, lines: u32) {
+    // The targets are one byte per INTID; the GIC allows byte accesses.
+    // SAFETY: a field of the caller's mapped distributor, not dereferenced.
+    let targets = unsafe { &raw mut (*distributor).itargetsr }.cast::<u8>();
+    let this_cpu = (0..32).fold(0_u8, |mask, intid| {
+        // SAFETY: bytes 0-31 are the SGI/PPI targets, inside the block.
+        mask | unsafe { targets.add(intid).read_volatile() }
+    });
+    if this_cpu == 0 {
+        return;
+    }
+    for intid in 32..lines as usize {
+        // SAFETY: `lines` is at most `LINE_COUNT`, inside the target bank.
+        unsafe {
+            targets.add(intid).write_volatile(this_cpu);
+        }
+    }
+}
+
 impl Gic400 {
-    /// Bind to the mapped controller in `config`: mask every interrupt, then
-    /// enable forwarding in the distributor and the CPU interface with no
-    /// priority filtering.
+    /// Bind to the mapped controller in `config`: route every SPI to this
+    /// core, mask every interrupt, then enable forwarding in the distributor
+    /// and the CPU interface with no priority filtering.
     ///
     /// # Safety
     ///
@@ -104,6 +133,16 @@ impl Gic400 {
         let regions = controller.regions();
         let distributor = block::<Gicd>(regions.first())?;
         let cpu_interface = block::<Gicc>(regions.get(1))?;
+        // SAFETY: the caller guarantees exclusive, mapped register blocks;
+        // this instance is gone before the targets are written.
+        let lines = unsafe { GicV2::new(distributor, cpu_interface) }
+            .typer()
+            .num_irqs()
+            .min(LINE_COUNT);
+        // SAFETY: as above; no driver instance holds the distributor now.
+        unsafe {
+            route_spis_to_this_cpu(distributor, lines);
+        }
         // SAFETY: the caller guarantees exclusive, mapped register blocks.
         let mut gic = unsafe { GicV2::new(distributor, cpu_interface) };
         gic.enable_all_interrupts(false);

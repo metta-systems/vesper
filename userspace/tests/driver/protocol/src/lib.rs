@@ -8,7 +8,7 @@
 //! with a bit for that instance; the probe signals it once every check
 //! passed.
 
-use libobject::{KeySlot, RawKey};
+use {libdevice_driver::local_key, libobject::RawKey};
 
 /// Slot of the probe's table holding the report key.
 pub const REPORT_SLOT: u32 = 250;
@@ -18,11 +18,7 @@ pub const PL011: u64 = 0;
 pub const AUX: u64 = 1;
 pub const AUX_UART: u64 = 2;
 
-/// Width of a component table's slot index (its tables are 256 entries).
-const SLOT_BITS: u32 = 8;
-
 /// The report key, in the table the probe's own table key `table` names.
 pub fn report_key(table: u64) -> RawKey {
-    let guard_bits = RawKey::from_wire(table).slot().0 & !((1 << SLOT_BITS) - 1);
-    RawKey::new(KeySlot(guard_bits | REPORT_SLOT), 1)
+    local_key(table, REPORT_SLOT)
 }

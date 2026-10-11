@@ -16,3 +16,12 @@ binary = "irqchip-bcm2836"
 [[privileged]]
 name = "gicv2"
 binary = "irqchip-gicv2"
+
+# EL0 device drivers, built with userspace/runtime/user.ld (`just
+# build-drivers`). Kickstart loads one instance per enabled device tree node
+# whose `compatible` list names one of a driver's strings.
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+priority = 0x8000

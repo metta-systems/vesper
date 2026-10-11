@@ -25,9 +25,11 @@ pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-arg=--script=' + test_link
 
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver driver-probe'
+user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver driver-probe uart-pl011'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
+# EL0 driver components the kickstart image bundles (see kernel/kickstart/image.toml)
+driver_components := 'uart-pl011'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -83,9 +85,14 @@ _cross-build crates board='rpi4' linker_script='' features='' rustflags='':
 [group("hw")]
 build-privileged board='rpi4': (_cross-build privileged_components board privileged_link '' pie_rustflags)
 
+# Build the EL0 driver components the kickstart image bundles (with semihosting output under 'qemu')
+[group("hw")]
+build-drivers board='rpi4' features='':
+    {{ just_executable() }} _cross-build '{{ driver_components }}' '{{ board }}' '{{ user_link }}' '{{ if features =~ "qemu" { "qemu" } else { "" } }}'
+
 # Build kernel (features: '' for hw, 'qemu' for emulation)
 [group("hw")]
-build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link features) (build-privileged board) (_cross-build 'kickstart' board init_link features)
+build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link features) (build-privileged board) (build-drivers board features) (_cross-build 'kickstart' board init_link features)
     {{ objcopy }} --strip-all -O binary "{{ kernel_elf }}" "{{ kernel_bin }}"
     @# TODO: print final binary size!
     @echo "{{ok_label}} kernel built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
@@ -115,6 +122,10 @@ build-driver-test board='rpi3': (build-components board 'qemu') (_build-test-ker
 # Build the irq-test e2e kernel (interrupt delivery to an EL0 receiver Thread)
 [group("test")]
 build-irq-test board='rpi3': (build-components board 'qemu') (_build-test-kernel 'irq-test' board)
+
+# Build the uart-test e2e kernel (the PL011 driver component serving a client in loopback)
+[group("test")]
+build-uart-test board='rpi3': (build-components board 'qemu') (_build-test-kernel 'uart-test' board)
 
 # Build the fault-test e2e kernel (fault delivery to EL0 fault handlers)
 [group("test")]
@@ -271,7 +282,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("test")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-endpoint test-fp-trap test-fault
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault
 
 alias t := test
 
@@ -352,6 +363,14 @@ test-driver: (_run-test-kernel 'driver-test' 'build-driver-test')
 [group("test")]
 test-driver-rpi4: (_run-test-kernel 'driver-test' 'build-driver-test rpi4' 'rpi4')
 
+# Boot uart-test: the PL011 driver component serves a client's transmit and receive rings in loopback by interrupts
+[group("test")]
+test-uart: (_run-test-kernel 'uart-test' 'build-uart-test')
+
+# Boot uart-test on the Raspberry Pi 4 machine: the same exchange through the GICv2 component
+[group("test")]
+test-uart-rpi4: (_run-test-kernel 'uart-test' 'build-uart-test rpi4' 'rpi4')
+
 # Boot irq-test: IRQControl.Issue, IRQHandler binding and Ack, repeated virtual-timer interrupts delivered to an EL0 receiver Thread
 [group("test")]
 test-irq: (_run-test-kernel 'irq-test' 'build-irq-test')
@@ -405,7 +424,7 @@ test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vespe
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
 [group("test")]
-test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2')
+test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'uart-pl011' 'pl011')
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -451,7 +470,7 @@ clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 
 
 # Lint the boot-platform host tests
 [group("maintenance")]
-clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2')
+clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'uart-pl011' 'pl011')
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]
@@ -502,7 +521,7 @@ fmt-check:
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
 [group("test")]
-audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-preempt-test 'rpi3') (build-irq-test 'rpi3') (build-driver-test 'rpi3') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
+audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-preempt-test 'rpi3') (build-irq-test 'rpi3') (build-driver-test 'rpi3') (build-uart-test 'rpi3') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
     artifacts="{{ release_dir }}"
@@ -512,7 +531,7 @@ audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memor
     failed=0
     # fp-probe executes an FP/SIMD instruction on purpose.
     user_components="{{ replace(user_components, 'fp-probe', '') }}"
-    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test irq-test driver-test endpoint-test fault-test ${user_components}; do
+    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test irq-test driver-test uart-test endpoint-test fault-test ${user_components}; do
         # Symbol names in <…> are not operands.
         found=$(rust-objdump -d --no-show-raw-insn "${artifacts}/${image}" | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
         if [ -n "${found}" ]; then
