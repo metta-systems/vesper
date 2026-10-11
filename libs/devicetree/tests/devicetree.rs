@@ -315,4 +315,198 @@ mod tests {
             assert!(out.trim_end().ends_with("};"));
         });
     }
+
+    // ── Interrupt topology ──────────────────────────────────────────────
+
+    use vesper_devicetree::interrupts::{
+        Interrupt, TimerInterrupt, generic_timer, interrupt, interrupt_controllers, interrupts,
+        root_interrupt_controller, timer_interrupt,
+    };
+
+    fn phandle_of_compatible(index: &DevTreeIndex<'_, '_>, compatible: &str) -> u32 {
+        let (node, _) = find_compatible(index, &[compatible]).expect("node");
+        phandle_of(&node).expect("phandle")
+    }
+
+    #[test]
+    fn rpi3_timer_interrupts_resolve_to_the_local_controller() {
+        with_index(RPI3, |index| {
+            let local = phandle_of_compatible(index, "brcm,bcm2836-l1-intc");
+            let root = root_interrupt_controller(index).expect("root controller");
+            assert_eq!(phandle_of(&root), Some(local));
+            let physical = timer_interrupt(index, TimerInterrupt::NonSecurePhysical).unwrap();
+            assert_eq!(
+                (physical.controller, physical.cells()),
+                (local, &[1, 4][..])
+            );
+            let virtual_timer = timer_interrupt(index, TimerInterrupt::Virtual).unwrap();
+            assert_eq!(virtual_timer.cells(), &[3, 4]);
+            let timer = generic_timer(index).expect("timer");
+            assert_eq!(interrupts(index, &timer).count(), 4);
+            assert_eq!(interrupt(index, &timer, 4), None);
+        });
+    }
+
+    #[test]
+    fn rpi4_timer_interrupts_resolve_to_the_gic() {
+        with_index(RPI4, |index| {
+            let gic = phandle_of_compatible(index, "arm,gic-400");
+            let virtual_timer = timer_interrupt(index, TimerInterrupt::Virtual).unwrap();
+            assert_eq!(
+                (virtual_timer.controller, virtual_timer.cells()),
+                (gic, &[1, 11, 0xf08][..])
+            );
+            let physical = timer_interrupt(index, TimerInterrupt::NonSecurePhysical).unwrap();
+            assert_eq!(physical.cells(), &[1, 14, 0xf08]);
+        });
+    }
+
+    #[test]
+    fn uart_interrupts_resolve_through_their_inherited_parent() {
+        // RPi3: the PL011 sits on the cascaded ARM-control block, GPU IRQ 57.
+        with_index(RPI3, |index| {
+            let (uart, _) = find_compatible(index, &["arm,pl011"]).expect("PL011");
+            let armctrl = phandle_of_compatible(index, "brcm,bcm2836-armctrl-ic");
+            let uart_interrupt = interrupt(index, &uart, 0).expect("PL011 interrupt");
+            assert_eq!(
+                (uart_interrupt.controller, uart_interrupt.cells()),
+                (armctrl, &[2, 25][..])
+            );
+        });
+        // RPi4: SPI 121 on the GIC.
+        with_index(RPI4, |index| {
+            let (uart, _) = find_compatible(index, &["arm,pl011"]).expect("PL011");
+            let gic = phandle_of_compatible(index, "arm,gic-400");
+            let uart_interrupt = interrupt(index, &uart, 0).expect("PL011 interrupt");
+            assert_eq!(
+                (uart_interrupt.controller, uart_interrupt.cells()),
+                (gic, &[0, 121, 4][..])
+            );
+        });
+    }
+
+    #[test]
+    fn interrupt_controllers_list_the_root_first() {
+        with_index(RPI3, |index| {
+            let local = phandle_of_compatible(index, "brcm,bcm2836-l1-intc");
+            let armctrl = phandle_of_compatible(index, "brcm,bcm2836-armctrl-ic");
+            let driven: Vec<_> =
+                interrupt_controllers(index, |node| is_compatible(node, "brcm,bcm2836-armctrl-ic"))
+                    .map(|node| phandle_of(&node))
+                    .collect();
+            assert_eq!(driven, [Some(local), Some(armctrl)]);
+            // Without a filter every other enabled controller follows, the
+            // root never twice.
+            let all: Vec<_> = interrupt_controllers(index, |_| true)
+                .map(|node| phandle_of(&node))
+                .collect();
+            assert_eq!(all[0], Some(local));
+            assert!(all.contains(&Some(armctrl)));
+            assert_eq!(all.iter().filter(|&&p| p == Some(local)).count(), 1);
+        });
+        with_index(RPI4, |index| {
+            let gic = phandle_of_compatible(index, "arm,gic-400");
+            let first = interrupt_controllers(index, |_| false).map(|node| phandle_of(&node));
+            assert_eq!(first.collect::<Vec<_>>(), [Some(gic)]);
+        });
+    }
+
+    /// A minimal flattened device tree: `/` with the controllers `a`
+    /// (phandle 1, one cell) and `b` (phandle 2, two cells) and a node `dev`
+    /// whose `interrupts-extended` routes one interrupt to each.
+    fn extended_interrupts_blob() -> Vec<u8> {
+        const BEGIN_NODE: u32 = 1;
+        const END_NODE: u32 = 2;
+        const PROP: u32 = 3;
+        const END: u32 = 9;
+        const HEADER: usize = 40;
+        const RESERVE_MAP: usize = 16;
+        let mut strings = Vec::new();
+        let mut structure = Vec::new();
+        let word = |structure: &mut Vec<u8>, value: u32| {
+            structure.extend_from_slice(&value.to_be_bytes());
+        };
+        let begin = |structure: &mut Vec<u8>, name: &str| {
+            structure.extend_from_slice(&BEGIN_NODE.to_be_bytes());
+            structure.extend_from_slice(name.as_bytes());
+            structure.push(0);
+            while !structure.len().is_multiple_of(4) {
+                structure.push(0);
+            }
+        };
+        let mut prop = |structure: &mut Vec<u8>, name: &str, cells: &[u32]| {
+            let offset = u32::try_from(strings.len()).unwrap();
+            strings.extend_from_slice(name.as_bytes());
+            strings.push(0);
+            structure.extend_from_slice(&PROP.to_be_bytes());
+            structure.extend_from_slice(&u32::try_from(cells.len() * 4).unwrap().to_be_bytes());
+            structure.extend_from_slice(&offset.to_be_bytes());
+            for cell in cells {
+                structure.extend_from_slice(&cell.to_be_bytes());
+            }
+        };
+        begin(&mut structure, "");
+        for (name, phandle, cells) in [("a", 1, 1), ("b", 2, 2)] {
+            begin(&mut structure, name);
+            prop(&mut structure, "interrupt-controller", &[]);
+            prop(&mut structure, "#interrupt-cells", &[cells]);
+            prop(&mut structure, "phandle", &[phandle]);
+            word(&mut structure, END_NODE);
+        }
+        begin(&mut structure, "dev");
+        prop(&mut structure, "interrupts-extended", &[1, 7, 2, 5, 6]);
+        word(&mut structure, END_NODE);
+        word(&mut structure, END_NODE);
+        word(&mut structure, END);
+
+        let structure_offset = HEADER + RESERVE_MAP;
+        let strings_offset = structure_offset + structure.len();
+        let total = strings_offset + strings.len();
+        let mut blob = Vec::new();
+        for value in [
+            0xd00d_feed,
+            total,
+            structure_offset,
+            strings_offset,
+            HEADER,
+            17,
+            16,
+            0,
+            strings.len(),
+            structure.len(),
+        ] {
+            blob.extend_from_slice(&u32::try_from(value).unwrap().to_be_bytes());
+        }
+        blob.extend_from_slice(&[0; RESERVE_MAP]);
+        blob.extend_from_slice(&structure);
+        blob.extend_from_slice(&strings);
+        blob
+    }
+
+    #[test]
+    fn interrupts_extended_names_each_entrys_controller() {
+        let blob = extended_interrupts_blob();
+        with_tree(&blob, |tree| {
+            let index = tree.index();
+            let device = tree.node("/dev").expect("dev node");
+            assert_eq!(
+                interrupt(index, &device, 0),
+                Some(Interrupt {
+                    controller: 1,
+                    cell_count: 1,
+                    cells: [7, 0, 0, 0]
+                })
+            );
+            assert_eq!(
+                interrupt(index, &device, 1),
+                Some(Interrupt {
+                    controller: 2,
+                    cell_count: 2,
+                    cells: [5, 6, 0, 0]
+                })
+            );
+            assert_eq!(interrupt(index, &device, 2), None);
+            assert_eq!(interrupts(index, &device).count(), 2);
+        });
+    }
 }

@@ -36,6 +36,7 @@ irq-protocol = { path = "../../../userspace/tests/irq/protocol" }
 kickstart = { path = "../../kickstart" }
 libaddress = { workspace = true }
 libboot = { workspace = true }
+libdevicetree = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
 libimage = { workspace = true }

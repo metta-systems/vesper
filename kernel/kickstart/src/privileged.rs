@@ -21,8 +21,12 @@ use {
     core::cell::UnsafeCell,
     libaddress::{PhysAddr, VirtAddr},
     libdevicetree::{
-        DeviceTree, Node, find_compatible, interrupt_cells, interrupt_parent, interrupt_specifier,
-        is_compatible, is_enabled, is_interrupt_controller, phandle, regions,
+        DeviceTree, Node,
+        interrupts::{
+            MAX_INTERRUPT_CELLS, TimerInterrupt, interrupt_controllers, root_interrupt_controller,
+            timer_interrupt,
+        },
+        is_compatible, phandle, regions,
     },
     libimage::{PAGE_BYTES, PAGE_SIZE, PrivilegedImage},
     libirqchip::{
@@ -37,12 +41,8 @@ use {
 /// otherwise unused TTBR1 L0 slot 257.
 pub const PRIVILEGED_BASE: u64 = 0xFFFF_8080_0000_0000;
 
-/// Generic timer nodes (device tree `arm,armv7-timer`/`arm,armv8-timer` binding).
-const TIMERS: &[&str] = &["arm,armv8-timer", "arm,armv7-timer"];
-
-/// Index of the non-secure EL1 physical timer in a timer node's `interrupts`
-/// (binding order: secure physical, non-secure physical, virtual, hypervisor).
-const NONSECURE_PHYSICAL_TIMER: usize = 1;
+// A timer specifier from the device tree fits the component ABI unchanged.
+const _: () = assert!(MAX_INTERRUPT_CELLS == MAX_SPECIFIER_CELLS);
 
 /// A controller the component will drive: its kind, phandle and CPU physical
 /// MMIO.
@@ -97,8 +97,8 @@ pub fn plan(
     images: &[&'static PrivilegedImage],
 ) -> Result<IrqChipPlan, &'static str> {
     let tree = device_tree.index();
-    let (timer, _) = find_compatible(tree, TIMERS).ok_or("no generic timer node")?;
-    let root = interrupt_parent(tree, &timer).ok_or("the timer has no interrupt-parent")?;
+    let root =
+        root_interrupt_controller(tree).ok_or("no generic timer with an interrupt-parent")?;
     let (image, root_kind) = images
         .iter()
         .find_map(|image| kind_in(image, &root).map(|kind| (*image, kind)))
@@ -106,40 +106,30 @@ pub fn plan(
 
     let mut plan = IrqChipPlan {
         image,
-        controller_count: 1,
+        controller_count: 0,
         controllers: [PlannedController::default(); MAX_CONTROLLERS],
         physical_timer: Specifier::default(),
     };
-    plan.controllers[0] = plan_controller(root_kind, &root);
-    for node in tree.nodes() {
-        if plan.controller_count == MAX_CONTROLLERS {
-            break;
-        }
-        let is_root = phandle(&node).is_some() && phandle(&node) == phandle(&root);
-        if is_root || !is_interrupt_controller(&node) || !is_enabled(&node) {
-            continue;
-        }
-        if let Some(kind) = kind_in(image, &node) {
-            plan.controllers[plan.controller_count] = plan_controller(kind, &node);
-            plan.controller_count += 1;
-        }
+    // The root first, then the cascaded controllers the component drives:
+    // the order `IRQControl.Issue` numbers them by.
+    for node in
+        interrupt_controllers(tree, |node| kind_in(image, node).is_some()).take(MAX_CONTROLLERS)
+    {
+        let kind = kind_in(image, &node).unwrap_or(root_kind);
+        plan.controllers[plan.controller_count] = plan_controller(kind, &node);
+        plan.controller_count += 1;
     }
 
-    let cell_count = interrupt_cells(&root).ok_or("the root controller has no #interrupt-cells")?;
-    let mut cells = [0_u32; MAX_SPECIFIER_CELLS];
-    let specifier = interrupt_specifier(
-        &timer,
-        NONSECURE_PHYSICAL_TIMER,
-        cell_count as usize,
-        &mut cells,
-    )
-    .ok_or("cannot read the physical timer interrupt")?;
+    let timer = timer_interrupt(tree, TimerInterrupt::NonSecurePhysical)
+        .ok_or("cannot read the physical timer interrupt")?;
+    if Some(timer.controller) != phandle(&root) {
+        return Err("the physical timer is not routed to the root controller");
+    }
     plan.physical_timer = Specifier {
         kind: root_kind,
-        cell_count,
-        cells: [0; MAX_SPECIFIER_CELLS],
+        cell_count: timer.cell_count,
+        cells: timer.cells,
     };
-    plan.physical_timer.cells[..specifier.len()].copy_from_slice(specifier);
 
     semi::println!(
         "🥾 Interrupt controller: {} ({} controllers), physical timer {:?}",

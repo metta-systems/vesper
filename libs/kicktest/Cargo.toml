@@ -24,6 +24,7 @@ aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
 kickstart = { path = "../../kernel/kickstart" }
 libaddress = { workspace = true }
+libdevicetree = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }
 libimage = { workspace = true }

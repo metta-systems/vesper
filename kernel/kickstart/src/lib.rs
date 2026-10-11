@@ -29,7 +29,7 @@ mod qsort;
 
 use {
     crate::{
-        boot_info::BOOT_INFO,
+        boot_info::{BOOT_INFO, DeviceTreeBlob},
         memory::{Alloc, BootAllocator},
     },
     aarch64_cpu::registers::{Readable, SPSR_EL2, Writeable},
@@ -239,6 +239,10 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             "DTB",
         )
         .expect("🌴 Cannot reserve DTB area in boot_info");
+        bi.device_tree = DeviceTreeBlob {
+            phys: dtb_ptr as u64,
+            size: device_tree.total_size() as u64,
+        };
     });
 
     // Next step: parse DTB!

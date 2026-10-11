@@ -845,7 +845,9 @@ fn install_device_untypeds(boot_table: &mut KeyTable) {
     );
 }
 
-pub use crate::boot_info::{DeviceUntypedRange as DeviceUntypeds, InterruptControllers};
+pub use crate::boot_info::{
+    DeviceTreeBlob, DeviceUntypedRange as DeviceUntypeds, InterruptControllers,
+};
 
 /// Where Kickstart installed the device Untypeds (empty before bootstrap).
 pub fn device_untypeds() -> DeviceUntypeds {
@@ -862,4 +864,11 @@ pub fn interrupt_controllers() -> InterruptControllers {
 /// no device Untyped covers any of their pages.
 pub fn kernel_owned_device_ranges() -> &'static [(u64, u64)] {
     privileged::kernel_owned_ranges()
+}
+
+/// Where the firmware's flattened device tree lies in physical memory. It
+/// stays reserved for the whole boot; through the kernel's physical window
+/// the boot phase can index it again.
+pub fn device_tree_blob() -> DeviceTreeBlob {
+    BOOT_INFO.lock(|boot_info| boot_info.device_tree)
 }

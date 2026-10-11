@@ -1,7 +1,7 @@
 [package]
 name = "vesper-devicetree"
 
-description = "Vesper device tree helpers: cell sizes, `reg` decoding, `ranges` translation and `compatible` matching."
+description = "Vesper device tree helpers: cell sizes, `reg` decoding, `ranges` translation, `compatible` matching and interrupt topology."
 
 authors = { workspace = true }
 categories = { workspace = true }

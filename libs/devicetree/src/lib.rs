@@ -6,9 +6,12 @@
 //!   `#address-cells`/`#size-cells` of its **parent** (defaults 2 and 1);
 //! - `reg` addresses are bus addresses, translated to CPU physical addresses
 //!   through every ancestor bus's `ranges` (§2.3.8);
-//! - `compatible` is a string list matched entry by entry.
+//! - `compatible` is a string list matched entry by entry;
+//! - [`interrupts`] resolves interrupt routing: the generic timer, the root
+//!   controller and each node's interrupts with their controller.
 
 mod dump;
+pub mod interrupts;
 mod tree;
 
 pub use {

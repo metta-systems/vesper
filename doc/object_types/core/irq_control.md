@@ -29,7 +29,7 @@ Decodes a device tree interrupt specifier into a line of the interrupt controlle
 | `x4` bits 63:16 | Zero |
 | `x5..x7` | The cells, in device tree order; cells beyond the count are zero |
 
-The controller index follows the interrupt controller component's list: the root controller (the CPU timer's `interrupt-parent`) is 0, and the cascaded controllers it drives follow in device tree order. Kickstart records their phandles in this order in `BOOT_INFO` (`kickstart::bootstrap::interrupt_controllers`), so a node's `interrupt-parent` phandle gives its index.
+The controller index follows the interrupt controller component's list: the root controller (the CPU timer's `interrupt-parent`) is 0, and the cascaded controllers it drives follow in device tree order. Kickstart records their phandles in this order in `BOOT_INFO` (`kickstart::bootstrap::interrupt_controllers`, with `InterruptControllers::index_of` mapping a phandle to its index). `libdevicetree::interrupts` resolves a node's interrupts, from `interrupts` with its inherited `interrupt-parent` or from `interrupts-extended`, to the controller's phandle and the specifier cells to pass here; it also finds the generic timer and the root controller.
 
 The line stays masked until the IRQHandler's first [Ack](irq_handler.md#ack).
 

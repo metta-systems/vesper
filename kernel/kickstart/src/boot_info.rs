@@ -275,10 +275,24 @@ pub struct InterruptControllers {
 }
 
 impl InterruptControllers {
+    /// The `IRQControl.Issue` index of the controller with `phandle`.
+    pub fn index_of(&self, phandle: u32) -> Option<u8> {
+        let position = self.phandles().iter().position(|&known| known == phandle)?;
+        u8::try_from(position).ok()
+    }
+
     /// The recorded phandles, in controller-index order.
     pub fn phandles(&self) -> &[u32] {
         &self.phandles[..(self.count as usize).min(libirqchip::MAX_CONTROLLERS)]
     }
+}
+
+/// Where the flattened device tree the firmware passed lies in physical
+/// memory. Kickstart keeps it reserved for the whole boot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeviceTreeBlob {
+    pub phys: u64,
+    pub size: u64,
 }
 
 pub struct BootInfo {
@@ -288,6 +302,8 @@ pub struct BootInfo {
     pub device_untypeds: DeviceUntypedRange,
     /// The controllers `IRQControl.Issue` specifiers are relative to.
     pub interrupt_controllers: InterruptControllers,
+    /// The device tree blob, for the boot phase to read again.
+    pub device_tree: DeviceTreeBlob,
 }
 
 /// Implement Default manually to work around Rust not defining Default for arrays over 32 items.
@@ -311,6 +327,7 @@ impl BootInfo {
                 count: 0,
                 phandles: [0; libirqchip::MAX_CONTROLLERS],
             },
+            device_tree: DeviceTreeBlob { phys: 0, size: 0 },
         }
     }
 

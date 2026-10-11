@@ -18,6 +18,7 @@
 //! are `IrqLineActive`, an unknown controller and an unbadged Notification
 //! `InvalidOperation`, and a retired handler's keys `ObjectRetired`.
 //!
+//! The timer interrupts and their controller come from the device tree.
 //! Runs on raspi3b (BCM2836 local controller) and raspi4b (GIC-400);
 //! in-guest assertions and the QEMU semihosting exit status are the result
 //! (`just test-irq`, `just test-irq-rpi4`).
@@ -37,9 +38,14 @@ use {
         },
         kickstart_init_el2,
     },
+    libdevicetree::{
+        interrupts::{TimerInterrupt, root_interrupt_controller, timer_interrupt},
+        is_enabled, is_interrupt_controller, node_by_phandle, phandle,
+    },
     libkicktest::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::{Component, ttbr},
+        devices,
         keys::{SlotCursor, boot_key},
         loader::{verify_component, write_init},
         paging::image_table_count,
@@ -59,29 +65,6 @@ libboot::entry!(boot_main);
 
 fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, run as *const u8 as u64)
-}
-
-/// The CPU timer interrupts as the board's device tree specifies them,
-/// relative to the root controller (index 0): the virtual timer the test
-/// drives and the non-secure physical timer the nucleus keeps.
-#[cfg(board_rpi3)]
-mod board {
-    /// `brcm,bcm2836-l1-intc` `<hwirq flags>`.
-    pub const VIRTUAL_TIMER: &[u32] = &[3, 4];
-    pub const VIRTUAL_TIMER_LINE: u32 = 3;
-    pub const PHYSICAL_TIMER: &[u32] = &[1, 4];
-    pub const PHYSICAL_TIMER_LINE: u32 = 1;
-    /// The local controller and the cascaded ARM-control block.
-    pub const CONTROLLERS: u32 = 2;
-}
-#[cfg(board_rpi4)]
-mod board {
-    /// `arm,gic-400` `<PPI number flags>`: PPI 11 is INTID 27.
-    pub const VIRTUAL_TIMER: &[u32] = &[1, 11, 0xf08];
-    pub const VIRTUAL_TIMER_LINE: u32 = 27;
-    pub const PHYSICAL_TIMER: &[u32] = &[1, 14, 0xf08];
-    pub const PHYSICAL_TIMER_LINE: u32 = 30;
-    pub const CONTROLLERS: u32 = 1;
 }
 
 /// First boot `KeyTable` slot the builder carves fixtures into.
@@ -164,14 +147,36 @@ pub fn run() -> ! {
     };
     let mut slots = SlotCursor::starting_at(FIRST_FIXTURE_SLOT);
 
-    // Kickstart recorded the controllers Issue specifiers are relative to.
+    // Kickstart recorded the controllers Issue specifiers are relative to:
+    // the root, the timer's interrupt-parent, first; each one an enabled
+    // interrupt controller of the device tree.
+    let device_tree = devices::device_tree();
+    let tree = device_tree.index();
     let controllers = interrupt_controllers();
     semi::println!(
         "irq-test: interrupt controllers by phandle {:?}",
         controllers.phandles()
     );
-    assert_eq!(controllers.count, board::CONTROLLERS);
-    assert!(controllers.phandles().iter().all(|&phandle| phandle != 0));
+    let root = root_interrupt_controller(tree).expect("the device tree has a root controller");
+    assert_eq!(controllers.phandles().first().copied(), phandle(&root));
+    for &recorded in controllers.phandles() {
+        let node = node_by_phandle(tree, recorded).expect("a recorded controller is in the tree");
+        assert!(is_interrupt_controller(&node) && is_enabled(&node));
+    }
+    // The timer interrupts, as the device tree routes them.
+    let virtual_timer =
+        timer_interrupt(tree, TimerInterrupt::Virtual).expect("the timer has a virtual interrupt");
+    let physical_timer = timer_interrupt(tree, TimerInterrupt::NonSecurePhysical)
+        .expect("the timer has a physical interrupt");
+    let timer_controller = controllers
+        .index_of(virtual_timer.controller)
+        .expect("the timer's controller is driven");
+    assert_eq!(timer_controller, 0, "the timer is wired to the root");
+    semi::println!(
+        "irq-test: virtual timer {:?}, physical timer {:?} on controller {timer_controller}",
+        virtual_timer.cells(),
+        physical_timer.cells()
+    );
 
     // ── The builder's own AddressSpace ────────────────────────────────────
     let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
@@ -198,21 +203,33 @@ pub fn run() -> ! {
     // ── Issue the virtual timer's line ────────────────────────────────────
     let irq_control = IrqControlKey::from_key(boot.irq_control_key);
     let issued = irq_control
-        .issue(&self_table, slots.take(1), 0, board::VIRTUAL_TIMER)
+        .issue(
+            &self_table,
+            slots.take(1),
+            timer_controller,
+            virtual_timer.cells(),
+        )
         .unwrap_or_else(|error| panic!("IRQControl.Issue failed: {:?}", error.code()));
-    assert_eq!(issued.line, board::VIRTUAL_TIMER_LINE);
+    semi::println!("irq-test: the virtual timer is line {}", issued.line);
     let handler = IrqHandlerKey::from_key(issued.handler);
     // One live handler per line; the nucleus keeps its timer line.
     assert!(matches!(
-        irq_control.issue(&self_table, slots.take(1), 0, board::VIRTUAL_TIMER),
-        Err(CapError::IrqLineActive { line }) if line == board::VIRTUAL_TIMER_LINE
+        irq_control.issue(&self_table, slots.take(1), timer_controller, virtual_timer.cells()),
+        Err(CapError::IrqLineActive { line }) if line == issued.line
     ));
     assert!(matches!(
-        irq_control.issue(&self_table, slots.take(1), 0, board::PHYSICAL_TIMER),
-        Err(CapError::IrqLineActive { line }) if line == board::PHYSICAL_TIMER_LINE
+        irq_control.issue(&self_table, slots.take(1), timer_controller, physical_timer.cells()),
+        Err(CapError::IrqLineActive { line }) if line != issued.line
     ));
+    // A controller index past the recorded ones.
+    let unknown_controller = u8::try_from(controllers.count).expect("few controllers");
     assert!(matches!(
-        irq_control.issue(&self_table, slots.take(1), 7, board::VIRTUAL_TIMER),
+        irq_control.issue(
+            &self_table,
+            slots.take(1),
+            unknown_controller,
+            virtual_timer.cells()
+        ),
         Err(CapError::InvalidOperation)
     ));
 
@@ -336,9 +353,14 @@ pub fn run() -> ! {
     let error = handler.ack().map(|()| 0).unwrap_err();
     assert!(is_retired(&error), "a retired handler key still works");
     let reissued = irq_control
-        .issue(&self_table, slots.take(1), 0, board::VIRTUAL_TIMER)
+        .issue(
+            &self_table,
+            slots.take(1),
+            timer_controller,
+            virtual_timer.cells(),
+        )
         .unwrap_or_else(|error| panic!("reissue failed: {:?}", error.code()));
-    assert_eq!(reissued.line, board::VIRTUAL_TIMER_LINE);
+    assert_eq!(reissued.line, issued.line);
 
     semi::println!("irq-test: ✅ issue, binding, repeated delivery and retirement checks passed");
     cfg_if::cfg_if! {
