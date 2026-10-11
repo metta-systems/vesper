@@ -21,6 +21,7 @@ use {
             self, SourceChain, TEST_TABLE_GUARD, assert_source_selected, record_fixture_stacks,
         },
         builder::Builder,
+        devices,
         keys::{boot_key, boot_slot},
         translation,
     },
@@ -1135,6 +1136,7 @@ pub fn run() {
     FrameKey::from_key(second_frame_key)
         .unmap()
         .unwrap_or_else(|error| panic!("second frame Frame.Unmap failed: {:?}", error.code()));
+    device_frame_reads_pl011(&self_table, boot_as_key, keytable_addr, active_ttbr0);
     // Repeat in the reverse direction while the second translation is
     // warm: neither physical marker changes, only the same VA's backing.
     frame
@@ -1285,4 +1287,76 @@ pub fn run() {
     ));
 
     semi::println!("Memory suite passed");
+}
+
+/// The PL011's register page (QEMU's raspi3b and raspi4b device trees).
+#[cfg(board_rpi3)]
+const PL011_PAGE: u64 = 0x3f20_1000;
+#[cfg(board_rpi4)]
+const PL011_PAGE: u64 = 0xfe20_1000;
+/// Where the device Frame is mapped: a free page under the suite's L3 table.
+const DEVICE_VA: u64 = 0x1000_3000;
+/// First boot-table slot for the device Frames this check retypes.
+const DEVICE_FRAME_SLOT: u32 = 220;
+
+/// Device memory end to end: the device Untypeds Kickstart handed out avoid
+/// the interrupt controller, one of them covers the PL011, a Frame retyped
+/// from it maps only as non-executable device memory, and reading through
+/// the mapping returns the PL011's `PrimeCell` peripheral ID.
+fn device_frame_reads_pl011(
+    self_table: &KeyTableKey,
+    boot_as_key: RawKey,
+    keytable_addr: u64,
+    active_ttbr0: u64,
+) {
+    devices::assert_device_untypeds_avoid_the_kernel(keytable_addr);
+    let (untyped_key, base, _) = devices::device_untyped_extents(keytable_addr)
+        .find(|&(_, start, end)| (start..end).contains(&PL011_PAGE))
+        .expect("no device Untyped covers the PL011");
+
+    // Frames are carved from the start of the Untyped: retype up to the
+    // PL011's page and use the last one.
+    let count = u32::try_from((PL011_PAGE - base) / 0x1000 + 1).unwrap();
+    let first = UntypedKey::from_key(untyped_key)
+        .retype(
+            ObjectType::FRAME,
+            12,
+            0,
+            count,
+            self_table,
+            DEVICE_FRAME_SLOT,
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("device Frame Retype failed: {:?}", error.code()));
+    let frame = FrameKey::from_key(boot_key(DEVICE_FRAME_SLOT + count - 1, first.incarnation()));
+    assert!(matches!(
+        frame.map(
+            boot_as_key,
+            DEVICE_VA,
+            Rights(Rights::READ | Rights::EXECUTE),
+            0
+        ),
+        Err(CapError::InvalidOperation)
+    ));
+    frame
+        .map(
+            boot_as_key,
+            DEVICE_VA,
+            Rights(Rights::READ | Rights::WRITE),
+            0,
+        )
+        .unwrap_or_else(|error| panic!("device Frame.Map failed: {:?}", error.code()));
+    let (level, pte) = translation::read_leaf(active_ttbr0, DEVICE_VA);
+    assert_eq!(level, 3);
+    assert_eq!(pte & 0x0000_FFFF_FFFF_F000, PL011_PAGE);
+    assert_eq!((pte >> 2) & 0b111, 1, "AttrIndx 1 is Device-nGnRnE");
+    assert_eq!(pte & ((1 << 53) | (1 << 54)), (1 << 53) | (1 << 54));
+    // SAFETY: the active context maps DEVICE_VA to the PL011's registers as
+    // device memory; UARTPeriphID0 at +0xFE0 is a read-only ID register.
+    let periph_id0 = unsafe { ((DEVICE_VA + 0xFE0) as *const u32).read_volatile() };
+    assert_eq!(periph_id0 & 0xff, 0x11, "PL011 UARTPeriphID0");
+    frame
+        .unmap()
+        .unwrap_or_else(|error| panic!("device Frame.Unmap failed: {:?}", error.code()));
+    semi::println!("Device Frame mapped the PL011: UARTPeriphID0 = {periph_id0:#x}");
 }

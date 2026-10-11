@@ -11,7 +11,9 @@
 //!   requested rights must be a subset of the frame capability's rights
 //!   (permission ceiling); requesting `EXECUTE` (within the ceiling) makes
 //!   the mapping executable — at EL1 only with `WRITE`, at EL0 only without
-//!   it — and without it every mapping stays execute-never. The walk requires every
+//!   it — and without it every mapping stays execute-never. A device Frame
+//!   maps as Device-nGnRnE memory and never executable (`EXECUTE` is
+//!   rejected with `InvalidOperation`). The walk requires every
 //!   intermediate table to be present. The
 //!   alias policy is enforced ahead of the hardware transition: the frame's
 //!   physical extent must not overlap any live mapping in the target
@@ -111,9 +113,9 @@ fn map<A: ArchObjects>(
         if frame.is_mapped() {
             return Err(CapError::AlreadyMapped);
         }
-        // Device frames cannot be created by Retype today; keep the defensive
-        // rejection until a device-memory policy is contracted (D6).
-        if frame.is_device() {
+        // A device Frame maps only as device memory and never executable
+        // (device memory policy, 2026-10-10).
+        if frame.is_device() && requested.has(Rights::EXECUTE) {
             return Err(CapError::InvalidOperation);
         }
         let as_entry = caller_table
@@ -163,6 +165,7 @@ fn map<A: ArchObjects>(
         frame.size_bits,
         writable,
         executable,
+        frame.is_device(),
     )?;
 
     // Commit: record the mapping identity on the frame entry. The destination

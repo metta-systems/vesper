@@ -522,43 +522,45 @@ fn retype_frame_size_rejection_precedes_source_resolution() {
     assert!(matches!(result, Err(CapError::InvalidFrameSize(13))));
 }
 
-/// A device Untyped is not a valid source for Frames either: the general
-/// device rejection covers the frame kind, with no state changes.
+/// A device Untyped carves device Frames without touching the registers: the
+/// carve writes no bytes (so it runs MMU-off), the Frame records `is_device`,
+/// and the source watermark advances by the frame size.
 #[test_case]
-fn retype_rejects_device_frames_without_changing_state() {
+fn retype_carves_device_frames_without_touching_them() {
     let mut fx = Fixture::new(FULL);
     let device = fx.install(KeySlot(30), device_untyped(24));
     let before = fx.len();
 
-    let result = fx.invoke(
-        device,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::FRAME,
-            12,
-            0,
-            1,
-            fx.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    assert!(matches!(
-        result,
-        Err(CapError::InvalidObjectType(ObjectType::FRAME))
-    ));
-
-    // No partial state: the source entry is untouched and nothing was
-    // installed.
-    assert_eq!(fx.len(), before);
-    let entry = fx
+    let (frame_wire, _) = fx
+        .invoke(
+            device,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::FRAME,
+                12,
+                0,
+                2,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        )
+        .unwrap_or_else(|e| panic!("device Frame retype failed: {:?}", e.code()));
+    assert_eq!(fx.len(), before + 2);
+    let frame = *fx
+        .lookup(RawKey::from_wire(frame_wire))
+        .unwrap_or_else(|_| panic!("device Frame missing"))
+        .as_frame()
+        .unwrap_or_else(|_| panic!("entry is not a Frame"));
+    assert!(frame.is_device());
+    assert_eq!(frame.paddr, 0x3F00_0000);
+    let region = *fx
         .lookup(device)
-        .unwrap_or_else(|_| panic!("device entry missing"));
-    let region = entry
+        .unwrap_or_else(|_| panic!("device entry missing"))
         .as_untyped()
         .unwrap_or_else(|_| panic!("entry is not an Untyped"));
     assert!(region.is_device);
-    assert_eq!(region.watermark_bytes(), 0);
+    assert_eq!(region.watermark_bytes(), 2 * 4096);
 }
 
 /// A 4 KiB frame that cannot fit the region is rejected at the reservation

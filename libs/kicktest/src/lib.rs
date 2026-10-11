@@ -30,6 +30,7 @@
 pub mod bounce;
 pub mod builder;
 pub mod component;
+pub mod devices;
 pub mod keys;
 pub mod loader;
 pub mod paging;

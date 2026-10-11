@@ -25,10 +25,10 @@
 //! a split into smaller Untypeds — the child region is `2^size_bits` bytes, at
 //! least the watermark encoding granularity, its own alignment, with the child
 //! watermark starting at zero; no bytes are initialized or sanitized because
-//! the split is pure bookkeeping); other kinds remain unsupported. Device
-//! Untypeds are rejected as sources for every kind except the `Untyped`
-//! split, which touches no bytes and propagates `is_device` to the children
-//! (per-kind device policy is D6). A batch is bounded by
+//! the split is pure bookkeeping); other kinds remain unsupported. A device
+//! Untyped is a source only for the `Untyped` split (which propagates
+//! `is_device`) and for device `Frame`s, which are never zeroed; every other
+//! kind is rejected. A batch is bounded by
 //! `MAX_RETYPE_BATCH` (256 objects; larger counts are rejected with
 //! `InvalidOperation` and split by the caller).
 //!
@@ -264,14 +264,15 @@ fn retype<A: ArchObjects>(
         if !untyped.rights().has(Rights::WRITE) {
             return Err(CapError::InsufficientRights);
         }
-        // Device-memory restriction: no creatable kind may touch or expose
-        // device bytes (device regions are MMIO, not kernel-object storage;
-        // sanitization must not zero them). Reject before any reservation,
-        // initialization, or watermark change. The one exception (selected
-        // 2026-09-23) is the Untyped split: it touches no bytes, so the
-        // hazard does not apply, and `is_device` propagates to the children.
-        // Per-kind device policy remains D6.
-        if untyped.as_untyped()?.is_device && kind != ObjectType::UNTYPED {
+        // Device memory (maintainer decision, 2026-10-10): a device Untyped
+        // splits into device Untypeds and carves into device Frames, which
+        // are never touched; every other kind would write kernel state into
+        // MMIO and is rejected before any reservation, initialization, or
+        // watermark change. `is_device` propagates to the children.
+        if untyped.as_untyped()?.is_device
+            && kind != ObjectType::UNTYPED
+            && kind != ObjectType::FRAME
+        {
             return Err(CapError::InvalidObjectType(kind));
         }
         let dst_cap = resolve_table_cap(&caller_table, dst_table_key, caller.guard, 5)?;
@@ -385,17 +386,22 @@ fn retype<A: ArchObjects>(
                 KeyEntry::new_keytable(addr as u64, table_guard, size_bits, requested, 0)
             }
             Carve::Frame { bytes } => {
-                // Sanitization (selected 2026-09-15): the kernel zeroes the
-                // carved frame contents before the capability is installed,
-                // so a fresh frame never carries prior-owner or kernel data
-                // when first exposed across a protection boundary.
-                let addr = PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>();
-                // SAFETY: the region lies within the Untyped's unused
-                // watermark range, is ordinary RAM (device sources are
-                // rejected above), and has no outstanding access.
-                unsafe {
-                    core::ptr::write_bytes(addr, 0, bytes);
-                };
+                // A device Frame names MMIO registers: it is never zeroed or
+                // otherwise touched (device memory policy, 2026-10-10).
+                if !untyped.is_device {
+                    // Sanitization (selected 2026-09-15): the kernel zeroes
+                    // the carved frame contents before the capability is
+                    // installed, so a fresh frame never carries prior-owner
+                    // or kernel data when first exposed across a protection
+                    // boundary.
+                    let addr = PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>();
+                    // SAFETY: the region lies within the Untyped's unused
+                    // watermark range, is ordinary RAM (checked just above),
+                    // and has no outstanding access.
+                    unsafe {
+                        core::ptr::write_bytes(addr, 0, bytes);
+                    };
+                }
                 KeyEntry::new_frame(paddr, size_bits, untyped.is_device, requested)
             }
             Carve::PageTable { bytes } => {

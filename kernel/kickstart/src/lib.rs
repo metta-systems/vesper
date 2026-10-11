@@ -311,6 +311,12 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             node.compat
         );
 
+        // Interrupt controllers the kernel keeps for itself even when no
+        // loaded component drives them.
+        if !node.disabled && privileged::WITHHELD.contains(&node.compat) {
+            privileged::withhold(node.start, node.size);
+        }
+
         if !node.disabled
             && node.name != "memory"
             && node.name != "gpio"

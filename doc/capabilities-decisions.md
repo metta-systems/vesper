@@ -153,6 +153,12 @@ needs them.
   re-carved at a different offset or as a different kind, and a check that it
   adds protection beyond the retire-time bump and completed cleanup that the
   contract already relies on.
+- **Budget from a scheduler's own bound Time:** a Time bound to a live Thread
+  can't give budget away, so a scheduler gives its children budget only from
+  Times not bound to a Thread (contract, bound Times). Revisit whether this
+  can be relaxed or reworked, for example letting the bound Thread itself (or
+  its scheduler) transfer out while still refusing other key holders, without
+  reopening the risk of an interrupt Thread's Time being drained.
 - **Kernel-published identity in `TPIDRRO_EL0`:** using the EL0 read-only,
   EL1-writable register to publish per-Thread identity to userspace, as Linux
   does for per-CPU data. Today it is always zero.

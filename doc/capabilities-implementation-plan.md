@@ -113,7 +113,7 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
 
 - [ ] Separate backing size/alignment from descriptor storage and slot quotas, with provenance, for kinds outside the kernel object pools.
-- [ ] Retype device Frames from device Untypeds (no zeroing, `is_device` recorded, device attributes and never executable on Map), and have Kickstart hand out device Untypeds for device-tree MMIO ranges, excluding kernel-owned ranges (interrupt controller, per-core timer/mailbox block); test that no handed-out device Untyped overlaps them.
+- [ ] Raspberry Pi 3 mailbox: a privileged mailbox driver component Kickstart instantiates (its registers share the BCM interrupt controller's page).
 - [ ] Define the sanitization duties beyond Retype-carved Frames and PageTables, distinguishing intentional content-preserving sharing.
 - [ ] Implement mapping-local Unmap versus origin-capability Revoke of descendants: retain the origin, define partial completion, and prevent racing mapping installation.
 - [ ] Encode and enforce origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no-Frame-slot-reuse rule.

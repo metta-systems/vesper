@@ -221,6 +221,7 @@ pub fn load(plan: &IrqChipPlan, setup: &mut MmuSetup) -> Result<PlatformHandoff,
         size / 1024,
         PRIVILEGED_BASE + image.ops_offset
     );
+    record_kernel_owned(plan);
     Ok(PlatformHandoff {
         ops: PRIVILEGED_BASE + image.ops_offset,
         config,
@@ -249,4 +250,56 @@ pub fn record(handoff: &PlatformHandoff) {
 pub fn handoff() -> Option<&'static PlatformHandoff> {
     // SAFETY: see `HandoffCell`: no writer remains.
     unsafe { (*HANDOFF.0.get()).as_ref() }
+}
+
+/// Most physical MMIO ranges the kernel drives through privileged components.
+const MAX_KERNEL_OWNED: usize = MAX_CONTROLLERS * MAX_REGIONS + MAX_WITHHELD;
+
+/// Most extra ranges withheld by compatible string (see [`WITHHELD`]).
+const MAX_WITHHELD: usize = 4;
+
+/// Interrupt controllers never handed out as device memory even when no
+/// loaded component drives them: the ARM local interrupt block also holds
+/// the core timer controls.
+pub const WITHHELD: &[&str] = &["brcm,bcm2836-l1-intc"];
+
+/// The physical MMIO ranges of the loaded component's controllers: hardware
+/// the kernel drives itself, never handed out as device memory.
+struct KernelOwnedCell(UnsafeCell<([(u64, u64); MAX_KERNEL_OWNED], usize)>);
+
+// SAFETY: written once at EL2 before the boot Thread runs, read-only afterwards,
+// on the single boot core.
+unsafe impl Sync for KernelOwnedCell {}
+
+static KERNEL_OWNED: KernelOwnedCell =
+    KernelOwnedCell(UnsafeCell::new(([(0, 0); MAX_KERNEL_OWNED], 0)));
+
+/// Record the physical MMIO ranges `plan` gives the component.
+fn record_kernel_owned(plan: &IrqChipPlan) {
+    // SAFETY: see `KernelOwnedCell`: the only write, before any reader.
+    let (ranges, count) = unsafe { &mut *KERNEL_OWNED.0.get() };
+    for planned in &plan.controllers[..plan.controller_count] {
+        for &range in &planned.regions[..planned.region_count] {
+            ranges[*count] = range;
+            *count += 1;
+        }
+    }
+}
+
+/// `(physical start, size)` of every MMIO range the kernel drives, empty if
+/// no component was loaded.
+pub fn kernel_owned_ranges() -> &'static [(u64, u64)] {
+    // SAFETY: see `KernelOwnedCell`: no writer remains.
+    let (ranges, count) = unsafe { &*KERNEL_OWNED.0.get() };
+    &ranges[..*count]
+}
+
+/// Withhold `[start, start + size)` from device memory: a node matching
+/// [`WITHHELD`]. Called while kickstart walks the device tree at EL2.
+pub fn withhold(start: u64, size: u64) {
+    // SAFETY: see `KernelOwnedCell`: written only at EL2, before any reader.
+    let (ranges, count) = unsafe { &mut *KERNEL_OWNED.0.get() };
+    assert!(*count < MAX_KERNEL_OWNED, "too many withheld device ranges");
+    ranges[*count] = (start, size);
+    *count += 1;
 }

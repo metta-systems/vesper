@@ -210,6 +210,7 @@ impl ArchObjects for AArch64 {
         size_bits: u8,
         writable: bool,
         executable: bool,
+        device: bool,
     ) -> Result<(), CapError> {
         super::page_table::install_frame_pte(
             root_paddr,
@@ -218,6 +219,7 @@ impl ArchObjects for AArch64 {
             size_bits,
             writable,
             executable,
+            device,
         )
     }
 

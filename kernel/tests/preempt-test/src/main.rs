@@ -48,6 +48,7 @@ use {
     libkicktest::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::ttbr,
+        devices,
         keys::{SlotCursor, boot_key, boot_slot},
         loader::verify_component,
         paging::image_table_count,
@@ -326,6 +327,9 @@ pub fn run() -> ! {
         .lookup(spinner_thread_key, BOOT_TABLE_GUARD)
         .and_then(KeyEntry::thread_id)
         .unwrap_or_else(|error| panic!("spinner Thread key lookup failed: {:?}", error.code()));
+    // Kickstart withheld the interrupt controllers, the local interrupt
+    // block included, from the device memory it handed out.
+    devices::assert_device_untypeds_avoid_the_kernel(keytable_addr);
     semi::println!("preempt-test: spinners, checker and idle started; parking");
 
     // Park until the checker wakes us: only preemption lets it run.

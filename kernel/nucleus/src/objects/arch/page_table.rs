@@ -44,6 +44,9 @@ pub mod pte {
     pub const AP_RO_USER: u64 = 0b11 << 6;
     /// Memory attribute index 0 (normal write-back cacheable).
     pub const ATTR_NORMAL: u64 = 0 << 2;
+    /// Memory attribute index 1 (Device-nGnRnE), as `MAIR_EL1` is set up at
+    /// boot.
+    pub const ATTR_DEVICE: u64 = 1 << 2;
     /// Privileged execute never.
     pub const PXN: u64 = 1 << 53;
     /// Unprivileged execute never.
@@ -254,6 +257,7 @@ pub fn install_frame_pte(
     size_bits: u8,
     writable: bool,
     executable: bool,
+    device: bool,
 ) -> Result<(), CapError> {
     if vaddr >= 1 << VA_BITS {
         return Err(CapError::InvalidPointer);
@@ -271,7 +275,7 @@ pub fn install_frame_pte(
     if leaf_table.entries[slot] != 0 {
         return Err(CapError::AlreadyMapped);
     }
-    leaf_table.entries[slot] = frame_descriptor(frame_paddr, leaf, writable, executable);
+    leaf_table.entries[slot] = frame_descriptor(frame_paddr, leaf, writable, executable, device);
     publish_descriptor_store();
     Ok(())
 }
@@ -288,7 +292,13 @@ fn publish_descriptor_store() {
 }
 
 /// Encode a TTBR0 leaf without accessing its backing table.
-fn frame_descriptor(frame_paddr: u64, leaf: u8, writable: bool, executable: bool) -> u64 {
+fn frame_descriptor(
+    frame_paddr: u64,
+    leaf: u8,
+    writable: bool,
+    executable: bool,
+    device: bool,
+) -> u64 {
     let (ap, execute_never) = match (writable, executable) {
         // Kernel-privilege RW+X, executable at EL1 only: EL1 cannot execute
         // EL0-writable pages (the architectural user-writable execute-never
@@ -305,6 +315,12 @@ fn frame_descriptor(frame_paddr: u64, leaf: u8, writable: bool, executable: bool
     // Level 3 uses page descriptors (bit 1 set); levels 1–2 use block
     // descriptors (bit 1 clear).
     let descriptor_bit = if leaf == 3 { pte::DESCRIPTOR } else { 0 };
+    // Device memory is never executable, whatever was requested.
+    let (attributes, execute_never) = if device {
+        (pte::ATTR_DEVICE, pte::PXN | pte::UXN)
+    } else {
+        (pte::ATTR_NORMAL, execute_never)
+    };
     frame_paddr
         | pte::VALID
         | descriptor_bit
@@ -312,7 +328,7 @@ fn frame_descriptor(frame_paddr: u64, leaf: u8, writable: bool, executable: bool
         | pte::NG
         | pte::SH_INNER
         | ap
-        | pte::ATTR_NORMAL
+        | attributes
         | execute_never
 }
 
@@ -405,11 +421,38 @@ mod tests {
                 (true, true, 0, 1 << 54),
             ] {
                 let descriptor =
-                    frame_descriptor(base, leaf_level(size_bits), writable, executable);
+                    frame_descriptor(base, leaf_level(size_bits), writable, executable, false);
                 // Literal flag bits pin the hardware format independently of
                 // the production constants, including nG at bit 11.
                 let expected =
                     base | descriptor_bits | (1 << 10) | (1 << 11) | (0b11 << 8) | ap | xn;
+                assert_eq!(descriptor, expected);
+            }
+        }
+    }
+
+    #[test_case]
+    fn device_frames_use_attribute_index_one_and_never_execute() {
+        for (size_bits, base, descriptor_bits) in [(12, 0x3f20_1000, 0b11), (21, 0x3f20_0000, 0b01)]
+        {
+            for (writable, executable, ap) in [
+                (false, false, 0b11 << 6),
+                (true, false, 0b01 << 6),
+                // A requested execute permission never reaches a device mapping.
+                (false, true, 0b11 << 6),
+            ] {
+                let descriptor =
+                    frame_descriptor(base, leaf_level(size_bits), writable, executable, true);
+                // AttrIndx 1 (bit 2) selects Device-nGnRnE; PXN and UXN both set.
+                let expected = base
+                    | descriptor_bits
+                    | (1 << 10)
+                    | (1 << 11)
+                    | (0b11 << 8)
+                    | ap
+                    | (1 << 2)
+                    | (1 << 53)
+                    | (1 << 54);
                 assert_eq!(descriptor, expected);
             }
         }

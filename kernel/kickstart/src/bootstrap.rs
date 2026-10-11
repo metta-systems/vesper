@@ -14,7 +14,7 @@
 
 use {
     crate::{
-        boot_info::BOOT_INFO,
+        boot_info::{BOOT_INFO, DeviceUntypedRange},
         embed::{NUCLEUS_SET_ANCHOR_VIRT, NUCLEUS_SET_PLATFORM_VIRT},
         print_my_sp, privileged,
     },
@@ -22,6 +22,7 @@ use {
     libaddress::PhysAddr,
     libexception::arch::aarch64::SavedContext,
     liblocking::interface::Mutex,
+    libmapping::MemAttributes,
     libobject::{
         CapError, KeySlot, ObjectType, RawKey, Rights,
         domain::DomainId,
@@ -569,6 +570,8 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
             panic!("root Scheduler install failed: {:?}", failure.error.code())
         });
 
+    install_device_untypeds(boot_table);
+
     // Install the debug console grant (debug_kernel), the boot Thread's
     // console authority.
     #[cfg(feature = "debug_kernel")]
@@ -635,4 +638,162 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
         #[cfg(feature = "debug_kernel")]
         debug_console_key,
     }
+}
+
+/// First boot-table slot of the device Untypeds (`BOOT_INFO` records the
+/// range actually used).
+pub const DEVICE_UNTYPED_FIRST_SLOT: u32 = 160;
+/// Boot-table slots reserved for device Untypeds.
+pub const DEVICE_UNTYPED_SLOTS: u32 = 40;
+
+/// Device memory is handed out in whole pages.
+const DEVICE_PAGE: u64 = 4096;
+/// Most page runs the handout tracks while splitting.
+const MAX_DEVICE_RUNS: usize = 64;
+
+/// Fixed-capacity list of `[start, end)` page runs, kept sorted by start.
+struct PageRuns {
+    runs: [(u64, u64); MAX_DEVICE_RUNS],
+    count: usize,
+}
+
+impl PageRuns {
+    const fn new() -> Self {
+        Self {
+            runs: [(0, 0); MAX_DEVICE_RUNS],
+            count: 0,
+        }
+    }
+
+    fn as_slice(&self) -> &[(u64, u64)] {
+        &self.runs[..self.count]
+    }
+
+    fn push(&mut self, run: (u64, u64)) {
+        assert!(self.count < MAX_DEVICE_RUNS, "too many device page runs");
+        self.runs[self.count] = run;
+        self.count += 1;
+    }
+}
+
+/// The whole pages covering `[start, start + size)`.
+fn page_span(start: u64, size: u64) -> (u64, u64) {
+    (
+        start & !(DEVICE_PAGE - 1),
+        (start + size).next_multiple_of(DEVICE_PAGE),
+    )
+}
+
+/// The page runs of the enabled device-tree register ranges in `BOOT_INFO`,
+/// with overlapping runs merged, minus every page that touches a range the
+/// kernel drives itself (`kernel_owned`, as `(start, size)`).
+fn device_page_runs(kernel_owned: &[(u64, u64)]) -> PageRuns {
+    let mut spans = PageRuns::new();
+    BOOT_INFO.lock(|boot_info| {
+        for region in boot_info
+            .used_regions()
+            .filter(|region| region.attributes.mem_attributes == MemAttributes::Device)
+        {
+            let start = region.start_inclusive.as_u64();
+            spans.push(page_span(start, region.end_exclusive.as_u64() - start));
+        }
+    });
+    spans.runs[..spans.count].sort_unstable_by_key(|run| run.0);
+
+    // Merge runs that share pages.
+    let mut merged = PageRuns::new();
+    for &(start, end) in spans.as_slice() {
+        match merged.runs[..merged.count].last_mut() {
+            Some(last) if start < last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+
+    // Withhold every page touching a kernel-owned range.
+    let mut handed = PageRuns::new();
+    for &(start, end) in merged.as_slice() {
+        let mut cursor = start;
+        while cursor < end {
+            // The earliest kernel-owned span starting inside the rest of the run.
+            let cut = kernel_owned
+                .iter()
+                .map(|&(owned, size)| page_span(owned, size))
+                .filter(|&(owned_start, owned_end)| owned_start < end && owned_end > cursor)
+                .min_by_key(|&(owned_start, _)| owned_start);
+            match cut {
+                Some((owned_start, owned_end)) => {
+                    if owned_start > cursor {
+                        handed.push((cursor, owned_start));
+                    }
+                    cursor = owned_end;
+                }
+                None => {
+                    handed.push((cursor, end));
+                    cursor = end;
+                }
+            }
+        }
+    }
+    handed
+}
+
+/// Install a device Untyped for every enabled device-tree register range that
+/// the kernel does not drive itself, in consecutive boot-table slots from
+/// [`DEVICE_UNTYPED_FIRST_SLOT`], and record the range in `BOOT_INFO`.
+///
+/// Each page run is split into the largest aligned power-of-two blocks, so
+/// the Untypeds never overlap.
+fn install_device_untypeds(boot_table: &mut KeyTable) {
+    let mut count = 0_u32;
+    for &(start, end) in device_page_runs(privileged::kernel_owned_ranges()).as_slice() {
+        let mut block = start;
+        while block < end {
+            let align_bits = block.trailing_zeros();
+            let length_bits = 63 - (end - block).leading_zeros();
+            let size_bits = align_bits.min(length_bits);
+            assert!(
+                count < DEVICE_UNTYPED_SLOTS,
+                "more device Untypeds than reserved slots"
+            );
+            boot_table
+                .insert(
+                    KeySlot(DEVICE_UNTYPED_FIRST_SLOT + count),
+                    KeyEntry::new_untyped(
+                        block,
+                        u8::try_from(size_bits).expect("block size fits u8"),
+                        true,
+                        Rights::all(),
+                    ),
+                    BOOT_TABLE_GUARD,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("device Untyped install failed: {:?}", failure.error.code())
+                });
+            count += 1;
+            block += 1 << size_bits;
+        }
+    }
+    BOOT_INFO.lock(|boot_info| {
+        boot_info.device_untypeds = DeviceUntypedRange {
+            first_slot: DEVICE_UNTYPED_FIRST_SLOT,
+            count,
+        };
+    });
+    semi::println!(
+        "🥾 {count} device Untypeds in boot slots {DEVICE_UNTYPED_FIRST_SLOT}..{}",
+        DEVICE_UNTYPED_FIRST_SLOT + count
+    );
+}
+
+pub use crate::boot_info::DeviceUntypedRange as DeviceUntypeds;
+
+/// Where Kickstart installed the device Untypeds (empty before bootstrap).
+pub fn device_untypeds() -> DeviceUntypeds {
+    BOOT_INFO.lock(|boot_info| boot_info.device_untypeds)
+}
+
+/// `(physical start, size)` of every MMIO range the kernel drives itself;
+/// no device Untyped covers any of their pages.
+pub fn kernel_owned_device_ranges() -> &'static [(u64, u64)] {
+    privileged::kernel_owned_ranges()
 }

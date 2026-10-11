@@ -226,7 +226,8 @@ pub trait ArchObjects: Sized + 'static {
     /// versus read-only; `executable` (the `EXECUTE` right — without it every
     /// mapping stays UXN|PXN) makes the mapping executable at one exception
     /// level: a writable executable mapping at EL1 only (EL0 denied, UXN),
-    /// a read-only executable mapping at EL0 only (PXN).
+    /// a read-only executable mapping at EL0 only (PXN). `device` maps the
+    /// frame as device memory (the caller rejects `executable` with it).
     fn install_frame_pte(
         root_paddr: u64,
         vaddr: u64,
@@ -234,6 +235,7 @@ pub trait ArchObjects: Sized + 'static {
         size_bits: u8,
         writable: bool,
         executable: bool,
+        device: bool,
     ) -> Result<(), CapError>;
 
     /// Clear the frame mapping descriptor at `vaddr`, verifying it still

@@ -40,11 +40,11 @@ Retype creates `count` objects and installs their capabilities into consecutive 
 | Thread | 0 | An inert Thread: no AddressSpace or execution state until the root [Scheduler](scheduler.md) configures and starts it |
 | Untyped | At least 4 (16 bytes) | A smaller Untyped covering part of the region |
 
-Other kinds fail with `INVALID_OBJECT_TYPE`. A device Untyped can only be split into smaller device Untypeds; every other kind from a device Untyped fails with `INVALID_OBJECT_TYPE`.
+Other kinds fail with `INVALID_OBJECT_TYPE`. A device Untyped covers hardware registers: it can be split into smaller device Untypeds or carved into device [Frames](../arch/frame.md), which Retype never zeroes or otherwise touches. Every other kind from a device Untyped fails with `INVALID_OBJECT_TYPE`.
 
 | Error | Cause |
 |---|---|
-| `INVALID_OBJECT_TYPE` | The kind cannot be created from memory, or the source is device memory |
+| `INVALID_OBJECT_TYPE` | The kind cannot be created from memory, or the source is device memory and the kind is neither Untyped nor Frame |
 | `INVALID_SIZE` | `size_bits` out of range for the kind; for a KeyTable, a guard too wide for its size or `x3` bits 63–40 set |
 | `INVALID_FRAME_SIZE` | Frame `size_bits` other than 12, 21 or 30 |
 | `INVALID_OPERATION` | Count 0 or above 256; `x3` bits above 7 set for a kind other than KeyTable; a kind, slot or rights word that does not fit its field; undefined rights bits |
@@ -54,6 +54,8 @@ Other kinds fail with `INVALID_OBJECT_TYPE`. A device Untyped can only be split 
 | `INVALID_SLOT`, `SLOT_OCCUPIED`, `KEY_SLOT_EXHAUSTED` | A destination slot is out of range, occupied, or has used up its incarnations |
 
 ## Implementation
+
+Kickstart gives the first component device Untypeds for the hardware registers listed in the device tree: each enabled node's range is rounded out to whole 4 KiB pages, overlapping pages are merged, and each run is split into aligned power-of-two blocks. Pages that hold registers the kernel drives itself, such as the interrupt controller, are never handed out, along with any other device on the same page.
 
 An Untyped tracks a watermark: Retype allocates from the unused part of the region above it and only ever moves it forward. Memory below the watermark is never handed out again, even after the objects created there are retired. Each new object is aligned to its own alignment (a Frame to its size), and the watermark advances in 16-byte steps.
 

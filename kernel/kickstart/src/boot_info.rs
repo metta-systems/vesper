@@ -257,9 +257,19 @@ pub enum BootInfoError {
     OverlappingUsedRegions,
 }
 
+/// The boot-table slots holding the device Untypeds Kickstart handed out:
+/// `count` consecutive slots starting at `first_slot`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeviceUntypedRange {
+    pub first_slot: u32,
+    pub count: u32,
+}
+
 pub struct BootInfo {
     pub regions: [BootInfoMemRegion; NUM_MEM_REGIONS],
     pub num_regions: usize,
+    /// Where the device Untypeds were installed, for the boot phase.
+    pub device_untypeds: DeviceUntypedRange,
 }
 
 /// Implement Default manually to work around Rust not defining Default for arrays over 32 items.
@@ -275,6 +285,10 @@ impl BootInfo {
         BootInfo {
             regions: [BootInfoMemRegion::new(); NUM_MEM_REGIONS],
             num_regions: 0,
+            device_untypeds: DeviceUntypedRange {
+                first_slot: 0,
+                count: 0,
+            },
         }
     }
 

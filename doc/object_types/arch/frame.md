@@ -33,7 +33,7 @@ Maps the Frame at virtual address `x3` in the AddressSpace named by `x2`. The ad
 | `READ \| EXECUTE` | Read, execute | Read |
 | `READ \| WRITE \| EXECUTE` | None | Read, write, execute |
 
-No mapping is both writable and executable at the same exception level.
+No mapping is both writable and executable at the same exception level. A device Frame maps as Device-nGnRnE memory and is never executable: requesting `EXECUTE` fails with `INVALID_OPERATION`.
 
 Within one AddressSpace, a physical byte may be mapped at only one virtual address: Map fails with `PHYSICAL_ALIAS` if the Frame overlaps memory already mapped there through any capability. Different AddressSpaces may map the same memory at any addresses.
 
@@ -43,7 +43,7 @@ Within one AddressSpace, a physical byte may be mapped at only one virtual addre
 | `ALREADY_MAPPED` | This Frame capability is already mapped, or the virtual address is in use |
 | `MISSING_INTERMEDIATE` | A translation table on the path is missing (`x1` is the address) |
 | `PHYSICAL_ALIAS` | The memory is already mapped in this AddressSpace (`x1` is the conflicting physical base) |
-| `INVALID_OPERATION` | Nonzero `x5`, misaligned address, undefined rights bits, or a nonzero unused argument |
+| `INVALID_OPERATION` | Nonzero `x5`, misaligned address, undefined rights bits, `EXECUTE` on a device Frame, or a nonzero unused argument |
 | `TYPE_MISMATCH` | `x2` is not an AddressSpace |
 
 ### Unmap
@@ -56,4 +56,4 @@ Returns the physical base address and size of the Frame. `FrameKey::get_extent` 
 
 ## Implementation
 
-Retype zeroes a Frame before handing it out. Deleting or moving a Frame capability leaves its mapping in place; unmap it first if the memory should become unreachable.
+Retype zeroes a Frame carved from ordinary memory before handing it out. A Frame carved from a device Untyped covers hardware registers and is never zeroed or touched. Deleting or moving a Frame capability leaves its mapping in place; unmap it first if the memory should become unreachable.
