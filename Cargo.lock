@@ -642,6 +642,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "irq-protocol"
+version = "0.0.1"
+
+[[package]]
+name = "irq-receiver"
+version = "0.0.1"
+dependencies = [
+ "irq-protocol",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "irq-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "irq-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "irqchip-bcm2836"
 version = "0.0.1"
 dependencies = [

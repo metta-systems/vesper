@@ -470,7 +470,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 32, u64::MAX, 1));
     }
-    for wire in [(37, 0, 0), (37, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(38, 0, 0), (38, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -521,4 +521,21 @@ fn time_budget_statuses_round_trip_and_reject_unused_details() {
     for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
         assert_unknown_response((36, detail1, detail2));
     }
+}
+
+#[test]
+fn irq_line_active_round_trips_the_line() {
+    use vesper_objects::syscall_status::IRQ_LINE_ACTIVE;
+
+    assert_eq!(IRQ_LINE_ACTIVE, 37);
+    for line in [0, 1, 30, 1019, u32::MAX] {
+        assert_error!(
+            (37, u64::from(line), 0),
+            CapError::IrqLineActive { line },
+            CapError::IrqLineActive { line: actual } if actual == line
+        );
+        assert_unknown_response((37, u64::from(line), 1));
+    }
+    // A line wider than 32 bits is not this status.
+    assert_unknown_response((37, 1 << 32, 0));
 }

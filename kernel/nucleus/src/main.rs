@@ -479,8 +479,9 @@ const MAX_CLAIMS_PER_ENTRY: usize = 64;
 /// pending line through the interrupt-controller component, then, on a
 /// timer tick (or when idle was interrupted), preempt the current Thread.
 ///
-/// The timer line re-arms the tick. Every other line is masked: binding
-/// lines to Notifications (`IRQHandler`) is not implemented yet.
+/// The timer line re-arms the tick. Every other line is masked and ended;
+/// a line bound by `IRQHandler.SetNotification` also signals its
+/// Notification, and stays masked until the handler's `Ack`.
 fn handle_irq(frame: &mut ExceptionContext) {
     assert!(
         frame.origin != ExceptionOrigin::CurrentSpx,
@@ -497,7 +498,9 @@ fn handle_irq(frame: &mut ExceptionContext) {
             ticked = true;
         } else {
             nucleus::platform::mask(line);
-            warn!("Masked unbound interrupt line {line}");
+            if !deliver_irq(line) {
+                warn!("Masked unbound interrupt line {line}");
+            }
         }
         nucleus::platform::complete(line);
     }
@@ -526,6 +529,23 @@ fn handle_irq(frame: &mut ExceptionContext) {
         Ok(None) => {}
         Err(error) => panic!("preemption scheduling invariant failed: {:?}", error.code()),
     }
+}
+
+/// Signal the Notification bound to the claimed `line`, if any; whether
+/// one was signalled.
+fn deliver_irq(line: u32) -> bool {
+    KERNEL_LOCK.lock(|()| {
+        let Some(nucleus_ptr) = nucleus_anchor() else {
+            panic!("nucleus not booted by Kickstart")
+        };
+        // SAFETY: the anchor names the retained boot-carved Nucleus, and the
+        // kernel lock gives exclusive access for this delivery.
+        let nucleus = unsafe { &mut *nucleus_ptr };
+        // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other
+        // Access or guard overlaps this transaction.
+        let access = unsafe { Access::new() };
+        nucleus::api::irq::deliver(&access, line, nucleus)
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════

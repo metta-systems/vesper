@@ -139,10 +139,7 @@ Reference: [communication](capabilities-contract.md#communication-and-deferred-c
 
 Reference: [IRQ delivery](capabilities-contract.md#irq-delivery). Order toward the PL011 driver: device Frames (Phase 5), then the items below.
 
-- [ ] Add the nucleus IRQ table (bound Notification identity and badge per line, sized by the component's `line_count`); `handle_irq` signals a bound line's Notification, masks it and ends the interrupt, and masks and ends unbound lines.
-- [ ] Implement `IRQControl.Issue` (specifier → line through `xlate`, trigger from the specifier, one live IRQHandler per line, nucleus timer line refused) and `IRQHandler.SetNotification`/`Clear`/`Ack`, with shared ABI, wrappers, rights checks and success traces; deleting the IRQHandler clears and masks the line.
-- [ ] Install IRQControl as a Kickstart boot key; later hand it to `irq-manager`.
-- [ ] Test issue/bind/clear/ack, double issue, wrong-kind and missing-`SEND` Notification keys and stale identities in nucleus unit tests; run an EL0 receiver Thread that waits on a bound line, acks and observes repeated deliveries on raspi3b and raspi4b.
+- [ ] Hand the boot IRQControl to an EL0 `irq-manager` component for good.
 - [ ] Carve PageTable metadata and AddressSpaces from the invoking Untyped (carved-object identity) and remove their boot pools; keep failure atomicity and watermark accounting.
 - [ ] Driver matching: `compatible` link section in EL0 driver binaries, `[[driver]]` manifest entries, Kickstart loading one driver per matching enabled node with its device Untyped, IRQHandlers and Time.
 - [ ] Port the PL011 UART to an EL0 driver component (`drivers/uart-pl011`) that retypes its receiver Thread and device Frame, binds its interrupt and serves receive and transmit by interrupts; `uart-test` runs it in loopback on raspi3b and raspi4b.

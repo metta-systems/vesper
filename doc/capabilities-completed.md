@@ -82,6 +82,12 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] A Time bound by `ConfigureThread` is its Thread's own while the Thread is live: a second binding is refused and Transfer/Merge cannot take budget out of it (`Time::is_bound`; nucleus `scheduler_tests::a_bound_time_is_its_threads_own`).
 - [x] Device Frames: Retype carves Frames from a device Untyped without zeroing them, and `Frame.Map` installs them as Device-nGnRnE memory, never executable (nucleus `untyped` and `page_table` tests).
 - [x] Kickstart hands out device Untypeds for the enabled device-tree ranges (page-rounded, merged, aligned power-of-two blocks, kernel-owned pages withheld) in boot slots from 160, recording the range in `BOOT_INFO` (`kickstart::bootstrap::install_device_untypeds`; `memory-test` checks none overlaps the interrupt controller and maps and reads the PL011 through one).
+- [x] The ARM local interrupt block (`brcm,bcm2836-l1-intc`) is withheld from device memory on every board (`kickstart::privileged::WITHHELD`; `libkicktest::devices::assert_device_untypeds_avoid_the_kernel` in `preempt-test` on rpi3 and rpi4 and in `memory-test`).
+
+## Interrupt delivery
+
+- [x] Nucleus IRQ table carved by Kickstart from the boot Untyped, sized by the component's line count; delivery signals a bound line's Notification with its badge, masks the line and ends the interrupt, and masks and ends unbound lines (`kernel/nucleus/src/objects/irq.rs`, `api::irq::deliver`).
+- [x] `IRQControl.Issue` (controller index and specifier, trigger from the specifier through `libirqchip` ABI 2 `xlate`, one live handler per line, timer line `IRQ_LINE_ACTIVE`) and `IRQHandler.SetNotification`/`Clear`/`Ack`/`Retire`; IRQControl at `KeySlot::IRQ_CONTROL`; controller order in `BOOT_INFO` (`kernel/nucleus/src/api/irq.rs`, `libs/object/src/irq.rs`; host ABI tests, nucleus `irq_tests` against a fake component, `irq-test` EL0 receiver over three virtual-timer interrupts on rpi3 and rpi4).
 
 ## Final integration
 

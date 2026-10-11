@@ -9,6 +9,7 @@ members = [
   "kernel/tests/endpoint-test",
   "kernel/tests/fault-test",
   "kernel/tests/fp-trap-test",
+  "kernel/tests/irq-test",
   "kernel/tests/preempt-test",
   "bin/chainboot",
   "bin/chainofcommand",
@@ -56,6 +57,8 @@ members = [
   "userspace/tests/fp-trap/probe",
   "userspace/tests/fp-trap/protocol",
   "userspace/tests/hello",
+  "userspace/tests/irq/protocol",
+  "userspace/tests/irq/receiver",
   "userspace/tests/preempt/spinner",
 ]
 resolver = "3"

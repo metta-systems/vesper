@@ -20,6 +20,7 @@ pub mod arch;
 pub mod debug_console;
 pub mod event_count;
 pub mod invocation;
+pub mod irq;
 pub mod key_entry;
 pub mod key_table;
 pub mod notification;
@@ -230,6 +231,16 @@ fn core_invoke<A: ArchObjects>(
                 .map(InvokeOutcome::Complete)
         }
 
+        CoreType::IRQControl => {
+            crate::api::irq::invoke_control::<A>(access, caller, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
+        }
+
+        CoreType::IRQHandler => {
+            crate::api::irq::invoke_handler::<A>(access, caller, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
+        }
+
         _ => Err(CapError::UnsupportedCoreType(core_type)),
     }
 }
@@ -297,7 +308,7 @@ fn arch_invoke<A: ArchObjects>(
                 .map(InvokeOutcome::Complete)
         }
 
-        // ASIDControl and I/O/IRQ control remain deferred with their kinds:
+        // ASIDControl and I/O control remain deferred with their kinds:
         // no creatable arch kind other than Frame, PageTable, and the
         // boot-provided AddressSpace/ASIDPool is allowlisted or provided,
         // and their draft handlers stay inactive. The registered ASIDControl

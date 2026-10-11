@@ -24,6 +24,11 @@ mod api;
 #[path = "../src/objects/mod.rs"]
 mod objects;
 
+// The interrupt-controller component as the IRQ operations reach it.
+#[allow(dead_code)]
+#[path = "../src/platform.rs"]
+mod platform;
+
 // Only the clock is used here; the tick is armed by the nucleus binary.
 #[allow(dead_code)]
 #[path = "../src/timer.rs"]
@@ -114,6 +119,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             pending: crate::objects::PendingPool::new(),
             run_queue: crate::objects::RunQueue::new(),
             idle_thread: None,
+            irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
             pools: NucleusPools {
                 arch: ArchPools::new(

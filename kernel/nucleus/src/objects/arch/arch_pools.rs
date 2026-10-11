@@ -19,7 +19,7 @@ pub struct ArchPools<A: ArchObjects> {
     /// (selected 2026-09-15); not Retype-creatable, so the only backing today
     /// is the boot pool carved at bootstrap.
     pub asid_pools: ObjectPool<A::ASIDPool>,
-    // Pools for ASIDControl/I/O/IRQ remain deferred with their kinds: no
+    // Pools for ASIDControl/I/O remain deferred with their kinds: no
     // creatable arch kind other than Frame and PageTable is allowlisted, so
     // no backing is carved for them yet.
     pub _marker: core::marker::PhantomData<A>,

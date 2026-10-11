@@ -66,6 +66,10 @@ pub mod time_client;
 pub mod scheduler_client;
 
 #[cfg(test)]
+#[path = "../src/irq.rs"]
+pub mod irq_client;
+
+#[cfg(test)]
 mod tests {
     use core::mem::{align_of, size_of};
 
@@ -362,6 +366,7 @@ mod tests {
         assert_eq!(KeySlot::FAULT_HANDLER, KeySlot(16));
         assert_eq!(KeySlot::BOOT_TIME, KeySlot(17));
         assert_eq!(KeySlot::ROOT_SCHEDULER, KeySlot(18));
+        assert_eq!(KeySlot::IRQ_CONTROL, KeySlot(19));
     }
 
     #[test]

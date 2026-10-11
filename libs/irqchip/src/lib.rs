@@ -16,7 +16,7 @@
 //! tree interrupt specifiers become lines through [`IrqChipOps::xlate`].
 
 /// Version of this ABI; [`IrqChipOps::abi_version`] must equal it.
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// Name of the [`IrqChipOps`] static every IC component exports.
 pub const OPS_SYMBOL: &str = "IRQCHIP_OPS";
@@ -26,6 +26,16 @@ pub const SPURIOUS: u32 = u32::MAX;
 
 /// [`IrqChipOps::xlate`] result for a specifier the component does not understand.
 pub const INVALID_LINE: u32 = u32::MAX - 1;
+
+/// [`IrqChipOps::xlate`] trigger: the specifier does not configure the
+/// trigger, or the line's trigger is fixed.
+pub const TRIGGER_FIXED: u32 = 0;
+
+/// [`IrqChipOps::xlate`] trigger: edge triggered.
+pub const TRIGGER_EDGE: u32 = 1;
+
+/// [`IrqChipOps::xlate`] trigger: level triggered.
+pub const TRIGGER_LEVEL: u32 = 2;
 
 /// Maximum controllers (device tree nodes) one component drives.
 pub const MAX_CONTROLLERS: usize = 4;
@@ -141,8 +151,11 @@ pub struct IrqChipOps {
     /// on success, nonzero if the line's trigger is fixed.
     pub set_trigger: unsafe extern "C" fn(line: u32, level: u32) -> i32,
     /// Decode a device tree interrupt specifier of `count` cells, relative to
-    /// the controller of kind `kind`, into a line, or [`INVALID_LINE`].
-    pub xlate: unsafe extern "C" fn(kind: u32, cells: *const u32, count: u32) -> u32,
+    /// the controller of kind `kind`, into a line, or [`INVALID_LINE`]. On
+    /// success `*trigger` receives the trigger the specifier asks for:
+    /// [`TRIGGER_FIXED`], [`TRIGGER_EDGE`] or [`TRIGGER_LEVEL`].
+    pub xlate:
+        unsafe extern "C" fn(kind: u32, cells: *const u32, count: u32, trigger: *mut u32) -> u32,
 }
 
 /// Name of the section holding a component's NUL-terminated `compatible`

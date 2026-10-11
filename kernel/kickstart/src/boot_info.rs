@@ -265,11 +265,29 @@ pub struct DeviceUntypedRange {
     pub count: u32,
 }
 
+/// The interrupt controllers the loaded interrupt-controller component
+/// drives, by device tree phandle, in the order `IRQControl.Issue` numbers
+/// them: the root controller first, then cascaded ones in device tree order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InterruptControllers {
+    pub count: u32,
+    pub phandles: [u32; libirqchip::MAX_CONTROLLERS],
+}
+
+impl InterruptControllers {
+    /// The recorded phandles, in controller-index order.
+    pub fn phandles(&self) -> &[u32] {
+        &self.phandles[..(self.count as usize).min(libirqchip::MAX_CONTROLLERS)]
+    }
+}
+
 pub struct BootInfo {
     pub regions: [BootInfoMemRegion; NUM_MEM_REGIONS],
     pub num_regions: usize,
     /// Where the device Untypeds were installed, for the boot phase.
     pub device_untypeds: DeviceUntypedRange,
+    /// The controllers `IRQControl.Issue` specifiers are relative to.
+    pub interrupt_controllers: InterruptControllers,
 }
 
 /// Implement Default manually to work around Rust not defining Default for arrays over 32 items.
@@ -288,6 +306,10 @@ impl BootInfo {
             device_untypeds: DeviceUntypedRange {
                 first_slot: 0,
                 count: 0,
+            },
+            interrupt_controllers: InterruptControllers {
+                count: 0,
+                phandles: [0; libirqchip::MAX_CONTROLLERS],
             },
         }
     }

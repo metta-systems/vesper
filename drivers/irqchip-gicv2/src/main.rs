@@ -72,9 +72,13 @@ unsafe extern "C" fn set_trigger(line: u32, level: u32) -> i32 {
     }
 }
 
-unsafe extern "C" fn xlate(_kind: u32, cells: *const u32, count: u32) -> u32 {
+unsafe extern "C" fn xlate(_kind: u32, cells: *const u32, count: u32, trigger: *mut u32) -> u32 {
     // SAFETY: the caller passes `count` readable cells.
     let cells = unsafe { core::slice::from_raw_parts(cells, count as usize) };
+    // SAFETY: the caller passes a writable trigger word.
+    unsafe {
+        trigger.write(Gic400::trigger(cells));
+    }
     Gic400::xlate(cells)
 }
 

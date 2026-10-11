@@ -14,6 +14,7 @@
 
 use {
     crate::{
+        boot_info::{BOOT_INFO, InterruptControllers},
         memory::{Alloc, MemoryPermissions},
         paging::{self, MmuSetup},
     },
@@ -28,6 +29,7 @@ use {
         Controller, IrqChipConfig, MAX_CONTROLLERS, MAX_REGIONS, MAX_SPECIFIER_CELLS, MmioRegion,
         PlatformHandoff, Specifier,
     },
+    liblocking::interface::Mutex,
     libqemu::semihosting as semi,
 };
 
@@ -42,10 +44,13 @@ const TIMERS: &[&str] = &["arm,armv8-timer", "arm,armv7-timer"];
 /// (binding order: secure physical, non-secure physical, virtual, hypervisor).
 const NONSECURE_PHYSICAL_TIMER: usize = 1;
 
-/// A controller the component will drive: its kind and CPU physical MMIO.
+/// A controller the component will drive: its kind, phandle and CPU physical
+/// MMIO.
 #[derive(Clone, Copy, Default)]
 struct PlannedController {
     kind: u32,
+    /// The node's device tree phandle, zero if it has none
+    phandle: u32,
     region_count: usize,
     /// `(physical start, size)` of each `reg` entry
     regions: [(u64, u64); MAX_REGIONS],
@@ -71,6 +76,7 @@ fn kind_in(image: &PrivilegedImage, node: &Node<'_, '_, '_>) -> Option<u32> {
 fn plan_controller(kind: u32, node: &Node<'_, '_, '_>) -> PlannedController {
     let mut planned = PlannedController {
         kind,
+        phandle: phandle(node).unwrap_or_default(),
         ..PlannedController::default()
     };
     for region in regions(node).take(MAX_REGIONS) {
@@ -222,6 +228,7 @@ pub fn load(plan: &IrqChipPlan, setup: &mut MmuSetup) -> Result<PlatformHandoff,
         PRIVILEGED_BASE + image.ops_offset
     );
     record_kernel_owned(plan);
+    record_controller_order(plan);
     Ok(PlatformHandoff {
         ops: PRIVILEGED_BASE + image.ops_offset,
         config,
@@ -302,4 +309,21 @@ pub fn withhold(start: u64, size: u64) {
     assert!(*count < MAX_KERNEL_OWNED, "too many withheld device ranges");
     ranges[*count] = (start, size);
     *count += 1;
+}
+
+/// Record in `BOOT_INFO` the phandles of `plan`'s controllers, in the order
+/// `IRQControl.Issue` numbers them.
+fn record_controller_order(plan: &IrqChipPlan) {
+    let mut controllers = InterruptControllers {
+        count: u32::try_from(plan.controller_count).expect("at most MAX_CONTROLLERS"),
+        ..InterruptControllers::default()
+    };
+    for (recorded, planned) in controllers
+        .phandles
+        .iter_mut()
+        .zip(&plan.controllers[..plan.controller_count])
+    {
+        *recorded = planned.phandle;
+    }
+    BOOT_INFO.lock(|boot_info| boot_info.interrupt_controllers = controllers);
 }

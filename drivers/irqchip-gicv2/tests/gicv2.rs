@@ -10,7 +10,10 @@ mod tests {
     use {
         arm_gic::gicv2::registers::{Gicc, Gicd},
         irqchip_gicv2::{ConfigError, Gic400, LINE_COUNT},
-        libirqchip::{Controller, INVALID_LINE, IrqChipConfig, MmioRegion, SPURIOUS},
+        libirqchip::{
+            Controller, INVALID_LINE, IrqChipConfig, MmioRegion, SPURIOUS, TRIGGER_EDGE,
+            TRIGGER_FIXED, TRIGGER_LEVEL,
+        },
         tock_registers::{
             fields::FieldValue,
             interfaces::{Readable, Writeable},
@@ -220,5 +223,16 @@ mod tests {
         assert_eq!(Gic400::xlate(&[0, 988, 4]), INVALID_LINE);
         assert_eq!(Gic400::xlate(&[2, 0, 4]), INVALID_LINE);
         assert_eq!(Gic400::xlate(&[0]), INVALID_LINE);
+    }
+
+    #[test]
+    fn trigger_follows_the_specifier_flags() {
+        // The RPi4 timer PPIs are level-low with a CPU mask (0xf08).
+        assert_eq!(Gic400::trigger(&[1, 11, 0xf08]), TRIGGER_LEVEL);
+        assert_eq!(Gic400::trigger(&[0, 121, 4]), TRIGGER_LEVEL);
+        assert_eq!(Gic400::trigger(&[0, 121, 1]), TRIGGER_EDGE);
+        assert_eq!(Gic400::trigger(&[0, 121, 2]), TRIGGER_EDGE);
+        assert_eq!(Gic400::trigger(&[0, 121, 0]), TRIGGER_FIXED);
+        assert_eq!(Gic400::trigger(&[0, 121]), TRIGGER_FIXED);
     }
 }

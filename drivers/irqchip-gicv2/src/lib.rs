@@ -30,7 +30,10 @@ use {
             registers::{Gicc, Gicd},
         },
     },
-    libirqchip::{INVALID_LINE, IrqChipConfig, MmioRegion, SPURIOUS},
+    libirqchip::{
+        INVALID_LINE, IrqChipConfig, MmioRegion, SPURIOUS, TRIGGER_EDGE, TRIGGER_FIXED,
+        TRIGGER_LEVEL,
+    },
 };
 
 /// Number of INTIDs a `GICv2` can deliver; 1020-1023 are special.
@@ -44,6 +47,13 @@ const SPECIFIER_PPI: u32 = 1;
 const SPI_COUNT: u32 = LINE_COUNT - 32;
 /// PPIs per CPU (INTIDs 16-31).
 const PPI_COUNT: u32 = 16;
+
+// Device tree `IRQ_TYPE_*` values in the specifier's flags cell.
+const IRQ_TYPE_MASK: u32 = 0xf;
+const IRQ_TYPE_EDGE_RISING: u32 = 1;
+const IRQ_TYPE_EDGE_FALLING: u32 = 2;
+const IRQ_TYPE_LEVEL_HIGH: u32 = 4;
+const IRQ_TYPE_LEVEL_LOW: u32 = 8;
 
 /// Errors from [`Gic400`] operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +158,17 @@ impl Gic400 {
             [SPECIFIER_SPI, number, ..] if *number < SPI_COUNT => IntId::spi(*number).into(),
             [SPECIFIER_PPI, number, ..] if *number < PPI_COUNT => IntId::ppi(*number).into(),
             _ => INVALID_LINE,
+        }
+    }
+
+    /// The trigger a `<type number flags>` specifier asks for: the flags'
+    /// `IRQ_TYPE` bits 3:0 (1 and 2 edge, 4 and 8 level); anything else
+    /// leaves the line's trigger as it is.
+    pub fn trigger(cells: &[u32]) -> u32 {
+        match cells.get(2).map(|flags| flags & IRQ_TYPE_MASK) {
+            Some(IRQ_TYPE_EDGE_RISING | IRQ_TYPE_EDGE_FALLING) => TRIGGER_EDGE,
+            Some(IRQ_TYPE_LEVEL_HIGH | IRQ_TYPE_LEVEL_LOW) => TRIGGER_LEVEL,
+            _ => TRIGGER_FIXED,
         }
     }
 }

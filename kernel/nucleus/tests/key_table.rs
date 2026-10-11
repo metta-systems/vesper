@@ -17,6 +17,11 @@ mod api;
 #[path = "../src/objects/mod.rs"]
 mod objects;
 
+// The interrupt-controller component as the IRQ operations reach it.
+#[allow(dead_code)]
+#[path = "../src/platform.rs"]
+mod platform;
+
 // Only the clock is used here; the tick is armed by the nucleus binary.
 #[allow(dead_code)]
 #[path = "../src/timer.rs"]

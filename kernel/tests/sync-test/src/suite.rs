@@ -160,7 +160,7 @@ pub fn run() {
             0,
             1,
             &self_table,
-            KeySlot(19).0,
+            KeySlot(29).0,
             Rights::all(),
         )
         .unwrap_or_else(|error| panic!("N2 Retype failed: {:?}", error.code()));

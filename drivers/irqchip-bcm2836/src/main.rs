@@ -11,7 +11,7 @@
 use {
     core::cell::UnsafeCell,
     irqchip_bcm2836::{Bcm2836, LINE_COUNT},
-    libirqchip::{ABI_VERSION, IrqChipConfig, IrqChipOps, SPURIOUS, irqchip_export},
+    libirqchip::{ABI_VERSION, IrqChipConfig, IrqChipOps, SPURIOUS, TRIGGER_FIXED, irqchip_export},
 };
 
 /// The bound controllers. The nucleus calls the component on one core with
@@ -68,7 +68,12 @@ unsafe extern "C" fn set_trigger(_line: u32, level: u32) -> i32 {
     if level != 0 { 0 } else { -1 }
 }
 
-unsafe extern "C" fn xlate(kind: u32, cells: *const u32, count: u32) -> u32 {
+unsafe extern "C" fn xlate(kind: u32, cells: *const u32, count: u32, trigger: *mut u32) -> u32 {
+    // Every BCM2836/7 line is level triggered and not configurable.
+    // SAFETY: the caller passes a writable trigger word.
+    unsafe {
+        trigger.write(TRIGGER_FIXED);
+    }
     // SAFETY: the caller passes `count` readable cells.
     let cells = unsafe { core::slice::from_raw_parts(cells, count as usize) };
     Bcm2836::xlate(kind, cells)

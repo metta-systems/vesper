@@ -55,6 +55,12 @@
 // │    (Notification, EventCount, Time)          │
 // │    address: u64               (8 bytes)       │
 // │    generation: u32            (4 bytes)       │
+// │                                              │
+// │  VARIANT I: IRQHandler                       │
+// │    line: u32                  (4 bytes)       │
+// │    generation: u32            (4 bytes)       │
+// │                                              │
+// │  IRQControl carries no payload (all zeros)   │
 // └──────────────────────────────────────────────┘
 // Total: 48 bytes before tail padding, 64-byte slot aligned to 32 bytes
 //
@@ -69,6 +75,7 @@ use {
         access::{ObjectId, PoolTag},
         carved::CarvedId,
         invocation::InvocationStackExtent,
+        irq::IrqHandlerId,
         thread::ThreadId,
     },
     core::num::NonZero,
@@ -209,6 +216,14 @@ struct CarvedPayload {
     _pad: u32,
 }
 
+/// Payload of an `IRQHandler`: its [`IrqHandlerId`].
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct IrqHandlerPayload {
+    line: u32,
+    generation: u32,
+}
+
 /// 40-byte payload union, discriminated by `obj_type` in the header.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -220,6 +235,7 @@ union KeyPayload {
     keytable: KeyTablePayload,
     carved: CarvedPayload,
     invocation: InvocationPayload,
+    irq_handler: IrqHandlerPayload,
     null: [u8; 40],
 }
 
@@ -243,6 +259,7 @@ const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<FramePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
 const _: () = assert!(core::mem::size_of::<CarvedPayload>() == 16);
+const _: () = assert!(core::mem::size_of::<IrqHandlerPayload>() == 8);
 const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 40);
 const _: () = assert!(core::mem::size_of::<ThreadSelector>() == 24);
 const _: () = assert!(core::mem::align_of::<ThreadSelector>() == 8);
@@ -309,6 +326,8 @@ impl KeyEntry {
                 | ObjectType::KEY_TABLE
                 | ObjectType::INVOCATION
                 | ObjectType::THREAD
+                | ObjectType::IRQ_CONTROL
+                | ObjectType::IRQ_HANDLER
         ) || is_carved_object_kind(obj_type)
         {
             return Err(CapError::InvalidObjectType(obj_type));
@@ -524,6 +543,50 @@ impl KeyEntry {
         }
     }
 
+    /// Create the `IRQControl` capability. There is one interrupt-line
+    /// namespace, so the entry names nothing beyond its kind.
+    pub fn new_irq_control(rights: Rights) -> Self {
+        Self {
+            obj_type: ObjectType::IRQ_CONTROL,
+            rights,
+            badge: 0,
+            payload: KeyPayload { null: [0_u8; 40] },
+        }
+    }
+
+    /// Create an `IRQHandler` capability for the handler `id`.
+    pub fn new_irq_handler(id: IrqHandlerId, rights: Rights) -> Self {
+        Self {
+            obj_type: ObjectType::IRQ_HANDLER,
+            rights,
+            badge: 0,
+            payload: KeyPayload {
+                irq_handler: IrqHandlerPayload {
+                    line: id.line,
+                    generation: id.generation,
+                },
+            },
+        }
+    }
+
+    /// The handler an `IRQHandler` capability names; `TypeMismatch` for
+    /// another kind.
+    pub fn irq_handler_id(&self) -> Result<IrqHandlerId, CapError> {
+        if self.obj_type != ObjectType::IRQ_HANDLER {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::IRQ_HANDLER,
+                found: self.obj_type,
+            });
+        }
+        // SAFETY: only `new_irq_handler` constructs IRQHandler entries, and
+        // the kind check selects its variant.
+        let payload = unsafe { self.payload.irq_handler };
+        Ok(IrqHandlerId {
+            line: payload.line,
+            generation: payload.generation,
+        })
+    }
+
     /// Whether this entry permits only current-relative Thread.Return.
     pub fn is_thread_return_key(&self) -> bool {
         matches!(
@@ -591,6 +654,8 @@ impl KeyEntry {
             || self.is_carved()
             || is_carved_object_kind(self.obj_type)
             || self.obj_type == ObjectType::INVOCATION
+            || self.obj_type == ObjectType::IRQ_CONTROL
+            || self.obj_type == ObjectType::IRQ_HANDLER
             || self.obj_type == ObjectType::NULL
         {
             return Err(CapError::TypeMismatch {

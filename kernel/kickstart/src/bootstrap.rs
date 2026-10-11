@@ -38,6 +38,7 @@ use {
             arch::ArchPools,
             carved::{Carved, CarvedId, CarvedObject},
             domain::DcbPages,
+            irq::{IrqLine, IrqTable},
             nucleus::NucleusPools,
             thread::ThreadId,
         },
@@ -147,6 +148,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         pending: PendingPool::new(),
         run_queue: RunQueue::new(),
         idle_thread: None,
+        irq_table: IrqTable::empty(),
         ticks: 0,
         pools: NucleusPools::<A> {
             // SAFETY: the architecture pool backings were carved above from
@@ -292,6 +294,8 @@ pub struct BootState {
     pub boot_time_key: RawKey,
     /// Key of the root Scheduler grant (slot `ROOT_SCHEDULER`).
     pub root_scheduler_key: RawKey,
+    /// Key of the `IRQControl` grant (slot `IRQ_CONTROL`).
+    pub irq_control_key: RawKey,
     /// Key of the debug console grant (slot `DEBUG_CONSOLE`), `debug_kernel`
     /// only.
     #[cfg(feature = "debug_kernel")]
@@ -338,6 +342,26 @@ pub fn carve_boot_object<T: CarvedObject>(
     boot_untyped_key: RawKey,
     object: T,
 ) -> CarvedId {
+    let address = carve_boot_bytes(
+        keytable_addr,
+        boot_untyped_key,
+        Carved::<T>::SIZE,
+        Carved::<T>::ALIGN,
+    );
+    // SAFETY: `carve_boot_bytes` reserved the bytes, aligned and sized for
+    // the record, exclusively for this object.
+    unsafe { Carved::<T>::initialize(address, object) }
+}
+
+/// Reserve `size` bytes aligned to `align` from the boot Untyped and return
+/// their kernel address. The watermark advances past them, so nothing else
+/// is ever carved there; the caller initializes them.
+fn carve_boot_bytes(
+    keytable_addr: u64,
+    boot_untyped_key: RawKey,
+    size: usize,
+    align: usize,
+) -> *mut u8 {
     // SAFETY: the boot table is the live carved boot KeyTable; this borrow
     // ends before any capability invocation.
     let table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
@@ -345,21 +369,40 @@ pub fn carve_boot_object<T: CarvedObject>(
         .lookup(boot_untyped_key, BOOT_TABLE_GUARD)
         .and_then(KeyEntry::as_untyped)
         .unwrap_or_else(|error| panic!("boot Untyped lookup failed: {:?}", error.code()));
-    let align = Carved::<T>::ALIGN.max(CARVE_ALIGN_MIN);
-    let size = Carved::<T>::SIZE.next_multiple_of(align);
+    let align = align.max(CARVE_ALIGN_MIN);
+    let size = size.next_multiple_of(align);
     let reservation = region
         .reserve(u64::try_from(align).unwrap(), u64::try_from(size).unwrap())
         .unwrap_or_else(|error| panic!("boot Untyped exhausted: {:?}", error.code()));
     let paddr = region.paddr + u64::try_from(reservation.start).unwrap();
-    let address = PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>();
-    // SAFETY: the reservation lies in the boot Untyped's unused watermark
-    // range, aligned and sized for the record, and the watermark advances
-    // past it below before anything else can carve there.
-    let id = unsafe { Carved::<T>::initialize(address, object) };
     table
         .advance_untyped_watermark(boot_untyped_key, BOOT_TABLE_GUARD, reservation.end)
         .unwrap_or_else(|error| panic!("boot Untyped watermark failed: {:?}", error.code()));
-    id
+    PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>()
+}
+
+/// Carve the records of the interrupt-controller component's `line_count`
+/// lines from the boot Untyped and give them to the nucleus.
+#[expect(
+    clippy::cast_ptr_alignment,
+    reason = "`carve_boot_bytes` aligns the carve to `IrqLine`"
+)]
+fn carve_irq_table(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    keytable_addr: u64,
+    boot_untyped_key: RawKey,
+    line_count: u32,
+) {
+    let size = core::mem::size_of::<IrqLine>() * line_count as usize;
+    let lines = carve_boot_bytes(
+        keytable_addr,
+        boot_untyped_key,
+        size,
+        core::mem::align_of::<IrqLine>(),
+    );
+    // SAFETY: the bytes were just carved, aligned and sized for `line_count`
+    // records, and nothing else uses them.
+    nucleus.irq_table = unsafe { IrqTable::initialize(lines.cast::<IrqLine>(), line_count) };
 }
 
 /// Create the idle Thread in `address_space` (which must map the boot image):
@@ -570,6 +613,16 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
             panic!("root Scheduler install failed: {:?}", failure.error.code())
         });
 
+    // IRQControl: the only authority that issues IRQHandlers; IRQ authority
+    // never comes from memory.
+    let irq_control_key = boot_table
+        .insert(
+            KeySlot::IRQ_CONTROL,
+            KeyEntry::new_irq_control(Rights::all()),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| panic!("IRQControl install failed: {:?}", failure.error.code()));
+
     install_device_untypeds(boot_table);
 
     // Install the debug console grant (debug_kernel), the boot Thread's
@@ -623,7 +676,13 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
             u32::MAX,
             "the nucleus refused the interrupt controller"
         );
-        semi::println!("🥾 Interrupt controller installed, physical timer line {timer_line}");
+        // SAFETY: the nucleus accepted the component, so its relocated
+        // operation table is mapped at `ops`.
+        let line_count = unsafe { (*(handoff.ops as *const libirqchip::IrqChipOps)).line_count };
+        carve_irq_table(nucleus, keytable_addr, boot_untyped_key, line_count);
+        semi::println!(
+            "🥾 Interrupt controller installed: {line_count} lines, physical timer line {timer_line}"
+        );
     }
     print_my_sp();
 
@@ -635,6 +694,7 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
         boot_untyped_key,
         boot_time_key,
         root_scheduler_key,
+        irq_control_key,
         #[cfg(feature = "debug_kernel")]
         debug_console_key,
     }
@@ -785,11 +845,17 @@ fn install_device_untypeds(boot_table: &mut KeyTable) {
     );
 }
 
-pub use crate::boot_info::DeviceUntypedRange as DeviceUntypeds;
+pub use crate::boot_info::{DeviceUntypedRange as DeviceUntypeds, InterruptControllers};
 
 /// Where Kickstart installed the device Untypeds (empty before bootstrap).
 pub fn device_untypeds() -> DeviceUntypeds {
     BOOT_INFO.lock(|boot_info| boot_info.device_untypeds)
+}
+
+/// The interrupt controllers `IRQControl.Issue` specifiers are relative to,
+/// by phandle in controller-index order (empty without a component).
+pub fn interrupt_controllers() -> InterruptControllers {
+    BOOT_INFO.lock(|boot_info| boot_info.interrupt_controllers)
 }
 
 /// `(physical start, size)` of every MMIO range the kernel drives itself;

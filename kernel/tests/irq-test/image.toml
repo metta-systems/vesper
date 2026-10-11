@@ -1,0 +1,8 @@
+# What irq-test bundles (see vesper-image-build): its EL0 interrupt
+# receiver. `binary` is the cargo binary name, built with
+# userspace/runtime/user.ld.
+
+[[component]]
+name = "receiver"
+binary = "irq-receiver"
+active = true

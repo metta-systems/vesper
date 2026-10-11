@@ -24,8 +24,8 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | Invocation | `0x06` | [invocation.md](core/invocation.md) | Call |
 | Notification | `0x07` | [notification.md](core/notification.md) | Signal, Wait, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
-| IRQControl | `0x09` | [irq_control.md](core/irq_control.md) | Not implemented |
-| IRQHandler | `0x0a` | [irq_handler.md](core/irq_handler.md) | Not implemented |
+| IRQControl | `0x09` | [irq_control.md](core/irq_control.md) | Issue |
+| IRQHandler | `0x0a` | [irq_handler.md](core/irq_handler.md) | SetNotification, Clear, Ack, Retire |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Write (debug kernels only) |
 
 Indices 11–126 are unassigned.
@@ -115,6 +115,7 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 34 | `UNEXPECTED_RETURN` | local `x1` | local `x2` |
 | 35 | `INSUFFICIENT_BUDGET` | the source Time's remaining budget | 0 |
 | 36 | `PRIORITY_CHAIN_FULL` | 0 | 0 |
+| 37 | `IRQ_LINE_ACTIVE` | the line | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 

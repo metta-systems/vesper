@@ -9,6 +9,7 @@ pub mod domain;
 pub mod event_count;
 pub mod fault;
 pub mod invocation;
+pub mod irq;
 pub mod key_table;
 pub mod notification;
 pub mod nucleus;

@@ -6,6 +6,7 @@ use {
         arch_objects::AddressSpaceObject,
         carved::Carved,
         domain::DcbPages,
+        irq::IrqTable,
         key_table::KeyTableBinding,
         thread::{ExecutionContext, ThreadId},
     },
@@ -77,6 +78,8 @@ pub struct Nucleus<A: ArchObjects> {
     /// The idle Thread, if boot created one: selected when nothing else is
     /// runnable and never queued.
     pub idle_thread: Option<ThreadId>,
+    /// The interrupt lines' records: live `IRQHandler`s and their bindings.
+    pub irq_table: IrqTable,
     /// Preemption-timer ticks taken since boot.
     pub ticks: u64,
 }
@@ -432,6 +435,7 @@ mod tests {
                 pending: PendingPool::new(),
                 run_queue: RunQueue::new(),
                 idle_thread: None,
+                irq_table: crate::objects::irq::IrqTable::empty(),
                 ticks: 0,
                 pools: NucleusPools {
                     // SAFETY: the arch backings are exclusively owned by the

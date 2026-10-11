@@ -8,7 +8,10 @@
 
 use {
     core::cell::UnsafeCell,
-    libirqchip::{ABI_VERSION, INVALID_LINE, IrqChipConfig, IrqChipOps, PlatformHandoff, SPURIOUS},
+    libirqchip::{
+        ABI_VERSION, INVALID_LINE, IrqChipConfig, IrqChipOps, PlatformHandoff, SPURIOUS,
+        TRIGGER_EDGE, TRIGGER_FIXED, TRIGGER_LEVEL,
+    },
 };
 
 /// Why [`install`] refused a handoff.
@@ -76,15 +79,10 @@ pub unsafe fn install(handoff: &PlatformHandoff) -> Result<u32, InstallError> {
         return Err(InstallError::InitFailed);
     }
     let timer = handoff.physical_timer;
-    let cells = timer.cells();
-    // `cells()` is clamped to the array, so the length always fits.
-    let count = u32::try_from(cells.len()).unwrap_or(0);
-    // SAFETY: `cells` is valid for `count` reads for the duration of the call.
-    let line = unsafe { (ops.xlate)(timer.kind, cells.as_ptr(), count) };
-    if line >= ops.line_count {
+    let Some((line, _trigger)) = translate(platform, timer.kind, timer.cells()) else {
         *slot = None;
         return Err(InstallError::NoTimerLine);
-    }
+    };
     platform.physical_timer_line = line;
     Ok(line)
 }
@@ -135,4 +133,59 @@ pub fn unmask(line: u32) {
             (platform.ops.unmask)(line);
         }
     }
+}
+
+/// How a line is triggered, as an interrupt specifier asks for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    /// The specifier leaves the trigger alone, or the line's is fixed.
+    Fixed,
+    Edge,
+    Level,
+}
+
+/// Number of lines the installed component numbers, zero without one.
+pub fn line_count() -> u32 {
+    platform().map_or(0, |platform| platform.ops.line_count)
+}
+
+/// Decode `cells`, a device tree interrupt specifier relative to the
+/// controller at `controller` in the component's list (the root first), into
+/// a line below [`line_count`] and the trigger it asks for.
+pub fn xlate(controller: usize, cells: &[u32]) -> Option<(u32, Trigger)> {
+    let platform = platform()?;
+    let kind = platform.config.controllers().get(controller)?.kind;
+    translate(platform, kind, cells)
+}
+
+/// Configure `line` as level (`Trigger::Level`) or edge triggered; a
+/// `Trigger::Fixed` request leaves it alone. Whether the component accepted.
+pub fn set_trigger(line: u32, trigger: Trigger) -> bool {
+    let level = match trigger {
+        Trigger::Fixed => return true,
+        Trigger::Edge => 0,
+        Trigger::Level => 1,
+    };
+    platform().is_some_and(|platform| {
+        // SAFETY: the component's contract.
+        unsafe { (platform.ops.set_trigger)(line, level) == 0 }
+    })
+}
+
+/// `xlate` through `platform`'s component for a controller of `kind`.
+fn translate(platform: &Platform, kind: u32, cells: &[u32]) -> Option<(u32, Trigger)> {
+    let count = u32::try_from(cells.len()).ok()?;
+    let mut trigger = TRIGGER_FIXED;
+    // SAFETY: `cells` is valid for `count` reads and `trigger` for one write
+    // for the duration of the call.
+    let line = unsafe { (platform.ops.xlate)(kind, cells.as_ptr(), count, &raw mut trigger) };
+    if line == INVALID_LINE || line >= platform.ops.line_count {
+        return None;
+    }
+    let trigger = match trigger {
+        TRIGGER_EDGE => Trigger::Edge,
+        TRIGGER_LEVEL => Trigger::Level,
+        _ => Trigger::Fixed,
+    };
+    Some((line, trigger))
 }

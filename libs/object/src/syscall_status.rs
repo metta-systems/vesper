@@ -59,6 +59,10 @@ pub const INSUFFICIENT_BUDGET: u64 = 35;
 /// A `Time.Transfer` would leave the destination with more
 /// than 16 priority-chain entries. Details are zero.
 pub const PRIORITY_CHAIN_FULL: u64 = 36;
+/// `IRQControl.Issue` named a line that already has a live `IRQHandler`, or
+/// the line the nucleus keeps for its own timer. Detail 1 is the line;
+/// detail 2 is zero.
+pub const IRQ_LINE_ACTIVE: u64 = 37;
 
 /// Field-specific Invocation stack diagnostics, carried as the complete `x2` word.
 ///

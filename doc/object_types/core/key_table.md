@@ -71,6 +71,7 @@ Each table also has a guard, chosen at Retype and fixed for the table's lifetime
 | 16 | `KeySlot::FAULT_HANDLER` | This AddressSpace's fault handler, an Invocation; see [fault delivery](thread.md#fault-delivery) |
 | 17 | `KeySlot::BOOT_TIME` | Boot [Time](time.md) (first component) |
 | 18 | `KeySlot::ROOT_SCHEDULER` | Root [Scheduler](scheduler.md) (first component) |
+| 19 | `KeySlot::IRQ_CONTROL` | [IRQControl](irq_control.md) (first component) |
 | 160–199 | — | Device [Untypeds](untyped.md) covering the device-tree register ranges the kernel does not drive (first component); Kickstart records how many it installed |
 
 ## Implementation
