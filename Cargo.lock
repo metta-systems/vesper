@@ -311,6 +311,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-probe"
+version = "0.0.1"
+dependencies = [
+ "driver-protocol",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "driver-protocol"
+version = "0.0.1"
+dependencies = [
+ "vesper-objects",
+]
+
+[[package]]
+name = "driver-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-component-loader",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "endian-type-rs"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -714,6 +757,7 @@ dependencies = [
  "vesper-boot",
  "vesper-component-loader",
  "vesper-cpu",
+ "vesper-device-driver",
  "vesper-devicetree",
  "vesper-exceptions",
  "vesper-image",
@@ -1609,6 +1653,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-device-driver"
+version = "0.0.1"
+dependencies = [
+ "vesper-objects",
+]
+
+[[package]]
 name = "vesper-devicetree"
 version = "0.0.1"
 dependencies = [
@@ -1669,7 +1720,6 @@ dependencies = [
  "vesper-address",
  "vesper-component-loader",
  "vesper-cpu",
- "vesper-devicetree",
  "vesper-exceptions",
  "vesper-image",
  "vesper-objects",

@@ -134,6 +134,29 @@ pub struct ComponentImage {
     pub exports: &'static [Export],
 }
 
+/// A device driver bundled into a boot image: an active EL0 component that
+/// Kickstart loads once per enabled device tree node whose `compatible` it
+/// names (see `libdevice_driver`).
+#[derive(Debug)]
+pub struct DriverImage {
+    pub component: &'static ComponentImage,
+    /// Device tree `compatible` strings the driver serves
+    pub compatible: &'static [&'static str],
+    /// Priority of each instance's Time
+    pub priority: u16,
+    /// Budget each instance's Time receives
+    pub budget_ns: u64,
+    /// Size exponent of each instance's RAM Untyped
+    pub memory_bits: u8,
+}
+
+impl DriverImage {
+    /// Whether the driver serves the `compatible` string.
+    pub fn serves(&self, compatible: &str) -> bool {
+        self.compatible.contains(&compatible)
+    }
+}
+
 /// The `length` bytes of `memory` at image offset `offset`, if inside it.
 fn span(memory: &mut [u8], offset: u64, length: usize) -> Option<&mut [u8]> {
     let start = usize::try_from(offset).ok()?;

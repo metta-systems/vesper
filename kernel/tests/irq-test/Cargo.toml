@@ -37,8 +37,8 @@ kickstart = { path = "../../kickstart" }
 libaddress = { workspace = true }
 libboot = { workspace = true }
 libcomponent-loader = { workspace = true }
-libdevicetree = { workspace = true }
 libcpu = { workspace = true }
+libdevicetree = { workspace = true }
 libexception = { workspace = true }
 libimage = { workspace = true }
 libkicktest = { workspace = true }

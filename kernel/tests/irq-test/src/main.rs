@@ -49,7 +49,8 @@ use {
         interrupts::{TimerInterrupt, root_interrupt_controller, timer_interrupt},
         is_enabled, is_interrupt_controller, node_by_phandle, phandle,
     },
-    libkicktest::devices,
+    // `libkicktest` supplies the panic handler.
+    libkicktest as _,
     libobject::{
         CapError, InconsistencyReason, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey,
         NotificationKey, ObjectType, RawKey, Rights, TimeKey, UntypedKey,
@@ -150,7 +151,7 @@ pub fn run() -> ! {
     // Kickstart recorded the controllers Issue specifiers are relative to:
     // the root, the timer's interrupt-parent, first; each one an enabled
     // interrupt controller of the device tree.
-    let device_tree = devices::device_tree();
+    let device_tree = kickstart::device_tree::at_el1();
     let tree = device_tree.index();
     let controllers = interrupt_controllers();
     semi::println!(

@@ -1,15 +1,8 @@
-//! The boot device tree, read again at EL1, and checks on the device
-//! Untypeds Kickstart hands out.
+//! Checks on the device Untypeds Kickstart hands out.
 
 use {
-    core::{
-        cell::UnsafeCell,
-        sync::atomic::{AtomicBool, Ordering},
-    },
-    kickstart::bootstrap::{device_tree_blob, device_untypeds, kernel_owned_device_ranges},
-    libaddress::PhysAddr,
+    kickstart::bootstrap::{device_untypeds, kernel_owned_device_ranges},
     libcomponent_loader::keys::{BOOT_TABLE_GUARD, boot_key},
-    libdevicetree::DeviceTree,
     libobject::RawKey,
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
 };
@@ -65,44 +58,4 @@ pub fn assert_device_untypeds_avoid_the_kernel(keytable_addr: u64) {
             );
         }
     }
-}
-
-/// Bytes reserved for the device tree index.
-const INDEX_BYTES: usize = 128 * 1024;
-
-/// Storage for the one device tree index a test kernel builds.
-#[repr(C, align(16))]
-struct IndexBuffer(UnsafeCell<[u8; INDEX_BYTES]>);
-
-// SAFETY: handed out once, guarded by `INDEXED`.
-unsafe impl Sync for IndexBuffer {}
-
-static INDEX: IndexBuffer = IndexBuffer(UnsafeCell::new([0; INDEX_BYTES]));
-static INDEXED: AtomicBool = AtomicBool::new(false);
-
-/// The firmware's device tree, indexed again through the kernel's physical
-/// window (Kickstart keeps the blob reserved and records where it is). A
-/// test kernel indexes it once.
-pub fn device_tree() -> DeviceTree<'static, 'static> {
-    assert!(
-        !INDEXED.swap(true, Ordering::AcqRel),
-        "the device tree is indexed once"
-    );
-    let blob = device_tree_blob();
-    assert_ne!(blob.size, 0, "Kickstart recorded no device tree");
-    let pointer = PhysAddr::new(blob.phys).user_to_kernel().as_ptr::<u8>();
-    // SAFETY: the blob stays reserved and unmodified for the whole boot, and
-    // the kernel's physical window maps all RAM.
-    let raw = unsafe { DeviceTree::blob_from_raw(pointer) }
-        .unwrap_or_else(|error| panic!("device tree header: {error:?}"));
-    let layout = DeviceTree::index_layout(&raw)
-        .unwrap_or_else(|error| panic!("device tree index layout: {error:?}"));
-    assert!(
-        layout.size() + layout.align() <= INDEX_BYTES,
-        "the device tree index needs {} bytes",
-        layout.size() + layout.align()
-    );
-    // SAFETY: `INDEXED` hands the buffer out once, for the rest of the boot.
-    let buffer = unsafe { &mut *INDEX.0.get() };
-    DeviceTree::new(raw, buffer).unwrap_or_else(|error| panic!("device tree index: {error:?}"))
 }

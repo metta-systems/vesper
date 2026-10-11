@@ -45,15 +45,34 @@ pub fn boot_slot(index: u32) -> KeySlot {
 /// bootstrap slots.
 pub struct SlotCursor {
     next: u32,
+    /// A run of slots `take` never hands out, as `(first, end)`
+    reserved: (u32, u32),
 }
 
 impl SlotCursor {
     pub const fn starting_at(first: u32) -> Self {
-        Self { next: first }
+        Self {
+            next: first,
+            reserved: (0, 0),
+        }
+    }
+
+    /// Never hand out the `count` slots from `first` (slots already holding
+    /// boot grants, such as the device Untypeds).
+    #[must_use]
+    pub const fn avoiding(self, first: u32, count: u32) -> Self {
+        Self {
+            reserved: (first, first + count),
+            ..self
+        }
     }
 
     /// Reserve `count` consecutive slots and return the first index.
     pub fn take(&mut self, count: u32) -> u32 {
+        let (reserved_start, reserved_end) = self.reserved;
+        if self.next < reserved_end && reserved_start < self.next + count {
+            self.next = reserved_end;
+        }
         let first = self.next;
         self.next = first + count;
         assert!(

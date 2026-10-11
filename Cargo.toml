@@ -6,6 +6,7 @@ members = [
   "kernel/tests/ppc-test",
   "kernel/tests/sync-test",
   "kernel/tests/capability-test",
+  "kernel/tests/driver-test",
   "kernel/tests/endpoint-test",
   "kernel/tests/fault-test",
   "kernel/tests/fp-trap-test",
@@ -23,6 +24,7 @@ members = [
   "libs/component-loader",
   "libs/console",
   "libs/cpu",
+  "libs/device-driver",
   "libs/devicetree",
   "libs/driver",
   "libs/exception",
@@ -52,6 +54,8 @@ members = [
   "userspace/tests/endpoint/endpoint",
   "userspace/tests/endpoint/protocol",
   "userspace/tests/endpoint/server",
+  "userspace/tests/driver/probe",
+  "userspace/tests/driver/protocol",
   "userspace/tests/fault/bare",
   "userspace/tests/fault/faulter",
   "userspace/tests/fault/protocol",
@@ -92,6 +96,7 @@ libboot = { path = "libs/boot", package = "vesper-boot" }
 libcomponent-loader = { path = "libs/component-loader", package = "vesper-component-loader" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
+libdevice-driver = { path = "libs/device-driver", package = "vesper-device-driver" }
 libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
 libdriver = { path = "libs/driver", package = "vesper-drivers" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }

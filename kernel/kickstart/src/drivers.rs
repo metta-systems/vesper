@@ -1,0 +1,644 @@
+//! Driver matching: one instance of a bundled driver per enabled device tree
+//! node that names one of its `compatible` strings.
+//!
+//! For each instance Kickstart builds a component `AddressSpace`, loads the
+//! driver's image and hands it, through its init page
+//! (`libdevice_driver::DriverInit`):
+//!
+//! - its register pages as page-sized device Untypeds carved out of the
+//!   device Untypeds handed out at boot, or, for a page several matched nodes
+//!   touch, a copy of one device Frame;
+//! - one `IRQHandler` per interrupt of the node, issued through the boot
+//!   `IRQControl` and bound to the driver's Notification and Thread, interrupt
+//!   *i* signalling bit *i*;
+//! - a RAM Untyped, a Time with the budget and priority of its manifest
+//!   entry, and one Thread configured on that Time and started at the
+//!   driver's entry with the init page's address in `x0`.
+//!
+//! A node whose registers touch a page the kernel keeps is skipped. Kickstart
+//! never calls into a driver.
+//!
+//! Untypeds, Notifications, Times and `IRQHandler`s are outside the
+//! `CopyDerive`/`Move` allowlist, so Kickstart grants them bootstrap-only: it
+//! writes the boot-table entry into the driver's table and deletes its own.
+
+use {
+    crate::{
+        bootstrap::{
+            BootState, device_untypeds, interrupt_controllers, kernel_owned_device_ranges,
+        },
+        device_tree,
+    },
+    libcomponent_loader::{
+        builder::Builder,
+        component::Component,
+        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
+        loader::write_init,
+    },
+    libdevice_driver::{
+        DEVICE_WINDOW_VA, DevicePage, DriverInit, INIT_VA, Interrupt, MAX_DEVICE_PAGES,
+        MAX_INTERRUPTS, MAX_REGIONS, PAGE_FRAME, PAGE_UNTYPED, Region, STACK_REGION,
+    },
+    libdevicetree::{
+        Node,
+        interrupts::{MAX_INTERRUPT_CELLS, interrupts},
+        is_compatible, is_enabled, regions,
+    },
+    libimage::DriverImage,
+    libobject::{
+        CapError, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights,
+        TimeKey, UntypedKey,
+        irq::MAX_ISSUE_CELLS,
+        scheduler::{SchedulerKey, ThreadStart},
+    },
+    libqemu::semihosting as semi,
+    nucleus::{
+        api::key_entry::KeyEntry,
+        objects::{ArchObjectsImpl, KeyTable, Nucleus},
+    },
+};
+
+const PAGE: u64 = 4096;
+const PAGE_BITS: u8 = 12;
+
+/// Most driver instances one boot loads.
+pub const MAX_DRIVER_INSTANCES: usize = 8;
+
+/// Pages of each driver's stack.
+const STACK_PAGES: u32 = 4;
+
+/// First slot of a driver's table Kickstart fills: the slots below are the
+/// well-known ones every component table has.
+const FIRST_DRIVER_SLOT: u32 = 5;
+
+/// Guard of the first driver instance's table; later instances count up.
+const FIRST_DRIVER_GUARD: u32 = 0x0D_0000;
+
+/// The boot keys driver loading draws on.
+#[derive(Clone, Copy)]
+pub struct BootKeys {
+    pub self_table: RawKey,
+    pub untyped: RawKey,
+    pub boot_time: RawKey,
+    pub root_scheduler: RawKey,
+    pub irq_control: RawKey,
+}
+
+impl BootKeys {
+    pub fn of(boot: &BootState) -> Self {
+        Self {
+            self_table: boot.self_table_key,
+            untyped: boot.boot_untyped_key,
+            boot_time: boot.boot_time_key,
+            root_scheduler: boot.root_scheduler_key,
+            irq_control: boot.irq_control_key,
+        }
+    }
+}
+
+/// A loaded driver instance, before its Thread starts.
+pub struct LoadedDriver<'a> {
+    pub driver: &'static DriverImage,
+    /// The node it drives
+    pub node: &'a str,
+    pub component: &'a Component,
+    /// The driver's Thread, in the boot table
+    pub thread: RawKey,
+    /// What the driver's init page holds
+    pub init: &'a DriverInit,
+    /// First slot of the driver's table nothing occupies
+    pub first_free_slot: u32,
+}
+
+/// One planned instance: a driver and the node it serves.
+#[derive(Clone)]
+struct Instance {
+    driver: &'static DriverImage,
+    /// Position of the matched string in the driver's `compatible` list
+    compatible_index: usize,
+    node: Node<'static, 'static, 'static>,
+    regions: [Region; MAX_REGIONS],
+    region_count: usize,
+    pages: [u64; MAX_DEVICE_PAGES],
+    page_count: usize,
+}
+
+impl Instance {
+    fn pages(&self) -> &[u64] {
+        &self.pages[..self.page_count]
+    }
+}
+
+/// The physical pages `node`'s registers span, sorted and deduplicated, with
+/// its register ranges; `None` if they do not fit the init record.
+fn plan_instance(
+    driver: &'static DriverImage,
+    compatible_index: usize,
+    node: Node<'static, 'static, 'static>,
+) -> Option<Instance> {
+    let mut instance = Instance {
+        driver,
+        compatible_index,
+        node,
+        regions: [Region::default(); MAX_REGIONS],
+        region_count: 0,
+        pages: [0; MAX_DEVICE_PAGES],
+        page_count: 0,
+    };
+    for region in regions(&instance.node) {
+        if region.size == 0 {
+            continue;
+        }
+        *instance.regions.get_mut(instance.region_count)? = Region {
+            start: region.start,
+            size: region.size,
+        };
+        instance.region_count += 1;
+        let mut page = region.start & !(PAGE - 1);
+        while page < region.start + region.size {
+            if !instance.pages().contains(&page) {
+                *instance.pages.get_mut(instance.page_count)? = page;
+                instance.page_count += 1;
+            }
+            page += PAGE;
+        }
+    }
+    instance.pages[..instance.page_count].sort_unstable();
+    Some(instance)
+}
+
+/// Whether `page` touches a range the kernel drives itself.
+fn kernel_owned(page: u64) -> bool {
+    kernel_owned_device_ranges()
+        .iter()
+        .any(|&(start, size)| page < start + size && start < page + PAGE)
+}
+
+/// Every enabled node some driver of `drivers` serves, the first matching
+/// driver taking it.
+fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INSTANCES], usize) {
+    let tree = device_tree::at_el1().index();
+    let mut instances = [const { None }; MAX_DRIVER_INSTANCES];
+    let mut count = 0;
+    for node in tree.nodes() {
+        if !is_enabled(&node) {
+            continue;
+        }
+        let Some((driver, compatible_index)) = drivers.iter().find_map(|driver| {
+            driver
+                .compatible
+                .iter()
+                .position(|entry| is_compatible(&node, entry))
+                .map(|index| (*driver, index))
+        }) else {
+            continue;
+        };
+        let name = node.name().unwrap_or("?");
+        let Some(instance) = plan_instance(driver, compatible_index, node.clone()) else {
+            semi::println!(
+                "🥾 Driver {}: {name} has too many registers, skipped",
+                driver.component.name
+            );
+            continue;
+        };
+        if instance.pages().iter().any(|&page| kernel_owned(page)) {
+            semi::println!(
+                "🥾 Driver {}: {name} shares a page with the kernel, skipped",
+                driver.component.name
+            );
+            continue;
+        }
+        if count == MAX_DRIVER_INSTANCES {
+            semi::println!(
+                "🥾 Driver {}: too many instances, {name} skipped",
+                driver.component.name
+            );
+            continue;
+        }
+        instances[count] = Some(instance);
+        count += 1;
+    }
+    (instances, count)
+}
+
+/// One piece of device memory Kickstart holds: an Untyped in the boot table
+/// and how much of it is carved.
+#[derive(Clone, Copy)]
+struct Piece {
+    key: RawKey,
+    base: u64,
+    size_bits: u8,
+    used: u64,
+}
+
+impl Piece {
+    fn end(&self) -> u64 {
+        self.base + (1 << self.size_bits)
+    }
+}
+
+/// Most device-memory pieces tracked while splitting.
+const MAX_PIECES: usize = 64;
+
+/// The device Untypeds handed out at boot, split into page-sized device
+/// Untypeds on demand.
+struct DeviceMemory {
+    pieces: [Option<Piece>; MAX_PIECES],
+}
+
+impl DeviceMemory {
+    fn new(builder: &Builder<'_>) -> Self {
+        let mut memory = Self {
+            pieces: [None; MAX_PIECES],
+        };
+        let range = device_untypeds();
+        for slot in range.first_slot..range.first_slot + range.count {
+            let key = boot_key(slot, 1);
+            let region = *builder
+                .entry(key)
+                .as_untyped()
+                .unwrap_or_else(|error| panic!("🥾 device Untyped {slot}: {:?}", error.code()));
+            memory.add(Piece {
+                key,
+                base: region.paddr,
+                size_bits: region.size_bits,
+                used: u64::try_from(region.watermark_bytes()).unwrap_or(u64::MAX),
+            });
+        }
+        memory
+    }
+
+    fn add(&mut self, piece: Piece) {
+        let free = self
+            .pieces
+            .iter_mut()
+            .find(|candidate| candidate.is_none())
+            .expect("🥾 too many device memory pieces");
+        *free = Some(piece);
+    }
+
+    /// A page-sized device Untyped over `page`, in a fresh boot slot: the
+    /// smallest piece holding `page` uncarved is carved up to it, each skipped
+    /// stretch becoming its own aligned piece for later pages.
+    fn take_page(
+        &mut self,
+        page: u64,
+        untyped_table: &KeyTableKey,
+        slots: &mut SlotCursor,
+    ) -> RawKey {
+        let index = self
+            .pieces
+            .iter()
+            .enumerate()
+            .filter_map(|(index, piece)| piece.map(|piece| (index, piece)))
+            .filter(|(_, piece)| piece.base + piece.used <= page && page < piece.end())
+            .min_by_key(|(_, piece)| piece.size_bits)
+            .map_or_else(
+                || panic!("🥾 no device Untyped holds page {page:#x}"),
+                |(index, _)| index,
+            );
+        loop {
+            let mut piece = self.pieces[index].expect("piece present");
+            let next = piece.base + piece.used;
+            let (size_bits, is_page) = if next == page {
+                (PAGE_BITS, true)
+            } else {
+                // The largest aligned block from `next` that stops at `page`.
+                let alignment = next.trailing_zeros();
+                let room = 63 - (page - next).leading_zeros();
+                (
+                    u8::try_from(alignment.min(room)).unwrap_or(PAGE_BITS),
+                    false,
+                )
+            };
+            let child = UntypedKey::from_key(piece.key)
+                .retype(
+                    ObjectType::UNTYPED,
+                    size_bits,
+                    0,
+                    1,
+                    untyped_table,
+                    slots.take(1),
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("🥾 device Untyped split failed: {:?}", error.code())
+                });
+            piece.used += 1 << size_bits;
+            self.pieces[index] = Some(piece);
+            if is_page {
+                return child;
+            }
+            self.add(Piece {
+                key: child,
+                base: next,
+                size_bits,
+                used: 0,
+            });
+        }
+    }
+}
+
+/// Install `entry` in `component`'s table at `slot`; the component-local key.
+fn grant(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
+    // SAFETY: the component's retained table, borrowed for this bootstrap
+    // grant only; no capability invocation overlaps it.
+    unsafe { &mut *(component.table_addr as *mut KeyTable) }
+        .insert(KeySlot(slot), entry, component.guard)
+        .unwrap_or_else(|failure| panic!("🥾 driver grant failed: {:?}", failure.error.code()))
+}
+
+/// Move the boot-table capability `key` into `component`'s table at `slot`:
+/// a bootstrap-only grant of the entry, then Delete of Kickstart's own.
+fn move_to(
+    builder: &Builder<'_>,
+    self_table: &mut KeyTableKey,
+    component: &Component,
+    key: RawKey,
+    slot: u32,
+) -> RawKey {
+    let local = grant(component, builder.entry(key), slot);
+    self_table
+        .delete(key)
+        .unwrap_or_else(|error| panic!("🥾 boot-table Delete failed: {:?}", error.code()));
+    local
+}
+
+/// Install `entry` in the boot table at `slot`.
+fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
+    // SAFETY: the live boot table, borrowed for this bootstrap grant only.
+    unsafe { &mut *(builder.boot_table_addr as *mut KeyTable) }
+        .insert(KeySlot(slot), entry, BOOT_TABLE_GUARD)
+        .unwrap_or_else(|failure| panic!("🥾 boot install failed: {:?}", failure.error.code()))
+}
+
+/// Load one instance of the bundled `drivers` per enabled device tree node
+/// they serve, call `before_start` with each one, then start its Thread.
+/// Boot-table slots come from `slots`. Returns how many instances started.
+pub fn load_drivers(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    builder: &Builder<'_>,
+    keys: BootKeys,
+    drivers: &[&'static DriverImage],
+    slots: &mut SlotCursor,
+    mut before_start: impl FnMut(&LoadedDriver<'_>),
+) -> usize {
+    let (instances, count) = plan(drivers);
+    let instances = &instances[..count];
+    let mut self_table = KeyTableKey::from_key(keys.self_table);
+    let mut memory = DeviceMemory::new(builder);
+    let controllers = interrupt_controllers();
+    let irq_control = IrqControlKey::from_key(keys.irq_control);
+    let root_scheduler = SchedulerKey::from_key(keys.root_scheduler);
+    let boot_time = TimeKey::from_key(keys.boot_time);
+    let untyped = UntypedKey::from_key(keys.untyped);
+
+    // A page several instances touch becomes one device Frame they all copy.
+    let instances_touching = |page: u64| {
+        instances
+            .iter()
+            .flatten()
+            .filter(|instance| instance.pages().contains(&page))
+            .count()
+    };
+    let mut shared: [Option<(u64, RawKey)>; MAX_DRIVER_INSTANCES * MAX_DEVICE_PAGES] =
+        [None; MAX_DRIVER_INSTANCES * MAX_DEVICE_PAGES];
+
+    let mut started = 0;
+    for (number, instance) in instances.iter().flatten().enumerate() {
+        let driver = instance.driver;
+        let image = driver.component;
+        let name = instance.node.name().unwrap_or("?");
+        let guard = FIRST_DRIVER_GUARD + u32::try_from(number).unwrap_or(0);
+        let component = builder.component(nucleus, guard, slots);
+        builder.load_component(&component, image, guard ^ 0x80_0000, slots);
+        let mut stacks = builder.stack_region(&component, STACK_REGION, slots);
+        let stack = builder.user_stack(&mut stacks, STACK_PAGES, slots);
+        let init_page =
+            builder.private_pages(component.address_space_key, component.l2, INIT_VA, 1, slots);
+        Builder::map_table(
+            builder.carve_tables(slots.take(1), 1),
+            component.l2,
+            DEVICE_WINDOW_VA,
+        );
+        let driver_table = component.table();
+        let mut next_slot = FIRST_DRIVER_SLOT;
+        let mut local_slot = || {
+            let slot = next_slot;
+            next_slot += 1;
+            slot
+        };
+        let mut init = DriverInit::EMPTY;
+        init.address_space = component
+            .local_key(KeySlot::SELF_ADDRESS_SPACE.0, 1)
+            .to_wire();
+        init.table = component.local_key(KeySlot::SELF_KEYTABLE.0, 1).to_wire();
+
+        // ── Registers ───────────────────────────────────────────────────
+        init.compatible_index = instance.compatible_index as u64;
+        init.region_count = instance.region_count as u64;
+        init.regions = instance.regions;
+        for (record, &page) in init.pages.iter_mut().zip(instance.pages()) {
+            *record = if instances_touching(page) > 1 {
+                let frame = match shared.iter().flatten().find(|(known, _)| *known == page) {
+                    Some(&(_, frame)) => frame,
+                    None => {
+                        let page_untyped = memory.take_page(page, builder.self_table, slots);
+                        let frame = UntypedKey::from_key(page_untyped)
+                            .retype(
+                                ObjectType::FRAME,
+                                PAGE_BITS,
+                                0,
+                                1,
+                                builder.self_table,
+                                slots.take(1),
+                                Rights::all(),
+                            )
+                            .unwrap_or_else(|error| {
+                                panic!("🥾 shared device Frame failed: {:?}", error.code())
+                            });
+                        *shared
+                            .iter_mut()
+                            .find(|entry| entry.is_none())
+                            .expect("shared slots") = Some((page, frame));
+                        frame
+                    }
+                };
+                let copy = self_table
+                    .copy_derive(
+                        frame,
+                        &driver_table,
+                        local_slot(),
+                        Rights(Rights::READ | Rights::WRITE),
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("🥾 device Frame copy failed: {:?}", error.code())
+                    });
+                DevicePage {
+                    paddr: page,
+                    key: copy.to_wire(),
+                    kind: PAGE_FRAME,
+                }
+            } else {
+                let page_untyped = memory.take_page(page, builder.self_table, slots);
+                DevicePage {
+                    paddr: page,
+                    key: move_to(
+                        builder,
+                        &mut self_table,
+                        &component,
+                        page_untyped,
+                        local_slot(),
+                    )
+                    .to_wire(),
+                    kind: PAGE_UNTYPED,
+                }
+            };
+        }
+        init.page_count = instance.page_count as u64;
+
+        // ── Memory, Time and Thread ─────────────────────────────────────
+        let ram = untyped
+            .retype(
+                ObjectType::UNTYPED,
+                driver.memory_bits,
+                0,
+                1,
+                builder.self_table,
+                slots.take(1),
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("🥾 driver memory Retype failed: {:?}", error.code()));
+        init.memory = move_to(builder, &mut self_table, &component, ram, local_slot()).to_wire();
+        init.memory_size = 1 << driver.memory_bits;
+        let mut retype = |kind: ObjectType| {
+            untyped
+                .retype(
+                    kind,
+                    0,
+                    0,
+                    1,
+                    builder.self_table,
+                    slots.take(1),
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("🥾 driver {kind:?} Retype failed: {:?}", error.code())
+                })
+        };
+        let thread = retype(ObjectType::THREAD);
+        let time = retype(ObjectType::TIME);
+        let notification = retype(ObjectType::NOTIFICATION);
+        boot_time
+            .transfer(&TimeKey::from_key(time), driver.budget_ns, driver.priority)
+            .unwrap_or_else(|error| panic!("🥾 driver Time.Transfer failed: {:?}", error.code()));
+        root_scheduler
+            .configure_thread(
+                thread,
+                component.address_space_key,
+                ThreadStart {
+                    entry: image.entry.expect("a driver has an entry"),
+                    stack_pointer: stack.top,
+                    argument: INIT_VA,
+                },
+                time,
+            )
+            .unwrap_or_else(|error| panic!("🥾 driver ConfigureThread failed: {:?}", error.code()));
+        init.time = grant(&component, builder.entry(time), local_slot()).to_wire();
+
+        // ── Interrupts ──────────────────────────────────────────────────
+        let tree = device_tree::at_el1().index();
+        let notification_id = builder
+            .entry(notification)
+            .carved_id()
+            .unwrap_or_else(|error| panic!("🥾 Notification identity: {:?}", error.code()));
+        let mut interrupt_count = 0;
+        for interrupt in interrupts(tree, &instance.node).take(MAX_INTERRUPTS) {
+            let Some(controller) = controllers.index_of(interrupt.controller) else {
+                semi::println!(
+                    "🥾 Driver {}: {name} has an interrupt on a controller the kernel does not drive",
+                    image.name
+                );
+                continue;
+            };
+            if interrupt.cells().len() > MAX_ISSUE_CELLS.min(MAX_INTERRUPT_CELLS) {
+                continue;
+            }
+            let issued = match irq_control.issue(
+                builder.self_table,
+                slots.take(1),
+                controller,
+                interrupt.cells(),
+            ) {
+                Ok(issued) => issued,
+                // Another node's driver holds the line already.
+                Err(CapError::IrqLineActive { line }) => {
+                    semi::println!(
+                        "🥾 Driver {}: {name}'s interrupt line {line} is taken, skipped",
+                        image.name
+                    );
+                    continue;
+                }
+                Err(error) => panic!("🥾 driver IRQControl.Issue failed: {:?}", error.code()),
+            };
+            let bits = 1_u16 << interrupt_count;
+            let badged = install_boot(
+                builder,
+                KeyEntry::new_carved(notification_id, Rights::all(), bits),
+                slots.take(1),
+            );
+            IrqHandlerKey::from_key(issued.handler)
+                .set_notification(badged, thread)
+                .unwrap_or_else(|error| {
+                    panic!("🥾 driver SetNotification failed: {:?}", error.code())
+                });
+            self_table
+                .delete(badged)
+                .unwrap_or_else(|error| panic!("🥾 boot-table Delete failed: {:?}", error.code()));
+            init.interrupts[interrupt_count] = Interrupt {
+                handler: move_to(
+                    builder,
+                    &mut self_table,
+                    &component,
+                    issued.handler,
+                    local_slot(),
+                )
+                .to_wire(),
+                bits: u64::from(bits),
+                line: u64::from(issued.line),
+            };
+            interrupt_count += 1;
+        }
+        init.interrupt_count = interrupt_count as u64;
+        init.notification = move_to(
+            builder,
+            &mut self_table,
+            &component,
+            notification,
+            local_slot(),
+        )
+        .to_wire();
+        init.first_free_slot = u64::from(next_slot);
+
+        write_init(init_page, init);
+        semi::println!(
+            "🥾 Driver {} for {name}: {} register pages, {} interrupts",
+            image.name,
+            init.page_count,
+            init.interrupt_count
+        );
+        before_start(&LoadedDriver {
+            driver,
+            node: name,
+            component: &component,
+            thread,
+            init: &init,
+            first_free_slot: next_slot,
+        });
+        root_scheduler
+            .start_thread(thread)
+            .unwrap_or_else(|error| panic!("🥾 driver StartThread failed: {:?}", error.code()));
+        started += 1;
+    }
+    started
+}

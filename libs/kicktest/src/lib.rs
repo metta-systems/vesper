@@ -9,8 +9,7 @@
 //! from the boot Thread, with the provisioning steps of `libcomponent_loader`.
 //! This crate holds what only the tests share:
 //!
-//! - [`devices`]: the boot device tree read again at EL1, and checks on the
-//!   device Untypeds;
+//! - [`devices`]: checks on the device Untypeds;
 //! - [`bounce`] and [`translation`]: the Bounce fixture — a second trusted
 //!   `EL1t` context in its own `AddressSpace` — and the two-root translation
 //!   provisioning and observations it runs on;

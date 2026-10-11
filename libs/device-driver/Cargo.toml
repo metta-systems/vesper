@@ -1,0 +1,25 @@
+[package]
+name = "vesper-device-driver"
+
+description = "What Kickstart and an EL0 device driver agree on: the compatible-string declaration, the init-page record, and mapping the driver's device pages."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+libobject = { workspace = true }
+
+[lib]
+# Shared by EL0 drivers and Kickstart; no test harness on the target.
+test = false
+harness = false
+
+[lints]
+workspace = true

@@ -76,6 +76,9 @@ pub struct ElfImage {
     pub symbols: Vec<(String, u64, u64)>,
     /// `(name, address)` records from the `.exports` section
     pub exports: Vec<(String, u64)>,
+    /// Device tree `compatible` strings from a driver's `.driver_compatible`
+    /// section (empty for other components)
+    pub driver_compatible: Vec<String>,
 }
 
 impl ElfImage {
@@ -104,6 +107,7 @@ impl ElfImage {
         let mut load_sections = Vec::new();
         let mut bss = None;
         let mut exports = Vec::new();
+        let mut driver_compatible = Vec::new();
         for header in &elf.section_headers {
             let Some(name) = elf.shdr_strtab.get_at(header.sh_name) else {
                 continue;
@@ -113,6 +117,10 @@ impl ElfImage {
                 let end = start + usize::try_from(header.sh_size).unwrap_or(usize::MAX);
                 bytes[start..end].to_vec()
             };
+            if name == ".driver_compatible" {
+                driver_compatible = parse_strings(&content(), path);
+                continue;
+            }
             if name == ".exports" {
                 exports = parse_exports(&content(), path);
                 continue;
@@ -153,6 +161,7 @@ impl ElfImage {
             bss,
             symbols,
             exports,
+            driver_compatible,
         }
     }
 
@@ -163,6 +172,19 @@ impl ElfImage {
             .find(|(symbol, _, _)| symbol == name)
             .map(|&(_, address, size)| (address, size))
     }
+}
+
+/// The NUL-separated strings of a section such as `.driver_compatible`.
+fn parse_strings(content: &[u8], path: &Path) -> Vec<String> {
+    content
+        .split(|&byte| byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            std::str::from_utf8(entry)
+                .unwrap_or_else(|_| panic!("{}: a string is not UTF-8", path.display()))
+                .to_string()
+        })
+        .collect()
 }
 
 fn parse_exports(content: &[u8], path: &Path) -> Vec<(String, u64)> {
@@ -649,12 +671,92 @@ struct ManifestEntry {
     entry: Option<String>,
 }
 
+/// A `[[driver]]` manifest entry: an active component plus what Kickstart
+/// gives each instance.
+struct DriverEntry {
+    component: ManifestEntry,
+    /// Priority of the driver's Time
+    priority: u16,
+    /// Budget the driver's Time receives (default 1 s)
+    budget_ns: u64,
+    /// Size exponent of the driver's RAM Untyped (default 64 KiB)
+    memory_bits: u8,
+}
+
+/// Default budget of a driver's Time.
+const DEFAULT_DRIVER_BUDGET_NS: u64 = 1_000_000_000;
+/// Default size of a driver's RAM Untyped.
+const DEFAULT_DRIVER_MEMORY: u64 = 64 * 1024;
+
+/// The `[[driver]]` entries of a parsed manifest at `path`.
+fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
+    let entries = table
+        .get("driver")
+        .and_then(toml::Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    entries
+        .iter()
+        .map(|entry| {
+            let text = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string)
+            };
+            let number = |key: &str| entry.get(key).and_then(toml::Value::as_integer);
+            let name =
+                text("name").unwrap_or_else(|| panic!("{}: a driver has no name", path.display()));
+            assert!(
+                name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "{}: driver name `{name}` must be an identifier",
+                path.display()
+            );
+            let priority = number("priority")
+                .and_then(|priority| u16::try_from(priority).ok())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{}: driver `{name}` needs a priority (0-65535)",
+                        path.display()
+                    )
+                });
+            let budget_ns = number("budget_ns").map_or(DEFAULT_DRIVER_BUDGET_NS, |budget| {
+                u64::try_from(budget).unwrap_or_else(|_| {
+                    panic!("{}: driver `{name}` has a negative budget", path.display())
+                })
+            });
+            let memory = number("memory").map_or(DEFAULT_DRIVER_MEMORY, |memory| {
+                u64::try_from(memory).unwrap_or_else(|_| {
+                    panic!("{}: driver `{name}` has negative memory", path.display())
+                })
+            });
+            assert!(
+                memory.is_power_of_two() && memory >= 4096,
+                "{}: driver `{name}` memory must be a power of two of at least 4096 bytes",
+                path.display()
+            );
+            DriverEntry {
+                component: ManifestEntry {
+                    binary: text("binary").unwrap_or_else(|| {
+                        panic!("{}: driver `{name}` has no binary", path.display())
+                    }),
+                    entry: None,
+                    active: true,
+                    name,
+                },
+                priority,
+                budget_ns,
+                memory_bits: u8::try_from(memory.trailing_zeros()).unwrap_or(u8::MAX),
+            }
+        })
+        .collect()
+}
+
 /// The `[[component]]` entries of a parsed manifest at `path`.
 fn read_components(path: &Path, table: &toml::Table) -> Vec<ManifestEntry> {
     let entries = table
         .get("component")
         .and_then(toml::Value::as_array)
-        .unwrap_or_else(|| panic!("{}: expected [[component]] entries", path.display()));
+        .map_or(&[][..], Vec::as_slice);
     entries
         .iter()
         .map(|entry| {
@@ -695,14 +797,18 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
     data
 }
 
-/// Bundle the `[[component]]` entries of `manifest` (relative to the crate)
-/// into
+/// Bundle the `[[component]]` and `[[driver]]` entries of `manifest`
+/// (relative to the crate) into
 /// `$OUT_DIR/components.rs`.
 ///
 /// For each component this emits one page-aligned, page-padded static per
 /// file-backed segment in the `.components` link section, and a
 /// `pub static <NAME>: libimage::ComponentImage`, plus
-/// `pub static COMPONENTS: &[&ComponentImage]`. The bundling image's linker
+/// `pub static COMPONENTS: &[&ComponentImage]`. A driver is an active
+/// component plus a `pub static <NAME>_DRIVER: libimage::DriverImage` with
+/// the strings of its `.driver_compatible` section, its `priority`, its
+/// `budget_ns` and its `memory` size, all listed in
+/// `pub static DRIVERS: &[&DriverImage]`. The bundling image's linker
 /// script must place `.components` page-aligned inside its retained image.
 pub fn bundle_components(manifest: &str) {
     let (manifest_path, table) = load_manifest(manifest);
@@ -711,7 +817,7 @@ pub fn bundle_components(manifest: &str) {
     let mut code = String::from(
         "// Generated by vesper-image-build from the component manifest. Do not edit.\n\n\
          #[allow(unused)]\n\
-         use libimage::{ComponentImage, Export, LoadableSection, Permissions, SectionMeta};\n\n\
+         use libimage::{ComponentImage, DriverImage, Export, LoadableSection, Permissions, SectionMeta};\n\n\
          /// Page-aligned storage for one component segment.\n\
          #[repr(C, align(4096))]\n\
          struct PageAligned<const N: usize>([u8; N]);\n\n",
@@ -719,95 +825,46 @@ pub fn bundle_components(manifest: &str) {
     let mut names = Vec::new();
     for component in read_components(&manifest_path, &table) {
         let image = ElfImage::read(&find_artifact(&component.binary));
-        let stem = component.name.to_uppercase();
-
-        let mut segments = String::new();
-        for section in &image.load_sections {
-            assert_eq!(
-                section.virt_addr % PAGE_SIZE,
-                0,
-                "{}: {} must be page-aligned (use the userspace linker script)",
-                component.binary,
-                section.name
-            );
-            let data = page_padded(section.data.clone());
-            let bin_file = format!(
-                "component_{}_{}.bin",
-                component.name,
-                section.name.trim_start_matches('.')
-            );
-            fs::write(out.join(&bin_file), &data)
-                .unwrap_or_else(|error| panic!("cannot write {bin_file}: {error}"));
-            let blob = format!("{stem}_{}_BLOB", section.tag());
-            emit!(
-                code,
-                "#[unsafe(link_section = \".components\")]\n\
-                 static {blob}: PageAligned<{len}> = PageAligned(*include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{bin_file}\")));\n",
-                len = data.len()
-            );
-            emit!(
-                segments,
-                "    LoadableSection {{ meta: SectionMeta {{ name: \"{name}\", virt_addr: 0x{addr:X}, size: 0x{size:X}, alignment: 0x{align:X}, permissions: {perms} }}, data: &{blob}.0 }},\n",
-                name = section.name,
-                addr = section.virt_addr,
-                size = section.size,
-                align = section.alignment.max(1),
-                perms = section.permissions(),
-            );
-        }
-        let bss = image.bss.as_ref().map_or_else(
-            || "None".to_string(),
-            |bss| {
-                assert_eq!(
-                    bss.virt_addr % PAGE_SIZE,
-                    0,
-                    "{}: .bss must be page-aligned (use the userspace linker script)",
-                    component.binary
-                );
-                format!(
-                    "Some(SectionMeta {{ name: \".bss\", virt_addr: 0x{:X}, size: 0x{:X}, alignment: 0x{:X}, permissions: {} }})",
-                    bss.virt_addr,
-                    bss.size,
-                    bss.alignment.max(1),
-                    bss.permissions()
-                )
-            },
-        );
+        names.push(emit_component(&mut code, &out, &component, &image));
+    }
+    let mut drivers = Vec::new();
+    for driver in read_drivers(&manifest_path, &table) {
+        let image = ElfImage::read(&find_artifact(&driver.component.binary));
         assert!(
-            component.active || component.entry.is_none(),
-            "{}: `entry` is set but the component is not `active`",
-            component.binary
+            !image.driver_compatible.is_empty(),
+            "{}: a driver declares its compatible strings with driver_compatible!",
+            driver.component.binary
         );
-        let entry = if component.active {
-            let symbol = component.entry.as_deref().unwrap_or("_start");
-            let (address, _) = image
-                .symbol(symbol)
-                .unwrap_or_else(|| panic!("{}: missing entry symbol `{symbol}`", component.binary));
-            format!("Some(0x{address:X})")
-        } else {
-            "None".to_string()
-        };
-        let exports: String = image
-            .exports
+        let stem = emit_component(&mut code, &out, &driver.component, &image);
+        let compatible: String = image
+            .driver_compatible
             .iter()
-            .map(|(name, address)| {
-                format!("    Export {{ name: \"{name}\", address: 0x{address:X} }},\n")
-            })
+            .map(|entry| format!("\"{entry}\", "))
             .collect();
         emit!(
             code,
-            "\n/// Component `{name}` (`{binary}`).\n\
-             pub static {stem}: ComponentImage = ComponentImage {{\n\
-             \x20   name: \"{name}\",\n\
-             \x20   segments: &[\n{segments}    ],\n\
-             \x20   bss: {bss},\n\
-             \x20   entry: {entry},\n\
-             \x20   exports: &[\n{exports}    ],\n}};\n\n",
-            name = component.name,
-            binary = component.binary,
+            "\n/// Driver `{name}` (`{binary}`), for `{list}`.\n\
+             pub static {stem}_DRIVER: DriverImage = DriverImage {{\n\
+             \x20   component: &{stem},\n\
+             \x20   compatible: &[{compatible}],\n\
+             \x20   priority: 0x{priority:X},\n\
+             \x20   budget_ns: {budget},\n\
+             \x20   memory_bits: {memory_bits},\n}};\n",
+            name = driver.component.name,
+            binary = driver.component.binary,
+            list = image.driver_compatible.join(", "),
+            priority = driver.priority,
+            budget = driver.budget_ns,
+            memory_bits = driver.memory_bits,
         );
-        names.push(stem);
+        names.push(stem.clone());
+        drivers.push(format!("&{stem}_DRIVER"));
     }
+    emit!(
+        code,
+        "/// Every bundled driver, in manifest order.\n#[allow(dead_code)]\npub static DRIVERS: &[&DriverImage] = &[{}];\n",
+        drivers.join(", ")
+    );
     emit!(
         code,
         "/// Every bundled component, in manifest order (a bundling image may use\n/// only the per-component statics).\n#[allow(dead_code)]\npub static COMPONENTS: &[&ComponentImage] = &[{}];\n",
@@ -818,4 +875,102 @@ pub fn bundle_components(manifest: &str) {
             .join(", ")
     );
     fs::write(out.join("components.rs"), code).expect("cannot write components.rs");
+}
+
+/// Emit the segment statics and the `ComponentImage` static of `component`
+/// (read as `image`) into `code`; the static's name.
+fn emit_component(
+    code: &mut String,
+    out: &Path,
+    component: &ManifestEntry,
+    image: &ElfImage,
+) -> String {
+    let stem = component.name.to_uppercase();
+
+    let mut segments = String::new();
+    for section in &image.load_sections {
+        assert_eq!(
+            section.virt_addr % PAGE_SIZE,
+            0,
+            "{}: {} must be page-aligned (use the userspace linker script)",
+            component.binary,
+            section.name
+        );
+        let data = page_padded(section.data.clone());
+        let bin_file = format!(
+            "component_{}_{}.bin",
+            component.name,
+            section.name.trim_start_matches('.')
+        );
+        fs::write(out.join(&bin_file), &data)
+            .unwrap_or_else(|error| panic!("cannot write {bin_file}: {error}"));
+        let blob = format!("{stem}_{}_BLOB", section.tag());
+        emit!(
+            code,
+            "#[unsafe(link_section = \".components\")]\n\
+             static {blob}: PageAligned<{len}> = PageAligned(*include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{bin_file}\")));\n",
+            len = data.len()
+        );
+        emit!(
+            segments,
+            "    LoadableSection {{ meta: SectionMeta {{ name: \"{name}\", virt_addr: 0x{addr:X}, size: 0x{size:X}, alignment: 0x{align:X}, permissions: {perms} }}, data: &{blob}.0 }},\n",
+            name = section.name,
+            addr = section.virt_addr,
+            size = section.size,
+            align = section.alignment.max(1),
+            perms = section.permissions(),
+        );
+    }
+    let bss = image.bss.as_ref().map_or_else(
+        || "None".to_string(),
+        |bss| {
+            assert_eq!(
+                bss.virt_addr % PAGE_SIZE,
+                0,
+                "{}: .bss must be page-aligned (use the userspace linker script)",
+                component.binary
+            );
+            format!(
+                "Some(SectionMeta {{ name: \".bss\", virt_addr: 0x{:X}, size: 0x{:X}, alignment: 0x{:X}, permissions: {} }})",
+                bss.virt_addr,
+                bss.size,
+                bss.alignment.max(1),
+                bss.permissions()
+            )
+        },
+    );
+    assert!(
+        component.active || component.entry.is_none(),
+        "{}: `entry` is set but the component is not `active`",
+        component.binary
+    );
+    let entry = if component.active {
+        let symbol = component.entry.as_deref().unwrap_or("_start");
+        let (address, _) = image
+            .symbol(symbol)
+            .unwrap_or_else(|| panic!("{}: missing entry symbol `{symbol}`", component.binary));
+        format!("Some(0x{address:X})")
+    } else {
+        "None".to_string()
+    };
+    let exports: String = image
+        .exports
+        .iter()
+        .map(|(name, address)| {
+            format!("    Export {{ name: \"{name}\", address: 0x{address:X} }},\n")
+        })
+        .collect();
+    emit!(
+        code,
+        "\n/// Component `{name}` (`{binary}`).\n\
+         pub static {stem}: ComponentImage = ComponentImage {{\n\
+         \x20   name: \"{name}\",\n\
+         \x20   segments: &[\n{segments}    ],\n\
+         \x20   bss: {bss},\n\
+         \x20   entry: {entry},\n\
+         \x20   exports: &[\n{exports}    ],\n}};\n\n",
+        name = component.name,
+        binary = component.binary,
+    );
+    stem
 }

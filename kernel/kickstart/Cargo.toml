@@ -39,6 +39,7 @@ libaddress = { workspace = true }
 libboot = { workspace = true }
 libcomponent-loader = { workspace = true }
 libcpu = { workspace = true }
+libdevice-driver = { workspace = true }
 libdevicetree = { workspace = true }
 libexception = { workspace = true }
 libirqchip = { workspace = true }

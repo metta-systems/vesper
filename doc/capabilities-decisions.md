@@ -102,10 +102,6 @@ Unanswered questions before implementing the scheduler record ABI:
   deleted; dispatch register schema and protection against races between
   user-level dispatch and kernel events (Composite's scheduling token); clock
   source and rounding of charged time.
-- **Driver loading (D4/D6/D8):**
-  - **Init page direction:** does Kickstart choose the init page's address and pass it in `x0`, or does the driver reserve the page in its own image (a link section) for Kickstart to fill?
-  - **Shared register pages:** how two trusted drivers share a page. Each gets its own device Untyped over the same page (two device Untypeds then overlap, against the non-overlap rule), or both get copies of one device Frame, or something else; and what makes a driver trusted.
-  - **Driver budget:** the priority comes from the manifest; how much budget the driver's Time receives.
 - **IRQ follow-up:** whether a Thread may bind one Notification for both
   PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built
@@ -166,3 +162,4 @@ needs them.
 - **Kernel-published identity in `TPIDRRO_EL0`:** using the EL0 read-only,
   EL1-writable register to publish per-Thread identity to userspace, as Linux
   does for per-CPU data. Today it is always zero.
+- **Driver probe/init calls:** Kickstart hands a driver everything through its init page and never calls into it. A device manager may need a probe/init part of the driver interface (asking a driver whether it can drive a device, or telling it to start or stop); look into what that would be and how it is called.

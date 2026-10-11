@@ -25,7 +25,7 @@ pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-arg=--script=' + test_link
 
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver'
+user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver driver-probe'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 
@@ -107,6 +107,10 @@ build-fp-trap-test board='rpi3': (build-components board 'qemu') (_build-test-ke
 # Build the preempt-test e2e kernel (timer tick and preemption of EL1t and EL0 Threads)
 [group("test")]
 build-preempt-test board='rpi3': (build-components board 'qemu') (_build-test-kernel 'preempt-test' board)
+
+# Build the driver-test e2e kernel (Kickstart driver matching and the driver init page)
+[group("test")]
+build-driver-test board='rpi3': (build-components board 'qemu') (_build-test-kernel 'driver-test' board)
 
 # Build the irq-test e2e kernel (interrupt delivery to an EL0 receiver Thread)
 [group("test")]
@@ -267,7 +271,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("test")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-irq test-irq-rpi4 test-endpoint test-fp-trap test-fault
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-endpoint test-fp-trap test-fault
 
 alias t := test
 
@@ -339,6 +343,14 @@ test-preempt: (_run-test-kernel 'preempt-test' 'build-preempt-test')
 # Boot preempt-test on the Raspberry Pi 4 machine: the same image, ticking through the GICv2 component
 [group("test")]
 test-preempt-rpi4: (_run-test-kernel 'preempt-test' 'build-preempt-test rpi4' 'rpi4')
+
+# Boot driver-test: Kickstart loads a probe driver per matching device tree node and hands it registers, interrupts, memory and a Time
+[group("test")]
+test-driver: (_run-test-kernel 'driver-test' 'build-driver-test')
+
+# Boot driver-test on the Raspberry Pi 4 machine: the same checks through the GICv2 component
+[group("test")]
+test-driver-rpi4: (_run-test-kernel 'driver-test' 'build-driver-test rpi4' 'rpi4')
 
 # Boot irq-test: IRQControl.Issue, IRQHandler binding and Ack, repeated virtual-timer interrupts delivered to an EL0 receiver Thread
 [group("test")]
@@ -490,7 +502,7 @@ fmt-check:
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
 [group("test")]
-audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-preempt-test 'rpi3') (build-irq-test 'rpi3') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
+audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-preempt-test 'rpi3') (build-irq-test 'rpi3') (build-driver-test 'rpi3') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
     artifacts="{{ release_dir }}"
@@ -500,7 +512,7 @@ audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memor
     failed=0
     # fp-probe executes an FP/SIMD instruction on purpose.
     user_components="{{ replace(user_components, 'fp-probe', '') }}"
-    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test irq-test endpoint-test fault-test ${user_components}; do
+    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test irq-test driver-test endpoint-test fault-test ${user_components}; do
         # Symbol names in <…> are not operands.
         found=$(rust-objdump -d --no-show-raw-insn "${artifacts}/${image}" | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
         if [ -n "${found}" ]; then

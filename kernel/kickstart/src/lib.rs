@@ -18,7 +18,8 @@
 
 mod boot_info;
 pub mod bootstrap;
-mod device_tree;
+pub mod device_tree;
+pub mod drivers;
 mod el_switch;
 mod embed;
 mod loader;

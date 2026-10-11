@@ -141,8 +141,7 @@ Reference: [IRQ delivery](capabilities-contract.md#irq-delivery). Order toward t
 
 - [ ] Hand the boot IRQControl to an EL0 `irq-manager` component for good.
 - [ ] Carve PageTable metadata and AddressSpaces from the invoking Untyped (carved-object identity) and remove their boot pools; keep failure atomicity and watermark accounting.
-- [ ] Driver matching: `compatible` link section in EL0 driver binaries, `[[driver]]` manifest entries, Kickstart loading one driver per matching enabled node with its device Untyped, IRQHandlers and Time.
-- [ ] Port the PL011 UART to an EL0 driver component (`drivers/uart-pl011`) that retypes its receiver Thread and device Frame, binds its interrupt and serves receive and transmit by interrupts; `uart-test` runs it in loopback on raspi3b and raspi4b.
+- [ ] Port the PL011 UART to an EL0 driver component (`drivers/uart-pl011`) that carves its device Frame, acks its bound interrupt and serves receive and transmit by interrupts; `uart-test` runs it in loopback on raspi3b and raspi4b. Load the bundled drivers on Kickstart's real boot path (`[[driver]]` entries in `kernel/kickstart/image.toml`).
 
 ## Phase 7 — Time and userspace scheduling
 
