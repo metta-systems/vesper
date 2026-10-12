@@ -32,6 +32,7 @@ qemu = [
 [dependencies]
 aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
+driver-echo = { path = "../../../userspace/tests/driver/echo" }
 driver-protocol = { path = "../../../userspace/tests/driver/protocol" }
 kickstart = { path = "../../kickstart" }
 libaddress = { workspace = true }

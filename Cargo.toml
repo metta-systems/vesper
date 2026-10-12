@@ -15,11 +15,16 @@ members = [
   "kernel/tests/uart-test",
   "bin/chainboot",
   "bin/chainofcommand",
+  "bin/meddler",
   # Privileged components
   "drivers/irqchip-bcm2836",
   "drivers/irqchip-gicv2",
   # EL0 driver components
   "drivers/uart-pl011",
+  # Mailbox component and its Meddle-generated interface crates
+  "drivers/mailbox",
+  "drivers/mailbox/client",
+  "drivers/mailbox/server",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -42,6 +47,8 @@ members = [
   "libs/log",
   "libs/machine",
   "libs/mapping",
+  "libs/meddle",
+  "libs/meddle-runtime",
   "libs/memory",
   "libs/mmio",
   "libs/object",
@@ -59,6 +66,8 @@ members = [
   "userspace/tests/endpoint/endpoint",
   "userspace/tests/endpoint/protocol",
   "userspace/tests/endpoint/server",
+  "userspace/tests/driver/echo",
+  "userspace/tests/driver/echo-client",
   "userspace/tests/driver/probe",
   "userspace/tests/driver/protocol",
   "userspace/tests/fault/bare",
@@ -116,6 +125,9 @@ liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
 libmachine = { path = "libs/machine", package = "vesper-machines" }
 libmapping = { path = "libs/mapping", package = "vesper-mapping" }
+libmeddle = { path = "libs/meddle", package = "vesper-meddle" }
+libmeddle-runtime = { path = "libs/meddle-runtime", package = "vesper-meddle-runtime" }
+mailbox = { path = "drivers/mailbox/server" }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }
@@ -154,6 +166,14 @@ tokio-stream = { version = "0.1" }
 #==========
 goblin = { version = "0.10" }
 minijinja = { version = "3" }
+# Meddle IDL front end and Rust emitter (libs/meddle)
+ariadne = { version = "0.6" }
+chumsky = { version = "0.12" }
+logos = { version = "0.16" }
+prettyplease = { version = "0.3" }
+proc-macro2 = { version = "1.0" }
+quote = { version = "1.0" }
+syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"] }
 toml = { version = "1.1" }
 #=======
 # mixed

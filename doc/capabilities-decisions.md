@@ -56,17 +56,21 @@ Unanswered questions before implementing the scheduler record ABI:
   classification and the selected delivery mechanism, what are the call lifecycle,
   cancellation, Thread/AddressSpace teardown, partial-completion, and other
   nested/concurrent-call rules beyond the fixed depth limit?
-- **Return-key handoff to component init:** the AddressSpace builder installs
-  the Slot(1) sentinel during provisioning and passes its deterministic key to
-  the component's init, which records it for the export adapter. Through what
-  channel does init receive it (entry register, init argument block, DCB
-  field), and is it part of the general init-handoff record?
 - **Return to a live but unready source:** if the top record's saved source
   AddressSpace is still live but its root/ASID is missing or unencodable,
   is that a third Return fault, a `ReturnTargetRetired` fault, or an ordinary
   error? It currently surfaces as the preparation error without a pop.
 - **Scheduling attribution:** how should hierarchical schedulers observe and
   attribute migrated work beyond the source Thread's own DCB accounting?
+- **Component outcome through the Call status:** a successful `Thread.Return`
+  always reaches the caller as `x0 = 0` with `r0`/`r1` in `x1`/`x2`, so
+  Meddle-generated interfaces spend `r0` on their own outcome word (success,
+  exception index, malformed arguments) and get one result word. Should
+  `Thread.Return` carry a component outcome into the caller's `x0` instead,
+  for example in a status range or bit the kernel never uses for its own
+  status codes, leaving both words for results? Affects the Return and Call
+  register contracts (D7/D9), `decode_syscall_result`, the export adapter and
+  the Meddle call convention in `libs/meddle-runtime`.
 - **Freezing the provisional PPC conventions (D9):** the maintainer decides
   when each becomes frozen ABI. Both work end-to-end through real Call/Return;
   no validation or plan item gates either freeze, and work should not be

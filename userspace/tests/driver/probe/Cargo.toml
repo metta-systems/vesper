@@ -19,7 +19,10 @@ qemu = ["libuser/qemu"]
 
 [dependencies]
 driver-protocol = { path = "../protocol" }
+driver-echo = { path = "../echo" }
+driver-echo-client = { path = "../echo-client" }
 libdevice-driver = { workspace = true }
+libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }

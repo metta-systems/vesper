@@ -283,3 +283,16 @@ pub fn write_init<T>(paddr: u64, value: T) {
             .write_volatile(value);
     }
 }
+
+/// Let `update` change the `T` [`write_init`] wrote at `paddr`, before the
+/// component runs.
+///
+/// The page must hold a `T` written by [`write_init`], and nothing else may
+/// access it while `update` runs.
+pub fn update_init<T, Output>(paddr: u64, update: impl FnOnce(&mut T) -> Output) -> Output {
+    const { assert!(core::mem::size_of::<T>() <= 4096) };
+    // SAFETY: per the contract above, `paddr` names a builder-owned page
+    // holding an initialized `T`, the direct map covers it, and this borrow
+    // is the only access for the duration of `update`.
+    update(unsafe { &mut *PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<T>() })
+}

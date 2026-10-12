@@ -15,8 +15,14 @@
 //! Before each instance starts, the boot Thread checks its init record
 //! against the device tree and installs a report key badged with a bit for
 //! the instance. Each probe maps its registers, reads one, acks its
-//! interrupts, carves an object from its own memory and reports; the boot
-//! Thread waits until every instance has.
+//! interrupts, carves an object from its own memory, calls `echo_v1` through
+//! its imports and reports; the boot Thread waits until every instance has.
+//!
+//! Every probe also exports `echo_v1`, and its `imports.if` uses it `via
+//! clocks`: Kickstart wires `uart1` (`clocks = <&aux 0>`) to the `aux`
+//! instance, and nothing for the others, whose first clock is the clock
+//! manager. The boot Thread checks each init record's Return key and import
+//! records; the probes check the calls, an exception included.
 //!
 //! In-guest assertions and the QEMU semihosting exit status are the result
 //! (`just test-driver`, `just test-driver-rpi4`).
@@ -27,6 +33,7 @@ mod components {
 }
 
 use {
+    driver_echo::echo_v1::TYPE_CODE as ECHO_V1,
     driver_protocol::{AUX, AUX_UART, PL011, REPORT_SLOT},
     kickstart::{
         bootstrap::{
@@ -38,7 +45,7 @@ use {
     libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::ttbr,
-        keys::{SlotCursor, boot_key},
+        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
         paging::image_table_count,
     },
     libdevice_driver::{PAGE_FRAME, PAGE_UNTYPED},
@@ -47,7 +54,7 @@ use {
     libkicktest as _,
     libobject::{
         KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
-        address_space::AddressSpaceKey,
+        address_space::AddressSpaceKey, thread::ThreadReturnKey,
     },
     libqemu::semihosting as semi,
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
@@ -185,6 +192,25 @@ pub fn run() -> ! {
             );
             assert!(!init.pages().is_empty() && !init.regions().is_empty());
             assert_eq!(init.memory_size, 64 * 1024);
+            // Its exports answer with the key at its table's Return slot.
+            assert_eq!(
+                init.return_key,
+                ThreadReturnKey::provisioned(loaded.component.guard, BOOT_TABLE_SIZE_BITS)
+                    .raw()
+                    .to_wire()
+            );
+            // `uart1` imports both `echo_v1` functions of the `aux` instance,
+            // on one target stack; the other nodes link to no probe.
+            let imports = init.imports();
+            if init.compatible_index == AUX_UART {
+                assert_eq!(imports.len(), 2, "uart1 imports identify and twice");
+                assert!(imports.iter().all(|record| record.type_code == ECHO_V1));
+                assert_eq!([imports[0].function, imports[1].function], [0, 1]);
+                assert_ne!(imports[0].invocation, imports[1].invocation);
+                assert_eq!(imports[0].stack_end, imports[1].stack_end);
+            } else {
+                assert!(imports.is_empty(), "{}: links to no probe", loaded.node);
+            }
             semi::println!(
                 "driver-test: {} on {}: compatible {}, {} pages from {:#x}, {} interrupts",
                 loaded.driver.component.name,

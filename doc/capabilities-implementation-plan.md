@@ -113,7 +113,10 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
 
 - [ ] Separate backing size/alignment from descriptor storage and slot quotas, with provenance, for kinds outside the kernel object pools.
-- [ ] Raspberry Pi 3 mailbox: a privileged mailbox driver component Kickstart instantiates (its registers share the BCM interrupt controller's page).
+- [ ] Raspberry Pi mailbox ([contract](capabilities-contract.md#resource-storage-and-memory-contracts)): the `mailbox` EL0 component serving `mailbox_v1` (`drivers/mailbox/interfaces/mailbox_v1.if`) through per-function Invocations.
+  - [ ] Kickstart hands the mailbox component a device Frame for the page it shares with the BCM interrupt controller.
+  - [ ] Implement the component (`drivers/mailbox`, stub today): property-tag requests through a private DMA bounce page, refusal of tags that hand over the system, buffers held until the VideoCore replies, reply interrupt through IRQHandler.
+  - [ ] `property` over an xbuf data area with EventCount completion; QEMU test of a typed call and the xbuf path from a client component.
 - [ ] Define the sanitization duties beyond Retype-carved Frames and PageTables, distinguishing intentional content-preserving sharing.
 - [ ] Implement mapping-local Unmap versus origin-capability Revoke of descendants: retain the origin, define partial completion, and prevent racing mapping installation.
 - [ ] Encode and enforce origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no-Frame-slot-reuse rule.

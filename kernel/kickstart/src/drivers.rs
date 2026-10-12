@@ -37,25 +37,28 @@ use {
     libcomponent_loader::{
         builder::Builder,
         component::Component,
-        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
-        loader::write_init,
+        keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
+        loader::{StackRegion, UserStack, update_init, write_init},
     },
     libdevice_driver::{
         DEVICE_WINDOW_VA, DevicePage, DriverInit, INIT_VA, Interrupt, MAX_DEVICE_PAGES,
-        MAX_FURTHER_THREADS, MAX_INTERRUPTS, MAX_REGIONS, PAGE_FRAME, PAGE_UNTYPED, Region,
-        STACK_REGION,
+        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, PAGE_FRAME, PAGE_UNTYPED,
+        Region, STACK_REGION,
     },
     libdevicetree::{
         Node,
         interrupts::{MAX_INTERRUPT_CELLS, interrupts},
-        is_compatible, is_enabled, regions,
+        is_compatible, is_enabled, linked_phandle, phandle, regions,
     },
     libimage::DriverImage,
+    libmeddle_runtime::ImportRecord,
     libobject::{
         CapError, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights,
         TimeKey, UntypedKey,
+        address_space::AddressSpaceKey,
         irq::MAX_ISSUE_CELLS,
         scheduler::{SchedulerKey, ThreadStart},
+        thread::ThreadReturnKey,
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -386,9 +389,32 @@ fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
         .unwrap_or_else(|failure| panic!("🥾 boot install failed: {:?}", failure.error.code()))
 }
 
+/// Pages of each target stack an exporting driver reserves for one client.
+const EXPORT_STACK_PAGES: u32 = 4;
+
+/// Minimum headroom of every exported function's target stack.
+const EXPORT_STACK_HEADROOM: u64 = 0x400;
+
+/// An instance loaded but not started: what wiring its imports and starting
+/// it need.
+struct Prepared<'p> {
+    instance: &'p Instance,
+    component: Component,
+    /// The driver's guarded stack span, which also holds the target stacks
+    /// of the functions it exports
+    stacks: StackRegion,
+    /// Physical address of the init page
+    init_page: u64,
+    thread: RawKey,
+    further_threads: [Option<RawKey>; MAX_FURTHER_THREADS],
+    /// First slot of the driver's table nothing occupies
+    next_slot: u32,
+}
+
 /// Load one instance of the bundled `drivers` per enabled device tree node
-/// they serve, call `before_start` with each one, then start its Threads.
-/// Boot-table slots come from `slots`. Returns how many instances started.
+/// they serve, wire every instance's imports, then, instance by instance,
+/// call `before_start` and start its Threads. Boot-table slots come from
+/// `slots`. Returns how many instances started.
 pub fn load_drivers(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     builder: &Builder<'_>,
@@ -399,6 +425,8 @@ pub fn load_drivers(
 ) -> usize {
     let (instances, count) = plan(drivers);
     let instances = &instances[..count];
+    let mut prepared: [Option<Prepared<'_>>; MAX_DRIVER_INSTANCES] =
+        [const { None }; MAX_DRIVER_INSTANCES];
     let mut self_table = KeyTableKey::from_key(keys.self_table);
     let mut memory = DeviceMemory::new(builder);
     let controllers = interrupt_controllers();
@@ -418,7 +446,6 @@ pub fn load_drivers(
     let mut shared: [Option<(u64, RawKey)>; MAX_DRIVER_INSTANCES * MAX_DEVICE_PAGES] =
         [None; MAX_DRIVER_INSTANCES * MAX_DEVICE_PAGES];
 
-    let mut started = 0;
     for (number, instance) in instances.iter().flatten().enumerate() {
         let driver = instance.driver;
         let image = driver.component;
@@ -456,7 +483,9 @@ pub fn load_drivers(
             .local_key(KeySlot::SELF_ADDRESS_SPACE.0, 1)
             .to_wire();
         init.table = component.local_key(KeySlot::SELF_KEYTABLE.0, 1).to_wire();
-
+        init.return_key = ThreadReturnKey::provisioned(guard, BOOT_TABLE_SIZE_BITS)
+            .raw()
+            .to_wire();
         // ── Registers ───────────────────────────────────────────────────
         init.compatible_index = instance.compatible_index as u64;
         init.region_count = instance.region_count as u64;
@@ -669,24 +698,146 @@ pub fn load_drivers(
             local_slot(),
         )
         .to_wire();
-        init.first_free_slot = u64::from(next_slot);
-
         write_init(init_page, init);
+        prepared[number] = Some(Prepared {
+            instance,
+            component,
+            stacks,
+            init_page,
+            thread,
+            further_threads,
+            next_slot,
+        });
+    }
+    let prepared = &mut prepared[..count];
+
+    // ── Imports ─────────────────────────────────────────────────────────
+    let tree = device_tree::at_el1().index();
+    // Target stack each (client, exporter) pair calls on, by instance index.
+    let mut call_stacks = [[None::<UserStack>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
+    for client in 0..count {
+        let Some(client_instance) = prepared[client].as_ref().map(|loaded| loaded.instance) else {
+            continue;
+        };
+        let client_image = client_instance.driver.component;
+        let client_name = client_instance.node.name().unwrap_or("?");
+        // Imports of one interface are consecutive: report a missing link once.
+        let mut unlinked: Option<&str> = None;
+        for import in client_image.imports {
+            let linked = linked_phandle(&client_instance.node, import.link);
+            let exporter = prepared.iter().position(|candidate| {
+                candidate.as_ref().is_some_and(|candidate| {
+                    linked.is_some()
+                        && phandle(&candidate.instance.node) == linked
+                        && candidate
+                            .instance
+                            .driver
+                            .component
+                            .exports_interface(import.interface, import.type_code)
+                })
+            });
+            let Some(exporter) = exporter else {
+                if unlinked == Some(import.interface) {
+                    continue;
+                }
+                unlinked = Some(import.interface);
+                semi::println!(
+                    "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
+                    client_image.name,
+                    import.interface,
+                    import.link
+                );
+                continue;
+            };
+            let stack = match call_stacks[client][exporter] {
+                Some(stack) => stack,
+                None => {
+                    let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
+                    let stack =
+                        builder.user_stack(&mut exporting.stacks, EXPORT_STACK_PAGES, slots);
+                    call_stacks[client][exporter] = Some(stack);
+                    stack
+                }
+            };
+            let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
+            let exporter_space = AddressSpaceKey::from_key(exporting.component.address_space_key);
+            let entry = exporting
+                .instance
+                .driver
+                .component
+                .export(import.export)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "🥾 {} exports no `{}`",
+                        exporting.instance.driver.component.name, import.export
+                    )
+                });
+            let calling = prepared[client].as_mut().expect("a loaded client");
+            let slot = calling.next_slot;
+            calling.next_slot += 1;
+            let invocation = exporter_space
+                .create_invocation(
+                    entry,
+                    &calling.component.table(),
+                    KeySlot(slot),
+                    stack.bottom,
+                    stack.top,
+                    EXPORT_STACK_HEADROOM,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "🥾 CreateInvocation `{}` failed: {:?}",
+                        import.export,
+                        error.code()
+                    )
+                });
+            update_init(calling.init_page, |init: &mut DriverInit| {
+                let index = usize::try_from(init.import_count).unwrap_or(MAX_IMPORTS);
+                let record = init.imports.get_mut(index).unwrap_or_else(|| {
+                    panic!(
+                        "🥾 driver {} imports more than {MAX_IMPORTS} functions",
+                        client_image.name
+                    )
+                });
+                *record = ImportRecord {
+                    type_code: import.type_code,
+                    function: import.function,
+                    invocation: invocation.to_wire(),
+                    stack_end: stack.top,
+                };
+                init.import_count += 1;
+            });
+        }
+    }
+
+    // ── Start ───────────────────────────────────────────────────────────
+    let mut started = 0;
+    for loaded in prepared.iter_mut().flatten() {
+        let instance = loaded.instance;
+        let name = instance.node.name().unwrap_or("?");
+        let first_free_slot = loaded.next_slot;
+        let init = update_init(loaded.init_page, |init: &mut DriverInit| {
+            init.first_free_slot = u64::from(first_free_slot);
+            *init
+        });
         semi::println!(
-            "🥾 Driver {} for {name}: {} register pages, {} interrupts",
-            image.name,
+            "🥾 Driver {} for {name}: {} register pages, {} interrupts, {} imports",
+            instance.driver.component.name,
             init.page_count,
-            init.interrupt_count
+            init.interrupt_count,
+            init.import_count
         );
         before_start(&LoadedDriver {
-            driver,
+            driver: instance.driver,
             node: name,
-            component: &component,
-            thread,
+            component: &loaded.component,
+            thread: loaded.thread,
             init: &init,
-            first_free_slot: next_slot,
+            first_free_slot,
         });
-        for thread in core::iter::once(thread).chain(further_threads.into_iter().flatten()) {
+        for thread in
+            core::iter::once(loaded.thread).chain(loaded.further_threads.into_iter().flatten())
+        {
             root_scheduler
                 .start_thread(thread)
                 .unwrap_or_else(|error| panic!("🥾 driver StartThread failed: {:?}", error.code()));

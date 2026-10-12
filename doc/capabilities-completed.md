@@ -99,3 +99,8 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] Separately linked EL0 component images, bundled and loaded in place (`libs/image`, `libs/image-build`, `image.toml` manifests).
 - [x] Kickstart finds its nucleus image through the manifest.
 - [x] `EXECUTE` mappings are executable at exactly one level (PXN/UXN), never RW+X at EL0.
+
+## Component interfaces (Meddle)
+
+- [x] Meddle IDL front end and Rust stub generator (`libs/meddle`, CLI `bin/meddler`), runtime support (`libs/meddle-runtime`); `mailbox_v1` generates the `mailbox` interface crate and the `mailbox-client` crate, built against the stub `mailbox` component; tested by `just test-meddle`, linted by `just clippy-meddle`.
+- [x] Kickstart wires `interfaces/imports.if`: each `uses ... via <property>` binds to the driver instance the client node's property links to, with one Invocation per function and one exporter stack per client, delivered in `DriverInit::imports` with the exporter's Return key in `DriverInit::return_key`; `just test-driver` and `just test-driver-rpi4` exercise calls and an exception from `uart1` into `aux`.

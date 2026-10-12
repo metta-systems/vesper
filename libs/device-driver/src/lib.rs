@@ -20,14 +20,23 @@
 //! - the Notification, a RAM Untyped, the driver's Time, its `AddressSpace`
 //!   and its own table;
 //! - an `EventCount` only the driver's own Threads hold, for them to hand
-//!   work to each other.
+//!   work to each other;
+//! - its `Thread.Return` key, for the functions it exports, and one
+//!   [`ImportRecord`] per function of another component its
+//!   `interfaces/imports.if` uses: the function's Invocation, in the
+//!   driver's table, into the instance the driver's node links to with the
+//!   `uses ... via` property, and the target stack reserved for the
+//!   driver's calls into that instance (one per instance it calls).
 //!
 //! A driver that needs more Threads than its interrupt Thread declares their
 //! entries with [`driver_threads!`]. Kickstart starts each on its own stack
 //! and Time with the init page's address in `x0`, alongside the first one;
 //! only the first Thread receives the interrupts.
 
-use libobject::{CapError, FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey};
+use {
+    libmeddle_runtime::ImportRecord,
+    libobject::{CapError, FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey},
+};
 
 /// Name of the section holding a driver's NUL-terminated `compatible`
 /// strings.
@@ -82,6 +91,9 @@ pub const DEVICE_WINDOW_VA: u64 = 0x3800_0000;
 pub const MAX_REGIONS: usize = 4;
 /// Most register pages of one node.
 pub const MAX_DEVICE_PAGES: usize = 16;
+/// Most functions of other components one driver imports.
+pub const MAX_IMPORTS: usize = 32;
+
 /// Most interrupts of one node: one Notification bit each.
 pub const MAX_INTERRUPTS: usize = 16;
 
@@ -135,6 +147,9 @@ pub struct DriverInit {
     pub table: u64,
     /// First slot of the driver's table nothing occupies
     pub first_free_slot: u64,
+    /// The driver's `Thread.Return` key, which every function it exports
+    /// records (`libobject::export::init_return_key`) before answering
+    pub return_key: u64,
     /// The Notification the node's interrupts signal (`RECV`)
     pub notification: u64,
     /// A RAM Untyped for the driver's own objects
@@ -151,6 +166,10 @@ pub struct DriverInit {
     pub regions: [Region; MAX_REGIONS],
     pub pages: [DevicePage; MAX_DEVICE_PAGES],
     pub interrupts: [Interrupt; MAX_INTERRUPTS],
+    pub import_count: u64,
+    /// The functions of other components the driver imports (its
+    /// `interfaces/imports.if`), each linked through its device tree node
+    pub imports: [ImportRecord; MAX_IMPORTS],
 }
 
 const _: () = assert!(size_of::<DriverInit>() <= 4096);
@@ -162,6 +181,7 @@ impl DriverInit {
         address_space: 0,
         table: 0,
         first_free_slot: 0,
+        return_key: 0,
         notification: 0,
         memory: 0,
         memory_size: 0,
@@ -181,6 +201,13 @@ impl DriverInit {
             bits: 0,
             line: 0,
         }; MAX_INTERRUPTS],
+        import_count: 0,
+        imports: [ImportRecord {
+            type_code: 0,
+            function: 0,
+            invocation: 0,
+            stack_end: 0,
+        }; MAX_IMPORTS],
     };
 
     /// The node's register ranges.
@@ -193,6 +220,10 @@ impl DriverInit {
         &self.pages[..clamp(self.page_count, MAX_DEVICE_PAGES)]
     }
 
+    /// The functions of other components the driver imports.
+    pub fn imports(&self) -> &[ImportRecord] {
+        &self.imports[..clamp(self.import_count, MAX_IMPORTS)]
+    }
     /// The node's interrupts, in device tree order.
     pub fn interrupts(&self) -> &[Interrupt] {
         &self.interrupts[..clamp(self.interrupt_count, MAX_INTERRUPTS)]

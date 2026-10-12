@@ -76,3 +76,7 @@ a finite sum reaching `u64::MAX`,  - currently in Time, but it should just satur
 ---
 
 A PageTable also takes a slot in the kernel PageTable pool. - do we need this pool?
+
+---
+
+Meddler codegen should use minijinja templates instead of manually written code.

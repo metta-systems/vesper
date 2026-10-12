@@ -25,7 +25,7 @@ pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-arg=--script=' + test_link
 
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver driver-probe uart-pl011'
+user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver driver-probe uart-pl011 mailbox-impl'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -291,11 +291,11 @@ alias t := test
 test-device:
     RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=chainboot
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=vesper-meddle --exclude=meddler --exclude=chainboot
 
     RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=chainboot
+    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=vesper-meddle --exclude=meddler --exclude=chainboot
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 [private]
@@ -408,7 +408,7 @@ test-chainboot:
 
 # Run capability, boot-platform and host tool tests natively
 [group("test")]
-test-host: test-object-host test-platform-host
+test-host: test-object-host test-platform-host test-meddle
     cargo test -p chainofcommand
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
@@ -425,6 +425,11 @@ test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vespe
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
 [group("test")]
 test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'uart-pl011' 'pl011')
+
+# Run the Meddle interface compiler tests and the generated code's runtime tests natively
+[group("test")]
+test-meddle: (_host-test 'vesper-meddle-runtime' 'words')
+    cargo test -p vesper-meddle
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -446,16 +451,16 @@ _cross-clippy board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build \
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=vesper-meddle --exclude=meddler \
       -- --deny warnings --allow deprecated
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host
+clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host clippy-meddle
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
-clippy-pre-push: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') clippy-object-host clippy-platform-host
+clippy-pre-push: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') clippy-object-host clippy-platform-host clippy-meddle
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 [private]
@@ -471,6 +476,11 @@ clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 
 # Lint the boot-platform host tests
 [group("maintenance")]
 clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'uart-pl011' 'pl011')
+
+# Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
+[group("maintenance")]
+clippy-meddle: (_host-clippy 'vesper-meddle-runtime' 'words')
+    cargo clippy -p vesper-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]

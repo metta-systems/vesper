@@ -1,0 +1,20 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## driver-test's interface between probe instances: every probe exports it,
+## and a probe whose device tree node links to another probe's node calls
+## that instance through it.
+local interface echo_v1
+{
+    ## `twice` would overflow for `value`.
+    exception overflow { card64 value; }
+
+    ## The exporting instance's compatible index.
+    identify() returns (card64 index);
+
+    ## `value` doubled.
+    twice(card64 value)
+        returns (card64 doubled)
+        raises (overflow);
+}

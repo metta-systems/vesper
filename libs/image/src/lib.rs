@@ -116,6 +116,30 @@ pub struct Export {
     pub address: u64,
 }
 
+/// An interface a component exports (one of its `interfaces/<name>_vN.if`
+/// files): each of its functions is the export `<name>_<function>`.
+#[derive(Debug, Clone, Copy)]
+pub struct InterfaceExport {
+    pub name: &'static str,
+    /// The interface version's fingerprint
+    pub type_code: u64,
+}
+
+/// One function of another component's interface that a component calls,
+/// declared in its `interfaces/imports.if`.
+#[derive(Debug, Clone, Copy)]
+pub struct Import {
+    /// The interface, as named in its exporter's [`InterfaceExport`]
+    pub interface: &'static str,
+    pub type_code: u64,
+    /// The function's declaration index in the interface
+    pub function: u64,
+    /// The client node's device tree property holding the phandle of the
+    /// exporting instance's node
+    pub link: &'static str,
+    /// The exporter's export name for the function
+    pub export: &'static str,
+}
 /// A userspace component bundled into a boot image.
 ///
 /// Every segment's `data` is page-aligned and padded to whole pages inside
@@ -132,6 +156,10 @@ pub struct ComponentImage {
     /// component only exports procedures
     pub entry: Option<u64>,
     pub exports: &'static [Export],
+    /// The interfaces the exports implement
+    pub interfaces: &'static [InterfaceExport],
+    /// The functions of other components this one calls
+    pub imports: &'static [Import],
 }
 
 /// A device driver bundled into a boot image: an active EL0 component that
@@ -258,5 +286,14 @@ impl ComponentImage {
             .iter()
             .find(|export| export.name == name)
             .map(|export| export.address)
+    }
+}
+
+impl ComponentImage {
+    /// Whether the component exports `interface` at version `type_code`.
+    pub fn exports_interface(&self, interface: &str, type_code: u64) -> bool {
+        self.interfaces
+            .iter()
+            .any(|exported| exported.name == interface && exported.type_code == type_code)
     }
 }

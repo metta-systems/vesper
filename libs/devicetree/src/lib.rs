@@ -274,6 +274,12 @@ pub fn phandle(node: &Node<'_, '_, '_>) -> Option<u32> {
     property(node, "phandle").and_then(|prop| prop.u32(0).ok())
 }
 
+/// The phandle in the first cell of `node`'s `property`: the node it links
+/// to, as in a consumer's `clocks = <&provider ...>` or `mboxes = <&mailbox>`.
+pub fn linked_phandle(node: &Node<'_, '_, '_>, property_name: &str) -> Option<u32> {
+    property(node, property_name).and_then(|prop| prop.u32(0).ok())
+}
+
 /// The node in `tree` whose `phandle` property equals `phandle`.
 pub fn node_by_phandle<'a, 'i: 'a, 'dt: 'i>(
     tree: &'a DevTreeIndex<'i, 'dt>,
