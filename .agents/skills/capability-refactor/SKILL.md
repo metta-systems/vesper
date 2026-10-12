@@ -64,7 +64,7 @@ Check the documents' decision status and dependencies for the selected item:
 - **D2:** selected management-authority/bookkeeping split; remaining revocation, completion, and reuse mechanisms.
 - **D3:** ownership and lifetime.
 - **D4:** authority, badges, and bootstrap.
-- **D5:** domain control block (DCB).
+- **D5:** scheduler-shared records.
 - **D6:** memory and ASID management.
 - **D7:** IPC and blocking.
 - **D8:** time.
@@ -112,7 +112,7 @@ Respect the plan's ordering and explicit prerequisites:
 
 - Follow the correctness-first rule in `doc/capabilities-contract.md` and `doc/capabilities-design.md` section 3. Do not preserve current kernel-object/key sizes, packing, or inline representations at the expense of consistent identity, authority, mapping, and lifetime semantics. Add/remove/expand fields and introduce shared records when needed.
 - Defer size/performance optimization to a separate measured pass after correctness. Existing KeyEntry size targets are not a reason to compress away necessary state or avoid a correct design.
-- Whenever layouts change, audit and update allocation/accounting, backing size/alignment, pool capacities, table strides, DCB record/page views, initialization bounds, shared ABI consumers, and layout assertions/tests together. Do not merely disable assertions. Respect hardware-defined formats and coordinate changes to agreed wire layouts/encodings; this rule does not authorize ABI renumbering or unrelated rewrites.
+- Whenever layouts change, audit and update allocation/accounting, backing size/alignment, pool capacities, table strides, scheduler-shared record views, initialization bounds, shared ABI consumers, and layout assertions/tests together. Do not merely disable assertions. Respect hardware-defined formats and coordinate changes to agreed wire layouts/encodings; this rule does not authorize ABI renumbering or unrelated rewrites.
 
 ## Keep responsibilities separate
 
@@ -125,7 +125,7 @@ Respect the plan's ordering and explicit prerequisites:
 
 ## Safety requirements
 
-- Never fabricate lifetimes or references with unsafe code to bypass ownership or guard constraints; establish real backing-storage and thread lifetime guarantees. Consult `doc/capabilities-design.md` sections 1–3 and 5–6 for slot/object/thread reuse, guarded access, and direct-memory/DCB hazards; thin fallible handles do not justify unguarded references.
+- Never fabricate lifetimes or references with unsafe code to bypass ownership or guard constraints; establish real backing-storage and thread lifetime guarantees. Consult `doc/capabilities-design.md` sections 1–3 and 5–6 for slot/object/thread reuse, guarded access, and direct-memory and shared-record hazards; thin fallible handles do not justify unguarded references.
 - Prevent rights amplification across lookup, derivation, transfer, and invocation; validate authority in the kernel regardless of wrapper types.
 - Preserve resources and ownership on pre-commit failure through validation/reservation and rollback. Where the approved contract permits irreversible partial completion, expose it explicitly with recoverable bookkeeping; never silently lose or duplicate resources.
 - Reject malformed or unsupported user input with defined errors, not panics, unchecked indexing, or fake success.

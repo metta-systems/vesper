@@ -29,21 +29,23 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just build rpi3 qemu` | Build the RPi3/QEMU kernel configuration without starting QEMU |
 | `just build-endpoint-test` | Build the endpoint-test e2e kernel image (nucleus + endpoint-test and its bundled components, sharing `libkicktest` scaffolding with the other test kernels); defaults to RPi3/QEMU |
 | `just fmt-check` | Workspace formatting check using the configured nightly toolchain |
-| `just clippy` | RPi3/QEMU feature-off and debug-enabled build prerequisites, all nine embedded configurations, and capability host-test linting |
-| `just clippy-pre-push` | Default features on RPi3 and RPi4 plus capability host-test linting; not the full embedded matrix |
+| `just clippy` | RPi3/QEMU feature-off and debug-enabled build prerequisites, all nine embedded configurations, and the capability, boot-platform and Meddle host linting |
+| `just clippy-pre-push` | Default features on RPi3 and RPi4 plus the capability, boot-platform and Meddle host linting; not the full embedded matrix |
 | `just clippy-object-host` | Focused native lint check of the capability library and its opt-in ABI test harness |
+| `just clippy-meddle`, `test-meddle` | Native lint and tests of the Meddle interface compiler (`libs/meddle`, `bin/meddler`) and the generated code's runtime (`libs/meddle-runtime`) |
 | `just lint` | Formatting, full embedded Clippy workflow, and host-tool Clippy |
 | `just test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
 | `just test-debug-console` | Debug-enabled nucleus handler and slot-identity regression tests under QEMU; included in `just test` |
 | `just test-capability`, `test-memory`, `test-sync`, `test-ppc` | Boot one e2e test kernel each (separate binaries reusing the real kickstart boot path, sharing `libkicktest`): capability handoff and Retype; translation tables, mappings, activation and AddressSpace retirement; Notification/EventCount and blocking through the Bounce fixture Thread; Invocation construction and PPC Call/Return into Bounce. In-guest assertions and the QEMU exit status are the result; all included in `just test` |
 | `just test-endpoint` | Boot the endpoint-test e2e kernel: client, rendezvous-endpoint and server `AddressSpace`s meet through PPC `Invocation`s, blocking inside the endpoint; in-guest assertions and the QEMU exit status are the result; included in `just test` |
+| `just test-preempt`, `test-irq`, `test-driver`, `test-uart` (each also `-rpi4`) | Boot the timer-preemption, interrupt-delivery, driver-loading and PL011-driver e2e kernels on raspi3b and raspi4b; `test-driver` also covers `imports.if` wiring and generated-interface calls between probe instances; all included in `just test` |
 | `just test-fp-trap` | Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t (test-only nucleus hook) and at EL0 (delivered to the component's fault handler); included in `just test` |
 | `just test-fault` | Boot fault-test: EL0 fault delivery — skip, retry, terminate, Return faults, and every unhandled case parking the Thread as faulted; included in `just test` |
 | `just audit-fp-simd` | Disassemble every image that runs under the integer-only policy and reject FP/SIMD instructions; part of `just lint` |
 | `just test-chainboot` | Chainboot tests with its own linker script and target runner |
 | `just test-object-host` | Opt-in capability ABI integration tests on the native host (currently AArch64) |
-| `just test-host` | Capability ABI tests, then native `chainofcommand` tests |
-| `just test` | Device, chainboot, capability-host, host-tool, debug handler/storage, and every e2e test kernel (capability, memory, sync, ppc, endpoint, fp-trap, fault) |
+| `just test-host` | Capability ABI, boot-platform and Meddle tests, then native `chainofcommand` tests |
+| `just test` | Device, chainboot, host (capability, boot-platform, Meddle, tools), debug handler/storage, and every e2e test kernel (capability, memory, sync, ppc, preempt, irq, driver, uart, endpoint, fp-trap, fault; the board-dependent ones on both boards) |
 | `just pre-push` | Formatting, shortened Clippy, and tests; does not itself push anything |
 | `just ci` | Cleanup, lint, build, and tests; do not invoke its cleanup as an incidental check |
 
@@ -113,10 +115,6 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
 
 - [ ] Separate backing size/alignment from descriptor storage and slot quotas, with provenance, for kinds outside the kernel object pools.
-- [ ] Raspberry Pi mailbox ([contract](capabilities-contract.md#resource-storage-and-memory-contracts)): the `mailbox` EL0 component serving `mailbox_v1` (`drivers/mailbox/interfaces/mailbox_v1.if`) through per-function Invocations.
-  - [ ] Kickstart hands the mailbox component a device Frame for the page it shares with the BCM interrupt controller.
-  - [ ] Implement the component (`drivers/mailbox`, stub today): property-tag requests through a private DMA bounce page, refusal of tags that hand over the system, buffers held until the VideoCore replies, reply interrupt through IRQHandler.
-  - [ ] `property` over an xbuf data area with EventCount completion; QEMU test of a typed call and the xbuf path from a client component.
 - [ ] Define the sanitization duties beyond Retype-carved Frames and PageTables, distinguishing intentional content-preserving sharing.
 - [ ] Implement mapping-local Unmap versus origin-capability Revoke of descendants: retain the origin, define partial completion, and prevent racing mapping installation.
 - [ ] Encode and enforce origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no-Frame-slot-reuse rule.
@@ -134,7 +132,7 @@ Reference: [communication](capabilities-contract.md#communication-and-deferred-c
 - [ ] Apply the aborted-work vocabulary (rejected before admission / cancelled before commit / completed / outcome unknown) to each operation's commit point, and define its wire representation.
 - [ ] Define stable user-record decoding and buffer/mapping lifetime across blocking; test adversarial mutation and unmap during pending operations.
 - [ ] Test Notification/EventCount signal/wait races, multiple waiters, cancellation, reader lag and payload publication/reuse ordering with multi-Thread fixtures.
-- [ ] Specify and implement Invocation distribution: CopyDerive restrictions, rights attenuation and badge-on-derive (D4), preserving target identity and the nonzero entry.
+- [ ] Specify and implement Invocation distribution: CopyDerive restrictions, rights attenuation and badge-on-derive (D4), preserving target identity and the nonzero entry. Exporters need the badge as caller identity for per-client policy (the mailbox component's `property`).
 - [ ] Specify nested/concurrent-call rules beyond the fixed depth, shared-memory rules, optional capability transfer, call cancellation/teardown (including target AddressSpace retirement during a call), and any partial-completion states after visible effects.
 - [ ] Complete architectural-state isolation beyond the selected TLS, timer/counter, PMU, debug-channel and FP/SIMD controls before protected EL0 claims.
 
@@ -145,6 +143,20 @@ Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
 - [ ] Hand the boot IRQControl to an EL0 `irq-manager` component for good.
 - [ ] Let an IRQHandler deliver to an EventCount as well as a Notification, so an interrupt Thread can sleep on either: each delivery advances the count, and one wakeup can drain every event the advance delta reports (for example several received bytes at once) and advance the client's channel count in turn.
 - [ ] Carve PageTable metadata and AddressSpaces from the invoking Untyped (carved-object identity) and remove their boot pools; keep failure atomicity and watermark accounting.
+
+### Components and interfaces
+
+Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts). Open questions: [mailbox component](capabilities-decisions.md#mailbox-component).
+
+- [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`, a stub answering `firmware_error` today). Prerequisite: the node and client-link decision.
+  - [ ] Kickstart loads it as a driver: its node (or the node it serves through), the Raspberry Pi 3 shared-page grant once its authorization is decided, and its reply interrupt (BCM line on the Raspberry Pi 3, GIC SPI on the Raspberry Pi 4).
+  - [ ] Request path: one request in flight, later callers waiting in order on an EventCount; the driver's interrupt Thread takes each reply and advances the count. `enter` records the Return key from `DriverInit::return_key`.
+  - [ ] Property buffers in a private bounce page from the driver's memory: its bus address from `Frame.GetAddress` and the `/soc` `dma-ranges`, cache handling per the DMA-coherence decision, held until the `VideoCore` replies.
+  - [ ] Typed functions (board revision and serial, clock rate, power state) build their tag buffers inside the component; `property` refuses tags that hand over the system (code execution, `VideoCore` memory allocation and locking). Per-client policy waits on caller identity through Invocation badges (Phase 6, Invocation distribution).
+  - [ ] `property` over an xbuf data area with EventCount completion, per the provisioning decision.
+  - [ ] QEMU test (raspi3b, raspi4b): a client driver on a node linking to the firmware calls the typed functions and the property path.
+  - [ ] Remove the kernel-era mailbox, power, framebuffer and `VideoCore` code from `libs/platform` once the component serves its users.
+- [ ] Load `[[component]]` entries (components without a device node) in Kickstart with their imports, once components other than drivers need it; only test builders load them today.
 
 ## Phase 7 — Time and userspace scheduling
 
@@ -162,8 +174,8 @@ Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduli
 ## Final integration
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
-  - [ ] Replace the fixture init page with the init-handoff design (keys, parameters) once selected.
-  - [ ] Copy a component's `.data` per instance before loading the same component twice; it is mapped in place from the bundle today.
+  - [ ] Move endpoint-test's fixture init pages and hand-wired Invocations onto the init record and the generated-interface import wiring Kickstart gives drivers (`DriverInit`, `imports.if`).
+  - [ ] Copy a component's `.data` per instance before loading the same component twice; it is mapped in place from the bundle today, so a driver with several instances (an exporter included) may keep per-instance state only in `.bss`.
   - [ ] Move the Bounce fixture (sync-test, ppc-test, via `libkicktest::bounce`) onto EL0 components where it does not need EL1 register access.
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`) and enable the protections the running core supports.
   - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN: set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN`. Prerequisite: the EL1t boot Thread stops using its EL0-accessible low stack. Validate on a core with FEAT_PAN (QEMU `virt` with a newer CPU).
