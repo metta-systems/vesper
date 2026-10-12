@@ -7,10 +7,8 @@
 pub mod gpio;
 #[cfg(board_rpi3)]
 pub mod interrupt_controller;
-pub mod mailbox;
 pub mod mini_uart;
 pub mod pl011_uart;
-pub mod power;
 
 #[cfg(board_rpi3)]
 pub use interrupt_controller::*;

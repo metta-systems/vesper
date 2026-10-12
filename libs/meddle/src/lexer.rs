@@ -30,6 +30,8 @@ pub enum Token<'source> {
     Returns,
     #[token("raises")]
     Raises,
+    #[token("compatible")]
+    Compatible,
     #[token("data")]
     Data,
     #[token("via")]
@@ -78,6 +80,7 @@ impl fmt::Display for Token<'_> {
             Self::Uses => "`uses`",
             Self::Via => "`via`",
             Self::Data => "`data`",
+            Self::Compatible => "`compatible`",
             Self::Number(number) => return write!(formatter, "{number}"),
             Self::Identifier(name) => return write!(formatter, "`{name}`"),
             Self::Text(text) => return write!(formatter, "\"{text}\""),

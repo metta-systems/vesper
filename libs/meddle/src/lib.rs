@@ -25,7 +25,7 @@
 //! field     = { doc } type name ;
 //! type      = name [ "&" ] ;
 //! uses      = "uses" name "via" link { "," link } "{" name { "," name } [ "," ] "}" ;
-//! link      = name | string ;
+//! link      = name | string | "compatible" string ;
 //! ```
 //!
 //! `#` starts a comment, `##` a documentation comment for the item that
@@ -37,6 +37,12 @@
 //! each client of the interface one such area, mapped at the same address in
 //! the client and its exporter. Interface names carry their version
 //! (`name_vN`): a change that breaks callers makes a new version.
+//!
+//! A `uses` declaration names the instance it calls by a chain of links, read
+//! from the device tree node of the component that uses it: each property of
+//! the current node holds the phandle of the next. The first link may instead
+//! be `compatible "string"`, the one enabled node with that compatible string,
+//! for providers no property leads to.
 //!
 //! A call passes at most six argument words and answers with an outcome word
 //! and one more word, so a function returns at most one one-word result and
@@ -276,13 +282,22 @@ impl InterfaceSummary {
     }
 }
 
+/// One step of a link chain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkSummary {
+    /// The node a property (of the client or of the previous step's node)
+    /// names by phandle
+    Property(String),
+    /// The one enabled node with this `compatible` string
+    Compatible(String),
+}
+
 /// The functions a component uses of one interface.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportSummary {
     pub interface: InterfaceSummary,
-    /// The device tree properties linking the client node to the exporter,
-    /// in order
-    pub links: Vec<String>,
+    /// The steps linking the client node to the exporter, in order
+    pub links: Vec<LinkSummary>,
     /// Indices of the used functions in `interface.functions`
     pub functions: Vec<usize>,
 }
@@ -332,7 +347,10 @@ pub fn summarize_imports(
                 links: declaration
                     .links
                     .iter()
-                    .map(|link| link.text.clone())
+                    .map(|link| match link {
+                        ast::Link::Property(name) => LinkSummary::Property(name.text.clone()),
+                        ast::Link::Compatible(name) => LinkSummary::Compatible(name.text.clone()),
+                    })
                     .collect(),
                 interface,
                 functions,

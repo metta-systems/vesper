@@ -65,8 +65,9 @@ const FIRST_FIXTURE_SLOT: u32 = 64;
 /// Guard of the `KeyTable` archiving the builder's image Frames.
 const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 
-/// Instances the board device trees produce: the mailbox and the power node.
-const INSTANCES: usize = 2;
+/// Instances the board device trees produce: the mailbox, the power management
+/// node, the framebuffer node and the vcsm client.
+const INSTANCES: usize = 4;
 
 /// The mailbox's register page: in the BCM interrupt controller's page on the
 /// Raspberry Pi 3, an ordinary device page on the Raspberry Pi 4.
@@ -74,6 +75,10 @@ const INSTANCES: usize = 2;
 const MAILBOX_PAGE: (u64, u64) = (0x3f00_b000, libdevice_driver::PAGE_FRAME);
 #[cfg(board_rpi4)]
 const MAILBOX_PAGE: (u64, u64) = (0xfe00_b000, libdevice_driver::PAGE_UNTYPED);
+
+/// Four words, a place to note the mailbox's data areas in.
+#[derive(Default)]
+struct Vec4([u64; 4]);
 
 pub fn run() -> ! {
     semi::println!("mailbox-test: enabled MMU and dropped to EL1");
@@ -147,17 +152,49 @@ pub fn run() -> ! {
     );
 
     // ── Driver loading ────────────────────────────────────────────────────
-    let mut seen_mailbox = false;
-    let mut seen_client = false;
+    // What each driver was handed, noted as its record is checked.
+    let mut mailbox_areas: Vec4 = Vec4::default();
+    let mut client_area = 0;
+    let mut power_area = 0;
+    let mut fb_area = 0;
+    let mut seen = 0;
     let started = load_drivers(
         nucleus,
         &builder,
         keys,
-        &[&components::MAILBOX_DRIVER, &components::CLIENT_DRIVER],
+        &[
+            &components::MAILBOX_DRIVER,
+            &components::POWER_DRIVER,
+            &components::FB_DRIVER,
+            &components::CLIENT_DRIVER,
+        ],
         &mut slots,
         |loaded: &LoadedDriver<'_>| {
             let init = loaded.init;
-            if loaded.driver.component.name == components::MAILBOX.name {
+            let name = loaded.driver.component.name;
+            let imports = init.imports();
+            // Every import of the mailbox interface carries the area the
+            // client shares with the mailbox: one page, in the data window.
+            let mailbox_imports = imports
+                .iter()
+                .filter(|record| record.type_code == MAILBOX_V1)
+                .count();
+            let area_of_mailbox_imports = imports
+                .iter()
+                .find(|record| record.type_code == MAILBOX_V1)
+                .map_or(0, |record| record.area_base);
+            for record in imports
+                .iter()
+                .filter(|record| record.type_code == MAILBOX_V1)
+            {
+                assert_eq!(
+                    (record.area_base, record.area_len),
+                    (area_of_mailbox_imports, 4096),
+                    "{name}: the functions of one pair share one area"
+                );
+                assert!(record.area_base >= DATA_WINDOW_VA);
+            }
+            if name == components::MAILBOX.name {
                 let page = init
                     .pages()
                     .first()
@@ -167,31 +204,66 @@ pub fn run() -> ! {
                     MAILBOX_PAGE,
                     "the mailbox register page and how it is handed over"
                 );
-                assert!(init.imports().is_empty());
-                // One client calls it, so it serves one data area, at the start of
-                // the window, one page.
+                assert!(imports.is_empty());
+                // Three clients call it (the vcsm client, power and fb), each
+                // with an area of one page of its own, and a stack of its own.
                 let areas = init.areas();
-                assert_eq!(areas.len(), 1, "one client, one data area");
-                assert_eq!((areas[0].base, areas[0].len), (DATA_WINDOW_VA, 4096));
-                assert!(areas[0].stack_bottom < areas[0].stack_end);
-                seen_mailbox = true;
-            } else {
-                // The power node has no registers; its import reaches the
-                // mailbox through the firmware node.
+                assert_eq!(areas.len(), 3, "three clients, three data areas");
+                for (index, area) in areas.iter().enumerate() {
+                    assert_eq!(area.len, 4096);
+                    assert!(area.stack_bottom < area.stack_end);
+                    mailbox_areas.0[index] = area.base;
+                }
+                mailbox_areas.0[..3].sort_unstable();
+                assert_eq!(
+                    mailbox_areas.0[..3],
+                    [DATA_WINDOW_VA, DATA_WINDOW_VA + 4096, DATA_WINDOW_VA + 8192],
+                    "areas follow each other in the window"
+                );
+            } else if name == components::POWER.name {
+                // The power management registers, and `set_power_state` of the
+                // mailbox, found through the firmware node by compatible string.
+                assert!(init.pages().len() >= 2);
+                let [set_power_state] = imports else {
+                    panic!("power imports one function, found {}", imports.len());
+                };
+                assert_eq!(mailbox_imports, 1);
+                assert_eq!(set_power_state.function, 4, "set_power_state");
+                assert!(init.areas().is_empty());
+                power_area = area_of_mailbox_imports;
+            } else if name == components::FB.name {
+                // No registers; `property` of the mailbox through the firmware
+                // link of its own node.
                 assert!(init.pages().is_empty());
-                let imports = init.imports();
-                assert_eq!(imports.len(), 5, "the client imports five functions");
-                assert!(imports.iter().all(|record| record.type_code == MAILBOX_V1));
-                // The same area, at the same address, in the client.
-                assert!(imports.iter().all(
-                        |record| (record.area_base, record.area_len) == (DATA_WINDOW_VA, 4096)
-                    ));
+                let [property] = imports else {
+                    panic!("fb imports one function, found {}", imports.len());
+                };
+                assert_eq!(mailbox_imports, 1);
+                assert_eq!(property.function, 5, "property");
+                fb_area = area_of_mailbox_imports;
+            } else {
+                // The vcsm node has no registers; its imports reach the
+                // mailbox through the firmware node, and the power and
+                // framebuffer components by compatible string.
+                assert!(init.pages().is_empty());
+                let imports: &[_; 10] = imports.try_into().unwrap_or_else(|_| {
+                    panic!(
+                        "five mailbox, one power, four fb functions, found {}",
+                        imports.len()
+                    )
+                });
+                assert_eq!(mailbox_imports, 5);
                 let functions: [u64; 5] = core::array::from_fn(|index| imports[index].function);
                 assert_eq!(
                     functions,
                     [0, 1, 2, 3, 5],
-                    "declaration indices of the imported functions"
+                    "declaration indices of the imported mailbox functions"
                 );
+                assert_eq!(imports[5].function, 0, "devices_off");
+                assert!(imports[5..].iter().all(|record| record.area_len == 0));
+                assert!(imports[6..].iter().map(|record| record.function).eq(0..4));
+                assert_ne!(imports[5].invocation, imports[6].invocation);
+                client_area = area_of_mailbox_imports;
                 // The report key, in the client's table only.
                 // SAFETY: the driver's retained table; no invocation overlaps.
                 unsafe { &mut *(loaded.component.table_addr as *mut KeyTable) }
@@ -203,20 +275,27 @@ pub fn run() -> ! {
                     .unwrap_or_else(|failure| {
                         panic!("report grant failed: {:?}", failure.error.code())
                     });
-                seen_client = true;
             }
+            assert_ne!(
+                init.return_key, 0,
+                "{name}: exports answer with a Return key"
+            );
+            seen += 1;
             semi::println!(
-                "mailbox-test: {} on {}: {} pages, {} interrupts, {} imports",
-                loaded.driver.component.name,
+                "mailbox-test: {name} on {}: {} pages, {} interrupts, {} imports",
                 loaded.node,
                 init.pages().len(),
                 init.interrupts().len(),
-                init.imports().len()
+                imports.len()
             );
         },
     );
     assert_eq!(started, INSTANCES);
-    assert!(seen_mailbox && seen_client);
+    assert_eq!(seen, INSTANCES);
+    // The areas the clients were handed are the ones the mailbox serves.
+    let mut handed_out = [client_area, power_area, fb_area];
+    handed_out.sort_unstable();
+    assert_eq!(handed_out, mailbox_areas.0[..3]);
 
     // ── The client reports ────────────────────────────────────────────────
     let bits = NotificationKey::from_key(report)

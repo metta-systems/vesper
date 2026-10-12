@@ -59,11 +59,11 @@ use {
         NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, STACK_REGION,
     },
     libdevicetree::{
-        DevTreeIndex, Node, dma_address,
+        DevTreeIndex, Node, dma_address, find_compatible,
         interrupts::{MAX_INTERRUPT_CELLS, interrupts},
         is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
     },
-    libimage::DriverImage,
+    libimage::{DriverImage, Link},
     libmeddle_runtime::ImportRecord,
     libobject::{
         CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType, RawKey,
@@ -406,24 +406,32 @@ fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
         .unwrap_or_else(|failure| panic!("🥾 boot install failed: {:?}", failure.error.code()))
 }
 
-/// The phandle `links` lead to from `node`: each property's first cell is the
-/// phandle of the next node, the last one's is the result.
-fn follow_links(
-    tree: &DevTreeIndex<'_, '_>,
-    node: &Node<'_, '_, '_>,
-    links: &[&str],
-) -> Option<u32> {
-    let (last, intermediate) = links.split_last()?;
-    let mut through = None;
-    for link in intermediate {
-        let next = linked_phandle(through.as_ref().unwrap_or(node), link)?;
-        through = Some(node_by_phandle(tree, next)?);
+/// The node `links` lead to from `node`: a property step reads the first cell
+/// of the current node's property as the phandle of the next node, and a
+/// `compatible` first step starts from the one node with that string.
+fn follow_links<'a, 'i, 'dt>(
+    tree: &'a DevTreeIndex<'i, 'dt>,
+    node: &Node<'a, 'i, 'dt>,
+    links: &[Link],
+) -> Option<Node<'a, 'i, 'dt>> {
+    let mut current = node.clone();
+    for (index, link) in links.iter().enumerate() {
+        current = match *link {
+            Link::Property(property) => node_by_phandle(tree, linked_phandle(&current, property)?)?,
+            Link::Compatible(compatible) if index == 0 => find_compatible(tree, &[compatible])?.0,
+            Link::Compatible(_) => return None,
+        };
     }
-    linked_phandle(through.as_ref().unwrap_or(node), last)
+    Some(current)
 }
 
-/// A link chain for messages: the properties separated by commas.
-struct Links(&'static [&'static str]);
+/// Whether two views of the device tree name the same node.
+fn same_node(first: &Node<'_, '_, '_>, second: &Node<'_, '_, '_>) -> bool {
+    first.name().ok() == second.name().ok() && phandle(first) == phandle(second)
+}
+
+/// A link chain for messages: the steps separated by commas.
+struct Links(&'static [Link]);
 
 impl core::fmt::Display for Links {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -431,7 +439,10 @@ impl core::fmt::Display for Links {
             if index > 0 {
                 formatter.write_str(", ")?;
             }
-            formatter.write_str(link)?;
+            match link {
+                Link::Property(property) => formatter.write_str(property)?,
+                Link::Compatible(compatible) => write!(formatter, "compatible \"{compatible}\"")?,
+            }
         }
         Ok(())
     }
@@ -853,11 +864,12 @@ pub fn load_drivers(
         // Imports of one interface are consecutive: report a missing link once.
         let mut unlinked: Option<&str> = None;
         for import in client_image.imports {
-            let linked = follow_links(tree, &client_instance.node, import.links);
+            let target = follow_links(tree, &client_instance.node, import.links);
             let exporter = prepared.iter().position(|candidate| {
                 candidate.as_ref().is_some_and(|candidate| {
-                    linked.is_some()
-                        && phandle(&candidate.instance.node) == linked
+                    target
+                        .as_ref()
+                        .is_some_and(|target| same_node(&candidate.instance.node, target))
                         && candidate
                             .instance
                             .driver

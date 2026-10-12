@@ -3,18 +3,24 @@
 // `semi::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(feature = "qemu", feature(format_args_nl))]
 
-//! mailbox-test's client, loaded for the firmware power node. It calls the
+//! mailbox-test's client, loaded for the vcsm node. It calls the
 //! mailbox component through the `mailbox_v1` import Kickstart wired along
 //! `firmware` and `mboxes`, checks the firmware's answers, and reports on the key
 //! mailbox-test installed (`driver_protocol::REPORT_SLOT`).
 
 use {
     driver_protocol::report_key,
+    fb_client::fb_v1::{
+        Bindings as FbBindings, Client as FbClient, Error as FbError, Exception as FbException,
+    },
     libdevice_driver::{driver_compatible, driver_init},
     libmeddle_runtime::{ExclusiveStacks, IoRec},
     libobject::{NotificationKey, RawKey},
     mailbox_client::mailbox_v1::{Bindings, Client, Clock, Device, Error, Exception},
     mailbox_impl::tag,
+    power_client::power_v1::{
+        Bindings as PowerBindings, Client as PowerClient, Error as PowerError,
+    },
 };
 
 libuser::entry!(main);
@@ -25,7 +31,7 @@ const BOARD_REVISION: u32 = 0x00a0_2082;
 #[cfg(board_rpi4)]
 const BOARD_REVISION: u32 = 0x00b0_3115;
 
-driver_compatible!("raspberrypi,bcm2835-power");
+driver_compatible!("raspberrypi,bcm2835-vcsm");
 
 /// Report the firmware's answers (under QEMU, on the semihosting console).
 #[cfg(feature = "qemu")]
@@ -149,6 +155,53 @@ fn check_property(mailbox: &Client) {
     assert_eq!(answer[5], BOARD_REVISION);
 }
 
+/// The power component: the client may power the devices off, but holds no
+/// Invocation to halt or reset the board.
+fn check_power(init: &libdevice_driver::DriverInit) {
+    let power = PowerClient::new(
+        PowerBindings::from_imports(init.imports()),
+        // SAFETY: this Thread is the only one calling through the client's
+        // imports.
+        unsafe { ExclusiveStacks::new() },
+    );
+    power
+        .devices_off()
+        .unwrap_or_else(|error| panic!("devices_off failed: {error:?}"));
+    assert_eq!(power.halt(), Err(PowerError::NotGranted));
+    assert_eq!(power.reset(), Err(PowerError::NotGranted));
+}
+
+/// The fb component: nothing is configured at first; configuring a 640 by 480
+/// display of 32 bits per pixel allocates a framebuffer.
+fn check_fb(init: &libdevice_driver::DriverInit) {
+    let fb = FbClient::new(
+        FbBindings::from_imports(init.imports()),
+        // SAFETY: as above.
+        unsafe { ExclusiveStacks::new() },
+    );
+    assert_eq!(
+        fb.address(),
+        Err(FbError::Exception(FbException::NotConfigured))
+    );
+    let pitch = fb
+        .configure(640, 480, 32)
+        .unwrap_or_else(|error| panic!("configure failed: {error:?}"));
+    assert_eq!(pitch, 640 * 4, "32 bits per pixel");
+    let address = fb
+        .address()
+        .unwrap_or_else(|error| panic!("address failed: {error:?}"));
+    let bytes = fb
+        .size()
+        .unwrap_or_else(|error| panic!("size failed: {error:?}"));
+    assert_ne!(address, 0, "the framebuffer has an address");
+    assert!(
+        u64::from(bytes) >= u64::from(pitch) * 480,
+        "it holds every row"
+    );
+    fb.pixel_order()
+        .unwrap_or_else(|error| panic!("pixel_order failed: {error:?}"));
+}
+
 fn main(init_va: u64) -> ! {
     // SAFETY: Kickstart passes the init page's address in x0.
     let init = unsafe { driver_init(init_va) };
@@ -176,6 +229,8 @@ fn main(init_va: u64) -> ! {
         .get_power_state(Device::Uart0)
         .unwrap_or_else(|error| panic!("get_power_state failed: {error:?}"));
     check_property(&mailbox);
+    check_power(init);
+    check_fb(init);
     report(revision, serial, uart_hz, uart_on);
     NotificationKey::from_key(report_key(init.table))
         .signal(0)

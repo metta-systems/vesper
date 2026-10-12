@@ -125,6 +125,17 @@ pub struct InterfaceExport {
     pub type_code: u64,
 }
 
+/// One step of the chain leading from a client's node to the instance it
+/// calls (see `Import::links`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Link {
+    /// The node the current node's property of this name holds the phandle of
+    Property(&'static str),
+    /// The one enabled node with this `compatible` string; only a chain's
+    /// first step
+    Compatible(&'static str),
+}
+
 /// One function of another component's interface that a component calls,
 /// declared in its `interfaces/imports.if`.
 #[derive(Debug, Clone, Copy)]
@@ -136,7 +147,7 @@ pub struct Import {
     pub function: u64,
     /// The device tree properties leading from the client's node to the
     /// exporting instance's node, each holding the next node's phandle
-    pub links: &'static [&'static str],
+    pub links: &'static [Link],
     /// Bytes of the data area the interface shares between a client and its
     /// exporter (zero: none)
     pub data_bytes: u64,

@@ -1,0 +1,38 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The display's framebuffer (Raspberry Pi), allocated by the `VideoCore`
+## firmware.
+local interface fb_v1
+{
+    ## The order of the color components in a pixel.
+    enum pixel_order { bgr, rgb }
+
+    ## The firmware refused a request; `code` is its response code.
+    exception firmware_error { card32 code; }
+
+    ## No framebuffer has been configured yet.
+    exception not_configured {}
+
+    ## Set up a framebuffer of `width` by `height` pixels of `depth` bits, with
+    ## alpha ignored, replacing any earlier one; returns its pitch in bytes.
+    configure(card32 width, card32 height, card32 depth)
+        returns (card32 pitch)
+        raises (firmware_error);
+
+    ## Physical address of the configured framebuffer.
+    address()
+        returns (card64 address)
+        raises (not_configured);
+
+    ## Size in bytes of the configured framebuffer.
+    size()
+        returns (card32 bytes)
+        raises (not_configured);
+
+    ## The configured framebuffer's pixel order.
+    pixel_order()
+        returns (pixel_order order)
+        raises (not_configured);
+}

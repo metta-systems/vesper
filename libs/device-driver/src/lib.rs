@@ -33,10 +33,16 @@
 //! entries with [`driver_threads!`]. Kickstart starts each on its own stack
 //! and Time with the init page's address in `x0`, alongside the first one;
 //! only the first Thread receives the interrupts.
-
 use {
+    core::{
+        marker::PhantomData,
+        sync::atomic::{AtomicU64, Ordering},
+    },
     libmeddle_runtime::ImportRecord,
-    libobject::{CapError, FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey},
+    libobject::{
+        CapError, EventCountKey, FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights,
+        UntypedKey,
+    },
 };
 
 /// Name of the section holding a driver's NUL-terminated `compatible`
@@ -391,4 +397,68 @@ pub fn calling_area(init: &DriverInit) -> Option<ExportedArea> {
         );
     }
     init.area_for_stack(stack_pointer)
+}
+
+/// Lets one caller at a time into the part of a component that uses stacks
+/// its imports reserve for it, such as a client of another component: those
+/// stacks serve one Thread at a time (see `libmeddle_runtime::ExclusiveStacks`).
+///
+/// A component creates a static `Turnstile`, calls [`open`](Self::open) with an
+/// `EventCount` it carved once it is set up, and advances
+/// `DriverInit::event_count` to say it is ready. Every export then calls
+/// [`enter`](Self::enter): it waits for readiness, then for every earlier
+/// caller to leave.
+pub struct Turnstile {
+    turns: AtomicU64,
+    tickets: AtomicU64,
+}
+
+/// The turn a caller holds in a [`Turnstile`]; leaving ends it.
+pub struct Turn<'turnstile> {
+    turns: EventCountKey,
+    _turnstile: PhantomData<&'turnstile Turnstile>,
+}
+
+impl Turnstile {
+    pub const fn new() -> Self {
+        Self {
+            turns: AtomicU64::new(0),
+            tickets: AtomicU64::new(0),
+        }
+    }
+
+    /// Count the turns on `turns`, an `EventCount` of the component's.
+    pub fn open(&self, turns: RawKey) {
+        self.turns.store(turns.to_wire(), Ordering::Release);
+    }
+
+    /// Wait until the component is ready and every earlier caller has left.
+    pub fn enter(&self, init: &DriverInit) -> Turn<'_> {
+        EventCountKey::from_key(RawKey::from_wire(init.event_count))
+            .await_ge(1, EventCountKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| panic!("turnstile: ready wait failed: {:?}", error.code()));
+        let ticket = self.tickets.fetch_add(1, Ordering::AcqRel) + 1;
+        let turns = EventCountKey::from_key(RawKey::from_wire(self.turns.load(Ordering::Acquire)));
+        turns
+            .await_ge(ticket - 1, EventCountKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| panic!("turnstile: turn wait failed: {:?}", error.code()));
+        Turn {
+            turns,
+            _turnstile: PhantomData,
+        }
+    }
+}
+
+impl Default for Turnstile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        self.turns
+            .advance(1)
+            .unwrap_or_else(|error| panic!("turnstile: turn release failed: {:?}", error.code()));
+    }
 }

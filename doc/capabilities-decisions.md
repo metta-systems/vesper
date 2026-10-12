@@ -167,3 +167,4 @@ needs them.
   EL1-writable register to publish per-Thread identity to userspace, as Linux
   does for per-CPU data. Today it is always zero.
 - **Driver probe/init calls:** Kickstart hands a driver everything through its init page and never calls into it. A device manager may need a probe/init part of the driver interface (asking a driver whether it can drive a device, or telling it to start or stop); look into what that would be and how it is called.
+- **Per-client mailbox policy:** `mailbox_v1.property` applies one fixed tag whitelist to every client. Different rules per client (for example clock and power setters for `cprman` only, memory tags for `vcsm`) need caller identity through Invocation badges (D4), which would also replace identifying the caller by its exporter stack.

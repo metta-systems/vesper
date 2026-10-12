@@ -572,6 +572,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "fb"
+version = "0.0.1"
+dependencies = [
+ "vesper-meddle",
+ "vesper-meddle-runtime",
+]
+
+[[package]]
+name = "fb-client"
+version = "0.0.1"
+dependencies = [
+ "fb",
+ "vesper-meddle",
+ "vesper-meddle-runtime",
+]
+
+[[package]]
+name = "fb-impl"
+version = "0.0.1"
+dependencies = [
+ "fb",
+ "mailbox-client",
+ "mailbox-impl",
+ "vesper-device-driver",
+ "vesper-meddle-runtime",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "fdt-rs"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1018,8 +1049,10 @@ name = "mailbox-test-client"
 version = "0.0.1"
 dependencies = [
  "driver-protocol",
+ "fb-client",
  "mailbox-client",
  "mailbox-impl",
+ "power-client",
  "vesper-device-driver",
  "vesper-meddle-runtime",
  "vesper-objects",
@@ -1302,6 +1335,39 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "power"
+version = "0.0.1"
+dependencies = [
+ "vesper-meddle",
+ "vesper-meddle-runtime",
+]
+
+[[package]]
+name = "power-client"
+version = "0.0.1"
+dependencies = [
+ "power",
+ "vesper-meddle",
+ "vesper-meddle-runtime",
+]
+
+[[package]]
+name = "power-impl"
+version = "0.0.1"
+dependencies = [
+ "mailbox-client",
+ "power",
+ "tock-registers",
+ "vesper-address",
+ "vesper-device-driver",
+ "vesper-meddle-runtime",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
 
 [[package]]
 name = "ppc-test"

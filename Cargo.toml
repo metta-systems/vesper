@@ -26,6 +26,13 @@ members = [
   "drivers/mailbox",
   "drivers/mailbox/client",
   "drivers/mailbox/server",
+  # Power and framebuffer components and their generated interface crates
+  "drivers/power",
+  "drivers/power/client",
+  "drivers/power/server",
+  "drivers/fb",
+  "drivers/fb/client",
+  "drivers/fb/server",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -131,6 +138,10 @@ libmeddle = { path = "libs/meddle", package = "vesper-meddle" }
 libmeddle-runtime = { path = "libs/meddle-runtime", package = "vesper-meddle-runtime" }
 mailbox = { path = "drivers/mailbox/server" }
 mailbox-client = { path = "drivers/mailbox/client" }
+power = { path = "drivers/power/server" }
+power-client = { path = "drivers/power/client" }
+fb = { path = "drivers/fb/server" }
+fb-client = { path = "drivers/fb/client" }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }

@@ -3,7 +3,7 @@
 use {
     crate::{
         ast::{
-            DataDeclaration, Exception, Field, File, Interface, Method, Name, TypeDefinition,
+            DataDeclaration, Exception, Field, File, Interface, Link, Method, Name, TypeDefinition,
             TypeKind, TypeReference, Uses,
         },
         diagnostic::Diagnostic,
@@ -224,16 +224,17 @@ where
             interface
         });
 
-    let link = name
-        .or(
-            select! { Token::Text(text) => text }.map_with(|text: &str, extra| {
-                let span: SimpleSpan = extra.span();
-                Name {
-                    text: text.to_owned(),
-                    span: span.into_range(),
-                }
-            }),
-        )
+    let text_name = select! { Token::Text(text) => text }.map_with(|text: &str, extra| {
+        let span: SimpleSpan = extra.span();
+        Name {
+            text: text.to_owned(),
+            span: span.into_range(),
+        }
+    });
+    let link = just(Token::Compatible)
+        .ignore_then(text_name)
+        .map(Link::Compatible)
+        .or(name.or(text_name).map(Link::Property))
         .labelled("a device tree property");
 
     let uses = just(Token::Uses)

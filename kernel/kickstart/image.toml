@@ -34,3 +34,18 @@ name = "mailbox"
 binary = "mailbox"
 interfaces = "../../drivers/mailbox/interfaces"
 priority = 0x8000
+
+# The power control: the power management node's registers halt and reset the
+# board; powering devices off goes through the mailbox component.
+[[driver]]
+name = "power"
+binary = "power"
+interfaces = "../../drivers/power/interfaces"
+priority = 0x8000
+
+# The display: configures the framebuffer through the mailbox component.
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../drivers/fb/interfaces"
+priority = 0x8000

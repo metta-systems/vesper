@@ -4,8 +4,8 @@
 mod tests {
     use {
         libmeddle::{
-            SourceFile,
-            ast::Interface,
+            LinkSummary, SourceFile,
+            ast::{Interface, Link},
             check::{self, Checked},
             emit, parse,
         },
@@ -349,11 +349,44 @@ mod tests {
         let links: Vec<Vec<&str>> = file
             .uses
             .iter()
-            .map(|uses| uses.links.iter().map(|link| link.text.as_str()).collect())
+            .map(|uses| {
+                uses.links
+                    .iter()
+                    .map(|link| link.name().text.as_str())
+                    .collect()
+            })
             .collect();
         assert_eq!(
             links,
             [["firmware", "mboxes"], ["raspberrypi,firmware", "mboxes"]]
+        );
+
+        // A chain can start at the one node with a compatible string.
+        let (file, diagnostics) = parse(
+            "uses mailbox_v1 via compatible \"raspberrypi,bcm2835-firmware\", mboxes { get_board_serial }",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let file = file.expect("parsed uses");
+        assert!(matches!(
+            file.uses[0].links.as_slice(),
+            [Link::Compatible(first), Link::Property(second)]
+                if first.text == "raspberrypi,bcm2835-firmware" && second.text == "mboxes"
+        ));
+        let directories = [PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../drivers/mailbox/interfaces"
+        ))];
+        let misplaced = source(
+            "imports.if",
+            "uses mailbox_v1 via firmware, compatible \"x\" { get_board_serial }",
+        );
+        let failure = misplaced
+            .imports(&directories)
+            .expect_err("a compatible link after the first");
+        assert!(
+            failure.diagnostics[0]
+                .message
+                .contains("can only start a chain")
         );
 
         // A use names the device tree property linking to the exporter.
@@ -408,7 +441,10 @@ mod tests {
         assert_eq!(summaries[0].interface.type_code, mailbox.type_code);
         // In the order `uses` names them, as declaration indices.
         assert_eq!(summaries[0].functions, [4, 2]);
-        assert_eq!(summaries[0].links, ["raspberrypi,firmware"]);
+        assert_eq!(
+            summaries[0].links,
+            [LinkSummary::Property("raspberrypi,firmware".to_owned())]
+        );
     }
     #[test]
     fn type_code_ignores_documentation_and_tracks_signatures() {

@@ -6,10 +6,7 @@
 
 use {
     libaddress::{Address, Virtual},
-    vesper_platforms::device_driver::{
-        Function, GPIO, RateDivisors,
-        mailbox::{self, LocalMailboxStorage, Mailbox, MailboxStorageRef, tag},
-    },
+    vesper_platforms::device_driver::{Function, GPIO, RateDivisors},
 };
 
 #[path = "../../../tests/common/mod.rs"]
@@ -75,31 +72,6 @@ fn test_pin_inputs() {
     assert_eq!(inp.level(), false);
     reg[14] = 0b1000; // Modify "MMIO" memory
     assert_eq!(inp.level(), true);
-}
-
-// Validate the buffer is filled correctly
-// Validate the buffer is properly terminated when call()ed -- this invariant must be maintained
-// by the end() fn.
-#[test_case]
-fn test_prepare_mailbox() {
-    let mut registers = [0u32; 9];
-    // SAFETY: The aligned register buffer covers the mailbox registers and outlives the mailbox.
-    // Local storage keeps this buffer-format test independent of the kernel's DMA mappings.
-    let mut mailbox =
-        unsafe { Mailbox::<8, LocalMailboxStorage<8>>::new(registers.as_mut_ptr() as usize) }
-            .unwrap();
-    let index = mailbox.request();
-    let index = mailbox.set_led_on(index, true);
-    let mailbox = mailbox.end(index);
-    // Instead of calling just check the filled buffer format:
-    assert_eq!(mailbox.0.buffer.as_ref()[0] as usize, (index + 1) * 4);
-    assert_eq!(mailbox.0.buffer.as_ref()[1], mailbox::REQUEST);
-    assert_eq!(mailbox.0.buffer.as_ref()[2], tag::SetGpioState);
-    assert_eq!(mailbox.0.buffer.as_ref()[3], 8);
-    assert_eq!(mailbox.0.buffer.as_ref()[4], 0);
-    assert_eq!(mailbox.0.buffer.as_ref()[5], 130);
-    assert_eq!(mailbox.0.buffer.as_ref()[6], 1);
-    assert_eq!(mailbox.0.buffer.as_ref()[7], tag::End);
 }
 
 #[test_case]

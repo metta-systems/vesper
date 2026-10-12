@@ -28,7 +28,7 @@ pub struct Uses {
     pub interface: Name,
     /// The device tree properties leading from the client node to the
     /// exporting node: each holds the phandle of the next node
-    pub links: Vec<Name>,
+    pub links: Vec<Link>,
     pub functions: Vec<Name>,
 }
 
@@ -103,4 +103,24 @@ pub struct Method {
 pub struct DataDeclaration {
     pub bytes: u64,
     pub span: Span,
+}
+
+/// One step of the chain leading from a client to the instance it calls.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Link {
+    /// The node the client's (or the previous step's) property names by
+    /// phandle
+    Property(Name),
+    /// The one enabled node with this `compatible` string; only a chain's
+    /// first step, for providers no property of the client leads to
+    Compatible(Name),
+}
+
+impl Link {
+    /// The property name or `compatible` string the step is written with.
+    pub const fn name(&self) -> &Name {
+        match self {
+            Self::Property(name) | Self::Compatible(name) => name,
+        }
+    }
 }
