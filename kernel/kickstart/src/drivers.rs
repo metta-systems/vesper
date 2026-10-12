@@ -20,8 +20,18 @@
 //! stack and a Time with the same budget and priority, and starts at its
 //! entry with the init page's address in `x0`, right after the first.
 //!
-//! A node whose registers touch a page the kernel keeps is skipped. Kickstart
-//! never calls into a driver.
+//! Once every instance is loaded, Kickstart wires their imports: for each
+//! function a driver's `interfaces/imports.if` uses, it follows the `via`
+//! properties from the driver's node to an instance exporting the interface,
+//! creates the function's Invocation into the driver's table on a target stack
+//! that instance reserves for this driver, and records it in the init page,
+//! which also carries the driver's own Return key for the functions it
+//! exports. Then the Threads start.
+//!
+//! A node whose registers touch a page the kernel keeps is skipped, unless its
+//! driver serves a compatible string on `privileged::SHARES_KERNEL_PAGES`: that
+//! driver receives a device Frame minted for the page. Kickstart never calls
+//! into a driver.
 //!
 //! Untypeds, Notifications, Times and `IRQHandler`s are outside the
 //! `CopyDerive`/`Move` allowlist, so Kickstart grants them bootstrap-only: it
@@ -33,6 +43,7 @@ use {
             BootState, device_untypeds, interrupt_controllers, kernel_owned_device_ranges,
         },
         device_tree,
+        privileged::SHARES_KERNEL_PAGES,
     },
     libcomponent_loader::{
         builder::Builder,
@@ -46,9 +57,9 @@ use {
         Region, STACK_REGION,
     },
     libdevicetree::{
-        Node,
+        DevTreeIndex, Node,
         interrupts::{MAX_INTERRUPT_CELLS, interrupts},
-        is_compatible, is_enabled, linked_phandle, phandle, regions,
+        is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
     },
     libimage::DriverImage,
     libmeddle_runtime::ImportRecord,
@@ -211,7 +222,11 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
             );
             continue;
         };
-        if instance.pages().iter().any(|&page| kernel_owned(page)) {
+        let shares_kernel_pages = driver
+            .compatible
+            .get(compatible_index)
+            .is_some_and(|compatible| SHARES_KERNEL_PAGES.contains(compatible));
+        if !shares_kernel_pages && instance.pages().iter().any(|&page| kernel_owned(page)) {
             semi::println!(
                 "🥾 Driver {}: {name} shares a page with the kernel, skipped",
                 driver.component.name
@@ -389,6 +404,37 @@ fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
         .unwrap_or_else(|failure| panic!("🥾 boot install failed: {:?}", failure.error.code()))
 }
 
+/// The phandle `links` lead to from `node`: each property's first cell is the
+/// phandle of the next node, the last one's is the result.
+fn follow_links(
+    tree: &DevTreeIndex<'_, '_>,
+    node: &Node<'_, '_, '_>,
+    links: &[&str],
+) -> Option<u32> {
+    let (last, intermediate) = links.split_last()?;
+    let mut through = None;
+    for link in intermediate {
+        let next = linked_phandle(through.as_ref().unwrap_or(node), link)?;
+        through = Some(node_by_phandle(tree, next)?);
+    }
+    linked_phandle(through.as_ref().unwrap_or(node), last)
+}
+
+/// A link chain for messages: the properties separated by commas.
+struct Links(&'static [&'static str]);
+
+impl core::fmt::Display for Links {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for (index, link) in self.0.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str(", ")?;
+            }
+            formatter.write_str(link)?;
+        }
+        Ok(())
+    }
+}
+
 /// Pages of each target stack an exporting driver reserves for one client.
 const EXPORT_STACK_PAGES: u32 = 4;
 
@@ -491,7 +537,29 @@ pub fn load_drivers(
         init.region_count = instance.region_count as u64;
         init.regions = instance.regions;
         for (record, &page) in init.pages.iter_mut().zip(instance.pages()) {
-            *record = if instances_touching(page) > 1 {
+            *record = if kernel_owned(page) {
+                // Only a driver on `SHARES_KERNEL_PAGES` gets here: no device
+                // Untyped covers the page, so the Frame is minted directly.
+                semi::println!(
+                    "🥾 Driver {}: {name} receives the kernel-owned page {page:#x}",
+                    image.name
+                );
+                DevicePage {
+                    paddr: page,
+                    key: grant(
+                        &component,
+                        KeyEntry::new_frame(
+                            page,
+                            PAGE_BITS,
+                            true,
+                            Rights(Rights::READ | Rights::WRITE),
+                        ),
+                        local_slot(),
+                    )
+                    .to_wire(),
+                    kind: PAGE_FRAME,
+                }
+            } else if instances_touching(page) > 1 {
                 let frame = match shared.iter().flatten().find(|(known, _)| *known == page) {
                     Some(&(_, frame)) => frame,
                     None => {
@@ -724,7 +792,7 @@ pub fn load_drivers(
         // Imports of one interface are consecutive: report a missing link once.
         let mut unlinked: Option<&str> = None;
         for import in client_image.imports {
-            let linked = linked_phandle(&client_instance.node, import.link);
+            let linked = follow_links(tree, &client_instance.node, import.links);
             let exporter = prepared.iter().position(|candidate| {
                 candidate.as_ref().is_some_and(|candidate| {
                     linked.is_some()
@@ -745,7 +813,7 @@ pub fn load_drivers(
                     "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
                     client_image.name,
                     import.interface,
-                    import.link
+                    Links(import.links)
                 );
                 continue;
             };

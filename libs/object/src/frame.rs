@@ -18,8 +18,9 @@ mod tests;
 
 /// Userspace handle to a Frame capability.
 ///
-/// Nucleus dispatch supports `Map`, `Unmap`, and `GetAddress`; the wrapper
-/// preserves kernel errors. Operation ID `3` is unassigned.
+/// Nucleus dispatch supports `Map`, `Unmap`, `GetAddress` and the four cache
+/// maintenance operations; the wrapper
+/// preserves kernel errors. Operation ID `7` is unassigned.
 pub struct FrameKey {
     key: Key<FrameType>,
 }
@@ -40,6 +41,16 @@ pub enum FrameOp {
     Unmap = 1,
     /// Query the physical extent (requires `GRANT`).
     GetAddress = 2,
+    /// Write dirty cache lines of a byte range back to the Point of Coherency
+    /// (requires `READ`).
+    CleanData = 3,
+    /// Discard the cache lines of a byte range (requires `WRITE`).
+    InvalidateData = 4,
+    /// Clean, then discard, the cache lines of a byte range (requires `READ`).
+    CleanInvalidateData = 5,
+    /// Clean a byte range to the Point of Unification and invalidate the
+    /// instruction caches (requires `READ`).
+    UnifyInstruction = 6,
 }
 
 impl TryFrom<u64> for FrameOp {
@@ -50,6 +61,10 @@ impl TryFrom<u64> for FrameOp {
             0 => Ok(Self::Map),
             1 => Ok(Self::Unmap),
             2 => Ok(Self::GetAddress),
+            3 => Ok(Self::CleanData),
+            4 => Ok(Self::InvalidateData),
+            5 => Ok(Self::CleanInvalidateData),
+            6 => Ok(Self::UnifyInstruction),
 
             _ => Err(CapError::InvalidOperation),
         }
@@ -134,6 +149,41 @@ impl FrameKey {
             )
         };
         decode_syscall_result(result)
+    }
+
+    /// Write the dirty cache lines of bytes `start..end` of the frame back to
+    /// the Point of Coherency (requires `READ`).
+    ///
+    /// Wire schema: `x2` start offset, `x3` end offset (exclusive), `x4..x7`
+    /// zero; `start < end <= size`.
+    pub fn clean_data(&self, start: u64, end: u64) -> Result<(), CapError> {
+        self.maintain_cache(FrameOp::CleanData, start, end)
+    }
+
+    /// Discard the cache lines of bytes `start..end` (requires `WRITE`); a
+    /// partial line at either end is cleaned first, so bytes outside the
+    /// range keep their values.
+    pub fn invalidate_data(&self, start: u64, end: u64) -> Result<(), CapError> {
+        self.maintain_cache(FrameOp::InvalidateData, start, end)
+    }
+
+    /// Clean, then discard, the cache lines of bytes `start..end` (requires
+    /// `READ`).
+    pub fn clean_invalidate_data(&self, start: u64, end: u64) -> Result<(), CapError> {
+        self.maintain_cache(FrameOp::CleanInvalidateData, start, end)
+    }
+
+    /// Make code written to bytes `start..end` through a data mapping visible
+    /// to instruction fetch (requires `READ`).
+    pub fn unify_instruction(&self, start: u64, end: u64) -> Result<(), CapError> {
+        self.maintain_cache(FrameOp::UnifyInstruction, start, end)
+    }
+
+    fn maintain_cache(&self, op: FrameOp, start: u64, end: u64) -> Result<(), CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result =
+            unsafe { protected_call6(self.key.to_wire(), op as u64, start, end, 0, 0, 0, 0) };
+        decode_syscall_result(result).map(|_| ())
     }
 }
 

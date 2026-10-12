@@ -1,8 +1,9 @@
 //! The memory suite: explicitly managed translation tables and mappings —
 //! `PageTable` Retype and installation, ASID binding, `AddressSpace.Retire`
 //! (whole-ASID invalidation, ASID release and reuse), Frame.Map/Unmap with
-//! the alias policy, activation making the carved tables hardware-live with
-//! observable TLB invalidation, and page-table pool accounting.
+//! the alias policy, Frame cache maintenance, activation making the carved
+//! tables hardware-live with observable TLB invalidation, and page-table pool
+//! accounting.
 //!
 //! The Bounce fixture's `AddressSpace` is provisioned (no Bounce Thread runs)
 //! so the source context is activated with the retained image mapped, exactly
@@ -1134,6 +1135,12 @@ pub fn run() {
     FrameKey::from_key(second_frame_key)
         .unmap()
         .unwrap_or_else(|error| panic!("second frame Frame.Unmap failed: {:?}", error.code()));
+    frame_cache_maintenance(
+        &self_table,
+        second_frame_key,
+        second_frame_paddr,
+        MAGIC_SECOND,
+    );
     device_frame_reads_pl011(&self_table, boot_as_key, keytable_addr, active_ttbr0);
     // Repeat in the reverse direction while the second translation is
     // warm: neither physical marker changes, only the same VA's backing.
@@ -1352,9 +1359,95 @@ fn device_frame_reads_pl011(
     // SAFETY: the active context maps DEVICE_VA to the PL011's registers as
     // device memory; UARTPeriphID0 at +0xFE0 is a read-only ID register.
     let periph_id0 = unsafe { ((DEVICE_VA + 0xFE0) as *const u32).read_volatile() };
+    // Device memory is never cached: cache maintenance is refused.
+    assert!(matches!(
+        frame.clean_data(0, 0x1000),
+        Err(CapError::InvalidOperation)
+    ));
     assert_eq!(periph_id0 & 0xff, 0x11, "PL011 UARTPeriphID0");
     frame
         .unmap()
         .unwrap_or_else(|error| panic!("device Frame.Unmap failed: {:?}", error.code()));
     semi::println!("Device Frame mapped the PL011: UARTPeriphID0 = {periph_id0:#x}");
+}
+
+/// Boot-table slot for the read-only Frame copy the cache-maintenance check
+/// derives.
+const READ_ONLY_FRAME_SLOT: u32 = 240;
+
+/// One `FrameKey` cache-maintenance wrapper.
+type CacheOperation = fn(&FrameKey, u64, u64) -> Result<(), CapError>;
+
+/// Frame cache maintenance on an unmapped RAM frame whose first word is
+/// `first_word`: every operation succeeds over the whole frame without a
+/// mapping, a partial-line invalidate keeps the bytes outside its range, the
+/// range must be nonempty and inside the frame, and invalidating needs
+/// `WRITE` where cleaning needs only `READ`.
+fn frame_cache_maintenance(
+    self_table: &KeyTableKey,
+    frame_key: RawKey,
+    frame_paddr: u64,
+    first_word: u64,
+) {
+    let frame = FrameKey::from_key(frame_key);
+    let operations: [(&str, CacheOperation); 4] = [
+        ("CleanData", FrameKey::clean_data),
+        ("InvalidateData", FrameKey::invalidate_data),
+        ("CleanInvalidateData", FrameKey::clean_invalidate_data),
+        ("UnifyInstruction", FrameKey::unify_instruction),
+    ];
+    for (name, operation) in operations {
+        operation(&frame, 0, 0x1000)
+            .unwrap_or_else(|error| panic!("Frame.{name} failed: {:?}", error.code()));
+        for (start, end) in [
+            (0, 0),
+            (0x40, 0x40),
+            (0x80, 0x40),
+            (0, 0x1001),
+            (0x1000, 0x1001),
+        ] {
+            assert!(
+                matches!(
+                    operation(&frame, start, end),
+                    Err(CapError::InvalidOperation)
+                ),
+                "Frame.{name} accepted {start:#x}..{end:#x}"
+            );
+        }
+    }
+    // The first word lies in a line only partly inside 8..0x48: it is
+    // cleaned, not discarded.
+    frame
+        .invalidate_data(8, 0x48)
+        .unwrap_or_else(|error| panic!("partial Frame.InvalidateData failed: {:?}", error.code()));
+    // SAFETY: the kernel direct map covers the frame's RAM; nothing maps or
+    // writes it meanwhile.
+    let observed = unsafe {
+        (PhysAddr::new(frame_paddr).user_to_kernel().as_u64() as *const u64).read_volatile()
+    };
+    assert_eq!(
+        observed, first_word,
+        "bytes outside the invalidated range survive"
+    );
+
+    let read_only = FrameKey::from_key(
+        self_table
+            .copy_derive(
+                frame_key,
+                self_table,
+                READ_ONLY_FRAME_SLOT,
+                Rights(Rights::READ),
+            )
+            .unwrap_or_else(|error| {
+                panic!("read-only Frame CopyDerive failed: {:?}", error.code())
+            }),
+    );
+    read_only
+        .clean_data(0, 0x1000)
+        .unwrap_or_else(|error| panic!("read-only Frame.CleanData failed: {:?}", error.code()));
+    assert!(matches!(
+        read_only.invalidate_data(0, 0x1000),
+        Err(CapError::InsufficientRights)
+    ));
+    semi::println!("Frame cache maintenance: four operations, ranges and rights checked");
 }

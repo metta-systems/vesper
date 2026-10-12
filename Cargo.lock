@@ -978,6 +978,47 @@ name = "mailbox-impl"
 version = "0.0.1"
 dependencies = [
  "mailbox",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "mailbox-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "mailbox",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-component-loader",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "mailbox-test-client"
+version = "0.0.1"
+dependencies = [
+ "driver-protocol",
+ "mailbox-client",
+ "vesper-device-driver",
+ "vesper-meddle-runtime",
+ "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",
 ]
@@ -1087,6 +1128,7 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "owo-colors",
+ "tock-registers",
  "vesper-address",
  "vesper-boot",
  "vesper-console",

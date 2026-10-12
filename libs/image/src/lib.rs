@@ -134,9 +134,9 @@ pub struct Import {
     pub type_code: u64,
     /// The function's declaration index in the interface
     pub function: u64,
-    /// The client node's device tree property holding the phandle of the
-    /// exporting instance's node
-    pub link: &'static str,
+    /// The device tree properties leading from the client's node to the
+    /// exporting instance's node, each holding the next node's phandle
+    pub links: &'static [&'static str],
     /// The exporter's export name for the function
     pub export: &'static str,
 }

@@ -287,6 +287,23 @@ mod tests {
                 .contains("has no function `reboot`")
         );
 
+        // A chain of links reaches the exporter through intermediate nodes.
+        let (file, diagnostics) = parse(
+            "uses mailbox_v1 via firmware, mboxes { get_clock_rate }\n\
+             uses mailbox_v1 via \"raspberrypi,firmware\", mboxes { get_board_serial }",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let file = file.expect("parsed uses");
+        let links: Vec<Vec<&str>> = file
+            .uses
+            .iter()
+            .map(|uses| uses.links.iter().map(|link| link.text.as_str()).collect())
+            .collect();
+        assert_eq!(
+            links,
+            [["firmware", "mboxes"], ["raspberrypi,firmware", "mboxes"]]
+        );
+
         // A use names the device tree property linking to the exporter.
         let (_, diagnostics) = parse("uses mailbox_v1 { get_clock_rate }");
         assert!(
@@ -339,7 +356,7 @@ mod tests {
         assert_eq!(summaries[0].interface.type_code, mailbox.type_code);
         // In the order `uses` names them, as declaration indices.
         assert_eq!(summaries[0].functions, [4, 2]);
-        assert_eq!(summaries[0].link, "raspberrypi,firmware");
+        assert_eq!(summaries[0].links, ["raspberrypi,firmware"]);
     }
     #[test]
     fn type_code_ignores_documentation_and_tracks_signatures() {

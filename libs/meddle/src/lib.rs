@@ -23,7 +23,8 @@
 //!             [ "raises" "(" name { "," name } ")" ] ";" ;
 //! field     = { doc } type name ;
 //! type      = name [ "&" ] ;
-//! uses      = "uses" name "via" ( name | string ) "{" name { "," name } [ "," ] "}" ;
+//! uses      = "uses" name "via" link { "," link } "{" name { "," name } [ "," ] "}" ;
+//! link      = name | string ;
 //! ```
 //!
 //! `#` starts a comment, `##` a documentation comment for the item that
@@ -273,8 +274,9 @@ impl InterfaceSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportSummary {
     pub interface: InterfaceSummary,
-    /// The client node's device tree property linking to the exporter
-    pub link: String,
+    /// The device tree properties linking the client node to the exporter,
+    /// in order
+    pub links: Vec<String>,
     /// Indices of the used functions in `interface.functions`
     pub functions: Vec<usize>,
 }
@@ -320,7 +322,11 @@ pub fn summarize_imports(
                 })
                 .collect();
             Ok(ImportSummary {
-                link: declaration.link.text.clone(),
+                links: declaration
+                    .links
+                    .iter()
+                    .map(|link| link.text.clone())
+                    .collect(),
                 interface,
                 functions,
             })

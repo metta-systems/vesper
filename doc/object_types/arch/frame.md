@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x80` (arch index 0) |
 | Backing | Physical memory carved from an Untyped by Retype |
-| Operations | Map, Unmap, GetAddress |
+| Operations | Map, Unmap, GetAddress, CleanData, InvalidateData, CleanInvalidateData, UnifyInstruction |
 
 ## Purpose
 
@@ -19,6 +19,10 @@ A Frame capability tracks at most one mapping at a time. To map the same memory 
 | 0 | Map | `x2` target AddressSpace, `x3` virtual address, `x4` rights, `x5` attributes | Requested rights on the Frame, `Map` on the AddressSpace | — |
 | 1 | Unmap | — | — | — |
 | 2 | GetAddress | — | `Grant` | `x1` physical base, `x2` size in bytes |
+| 3 | CleanData | `x2` start offset, `x3` end offset | `Read` | — |
+| 4 | InvalidateData | `x2` start offset, `x3` end offset | `Write` | — |
+| 5 | CleanInvalidateData | `x2` start offset, `x3` end offset | `Read` | — |
+| 6 | UnifyInstruction | `x2` start offset, `x3` end offset | `Read` | — |
 
 ### Map
 
@@ -53,6 +57,25 @@ Removes the Frame's mapping and flushes it from the TLB, so the address is free 
 ### GetAddress
 
 Returns the physical base address and size of the Frame. `FrameKey::get_extent` wraps it.
+
+### Cache maintenance
+
+CleanData, InvalidateData, CleanInvalidateData and UnifyInstruction maintain the caches for bytes `x2` up to, not including, `x3` of the Frame's memory, for sharing it with a device that does not snoop the processor's caches. The kernel works on the memory directly, so the Frame does not have to be mapped. `x4..x7` must be zero.
+
+| Op | Effect |
+|---|---|
+| CleanData | Writes dirty cache lines back to memory (the Point of Coherency), so a device reads the latest data |
+| InvalidateData | Discards cache lines, so the processor next reads what a device wrote; a line only partly inside the range is written back first, so bytes outside the range keep their values |
+| CleanInvalidateData | Writes dirty lines back, then discards them |
+| UnifyInstruction | Writes dirty lines back to the Point of Unification and invalidates the instruction caches, so code written through a data mapping can run |
+
+The operations act on whole cache lines; the kernel reads the line size from `CTR_EL0`. InvalidateData needs `Write` because discarding a dirty line loses data the way a write does. `FrameKey` wraps them as `clean_data`, `invalidate_data`, `clean_invalidate_data` and `unify_instruction`.
+
+| Error | Cause |
+|---|---|
+| `InsufficientRights` | The Frame capability lacks the operation's right |
+| `InvalidOperation` | `x2 >= x3`, `x3` beyond the Frame's size, a device Frame, or a nonzero unused argument |
+| `TypeMismatch` | The key names another kind |
 
 ## Implementation
 

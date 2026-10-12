@@ -7,6 +7,7 @@ members = [
   "kernel/tests/sync-test",
   "kernel/tests/capability-test",
   "kernel/tests/driver-test",
+  "kernel/tests/mailbox-test",
   "kernel/tests/endpoint-test",
   "kernel/tests/fault-test",
   "kernel/tests/fp-trap-test",
@@ -77,6 +78,7 @@ members = [
   "userspace/tests/fp-trap/protocol",
   "userspace/tests/hello",
   "userspace/tests/irq/protocol",
+  "userspace/tests/mailbox/client",
   "userspace/tests/irq/receiver",
   "userspace/tests/preempt/spinner",
 ]
@@ -128,6 +130,7 @@ libmapping = { path = "libs/mapping", package = "vesper-mapping" }
 libmeddle = { path = "libs/meddle", package = "vesper-meddle" }
 libmeddle-runtime = { path = "libs/meddle-runtime", package = "vesper-meddle-runtime" }
 mailbox = { path = "drivers/mailbox/server" }
+mailbox-client = { path = "drivers/mailbox/client" }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }

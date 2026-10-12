@@ -200,7 +200,19 @@ mod tests {
         assert_eq!(FrameOp::Map as u32, 0);
         assert_eq!(FrameOp::Unmap as u8, 1);
         assert_eq!(FrameOp::GetAddress as u8, 2);
-        for value in [3, 4, 255, 256, 1 << 32, u64::MAX] {
+        assert_eq!(FrameOp::CleanData as u8, 3);
+        assert_eq!(FrameOp::InvalidateData as u8, 4);
+        assert_eq!(FrameOp::CleanInvalidateData as u8, 5);
+        assert_eq!(FrameOp::UnifyInstruction as u8, 6);
+        for (raw, op) in [
+            (3_u8, FrameOp::CleanData),
+            (4, FrameOp::InvalidateData),
+            (5, FrameOp::CleanInvalidateData),
+            (6, FrameOp::UnifyInstruction),
+        ] {
+            assert_eq!(FrameOp::try_from(u64::from(raw)).ok(), Some(op));
+        }
+        for value in [7, 8, 255, 256, 1 << 32, u64::MAX] {
             assert!(matches!(
                 FrameOp::try_from(value),
                 Err(CapError::InvalidOperation)
@@ -440,7 +452,7 @@ mod tests {
 
     #[test]
     fn frame_operation_decoder_is_exact() {
-        assert_operation_decoder_is_exact::<vesper_objects::frame::FrameOp>(&[0, 1, 2]);
+        assert_operation_decoder_is_exact::<vesper_objects::frame::FrameOp>(&[0, 1, 2, 3, 4, 5, 6]);
     }
 
     #[test]

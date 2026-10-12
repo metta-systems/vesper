@@ -873,10 +873,15 @@ fn emit_interfaces(
             for index in summary.functions {
                 emit!(
                     imports,
-                    "        Import {{ interface: \"{}\", type_code: 0x{:016x}, function: {index}, link: \"{}\", export: \"{}\" }},\n",
+                    "        Import {{ interface: \"{}\", type_code: 0x{:016x}, function: {index}, links: &[{}], export: \"{}\" }},\n",
                     summary.interface.name,
                     summary.interface.type_code,
-                    summary.link,
+                    summary
+                        .links
+                        .iter()
+                        .map(|link| format!("\"{link}\""))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     summary.interface.export_name(index).unwrap_or_default()
                 );
             }

@@ -19,14 +19,16 @@ pub struct File {
     pub uses: Vec<Uses>,
 }
 
-/// `uses interface via property { function, ... }`: the functions of
+/// `uses interface via property, ... { function, ... }`: the functions of
 /// `interface` a component calls, through the instance its device tree node
-/// links to with `property`.
+/// links to through `property` (each further property read from the node
+/// the previous one reached).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Uses {
     pub interface: Name,
-    /// The client node's property holding the exporting node's phandle
-    pub link: Name,
+    /// The device tree properties leading from the client node to the
+    /// exporting node: each holds the phandle of the next node
+    pub links: Vec<Name>,
     pub functions: Vec<Name>,
 }
 

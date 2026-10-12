@@ -28,7 +28,13 @@
 //! - `GetAddress` `2`: no arguments; requires `GRANT`. Returns the physical
 //!   extent — the base in `x1` and the size in bytes in `x2` (the client
 //!   wrapper names it `get_extent`).
-//! - Operation ID `3` is unassigned and rejected by checked decoding.
+//! - `CleanData` `3`, `InvalidateData` `4`, `CleanInvalidateData` `5`,
+//!   `UnifyInstruction` `6`: cache maintenance over bytes `x2..x3` of the
+//!   frame (`x4..x7` zero, `start < end <= size`) through the kernel direct
+//!   map, so the frame need not be mapped. `InvalidateData` needs `WRITE`
+//!   (discarding a dirty line loses data like a write), the others `READ`. A
+//!   device Frame has no cacheable memory and is rejected.
+//! - Operation ID `7` is unassigned and rejected by checked decoding.
 //!
 //! Carved tables become hardware-live through `AddressSpace.Activate`, which
 //! installs the bound root into `TTBR0_EL1` with the
@@ -42,8 +48,11 @@
 
 use {
     crate::objects::{
-        ArchObjects, KeyTable, Nucleus, access::Access, arch_objects::AddressSpaceObject,
-        key_table::CallerTable, object_pool::IdentityError,
+        ArchObjects, KeyTable, Nucleus,
+        access::Access,
+        arch_objects::{AddressSpaceObject, CacheMaintenance},
+        key_table::CallerTable,
+        object_pool::IdentityError,
     },
     libobject::{CapError, FrameOp, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -66,6 +75,30 @@ pub fn invoke<A: ArchObjects>(
         FrameOp::Map => map::<A>(access, caller, frame_key, args, nucleus),
         FrameOp::Unmap => unmap::<A>(access, caller, frame_key, args, nucleus),
         FrameOp::GetAddress => get_extent(access, caller, frame_key, args),
+        FrameOp::CleanData => {
+            maintain_cache::<A>(access, caller, frame_key, CacheMaintenance::Clean, args)
+        }
+        FrameOp::InvalidateData => maintain_cache::<A>(
+            access,
+            caller,
+            frame_key,
+            CacheMaintenance::Invalidate,
+            args,
+        ),
+        FrameOp::CleanInvalidateData => maintain_cache::<A>(
+            access,
+            caller,
+            frame_key,
+            CacheMaintenance::CleanInvalidate,
+            args,
+        ),
+        FrameOp::UnifyInstruction => maintain_cache::<A>(
+            access,
+            caller,
+            frame_key,
+            CacheMaintenance::UnifyInstruction,
+            args,
+        ),
     }
 }
 
@@ -257,4 +290,55 @@ fn get_extent(
     let frame = entry.as_frame().map_err(|e| e.with_key_operand(0))?;
     semi::println!("✅ Frame::GetExtent({}, {})", frame.paddr, frame.size());
     Ok((frame.paddr, frame.size() as u64))
+}
+
+/// `CleanData` `3`, `InvalidateData` `4`, `CleanInvalidateData` `5`,
+/// `UnifyInstruction` `6`: cache maintenance over bytes `x2..x3` of the frame.
+fn maintain_cache<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    frame_key: RawKey,
+    operation: CacheMaintenance,
+    args: &[u64; 6],
+) -> Result<(u64, u64), CapError> {
+    let (start, end) = (args[0], args[1]);
+    if args[2..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let frame = {
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let entry = caller_table
+            .lookup(frame_key, caller.guard)
+            .map_err(|e| e.with_key_operand(0))?;
+        if entry.object_type() != ObjectType::FRAME {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::FRAME,
+                found: entry.object_type(),
+            });
+        }
+        // Discarding a dirty line loses data like a write does; the other
+        // operations leave every byte's value unchanged.
+        let required = if operation == CacheMaintenance::Invalidate {
+            Rights::WRITE
+        } else {
+            Rights::READ
+        };
+        if !entry.rights().has(required) {
+            return Err(CapError::InsufficientRights);
+        }
+        *entry.as_frame().map_err(|e| e.with_key_operand(0))?
+    };
+    // Device memory is never cached; the range lies inside the frame.
+    if frame.is_device() || start >= end || end > frame.size() as u64 {
+        return Err(CapError::InvalidOperation);
+    }
+    A::maintain_cache(operation, frame.paddr + start, end - start);
+    let name = match operation {
+        CacheMaintenance::Clean => "CleanData",
+        CacheMaintenance::Invalidate => "InvalidateData",
+        CacheMaintenance::CleanInvalidate => "CleanInvalidateData",
+        CacheMaintenance::UnifyInstruction => "UnifyInstruction",
+    };
+    semi::println!("✅ Frame::{name}({start:#x}..{end:#x})");
+    Ok((0, 0))
 }

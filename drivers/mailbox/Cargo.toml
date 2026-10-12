@@ -22,6 +22,8 @@ qemu = ["libuser/qemu"]
 mailbox = { workspace = true }
 
 [target.'cfg(target_os = "vesper")'.dependencies]
+libdevice-driver = { workspace = true }
+libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
 libuser = { workspace = true }

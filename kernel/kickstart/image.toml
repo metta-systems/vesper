@@ -25,3 +25,12 @@ binary = "irqchip-gicv2"
 name = "uart"
 binary = "uart-pl011"
 priority = 0x8000
+
+# The VideoCore mailbox component: on the Raspberry Pi 3 its registers share
+# the BCM interrupt controller's page, which Kickstart hands it as a device
+# Frame (`privileged::SHARES_KERNEL_PAGES`).
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../drivers/mailbox/interfaces"
+priority = 0x8000

@@ -221,11 +221,15 @@ where
     let uses = just(Token::Uses)
         .ignore_then(name)
         .then_ignore(just(Token::Via))
-        .then(link)
+        .then(
+            link.separated_by(just(Token::Comma))
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
         .then(name_list.delimited_by(just(Token::LeftBrace), just(Token::RightBrace)))
-        .map(|((interface, link), functions)| Uses {
+        .map(|((interface, links), functions)| Uses {
             interface,
-            link,
+            links,
             functions,
         });
 

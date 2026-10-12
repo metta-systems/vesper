@@ -34,7 +34,7 @@ Indices 11–126 are unassigned.
 
 | Kind | Wire | Page | Operations on AArch64 |
 |---|---:|---|---|
-| Frame | `0x80` | [frame.md](arch/frame.md) | Map, Unmap, GetAddress |
+| Frame | `0x80` | [frame.md](arch/frame.md) | Map, Unmap, GetAddress, cache maintenance |
 | PageTable | `0x81` | [page_table.md](arch/page_table.md) | Map, Unmap |
 | AddressSpace | `0x82` | [address_space.md](arch/address_space.md) | Activate, Retire, CreateInvocation |
 | ASIDPool | `0x83` | [asid_pool.md](arch/asid_pool.md) | Assign |

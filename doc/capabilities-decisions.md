@@ -80,42 +80,6 @@ Unanswered questions before implementing the scheduler record ABI:
   - the common native target-body return convention (`extern "C"` body
     returning a `#[repr(C)]` two-`u64` struct in x0/x1).
 
-## Mailbox component
-
-Unanswered questions before the `mailbox` component serves the `VideoCore`
-property mailbox (contract: Raspberry Pi mailbox; component interfaces and
-imports):
-
-- **Which node the component serves, and how clients link to it:** on both
-  boards nothing links to the `brcm,bcm2835-mbox` node except the
-  `raspberrypi,bcm2835-firmware` node (`mboxes = <&mailbox>`); the nodes that
-  use firmware services (`cprman`, `power`, `fb`, `vcsm`, `firmwarekms`,
-  `axiperf`) link to `firmware` through a `firmware` property. Does the
-  component (a) match the firmware node, with Kickstart handing it the
-  registers and interrupt of the node `mboxes` links to, and clients use
-  `uses mailbox_v1 via firmware`; (b) match the mailbox node, with Kickstart
-  following `firmware` → `mboxes` for a client's link; or (c) something else?
-- **Authorizing the shared-page grant (D1/D6):** the Raspberry Pi 3 mailbox
-  page also holds the BCM interrupt controller, and the contract makes the
-  mailbox component the one holder of it. What marks the component as allowed
-  to receive a kernel-owned page: (a) a key on its `[[driver]]` entry in the
-  boot image manifest, or (b) a compatible-string list in Kickstart, like the
-  withheld interrupt controllers? On the Raspberry Pi 4 the page is not
-  kernel-owned and the component loads as an ordinary driver.
-- **DMA coherence with the `VideoCore` (D6):** `Frame.Map` accepts only
-  normal write-back cacheable memory, and the firmware reads and writes the
-  property buffer without snooping the ARM caches. Is it (a) a `Frame.Map`
-  attribute for normal non-cacheable memory, (b) EL0 cache maintenance
-  (`SCTLR_EL1.UCI`) with the component cleaning and invalidating its bounce
-  page, or (c) a kernel cache-maintenance operation on a Frame?
-- **Provisioning the xbuf for `property` (D1/D6/D7):** the property path passes
-  an IO_Rec in a data area both sides map at the same address, with EventCount
-  completion. Is the data area (a) created by Kickstart's import wiring per
-  (client, exporter) pair, its size declared in the interface file, together
-  with the EventCounts, (b) owned by the client and granted to the component
-  at call time, or (c) deferred, with only register-sized typed functions for
-  now? Option (a) is a first case of the fbuf address agreement in the plan.
-
 ## Other unanswered decisions
 
 - **D1:** machine-local namespace and address-reservation conflicts for shared

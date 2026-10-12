@@ -54,6 +54,7 @@ libobject = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 owo-colors = { workspace = true }
+tock-registers = { workspace = true }
 
 [dev-dependencies]
 libboot = { workspace = true }

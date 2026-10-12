@@ -126,6 +126,22 @@ pub trait AddressSpaceObject: NucleusObject {
 /// Frame capabilities are arch-independent (inline `RegionPayload` in `KeyEntry`),
 /// so there is no `type Frame` associated type. Frame size validation is
 /// arch-specific via `validate_frame_size`.
+/// A cache-maintenance operation over a range of ordinary memory (Frame
+/// cache maintenance).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheMaintenance {
+    /// Write dirty data-cache lines back to the Point of Coherency.
+    Clean,
+    /// Discard data-cache lines; a line only partly inside the range is
+    /// cleaned first, so bytes outside the range keep their values.
+    Invalidate,
+    /// Clean, then discard, data-cache lines.
+    CleanInvalidate,
+    /// Clean data-cache lines to the Point of Unification and invalidate the
+    /// instruction caches.
+    UnifyInstruction,
+}
+
 pub trait ArchObjects: Sized + 'static {
     // ─── Associated Types (pool-backed arch objects only) ───
     type PageTable: PageTableObject;
@@ -176,6 +192,12 @@ pub trait ArchObjects: Sized + 'static {
     /// completing before the caller proceeds. Called when an `AddressSpace`'s
     /// translation root is withdrawn.
     fn invalidate_tlb_asid(asid: u16);
+
+    // ─── Cache maintenance ───
+
+    /// Perform `operation` on the ordinary RAM `[paddr, paddr + length)`
+    /// through the kernel direct map, completing before the caller proceeds.
+    fn maintain_cache(operation: CacheMaintenance, paddr: u64, length: u64);
 
     // ─── Translation-context installation (hardware activation) ───
 

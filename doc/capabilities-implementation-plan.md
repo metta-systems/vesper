@@ -38,14 +38,14 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just test-debug-console` | Debug-enabled nucleus handler and slot-identity regression tests under QEMU; included in `just test` |
 | `just test-capability`, `test-memory`, `test-sync`, `test-ppc` | Boot one e2e test kernel each (separate binaries reusing the real kickstart boot path, sharing `libkicktest`): capability handoff and Retype; translation tables, mappings, activation and AddressSpace retirement; Notification/EventCount and blocking through the Bounce fixture Thread; Invocation construction and PPC Call/Return into Bounce. In-guest assertions and the QEMU exit status are the result; all included in `just test` |
 | `just test-endpoint` | Boot the endpoint-test e2e kernel: client, rendezvous-endpoint and server `AddressSpace`s meet through PPC `Invocation`s, blocking inside the endpoint; in-guest assertions and the QEMU exit status are the result; included in `just test` |
-| `just test-preempt`, `test-irq`, `test-driver`, `test-uart` (each also `-rpi4`) | Boot the timer-preemption, interrupt-delivery, driver-loading and PL011-driver e2e kernels on raspi3b and raspi4b; `test-driver` also covers `imports.if` wiring and generated-interface calls between probe instances; all included in `just test` |
+| `just test-preempt`, `test-irq`, `test-driver`, `test-mailbox`, `test-uart` (each also `-rpi4`) | Boot the timer-preemption, interrupt-delivery, driver-loading, mailbox and PL011-driver e2e kernels on raspi3b and raspi4b; `test-driver` also covers `imports.if` wiring and generated-interface calls between probe instances, `test-mailbox` the kernel-owned page grant and a two-link import; all included in `just test` |
 | `just test-fp-trap` | Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t (test-only nucleus hook) and at EL0 (delivered to the component's fault handler); included in `just test` |
 | `just test-fault` | Boot fault-test: EL0 fault delivery — skip, retry, terminate, Return faults, and every unhandled case parking the Thread as faulted; included in `just test` |
 | `just audit-fp-simd` | Disassemble every image that runs under the integer-only policy and reject FP/SIMD instructions; part of `just lint` |
 | `just test-chainboot` | Chainboot tests with its own linker script and target runner |
 | `just test-object-host` | Opt-in capability ABI integration tests on the native host (currently AArch64) |
 | `just test-host` | Capability ABI, boot-platform and Meddle tests, then native `chainofcommand` tests |
-| `just test` | Device, chainboot, host (capability, boot-platform, Meddle, tools), debug handler/storage, and every e2e test kernel (capability, memory, sync, ppc, preempt, irq, driver, uart, endpoint, fp-trap, fault; the board-dependent ones on both boards) |
+| `just test` | Device, chainboot, host (capability, boot-platform, Meddle, tools), debug handler/storage, and every e2e test kernel (capability, memory, sync, ppc, preempt, irq, driver, mailbox, uart, endpoint, fp-trap, fault; the board-dependent ones on both boards) |
 | `just pre-push` | Formatting, shortened Clippy, and tests; does not itself push anything |
 | `just ci` | Cleanup, lint, build, and tests; do not invoke its cleanup as an incidental check |
 
@@ -121,6 +121,8 @@ Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memo
 - [ ] Implement the revocation/reclamation completion protocol: teardown bookkeeping retained across partial map/unmap failures, Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
 - [ ] Implement fbuf setup that agrees addresses for every participant before mapping, with reservation/conflict handling and rollback before pointers are published.
 - [ ] Implement exclusive, immutable-shared and mutable-shared modes with explicit transitions, and `MappedSlice` ownership of a private, non-derivable capability and mapping with incarnation-checked Drop cleanup.
+- [ ] Add a normal non-cacheable `Frame.Map` attribute for memory shared with non-coherent devices.
+- [ ] Decide and implement EL0 cache maintenance (`SCTLR_EL1.UCI`) for components that maintain shared buffers themselves.
 - [ ] Define per-target MMU/MPU/IOMMU, address-width and DMA restrictions, with a protected-context fallback that never downgrades hostile-code isolation.
 - [ ] Implement `ASIDControl` pool creation and partitioning of the 16-bit ASID space once its schema is selected.
 - [ ] Test rights denial for `Frame.Map`, `PageTable.Map` and `ASIDPool.Assign`; inject failures before and after Retype reservation and check ownership and accounting; test partial mapping failures, revocation races, cross-AddressSpace reuse without stale-data disclosure, and run target integration for retype → map → access → unmap/revoke → safe reuse, including failure paths.
@@ -146,16 +148,15 @@ Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
 
 ### Components and interfaces
 
-Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts). Open questions: [mailbox component](capabilities-decisions.md#mailbox-component).
+Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts), [Frame cache maintenance](capabilities-contract.md#mapping-and-sharing).
 
-- [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`, a stub answering `firmware_error` today). Prerequisite: the node and client-link decision.
-  - [ ] Kickstart loads it as a driver: its node (or the node it serves through), the Raspberry Pi 3 shared-page grant once its authorization is decided, and its reply interrupt (BCM line on the Raspberry Pi 3, GIC SPI on the Raspberry Pi 4).
+- [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`): loaded and wired today, every function answering `firmware_error`.
   - [ ] Request path: one request in flight, later callers waiting in order on an EventCount; the driver's interrupt Thread takes each reply and advances the count. `enter` records the Return key from `DriverInit::return_key`.
-  - [ ] Property buffers in a private bounce page from the driver's memory: its bus address from `Frame.GetAddress` and the `/soc` `dma-ranges`, cache handling per the DMA-coherence decision, held until the `VideoCore` replies.
+  - [ ] Property buffers in a private bounce page from the driver's memory: its bus address from `Frame.GetAddress` and the `/soc` `dma-ranges`, cleaned before and invalidated after each request with the Frame cache operations, held until the `VideoCore` replies.
   - [ ] Typed functions (board revision and serial, clock rate, power state) build their tag buffers inside the component; `property` refuses tags that hand over the system (code execution, `VideoCore` memory allocation and locking). Per-client policy waits on caller identity through Invocation badges (Phase 6, Invocation distribution).
-  - [ ] `property` over an xbuf data area with EventCount completion, per the provisioning decision.
-  - [ ] QEMU test (raspi3b, raspi4b): a client driver on a node linking to the firmware calls the typed functions and the property path.
-  - [ ] Remove the kernel-era mailbox, power, framebuffer and `VideoCore` code from `libs/platform` once the component serves its users.
+  - [ ] xbuf data areas created by the import wiring for interfaces that pass references: size declared in the interface file, same address in client and exporter, request-completion EventCounts; `property` over it.
+  - [ ] Clients: `fb` and `power` components importing `mailbox_v1 via firmware, mboxes`, checked against QEMU's firmware answers on raspi3b and raspi4b (`mailbox-test` checks the link with a test client on the power node today).
+  - [ ] Remove the kernel-era mailbox, power, framebuffer and `VideoCore` code from `libs/platform` once the components serve its users.
 - [ ] Load `[[component]]` entries (components without a device node) in Kickstart with their imports, once components other than drivers need it; only test builders load them today.
 
 ## Phase 7 — Time and userspace scheduling

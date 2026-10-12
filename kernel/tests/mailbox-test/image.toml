@@ -1,0 +1,16 @@
+# What mailbox-test bundles (see vesper-image-build): the mailbox component,
+# loaded for the VideoCore mailbox node, and a test client loaded for the
+# firmware power node, which imports mailbox_v1 through the firmware node's
+# mailbox link.
+
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+priority = 0x8000
+
+[[driver]]
+name = "client"
+binary = "mailbox-test-client"
+interfaces = "../../../userspace/tests/mailbox/client/interfaces"
+priority = 0x8000

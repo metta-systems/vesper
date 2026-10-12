@@ -108,3 +108,51 @@ fn frame_wrappers_preserve_kernel_errors() {
         Err(CapError::UnknownResponse { .. })
     ));
 }
+
+/// One `FrameKey` cache-maintenance wrapper.
+type CacheCall = fn(&FrameKey, u64, u64) -> Result<(), CapError>;
+
+/// Issue one cache-maintenance wrapper over bytes `0x40..0x1000` and return
+/// the captured request, or the kernel error decoded from `response`.
+fn invoke_cache(response: Response, call: CacheCall) -> Result<Request, CapError> {
+    let frame = FrameKey::from_key(RawKey::new(KeySlot(9), 0x0246_8ace));
+    RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
+    let result = call(&frame, 0x40, 0x1000);
+    captured(result)
+}
+
+#[test]
+fn frame_cache_maintenance_preserves_request_encoding() {
+    use vesper_objects::FrameOp;
+
+    let calls: [(CacheCall, FrameOp); 4] = [
+        (FrameKey::clean_data, FrameOp::CleanData),
+        (FrameKey::invalidate_data, FrameOp::InvalidateData),
+        (
+            FrameKey::clean_invalidate_data,
+            FrameOp::CleanInvalidateData,
+        ),
+        (FrameKey::unify_instruction, FrameOp::UnifyInstruction),
+    ];
+    for (call, expected) in calls {
+        let (key, op, args, len) = invoke_cache((0, 0, 0), call)
+            .map_err(CapError::code)
+            .unwrap();
+        assert_eq!(len, 6);
+        assert_eq!(key, RawKey::new(KeySlot(9), 0x0246_8ace).to_wire());
+        assert_eq!(op, expected as u64);
+        assert_eq!(args, [0x40, 0x1000, 0, 0, 0, 0]);
+    }
+}
+
+#[test]
+fn frame_cache_maintenance_preserves_kernel_errors() {
+    assert!(matches!(
+        invoke_cache((8, 0, 0), FrameKey::clean_data),
+        Err(CapError::InvalidOperation)
+    ));
+    assert!(matches!(
+        invoke_cache((5, 0, 0), FrameKey::invalidate_data),
+        Err(CapError::InsufficientRights)
+    ));
+}

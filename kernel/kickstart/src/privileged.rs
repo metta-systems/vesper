@@ -260,6 +260,12 @@ const MAX_WITHHELD: usize = 4;
 /// the core timer controls.
 pub const WITHHELD: &[&str] = &["brcm,bcm2836-l1-intc"];
 
+/// Drivers of these nodes receive a device Frame for a kernel-owned page their
+/// registers share: on the Raspberry Pi 3 the `VideoCore` mailbox lies in the
+/// BCM interrupt controller's page, and the mailbox component is the one
+/// holder of that page besides the kernel.
+pub const SHARES_KERNEL_PAGES: &[&str] = &["brcm,bcm2835-mbox"];
+
 /// The physical MMIO ranges of the loaded component's controllers: hardware
 /// the kernel drives itself, never handed out as device memory.
 struct KernelOwnedCell(UnsafeCell<([(u64, u64); MAX_KERNEL_OWNED], usize)>);
