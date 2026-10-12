@@ -173,9 +173,14 @@ pub fn run() -> ! {
                 // mailbox through the firmware node.
                 assert!(init.pages().is_empty());
                 let imports = init.imports();
-                assert_eq!(imports.len(), 1, "the client imports get_board_revision");
-                assert_eq!(imports[0].type_code, MAILBOX_V1);
-                assert_eq!(imports[0].function, 0);
+                assert_eq!(imports.len(), 4, "the client imports four functions");
+                assert!(imports.iter().all(|record| record.type_code == MAILBOX_V1));
+                let functions: [u64; 4] = core::array::from_fn(|index| imports[index].function);
+                assert_eq!(
+                    functions,
+                    [0, 1, 2, 3],
+                    "declaration indices of the imported functions"
+                );
                 // The report key, in the client's table only.
                 // SAFETY: the driver's retained table; no invocation overlaps.
                 unsafe { &mut *(loaded.component.table_addr as *mut KeyTable) }

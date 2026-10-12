@@ -17,8 +17,9 @@
 //! - one `IRQHandler` per interrupt of the node, every one bound to the
 //!   driver's Notification, interrupt *i* signalling bit *i*; each handler is
 //!   enabled by its first `Ack`;
-//! - the Notification, a RAM Untyped, the driver's Time, its `AddressSpace`
-//!   and its own table;
+//! - the Notification, a RAM Untyped (with its physical base and the address
+//!   the node's device reaches it at, for DMA buffers), the driver's Time, its
+//!   `AddressSpace` and its own table;
 //! - an `EventCount` only the driver's own Threads hold, for them to hand
 //!   work to each other;
 //! - its `Thread.Return` key, for the functions it exports, and one
@@ -91,6 +92,9 @@ pub const DEVICE_WINDOW_VA: u64 = 0x3800_0000;
 pub const MAX_REGIONS: usize = 4;
 /// Most register pages of one node.
 pub const MAX_DEVICE_PAGES: usize = 16;
+/// [`DriverInit::memory_bus`] when the device cannot reach the driver's memory.
+pub const NO_BUS_ADDRESS: u64 = u64::MAX;
+
 /// Most functions of other components one driver imports.
 pub const MAX_IMPORTS: usize = 32;
 
@@ -154,6 +158,11 @@ pub struct DriverInit {
     pub notification: u64,
     /// A RAM Untyped for the driver's own objects
     pub memory: u64,
+    /// Physical base of `memory`
+    pub memory_paddr: u64,
+    /// Where the node's device reaches `memory` through its buses' `dma-ranges`
+    /// (the address to give it for DMA), or [`NO_BUS_ADDRESS`]
+    pub memory_bus: u64,
     /// Bytes `memory` covers
     pub memory_size: u64,
     /// The Time the driver's first Thread runs on
@@ -184,6 +193,8 @@ impl DriverInit {
         return_key: 0,
         notification: 0,
         memory: 0,
+        memory_paddr: 0,
+        memory_bus: NO_BUS_ADDRESS,
         memory_size: 0,
         time: 0,
         event_count: 0,

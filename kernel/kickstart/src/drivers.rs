@@ -11,9 +11,11 @@
 //! - one `IRQHandler` per interrupt of the node, issued through the boot
 //!   `IRQControl` and bound to the driver's Notification and Thread, interrupt
 //!   *i* signalling bit *i*;
-//! - a RAM Untyped, a Time with the budget and priority of its manifest
-//!   entry, and one Thread configured on that Time and started at the
-//!   driver's entry with the init page's address in `x0`;
+//! - a RAM Untyped, with its physical base and the bus address the node's
+//!   device reaches it at (`libdevicetree::dma_address`), a Time with the
+//!   budget and priority of its manifest entry, and one Thread configured on
+//!   that Time and started at the driver's entry with the init page's address
+//!   in `x0`;
 //! - an `EventCount` for the driver's own Threads.
 //!
 //! Each further Thread the driver declares (`driver_threads!`) gets its own
@@ -53,11 +55,11 @@ use {
     },
     libdevice_driver::{
         DEVICE_WINDOW_VA, DevicePage, DriverInit, INIT_VA, Interrupt, MAX_DEVICE_PAGES,
-        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, PAGE_FRAME, PAGE_UNTYPED,
-        Region, STACK_REGION,
+        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, NO_BUS_ADDRESS, PAGE_FRAME,
+        PAGE_UNTYPED, Region, STACK_REGION,
     },
     libdevicetree::{
-        DevTreeIndex, Node,
+        DevTreeIndex, Node, dma_address,
         interrupts::{MAX_INTERRUPT_CELLS, interrupts},
         is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
     },
@@ -629,6 +631,14 @@ pub fn load_drivers(
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("🥾 driver memory Retype failed: {:?}", error.code()));
+        let memory_paddr = builder
+            .entry(ram)
+            .as_untyped()
+            .unwrap_or_else(|error| panic!("🥾 driver memory region: {:?}", error.code()))
+            .paddr;
+        init.memory_paddr = memory_paddr;
+        init.memory_bus = dma_address(&instance.node, memory_paddr, 1 << driver.memory_bits)
+            .unwrap_or(NO_BUS_ADDRESS);
         init.memory = move_to(builder, &mut self_table, &component, ram, local_slot()).to_wire();
         init.memory_size = 1 << driver.memory_bits;
         let mut retype = |kind: ObjectType| {

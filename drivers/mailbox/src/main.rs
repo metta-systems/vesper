@@ -9,24 +9,64 @@
 //! `interfaces/mailbox_v1.if`).
 //!
 //! Kickstart loads it as a driver: on the Raspberry Pi 3 its register page is
-//! the BCM interrupt controller's, handed to it as a device Frame. Its
-//! Thread maps the registers and waits for the mailbox interrupt. Requests
-//! are not served yet: every function answers `firmware_error` with code
-//! [`NOT_SERVED`].
+//! the BCM interrupt controller's, handed to it as a device Frame. Its Thread
+//! sets up a bounce page for the property buffers and two `EventCount`s, then
+//! serves the mailbox interrupt: each reply from the firmware advances
+//! `replies`.
+//!
+//! A function call runs on the caller's Thread. It takes a ticket, waits on
+//! `turns` until every earlier request is done, writes its tag buffer into
+//! the bounce page, cleans it to memory, posts the buffer's bus address on
+//! the property channel, waits on `replies` for its answer, invalidates the
+//! page, reads the answer, and advances `turns` for the next caller.
+//!
+//! `property` (raw tag buffers in a shared data area) is not served yet: it
+//! answers `firmware_error` with code [`NOT_SERVED`].
 
 use mailbox::mailbox_v1::{__runtime::IoRec, Clock, Device, Exception, MailboxV1};
 
-/// `firmware_error` code of every answer until requests are served.
+/// `firmware_error` code of a function not served yet.
 const NOT_SERVED: u32 = u32::MAX;
+
+/// Property tags of the typed functions.
+mod tag {
+    pub const GET_BOARD_REVISION: u32 = 0x0001_0002;
+    pub const GET_BOARD_SERIAL: u32 = 0x0001_0004;
+    pub const GET_POWER_STATE: u32 = 0x0002_0001;
+    pub const SET_POWER_STATE: u32 = 0x0002_8001;
+    pub const GET_CLOCK_RATE: u32 = 0x0003_0002;
+}
+
+/// Power state bits: the device is on; it does not exist (in answers) or the
+/// firmware should wait for it to settle (in requests).
+const POWER_ON: u32 = 1 << 0;
+const POWER_MISSING_OR_WAIT: u32 = 1 << 1;
+
+/// The firmware's id of a clock: its position in `mailbox_v1.clock`, from 1.
+fn clock_id(clock: Clock) -> u32 {
+    let mut words = [0];
+    mailbox::mailbox_v1::__runtime::Words::store(&clock, &mut words);
+    u32::try_from(words[0] + 1).unwrap_or(u32::MAX)
+}
+
+/// The firmware's id of a device: its position in `mailbox_v1.device`.
+fn device_id(device: Device) -> u32 {
+    let mut words = [0];
+    mailbox::mailbox_v1::__runtime::Words::store(&device, &mut words);
+    u32::try_from(words[0]).unwrap_or(u32::MAX)
+}
+
+/// A power state answer: whether the device is on, unless it does not exist.
+fn power_state(state: u32) -> Result<bool, Exception> {
+    if state & POWER_MISSING_OR_WAIT == 0 {
+        Ok(state & POWER_ON != 0)
+    } else {
+        Err(Exception::FirmwareError { code: state })
+    }
+}
 
 /// The firmware mailbox.
 struct VideoCoreMailbox;
-
-impl VideoCoreMailbox {
-    const fn not_served<T>() -> Result<T, Exception> {
-        Err(Exception::FirmwareError { code: NOT_SERVED })
-    }
-}
 
 impl MailboxV1 for VideoCoreMailbox {
     #[cfg(target_os = "vesper")]
@@ -35,90 +75,327 @@ impl MailboxV1 for VideoCoreMailbox {
     }
 
     fn get_board_revision() -> Result<u32, Exception> {
-        Self::not_served()
+        call(tag::GET_BOARD_REVISION, &[], 1).map(|values| values[0])
     }
 
     fn get_board_serial() -> Result<u64, Exception> {
-        Self::not_served()
+        call(tag::GET_BOARD_SERIAL, &[], 2)
+            .map(|values| u64::from(values[0]) | u64::from(values[1]) << 32)
     }
 
-    fn get_clock_rate(_which: Clock) -> Result<u32, Exception> {
-        Self::not_served()
+    fn get_clock_rate(which: Clock) -> Result<u32, Exception> {
+        call(tag::GET_CLOCK_RATE, &[clock_id(which)], 2).map(|values| values[1])
     }
 
-    fn get_power_state(_which: Device) -> Result<bool, Exception> {
-        Self::not_served()
+    fn get_power_state(which: Device) -> Result<bool, Exception> {
+        call(tag::GET_POWER_STATE, &[device_id(which)], 2).and_then(|values| power_state(values[1]))
     }
 
-    fn set_power_state(_which: Device, _on: bool) -> Result<bool, Exception> {
-        Self::not_served()
+    fn set_power_state(which: Device, on: bool) -> Result<bool, Exception> {
+        let state = POWER_MISSING_OR_WAIT | if on { POWER_ON } else { 0 };
+        call(tag::SET_POWER_STATE, &[device_id(which), state], 2)
+            .and_then(|values| power_state(values[1]))
     }
 
     fn property(_tags: IoRec) -> Result<(), Exception> {
-        Self::not_served()
+        Err(Exception::FirmwareError { code: NOT_SERVED })
     }
 }
 
 mailbox::mailbox_v1_export!(VideoCoreMailbox);
 
+/// Most value words of one tag.
+const MAX_VALUE_WORDS: usize = 4;
+
+/// One property request with tag `tag` and value words `request`, answered
+/// with `answer_words` value words.
+#[cfg(target_os = "vesper")]
+fn call(
+    tag: u32,
+    request: &[u32],
+    answer_words: usize,
+) -> Result<[u32; MAX_VALUE_WORDS], Exception> {
+    component::call(tag, request, answer_words)
+}
+
+#[cfg(not(target_os = "vesper"))]
+fn call(
+    _tag: u32,
+    _request: &[u32],
+    _answer_words: usize,
+) -> Result<[u32; MAX_VALUE_WORDS], Exception> {
+    Err(Exception::FirmwareError { code: NOT_SERVED })
+}
+
 #[cfg(target_os = "vesper")]
 mod component {
     use {
-        libdevice_driver::{INIT_VA, driver_compatible, driver_init, map_device_pages},
-        libobject::{NotificationKey, RawKey, export::init_return_key, thread::ThreadReturnKey},
+        super::{Exception, MAX_VALUE_WORDS},
+        core::sync::atomic::{AtomicU64, Ordering},
+        libaddress::{Address, Virtual},
+        libdevice_driver::{
+            DEVICE_WINDOW_VA, INIT_VA, NO_BUS_ADDRESS, device_address, driver_compatible,
+            driver_init, map_device_pages,
+        },
+        libmmio::MMIODerefWrapper,
+        libobject::{
+            EventCountKey, FrameKey, IrqHandlerKey, KeyTableKey, NotificationKey, ObjectType,
+            RawKey, Rights, UntypedKey, export::init_return_key, thread::ThreadReturnKey,
+        },
+        libuser::semihosting as semi,
+        tock_registers::{
+            interfaces::{Readable, Writeable},
+            register_bitfields, register_structs,
+            registers::{ReadOnly, ReadWrite, WriteOnly},
+        },
     };
 
     libuser::entry!(main);
 
     driver_compatible!("brcm,bcm2835-mbox");
 
-    /// Offset of mailbox 0's status register in the node's registers.
-    #[cfg(feature = "qemu")]
-    const MAILBOX0_STATUS: u64 = 0x18;
+    register_bitfields! {
+        u32,
+
+        /// Mailbox status.
+        STATUS [
+            /// The mailbox cannot take another word
+            FULL OFFSET(31) NUMBITS(1) [],
+            /// The mailbox holds no word
+            EMPTY OFFSET(30) NUMBITS(1) []
+        ],
+
+        /// Mailbox configuration.
+        CONFIG [
+            /// Interrupt while the mailbox holds data
+            DATA_IRQ OFFSET(0) NUMBITS(1) []
+        ]
+    }
+
+    register_structs! {
+        /// The node's registers: mailbox 0 carries the firmware's answers to
+        /// the ARM, mailbox 1 the ARM's requests to the firmware.
+        #[allow(non_snake_case)]
+        RegisterBlock {
+            (0x00 => READ0: ReadOnly<u32>),
+            (0x04 => _reserved0),
+            (0x18 => STATUS0: ReadOnly<u32, STATUS::Register>),
+            (0x1c => CONFIG0: ReadWrite<u32, CONFIG::Register>),
+            (0x20 => WRITE1: WriteOnly<u32>),
+            (0x24 => _reserved1),
+            (0x38 => STATUS1: ReadOnly<u32, STATUS::Register>),
+            (0x3c => @END),
+        }
+    }
+
+    type Registers = MMIODerefWrapper<RegisterBlock>;
+
+    /// The property channel, in the low four bits of a mailbox word.
+    const PROPERTY_CHANNEL: u32 = 8;
+    const CHANNEL_MASK: u32 = 0xf;
+
+    /// Buffer code of a request, and of a buffer the firmware answered.
+    const REQUEST: u32 = 0;
+    const ANSWERED: u32 = 0x8000_0000;
+    /// Set in a tag's code word once the firmware answered the tag.
+    const TAG_ANSWERED: u32 = 0x8000_0000;
+
+    /// What the interrupt Thread set up for the calls (zero until ready).
+    static REGISTERS_VA: AtomicU64 = AtomicU64::new(0);
+    static BOUNCE_VA: AtomicU64 = AtomicU64::new(0);
+    static BOUNCE_BUS: AtomicU64 = AtomicU64::new(0);
+    static BOUNCE_FRAME: AtomicU64 = AtomicU64::new(0);
+    /// Requests finished, so ticket `t` may run once `turns >= t - 1`.
+    static TURNS: AtomicU64 = AtomicU64::new(0);
+    /// Answers the firmware gave, so ticket `t`'s answer is in at `t`.
+    static REPLIES: AtomicU64 = AtomicU64::new(0);
+    /// Last ticket taken.
+    static TICKETS: AtomicU64 = AtomicU64::new(0);
+
+    fn init() -> &'static libdevice_driver::DriverInit {
+        // SAFETY: Kickstart maps every driver's init record at `INIT_VA`; it
+        // is read in this component's own `AddressSpace` only.
+        unsafe { driver_init(INIT_VA) }
+    }
+
+    fn key(word: &AtomicU64) -> RawKey {
+        RawKey::from_wire(word.load(Ordering::Acquire))
+    }
 
     /// Record this component's `Thread.Return` key for its exports.
     pub fn record_return_key() {
-        // SAFETY: Kickstart maps every driver's init record at `INIT_VA`, and
-        // an export runs in this component's own `AddressSpace`.
-        let init = unsafe { driver_init(INIT_VA) };
         init_return_key(&ThreadReturnKey::from_key(RawKey::from_wire(
-            init.return_key,
+            init().return_key,
         )));
     }
 
-    /// Under QEMU, read the mapped mailbox status register and report it.
-    #[cfg(feature = "qemu")]
-    fn report_registers(init: &libdevice_driver::DriverInit) {
-        use {
-            core::ptr::read_volatile, libdevice_driver::device_address,
-            libuser::semihosting as semi,
-        };
+    /// One property request (see [`super::call`]): the answer's value words,
+    /// or the firmware's error code.
+    pub fn call(
+        tag: u32,
+        request: &[u32],
+        answer_words: usize,
+    ) -> Result<[u32; MAX_VALUE_WORDS], Exception> {
+        let value_words = request.len().max(answer_words).min(MAX_VALUE_WORDS);
+        // Size, code, tag, value bytes, tag code, values, end tag.
+        let words = 6 + value_words;
+        let bytes = u32::try_from(words * 4).unwrap_or(u32::MAX);
+        EventCountKey::from_key(RawKey::from_wire(init().event_count))
+            .await_ge(1, EventCountKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| panic!("mailbox: ready wait failed: {:?}", error.code()));
+        let turns = EventCountKey::from_key(key(&TURNS));
+        let replies = EventCountKey::from_key(key(&REPLIES));
+        let frame = FrameKey::from_key(key(&BOUNCE_FRAME));
+        let buffer = BOUNCE_VA.load(Ordering::Acquire) as *mut u32;
+        let registers = Registers::new(Address::<Virtual>::new(
+            REGISTERS_VA.load(Ordering::Acquire),
+        ));
 
-        let registers =
-            device_address(init, init.regions()[0].start).expect("mailbox: registers mapped");
-        // SAFETY: `map_device_pages` mapped the node's registers as device
-        // memory; reading the status register has no side effects.
-        let status = unsafe { read_volatile((registers + MAILBOX0_STATUS) as *const u32) };
-        semi::println!(
-            "mailbox: registers at {:#x}, status {status:#x}, {} interrupts",
-            init.regions()[0].start,
-            init.interrupts().len()
-        );
+        let ticket = TICKETS.fetch_add(1, Ordering::AcqRel) + 1;
+        turns
+            .await_ge(ticket - 1, EventCountKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| panic!("mailbox: turn wait failed: {:?}", error.code()));
+
+        let mut message = [0_u32; 6 + MAX_VALUE_WORDS];
+        message[0] = bytes;
+        message[1] = REQUEST;
+        message[2] = tag;
+        message[3] = u32::try_from(value_words * 4).unwrap_or(0);
+        message[4] = 0;
+        message[5..5 + request.len()].copy_from_slice(request);
+        for (index, &word) in message[..words].iter().enumerate() {
+            // SAFETY: the bounce page is mapped read/write and only the
+            // caller holding the turn touches it.
+            unsafe {
+                buffer.add(index).write_volatile(word);
+            }
+        }
+        frame
+            .clean_data(0, u64::from(bytes))
+            .unwrap_or_else(|error| panic!("mailbox: CleanData failed: {:?}", error.code()));
+        while registers.STATUS1.is_set(STATUS::FULL) {
+            core::hint::spin_loop();
+        }
+        let bus = u32::try_from(BOUNCE_BUS.load(Ordering::Acquire)).unwrap_or(0);
+        registers.WRITE1.set(bus | PROPERTY_CHANNEL);
+        replies
+            .await_ge(ticket, EventCountKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| panic!("mailbox: reply wait failed: {:?}", error.code()));
+        frame
+            .invalidate_data(0, u64::from(bytes))
+            .unwrap_or_else(|error| panic!("mailbox: InvalidateData failed: {:?}", error.code()));
+        for (index, word) in message[..words].iter_mut().enumerate() {
+            // SAFETY: as above; the firmware has answered.
+            *word = unsafe { buffer.add(index).read_volatile() };
+        }
+        turns
+            .advance(1)
+            .unwrap_or_else(|error| panic!("mailbox: turn release failed: {:?}", error.code()));
+
+        if message[1] != ANSWERED {
+            return Err(Exception::FirmwareError { code: message[1] });
+        }
+        if message[4] & TAG_ANSWERED == 0 {
+            return Err(Exception::FirmwareError { code: message[4] });
+        }
+        let mut values = [0; MAX_VALUE_WORDS];
+        values[..value_words].copy_from_slice(&message[5..5 + value_words]);
+        Ok(values)
     }
 
-    #[cfg(not(feature = "qemu"))]
-    fn report_registers(_init: &libdevice_driver::DriverInit) {}
-
+    /// Set up the bounce page and the `EventCount`s, then serve the mailbox
+    /// interrupt.
     fn main(init_va: u64) -> ! {
         // SAFETY: Kickstart passes the init page's address in x0.
         let init = unsafe { driver_init(init_va) };
-        map_device_pages(init).unwrap_or_else(|error| {
+        let mut slot = map_device_pages(init).unwrap_or_else(|error| {
             panic!("mailbox: mapping registers failed: {:?}", error.code())
         });
-        report_registers(init);
+        let mut next_slot = || {
+            let taken = u32::try_from(slot).unwrap_or(u32::MAX);
+            slot += 1;
+            taken
+        };
+        let registers_va =
+            device_address(init, init.regions()[0].start).expect("mailbox: registers mapped");
+        let table = KeyTableKey::from_key(RawKey::from_wire(init.table));
+        let memory = UntypedKey::from_key(RawKey::from_wire(init.memory));
+        let mut carve = |kind: ObjectType, size_bits: u8| {
+            memory
+                .retype(kind, size_bits, 0, 1, &table, next_slot(), Rights::all())
+                .unwrap_or_else(|error| panic!("mailbox: Retype failed: {:?}", error.code()))
+        };
+        let frame = carve(ObjectType::FRAME, 12);
+        let turns = carve(ObjectType::EVENT_COUNT, 0);
+        let replies = carve(ObjectType::EVENT_COUNT, 0);
+
+        // The bounce page, right after the register pages.
+        let bounce_va = DEVICE_WINDOW_VA + init.pages().len() as u64 * 0x1000;
+        FrameKey::from_key(frame)
+            .map(
+                RawKey::from_wire(init.address_space),
+                bounce_va,
+                Rights(Rights::READ | Rights::WRITE),
+                0,
+            )
+            .unwrap_or_else(|error| panic!("mailbox: bounce page Map failed: {:?}", error.code()));
+        let (paddr, _) = FrameKey::from_key(frame)
+            .get_extent()
+            .unwrap_or_else(|error| panic!("mailbox: bounce page address: {:?}", error.code()));
+        assert_ne!(
+            init.memory_bus, NO_BUS_ADDRESS,
+            "the firmware cannot reach this memory"
+        );
+        let bus = init.memory_bus + (paddr - init.memory_paddr);
+
+        REGISTERS_VA.store(registers_va, Ordering::Release);
+        BOUNCE_VA.store(bounce_va, Ordering::Release);
+        BOUNCE_BUS.store(bus, Ordering::Release);
+        BOUNCE_FRAME.store(frame.to_wire(), Ordering::Release);
+        TURNS.store(turns.to_wire(), Ordering::Release);
+        REPLIES.store(replies.to_wire(), Ordering::Release);
+
+        let registers = Registers::new(Address::<Virtual>::new(registers_va));
+        registers.CONFIG0.write(CONFIG::DATA_IRQ::SET);
+        let handlers = init.interrupts();
+        for interrupt in handlers {
+            IrqHandlerKey::from_key(RawKey::from_wire(interrupt.handler))
+                .ack()
+                .unwrap_or_else(|error| {
+                    panic!("mailbox: interrupt Ack failed: {:?}", error.code())
+                });
+        }
+        EventCountKey::from_key(RawKey::from_wire(init.event_count))
+            .advance(1)
+            .unwrap_or_else(|error| panic!("mailbox: ready advance failed: {:?}", error.code()));
+        semi::println!(
+            "mailbox: registers at {:#x}, bounce page at bus address {bus:#x}",
+            init.regions()[0].start
+        );
+
         let interrupts = NotificationKey::from_key(RawKey::from_wire(init.notification));
+        let replies = EventCountKey::from_key(replies);
         loop {
-            let _bits = interrupts.wait(NotificationKey::WAIT_INFINITE);
+            interrupts
+                .wait(NotificationKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| {
+                    panic!("mailbox: interrupt wait failed: {:?}", error.code())
+                });
+            while !registers.STATUS0.is_set(STATUS::EMPTY) {
+                let word = registers.READ0.get();
+                if word & CHANNEL_MASK == PROPERTY_CHANNEL {
+                    replies.advance(1).unwrap_or_else(|error| {
+                        panic!("mailbox: reply advance failed: {:?}", error.code())
+                    });
+                }
+            }
+            for interrupt in handlers {
+                IrqHandlerKey::from_key(RawKey::from_wire(interrupt.handler))
+                    .ack()
+                    .unwrap_or_else(|error| {
+                        panic!("mailbox: interrupt Ack failed: {:?}", error.code())
+                    });
+            }
         }
     }
 }

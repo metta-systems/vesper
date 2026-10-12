@@ -150,12 +150,9 @@ Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
 
 Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts), [Frame cache maintenance](capabilities-contract.md#mapping-and-sharing).
 
-- [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`): loaded and wired today, every function answering `firmware_error`.
-  - [ ] Request path: one request in flight, later callers waiting in order on an EventCount; the driver's interrupt Thread takes each reply and advances the count. `enter` records the Return key from `DriverInit::return_key`.
-  - [ ] Property buffers in a private bounce page from the driver's memory: its bus address from `Frame.GetAddress` and the `/soc` `dma-ranges`, cleaned before and invalidated after each request with the Frame cache operations, held until the `VideoCore` replies.
-  - [ ] Typed functions (board revision and serial, clock rate, power state) build their tag buffers inside the component; `property` refuses tags that hand over the system (code execution, `VideoCore` memory allocation and locking). Per-client policy waits on caller identity through Invocation badges (Phase 6, Invocation distribution).
-  - [ ] xbuf data areas created by the import wiring for interfaces that pass references: size declared in the interface file, same address in client and exporter, request-completion EventCounts; `property` over it.
-  - [ ] Clients: `fb` and `power` components importing `mailbox_v1 via firmware, mboxes`, checked against QEMU's firmware answers on raspi3b and raspi4b (`mailbox-test` checks the link with a test client on the power node today).
+- [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`): the typed functions are served; `property` answers `firmware_error`.
+  - [ ] xbuf data areas created by the import wiring for interfaces that pass references: size declared in the interface file, same address in client and exporter, request-completion EventCounts; `property` over it, refusing tags that hand over the system (code execution, `VideoCore` memory allocation and locking). Per-client policy waits on caller identity through Invocation badges (Phase 6, Invocation distribution).
+  - [ ] Clients: `fb` and `power` components importing `mailbox_v1 via firmware, mboxes` (`mailbox-test`'s client on the power node checks the typed functions against QEMU's firmware today; `set_power_state` is not exercised yet).
   - [ ] Remove the kernel-era mailbox, power, framebuffer and `VideoCore` code from `libs/platform` once the components serve its users.
 - [ ] Load `[[component]]` entries (components without a device node) in Kickstart with their imports, once components other than drivers need it; only test builders load them today.
 

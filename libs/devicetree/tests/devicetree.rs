@@ -3,9 +3,10 @@
 #[cfg(test)]
 mod tests {
     use vesper_devicetree::{
-        Cells, DevTreeIndex, DeviceTree, PropReader, Region, bus_cells, dump, find_compatible,
-        interrupt_cells, interrupt_parent, interrupt_specifier, is_compatible, is_enabled,
-        is_interrupt_controller, node_by_phandle, property, reg, reg_cells, regions, translate,
+        Cells, DevTreeIndex, DeviceTree, PropReader, Region, bus_cells, dma_address, dump,
+        find_compatible, interrupt_cells, interrupt_parent, interrupt_specifier, is_compatible,
+        is_enabled, is_interrupt_controller, linked_phandle, node_by_phandle, phandle, property,
+        reg, reg_cells, regions, translate,
     };
 
     /// A DTB blob copied into u32-aligned storage, as `DevTree` requires.
@@ -96,6 +97,43 @@ mod tests {
         });
     }
 
+    #[test]
+    fn soc_devices_reach_ram_through_dma_ranges() {
+        for (blob, ram_size) in [(RPI3, 0x3f00_0000), (RPI4, 0x4000_0000)] {
+            with_index(blob, |index| {
+                let (mailbox, _) =
+                    find_compatible(index, &["brcm,bcm2835-mbox"]).expect("mailbox node");
+                // `/soc` maps the bus window at 0xC000_0000 onto RAM from 0.
+                assert_eq!(dma_address(&mailbox, 0, 0x1000), Some(0xc000_0000));
+                assert_eq!(dma_address(&mailbox, 0x10_0000, 0x1000), Some(0xc010_0000));
+                assert_eq!(
+                    dma_address(&mailbox, ram_size - 0x1000, 0x1000),
+                    Some(0xc000_0000 + ram_size - 0x1000)
+                );
+                // A range running past the entry is not reachable.
+                assert_eq!(dma_address(&mailbox, ram_size - 0x1000, 0x2000), None);
+            });
+        }
+    }
+
+    #[test]
+    fn firmware_services_link_to_the_mailbox() {
+        for blob in [RPI3, RPI4] {
+            with_index(blob, |index| {
+                let (power, _) =
+                    find_compatible(index, &["raspberrypi,bcm2835-power"]).expect("power node");
+                let firmware = node_by_phandle(
+                    index,
+                    linked_phandle(&power, "firmware").expect("firmware link"),
+                )
+                .expect("firmware node");
+                assert!(is_compatible(&firmware, "raspberrypi,bcm2835-firmware"));
+                let (mailbox, _) =
+                    find_compatible(index, &["brcm,bcm2835-mbox"]).expect("mailbox node");
+                assert_eq!(linked_phandle(&firmware, "mboxes"), phandle(&mailbox));
+            });
+        }
+    }
     #[test]
     fn rpi3_untranslatable_address_is_rejected() {
         with_index(RPI3, |index| {

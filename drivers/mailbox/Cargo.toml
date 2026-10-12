@@ -22,11 +22,14 @@ qemu = ["libuser/qemu"]
 mailbox = { workspace = true }
 
 [target.'cfg(target_os = "vesper")'.dependencies]
+libaddress = { workspace = true }
 libdevice-driver = { workspace = true }
+libmmio = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
 libuser = { workspace = true }
+tock-registers = { workspace = true }
 
 [[bin]]
 name = "mailbox"

@@ -502,7 +502,7 @@ Signal/Advance/Poll/Read do not block but can fail validation/authorization. A `
   - **Thread:** one Thread, retyped, configured on the driver's Time and started at the driver's entry; it is the receiver. A driver that needs more Threads waits for Scheduler derivation (D5).
   - **Time:** a Time with the budget and priority the driver's manifest entry names, transferred from the boot Time.
   - **Device memory:** the node's register pages as page-sized device Untypeds; a driver carves its device Frames from them. A page that several matched nodes touch is retyped once into a device Frame, and each of those drivers gets a copy of it; there is no trust distinction between Kickstart-loaded drivers for now.
-  - **Memory:** a RAM Untyped split from the boot Untyped, sized by the manifest entry.
+  - **Memory:** a RAM Untyped split from the boot Untyped, sized by the manifest entry, with its physical base and the address at which the node's device reaches it through its buses' `dma-ranges` (for DMA buffers carved from it).
   - **Interrupts:** Kickstart issues each of the node's interrupts and creates one Notification; interrupt *i* signals bit *i* (a badged key Kickstart installs directly). Kickstart binds every IRQHandler to that Notification and the driver's Thread; the driver waits and acks.
   - **Handoff:** Kickstart retypes an init page, writes a record with the driver's keys and the node's register ranges and interrupts, maps it into the driver at a fixed address and passes that address in `x0` on the Thread's first entry. Kickstart never calls into the driver.
 - **Brand.** There is no separate event-target kind: a Notification plus its receiver Thread and that Thread's Time cover what a brand named.

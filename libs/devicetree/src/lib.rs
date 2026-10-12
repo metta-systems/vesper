@@ -166,6 +166,58 @@ pub fn translate(node: &Node<'_, '_, '_>, address: u64) -> Option<u64> {
     Some(address)
 }
 
+/// Most bus levels [`dma_address`] walks above a node.
+const MAX_BUS_DEPTH: usize = 8;
+
+/// The address at which devices under `node`'s parent bus reach the CPU
+/// physical range `[cpu_address, cpu_address + size)`, or `None` if a bus on
+/// the way does not map all of it.
+///
+/// Applies every ancestor bus's `dma-ranges` from the root down; a missing or
+/// empty `dma-ranges` maps addresses one to one. Each matching
+/// `(child, parent, size)` entry rebases a parent address into the bus.
+pub fn dma_address(node: &Node<'_, '_, '_>, cpu_address: u64, size: u64) -> Option<u64> {
+    let mut buses = [const { None }; MAX_BUS_DEPTH];
+    let mut depth = 0;
+    let mut bus = node.parent()?;
+    while let Some(grandparent) = bus.parent() {
+        *buses.get_mut(depth)? = Some((bus, grandparent.clone()));
+        depth += 1;
+        bus = grandparent;
+    }
+    let mut address = cpu_address;
+    for (bus, parent) in buses[..depth].iter().rev().flatten() {
+        let Some(dma_ranges) = property(bus, "dma-ranges") else {
+            continue;
+        };
+        if dma_ranges.length() == 0 {
+            continue;
+        }
+        let child_cells = bus_cells(bus);
+        let parent_address_cells = bus_cells(parent).address;
+        let stride = (child_cells.address + parent_address_cells + child_cells.size) as usize;
+        let entries = dma_ranges.length() / size_of::<u32>() / stride;
+        address = (0..entries).find_map(|entry| {
+            let index = entry * stride;
+            let child_base = read_number(&dma_ranges, index, child_cells.address)?;
+            let parent_base = read_number(
+                &dma_ranges,
+                index + child_cells.address as usize,
+                parent_address_cells,
+            )?;
+            let length = read_number(
+                &dma_ranges,
+                index + (child_cells.address + parent_address_cells) as usize,
+                child_cells.size,
+            )?;
+            let end = address.checked_add(size)?;
+            (address >= parent_base && end <= parent_base.checked_add(length)?)
+                .then(|| child_base + (address - parent_base))
+        })?;
+    }
+    Some(address)
+}
+
 /// Iterator over a node's `reg` entries translated to CPU physical addresses;
 /// entries that cannot be translated are skipped.
 pub struct Regions<'a, 'i: 'a, 'dt: 'i> {

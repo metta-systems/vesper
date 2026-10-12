@@ -978,7 +978,10 @@ name = "mailbox-impl"
 version = "0.0.1"
 dependencies = [
  "mailbox",
+ "tock-registers",
+ "vesper-address",
  "vesper-device-driver",
+ "vesper-mmio",
  "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",
