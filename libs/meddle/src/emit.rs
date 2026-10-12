@@ -431,7 +431,7 @@ impl Emitter<'_, '_> {
         let module = ident(&interface.name.text);
         let interface_crate = ident(interface_crate);
         let has_exceptions = !interface.exceptions.is_empty();
-        let mut reexports: Vec<Ident> = vec![ident("TYPE_CODE")];
+        let mut reexports: Vec<Ident> = vec![ident("TYPE_CODE"), ident("DATA_BYTES")];
         reexports.extend(
             interface
                 .types
@@ -473,7 +473,11 @@ impl Emitter<'_, '_> {
                 /// binding was not granted to it.
                 #[derive(Default)]
                 #[allow(clippy::struct_field_names)]
-                pub struct Bindings { #( #binding_fields )* }
+                pub struct Bindings {
+                    #( #binding_fields )*
+                    /// The data area shared with the exporter, if the interface has one.
+                    pub data_area: Option<#runtime::DataArea>,
+                }
 
                 impl Bindings {
                     /// The bindings `imports` grant for this interface
@@ -481,6 +485,9 @@ impl Emitter<'_, '_> {
                     pub fn from_imports(imports: &[#runtime::ImportRecord]) -> Self {
                         let mut bindings = Self::default();
                         for record in imports.iter().filter(|record| record.type_code == TYPE_CODE) {
+                            if record.area_len != 0 {
+                                bindings.data_area = record.data_area();
+                            }
                             match record.function {
                                 #( #assignments )*
                                 _ => {}
@@ -520,6 +527,12 @@ impl Emitter<'_, '_> {
                     /// stacks `stacks` proves are the calling Thread's alone.
                     pub const fn new(bindings: Bindings, stacks: #runtime::ExclusiveStacks) -> Self {
                         Self { bindings, stacks }
+                    }
+
+                    /// The data area shared with the exporter, if the interface has
+                    /// one: references passed to its functions point into it.
+                    pub const fn data_area(&self) -> Option<#runtime::DataArea> {
+                        self.bindings.data_area
                     }
 
                     #( #functions )*
@@ -615,6 +628,7 @@ pub fn interface_module(checked: &Checked<'_>, source_name: &str) -> String {
     let type_code: TokenStream = format!("0x{:016x}", checked.type_code())
         .parse()
         .unwrap_or_else(|_| quote!(0));
+    let data_bytes = Literal::u64_unsuffixed(checked.data_bytes());
     let types = emitter.type_definitions();
     let exceptions = emitter.exceptions();
     let component_trait = emitter.component_trait();
@@ -630,6 +644,10 @@ pub fn interface_module(checked: &Checked<'_>, source_name: &str) -> String {
 
                 /// Fingerprint of this interface version.
                 pub const TYPE_CODE: u64 = #type_code;
+
+                /// Bytes of the data area each client shares with the exporter
+                /// (zero: the interface passes no references).
+                pub const DATA_BYTES: u64 = #data_bytes;
 
                 #types
                 #exceptions

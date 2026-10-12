@@ -80,6 +80,15 @@ macro_rules! driver_threads {
     };
 }
 
+/// The 2 MiB span where Kickstart maps the data areas shared between clients
+/// and exporters (`DriverInit::areas`, `ImportRecord::area_base`): its L3 table
+/// is installed in every participant. Each pair's area has one address, the
+/// same in both.
+pub const DATA_WINDOW_VA: u64 = 0x3a00_0000;
+
+/// Most data areas an exporting driver serves: one per client instance.
+pub const MAX_AREAS: usize = 8;
+
 /// Where the init page is mapped, read-only, in every driver.
 pub const INIT_VA: u64 = 0x2000_0000;
 /// The 2 MiB span holding the driver's guarded stack.
@@ -138,6 +147,23 @@ pub struct Interrupt {
     pub line: u64,
 }
 
+/// The data area an exporting driver shares with one client instance, and the
+/// stack that client's calls run on. A call enters the exporter with its stack
+/// pointer inside the stack of the client's own Invocation, which the kernel
+/// enforces, so the exporter tells its callers apart by [`calling_area`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExportedArea {
+    /// Bottom of the target stack reserved for the client
+    pub stack_bottom: u64,
+    /// End (initial stack pointer) of that stack
+    pub stack_end: u64,
+    /// Base of the data area, at the same address in the client
+    pub base: u64,
+    /// Bytes of the data area
+    pub len: u64,
+}
+
 /// The init page's record.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -176,6 +202,9 @@ pub struct DriverInit {
     pub pages: [DevicePage; MAX_DEVICE_PAGES],
     pub interrupts: [Interrupt; MAX_INTERRUPTS],
     pub import_count: u64,
+    /// Data areas shared with the clients that call this driver's exports
+    pub area_count: u64,
+    pub areas: [ExportedArea; MAX_AREAS],
     /// The functions of other components the driver imports (its
     /// `interfaces/imports.if`), each linked through its device tree node
     pub imports: [ImportRecord; MAX_IMPORTS],
@@ -213,11 +242,20 @@ impl DriverInit {
             line: 0,
         }; MAX_INTERRUPTS],
         import_count: 0,
+        area_count: 0,
+        areas: [ExportedArea {
+            stack_bottom: 0,
+            stack_end: 0,
+            base: 0,
+            len: 0,
+        }; MAX_AREAS],
         imports: [ImportRecord {
             type_code: 0,
             function: 0,
             invocation: 0,
             stack_end: 0,
+            area_base: 0,
+            area_len: 0,
         }; MAX_IMPORTS],
     };
 
@@ -229,6 +267,20 @@ impl DriverInit {
     /// The node's register pages, by address.
     pub fn pages(&self) -> &[DevicePage] {
         &self.pages[..clamp(self.page_count, MAX_DEVICE_PAGES)]
+    }
+
+    /// The data areas shared with the driver's clients.
+    pub fn areas(&self) -> &[ExportedArea] {
+        &self.areas[..clamp(self.area_count, MAX_AREAS)]
+    }
+
+    /// The data area of the client whose call runs with stack pointer
+    /// `stack_pointer`, if it has one.
+    pub fn area_for_stack(&self, stack_pointer: u64) -> Option<ExportedArea> {
+        self.areas()
+            .iter()
+            .find(|area| area.stack_bottom < stack_pointer && stack_pointer <= area.stack_end)
+            .copied()
     }
 
     /// The functions of other components the driver imports.
@@ -320,4 +372,23 @@ pub fn device_address(init: &DriverInit, paddr: u64) -> Option<u64> {
         .iter()
         .position(|candidate| candidate.paddr == page)
         .map(|index| device_page_va(index) + (paddr & 0xfff))
+}
+
+/// The data area of the client whose call this Thread is serving, found by
+/// the stack it runs on (see [`ExportedArea`]).
+///
+/// Call it from an exported function's body, which runs on the caller's
+/// stack.
+#[cfg(target_arch = "aarch64")]
+pub fn calling_area(init: &DriverInit) -> Option<ExportedArea> {
+    let stack_pointer: u64;
+    // SAFETY: reading `sp` has no side effects.
+    unsafe {
+        core::arch::asm!(
+            "mov {}, sp",
+            out(reg) stack_pointer,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    init.area_for_stack(stack_pointer)
 }

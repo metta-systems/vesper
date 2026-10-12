@@ -54,9 +54,9 @@ use {
         loader::{StackRegion, UserStack, update_init, write_init},
     },
     libdevice_driver::{
-        DEVICE_WINDOW_VA, DevicePage, DriverInit, INIT_VA, Interrupt, MAX_DEVICE_PAGES,
-        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, NO_BUS_ADDRESS, PAGE_FRAME,
-        PAGE_UNTYPED, Region, STACK_REGION,
+        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DriverInit, ExportedArea, INIT_VA, Interrupt,
+        MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS,
+        NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, STACK_REGION,
     },
     libdevicetree::{
         DevTreeIndex, Node, dma_address,
@@ -66,8 +66,8 @@ use {
     libimage::DriverImage,
     libmeddle_runtime::ImportRecord,
     libobject::{
-        CapError, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights,
-        TimeKey, UntypedKey,
+        CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType, RawKey,
+        Rights, TimeKey, UntypedKey,
         address_space::AddressSpaceKey,
         irq::MAX_ISSUE_CELLS,
         scheduler::{SchedulerKey, ThreadStart},
@@ -437,6 +437,51 @@ impl core::fmt::Display for Links {
     }
 }
 
+/// Bytes of the window data areas are mapped in: one 2 MiB span.
+const DATA_WINDOW_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Map the `bytes` data area at `base` read/write in both `participants`,
+/// from Frames carved from the boot Untyped. The first participant maps the
+/// Frames themselves, the second a copy of each (a Frame capability tracks one
+/// mapping); Kickstart keeps the capabilities, so neither participant can
+/// unmap the area.
+fn share_data_area(
+    builder: &Builder<'_>,
+    self_table: &KeyTableKey,
+    slots: &mut SlotCursor,
+    base: u64,
+    bytes: u64,
+    participants: [&Component; 2],
+) {
+    let pages = u32::try_from(bytes / PAGE).expect("a data area of a few pages");
+    let first = slots.take(pages);
+    let frames = builder.retype_frames(first, pages);
+    let rights = Rights(Rights::READ | Rights::WRITE);
+    let [first_participant, second_participant] = participants;
+    Builder::map_frames(
+        first,
+        frames.incarnation(),
+        pages,
+        first_participant.address_space_key,
+        base,
+        rights,
+    );
+    for page in 0..pages {
+        let original = boot_key(first + page, frames.incarnation());
+        let copy = self_table
+            .copy_derive(original, builder.self_table, slots.take(1), rights)
+            .unwrap_or_else(|error| panic!("🥾 data area Frame copy failed: {:?}", error.code()));
+        FrameKey::from_key(copy)
+            .map(
+                second_participant.address_space_key,
+                base + u64::from(page) * PAGE,
+                rights,
+                0,
+            )
+            .unwrap_or_else(|error| panic!("🥾 data area Frame.Map failed: {:?}", error.code()));
+    }
+}
+
 /// Pages of each target stack an exporting driver reserves for one client.
 const EXPORT_STACK_PAGES: u32 = 4;
 
@@ -793,6 +838,12 @@ pub fn load_drivers(
     let tree = device_tree::at_el1().index();
     // Target stack each (client, exporter) pair calls on, by instance index.
     let mut call_stacks = [[None::<UserStack>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
+    // The data area of each pair whose interface has one, as `(base, len)`,
+    // the next free address of the window they share, and which instances
+    // already have its page table installed.
+    let mut call_areas = [[None::<(u64, u64)>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
+    let mut data_cursor = DATA_WINDOW_VA;
+    let mut window_installed = [false; MAX_DRIVER_INSTANCES];
     for client in 0..count {
         let Some(client_instance) = prepared[client].as_ref().map(|loaded| loaded.instance) else {
             continue;
@@ -837,6 +888,61 @@ pub fn load_drivers(
                     stack
                 }
             };
+            let area = if import.data_bytes == 0 {
+                None
+            } else if let Some(area) = call_areas[client][exporter] {
+                Some(area)
+            } else {
+                let bytes = import.data_bytes;
+                let base = data_cursor;
+                data_cursor += bytes;
+                assert!(
+                    data_cursor <= DATA_WINDOW_VA + DATA_WINDOW_BYTES,
+                    "🥾 the data window is full"
+                );
+                let calling = prepared[client].as_ref().expect("a loaded client");
+                let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
+                for (index, component) in [
+                    (exporter, &exporting.component),
+                    (client, &calling.component),
+                ] {
+                    if !window_installed[index] {
+                        Builder::map_table(
+                            builder.carve_tables(slots.take(1), 1),
+                            component.l2,
+                            DATA_WINDOW_VA,
+                        );
+                        window_installed[index] = true;
+                    }
+                }
+                share_data_area(
+                    builder,
+                    &self_table,
+                    slots,
+                    base,
+                    bytes,
+                    [&exporting.component, &calling.component],
+                );
+                update_init(exporting.init_page, |init: &mut DriverInit| {
+                    let index = usize::try_from(init.area_count).unwrap_or(MAX_AREAS);
+                    let record = init.areas.get_mut(index).unwrap_or_else(|| {
+                        panic!(
+                            "🥾 driver {} serves more than {MAX_AREAS} data areas",
+                            exporting.instance.driver.component.name
+                        )
+                    });
+                    *record = ExportedArea {
+                        stack_bottom: stack.bottom,
+                        stack_end: stack.top,
+                        base,
+                        len: bytes,
+                    };
+                    init.area_count += 1;
+                });
+                call_areas[client][exporter] = Some((base, bytes));
+                Some((base, bytes))
+            };
+            let (area_base, area_len) = area.unwrap_or((0, 0));
             let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
             let exporter_space = AddressSpaceKey::from_key(exporting.component.address_space_key);
             let entry = exporting
@@ -882,6 +988,8 @@ pub fn load_drivers(
                     function: import.function,
                     invocation: invocation.to_wire(),
                     stack_end: stack.top,
+                    area_base,
+                    area_len,
                 };
                 init.import_count += 1;
             });

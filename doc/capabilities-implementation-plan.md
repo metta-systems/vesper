@@ -150,11 +150,13 @@ Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
 
 Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts), [Frame cache maintenance](capabilities-contract.md#mapping-and-sharing).
 
-- [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`): the typed functions are served; `property` answers `firmware_error`.
-  - [ ] xbuf data areas created by the import wiring for interfaces that pass references: size declared in the interface file, same address in client and exporter, request-completion EventCounts; `property` over it, refusing tags that hand over the system (code execution, `VideoCore` memory allocation and locking). Per-client policy waits on caller identity through Invocation badges (Phase 6, Invocation distribution).
-  - [ ] Clients: `fb` and `power` components importing `mailbox_v1 via firmware, mboxes` (`mailbox-test`'s client on the power node checks the typed functions against QEMU's firmware today; `set_power_state` is not exercised yet).
+- [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`): the typed functions and `property` over the client's data area are served.
+  - [ ] Per-client policy on `property` and the typed setters: the whitelist is the same for every client today; per-client rules wait on caller identity through Invocation badges (Phase 6, Invocation distribution), which would also replace identifying the caller by its exporter stack.
+  - [ ] Grow the `property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
+  - [ ] Clients: `fb` and `power` components importing `mailbox_v1 via firmware, mboxes` (`mailbox-test`'s client on the power node checks the typed functions and `property` against QEMU's firmware today; `set_power_state` is not exercised yet).
   - [ ] Remove the kernel-era mailbox, power, framebuffer and `VideoCore` code from `libs/platform` once the components serve its users.
 - [ ] Load `[[component]]` entries (components without a device node) in Kickstart with their imports, once components other than drivers need it; only test builders load them today.
+- [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (`property` runs to completion on the caller's Thread today).
 
 ## Phase 7 — Time and userspace scheduling
 

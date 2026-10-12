@@ -1019,6 +1019,7 @@ version = "0.0.1"
 dependencies = [
  "driver-protocol",
  "mailbox-client",
+ "mailbox-impl",
  "vesper-device-driver",
  "vesper-meddle-runtime",
  "vesper-objects",

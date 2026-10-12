@@ -13,7 +13,8 @@
 //! ```text
 //! file      = { interface | uses } ;
 //! interface = { doc } [ "local" ] "interface" name "{" { member } "}" ;
-//! member    = { doc } ( alias | enum | record | exception | method ) ;
+//! member    = { doc } ( alias | enum | record | exception | data | method ) ;
+//! data      = "data" number ";" ;
 //! alias     = "type" type name ";" ;
 //! enum      = "enum" name "{" name { "," name } [ "," ] "}" ;
 //! record    = "record" name "{" { field ";" } "}" ;
@@ -29,10 +30,13 @@
 //!
 //! `#` starts a comment, `##` a documentation comment for the item that
 //! follows. Built-in types are `octet`, `card16`, `card32`, `card64`,
-//! `int8`, `int16`, `int32`, `int64` and `boolean`. `T&` is a reference to a
-//! `T` in an xbuf data area, passed as its address and length; it is allowed
-//! only on parameters of `local` interfaces. Interface names carry their
-//! version (`name_vN`): a change that breaks callers makes a new version.
+//! `int8`, `int16`, `int32`, `int64` and `boolean`. `T&` is a reference to
+//! bytes in the interface's data area, passed as its address and length; it
+//! is allowed only on parameters of `local` interfaces, which must declare the
+//! area with `data <bytes>;` (whole pages, at most 64 KiB). Kickstart gives
+//! each client of the interface one such area, mapped at the same address in
+//! the client and its exporter. Interface names carry their version
+//! (`name_vN`): a change that breaks callers makes a new version.
 //!
 //! A call passes at most six argument words and answers with an outcome word
 //! and one more word, so a function returns at most one one-word result and
@@ -256,6 +260,8 @@ pub fn generate_client(path: impl AsRef<Path>, interface_crate: &str) -> Result<
 pub struct InterfaceSummary {
     pub name: String,
     pub type_code: u64,
+    /// Bytes of the data area each client shares with the exporter (zero: none)
+    pub data_bytes: u64,
     /// The interface's functions, in declaration order: a function's
     /// position is its index in import records
     pub functions: Vec<String>,
@@ -286,6 +292,7 @@ pub fn summarize_interface(path: impl AsRef<Path>) -> Result<InterfaceSummary, F
     SourceFile::read(path)?.with_checked(|checked| InterfaceSummary {
         name: checked.interface().name.text.clone(),
         type_code: checked.type_code(),
+        data_bytes: checked.data_bytes(),
         functions: checked
             .interface()
             .methods

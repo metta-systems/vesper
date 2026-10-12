@@ -177,20 +177,72 @@ mod tests {
     #[test]
     fn references_are_local_parameters_only() {
         assert_reports(
-            "interface a_v1 { f(octet& data); }",
+            "interface a_v1 { f(octet& buffer); }",
             "need a `local` interface",
         );
         assert_reports(
-            "local interface a_v1 { record r { octet& data; } }",
+            "local interface a_v1 { data 4096; record r { octet& buffer; } }",
             "only on function parameters",
         );
         assert_reports(
-            "local interface a_v1 { f() returns (octet& data); }",
+            "local interface a_v1 { data 4096; f() returns (octet& buffer); }",
             "only on function parameters",
         );
-        assert!(check_messages("local interface a_v1 { f(octet& data); }").is_empty());
+        assert!(check_messages("local interface a_v1 { data 4096; f(octet& buffer); }").is_empty());
     }
 
+    #[test]
+    fn data_areas_go_with_references() {
+        assert_reports(
+            "local interface a_v1 { f(octet& buffer); }",
+            "need a `data <bytes>;` area",
+        );
+        assert_reports(
+            "local interface a_v1 { data 4096; f(card32 value); }",
+            "no function takes a reference",
+        );
+        assert_reports(
+            "local interface a_v1 { data 0; f(octet& buffer); }",
+            "at least one page",
+        );
+        assert_reports(
+            "local interface a_v1 { data 100; f(octet& buffer); }",
+            "whole 4096-byte pages",
+        );
+        assert_reports(
+            "local interface a_v1 { data 131072; f(octet& buffer); }",
+            "at most 65536 bytes",
+        );
+        assert!(
+            check_messages("local interface a_v1 { data 65536; f(octet& buffer); }").is_empty()
+        );
+    }
+
+    #[test]
+    fn data_area_size_is_part_of_the_type_code_and_the_generated_api() {
+        let one_page = type_code("local interface a_v1 { data 4096; f(octet& buffer); }");
+        let two_pages = type_code("local interface a_v1 { data 8192; f(octet& buffer); }");
+        assert_ne!(one_page, two_pages);
+
+        let (interface_module, client_module) = with_checked(
+            "local interface a_v1 { data 8192; f(octet& buffer); }",
+            |checked| {
+                (
+                    emit::interface_module(checked, "a_v1.if"),
+                    emit::client_module(checked, "a_v1.if", "a"),
+                )
+            },
+        );
+        assert!(interface_module.contains("pub const DATA_BYTES: u64 = 8192;"));
+        assert!(client_module.contains("pub data_area: Option<__runtime::DataArea>"));
+        assert!(client_module.contains("pub const fn data_area(&self)"));
+        let mailbox = libmeddle::summarize_interface(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../drivers/mailbox/interfaces/mailbox_v1.if"
+        ))
+        .expect("mailbox_v1 summary");
+        assert_eq!(mailbox.data_bytes, 4096);
+    }
     #[test]
     fn calls_fit_the_register_budget() {
         assert!(
@@ -205,7 +257,7 @@ mod tests {
         );
         // A reference takes two words.
         assert_reports(
-            "local interface a_v1 { f(octet& a, octet& b, octet& c, card32 d); }",
+            "local interface a_v1 { data 4096; f(octet& a, octet& b, octet& c, card32 d); }",
             "takes 7 argument words",
         );
         assert_reports(

@@ -30,6 +30,8 @@ pub enum Token<'source> {
     Returns,
     #[token("raises")]
     Raises,
+    #[token("data")]
+    Data,
     #[token("via")]
     Via,
     #[token("uses")]
@@ -37,6 +39,9 @@ pub enum Token<'source> {
 
     #[regex(r#""[^"\n]*""#, |lexer| lexer.slice().trim_matches('"'))]
     Text(&'source str),
+
+    #[regex(r"[0-9]+", |lexer| lexer.slice().parse::<u64>().ok())]
+    Number(u64),
 
     #[regex(r"[A-Za-z][A-Za-z0-9_]*")]
     Identifier(&'source str),
@@ -72,6 +77,8 @@ impl fmt::Display for Token<'_> {
             Self::Raises => "`raises`",
             Self::Uses => "`uses`",
             Self::Via => "`via`",
+            Self::Data => "`data`",
+            Self::Number(number) => return write!(formatter, "{number}"),
             Self::Identifier(name) => return write!(formatter, "`{name}`"),
             Self::Text(text) => return write!(formatter, "\"{text}\""),
             Self::LeftBrace => "`{`",

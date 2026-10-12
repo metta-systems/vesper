@@ -7,6 +7,9 @@
 ## make; `property` passes a raw tag buffer for everything else.
 local interface mailbox_v1
 {
+    ## Each client shares one page with the component for property buffers.
+    data 4096;
+
     ## A firmware clock.
     enum clock {
         emmc, uart, arm, core, v3d, h264, isp, sdram, pixel, pwm, hevc, emmc2, m2mc, pixel_bvb
@@ -23,7 +26,8 @@ local interface mailbox_v1
     ## Another request is in flight on the mailbox.
     exception busy {}
 
-    ## The tag buffer asks for something this client may not do.
+    ## The tag buffer lies outside the client's data area, is not a well-formed
+    ## request, or asks for something clients may not do.
     exception not_permitted {}
 
     ## The board revision code.
@@ -51,7 +55,7 @@ local interface mailbox_v1
         returns (boolean is_on)
         raises (firmware_error, busy);
 
-    ## Send the property tag buffer in `tags`, an xbuf record holding a complete
+    ## Send the property tag buffer in `tags`, bytes of the data area holding a complete
     ## request; the firmware's response replaces it in place.
     property(octet& tags)
         raises (firmware_error, busy, not_permitted);

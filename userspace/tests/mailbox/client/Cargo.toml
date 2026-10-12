@@ -26,6 +26,7 @@ libobject = { workspace = true }
 libprint = { workspace = true }
 libuser = { workspace = true }
 mailbox-client = { workspace = true }
+mailbox-impl = { path = "../../../../drivers/mailbox" }
 
 [[bin]]
 name = "mailbox-test-client"

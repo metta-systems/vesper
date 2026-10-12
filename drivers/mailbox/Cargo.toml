@@ -15,6 +15,8 @@ version = { workspace = true }
 publish = false
 
 [features]
+# Opt in to standard host integration tests of the property buffer checks.
+host-tests = []
 default = []
 qemu = ["libuser/qemu"]
 
@@ -30,6 +32,14 @@ libobject = { workspace = true }
 libprint = { workspace = true }
 libuser = { workspace = true }
 tock-registers = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "tags"
+required-features = ["host-tests"]
 
 [[bin]]
 name = "mailbox"

@@ -40,6 +40,8 @@ pub struct Interface {
     pub name: Name,
     pub types: Vec<TypeDefinition>,
     pub exceptions: Vec<Exception>,
+    /// The shared data area its functions pass references into
+    pub data: Option<DataDeclaration>,
     pub methods: Vec<Method>,
 }
 
@@ -93,4 +95,12 @@ pub struct Method {
     pub parameters: Vec<Field>,
     pub results: Vec<Field>,
     pub raises: Vec<Name>,
+}
+
+/// `data <bytes>;`: the size of the data area each client of the interface
+/// shares with its exporter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataDeclaration {
+    pub bytes: u64,
+    pub span: Span,
 }

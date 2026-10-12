@@ -41,6 +41,7 @@ use {
         keys::{SlotCursor, boot_key},
         paging::image_table_count,
     },
+    libdevice_driver::DATA_WINDOW_VA,
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
@@ -82,7 +83,7 @@ pub fn run() -> ! {
         // builder and one per driver instance
         address_spaces: 1 + INSTANCES,
         // builder: root/L1/L2 and image L3s; each driver: root/L1/L2, image
-        // span, stack region, init page, device window
+        // span, stack region, init page, device window, data window
         page_tables: 3 + image_tables + INSTANCES * 8,
         asid_pools: 1,
     });
@@ -167,18 +168,28 @@ pub fn run() -> ! {
                     "the mailbox register page and how it is handed over"
                 );
                 assert!(init.imports().is_empty());
+                // One client calls it, so it serves one data area, at the start of
+                // the window, one page.
+                let areas = init.areas();
+                assert_eq!(areas.len(), 1, "one client, one data area");
+                assert_eq!((areas[0].base, areas[0].len), (DATA_WINDOW_VA, 4096));
+                assert!(areas[0].stack_bottom < areas[0].stack_end);
                 seen_mailbox = true;
             } else {
                 // The power node has no registers; its import reaches the
                 // mailbox through the firmware node.
                 assert!(init.pages().is_empty());
                 let imports = init.imports();
-                assert_eq!(imports.len(), 4, "the client imports four functions");
+                assert_eq!(imports.len(), 5, "the client imports five functions");
                 assert!(imports.iter().all(|record| record.type_code == MAILBOX_V1));
-                let functions: [u64; 4] = core::array::from_fn(|index| imports[index].function);
+                // The same area, at the same address, in the client.
+                assert!(imports.iter().all(
+                        |record| (record.area_base, record.area_len) == (DATA_WINDOW_VA, 4096)
+                    ));
+                let functions: [u64; 5] = core::array::from_fn(|index| imports[index].function);
                 assert_eq!(
                     functions,
-                    [0, 1, 2, 3],
+                    [0, 1, 2, 3, 5],
                     "declaration indices of the imported functions"
                 );
                 // The report key, in the client's table only.

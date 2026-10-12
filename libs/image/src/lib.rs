@@ -137,6 +137,9 @@ pub struct Import {
     /// The device tree properties leading from the client's node to the
     /// exporting instance's node, each holding the next node's phandle
     pub links: &'static [&'static str],
+    /// Bytes of the data area the interface shares between a client and its
+    /// exporter (zero: none)
+    pub data_bytes: u64,
     /// The exporter's export name for the function
     pub export: &'static str,
 }

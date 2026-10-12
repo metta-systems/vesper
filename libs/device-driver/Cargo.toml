@@ -13,6 +13,10 @@ readme = { workspace = true }
 repository = { workspace = true }
 version = { workspace = true }
 
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
 [dependencies]
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
@@ -21,6 +25,10 @@ libobject = { workspace = true }
 # Shared by EL0 drivers and Kickstart; no test harness on the target.
 test = false
 harness = false
+
+[[test]]
+name = "areas"
+required-features = ["host-tests"]
 
 [lints]
 workspace = true

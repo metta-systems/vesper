@@ -3,8 +3,8 @@
 use {
     crate::{
         ast::{
-            Exception, Field, File, Interface, Method, Name, TypeDefinition, TypeKind,
-            TypeReference, Uses,
+            DataDeclaration, Exception, Field, File, Interface, Method, Name, TypeDefinition,
+            TypeKind, TypeReference, Uses,
         },
         diagnostic::Diagnostic,
         lexer::Token,
@@ -24,6 +24,7 @@ enum Member {
     Type(TypeDefinition),
     Exception(Exception),
     Method(Method),
+    Data(DataDeclaration),
     /// A member that did not parse; its error is already reported.
     Invalid,
 }
@@ -32,6 +33,7 @@ enum Member {
 enum MemberBody {
     Type(Name, TypeKind),
     Exception(Name, Vec<Field>),
+    Data(DataDeclaration),
     Method {
         name: Name,
         parameters: Vec<Field>,
@@ -133,10 +135,23 @@ where
         )
         .then_ignore(just(Token::Semicolon));
 
+    let data = just(Token::Data)
+        .ignore_then(
+            select! { Token::Number(bytes) => bytes }.map_with(|bytes: u64, extra| {
+                let span: SimpleSpan = extra.span();
+                DataDeclaration {
+                    bytes,
+                    span: span.into_range(),
+                }
+            }),
+        )
+        .then_ignore(just(Token::Semicolon));
+
     let member = docs
         .then(choice((
             type_definition.map(|(name, kind)| MemberBody::Type(name, kind)),
             exception.map(|(name, fields)| MemberBody::Exception(name, fields)),
+            data.map(MemberBody::Data),
             method.map(
                 |(((name, parameters), results), raises)| MemberBody::Method {
                     name,
@@ -148,6 +163,7 @@ where
         )))
         .map(|(doc, body)| match body {
             MemberBody::Type(name, kind) => Member::Type(TypeDefinition { doc, name, kind }),
+            MemberBody::Data(declaration) => Member::Data(declaration),
             MemberBody::Exception(name, fields) => {
                 Member::Exception(Exception { doc, name, fields })
             }
@@ -193,6 +209,7 @@ where
                 name,
                 types: Vec::new(),
                 exceptions: Vec::new(),
+                data: None,
                 methods: Vec::new(),
             };
             for member in members {
@@ -200,6 +217,7 @@ where
                     Member::Type(definition) => interface.types.push(definition),
                     Member::Exception(exception) => interface.exceptions.push(exception),
                     Member::Method(method) => interface.methods.push(method),
+                    Member::Data(declaration) => interface.data = Some(declaration),
                     Member::Invalid => {}
                 }
             }

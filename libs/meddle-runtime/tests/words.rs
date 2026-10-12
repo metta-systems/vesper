@@ -4,8 +4,8 @@
 #[cfg(test)]
 mod tests {
     use vesper_meddle_runtime::{
-        ARGUMENT_WORDS, IoRec, OUTCOME_MALFORMED, OUTCOME_OK, Words, exception, malformed, ok,
-        unused_words_are_zero,
+        ARGUMENT_WORDS, DataArea, ImportRecord, IoRec, OUTCOME_MALFORMED, OUTCOME_OK, Words,
+        exception, malformed, ok, unused_words_are_zero,
     };
 
     fn round_trip<T: Words + PartialEq + core::fmt::Debug>(value: &T) {
@@ -76,5 +76,73 @@ mod tests {
         assert!(!unused_words_are_zero(&arguments, 1));
         arguments[5] = 1;
         assert!(!unused_words_are_zero(&arguments, 2));
+    }
+
+    #[test]
+    fn data_area_references_stay_inside_the_area() {
+        let area = DataArea {
+            base: 0x3a00_0000,
+            len: 0x1000,
+        };
+        assert_eq!(
+            area.reference(0x40, 0x100),
+            Some(IoRec {
+                base: 0x3a00_0040,
+                len: 0x100
+            })
+        );
+        assert!(area.reference(0x1000, 0).is_some());
+        assert!(area.reference(0xfff, 2).is_none());
+        assert!(area.reference(u64::MAX, 2).is_none());
+
+        for (base, len, inside) in [
+            (0x3a00_0000, 0x1000, true),
+            (0x3a00_0ff0, 0x10, true),
+            (0x3a00_0ff0, 0x11, false),
+            (0x39ff_fff0, 0x20, false),
+            (u64::MAX - 8, 0x20, false),
+        ] {
+            assert_eq!(
+                area.contains(&IoRec { base, len }),
+                inside,
+                "{base:#x}+{len:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn data_area_words_round_trip_and_respect_bounds() {
+        let mut storage = vec![0_u32; 16];
+        let area = DataArea {
+            base: storage.as_mut_ptr() as u64,
+            len: 64,
+        };
+        assert!(area.write_words(8, &[1, 2, 3]));
+        let mut words = [0; 3];
+        assert!(area.read_words(8, &mut words));
+        assert_eq!(words, [1, 2, 3]);
+        assert_eq!(&storage[2..5], &[1, 2, 3]);
+        // Out of range, misaligned and overflowing accesses are refused.
+        assert!(!area.write_words(60, &[0, 0]));
+        assert!(!area.write_words(2, &[0]));
+        assert!(!area.read_words(u64::MAX - 1, &mut words));
+        assert_eq!(&storage[2..5], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn import_records_carry_their_data_area() {
+        let record = ImportRecord {
+            area_base: 0x3a00_0000,
+            area_len: 0x1000,
+            ..ImportRecord::default()
+        };
+        assert_eq!(
+            record.data_area(),
+            Some(DataArea {
+                base: 0x3a00_0000,
+                len: 0x1000
+            })
+        );
+        assert_eq!(ImportRecord::default().data_area(), None);
     }
 }

@@ -201,6 +201,74 @@ impl Binding {
     }
 }
 
+/// The data area one client shares with one exporter: bytes both map at the
+/// same address, which functions of `local` interfaces point into with
+/// references ([`IoRec`]s). A call runs to completion on the caller's Thread,
+/// so the exporter touches the area only while the client is inside a call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataArea {
+    pub base: u64,
+    pub len: u64,
+}
+
+impl DataArea {
+    /// The reference to `len` bytes at `offset` in the area, if they lie
+    /// inside it.
+    pub fn reference(&self, offset: u64, len: u64) -> Option<IoRec> {
+        let end = offset.checked_add(len)?;
+        (end <= self.len).then(|| IoRec {
+            base: self.base + offset,
+            len,
+        })
+    }
+
+    /// Whether `reference` lies entirely inside the area.
+    pub fn contains(&self, reference: &IoRec) -> bool {
+        let Some(end) = reference.base.checked_add(reference.len) else {
+            return false;
+        };
+        reference.base >= self.base && end <= self.base.saturating_add(self.len)
+    }
+
+    /// Write `words` at byte `offset` (a multiple of 4 inside the area).
+    pub fn write_words(&self, offset: u64, words: &[u32]) -> bool {
+        let Some(span) = self.word_span(offset, words.len()) else {
+            return false;
+        };
+        for (index, &word) in words.iter().enumerate() {
+            // SAFETY: `word_span` checked that the words lie inside the area,
+            // which Kickstart maps read/write for the component's lifetime.
+            // The access is volatile because the exporter changes the area
+            // during calls.
+            unsafe {
+                span.add(index).write_volatile(word);
+            }
+        }
+        true
+    }
+
+    /// Read `words.len()` words from byte `offset` (a multiple of 4 inside
+    /// the area).
+    pub fn read_words(&self, offset: u64, words: &mut [u32]) -> bool {
+        let Some(span) = self.word_span(offset, words.len()) else {
+            return false;
+        };
+        for (index, word) in words.iter_mut().enumerate() {
+            // SAFETY: as in `write_words`.
+            *word = unsafe { span.add(index).read_volatile() };
+        }
+        true
+    }
+
+    /// Address of `count` words at `offset`, if aligned and inside the area.
+    fn word_span(&self, offset: u64, count: usize) -> Option<*mut u32> {
+        let bytes = u64::try_from(count).ok()?.checked_mul(4)?;
+        let end = offset.checked_add(bytes)?;
+        (offset.is_multiple_of(4) && self.base.is_multiple_of(4) && end <= self.len)
+            .then(|| (self.base + offset) as *mut u32)
+    }
+}
+
 /// One function granted to a client: what Kickstart writes into the client's
 /// init record for every function its `imports.if` uses.
 #[repr(C)]
@@ -214,9 +282,25 @@ pub struct ImportRecord {
     pub invocation: u64,
     /// End of the target stack reserved for this client's calls
     pub stack_end: u64,
+    /// Base of the data area shared with the exporter (zero: none)
+    pub area_base: u64,
+    /// Bytes of the data area
+    pub area_len: u64,
 }
 
 impl ImportRecord {
+    /// The data area this record grants, if the interface has one.
+    pub const fn data_area(&self) -> Option<DataArea> {
+        if self.area_len == 0 {
+            None
+        } else {
+            Some(DataArea {
+                base: self.area_base,
+                len: self.area_len,
+            })
+        }
+    }
+
     /// The binding this record grants.
     pub const fn binding(&self) -> Binding {
         Binding::new(

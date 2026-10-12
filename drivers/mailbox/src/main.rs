@@ -20,27 +20,21 @@
 //! the property channel, waits on `replies` for its answer, invalidates the
 //! page, reads the answer, and advances `turns` for the next caller.
 //!
-//! `property` (raw tag buffers in a shared data area) is not served yet: it
-//! answers `firmware_error` with code [`NOT_SERVED`].
+//! The typed functions build their buffers themselves. `property` takes a
+//! reference into the data area the caller shares with the component: the
+//! component finds the caller's area from the stack the call runs on (see
+//! `libdevice_driver::calling_area`), copies the buffer into the bounce page,
+//! checks the copy (`mailbox_impl::check_request`: only allowed tags), and
+//! copies the firmware's answer back to the area.
 
-use mailbox::mailbox_v1::{__runtime::IoRec, Clock, Device, Exception, MailboxV1};
+use {
+    mailbox::mailbox_v1::{__runtime::IoRec, Clock, Device, Exception, MailboxV1},
+    mailbox_impl::tag,
+};
 
-/// `firmware_error` code of a function not served yet.
+/// `firmware_error` code of a request that cannot run (non-Vesper builds).
+#[cfg(not(target_os = "vesper"))]
 const NOT_SERVED: u32 = u32::MAX;
-
-/// Property tags of the typed functions.
-mod tag {
-    pub const GET_BOARD_REVISION: u32 = 0x0001_0002;
-    pub const GET_BOARD_SERIAL: u32 = 0x0001_0004;
-    pub const GET_POWER_STATE: u32 = 0x0002_0001;
-    pub const SET_POWER_STATE: u32 = 0x0002_8001;
-    pub const GET_CLOCK_RATE: u32 = 0x0003_0002;
-}
-
-/// Power state bits: the device is on; it does not exist (in answers) or the
-/// firmware should wait for it to settle (in requests).
-const POWER_ON: u32 = 1 << 0;
-const POWER_MISSING_OR_WAIT: u32 = 1 << 1;
 
 /// The firmware's id of a clock: its position in `mailbox_v1.clock`, from 1.
 fn clock_id(clock: Clock) -> u32 {
@@ -55,6 +49,11 @@ fn device_id(device: Device) -> u32 {
     mailbox::mailbox_v1::__runtime::Words::store(&device, &mut words);
     u32::try_from(words[0]).unwrap_or(u32::MAX)
 }
+
+/// Power state bits: the device is on; it does not exist (in answers) or the
+/// firmware should wait for it to settle (in requests).
+const POWER_ON: u32 = 1 << 0;
+const POWER_MISSING_OR_WAIT: u32 = 1 << 1;
 
 /// A power state answer: whether the device is on, unless it does not exist.
 fn power_state(state: u32) -> Result<bool, Exception> {
@@ -97,18 +96,18 @@ impl MailboxV1 for VideoCoreMailbox {
             .and_then(|values| power_state(values[1]))
     }
 
-    fn property(_tags: IoRec) -> Result<(), Exception> {
-        Err(Exception::FirmwareError { code: NOT_SERVED })
+    fn property(tags: IoRec) -> Result<(), Exception> {
+        property(tags)
     }
 }
 
 mailbox::mailbox_v1_export!(VideoCoreMailbox);
 
-/// Most value words of one tag.
+/// Most value words of one typed tag.
 const MAX_VALUE_WORDS: usize = 4;
 
-/// One property request with tag `tag` and value words `request`, answered
-/// with `answer_words` value words.
+/// One typed request with tag `tag` and value words `request`, answered with
+/// `answer_words` value words.
 #[cfg(target_os = "vesper")]
 fn call(
     tag: u32,
@@ -116,6 +115,11 @@ fn call(
     answer_words: usize,
 ) -> Result<[u32; MAX_VALUE_WORDS], Exception> {
     component::call(tag, request, answer_words)
+}
+
+#[cfg(target_os = "vesper")]
+fn property(tags: IoRec) -> Result<(), Exception> {
+    component::property(tags)
 }
 
 #[cfg(not(target_os = "vesper"))]
@@ -127,15 +131,20 @@ fn call(
     Err(Exception::FirmwareError { code: NOT_SERVED })
 }
 
+#[cfg(not(target_os = "vesper"))]
+fn property(_tags: IoRec) -> Result<(), Exception> {
+    Err(Exception::FirmwareError { code: NOT_SERVED })
+}
+
 #[cfg(target_os = "vesper")]
 mod component {
     use {
-        super::{Exception, MAX_VALUE_WORDS},
+        super::{Exception, IoRec, MAX_VALUE_WORDS},
         core::sync::atomic::{AtomicU64, Ordering},
         libaddress::{Address, Virtual},
         libdevice_driver::{
-            DEVICE_WINDOW_VA, INIT_VA, NO_BUS_ADDRESS, device_address, driver_compatible,
-            driver_init, map_device_pages,
+            DEVICE_WINDOW_VA, INIT_VA, NO_BUS_ADDRESS, calling_area, device_address,
+            driver_compatible, driver_init, map_device_pages,
         },
         libmmio::MMIODerefWrapper,
         libobject::{
@@ -143,6 +152,8 @@ mod component {
             RawKey, Rights, UntypedKey, export::init_return_key, thread::ThreadReturnKey,
         },
         libuser::semihosting as semi,
+        mailbox::mailbox_v1::__runtime::DataArea,
+        mailbox_impl::{BUFFER_BYTES, check_request},
         tock_registers::{
             interfaces::{Readable, Writeable},
             register_bitfields, register_structs,
@@ -207,8 +218,11 @@ mod component {
     static BOUNCE_FRAME: AtomicU64 = AtomicU64::new(0);
     /// Requests finished, so ticket `t` may run once `turns >= t - 1`.
     static TURNS: AtomicU64 = AtomicU64::new(0);
-    /// Answers the firmware gave, so ticket `t`'s answer is in at `t`.
+    /// Answers the firmware gave: exchange `n` is answered once `replies >= n`.
     static REPLIES: AtomicU64 = AtomicU64::new(0);
+    /// Requests sent to the firmware, in order; only the holder of the turn
+    /// sends, so the count is the sequence number of its exchange.
+    static EXCHANGES: AtomicU64 = AtomicU64::new(0);
     /// Last ticket taken.
     static TICKETS: AtomicU64 = AtomicU64::new(0);
 
@@ -229,8 +243,68 @@ mod component {
         )));
     }
 
-    /// One property request (see [`super::call`]): the answer's value words,
-    /// or the firmware's error code.
+    /// The one request in flight: while a `Turn` lives, its holder alone uses
+    /// the bounce page and the mailbox. Dropping it lets the next ticket run.
+    struct Turn;
+
+    impl Turn {
+        /// Wait until the mailbox is ready and every earlier request is done.
+        fn take() -> Self {
+            EventCountKey::from_key(RawKey::from_wire(init().event_count))
+                .await_ge(1, EventCountKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!("mailbox: ready wait failed: {:?}", error.code()));
+            let ticket = TICKETS.fetch_add(1, Ordering::AcqRel) + 1;
+            EventCountKey::from_key(key(&TURNS))
+                .await_ge(ticket - 1, EventCountKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!("mailbox: turn wait failed: {:?}", error.code()));
+            Self
+        }
+
+        /// The bounce page, as words.
+        fn buffer() -> *mut u32 {
+            BOUNCE_VA.load(Ordering::Acquire) as *mut u32
+        }
+
+        /// Send the `bytes` of the bounce page to the firmware and wait for
+        /// its answer, which replaces them.
+        #[allow(
+            clippy::unused_self,
+            reason = "the receiver proves the caller holds the turn"
+        )]
+        fn exchange(&self, bytes: usize) {
+            let length = u64::try_from(bytes).unwrap_or(u64::MAX);
+            let frame = FrameKey::from_key(key(&BOUNCE_FRAME));
+            let registers = Registers::new(Address::<Virtual>::new(
+                REGISTERS_VA.load(Ordering::Acquire),
+            ));
+            frame
+                .clean_data(0, length)
+                .unwrap_or_else(|error| panic!("mailbox: CleanData failed: {:?}", error.code()));
+            while registers.STATUS1.is_set(STATUS::FULL) {
+                core::hint::spin_loop();
+            }
+            let bus = u32::try_from(BOUNCE_BUS.load(Ordering::Acquire)).unwrap_or(0);
+            let exchange = EXCHANGES.fetch_add(1, Ordering::AcqRel) + 1;
+            registers.WRITE1.set(bus | PROPERTY_CHANNEL);
+            EventCountKey::from_key(key(&REPLIES))
+                .await_ge(exchange, EventCountKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!("mailbox: reply wait failed: {:?}", error.code()));
+            frame.invalidate_data(0, length).unwrap_or_else(|error| {
+                panic!("mailbox: InvalidateData failed: {:?}", error.code())
+            });
+        }
+    }
+
+    impl Drop for Turn {
+        fn drop(&mut self) {
+            EventCountKey::from_key(key(&TURNS))
+                .advance(1)
+                .unwrap_or_else(|error| panic!("mailbox: turn release failed: {:?}", error.code()));
+        }
+    }
+
+    /// One typed request (see [`super::call`]): the answer's value words, or
+    /// the firmware's error code.
     pub fn call(
         tag: u32,
         request: &[u32],
@@ -239,58 +313,29 @@ mod component {
         let value_words = request.len().max(answer_words).min(MAX_VALUE_WORDS);
         // Size, code, tag, value bytes, tag code, values, end tag.
         let words = 6 + value_words;
-        let bytes = u32::try_from(words * 4).unwrap_or(u32::MAX);
-        EventCountKey::from_key(RawKey::from_wire(init().event_count))
-            .await_ge(1, EventCountKey::WAIT_INFINITE)
-            .unwrap_or_else(|error| panic!("mailbox: ready wait failed: {:?}", error.code()));
-        let turns = EventCountKey::from_key(key(&TURNS));
-        let replies = EventCountKey::from_key(key(&REPLIES));
-        let frame = FrameKey::from_key(key(&BOUNCE_FRAME));
-        let buffer = BOUNCE_VA.load(Ordering::Acquire) as *mut u32;
-        let registers = Registers::new(Address::<Virtual>::new(
-            REGISTERS_VA.load(Ordering::Acquire),
-        ));
-
-        let ticket = TICKETS.fetch_add(1, Ordering::AcqRel) + 1;
-        turns
-            .await_ge(ticket - 1, EventCountKey::WAIT_INFINITE)
-            .unwrap_or_else(|error| panic!("mailbox: turn wait failed: {:?}", error.code()));
-
         let mut message = [0_u32; 6 + MAX_VALUE_WORDS];
-        message[0] = bytes;
+        message[0] = u32::try_from(words * 4).unwrap_or(u32::MAX);
         message[1] = REQUEST;
         message[2] = tag;
         message[3] = u32::try_from(value_words * 4).unwrap_or(0);
         message[4] = 0;
         message[5..5 + request.len()].copy_from_slice(request);
+
+        let turn = Turn::take();
+        let buffer = Turn::buffer();
         for (index, &word) in message[..words].iter().enumerate() {
             // SAFETY: the bounce page is mapped read/write and only the
-            // caller holding the turn touches it.
+            // holder of the turn touches it.
             unsafe {
                 buffer.add(index).write_volatile(word);
             }
         }
-        frame
-            .clean_data(0, u64::from(bytes))
-            .unwrap_or_else(|error| panic!("mailbox: CleanData failed: {:?}", error.code()));
-        while registers.STATUS1.is_set(STATUS::FULL) {
-            core::hint::spin_loop();
-        }
-        let bus = u32::try_from(BOUNCE_BUS.load(Ordering::Acquire)).unwrap_or(0);
-        registers.WRITE1.set(bus | PROPERTY_CHANNEL);
-        replies
-            .await_ge(ticket, EventCountKey::WAIT_INFINITE)
-            .unwrap_or_else(|error| panic!("mailbox: reply wait failed: {:?}", error.code()));
-        frame
-            .invalidate_data(0, u64::from(bytes))
-            .unwrap_or_else(|error| panic!("mailbox: InvalidateData failed: {:?}", error.code()));
+        turn.exchange(words * 4);
         for (index, word) in message[..words].iter_mut().enumerate() {
             // SAFETY: as above; the firmware has answered.
             *word = unsafe { buffer.add(index).read_volatile() };
         }
-        turns
-            .advance(1)
-            .unwrap_or_else(|error| panic!("mailbox: turn release failed: {:?}", error.code()));
+        drop(turn);
 
         if message[1] != ANSWERED {
             return Err(Exception::FirmwareError { code: message[1] });
@@ -301,6 +346,72 @@ mod component {
         let mut values = [0; MAX_VALUE_WORDS];
         values[..value_words].copy_from_slice(&message[5..5 + value_words]);
         Ok(values)
+    }
+
+    /// Words copied at a time between the data area and the bounce page.
+    const COPY_WORDS: usize = 16;
+
+    /// `property`: the caller's tag buffer `tags`, in its data area, goes to
+    /// the firmware if it is a well-formed request of allowed tags; the answer
+    /// replaces it in the area.
+    pub fn property(tags: IoRec) -> Result<(), Exception> {
+        let area = calling_area(init()).ok_or(Exception::NotPermitted)?;
+        let data = DataArea {
+            base: area.base,
+            len: area.len,
+        };
+        let bytes = usize::try_from(tags.len).map_err(|_overflow| Exception::NotPermitted)?;
+        if !data.contains(&tags)
+            || bytes > BUFFER_BYTES
+            || !bytes.is_multiple_of(4)
+            || !tags.base.is_multiple_of(4)
+        {
+            return Err(Exception::NotPermitted);
+        }
+        let offset = tags.base - data.base;
+        let words = bytes / 4;
+
+        let turn = Turn::take();
+        let buffer = Turn::buffer();
+        // Copy the request into the bounce page: it is checked and sent from
+        // there, out of the caller's reach.
+        let mut chunk = [0_u32; COPY_WORDS];
+        for start in (0..words).step_by(COPY_WORDS) {
+            let count = COPY_WORDS.min(words - start);
+            if !data.read_words(offset + start as u64 * 4, &mut chunk[..count]) {
+                return Err(Exception::NotPermitted);
+            }
+            for (index, &word) in chunk[..count].iter().enumerate() {
+                // SAFETY: the bounce page is mapped read/write, `words` fits
+                // it, and only the holder of the turn touches it.
+                unsafe {
+                    buffer.add(start + index).write_volatile(word);
+                }
+            }
+        }
+        // SAFETY: as above; nothing else writes the page until it is sent.
+        let request = unsafe { core::slice::from_raw_parts(buffer, words) };
+        check_request(request).map_err(|_rejected| Exception::NotPermitted)?;
+        turn.exchange(bytes);
+
+        // Copy the answer back, then judge it.
+        for start in (0..words).step_by(COPY_WORDS) {
+            let count = COPY_WORDS.min(words - start);
+            for (index, word) in chunk[..count].iter_mut().enumerate() {
+                // SAFETY: as above; the firmware has answered.
+                *word = unsafe { buffer.add(start + index).read_volatile() };
+            }
+            if !data.write_words(offset + start as u64 * 4, &chunk[..count]) {
+                return Err(Exception::NotPermitted);
+            }
+        }
+        // SAFETY: as above.
+        let code = unsafe { buffer.add(1).read_volatile() };
+        if code == ANSWERED {
+            Ok(())
+        } else {
+            Err(Exception::FirmwareError { code })
+        }
     }
 
     /// Set up the bounce page and the `EventCount`s, then serve the mailbox
@@ -369,8 +480,9 @@ mod component {
             .advance(1)
             .unwrap_or_else(|error| panic!("mailbox: ready advance failed: {:?}", error.code()));
         semi::println!(
-            "mailbox: registers at {:#x}, bounce page at bus address {bus:#x}",
-            init.regions()[0].start
+            "mailbox: registers at {:#x}, bounce page at bus address {bus:#x}, {} data areas",
+            init.regions()[0].start,
+            init.areas().len()
         );
 
         let interrupts = NotificationKey::from_key(RawKey::from_wire(init.notification));

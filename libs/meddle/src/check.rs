@@ -18,6 +18,13 @@ pub const ARGUMENT_WORDS: usize = 6;
 /// Words a call returns besides its outcome: the result or exception field.
 pub const ANSWER_WORDS: usize = 1;
 
+/// Largest data area an interface may declare: it is mapped in both the client
+/// and the exporter for every pair, in a window of 2 MiB.
+pub const MAX_DATA_BYTES: u64 = 64 * 1024;
+
+/// Bytes of a page: data areas are whole pages.
+pub const PAGE_BYTES: u64 = 4096;
+
 /// Longest export name the image builder records.
 pub const EXPORT_NAME_BYTES: usize = 32;
 
@@ -97,6 +104,15 @@ impl<'interface> Checked<'interface> {
         resolve(self.interface, name)
     }
 
+    /// Bytes of the data area each client shares with the exporter; zero when
+    /// the interface passes no references.
+    pub fn data_bytes(&self) -> u64 {
+        self.interface
+            .data
+            .as_ref()
+            .map_or(0, |declaration| declaration.bytes)
+    }
+
     /// Words a value of `ty` takes in a call.
     pub fn words_of(&self, ty: &TypeReference) -> usize {
         if ty.reference {
@@ -166,6 +182,7 @@ pub fn check(interface: &Interface) -> Result<Checked<'_>, Vec<Diagnostic>> {
     pass.unique_names();
     pass.identifiers();
     pass.type_references();
+    pass.data_area();
     let words = pass.word_counts();
     let checked = Checked { interface, words };
     pass.members(&checked);
@@ -507,6 +524,49 @@ impl<'interface> Checker<'interface> {
         }
     }
 
+    /// A `data` declaration and the functions taking references go together:
+    /// a reference names bytes of the data area, which has a declared size.
+    fn data_area(&mut self) {
+        let interface = self.interface;
+        let takes_reference = interface.methods.iter().any(|method| {
+            method
+                .parameters
+                .iter()
+                .any(|parameter| parameter.ty.reference)
+        });
+        match (&interface.data, takes_reference) {
+            (Some(declaration), _) if declaration.bytes == 0 => {
+                self.diagnostics.push(Diagnostic::error(
+                    declaration.span.clone(),
+                    "a data area needs at least one page",
+                ));
+            }
+            (Some(declaration), _)
+                if declaration.bytes % PAGE_BYTES != 0 || declaration.bytes > MAX_DATA_BYTES =>
+            {
+                self.diagnostics.push(Diagnostic::error(
+                    declaration.span.clone(),
+                    format!(
+                        "a data area is whole {PAGE_BYTES}-byte pages, at most {MAX_DATA_BYTES} bytes"
+                    ),
+                ));
+            }
+            (Some(declaration), false) => {
+                self.diagnostics.push(Diagnostic::error(
+                    declaration.span.clone(),
+                    "no function takes a reference (`&`), so the data area is never used",
+                ));
+            }
+            (None, true) => {
+                self.error(
+                    &interface.name,
+                    "functions taking references (`&`) need a `data <bytes>;` area to point into",
+                );
+            }
+            (Some(_), true) | (None, false) => {}
+        }
+    }
+
     /// Register budgets and export names.
     fn members(&mut self, checked: &Checked<'interface>) {
         let interface = self.interface;
@@ -572,6 +632,9 @@ fn fingerprint_text(interface: &Interface) -> String {
 fn write_fingerprint(text: &mut String, interface: &Interface) -> fmt::Result {
     let local = if interface.local { "local " } else { "" };
     write!(text, "{local}interface {}{{", interface.name.text)?;
+    if let Some(declaration) = &interface.data {
+        write!(text, "data {};", declaration.bytes)?;
+    }
     for definition in &interface.types {
         match &definition.kind {
             TypeKind::Alias(target) => {
