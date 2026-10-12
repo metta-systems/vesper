@@ -80,3 +80,25 @@ A PageTable also takes a slot in the kernel PageTable pool. - do we need this po
 ---
 
 Meddler codegen should use minijinja templates instead of manually written code.
+
+---
+
+Not done: capability transfer (2b)
+
+I did not implement it because its schema is unanswered, and I won't guess a kernel ABI. These are the questions, with my recommendation first:
+
+1. How the caller names the keys it passes: a per-function declaration in the .if file, compiled into a key mask when the Invocation is created (recommended), or a flag set at call time.
+2. Where the callee receives them: the kernel picks a free slot in the callee's table and puts its index in the argument word (recommended), or a fixed slot block.
+3. How long they live: borrowed until the call returns, with the kernel deleting the entries afterwards (recommended), or kept.
+4. Rights and kinds: the caller's requested rights intersected with the key's, and only the existing CopyDerive kinds (KeyTable, Frame, DebugConsole).
+5. Return: capabilities in results, now or later. I'd leave it for later.
+
+Once these are settled, fb can Retype the framebuffer's Frames into the client's table using a table key the client passes. That is the last piece before the test shell.
+
+Other things to know
+
+- No hardware check. The video range rule is a heuristic that matches the emulated boards only. The contract says so.
+- Legacy stack still present. pl011_uart, interrupt_controller and drivers.rs in libs/platform stay for now, because chainboot and the device-test console still use them. A plan item records this.
+- Subagents. I started none.
+
+needs input: answer the five capability-transfer questions above (or "all recommended"), and say whether to keep or replace the legacy libs/platform driver stack.

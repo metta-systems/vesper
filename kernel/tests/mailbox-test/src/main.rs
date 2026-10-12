@@ -76,6 +76,14 @@ const MAILBOX_PAGE: (u64, u64) = (0x3f00_b000, libdevice_driver::PAGE_FRAME);
 #[cfg(board_rpi4)]
 const MAILBOX_PAGE: (u64, u64) = (0xfe00_b000, libdevice_driver::PAGE_UNTYPED);
 
+/// The `VideoCore` memory the firmware reports on the emulated boards: from the
+/// top of RAM up to the peripheral window on the Raspberry Pi 3, up to the
+/// first gigabyte on the Raspberry Pi 4.
+#[cfg(board_rpi3)]
+const VIDEO_MEMORY: (u64, u64) = (0x3c00_0000, 0x3f00_0000);
+#[cfg(board_rpi4)]
+const VIDEO_MEMORY: (u64, u64) = (0x3c00_0000, 0x4000_0000);
+
 /// Four words, a place to note the mailbox's data areas in.
 #[derive(Default)]
 struct Vec4([u64; 4]);
@@ -240,6 +248,18 @@ pub fn run() -> ! {
                 };
                 assert_eq!(mailbox_imports, 1);
                 assert_eq!(property.function, 5, "property");
+                // The video memory, in aligned blocks that follow each other
+                // from the top of RAM to the end of the gap.
+                let video = init.video();
+                assert!(!video.is_empty(), "fb holds the video memory");
+                let mut cursor = VIDEO_MEMORY.0;
+                for block in video {
+                    assert_eq!(block.base, cursor, "blocks follow each other");
+                    assert_eq!(block.base % (1 << block.size_bits), 0, "aligned");
+                    assert_ne!(block.key, 0);
+                    cursor = block.end();
+                }
+                assert_eq!(cursor, VIDEO_MEMORY.1, "up to the end of the gap");
                 fb_area = area_of_mailbox_imports;
             } else {
                 // The vcsm node has no registers; its imports reach the

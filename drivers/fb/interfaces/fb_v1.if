@@ -12,6 +12,10 @@ local interface fb_v1
     ## The firmware refused a request; `code` is its response code.
     exception firmware_error { card32 code; }
 
+    ## The framebuffer the firmware allocated is not in the video memory the
+    ## component holds, so it cannot hand it out.
+    exception out_of_video_memory {}
+
     ## No framebuffer has been configured yet.
     exception not_configured {}
 

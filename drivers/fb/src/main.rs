@@ -9,7 +9,9 @@
 //! its import of `mailbox_v1` through the firmware node. Configuring the
 //! display sends two property buffers through the data area the component
 //! shares with the mailbox (see `fb_impl`); the answers are kept for the
-//! getters. Mapping and drawing into the framebuffer is up to a client that
+//! getters, after checking that the framebuffer lies in the `VideoCore` memory
+//! Kickstart handed it (`DriverInit::video`). Mapping and drawing into the
+//! framebuffer is up to a client that
 //! holds the memory.
 
 use fb::fb_v1::{Exception, FbV1, PixelOrder};
@@ -76,10 +78,12 @@ mod component {
         core::sync::atomic::{AtomicU64, Ordering},
         fb::fb_v1::PixelOrder,
         fb_impl::{
-            ATTRIBUTE_WORDS, CONFIGURE_WORDS, attributes_request, configure_request,
+            ATTRIBUTE_WORDS, CONFIGURE_WORDS, attributes_request, configure_request, covered_by,
             physical_address, read_allocation, read_attributes,
         },
-        libdevice_driver::{INIT_VA, NO_BUS_ADDRESS, Turnstile, driver_compatible, driver_init},
+        libdevice_driver::{
+            INIT_VA, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, Turnstile, driver_compatible, driver_init,
+        },
         libmeddle_runtime::ExclusiveStacks,
         libobject::{
             EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
@@ -179,12 +183,19 @@ mod component {
         } else {
             init.memory_bus.saturating_sub(init.memory_paddr)
         };
+        let physical = physical_address(allocation.bus_address, bus_offset);
+        // The memory must be among the blocks of video memory this component
+        // holds, for the Frames handed to a client to come from them.
+        let mut blocks = [(0, 0); MAX_VIDEO_BLOCKS];
+        for (slot, block) in blocks.iter_mut().zip(init.video()) {
+            *slot = (block.base, block.end());
+        }
+        if !covered_by(&blocks, physical, u64::from(allocation.bytes)) {
+            return Err(Exception::OutOfVideoMemory);
+        }
         BYTES.store(u64::from(allocation.bytes), Ordering::Release);
         PIXEL_ORDER.store(u64::from(attributes.pixel_order), Ordering::Release);
-        ADDRESS.store(
-            physical_address(allocation.bus_address, bus_offset),
-            Ordering::Release,
-        );
+        ADDRESS.store(physical, Ordering::Release);
         Ok(attributes.pitch)
     }
 

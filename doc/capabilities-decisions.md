@@ -60,6 +60,16 @@ Unanswered questions before implementing the scheduler record ABI:
   AddressSpace is still live but its root/ASID is missing or unencodable,
   is that a third Return fault, a `ReturnTargetRetired` fault, or an ordinary
   error? It currently surfaces as the preparation error without a pop.
+- **Capability transfer in calls (the maintainer chose to support it, 2026-10-12;
+  the schema is open):** `fb` needs the client's table key to Retype the
+  framebuffer's Frames into the client's table, and a call carries only six
+  words. How does a caller name the keys it passes (a per-function mask fixed
+  when the Invocation is created, or a flag in the call), where does the callee
+  receive them (kernel-chosen slots in its table, reported in the argument
+  words, or a fixed block), how long do they live (borrowed until the call
+  returns, or kept), which rights they arrive with (the caller's request
+  intersected with the key's), and which kinds may travel (the CopyDerive
+  allowlist: KeyTable, Frame, DebugConsole)? Do results carry keys too?
 - **Scheduling attribution:** how should hierarchical schedulers observe and
   attribute migrated work beyond the source Thread's own time accounting?
 - **Component outcome through the Call status:** a successful `Thread.Return`

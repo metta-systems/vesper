@@ -55,7 +55,7 @@ Other kinds fail with `InvalidObjectType`. A device Untyped covers hardware regi
 
 ## Implementation
 
-Kickstart gives the first component device Untypeds for the hardware registers listed in the device tree: each enabled node's range is rounded out to whole 4 KiB pages, overlapping pages are merged, and each run is split into aligned power-of-two blocks. Pages that hold registers the kernel drives itself, such as the interrupt controller, are never handed out, along with any other device on the same page.
+Kickstart gives the first component device Untypeds over the `VideoCore` memory the device tree does not list (from the top of RAM to the lowest device register, at most the first gigabyte) and for the hardware registers listed in the device tree: each enabled node's range is rounded out to whole 4 KiB pages, overlapping pages are merged, and each run is split into aligned power-of-two blocks. Pages that hold registers the kernel drives itself, such as the interrupt controller, are never handed out, along with any other device on the same page.
 
 An Untyped tracks a watermark: Retype allocates from the unused part of the region above it and only ever moves it forward. Memory below the watermark is never handed out again, even after the objects created there are retired. Each new object is aligned to its own alignment (a Frame to its size), and the watermark advances in 16-byte steps.
 

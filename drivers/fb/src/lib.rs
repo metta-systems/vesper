@@ -105,3 +105,22 @@ pub fn physical_address(bus: u32, bus_offset: u64) -> u64 {
 fn byte_size(words: usize) -> u32 {
     u32::try_from(words * 4).unwrap_or(u32::MAX)
 }
+
+/// Whether the bytes `[start, start + length)` lie in the memory the blocks
+/// `[base, end)` make up together; the blocks may be adjacent.
+pub fn covered_by(blocks: &[(u64, u64)], start: u64, length: u64) -> bool {
+    let Some(end) = start.checked_add(length) else {
+        return false;
+    };
+    let mut cursor = start;
+    while cursor < end {
+        let Some(&(_, block_end)) = blocks
+            .iter()
+            .find(|&&(base, block_end)| base <= cursor && cursor < block_end)
+        else {
+            return false;
+        };
+        cursor = block_end;
+    }
+    true
+}

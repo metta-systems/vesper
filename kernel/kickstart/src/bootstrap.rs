@@ -14,7 +14,7 @@
 
 use {
     crate::{
-        boot_info::{BOOT_INFO, DeviceUntypedRange},
+        boot_info::{BOOT_INFO, BootInfoMemRegion, DeviceUntypedRange},
         embed::{NUCLEUS_SET_ANCHOR_VIRT, NUCLEUS_SET_PLATFORM_VIRT},
         print_my_sp, privileged,
     },
@@ -732,46 +732,95 @@ fn device_page_runs(kernel_owned: &[(u64, u64)]) -> PageRuns {
     handed
 }
 
-/// Install a device Untyped for every enabled device-tree register range that
-/// the kernel does not drive itself, in consecutive boot-table slots from
-/// [`DEVICE_UNTYPED_FIRST_SLOT`], and record the range in `BOOT_INFO`.
-///
-/// Each page run is split into the largest aligned power-of-two blocks, so
-/// the Untypeds never overlap.
+/// The first gigabyte of physical memory: the part `VideoCore` can reach.
+const VIDEO_REACH: u64 = 1 << 30;
+
+/// The end of the video memory is rounded down to this, clear of any
+/// peripheral window below the first listed device.
+const VIDEO_END_ALIGNMENT: u64 = 1 << 20;
+
+/// `[start, end)` of the memory the `VideoCore` firmware keeps for itself and
+/// puts the framebuffer in, which the device tree does not list: from the top
+/// of the RAM it lists to the lowest device register, rounded down, but not
+/// beyond the first gigabyte. `None` when RAM leaves no such gap.
+fn video_memory_range() -> Option<(u64, u64)> {
+    BOOT_INFO.lock(|boot_info| {
+        let is_device =
+            |region: &&BootInfoMemRegion| region.attributes.mem_attributes == MemAttributes::Device;
+        let ram_top = boot_info
+            .iter()
+            .filter(|region| !region.is_empty() && !is_device(region))
+            .filter(|region| region.start_inclusive.as_u64() < VIDEO_REACH)
+            .map(|region| region.end_exclusive.as_u64())
+            .max()?;
+        let lowest_device = boot_info
+            .used_regions()
+            .filter(is_device)
+            .map(|region| region.start_inclusive.as_u64())
+            .min()
+            .unwrap_or(u64::MAX);
+        let end = lowest_device.min(VIDEO_REACH) & !(VIDEO_END_ALIGNMENT - 1);
+        let start = ram_top.next_multiple_of(DEVICE_PAGE);
+        (start < end).then_some((start, end))
+    })
+}
+
+/// Install `[start, end)` as device Untypeds in consecutive boot-table slots
+/// from `DEVICE_UNTYPED_FIRST_SLOT + *count`, splitting it into the largest
+/// aligned power-of-two blocks so the Untypeds never overlap.
+fn install_blocks(boot_table: &mut KeyTable, start: u64, end: u64, count: &mut u32) {
+    let mut block = start;
+    while block < end {
+        let align_bits = block.trailing_zeros();
+        let length_bits = 63 - (end - block).leading_zeros();
+        let size_bits = align_bits.min(length_bits);
+        assert!(
+            *count < DEVICE_UNTYPED_SLOTS,
+            "more device Untypeds than reserved slots"
+        );
+        boot_table
+            .insert(
+                KeySlot(DEVICE_UNTYPED_FIRST_SLOT + *count),
+                KeyEntry::new_untyped(
+                    block,
+                    u8::try_from(size_bits).expect("block size fits u8"),
+                    true,
+                    Rights::all(),
+                ),
+                BOOT_TABLE_GUARD,
+            )
+            .unwrap_or_else(|failure| {
+                panic!("device Untyped install failed: {:?}", failure.error.code())
+            });
+        *count += 1;
+        block += 1 << size_bits;
+    }
+}
+
+/// Install the device Untypeds in consecutive boot-table slots from
+/// [`DEVICE_UNTYPED_FIRST_SLOT`], and record the ranges in `BOOT_INFO`: first
+/// the blocks of `VideoCore` memory, which lies below every register, then one
+/// Untyped for every enabled device-tree register range that the kernel does
+/// not drive itself. Each page run is split into the largest aligned
+/// power-of-two blocks, so the Untypeds never overlap.
 fn install_device_untypeds(boot_table: &mut KeyTable) {
     let mut count = 0_u32;
+    if let Some((start, end)) = video_memory_range() {
+        install_blocks(boot_table, start, end, &mut count);
+        semi::println!("🥾 Video memory {start:#x}..{end:#x} in {count} Untypeds");
+    }
+    let video_count = count;
     for &(start, end) in device_page_runs(privileged::kernel_owned_ranges()).as_slice() {
-        let mut block = start;
-        while block < end {
-            let align_bits = block.trailing_zeros();
-            let length_bits = 63 - (end - block).leading_zeros();
-            let size_bits = align_bits.min(length_bits);
-            assert!(
-                count < DEVICE_UNTYPED_SLOTS,
-                "more device Untypeds than reserved slots"
-            );
-            boot_table
-                .insert(
-                    KeySlot(DEVICE_UNTYPED_FIRST_SLOT + count),
-                    KeyEntry::new_untyped(
-                        block,
-                        u8::try_from(size_bits).expect("block size fits u8"),
-                        true,
-                        Rights::all(),
-                    ),
-                    BOOT_TABLE_GUARD,
-                )
-                .unwrap_or_else(|failure| {
-                    panic!("device Untyped install failed: {:?}", failure.error.code())
-                });
-            count += 1;
-            block += 1 << size_bits;
-        }
+        install_blocks(boot_table, start, end, &mut count);
     }
     BOOT_INFO.lock(|boot_info| {
         boot_info.device_untypeds = DeviceUntypedRange {
             first_slot: DEVICE_UNTYPED_FIRST_SLOT,
             count,
+        };
+        boot_info.video_untypeds = DeviceUntypedRange {
+            first_slot: DEVICE_UNTYPED_FIRST_SLOT,
+            count: video_count,
         };
     });
     semi::println!(
@@ -783,6 +832,12 @@ fn install_device_untypeds(boot_table: &mut KeyTable) {
 pub use crate::boot_info::{
     DeviceTreeBlob, DeviceUntypedRange as DeviceUntypeds, InterruptControllers,
 };
+
+/// Where Kickstart installed the `VideoCore` memory Untypeds, the first of the
+/// device Untypeds (empty when RAM leaves no gap below the registers).
+pub fn video_untypeds() -> DeviceUntypeds {
+    BOOT_INFO.lock(|boot_info| boot_info.video_untypeds)
+}
 
 /// Where Kickstart installed the device Untypeds (empty before bootstrap).
 pub fn device_untypeds() -> DeviceUntypeds {

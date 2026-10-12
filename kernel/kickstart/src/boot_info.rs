@@ -300,6 +300,8 @@ pub struct BootInfo {
     pub num_regions: usize,
     /// Where the device Untypeds were installed, for the boot phase.
     pub device_untypeds: DeviceUntypedRange,
+    /// The part of that range holding the `VideoCore` memory blocks.
+    pub video_untypeds: DeviceUntypedRange,
     /// The controllers `IRQControl.Issue` specifiers are relative to.
     pub interrupt_controllers: InterruptControllers,
     /// The device tree blob, for the boot phase to read again.
@@ -319,6 +321,10 @@ impl BootInfo {
         BootInfo {
             regions: [BootInfoMemRegion::new(); NUM_MEM_REGIONS],
             num_regions: 0,
+            video_untypeds: DeviceUntypedRange {
+                first_slot: 0,
+                count: 0,
+            },
             device_untypeds: DeviceUntypedRange {
                 first_slot: 0,
                 count: 0,

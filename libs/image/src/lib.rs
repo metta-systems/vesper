@@ -190,6 +190,8 @@ pub struct DriverImage {
     pub budget_ns: u64,
     /// Size exponent of each instance's RAM Untyped
     pub memory_bits: u8,
+    /// Whether each instance receives the `VideoCore` memory Untypeds
+    pub video_memory: bool,
     /// Entries of the further Threads each instance runs besides the one
     /// at the component's entry
     pub threads: &'static [u64],

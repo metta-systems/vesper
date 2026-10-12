@@ -171,9 +171,36 @@ fn check_power(init: &libdevice_driver::DriverInit) {
     assert_eq!(power.reset(), Err(PowerError::NotGranted));
 }
 
+/// The base and size of the `VideoCore` memory, from the firmware.
+fn vc_memory(mailbox: &Client) -> (u64, u64) {
+    let area = mailbox.data_area().expect("a shared data area");
+    let words = [32, 0, tag::GET_VC_MEMORY, 8, 0, 0, 0, 0];
+    assert!(area.write_words(0, &words));
+    mailbox
+        .property(area.reference(0, 32).expect("inside the area"))
+        .unwrap_or_else(|error| panic!("property GetVcMemory failed: {error:?}"));
+    let mut answer = [0_u32; 8];
+    assert!(area.read_words(0, &mut answer));
+    assert_ne!(answer[4] & 0x8000_0000, 0, "the firmware answered the tag");
+    (u64::from(answer[5]), u64::from(answer[6]))
+}
+
+/// Report where the framebuffer and the `VideoCore` memory are (under QEMU).
+#[cfg(feature = "qemu")]
+fn report_framebuffer(address: u64, bytes: u32, vc_base: u64, vc_size: u64) {
+    use libuser::semihosting as semi;
+
+    semi::println!(
+        "mailbox-test-client: framebuffer {address:#x}+{bytes:#x}, VideoCore memory {vc_base:#x}+{vc_size:#x}"
+    );
+}
+
+#[cfg(not(feature = "qemu"))]
+fn report_framebuffer(_address: u64, _bytes: u32, _vc_base: u64, _vc_size: u64) {}
+
 /// The fb component: nothing is configured at first; configuring a 640 by 480
 /// display of 32 bits per pixel allocates a framebuffer.
-fn check_fb(init: &libdevice_driver::DriverInit) {
+fn check_fb(init: &libdevice_driver::DriverInit, mailbox: &Client) {
     let fb = FbClient::new(
         FbBindings::from_imports(init.imports()),
         // SAFETY: as above.
@@ -197,6 +224,13 @@ fn check_fb(init: &libdevice_driver::DriverInit) {
     assert!(
         u64::from(bytes) >= u64::from(pitch) * 480,
         "it holds every row"
+    );
+    // The framebuffer lies in the `VideoCore` memory the firmware reports.
+    let (vc_base, vc_size) = vc_memory(mailbox);
+    report_framebuffer(address, bytes, vc_base, vc_size);
+    assert!(
+        vc_base <= address && address + u64::from(bytes) <= vc_base + vc_size,
+        "the framebuffer lies in the VideoCore memory"
     );
     fb.pixel_order()
         .unwrap_or_else(|error| panic!("pixel_order failed: {error:?}"));
@@ -230,7 +264,7 @@ fn main(init_va: u64) -> ! {
         .unwrap_or_else(|error| panic!("get_power_state failed: {error:?}"));
     check_property(&mailbox);
     check_power(init);
-    check_fb(init);
+    check_fb(init, &mailbox);
     report(revision, serial, uart_hz, uart_on);
     NotificationKey::from_key(report_key(init.table))
         .signal(0)

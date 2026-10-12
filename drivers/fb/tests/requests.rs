@@ -5,7 +5,7 @@ mod tests {
     use {
         fb_impl::{
             ATTRIBUTE_WORDS, Allocation, Attributes, CONFIGURE_WORDS, attributes_request,
-            configure_request, physical_address, read_allocation, read_attributes,
+            configure_request, covered_by, physical_address, read_allocation, read_attributes,
         },
         mailbox_impl::{check_request, tag},
     };
@@ -76,6 +76,25 @@ mod tests {
         assert_eq!(read_attributes(&answer), Err(0));
     }
 
+    #[test]
+    fn the_framebuffer_must_lie_in_the_video_memory_blocks() {
+        // Two adjacent blocks, as on the Raspberry Pi 3: 32 MiB and 16 MiB.
+        let blocks = [(0x3c00_0000, 0x3e00_0000), (0x3e00_0000, 0x3f00_0000)];
+        assert!(covered_by(&blocks, 0x3c10_0000, 0x12_c000));
+        // Across the boundary between the blocks.
+        assert!(covered_by(&blocks, 0x3dff_f000, 0x2000));
+        assert!(covered_by(&blocks, 0x3c00_0000, 0x0300_0000));
+        // Below, beyond, and partly outside.
+        assert!(!covered_by(&blocks, 0x3bff_f000, 0x2000));
+        assert!(!covered_by(&blocks, 0x3eff_f000, 0x2000));
+        assert!(!covered_by(&blocks, 0x3f00_0000, 0x1000));
+        assert!(!covered_by(&blocks, u64::MAX - 8, 0x100));
+        assert!(!covered_by(&[], 0x3c10_0000, 0x1000));
+        assert!(
+            covered_by(&blocks, 0x3c10_0000, 0),
+            "an empty range is covered"
+        );
+    }
     #[test]
     fn bus_addresses_become_physical_addresses() {
         assert_eq!(physical_address(0xc3e0_0000, 0xc000_0000), 0x03e0_0000);

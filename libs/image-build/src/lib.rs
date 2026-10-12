@@ -707,6 +707,8 @@ struct DriverEntry {
     budget_ns: u64,
     /// Size exponent of the driver's RAM Untyped (default 64 KiB)
     memory_bits: u8,
+    /// Whether the driver receives the `VideoCore` memory Untypeds (`video_memory = true`)
+    video_memory: bool,
 }
 
 /// Default budget of a driver's Time.
@@ -773,6 +775,10 @@ fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
                 priority,
                 budget_ns,
                 memory_bits: u8::try_from(memory.trailing_zeros()).unwrap_or(u8::MAX),
+                video_memory: entry
+                    .get("video_memory")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false),
             }
         })
         .collect()
@@ -978,6 +984,7 @@ pub fn bundle_components(manifest: &str) {
              \x20   priority: 0x{priority:X},\n\
              \x20   budget_ns: {budget},\n\
              \x20   memory_bits: {memory_bits},\n\
+             \x20   video_memory: {video_memory},\n\
              \x20   threads: &[{threads}],\n}};\n",
             name = driver.component.name,
             binary = driver.component.binary,
@@ -985,6 +992,7 @@ pub fn bundle_components(manifest: &str) {
             priority = driver.priority,
             budget = driver.budget_ns,
             memory_bits = driver.memory_bits,
+            video_memory = driver.video_memory,
             threads = image
                 .driver_threads
                 .iter()

@@ -11,6 +11,9 @@
 //! - one `IRQHandler` per interrupt of the node, issued through the boot
 //!   `IRQControl` and bound to the driver's Notification and Thread, interrupt
 //!   *i* signalling bit *i*;
+//! - for a driver whose manifest entry says `video_memory = true`, the device
+//!   Untypeds over the `VideoCore` memory the firmware allocates framebuffers
+//!   in, outside every other Untyped (see `video_untypeds`);
 //! - a RAM Untyped, with its physical base and the bus address the node's
 //!   device reaches it at (`libdevicetree::dma_address`), a Time with the
 //!   budget and priority of its manifest entry, and one Thread configured on
@@ -43,6 +46,7 @@ use {
     crate::{
         bootstrap::{
             BootState, device_untypeds, interrupt_controllers, kernel_owned_device_ranges,
+            video_untypeds,
         },
         device_tree,
         privileged::SHARES_KERNEL_PAGES,
@@ -56,7 +60,8 @@ use {
     libdevice_driver::{
         DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DriverInit, ExportedArea, INIT_VA, Interrupt,
         MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS,
-        NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, STACK_REGION,
+        MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, STACK_REGION,
+        VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, dma_address, find_compatible,
@@ -547,6 +552,8 @@ pub fn load_drivers(
             .filter(|instance| instance.pages().contains(&page))
             .count()
     };
+    // Whether the `VideoCore` memory went to a driver already.
+    let mut video_given = false;
     let mut shared: [Option<(u64, RawKey)>; MAX_DRIVER_INSTANCES * MAX_DEVICE_PAGES] =
         [None; MAX_DRIVER_INSTANCES * MAX_DEVICE_PAGES];
 
@@ -697,6 +704,27 @@ pub fn load_drivers(
             .unwrap_or(NO_BUS_ADDRESS);
         init.memory = move_to(builder, &mut self_table, &component, ram, local_slot()).to_wire();
         init.memory_size = 1 << driver.memory_bits;
+        if driver.video_memory {
+            // The blocks move to the first instance that asks for them.
+            let video = video_untypeds();
+            let blocks = if video_given { 0 } else { video.count };
+            for slot in video.first_slot..video.first_slot + blocks {
+                let key = boot_key(slot, 1);
+                let region = *builder
+                    .entry(key)
+                    .as_untyped()
+                    .unwrap_or_else(|error| panic!("🥾 video Untyped {slot}: {:?}", error.code()));
+                let index = usize::try_from(init.video_count).unwrap_or(MAX_VIDEO_BLOCKS);
+                assert!(index < MAX_VIDEO_BLOCKS, "🥾 too many video memory blocks");
+                init.video[index] = VideoBlock {
+                    key: move_to(builder, &mut self_table, &component, key, local_slot()).to_wire(),
+                    base: region.paddr,
+                    size_bits: u64::from(region.size_bits),
+                };
+                init.video_count += 1;
+            }
+            video_given |= blocks != 0;
+        }
         let mut retype = |kind: ObjectType| {
             untyped
                 .retype(

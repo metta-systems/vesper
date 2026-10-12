@@ -110,6 +110,9 @@ pub const MAX_DEVICE_PAGES: usize = 16;
 /// [`DriverInit::memory_bus`] when the device cannot reach the driver's memory.
 pub const NO_BUS_ADDRESS: u64 = u64::MAX;
 
+/// Most `VideoCore` memory blocks one driver receives.
+pub const MAX_VIDEO_BLOCKS: usize = 8;
+
 /// Most functions of other components one driver imports.
 pub const MAX_IMPORTS: usize = 32;
 
@@ -151,6 +154,25 @@ pub struct Interrupt {
     pub bits: u64,
     /// The interrupt line
     pub line: u64,
+}
+
+/// One block of `VideoCore` memory: a device Untyped in the driver's table.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VideoBlock {
+    /// Wire key of the device Untyped in the driver's table
+    pub key: u64,
+    /// Physical base of the block
+    pub base: u64,
+    /// Size of the block as a power of two
+    pub size_bits: u64,
+}
+
+impl VideoBlock {
+    /// Physical address just past the block.
+    pub const fn end(&self) -> u64 {
+        self.base + (1 << self.size_bits)
+    }
 }
 
 /// The data area an exporting driver shares with one client instance, and the
@@ -207,6 +229,10 @@ pub struct DriverInit {
     pub regions: [Region; MAX_REGIONS],
     pub pages: [DevicePage; MAX_DEVICE_PAGES],
     pub interrupts: [Interrupt; MAX_INTERRUPTS],
+    /// The `VideoCore` memory a driver that asked for it holds: the memory the
+    /// firmware allocates framebuffers in, outside every other Untyped
+    pub video_count: u64,
+    pub video: [VideoBlock; MAX_VIDEO_BLOCKS],
     pub import_count: u64,
     /// Data areas shared with the clients that call this driver's exports
     pub area_count: u64,
@@ -247,6 +273,12 @@ impl DriverInit {
             bits: 0,
             line: 0,
         }; MAX_INTERRUPTS],
+        video_count: 0,
+        video: [VideoBlock {
+            key: 0,
+            base: 0,
+            size_bits: 0,
+        }; MAX_VIDEO_BLOCKS],
         import_count: 0,
         area_count: 0,
         areas: [ExportedArea {
@@ -275,6 +307,10 @@ impl DriverInit {
         &self.pages[..clamp(self.page_count, MAX_DEVICE_PAGES)]
     }
 
+    /// The blocks of `VideoCore` memory the driver holds.
+    pub fn video(&self) -> &[VideoBlock] {
+        &self.video[..clamp(self.video_count, MAX_VIDEO_BLOCKS)]
+    }
     /// The data areas shared with the driver's clients.
     pub fn areas(&self) -> &[ExportedArea] {
         &self.areas[..clamp(self.area_count, MAX_AREAS)]

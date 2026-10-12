@@ -26,4 +26,5 @@ priority = 0x8000
 name = "fb"
 binary = "fb"
 interfaces = "../../../drivers/fb/interfaces"
+video_memory = true
 priority = 0x8000
