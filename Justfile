@@ -49,8 +49,12 @@ chainboot_baud   := '115200'
 
 # QEMU option fragments
 # Console, monitor and semihosting wiring shared by every QEMU run
-qemu_io_opts      := '-chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -object monitor-hmp,chardev=char0,id=mon0 -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0'
+qemu_stdio_opts   := '-chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -object monitor-hmp,chardev=char0,id=mon0 -semihosting-config enable=on,userspace=on,chardev=char0'
+qemu_io_opts      := '-serial chardev:char0 ' + qemu_stdio_opts
 qemu_base_opts    := '-M ' + qemu_machine + ' ' + qemu_io_opts
+# The zellij runs name their serial ports themselves (the PL011, then the mini UART, each
+# on its own pane), so only the monitor and semihosting stay on stdio
+qemu_zellij_opts  := '-M ' + qemu_machine + ' ' + qemu_stdio_opts
 qemu_disasm       := '-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin'
 qemu_gdb_opts     := '-gdb tcp::5555 -S'
 qemu_test_opts    := '-nographic'
@@ -194,16 +198,21 @@ _write-zellij-config bin runner_opts dtb:
     #!/usr/bin/env bash
     cat > emulation/zellij-config.sh <<EOF
     QEMU="{{ qemu }}"
-    QEMU_OPTS="{{ qemu_base_opts }}"
+    QEMU_OPTS="{{ qemu_zellij_opts }}"
     QEMU_RUNNER_OPTS="{{ runner_opts }}"
     CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY="{{ justfile_directory() }}"
     TARGET_DTB="{{ dtb }}"
     KERNEL_BIN="{{ bin }}"
     EOF
 
-# Build and run kernel in QEMU with serial port emulation
+# Build and run kernel in QEMU with serial port emulation: the PL011 and the mini UART each get a pane
 [group("emu")]
-zellij: (build 'rpi3' 'qemu') (_write-zellij-config kernel_bin qemu_disasm_gdb rpi3_dtb)
+zellij: (build 'rpi3' 'qemu') (_write-zellij-config kernel_bin '' rpi3_dtb)
+    zellij --layout emulation/layout.zellij
+
+# Like zellij, but QEMU waits for GDB on port 5555 and traces instructions
+[group("emu")]
+zellij-gdb: (build 'rpi3' 'qemu') (_write-zellij-config kernel_bin qemu_disasm_gdb rpi3_dtb)
     zellij --layout emulation/layout.zellij
 
 alias z-qemu := zellij
