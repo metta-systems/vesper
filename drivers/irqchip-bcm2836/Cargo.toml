@@ -19,10 +19,11 @@ publish = false
 host-tests = []
 
 [dependencies]
-libaddress = { workspace = true }
+arbitrary-int = { workspace = true }
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
 libirqchip = { workspace = true }
 libmmio = { workspace = true }
-tock-registers = { workspace = true }
 
 [lib]
 test = false

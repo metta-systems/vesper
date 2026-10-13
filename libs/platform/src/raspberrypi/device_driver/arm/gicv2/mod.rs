@@ -191,7 +191,8 @@ impl IRQManager for GICv2 {
     fn handle_pending_irqs<'irq_context>(&'irq_context self, ic: &IRQContext<'irq_context>) {
         // Extract the highest priority pending IRQ number from the Interrupt Acknowledge Register
         // (IAR).
-        let irq_number = self.gicc.pending_irq_number(ic);
+        let interrupt = self.gicc.pending_irq_number(ic);
+        let irq_number = usize::from(interrupt.value());
 
         // Guard against spurious interrupts.
         if irq_number > GICv2::MAX_IRQ_NUMBER {
@@ -210,8 +211,7 @@ impl IRQManager for GICv2 {
         });
 
         // Signal completion of handling.
-        self.gicc
-            .mark_completed(u32::try_from(irq_number).unwrap(), ic);
+        self.gicc.mark_completed(interrupt, ic);
     }
 
     fn print_handler(&self) {

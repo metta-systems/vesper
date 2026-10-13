@@ -7,20 +7,17 @@
 
 use {
     crate::device_driver::IRQNumber,
+    bitbybit::{bitenum, bitfield},
     core::marker::PhantomData,
+    derive_mmio::Mmio,
     libaddress::{Address, Virtual},
     liblocking::{IRQSafeNullLock, interface::Mutex},
-    libmmio::MMIODerefWrapper,
-    tock_registers::{
-        fields::FieldValue,
-        interfaces::{ReadWriteable, Readable, Writeable},
-        register_structs,
-        registers::{ReadOnly, ReadWrite, WriteOnly},
-    },
+    libmmio::assert_register_offsets,
 };
 
 // Descriptions taken from
 // https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf
+// and the BCM2711 ARM Peripherals manual.
 
 /// Generates `pub enums` with no variants for each `ident` passed in.
 macro states($($name:ident),*) {
@@ -32,69 +29,145 @@ states! {
     Uninitialized, Input, Output, Alt
 }
 
+/// An alternative GPIO function.
+#[bitenum(u3, exhaustive = true)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum Function {
+    Input = 0b000,
+    Output = 0b001,
+    Alt0 = 0b100,
+    Alt1 = 0b101,
+    Alt2 = 0b110,
+    Alt3 = 0b111,
+    Alt4 = 0b011,
+    Alt5 = 0b010,
+}
+
+/// Pull up/down resistor setup.
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub enum PullUpDown {
+    None,
+    Up,
+    Down,
+}
+
+/// `GPFSELn`: the function of ten consecutive pins.
+#[bitfield(u32, default = 0, debug)]
+pub struct FunctionSelect {
+    #[bits(0..=2, rw, stride = 3)]
+    function: [Function; 10],
+}
+
+/// `GPSETn` / `GPCLRn` / `GPLEVn` / `GPPUDCLKn`: one bit per pin of a 32-pin bank.
+#[bitfield(u32, default = 0, debug)]
+pub struct Pins {
+    #[bit(0, rw)]
+    pin: [bool; 32],
+}
+
+/// The pull a GPPUD write applies (BCM2837).
 #[cfg(board_rpi3)]
-register_structs! {
-    /// The offsets for each register.
-    /// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
-    /// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
-    #[allow(non_snake_case)]
-    #[allow(clippy::partial_pub_fields)]
-    RegisterBlock {
-        (0x00 => pub FunctionSelect: [ReadWrite<u32>; 6]), // function select
-        (0x18 => __reserved_1),
-        (0x1c => pub SetPin: [WriteOnly<u32>; 2]), // set output pin
-        (0x24 => __reserved_2),
-        (0x28 => pub ClearPin: [WriteOnly<u32>; 2]), // clear output pin
-        (0x30 => __reserved_3),
-        (0x34 => pub PinLevel: [ReadOnly<u32>; 2]), // get input pin level
-        (0x3c => __reserved_4),
-        // Everything below is unused atm!
-        // (0x40 => pub EDS: [ReadWrite<u32>; 2]),
-        // (0x48 => __reserved_5),
-        // (0x4c => pub REN: [ReadWrite<u32>; 2]),
-        // (0x54 => __reserved_6),
-        // (0x58 => pub FEN: [ReadWrite<u32>; 2]),
-        // (0x60 => __reserved_7),
-        // (0x64 => pub HEN: [ReadWrite<u32>; 2]),
-        // (0x6c => __reserved_8),
-        // (0x70 => pub LEN: [ReadWrite<u32>; 2]),
-        // (0x78 => __reserved_9),
-        // (0x7c => pub AREN: [ReadWrite<u32>; 2]),
-        // (0x84 => __reserved_10),
-        // (0x88 => pub AFEN: [ReadWrite<u32>; 2]),
-        // (0x90 => __reserved_11),
-        (0x94 => pub PullUpDown: ReadWrite<u32>),
-        (0x98 => pub PullUpDownEnableClock: [ReadWrite<u32>; 2]),
-        (0xa0 => @END),
-    }
+#[bitenum(u2, exhaustive = false)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum PullControl {
+    Off = 0b00,
+    PullDown = 0b01,
+    PullUp = 0b10,
+}
+
+/// `GPPUD` (BCM2837): the pull applied to the pins clocked by `GPPUDCLKn`.
+#[cfg(board_rpi3)]
+#[bitfield(u32, default = 0, debug)]
+pub struct PullUpDownEnable {
+    #[bits(0..=1, rw)]
+    control: Option<PullControl>,
+}
+
+/// The pull of a pin (BCM2711).
+#[cfg(board_rpi4)]
+#[bitenum(u2, exhaustive = false)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum PullResistor {
+    None = 0b00,
+    Up = 0b01,
+    Down = 0b10,
+}
+
+/// `GPIO_PUP_PDN_CNTRL_REGn` (BCM2711): the pull of sixteen pins.
+#[cfg(board_rpi4)]
+#[bitfield(u32, default = 0, debug)]
+pub struct PullUpDownControl {
+    #[bits(0..=1, rw, stride = 2)]
+    pull: [Option<PullResistor>; 16],
+}
+
+/// The GPIO register block.
+#[cfg(board_rpi3)]
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+pub struct GpioRegisterBlock {
+    function_select: [FunctionSelect; 6],
+    _reserved1: u32,
+    #[mmio(Write)]
+    set_pin: [Pins; 2],
+    _reserved2: u32,
+    #[mmio(Write)]
+    clear_pin: [Pins; 2],
+    _reserved3: u32,
+    #[mmio(PureRead)]
+    pin_level: [Pins; 2],
+    _events: [u32; 22],
+    pull_up_down: PullUpDownEnable,
+    pull_up_down_clock: [Pins; 2],
+}
+
+#[cfg(board_rpi3)]
+assert_register_offsets!(GpioRegisterBlock, 0xa0, {
+    function_select: 0x00,
+    set_pin: 0x1c,
+    clear_pin: 0x28,
+    pin_level: 0x34,
+    pull_up_down: 0x94,
+    pull_up_down_clock: 0x98,
+});
+
+/// The GPIO register block.
+#[cfg(board_rpi4)]
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+pub struct GpioRegisterBlock {
+    function_select: [FunctionSelect; 6],
+    _reserved1: u32,
+    #[mmio(Write)]
+    set_pin: [Pins; 2],
+    _reserved2: u32,
+    #[mmio(Write)]
+    clear_pin: [Pins; 2],
+    _reserved3: u32,
+    #[mmio(PureRead)]
+    pin_level: [Pins; 2],
+    _events: [u32; 42],
+    pull_up_down_control: [PullUpDownControl; 4],
 }
 
 #[cfg(board_rpi4)]
-register_structs! {
-    /// The offsets for each register.
-    /// From <https://wiki.osdev.org/Raspberry_Pi_Bare_Bones> and
-    /// <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
-    #[allow(non_snake_case)]
-    #[allow(clippy::partial_pub_fields)]
-    RegisterBlock {
-        (0x00 => pub FunctionSelect: [ReadWrite<u32>; 6]), // function select
-        (0x18 => __reserved_1),
-        (0x1c => pub SetPin: [WriteOnly<u32>; 2]), // set output pin
-        (0x24 => __reserved_2),
-        (0x28 => pub ClearPin: [WriteOnly<u32>; 2]), // clear output pin
-        (0x30 => __reserved_3),
-        (0x34 => pub PinLevel: [ReadOnly<u32>; 2]), // get input pin level
-        (0x3c => __reserved_4),
-        (0xe4 => PullUpDownControl: [ReadWrite<u32>; 4]),
-        (0xf4 => @END),
-    }
+assert_register_offsets!(GpioRegisterBlock, 0xf4, {
+    function_select: 0x00,
+    set_pin: 0x1c,
+    clear_pin: 0x28,
+    pin_level: 0x34,
+    pull_up_down_control: 0xe4,
+});
+
+/// Bank and position of `pin` in registers holding `per_register` pins.
+const fn locate(pin: usize, per_register: usize) -> (usize, usize) {
+    (pin / per_register, pin % per_register)
 }
 
-// Hide RegisterBlock from public api.
-type Registers = MMIODerefWrapper<RegisterBlock>;
-
 struct GPIOInner {
-    registers: Registers,
+    registers: MmioGpioRegisterBlock<'static>,
 }
 
 /// Public interface to the GPIO MMIO area
@@ -102,120 +175,131 @@ pub struct GPIO {
     inner: IRQSafeNullLock<GPIOInner>,
 }
 
+// Pins are at most 53 by construction (`Pin::new`), so every bank index below
+// is in range: the array accessors' `OutOfBoundsError` cannot happen, and a
+// write that reports one is ignored.
+
 impl GPIOInner {
+    /// # Safety
+    ///
+    /// `mmio_base_addr` maps the GPIO block as device memory for the rest of
+    /// the program, and nothing else accesses it.
     pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            registers: Registers::new(mmio_base_addr),
+            // SAFETY: the caller's contract.
+            registers: unsafe { GpioRegisterBlock::new_mmio(mmio_base_addr.as_mut_ptr()) },
         }
     }
 
     #[cfg(board_rpi3)]
-    pub fn power_off(&self) {
+    pub fn power_off(&mut self) {
         use core::time::Duration;
 
         // The Linux 2837 GPIO driver waits 1 µs between the steps.
         const DELAY: Duration = Duration::from_micros(1);
 
         // power off gpio pins (but not VCC pins)
-        for register in self.registers.FunctionSelect.iter().take(5) {
-            register.set(0);
+        for bank in 0..5 {
+            let _in_range = self
+                .registers
+                .write_function_select(bank, FunctionSelect::ZERO);
         }
 
-        self.registers.PullUpDown.set(0);
+        self.registers
+            .write_pull_up_down(PullUpDownEnable::ZERO.with_control(PullControl::Off));
 
         libtime::time::time_manager().spin_for(DELAY);
 
-        self.registers.PullUpDownEnableClock[0].set(0xffff_ffff);
-        self.registers.PullUpDownEnableClock[1].set(0xffff_ffff);
+        for bank in 0..self.registers.len_pull_up_down_clock() {
+            let _in_range = self
+                .registers
+                .write_pull_up_down_clock(bank, Pins::new_with_raw_value(u32::MAX));
+        }
 
         libtime::time::time_manager().spin_for(DELAY);
 
         // flush GPIO setup
-        self.registers.PullUpDownEnableClock[0].set(0);
-        self.registers.PullUpDownEnableClock[1].set(0);
+        for bank in 0..self.registers.len_pull_up_down_clock() {
+            let _in_range = self.registers.write_pull_up_down_clock(bank, Pins::ZERO);
+        }
     }
 
     #[cfg(board_rpi4)]
-    pub fn power_off(&self) {
+    pub fn power_off(&mut self) {
         todo!()
     }
 
-    // One behaviour difference: the existing rpi3 set_pull_up_down in gpio.rs
-    // looks buggy. It writes 0 (no pull) to the pull register and then encodes
-    // the pull direction in the clock bit. My sketch writes the requested pull
-    // and then clocks the pin, which is how the BCM2837 datasheet describes
-    // the sequence. If you migrate gpio.rs, fix that there too.
     #[cfg(board_rpi3)]
-    pub fn set_pull_up_down(&self, pin: usize, pull: PullUpDown) {
+    pub fn set_pull_up_down(&mut self, pin: usize, pull: PullUpDown) {
         use core::time::Duration;
 
         // The Linux 2837 GPIO driver waits 1 µs between the steps.
         const DELAY: Duration = Duration::from_micros(1);
 
-        let bank = pin / 32;
-        let off = pin % 32;
+        let (bank, bit) = locate(pin, 32);
 
-        self.registers.PullUpDown.set(0);
-
-        libtime::time::time_manager().spin_for(DELAY);
-
-        self.registers.PullUpDownEnableClock[bank].modify(FieldValue::<u32, ()>::new(
-            0b1,
-            off,
-            (pull == PullUpDown::Up).into(),
-        ));
+        self.registers
+            .write_pull_up_down(PullUpDownEnable::ZERO.with_control(match pull {
+                PullUpDown::None => PullControl::Off,
+                PullUpDown::Up => PullControl::PullUp,
+                PullUpDown::Down => PullControl::PullDown,
+            }));
 
         libtime::time::time_manager().spin_for(DELAY);
 
-        self.registers.PullUpDown.set(0);
-        self.registers.PullUpDownEnableClock[bank].set(0);
+        let _in_range = self
+            .registers
+            .write_pull_up_down_clock(bank, Pins::ZERO.with_pin(bit, true));
+
+        libtime::time::time_manager().spin_for(DELAY);
+
+        self.registers
+            .write_pull_up_down(PullUpDownEnable::ZERO.with_control(PullControl::Off));
+        let _in_range = self.registers.write_pull_up_down_clock(bank, Pins::ZERO);
     }
 
     #[cfg(board_rpi4)]
-    pub fn set_pull_up_down(&self, pin: usize, pull: PullUpDown) {
-        let bank = pin / 16;
-        let off = pin % 16;
-
-        self.registers.PullUpDownControl[bank].modify(FieldValue::<u32, ()>::new(
-            0b11,
-            off * 2,
-            pull.into(),
-        ));
+    pub fn set_pull_up_down(&mut self, pin: usize, pull: PullUpDown) {
+        let (bank, index) = locate(pin, 16);
+        let resistor = match pull {
+            PullUpDown::None => PullResistor::None,
+            PullUpDown::Up => PullResistor::Up,
+            PullUpDown::Down => PullResistor::Down,
+        };
+        let _in_range = self
+            .registers
+            .modify_pull_up_down_control(bank, |control| control.with_pull(index, resistor));
     }
 
-    pub fn to_alt(&self, pin: usize, function: Function) {
-        let bank = pin / 10;
-        let off = pin % 10;
-
-        self.registers.FunctionSelect[bank].modify(FieldValue::<u32, ()>::new(
-            0b111,
-            off * 3,
-            function.into(),
-        ));
+    pub fn set_function(&mut self, pin: usize, function: Function) {
+        let (bank, index) = locate(pin, 10);
+        let _in_range = self
+            .registers
+            .modify_function_select(bank, |select| select.with_function(index, function));
     }
 
     pub fn set_pin(&mut self, pin: usize) {
-        // Guarantees: pin number is between [0; 53] by construction.
-        let bank = pin / 32;
-        let shift = pin % 32;
-        self.registers.SetPin[bank].set(1 << shift);
+        let (bank, bit) = locate(pin, 32);
+        // GPSET is write-1-to-set: zero bits leave the other pins alone.
+        let _in_range = self
+            .registers
+            .write_set_pin(bank, Pins::ZERO.with_pin(bit, true));
     }
 
     pub fn clear_pin(&mut self, pin: usize) {
-        // Guarantees: pin number is between [0; 53] by construction.
-        let bank = pin / 32;
-        let shift = pin % 32;
-        self.registers.ClearPin[bank].set(1 << shift);
+        let (bank, bit) = locate(pin, 32);
+        let _in_range = self
+            .registers
+            .write_clear_pin(bank, Pins::ZERO.with_pin(bit, true));
     }
 
     pub fn get_level(&self, pin: usize) -> Level {
-        // Guarantees: pin number is between [0; 53] by construction.
-        let bank = pin / 32;
-        let off = pin % 32;
-        self.registers.PinLevel[bank].matches_all(FieldValue::<u32, ()>::new(1, off, 1))
+        let (bank, bit) = locate(pin, 32);
+        self.registers
+            .read_pin_level(bank)
+            .is_ok_and(|level| level.pin(bit))
     }
 }
-
 impl GPIO {
     pub const COMPATIBLE: &'static str = "BCM GPIO";
 
@@ -237,41 +321,7 @@ impl GPIO {
     }
 
     pub fn power_off(&self) {
-        self.inner.lock(|inner| inner.power_off());
-    }
-}
-
-/// An alternative GPIO function.
-#[repr(u8)]
-pub enum Function {
-    Input = 0b000,
-    Output = 0b001,
-    Alt0 = 0b100,
-    Alt1 = 0b101,
-    Alt2 = 0b110,
-    Alt3 = 0b111,
-    Alt4 = 0b011,
-    Alt5 = 0b010,
-}
-
-impl ::core::convert::From<Function> for u32 {
-    fn from(f: Function) -> Self {
-        f as u32
-    }
-}
-
-/// Pull up/down resistor setup.
-#[repr(u8)]
-#[derive(PartialEq, Eq, Copy, Clone)]
-pub enum PullUpDown {
-    None = 0b00,
-    Up = 0b01,
-    Down = 0b10,
-}
-
-impl ::core::convert::From<PullUpDown> for u32 {
-    fn from(p: PullUpDown) -> Self {
-        p as u32
+        self.inner.lock(GPIOInner::power_off);
     }
 }
 
@@ -333,7 +383,8 @@ impl<'outer> Pin<'outer, Uninitialized> {
     /// Enables the alternative function `function` for `self`. Consumes self
     /// and returns a `Pin` structure in the `Alt` state.
     pub fn into_alt(self, function: Function) -> Pin<'outer, Alt> {
-        self.inner.lock(|inner| inner.to_alt(self.pin, function));
+        self.inner
+            .lock(|inner| inner.set_function(self.pin, function));
         self.transition()
     }
 

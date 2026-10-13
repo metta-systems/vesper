@@ -27,6 +27,9 @@ test_build = []
 
 [dependencies]
 aarch64-cpu = { workspace = true }
+arbitrary-int = { workspace = true }
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
 libaddress = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
@@ -40,7 +43,6 @@ libmmio = { workspace = true }
 libprimitives = { workspace = true }
 libtime = { workspace = true }
 snafu = { workspace = true }
-tock-registers = { workspace = true }
 
 [dev-dependencies]
 libboot = { workspace = true }

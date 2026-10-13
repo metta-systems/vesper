@@ -15,7 +15,7 @@ extern "C" fn current_elx_irq(e: &mut ExceptionContext) {
 // exception::asynchronous::irq_manager().handle_pending_irqs(token);
 }
 
-safe-mmio for MMIODerefWrapper?
+---
 
 No split end-of-interrupt. The deactivate register exists in its register block, but nothing writes it or turns on the mode that uses it. So I dropped the planned "drop priority on delivery, deactivate on driver ack" scheme. The GIC uses the same protocol as the BCM controller instead: mask the line and end the interrupt on delivery, unmask when the driver acknowledges. The nucleus has no GIC special case.
 

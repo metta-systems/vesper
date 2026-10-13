@@ -10,45 +10,39 @@
 
 use {
     super::{PendingIRQs, PeripheralIRQ},
+    derive_mmio::Mmio,
     libexception::asynchronous::{IRQContext, IRQHandlerDescriptor, interface::IRQManager},
     liblocking::{self, IRQSafeNullLock, InitStateLock},
-    libmmio::MMIODerefWrapper,
-    tock_registers::{
-        interfaces::{Readable, Writeable},
-        register_structs,
-        registers::{ReadOnly, WriteOnly},
-    },
+    libmmio::assert_register_offsets,
 };
 
 //--------------------------------------------------------------------------------------------------
 // Private Definitions
 //--------------------------------------------------------------------------------------------------
 
-register_structs! {
-    #[allow(non_snake_case)]
-    WORegisterBlock {
-        (0x00 => _reserved1),
-        (0x10 => ENABLE_1: WriteOnly<u32>),
-        (0x14 => ENABLE_2: WriteOnly<u32>),
-        (0x18 => @END),
-    }
+/// The peripheral interrupt registers of the ARM-control block.
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+struct RegisterBlock {
+    _basic_pending: u32,
+    #[mmio(PureRead)]
+    pending_1: u32,
+    #[mmio(PureRead)]
+    pending_2: u32,
+    _fiq_control: u32,
+    #[mmio(Write)]
+    enable_1: u32,
+    #[mmio(Write)]
+    enable_2: u32,
 }
 
-register_structs! {
-    #[allow(non_snake_case)]
-    RORegisterBlock {
-        (0x00 => _reserved1),
-        (0x04 => PENDING_1: ReadOnly<u32>),
-        (0x08 => PENDING_2: ReadOnly<u32>),
-        (0x0c => @END),
-    }
-}
-
-/// Abstraction for the `WriteOnly` parts of the associated MMIO registers.
-type WriteOnlyRegisters = MMIODerefWrapper<WORegisterBlock>;
-
-/// Abstraction for the `ReadOnly` parts of the associated MMIO registers.
-type ReadOnlyRegisters = MMIODerefWrapper<RORegisterBlock>;
+assert_register_offsets!(RegisterBlock, 0x18, {
+    pending_1: 0x04,
+    pending_2: 0x08,
+    enable_1: 0x10,
+    enable_2: 0x14,
+});
 
 type HandlerTable = [Option<IRQHandlerDescriptor<PeripheralIRQ>>; PeripheralIRQ::MAX_INCLUSIVE + 1];
 
@@ -58,11 +52,8 @@ type HandlerTable = [Option<IRQHandlerDescriptor<PeripheralIRQ>>; PeripheralIRQ:
 
 /// Representation of the peripheral interrupt controller.
 pub struct PeripheralIC {
-    /// Access to write registers is guarded with a lock.
-    wo_registers: IRQSafeNullLock<WriteOnlyRegisters>,
-
-    /// Register read access is unguarded.
-    ro_registers: ReadOnlyRegisters,
+    /// Access to the registers is guarded with a lock.
+    registers: IRQSafeNullLock<MmioRegisterBlock<'static>>,
 
     /// Stores registered IRQ handlers. Writable only during kernel init. RO afterwards.
     handler_table: InitStateLock<HandlerTable>,
@@ -80,16 +71,19 @@ impl PeripheralIC {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(mmio_start_addr: Address<Virtual>) -> Self {
         Self {
-            wo_registers: IRQSafeNullLock::new(WriteOnlyRegisters::new(mmio_start_addr)),
-            ro_registers: ReadOnlyRegisters::new(mmio_start_addr),
+            // SAFETY: the caller's contract.
+            registers: IRQSafeNullLock::new(unsafe {
+                RegisterBlock::new_mmio(mmio_start_addr.as_mut_ptr())
+            }),
             handler_table: InitStateLock::new([None; PeripheralIRQ::MAX_INCLUSIVE + 1]),
         }
     }
 
     /// Query the list of pending IRQs.
     fn pending_irqs(&self) -> PendingIRQs {
-        let pending_mask: u64 = (u64::from(self.ro_registers.PENDING_2.get()) << 32)
-            | u64::from(self.ro_registers.PENDING_1.get());
+        let pending_mask: u64 = self.registers.lock(|registers| {
+            (u64::from(registers.read_pending_2()) << 32) | u64::from(registers.read_pending_1())
+        });
 
         PendingIRQs::new(pending_mask)
     }
@@ -124,18 +118,16 @@ impl IRQManager for PeripheralIC {
     }
 
     fn enable(&self, irq: Self::IRQNumberType) {
-        self.wo_registers.lock(|regs| {
-            let enable_reg = if irq.get() <= 31 {
-                &regs.ENABLE_1
-            } else {
-                &regs.ENABLE_2
-            };
-
+        self.registers.lock(|registers| {
             let enable_bit: u32 = 1 << (irq.get() % 32);
 
             // Writing a 1 to a bit will set the corresponding IRQ enable bit. All other IRQ enable
             // bits are unaffected. So we don't need read and OR'ing here.
-            enable_reg.set(enable_bit);
+            if irq.get() <= 31 {
+                registers.write_enable_1(enable_bit);
+            } else {
+                registers.write_enable_2(enable_bit);
+            }
         });
     }
 

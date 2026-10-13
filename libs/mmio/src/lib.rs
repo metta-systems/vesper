@@ -4,10 +4,9 @@
 
 #![no_std]
 
-use {
-    core::{marker::PhantomData, ops},
-    libaddress::{Address, Virtual},
-};
+//! MMIO helpers shared by the drivers. Register blocks themselves are
+//! `#[derive(derive_mmio::Mmio)]` structs: their handles wrap a raw pointer and
+//! never form a reference to device memory.
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
@@ -16,41 +15,31 @@ use {
 pub mod mmio_descriptor;
 pub use mmio_descriptor::*;
 
-#[allow(clippy::partial_pub_fields)]
-pub struct MMIODerefWrapper<T> {
-    pub base_addr: Address<Virtual>, // @todo unmake public, GPIO::Pin uses it
-    phantom: PhantomData<fn() -> T>,
-}
-
-//--------------------------------------------------------------------------------------------------
-// Public Code
-//--------------------------------------------------------------------------------------------------
-
-impl<T> MMIODerefWrapper<T> {
-    /// Create an instance.
-    pub const fn new(base_addr: Address<Virtual>) -> Self {
-        Self {
-            base_addr,
-            phantom: PhantomData,
-        }
-    }
-}
-
-// Deref to RegisterBlock
+/// Check at compile time that each named register of a `#[repr(C)]` register
+/// block sits at its datasheet offset, and that the block has its datasheet
+/// size. derive-mmio rejects padding between fields; this catches a wrong
+/// reserved-gap length.
 ///
-/// Allows writing
-/// ```ignore
-/// self.GPPUD.read()
+/// ```text
+/// assert_register_offsets!(RegisterBlock, 0x1000, {
+///     data: 0x000,
+///     flag: 0x018,
+/// });
 /// ```
-/// instead of something along the lines of
-/// ```ignore
-/// unsafe { (*GPIO::ptr()).GPPUD.read() }
-/// ```
-impl<T> ops::Deref for MMIODerefWrapper<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        // SAFETY: Not safe.
-        unsafe { &*(self.base_addr.as_usize() as *const _) }
-    }
+#[macro_export]
+macro_rules! assert_register_offsets {
+    ($block:ty, $size:expr, { $($register:ident: $offset:expr),* $(,)? }) => {
+        const _: () = {
+            $(
+                assert!(
+                    ::core::mem::offset_of!($block, $register) == $offset,
+                    concat!(stringify!($block), "::", stringify!($register), " is not at its offset"),
+                );
+            )*
+            assert!(
+                ::core::mem::size_of::<$block>() == $size,
+                concat!(stringify!($block), " is not its size"),
+            );
+        };
+    };
 }

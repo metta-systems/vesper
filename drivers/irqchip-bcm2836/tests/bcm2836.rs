@@ -1,56 +1,54 @@
 //! Host tests of the BCM2836 register logic against in-memory register blocks.
 //!
 //! Each test plays the hardware through a *device view* of the register
-//! blocks: the same layout as the driver's `register_structs!`, with every
-//! register readable and writable, so a test can raise pending interrupts in
-//! read-only registers and observe what the driver wrote to write-only ones.
+//! blocks: the same layout as the driver's blocks, with every register
+//! readable and writable, so a test can raise pending interrupts in read-only
+//! registers and observe what the driver wrote to write-only ones.
 
 #[cfg(test)]
 mod tests {
     use {
+        derive_mmio::Mmio,
         irqchip_bcm2836::{
-            ArmctrlRegisterBlock, BASIC, Bcm2836, ConfigError, GPU_IRQS, GPU_ROUTING, IRQ_SOURCE,
-            KIND_ARMCTRL, KIND_LOCAL, LINE_CNTPNS, LINE_CNTV, LINE_COUNT, LINE_MAILBOX0, LINE_PMU,
-            LocalRegisterBlock, MAILBOX_CONTROL, PMU_ROUTING, TIMER_CONTROL, armctrl_line, gpu_irq,
+            ArmctrlRegisterBlock, BasicInterrupts, Bcm2836, ConfigError, Core, GpuInterrupts,
+            GpuRouting, IrqSource, KIND_ARMCTRL, KIND_LOCAL, LINE_CNTPNS, LINE_CNTV, LINE_COUNT,
+            LINE_MAILBOX0, LINE_PMU, LocalRegisterBlock, MailboxControl, PmuRouting, TimerControl,
+            armctrl_line,
         },
         libirqchip::{Controller, INVALID_LINE, IrqChipConfig, MmioRegion, SPURIOUS},
-        tock_registers::{
-            interfaces::{Readable, Writeable},
-            register_structs,
-            registers::ReadWrite,
-        },
     };
 
-    register_structs! {
-        /// The local peripherals block as the hardware sees it.
-        #[allow(non_snake_case)]
-        LocalDevice {
-            (0x00 => _control),
-            (0x0C => GPU_INT_ROUTING: ReadWrite<u32, GPU_ROUTING::Register>),
-            (0x10 => PMU_INT_ROUTING_SET: ReadWrite<u32, PMU_ROUTING::Register>),
-            (0x14 => PMU_INT_ROUTING_CLEAR: ReadWrite<u32, PMU_ROUTING::Register>),
-            (0x18 => _timers),
-            (0x40 => CORE_TIMER_INT_CONTROL: [ReadWrite<u32, TIMER_CONTROL::Register>; 4]),
-            (0x50 => CORE_MAILBOX_INT_CONTROL: [ReadWrite<u32, MAILBOX_CONTROL::Register>; 4]),
-            (0x60 => CORE_IRQ_SOURCE: [ReadWrite<u32, IRQ_SOURCE::Register>; 4]),
-            (0x70 => _fiq_sources),
-            (0x80 => @END),
-        }
+    /// The local peripherals block as the hardware sees it.
+    #[derive(Mmio)]
+    #[mmio(no_owned)]
+    #[repr(C)]
+    struct LocalDevice {
+        _control: [u32; 3],
+        gpu_int_routing: GpuRouting,
+        pmu_int_routing_set: PmuRouting,
+        pmu_int_routing_clear: PmuRouting,
+        _timers: [u32; 10],
+        core0_timer_int_control: TimerControl,
+        _core1_3_timer_int_control: [u32; 3],
+        core0_mailbox_int_control: MailboxControl,
+        _core1_3_mailbox_int_control: [u32; 3],
+        core0_irq_source: IrqSource,
+        _core1_3_irq_source: [u32; 3],
+        _fiq_sources: [u32; 4],
     }
 
-    register_structs! {
-        /// The ARM-control block as the hardware sees it.
-        #[allow(non_snake_case)]
-        ArmctrlDevice {
-            (0x00 => BASIC_PENDING: ReadWrite<u32, BASIC::Register>),
-            (0x04 => GPU_PENDING: [ReadWrite<u32, GPU_IRQS::Register>; 2]),
-            (0x0C => _fiq_control),
-            (0x10 => GPU_ENABLE: [ReadWrite<u32, GPU_IRQS::Register>; 2]),
-            (0x18 => BASIC_ENABLE: ReadWrite<u32, BASIC::Register>),
-            (0x1C => GPU_DISABLE: [ReadWrite<u32, GPU_IRQS::Register>; 2]),
-            (0x24 => BASIC_DISABLE: ReadWrite<u32, BASIC::Register>),
-            (0x28 => @END),
-        }
+    /// The ARM-control block as the hardware sees it.
+    #[derive(Mmio)]
+    #[mmio(no_owned)]
+    #[repr(C)]
+    struct ArmctrlDevice {
+        basic_pending: BasicInterrupts,
+        gpu_pending: [GpuInterrupts; 2],
+        _fiq_control: u32,
+        gpu_enable: [GpuInterrupts; 2],
+        basic_enable: BasicInterrupts,
+        gpu_disable: [GpuInterrupts; 2],
+        basic_disable: BasicInterrupts,
     }
 
     // The device views must cover exactly the driver's blocks.
@@ -58,16 +56,27 @@ mod tests {
     const _: () = assert!(size_of::<ArmctrlDevice>() == size_of::<ArmctrlRegisterBlock>());
 
     /// Zeroed, leaked backing memory for register block `T`, with its region.
-    fn device<T>() -> (&'static T, MmioRegion) {
+    fn device<T>() -> (*mut T, MmioRegion) {
         let words = size_of::<T>().div_ceil(size_of::<u32>());
         let memory: &'static mut [u32] = Box::leak(vec![0_u32; words].into_boxed_slice());
         let region = MmioRegion {
             virt: memory.as_ptr() as u64,
             size: size_of::<T>() as u64,
         };
+        (memory.as_mut_ptr().cast::<T>(), region)
+    }
+
+    fn local_device() -> (MmioLocalDevice<'static>, MmioRegion) {
+        let (block, region) = device::<LocalDevice>();
         // SAFETY: zeroed, u32-aligned memory of the block's size, leaked for
-        // 'static; the registers are plain `u32` cells.
-        (unsafe { &*memory.as_ptr().cast::<T>() }, region)
+        // 'static.
+        (unsafe { LocalDevice::new_mmio(block) }, region)
+    }
+
+    fn armctrl_device() -> (MmioArmctrlDevice<'static>, MmioRegion) {
+        let (block, region) = device::<ArmctrlDevice>();
+        // SAFETY: as in `local_device`.
+        (unsafe { ArmctrlDevice::new_mmio(block) }, region)
     }
 
     fn controller(kind: u32, region: MmioRegion) -> Controller {
@@ -81,9 +90,13 @@ mod tests {
     }
 
     /// A chip bound to fresh local and ARM-control blocks.
-    fn chip() -> (Bcm2836, &'static LocalDevice, &'static ArmctrlDevice) {
-        let (local, local_region) = device::<LocalDevice>();
-        let (armctrl, armctrl_region) = device::<ArmctrlDevice>();
+    fn chip() -> (
+        Bcm2836,
+        MmioLocalDevice<'static>,
+        MmioArmctrlDevice<'static>,
+    ) {
+        let (local, local_region) = local_device();
+        let (armctrl, armctrl_region) = armctrl_device();
         let mut config = IrqChipConfig {
             controller_count: 2,
             ..IrqChipConfig::default()
@@ -95,29 +108,40 @@ mod tests {
         (chip, local, armctrl)
     }
 
+    /// The interrupt sources with exactly `lines` raised.
+    fn sources(lines: &[u32]) -> IrqSource {
+        IrqSource::new_with_raw_value(lines.iter().fold(0, |bits, line| bits | 1 << line))
+    }
+
+    /// GPU interrupt `irq` of a bank.
+    fn gpu_irq(irq: usize) -> GpuInterrupts {
+        GpuInterrupts::ZERO.with_irq(irq, true)
+    }
+
     #[test]
     fn init_masks_every_line_and_routes_the_gpu_to_core0() {
         let (_chip, local, armctrl) = chip();
-        assert_eq!(local.CORE_TIMER_INT_CONTROL[0].get(), 0);
-        assert_eq!(local.CORE_MAILBOX_INT_CONTROL[0].get(), 0);
-        assert!(local.PMU_INT_ROUTING_CLEAR.is_set(PMU_ROUTING::CORE0_IRQ));
-        assert!(
-            local
-                .GPU_INT_ROUTING
-                .matches_all(GPU_ROUTING::IRQ_CORE::Core0 + GPU_ROUTING::FIQ_CORE::Core0)
+        assert_eq!(local.read_core0_timer_int_control(), TimerControl::ZERO);
+        assert_eq!(local.read_core0_mailbox_int_control(), MailboxControl::ZERO);
+        assert!(local.read_pmu_int_routing_clear().irq_core(0));
+        assert_eq!(
+            local.read_gpu_int_routing(),
+            GpuRouting::ZERO
+                .with_irq_core(Core::Core0)
+                .with_fiq_core(Core::Core0)
         );
         assert_eq!(
-            armctrl.BASIC_DISABLE.read(BASIC::ARM_PERIPHERALS),
-            BASIC::ARM_PERIPHERALS.mask
+            armctrl.read_basic_disable(),
+            BasicInterrupts::ALL_ARM_PERIPHERALS
         );
-        for disable in &armctrl.GPU_DISABLE {
-            assert_eq!(disable.read(GPU_IRQS::ALL), GPU_IRQS::ALL.mask);
+        for bank in 0..armctrl.len_gpu_disable() {
+            assert_eq!(armctrl.read_gpu_disable(bank).unwrap(), GpuInterrupts::ALL);
         }
     }
 
     #[test]
     fn a_config_without_the_local_controller_is_rejected() {
-        let (_armctrl, region) = device::<ArmctrlDevice>();
+        let (_armctrl, region) = armctrl_device();
         let mut config = IrqChipConfig {
             controller_count: 1,
             ..IrqChipConfig::default()
@@ -130,7 +154,7 @@ mod tests {
 
     #[test]
     fn a_region_smaller_than_its_block_is_rejected() {
-        let (_local, mut region) = device::<LocalDevice>();
+        let (_local, mut region) = local_device();
         region.size -= 4;
         let mut config = IrqChipConfig {
             controller_count: 1,
@@ -146,68 +170,68 @@ mod tests {
     fn timer_lines_toggle_their_core0_enables() {
         let (mut chip, local, _armctrl) = chip();
         chip.set_enabled(LINE_CNTPNS, true);
-        assert!(local.CORE_TIMER_INT_CONTROL[0].is_set(TIMER_CONTROL::CNTPNS_IRQ));
+        assert!(local.read_core0_timer_int_control().irq(1));
         chip.set_enabled(LINE_CNTV, true);
-        assert!(
-            local.CORE_TIMER_INT_CONTROL[0]
-                .matches_all(TIMER_CONTROL::CNTPNS_IRQ::SET + TIMER_CONTROL::CNTV_IRQ::SET)
+        assert_eq!(
+            local.read_core0_timer_int_control(),
+            TimerControl::ZERO.with_irq(1, true).with_irq(3, true)
         );
         chip.set_enabled(LINE_CNTPNS, false);
-        assert!(!local.CORE_TIMER_INT_CONTROL[0].is_set(TIMER_CONTROL::CNTPNS_IRQ));
-        assert!(local.CORE_TIMER_INT_CONTROL[0].is_set(TIMER_CONTROL::CNTV_IRQ));
+        assert!(!local.read_core0_timer_int_control().irq(1));
+        assert!(local.read_core0_timer_int_control().irq(3));
     }
 
     #[test]
     fn mailbox_and_pmu_lines_use_their_own_registers() {
         let (mut chip, local, _armctrl) = chip();
         chip.set_enabled(LINE_MAILBOX0 + 1, true);
-        assert!(local.CORE_MAILBOX_INT_CONTROL[0].is_set(MAILBOX_CONTROL::MAILBOX1_IRQ));
-        assert!(!local.CORE_MAILBOX_INT_CONTROL[0].is_set(MAILBOX_CONTROL::MAILBOX0_IRQ));
+        assert!(local.read_core0_mailbox_int_control().irq(1));
+        assert!(!local.read_core0_mailbox_int_control().irq(0));
         chip.set_enabled(LINE_PMU, true);
-        assert!(local.PMU_INT_ROUTING_SET.is_set(PMU_ROUTING::CORE0_IRQ));
+        assert!(local.read_pmu_int_routing_set().irq_core(0));
     }
 
     #[test]
     fn claim_returns_the_first_direct_local_line() {
-        let (chip, local, _armctrl) = chip();
+        let (chip, mut local, _armctrl) = chip();
         assert_eq!(chip.claim(), SPURIOUS);
-        local.CORE_IRQ_SOURCE[0].write(IRQ_SOURCE::CNTPNS::SET + IRQ_SOURCE::CNTV::SET);
+        local.write_core0_irq_source(sources(&[LINE_CNTPNS, LINE_CNTV]));
         assert_eq!(chip.claim(), LINE_CNTPNS);
-        local.CORE_IRQ_SOURCE[0].write(IRQ_SOURCE::PMU::SET);
+        local.write_core0_irq_source(sources(&[LINE_PMU]));
         assert_eq!(chip.claim(), LINE_PMU);
     }
 
     #[test]
     fn claim_demuxes_the_gpu_cascade_through_enabled_interrupts() {
-        let (mut chip, local, armctrl) = chip();
-        local.CORE_IRQ_SOURCE[0].write(IRQ_SOURCE::GPU::SET);
+        let (mut chip, mut local, mut armctrl) = chip();
+        local.write_core0_irq_source(sources(&[8]));
 
         // GPU interrupt 57 (PL011) is bank 2, irq 25: pending but not enabled.
-        armctrl.GPU_PENDING[1].write(gpu_irq(25));
+        armctrl.write_gpu_pending(1, gpu_irq(25)).unwrap();
         assert_eq!(chip.claim(), SPURIOUS);
 
         let uart = Bcm2836::xlate(KIND_ARMCTRL, &[2, 25]);
         assert_eq!(uart, armctrl_line(2, 25));
         chip.set_enabled(uart, true);
-        assert!(armctrl.GPU_ENABLE[1].matches_all(gpu_irq(25)));
+        assert_eq!(armctrl.read_gpu_enable(1).unwrap(), gpu_irq(25));
         assert_eq!(chip.claim(), uart);
 
         // A pending, enabled bank-1 interrupt is claimed before bank 2.
         let gpu_line = armctrl_line(1, 3);
         chip.set_enabled(gpu_line, true);
-        armctrl.GPU_PENDING[0].write(gpu_irq(3));
+        armctrl.write_gpu_pending(0, gpu_irq(3)).unwrap();
         assert_eq!(chip.claim(), gpu_line);
 
         // ARM peripherals (bank 0) come first.
         let arm_timer = armctrl_line(0, 0);
         chip.set_enabled(arm_timer, true);
-        assert!(armctrl.BASIC_ENABLE.is_set(BASIC::ARM_TIMER));
-        armctrl.BASIC_PENDING.write(BASIC::ARM_TIMER::SET);
+        assert!(armctrl.read_basic_enable().arm_peripheral(0));
+        armctrl.write_basic_pending(BasicInterrupts::ZERO.with_arm_peripheral(0, true));
         assert_eq!(chip.claim(), arm_timer);
 
         // Masking writes the disable register and stops delivery.
         chip.set_enabled(arm_timer, false);
-        assert!(armctrl.BASIC_DISABLE.is_set(BASIC::ARM_TIMER));
+        assert!(armctrl.read_basic_disable().arm_peripheral(0));
         assert_eq!(chip.claim(), gpu_line);
     }
 

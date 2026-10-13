@@ -22,16 +22,10 @@
 //! `hw/intc/bcm2836_control.c` and `bcm2835_ic.c`.
 
 use {
-    libaddress::{Address, Virtual},
+    bitbybit::{bitenum, bitfield},
+    derive_mmio::Mmio,
     libirqchip::{INVALID_LINE, IrqChipConfig, SPURIOUS},
-    libmmio::MMIODerefWrapper,
-    tock_registers::{
-        LocalRegisterCopy,
-        fields::{Field, FieldValue},
-        interfaces::{ReadWriteable, Readable, Writeable},
-        register_bitfields, register_structs,
-        registers::{ReadOnly, ReadWrite, WriteOnly},
-    },
+    libmmio::assert_register_offsets,
 };
 
 /// Index of `brcm,bcm2836-l1-intc` in the component's `compatible` list
@@ -74,170 +68,191 @@ pub const fn armctrl_line(bank: u32, irq: u32) -> u32 {
     LOCAL_LINES + bank * BANK_LINES + irq
 }
 
-register_bitfields! {
-    u32,
-
-    /// Per-core generic timer interrupt control (`CORE_TIMER_INT_CONTROL`).
-    pub TIMER_CONTROL [
-        CNTPS_IRQ OFFSET(0) NUMBITS(1) [],
-        CNTPNS_IRQ OFFSET(1) NUMBITS(1) [],
-        CNTHP_IRQ OFFSET(2) NUMBITS(1) [],
-        CNTV_IRQ OFFSET(3) NUMBITS(1) [],
-        CNTPS_FIQ OFFSET(4) NUMBITS(1) [],
-        CNTPNS_FIQ OFFSET(5) NUMBITS(1) [],
-        CNTHP_FIQ OFFSET(6) NUMBITS(1) [],
-        CNTV_FIQ OFFSET(7) NUMBITS(1) [],
-    ],
-
-    /// Per-core mailbox interrupt control (`CORE_MAILBOX_INT_CONTROL`).
-    pub MAILBOX_CONTROL [
-        MAILBOX0_IRQ OFFSET(0) NUMBITS(1) [],
-        MAILBOX1_IRQ OFFSET(1) NUMBITS(1) [],
-        MAILBOX2_IRQ OFFSET(2) NUMBITS(1) [],
-        MAILBOX3_IRQ OFFSET(3) NUMBITS(1) [],
-        MAILBOX0_FIQ OFFSET(4) NUMBITS(1) [],
-        MAILBOX1_FIQ OFFSET(5) NUMBITS(1) [],
-        MAILBOX2_FIQ OFFSET(6) NUMBITS(1) [],
-        MAILBOX3_FIQ OFFSET(7) NUMBITS(1) [],
-    ],
-
-    /// Per-core interrupt sources (`CORE_IRQ_SOURCE`); bit `n` is local hwirq `n`.
-    pub IRQ_SOURCE [
-        CNTPS OFFSET(0) NUMBITS(1) [],
-        CNTPNS OFFSET(1) NUMBITS(1) [],
-        CNTHP OFFSET(2) NUMBITS(1) [],
-        CNTV OFFSET(3) NUMBITS(1) [],
-        MAILBOX0 OFFSET(4) NUMBITS(1) [],
-        MAILBOX1 OFFSET(5) NUMBITS(1) [],
-        MAILBOX2 OFFSET(6) NUMBITS(1) [],
-        MAILBOX3 OFFSET(7) NUMBITS(1) [],
-        /// The cascaded GPU interrupt controller
-        GPU OFFSET(8) NUMBITS(1) [],
-        PMU OFFSET(9) NUMBITS(1) [],
-        AXI OFFSET(10) NUMBITS(1) [],
-        LOCAL_TIMER OFFSET(11) NUMBITS(1) [],
-    ],
-
-    /// GPU interrupt routing (`GPU_INT_ROUTING`).
-    pub GPU_ROUTING [
-        IRQ_CORE OFFSET(0) NUMBITS(2) [
-            Core0 = 0
-        ],
-        FIQ_CORE OFFSET(2) NUMBITS(2) [
-            Core0 = 0
-        ],
-    ],
-
-    /// PMU interrupt routing (`PMU_INT_ROUTING_SET`/`_CLEAR`).
-    pub PMU_ROUTING [
-        CORE0_IRQ OFFSET(0) NUMBITS(1) [],
-    ],
-
-    /// ARM-control basic pending, enable and disable registers.
-    pub BASIC [
-        ARM_TIMER OFFSET(0) NUMBITS(1) [],
-        ARM_MAILBOX OFFSET(1) NUMBITS(1) [],
-        ARM_DOORBELL0 OFFSET(2) NUMBITS(1) [],
-        ARM_DOORBELL1 OFFSET(3) NUMBITS(1) [],
-        GPU0_HALTED OFFSET(4) NUMBITS(1) [],
-        GPU1_HALTED OFFSET(5) NUMBITS(1) [],
-        ILLEGAL_ACCESS1 OFFSET(6) NUMBITS(1) [],
-        ILLEGAL_ACCESS0 OFFSET(7) NUMBITS(1) [],
-        /// The ARM peripheral interrupts above (bank 0)
-        ARM_PERIPHERALS OFFSET(0) NUMBITS(8) [],
-        /// Some GPU interrupt 0-31 is pending (read-only)
-        PENDING1 OFFSET(8) NUMBITS(1) [],
-        /// Some GPU interrupt 32-63 is pending (read-only)
-        PENDING2 OFFSET(9) NUMBITS(1) [],
-    ],
-
-    /// ARM-control GPU pending, enable and disable registers: bit `n` is GPU
-    /// interrupt `n` of the bank.
-    pub GPU_IRQS [
-        ALL OFFSET(0) NUMBITS(32) [],
-    ],
+/// A core of the BCM2836, as the routing registers name it.
+#[bitenum(u2, exhaustive = true)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum Core {
+    Core0 = 0,
+    Core1 = 1,
+    Core2 = 2,
+    Core3 = 3,
 }
 
-register_structs! {
-    /// The BCM2836 local peripherals block.
-    #[allow(non_snake_case)]
-    pub LocalRegisterBlock {
-        (0x00 => _control),
-        (0x0C => GPU_INT_ROUTING: ReadWrite<u32, GPU_ROUTING::Register>),
-        (0x10 => PMU_INT_ROUTING_SET: WriteOnly<u32, PMU_ROUTING::Register>),
-        (0x14 => PMU_INT_ROUTING_CLEAR: WriteOnly<u32, PMU_ROUTING::Register>),
-        (0x18 => _timers),
-        (0x40 => CORE_TIMER_INT_CONTROL: [ReadWrite<u32, TIMER_CONTROL::Register>; 4]),
-        (0x50 => CORE_MAILBOX_INT_CONTROL: [ReadWrite<u32, MAILBOX_CONTROL::Register>; 4]),
-        (0x60 => CORE_IRQ_SOURCE: [ReadOnly<u32, IRQ_SOURCE::Register>; 4]),
-        (0x70 => _fiq_sources),
-        (0x80 => @END),
-    }
+/// Per-core generic timer interrupt control (`CORE_TIMER_INT_CONTROL`). The
+/// timers are indexed by local line: CNTPS, CNTPNS, CNTHP, CNTV.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct TimerControl {
+    /// IRQ enable of each timer
+    #[bit(0, rw)]
+    irq: [bool; 4],
+    /// FIQ enable of each timer, overriding its IRQ enable
+    #[bit(4, rw)]
+    fiq: [bool; 4],
 }
 
-register_structs! {
-    /// The BCM2835 ARM-control interrupt block.
-    #[allow(non_snake_case)]
-    pub ArmctrlRegisterBlock {
-        (0x00 => BASIC_PENDING: ReadOnly<u32, BASIC::Register>),
-        (0x04 => GPU_PENDING: [ReadOnly<u32, GPU_IRQS::Register>; 2]),
-        (0x0C => _fiq_control),
-        (0x10 => GPU_ENABLE: [WriteOnly<u32, GPU_IRQS::Register>; 2]),
-        (0x18 => BASIC_ENABLE: WriteOnly<u32, BASIC::Register>),
-        (0x1C => GPU_DISABLE: [WriteOnly<u32, GPU_IRQS::Register>; 2]),
-        (0x24 => BASIC_DISABLE: WriteOnly<u32, BASIC::Register>),
-        (0x28 => @END),
-    }
+/// Per-core mailbox interrupt control (`CORE_MAILBOX_INT_CONTROL`), by
+/// mailbox.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct MailboxControl {
+    /// IRQ enable of each mailbox
+    #[bit(0, rw)]
+    irq: [bool; 4],
+    /// FIQ enable of each mailbox, overriding its IRQ enable
+    #[bit(4, rw)]
+    fiq: [bool; 4],
 }
 
-type LocalRegisters = MMIODerefWrapper<LocalRegisterBlock>;
-type ArmctrlRegisters = MMIODerefWrapper<ArmctrlRegisterBlock>;
-
-/// IRQ enables of the generic timers, by local line.
-const TIMER_IRQS: [Field<u32, TIMER_CONTROL::Register>; 4] = [
-    TIMER_CONTROL::CNTPS_IRQ,
-    TIMER_CONTROL::CNTPNS_IRQ,
-    TIMER_CONTROL::CNTHP_IRQ,
-    TIMER_CONTROL::CNTV_IRQ,
-];
-
-/// IRQ enables of the mailboxes, by local line minus [`LINE_MAILBOX0`].
-const MAILBOX_IRQS: [Field<u32, MAILBOX_CONTROL::Register>; 4] = [
-    MAILBOX_CONTROL::MAILBOX0_IRQ,
-    MAILBOX_CONTROL::MAILBOX1_IRQ,
-    MAILBOX_CONTROL::MAILBOX2_IRQ,
-    MAILBOX_CONTROL::MAILBOX3_IRQ,
-];
-
-/// Directly delivered local sources, in claim order, with their lines.
-const LOCAL_SOURCES: [(u32, Field<u32, IRQ_SOURCE::Register>); 9] = [
-    (LINE_CNTPS, IRQ_SOURCE::CNTPS),
-    (LINE_CNTPNS, IRQ_SOURCE::CNTPNS),
-    (LINE_CNTHP, IRQ_SOURCE::CNTHP),
-    (LINE_CNTV, IRQ_SOURCE::CNTV),
-    (LINE_MAILBOX0, IRQ_SOURCE::MAILBOX0),
-    (LINE_MAILBOX0 + 1, IRQ_SOURCE::MAILBOX1),
-    (LINE_MAILBOX0 + 2, IRQ_SOURCE::MAILBOX2),
-    (LINE_MAILBOX0 + 3, IRQ_SOURCE::MAILBOX3),
-    (LINE_PMU, IRQ_SOURCE::PMU),
-];
-
-/// ARM peripheral interrupts of the basic registers, by irq of bank 0.
-const BASIC_IRQS: [Field<u32, BASIC::Register>; 8] = [
-    BASIC::ARM_TIMER,
-    BASIC::ARM_MAILBOX,
-    BASIC::ARM_DOORBELL0,
-    BASIC::ARM_DOORBELL1,
-    BASIC::GPU0_HALTED,
-    BASIC::GPU1_HALTED,
-    BASIC::ILLEGAL_ACCESS1,
-    BASIC::ILLEGAL_ACCESS0,
-];
-
-/// GPU interrupt `irq` of a bank.
-pub const fn gpu_irq(irq: u32) -> FieldValue<u32, GPU_IRQS::Register> {
-    FieldValue::<u32, GPU_IRQS::Register>::new(1, irq as usize, 1)
+/// Per-core interrupt sources (`CORE_IRQ_SOURCE`); bit `n` is local hwirq `n`.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct IrqSource {
+    /// The generic timers, by local line
+    #[bit(0, r)]
+    timer: [bool; 4],
+    /// The mailboxes
+    #[bit(4, r)]
+    mailbox: [bool; 4],
+    /// The cascaded GPU interrupt controller
+    #[bit(8, r)]
+    gpu: bool,
+    /// The performance monitor
+    #[bit(9, r)]
+    pmu: bool,
+    /// AXI outstanding writes or reads
+    #[bit(10, r)]
+    axi: bool,
+    /// The local timer
+    #[bit(11, r)]
+    local_timer: bool,
 }
+
+/// GPU interrupt routing (`GPU_INT_ROUTING`).
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct GpuRouting {
+    /// The core that takes the GPU IRQ
+    #[bits(0..=1, rw)]
+    irq_core: Core,
+    /// The core that takes the GPU FIQ
+    #[bits(2..=3, rw)]
+    fiq_core: Core,
+}
+
+/// PMU interrupt routing (`PMU_INT_ROUTING_SET` / `_CLEAR`): writing a one
+/// sets or clears the route, a zero leaves it.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct PmuRouting {
+    /// The PMU IRQ goes to each core
+    #[bit(0, rw)]
+    irq_core: [bool; 4],
+    /// The PMU FIQ goes to each core
+    #[bit(4, rw)]
+    fiq_core: [bool; 4],
+}
+
+/// ARM-control basic pending, enable and disable registers.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct BasicInterrupts {
+    /// The ARM peripheral interrupts of bank 0, by irq: ARM timer, ARM
+    /// mailbox, ARM doorbell 0 and 1, GPU 0 and 1 halted, illegal access
+    /// types 1 and 0
+    #[bit(0, rw)]
+    arm_peripheral: [bool; 8],
+    /// Some GPU interrupt 0-31 is pending (read-only)
+    #[bit(8, r)]
+    gpu_pending_low: bool,
+    /// Some GPU interrupt 32-63 is pending (read-only)
+    #[bit(9, r)]
+    gpu_pending_high: bool,
+}
+
+/// ARM-control GPU pending, enable and disable registers: bit `n` is GPU
+/// interrupt `n` of the bank.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct GpuInterrupts {
+    #[bit(0, rw)]
+    irq: [bool; 32],
+}
+
+/// ARM peripheral interrupts in bank 0.
+const ARM_PERIPHERALS: u32 = 8;
+
+impl BasicInterrupts {
+    /// Every ARM peripheral interrupt.
+    pub const ALL_ARM_PERIPHERALS: Self = Self::new_with_raw_value(0xff);
+}
+
+impl GpuInterrupts {
+    /// Every interrupt of the bank.
+    pub const ALL: Self = Self::new_with_raw_value(u32::MAX);
+}
+
+/// The BCM2836 local peripherals block. Only core 0 is driven, so the other
+/// cores' registers are reserved here.
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+pub struct LocalRegisterBlock {
+    _control: [u32; 3],
+    gpu_int_routing: GpuRouting,
+    #[mmio(Write)]
+    pmu_int_routing_set: PmuRouting,
+    #[mmio(Write)]
+    pmu_int_routing_clear: PmuRouting,
+    _timers: [u32; 10],
+    core0_timer_int_control: TimerControl,
+    _core1_3_timer_int_control: [u32; 3],
+    core0_mailbox_int_control: MailboxControl,
+    _core1_3_mailbox_int_control: [u32; 3],
+    #[mmio(PureRead)]
+    core0_irq_source: IrqSource,
+    _core1_3_irq_source: [u32; 3],
+    _fiq_sources: [u32; 4],
+}
+
+assert_register_offsets!(LocalRegisterBlock, 0x80, {
+    gpu_int_routing: 0x0c,
+    pmu_int_routing_set: 0x10,
+    pmu_int_routing_clear: 0x14,
+    core0_timer_int_control: 0x40,
+    core0_mailbox_int_control: 0x50,
+    core0_irq_source: 0x60,
+    _fiq_sources: 0x70,
+});
+
+/// The BCM2835 ARM-control interrupt block.
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+pub struct ArmctrlRegisterBlock {
+    #[mmio(PureRead)]
+    basic_pending: BasicInterrupts,
+    #[mmio(PureRead)]
+    gpu_pending: [GpuInterrupts; 2],
+    _fiq_control: u32,
+    #[mmio(Write)]
+    gpu_enable: [GpuInterrupts; 2],
+    #[mmio(Write)]
+    basic_enable: BasicInterrupts,
+    #[mmio(Write)]
+    gpu_disable: [GpuInterrupts; 2],
+    #[mmio(Write)]
+    basic_disable: BasicInterrupts,
+}
+
+assert_register_offsets!(ArmctrlRegisterBlock, 0x28, {
+    basic_pending: 0x00,
+    gpu_pending: 0x04,
+    gpu_enable: 0x10,
+    basic_enable: 0x18,
+    gpu_disable: 0x1c,
+    basic_disable: 0x24,
+});
 
 /// A cascaded-block line as `(bank, irq)`.
 const fn bank_of(line: u32) -> Option<(u32, u32)> {
@@ -259,21 +274,21 @@ pub enum ConfigError {
 
 /// The local controller and, when present, the cascaded ARM-control block.
 pub struct Bcm2836 {
-    local: LocalRegisters,
-    armctrl: Option<ArmctrlRegisters>,
+    local: MmioLocalRegisterBlock<'static>,
+    armctrl: Option<MmioArmctrlRegisterBlock<'static>>,
     /// Enabled interrupts of the GPU banks: the enable registers are
     /// write-only and the pending registers are not masked by them
-    gpu_enabled: [LocalRegisterCopy<u32, GPU_IRQS::Register>; 2],
+    gpu_enabled: [GpuInterrupts; 2],
     /// Enabled ARM peripheral interrupts of the basic bank
-    basic_enabled: LocalRegisterCopy<u32, BASIC::Register>,
+    basic_enabled: BasicInterrupts,
 }
 
-/// The mapping of `region` for a register block of type `T`.
-fn block_address<T>(region: &libirqchip::MmioRegion) -> Result<Address<Virtual>, ConfigError> {
+/// The register block of type `T` mapped by `region`.
+fn block<T>(region: &libirqchip::MmioRegion) -> Result<*mut T, ConfigError> {
     if region.size < size_of::<T>() as u64 {
         return Err(ConfigError::BadRegion);
     }
-    Ok(Address::<Virtual>::new(region.virt))
+    Ok(region.virt as *mut T)
 }
 
 impl Bcm2836 {
@@ -290,73 +305,78 @@ impl Bcm2836 {
             let region = controller.regions().first().ok_or(ConfigError::BadRegion)?;
             match controller.kind {
                 KIND_LOCAL => {
-                    local = Some(LocalRegisters::new(block_address::<LocalRegisterBlock>(
-                        region,
-                    )?));
+                    // SAFETY: the caller guarantees a mapped, exclusive block.
+                    local = Some(unsafe { LocalRegisterBlock::new_mmio(block(region)?) });
                 }
                 KIND_ARMCTRL => {
-                    armctrl = Some(ArmctrlRegisters::new(
-                        block_address::<ArmctrlRegisterBlock>(region)?,
-                    ));
+                    // SAFETY: as above.
+                    armctrl = Some(unsafe { ArmctrlRegisterBlock::new_mmio(block(region)?) });
                 }
                 _ => {}
             }
         }
-        let chip = Self {
+        let mut chip = Self {
             local: local.ok_or(ConfigError::MissingLocal)?,
             armctrl,
-            gpu_enabled: [LocalRegisterCopy::new(0); 2],
-            basic_enabled: LocalRegisterCopy::new(0),
+            gpu_enabled: [GpuInterrupts::ZERO; 2],
+            basic_enabled: BasicInterrupts::ZERO,
         };
         chip.reset();
         Ok(chip)
     }
 
     /// Mask every line and route the GPU interrupt to core 0.
-    fn reset(&self) {
-        self.local.CORE_TIMER_INT_CONTROL[0].set(0);
-        self.local.CORE_MAILBOX_INT_CONTROL[0].set(0);
+    fn reset(&mut self) {
+        self.local.write_core0_timer_int_control(TimerControl::ZERO);
         self.local
-            .PMU_INT_ROUTING_CLEAR
-            .write(PMU_ROUTING::CORE0_IRQ::SET);
+            .write_core0_mailbox_int_control(MailboxControl::ZERO);
         self.local
-            .GPU_INT_ROUTING
-            .write(GPU_ROUTING::IRQ_CORE::Core0 + GPU_ROUTING::FIQ_CORE::Core0);
-        if let Some(armctrl) = &self.armctrl {
-            armctrl
-                .BASIC_DISABLE
-                .write(BASIC::ARM_PERIPHERALS.val(BASIC::ARM_PERIPHERALS.mask));
-            for disable in &armctrl.GPU_DISABLE {
-                disable.write(GPU_IRQS::ALL.val(GPU_IRQS::ALL.mask));
+            .write_pmu_int_routing_clear(PmuRouting::ZERO.with_irq_core(0, true));
+        self.local.write_gpu_int_routing(
+            GpuRouting::ZERO
+                .with_irq_core(Core::Core0)
+                .with_fiq_core(Core::Core0),
+        );
+        if let Some(armctrl) = &mut self.armctrl {
+            armctrl.write_basic_disable(BasicInterrupts::ALL_ARM_PERIPHERALS);
+            for bank in 0..armctrl.len_gpu_disable() {
+                if armctrl.write_gpu_disable(bank, GpuInterrupts::ALL).is_err() {
+                    break;
+                }
             }
         }
     }
 
     /// The first pending, enabled line on core 0, or [`SPURIOUS`].
     pub fn claim(&self) -> u32 {
-        let source = self.local.CORE_IRQ_SOURCE[0].extract();
-        if let Some(&(line, _)) = LOCAL_SOURCES
-            .iter()
-            .find(|(_, field)| source.is_set(*field))
-        {
+        let source = self.local.read_core0_irq_source();
+        let direct = (0..4_u32)
+            .find(|&timer| source.timer(timer as usize))
+            .map(|timer| LINE_CNTPS + timer)
+            .or_else(|| {
+                (0..4_u32)
+                    .find(|&mailbox| source.mailbox(mailbox as usize))
+                    .map(|mailbox| LINE_MAILBOX0 + mailbox)
+            })
+            .or_else(|| source.pmu().then_some(LINE_PMU));
+        if let Some(line) = direct {
             return line;
         }
         let Some(armctrl) = &self.armctrl else {
             return SPURIOUS;
         };
-        if !source.is_set(IRQ_SOURCE::GPU) {
+        if !source.gpu() {
             return SPURIOUS;
         }
-        let basic = armctrl.BASIC_PENDING.extract();
-        if let Some(irq) = (0..).zip(BASIC_IRQS).find_map(|(irq, field)| {
-            (basic.is_set(field) && self.basic_enabled.is_set(field)).then_some(irq)
-        }) {
-            return armctrl_line(BASIC_BANK, irq);
+        let basic = armctrl.read_basic_pending().raw_value() & self.basic_enabled.raw_value();
+        if basic != 0 {
+            return armctrl_line(BASIC_BANK, basic.trailing_zeros());
         }
         (1..)
-            .zip(armctrl.GPU_PENDING.iter().zip(self.gpu_enabled))
-            .find_map(|(bank, (pending, enabled))| {
-                let lines = pending.read(GPU_IRQS::ALL) & enabled.get();
+            .zip(self.gpu_enabled.iter().enumerate())
+            .find_map(|(bank, (index, enabled))| {
+                let pending = armctrl.read_gpu_pending(index).ok()?;
+                let lines = pending.raw_value() & enabled.raw_value();
                 (lines != 0).then(|| armctrl_line(bank, lines.trailing_zeros()))
             })
             .unwrap_or(SPURIOUS)
@@ -364,41 +384,48 @@ impl Bcm2836 {
 
     /// Enable (`enable`) or disable delivery of `line`.
     pub fn set_enabled(&mut self, line: u32, enable: bool) {
-        let value = u32::from(enable);
-        if let Some(&timer) = TIMER_IRQS.get(line as usize) {
-            self.local.CORE_TIMER_INT_CONTROL[0].modify(timer.val(value));
-        } else if let Some(&mailbox) = line
-            .checked_sub(LINE_MAILBOX0)
-            .and_then(|index| MAILBOX_IRQS.get(index as usize))
-        {
-            self.local.CORE_MAILBOX_INT_CONTROL[0].modify(mailbox.val(value));
+        if line <= LINE_CNTV {
+            let timer = line as usize;
+            self.local
+                .modify_core0_timer_int_control(|control| control.with_irq(timer, enable));
+        } else if (LINE_MAILBOX0..LINE_MAILBOX0 + 4).contains(&line) {
+            let mailbox = (line - LINE_MAILBOX0) as usize;
+            self.local
+                .modify_core0_mailbox_int_control(|control| control.with_irq(mailbox, enable));
         } else if line == LINE_PMU {
-            let route = PMU_ROUTING::CORE0_IRQ::SET;
+            let route = PmuRouting::ZERO.with_irq_core(0, true);
             if enable {
-                self.local.PMU_INT_ROUTING_SET.write(route);
+                self.local.write_pmu_int_routing_set(route);
             } else {
-                self.local.PMU_INT_ROUTING_CLEAR.write(route);
+                self.local.write_pmu_int_routing_clear(route);
             }
-        } else if let (Some((bank, irq)), Some(armctrl)) = (bank_of(line), &self.armctrl) {
+        } else if let (Some((bank, irq)), Some(armctrl)) = (bank_of(line), &mut self.armctrl) {
             if bank == BASIC_BANK {
-                let Some(&field) = BASIC_IRQS.get(irq as usize) else {
+                if irq >= ARM_PERIPHERALS {
                     return;
-                };
-                self.basic_enabled.modify(field.val(value));
+                }
+                let irq = irq as usize;
+                self.basic_enabled = self.basic_enabled.with_arm_peripheral(irq, enable);
+                let interrupt = BasicInterrupts::ZERO.with_arm_peripheral(irq, true);
                 if enable {
-                    armctrl.BASIC_ENABLE.write(field.val(1));
+                    armctrl.write_basic_enable(interrupt);
                 } else {
-                    armctrl.BASIC_DISABLE.write(field.val(1));
+                    armctrl.write_basic_disable(interrupt);
                 }
             } else {
                 let index = (bank - 1) as usize;
-                let interrupt = Field::<u32, GPU_IRQS::Register>::new(1, irq as usize);
-                self.gpu_enabled[index].modify(interrupt.val(value));
-                if enable {
-                    armctrl.GPU_ENABLE[index].write(gpu_irq(irq));
+                let irq = irq as usize;
+                let Some(enabled) = self.gpu_enabled.get_mut(index) else {
+                    return;
+                };
+                *enabled = enabled.with_irq(irq, enable);
+                let interrupt = GpuInterrupts::ZERO.with_irq(irq, true);
+                // `index` is a bank of `gpu_enabled`, so of the registers too.
+                let _in_range = if enable {
+                    armctrl.write_gpu_enable(index, interrupt)
                 } else {
-                    armctrl.GPU_DISABLE[index].write(gpu_irq(irq));
-                }
+                    armctrl.write_gpu_disable(index, interrupt)
+                };
             }
         }
         // The GPU cascade (local line 8) is always routed; other local lines

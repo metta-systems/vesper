@@ -21,9 +21,12 @@ host-tests = []
 qemu = ["libuser/qemu"]
 
 [dependencies]
+arbitrary-int = { workspace = true }
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
 libio-channel = { workspace = true }
+libmmio = { workspace = true }
 libserial-channel = { workspace = true }
-tock-registers = { workspace = true }
 
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]

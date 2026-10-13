@@ -80,9 +80,11 @@ mod component {
         let registers = device_address(init, registers_paddr(init)).expect("registers mapped");
         // SAFETY: the interrupt Thread's `map_device_pages` mapped the
         // node's register page read/write as device memory at `registers`
-        // for the driver's lifetime; the two Threads touch disjoint
-        // registers once the UART is configured.
-        Pl011::new(unsafe { &*(registers as *const RegisterBlock) })
+        // for the driver's lifetime. Each Thread makes its own handle; once
+        // the UART is configured they touch disjoint registers, except the
+        // data register, where the interrupt Thread's reads pop the receive
+        // FIFO and the transmit Thread's writes push the transmit FIFO.
+        Pl011::new(unsafe { RegisterBlock::new_mmio(registers as *mut RegisterBlock) })
     }
 
     /// The table's key at `slot`, as an `EventCount`.
@@ -135,7 +137,7 @@ mod component {
         map_device_pages(init).unwrap_or_else(|error| {
             panic!("uart-pl011: mapping registers failed: {:?}", error.code())
         });
-        let uart = uart(init);
+        let mut uart = uart(init);
         assert!(uart.is_pl011(), "uart-pl011: not a PL011");
 
         let attached = attach(init);
@@ -159,7 +161,7 @@ mod component {
             // SAFETY: the private channel names no buffers, so the receiver
             // never touches the data area.
             let receiver = unsafe { Receiver::new(channel, NoEvent, DATA_AREA) };
-            serve_interrupts(init, &uart, receiver, None)
+            serve_interrupts(init, &mut uart, receiver, None)
         }
         let completed = event_count(init, RECEIVE_COMPLETED_SLOT);
         // SAFETY: `attach` mapped the data area read/write for the driver's
@@ -170,7 +172,7 @@ mod component {
         transmit_room
             .advance(1)
             .unwrap_or_else(|error| panic!("uart-pl011: Advance failed: {:?}", error.code()));
-        serve_interrupts(init, &uart, receiver, Some(&transmit_room))
+        serve_interrupts(init, &mut uart, receiver, Some(&transmit_room))
     }
 
     /// The interrupt Thread's loop: on each wakeup, receive into
@@ -179,7 +181,7 @@ mod component {
     /// interrupts that woke it.
     fn serve_interrupts<Completed: Event>(
         init: &DriverInit,
-        uart: &Pl011<'_>,
+        uart: &mut Pl011<'_>,
         mut receiver: Receiver<'_, Completed>,
         transmit_room: Option<&EventCountKey>,
     ) -> ! {
@@ -264,7 +266,7 @@ mod component {
     /// reports the room, so the FIFO never holds more than one burst. A
     /// burst short of [`TRANSMIT_BURST`] that ends the packet may never
     /// drain through the FIFO's trigger level, so nothing waits for it.
-    fn send(uart: &Pl011<'_>, packet: &Packet, room: &mut TransmitRoom) {
+    fn send(uart: &mut Pl011<'_>, packet: &Packet, room: &mut TransmitRoom) {
         let mut cursor = Cursor::START;
         while !cursor.is_at_end(packet) {
             room.wait();
@@ -293,7 +295,7 @@ mod component {
             awaiting: Some(1),
         };
         room.wait();
-        let uart = uart(init);
+        let mut uart = uart(init);
         // SAFETY: the interrupt Thread mapped the client's channel at
         // CONTROL_VA before its first advance.
         let channel = unsafe { SerialChannel::at(CONTROL_VA) };
@@ -311,7 +313,7 @@ mod component {
                 }
             };
             if DATA_AREA.holds(&packet) {
-                send(&uart, &packet, &mut room);
+                send(&mut uart, &packet, &mut room);
             } else {
                 // A packet outside the data area comes back with nothing sent.
                 Cursor::START.cut(&mut packet);

@@ -9,43 +9,39 @@
 mod tests {
     use {
         core::{cell::Cell, sync::atomic::Ordering},
+        derive_mmio::Mmio,
         libio_channel::{DataArea, Event, IoRec, NoEvent, Packet},
         libserial_channel::SerialChannel,
-        tock_registers::{
-            interfaces::{Readable, Writeable},
-            register_structs,
-            registers::ReadWrite,
-        },
         uart_pl011::{
             Interrupts, PART_NUMBER0, Pl011, RECEIVE_BURST, Received, Receiver, RegisterBlock,
             TRANSMIT_BURST,
         },
     };
 
-    register_structs! {
-        /// The PL011 as the hardware sees it.
-        #[allow(non_snake_case)]
-        Device {
-            (0x000 => DR: ReadWrite<u32>),
-            (0x004 => RSR: ReadWrite<u32>),
-            (0x008 => _reserved0),
-            (0x018 => FR: ReadWrite<u32>),
-            (0x01c => _reserved1),
-            (0x024 => IBRD: ReadWrite<u32>),
-            (0x028 => FBRD: ReadWrite<u32>),
-            (0x02c => LCR_H: ReadWrite<u32>),
-            (0x030 => CR: ReadWrite<u32>),
-            (0x034 => IFLS: ReadWrite<u32>),
-            (0x038 => IMSC: ReadWrite<u32>),
-            (0x03c => RIS: ReadWrite<u32>),
-            (0x040 => MIS: ReadWrite<u32>),
-            (0x044 => ICR: ReadWrite<u32>),
-            (0x048 => DMACR: ReadWrite<u32>),
-            (0x04c => _reserved2),
-            (0xfe0 => PERIPH_ID0: ReadWrite<u32>),
-            (0xfe4 => _identification),
-            (0x1000 => @END),
-        }
+    /// The PL011 register block as the hardware sees it, with plain words so
+    /// the tests check the bit positions the driver uses.
+    #[derive(Mmio)]
+    #[mmio(no_owned)]
+    #[repr(C)]
+    struct Device {
+        data: u32,
+        receive_status: u32,
+        _reserved0: [u32; 4],
+        flag: u32,
+        _reserved1: [u32; 2],
+        integer_baud_rate: u32,
+        fractional_baud_rate: u32,
+        line_control: u32,
+        control: u32,
+        interrupt_fifo_level_select: u32,
+        interrupt_mask: u32,
+        raw_interrupt_status: u32,
+        masked_interrupt_status: u32,
+        interrupt_clear: u32,
+        dma_control: u32,
+        _reserved2: [u32; 997],
+        peripheral_id0: u32,
+        _identification: [u32; 7],
     }
 
     const _: () = assert!(size_of::<Device>() == size_of::<RegisterBlock>());
@@ -63,67 +59,80 @@ mod tests {
     const LCR_H_FEN: u32 = 1 << 4;
     const LCR_H_WLEN_8: u32 = 0b11 << 5;
 
-    /// Zeroed, leaked backing memory for the device, and the driver's view
-    /// of it.
-    fn device() -> (&'static Device, Pl011<'static>) {
+    /// A device view and a driver over the same zeroed, leaked block.
+    fn device() -> (MmioDevice<'static>, Pl011<'static>) {
         let words = size_of::<Device>().div_ceil(size_of::<u64>());
         let memory: &'static mut [u64] = Box::leak(vec![0_u64; words].into_boxed_slice());
+        let block = memory.as_mut_ptr();
         // SAFETY: zeroed, aligned memory of the block's size, leaked for
-        // 'static; both views are plain `u32` cells at the same offsets.
-        let (device, registers) = unsafe {
+        // 'static; the tests use the two handles one at a time.
+        unsafe {
             (
-                &*memory.as_ptr().cast::<Device>(),
-                &*memory.as_ptr().cast::<RegisterBlock>(),
+                Device::new_mmio(block.cast::<Device>()),
+                Pl011::new(RegisterBlock::new_mmio(block.cast::<RegisterBlock>())),
             )
-        };
-        (device, Pl011::new(registers))
+        }
     }
 
     #[test]
     fn a_pl011_identifies_itself() {
-        let (device, uart) = device();
+        let (mut device, uart) = device();
         assert!(!uart.is_pl011());
-        device.PERIPH_ID0.set(PART_NUMBER0);
+        device.write_peripheral_id0(u32::from(PART_NUMBER0));
         assert!(uart.is_pl011());
     }
 
     #[test]
     fn configure_sets_8n1_with_fifos_and_all_three_interrupts() {
-        let (device, uart) = device();
-        device.DMACR.set(0b11);
-        device.IMSC.set(0x7ff);
+        let (mut device, mut uart) = device();
+        device.write_dma_control(0b11);
+        device.write_interrupt_mask(0x7ff);
         uart.configure(false);
-        assert_eq!(device.LCR_H.get(), LCR_H_WLEN_8 | LCR_H_FEN);
-        assert_eq!(device.IMSC.get(), INT_RX | INT_RT | INT_TX);
-        assert_eq!(device.IFLS.get(), 0, "both trigger levels at 1/8");
-        assert_eq!(device.DMACR.get(), 0);
-        assert_eq!(device.ICR.get(), 0x7ff, "every pending interrupt cleared");
-        assert_eq!(device.CR.get(), CR_UARTEN | CR_TXE | CR_RXE);
+        assert_eq!(device.read_line_control(), LCR_H_WLEN_8 | LCR_H_FEN);
+        assert_eq!(device.read_interrupt_mask(), INT_RX | INT_RT | INT_TX);
+        assert_eq!(
+            device.read_interrupt_fifo_level_select(),
+            0,
+            "both trigger levels at 1/8"
+        );
+        assert_eq!(device.read_dma_control(), 0);
+        assert_eq!(
+            device.read_interrupt_clear(),
+            0x7ff,
+            "every pending interrupt cleared"
+        );
+        assert_eq!(device.read_control(), CR_UARTEN | CR_TXE | CR_RXE);
     }
 
     #[test]
     fn configure_keeps_the_firmware_baud_rate() {
-        let (device, uart) = device();
-        device.IBRD.set(26);
-        device.FBRD.set(3);
+        let (mut device, mut uart) = device();
+        device.write_integer_baud_rate(26);
+        device.write_fractional_baud_rate(3);
         uart.configure(false);
-        assert_eq!((device.IBRD.get(), device.FBRD.get()), (26, 3));
+        assert_eq!(
+            (
+                device.read_integer_baud_rate(),
+                device.read_fractional_baud_rate()
+            ),
+            (26, 3)
+        );
     }
 
     #[test]
     fn configure_loops_back_on_request() {
-        let (device, uart) = device();
+        let (device, mut uart) = device();
         uart.configure(true);
-        assert_eq!(device.CR.get(), CR_UARTEN | CR_TXE | CR_RXE | CR_LBE);
+        assert_eq!(device.read_control(), CR_UARTEN | CR_TXE | CR_RXE | CR_LBE);
     }
 
     #[test]
     fn quiesce_masks_everything_and_switches_off() {
-        let (device, uart) = device();
+        let (device, mut uart) = device();
         uart.configure(true);
         uart.quiesce();
-        assert_eq!(device.IMSC.get(), 0);
-        assert_eq!(device.CR.get() & CR_UARTEN, 0);
+        assert_eq!(device.read_interrupt_mask(), 0);
+        assert_eq!(device.read_control() & CR_UARTEN, 0);
     }
 
     /// A data area over leaked host memory, so records name real bytes.
@@ -159,8 +168,8 @@ mod tests {
 
     #[test]
     fn take_interrupts_clears_exactly_the_pending_sources() {
-        let (device, uart) = device();
-        device.MIS.set(INT_RX | INT_TX);
+        let (mut device, mut uart) = device();
+        device.write_masked_interrupt_status(INT_RX | INT_TX);
         assert_eq!(
             uart.take_interrupts(),
             Interrupts {
@@ -168,9 +177,9 @@ mod tests {
                 transmit: true
             }
         );
-        assert_eq!(device.ICR.get(), INT_RX | INT_TX);
+        assert_eq!(device.read_interrupt_clear(), INT_RX | INT_TX);
 
-        device.MIS.set(INT_RT);
+        device.write_masked_interrupt_status(INT_RT);
         assert_eq!(
             uart.take_interrupts(),
             Interrupts {
@@ -178,15 +187,15 @@ mod tests {
                 transmit: false
             }
         );
-        assert_eq!(device.ICR.get(), INT_RT);
+        assert_eq!(device.read_interrupt_clear(), INT_RT);
 
-        device.MIS.set(INT_OE);
+        device.write_masked_interrupt_status(INT_OE);
         assert!(
             uart.take_interrupts().receive,
             "an overrun is a receive event"
         );
 
-        device.MIS.set(INT_TX);
+        device.write_masked_interrupt_status(INT_TX);
         assert_eq!(
             uart.take_interrupts(),
             Interrupts {
@@ -198,13 +207,13 @@ mod tests {
 
     #[test]
     fn received_bytes_without_a_buffer_are_dropped_and_counted() {
-        let (device, uart) = device();
+        let (mut device, mut uart) = device();
         let channel = SerialChannel::new();
         let (_memory, area) = data_area(16);
         let completions = Completions::default();
         // SAFETY: the area is leaked host memory.
         let mut receiver = unsafe { Receiver::new(&channel, &completions, area) };
-        device.DR.set(0x41);
+        device.write_data(0x41);
         let pass = uart.receive(&mut receiver);
         assert_eq!(
             pass,
@@ -227,7 +236,7 @@ mod tests {
 
     #[test]
     fn a_receive_pass_fills_buffers_and_returns_the_last_part_full() {
-        let (device, uart) = device();
+        let (mut device, mut uart) = device();
         let channel = SerialChannel::new();
         let (memory, area) = data_area(64);
         let base = area.base;
@@ -259,7 +268,7 @@ mod tests {
         // SAFETY: the area is leaked host memory.
         let mut receiver = unsafe { Receiver::new(&channel, &completions, area) };
         // A byte with a framing error flag: only its data bits are taken.
-        device.DR.set(0x100 | 0x41);
+        device.write_data(0x100 | 0x41);
         let pass = uart.receive(&mut receiver);
         assert_eq!(
             pass,
@@ -308,7 +317,7 @@ mod tests {
 
     #[test]
     fn a_pass_that_stores_nothing_keeps_the_buffer() {
-        let (device, uart) = device();
+        let (mut device, mut uart) = device();
         let channel = SerialChannel::new();
         let (_memory, area) = data_area(16);
         let base = area.base;
@@ -319,13 +328,13 @@ mod tests {
             .expect("room");
         // SAFETY: the area is leaked host memory.
         let mut receiver = unsafe { Receiver::new(&channel, &completions, area) };
-        device.FR.set(FR_RXFE);
+        device.write_flag(FR_RXFE);
         assert_eq!(uart.receive(&mut receiver), Received::default());
         assert_eq!(channel.receive.complete.get(), Ok(None));
 
         // The next byte goes into the same buffer.
-        device.FR.set(0);
-        device.DR.set(0x42);
+        device.write_flag(0);
+        device.write_data(0x42);
         uart.receive(&mut receiver);
         assert_eq!(
             channel.receive.complete.get(),
@@ -335,7 +344,7 @@ mod tests {
 
     #[test]
     fn a_buffer_outside_the_data_area_comes_back_empty() {
-        let (device, uart) = device();
+        let (mut device, mut uart) = device();
         let channel = SerialChannel::new();
         let (memory, area) = data_area(64);
         let base = area.base;
@@ -354,7 +363,7 @@ mod tests {
             .expect("room");
         // SAFETY: the area is leaked host memory.
         let mut receiver = unsafe { Receiver::new(&channel, &completions, area) };
-        device.DR.set(0x43);
+        device.write_data(0x43);
         uart.receive(&mut receiver);
         assert_eq!(
             channel.receive.complete.get(),
@@ -384,11 +393,11 @@ mod tests {
 
     #[test]
     fn transmit_writes_one_burst() {
-        let (device, uart) = device();
+        let (device, mut uart) = device();
         let mut bytes = 0..20_u8;
         assert_eq!(uart.transmit(|| bytes.next()), TRANSMIT_BURST);
         assert_eq!(
-            device.DR.get(),
+            device.read_data(),
             u32::try_from(TRANSMIT_BURST).unwrap() - 1,
             "the last byte written"
         );
@@ -397,16 +406,16 @@ mod tests {
 
     #[test]
     fn transmit_stops_when_the_bytes_run_out() {
-        let (device, uart) = device();
+        let (device, mut uart) = device();
         let mut bytes = [1_u8, 2, 3].into_iter();
         assert_eq!(uart.transmit(|| bytes.next()), 3);
-        assert_eq!(device.DR.get(), 3);
+        assert_eq!(device.read_data(), 3);
     }
 
     #[test]
     fn transmit_takes_no_byte_a_full_fifo_has_no_room_for() {
-        let (device, uart) = device();
-        device.FR.set(FR_TXFF);
+        let (mut device, mut uart) = device();
+        device.write_flag(FR_TXFF);
         let mut asked = 0;
         assert_eq!(
             uart.transmit(|| {

@@ -10,18 +10,16 @@
 
 use {
     crate::device_driver::{IRQNumber, gpio},
+    arbitrary_int::u6,
+    bitbybit::{bitenum, bitfield},
     core::fmt::{self, Arguments},
+    derive_mmio::Mmio,
     libaddress::{Address, Virtual},
     libconsole::{SerialOps, console::interface},
     liblocking::{IRQSafeNullLock, interface::Mutex},
-    libmmio::MMIODerefWrapper,
+    libmmio::assert_register_offsets,
     libprimitives::cpu::loop_while,
     // snafu::Snafu,
-    tock_registers::{
-        interfaces::{ReadWriteable, Readable, Writeable},
-        register_bitfields, register_structs,
-        registers::{ReadOnly, ReadWrite, WriteOnly},
-    },
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -32,213 +30,230 @@ use {
 //
 // Descriptions taken from
 // https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf
-register_bitfields! {
-    u32,
 
-    /// Flag Register
-    FR [
-        /// Transmit FIFO empty. The meaning of this bit depends on the
-        /// state of the FEN bit in the Line Control Register, If the
-        /// FIFO is disabled, this bit is set when the transmit holding
-        /// register is empty. If the FIFO is enabled, the TXFE bit is
-        /// set when the transmit FIFO is empty. This bit does not indicate
-        /// if there is data in the transmit shift register.
-        TXFE OFFSET(7) NUMBITS(1) [],
+/// Data Register.
+#[bitfield(u32, default = 0, debug)]
+struct Data {
+    /// Received or transmitted byte
+    #[bits(0..=7, rw)]
+    byte: u8,
+}
 
-        /// Receive FIFO full. The meaning of this bit depends on the
-        /// state of the FEN bit in the LCRH Register. If the FIFO is
-        /// disabled, this bit is set when the receive holding register
-        /// is full. If the FIFO is enabled, the RXFF bit is set when
-        /// the receive FIFO is full.
-        RXFF OFFSET(6) NUMBITS(1) [],
+/// Flag Register
+#[bitfield(u32, default = 0, debug)]
+struct Flags {
+    /// UART busy. If this bit is set to 1, the UART is busy
+    /// transmitting data. This bit remains set until the complete
+    /// byte, including all the stop bits, has been sent from the
+    /// shift register. This bit is set as soon as the transmit FIFO
+    /// becomes non-empty, regardless of whether the UART is enabled or not.
+    #[bit(3, r)]
+    busy: bool,
 
-        /// Transmit FIFO full. The meaning of this bit depends on the
-        /// state of the FEN bit in the LCRH Register. If the
-        /// FIFO is disabled, this bit is set when the transmit
-        /// holding register is full. If the FIFO is enabled, the TXFF
-        /// bit is set when the transmit FIFO is full.
-        TXFF OFFSET(5) NUMBITS(1) [],
+    /// Receive FIFO empty. The meaning of this bit depends on the
+    /// state of the FEN bit in the LCRH Register. If the
+    /// FIFO is disabled, this bit is set when the receive holding
+    /// register is empty. If the FIFO is enabled, the RXFE bit is
+    /// set when the receive FIFO is empty.
+    #[bit(4, r)]
+    receive_fifo_empty: bool,
 
-        /// Receive FIFO empty. The meaning of this bit depends on the
-        /// state of the FEN bit in the LCRH Register. If the
-        /// FIFO is disabled, this bit is set when the receive holding
-        /// register is empty. If the FIFO is enabled, the RXFE bit is
-        /// set when the receive FIFO is empty.
-        RXFE OFFSET(4) NUMBITS(1) [],
+    /// Transmit FIFO full. The meaning of this bit depends on the
+    /// state of the FEN bit in the LCRH Register. If the
+    /// FIFO is disabled, this bit is set when the transmit
+    /// holding register is full. If the FIFO is enabled, the TXFF
+    /// bit is set when the transmit FIFO is full.
+    #[bit(5, r)]
+    transmit_fifo_full: bool,
 
-        /// UART busy. If this bit is set to 1, the UART is busy
-        /// transmitting data. This bit remains set until the complete
-        /// byte, including all the stop bits, has been sent from the
-        /// shift register. This bit is set as soon as the transmit FIFO
-        /// becomes non-empty, regardless of whether the UART is enabled or not.
-        BUSY OFFSET(3) NUMBITS(1) []
-    ],
+    /// Receive FIFO full. The meaning of this bit depends on the
+    /// state of the FEN bit in the LCRH Register. If the FIFO is
+    /// disabled, this bit is set when the receive holding register
+    /// is full. If the FIFO is enabled, the RXFF bit is set when
+    /// the receive FIFO is full.
+    #[bit(6, r)]
+    receive_fifo_full: bool,
 
+    /// Transmit FIFO empty. The meaning of this bit depends on the
+    /// state of the FEN bit in the Line Control Register, If the
+    /// FIFO is disabled, this bit is set when the transmit holding
+    /// register is empty. If the FIFO is enabled, the TXFE bit is
+    /// set when the transmit FIFO is empty. This bit does not indicate
+    /// if there is data in the transmit shift register.
+    #[bit(7, r)]
+    transmit_fifo_empty: bool,
+}
+
+/// Integer Baud rate divisor
+#[bitfield(u32, default = 0, debug)]
+struct IntegerBaudRate {
     /// Integer Baud rate divisor
-    IBRD [
-        /// Integer Baud rate divisor
-        BAUD_DIVINT OFFSET(0) NUMBITS(16) []
-    ],
+    #[bits(0..=15, rw)]
+    divisor: u16,
+}
 
+/// Fractional Baud rate divisor
+#[bitfield(u32, default = 0, debug)]
+struct FractionalBaudRate {
     /// Fractional Baud rate divisor
-    FBRD [
-        /// Fractional Baud rate divisor
-        BAUD_DIVFRAC OFFSET(0) NUMBITS(6) []
-    ],
+    #[bits(0..=5, rw)]
+    divisor: u6,
+}
 
-    /// Line Control register
-    LCR_H [
-        /// Word length. These bits indicate the number of data bits
-        /// transmitted or received in a frame.
-        WordLength OFFSET(5) NUMBITS(2) [
-            FiveBit = 0b00,
-            SixBit = 0b01,
-            SevenBit = 0b10,
-            EightBit = 0b11
-        ],
+/// Word length: the number of data bits transmitted or received in a frame.
+#[bitenum(u2, exhaustive = true)]
+#[derive(Debug)]
+enum WordLength {
+    Five = 0b00,
+    Six = 0b01,
+    Seven = 0b10,
+    Eight = 0b11,
+}
 
-        Fifos OFFSET(4) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
+/// Line Control register
+#[bitfield(u32, default = 0, debug)]
+struct LineControl {
+    #[bit(1, rw)]
+    parity: bool,
 
-        /// Use 2 stop bits
-        Stop2 OFFSET(3) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
+    /// Use 2 stop bits
+    #[bit(3, rw)]
+    two_stop_bits: bool,
 
-        Parity OFFSET(1) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
-    ],
+    #[bit(4, rw)]
+    fifos: bool,
 
-    /// Control Register
-    CR [
-        /// Receive enable. If this bit is set to 1, the receive
-        /// section of the UART is enabled. Data reception occurs for
-        /// UART signals. When the UART is disabled in the middle of
-        /// reception, it completes the current character before
-        /// stopping.
-        RXE    OFFSET(9) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
+    #[bits(5..=6, rw)]
+    word_length: WordLength,
+}
 
-        /// Transmit enable. If this bit is set to 1, the transmit
-        /// section of the UART is enabled. Data transmission occurs
-        /// for UART signals. When the UART is disabled in the middle
-        /// of transmission, it completes the current character before
-        /// stopping.
-        TXE    OFFSET(8) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
+/// Control Register
+#[bitfield(u32, default = 0, debug)]
+struct Control {
+    /// UART enable. If the UART is disabled in the middle of transmission
+    /// or reception, it completes the current character before stopping.
+    #[bit(0, rw)]
+    uart_enable: bool,
 
-        /// UART enable
-        UARTEN OFFSET(0) NUMBITS(1) [
-            /// If the UART is disabled in the middle of transmission
-            /// or reception, it completes the current character
-            /// before stopping.
-            Disabled = 0,
-            Enabled = 1
-        ]
-    ],
+    /// Transmit enable. If this bit is set to 1, the transmit
+    /// section of the UART is enabled. Data transmission occurs
+    /// for UART signals. When the UART is disabled in the middle
+    /// of transmission, it completes the current character before
+    /// stopping.
+    #[bit(8, rw)]
+    transmit_enable: bool,
 
-    /// Interrupt FIFO Level Select Register.
-    IFLS [
-        /// Receive interrupt FIFO level select.
-        /// The trigger points for the receive interrupt are as follows.
-        RXIFLSEL OFFSET(3) NUMBITS(5) [
-            OneEigth = 0b000,
-            OneQuarter = 0b001,
-            OneHalf = 0b010,
-            ThreeQuarters = 0b011,
-            SevenEights = 0b100
-        ]
-    ],
+    /// Receive enable. If this bit is set to 1, the receive
+    /// section of the UART is enabled. Data reception occurs for
+    /// UART signals. When the UART is disabled in the middle of
+    /// reception, it completes the current character before
+    /// stopping.
+    #[bit(9, rw)]
+    receive_enable: bool,
+}
 
-    /// Interrupt Mask Set/Clear Register.
-    IMSC [
-        /// Receive timeout interrupt mask. A read returns the current mask for the UARTRTINTR
-        /// interrupt.
-        ///
-        /// - On a write of 1, the mask of the UARTRTINTR interrupt is set.
-        /// - A write of 0 clears the mask.
-        RTIM OFFSET(6) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
+/// The trigger points for the receive interrupt.
+#[bitenum(u3, exhaustive = false)]
+#[derive(Debug)]
+enum FifoLevel {
+    OneEighth = 0b000,
+    OneQuarter = 0b001,
+    OneHalf = 0b010,
+    ThreeQuarters = 0b011,
+    SevenEighths = 0b100,
+}
 
-        /// Receive interrupt mask. A read returns the current mask for the UARTRXINTR interrupt.
-        ///
-        /// - On a write of 1, the mask of the UARTRXINTR interrupt is set.
-        /// - A write of 0 clears the mask.
-        RXIM OFFSET(4) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ]
-    ],
+/// Interrupt FIFO Level Select Register.
+#[bitfield(u32, default = 0, debug)]
+struct InterruptFifoLevelSelect {
+    /// Receive interrupt FIFO level select.
+    #[bits(3..=5, rw)]
+    receive: Option<FifoLevel>,
+}
 
-    /// Masked Interrupt Status Register.
-    MIS [
-        /// Receive timeout masked interrupt status. Returns the masked interrupt state of the
-        /// UARTRTINTR interrupt.
-        RTMIS OFFSET(6) NUMBITS(1) [],
+/// Interrupt sources, as the mask set/clear, masked status and clear
+/// registers lay them out.
+#[bitfield(u32, default = 0, debug)]
+struct InterruptSources {
+    /// Receive interrupt (UARTRXINTR).
+    ///
+    /// In the mask register a write of 1 sets the mask of the interrupt and a
+    /// write of 0 clears it; a read returns the current mask.
+    #[bit(4, rw)]
+    receive: bool,
 
-        /// Receive masked interrupt status. Returns the masked interrupt state of the UARTRXINTR
-        /// interrupt.
-        RXMIS OFFSET(4) NUMBITS(1) []
-    ],
+    /// Receive timeout interrupt (UARTRTINTR).
+    #[bit(6, rw)]
+    receive_timeout: bool,
+}
 
-    /// Interrupt Clear Register
-    ICR [
-        /// Meta field for all pending interrupts
-        /// On a write of 1, the corresponding interrupt is cleared. A write of 0 has no effect.
-        ALL OFFSET(0) NUMBITS(11) []
-    ],
+impl InterruptSources {
+    /// Every interrupt: on a write of 1 to the clear register, the
+    /// corresponding interrupt is cleared. A write of 0 has no effect.
+    const ALL: Self = Self::new_with_raw_value(0x7ff);
+}
 
-    /// DMA Control Register
-    DMACR [
-        // RX DMA enabled
-        RXDMAE OFFSET(0) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
+/// DMA Control Register
+#[bitfield(u32, default = 0, debug)]
+struct DmaControl {
+    /// RX DMA enabled
+    #[bit(0, rw)]
+    receive_dma_enable: bool,
 
-        // TX DMA enabled
-        TXDMAE OFFSET(0) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
-    ]
+    /// TX DMA enabled
+    #[bit(1, rw)]
+    transmit_dma_enable: bool,
 }
 
 // https://developer.arm.com/documentation/ddi0183/g/programmers-model/summary-of-registers?lang=en
-register_structs! {
-    #[allow(non_snake_case)]
-    RegisterBlock {
-        (0x00 => Data: ReadWrite<u32>), // DR
-        (0x04 => Status: ReadWrite<u32>), // RSR/ECR
-        (0x08 => __reserved_1),
-        (0x18 => Flag: ReadOnly<u32, FR::Register>),
-        (0x1c => __reserved_2),
-        (0x24 => IntegerBaudRate: WriteOnly<u32, IBRD::Register>),
-        (0x28 => FractionalBaudRate: WriteOnly<u32, FBRD::Register>),
-        (0x2c => LineControl: ReadWrite<u32, LCR_H::Register>), // @todo write-only?
-        (0x30 => Control: WriteOnly<u32, CR::Register>),
-        (0x34 => InterruptFifoLevelSelect: ReadWrite<u32, IFLS::Register>),
-        (0x38 => InterruptMaskSetClear: ReadWrite<u32, IMSC::Register>),
-        (0x3c => RawInterruptStatus: ReadOnly<u32>),
-        (0x40 => MaskedInterruptStatus: ReadOnly<u32, MIS::Register>),
-        (0x44 => InterruptClear: WriteOnly<u32, ICR::Register>),
-        (0x48 => DmaControl: WriteOnly<u32, DMACR::Register>),
-        (0x4c => __reserved_3),
-        (0x1000 => @END),
-    }
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+struct Pl011RegisterBlock {
+    #[mmio(Read, Write)]
+    data: Data,
+    /// RSR/ECR
+    #[mmio(Read, Write)]
+    status: u32,
+    _reserved1: [u32; 4],
+    #[mmio(PureRead)]
+    flag: Flags,
+    _reserved2: [u32; 2],
+    #[mmio(Write)]
+    integer_baud_rate: IntegerBaudRate,
+    #[mmio(Write)]
+    fractional_baud_rate: FractionalBaudRate,
+    line_control: LineControl, // @todo write-only?
+    #[mmio(Write)]
+    control: Control,
+    interrupt_fifo_level_select: InterruptFifoLevelSelect,
+    interrupt_mask_set_clear: InterruptSources,
+    #[mmio(PureRead)]
+    raw_interrupt_status: u32,
+    #[mmio(PureRead)]
+    masked_interrupt_status: InterruptSources,
+    #[mmio(Write)]
+    interrupt_clear: InterruptSources,
+    #[mmio(Write)]
+    dma_control: DmaControl,
+    _reserved3: [u32; 1005],
 }
 
+assert_register_offsets!(Pl011RegisterBlock, 0x1000, {
+    data: 0x00,
+    status: 0x04,
+    flag: 0x18,
+    integer_baud_rate: 0x24,
+    fractional_baud_rate: 0x28,
+    line_control: 0x2c,
+    control: 0x30,
+    interrupt_fifo_level_select: 0x34,
+    interrupt_mask_set_clear: 0x38,
+    raw_interrupt_status: 0x3c,
+    masked_interrupt_status: 0x40,
+    interrupt_clear: 0x44,
+    dma_control: 0x48,
+});
 // #[derive(Debug, Snafu)]
 // pub enum PL011UartError {
 //     #[snafu(display("PL011 UART setup failed in mailbox operation"))]
@@ -257,10 +272,8 @@ register_structs! {
 //
 // pub type Result<T> = ::core::result::Result<T, PL011UartError>;
 
-type Registers = MMIODerefWrapper<RegisterBlock>;
-
 struct PL011UartInner {
-    registers: Registers,
+    registers: MmioPl011RegisterBlock<'static>,
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -358,29 +371,37 @@ impl PL011UartInner {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            registers: Registers::new(mmio_base_addr),
+            // SAFETY: the caller's contract.
+            registers: unsafe { Pl011RegisterBlock::new_mmio(mmio_base_addr.as_mut_ptr()) },
         }
     }
 
-    /// Set baud rate and characteristics (115200 8N1) and map to GPIO
-    pub fn prepare(&self) -> core::result::Result<(), &'static str> {
-        use tock_registers::interfaces::Writeable;
+    /// A handle to the registers for one access.
+    fn registers(&self) -> MmioPl011RegisterBlock<'static> {
+        // SAFETY: `PL011UartInner` is only reached through the
+        // `IRQSafeNullLock` of its `PL011Uart`, which serializes every access,
+        // so no two handles are used at the same time.
+        unsafe { self.registers.clone() }
+    }
 
+    /// Set baud rate and characteristics (115200 8N1) and map to GPIO
+    pub fn prepare(&mut self) -> core::result::Result<(), &'static str> {
         // set up clock for consistent divisor values
         const CLOCK: u32 = 4_000_000; // 4Mhz
         const BAUD_RATE: u32 = 115_200;
 
         // Turn off UART
-        self.registers.Control.set(0);
+        self.registers.write_control(Control::ZERO);
 
         // Wait for any ongoing transmissions to complete
         self.flush_internal();
 
         // Flush TX FIFO
-        self.registers.LineControl.modify(LCR_H::Fifos::Disabled);
+        self.registers
+            .modify_line_control(|line| line.with_fifos(false));
 
         // Clear pending interrupts
-        self.registers.InterruptClear.write(ICR::ALL::SET);
+        self.registers.write_interrupt_clear(InterruptSources::ALL);
 
         // // Should have a MailboxCommand with ref to a command buffer, and access to global MAILBOX
         // // driver to run those commands atomically..
@@ -402,76 +423,90 @@ impl PL011UartInner {
         //
         // Set the baud rate divisors, 8N1 and FIFO enabled.
         let divisors = RateDivisors::from_clock_and_rate(CLOCK.into(), BAUD_RATE)?;
+        // `from_clock_and_rate` already rejects divisors outside the fields.
+        let integer_divisor = u16::try_from(divisors.integer_baud_rate_divisor)
+            .ok()
+            .ok_or("PL011 UART integer baud rate divisor out of range")?;
+        let fractional_divisor = u8::try_from(divisors.fractional_baud_rate_divisor)
+            .ok()
+            .and_then(|divisor| u6::try_new(divisor).ok())
+            .ok_or("PL011 UART fractional baud rate divisor out of range")?;
         self.registers
-            .IntegerBaudRate
-            .write(IBRD::BAUD_DIVINT.val(divisors.integer_baud_rate_divisor & 0xffff));
+            .write_integer_baud_rate(IntegerBaudRate::ZERO.with_divisor(integer_divisor));
         self.registers
-            .FractionalBaudRate
-            .write(FBRD::BAUD_DIVFRAC.val(divisors.fractional_baud_rate_divisor & 0b11_1111));
-        self.registers.LineControl.write(
-            LCR_H::WordLength::EightBit
-                + LCR_H::Fifos::Enabled
-                + LCR_H::Parity::Disabled
-                + LCR_H::Stop2::Disabled,
+            .write_fractional_baud_rate(FractionalBaudRate::ZERO.with_divisor(fractional_divisor));
+        self.registers.write_line_control(
+            LineControl::ZERO
+                .with_word_length(WordLength::Eight)
+                .with_fifos(true)
+                .with_parity(false)
+                .with_two_stop_bits(false),
         );
 
         // Set RX FIFO fill level at 1/8.
-        self.registers
-            .InterruptFifoLevelSelect
-            .write(IFLS::RXIFLSEL::OneEigth);
+        self.registers.write_interrupt_fifo_level_select(
+            InterruptFifoLevelSelect::ZERO.with_receive(FifoLevel::OneEighth),
+        );
 
         // Enable RX IRQ + RX timeout IRQ.
-        self.registers
-            .InterruptMaskSetClear
-            .write(IMSC::RXIM::Enabled + IMSC::RTIM::Enabled);
+        self.registers.write_interrupt_mask_set_clear(
+            InterruptSources::ZERO
+                .with_receive(true)
+                .with_receive_timeout(true),
+        );
 
         // Disable DMA
-        self.registers
-            .DmaControl
-            .write(DMACR::RXDMAE::Disabled + DMACR::TXDMAE::Disabled);
+        self.registers.write_dma_control(
+            DmaControl::ZERO
+                .with_receive_dma_enable(false)
+                .with_transmit_dma_enable(false),
+        );
 
         // Turn on UART
-        self.registers
-            .Control
-            .write(CR::UARTEN::Enabled + CR::TXE::Enabled + CR::RXE::Enabled);
+        self.registers.write_control(
+            Control::ZERO
+                .with_uart_enable(true)
+                .with_transmit_enable(true)
+                .with_receive_enable(true),
+        );
 
         Ok(())
     }
 
     fn flush_internal(&self) {
-        loop_while(|| self.registers.Flag.is_set(FR::BUSY));
+        loop_while(|| self.registers.read_flag().busy());
     }
 }
 
 impl Drop for PL011UartInner {
     fn drop(&mut self) {
-        self.registers.Control.set(0);
+        self.registers.write_control(Control::ZERO);
     }
 }
 
 impl SerialOps for PL011UartInner {
     fn read_byte(&self) -> u8 {
         // wait until something is in the buffer
-        loop_while(|| self.registers.Flag.is_set(FR::RXFE));
+        loop_while(|| self.registers.read_flag().receive_fifo_empty());
 
         // read it and return
-        u8::try_from(self.registers.Data.get() & 0xff).unwrap()
+        self.registers().read_data().byte()
     }
 
     fn read_byte_nonblocking(&self) -> Option<u8> {
-        if self.registers.Flag.is_set(FR::RXFE) {
+        if self.registers.read_flag().receive_fifo_empty() {
             None
         } else {
-            Some(u8::try_from(self.registers.Data.get() & 0xff).unwrap())
+            Some(self.registers().read_data().byte())
         }
     }
 
     fn write_byte(&self, b: u8) {
         // wait until we can send
-        loop_while(|| self.registers.Flag.is_set(FR::TXFF));
+        loop_while(|| self.registers.read_flag().transmit_fifo_full());
 
         // write the character to the buffer
-        self.registers.Data.set(u32::from(b));
+        self.registers().write_data(Data::ZERO.with_byte(b));
     }
 
     /// Wait until the TX FIFO is empty, aka all characters have been put on the
@@ -484,7 +519,7 @@ impl SerialOps for PL011UartInner {
     /// consumed.
     fn clear_rx(&self) {
         loop_while(|| {
-            let pending = !self.registers.Flag.is_set(FR::RXFE);
+            let pending = !self.registers.read_flag().receive_fifo_empty();
             if pending {
                 self.read_byte();
             }
@@ -521,7 +556,7 @@ impl libdriver::drivers::interface::DeviceDriver for PL011Uart {
     }
 
     unsafe fn init(&self) -> core::result::Result<(), &'static str> {
-        self.inner.lock(|inner| inner.prepare())
+        self.inner.lock(PL011UartInner::prepare)
     }
 
     fn register_and_enable_irq_handler(
@@ -583,13 +618,13 @@ impl interface::All for PL011Uart {}
 impl libexception::asynchronous::interface::IRQHandler for PL011Uart {
     fn handle(&self) -> Result<(), &'static str> {
         self.inner.lock(|inner| {
-            let pending = inner.registers.MaskedInterruptStatus.extract();
+            let pending = inner.registers.read_masked_interrupt_status();
 
             // Clear all pending IRQs.
-            inner.registers.InterruptClear.write(ICR::ALL::SET);
+            inner.registers.write_interrupt_clear(InterruptSources::ALL);
 
             // Check for any kind of RX interrupt.
-            if pending.matches_any(&[MIS::RXMIS::SET + MIS::RTMIS::SET]) {
+            if pending.receive() || pending.receive_timeout() {
                 // use interface::ConsoleOps;
                 // Echo any received characters.
                 // while let Some(c) = inner.read_char() {

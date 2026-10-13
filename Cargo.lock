@@ -338,6 +338,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive-mmio"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acd34ba795703e849ab4136e8886fa2140935e2e27640d22c7da6ef5796324af"
+dependencies = [
+ "derive-mmio-macro",
+ "rustversion",
+]
+
+[[package]]
+name = "derive-mmio-macro"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb3c030cba3e3eb0fac8a6877210e23e521535f725b72b137d1d5b8b0085c077"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -870,8 +891,9 @@ dependencies = [
 name = "irqchip-bcm2836"
 version = "0.0.1"
 dependencies = [
- "tock-registers",
- "vesper-address",
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
  "vesper-irqchip",
  "vesper-mmio",
 ]
@@ -881,7 +903,7 @@ name = "irqchip-gicv2"
 version = "0.0.1"
 dependencies = [
  "arm-gic",
- "tock-registers",
+ "derive-mmio",
  "vesper-irqchip",
 ]
 
@@ -1009,9 +1031,10 @@ dependencies = [
 name = "mailbox-impl"
 version = "0.0.1"
 dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
  "mailbox",
- "tock-registers",
- "vesper-address",
  "vesper-device-driver",
  "vesper-mmio",
  "vesper-objects",
@@ -1358,10 +1381,11 @@ dependencies = [
 name = "power-impl"
 version = "0.0.1"
 dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
  "mailbox-client",
  "power",
- "tock-registers",
- "vesper-address",
  "vesper-device-driver",
  "vesper-meddle-runtime",
  "vesper-mmio",
@@ -1951,9 +1975,12 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 name = "uart-pl011"
 version = "0.0.1"
 dependencies = [
- "tock-registers",
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
  "vesper-device-driver",
  "vesper-io-channel",
+ "vesper-mmio",
  "vesper-objects",
  "vesper-print",
  "vesper-serial-channel",
@@ -2273,8 +2300,10 @@ name = "vesper-platforms"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
  "snafu",
- "tock-registers",
  "vesper-address",
  "vesper-boot",
  "vesper-console",

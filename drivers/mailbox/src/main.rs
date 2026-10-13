@@ -144,13 +144,15 @@ fn property(_tags: IoRec) -> Result<(), Exception> {
 mod component {
     use {
         super::{Exception, IoRec, MAX_VALUE_WORDS},
+        arbitrary_int::{u4, u28},
+        bitbybit::bitfield,
         core::sync::atomic::{AtomicU64, Ordering},
-        libaddress::{Address, Virtual},
+        derive_mmio::Mmio,
         libdevice_driver::{
             DEVICE_WINDOW_VA, INIT_VA, NO_BUS_ADDRESS, calling_area, device_address,
             driver_compatible, driver_init, map_device_pages,
         },
-        libmmio::MMIODerefWrapper,
+        libmmio::assert_register_offsets,
         libobject::{
             EventCountKey, FrameKey, IrqHandlerKey, KeyTableKey, NotificationKey, ObjectType,
             RawKey, Rights, UntypedKey, export::init_return_key, thread::ThreadReturnKey,
@@ -158,56 +160,82 @@ mod component {
         libuser::semihosting as semi,
         mailbox::mailbox_v1::__runtime::DataArea,
         mailbox_impl::{BUFFER_BYTES, check_request},
-        tock_registers::{
-            interfaces::{Readable, Writeable},
-            register_bitfields, register_structs,
-            registers::{ReadOnly, ReadWrite, WriteOnly},
-        },
     };
 
     libuser::entry!(main);
 
     driver_compatible!("brcm,bcm2835-mbox");
 
-    register_bitfields! {
-        u32,
-
-        /// Mailbox status.
-        STATUS [
-            /// The mailbox cannot take another word
-            FULL OFFSET(31) NUMBITS(1) [],
-            /// The mailbox holds no word
-            EMPTY OFFSET(30) NUMBITS(1) []
-        ],
-
-        /// Mailbox configuration.
-        CONFIG [
-            /// Interrupt while the mailbox holds data
-            DATA_IRQ OFFSET(0) NUMBITS(1) []
-        ]
+    /// Mailbox status.
+    #[bitfield(u32, default = 0, debug)]
+    struct Status {
+        /// The mailbox holds no word
+        #[bit(30, r)]
+        empty: bool,
+        /// The mailbox cannot take another word
+        #[bit(31, r)]
+        full: bool,
     }
 
-    register_structs! {
-        /// The node's registers: mailbox 0 carries the firmware's answers to
-        /// the ARM, mailbox 1 the ARM's requests to the firmware.
-        #[allow(non_snake_case)]
-        RegisterBlock {
-            (0x00 => READ0: ReadOnly<u32>),
-            (0x04 => _reserved0),
-            (0x18 => STATUS0: ReadOnly<u32, STATUS::Register>),
-            (0x1c => CONFIG0: ReadWrite<u32, CONFIG::Register>),
-            (0x20 => WRITE1: WriteOnly<u32>),
-            (0x24 => _reserved1),
-            (0x38 => STATUS1: ReadOnly<u32, STATUS::Register>),
-            (0x3c => @END),
-        }
+    /// Mailbox configuration.
+    #[bitfield(u32, default = 0, debug)]
+    struct Config {
+        /// Interrupt while the mailbox holds data
+        #[bit(0, rw)]
+        data_irq: bool,
     }
 
-    type Registers = MMIODerefWrapper<RegisterBlock>;
+    /// A mailbox word: a channel and the top 28 bits of a 16-byte aligned
+    /// bus address.
+    #[bitfield(u32, default = 0, debug)]
+    struct MailboxWord {
+        #[bits(0..=3, rw)]
+        channel: u4,
+        #[bits(4..=31, rw)]
+        address_bits: u28,
+    }
 
-    /// The property channel, in the low four bits of a mailbox word.
-    const PROPERTY_CHANNEL: u32 = 8;
-    const CHANNEL_MASK: u32 = 0xf;
+    /// The node's registers: mailbox 0 carries the firmware's answers to the
+    /// ARM, mailbox 1 the ARM's requests to the firmware.
+    #[derive(Mmio)]
+    #[mmio(no_owned)]
+    #[repr(C)]
+    struct RegisterBlock {
+        #[mmio(Read)]
+        read0: MailboxWord,
+        _reserved0: [u32; 5],
+        #[mmio(PureRead)]
+        status0: Status,
+        config0: Config,
+        #[mmio(Write)]
+        write1: MailboxWord,
+        _reserved1: [u32; 5],
+        #[mmio(PureRead)]
+        status1: Status,
+    }
+
+    assert_register_offsets!(RegisterBlock, 0x3c, {
+        read0: 0x00,
+        status0: 0x18,
+        config0: 0x1c,
+        write1: 0x20,
+        status1: 0x38,
+    });
+
+    /// The registers mapped at `address`.
+    ///
+    /// # Safety
+    ///
+    /// `address` maps the node's registers as device memory for the rest of
+    /// the component's life. The caller Thread holding the turn uses only
+    /// mailbox 1, and the interrupt Thread only mailbox 0.
+    unsafe fn registers(address: u64) -> MmioRegisterBlock<'static> {
+        // SAFETY: the caller's contract.
+        unsafe { RegisterBlock::new_mmio(address as *mut RegisterBlock) }
+    }
+
+    /// The property channel.
+    const PROPERTY_CHANNEL: u4 = u4::new(8);
 
     /// Buffer code of a request, and of a buffer the firmware answered.
     const REQUEST: u32 = 0;
@@ -278,18 +306,23 @@ mod component {
         fn exchange(&self, bytes: usize) {
             let length = u64::try_from(bytes).unwrap_or(u64::MAX);
             let frame = FrameKey::from_key(key(&BOUNCE_FRAME));
-            let registers = Registers::new(Address::<Virtual>::new(
-                REGISTERS_VA.load(Ordering::Acquire),
-            ));
+            // SAFETY: the interrupt Thread mapped the registers before the
+            // first turn; this Thread holds the turn and uses mailbox 1 only.
+            let mut registers = unsafe { registers(REGISTERS_VA.load(Ordering::Acquire)) };
             frame
                 .clean_data(0, length)
                 .unwrap_or_else(|error| panic!("mailbox: CleanData failed: {:?}", error.code()));
-            while registers.STATUS1.is_set(STATUS::FULL) {
+            while registers.read_status1().full() {
                 core::hint::spin_loop();
             }
+            // The bounce page is page aligned and below 4 GiB on the bus.
             let bus = u32::try_from(BOUNCE_BUS.load(Ordering::Acquire)).unwrap_or(0);
             let exchange = EXCHANGES.fetch_add(1, Ordering::AcqRel) + 1;
-            registers.WRITE1.set(bus | PROPERTY_CHANNEL);
+            registers.write_write1(
+                MailboxWord::ZERO
+                    .with_channel(PROPERTY_CHANNEL)
+                    .with_address_bits(u28::new(bus >> 4)),
+            );
             EventCountKey::from_key(key(&REPLIES))
                 .await_ge(exchange, EventCountKey::WAIT_INFINITE)
                 .unwrap_or_else(|error| panic!("mailbox: reply wait failed: {:?}", error.code()));
@@ -470,8 +503,10 @@ mod component {
         TURNS.store(turns.to_wire(), Ordering::Release);
         REPLIES.store(replies.to_wire(), Ordering::Release);
 
-        let registers = Registers::new(Address::<Virtual>::new(registers_va));
-        registers.CONFIG0.write(CONFIG::DATA_IRQ::SET);
+        // SAFETY: `map_device_pages` mapped the registers for good; this
+        // Thread uses mailbox 0 only.
+        let mut registers = unsafe { registers(registers_va) };
+        registers.write_config0(Config::ZERO.with_data_irq(true));
         let handlers = init.interrupts();
         for interrupt in handlers {
             IrqHandlerKey::from_key(RawKey::from_wire(interrupt.handler))
@@ -497,9 +532,9 @@ mod component {
                 .unwrap_or_else(|error| {
                     panic!("mailbox: interrupt wait failed: {:?}", error.code())
                 });
-            while !registers.STATUS0.is_set(STATUS::EMPTY) {
-                let word = registers.READ0.get();
-                if word & CHANNEL_MASK == PROPERTY_CHANNEL {
+            while !registers.read_status0().empty() {
+                let word = registers.read_read0();
+                if word.channel() == PROPERTY_CHANNEL {
                     replies.advance(1).unwrap_or_else(|error| {
                         panic!("mailbox: reply advance failed: {:?}", error.code())
                     });

@@ -72,42 +72,23 @@ mod component {
             convert::Infallible,
             sync::atomic::{AtomicU64, Ordering},
         },
-        libaddress::{Address, Virtual},
         libdevice_driver::{
             INIT_VA, Turnstile, device_address, driver_compatible, driver_init, map_device_pages,
         },
         libmeddle_runtime::ExclusiveStacks,
-        libmmio::MMIODerefWrapper,
         libobject::{
             EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
             export::init_return_key, thread::ThreadReturnKey,
         },
         mailbox_client::mailbox_v1::{Bindings, Client, Device, Error},
-        power_impl::{full_reset_control, halt_status, watchdog_start},
-        tock_registers::{
-            interfaces::{Readable, Writeable},
-            register_structs,
-            registers::ReadWrite,
+        power_impl::{
+            MmioRegisterBlock, RegisterBlock, full_reset_control, halt_status, watchdog_start,
         },
     };
 
     libuser::entry!(main);
 
     driver_compatible!("brcm,bcm2835-pm");
-
-    register_structs! {
-        /// The power management block's reset registers.
-        #[allow(non_snake_case)]
-        RegisterBlock {
-            (0x00 => _reserved),
-            (0x1c => RSTC: ReadWrite<u32>),
-            (0x20 => RSTS: ReadWrite<u32>),
-            (0x24 => WDOG: ReadWrite<u32>),
-            (0x28 => @END),
-        }
-    }
-
-    type Registers = MMIODerefWrapper<RegisterBlock>;
 
     /// The devices the firmware powers, in the order of its ids.
     const DEVICES: [Device; 9] = [
@@ -141,10 +122,13 @@ mod component {
         )));
     }
 
-    fn registers() -> Registers {
-        Registers::new(Address::<Virtual>::new(
-            REGISTERS_VA.load(Ordering::Acquire),
-        ))
+    /// The block's reset registers. Only `reset` and `halt` use them, and
+    /// both end the board's run.
+    fn registers() -> MmioRegisterBlock<'static> {
+        // SAFETY: `main` mapped the registers for good before the first call.
+        unsafe {
+            RegisterBlock::new_mmio(REGISTERS_VA.load(Ordering::Acquire) as *mut RegisterBlock)
+        }
     }
 
     /// The firmware's response code behind a failed mailbox call.
@@ -179,9 +163,9 @@ mod component {
 
     /// Reset the board through the watchdog; the board stops running here.
     pub fn reset() -> ! {
-        let registers = registers();
-        registers.WDOG.set(watchdog_start());
-        registers.RSTC.set(full_reset_control(registers.RSTC.get()));
+        let mut registers = registers();
+        registers.write_watchdog(watchdog_start());
+        registers.modify_reset_control(full_reset_control);
         loop {
             core::hint::spin_loop();
         }
@@ -190,8 +174,8 @@ mod component {
     /// Power the devices off, mark the halt and reset.
     pub fn halt() -> Result<Infallible, Exception> {
         devices_off()?;
-        let registers = registers();
-        registers.RSTS.set(halt_status(registers.RSTS.get()));
+        let mut registers = registers();
+        registers.modify_reset_status(halt_status);
         reset()
     }
 

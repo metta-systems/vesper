@@ -1,15 +1,37 @@
 # Future: pointer-based `libmmio` with tock-registers ergonomics
 
 Status: **shelved.** The drivers use [derive-mmio](https://docs.rs/derive-mmio) with
-[bitbybit](https://docs.rs/bitbybit) bitfields first. Come back to this design if that combination
+[bitbybit](https://docs.rs/bitbybit) bitfields. Come back to this design if that combination
 proves too verbose or too limited. `libs/platform/src/raspberrypi/device_driver/bcm/gpio_libmmio.rs`
-(a sketch that is not compiled) shows the BCM GPIO driver written against this design, and
-`gpio_derive_mmio.rs` next to it shows the same driver on derive-mmio.
+(a sketch that is not compiled) shows the BCM GPIO driver written against this design;
+`gpio.rs` next to it is the same driver on derive-mmio.
+
+## What the derive-mmio port showed
+
+Points to weigh when revisiting this design, from porting every driver to derive-mmio 0.8:
+
+- **Array accessors form a reference.** derive-mmio 0.8 reaches an array element through
+  `(*self.ptr).field.as_mut_ptr()`, which auto-references the whole array. Single registers use
+  `addr_of!` and form no reference. Worth an upstream fix.
+- **Plain volatile accesses.** Reads and writes are `read_volatile` / `write_volatile`, with no
+  single-instruction guarantee for trap-and-emulate under a hypervisor.
+- **No offset checks.** derive-mmio checks only that the fields leave no padding. Every block
+  carries `libmmio::assert_register_offsets!` for the datasheet offsets; it caught a wrong gap
+  length during the port.
+- **`&mut` for writes meets `&self` traits.** `libconsole::SerialOps` takes `&self`, so the
+  platform UARTs make a short-lived handle with the unsafe `clone()` under their lock.
+- **Handle names are always public.** The generated `Mmio<Name>` is `pub` whatever the block's
+  visibility, so blocks re-exported through one glob need distinct names.
+- **Arrays return `Result`.** Every array access returns `Result<_, OutOfBoundsError>`, even for
+  indices that are in range by construction.
+- **Fixed field access.** A register's access is fixed per field, so a register whose read and
+  write are separate hardware paths (the PL011 data register) cannot be split between two
+  owners. Two Threads each make their own handle instead.
 
 ## Problem
 
-The tock-registers 0.10 drivers reach registers through `&RegisterBlock`, either directly
-(`&*(address as *const RegisterBlock)`) or through `libmmio::MMIODerefWrapper`, whose `Deref` cannot
+tock-registers 0.10 register blocks are reached through `&RegisterBlock`, either directly
+(`&*(address as *const RegisterBlock)`) or through a `Deref` wrapper, which cannot
 uphold its safety comment. A reference to MMIO is `dereferenceable`, so LLVM may insert reads the
 code never asked for. That is undefined behaviour, and on a FIFO or a read-to-clear status register
 it has real side effects.
@@ -85,7 +107,6 @@ pure reads only. Both hold `NonNull<B>`.
   valid for `'a`, with no other handle to it.
 - `fn shared(&self) -> SharedMmio<'_, B>` and `fn reborrow(&mut self) -> Mmio<'_, B>`.
 - Field projection uses `&raw mut (*ptr).field` only. No reference to device memory is ever formed.
-- `MMIODerefWrapper` goes away. `MMIODescriptor` stays.
 
 ### `register_block!`
 

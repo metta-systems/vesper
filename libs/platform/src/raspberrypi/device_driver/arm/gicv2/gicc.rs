@@ -5,66 +5,71 @@
 //! GICC Driver - GIC CPU interface.
 
 use {
+    arbitrary_int::u10,
+    bitbybit::bitfield,
+    derive_mmio::Mmio,
     libaddress::{Address, Virtual},
-    libmmio::MMIODerefWrapper,
-    tock_registers::{
-        interfaces::{Readable, Writeable},
-        register_bitfields, register_structs,
-        registers::ReadWrite,
-    },
+    liblocking::{IRQSafeNullLock, interface::Mutex},
+    libmmio::assert_register_offsets,
 };
 
 //--------------------------------------------------------------------------------------------------
 // Private Definitions
 //--------------------------------------------------------------------------------------------------
 
-register_bitfields! {
-    u32,
-
-    /// CPU Interface Control Register
-    CTLR [
-        Enable OFFSET(0) NUMBITS(1) []
-    ],
-
-    /// Interrupt Priority Mask Register
-    PMR [
-        Priority OFFSET(0) NUMBITS(8) []
-    ],
-
-    /// Interrupt Acknowledge Register
-    IAR [
-        InterruptID OFFSET(0) NUMBITS(10) []
-    ],
-
-    /// End of Interrupt Register
-    EOIR [
-        EOIINTID OFFSET(0) NUMBITS(10) []
-    ]
+/// CPU Interface Control Register
+#[bitfield(u32, default = 0, debug)]
+struct CpuInterfaceControl {
+    #[bit(0, rw)]
+    enable: bool,
 }
 
-register_structs! {
-    #[allow(non_snake_case)]
-    pub RegisterBlock {
-        (0x000 => CTLR: ReadWrite<u32, CTLR::Register>),
-        (0x004 => PMR: ReadWrite<u32, PMR::Register>),
-        (0x008 => _reserved1),
-        (0x00C => IAR: ReadWrite<u32, IAR::Register>),
-        (0x010 => EOIR: ReadWrite<u32, EOIR::Register>),
-        (0x014  => @END),
-    }
+/// Interrupt Priority Mask Register
+#[bitfield(u32, default = 0, debug)]
+struct PriorityMask {
+    #[bits(0..=7, rw)]
+    priority: u8,
 }
 
-/// Abstraction for the associated MMIO registers.
-type Registers = MMIODerefWrapper<RegisterBlock>;
+/// Interrupt Acknowledge Register and End of Interrupt Register
+#[bitfield(u32, default = 0, debug)]
+struct InterruptId {
+    #[bits(0..=9, rw)]
+    id: u10,
+}
+
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+struct RegisterBlock {
+    control: CpuInterfaceControl,
+    priority_mask: PriorityMask,
+    _binary_point: u32,
+    /// Reading acknowledges the interrupt it returns.
+    #[mmio(Read)]
+    interrupt_acknowledge: InterruptId,
+    #[mmio(Write)]
+    end_of_interrupt: InterruptId,
+}
+
+assert_register_offsets!(RegisterBlock, 0x14, {
+    control: 0x000,
+    priority_mask: 0x004,
+    interrupt_acknowledge: 0x00c,
+    end_of_interrupt: 0x010,
+});
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
 //--------------------------------------------------------------------------------------------------
 
 /// Representation of the GIC CPU interface.
+///
+/// GICC MMIO registers are banked per CPU core, so the lock only serializes
+/// this core's accesses.
 #[allow(clippy::upper_case_acronyms)]
 pub struct GICC {
-    registers: Registers,
+    registers: IRQSafeNullLock<MmioRegisterBlock<'static>>,
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -79,7 +84,10 @@ impl GICC {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(mmio_start_addr: Address<Virtual>) -> Self {
         Self {
-            registers: Registers::new(mmio_start_addr),
+            // SAFETY: the caller's contract.
+            registers: IRQSafeNullLock::new(unsafe {
+                RegisterBlock::new_mmio(mmio_start_addr.as_mut_ptr())
+            }),
         }
     }
 
@@ -89,39 +97,29 @@ impl GICC {
     ///
     ///   "Writing 255 to the `GICC_PMR` always sets it to the largest supported priority field
     ///    value."
-    ///
-    /// # Safety
-    ///
-    /// - GICC MMIO registers are banked per CPU core. It is therefore safe to have `&self` instead
-    ///   of `&mut self`.
     pub fn priority_accept_all(&self) {
-        self.registers.PMR.write(PMR::Priority.val(255)); // Comment in arch spec.
+        self.registers.lock(|registers| {
+            registers.write_priority_mask(PriorityMask::ZERO.with_priority(255)); // Comment in arch spec.
+        });
     }
 
     /// Enable the interface - start accepting IRQs.
-    ///
-    /// # Safety
-    ///
-    /// - GICC MMIO registers are banked per CPU core. It is therefore safe to have `&self` instead
-    ///   of `&mut self`.
     pub fn enable(&self) {
-        self.registers.CTLR.write(CTLR::Enable::SET);
+        self.registers.lock(|registers| {
+            registers.write_control(CpuInterfaceControl::ZERO.with_enable(true));
+        });
     }
 
     /// Extract the number of the highest-priority pending IRQ.
     ///
     /// Can only be called from IRQ context, which is ensured by taking an `IRQContext` token.
-    ///
-    /// # Safety
-    ///
-    /// - GICC MMIO registers are banked per CPU core. It is therefore safe to have `&self` instead
-    ///   of `&mut self`.
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn pending_irq_number<'irq_context>(
         &self,
         _ic: &libexception::asynchronous::IRQContext<'irq_context>,
-    ) -> usize {
-        self.registers.IAR.read(IAR::InterruptID) as usize
+    ) -> u10 {
+        self.registers
+            .lock(|registers| registers.read_interrupt_acknowledge().id())
     }
 
     /// Complete handling of the currently active IRQ.
@@ -129,17 +127,14 @@ impl GICC {
     /// Can only be called from IRQ context, which is ensured by taking an `IRQContext` token.
     ///
     /// To be called after `pending_irq_number()`.
-    ///
-    /// # Safety
-    ///
-    /// - GICC MMIO registers are banked per CPU core. It is therefore safe to have `&self` instead
-    ///   of `&mut self`.
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn mark_completed<'irq_context>(
         &self,
-        irq_number: u32,
+        irq_number: u10,
         _ic: &libexception::asynchronous::IRQContext<'irq_context>,
     ) {
-        self.registers.EOIR.write(EOIR::EOIINTID.val(irq_number));
+        self.registers.lock(|registers| {
+            registers.write_end_of_interrupt(InterruptId::ZERO.with_id(irq_number));
+        });
     }
 }

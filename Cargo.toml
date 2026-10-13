@@ -115,6 +115,7 @@ bitbybit  = { version = "2.0" }
 # bitflags = { version = "2.10" }
 # buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
+derive-mmio = { version = "0.8" }
 libaddress = { path = "libs/address", package = "vesper-address" }
 # liballoc = { path = "libs/alloc", package = "vesper-alloc" }
 libboot = { path = "libs/boot", package = "vesper-boot" }

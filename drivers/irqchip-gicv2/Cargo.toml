@@ -23,7 +23,7 @@ arm-gic = { workspace = true }
 libirqchip = { workspace = true }
 
 [dev-dependencies]
-tock-registers = { workspace = true }
+derive-mmio = { workspace = true }
 
 [lib]
 test = false

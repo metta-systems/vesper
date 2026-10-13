@@ -5,150 +5,149 @@
  * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
  */
 
-// #[cfg(not(feature = "noserial"))]
-// use tock_registers::interfaces::{Readable, Writeable};
 use {
     crate::{BcmHost, device_driver::gpio, exception::asynchronous::IRQNumber},
+    bitbybit::{bitenum, bitfield},
     core::{
         convert::From,
         fmt::{self, Arguments},
     },
+    derive_mmio::Mmio,
     libaddress::{Address, Virtual},
     libconsole::{SerialOps, console::interface},
     liblocking::{IRQSafeNullLock, interface::Mutex},
-    libmmio::MMIODerefWrapper,
-    tock_registers::{
-        interfaces::ReadWriteable,
-        register_bitfields, register_structs,
-        registers::{ReadOnly, ReadWrite, WriteOnly},
-    },
+    libmmio::assert_register_offsets,
 };
 
 // Auxiliary mini UART registers
 //
 // Descriptions taken from
 // https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf
-register_bitfields! {
-    u32,
 
-    /// Auxiliary enables
-    AUX_ENABLES [
-        /// If set the mini UART is enabled. The UART will immediately
-        /// start receiving data, especially if the UART1_RX line is
-        /// low.
-        /// If clear the mini UART is disabled. That also disables any
-        /// mini UART register access
-        MINI_UART_ENABLE OFFSET(0) NUMBITS(1) []
-    ],
+/// Auxiliary enables
+#[bitfield(u32, default = 0, debug)]
+struct AuxEnables {
+    /// If set the mini UART is enabled. The UART will immediately
+    /// start receiving data, especially if the `UART1_RX` line is
+    /// low.
+    /// If clear the mini UART is disabled. That also disables any
+    /// mini UART register access
+    #[bit(0, rw)]
+    mini_uart_enable: bool,
+}
 
-    /// Mini Uart Interrupt Identify
-    AUX_MU_IIR [
-        /// Writing with bit 1 set will clear the receive FIFO
-        /// Writing with bit 2 set will clear the transmit FIFO
-        FIFO_CLEAR OFFSET(1) NUMBITS(2) [
-            Rx = 0b01,
-            Tx = 0b10,
-            All = 0b11
-        ]
-    ],
+/// Mini Uart Interrupt Identify
+#[bitfield(u32, default = 0, debug)]
+struct InterruptIdentify {
+    /// Writing with bit 1 set will clear the receive FIFO
+    #[bit(1, w)]
+    clear_receive_fifo: bool,
+    /// Writing with bit 2 set will clear the transmit FIFO
+    #[bit(2, w)]
+    clear_transmit_fifo: bool,
+}
 
-    /// Mini Uart Line Control
-    AUX_MU_LCR [
-        /// Mode the UART works in
-        DATA_SIZE OFFSET(0) NUMBITS(2) [
-            SevenBit = 0b00,
-            EightBit = 0b11
-        ]
-    ],
+/// The mode the UART works in.
+#[bitenum(u2, exhaustive = false)]
+#[derive(Debug)]
+enum DataSize {
+    SevenBit = 0b00,
+    EightBit = 0b11,
+}
 
+/// Mini Uart Line Control
+#[bitfield(u32, default = 0, debug)]
+struct LineControl {
+    #[bits(0..=1, rw)]
+    data_size: Option<DataSize>,
+}
+
+/// Mini Uart Extra Control
+#[bitfield(u32, default = 0, debug)]
+struct ExtraControl {
+    /// If this bit is set the mini UART receiver is enabled.
+    /// If this bit is clear the mini UART receiver is disabled.
+    #[bit(0, rw)]
+    receive_enable: bool,
+    /// If this bit is set the mini UART transmitter is enabled.
+    /// If this bit is clear the mini UART transmitter is disabled.
+    #[bit(1, rw)]
+    transmit_enable: bool,
+}
+
+/// Mini Uart Status
+#[bitfield(u32, default = 0, debug)]
+struct Status {
+    /// This bit is set if the receive FIFO holds at least 1
+    /// symbol.
+    #[bit(0, r)]
+    symbol_available: bool,
+    /// This bit is set if the transmit FIFO can accept at least
+    /// one byte.
+    #[bit(1, r)]
+    space_available: bool,
+    #[bit(9, r)]
+    transmit_done: bool,
+}
+
+/// Mini Uart Baud rate
+#[bitfield(u32, default = 0, debug)]
+struct BaudRate {
+    /// Mini UART baud rate counter
+    #[bits(0..=15, rw)]
+    rate: u16,
+}
+
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+struct MiniUartRegisterBlock {
+    // 0x00 - AUX_IRQ?
+    _reserved1: u32,
+    aux_enables: AuxEnables,
+    _reserved2: [u32; 14],
+    /// Mini Uart I/O Data
+    #[mmio(Read, Write)]
+    io: u32,
+    /// Mini Uart Interrupt Enable
+    #[mmio(Write)]
+    interrupt_enable: u32,
+    #[mmio(Write)]
+    interrupt_identify: InterruptIdentify,
+    #[mmio(Write)]
+    line_control: LineControl,
+    /// Mini Uart Modem Control
+    #[mmio(Write)]
+    modem_control: u32,
     /// Mini Uart Line Status
-    AUX_MU_LSR [
-        /// This bit is set if the transmit FIFO is empty and the transmitter is
-        /// idle. (Finished shifting out the last bit).
-        TX_IDLE    OFFSET(6) NUMBITS(1) [],
-
-        /// This bit is set if the transmit FIFO can accept at least
-        /// one byte.
-        TX_EMPTY   OFFSET(5) NUMBITS(1) [],
-
-        /// This bit is set if the receive FIFO holds at least 1
-        /// symbol.
-        DATA_READY OFFSET(0) NUMBITS(1) []
-    ],
-
-    /// Mini Uart Extra Control
-    AUX_MU_CNTL [
-        /// If this bit is set the mini UART transmitter is enabled.
-        /// If this bit is clear the mini UART transmitter is disabled.
-        TX_EN OFFSET(1) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ],
-
-        /// If this bit is set the mini UART receiver is enabled.
-        /// If this bit is clear the mini UART receiver is disabled.
-        RX_EN OFFSET(0) NUMBITS(1) [
-            Disabled = 0,
-            Enabled = 1
-        ]
-    ],
-
-    /// Mini Uart Status
-    AUX_MU_STAT [
-        TX_DONE OFFSET(9) NUMBITS(1) [
-            No = 0,
-            Yes = 1
-        ],
-
-        /// This bit is set if the transmit FIFO can accept at least
-        /// one byte.
-        SPACE_AVAILABLE OFFSET(1) NUMBITS(1) [
-            No = 0,
-            Yes = 1
-        ],
-
-        /// This bit is set if the receive FIFO holds at least 1
-        /// symbol.
-        SYMBOL_AVAILABLE OFFSET(0) NUMBITS(1) [
-            No = 0,
-            Yes = 1
-        ]
-    ],
-
-    /// Mini Uart Baud rate
-    AUX_MU_BAUD [
-        /// Mini UART baud rate counter
-        RATE OFFSET(0) NUMBITS(16) []
-    ]
+    #[mmio(PureRead)]
+    line_status: u32,
+    // 0x58 - AUX_MU_MSR
+    // 0x5c - AUX_MU_SCRATCH
+    _reserved3: [u32; 2],
+    #[mmio(Write)]
+    extra_control: ExtraControl,
+    #[mmio(PureRead)]
+    status: Status,
+    #[mmio(Write)]
+    baud_rate: BaudRate,
 }
 
-register_structs! {
-    #[allow(non_snake_case)]
-    RegisterBlock {
-        // 0x00 - AUX_IRQ?
-        (0x00 => __reserved_1),
-        (0x04 => AUX_ENABLES: ReadWrite<u32, AUX_ENABLES::Register>),
-        (0x08 => __reserved_2),
-        (0x40 => AUX_MU_IO: ReadWrite<u32>),//Mini Uart I/O Data
-        (0x44 => AUX_MU_IER: WriteOnly<u32>),//Mini Uart Interrupt Enable
-        (0x48 => AUX_MU_IIR: WriteOnly<u32, AUX_MU_IIR::Register>),
-        (0x4c => AUX_MU_LCR: WriteOnly<u32, AUX_MU_LCR::Register>),
-        (0x50 => AUX_MU_MCR: WriteOnly<u32>),
-        (0x54 => AUX_MU_LSR: ReadOnly<u32, AUX_MU_LSR::Register>),
-        // 0x58 - AUX_MU_MSR
-        // 0x5c - AUX_MU_SCRATCH
-        (0x58 => __reserved_3),
-        (0x60 => AUX_MU_CNTL: WriteOnly<u32, AUX_MU_CNTL::Register>),
-        (0x64 => AUX_MU_STAT: ReadOnly<u32, AUX_MU_STAT::Register>),
-        (0x68 => AUX_MU_BAUD: WriteOnly<u32, AUX_MU_BAUD::Register>),
-        (0x6c => @END),
-    }
-}
-
-type Registers = MMIODerefWrapper<RegisterBlock>;
+assert_register_offsets!(MiniUartRegisterBlock, 0x6c, {
+    aux_enables: 0x04,
+    io: 0x40,
+    interrupt_enable: 0x44,
+    interrupt_identify: 0x48,
+    line_control: 0x4c,
+    modem_control: 0x50,
+    line_status: 0x54,
+    extra_control: 0x60,
+    status: 0x64,
+    baud_rate: 0x68,
+});
 
 struct MiniUartInner {
-    registers: Registers,
+    registers: MmioMiniUartRegisterBlock<'static>,
 }
 
 pub struct MiniUart {
@@ -160,9 +159,9 @@ pub enum Rate {
     Baud115200 = 270,
 }
 
-impl From<Rate> for u32 {
+impl From<Rate> for u16 {
     fn from(r: Rate) -> Self {
-        r as u32
+        r as u16
     }
 }
 
@@ -177,7 +176,7 @@ impl libdriver::drivers::interface::DeviceDriver for MiniUart {
     }
 
     unsafe fn init(&self) -> Result<(), &'static str> {
-        self.inner.lock(|inner| inner.prepare())
+        self.inner.lock(MiniUartInner::prepare)
     }
 }
 
@@ -223,50 +222,59 @@ impl MiniUartInner {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(mmio_base_addr: Address<Virtual>) -> Self {
         Self {
-            registers: Registers::new(mmio_base_addr),
+            // SAFETY: the caller's contract.
+            registers: unsafe { MiniUartRegisterBlock::new_mmio(mmio_base_addr.as_mut_ptr()) },
         }
+    }
+
+    /// A handle to the registers for one access.
+    fn registers(&self) -> MmioMiniUartRegisterBlock<'static> {
+        // SAFETY: `MiniUartInner` is only reached through the
+        // `IRQSafeNullLock` of its `MiniUart`, which serializes every access,
+        // so no two handles are used at the same time.
+        unsafe { self.registers.clone() }
     }
 
     /// Set baud rate and characteristics (115200 8N1) and map to GPIO
     #[allow(clippy::unnecessary_wraps)]
-    pub fn prepare(&self) -> Result<(), &'static str> {
-        use tock_registers::interfaces::Writeable;
+    pub fn prepare(&mut self) -> Result<(), &'static str> {
         // initialize UART
         self.registers
-            .AUX_ENABLES
-            .modify(AUX_ENABLES::MINI_UART_ENABLE::SET);
-        self.registers.AUX_MU_IER.set(0);
-        self.registers.AUX_MU_CNTL.set(0);
+            .modify_aux_enables(|enables| enables.with_mini_uart_enable(true));
+        self.registers.write_interrupt_enable(0);
+        self.registers.write_extra_control(ExtraControl::ZERO);
         self.registers
-            .AUX_MU_LCR
-            .write(AUX_MU_LCR::DATA_SIZE::EightBit);
-        self.registers.AUX_MU_MCR.set(0);
-        self.registers.AUX_MU_IER.set(0);
+            .write_line_control(LineControl::ZERO.with_data_size(DataSize::EightBit));
+        self.registers.write_modem_control(0);
+        self.registers.write_interrupt_enable(0);
         self.registers
-            .AUX_MU_BAUD
-            .write(AUX_MU_BAUD::RATE.val(Rate::Baud115200.into()));
+            .write_baud_rate(BaudRate::ZERO.with_rate(Rate::Baud115200.into()));
 
         // Clear FIFOs before using the device
-        self.registers.AUX_MU_IIR.write(AUX_MU_IIR::FIFO_CLEAR::All);
+        self.registers.write_interrupt_identify(
+            InterruptIdentify::ZERO
+                .with_clear_receive_fifo(true)
+                .with_clear_transmit_fifo(true),
+        );
 
-        self.registers
-            .AUX_MU_CNTL
-            .write(AUX_MU_CNTL::RX_EN::Enabled + AUX_MU_CNTL::TX_EN::Enabled);
+        self.registers.write_extra_control(
+            ExtraControl::ZERO
+                .with_receive_enable(true)
+                .with_transmit_enable(true),
+        );
 
         Ok(())
     }
 
     fn flush_internal(&self) {
-        use tock_registers::interfaces::Readable;
-        libprimitives::cpu::loop_until(|| self.registers.AUX_MU_STAT.is_set(AUX_MU_STAT::TX_DONE));
+        libprimitives::cpu::loop_until(|| self.registers.read_status().transmit_done());
     }
 }
 
 impl Drop for MiniUartInner {
     fn drop(&mut self) {
         self.registers
-            .AUX_ENABLES
-            .modify(AUX_ENABLES::MINI_UART_ENABLE::CLEAR);
+            .modify_aux_enables(|enables| enables.with_mini_uart_enable(false));
         // @todo disable gpio.PUD ?
     }
 }
@@ -274,37 +282,26 @@ impl Drop for MiniUartInner {
 impl SerialOps for MiniUartInner {
     /// Receive a byte without console translation
     fn read_byte(&self) -> u8 {
-        use tock_registers::interfaces::Readable;
         // wait until something is in the buffer
-        libprimitives::cpu::loop_until(|| {
-            self.registers
-                .AUX_MU_STAT
-                .is_set(AUX_MU_STAT::SYMBOL_AVAILABLE)
-        });
+        libprimitives::cpu::loop_until(|| self.registers.read_status().symbol_available());
 
         // read it and return
-        (self.registers.AUX_MU_IO.get() & 0xff) as u8
+        (self.registers().read_io() & 0xff) as u8
     }
 
     fn read_byte_nonblocking(&self) -> Option<u8> {
-        use tock_registers::interfaces::Readable;
         self.registers
-            .AUX_MU_STAT
-            .is_set(AUX_MU_STAT::SYMBOL_AVAILABLE)
-            .then(|| (self.registers.AUX_MU_IO.get() & 0xff) as u8)
+            .read_status()
+            .symbol_available()
+            .then(|| (self.registers().read_io() & 0xff) as u8)
     }
 
     fn write_byte(&self, b: u8) {
-        use tock_registers::interfaces::{Readable, Writeable};
         // wait until we can send
-        libprimitives::cpu::loop_until(|| {
-            self.registers
-                .AUX_MU_STAT
-                .is_set(AUX_MU_STAT::SPACE_AVAILABLE)
-        });
+        libprimitives::cpu::loop_until(|| self.registers.read_status().space_available());
 
         // write the character to the buffer
-        self.registers.AUX_MU_IO.set(u32::from(b));
+        self.registers().write_io(u32::from(b));
     }
 
     /// Wait until the TX FIFO is empty, aka all characters have been put on the
@@ -316,13 +313,9 @@ impl SerialOps for MiniUartInner {
     /// Consume input until RX FIFO is empty, aka all pending characters have been
     /// consumed.
     fn clear_rx(&self) {
-        use tock_registers::interfaces::Readable;
         libprimitives::cpu::loop_while(|| {
             // libprimitives?
-            let pending = self
-                .registers
-                .AUX_MU_STAT
-                .is_set(AUX_MU_STAT::SYMBOL_AVAILABLE);
+            let pending = self.registers.read_status().symbol_available();
             if pending {
                 self.read_byte();
             }

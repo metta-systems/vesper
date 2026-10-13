@@ -8,71 +8,75 @@
 //!   - SPI - Shared Peripheral Interrupt.
 
 use {
+    arbitrary_int::u5,
+    bitbybit::bitfield,
+    derive_mmio::Mmio,
     libaddress::{Address, Virtual},
     liblocking::IRQSafeNullLock,
-    libmmio::MMIODerefWrapper,
-    tock_registers::{
-        interfaces::{Readable, Writeable},
-        register_bitfields, register_structs,
-        registers::{ReadOnly, ReadWrite},
-    },
+    libmmio::assert_register_offsets,
 };
 
 //--------------------------------------------------------------------------------------------------
 // Private Definitions
 //--------------------------------------------------------------------------------------------------
 
-register_bitfields! {
-    u32,
-
-    /// Distributor Control Register
-    CTLR [
-        Enable OFFSET(0) NUMBITS(1) []
-    ],
-
-    /// Interrupt Controller Type Register
-    TYPER [
-        ITLinesNumber OFFSET(0)  NUMBITS(5) []
-    ],
-
-    /// Interrupt Processor Targets Registers
-    ITARGETSR [
-        Offset3 OFFSET(24) NUMBITS(8) [],
-        Offset2 OFFSET(16) NUMBITS(8) [],
-        Offset1 OFFSET(8)  NUMBITS(8) [],
-        Offset0 OFFSET(0)  NUMBITS(8) []
-    ]
+/// Distributor Control Register
+#[bitfield(u32, default = 0, debug)]
+struct DistributorControl {
+    #[bit(0, rw)]
+    enable: bool,
 }
 
-register_structs! {
-    #[allow(non_snake_case)]
-    SharedRegisterBlock {
-        (0x000 => CTLR: ReadWrite<u32, CTLR::Register>),
-        (0x004 => TYPER: ReadOnly<u32, TYPER::Register>),
-        (0x008 => _reserved1),
-        (0x104 => ISENABLER: [ReadWrite<u32>; 31]),
-        (0x180 => _reserved2),
-        (0x820 => ITARGETSR: [ReadWrite<u32, ITARGETSR::Register>; 248]),
-        (0xC00 => @END),
-    }
+/// Interrupt Controller Type Register
+#[bitfield(u32, default = 0, debug)]
+struct ControllerType {
+    #[bits(0..=4, r)]
+    it_lines_number: u5,
 }
 
-register_structs! {
-    #[allow(non_snake_case)]
-    BankedRegisterBlock {
-        (0x000 => _reserved1),
-        (0x100 => ISENABLER: ReadWrite<u32>),
-        (0x104 => _reserved2),
-        (0x800 => ITARGETSR: [ReadOnly<u32, ITARGETSR::Register>; 8]),
-        (0x820 => @END),
-    }
+/// Interrupt Processor Targets Registers: the CPU target mask of four
+/// interrupts, one byte each.
+#[bitfield(u32, default = 0, debug)]
+struct ProcessorTargets {
+    #[bits(0..=7, rw)]
+    target: [u8; 4],
 }
 
-/// Abstraction for the non-banked parts of the associated MMIO registers.
-struct SharedRegisters(MMIODerefWrapper<SharedRegisterBlock>);
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+struct SharedRegisterBlock {
+    control: DistributorControl,
+    #[mmio(PureRead)]
+    controller_type: ControllerType,
+    _reserved1: [u32; 63],
+    set_enable: [u32; 31],
+    _reserved2: [u32; 424],
+    targets: [ProcessorTargets; 248],
+}
 
-/// Abstraction for the banked parts of the associated MMIO registers.
-struct BankedRegisters(MMIODerefWrapper<BankedRegisterBlock>);
+assert_register_offsets!(SharedRegisterBlock, 0xc00, {
+    control: 0x000,
+    controller_type: 0x004,
+    set_enable: 0x104,
+    targets: 0x820,
+});
+
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+struct BankedRegisterBlock {
+    _reserved1: [u32; 64],
+    set_enable: u32,
+    _reserved2: [u32; 447],
+    #[mmio(PureRead)]
+    targets: [ProcessorTargets; 8],
+}
+
+assert_register_offsets!(BankedRegisterBlock, 0x820, {
+    set_enable: 0x100,
+    targets: 0x800,
+});
 
 //--------------------------------------------------------------------------------------------------
 // Public Definitions
@@ -82,41 +86,34 @@ struct BankedRegisters(MMIODerefWrapper<BankedRegisterBlock>);
 #[allow(clippy::upper_case_acronyms)]
 pub struct GICD {
     /// Access to shared registers is guarded with a lock.
-    shared_registers: IRQSafeNullLock<SharedRegisters>,
+    shared_registers: IRQSafeNullLock<MmioSharedRegisterBlock<'static>>,
 
-    /// Access to banked registers is unguarded.
-    banked_registers: BankedRegisters,
+    /// Access to banked registers is guarded with a lock as well; they are
+    /// per core, so the lock only serializes this core's accesses.
+    banked_registers: IRQSafeNullLock<MmioBankedRegisterBlock<'static>>,
 }
 
 //--------------------------------------------------------------------------------------------------
 // Private Code
 //--------------------------------------------------------------------------------------------------
 
-impl SharedRegisters {
-    /// Return the number of IRQs that this HW implements.
-    #[inline(always)]
-    fn num_irqs(&mut self) -> usize {
-        // Query number of implemented IRQs.
-        //
-        // Refer to GICv2 Architecture Specification, Section 4.3.2.
-        ((self.0.TYPER.read(TYPER::ITLinesNumber) as usize) + 1) * 32
-    }
+/// Return the number of IRQs that this HW implements.
+#[inline(always)]
+fn num_irqs(registers: &MmioSharedRegisterBlock<'_>) -> usize {
+    // Query number of implemented IRQs.
+    //
+    // Refer to GICv2 Architecture Specification, Section 4.3.2.
+    (usize::from(registers.read_controller_type().it_lines_number().value()) + 1) * 32
+}
 
-    /// Return a slice of the implemented ITARGETSR.
-    #[inline(always)]
-    fn implemented_itargets_slice(&mut self) -> &[ReadWrite<u32, ITARGETSR::Register>] {
-        assert!(self.num_irqs() >= 36);
+/// Return the number of implemented SPI ITARGETSR registers.
+#[inline(always)]
+fn implemented_spi_targets(registers: &MmioSharedRegisterBlock<'_>) -> usize {
+    assert!(num_irqs(registers) >= 36);
 
-        // Calculate the max index of the shared ITARGETSR array.
-        //
-        // The first 32 IRQs are private, so not included in `shared_registers`. Each ITARGETS
-        // register has four entries, so shift right by two. Subtract one because we start
-        // counting at zero.
-        let spi_itargetsr_max_index = ((self.num_irqs() - 32) >> 2) - 1;
-
-        // Rust automatically inserts slice range sanity check, i.e. max >= min.
-        &self.0.ITARGETSR[0..spi_itargetsr_max_index]
-    }
+    // The first 32 IRQs are private, so not included in `shared_registers`. Each ITARGETS
+    // register has four entries, so shift right by two.
+    ((num_irqs(registers) - 32) >> 2).min(registers.len_targets())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -132,10 +129,15 @@ impl GICD {
     /// - The user must ensure to provide a correct MMIO start address.
     pub const unsafe fn new(mmio_start_addr: Address<Virtual>) -> Self {
         Self {
-            shared_registers: IRQSafeNullLock::new(SharedRegisters(MMIODerefWrapper::new(
-                mmio_start_addr,
-            ))),
-            banked_registers: BankedRegisters(MMIODerefWrapper::new(mmio_start_addr)),
+            // SAFETY: the caller's contract. The two blocks overlap at the
+            // same base; each covers registers the other does not.
+            shared_registers: IRQSafeNullLock::new(unsafe {
+                SharedRegisterBlock::new_mmio(mmio_start_addr.as_mut_ptr())
+            }),
+            // SAFETY: as above.
+            banked_registers: IRQSafeNullLock::new(unsafe {
+                BankedRegisterBlock::new_mmio(mmio_start_addr.as_mut_ptr())
+            }),
         }
     }
 
@@ -145,8 +147,12 @@ impl GICD {
     ///
     ///   "`GICD_ITARGETSR0` to `GICD_ITARGETSR7` are read-only, and each field returns a value that
     ///    corresponds only to the processor reading the register."
-    fn local_gic_target_mask(&self) -> u32 {
-        self.banked_registers.0.ITARGETSR[0].read(ITARGETSR::Offset0)
+    fn local_gic_target_mask(&self) -> u8 {
+        self.banked_registers.lock(|registers| {
+            registers
+                .read_targets(0)
+                .map_or(0, |targets| targets.target(0))
+        })
     }
 
     /// Route all SPIs to the boot core and enable the distributor.
@@ -158,18 +164,16 @@ impl GICD {
 
         // Target all SPIs to the boot core only.
         let mask = self.local_gic_target_mask();
+        let targets = (0..4).fold(ProcessorTargets::ZERO, |targets, index| {
+            targets.with_target(index, mask)
+        });
 
-        self.shared_registers.lock(|regs| {
-            for i in regs.implemented_itargets_slice() {
-                i.write(
-                    ITARGETSR::Offset3.val(mask)
-                        + ITARGETSR::Offset2.val(mask)
-                        + ITARGETSR::Offset1.val(mask)
-                        + ITARGETSR::Offset0.val(mask),
-                );
+        self.shared_registers.lock(|registers| {
+            for index in 0..implemented_spi_targets(registers) {
+                let _in_range = registers.write_targets(index, targets);
             }
 
-            regs.0.CTLR.write(CTLR::Enable::SET);
+            registers.write_control(DistributorControl::ZERO.with_enable(true));
         });
     }
 
@@ -182,20 +186,20 @@ impl GICD {
         let enable_reg_index = irq_num >> 5;
         let enable_bit: u32 = 1_u32 << (irq_num % 32);
 
-        // Check if we are handling a private or shared IRQ.
+        // Writing a 1 to a bit of ISENABLER enables that IRQ. All other IRQ
+        // enable bits are unaffected, so no read and OR'ing is needed.
         match irq_num {
             // Private.
             0..=31 => {
-                let enable_reg = &self.banked_registers.0.ISENABLER;
-                enable_reg.set(enable_reg.get() | enable_bit);
+                self.banked_registers
+                    .lock(|registers| registers.write_set_enable(enable_bit));
             }
             // Shared.
             _ => {
                 let enable_reg_index_shared = enable_reg_index - 1;
 
-                self.shared_registers.lock(|regs| {
-                    let enable_reg = &regs.0.ISENABLER[enable_reg_index_shared];
-                    enable_reg.set(enable_reg.get() | enable_bit);
+                self.shared_registers.lock(|registers| {
+                    let _in_range = registers.write_set_enable(enable_reg_index_shared, enable_bit);
                 });
             }
         }
