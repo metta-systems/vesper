@@ -29,7 +29,7 @@
 
 use {
     mailbox::mailbox_v1::{__runtime::IoRec, Clock, Device, Exception, MailboxV1},
-    mailbox_impl::tag,
+    mailbox_impl::{ACT_LED_PIN, tag},
 };
 
 /// `firmware_error` code of a request that cannot run (non-Vesper builds).
@@ -94,6 +94,10 @@ impl MailboxV1 for VideoCoreMailbox {
         let state = POWER_MISSING_OR_WAIT | if on { POWER_ON } else { 0 };
         call(tag::SET_POWER_STATE, &[device_id(which), state], 2)
             .and_then(|values| power_state(values[1]))
+    }
+
+    fn set_led(on: bool) -> Result<(), Exception> {
+        call(tag::SET_GPIO_STATE, &[ACT_LED_PIN, u32::from(on)], 2).map(|_values| ())
     }
 
     fn property(tags: IoRec) -> Result<(), Exception> {

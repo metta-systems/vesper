@@ -53,6 +53,7 @@ mod tests {
             tag::SET_POWER_STATE,
             tag::SET_CLOCK_STATE,
             tag::SET_CLOCK_RATE,
+            tag::SET_GPIO_STATE,
         ] {
             assert!(!is_allowed(id), "{id:#x}");
             assert_eq!(
@@ -132,5 +133,15 @@ mod tests {
         let mut words = vec![0_u32; BUFFER_BYTES / 4 + 1];
         words[0] = u32::try_from(words.len() * 4).unwrap();
         assert_eq!(check_request(&words), Err(Rejected::Malformed));
+    }
+
+    #[test]
+    fn the_led_pin_is_the_expander_pin_unless_built_for_the_pi_4() {
+        // Host builds carry no board cfg: the Raspberry Pi 3's expander pin.
+        assert_eq!(
+            mailbox_impl::ACT_LED_PIN,
+            if cfg!(board_rpi4) { 42 } else { 130 }
+        );
+        assert!(!mailbox_impl::is_allowed(tag::SET_GPIO_STATE));
     }
 }

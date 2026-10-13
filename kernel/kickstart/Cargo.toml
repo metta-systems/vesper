@@ -40,6 +40,7 @@ libboot = { workspace = true }
 libcomponent-loader = { workspace = true }
 libcpu = { workspace = true }
 libdevice-driver = { workspace = true }
+libserial-channel = { workspace = true }
 libdevicetree = { workspace = true }
 libexception = { workspace = true }
 libirqchip = { workspace = true }

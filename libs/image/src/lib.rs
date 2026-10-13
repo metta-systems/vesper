@@ -180,7 +180,24 @@ pub struct ComponentImage {
     pub interfaces: &'static [InterfaceExport],
     /// The functions of other components this one calls
     pub imports: &'static [Import],
+    /// The resources mapped read-only among `segments`, in the order the
+    /// component's manifest entry names them
+    pub resources: &'static [ResourceMapping],
 }
+
+/// Where a bundled resource (a `[[resource]]` data file) is mapped in the
+/// component that names it.
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceMapping {
+    pub name: &'static str,
+    pub virt_addr: u64,
+    /// Bytes of the file (the mapping is padded to whole pages)
+    pub size: u64,
+}
+
+/// Where the first resource of a component is mapped; further resources
+/// follow page-aligned.
+pub const RESOURCE_BASE: u64 = 0x3c00_0000;
 
 /// A device driver bundled into a boot image: an active EL0 component that
 /// Kickstart loads once per enabled device tree node whose `compatible` it
@@ -198,6 +215,9 @@ pub struct DriverImage {
     pub memory_bits: u8,
     /// Whether each instance receives the `VideoCore` memory Untypeds
     pub video_memory: bool,
+    /// Whether the instance is attached to the PL011 driver's serial channel
+    /// (`serial = true`; see `libserial-channel`)
+    pub serial: bool,
     /// Entries of the further Threads each instance runs besides the one
     /// at the component's entry
     pub threads: &'static [u64],

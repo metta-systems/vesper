@@ -55,6 +55,11 @@ local interface mailbox_v1
         returns (boolean is_on)
         raises (firmware_error, busy);
 
+    ## Turn the board's activity LED on or off. The Raspberry Pi models drive
+    ## the LED differently; the component knows how.
+    set_led(boolean on)
+        raises (firmware_error, busy);
+
     ## Send the property tag buffer in `tags`, bytes of the data area holding a complete
     ## request; the firmware's response replaces it in place.
     property(octet& tags)

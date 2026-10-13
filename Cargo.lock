@@ -911,6 +911,7 @@ dependencies = [
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
+ "vesper-serial-channel",
 ]
 
 [[package]]
@@ -1655,6 +1656,21 @@ dependencies = [
  "scopeguard",
  "unescaper",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "shell"
+version = "0.0.1"
+dependencies = [
+ "mailbox-client",
+ "power-client",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-meddle-runtime",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-channel",
+ "vesper-user-runtime",
 ]
 
 [[package]]

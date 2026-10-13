@@ -25,11 +25,11 @@ pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-arg=--script=' + test_link
 
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver driver-probe uart-pl011 mailbox-impl power-impl fb-impl mailbox-test-client'
+user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver driver-probe uart-pl011 mailbox-impl power-impl fb-impl mailbox-test-client shell'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
-# EL0 driver components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'uart-pl011 mailbox-impl power-impl fb-impl'
+# EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
+driver_components := 'uart-pl011 mailbox-impl power-impl fb-impl shell'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -375,6 +375,18 @@ test-mailbox: (_run-test-kernel 'mailbox-test' 'build-mailbox-test')
 [group("test")]
 test-mailbox-rpi4: (_run-test-kernel 'mailbox-test' 'build-mailbox-test rpi4' 'rpi4')
 
+# Boot the production image (rpi3, QEMU) and type commands at the shell on the serial console (the kernel's semihosting output goes to its own file), from a slow feeder so the UART's FIFO never overflows: the commands must answer, and `end` must shut QEMU down with a success status
+[group("test")]
+test-shell: (build 'rpi3' 'qemu')
+    @rm -f qemu.log target/shell-test.log target/shell-semihosting.log
+    (sleep 10; printf 'help\n'; sleep 2; printf 'led on\n'; sleep 2; printf 'led off\n'; sleep 2; printf 'feats\n'; sleep 2; printf 'draw\n'; sleep 2; printf 'end\n'; sleep 3) | {{ qemu }} -M raspi3b -display none -monitor none -chardev stdio,id=uart,signal=off -serial chardev:uart -chardev file,id=semihosting,path=target/shell-semihosting.log -semihosting-config enable=on,userspace=on,chardev=semihosting -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_bin }}" > target/shell-test.log
+    @grep -q "Supported console commands" target/shell-test.log || { echo "shell-test: help printed nothing"; exit 1; }
+    @grep -q "Unknown command feats, try 'help'" target/shell-test.log || { echo "shell-test: an unknown command was not reported"; exit 1; }
+    @if grep -q "led on failed\|led off failed" target/shell-test.log; then echo "shell-test: the LED command failed"; exit 1; fi
+    @grep -q "font: 95 glyphs mapped" target/shell-test.log || { echo "shell-test: the font resource was not mapped"; exit 1; }
+    @grep -q "Bye" target/shell-test.log || { echo "shell-test: end did not say goodbye"; exit 1; }
+    @echo "{{ ok_label }} shell answered help, the LED commands, an unknown command and end"
+
 # Boot uart-test: the PL011 driver component's two Threads serve a client's transmit and receive IO channels in loopback by interrupts
 [group("test")]
 test-uart: (_run-test-kernel 'uart-test' 'build-uart-test')
@@ -436,7 +448,7 @@ test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vespe
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
 [group("test")]
-test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'vesper-device-driver' 'areas') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'fb-impl' 'requests')
+test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'vesper-device-driver' 'areas') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 [group("test")]
@@ -487,7 +499,7 @@ clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 
 
 # Lint the boot-platform host tests
 [group("maintenance")]
-clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'fb-impl' 'requests')
+clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 [group("maintenance")]

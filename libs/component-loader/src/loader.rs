@@ -84,6 +84,9 @@ pub fn verify_component(ttbr: u64, image: &ComponentImage) {
     }
 }
 
+/// Most 2 MiB spans one component image may touch.
+const MAX_SPANS: usize = 16;
+
 impl Builder<'_> {
     /// Map `image` into `component`'s `AddressSpace` at its link addresses.
     ///
@@ -110,17 +113,31 @@ impl Builder<'_> {
                 )
             })
             .chain(bss_range);
-        let (low, high) = ranges.fold((u64::MAX, 0), |(low, high), (start, end)| {
-            (low.min(start), high.max(end))
-        });
-        assert!(low < high, "component `{}` has nothing to load", image.name);
-        for span in (low / LEAF_SPAN)..=((high - 1) / LEAF_SPAN) {
-            Self::map_table(
-                self.carve_tables(slots.take(1), 1),
-                component.l2,
-                span * LEAF_SPAN,
-            );
+        // One L3 table per 2 MiB span any range touches, each carved once.
+        let mut carved = [u64::MAX; MAX_SPANS];
+        let mut carved_count = 0;
+        let mut loadable = false;
+        for (start, end) in ranges {
+            loadable |= start < end;
+            for span in (start / LEAF_SPAN)..=((end.max(start + 1) - 1) / LEAF_SPAN) {
+                if carved[..carved_count].contains(&span) {
+                    continue;
+                }
+                assert!(
+                    carved_count < MAX_SPANS,
+                    "component `{}` spans too much",
+                    image.name
+                );
+                carved[carved_count] = span;
+                carved_count += 1;
+                Self::map_table(
+                    self.carve_tables(slots.take(1), 1),
+                    component.l2,
+                    span * LEAF_SPAN,
+                );
+            }
         }
+        assert!(loadable, "component `{}` has nothing to load", image.name);
 
         let pages: usize = image
             .segments

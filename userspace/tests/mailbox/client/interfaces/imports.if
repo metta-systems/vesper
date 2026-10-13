@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: BlueOak-1.0.0
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
-# The vcsm node links to the firmware node, which links to the mailbox: the
-# client reaches the mailbox component through both links. Nothing links to the
-# power management and framebuffer nodes, so they are found by compatible
-# string. The client may power devices off, but not halt or reset the board.
-uses mailbox_v1 via firmware, mboxes {
-    get_board_revision, get_board_serial, get_clock_rate, get_power_state, property
+# The client has no device tree node, so every chain starts from a node found
+# by its compatible string: the firmware node, which links to the mailbox,
+# the power management node and the framebuffer node. The client may power
+# devices off, but not halt or reset the board.
+uses mailbox_v1 via compatible "raspberrypi,bcm2835-firmware", mboxes {
+    get_board_revision, get_board_serial, get_clock_rate, get_power_state, set_led, property
 }
 uses power_v1 via compatible "brcm,bcm2835-pm" { devices_off }
 uses fb_v1 via compatible "brcm,bcm2708-fb" { configure, address, size, pixel_order, frames }

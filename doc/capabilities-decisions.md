@@ -118,6 +118,16 @@ Unanswered questions before implementing the scheduler record ABI:
   needs. (B) a register-inline operation, e.g. a length plus up to 40 bytes in
   `x3..x7` with client chunking, so the nucleus never reads user memory. Until
   this is decided the console stays a debug-only prototype.
+- **Write-combining mappings for device Frames (D6):** the framebuffer's
+  Frames are device Frames, which map as Device-nGnRnE: slow, and an unaligned
+  access faults. The maintainer wants an option to map them with write-combining
+  (Normal non-cacheable) attributes, either as a separate maintenance operation
+  or as part of `Frame.Map`. Open: which of the two; how the attribute word
+  (`x5` of `Frame.Map`, accepted as zero only today) encodes it; whether it is
+  gated by a Frame right; what an EL0 component must do to make its writes
+  visible (barriers, cache maintenance) and how that relates to the Frame cache
+  maintenance operations; and which Frames may be mapped this way (device Frames
+  only, or RAM too).
 
 ## Future work
 

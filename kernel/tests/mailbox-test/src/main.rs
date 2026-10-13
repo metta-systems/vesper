@@ -247,7 +247,7 @@ pub fn run() -> ! {
                     panic!("fb imports one function, found {}", imports.len());
                 };
                 assert_eq!(mailbox_imports, 1);
-                assert_eq!(property.function, 5, "property");
+                assert_eq!(property.function, 6, "property");
                 // The video memory, in aligned blocks that follow each other
                 // from the top of RAM to the end of the gap.
                 let video = init.video();
@@ -266,23 +266,23 @@ pub fn run() -> ! {
                 // mailbox through the firmware node, and the power and
                 // framebuffer components by compatible string.
                 assert!(init.pages().is_empty());
-                let imports: &[_; 11] = imports.try_into().unwrap_or_else(|_| {
+                let imports: &[_; 12] = imports.try_into().unwrap_or_else(|_| {
                     panic!(
-                        "five mailbox, one power, five fb functions, found {}",
+                        "six mailbox, one power, five fb functions, found {}",
                         imports.len()
                     )
                 });
-                assert_eq!(mailbox_imports, 5);
-                let functions: [u64; 5] = core::array::from_fn(|index| imports[index].function);
+                assert_eq!(mailbox_imports, 6);
+                let functions: [u64; 6] = core::array::from_fn(|index| imports[index].function);
                 assert_eq!(
                     functions,
-                    [0, 1, 2, 3, 5],
+                    [0, 1, 2, 3, 5, 6],
                     "declaration indices of the imported mailbox functions"
                 );
-                assert_eq!(imports[5].function, 0, "devices_off");
-                assert!(imports[5..].iter().all(|record| record.area_len == 0));
-                assert!(imports[6..].iter().map(|record| record.function).eq(0..5));
-                assert_ne!(imports[5].invocation, imports[6].invocation);
+                assert_eq!(imports[6].function, 0, "devices_off");
+                assert!(imports[6..].iter().all(|record| record.area_len == 0));
+                assert!(imports[7..].iter().map(|record| record.function).eq(0..5));
+                assert_ne!(imports[6].invocation, imports[7].invocation);
                 client_area = area_of_mailbox_imports;
                 // The report key, in the client's table only.
                 // SAFETY: the driver's retained table; no invocation overlaps.

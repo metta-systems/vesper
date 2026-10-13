@@ -70,6 +70,7 @@ members = [
   "libs/time",
   # Userspace
   "userspace/runtime",
+  "userspace/shell",
   "userspace/tests/endpoint/client",
   "userspace/tests/endpoint/endpoint",
   "userspace/tests/endpoint/protocol",

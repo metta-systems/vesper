@@ -95,6 +95,9 @@ pub const DATA_WINDOW_VA: u64 = 0x3a00_0000;
 /// Most data areas an exporting driver serves: one per client instance.
 pub const MAX_AREAS: usize = 8;
 
+/// Most resources a component maps.
+pub const MAX_RESOURCES: usize = 4;
+
 /// Where the init page is mapped, read-only, in every driver.
 pub const INIT_VA: u64 = 0x2000_0000;
 /// The 2 MiB span holding the driver's guarded stack.
@@ -193,6 +196,22 @@ pub struct ExportedArea {
 }
 
 /// The init page's record.
+/// The keys of a client attached to a serial driver's channel (see
+/// `libserial-channel`), in the client's table: zero where the client is not
+/// attached. The control page and data area are already mapped read/write at
+/// `CONTROL_VA` and `DATA_AREA_VA` there.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SerialKeys {
+    /// The transmit channel's submit `EventCount`, to advance after submitting
+    /// packets (`SEND`)
+    pub transmit_submitted: u64,
+    /// The transmit channel's completion `EventCount` (`RECV`)
+    pub transmit_completed: u64,
+    /// The receive channel's completion `EventCount` (`RECV`)
+    pub receive_completed: u64,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct DriverInit {
@@ -240,6 +259,22 @@ pub struct DriverInit {
     /// The functions of other components the driver imports (its
     /// `interfaces/imports.if`), each linked through its device tree node
     pub imports: [ImportRecord; MAX_IMPORTS],
+    /// The keys of the serial channel Kickstart attached the component to, if
+    /// its manifest entry says `serial = true`
+    pub serial: SerialKeys,
+    pub resource_count: u64,
+    /// The bundled resources mapped read-only in the component, in the order
+    /// its manifest entry names them (`resources = [...]`)
+    pub resources: [ResourceRecord; MAX_RESOURCES],
+}
+
+/// Where one bundled resource is mapped, read-only.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceRecord {
+    pub base: u64,
+    /// Bytes of the file
+    pub len: u64,
 }
 
 const _: () = assert!(size_of::<DriverInit>() <= 4096);
@@ -295,6 +330,13 @@ impl DriverInit {
             area_base: 0,
             area_len: 0,
         }; MAX_IMPORTS],
+        serial: SerialKeys {
+            transmit_submitted: 0,
+            transmit_completed: 0,
+            receive_completed: 0,
+        },
+        resource_count: 0,
+        resources: [ResourceRecord { base: 0, len: 0 }; MAX_RESOURCES],
     };
 
     /// The node's register ranges.
@@ -328,6 +370,14 @@ impl DriverInit {
     /// The functions of other components the driver imports.
     pub fn imports(&self) -> &[ImportRecord] {
         &self.imports[..clamp(self.import_count, MAX_IMPORTS)]
+    }
+    /// The component's bundled resource `index`, as bytes: Kickstart maps it
+    /// read-only for the component's lifetime.
+    pub fn resource(&self, index: usize) -> Option<&'static [u8]> {
+        let record = self.resources[..clamp(self.resource_count, MAX_RESOURCES)].get(index)?;
+        let len = usize::try_from(record.len).ok()?;
+        // SAFETY: mapped read-only by Kickstart at `base` for `len` bytes.
+        Some(unsafe { core::slice::from_raw_parts(record.base as *const u8, len) })
     }
     /// The node's interrupts, in device tree order.
     pub fn interrupts(&self) -> &[Interrupt] {

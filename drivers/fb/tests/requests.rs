@@ -104,4 +104,204 @@ mod tests {
         // An address below the offset falls back to the same masking.
         assert_eq!(physical_address(0x8000_1000, 0xc000_0000), 0x0000_1000);
     }
+
+    use fb_impl::{
+        FramePlan, FrameRun, LARGE_FRAME_BITS, MAX_RETYPE_COUNT, PAGE_BYTES, PAGE_FRAME_BITS,
+        page_range, skip_chunks,
+    };
+
+    const LARGE: u64 = 1 << LARGE_FRAME_BITS;
+
+    fn plan(blocks: &[(u64, u64)], start: u64, end: u64) -> Vec<FrameRun> {
+        FramePlan::new(blocks, start, end).collect()
+    }
+
+    /// Whether `runs` cover `[start, end)` exactly, in order, each run inside
+    /// one of `blocks` and on the alignment of its Frames.
+    fn assert_covers(runs: &[FrameRun], blocks: &[(u64, u64)], start: u64, end: u64) {
+        let mut cursor = start;
+        for run in runs {
+            assert_eq!(run.address, cursor, "runs follow each other: {runs:?}");
+            assert!(run.count >= 1 && run.count <= MAX_RETYPE_COUNT);
+            assert!(run.address.is_multiple_of(1 << run.size_bits), "aligned");
+            assert!(
+                blocks
+                    .iter()
+                    .any(|&(base, block_end)| base <= run.address && run.end() <= block_end),
+                "a run stays inside one block: {run:?}"
+            );
+            cursor = run.end();
+        }
+        assert_eq!(cursor, end, "the runs reach the end: {runs:?}");
+    }
+
+    #[test]
+    fn the_framebuffer_occupies_whole_pages() {
+        assert_eq!(
+            page_range(0x3c10_0000, 0x12_c000),
+            Some((0x3c10_0000, 0x3c22_c000))
+        );
+        // A buffer that starts and ends inside pages takes those pages whole.
+        assert_eq!(
+            page_range(0x3c10_0010, 100),
+            Some((0x3c10_0000, 0x3c10_1000))
+        );
+        assert_eq!(
+            page_range(0x3c10_0ff0, 0x20),
+            Some((0x3c10_0000, 0x3c10_2000))
+        );
+        assert_eq!(page_range(0x1000, 0), None);
+        assert_eq!(page_range(u64::MAX - 8, 100), None);
+        assert_eq!(page_range(u64::MAX - 0x10, 0x8), None, "rounding overflows");
+    }
+
+    #[test]
+    fn a_framebuffer_off_the_large_alignment_is_4k_frames() {
+        // What QEMU's firmware allocates: 1 MiB into the video memory.
+        let blocks = [(0x3c00_0000, 0x4000_0000)];
+        let runs = plan(&blocks, 0x3c10_0000, 0x3c22_c000);
+        assert_covers(&runs, &blocks, 0x3c10_0000, 0x3c22_c000);
+        assert_eq!(
+            runs,
+            [
+                FrameRun {
+                    address: 0x3c10_0000,
+                    size_bits: PAGE_FRAME_BITS,
+                    count: 256
+                },
+                FrameRun {
+                    address: 0x3c20_0000,
+                    size_bits: PAGE_FRAME_BITS,
+                    count: 44
+                },
+            ],
+            "300 pages, 256 per Retype"
+        );
+        assert_eq!(
+            runs.iter().map(|run| u64::from(run.count)).sum::<u64>(),
+            300
+        );
+    }
+
+    #[test]
+    fn large_frames_where_the_range_allows() {
+        let blocks = [(0, 0x1000_0000)];
+        // A 4 KiB head to the alignment, three 2 MiB Frames, a 4 KiB tail.
+        let runs = plan(&blocks, 0x1f_f000, 0x80_1000);
+        assert_covers(&runs, &blocks, 0x1f_f000, 0x80_1000);
+        assert_eq!(
+            runs,
+            [
+                FrameRun {
+                    address: 0x1f_f000,
+                    size_bits: PAGE_FRAME_BITS,
+                    count: 1
+                },
+                FrameRun {
+                    address: 0x20_0000,
+                    size_bits: LARGE_FRAME_BITS,
+                    count: 3
+                },
+                FrameRun {
+                    address: 0x80_0000,
+                    size_bits: PAGE_FRAME_BITS,
+                    count: 1
+                },
+            ]
+        );
+        // Less than a large Frame fully inside the range is all 4 KiB.
+        let runs = plan(&blocks, 0x20_0000, 0x20_0000 + LARGE - PAGE_BYTES);
+        assert!(runs.iter().all(|run| run.size_bits == PAGE_FRAME_BITS));
+        assert_covers(&runs, &blocks, 0x20_0000, 0x20_0000 + LARGE - PAGE_BYTES);
+        // Exactly one large Frame is one.
+        assert_eq!(
+            plan(&blocks, 0x20_0000, 0x40_0000),
+            [FrameRun {
+                address: 0x20_0000,
+                size_bits: LARGE_FRAME_BITS,
+                count: 1
+            }]
+        );
+    }
+
+    #[test]
+    fn runs_stay_inside_their_block_and_are_capped() {
+        // A block too small for a large Frame forces 4 KiB Frames, and a run
+        // never crosses into the next block.
+        let blocks = [(0, 0x10_0000), (0x10_0000, 0x40_0000)];
+        let runs = plan(&blocks, 0xf_f000, 0x30_0000);
+        assert_covers(&runs, &blocks, 0xf_f000, 0x30_0000);
+        assert_eq!(runs[0].address, 0xf_f000);
+        assert_eq!(runs[0].count, 1, "up to the end of the first block");
+        assert_eq!(runs[1].address, 0x10_0000);
+        // 256 pages fill 1 MiB: the cap, then the next run follows at once.
+        assert!(runs.iter().all(|run| run.count <= MAX_RETYPE_COUNT));
+        // A large Frame in the second block, from the first aligned address
+        // that has room for it before the end of the range.
+        let runs = plan(&blocks, 0x10_0000, 0x40_0000);
+        assert_covers(&runs, &blocks, 0x10_0000, 0x40_0000);
+        assert!(runs.iter().any(|run| run.size_bits == LARGE_FRAME_BITS));
+        // A large Frame never straddles two blocks, even when aligned.
+        let split = [(0x20_0000, 0x30_0000), (0x30_0000, 0x40_0000)];
+        let runs = plan(&split, 0x20_0000, 0x40_0000);
+        assert_covers(&runs, &split, 0x20_0000, 0x40_0000);
+        assert!(runs.iter().all(|run| run.size_bits == PAGE_FRAME_BITS));
+    }
+
+    #[test]
+    fn plans_end_at_memory_no_block_holds() {
+        let blocks = [(0x1000, 0x5000)];
+        let runs = plan(&blocks, 0x3000, 0x9000);
+        assert_eq!(runs.iter().map(|run| run.bytes()).sum::<u64>(), 0x2000);
+        assert!(plan(&blocks, 0x6000, 0x8000).is_empty());
+        assert!(plan(&blocks, 0x3000, 0x3000).is_empty());
+    }
+
+    #[test]
+    fn any_covered_range_is_planned_exactly() {
+        let blocks = [
+            (0x0, 0x40_0000),
+            (0x40_0000, 0x80_0000),
+            (0x80_0000, 0x100_0000),
+        ];
+        for start in (0..0x100_0000).step_by(0x3_f000 + 0x1000) {
+            for pages in [1_u64, 2, 255, 256, 257, 511, 512, 513, 1000, 3000] {
+                let end = (start + pages * PAGE_BYTES).min(0x100_0000);
+                if end > start {
+                    let runs = plan(&blocks, start, end);
+                    assert_covers(&runs, &blocks, start, end);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn skipping_carves_aligned_chunks() {
+        assert_eq!(skip_chunks(0, 0x10_0000).collect::<Vec<_>>(), [20]);
+        assert_eq!(skip_chunks(0, 0).count(), 0);
+        assert_eq!(skip_chunks(0x1000, 0x3000).collect::<Vec<_>>(), [12, 12]);
+        assert_eq!(skip_chunks(0, 0x3000).collect::<Vec<_>>(), [13, 12]);
+        for (from, to) in [
+            (0, 0x12c_000),
+            (0x1000, 0x10_0000),
+            (0x3000, 0x20_0000),
+            (0x7_0000, 0x7_1000),
+            (0x1_0010, 0x4_0000),
+            (0, 0x3fff_f000),
+        ] {
+            let mut cursor = from;
+            let mut chunks = 0;
+            for bits in skip_chunks(from, to) {
+                assert!(bits >= 4, "a chunk is at least an Untyped of 16 bytes");
+                assert!(
+                    cursor.is_multiple_of(1 << bits),
+                    "{cursor:#x} aligned to 2^{bits}"
+                );
+                cursor += 1 << bits;
+                chunks += 1;
+            }
+            assert_eq!(cursor, to, "the chunks reach the target");
+            assert!(chunks <= 2 * 30, "a few chunks: {chunks}");
+        }
+    }
 }

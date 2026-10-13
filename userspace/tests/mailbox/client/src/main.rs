@@ -9,13 +9,19 @@
 //! mailbox-test installed (`driver_protocol::REPORT_SLOT`).
 
 use {
-    driver_protocol::{FRAME_SLOT, lend_table_key, plain_table_key, report_key},
+    driver_protocol::{
+        COPY_SLOT, FRAME_TABLE_BITS, FRAME_TABLE_GUARD, FRAME_TABLE_SLOT, lend_table_key,
+        plain_table_key, report_key,
+    },
     fb_client::fb_v1::{
         Bindings as FbBindings, Client as FbClient, Error as FbError, Exception as FbException,
     },
-    libdevice_driver::{driver_compatible, driver_init, local_key},
+    libdevice_driver::{driver_init, driver_threads, local_key},
     libmeddle_runtime::{ExclusiveStacks, IoRec},
-    libobject::{FrameKey, KeyTableKey, NotificationKey, RawKey},
+    libobject::{
+        EventCountKey, FrameKey, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
+        UntypedKey,
+    },
     mailbox_client::mailbox_v1::{Bindings, Client, Clock, Device, Error, Exception},
     mailbox_impl::tag,
     power_client::power_v1::{
@@ -31,7 +37,21 @@ const BOARD_REVISION: u32 = 0x00a0_2082;
 #[cfg(board_rpi4)]
 const BOARD_REVISION: u32 = 0x00b0_3115;
 
-driver_compatible!("raspberrypi,bcm2835-vcsm");
+driver_threads!(background);
+
+/// The client's second Thread: it reports in on the component's own
+/// `EventCount`, which the first Thread waits for before it starts calling.
+fn background(init_va: u64) -> ! {
+    // SAFETY: Kickstart passes the init page's address in x0.
+    let init = unsafe { driver_init(init_va) };
+    EventCountKey::from_key(RawKey::from_wire(init.event_count))
+        .advance(1)
+        .unwrap_or_else(|error| panic!("background advance failed: {:?}", error.code()));
+    let park = NotificationKey::from_key(RawKey::from_wire(init.notification));
+    loop {
+        let _bits = park.wait(NotificationKey::WAIT_INFINITE);
+    }
+}
 
 /// Report the firmware's answers (under QEMU, on the semihosting console).
 #[cfg(feature = "qemu")]
@@ -210,6 +230,11 @@ fn check_fb(init: &libdevice_driver::DriverInit, mailbox: &Client) {
         fb.address(),
         Err(FbError::Exception(FbException::NotConfigured))
     );
+    // There is nothing to hand out before the display is configured.
+    assert_eq!(
+        fb.frames(&KeyTableKey::from_key(lend_table_key(init.table)), 0),
+        Err(FbError::Exception(FbException::NotConfigured))
+    );
     let pitch = fb
         .configure(640, 480, 32)
         .unwrap_or_else(|error| panic!("configure failed: {error:?}"));
@@ -234,63 +259,115 @@ fn check_fb(init: &libdevice_driver::DriverInit, mailbox: &Client) {
     );
     fb.pixel_order()
         .unwrap_or_else(|error| panic!("pixel_order failed: {error:?}"));
-    check_frames(init, &fb);
+    check_frames(init, &fb, address, bytes);
 }
 
-/// Frames from the fb component into the client's own table, through a table
-/// key the client lends for the call (`CallWithKey`): fb installs the Frames
-/// with the borrowed key as the destination.
-fn check_frames(init: &libdevice_driver::DriverInit, fb: &FbClient) {
-    let lend = KeyTableKey::from_key(lend_table_key(init.table));
-    let plain = KeyTableKey::from_key(plain_table_key(init.table));
-
-    // Two Frames, then one more. fb's window for the keys lent to it is one
-    // slot, so the second call works only because the first call's borrowed
-    // key was removed when it returned.
-    assert_eq!(fb.frames(&lend, FRAME_SLOT, 2), Ok(2));
-    assert_eq!(fb.frames(&lend, FRAME_SLOT + 2, 1), Ok(1));
-    let mut previous = None;
-    for index in 0..3 {
-        let frame = FrameKey::from_key(local_key(init.table, FRAME_SLOT + index));
-        let (base, size) = frame
-            .get_extent()
-            .unwrap_or_else(|error| panic!("Frame {index} has no extent: {:?}", error.code()));
-        assert_eq!(size, 4096, "4 KiB Frames");
-        if let Some(before) = previous {
-            assert_eq!(base, before + 4096, "consecutive video memory");
-        }
-        previous = Some(base);
-    }
+/// The framebuffer's Frames, from the fb component into a table the client
+/// carves for them and lends for the call (`CallWithKey`): fb carves the
+/// Frames straight into the borrowed table. The Frames do not fit the
+/// client's own table, which is why it lends another.
+fn check_frames(init: &libdevice_driver::DriverInit, fb: &FbClient, address: u64, bytes: u32) {
+    let own = KeyTableKey::from_key(RawKey::from_wire(init.table));
+    let mut own_self = KeyTableKey::from_key(local_key(init.table, KeySlot::SELF_KEYTABLE.0));
+    let memory = UntypedKey::from_key(RawKey::from_wire(init.memory));
+    let table_with = |slot: u32, size_bits: u8, guard: u32| {
+        KeyTableKey::from_key(
+            memory
+                .retype(
+                    ObjectType::KEY_TABLE,
+                    size_bits,
+                    guard,
+                    1,
+                    &own,
+                    slot,
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| panic!("KeyTable Retype failed: {:?}", error.code())),
+        )
+    };
+    let table = table_with(FRAME_TABLE_SLOT, FRAME_TABLE_BITS, FRAME_TABLE_GUARD);
 
     // A table key without `LEND` is refused before the call starts
     // (`InsufficientRights`, status 5).
+    let plain = KeyTableKey::from_key(plain_table_key(init.table));
     assert_eq!(
-        fb.frames(&plain, FRAME_SLOT + 3, 1),
+        fb.frames(&plain, 0),
         Err(FbError::Call {
             status: 5,
             detail: [0, 0]
         })
     );
-    // An occupied slot makes the first install fail; the exception says how
-    // many went in before it.
+    // A table too small for the Frames fails the first install and hands
+    // nothing out, so the real call below still works.
+    let small = table_with(FRAME_TABLE_SLOT + 2, 1, 0x1234);
     assert_eq!(
-        fb.frames(&lend, FRAME_SLOT, 1),
+        fb.frames(&small, 0),
         Err(FbError::Exception(FbException::InstallFailed {
             installed: 0
         }))
     );
-    // More Frames than one call hands over.
+
+    // The hand-over.
+    let installed = fb
+        .frames(&table, 0)
+        .unwrap_or_else(|error| panic!("frames failed: {error:?}"));
+    assert!(installed >= 1, "the framebuffer needs Frames");
+
+    // The Frames cover the framebuffer's pages exactly, in address order, as
+    // 4 KiB and 2 MiB Frames: copy each out of the table and read its extent.
+    let start = address & !0xfff;
+    let end = (address + u64::from(bytes)).next_multiple_of(0x1000);
+    let mut cursor = start;
+    for index in 0..installed {
+        let source = RawKey::new(KeySlot((FRAME_TABLE_GUARD << FRAME_TABLE_BITS) | index), 1);
+        let copy = table
+            .copy_derive(source, &own, COPY_SLOT, Rights(Rights::GRANT))
+            .unwrap_or_else(|error| panic!("Frame {index} missing: {:?}", error.code()));
+        let (base, size) = FrameKey::from_key(copy)
+            .get_extent()
+            .unwrap_or_else(|error| panic!("Frame {index} has no extent: {:?}", error.code()));
+        assert_eq!(base, cursor, "Frame {index} follows the one before");
+        assert!(size == 4096 || size == 2 << 20, "Frame {index}: {size:#x}");
+        cursor += size;
+        own_self
+            .delete(copy)
+            .unwrap_or_else(|error| panic!("delete failed: {:?}", error.code()));
+    }
+    assert_eq!(cursor, end, "the Frames reach the end of the framebuffer");
+    report_frames(installed, start, end);
+
+    // The memory is handed out for good. This call also shows the window for
+    // the lent key is free again after the first call returned.
     assert_eq!(
-        fb.frames(&lend, FRAME_SLOT + 4, 17),
-        Err(FbError::Exception(FbException::NotEnoughFrames))
+        fb.frames(&table, installed),
+        Err(FbError::Exception(FbException::AlreadyHandedOut))
     );
-    // After a refused call and two exceptions the window is free again.
-    assert_eq!(fb.frames(&lend, FRAME_SLOT + 3, 1), Ok(1));
 }
+
+/// Report what was handed out (under QEMU).
+#[cfg(feature = "qemu")]
+fn report_frames(frames: u32, start: u64, end: u64) {
+    use libuser::semihosting as semi;
+
+    semi::println!("mailbox-test-client: {frames} Frames cover {start:#x}..{end:#x}");
+}
+
+#[cfg(not(feature = "qemu"))]
+fn report_frames(_frames: u32, _start: u64, _end: u64) {}
 
 fn main(init_va: u64) -> ! {
     // SAFETY: Kickstart passes the init page's address in x0.
     let init = unsafe { driver_init(init_va) };
+    // The extra Thread started and ran: Kickstart loads a program's Threads
+    // like a driver's.
+    EventCountKey::from_key(RawKey::from_wire(init.event_count))
+        .await_ge(1, EventCountKey::WAIT_INFINITE)
+        .unwrap_or_else(|error| {
+            panic!(
+                "waiting for the background Thread failed: {:?}",
+                error.code()
+            )
+        });
     let mailbox = Client::new(
         Bindings::from_imports(init.imports()),
         // SAFETY: this Thread is the only one calling through the client's
@@ -314,6 +391,12 @@ fn main(init_va: u64) -> ! {
     let uart_on = mailbox
         .get_power_state(Device::Uart0)
         .unwrap_or_else(|error| panic!("get_power_state failed: {error:?}"));
+    // The LED, whichever way the board drives it: the call must succeed.
+    for on in [true, false] {
+        mailbox
+            .set_led(on)
+            .unwrap_or_else(|error| panic!("set_led({on}) failed: {error:?}"));
+    }
     check_property(&mailbox);
     check_power(init);
     check_fb(init, &mailbox);

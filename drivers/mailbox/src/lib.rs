@@ -80,6 +80,8 @@ pub mod tag {
     pub const SET_POWER_STATE: u32 = 0x0002_8001;
     pub const SET_CLOCK_STATE: u32 = 0x0003_8001;
     pub const SET_CLOCK_RATE: u32 = 0x0003_8002;
+    /// Refused: the typed `set_led` drives the one GPIO a client may change.
+    pub const SET_GPIO_STATE: u32 = 0x0003_8041;
 }
 
 /// Tags any client may send.
@@ -192,3 +194,12 @@ pub fn check_request(words: &[u32]) -> Result<(), Rejected> {
             .ok_or(Rejected::Malformed)?;
     }
 }
+
+/// The firmware's number of the activity LED's GPIO, for `tag::SET_GPIO_STATE`.
+///
+/// The Raspberry Pi 3 has the LED on its GPIO expander, which the firmware
+/// numbers from 128: expander pin 2 is 130, as the former platform mailbox
+/// code used on hardware. The Raspberry Pi 4 wires it to the `SoC`'s GPIO 42;
+/// that pin is not yet confirmed on a board. `mailbox_v1.set_led` hides the
+/// difference.
+pub const ACT_LED_PIN: u32 = if cfg!(board_rpi4) { 42 } else { 130 };

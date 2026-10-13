@@ -50,3 +50,23 @@ binary = "fb"
 interfaces = "../../drivers/fb/interfaces"
 video_memory = true
 priority = 0x8000
+
+# The shell: an EL0 program, loaded once without a device tree node (a
+# component with a `priority`). It has a command prompt on the PL011's serial
+# channel (`serial = true`), switches the LED through the mailbox component
+# and resets the board through the power component.
+[[component]]
+name = "shell"
+binary = "shell"
+interfaces = "../../userspace/shell/interfaces"
+active = true
+priority = 0x4000
+serial = true
+resources = ["font"]
+
+# Data files Kickstart maps read-only into the components that name them in
+# `resources`. The first is the 8x8 console font: 95 glyphs for the characters
+# from space to `~`, 8 bytes each, top row first, bit 0 the leftmost pixel.
+[[resource]]
+name = "font"
+file = "resources/font8x8.bin"

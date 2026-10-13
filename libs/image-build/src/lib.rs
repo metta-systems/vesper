@@ -32,6 +32,9 @@ macro_rules! emit {
 
 pub const PAGE_SIZE: u64 = 4096;
 
+/// Where a component's first resource is mapped (`libimage::RESOURCE_BASE`).
+const RESOURCE_BASE: u64 = 0x3c00_0000;
+
 /// Bytes reserved for an export's name in a `.exports` record; the record is
 /// the NUL-padded name followed by the little-endian `u64` entry address.
 /// `libobject::ppc_export!` emits this layout.
@@ -695,26 +698,114 @@ struct ManifestEntry {
     /// to the manifest): one `<name>_vN.if` per exported interface and an
     /// `imports.if` of the functions it calls
     interfaces: Option<PathBuf>,
+    /// What Kickstart gives the one instance of a program it starts at boot
+    /// (a component with a `priority`); `None` for components test builders load
+    program: Option<Settings>,
+    /// The `[[resource]]` entries the component maps read-only
+    /// (`resources = [...]`), by name
+    resources: Vec<String>,
+}
+
+/// A `[[resource]]` manifest entry: a data file bundled into the boot image
+/// that Kickstart maps read-only into the components naming it.
+struct ResourceEntry {
+    name: String,
+    file: PathBuf,
+}
+
+/// The `[[resource]]` entries of a parsed manifest at `path`.
+fn read_resources(path: &Path, table: &toml::Table) -> Vec<ResourceEntry> {
+    let entries = table
+        .get("resource")
+        .and_then(toml::Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    entries
+        .iter()
+        .map(|entry| {
+            let field = |key: &str| entry.get(key).and_then(toml::Value::as_str);
+            let name = field("name")
+                .unwrap_or_else(|| panic!("{}: a resource has no name", path.display()));
+            assert!(
+                name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "{}: resource name `{name}` must be an identifier",
+                path.display()
+            );
+            let file = field("file")
+                .unwrap_or_else(|| panic!("{}: resource `{name}` has no file", path.display()));
+            ResourceEntry {
+                name: name.to_string(),
+                file: path.parent().unwrap_or(Path::new(".")).join(file),
+            }
+        })
+        .collect()
+}
+
+/// What Kickstart gives each instance of a driver or program.
+#[derive(Debug)]
+struct Settings {
+    /// Priority of the Time
+    priority: u16,
+    /// Budget the Time receives (default 1 s)
+    budget_ns: u64,
+    /// Size exponent of the RAM Untyped (default 64 KiB)
+    memory_bits: u8,
+    /// Whether the instance receives the `VideoCore` memory Untypeds (`video_memory = true`)
+    video_memory: bool,
+    /// Whether the instance is attached to the PL011 driver's serial channel
+    /// (`serial = true`)
+    serial: bool,
 }
 
 /// A `[[driver]]` manifest entry: an active component plus what Kickstart
 /// gives each instance.
 struct DriverEntry {
     component: ManifestEntry,
-    /// Priority of the driver's Time
-    priority: u16,
-    /// Budget the driver's Time receives (default 1 s)
-    budget_ns: u64,
-    /// Size exponent of the driver's RAM Untyped (default 64 KiB)
-    memory_bits: u8,
-    /// Whether the driver receives the `VideoCore` memory Untypeds (`video_memory = true`)
-    video_memory: bool,
+    settings: Settings,
 }
 
 /// Default budget of a driver's Time.
 const DEFAULT_DRIVER_BUDGET_NS: u64 = 1_000_000_000;
 /// Default size of a driver's RAM Untyped.
 const DEFAULT_DRIVER_MEMORY: u64 = 64 * 1024;
+
+/// The settings of the driver or program `name` from its manifest `entry`.
+fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Settings {
+    let number = |key: &str| entry.get(key).and_then(toml::Value::as_integer);
+    let priority = number("priority")
+        .and_then(|priority| u16::try_from(priority).ok())
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: {kind} `{name}` needs a priority (0-65535)",
+                path.display()
+            )
+        });
+    let budget_ns = number("budget_ns").map_or(DEFAULT_DRIVER_BUDGET_NS, |budget| {
+        u64::try_from(budget)
+            .unwrap_or_else(|_| panic!("{}: {kind} `{name}` has a negative budget", path.display()))
+    });
+    let memory = number("memory").map_or(DEFAULT_DRIVER_MEMORY, |memory| {
+        u64::try_from(memory)
+            .unwrap_or_else(|_| panic!("{}: {kind} `{name}` has negative memory", path.display()))
+    });
+    assert!(
+        memory.is_power_of_two() && memory >= 4096,
+        "{}: {kind} `{name}` memory must be a power of two of at least 4096 bytes",
+        path.display()
+    );
+    Settings {
+        priority,
+        budget_ns,
+        memory_bits: u8::try_from(memory.trailing_zeros()).unwrap_or(u8::MAX),
+        video_memory: entry
+            .get("video_memory")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false),
+        serial: entry
+            .get("serial")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false),
+    }
+}
 
 /// The `[[driver]]` entries of a parsed manifest at `path`.
 fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
@@ -731,7 +822,6 @@ fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
                     .and_then(toml::Value::as_str)
                     .map(str::to_string)
             };
-            let number = |key: &str| entry.get(key).and_then(toml::Value::as_integer);
             let name =
                 text("name").unwrap_or_else(|| panic!("{}: a driver has no name", path.display()));
             assert!(
@@ -739,30 +829,8 @@ fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
                 "{}: driver name `{name}` must be an identifier",
                 path.display()
             );
-            let priority = number("priority")
-                .and_then(|priority| u16::try_from(priority).ok())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{}: driver `{name}` needs a priority (0-65535)",
-                        path.display()
-                    )
-                });
-            let budget_ns = number("budget_ns").map_or(DEFAULT_DRIVER_BUDGET_NS, |budget| {
-                u64::try_from(budget).unwrap_or_else(|_| {
-                    panic!("{}: driver `{name}` has a negative budget", path.display())
-                })
-            });
-            let memory = number("memory").map_or(DEFAULT_DRIVER_MEMORY, |memory| {
-                u64::try_from(memory).unwrap_or_else(|_| {
-                    panic!("{}: driver `{name}` has negative memory", path.display())
-                })
-            });
-            assert!(
-                memory.is_power_of_two() && memory >= 4096,
-                "{}: driver `{name}` memory must be a power of two of at least 4096 bytes",
-                path.display()
-            );
             DriverEntry {
+                settings: settings_of(path, "driver", &name, entry),
                 component: ManifestEntry {
                     binary: text("binary").unwrap_or_else(|| {
                         panic!("{}: driver `{name}` has no binary", path.display())
@@ -770,21 +838,18 @@ fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
                     entry: None,
                     interfaces: interface_directory(path, entry),
                     active: true,
+                    program: None,
+                    resources: Vec::new(),
                     name,
                 },
-                priority,
-                budget_ns,
-                memory_bits: u8::try_from(memory.trailing_zeros()).unwrap_or(u8::MAX),
-                video_memory: entry
-                    .get("video_memory")
-                    .and_then(toml::Value::as_bool)
-                    .unwrap_or(false),
             }
         })
         .collect()
 }
 
-/// The `[[component]]` entries of a parsed manifest at `path`.
+/// The `[[component]]` entries of a parsed manifest at `path`. An entry with
+/// a `priority` is a program: Kickstart starts one instance of it at boot,
+/// like a driver without a device tree node.
 fn read_components(path: &Path, table: &toml::Table) -> Vec<ManifestEntry> {
     let entries = table
         .get("component")
@@ -806,16 +871,41 @@ fn read_components(path: &Path, table: &toml::Table) -> Vec<ManifestEntry> {
                 "{}: component name `{name}` must be an identifier",
                 path.display()
             );
+            let active = entry
+                .get("active")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false);
+            let program = entry
+                .get("priority")
+                .is_some()
+                .then(|| settings_of(path, "program", &name, entry));
+            assert!(
+                program.is_none() || active,
+                "{}: program `{name}` must be `active`",
+                path.display()
+            );
             ManifestEntry {
                 binary: field("binary").unwrap_or_else(|| {
                     panic!("{}: component `{name}` has no binary", path.display())
                 }),
                 entry: field("entry"),
                 interfaces: interface_directory(path, entry),
-                active: entry
-                    .get("active")
-                    .and_then(toml::Value::as_bool)
-                    .unwrap_or(false),
+                active,
+                program,
+                resources: entry
+                    .get("resources")
+                    .and_then(toml::Value::as_array)
+                    .map_or(&[][..], Vec::as_slice)
+                    .iter()
+                    .map(|resource| {
+                        resource
+                            .as_str()
+                            .unwrap_or_else(|| {
+                                panic!("{}: `{name}` resources are names", path.display())
+                            })
+                            .to_string()
+                    })
+                    .collect(),
                 name,
             }
         })
@@ -925,7 +1015,11 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
 /// the strings of its `.driver_compatible` section, the entries of its
 /// `.driver_threads` section, its `priority`, its `budget_ns` and its
 /// `memory` size, all listed in
-/// `pub static DRIVERS: &[&DriverImage]`. The bundling image's linker
+/// `pub static DRIVERS: &[&DriverImage]`, followed by the programs: a
+/// `[[component]]` entry with a `priority` (and `budget_ns`, `memory`,
+/// `video_memory` like a driver's) gets a `DriverImage` with no `compatible`
+/// strings, which Kickstart loads once without a device tree node. The
+/// bundling image's linker
 /// script must place `.components` page-aligned inside its retained image.
 pub fn bundle_components(manifest: &str) {
     let (manifest_path, table) = load_manifest(manifest);
@@ -934,7 +1028,7 @@ pub fn bundle_components(manifest: &str) {
     let mut code = String::from(
         "// Generated by vesper-image-build from the component manifest. Do not edit.\n\n\
          #[allow(unused)]\n\
-         use libimage::{ComponentImage, DriverImage, Export, Import, InterfaceExport, Link, LoadableSection, Permissions, SectionMeta};\n\n\
+         use libimage::{ComponentImage, DriverImage, Export, Import, InterfaceExport, Link, LoadableSection, Permissions, ResourceMapping, SectionMeta};\n\n\
          /// Page-aligned storage for one component segment.\n\
          #[repr(C, align(4096))]\n\
          struct PageAligned<const N: usize>([u8; N]);\n\n",
@@ -942,20 +1036,28 @@ pub fn bundle_components(manifest: &str) {
     let mut names = Vec::new();
     let components = read_components(&manifest_path, &table);
     let driver_entries = read_drivers(&manifest_path, &table);
+    let resources = read_resources(&manifest_path, &table);
     let interface_directories: Vec<PathBuf> = components
         .iter()
         .chain(driver_entries.iter().map(|driver| &driver.component))
         .filter_map(|entry| entry.interfaces.clone())
         .collect();
+    let mut programs = Vec::new();
     for component in &components {
         let image = ElfImage::read(&find_artifact(&component.binary));
-        names.push(emit_component(
+        let stem = emit_component(
             &mut code,
             &out,
             component,
             &image,
             &interface_directories,
-        ));
+            &resources,
+        );
+        if let Some(settings) = &component.program {
+            emit_driver_image(&mut code, &stem, component, settings, &image, "Program");
+            programs.push(format!("&{stem}_DRIVER"));
+        }
+        names.push(stem);
     }
     let mut drivers = Vec::new();
     for driver in &driver_entries {
@@ -971,39 +1073,21 @@ pub fn bundle_components(manifest: &str) {
             &driver.component,
             &image,
             &interface_directories,
+            &resources,
         );
-        let compatible: String = image
-            .driver_compatible
-            .iter()
-            .map(|entry| format!("\"{entry}\", "))
-            .collect();
-        emit!(
-            code,
-            "\n/// Driver `{name}` (`{binary}`), for `{list}`.\n\
-             pub static {stem}_DRIVER: DriverImage = DriverImage {{\n\
-             \x20   component: &{stem},\n\
-             \x20   compatible: &[{compatible}],\n\
-             \x20   priority: 0x{priority:X},\n\
-             \x20   budget_ns: {budget},\n\
-             \x20   memory_bits: {memory_bits},\n\
-             \x20   video_memory: {video_memory},\n\
-             \x20   threads: &[{threads}],\n}};\n",
-            name = driver.component.name,
-            binary = driver.component.binary,
-            list = image.driver_compatible.join(", "),
-            priority = driver.priority,
-            budget = driver.budget_ns,
-            memory_bits = driver.memory_bits,
-            video_memory = driver.video_memory,
-            threads = image
-                .driver_threads
-                .iter()
-                .map(|entry| format!("0x{entry:X}, "))
-                .collect::<String>(),
+        emit_driver_image(
+            &mut code,
+            &stem,
+            &driver.component,
+            &driver.settings,
+            &image,
+            "Driver",
         );
         names.push(stem.clone());
         drivers.push(format!("&{stem}_DRIVER"));
     }
+    // Programs start after the drivers: they load without a device tree node.
+    drivers.extend(programs);
     emit!(
         code,
         "/// Every bundled driver, in manifest order.\n#[allow(dead_code)]\npub static DRIVERS: &[&DriverImage] = &[{}];\n",
@@ -1021,6 +1105,54 @@ pub fn bundle_components(manifest: &str) {
     fs::write(out.join("components.rs"), code).expect("cannot write components.rs");
 }
 
+/// Emit `pub static <stem>_DRIVER: DriverImage` for `component`, an instance of
+/// which Kickstart loads: a driver per device tree node it serves, a program
+/// once (its `compatible` list is empty).
+fn emit_driver_image(
+    code: &mut String,
+    stem: &str,
+    component: &ManifestEntry,
+    settings: &Settings,
+    image: &ElfImage,
+    what: &str,
+) {
+    let compatible: String = image
+        .driver_compatible
+        .iter()
+        .map(|entry| format!("\"{entry}\", "))
+        .collect();
+    emit!(
+        code,
+        "\n/// {what} `{name}` (`{binary}`){list}.\n\
+         pub static {stem}_DRIVER: DriverImage = DriverImage {{\n\
+         \x20   component: &{stem},\n\
+         \x20   compatible: &[{compatible}],\n\
+         \x20   priority: 0x{priority:X},\n\
+         \x20   budget_ns: {budget},\n\
+         \x20   memory_bits: {memory_bits},\n\
+         \x20   video_memory: {video_memory},\n\
+         \x20   serial: {serial},\n\
+         \x20   threads: &[{threads}],\n}};\n",
+        name = component.name,
+        binary = component.binary,
+        list = if image.driver_compatible.is_empty() {
+            String::new()
+        } else {
+            format!(", for `{}`", image.driver_compatible.join(", "))
+        },
+        priority = settings.priority,
+        budget = settings.budget_ns,
+        memory_bits = settings.memory_bits,
+        video_memory = settings.video_memory,
+        serial = settings.serial,
+        threads = image
+            .driver_threads
+            .iter()
+            .map(|entry| format!("0x{entry:X}, "))
+            .collect::<String>(),
+    );
+}
+
 /// Emit the segment statics and the `ComponentImage` static of `component`
 /// (read as `image`) into `code`; the static's name.
 fn emit_component(
@@ -1029,6 +1161,7 @@ fn emit_component(
     component: &ManifestEntry,
     image: &ElfImage,
     interface_directories: &[PathBuf],
+    resources: &[ResourceEntry],
 ) -> String {
     let stem = component.name.to_uppercase();
 
@@ -1065,6 +1198,44 @@ fn emit_component(
             align = section.alignment.max(1),
             perms = section.permissions(),
         );
+    }
+    let mut mappings = String::new();
+    let mut resource_address = RESOURCE_BASE;
+    for name in &component.resources {
+        let resource = resources
+            .iter()
+            .find(|resource| resource.name == *name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: names the resource `{name}`, which no [[resource]] defines",
+                    component.binary
+                )
+            });
+        rerun_if_changed(&resource.file);
+        let content = fs::read(&resource.file).unwrap_or_else(|error| {
+            panic!("cannot read resource {}: {error}", resource.file.display())
+        });
+        let size = content.len();
+        let data = page_padded(content);
+        let bin_file = format!("component_{}_resource_{name}.bin", component.name);
+        fs::write(out.join(&bin_file), &data)
+            .unwrap_or_else(|error| panic!("cannot write {bin_file}: {error}"));
+        let blob = format!("{stem}_RESOURCE_{}_BLOB", name.to_uppercase());
+        emit!(
+            code,
+            "#[unsafe(link_section = \".components\")]\n\
+             static {blob}: PageAligned<{len}> = PageAligned(*include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{bin_file}\")));\n",
+            len = data.len()
+        );
+        emit!(
+            segments,
+            "    LoadableSection {{ meta: SectionMeta {{ name: \"{name}\", virt_addr: 0x{resource_address:X}, size: 0x{size:X}, alignment: 0x1000, permissions: Permissions {{ readable: true, writable: false, executable: false }} }}, data: &{blob}.0 }},\n",
+        );
+        emit!(
+            mappings,
+            "    ResourceMapping {{ name: \"{name}\", virt_addr: 0x{resource_address:X}, size: 0x{size:X} }},\n",
+        );
+        resource_address += data.len() as u64;
     }
     let bss = image.bss.as_ref().map_or_else(
         || "None".to_string(),
@@ -1116,7 +1287,8 @@ fn emit_component(
          \x20   entry: {entry},\n\
          \x20   exports: &[\n{exports}    ],\n\
          \x20   interfaces: &[\n{interfaces}    ],\n\
-         \x20   imports: &[\n{imports}    ],\n}};\n\n",
+         \x20   imports: &[\n{imports}    ],\n\
+         \x20   resources: &[\n{mappings}    ],\n}};\n\n",
         name = component.name,
         binary = component.binary,
     );

@@ -26,8 +26,8 @@ local interface fb_v1
     ## The lent table refused a Frame: `installed` Frames of the call are in it.
     exception install_failed { card32 installed; }
 
-    ## The component holds fewer Frames of video memory than asked for.
-    exception not_enough_frames {}
+    ## The framebuffer's memory was handed out already, or part of it was.
+    exception already_handed_out {}
 
     ## Set up a framebuffer of `width` by `height` pixels of `depth` bits, with
     ## alpha ignored, replacing any earlier one; returns its pitch in bytes.
@@ -50,11 +50,14 @@ local interface fb_v1
         returns (pixel_order order)
         raises (not_configured);
 
-    ## Install `count` Frames of the video memory the component holds into the
-    ## table the caller lends, at consecutive slots from `first_slot`, and
-    ## return how many. The Frames are the caller's to map; the lent key is
-    ## gone when the call returns.
-    frames(card32 first_slot, card32 count) lends (key_table into)
+    ## Install the Frames that cover the configured framebuffer into the table
+    ## the caller lends, at consecutive slots from `first_slot` in address
+    ## order, and return how many. A 2 MiB Frame stands for each 2 MiB the
+    ## buffer fills on that alignment, and every other page is a 4 KiB Frame,
+    ## so the first and last Frame may hold a few bytes beside the buffer. The
+    ## Frames are the caller's to map and the memory is handed out for good:
+    ## the lent key is gone when the call returns, and a second call fails.
+    frames(card32 first_slot) lends (key_table into)
         returns (card32 installed)
-        raises (install_failed, not_enough_frames);
+        raises (not_configured, out_of_video_memory, already_handed_out, install_failed);
 }

@@ -153,9 +153,11 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
 - [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`): the typed functions and `property` over the client's data area are served.
   - [ ] Grow the `property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
   - [ ] Delete the old files whose modules are already gone: `libs/platform/src/raspberrypi/{fb,vc}.rs` and `libs/platform/src/raspberrypi/device_driver/bcm/{power,mailbox,mailbox_refactor}.rs`.
-  - [ ] Hand the framebuffer to a client: `fb_v1.frames` installs Frames of the first video block through the table key the caller lends (the `CallWithKey` mechanism is tested end to end in `mailbox-test`); make it install the Frames that cover the configured framebuffer instead (2 MiB Frames where the address allows, 4 KiB for the rest), carving past the Untyped's watermark to the framebuffer's address, and map them in the client.
   - [ ] Port the rest of the old `Power::off`: the GPIO pin power-down before the halt (no GPIO component exists yet).
-- [ ] Load `[[component]]` entries (components without a device node) in Kickstart with their imports, once components other than drivers need it; only test builders load them today.
+- [ ] The shell (`userspace/shell/`, contract: The shell and loading components), in this order:
+  - [ ] Kickstart provisions the framebuffer window (page tables, a table large enough) for a component importing `fb_v1`; the shell maps the Frames `fb_v1.frames` hands over (device mapping until the write-combining decision).
+  - [ ] `libs/graphics` (colors, rectangles, text from the font) and `draw`, rendered by an extra shell Thread.
+  - [ ] Write-combining mappings for device Frames (waits for the decision in the decisions file).
 - [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (`property` runs to completion on the caller's Thread today).
 
 ## Phase 7 — Time and userspace scheduling

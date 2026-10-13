@@ -72,7 +72,7 @@ mod tests {
         assert!(mailbox.local);
         assert_eq!(mailbox.types.len(), 2);
         assert_eq!(mailbox.exceptions.len(), 3);
-        assert_eq!(mailbox.methods.len(), 6);
+        assert_eq!(mailbox.methods.len(), 7);
         assert_eq!(
             mailbox.doc.first().map(String::as_str),
             Some("The `VideoCore` firmware's property mailbox (Raspberry Pi), served by the")
@@ -88,7 +88,9 @@ mod tests {
         with_checked(MAILBOX, |checked| {
             let set_power_state = &checked.interface().methods[4];
             assert_eq!(checked.words_of_fields(&set_power_state.parameters), 2);
-            let property = &checked.interface().methods[5];
+            let set_led = &checked.interface().methods[5];
+            assert_eq!(checked.words_of_fields(&set_led.parameters), 1);
+            let property = &checked.interface().methods[6];
             assert_eq!(checked.words_of_fields(&property.parameters), 2);
         });
     }
@@ -420,7 +422,7 @@ mod tests {
             "imports.if is not an interface"
         );
         let mailbox = libmeddle::summarize_interface(&interfaces[0]).expect("mailbox_v1 summary");
-        assert_eq!(mailbox.functions.len(), 6);
+        assert_eq!(mailbox.functions.len(), 7);
         assert_eq!(
             mailbox.export_name(2).as_deref(),
             Some("mailbox_v1_get_clock_rate")

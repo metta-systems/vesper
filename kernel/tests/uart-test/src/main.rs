@@ -38,6 +38,7 @@ use {
         },
         drivers::{BootKeys, LoadedDriver, instance_count, load_drivers},
         kickstart_init_el2,
+        serial::SerialChannelParts,
     },
     libaddress::PhysAddr,
     libcomponent_loader::{
@@ -46,21 +47,15 @@ use {
         keys::{SlotCursor, boot_key},
         paging::image_table_count,
     },
-    libdevice_driver::local_key,
     libio_channel::{Event, IoRec, NoEvent, Packet, Producer, WaitError},
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
-        CapError, EventCountKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey,
+        CapError, EventCountKey, KeySlot, KeyTableKey, RawKey, UntypedKey,
         address_space::AddressSpaceKey,
     },
     libqemu::semihosting as semi,
-    libserial_channel::{
-        CONTROL_FRAME_SLOT, DATA_AREA, DATA_AREA_VA, DATA_FRAME_SLOT, DATA_PAGES, LOOPBACK,
-        RECEIVE_COMPLETED_SLOT, SLOTS, SerialChannel, TRANSMIT_COMPLETED_SLOT,
-        TRANSMIT_SUBMITTED_SLOT,
-    },
-    nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
+    libserial_channel::{DATA_AREA, DATA_AREA_VA, DATA_PAGES, LOOPBACK, SLOTS, SerialChannel},
 };
 
 libboot::entry!(boot_main);
@@ -280,16 +275,17 @@ pub fn run() -> ! {
         .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
 
     // ── The client's side of the channel ──────────────────────────────────
-    let control_frame = builder.retype_frames(slots.take(1), 1);
-    let control_paddr = Builder::frame_paddr(control_frame);
+    // The same parts Kickstart gives the shell; this client is the boot
+    // Thread, which reaches them through the kernel's direct map.
+    let parts = SerialChannelParts::create(&builder, &mut slots);
+    let control_paddr = Builder::frame_paddr(parts.control);
     // SAFETY: a fresh, zeroed Frame the boot Thread holds; the direct map
     // covers it for the whole test, and the driver maps the same page.
     let channel =
         unsafe { SerialChannel::at(PhysAddr::new(control_paddr).user_to_kernel().as_u64()) };
     channel.config.store(LOOPBACK, Ordering::Release);
-    let data_first = slots.take(DATA_PAGES);
-    let data_incarnation = builder.retype_frames(data_first, DATA_PAGES).incarnation();
-    let data_paddr = Builder::contiguous_frames(data_first, data_incarnation, DATA_PAGES);
+    let data_paddr =
+        Builder::contiguous_frames(parts.data_first, parts.data_incarnation, DATA_PAGES);
     // The boot Thread's view of the data area byte at `address`.
     let data = |address: u64| {
         assert!(DATA_AREA.contains(&IoRec {
@@ -300,22 +296,11 @@ pub fn run() -> ! {
             .user_to_kernel()
             .as_u64() as *mut u8
     };
-    let mut new_event_count = |what: &str| {
-        untyped
-            .retype(
-                ObjectType::EVENT_COUNT,
-                0,
-                0,
-                1,
-                &self_table,
-                slots.take(1),
-                Rights::all(),
-            )
-            .unwrap_or_else(|error| panic!("{what} EventCount Retype failed: {:?}", error.code()))
-    };
-    let transmit_submitted = new_event_count("transmit submit");
-    let transmit_completed = new_event_count("transmit completion");
-    let receive_completed = new_event_count("receive completion");
+    let (transmit_submitted, transmit_completed, receive_completed) = (
+        parts.transmit_submitted,
+        parts.transmit_completed,
+        parts.receive_completed,
+    );
 
     let _idle = spawn_idle(
         nucleus,
@@ -334,50 +319,9 @@ pub fn run() -> ! {
         |loaded: &LoadedDriver<'_>| {
             let init = loaded.init;
             assert_eq!(init.interrupts().len(), 1, "{}: one interrupt", loaded.node);
-            let driver_table = loaded.component.table();
-            let give_frame = |frame: RawKey, slot: u32| {
-                let copy = self_table
-                    .copy_derive(
-                        frame,
-                        &driver_table,
-                        slot,
-                        Rights(Rights::READ | Rights::WRITE),
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!("channel Frame copy failed: {:?}", error.code())
-                    });
-                assert_eq!(copy, local_key(init.table, slot));
-            };
-            give_frame(control_frame, CONTROL_FRAME_SLOT);
-            for page in 0..DATA_PAGES {
-                give_frame(
-                    boot_key(data_first + page, data_incarnation),
-                    DATA_FRAME_SLOT + page,
-                );
-            }
-            // SAFETY: the driver's retained table, before its Threads run;
-            // no invocation overlaps these bootstrap grants.
-            let driver_table = unsafe { &mut *(loaded.component.table_addr as *mut KeyTable) };
-            for (event_count, rights, slot) in [
-                (transmit_submitted, Rights::RECV, TRANSMIT_SUBMITTED_SLOT),
-                (transmit_completed, Rights::SEND, TRANSMIT_COMPLETED_SLOT),
-                (receive_completed, Rights::SEND, RECEIVE_COMPLETED_SLOT),
-            ] {
-                let id = builder
-                    .entry(event_count)
-                    .carved_id()
-                    .unwrap_or_else(|error| panic!("EventCount identity: {:?}", error.code()));
-                let key = driver_table
-                    .insert(
-                        KeySlot(slot),
-                        KeyEntry::new_carved(id, Rights(rights), 0),
-                        loaded.component.guard,
-                    )
-                    .unwrap_or_else(|failure| {
-                        panic!("EventCount grant failed: {:?}", failure.error.code())
-                    });
-                assert_eq!(key, local_key(init.table, slot));
-            }
+            // Attach before the driver's Threads start, as Kickstart does for
+            // a program with `serial = true`.
+            parts.attach_driver(&builder, loaded.component);
         },
     );
     assert_eq!(started, 1);

@@ -32,9 +32,15 @@ pub const LEND_TABLE_SLOT: u32 = 249;
 /// `INSTALL`: a key that cannot be lent.
 pub const PLAIN_TABLE_SLOT: u32 = 248;
 
-/// First slot of the client's table the framebuffer component installs
-/// Frames into.
-pub const FRAME_SLOT: u32 = 100;
+/// Slot of the client's table where it keeps the table it carves to receive
+/// the framebuffer's Frames, and the slot it copies one Frame at a time to
+/// inspect it.
+pub const FRAME_TABLE_SLOT: u32 = 150;
+pub const COPY_SLOT: u32 = 151;
+
+/// The received-Frames table: `2^FRAME_TABLE_BITS` slots, with this guard.
+pub const FRAME_TABLE_BITS: u8 = 9;
+pub const FRAME_TABLE_GUARD: u32 = 0x7_AB1E;
 
 /// The lendable table key, in the table the client's own table key `table` names.
 pub fn lend_table_key(table: u64) -> RawKey {

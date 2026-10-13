@@ -27,6 +27,7 @@ mod memory;
 mod paging;
 mod privileged;
 mod qsort;
+pub mod serial;
 
 use {
     crate::{

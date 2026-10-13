@@ -33,6 +33,12 @@
 //! which also carries the driver's own Return key for the functions it
 //! exports. Then the Threads start.
 //!
+//! A program, a `[[component]]` manifest entry with a `priority`, is a driver
+//! without a device tree node: one instance of it loads, with no register
+//! pages, interrupts or DMA view, and the import chains of its
+//! `interfaces/imports.if` start from a `compatible` step. Its further Threads
+//! (`driver_threads!`) are declared and started like a driver's.
+//!
 //! A node whose registers touch a page the kernel keeps is skipped, unless its
 //! driver serves a compatible string on `privileged::SHARES_KERNEL_PAGES`: that
 //! driver receives a device Frame minted for the page. Kickstart never calls
@@ -50,6 +56,7 @@ use {
         },
         device_tree,
         privileged::SHARES_KERNEL_PAGES,
+        serial::SerialChannelParts,
     },
     libcomponent_loader::{
         builder::Builder,
@@ -60,8 +67,8 @@ use {
     libdevice_driver::{
         DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DriverInit, ExportedArea, INIT_VA, Interrupt,
         MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS,
-        MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, STACK_REGION,
-        VideoBlock,
+        MAX_RESOURCES, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region,
+        ResourceRecord, STACK_REGION, VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, dma_address, find_compatible,
@@ -87,6 +94,10 @@ use {
 
 const PAGE: u64 = 4096;
 const PAGE_BITS: u8 = 12;
+
+/// The `compatible` string of the serial driver a program with `serial = true`
+/// is attached to.
+const SERIAL_COMPATIBLE: &str = "arm,pl011";
 
 /// Most driver instances one boot loads.
 pub const MAX_DRIVER_INSTANCES: usize = 8;
@@ -144,7 +155,8 @@ struct Instance {
     driver: &'static DriverImage,
     /// Position of the matched string in the driver's `compatible` list
     compatible_index: usize,
-    node: Node<'static, 'static, 'static>,
+    /// The node it serves; none for a program, which has no device
+    node: Option<Node<'static, 'static, 'static>>,
     regions: [Region; MAX_REGIONS],
     region_count: usize,
     pages: [u64; MAX_DEVICE_PAGES],
@@ -152,6 +164,27 @@ struct Instance {
 }
 
 impl Instance {
+    /// An instance of a program: a driver without a device tree node.
+    const fn program(driver: &'static DriverImage) -> Self {
+        Self {
+            driver,
+            compatible_index: 0,
+            node: None,
+            regions: [Region { start: 0, size: 0 }; MAX_REGIONS],
+            region_count: 0,
+            pages: [0; MAX_DEVICE_PAGES],
+            page_count: 0,
+        }
+    }
+
+    /// The name of the node it serves, for messages.
+    fn name(&self) -> &str {
+        self.node
+            .as_ref()
+            .and_then(|node| node.name().ok())
+            .unwrap_or("-")
+    }
+
     fn pages(&self) -> &[u64] {
         &self.pages[..self.page_count]
     }
@@ -162,18 +195,18 @@ impl Instance {
 fn plan_instance(
     driver: &'static DriverImage,
     compatible_index: usize,
-    node: Node<'static, 'static, 'static>,
+    node: &Node<'static, 'static, 'static>,
 ) -> Option<Instance> {
     let mut instance = Instance {
         driver,
         compatible_index,
-        node,
+        node: Some(node.clone()),
         regions: [Region::default(); MAX_REGIONS],
         region_count: 0,
         pages: [0; MAX_DEVICE_PAGES],
         page_count: 0,
     };
-    for region in regions(&instance.node) {
+    for region in regions(node) {
         if region.size == 0 {
             continue;
         }
@@ -222,7 +255,7 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
             continue;
         };
         let name = node.name().unwrap_or("?");
-        let Some(instance) = plan_instance(driver, compatible_index, node.clone()) else {
+        let Some(instance) = plan_instance(driver, compatible_index, &node) else {
             semi::println!(
                 "🥾 Driver {}: {name} has too many registers, skipped",
                 driver.component.name
@@ -248,6 +281,18 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
             continue;
         }
         instances[count] = Some(instance);
+        count += 1;
+    }
+    // Programs have no node: one instance each.
+    for driver in drivers.iter().filter(|driver| driver.compatible.is_empty()) {
+        if count == MAX_DRIVER_INSTANCES {
+            semi::println!(
+                "🥾 Program {}: too many instances, skipped",
+                driver.component.name
+            );
+            continue;
+        }
+        instances[count] = Some(Instance::program(driver));
         count += 1;
     }
     (instances, count)
@@ -379,7 +424,7 @@ impl DeviceMemory {
 }
 
 /// Install `entry` in `component`'s table at `slot`; the component-local key.
-fn grant(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
+pub(crate) fn grant(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
     // SAFETY: the component's retained table, borrowed for this bootstrap
     // grant only; no capability invocation overlaps it.
     unsafe { &mut *(component.table_addr as *mut KeyTable) }
@@ -411,23 +456,26 @@ fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
         .unwrap_or_else(|failure| panic!("🥾 boot install failed: {:?}", failure.error.code()))
 }
 
-/// The node `links` lead to from `node`: a property step reads the first cell
-/// of the current node's property as the phandle of the next node, and a
-/// `compatible` first step starts from the one node with that string.
+/// The node `links` lead to from `node` (none for a program, which has no
+/// node, so its chain starts with `compatible`): a property step reads the
+/// first cell of the current node's property as the phandle of the next node,
+/// and a `compatible` first step starts from the one node with that string.
 fn follow_links<'a, 'i, 'dt>(
     tree: &'a DevTreeIndex<'i, 'dt>,
-    node: &Node<'a, 'i, 'dt>,
+    node: Option<&Node<'a, 'i, 'dt>>,
     links: &[Link],
 ) -> Option<Node<'a, 'i, 'dt>> {
-    let mut current = node.clone();
+    let mut current = node.cloned();
     for (index, link) in links.iter().enumerate() {
-        current = match *link {
-            Link::Property(property) => node_by_phandle(tree, linked_phandle(&current, property)?)?,
+        current = Some(match *link {
+            Link::Property(property) => {
+                node_by_phandle(tree, linked_phandle(current.as_ref()?, property)?)?
+            }
             Link::Compatible(compatible) if index == 0 => find_compatible(tree, &[compatible])?.0,
             Link::Compatible(_) => return None,
-        };
+        });
     }
-    Some(current)
+    current
 }
 
 /// Whether two views of the device tree name the same node.
@@ -560,7 +608,7 @@ pub fn load_drivers(
     for (number, instance) in instances.iter().flatten().enumerate() {
         let driver = instance.driver;
         let image = driver.component;
-        let name = instance.node.name().unwrap_or("?");
+        let name = instance.name();
         let guard = FIRST_DRIVER_GUARD + u32::try_from(number).unwrap_or(0);
         let component = builder.component(nucleus, guard, slots);
         builder.load_component(&component, image, guard ^ 0x80_0000, slots);
@@ -598,6 +646,18 @@ pub fn load_drivers(
             .raw()
             .to_wire();
         // ── Registers ───────────────────────────────────────────────────
+        assert!(
+            image.resources.len() <= MAX_RESOURCES,
+            "🥾 component {} names too many resources",
+            image.name
+        );
+        init.resource_count = image.resources.len() as u64;
+        for (record, mapping) in init.resources.iter_mut().zip(image.resources) {
+            *record = ResourceRecord {
+                base: mapping.virt_addr,
+                len: mapping.size,
+            };
+        }
         init.compatible_index = instance.compatible_index as u64;
         init.region_count = instance.region_count as u64;
         init.regions = instance.regions;
@@ -700,7 +760,10 @@ pub fn load_drivers(
             .unwrap_or_else(|error| panic!("🥾 driver memory region: {:?}", error.code()))
             .paddr;
         init.memory_paddr = memory_paddr;
-        init.memory_bus = dma_address(&instance.node, memory_paddr, 1 << driver.memory_bits)
+        init.memory_bus = instance
+            .node
+            .as_ref()
+            .and_then(|node| dma_address(node, memory_paddr, 1 << driver.memory_bits))
             .unwrap_or(NO_BUS_ADDRESS);
         init.memory = move_to(builder, &mut self_table, &component, ram, local_slot()).to_wire();
         init.memory_size = 1 << driver.memory_bits;
@@ -795,7 +858,12 @@ pub fn load_drivers(
             .carved_id()
             .unwrap_or_else(|error| panic!("🥾 Notification identity: {:?}", error.code()));
         let mut interrupt_count = 0;
-        for interrupt in interrupts(tree, &instance.node).take(MAX_INTERRUPTS) {
+        for interrupt in instance
+            .node
+            .iter()
+            .flat_map(|node| interrupts(tree, node))
+            .take(MAX_INTERRUPTS)
+        {
             let Some(controller) = controllers.index_of(interrupt.controller) else {
                 semi::println!(
                     "🥾 Driver {}: {name} has an interrupt on a controller the kernel does not drive",
@@ -891,21 +959,24 @@ pub fn load_drivers(
             continue;
         };
         let client_image = client_instance.driver.component;
-        let client_name = client_instance.node.name().unwrap_or("?");
+        let client_name = client_instance.name();
         // Imports of one interface are consecutive: report a missing link once.
         let mut unlinked: Option<&str> = None;
         for import in client_image.imports {
-            let target = follow_links(tree, &client_instance.node, import.links);
+            let target = follow_links(tree, client_instance.node.as_ref(), import.links);
             let exporter = prepared.iter().position(|candidate| {
                 candidate.as_ref().is_some_and(|candidate| {
-                    target
-                        .as_ref()
-                        .is_some_and(|target| same_node(&candidate.instance.node, target))
-                        && candidate
+                    target.as_ref().is_some_and(|target| {
+                        candidate
                             .instance
-                            .driver
-                            .component
-                            .exports_interface(import.interface, import.type_code)
+                            .node
+                            .as_ref()
+                            .is_some_and(|node| same_node(node, target))
+                    }) && candidate
+                        .instance
+                        .driver
+                        .component
+                        .exports_interface(import.interface, import.type_code)
                 })
             });
             let Some(exporter) = exporter else {
@@ -1062,11 +1133,51 @@ pub fn load_drivers(
         }
     }
 
+    // ── Serial channel ──────────────────────────────────────────────────
+    // The program that asks for it (`serial = true`) is attached to the PL011
+    // driver's channel, before the driver's Threads start. There is no general
+    // way to connect a client to a serial driver yet: the first such program
+    // gets the first PL011 instance.
+    let client = prepared.iter().position(|loaded| {
+        loaded
+            .as_ref()
+            .is_some_and(|loaded| loaded.instance.driver.serial)
+    });
+    if let Some(client) = client {
+        let uart = prepared.iter().position(|loaded| {
+            loaded
+                .as_ref()
+                .is_some_and(|loaded| loaded.instance.driver.serves(SERIAL_COMPATIBLE))
+        });
+        match uart {
+            Some(uart) => {
+                let parts = SerialChannelParts::create(builder, slots);
+                let driver = prepared[uart].as_ref().expect("a loaded PL011 driver");
+                parts.attach_driver(builder, &driver.component);
+                let program = prepared[client].as_mut().expect("a loaded client");
+                let keys = parts.attach_client(builder, &program.component, &mut program.next_slot);
+                update_init(program.init_page, |init: &mut DriverInit| {
+                    init.serial = keys;
+                });
+            }
+            None => {
+                semi::println!(
+                    "🥾 Program {} asks for a serial channel and no PL011 driver is loaded",
+                    prepared[client].as_ref().map_or("?", |loaded| loaded
+                        .instance
+                        .driver
+                        .component
+                        .name)
+                );
+            }
+        }
+    }
+
     // ── Start ───────────────────────────────────────────────────────────
     let mut started = 0;
     for loaded in prepared.iter_mut().flatten() {
         let instance = loaded.instance;
-        let name = instance.node.name().unwrap_or("?");
+        let name = instance.name();
         let first_free_slot = loaded.next_slot;
         let init = update_init(loaded.init_page, |init: &mut DriverInit| {
             init.first_free_slot = u64::from(first_free_slot);

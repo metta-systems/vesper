@@ -124,3 +124,176 @@ pub fn covered_by(blocks: &[(u64, u64)], start: u64, length: u64) -> bool {
     }
     true
 }
+
+/// Bytes of a page: video memory is handed out in whole pages.
+pub const PAGE_BYTES: u64 = 4096;
+
+/// `size_bits` of a 4 KiB Frame.
+pub const PAGE_FRAME_BITS: u8 = 12;
+
+/// `size_bits` of a 2 MiB Frame.
+pub const LARGE_FRAME_BITS: u8 = 21;
+
+/// Most objects one Retype creates.
+pub const MAX_RETYPE_COUNT: u32 = 256;
+
+/// The pages the bytes `[address, address + bytes)` occupy, as the range
+/// `[start, end)` of whole pages, or `None` if it is empty or overflows.
+pub fn page_range(address: u64, bytes: u64) -> Option<(u64, u64)> {
+    let end = address.checked_add(bytes)?;
+    if bytes == 0 {
+        return None;
+    }
+    Some((
+        address & !(PAGE_BYTES - 1),
+        end.checked_next_multiple_of(PAGE_BYTES)?,
+    ))
+}
+
+/// A run of consecutive Frames of one size, which one Retype from one block
+/// of video memory carves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameRun {
+    /// Physical address of the first Frame
+    pub address: u64,
+    /// `size_bits` of each Frame: [`PAGE_FRAME_BITS`] or [`LARGE_FRAME_BITS`]
+    pub size_bits: u8,
+    /// How many Frames, at most [`MAX_RETYPE_COUNT`]
+    pub count: u32,
+}
+
+impl FrameRun {
+    /// Bytes the run covers.
+    pub const fn bytes(self) -> u64 {
+        (self.count as u64) << self.size_bits
+    }
+
+    /// Address after the run's last Frame.
+    pub const fn end(self) -> u64 {
+        self.address + self.bytes()
+    }
+}
+
+/// The runs of Frames that cover the pages `[start, end)` of video memory made
+/// up of `blocks` (each `(base, end)`), in address order.
+///
+/// A 2 MiB Frame is used wherever one lies fully inside the range, on its own
+/// alignment and inside a single block; every other page is a 4 KiB Frame. A
+/// run never leaves its block, since one Retype carves from one block. The
+/// plan ends early at memory no block holds, so check the range with
+/// [`covered_by`] first.
+#[derive(Clone, Debug)]
+pub struct FramePlan<'blocks> {
+    blocks: &'blocks [(u64, u64)],
+    cursor: u64,
+    end: u64,
+}
+
+impl<'blocks> FramePlan<'blocks> {
+    /// The plan covering `[start, end)`, both multiples of [`PAGE_BYTES`].
+    pub const fn new(blocks: &'blocks [(u64, u64)], start: u64, end: u64) -> Self {
+        Self {
+            blocks,
+            cursor: start,
+            end,
+        }
+    }
+
+    /// The end of the block holding `address`.
+    fn block_end(&self, address: u64) -> Option<u64> {
+        self.blocks
+            .iter()
+            .find(|&&(base, block_end)| base <= address && address < block_end)
+            .map(|&(_, block_end)| block_end)
+    }
+
+    /// Whether a 2 MiB Frame can start at `address`.
+    fn large_fits(&self, address: u64) -> bool {
+        let large = 1_u64 << LARGE_FRAME_BITS;
+        address.is_multiple_of(large)
+            && address
+                .checked_add(large)
+                .is_some_and(|frame_end| frame_end <= self.end)
+            && self
+                .block_end(address)
+                .is_some_and(|block_end| address + large <= block_end)
+    }
+}
+
+impl Iterator for FramePlan<'_> {
+    type Item = FrameRun;
+
+    fn next(&mut self) -> Option<FrameRun> {
+        if self.cursor >= self.end {
+            return None;
+        }
+        let address = self.cursor;
+        let block_end = self.block_end(address)?;
+        let (size_bits, count) = if self.large_fits(address) {
+            let large = 1_u64 << LARGE_FRAME_BITS;
+            let mut count = 0_u32;
+            while count < MAX_RETYPE_COUNT {
+                let next = address + u64::from(count) * large;
+                if !self.large_fits(next) || self.block_end(next) != Some(block_end) {
+                    break;
+                }
+                count += 1;
+            }
+            (LARGE_FRAME_BITS, count)
+        } else {
+            let mut count = 0_u32;
+            while count < MAX_RETYPE_COUNT {
+                let next = address + u64::from(count) * PAGE_BYTES;
+                if next >= self.end || next >= block_end || (count > 0 && self.large_fits(next)) {
+                    break;
+                }
+                count += 1;
+            }
+            (PAGE_FRAME_BITS, count)
+        };
+        let run = FrameRun {
+            address,
+            size_bits,
+            count,
+        };
+        self.cursor = run.end();
+        Some(run)
+    }
+}
+
+/// The sizes (`size_bits`) of the aligned chunks that carve a Untyped's
+/// watermark forward from `from` to `to`, both multiples of 16 bytes with
+/// `from <= to` (offsets from the block's base).
+///
+/// Retype allocates at the watermark, aligned to the object, so skipping
+/// memory means carving it into Untypeds, each aligned to its own size: the
+/// largest power of two that fits both the gap and the watermark's alignment.
+#[derive(Clone, Debug)]
+pub struct SkipChunks {
+    from: u64,
+    to: u64,
+}
+
+/// The chunks that move a watermark from `from` to `to`.
+pub const fn skip_chunks(from: u64, to: u64) -> SkipChunks {
+    SkipChunks { from, to }
+}
+
+impl Iterator for SkipChunks {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<u8> {
+        if self.from >= self.to {
+            return None;
+        }
+        let gap_bits = 63 - (self.to - self.from).leading_zeros();
+        let alignment_bits = if self.from == 0 {
+            63
+        } else {
+            self.from.trailing_zeros()
+        };
+        let bits = gap_bits.min(alignment_bits);
+        self.from += 1_u64 << bits;
+        u8::try_from(bits).ok()
+    }
+}
