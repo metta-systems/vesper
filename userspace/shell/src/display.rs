@@ -239,6 +239,7 @@ impl Surface for Screen {
     }
 }
 
+// FIXME: use normal formatting fns
 /// Write `value` in decimal into `buffer`, after `prefix`; the text.
 fn labelled<'buffer>(buffer: &'buffer mut [u8; 32], prefix: &str, value: u32) -> &'buffer str {
     let mut length = prefix.len();

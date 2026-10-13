@@ -229,6 +229,7 @@ fn report(console: &mut dyn Console, what: &str, result: Result<(), Failure>) {
     }
 }
 
+// FIXME: use normal formatting fns
 /// Print `value` in decimal.
 pub fn print_number(console: &mut dyn Console, mut value: u64) {
     let mut digits = [0_u8; 20];
