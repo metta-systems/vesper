@@ -27,7 +27,7 @@ mod components {
 }
 
 use {
-    driver_protocol::REPORT_SLOT,
+    driver_protocol::{LEND_TABLE_SLOT, PLAIN_TABLE_SLOT, REPORT_SLOT},
     kickstart::{
         bootstrap::{
             PoolCapacities, bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle,
@@ -38,7 +38,7 @@ use {
     libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::ttbr,
-        keys::{SlotCursor, boot_key},
+        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
         paging::image_table_count,
     },
     libdevice_driver::DATA_WINDOW_VA,
@@ -266,9 +266,9 @@ pub fn run() -> ! {
                 // mailbox through the firmware node, and the power and
                 // framebuffer components by compatible string.
                 assert!(init.pages().is_empty());
-                let imports: &[_; 10] = imports.try_into().unwrap_or_else(|_| {
+                let imports: &[_; 11] = imports.try_into().unwrap_or_else(|_| {
                     panic!(
-                        "five mailbox, one power, four fb functions, found {}",
+                        "five mailbox, one power, five fb functions, found {}",
                         imports.len()
                     )
                 });
@@ -281,7 +281,7 @@ pub fn run() -> ! {
                 );
                 assert_eq!(imports[5].function, 0, "devices_off");
                 assert!(imports[5..].iter().all(|record| record.area_len == 0));
-                assert!(imports[6..].iter().map(|record| record.function).eq(0..4));
+                assert!(imports[6..].iter().map(|record| record.function).eq(0..5));
                 assert_ne!(imports[5].invocation, imports[6].invocation);
                 client_area = area_of_mailbox_imports;
                 // The report key, in the client's table only.
@@ -295,6 +295,30 @@ pub fn run() -> ! {
                     .unwrap_or_else(|failure| {
                         panic!("report grant failed: {:?}", failure.error.code())
                     });
+                // Keys to the client's own table, for it to lend to fb through
+                // `CallWithKey`: one carries `INSTALL | LEND`, the other
+                // only `INSTALL`.
+                for (slot, rights) in [
+                    (LEND_TABLE_SLOT, Rights(Rights::INSTALL | Rights::LEND)),
+                    (PLAIN_TABLE_SLOT, Rights(Rights::INSTALL)),
+                ] {
+                    // SAFETY: as above.
+                    unsafe { &mut *(loaded.component.table_addr as *mut KeyTable) }
+                        .insert(
+                            KeySlot(slot),
+                            KeyEntry::new_keytable(
+                                loaded.component.table_addr,
+                                loaded.component.guard,
+                                BOOT_TABLE_SIZE_BITS,
+                                rights,
+                                0,
+                            ),
+                            loaded.component.guard,
+                        )
+                        .unwrap_or_else(|failure| {
+                            panic!("table key grant failed: {:?}", failure.error.code())
+                        });
+                }
             }
             assert_ne!(
                 init.return_key, 0,

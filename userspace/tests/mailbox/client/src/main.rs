@@ -9,13 +9,13 @@
 //! mailbox-test installed (`driver_protocol::REPORT_SLOT`).
 
 use {
-    driver_protocol::report_key,
+    driver_protocol::{FRAME_SLOT, lend_table_key, plain_table_key, report_key},
     fb_client::fb_v1::{
         Bindings as FbBindings, Client as FbClient, Error as FbError, Exception as FbException,
     },
-    libdevice_driver::{driver_compatible, driver_init},
+    libdevice_driver::{driver_compatible, driver_init, local_key},
     libmeddle_runtime::{ExclusiveStacks, IoRec},
-    libobject::{NotificationKey, RawKey},
+    libobject::{FrameKey, KeyTableKey, NotificationKey, RawKey},
     mailbox_client::mailbox_v1::{Bindings, Client, Clock, Device, Error, Exception},
     mailbox_impl::tag,
     power_client::power_v1::{
@@ -234,6 +234,58 @@ fn check_fb(init: &libdevice_driver::DriverInit, mailbox: &Client) {
     );
     fb.pixel_order()
         .unwrap_or_else(|error| panic!("pixel_order failed: {error:?}"));
+    check_frames(init, &fb);
+}
+
+/// Frames from the fb component into the client's own table, through a table
+/// key the client lends for the call (`CallWithKey`): fb installs the Frames
+/// with the borrowed key as the destination.
+fn check_frames(init: &libdevice_driver::DriverInit, fb: &FbClient) {
+    let lend = KeyTableKey::from_key(lend_table_key(init.table));
+    let plain = KeyTableKey::from_key(plain_table_key(init.table));
+
+    // Two Frames, then one more. fb's window for the keys lent to it is one
+    // slot, so the second call works only because the first call's borrowed
+    // key was removed when it returned.
+    assert_eq!(fb.frames(&lend, FRAME_SLOT, 2), Ok(2));
+    assert_eq!(fb.frames(&lend, FRAME_SLOT + 2, 1), Ok(1));
+    let mut previous = None;
+    for index in 0..3 {
+        let frame = FrameKey::from_key(local_key(init.table, FRAME_SLOT + index));
+        let (base, size) = frame
+            .get_extent()
+            .unwrap_or_else(|error| panic!("Frame {index} has no extent: {:?}", error.code()));
+        assert_eq!(size, 4096, "4 KiB Frames");
+        if let Some(before) = previous {
+            assert_eq!(base, before + 4096, "consecutive video memory");
+        }
+        previous = Some(base);
+    }
+
+    // A table key without `LEND` is refused before the call starts
+    // (`InsufficientRights`, status 5).
+    assert_eq!(
+        fb.frames(&plain, FRAME_SLOT + 3, 1),
+        Err(FbError::Call {
+            status: 5,
+            detail: [0, 0]
+        })
+    );
+    // An occupied slot makes the first install fail; the exception says how
+    // many went in before it.
+    assert_eq!(
+        fb.frames(&lend, FRAME_SLOT, 1),
+        Err(FbError::Exception(FbException::InstallFailed {
+            installed: 0
+        }))
+    );
+    // More Frames than one call hands over.
+    assert_eq!(
+        fb.frames(&lend, FRAME_SLOT + 4, 17),
+        Err(FbError::Exception(FbException::NotEnoughFrames))
+    );
+    // After a refused call and two exceptions the window is free again.
+    assert_eq!(fb.frames(&lend, FRAME_SLOT + 3, 1), Ok(1));
 }
 
 fn main(init_va: u64) -> ! {

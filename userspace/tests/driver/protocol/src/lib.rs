@@ -22,3 +22,26 @@ pub const AUX_UART: u64 = 2;
 pub fn report_key(table: u64) -> RawKey {
     local_key(table, REPORT_SLOT)
 }
+
+/// Slot of a client's table holding a key to the table itself with only
+/// `INSTALL | LEND`, which mailbox-test installs for the client to lend to
+/// the framebuffer component.
+pub const LEND_TABLE_SLOT: u32 = 249;
+
+/// Slot of a client's table holding a key to the table itself with only
+/// `INSTALL`: a key that cannot be lent.
+pub const PLAIN_TABLE_SLOT: u32 = 248;
+
+/// First slot of the client's table the framebuffer component installs
+/// Frames into.
+pub const FRAME_SLOT: u32 = 100;
+
+/// The lendable table key, in the table the client's own table key `table` names.
+pub fn lend_table_key(table: u64) -> RawKey {
+    local_key(table, LEND_TABLE_SLOT)
+}
+
+/// The table key without `LEND`.
+pub fn plain_table_key(table: u64) -> RawKey {
+    local_key(table, PLAIN_TABLE_SLOT)
+}

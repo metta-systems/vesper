@@ -25,7 +25,7 @@ An Untyped capability grants authority over a region of unallocated physical mem
 | `x4` | Number of objects, 1–256 |
 | `x5` | Key of the destination KeyTable |
 | `x6` | First destination slot, as a bare index |
-| `x7` | Rights for the new capabilities (any subset of `0x3F`) |
+| `x7` | Rights for the new capabilities (any subset of `0x7F`) |
 
 Retype creates `count` objects and installs their capabilities into consecutive destination slots starting at `x6`. It succeeds completely or changes nothing.
 

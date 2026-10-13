@@ -14,7 +14,7 @@
 //! framebuffer is up to a client that
 //! holds the memory.
 
-use fb::fb_v1::{Exception, FbV1, PixelOrder};
+use fb::fb_v1::{__runtime::KeyTableKey, Exception, FbV1, PixelOrder};
 
 /// `firmware_error` code when the mailbox cannot be reached or answers
 /// something unexpected.
@@ -44,6 +44,10 @@ impl FbV1 for Display {
     fn pixel_order() -> Result<PixelOrder, Exception> {
         configured().map(|display| display.pixel_order)
     }
+
+    fn frames(into: &KeyTableKey, first_slot: u32, count: u32) -> Result<u32, Exception> {
+        frames(into, first_slot, count)
+    }
 }
 
 fb::fb_v1_export!(Display);
@@ -57,7 +61,12 @@ struct Configured {
 }
 
 #[cfg(target_os = "vesper")]
-use component::{configure, configured};
+use component::{configure, configured, frames};
+
+#[cfg(not(target_os = "vesper"))]
+fn frames(_into: &KeyTableKey, _first_slot: u32, _count: u32) -> Result<u32, Exception> {
+    Err(Exception::NotEnoughFrames)
+}
 
 #[cfg(not(target_os = "vesper"))]
 fn configure(_width: u32, _height: u32, _depth: u32) -> Result<u32, Exception> {
@@ -83,11 +92,12 @@ mod component {
         },
         libdevice_driver::{
             INIT_VA, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, Turnstile, driver_compatible, driver_init,
+            local_key,
         },
         libmeddle_runtime::ExclusiveStacks,
         libobject::{
-            EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
-            export::init_return_key, thread::ThreadReturnKey,
+            EventCountKey, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
+            UntypedKey, export::init_return_key, thread::ThreadReturnKey,
         },
         mailbox_client::mailbox_v1::{Bindings, Client, Error, Exception as MailboxException},
     };
@@ -216,6 +226,55 @@ mod component {
         })
     }
 
+    /// Frames one `frames` call may hand over.
+    const MAX_FRAMES: u32 = 16;
+
+    /// Rights of the Frames handed to a client: to map, and to learn their
+    /// extent.
+    const FRAME_RIGHTS: Rights = Rights(Rights::READ | Rights::WRITE | Rights::GRANT);
+
+    /// Next slot of the component's own table to carve Frames into; the call
+    /// that holds the turnstile owns it.
+    static NEXT_FRAME_SLOT: AtomicU64 = AtomicU64::new(0);
+
+    /// Carve `count` Frames of video memory into the component's own table and
+    /// install a copy of each into the table `into` (lent for this call) at
+    /// consecutive slots from `first_slot`.
+    pub fn frames(into: &KeyTableKey, first_slot: u32, count: u32) -> Result<u32, Exception> {
+        let init = init();
+        let _turn = TURNSTILE.enter(init);
+        let block = init.video().first().ok_or(Exception::NotEnoughFrames)?;
+        if count == 0 || count > MAX_FRAMES {
+            return Err(Exception::NotEnoughFrames);
+        }
+        let own_first =
+            u32::try_from(NEXT_FRAME_SLOT.fetch_add(u64::from(count), Ordering::AcqRel))
+                .map_err(|_overflow| Exception::NotEnoughFrames)?;
+        UntypedKey::from_key(RawKey::from_wire(block.key))
+            .retype(
+                ObjectType::FRAME,
+                12,
+                0,
+                count,
+                &KeyTableKey::from_key(RawKey::from_wire(init.table)),
+                own_first,
+                FRAME_RIGHTS,
+            )
+            .map_err(|_error| Exception::NotEnoughFrames)?;
+        // The component's own table key, which may derive from it.
+        let own = KeyTableKey::from_key(local_key(init.table, KeySlot::SELF_KEYTABLE.0));
+        for index in 0..count {
+            own.copy_derive(
+                local_key(init.table, own_first + index),
+                into,
+                first_slot.wrapping_add(index),
+                FRAME_RIGHTS,
+            )
+            .map_err(|_error| Exception::InstallFailed { installed: index })?;
+        }
+        Ok(count)
+    }
+
     /// Set the turnstile up, then park: everything else happens in calls.
     fn main(init_va: u64) -> ! {
         // SAFETY: Kickstart passes the init page's address in x0.
@@ -232,6 +291,7 @@ mod component {
                 Rights::all(),
             )
             .unwrap_or_else(|error| panic!("fb: Retype failed: {:?}", error.code()));
+        NEXT_FRAME_SLOT.store(init.first_free_slot + 1, Ordering::Release);
         TURNSTILE.open(turns);
         EventCountKey::from_key(RawKey::from_wire(init.event_count))
             .advance(1)

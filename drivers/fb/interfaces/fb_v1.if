@@ -6,6 +6,10 @@
 ## firmware.
 local interface fb_v1
 {
+    ## A client lends one table at a time, so one slot of the component's
+    ## table is reserved for it.
+    placement 1;
+
     ## The order of the color components in a pixel.
     enum pixel_order { bgr, rgb }
 
@@ -18,6 +22,12 @@ local interface fb_v1
 
     ## No framebuffer has been configured yet.
     exception not_configured {}
+
+    ## The lent table refused a Frame: `installed` Frames of the call are in it.
+    exception install_failed { card32 installed; }
+
+    ## The component holds fewer Frames of video memory than asked for.
+    exception not_enough_frames {}
 
     ## Set up a framebuffer of `width` by `height` pixels of `depth` bits, with
     ## alpha ignored, replacing any earlier one; returns its pitch in bytes.
@@ -39,4 +49,12 @@ local interface fb_v1
     pixel_order()
         returns (pixel_order order)
         raises (not_configured);
+
+    ## Install `count` Frames of the video memory the component holds into the
+    ## table the caller lends, at consecutive slots from `first_slot`, and
+    ## return how many. The Frames are the caller's to map; the lent key is
+    ## gone when the call returns.
+    frames(card32 first_slot, card32 count) lends (key_table into)
+        returns (card32 installed)
+        raises (install_failed, not_enough_frames);
 }
