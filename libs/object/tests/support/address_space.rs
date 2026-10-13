@@ -13,6 +13,7 @@ type Request = (u64, u64, [u64; 6]);
 std::thread_local! {
     static RESPONSE: Cell<Option<Response>> = const { Cell::new(None) };
     static REQUEST: Cell<Option<Request>> = const { Cell::new(None) };
+    static X8: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
 fn respond(request: Request) -> Response {
@@ -24,9 +25,10 @@ pub(super) unsafe fn protected_call0(key: u64, op: u64) -> Response {
     respond((key, op, [0; 6]))
 }
 
-// Mirrors `libsyscall::protected_call6`, including its lint exemption.
+// Mirrors `libsyscall::protected_call6_with_x8`, including its lint exemption;
+// the `x8` word is recorded beside the request.
 #[allow(clippy::too_many_arguments)]
-pub(super) unsafe fn protected_call6(
+pub(super) unsafe fn protected_call6_with_x8(
     key: u64,
     op: u64,
     arg0: u64,
@@ -35,7 +37,9 @@ pub(super) unsafe fn protected_call6(
     arg3: u64,
     arg4: u64,
     arg5: u64,
+    x8: u64,
 ) -> Response {
+    X8.with(|recorded| recorded.set(Some(x8)));
     respond((key, op, [arg0, arg1, arg2, arg3, arg4, arg5]))
 }
 
@@ -219,7 +223,7 @@ fn all_address_space_wrappers_preserve_unknown_statuses_and_malformed_details() 
             (1 << 32, 1, 2),
             (19, 258, 0),
             (3, 0, 1),
-            (26, 0x7654_3210_ffff_fffe, 0x0801),
+            (26, 0x7654_3210_ffff_fffe, 0x0901),
             (27, 0x7654_3210_ffff_fffe, 0x0100_0001),
             (28, 1 << 32, 0),
         ] {
@@ -368,11 +372,83 @@ fn create_invocation_preserves_unknown_statuses_and_extended_stack_reasons() {
         (32, u64::MAX, u64::MAX),
         (35, u64::MAX, u64::MAX),
         (5, 0, 1),
-        (26, 0x7654_3210_ffff_fffe, 0x0801),
+        (26, 0x7654_3210_ffff_fffe, 0x0901),
     ] {
         match invoke_create_invocation(CREATE_INVOCATION_ARGS, wire) {
             Err(error @ CapError::UnknownResponse { .. }) => assert_eq!(error.code(), wire),
             _ => panic!("lost error details for CreateInvocation {wire:?}"),
         }
     }
+}
+
+fn submitted_x8(window: Option<vesper_objects::PlacementWindow>) -> u64 {
+    let address_space = AddressSpaceKey::from_key(RawKey::new(KeySlot(1), 0x89ab_cdef));
+    let destination = KeyTableKey::from_key(RawKey::new(KeySlot(3), 0x1357_2468));
+    X8.with(|recorded| recorded.set(None));
+    RESPONSE.with(|pending| {
+        assert!(
+            pending
+                .replace(Some((0, RawKey::new(KeySlot(12), 1).to_wire(), 0)))
+                .is_none()
+        );
+    });
+    let result = match window {
+        None => {
+            address_space.create_invocation(0x1000, &destination, KeySlot(12), 0x2000, 0x3000, 0x40)
+        }
+        Some(window) => address_space.create_invocation_with_window(
+            0x1000,
+            &destination,
+            KeySlot(12),
+            0x2000,
+            0x3000,
+            0x40,
+            window,
+        ),
+    };
+    assert!(result.is_ok());
+    REQUEST.with(|request| assert!(request.take().is_some()));
+    X8.with(|recorded| recorded.take().expect("x8 was not submitted"))
+}
+
+#[test]
+fn create_invocation_without_a_window_submits_zero_in_x8() {
+    assert_eq!(submitted_x8(None), 0);
+}
+
+#[test]
+fn create_invocation_with_window_submits_first_and_count_in_x8() {
+    use vesper_objects::PlacementWindow;
+
+    assert_eq!(
+        submitted_x8(Some(PlacementWindow::new(40, 3))),
+        40 | (3 << 32)
+    );
+    assert_eq!(
+        submitted_x8(Some(PlacementWindow::new(u32::MAX, u32::MAX))),
+        u64::MAX
+    );
+    // An empty window is the zero word whatever its first slot.
+    assert_eq!(submitted_x8(Some(PlacementWindow::new(40, 0))), 0);
+}
+
+#[test]
+fn placement_window_wire_form_round_trips() {
+    use vesper_objects::PlacementWindow;
+
+    for (first, count) in [(0, 1), (7, 2), (u32::MAX, 1), (1, u32::MAX)] {
+        let window = PlacementWindow::new(first, count);
+        assert_eq!(PlacementWindow::from_wire(window.to_wire()), window);
+        assert_eq!((window.first(), window.count()), (first, count));
+        assert!(window.accepts_keys());
+    }
+    // A zero count normalizes to the empty window, whatever the first word.
+    for word in [0_u64, 0x0000_0000_dead_beef, 0xffff_ffff] {
+        let window = PlacementWindow::from_wire(word);
+        assert_eq!(window, PlacementWindow::NONE);
+        assert!(!window.accepts_keys());
+        assert_eq!(window.to_wire(), 0);
+    }
+    assert_eq!(PlacementWindow::new(5, 3).end(), Some(8));
+    assert_eq!(PlacementWindow::new(u32::MAX, 2).end(), None);
 }

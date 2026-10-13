@@ -23,7 +23,7 @@ use {
     },
     libobject::{
         CapError, InconsistencyReason, InvalidKeyReason, InvalidStackReason, KeySlot, KeyTableKey,
-        ObjectType, RawKey, Rights, UntypedKey, address_space::AddressSpaceKey,
+        ObjectType, PlacementWindow, RawKey, Rights, UntypedKey, address_space::AddressSpaceKey,
         thread::ThreadReturnKey,
     },
     libqemu::semihosting as semi,
@@ -132,6 +132,10 @@ fn invocation_destination_state(
         stack: [extent.base(), extent.end(), extent.minimum_headroom()],
     }
 }
+
+/// First slot of the placement window the keyed Invocation declares in
+/// Bounce's table (two slots).
+const WINDOW_FIRST: u32 = 120;
 
 pub fn run() {
     let (_boot_execution_sp, shared_trap_sp) = record_fixture_stacks();
@@ -736,6 +740,8 @@ pub fn run() {
     {
         // SAFETY: Bounce's retained initialized table; this read-only
         // check overlaps no capability invocation.
+        // SAFETY: Bounce's retained table; no capability invocation is in
+        // flight while this shared borrow lives.
         let bounce_table = unsafe { &*(bounce_table_addr as *const KeyTable) };
         let entry = bounce_table
             .lookup(ppc_return_key, TEST_TABLE_GUARD)
@@ -788,7 +794,8 @@ pub fn run() {
                 reason: InvalidStackReason::SpInsufficientHeadroom,
             },
         ),
-        (1, ppc::STACK_END, CapError::InvalidOperation),
+        (1, ppc::STACK_END, CapError::KeyNotAccepted),
+        (2, ppc::STACK_END, CapError::InvalidOperation),
     ] {
         ppc::assert_call_rejected(ppc_key, op, sp, expected);
         assert_boot_thread_home(nucleus);
@@ -937,5 +944,167 @@ pub fn run() {
     ppc::live_values_trip(clobber_key);
     assert_boot_thread_home(nucleus);
     assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+
+    // ── CallWithKey: lend one key for the duration of a call ─────────────
+    // Bounce, the exporter, declares a two-slot placement window in its
+    // table. The boot component lends a key to its own table that carries
+    // only `INSTALL | LEND`; inside Bounce the borrowed entry is the
+    // destination of a real CopyDerive that installs a write-only
+    // DebugConsole key into the lender's table (the fb pattern). The target
+    // also tries to keep the borrowed entry, which must be refused. Return
+    // removes the borrowed entry again.
+    let bounce_self_table_key = RawKey::from_parts(
+        TEST_TABLE_GUARD,
+        BOOT_TABLE_SIZE_BITS,
+        KeySlot::SELF_KEYTABLE.0,
+        1,
+    );
+    ppc::keyed_init(bounce_self_table_key);
+    let keyed_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation_with_window(
+            ppc::keyed_entry as *const () as u64,
+            &self_table,
+            KeySlot(204),
+            ppc::STACK_BASE,
+            ppc::STACK_END,
+            ppc::MINIMUM_HEADROOM,
+            PlacementWindow::new(WINDOW_FIRST, 2),
+        )
+        .unwrap_or_else(|error| panic!("keyed CreateInvocation failed: {:?}", error.code()));
+    let lendable_table = self_table
+        .copy_derive(
+            self_table_key,
+            &self_table,
+            110,
+            Rights(Rights::INSTALL | Rights::LEND),
+        )
+        .unwrap_or_else(|error| panic!("lendable table key failed: {:?}", error.code()));
+    let keyed = ppc::keyed_round_trip(keyed_key, lendable_table, 111);
+    let placed = RawKey::from_parts(TEST_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, WINDOW_FIRST, 1);
+    assert_eq!(keyed.lent_key, placed, "borrowed key delivered in x0");
+    assert_eq!(keyed.dummy, 0, "x1 stays the dummy");
+    assert_eq!(keyed.input0, 111, "arguments stay in x2..x7");
+    assert_eq!(keyed.delivered.0, 0, "install through the borrowed key");
+    assert_eq!(keyed.install.0, 0, "install status");
+    assert_eq!(
+        RawKey::from_wire(keyed.delivered.1),
+        boot_key(111, 1),
+        "the installed key is local to the lender's table"
+    );
+    assert_eq!(
+        keyed.keep,
+        CapError::InvalidOperation.code(),
+        "a borrowed entry cannot be copied out of the call"
+    );
+    {
+        // SAFETY: both retained tables; every SVC has returned and these
+        // shared borrows end before the next capability invocation.
+        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let installed = boot_table
+            .lookup(boot_key(111, 1), BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("installed key missing: {:?}", error.code()));
+        assert_eq!(installed.object_type(), ObjectType::DEBUG_CONSOLE);
+        assert_eq!(installed.rights(), Rights(Rights::WRITE));
+        assert!(!installed.is_lent());
+        let kept = boot_table
+            .lookup(lendable_table, BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("lender's key lost: {:?}", error.code()));
+        assert_eq!(kept.rights(), Rights(Rights::INSTALL | Rights::LEND));
+        assert!(!kept.is_lent());
+        // SAFETY: Bounce's retained table; no capability invocation is in
+        // flight while this shared borrow lives.
+        let bounce_table = unsafe { &*(bounce_table_addr as *const KeyTable) };
+        assert!(
+            matches!(
+                bounce_table.lookup(placed, TEST_TABLE_GUARD),
+                Err(CapError::InconsistentKey {
+                    reason: InconsistencyReason::CapabilityInvalidated,
+                    ..
+                })
+            ),
+            "Return removed the borrowed entry"
+        );
+        let never_kept = RawKey::from_parts(TEST_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, 130, 1);
+        assert!(
+            matches!(
+                bounce_table.lookup(never_kept, TEST_TABLE_GUARD),
+                Err(CapError::InvalidKey {
+                    reason: InvalidKeyReason::NeverIssued,
+                    ..
+                })
+            ),
+            "nothing was kept in Bounce"
+        );
+    }
+    assert_boot_thread_home(nucleus);
+    assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+
+    // Rejections through the real SVC path: before migration, nothing changes.
+    let unlendable_table = self_table
+        .copy_derive(self_table_key, &self_table, 112, Rights(Rights::INSTALL))
+        .unwrap_or_else(|error| panic!("unlendable table key failed: {:?}", error.code()));
+    let never_issued_lent = boot_key(250, 1);
+    let full_window_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation_with_window(
+            ppc::keyed_entry as *const () as u64,
+            &self_table,
+            KeySlot(205),
+            ppc::STACK_BASE,
+            ppc::STACK_END,
+            ppc::MINIMUM_HEADROOM,
+            PlacementWindow::new(124, 1),
+        )
+        .unwrap_or_else(|error| panic!("full-window CreateInvocation failed: {:?}", error.code()));
+    // SAFETY: Bounce's retained table; no capability invocation is in
+    // flight, and the borrow ends with this statement.
+    unsafe { &mut *(bounce_table_addr as *mut KeyTable) }
+        .insert(
+            KeySlot(124),
+            KeyEntry::new_frame(0x1000, 12, false, Rights::all()),
+            TEST_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| panic!("window fill failed: {:?}", failure.error.code()));
+    for (invocation, lent, expected) in [
+        (ppc_key, lendable_table, CapError::KeyNotAccepted),
+        (keyed_key, unlendable_table, CapError::InsufficientRights),
+        (
+            keyed_key,
+            ppc_key,
+            CapError::InvalidObjectType(ObjectType::INVOCATION),
+        ),
+        (
+            keyed_key,
+            never_issued_lent,
+            CapError::InvalidKey {
+                key: never_issued_lent,
+                reason: InvalidKeyReason::NeverIssued,
+                operand: 8,
+            },
+        ),
+        (full_window_key, lendable_table, CapError::NoPlacementSlot),
+    ] {
+        ppc::assert_call_with_key_rejected(invocation, lent, ppc::STACK_END, expected);
+        assert_boot_thread_home(nucleus);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+    }
+    // A window beyond the exporter's table is refused at construction, like
+    // an out-of-range slot.
+    for (first, count) in [(255, 2), (u32::MAX, 2), (WINDOW_FIRST, u32::MAX)] {
+        assert!(
+            matches!(
+                AddressSpaceKey::from_key(bounce_as_key).create_invocation_with_window(
+                    0x1234,
+                    &self_table,
+                    KeySlot(206),
+                    ppc::STACK_BASE,
+                    ppc::STACK_END,
+                    ppc::MINIMUM_HEADROOM,
+                    PlacementWindow::new(first, count),
+                ),
+                Err(CapError::InvalidSlot(slot)) if slot == KeySlot(first)
+            ),
+            "window ({first}, {count}) must fail like an out-of-range slot"
+        );
+    }
     semi::println!("PPC Call/Return round trips through Bounce passed");
 }

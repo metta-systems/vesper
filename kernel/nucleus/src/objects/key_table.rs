@@ -5,8 +5,8 @@ use {
     },
     core::num::NonZero,
     libobject::{
-        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey,
-        domain::DomainId,
+        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow,
+        RawKey, domain::DomainId,
     },
 };
 
@@ -384,6 +384,7 @@ impl KeyTable {
             address_space,
             function_address,
             stack_extent: entry.invocation_stack_extent().ok()?,
+            placement_window: entry.invocation_placement_window().ok()?,
         })
     }
 
@@ -405,6 +406,56 @@ impl KeyTable {
             .checked_add(1)
             .map(|_| ())
             .ok_or(CapError::KeySlotExhausted(slot))
+    }
+
+    /// Whether `window` lies entirely within this table's capacity.
+    pub fn contains_window(&self, window: PlacementWindow) -> bool {
+        window
+            .end()
+            .is_some_and(|end| usize::try_from(end).is_ok_and(|end| end <= self.capacity()))
+    }
+
+    /// The first slot of `window` that can take a new valid entry, with the
+    /// incarnation that installation will issue: the slot is vacant and has an
+    /// incarnation left. Read-only; the window must lie within the capacity
+    /// (see [`contains_window`](Self::contains_window)), else no slot is found.
+    ///
+    /// `CallWithKey` uses this to pre-validate its placement slot, so the
+    /// install at commit cannot fail.
+    pub fn first_vacant_in(&self, window: PlacementWindow) -> Option<(KeySlot, u32)> {
+        if !self.contains_window(window) {
+            return None;
+        }
+        (window.first()..window.end()?).find_map(|slot| {
+            let idx = usize::try_from(slot).ok()?;
+            if self.entry(idx).is_valid() {
+                return None;
+            }
+            let next = self.incarnation_of(idx).checked_add(1)?;
+            Some((KeySlot(slot), next))
+        })
+    }
+
+    /// Remove the entry `CallWithKey` placed at `slot` if it is still the one
+    /// issued at `incarnation`. A callee that already deleted it (or replaced
+    /// it, which advances the incarnation) leaves nothing to remove. Returns
+    /// whether an entry was removed.
+    pub fn release_placed(&mut self, slot: KeySlot, incarnation: u32) -> bool {
+        let Some(idx) = usize::try_from(slot.0)
+            .ok()
+            .filter(|&idx| idx < self.capacity())
+        else {
+            return false;
+        };
+        if incarnation == 0
+            || self.incarnation_of(idx) != incarnation
+            || !self.entry(idx).is_valid()
+        {
+            return false;
+        }
+        *self.entry_mut(idx) = KeyEntry::null();
+        self.count -= 1;
+        true
     }
 
     /// Advance the watermark of the validated Untyped entry at `key`.

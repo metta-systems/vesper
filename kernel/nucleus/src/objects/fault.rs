@@ -69,8 +69,8 @@ impl<A: ArchObjects> Nucleus<A> {
             call_frame.gpr[2..8].copy_from_slice(&info.to_arguments());
             // The handler starts at the top of its Invocation's stack.
             call_frame.gpr[9] = target.stack_extent.end();
-            if let Ok(prepared) = self.prepare_call(access, &call_frame, target) {
-                let committed = self.commit_call(prepared)?;
+            if let Ok(prepared) = self.prepare_call(access, &call_frame, target, None) {
+                let committed = self.commit_call(access, prepared)?;
                 let thread = self.thread_mut(current).ok_or(CapError::InvalidDomain)?;
                 thread.fault = Some(ThreadFault {
                     frame: faulting,
@@ -99,6 +99,7 @@ impl<A: ArchObjects> Nucleus<A> {
         faulting: SavedContext,
     ) -> Result<PreparedResume, CapError> {
         self.release_thread_fault(current);
+        self.release_thread_placements(access, current);
         self.park_faulted_and_select(access, faulting)
     }
 

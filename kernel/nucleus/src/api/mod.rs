@@ -115,7 +115,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 
     if core::hint::unlikely(obj_type.is_arch()) {
         // Architecture-specific dispatch (less common path)
-        arch_invoke::<A>(nucleus, &access, caller, key, obj_type, op, args)
+        arch_invoke::<A>(nucleus, &access, caller, obj_type, saved)
     } else {
         // Core dispatch (common path)
         core_invoke::<A>(nucleus, &access, caller, obj_type, saved)
@@ -137,28 +137,8 @@ fn caller_table<A: ArchObjects>(
     access: &Access,
     invoked: RawKey,
 ) -> Result<CallerTable, CapError> {
-    let binding = {
-        let thread = nucleus.current_thread_ref()?;
-        let address_space = access
-            .resolve(&nucleus.pools.arch.address_spaces, thread.address_space)
-            .map_err(|_invalid_address_space| CapError::InvalidDomain)?;
-        address_space.keytable()
-    };
-    let addr = binding.address();
-    let no_context = || CapError::InconsistentKey {
-        key: invoked,
-        reason: InconsistencyReason::CapabilityInvalidated,
-        operand: 0,
-    };
-    let table = access.resolve_carved_mut::<KeyTable>(addr)?;
-    let (cap_addr, guard, size_bits) = table.self_table_capability().ok_or_else(no_context)?;
-    if cap_addr != addr
-        || size_bits != binding.size_bits()
-        || table.size_bits() != binding.size_bits()
-    {
-        return Err(no_context());
-    }
-    Ok(CallerTable { addr, guard })
+    let thread = nucleus.current_thread_ref()?;
+    nucleus.address_space_table(access, thread.address_space, invoked)
 }
 
 /// Core object dispatch
@@ -279,11 +259,13 @@ fn arch_invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
     access: &Access,
     caller: CallerTable,
-    key: RawKey,
     obj_type: ObjectType,
-    op: u64,
-    args: &[u64; 6],
+    saved: &SavedContext,
 ) -> Result<InvokeOutcome, CapError> {
+    // `x8` is read only by AddressSpace.CreateInvocation (its placement window).
+    let (key, op, operands) = decode_invocation(saved);
+    let args = &operands;
+    let x8 = saved.gpr[8];
     let arch_type = ArchType::try_from(obj_type)?;
 
     // semi::println!("🔄 arch_invoke {key:?} / {arch_type}:{op}");
@@ -300,7 +282,7 @@ fn arch_invoke<A: ArchObjects>(
         }
 
         ArchType::AddressSpace => {
-            crate::api::arch::address_space::invoke::<A>(access, caller, key, op, args, nucleus)
+            crate::api::arch::address_space::invoke::<A>(access, caller, key, op, args, x8, nucleus)
         }
 
         ArchType::ASIDPool => {

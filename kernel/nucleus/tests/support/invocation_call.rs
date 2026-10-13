@@ -7,7 +7,7 @@ use {
         api::{self, KeyEntry},
         objects::{
             ArchObjects, ArchObjectsImpl, ExecutionContext, InvocationContinuation,
-            InvocationStack, KeyTable, Nucleus, ThreadFault,
+            InvocationStack, KeyTable, Nucleus, Placement, ThreadFault,
             access::{Access, ObjectId},
             arch_objects::AddressSpaceObject,
             fault::FaultDelivery,
@@ -23,8 +23,8 @@ use {
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
     libobject::{
-        CapError, INVOCATION_STACK_DEPTH, InconsistencyReason, InvalidStackReason, KeySlot,
-        ObjectType, RawKey, Rights,
+        CapError, INVOCATION_STACK_DEPTH, InconsistencyReason, InvalidKeyReason,
+        InvalidStackReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights,
         fault::{FaultAction, FaultInfo, FaultKind},
     },
 };
@@ -93,7 +93,12 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
                 .unwrap()
                 .insert(
                     INVOCATION_SLOT,
-                    KeyEntry::new_invocation(target_as, NonZero::new(FUNCTION).unwrap(), extent),
+                    KeyEntry::new_invocation(
+                        target_as,
+                        NonZero::new(FUNCTION).unwrap(),
+                        extent,
+                        PlacementWindow::NONE,
+                    ),
                     FIXTURE_GUARD,
                 )
                 .unwrap_or_else(|error| panic!("Invocation install: {:?}", error.error.code()));
@@ -502,8 +507,12 @@ fn operation_kind_and_authority_precede_supplied_values() {
         // Invalid SP and full depth must not mask key-stage rejections.
         fill_stack(nucleus, INVOCATION_STACK_DEPTH);
         let mut saved = call_frame(fixture.key, STACK_BASE);
-        saved.gpr[1] = 1;
+        saved.gpr[1] = 2;
         reject_preserved(nucleus, &fixture, &saved, CapError::InvalidOperation);
+        // Operation 1 is CallWithKey: this Invocation accepts no key, which is
+        // also a key-stage rejection ahead of the stack and depth checks.
+        saved.gpr[1] = 1;
+        reject_preserved(nucleus, &fixture, &saved, CapError::KeyNotAccepted);
 
         let attenuated = {
             let table = nucleus.current_thread_table_mut().unwrap();
@@ -580,6 +589,7 @@ fn prepare_direct(
     let target = CallTarget {
         address_space: target_as,
         function_address: NonZero::new(FUNCTION).unwrap(),
+        placement_window: PlacementWindow::NONE,
         stack_extent: InvocationStackExtent::new(
             STACK_BASE,
             STACK_END,
@@ -590,7 +600,7 @@ fn prepare_direct(
     };
     // SAFETY: as in `call`.
     let access = unsafe { Access::new() };
-    nucleus.prepare_call(&access, saved, target)
+    nucleus.prepare_call(&access, saved, target, None)
 }
 
 fn committed(result: Result<CommittedCall, CapError>) -> CommittedCall {
@@ -692,7 +702,7 @@ fn nested_commits_fill_sixteen_records_then_reject_the_seventeenth() {
             saved.elr_el1 = 0x9_0000 + 4 * u64::try_from(depth).unwrap();
             let prepared = admitted(prepare_direct(nucleus, fixture.target_as, &saved));
             assert_eq!(prepared.depth(), depth);
-            committed(nucleus.commit_call(prepared));
+            committed(commit(nucleus, prepared));
         }
         let stack = source_mut(nucleus).invocation_stack;
         assert!(stack.is_full());
@@ -740,7 +750,7 @@ fn stale_prepared_call_is_rejected_without_mutation() {
             }
             let before = snapshot(nucleus, &fixture);
             let error = nucleus
-                .commit_call(prepared)
+                .commit_call(&unsafe { Access::new() }, prepared)
                 .expect_err("stale Call description committed");
             assert_eq!(error.code(), CapError::InvalidOperation.code());
             assert_eq!(snapshot(nucleus, &fixture), before);
@@ -965,7 +975,7 @@ fn nested_returns_pop_in_lifo_order() {
         second.elr_el1 = 0x9_1000;
         second.gpr[19] = 0x1919;
         let prepared = admitted(prepare_direct(nucleus, fixture.target_as, &second));
-        committed(nucleus.commit_call(prepared));
+        committed(commit(nucleus, prepared));
         assert_eq!(source_mut(nucleus).invocation_stack.len(), 2);
 
         let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
@@ -1093,6 +1103,7 @@ fn return_key_form_and_lookup_errors_precede_the_pop() {
                         ArchObjectsImpl::USER_VA_END,
                     )
                     .unwrap_or_else(|error| panic!("extent: {:?}", error.code())),
+                    PlacementWindow::NONE,
                 ),
                 FIXTURE_GUARD,
             )
@@ -1231,7 +1242,12 @@ fn install_fault_handler(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallF
         .unwrap()
         .insert(
             KeySlot::FAULT_HANDLER,
-            KeyEntry::new_invocation(fixture.target_as, NonZero::new(FUNCTION).unwrap(), extent),
+            KeyEntry::new_invocation(
+                fixture.target_as,
+                NonZero::new(FUNCTION).unwrap(),
+                extent,
+                PlacementWindow::NONE,
+            ),
             FIXTURE_GUARD,
         )
         .unwrap_or_else(|error| panic!("fault handler install: {:?}", error.error.code()));
@@ -1482,4 +1498,570 @@ fn releasing_a_thread_fault_frees_its_handler() {
         assert_eq!(source_mut(nucleus).fault, None);
         assert_eq!(handler_state(nucleus, fixture.source_as), (false, 0));
     });
+}
+
+fn commit(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    prepared: PreparedCall,
+) -> Result<CommittedCall, CapError> {
+    // SAFETY: as in `call`: this fixture is serial and owns exclusive
+    // nucleus/pool backing, with no overlapping access context or guard.
+    let access = unsafe { Access::new() };
+    nucleus.commit_call(&access, prepared)
+}
+
+// ═════════════════════════════
+// CALL WITH KEY
+// ═════════════════════════════
+
+/// The exporter's placement window in each fixture table: slots 40 and 41.
+const WINDOW_FIRST: u32 = 40;
+const WINDOW_COUNT: u32 = 2;
+/// Slot of the window-accepting Invocation in the source table.
+const KEYED_INVOCATION_SLOT: KeySlot = KeySlot(30);
+
+fn fixture_extent() -> InvocationStackExtent {
+    InvocationStackExtent::new(
+        STACK_BASE,
+        STACK_END,
+        MINIMUM_HEADROOM,
+        ArchObjectsImpl::USER_VA_END,
+    )
+    .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()))
+}
+
+fn install_entry(table_address: u64, slot: KeySlot, entry: KeyEntry) -> RawKey {
+    // SAFETY: serial fixture with exclusive nucleus/pool backing; no other
+    // access context or table guard overlaps this installation.
+    let access = unsafe { Access::new() };
+    let mut table = access
+        .resolve_carved_mut::<KeyTable>(table_address)
+        .unwrap_or_else(|error| panic!("fixture table: {:?}", error.code()));
+    table
+        .insert(slot, entry, FIXTURE_GUARD)
+        .unwrap_or_else(|failure| panic!("install: {:?}", failure.error.code()))
+}
+
+/// The entry `key` names in the table at `table_address`, by value.
+fn entry_in(table_address: u64, key: RawKey) -> Result<KeyEntry, CapError> {
+    // SAFETY: as in `install_entry`.
+    let access = unsafe { Access::new() };
+    let table = access
+        .resolve_carved_mut::<KeyTable>(table_address)
+        .unwrap_or_else(|error| panic!("fixture table: {:?}", error.code()));
+    table.lookup(key, FIXTURE_GUARD).copied()
+}
+
+fn remove_entry(table_address: u64, key: RawKey) -> KeyEntry {
+    // SAFETY: as in `install_entry`.
+    let access = unsafe { Access::new() };
+    let mut table = access
+        .resolve_carved_mut::<KeyTable>(table_address)
+        .unwrap_or_else(|error| panic!("fixture table: {:?}", error.code()));
+    table
+        .remove(key, FIXTURE_GUARD)
+        .unwrap_or_else(|error| panic!("remove: {:?}", error.code()))
+}
+
+/// A Frame key that may be lent, and the same Frame without `LEND`.
+fn lendable_frame() -> KeyEntry {
+    KeyEntry::new_frame(
+        0x20_0000,
+        12,
+        false,
+        Rights(Rights::READ | Rights::WRITE | Rights::LEND),
+    )
+}
+
+fn unlendable_frame() -> KeyEntry {
+    KeyEntry::new_frame(0x20_0000, 12, false, Rights(Rights::READ | Rights::WRITE))
+}
+
+/// The key the callee receives for the borrowed entry in window slot `index`
+/// of a fixture table, at `incarnation`.
+fn placed_key(index: u32, incarnation: u32) -> RawKey {
+    RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, WINDOW_FIRST + index, incarnation)
+}
+
+/// An Invocation into the target AddressSpace that accepts one lent key at a
+/// time in a two-slot window, installed in the source table.
+fn keyed_invocation(fixture: &CallFixture) -> RawKey {
+    install_entry(
+        fixture.source_table,
+        KEYED_INVOCATION_SLOT,
+        KeyEntry::new_invocation(
+            fixture.target_as,
+            NonZero::new(FUNCTION).unwrap(),
+            fixture_extent(),
+            PlacementWindow::new(WINDOW_FIRST, WINDOW_COUNT),
+        ),
+    )
+}
+
+/// A `CallWithKey` frame: operation 1 and the lent key in `x8`.
+fn keyed_frame(invocation: RawKey, lent: RawKey, target_sp: u64) -> SavedContext {
+    let mut saved = call_frame(invocation, target_sp);
+    saved.gpr[1] = 1;
+    saved.gpr[8] = lent.to_wire();
+    saved
+}
+
+/// Admit and commit `saved` from the table the Thread currently runs in.
+fn call_current(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    saved: &SavedContext,
+) -> Result<CommittedCall, CapError> {
+    let caller = current_caller(nucleus);
+    // SAFETY: as in `call`.
+    let access = unsafe { Access::new() };
+    api::invocation::call(&access, caller, saved, nucleus)
+}
+
+fn assert_borrowed(table_address: u64, key: RawKey, original: &KeyEntry) {
+    let borrowed = entry_in(table_address, key)
+        .unwrap_or_else(|error| panic!("borrowed entry: {:?}", error.code()));
+    assert!(borrowed.is_lent());
+    assert_eq!(borrowed.object_type(), original.object_type());
+    assert_eq!(borrowed.rights(), original.rights());
+    assert!(borrowed.rights().has(Rights::LEND));
+    assert_eq!(borrowed.badge(), original.badge());
+}
+
+/// The slot of `key` has never held an entry: nothing was ever placed there.
+fn assert_never_issued(table_address: u64, key: RawKey) {
+    assert!(matches!(
+        entry_in(table_address, key),
+        Err(CapError::InvalidKey {
+            reason: InvalidKeyReason::NeverIssued,
+            ..
+        })
+    ));
+}
+
+fn assert_vacant(table_address: u64, key: RawKey) {
+    assert!(matches!(
+        entry_in(table_address, key),
+        Err(CapError::InconsistentKey {
+            reason: InconsistencyReason::CapabilityInvalidated,
+            ..
+        })
+    ));
+}
+
+#[test_case]
+fn call_with_key_places_the_borrowed_entry_and_return_removes_it() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let original = lendable_frame();
+        let lent = install_entry(fixture.source_table, KeySlot(20), original);
+
+        let committed = committed(call(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, lent, LOWEST_SP),
+        ));
+        assert!(committed.with_key);
+        // The callee receives the borrowed entry's key in x0; x1 stays zero
+        // and the six arguments are untouched.
+        let placed = placed_key(0, 1);
+        assert_eq!(committed.target.gpr[0], placed.to_wire());
+        assert_eq!(committed.target.gpr[1], 0);
+        assert_eq!(committed.target.gpr[2], 0x5A00 + 2);
+        assert_eq!(committed.target.gpr[7], 0x5A00 + 7);
+        assert_eq!(committed.target.gpr[8], 0);
+        assert_borrowed(fixture.target_table, placed, &original);
+        // The lender keeps its own key, unchanged and not lent.
+        let kept = entry_in(fixture.source_table, lent).must("lender's key");
+        assert!(!kept.is_lent());
+        assert_eq!(kept.rights(), original.rights());
+        // The record remembers where the entry went.
+        let record = *source_mut(nucleus).invocation_stack.top().unwrap();
+        assert_eq!(
+            record.placement,
+            Placement {
+                slot: WINDOW_FIRST,
+                incarnation: 1
+            }
+        );
+
+        let saved = return_frame(fixture.target_return_key, [7, 8], [0; 4]);
+        let returned = returned(thread_return(nucleus, &saved));
+        assert_eq!(returned.placement, record.placement);
+        assert_eq!(returned.resumed.gpr[1], 7);
+        assert_vacant(fixture.target_table, placed);
+        assert!(source_mut(nucleus).invocation_stack.is_empty());
+        entry_in(fixture.source_table, lent).must("lender's key after Return");
+
+        // The slot's incarnation advanced: the next call issues incarnation 2,
+        // and the earlier key stays stale.
+        let again = committed_call_with(nucleus, &fixture, invocation, lent);
+        assert_eq!(again.target.gpr[0], placed_key(0, 2).to_wire());
+        assert!(matches!(
+            entry_in(fixture.target_table, placed),
+            Err(CapError::InconsistentKey {
+                reason: InconsistencyReason::SlotIncarnationMismatch,
+                ..
+            })
+        ));
+        assert_borrowed(fixture.target_table, placed_key(0, 2), &original);
+    });
+}
+
+fn committed_call_with(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    fixture: &CallFixture,
+    invocation: RawKey,
+    lent: RawKey,
+) -> CommittedCall {
+    committed(call(
+        nucleus,
+        fixture,
+        &keyed_frame(invocation, lent, LOWEST_SP),
+    ))
+}
+
+#[test_case]
+fn dispatched_call_with_key_commits_through_the_production_entry() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
+        let saved = keyed_frame(invocation, lent, LOWEST_SP);
+        match api::handle_cap_invoke(nucleus, &saved) {
+            Ok(api::InvokeOutcome::Call(committed)) => {
+                assert!(committed.with_key);
+                assert_eq!(committed.target.gpr[0], placed_key(0, 1).to_wire());
+            }
+            Ok(_) => panic!("dispatched CallWithKey produced a non-Call outcome"),
+            Err(error) => panic!("dispatched CallWithKey rejected: {:?}", error.code()),
+        }
+        assert_eq!(source_mut(nucleus).address_space, fixture.target_as);
+        entry_in(fixture.target_table, placed_key(0, 1)).must("borrowed entry");
+    });
+}
+
+#[test_case]
+fn plain_call_ignores_x8_and_places_nothing() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
+        // A plain Call on an Invocation that accepts keys: x8 is just garbage.
+        let mut saved = call_frame(invocation, LOWEST_SP);
+        saved.gpr[8] = lent.to_wire();
+        let committed = committed(call(nucleus, &fixture, &saved));
+        assert!(!committed.with_key);
+        assert_eq!(committed.target.gpr[0], 0);
+        assert_never_issued(fixture.target_table, placed_key(0, 1));
+        assert_eq!(
+            source_mut(nucleus)
+                .invocation_stack
+                .top()
+                .unwrap()
+                .placement,
+            Placement::NONE
+        );
+    });
+}
+
+#[test_case]
+fn call_with_key_rejections_preserve_every_table() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
+        let unlendable = install_entry(fixture.source_table, KeySlot(21), unlendable_frame());
+        let never = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 200, 1);
+
+        // The Invocation accepts no key (empty window).
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(fixture.key, lent, LOWEST_SP),
+            CapError::KeyNotAccepted,
+        );
+        // A key without LEND.
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, unlendable, LOWEST_SP),
+            CapError::InsufficientRights,
+        );
+        // A kind that cannot be lent (an Invocation).
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, fixture.key, LOWEST_SP),
+            CapError::InvalidObjectType(ObjectType::INVOCATION),
+        );
+        // A key that was never issued is reported against operand x8.
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, never, LOWEST_SP),
+            CapError::InvalidKey {
+                key: never,
+                reason: InvalidKeyReason::NeverIssued,
+                operand: 8,
+            },
+        );
+        // A key from another table's guard is rejected the same way.
+        let foreign = RawKey::from_parts(FIXTURE_GUARD ^ 1, SIZE_BITS, 20, lent.incarnation());
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, foreign, LOWEST_SP),
+            CapError::InvalidKey {
+                key: foreign,
+                reason: InvalidKeyReason::GuardMismatch,
+                operand: 8,
+            },
+        );
+    });
+}
+
+#[test_case]
+fn call_with_key_admission_order_is_pinned() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
+        let unlendable = install_entry(fixture.source_table, KeySlot(21), unlendable_frame());
+        let never = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 200, 1);
+        let misaligned_sp = LOWEST_SP + 8;
+        let invalid_stack = CapError::InvalidStack {
+            value: misaligned_sp,
+            reason: InvalidStackReason::SpMisaligned,
+        };
+
+        // KeyNotAccepted precedes any lent-key error.
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(fixture.key, never, misaligned_sp),
+            CapError::KeyNotAccepted,
+        );
+        // Lent-key errors (lookup, then rights) precede the stack checks.
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, never, misaligned_sp),
+            CapError::InvalidKey {
+                key: never,
+                reason: InvalidKeyReason::NeverIssued,
+                operand: 8,
+            },
+        );
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, unlendable, misaligned_sp),
+            CapError::InsufficientRights,
+        );
+        // A full window is reported last: the stack and depth errors win.
+        install_entry(
+            fixture.target_table,
+            KeySlot(WINDOW_FIRST),
+            lendable_frame(),
+        );
+        install_entry(
+            fixture.target_table,
+            KeySlot(WINDOW_FIRST + 1),
+            lendable_frame(),
+        );
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, lent, misaligned_sp),
+            invalid_stack,
+        );
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, lent, LOWEST_SP),
+            CapError::NoPlacementSlot,
+        );
+        fill_stack(nucleus, INVOCATION_STACK_DEPTH);
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, lent, LOWEST_SP),
+            CapError::NestingDepth {
+                count: INVOCATION_STACK_DEPTH as u64,
+            },
+        );
+    });
+}
+
+#[test_case]
+fn placement_skips_occupied_slots_and_fills_the_window_in_order() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let original = lendable_frame();
+        let lent = install_entry(fixture.source_table, KeySlot(20), original);
+        // The exporter's own key sits in the first window slot.
+        install_entry(
+            fixture.target_table,
+            KeySlot(WINDOW_FIRST),
+            unlendable_frame(),
+        );
+
+        let first = committed_call_with(nucleus, &fixture, invocation, lent);
+        assert_eq!(first.target.gpr[0], placed_key(1, 1).to_wire());
+        assert_borrowed(fixture.target_table, placed_key(1, 1), &original);
+        // The window is now full for a concurrent second call.
+        let (result, before) =
+            prepare(nucleus, &fixture, &keyed_frame(invocation, lent, LOWEST_SP));
+        assert_eq!(
+            result.expect_err("full window").code(),
+            CapError::NoPlacementSlot.code()
+        );
+        assert_eq!(snapshot(nucleus, &fixture), before);
+        // The callee's own entry was never touched.
+        assert!(
+            !entry_in(fixture.target_table, placed_key(0, 1))
+                .must("exporter's key")
+                .is_lent()
+        );
+    });
+}
+
+#[test_case]
+fn return_tolerates_a_callee_that_deleted_or_replaced_the_borrowed_entry() {
+    for replace in [false, true] {
+        with_call(|nucleus, fixture| {
+            let invocation = keyed_invocation(&fixture);
+            let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
+            let committed = committed_call_with(nucleus, &fixture, invocation, lent);
+            let placed = RawKey::from_wire(committed.target.gpr[0]);
+            remove_entry(fixture.target_table, placed);
+            let replacement = if replace {
+                // The callee puts a key of its own into the freed slot: a new
+                // incarnation, which Return must leave alone.
+                Some(install_entry(
+                    fixture.target_table,
+                    KeySlot(WINDOW_FIRST),
+                    unlendable_frame(),
+                ))
+            } else {
+                None
+            };
+            let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+            returned(thread_return(nucleus, &saved));
+            match replacement {
+                Some(key) => {
+                    let kept = entry_in(fixture.target_table, key).must("callee's own key");
+                    assert!(!kept.is_lent());
+                }
+                None => assert_vacant(fixture.target_table, placed),
+            }
+            assert!(source_mut(nucleus).invocation_stack.is_empty());
+        });
+    }
+}
+
+#[test_case]
+fn a_borrowed_entry_can_be_lent_onward_without_copies() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let original = lendable_frame();
+        let lent = install_entry(fixture.source_table, KeySlot(20), original);
+        let first = committed_call_with(nucleus, &fixture, invocation, lent);
+        let borrowed = RawKey::from_wire(first.target.gpr[0]);
+
+        // From inside the target, call back into the source AddressSpace (a
+        // second exporter with its own window at slots 60 and 61), lending the
+        // borrowed entry itself.
+        let onward = install_entry(
+            fixture.target_table,
+            KeySlot(50),
+            KeyEntry::new_invocation(
+                fixture.source_as,
+                NonZero::new(FUNCTION).unwrap(),
+                fixture_extent(),
+                PlacementWindow::new(60, 2),
+            ),
+        );
+        let saved = keyed_frame(onward, borrowed, LOWEST_SP);
+        let second = committed(call_current(nucleus, &saved));
+        assert!(second.with_key);
+        let second_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 60, 1);
+        assert_eq!(second.target.gpr[0], second_key.to_wire());
+        assert_borrowed(fixture.source_table, second_key, &original);
+        assert_eq!(source_mut(nucleus).invocation_stack.len(), 2);
+
+        // Returning from the second callee removes only its own entry.
+        let inner = return_frame(fixture.source_return_key, [1, 2], [0; 4]);
+        returned(thread_return(nucleus, &inner));
+        assert_vacant(fixture.source_table, second_key);
+        assert_borrowed(fixture.target_table, borrowed, &original);
+        // Returning from the first removes the first.
+        let outer = return_frame(fixture.target_return_key, [3, 4], [0; 4]);
+        returned(thread_return(nucleus, &outer));
+        assert_vacant(fixture.target_table, borrowed);
+        entry_in(fixture.source_table, lent).must("the lender's key throughout");
+    });
+}
+
+#[test_case]
+fn thread_teardown_removes_every_outstanding_borrowed_entry() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
+        let first = committed_call_with(nucleus, &fixture, invocation, lent);
+        let borrowed = RawKey::from_wire(first.target.gpr[0]);
+        let onward = install_entry(
+            fixture.target_table,
+            KeySlot(50),
+            KeyEntry::new_invocation(
+                fixture.source_as,
+                NonZero::new(FUNCTION).unwrap(),
+                fixture_extent(),
+                PlacementWindow::new(60, 2),
+            ),
+        );
+        let second = committed(call_current(
+            nucleus,
+            &keyed_frame(onward, borrowed, LOWEST_SP),
+        ));
+        let second_key = RawKey::from_wire(second.target.gpr[0]);
+        entry_in(fixture.target_table, borrowed).must("first borrowed entry");
+        entry_in(fixture.source_table, second_key).must("second borrowed entry");
+
+        let thread = nucleus.current_thread.unwrap();
+        // SAFETY: serial fixture; no other access context or guard overlaps.
+        let access = unsafe { Access::new() };
+        nucleus.release_thread_placements(&access, thread);
+        assert_vacant(fixture.target_table, borrowed);
+        assert_vacant(fixture.source_table, second_key);
+        // The lender's key is untouched, and a second release is a no-op.
+        entry_in(fixture.source_table, lent).must("the lender's key");
+        nucleus.release_thread_placements(&access, thread);
+    });
+}
+
+#[test_case]
+fn a_stale_prepared_call_with_key_installs_nothing() {
+    with_call(|nucleus, fixture| {
+        let invocation = keyed_invocation(&fixture);
+        let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
+        let (result, _) = prepare(nucleus, &fixture, &keyed_frame(invocation, lent, LOWEST_SP));
+        let prepared = admitted(result);
+        // The depth changed after admission: commit refuses before touching
+        // either table.
+        fill_stack(nucleus, 1);
+        let before = snapshot(nucleus, &fixture);
+        let error = commit(nucleus, prepared).expect_err("stale CallWithKey committed");
+        assert_eq!(error.code(), CapError::InvalidOperation.code());
+        assert_eq!(snapshot(nucleus, &fixture), before);
+        assert_never_issued(fixture.target_table, placed_key(0, 1));
+    });
+}
+
+/// `expect` for results whose error type has no `Debug`: panics with the wire
+/// code of the error.
+trait Must<T> {
+    fn must(self, what: &str) -> T;
+}
+
+impl<T> Must<T> for Result<T, CapError> {
+    fn must(self, what: &str) -> T {
+        self.unwrap_or_else(|error| panic!("{what}: {:?}", error.code()))
+    }
 }

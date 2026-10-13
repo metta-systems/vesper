@@ -21,7 +21,8 @@ use {
     },
     libkicktest::translation::{self, PPC_STACK_PAGES, PPC_STACK_VA, PROBE_VA},
     libobject::{
-        CapError, DebugConsoleKey, InconsistencyReason, RawKey, decode_syscall_result,
+        CapError, DebugConsoleKey, InconsistencyReason, KeyTableKey, RawKey, Rights,
+        decode_syscall_result,
         export::{self, PpcResult},
         invocation::InvocationKey,
         ppc_export,
@@ -698,4 +699,161 @@ pub fn live_values_trip(key: RawKey) {
         "target's plain memory write not observed"
     );
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
+}
+
+// ═════════════════════════════
+// CALL WITH KEY
+// ═════════════════════════════
+
+/// Bounce-table-local `SELF_KEYTABLE` key, recorded by [`keyed_init`].
+static KEYED_SELF_TABLE_KEY: AtomicU64 = AtomicU64::new(0);
+/// What [`keyed_entry`] observed: the borrowed key in `x0`, the dummy `x1`,
+/// and its first argument.
+static KEYED_LENT_KEY: AtomicU64 = AtomicU64::new(0);
+static KEYED_DUMMY: AtomicU64 = AtomicU64::new(u64::MAX);
+static KEYED_INPUT0: AtomicU64 = AtomicU64::new(0);
+/// Status words of the two table operations the target ran with the borrowed
+/// key: installing into the lender's table (the first success word is the
+/// lender-local key), and trying to keep the borrowed entry.
+static KEYED_INSTALL: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+static KEYED_KEEP: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+/// Vacant Bounce slot the target tries to copy the borrowed entry into.
+const KEYED_KEEP_SLOT: u32 = 130;
+
+/// The keyed component's init: record Bounce's own table key, the source of
+/// the keys its entry installs into the lender's table.
+pub fn keyed_init(self_table_key: RawKey) {
+    KEYED_SELF_TABLE_KEY.store(self_table_key.to_wire(), Ordering::Release);
+}
+
+/// Target entry of a `CallWithKey` Invocation, export-shaped (the borrowed key
+/// in `x0`, a dummy `x1`, six arguments). It uses the borrowed table key as a
+/// destination to install Bounce's `DebugConsole` key (write-only) into the
+/// lender's table at slot `input0`, then tries to copy the borrowed entry
+/// itself into its own table, which must be refused, and Returns `(0, key)`.
+pub extern "C" fn keyed_entry(
+    lent_key: u64,
+    dummy: u64,
+    input0: u64,
+    _input1: u64,
+    _input2: u64,
+    _input3: u64,
+    _input4: u64,
+    _input5: u64,
+) -> ! {
+    KEYED_LENT_KEY.store(lent_key, Ordering::Release);
+    KEYED_DUMMY.store(dummy, Ordering::Release);
+    KEYED_INPUT0.store(input0, Ordering::Release);
+    let self_table = KeyTableKey::from_key(RawKey::from_wire(
+        KEYED_SELF_TABLE_KEY.load(Ordering::Acquire),
+    ));
+    let lent = RawKey::from_wire(lent_key);
+
+    // The fb pattern: the lender's table is the destination.
+    let installed = self_table.copy_derive(
+        RawKey::from_wire(DEBUG_CONSOLE_KEY.load(Ordering::Acquire)),
+        &KeyTableKey::from_key(lent),
+        u32::try_from(input0).unwrap_or(u32::MAX),
+        Rights(Rights::WRITE),
+    );
+    let (install_status, install_key) = match installed {
+        Ok(key) => ((0, key.to_wire(), 0), key.to_wire()),
+        Err(error) => (error.code(), 0),
+    };
+    for (slot, word) in
+        KEYED_INSTALL
+            .iter()
+            .zip([install_status.0, install_status.1, install_status.2])
+    {
+        slot.store(word, Ordering::Release);
+    }
+
+    // The borrowed entry cannot be copied out of the call.
+    let kept = self_table.copy_derive(lent, &self_table, KEYED_KEEP_SLOT, Rights(Rights::INSTALL));
+    let keep_status = match kept {
+        Ok(key) => (0, key.to_wire(), 0),
+        Err(error) => error.code(),
+    };
+    for (slot, word) in KEYED_KEEP
+        .iter()
+        .zip([keep_status.0, keep_status.1, keep_status.2])
+    {
+        slot.store(word, Ordering::Release);
+    }
+
+    let return_key = RawKey::from_wire(RETURN_KEY.load(Ordering::Acquire));
+    // SAFETY: completing this Call abandons the target stack and context.
+    let Err(error) =
+        unsafe { ThreadReturnKey::from_key(return_key).return_from_invocation(0, install_key) };
+    panic!("PPC keyed target: Return failed: {:?}", error.code());
+}
+
+/// What a `CallWithKey` round trip observed inside the target.
+pub struct KeyedOutcome {
+    /// The `(r0, r1)` the target returned: zero and the lender-local key of
+    /// the entry it installed in the lender's table.
+    pub delivered: (u64, u64),
+    /// The borrowed key the target received in `x0`, and its dummy `x1`.
+    pub lent_key: RawKey,
+    pub dummy: u64,
+    /// The target's first argument, unchanged.
+    pub input0: u64,
+    /// The `(x0, x1, x2)` of the target's install and keep attempts.
+    pub install: (u64, u64, u64),
+    pub keep: (u64, u64, u64),
+}
+
+/// `CallWithKey` through `key` (an Invocation of [`keyed_entry`]) lending
+/// `lent`, with `destination_slot` as the target's first argument.
+pub fn keyed_round_trip(key: RawKey, lent: RawKey, destination_slot: u32) -> KeyedOutcome {
+    assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
+    let args = [u64::from(destination_slot), 2, 3, 4, 5, 6];
+    // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
+    // fixture's Invocations; nothing else uses it during the Call.
+    let delivered = unsafe { InvocationKey::from_key(key).call_with_key(lent, args, STACK_END) }
+        .unwrap_or_else(|error| panic!("CallWithKey failed: {:?}", error.code()));
+    assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
+    let words = |words: &[AtomicU64; 3]| {
+        (
+            words[0].load(Ordering::Acquire),
+            words[1].load(Ordering::Acquire),
+            words[2].load(Ordering::Acquire),
+        )
+    };
+    KeyedOutcome {
+        delivered,
+        lent_key: RawKey::from_wire(KEYED_LENT_KEY.load(Ordering::Acquire)),
+        dummy: KEYED_DUMMY.load(Ordering::Acquire),
+        input0: KEYED_INPUT0.load(Ordering::Acquire),
+        install: words(&KEYED_INSTALL),
+        keep: words(&KEYED_KEEP),
+    }
+}
+
+/// A `CallWithKey` the kernel must reject before migration: the error decodes
+/// as `expected` and the source keeps its root.
+pub fn assert_call_with_key_rejected(
+    key: RawKey,
+    lent: RawKey,
+    target_sp: u64,
+    expected: CapError,
+) {
+    let ttbr_before = TTBR0_EL1.get();
+    // SAFETY: a rejected Call leaves this Thread unchanged and runs nothing.
+    let result = unsafe {
+        InvocationKey::from_key(key).call_with_key(
+            lent,
+            [0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+            target_sp,
+        )
+    };
+    match result {
+        Err(error) => assert_eq!(error.code(), expected.code()),
+        Ok(words) => panic!("CallWithKey was not rejected: {words:?}"),
+    }
+    assert_eq!(
+        TTBR0_EL1.get(),
+        ttbr_before,
+        "rejected CallWithKey switched roots"
+    );
 }

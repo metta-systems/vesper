@@ -45,8 +45,7 @@ Unanswered questions before implementing the scheduler record ABI:
   leans towards switching.
 - **Call-only Invocation distribution (D4):** what are the permitted
   derivation/CopyDerive restrictions, rights attenuation, and source badges?
-- **Shared memory and transfer:** pointer/shared-memory rules and whether
-  optional capability transfer is supported.
+- **Shared memory:** pointer/shared-memory rules.
 - **Fault delivery refinements (D1):** the mechanism and its details are
   selected (see the contract). Open: a small per-AddressSpace fault queue that
   runs handlers one after another instead of treating a fault during a busy
@@ -60,16 +59,6 @@ Unanswered questions before implementing the scheduler record ABI:
   AddressSpace is still live but its root/ASID is missing or unencodable,
   is that a third Return fault, a `ReturnTargetRetired` fault, or an ordinary
   error? It currently surfaces as the preparation error without a pop.
-- **Capability transfer in calls (the maintainer chose to support it, 2026-10-12;
-  the schema is open):** `fb` needs the client's table key to Retype the
-  framebuffer's Frames into the client's table, and a call carries only six
-  words. How does a caller name the keys it passes (a per-function mask fixed
-  when the Invocation is created, or a flag in the call), where does the callee
-  receive them (kernel-chosen slots in its table, reported in the argument
-  words, or a fixed block), how long do they live (borrowed until the call
-  returns, or kept), which rights they arrive with (the caller's request
-  intersected with the key's), and which kinds may travel (the CopyDerive
-  allowlist: KeyTable, Frame, DebugConsole)? Do results carry keys too?
 - **Scheduling attribution:** how should hierarchical schedulers observe and
   attribute migrated work beyond the source Thread's own time accounting?
 - **Component outcome through the Call status:** a successful `Thread.Return`
@@ -178,3 +167,5 @@ needs them.
   does for per-CPU data. Today it is always zero.
 - **Driver probe/init calls:** Kickstart hands a driver everything through its init page and never calls into it. A device manager may need a probe/init part of the driver interface (asking a driver whether it can drive a device, or telling it to start or stop); look into what that would be and how it is called.
 - **Per-client mailbox policy:** `mailbox_v1.property` applies one fixed tag whitelist to every client. Different rules per client (for example clock and power setters for `cprman` only, memory tags for `vcsm`) need caller identity through Invocation badges (D4), which would also replace identifying the caller by its exporter stack.
+- **Count ranges on CopyDerive and Move:** an optional count that copies or moves a run of consecutive slots in one operation, like NOVA's `ctrl_pd` selector order. The framebuffer hand-off needs only two to four 2 MiB Frames, so single-slot CopyDerive is enough today; ranges would matter for hand-offs of hundreds of small Frames.
+- **Keys in call results:** letting `Thread.Return` carry a key back to the caller, and letting `CallWithKey` lend more than one key. Today a call lends one key and results carry data only.

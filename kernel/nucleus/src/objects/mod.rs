@@ -36,6 +36,8 @@ pub use {
     object_pool::ObjectPool,
     sched::RunQueue,
     scheduler::Scheduler,
-    thread::{ExecutionContext, InvocationContinuation, InvocationStack, Thread, ThreadFault},
+    thread::{
+        ExecutionContext, InvocationContinuation, InvocationStack, Placement, Thread, ThreadFault,
+    },
     time::Time,
 };

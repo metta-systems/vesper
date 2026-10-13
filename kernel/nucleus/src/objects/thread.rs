@@ -73,6 +73,31 @@ pub struct ThreadFault {
     pub depth: usize,
 }
 
+/// Where `Invocation.CallWithKey` placed a borrowed entry: the slot and the
+/// incarnation issued to it in the callee's table. Incarnations start at 1, so
+/// a zero incarnation means the call lent no key.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placement {
+    /// Slot of the borrowed entry in the callee's table.
+    pub slot: u32,
+    /// The incarnation issued when the entry was installed.
+    pub incarnation: u32,
+}
+
+impl Placement {
+    /// No key was lent.
+    pub const NONE: Self = Self {
+        slot: 0,
+        incarnation: 0,
+    };
+
+    /// Whether a borrowed entry was placed.
+    pub const fn is_some(self) -> bool {
+        self.incarnation != 0
+    }
+}
+
 /// Kernel-owned continuation captured at a successful PPC Call.
 ///
 /// The record is deliberately independent of the transient exception frame and
@@ -90,6 +115,10 @@ pub struct InvocationContinuation {
     pub source_x19_x30: [u64; 12],
     /// The source's EL0 TLS: the target is entered with zero, Return restores this.
     pub source_tpidr_el0: u64,
+    /// The borrowed entry `CallWithKey` placed in the callee's table for this
+    /// call, to be removed when the call returns or its Thread is torn down.
+    /// [`Placement::NONE`] for a plain Call.
+    pub placement: Placement,
 }
 
 impl InvocationContinuation {
@@ -107,6 +136,7 @@ impl InvocationContinuation {
             source_origin: ExceptionOrigin::CurrentSp0,
             source_x19_x30: [0; 12],
             source_tpidr_el0: 0,
+            placement: Placement::NONE,
         }
     }
 
@@ -123,6 +153,7 @@ impl InvocationContinuation {
             source_origin: saved.origin,
             source_x19_x30,
             source_tpidr_el0: saved.tpidr_el0,
+            placement: Placement::NONE,
         }
     }
 }
@@ -176,6 +207,11 @@ impl InvocationStack {
         let record = self.records[index];
         self.records[index] = InvocationContinuation::empty();
         Some(record)
+    }
+
+    /// The saved continuations, oldest first.
+    pub fn records(&self) -> &[InvocationContinuation] {
+        &self.records[..self.len as usize]
     }
 
     pub const fn top(&self) -> Option<&InvocationContinuation> {
@@ -273,9 +309,9 @@ impl Thread {
 
 // The record and array sizes are part of the storage/accounting contract.
 const _: () = {
-    assert!(size_of::<InvocationContinuation>() == 152);
+    assert!(size_of::<InvocationContinuation>() == 160);
     assert!(align_of::<InvocationContinuation>() == 8);
-    assert!(size_of::<InvocationStack>() >= 152 * INVOCATION_STACK_DEPTH);
+    assert!(size_of::<InvocationStack>() >= 160 * INVOCATION_STACK_DEPTH);
 };
 // Thread backing is type-derived and is not required to fit in one page.
 const _: () = {

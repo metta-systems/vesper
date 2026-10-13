@@ -37,7 +37,8 @@ use {
         num::NonZero,
     },
     libobject::{
-        CapError, InvalidStackReason, KeySlot, ObjectType, RawKey, Rights, domain::DomainId,
+        CapError, InvalidStackReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights,
+        domain::DomainId,
     },
     objects::{
         ArchObjects, ArchObjectsImpl, KeyTable,
@@ -345,12 +346,18 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
         generation: u32::MAX,
     };
     // These types pin both public signatures to a mandatory nonzero address.
-    let constructor: fn(ObjectId, NonZero<u64>, InvocationStackExtent) -> KeyEntry =
-        KeyEntry::new_invocation;
+    let constructor: fn(
+        ObjectId,
+        NonZero<u64>,
+        InvocationStackExtent,
+        PlacementWindow,
+    ) -> KeyEntry = KeyEntry::new_invocation;
     let target_getter: fn(&KeyEntry) -> Result<(ObjectId, NonZero<u64>), CapError> =
         KeyEntry::invocation_target;
     let extent_getter: fn(&KeyEntry) -> Result<InvocationStackExtent, CapError> =
         KeyEntry::invocation_stack_extent;
+    let window_getter: fn(&KeyEntry) -> Result<PlacementWindow, CapError> =
+        KeyEntry::invocation_placement_window;
     for extent in [
         stack_extent(0, 16, 16),
         stack_extent(0x1010, 0x1080, 48),
@@ -363,7 +370,14 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
     ] {
         for address in [1, 0x1234_5678_9ABC_DEF0, u64::MAX] {
             let function = NonZero::new(address).unwrap();
-            let entry = constructor(address_space, function, extent);
+            let window = if address == 1 {
+                PlacementWindow::NONE
+            } else {
+                PlacementWindow::new(40, 3)
+            };
+            let entry = constructor(address_space, function, extent, window);
+            assert!(matches!(window_getter(&entry), Ok(found) if found == window));
+            assert!(!entry.is_lent());
             let target = target_getter(&entry)
                 .unwrap_or_else(|error| panic!("Invocation target: {:?}", error.code()));
             assert_eq!(target, (address_space, function));
@@ -382,6 +396,7 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
             for rights in [Rights::empty(), Rights(Rights::CALL)] {
                 let derived = entry.derive(rights);
                 assert!(matches!(derived.invocation_target(), Ok(found) if found == target));
+                assert!(matches!(window_getter(&derived), Ok(found) if found == window));
                 let stored = derived
                     .invocation_stack_extent()
                     .unwrap_or_else(|error| panic!("derived stack extent: {:?}", error.code()));
@@ -413,6 +428,7 @@ fn thread_selector_rejects_non_thread_payloads() {
             address_space,
             NonZero::new(0x80000).unwrap(),
             stack_extent(0x1010, 0x1080, 48),
+            PlacementWindow::NONE,
         ),
     ] {
         assert!(matches!(
@@ -470,13 +486,15 @@ fn thread_return_representation_preserves_entry_and_payload_layout() {
     assert_eq!(align_of::<ThreadSelector>(), 8);
     assert_eq!(size_of::<InvocationStackExtent>(), 24);
     assert_eq!(align_of::<InvocationStackExtent>(), 8);
-    assert_eq!(size_of::<InvocationPayload>(), 40);
+    assert_eq!(size_of::<InvocationPayload>(), 48);
     assert_eq!(align_of::<InvocationPayload>(), 8);
     assert_eq!(offset_of!(InvocationPayload, function_address), 0);
     assert_eq!(offset_of!(InvocationPayload, address_space_pool), 8);
     assert_eq!(offset_of!(InvocationPayload, address_space_index), 10);
     assert_eq!(offset_of!(InvocationPayload, address_space_generation), 12);
     assert_eq!(offset_of!(InvocationPayload, stack_extent), 16);
+    assert_eq!(offset_of!(InvocationPayload, placement_first), 40);
+    assert_eq!(offset_of!(InvocationPayload, placement_count), 44);
     assert_eq!(size_of::<FramePayload>(), 24);
     assert_eq!(size_of::<KeyEntry>(), 64);
     assert_eq!(align_of::<KeyEntry>(), 32);
@@ -960,7 +978,7 @@ fn copy_derive_rejects_undefined_rights_bits() {
         KeySlot(10),
         table_cap(fx.dst_table_addr, Rights::all(), 0),
     );
-    for rights_word in [0x40_u64, 0x80, 0xFF, 1 << 8, u64::MAX] {
+    for rights_word in [0x80_u64, 0xFF, 1 << 8, u64::MAX] {
         let result = fx.invoke(
             fx.self_table_key,
             0,
@@ -1109,6 +1127,7 @@ fn thread_and_invocation_entries_remain_outside_copy_derive_and_move_allowlist()
             address_space,
             NonZero::new(0x80000).unwrap(),
             stack_extent(0x1010, 0x1080, 48),
+            PlacementWindow::NONE,
         ),
     ] {
         let mut fx = Fixture::new(FULL);
@@ -1638,4 +1657,70 @@ fn address_space_provisioning_rejects_a_foreign_or_reissued_slot_one() {
         error.code(),
         CapError::SlotOccupied(KeySlot::THREAD_RETURN).code()
     );
+}
+
+/// A borrowed entry (placed by `Invocation.CallWithKey`) is never the source
+/// of CopyDerive or Move, whatever its kind or rights: the callee cannot keep
+/// it past the call. Delete and the borrowed entry's own use stay available.
+#[test_case]
+fn borrowed_entries_are_not_copy_derive_or_move_sources() {
+    for entry in [
+        table_cap(0, Rights::all(), 0),
+        KeyEntry::new_frame(0x1000, 12, false, Rights::all()),
+    ] {
+        let mut fx = Fixture::new(FULL);
+        let borrowed = entry.borrowed_copy();
+        assert!(borrowed.is_lent());
+        let src = fx.install(0, KeySlot(10), borrowed);
+
+        let copy = args(src.to_wire(), fx.self_table_key.to_wire(), 20, 1, 0, 0);
+        assert!(matches!(
+            fx.invoke(fx.self_table_key, 0, &copy),
+            Err(CapError::InvalidOperation)
+        ));
+        let mv = args(src.to_wire(), fx.self_table_key.to_wire(), 21, 0, 0, 0);
+        assert!(matches!(
+            fx.invoke(fx.self_table_key, 1, &mv),
+            Err(CapError::InvalidOperation)
+        ));
+        // Both refusals left the table as it was: the borrowed entry is intact.
+        assert!(
+            fx.lookup(0, src)
+                .unwrap_or_else(|_| panic!("borrowed entry lost"))
+                .is_lent()
+        );
+        assert_eq!(fx.caller_len(), 2); // self-table + borrowed entry
+
+        // Deleting it is allowed.
+        let delete = args(src.to_wire(), 0, 0, 0, 0, 0);
+        assert_eq!(
+            fx.invoke(fx.self_table_key, 2, &delete)
+                .unwrap_or_else(|_| panic!("delete of a borrowed entry failed")),
+            (0, 0)
+        );
+        assert_eq!(fx.caller_len(), 1);
+    }
+}
+
+/// A borrowed copy keeps the object and the exact rights (including `LEND`),
+/// is marked, and derive() of any entry yields an unmarked, ordinary one.
+#[test_case]
+fn borrowed_copy_keeps_rights_and_marks_the_entry() {
+    let original = KeyEntry::new_frame(
+        0x1000,
+        12,
+        false,
+        Rights(Rights::READ | Rights::WRITE | Rights::LEND),
+    );
+    assert!(!original.is_lent());
+    let borrowed = original.borrowed_copy();
+    assert!(borrowed.is_lent());
+    assert_eq!(borrowed.rights(), original.rights());
+    assert_eq!(borrowed.object_type(), ObjectType::FRAME);
+    // An ordinary derivation of a borrowed entry never carries the mark.
+    assert!(!borrowed.derive(Rights(Rights::READ)).is_lent());
+    assert!(KeyEntry::is_derivable_kind(ObjectType::KEY_TABLE));
+    assert!(KeyEntry::is_derivable_kind(ObjectType::FRAME));
+    assert!(!KeyEntry::is_derivable_kind(ObjectType::UNTYPED));
+    assert!(!KeyEntry::is_derivable_kind(ObjectType::INVOCATION));
 }

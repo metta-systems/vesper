@@ -414,7 +414,11 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
             let translation = committed.translation;
             ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
             frame.restore(committed.target);
-            semi::println!("{}", "✅ Invocation::Call()".on_cyan());
+            if committed.with_key {
+                semi::println!("{}", "✅ Invocation::CallWithKey()".on_cyan());
+            } else {
+                semi::println!("{}", "✅ Invocation::Call()".on_cyan());
+            }
             return;
         }
         Ok(nucleus::api::InvokeOutcome::Return(committed)) if committed.terminate => {

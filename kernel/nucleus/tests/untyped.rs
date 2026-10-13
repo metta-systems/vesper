@@ -1363,7 +1363,7 @@ fn retype_rejects_undefined_rights_bits() {
     let ram = fx.install(KeySlot(30), ram_untyped(24));
     let before = fx.len();
 
-    for rights_word in [0x40_u64, 0x80, 0xFF, 1 << 8, u64::MAX] {
+    for rights_word in [0x80_u64, 0xFF, 1 << 8, u64::MAX] {
         let mut args = retype_args(
             ObjectType::FRAME,
             12,

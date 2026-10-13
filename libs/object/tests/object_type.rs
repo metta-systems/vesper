@@ -1,6 +1,6 @@
 use vesper_objects::{
-    CapError, Key, KeySlot, KeyTableKey, ObjectType, RawKey, Rights, decode_syscall_result, domain,
-    thread,
+    CapError, Key, KeySlot, KeyTableKey, ObjectType, PlacementWindow, RawKey, Rights,
+    decode_syscall_result, domain, thread,
 };
 
 #[cfg(test)]
@@ -317,10 +317,10 @@ mod tests {
     }
 
     #[test]
-    fn invocation_operation_rejects_every_non_call_byte() {
+    fn invocation_operation_rejects_every_unassigned_byte() {
         use vesper_objects::invocation::InvocationOp;
 
-        for raw in 1_u32..=255 {
+        for raw in 2_u32..=255 {
             assert!(matches!(
                 InvocationOp::try_from(raw),
                 Err(CapError::InvalidOperation)
@@ -495,6 +495,7 @@ mod tests {
         assert_eq!(Rights::DERIVE, 0x01);
         assert_eq!(Rights::REMOVE, 0x02);
         assert_eq!(Rights::INSTALL, 0x04);
+        assert_eq!(Rights::LEND, 0x40);
         assert_eq!(Rights::empty().bits(), 0);
         assert_eq!(
             Rights::all().bits(),
@@ -504,6 +505,7 @@ mod tests {
                 | Rights::GRANT
                 | Rights::EXECUTE
                 | Rights::RETIRE
+                | Rights::LEND
         );
     }
 
@@ -511,20 +513,20 @@ mod tests {
     fn rights_wire_decoding_accepts_only_defined_bits() {
         use vesper_objects::Rights;
 
-        for word in 0_u64..=0x3F {
+        for word in 0_u64..=0x7F {
             assert!(matches!(
                 Rights::from_wire(word),
                 Ok(rights) if u64::from(rights.bits()) == word
             ));
         }
-        for word in 0x40_u64..=0xFF {
+        for word in 0x80_u64..=0xFF {
             assert!(matches!(
                 Rights::from_wire(word),
                 Err(CapError::InvalidOperation)
             ));
         }
         for bit in 8..64 {
-            for valid in [0_u64, 0x01, 0x3F] {
+            for valid in [0_u64, 0x01, 0x7F] {
                 assert!(matches!(
                     Rights::from_wire(valid | (1_u64 << bit)),
                     Err(CapError::InvalidOperation)
@@ -537,8 +539,8 @@ mod tests {
     fn rights_permit_exactly_subsets() {
         use vesper_objects::Rights;
 
-        for held in 0_u8..=0x3F {
-            for requested in 0_u8..=0x3F {
+        for held in 0_u8..=0x7F {
+            for requested in 0_u8..=0x7F {
                 assert_eq!(
                     Rights(held).permits(Rights(requested)),
                     requested & !held == 0

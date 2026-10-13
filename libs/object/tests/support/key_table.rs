@@ -217,7 +217,7 @@ fn all_key_table_wrappers_preserve_unknown_statuses_and_malformed_details() {
             (16, 259, 0),
             (11, 1 << 32, 0),
             (5, 0, 1),
-            (26, 0x1357_9bdf_ffff_fffd, 0x0801),
+            (26, 0x1357_9bdf_ffff_fffd, 0x0901),
             (27, 0x1357_9bdf_ffff_fffd, 0x0100_0001),
             (28, 1 << 32, 0),
         ] {

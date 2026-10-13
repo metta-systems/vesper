@@ -470,7 +470,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 32, u64::MAX, 1));
     }
-    for wire in [(38, 0, 0), (38, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(40, 0, 0), (40, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -538,4 +538,27 @@ fn irq_line_active_round_trips_the_line() {
     }
     // A line wider than 32 bits is not this status.
     assert_unknown_response((37, 1 << 32, 0));
+}
+
+#[test]
+fn call_with_key_statuses_round_trip_with_zero_details() {
+    use vesper_objects::syscall_status::{KEY_NOT_ACCEPTED, NO_PLACEMENT_SLOT};
+
+    assert_eq!(KEY_NOT_ACCEPTED, 38);
+    assert_eq!(NO_PLACEMENT_SLOT, 39);
+    assert_error!(
+        (38, 0, 0),
+        CapError::KeyNotAccepted,
+        CapError::KeyNotAccepted
+    );
+    assert_error!(
+        (39, 0, 0),
+        CapError::NoPlacementSlot,
+        CapError::NoPlacementSlot
+    );
+    for status in [38, 39] {
+        for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
+            assert_unknown_response((status, detail1, detail2));
+        }
+    }
 }

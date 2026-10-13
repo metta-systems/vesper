@@ -175,7 +175,7 @@ fn key_statuses_and_all_reason_bytes_are_pinned() {
 #[test]
 fn key_errors_pin_all_reasons_operands_and_submitted_key_bits() {
     for submitted in [0, 0x0000_0000_ffff_ffff, 0x8000_0001_89ab_cdef, u64::MAX] {
-        for operand in 0..=7 {
+        for operand in 0..=8 {
             for (reason, literal) in [
                 (InvalidKeyReason::ZeroIncarnation, 0x01),
                 (InvalidKeyReason::SlotOutOfRange, 0x02),
@@ -243,12 +243,12 @@ fn key_error_unknown_reasons_operands_and_extension_bits_are_lossless() {
                 (1..=3).contains(&reason)
             };
             if !known {
-                for operand in 0..=7_u64 {
+                for operand in 0..=8_u64 {
                     assert_unknown_response((status, u64::MAX, u64::from(reason) | (operand << 8)));
                 }
             }
         }
-        for operand in 8..=u8::MAX {
+        for operand in 9..=u8::MAX {
             for reason in 1..=3 {
                 assert_unknown_response((status, u64::MAX, reason | (u64::from(operand) << 8)));
             }

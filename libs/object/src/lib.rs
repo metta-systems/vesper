@@ -33,7 +33,7 @@ pub use {
     asid_pool::{ASIDPoolKey, ASIDPoolOp},
     event_count::{EventCountKey, EventCountOp},
     frame::{FrameKey, FrameOp},
-    invocation::{INVOCATION_STACK_DEPTH, InvocationOp},
+    invocation::{INVOCATION_STACK_DEPTH, InvocationOp, PlacementWindow},
     irq::{IrqControlKey, IrqControlOp, IrqHandlerKey, IrqHandlerOp},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},
@@ -102,12 +102,12 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::INVALID_FRAME_SIZE, s, 0) => {
                 CapError::InvalidFrameSize(usize::try_from(s).ok()?)
             }
-            (code::INVALID_KEY, key, diagnostic) if diagnostic >> 8 <= 7 => CapError::InvalidKey {
+            (code::INVALID_KEY, key, diagnostic) if diagnostic >> 8 <= 8 => CapError::InvalidKey {
                 key: RawKey::from_wire(key),
                 reason: InvalidKeyReason::try_from(u8::try_from(diagnostic & 0xff).ok()?).ok()?,
                 operand: u8::try_from(diagnostic >> 8).ok()?,
             },
-            (code::INCONSISTENT_KEY, key, diagnostic) if diagnostic >> 8 <= 7 => {
+            (code::INCONSISTENT_KEY, key, diagnostic) if diagnostic >> 8 <= 8 => {
                 CapError::InconsistentKey {
                     key: RawKey::from_wire(key),
                     reason: InconsistencyReason::try_from(u8::try_from(diagnostic & 0xff).ok()?)
@@ -132,6 +132,8 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::IRQ_LINE_ACTIVE, line, 0) => CapError::IrqLineActive {
                 line: u32::try_from(line).ok()?,
             },
+            (code::KEY_NOT_ACCEPTED, 0, 0) => CapError::KeyNotAccepted,
+            (code::NO_PLACEMENT_SLOT, 0, 0) => CapError::NoPlacementSlot,
             _ => return None,
         })
     })();
@@ -233,6 +235,12 @@ pub enum CapError {
         /// The line the specifier decoded to.
         line: u32,
     },
+    /// An `Invocation.CallWithKey` named an Invocation that accepts no lent
+    /// key: its exporter declared an empty key-placement window.
+    KeyNotAccepted,
+    /// The Invocation's key-placement window has no slot that is vacant and
+    /// able to issue a fresh incarnation, so the lent key cannot be placed.
+    NoPlacementSlot,
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
     UnknownResponse {
@@ -245,7 +253,8 @@ pub enum CapError {
 impl CapError {
     /// Attribute a key error to its input register; leave other errors unchanged.
     ///
-    /// Callers should supply 0–7. Out-of-range indices are retained, not masked;
+    /// Callers should supply 0–8 (8 is `x8`, the lent key of `CallWithKey`).
+    /// Out-of-range indices are retained, not masked;
     /// the shared decoder preserves them as an unknown response.
     #[must_use]
     pub fn with_key_operand(self, operand: u8) -> Self {
@@ -329,6 +338,8 @@ impl CapError {
             CapError::InsufficientBudget { remaining } => (code::INSUFFICIENT_BUDGET, remaining, 0),
             CapError::PriorityChainFull => (code::PRIORITY_CHAIN_FULL, 0, 0),
             CapError::IrqLineActive { line } => (code::IRQ_LINE_ACTIVE, u64::from(line), 0),
+            CapError::KeyNotAccepted => (code::KEY_NOT_ACCEPTED, 0, 0),
+            CapError::NoPlacementSlot => (code::NO_PLACEMENT_SLOT, 0, 0),
             CapError::UnknownResponse {
                 status,
                 detail1,

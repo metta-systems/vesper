@@ -27,6 +27,12 @@ impl Rights {
     /// creates; bootstrap grants carry it for the boot Threads.
     pub const RETIRE: u8 = 0x20;
 
+    /// Permission to pass this key through `Invocation.CallWithKey`. It has the
+    /// same bit position for every lendable kind (`KeyTable`, `Frame`, `DebugConsole`).
+    /// A borrowed entry keeps it, so a lent key can be lent onward; `CopyDerive`
+    /// drops it through the requested-rights subset rule.
+    pub const LEND: u8 = 0x40;
+
     // ── KeyTable-management permissions (per-kind interpretation) ──
     // Selected 2026-09-07 (D4): KeyTable capabilities interpret the rights
     // field as table-management permissions, reusing the same bit positions
@@ -44,7 +50,7 @@ impl Rights {
         Rights(0)
     }
     pub const fn all() -> Rights {
-        Rights(0x3F)
+        Rights(0x7F)
     }
     pub fn bits(&self) -> u8 {
         self.0

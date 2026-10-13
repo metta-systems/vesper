@@ -75,22 +75,8 @@ a finite sum reaching `u64::MAX`,  - currently in Time, but it should just satur
 
 ---
 
-A PageTable also takes a slot in the kernel PageTable pool. - do we need this pool?
+A PageTable also takes a slot in the kernel PageTable pool. - do we need this kernel pool?
 
 ---
 
 Meddler codegen should use minijinja templates instead of manually written code.
-
----
-
-Not done: capability transfer (2b)
-
-I did not implement it because its schema is unanswered, and I won't guess a kernel ABI. These are the questions, with my recommendation first:
-
-1. How the caller names the keys it passes: a per-function declaration in the .if file, compiled into a key mask when the Invocation is created (recommended), or a flag set at call time.
-2. Where the callee receives them: the kernel picks a free slot in the callee's table and puts its index in the argument word (recommended), or a fixed slot block.
-3. How long they live: borrowed until the call returns, with the kernel deleting the entries afterwards (recommended), or kept.
-4. Rights and kinds: the caller's requested rights intersected with the key's, and only the existing CopyDerive kinds (KeyTable, Frame, DebugConsole).
-5. Return: capabilities in results, now or later. I'd leave it for later.
-
-Once these are settled, fb can Retype the framebuffer's Frames into the client's table using a table key the client passes. That is the last piece before the test shell.

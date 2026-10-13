@@ -10,16 +10,27 @@
 //! primitives. `api::handle_cap_invoke` dispatches both.
 
 use {
-    crate::objects::{
-        ArchObjects, ExecutionContext, InvocationContinuation, Nucleus,
-        access::{Access, ObjectId},
-        resume::{PreparedTranslationContext, execution_origin, prepare_translation_context},
-        thread::ThreadId,
+    crate::{
+        api::key_entry::KeyEntry,
+        objects::{
+            ArchObjects, ExecutionContext, InvocationContinuation, KeyTable, Nucleus, Placement,
+            access::{Access, ObjectId},
+            arch_objects::AddressSpaceObject,
+            key_table::CallerTable,
+            resume::{PreparedTranslationContext, execution_origin, prepare_translation_context},
+            thread::ThreadId,
+        },
     },
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
-    libobject::{CapError, InvalidStackReason, RawKey, fault::FaultAction},
+    libobject::{
+        CapError, InvalidStackReason, KeySlot, PlacementWindow, RawKey, Rights, fault::FaultAction,
+    },
 };
+
+/// The input register that carries the lent key of `CallWithKey` (`x8`), as
+/// key diagnostics report it.
+const LENT_KEY_OPERAND: u8 = 8;
 
 /// An immutable, validated target stack extent and downward headroom requirement.
 #[repr(C)]
@@ -120,6 +131,32 @@ pub struct CallTarget {
     pub address_space: ObjectId,
     pub function_address: NonZero<u64>,
     pub stack_extent: InvocationStackExtent,
+    /// Where `CallWithKey` places a lent key in the target's table; empty if
+    /// the Invocation accepts none.
+    pub placement_window: PlacementWindow,
+}
+
+/// A key lent through `CallWithKey`, as the caller named it: its packed key
+/// and the caller's own table context it resolves through.
+///
+/// No entry reference or table guard survives: the entry is looked up again
+/// whenever it is needed within the serialized interval.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LendRequest {
+    pub key: RawKey,
+    pub caller: CallerTable,
+}
+
+/// The admitted placement of a lent key: where the borrowed entry will be
+/// installed in the target's table, and the exact key the callee will receive
+/// (the incarnation is known before installation).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PreparedPlacement {
+    lent: LendRequest,
+    target_table: CallerTable,
+    slot: KeySlot,
+    incarnation: u32,
+    placed_key: RawKey,
 }
 
 /// A fully admitted, uncommitted `Invocation.Call` migration description.
@@ -142,6 +179,7 @@ pub struct PreparedCall {
     entry_pc: NonZero<u64>,
     target_sp: u64,
     arguments: [u64; 6],
+    placement: Option<PreparedPlacement>,
     depth: usize,
 }
 
@@ -176,6 +214,12 @@ impl PreparedCall {
         self.arguments
     }
 
+    /// The key the callee receives in `x0` for a `CallWithKey`: its borrowed
+    /// entry's callee-local packed key. `None` for a plain Call.
+    pub fn placed_key(&self) -> Option<RawKey> {
+        self.placement.map(|placement| placement.placed_key)
+    }
+
     /// Saved-continuation count before the push this Call would perform.
     pub const fn depth(&self) -> usize {
         self.depth
@@ -183,8 +227,40 @@ impl PreparedCall {
 }
 
 impl<A: ArchObjects> Nucleus<A> {
-    /// Admit and prepare `Invocation.Call` for the current Thread, without
-    /// committing anything.
+    /// The key-resolution context of `address_space`: its carved table's
+    /// address and guard, the latter from the `SELF_KEYTABLE` capability,
+    /// validated to name this very table. `invoked` is the key reported if the
+    /// context cannot be established.
+    pub(crate) fn address_space_table(
+        &self,
+        access: &Access,
+        address_space: ObjectId,
+        invoked: RawKey,
+    ) -> Result<CallerTable, CapError> {
+        let binding = access
+            .resolve(&self.pools.arch.address_spaces, address_space)
+            .map_err(|_invalid_address_space| CapError::InvalidDomain)?
+            .keytable();
+        let addr = binding.address();
+        let no_context = || CapError::InconsistentKey {
+            key: invoked,
+            reason: libobject::InconsistencyReason::CapabilityInvalidated,
+            operand: 0,
+        };
+        let table = access.resolve_carved_mut::<KeyTable>(addr)?;
+        let (cap_addr, guard, size_bits) = table.self_table_capability().ok_or_else(no_context)?;
+        if cap_addr != addr
+            || size_bits != binding.size_bits()
+            || table.size_bits() != binding.size_bits()
+        {
+            return Err(no_context());
+        }
+        Ok(CallerTable { addr, guard })
+    }
+
+    /// Admit and prepare `Invocation.Call` (or, with `lend`,
+    /// `Invocation.CallWithKey`) for the current Thread, without committing
+    /// anything.
     ///
     /// `saved` is the caller's saved exception frame: the target SP is read
     /// from saved `x9` (provisional transport), never the live register, and
@@ -193,9 +269,15 @@ impl<A: ArchObjects> Nucleus<A> {
     ///
     /// 1. live target `AddressSpace` identity (`InconsistentKey`/`ObjectRetired`
     ///    on the Invocation key in `x0`);
-    /// 2. ordered SP predicates (`InvalidStack`);
-    /// 3. target translation-context readiness/encodability;
-    /// 4. invocation-stack capacity (`NestingDepth { count }`).
+    /// 2. `CallWithKey` only: the Invocation accepts keys (`KeyNotAccepted`);
+    /// 3. `CallWithKey` only: the lent key resolves through the caller's table
+    ///    (reported against operand `x8`), is a lendable kind
+    ///    (`InvalidObjectType`) and carries `LEND` (`InsufficientRights`);
+    /// 4. ordered SP predicates (`InvalidStack`);
+    /// 5. target translation-context readiness/encodability;
+    /// 6. invocation-stack capacity (`NestingDepth { count }`);
+    /// 7. `CallWithKey` only: a vacant placement slot in the target's table
+    ///    (`NoPlacementSlot`).
     ///
     /// Taking `&self` makes non-mutation structural: every rejection preserves
     /// the source Thread, its invocation stack, pending records, scheduling
@@ -205,6 +287,7 @@ impl<A: ArchObjects> Nucleus<A> {
         access: &Access,
         saved: &SavedContext,
         target: CallTarget,
+        lend: Option<LendRequest>,
     ) -> Result<PreparedCall, CapError> {
         if !execution_origin(saved.origin) {
             return Err(CapError::InvalidDomain);
@@ -214,30 +297,42 @@ impl<A: ArchObjects> Nucleus<A> {
         if source.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
+        let invocation_key = RawKey::from_wire(saved.gpr[0]);
 
         // Stage 1: stale or reused target identity precedes supplied values.
         access
             .resolve(&self.pools.arch.address_spaces, target.address_space)
-            .map_err(|error| error.for_key(RawKey::from_wire(saved.gpr[0]), 0))?;
+            .map_err(|error| error.for_key(invocation_key, 0))?;
 
-        // Stage 2: the submitted SP, from the saved frame only.
+        // Stages 2 and 3: the exporter accepts keys, and the lent key is
+        // resolvable and lendable.
+        if let Some(lend) = lend {
+            Self::admit_lent_key(access, target.placement_window, lend)?;
+        }
+
+        // Stage 4: the submitted SP, from the saved frame only.
         let target_sp = saved.gpr[9];
         target.stack_extent.validate_sp(target_sp)?;
 
-        // Stage 3: root/ASID readiness and backend encodability.
+        // Stage 5: root/ASID readiness and backend encodability.
         let translation = prepare_translation_context::<A>(
             access,
             &self.pools.arch.address_spaces,
             target.address_space,
         )?;
 
-        // Stage 4: a full stack reports the current count, never depth + 1.
+        // Stage 6: a full stack reports the current count, never depth + 1.
         let depth = source.invocation_stack.len();
         if source.invocation_stack.is_full() {
             return Err(CapError::NestingDepth {
                 count: u64::try_from(depth).map_err(|_too_wide| CapError::InvalidOperation)?,
             });
         }
+
+        // Stage 7: the placement slot, with the exact key the callee receives.
+        let placement = lend
+            .map(|lend| self.prepare_placement(access, target, invocation_key, lend))
+            .transpose()?;
 
         let mut arguments = [0; 6];
         arguments.copy_from_slice(&saved.gpr[2..8]);
@@ -252,7 +347,60 @@ impl<A: ArchObjects> Nucleus<A> {
             entry_pc: target.function_address,
             target_sp,
             arguments,
+            placement,
             depth,
+        })
+    }
+
+    /// Stages 2 and 3 of `CallWithKey` admission.
+    fn admit_lent_key(
+        access: &Access,
+        window: PlacementWindow,
+        lend: LendRequest,
+    ) -> Result<(), CapError> {
+        if !window.accepts_keys() {
+            return Err(CapError::KeyNotAccepted);
+        }
+        let caller_table = access.resolve_carved_mut::<KeyTable>(lend.caller.addr)?;
+        let entry = caller_table
+            .lookup(lend.key, lend.caller.guard)
+            .map_err(|error| error.with_key_operand(LENT_KEY_OPERAND))?;
+        if !KeyEntry::is_derivable_kind(entry.object_type()) {
+            return Err(CapError::InvalidObjectType(entry.object_type()));
+        }
+        if !entry.rights().has(Rights::LEND) {
+            return Err(CapError::InsufficientRights);
+        }
+        Ok(())
+    }
+
+    /// Stage 7 of `CallWithKey` admission: the first vacant slot of the
+    /// exporter's placement window in the target's table, and the key the
+    /// installation will issue there.
+    fn prepare_placement(
+        &self,
+        access: &Access,
+        target: CallTarget,
+        invocation_key: RawKey,
+        lent: LendRequest,
+    ) -> Result<PreparedPlacement, CapError> {
+        let target_table =
+            self.address_space_table(access, target.address_space, invocation_key)?;
+        let table = access.resolve_carved_mut::<KeyTable>(target_table.addr)?;
+        let (slot, incarnation) = table
+            .first_vacant_in(target.placement_window)
+            .ok_or(CapError::NoPlacementSlot)?;
+        Ok(PreparedPlacement {
+            lent,
+            target_table,
+            slot,
+            incarnation,
+            placed_key: RawKey::from_parts(
+                target_table.guard,
+                table.size_bits(),
+                slot.0,
+                incarnation,
+            ),
         })
     }
 }
@@ -272,6 +420,9 @@ impl PreparedCall {
     pub fn target_entry_context(&self) -> SavedContext {
         let mut gpr = [0; 30];
         gpr[2..8].copy_from_slice(&self.arguments);
+        if let Some(placement) = self.placement {
+            gpr[0] = placement.placed_key.to_wire();
+        }
         SavedContext {
             gpr,
             lr: 0,
@@ -294,11 +445,14 @@ pub struct CommittedCall {
     pub source_thread: ThreadId,
     pub target: SavedContext,
     pub translation: PreparedTranslationContext,
+    /// The call lent a key (`CallWithKey`); entry traces it as such.
+    pub with_key: bool,
 }
 
 impl<A: ArchObjects> Nucleus<A> {
-    /// Commit a prepared Call: push the source continuation and migrate the
-    /// current Thread into the target `AddressSpace` (and thus its table).
+    /// Commit a prepared Call: install the borrowed entry of a `CallWithKey`,
+    /// push the source continuation and migrate the current Thread into the
+    /// target `AddressSpace` (and thus its table).
     ///
     /// `prepared` must come from [`Nucleus::prepare_call`] in the same
     /// serialized trap interval. Its cheap invariants are re-checked first so
@@ -307,36 +461,134 @@ impl<A: ArchObjects> Nucleus<A> {
     /// captured source `AddressSpace`, and the stack depth it was admitted at.
     /// The target translation is not re-resolved: no transaction can retire
     /// or rebind it inside the interval. No hardware is touched here.
-    pub fn commit_call(&mut self, prepared: PreparedCall) -> Result<CommittedCall, CapError> {
+    ///
+    /// The borrowed entry is installed before the push, into the slot admission
+    /// found vacant, and removed again if the push fails, so a failure leaves
+    /// both tables unchanged.
+    pub fn commit_call(
+        &mut self,
+        access: &Access,
+        prepared: PreparedCall,
+    ) -> Result<CommittedCall, CapError> {
         let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
         let source_thread = prepared.source_thread;
         if source_thread != current {
             return Err(CapError::InvalidOperation);
         }
+        {
+            let source = self
+                .thread_mut(source_thread)
+                .ok_or(CapError::InvalidOperation)?;
+            if source.context != ExecutionContext::Running
+                || source.address_space != prepared.continuation.source_address_space
+                || source.invocation_stack.len() != prepared.depth
+            {
+                return Err(CapError::InvalidOperation);
+            }
+        }
+
+        // Commit. The borrowed entry goes in first; the push is the last
+        // fallible step and leaves the stack unchanged on failure.
+        let mut continuation = prepared.continuation;
+        if let Some(placement) = prepared.placement {
+            continuation.placement = Self::install_placement(access, placement)?;
+        }
         let source = self
             .thread_mut(source_thread)
             .ok_or(CapError::InvalidOperation)?;
-        if source.context != ExecutionContext::Running
-            || source.address_space != prepared.continuation.source_address_space
-            || source.invocation_stack.len() != prepared.depth
-        {
-            return Err(CapError::InvalidOperation);
-        }
-
-        // Commit. The push is the last fallible step and leaves the stack
-        // unchanged on failure; the AddressSpace switch follows it.
-        source
-            .invocation_stack
-            .push(prepared.continuation)
-            .map_err(|_full| CapError::NestingDepth {
+        if source.invocation_stack.push(continuation).is_err() {
+            Self::release_placement(
+                access,
+                prepared
+                    .placement
+                    .map_or(0, |placement| placement.target_table.addr),
+                continuation.placement,
+            );
+            return Err(CapError::NestingDepth {
                 count: u64::try_from(prepared.depth).unwrap_or(u64::MAX),
-            })?;
+            });
+        }
         source.address_space = prepared.translation.address_space();
         Ok(CommittedCall {
             source_thread,
             target: prepared.target_entry_context(),
             translation: prepared.translation,
+            with_key: prepared.placement.is_some(),
         })
+    }
+
+    /// Install the borrowed entry of a lent key into its admitted slot.
+    ///
+    /// The lent entry is looked up again through the caller's table (nothing
+    /// interleaves since admission) and copied with its exact rights, marked
+    /// `LENT`. Returns where it was placed, for the continuation record.
+    fn install_placement(
+        access: &Access,
+        placement: PreparedPlacement,
+    ) -> Result<Placement, CapError> {
+        let borrowed = {
+            let caller_table = access.resolve_carved_mut::<KeyTable>(placement.lent.caller.addr)?;
+            caller_table
+                .lookup(placement.lent.key, placement.lent.caller.guard)
+                .map_err(|error| error.with_key_operand(LENT_KEY_OPERAND))?
+                .borrowed_copy()
+        };
+        let mut target_table =
+            access.resolve_carved_mut::<KeyTable>(placement.target_table.addr)?;
+        let placed = target_table
+            .insert(placement.slot, borrowed, placement.target_table.guard)
+            .map_err(|failure| failure.error)?;
+        let installed = Placement {
+            slot: placement.slot.0,
+            incarnation: placement.incarnation,
+        };
+        if placed != placement.placed_key {
+            // Admission computed this key from the same table state, so the
+            // issued key must match; undo rather than hand out a stranger.
+            target_table.release_placed(placement.slot, placement.incarnation);
+            return Err(CapError::InvalidOperation);
+        }
+        Ok(installed)
+    }
+
+    /// Remove the borrowed entry `placement` names from the table at
+    /// `table_address`, if it is still the entry issued then. Called when a
+    /// call that lent a key returns, and when its Thread stops for good.
+    /// Returns whether an entry was removed; a callee that already deleted it
+    /// leaves nothing to do.
+    pub fn release_placement(access: &Access, table_address: u64, placement: Placement) -> bool {
+        if !placement.is_some() {
+            return false;
+        }
+        let Ok(mut table) = access.resolve_carved_mut::<KeyTable>(table_address) else {
+            return false;
+        };
+        table.release_placed(KeySlot(placement.slot), placement.incarnation)
+    }
+
+    /// Remove every borrowed entry the outstanding calls of `thread` placed.
+    ///
+    /// The callee of the call recorded at depth `i` is the source of the record
+    /// at depth `i + 1`, or the Thread's current `AddressSpace` for the top
+    /// record. A callee whose `AddressSpace` is gone took its table with it, so
+    /// there is nothing to remove. Called when the Thread stops for good
+    /// (retired, or parked as faulted).
+    pub fn release_thread_placements(&self, access: &Access, thread: ThreadId) {
+        let Some(thread) = self.thread(thread) else {
+            return;
+        };
+        let records = thread.invocation_stack.records();
+        for (depth, record) in records.iter().enumerate() {
+            if !record.placement.is_some() {
+                continue;
+            }
+            let callee = records
+                .get(depth + 1)
+                .map_or(thread.address_space, |next| next.source_address_space);
+            if let Ok(table) = self.address_space_table(access, callee, RawKey::from_wire(0)) {
+                Self::release_placement(access, table.addr, record.placement);
+            }
+        }
     }
 }
 
@@ -444,6 +696,10 @@ pub struct CommittedReturn {
     /// resuming, entry parks the Thread as faulted with `resumed` (its
     /// faulting state).
     pub terminate: bool,
+    /// The borrowed entry the popped call placed in this (the callee's) table,
+    /// still to be removed by the API layer after the pop; `Placement::NONE`
+    /// for a plain Call or a fault handler's Return.
+    pub placement: Placement,
 }
 
 impl<A: ArchObjects> Nucleus<A> {
@@ -537,6 +793,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 resumed: prepared.source_resume_context(),
                 translation: prepared.translation,
                 terminate: false,
+                placement: prepared.continuation.placement,
             });
         };
         thread.fault = None;
@@ -552,6 +809,7 @@ impl<A: ArchObjects> Nucleus<A> {
             resumed,
             translation: prepared.translation,
             terminate: action == FaultAction::Terminate,
+            placement: prepared.continuation.placement,
         })
     }
 }

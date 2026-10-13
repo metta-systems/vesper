@@ -16,7 +16,7 @@ An AddressSpace is a protection domain: a translation root, the ASID bound to it
 |---|---|---|---|---|
 | 0 | Activate | — | `Map` | — |
 | 1 | Retire | — | `Retire` | — |
-| 3 | CreateInvocation | `x2` entry, `x3` destination table, `x4` destination slot, `x5` stack base, `x6` stack end, `x7` minimum headroom | `Grant` on the AddressSpace, `Install` on the destination | `x1` new Invocation key |
+| 3 | CreateInvocation | `x2` entry, `x3` destination table, `x4` destination slot, `x5` stack base, `x6` stack end, `x7` minimum headroom, `x8` key-placement window | `Grant` on the AddressSpace, `Install` on the destination | `x1` new Invocation key |
 
 ### Activate
 
@@ -44,7 +44,11 @@ Destroys an AddressSpace other than the caller's. Its root must be unmapped firs
 
 ### CreateInvocation
 
-Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSpace on the stack extent `[x5, x6)` with minimum headroom `x7` bytes, and installs it into slot `x4` of the table named by `x3`. The new capability carries only `Call` right. The entry address must be nonzero (`InvalidPointer`); the stack rules and errors are on the [Invocation](../core/invocation.md#stack-extent) page. Failures leave the destination table unchanged.
+Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSpace on the stack extent `[x5, x6)` with minimum headroom `x7` bytes, and installs it into slot `x4` of the table named by `x3`. The new capability carries only `Call` right. The entry address must be nonzero (`InvalidPointer`); the stack rules and errors are on the [Invocation](../core/invocation.md#stack-extent) page.
+
+`x8` is the key-placement window that [`CallWithKey`](../core/invocation.md#callwithkey) uses: bits 31:0 are the first slot and bits 63:32 the number of slots, in this AddressSpace's own KeyTable. Zero means the Invocation accepts no lent key. A window that does not fit the table fails with `InvalidSlot`, naming its first slot. The slots need not be vacant when the Invocation is created.
+
+Failures leave the destination table unchanged.
 
 ## Implementation
 

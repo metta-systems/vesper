@@ -145,7 +145,7 @@ fn all_thread_wrappers_preserve_unknown_statuses_and_malformed_details() {
             (1 << 32, 1, 2),
             (16, 258, 0),
             (3, 0, 1),
-            (26, 0x7654_3210_ffff_fffe, 0x0801),
+            (26, 0x7654_3210_ffff_fffe, 0x0901),
             (27, 0x7654_3210_ffff_fffe, 0x0100_0001),
             (28, 1 << 32, 0),
         ] {

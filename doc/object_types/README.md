@@ -21,7 +21,7 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | Thread | `0x03` | [thread.md](core/thread.md) | Return, Retire |
 | Time | `0x04` | [time.md](core/time.md) | Transfer, Merge, Query |
 | Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | ConfigureThread, StartThread (root Scheduler) |
-| Invocation | `0x06` | [invocation.md](core/invocation.md) | Call |
+| Invocation | `0x06` | [invocation.md](core/invocation.md) | Call, CallWithKey |
 | Notification | `0x07` | [notification.md](core/notification.md) | Signal, Wait, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
 | IRQControl | `0x09` | [irq_control.md](core/irq_control.md) | Issue |
@@ -58,7 +58,7 @@ Every operation is one `svc` instruction. The immediate is ignored; the userspac
 | Out | `x0` | Status; zero is success |
 | Out | `x1`, `x2` | Two result words on success, error details on failure |
 
-Argument words an operation does not use must be zero; a nonzero unused word fails with `InvalidOperation`. Exceptions: `Thread.Return` ignores `x4..x7`, and `Invocation.Call` also reads `x9`.
+Argument words an operation does not use must be zero; a nonzero unused word fails with `InvalidOperation`. Exceptions: `Thread.Return` ignores `x4..x7`; `Invocation.Call` also reads `x9`; `Invocation.CallWithKey` also reads `x8` (the key to lend) and `x9`; `AddressSpace.CreateInvocation` also reads `x8` (the key-placement window).
 
 An invocation writes only `x0..x2`. Every other register, SP and the NZCV flags are returned unchanged, whether the operation succeeds, fails, or blocks and resumes later. `Invocation.Call` and `Thread.Return` move the Thread between address spaces and have their own register rules; see [Invocation](core/invocation.md#register-state).
 
@@ -116,6 +116,8 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 35 | `InsufficientBudget` | the source Time's remaining budget | 0 |
 | 36 | `PriorityChainFull` | 0 | 0 |
 | 37 | `IrqLineActive` | the line | 0 |
+| 38 | `KeyNotAccepted` | 0 | 0 |
+| 39 | `NoPlacementSlot` | 0 | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 
@@ -132,7 +134,7 @@ Any key argument can fail lookup. Lookup checks, in this order:
 | The slot still holds the same occupant | `InconsistentKey` | 1 `SlotIncarnationMismatch` |
 | That occupant was not deleted or moved | `InconsistentKey` | 2 `CapabilityInvalidated` |
 
-`x2` bits 15–8 hold the index of the argument register that carried the failing key (`0` for `x0`).
+`x2` bits 15–8 hold the index of the argument register that carried the failing key (`0` for `x0`, `8` for the key `CallWithKey` lends in `x8`).
 
 When an operation uses the object a capability names, it checks after the kind and rights checks that the object still exists. If the object was retired, the operation fails with `InconsistentKey`, reason 3 `ObjectRetired`, against the key that named it. An [Invocation](core/invocation.md#call) whose target AddressSpace was retired fails this way on the Invocation key.
 

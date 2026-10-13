@@ -13,7 +13,7 @@
 // │    rights: Rights             (1 byte)       │
 // │    badge: u16                 (2 bytes)      │
 // ├──────────────────────────────────────────────┤
-// │  Payload — 40 bytes (union on obj_type)      │
+// │  Payload — 48 bytes (union on obj_type)      │
 // │                                              │
 // │  VARIANT A: Object identity (most types)     │
 // │    pool: PoolTag              (1 byte)       │
@@ -47,6 +47,7 @@
 // │    function_address: NonZero<u64>            │
 // │    AddressSpace pool/index/generation        │
 // │    Stack base/end/minimum headroom (24 bytes)│
+// │    Placement window first/count (2 x u32)    │
 // │                                              │
 // │  VARIANT G: Thread selector                  │
 // │    Named(ObjectId) | CurrentReturnOnly        │
@@ -62,7 +63,8 @@
 // │                                              │
 // │  IRQControl carries no payload (all zeros)   │
 // └──────────────────────────────────────────────┘
-// Total: 48 bytes before tail padding, 64-byte slot aligned to 32 bytes
+// Total: 56 bytes before tail padding (4-byte header, flags byte, padding to
+// the 8-aligned payload), 64-byte slot aligned to 32 bytes
 //
 // Variant A stores a checked object identity (pool tag, index, generation),
 // never a raw pointer: the owning access context computes object addresses
@@ -80,7 +82,7 @@ use {
     },
     core::num::NonZero,
     libaddress::align,
-    libobject::{ArchType, CapError, CoreType, ObjectType, Rights},
+    libobject::{ArchType, CapError, CoreType, ObjectType, PlacementWindow, Rights},
 };
 
 /// Payload for identity-based capabilities (most object types).
@@ -184,6 +186,13 @@ pub struct InvocationPayload {
     pub address_space_generation: u32,
     /// Numeric target stack contract, validated before construction.
     pub stack_extent: InvocationStackExtent,
+    /// First slot of the key-placement window `CallWithKey` places a lent key
+    /// in, within the target `AddressSpace`'s `KeyTable`. Meaningful only when
+    /// `placement_count` is nonzero.
+    pub placement_first: u32,
+    /// Number of slots in the key-placement window; zero means the Invocation
+    /// accepts no lent key.
+    pub placement_count: u32,
 }
 
 /// Payload for a `KeyTable` capability: a reference to the carved `KeyTable`
@@ -224,7 +233,7 @@ struct IrqHandlerPayload {
     generation: u32,
 }
 
-/// 40-byte payload union, discriminated by `obj_type` in the header.
+/// 48-byte payload union, discriminated by `obj_type` in the header.
 #[repr(C)]
 #[derive(Clone, Copy)]
 union KeyPayload {
@@ -236,12 +245,12 @@ union KeyPayload {
     carved: CarvedPayload,
     invocation: InvocationPayload,
     irq_handler: IrqHandlerPayload,
-    null: [u8; 40],
+    null: [u8; 48],
 }
 
 /// A single entry in a thread's capability table (`KeyTable`).
 ///
-/// 48 bytes before tail padding in a 64-byte slot aligned to 32 bytes.
+/// 56 bytes before tail padding in a 64-byte slot aligned to 32 bytes.
 /// Discriminated union: `obj_type` selects the payload variant.
 #[repr(C, align(32))]
 #[derive(Clone, Copy)]
@@ -249,18 +258,22 @@ pub struct KeyEntry {
     obj_type: ObjectType,
     rights: Rights,
     badge: u16,
+    /// Kernel-set marks that are never part of a capability's authority (see
+    /// [`KeyEntry::FLAG_LENT`]). Zero for every entry installed by Retype,
+    /// bootstrap or `CopyDerive`.
+    flags: u8,
     payload: KeyPayload,
 }
 
 // Verify sizes at compile time
 const _: () = assert!(core::mem::size_of::<KeyEntry>() == 64);
-const _: () = assert!(core::mem::size_of::<KeyPayload>() == 40);
+const _: () = assert!(core::mem::size_of::<KeyPayload>() == 48);
 const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<FramePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
 const _: () = assert!(core::mem::size_of::<CarvedPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<IrqHandlerPayload>() == 8);
-const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 40);
+const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 48);
 const _: () = assert!(core::mem::size_of::<ThreadSelector>() == 24);
 const _: () = assert!(core::mem::align_of::<ThreadSelector>() == 8);
 const _: () = assert!(core::mem::align_of::<KeyEntry>() == 32);
@@ -287,13 +300,74 @@ const MIN_ALIGN_BITS: u32 = 4;
 pub(crate) const MIN_ALIGN: usize = 1 << MIN_ALIGN_BITS;
 
 impl KeyEntry {
+    /// Entry mark set only on the borrowed entry `Invocation.CallWithKey`
+    /// places in the callee's table. A `LENT` entry may be invoked, used as a
+    /// destination-table key, deleted, and lent onward through
+    /// `CallWithKey`, but it is never the source of `CopyDerive` or `Move`, so the
+    /// callee cannot keep it beyond the call. The kernel removes it when the
+    /// call returns.
+    pub const FLAG_LENT: u8 = 1;
+
+    /// Whether this is a borrowed entry placed by `CallWithKey`.
+    #[inline]
+    pub const fn is_lent(&self) -> bool {
+        self.flags & Self::FLAG_LENT != 0
+    }
+
+    /// The kinds `CopyDerive`, `Move` and `CallWithKey` may carry: `KeyTable`,
+    /// `Frame` and the debug-gated `DebugConsole`. Other kinds remain
+    /// unsupported until their lifecycle contracts exist.
+    pub fn is_derivable_kind(obj_type: ObjectType) -> bool {
+        obj_type == ObjectType::KEY_TABLE || obj_type == ObjectType::FRAME || {
+            #[cfg(feature = "debug_kernel")]
+            {
+                obj_type == ObjectType::DEBUG_CONSOLE
+            }
+            #[cfg(not(feature = "debug_kernel"))]
+            {
+                false
+            }
+        }
+    }
+
+    /// The borrowed entry `CallWithKey` places for this lent entry: the same
+    /// object and payload with exactly this entry's rights (including `LEND`,
+    /// so it can be lent onward), marked [`FLAG_LENT`](Self::FLAG_LENT). A
+    /// Frame's mapping record is not carried over, as for any derived copy.
+    pub fn borrowed_copy(&self) -> Self {
+        let mut borrowed = self.derive(self.rights);
+        borrowed.flags = Self::FLAG_LENT;
+        borrowed
+    }
+
+    /// The key-placement window of an `Invocation`: where `CallWithKey`
+    /// places a lent key in the target's table. Empty if it accepts none.
+    pub fn invocation_placement_window(&self) -> Result<PlacementWindow, CapError> {
+        if self.obj_type != ObjectType::INVOCATION {
+            return Err(CapError::TypeMismatch {
+                expected: ObjectType::INVOCATION,
+                found: self.obj_type,
+            });
+        }
+        // SAFETY: the Invocation type check selects the invocation payload,
+        // whose constructor initializes the window.
+        let payload = unsafe { self.payload.invocation };
+        Ok(PlacementWindow::new(
+            payload.placement_first,
+            payload.placement_count,
+        ))
+    }
+}
+
+impl KeyEntry {
     /// Create a null/empty entry.
     pub const fn null() -> Self {
         Self {
             obj_type: ObjectType::NULL,
             rights: Rights::empty(),
             badge: 0,
-            payload: KeyPayload { null: [0_u8; 40] },
+            flags: 0,
+            payload: KeyPayload { null: [0_u8; 48] },
         }
     }
 
@@ -341,6 +415,7 @@ impl KeyEntry {
             obj_type,
             rights,
             badge,
+            flags: 0,
             payload: KeyPayload {
                 obj: ObjectPayload {
                     pool: id.pool as u8,
@@ -359,6 +434,7 @@ impl KeyEntry {
             obj_type: ObjectType::UNTYPED,
             rights,
             badge: 0,
+            flags: 0,
             payload: KeyPayload {
                 region: RegionPayload {
                     paddr,
@@ -377,6 +453,7 @@ impl KeyEntry {
             obj_type: ObjectType::FRAME,
             rights,
             badge: 0,
+            flags: 0,
             payload: KeyPayload {
                 frame: FramePayload {
                     paddr,
@@ -409,6 +486,7 @@ impl KeyEntry {
             obj_type: ObjectType::KEY_TABLE,
             rights,
             badge,
+            flags: 0,
             payload: KeyPayload {
                 keytable: KeyTablePayload {
                     address,
@@ -434,6 +512,7 @@ impl KeyEntry {
             obj_type: id.kind,
             rights,
             badge,
+            flags: 0,
             payload: KeyPayload {
                 carved: CarvedPayload {
                     address: id.address,
@@ -471,17 +550,21 @@ impl KeyEntry {
 
     /// Create an `Invocation` capability targeting an entry point in an
     /// `AddressSpace`. The capability starts with `CALL` authority and no badge.
-    /// The nonzero entry and validated numeric stack contract are mandatory.
+    /// The nonzero entry and validated numeric stack contract are mandatory;
+    /// `placement_window` is where `CallWithKey` places a lent key (empty for
+    /// an Invocation that accepts none).
     pub fn new_invocation(
         address_space: ObjectId,
         function_address: NonZero<u64>,
         stack_extent: InvocationStackExtent,
+        placement_window: PlacementWindow,
     ) -> Self {
         debug_assert_eq!(address_space.pool, PoolTag::AddressSpace);
         Self {
             obj_type: ObjectType::INVOCATION,
             rights: Rights(Rights::CALL),
             badge: 0,
+            flags: 0,
             payload: KeyPayload {
                 invocation: InvocationPayload {
                     function_address,
@@ -490,6 +573,8 @@ impl KeyEntry {
                     address_space_index: address_space.index,
                     address_space_generation: address_space.generation,
                     stack_extent,
+                    placement_first: placement_window.first(),
+                    placement_count: placement_window.count(),
                 },
             },
         }
@@ -501,6 +586,7 @@ impl KeyEntry {
             obj_type: ObjectType::THREAD,
             rights,
             badge,
+            flags: 0,
             payload: KeyPayload {
                 thread: ThreadSelector::Named(id),
             },
@@ -515,6 +601,7 @@ impl KeyEntry {
             obj_type: ObjectType::THREAD,
             rights: Rights::empty(),
             badge: 0,
+            flags: 0,
             payload: KeyPayload {
                 thread: ThreadSelector::CurrentReturnOnly,
             },
@@ -550,7 +637,8 @@ impl KeyEntry {
             obj_type: ObjectType::IRQ_CONTROL,
             rights,
             badge: 0,
-            payload: KeyPayload { null: [0_u8; 40] },
+            flags: 0,
+            payload: KeyPayload { null: [0_u8; 48] },
         }
     }
 
@@ -560,6 +648,7 @@ impl KeyEntry {
             obj_type: ObjectType::IRQ_HANDLER,
             rights,
             badge: 0,
+            flags: 0,
             payload: KeyPayload {
                 irq_handler: IrqHandlerPayload {
                     line: id.line,
@@ -626,6 +715,7 @@ impl KeyEntry {
     pub fn derive(&self, rights: Rights) -> Self {
         let mut derived = *self;
         derived.rights = rights;
+        derived.flags = 0;
         if derived.obj_type == ObjectType::FRAME {
             // SAFETY: the FRAME type check selects the frame payload variant.
             unsafe {

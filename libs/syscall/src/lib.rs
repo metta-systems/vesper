@@ -344,6 +344,101 @@ pub unsafe fn ppc_call(key: u64, args: [u64; 6], target_sp: u64) -> (u64, u64, u
     (status, word1, word2)
 }
 
+/// `Invocation.CallWithKey` transport: as [`ppc_call`] with operation `1` in
+/// `x1` and the caller-local packed key to lend in `x8`.
+///
+/// On success the target is entered with the callee-local packed key of the
+/// borrowed entry in `x0`; the kernel removes that entry when the call
+/// returns. A rejection is returned before migration and changes nothing.
+/// Register declarations match `ppc_call`: `x8` is an input with a discarded
+/// output.
+///
+/// # Safety
+/// As [`ppc_call`]; additionally the target may use the lent key, within its
+/// rights, until the call returns.
+#[inline(always)]
+pub unsafe fn ppc_call_with_key(
+    key: u64,
+    lent_key: u64,
+    args: [u64; 6],
+    target_sp: u64,
+) -> (u64, u64, u64) {
+    let status: u64;
+    let word1: u64;
+    let word2: u64;
+    // SAFETY: the caller upholds the contract above; every register the
+    // kernel may rewrite on Call/Return is declared.
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") key => status,
+            inlateout("x1") 1_u64 => word1,
+            inlateout("x2") args[0] => word2,
+            inlateout("x3") args[1] => _,
+            inlateout("x4") args[2] => _,
+            inlateout("x5") args[3] => _,
+            inlateout("x6") args[4] => _,
+            inlateout("x7") args[5] => _,
+            inlateout("x8") lent_key => _,
+            inlateout("x9") target_sp => _,
+            lateout("x10") _,
+            lateout("x11") _,
+            lateout("x12") _,
+            lateout("x13") _,
+            lateout("x14") _,
+            lateout("x15") _,
+            lateout("x16") _,
+            lateout("x17") _,
+            // x18 is caller-volatile scratch where the target allows it; on
+            // targets that reserve it (Apple) the compiler never allocates it.
+            #[cfg(not(target_vendor = "apple"))]
+            lateout("x18") _,
+        );
+    }
+    (status, word1, word2)
+}
+
+/// Single syscall with six operands and an eighth input word in `x8`
+/// (`AddressSpace.CreateInvocation` carries its key-placement window there).
+/// Same ABI as [`protected_call6`], with `x8` as an additional input.
+///
+/// # Safety
+/// - Not safe.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn protected_call6_with_x8(
+    cap: u64,
+    op: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+    a5: u64,
+    x8: u64,
+) -> (u64, u64, u64) {
+    let r0: u64;
+    let r1: u64;
+    let r2: u64;
+    // # SAFETY: As safe as possible, duh!
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            inlateout("x0") cap => r0,
+            inlateout("x1") op => r1,
+            inlateout("x2") a0 => r2,
+            in("x3") a1,
+            in("x4") a2,
+            in("x5") a3,
+            in("x6") a4,
+            in("x7") a5,
+            in("x8") x8,
+            options(nostack),
+        );
+    }
+    (r0, r1, r2)
+}
+
 /// `Thread.Return` transport: `x0` the target-table-local packed Slot(1)
 /// key, `x1` operation 0, `x2`/`x3` the result words `(r0, r1)`.
 ///

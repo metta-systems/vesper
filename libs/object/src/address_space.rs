@@ -1,9 +1,9 @@
-use crate::{CapError, Key, KeySlot, KeyTableKey, RawKey, decode_syscall_result};
+use crate::{CapError, Key, KeySlot, KeyTableKey, PlacementWindow, RawKey, decode_syscall_result};
 
 #[cfg(not(test))]
-use libsyscall::{protected_call0, protected_call6};
+use libsyscall::{protected_call0, protected_call6_with_x8};
 #[cfg(test)]
-use tests::{protected_call0, protected_call6};
+use tests::{protected_call0, protected_call6_with_x8};
 
 #[cfg(test)]
 #[path = "../tests/support/address_space.rs"]
@@ -62,12 +62,15 @@ impl AddressSpaceKey {
 
     /// Construct an `Invocation` capability for `function_address` in this
     /// `AddressSpace` and install it into `destination` at `destination_slot`.
+    /// The Invocation accepts no lent key: `CallWithKey` on it fails with
+    /// `KeyNotAccepted`. Use [`create_invocation_with_window`] to accept keys.
     ///
     /// Wire schema: `x2` function address, `x3` destination `KeyTable`
     /// capability, `x4` vacant destination slot, `x5` stack base, `x6` exclusive
-    /// stack end, and `x7` positive minimum downward headroom in bytes. Requires
-    /// `GRANT` on this `AddressSpace` and `INSTALL` on the destination
-    /// `KeyTable`. The installed `Invocation` capability has `CALL` authority only. The
+    /// stack end, `x7` positive minimum downward headroom in bytes and `x8`
+    /// the key-placement window (zero here). Requires `GRANT` on this
+    /// `AddressSpace` and `INSTALL` on the destination `KeyTable`. The
+    /// installed `Invocation` capability has `CALL` authority only. The
     /// address is stored as supplied; construction does not check mapping or
     /// executable permission. Returns the destination-table-local key.
     ///
@@ -76,6 +79,8 @@ impl AddressSpaceKey {
     /// extent and a positive minimum that fits it. Kernel validation owns these
     /// invariants; this wrapper forwards supplied values unchanged. Numeric
     /// admission does not prove mapped/writable backing or stack exclusivity.
+    ///
+    /// [`create_invocation_with_window`]: Self::create_invocation_with_window
     pub fn create_invocation(
         &self,
         function_address: u64,
@@ -85,10 +90,39 @@ impl AddressSpaceKey {
         stack_end: u64,
         minimum_headroom: u64,
     ) -> Result<RawKey, CapError> {
-        // SAFETY: protected_call6 encapsulates the SVC ABI; these are raw
-        // register operands from the selected CreateInvocation wire schema.
+        self.create_invocation_with_window(
+            function_address,
+            destination,
+            destination_slot,
+            stack_base,
+            stack_end,
+            minimum_headroom,
+            PlacementWindow::NONE,
+        )
+    }
+
+    /// As [`create_invocation`](Self::create_invocation), declaring the
+    /// key-placement window `CallWithKey` uses: `placement_window.count()`
+    /// consecutive slots of this `AddressSpace`'s `KeyTable` starting at
+    /// `placement_window.first()`, in `x8`. The window must lie within the
+    /// table's capacity. The kernel does not reserve it; the exporter keeps it
+    /// vacant by convention, and its size bounds the number of simultaneous
+    /// `CallWithKey` calls into the Invocation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_invocation_with_window(
+        &self,
+        function_address: u64,
+        destination: &KeyTableKey,
+        destination_slot: KeySlot,
+        stack_base: u64,
+        stack_end: u64,
+        minimum_headroom: u64,
+        placement_window: PlacementWindow,
+    ) -> Result<RawKey, CapError> {
+        // SAFETY: protected_call6_with_x8 encapsulates the SVC ABI; these are
+        // raw register operands from the selected CreateInvocation wire schema.
         let response = unsafe {
-            protected_call6(
+            protected_call6_with_x8(
                 self.key.to_wire(),
                 AddressSpaceOp::CreateInvocation as u64,
                 function_address,
@@ -97,6 +131,7 @@ impl AddressSpaceKey {
                 stack_base,
                 stack_end,
                 minimum_headroom,
+                placement_window.to_wire(),
             )
         };
         let (key, _) = decode_syscall_result(response)?;

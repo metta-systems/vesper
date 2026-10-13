@@ -11,7 +11,10 @@
 //!   Success returns zeros.
 //! - `CreateInvocation` `3`: `x2` nonzero function address, `x3` destination
 //!   `KeyTable` capability, `x4` vacant destination slot, `x5` stack base,
-//!   `x6` exclusive stack end, `x7` positive minimum headroom in bytes. Requires
+//!   `x6` exclusive stack end, `x7` positive minimum headroom in bytes, and `x8`
+//!   the key-placement window (first slot in bits 31:0, count in bits 63:32;
+//!   count 0 accepts no lent key; the window must lie within this
+//!   `AddressSpace`'s `KeyTable`, else `InvalidSlot`). Requires
 //!   `GRANT` on this `AddressSpace` and `INSTALL` on the destination `KeyTable`.
 //!   Installs an Invocation capability with only `CALL` authority; returns its
 //!   destination-local key in `x1` and zero in `x2`. The function address is
@@ -51,7 +54,7 @@ use {
         },
     },
     core::num::NonZero,
-    libobject::{CapError, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights},
+    libobject::{CapError, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights},
     libqemu::semihosting as semi,
 };
 
@@ -65,12 +68,13 @@ pub fn invoke<A: ArchObjects>(
     as_key: RawKey,
     op: u64,
     args: &[u64; 6],
+    x8: u64,
     nucleus: &mut Nucleus<A>,
 ) -> Result<InvokeOutcome, CapError> {
     match op {
         0 => activate::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Activate),
         1 => retire::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Complete),
-        3 => create_invocation::<A>(access, caller, as_key, args, nucleus)
+        3 => create_invocation::<A>(access, caller, as_key, args, x8, nucleus)
             .map(InvokeOutcome::Complete),
         _ => Err(CapError::InvalidOperation),
     }
@@ -107,6 +111,7 @@ fn create_invocation<A: ArchObjects>(
     caller: CallerTable,
     as_key: RawKey,
     args: &[u64; 6],
+    x8: u64,
     nucleus: &Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     let destination_key = RawKey::from_wire(args[1]);
@@ -150,6 +155,16 @@ fn create_invocation<A: ArchObjects>(
     // cannot construct current-relative Thread.Return authority here.
     let function_address = NonZero::new(args[0]).ok_or(CapError::InvalidPointer)?;
     let stack_extent = InvocationStackExtent::new(args[3], args[4], args[5], A::USER_VA_END)?;
+    // The exporter's key-placement window must lie within the target's table
+    // (an empty window needs no table); it fails like an out-of-range slot.
+    let placement_window = PlacementWindow::from_wire(x8);
+    if placement_window.accepts_keys() {
+        let target_table = nucleus.address_space_table(access, address_space_id, as_key)?;
+        let table = access.resolve_carved_mut::<KeyTable>(target_table.addr)?;
+        if !table.contains_window(placement_window) {
+            return Err(CapError::InvalidSlot(KeySlot(placement_window.first())));
+        }
+    }
     let destination_slot =
         KeySlot(
             u32::try_from(args[2]).map_err(|_truncated| CapError::InvalidKey {
@@ -158,7 +173,12 @@ fn create_invocation<A: ArchObjects>(
                 operand: 4,
             })?,
         );
-    let invocation = KeyEntry::new_invocation(address_space_id, function_address, stack_extent);
+    let invocation = KeyEntry::new_invocation(
+        address_space_id,
+        function_address,
+        stack_extent,
+        placement_window,
+    );
     let mut destination_table = access.resolve_carved_mut::<KeyTable>(destination.address)?;
     destination_table
         .insert(destination_slot, invocation, destination.guard)

@@ -47,8 +47,8 @@ use {
         num::NonZero,
     },
     libobject::{
-        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights,
-        decode_syscall_result, domain::DomainId,
+        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow,
+        RawKey, Rights, decode_syscall_result, domain::DomainId,
     },
     objects::{
         ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, ObjectPool, Thread,
@@ -860,12 +860,13 @@ fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
             .unwrap()
             .insert(
                 KeySlot(10),
-                KeyEntry::new_invocation(second_as, function, extent),
+                KeyEntry::new_invocation(second_as, function, extent, PlacementWindow::NONE),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|_| panic!("Invocation capability installation"));
         // Call dispatch is live. A zero saved x9 is an invalid SP, reported
-        // before the unready target translation; op 1 is not an Invocation op.
+        // before the unready target translation; op 1 is CallWithKey, which this
+        // Invocation (empty placement window) rejects, and op 2 is unassigned.
         for (op, expected) in [
             (
                 0,
@@ -875,7 +876,8 @@ fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
                 }
                 .code(),
             ),
-            (1, CapError::InvalidOperation.code()),
+            (1, CapError::KeyNotAccepted.code()),
+            (2, CapError::InvalidOperation.code()),
         ] {
             match cap_invoke(nucleus, key, op, &[0; 6]) {
                 Err(error) => assert_eq!(error.code(), expected),

@@ -134,9 +134,9 @@ Reference: [communication](capabilities-contract.md#communication-and-deferred-c
 - [ ] Apply the aborted-work vocabulary (rejected before admission / cancelled before commit / completed / outcome unknown) to each operation's commit point, and define its wire representation.
 - [ ] Define stable user-record decoding and buffer/mapping lifetime across blocking; test adversarial mutation and unmap during pending operations.
 - [ ] Test Notification/EventCount signal/wait races, multiple waiters, cancellation, reader lag and payload publication/reuse ordering with multi-Thread fixtures.
-- [ ] Capability transfer in `Invocation.Call` and `Thread.Return` (the schema is open in the decisions file): kernel, ABI, wrappers, Meddle key parameters, tests.
+- [ ] Meddle `key` parameter: a function declared with a key parameter is called through `InvocationKey::call_with_key` by the generated client and receives the lent key as its first argument (`fn(lent_key, _dummy, a0..a5)`) in the generated server entry; Kickstart's import wiring declares and sizes the exporter's placement window.
 - [ ] Specify and implement Invocation distribution: CopyDerive restrictions, rights attenuation and badge-on-derive (D4), preserving target identity and the nonzero entry. Exporters need the badge as caller identity for per-client policy (the mailbox component's `property`).
-- [ ] Specify nested/concurrent-call rules beyond the fixed depth, shared-memory rules, optional capability transfer, call cancellation/teardown (including target AddressSpace retirement during a call), and any partial-completion states after visible effects.
+- [ ] Specify nested/concurrent-call rules beyond the fixed depth, shared-memory rules, call cancellation/teardown (including target AddressSpace retirement during a call), and any partial-completion states after visible effects.
 - [ ] Complete architectural-state isolation beyond the selected TLS, timer/counter, PMU, debug-channel and FP/SIMD controls before protected EL0 claims.
 
 ### Interrupt delivery
@@ -154,7 +154,7 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
 - [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`): the typed functions and `property` over the client's data area are served.
   - [ ] Grow the `property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
   - [ ] Delete the old files whose modules are already gone: `libs/platform/src/raspberrypi/{fb,vc}.rs` and `libs/platform/src/raspberrypi/device_driver/bcm/{power,mailbox,mailbox_refactor}.rs`.
-  - [ ] Hand the framebuffer to a client: `fb` Retypes Frames over the framebuffer from its video memory Untypeds into the client's table (2 MiB Frames where the address allows, 4 KiB for the rest), using a table key the client passes in the call. Prerequisite: capability transfer in calls (Phase 6, Invocation distribution; schema open in the decisions file).
+  - [ ] Hand the framebuffer to a client: `fb` Retypes Frames over the framebuffer from its video memory Untypeds into the client's table (2 MiB Frames where the address allows, 4 KiB for the rest), through the table key the client lends with `CallWithKey`. Prerequisite: the Meddle `key` parameter (Phase 6).
   - [ ] Port the rest of the old `Power::off`: the GPIO pin power-down before the halt (no GPIO component exists yet).
 - [ ] Load `[[component]]` entries (components without a device node) in Kickstart with their imports, once components other than drivers need it; only test builders load them today.
 - [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (`property` runs to completion on the caller's Thread today).

@@ -27,7 +27,10 @@
 //!   `x1`/`x2`.
 
 use {
-    crate::objects::{KeyTable, access::Access, key_table::CallerTable},
+    crate::{
+        api::key_entry::KeyEntry,
+        objects::{KeyTable, access::Access, key_table::CallerTable},
+    },
     libobject::{CapError, KeySlot, KeyTableOp, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
 };
@@ -102,7 +105,7 @@ fn copy_derive(
             let src_entry = table
                 .lookup(src_sel, src_cap.guard)
                 .map_err(|e| e.with_key_operand(2))?;
-            check_allowlisted(src_entry.object_type(), 2)?;
+            check_copyable(src_entry, 2)?;
             if !src_entry.rights().permits(requested) {
                 return Err(CapError::InsufficientRights);
             }
@@ -122,7 +125,7 @@ fn copy_derive(
         let src_entry = src_table
             .lookup(src_sel, src_cap.guard)
             .map_err(|e| e.with_key_operand(2))?;
-        check_allowlisted(src_entry.object_type(), 2)?;
+        check_copyable(src_entry, 2)?;
         if !src_entry.rights().permits(requested) {
             return Err(CapError::InsufficientRights);
         }
@@ -326,7 +329,7 @@ fn check_source_allowlisted(
     let entry = table
         .lookup(src_sel, guard)
         .map_err(|e| e.with_key_operand(operand))?;
-    check_allowlisted(entry.object_type(), operand)
+    check_copyable(entry, operand)
 }
 
 /// Only the approved initial target kinds may be derived/moved: `KeyTable`,
@@ -335,20 +338,16 @@ fn check_source_allowlisted(
 /// active mapping association; Move preserves the mapping record; Delete of a
 /// mapped frame leaves the mapping in place under the accepted-leak model).
 /// Other kinds remain unsupported.
-fn check_allowlisted(obj_type: ObjectType, _operand: u8) -> Result<(), CapError> {
-    let allowed = obj_type == ObjectType::KEY_TABLE || obj_type == ObjectType::FRAME || {
-        #[cfg(feature = "debug_kernel")]
-        {
-            obj_type == ObjectType::DEBUG_CONSOLE
-        }
-        #[cfg(not(feature = "debug_kernel"))]
-        {
-            false
-        }
-    };
-    if allowed {
-        Ok(())
-    } else {
-        Err(CapError::InvalidObjectType(obj_type))
+///
+/// A borrowed entry (`LENT`, placed by `Invocation.CallWithKey`) is never a
+/// source, whatever its kind: the callee may use it, delete it and lend it
+/// onward, but cannot keep it past the call. That is `InvalidOperation`.
+fn check_copyable(entry: &KeyEntry, _operand: u8) -> Result<(), CapError> {
+    if !KeyEntry::is_derivable_kind(entry.object_type()) {
+        return Err(CapError::InvalidObjectType(entry.object_type()));
     }
+    if entry.is_lent() {
+        return Err(CapError::InvalidOperation);
+    }
+    Ok(())
 }

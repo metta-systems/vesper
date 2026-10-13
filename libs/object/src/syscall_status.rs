@@ -63,6 +63,13 @@ pub const PRIORITY_CHAIN_FULL: u64 = 36;
 /// the line the nucleus keeps for its own timer. Detail 1 is the line;
 /// detail 2 is zero.
 pub const IRQ_LINE_ACTIVE: u64 = 37;
+/// An `Invocation.CallWithKey` named an Invocation whose exporter declared no
+/// key-placement window (count 0), so it accepts no lent key. Details are zero.
+pub const KEY_NOT_ACCEPTED: u64 = 38;
+/// Every slot of the Invocation's key-placement window is occupied or cannot
+/// issue a fresh incarnation, so the lent key has nowhere to be placed.
+/// Details are zero.
+pub const NO_PLACEMENT_SLOT: u64 = 39;
 
 /// Field-specific Invocation stack diagnostics, carried as the complete `x2` word.
 ///

@@ -129,6 +129,8 @@ fn retire<A: ArchObjects>(
     nucleus.cancel_thread_pending(thread_id)?;
     // A Thread retired inside a fault handler frees that handler.
     nucleus.release_thread_fault(thread_id);
+    // Keys its outstanding calls borrowed leave the callees' tables.
+    nucleus.release_thread_placements(access, thread_id);
     // SAFETY: as above; no reference to the Thread is live here.
     unsafe { Carved::<Thread>::retire(thread_id) }.map_err(|error| error.for_key(thread_key, 0))?;
     semi::println!("✅ Thread::Retire()");
@@ -187,5 +189,10 @@ pub fn return_from_call<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
 ) -> Result<CommittedReturn, ReturnRejection> {
     let prepared = prepare_return(access, caller, saved, nucleus)?;
-    Ok(nucleus.commit_return(prepared)?)
+    let committed = nucleus.commit_return(prepared)?;
+    // The call returned: a key it borrowed (CallWithKey) leaves the callee's
+    // table, which is the table this Return ran in. A callee that already
+    // deleted it leaves nothing to remove.
+    Nucleus::<A>::release_placement(access, caller.addr, committed.placement);
+    Ok(committed)
 }

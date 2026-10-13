@@ -21,13 +21,13 @@ A KeyTable capability authorizes managing the entries of that table — copying,
 | 2 | Delete | `x2` key of the entry to remove | `Remove` on the invoked table | — |
 | 4 | Revoke | — | — | Not implemented: `InvalidOperation` |
 
-Table rights: bit 0 `Derive`, bit 1 `Remove`, bit 2 `Install`.
+Table rights: bit 0 `Derive`, bit 1 `Remove`, bit 2 `Install`, bit 6 `Lend` (the right to lend the table's key through [`CallWithKey`](invocation.md#callwithkey)).
 
 ### CopyDerive
 
-Copies the entry named by `x2` (a key in the invoked table) into slot `x4` of the table named by `x3` (a key in the caller's table), with the rights in `x5`. The copy keeps the badge. Its rights must be a subset of the source's; asking for more fails with `InsufficientRights`, and a rights word with bits outside `0x3F` fails with `InvalidOperation`.
+Copies the entry named by `x2` (a key in the invoked table) into slot `x4` of the table named by `x3` (a key in the caller's table), with the rights in `x5`. The copy keeps the badge. Its rights must be a subset of the source's; asking for more fails with `InsufficientRights`, and a rights word with bits outside `0x7F` fails with `InvalidOperation`.
 
-CopyDerive and Move accept `KeyTable`, `Frame` and `DebugConsole` entries; other kinds fail with `InvalidObjectType`. A copied Frame starts unmapped.
+CopyDerive and Move accept `KeyTable`, `Frame` and `DebugConsole` entries; other kinds fail with `InvalidObjectType`. A copied Frame starts unmapped. An entry placed by [`CallWithKey`](invocation.md#callwithkey) is never a source of either: that fails with `InvalidOperation`.
 
 ### Move
 
@@ -43,7 +43,7 @@ Removes the entry. The object it named is unaffected: deleting a capability neit
 |---|---|
 | `InsufficientRights` | A table right is missing, or CopyDerive asks for rights the source lacks |
 | `InvalidObjectType` | CopyDerive or Move of a kind that cannot be copied |
-| `InvalidOperation` | Undefined rights bits, nonzero unused argument |
+| `InvalidOperation` | Undefined rights bits, nonzero unused argument, or a source entry placed by `CallWithKey` |
 | `InvalidSlot`, `SlotOccupied` | Destination slot out of range or occupied (including a Move onto its own slot) |
 | `KeySlotExhausted` | The destination slot has used up its incarnations |
 | `InvalidKey`, `InconsistentKey` | A key argument failed lookup; see [key errors](../README.md#key-errors) |
