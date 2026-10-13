@@ -13,14 +13,14 @@ fn command_prompt() {
         let mut buf = [0_u8; 64];
 
         match libconsole::console::command_prompt(&mut buf) {
-            // b"mmu" => init_mmu(),
+            // b"mmu" => init_mmu(), ❌
             b"feats" => print_mmu_state_and_features(),
-            // b"disp" => check_display_init(),
-            // b"trap" => check_data_abort_trap(),
-            // b"map" => machine::platform::memory::mmu::virt_mem_layout().print_layout(),
-            // b"led on" => set_led(true),
-            // b"led off" => set_led(false),
-            b"help" => print_help(),
+            // b"disp" => check_display_init(), ➡️ rename to "draw", draw demo graphics from graphics.rs
+            // b"trap" => check_data_abort_trap(), ❌ maybe not yet
+            // b"map" => machine::platform::memory::mmu::virt_mem_layout().print_layout(), ❌
+            // b"led on" => set_led(true), ✅ use mailbox for this
+            // b"led off" => set_led(false), ✅ use mailbox for this
+            b"help" => print_help(), ✅
             b"end" => break 'cmd_loop,
             x => warn!("[!] Unknown command {x:?}, try 'help'"),
         }

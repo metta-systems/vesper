@@ -94,11 +94,3 @@ I did not implement it because its schema is unanswered, and I won't guess a ker
 5. Return: capabilities in results, now or later. I'd leave it for later.
 
 Once these are settled, fb can Retype the framebuffer's Frames into the client's table using a table key the client passes. That is the last piece before the test shell.
-
-Other things to know
-
-- No hardware check. The video range rule is a heuristic that matches the emulated boards only. The contract says so.
-- Legacy stack still present. pl011_uart, interrupt_controller and drivers.rs in libs/platform stay for now, because chainboot and the device-test console still use them. A plan item records this.
-- Subagents. I started none.
-
-needs input: answer the five capability-transfer questions above (or "all recommended"), and say whether to keep or replace the legacy libs/platform driver stack.
