@@ -20,7 +20,9 @@ host-tests = []
 qemu = ["libuser/qemu"]
 
 [target.'cfg(target_os = "vesper")'.dependencies]
+fb-client = { workspace = true }
 libdevice-driver = { workspace = true }
+libgraphics = { workspace = true }
 libio-channel = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }

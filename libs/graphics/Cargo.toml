@@ -1,0 +1,30 @@
+[package]
+name = "vesper-graphics"
+
+description = "Drawing on a framebuffer: colors, filled rectangles and text from a bitmap font, onto any surface that can store a pixel."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "graphics"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

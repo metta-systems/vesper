@@ -54,7 +54,9 @@ priority = 0x8000
 # The shell: an EL0 program, loaded once without a device tree node (a
 # component with a `priority`). It has a command prompt on the PL011's serial
 # channel (`serial = true`), switches the LED through the mailbox component
-# and resets the board through the power component.
+# and resets the board through the power component. Its `draw` command maps the
+# framebuffer through the fb component, which `memory` leaves room for (the
+# table of Frames the fb component fills).
 [[component]]
 name = "shell"
 binary = "shell"
@@ -62,6 +64,7 @@ interfaces = "../../userspace/shell/interfaces"
 active = true
 priority = 0x4000
 serial = true
+memory = 131072
 resources = ["font"]
 
 # Data files Kickstart maps read-only into the components that name them in

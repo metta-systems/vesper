@@ -114,8 +114,9 @@ pub fn kickstart_run() -> ! {
     let boot_state = bootstrap_nucleus(&PoolCapacities {
         address_spaces: 1 + instances,
         // builder: root/L1/L2 and image L3s; each driver: root/L1/L2, image
-        // span, stack region, init page, device window
-        page_tables: 3 + image_tables + instances * 8,
+        // span, stack region, init page, device window, resource span, data
+        // window and the framebuffer window's tables
+        page_tables: 3 + image_tables + instances * 16,
         asid_pools: 1,
     });
     let park = start_drivers(boot_state, &retained, instances);

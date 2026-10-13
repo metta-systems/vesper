@@ -65,10 +65,10 @@ use {
         loader::{StackRegion, UserStack, update_init, write_init},
     },
     libdevice_driver::{
-        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DriverInit, ExportedArea, INIT_VA, Interrupt,
-        MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS,
-        MAX_RESOURCES, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region,
-        ResourceRecord, STACK_REGION, VideoBlock,
+        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DriverInit, ExportedArea, FB_WINDOW_SPANS,
+        FbWindow, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS,
+        MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS,
+        PAGE_FRAME, PAGE_UNTYPED, Region, ResourceRecord, STACK_REGION, VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, dma_address, find_compatible,
@@ -94,6 +94,13 @@ use {
 
 const PAGE: u64 = 4096;
 const PAGE_BITS: u8 = 12;
+
+/// The tables of a framebuffer window.
+const FB_WINDOW_TABLES: u32 = 4;
+const _: () = assert!(FB_WINDOW_TABLES as usize == FB_WINDOW_SPANS);
+
+/// The interface whose importers get a framebuffer window.
+const FB_INTERFACE: &str = "fb_v1";
 
 /// The `compatible` string of the serial driver a program with `serial = true`
 /// is attached to.
@@ -611,7 +618,7 @@ pub fn load_drivers(
         let name = instance.name();
         let guard = FIRST_DRIVER_GUARD + u32::try_from(number).unwrap_or(0);
         let component = builder.component(nucleus, guard, slots);
-        builder.load_component(&component, image, guard ^ 0x80_0000, slots);
+        builder.load_component(&component, image, guard ^ 0x40_0000, slots);
         let mut stacks = builder.stack_region(&component, STACK_REGION, slots);
         let stack = builder.user_stack(&mut stacks, STACK_PAGES, slots);
         assert!(
@@ -1171,6 +1178,56 @@ pub fn load_drivers(
                 );
             }
         }
+    }
+
+    // A component that imports `fb_v1` maps the framebuffer's Frames itself:
+    // it gets its second-level page table and spare last-level tables for the
+    // spans that end up holding 4 KiB Frames.
+    for loaded in prepared.iter_mut().flatten() {
+        if !loaded
+            .instance
+            .driver
+            .component
+            .imports
+            .iter()
+            .any(|import| import.interface == FB_INTERFACE)
+        {
+            continue;
+        }
+        let first = slots.take(FB_WINDOW_TABLES);
+        let tables = builder.carve_tables(first, FB_WINDOW_TABLES);
+        let mut window = FbWindow {
+            l2: 0,
+            tables: [0; FB_WINDOW_SPANS],
+        };
+        for (index, table) in window.tables.iter_mut().enumerate() {
+            let key = boot_key(
+                first + u32::try_from(index).unwrap_or(0),
+                tables.incarnation(),
+            );
+            *table = move_to(
+                builder,
+                &mut self_table,
+                &loaded.component,
+                key,
+                loaded.next_slot,
+            )
+            .to_wire();
+            loaded.next_slot += 1;
+        }
+        // The loader no longer needs the component's second-level table.
+        window.l2 = move_to(
+            builder,
+            &mut self_table,
+            &loaded.component,
+            loaded.component.l2,
+            loaded.next_slot,
+        )
+        .to_wire();
+        loaded.next_slot += 1;
+        update_init(loaded.init_page, |init: &mut DriverInit| {
+            init.fb_window = window;
+        });
     }
 
     // ── Start ───────────────────────────────────────────────────────────

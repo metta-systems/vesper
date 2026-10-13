@@ -97,7 +97,7 @@ pub fn run() -> ! {
         address_spaces: 1 + INSTANCES,
         // builder: root/L1/L2 and image L3s; each driver: root/L1/L2, image
         // span, stack region, init page, device window, data window
-        page_tables: 3 + image_tables + INSTANCES * 8,
+        page_tables: 3 + image_tables + INSTANCES * 16,
         asid_pools: 1,
     });
     let keys = BootKeys::of(&boot);

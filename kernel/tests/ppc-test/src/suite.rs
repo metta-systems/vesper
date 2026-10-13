@@ -176,7 +176,7 @@ pub fn run() {
     let new_table_key = untyped
         .retype(
             ObjectType::KEY_TABLE,
-            8,
+            BOOT_TABLE_SIZE_BITS,
             TEST_TABLE_GUARD,
             1,
             &self_table,
@@ -240,7 +240,7 @@ pub fn run() {
     // from userspace. Once authority/live identity are established, zero
     // wins over malformed extents and destination readiness.
     let table_len_before_zero = before_rejections.count;
-    for slot in [KeySlot(62), KeySlot(63), KeySlot(300)] {
+    for slot in [KeySlot(62), KeySlot(63), KeySlot(600)] {
         for stack in [invocation_stack, [0x1001, 0x1001, 0]] {
             assert!(matches!(
                 boot_as.create_invocation(0, &self_table, slot, stack[0], stack[1], stack[2]),
@@ -358,7 +358,7 @@ pub fn run() {
         ),
     ];
     for (stack, reason, reason_id, value) in malformed_stacks {
-        for slot in [KeySlot(62), KeySlot(63), KeySlot(300)] {
+        for slot in [KeySlot(62), KeySlot(63), KeySlot(600)] {
             assert_invalid_stack(
                 boot_as.create_invocation(0x5678, &self_table, slot, stack[0], stack[1], stack[2]),
                 value,
@@ -500,8 +500,8 @@ pub fn run() {
         Err(CapError::SlotOccupied(KeySlot(62)))
     ));
     assert!(matches!(
-        boot_as.create_invocation(0x5678, &self_table, KeySlot(300), 0x5010, 0x50A0, 0x30),
-        Err(CapError::InvalidSlot(KeySlot(300)))
+        boot_as.create_invocation(0x5678, &self_table, KeySlot(600), 0x5010, 0x50A0, 0x30),
+        Err(CapError::InvalidSlot(KeySlot(600)))
     ));
     assert_eq!(
         create_invocation_raw(
@@ -1089,7 +1089,7 @@ pub fn run() {
     }
     // A window beyond the exporter's table is refused at construction, like
     // an out-of-range slot.
-    for (first, count) in [(255, 2), (u32::MAX, 2), (WINDOW_FIRST, u32::MAX)] {
+    for (first, count) in [(511, 2), (u32::MAX, 2), (WINDOW_FIRST, u32::MAX)] {
         assert!(
             matches!(
                 AddressSpaceKey::from_key(bounce_as_key).create_invocation_with_window(

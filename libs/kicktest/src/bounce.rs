@@ -35,7 +35,7 @@ use {
 /// The guard of the tables the suites carve at runtime (Bounce's among them):
 /// distinct from the boot table's guard so cross-table key confusion is
 /// exercised. Fits the 24 guard bits of a 256-entry table's address.
-pub const TEST_TABLE_GUARD: u32 = 0xFEE_D42;
+pub const TEST_TABLE_GUARD: u32 = 0x6E_ED42;
 
 /// The slot half of a key in one of the runtime-carved test tables.
 pub fn test_slot(index: u32) -> KeySlot {
@@ -253,7 +253,7 @@ pub fn provision(
         .untyped
         .retype(
             ObjectType::KEY_TABLE,
-            8,
+            BOOT_TABLE_SIZE_BITS,
             TEST_TABLE_GUARD,
             1,
             self_table,

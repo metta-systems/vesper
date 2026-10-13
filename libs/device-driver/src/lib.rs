@@ -106,6 +106,14 @@ pub const STACK_REGION: u64 = 0x3000_0000;
 /// installed, so only Frames need mapping there.
 pub const DEVICE_WINDOW_VA: u64 = 0x3800_0000;
 
+/// Where a component that imports `fb_v1` maps the framebuffer's Frames
+/// ([`FbWindow`]): `FB_WINDOW_SPANS` consecutive 2 MiB spans.
+pub const FB_WINDOW_VA: u64 = 0x3e00_0000;
+
+/// Spans of 2 MiB in the framebuffer window, and so the spare page tables a
+/// component receives: a 1024x768 framebuffer at any alignment touches three.
+pub const FB_WINDOW_SPANS: usize = 4;
+
 /// Most register ranges of one node.
 pub const MAX_REGIONS: usize = 4;
 /// Most register pages of one node.
@@ -262,10 +270,29 @@ pub struct DriverInit {
     /// The keys of the serial channel Kickstart attached the component to, if
     /// its manifest entry says `serial = true`
     pub serial: SerialKeys,
+    /// What the component needs to map a framebuffer, if it imports `fb_v1`
+    pub fb_window: FbWindow,
     pub resource_count: u64,
     /// The bundled resources mapped read-only in the component, in the order
     /// its manifest entry names them (`resources = [...]`)
     pub resources: [ResourceRecord; MAX_RESOURCES],
+}
+
+/// The page tables Kickstart provisions for mapping a framebuffer at
+/// [`FB_WINDOW_VA`].
+///
+/// A 2 MiB Frame maps as a block in the second-level table, a 4 KiB Frame
+/// needs a last-level table below it; which spans need which depends on where
+/// the firmware puts the framebuffer, so the tables come uninstalled, to be
+/// installed (`PageTable.Map` into `l2`) for the spans that hold 4 KiB Frames.
+/// All keys are zero when the component imports no `fb_v1`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FbWindow {
+    /// The second-level `PageTable` of the component's `AddressSpace`
+    pub l2: u64,
+    /// Uninstalled last-level `PageTable`s
+    pub tables: [u64; FB_WINDOW_SPANS],
 }
 
 /// Where one bundled resource is mapped, read-only.
@@ -334,6 +361,10 @@ impl DriverInit {
             transmit_submitted: 0,
             transmit_completed: 0,
             receive_completed: 0,
+        },
+        fb_window: FbWindow {
+            l2: 0,
+            tables: [0; FB_WINDOW_SPANS],
         },
         resource_count: 0,
         resources: [ResourceRecord { base: 0, len: 0 }; MAX_RESOURCES],

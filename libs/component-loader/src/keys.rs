@@ -7,16 +7,17 @@
 
 use libobject::{KeySlot, RawKey};
 
-/// The boot Thread's `KeyTable` capacity exponent: 256 entries (the historical
-/// fixed size; the well-known bootstrap slots and the boot test's Retype
-/// destinations fit comfortably).
-pub const BOOT_TABLE_SIZE_BITS: u8 = 8;
+/// The boot Thread's `KeyTable` capacity exponent: 512 entries, for the
+/// well-known bootstrap slots, the boot test's Retype destinations and the
+/// slots Kickstart takes while loading every driver and program (it never
+/// reuses a deleted one).
+pub const BOOT_TABLE_SIZE_BITS: u8 = 9;
 
 /// The boot table's guard (guarded key-space package, selected 2026-09-23):
 /// Kickstart picks a nonzero value so every hand-constructed boot key
-/// exercises the guard machinery. It fits the 24 guard bits of a 256-entry
-/// table's table-relative address.
-pub const BOOT_TABLE_GUARD: u32 = 0xC0F_FEE;
+/// exercises the guard machinery. It fits the 23 guard bits left in a
+/// 512-entry table's table-relative address.
+pub const BOOT_TABLE_GUARD: u32 = 0x40_FFEE;
 
 /// The slot half of a key in a table with `guard` (the guard packed above
 /// the bare `index`).

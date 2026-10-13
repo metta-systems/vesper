@@ -1662,9 +1662,11 @@ dependencies = [
 name = "shell"
 version = "0.0.1"
 dependencies = [
+ "fb-client",
  "mailbox-client",
  "power-client",
  "vesper-device-driver",
+ "vesper-graphics",
  "vesper-io-channel",
  "vesper-meddle-runtime",
  "vesper-objects",
@@ -2118,6 +2120,10 @@ dependencies = [
  "vesper-qemu",
  "vesper-tests",
 ]
+
+[[package]]
+name = "vesper-graphics"
+version = "0.0.1"
 
 [[package]]
 name = "vesper-image"

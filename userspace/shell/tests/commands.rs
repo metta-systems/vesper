@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     use shell::{
-        Board, Command, Console, Edit, Failure, Font, HELP, LINE_BYTES, LineEditor, Outcome,
-        execute, parse, print_number,
+        Board, Command, Console, Edit, Failure, HELP, LINE_BYTES, LineEditor, Outcome, execute,
+        parse, print_number,
     };
 
     #[derive(Default)]
@@ -224,22 +224,5 @@ mod tests {
             print_number(&mut screen, value);
             assert_eq!(screen.0, text);
         }
-    }
-
-    #[test]
-    fn bundled_font_has_every_printable_glyph() {
-        let bytes = include_bytes!("../../../kernel/kickstart/resources/font8x8.bin");
-        let font = Font::new(bytes).expect("whole glyphs");
-        assert_eq!(font.glyph_count(), 95);
-        assert_eq!(font.glyph(b' '), Some(&[0; 8]));
-        // `!`: a stem and a dot.
-        assert_eq!(
-            font.glyph(b'!'),
-            Some(&[0x18, 0x3c, 0x3c, 0x18, 0x18, 0x00, 0x18, 0x00])
-        );
-        assert!(font.glyph(b'~').is_some());
-        assert_eq!(font.glyph(0x7f), None);
-        assert_eq!(font.glyph(0x1f), None);
-        assert!(Font::new(&[0; 7]).is_none());
     }
 }

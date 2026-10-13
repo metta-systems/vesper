@@ -28,7 +28,7 @@ use {
 /// The guard for the tables this suite carves at runtime: distinct from the
 /// boot table's guard so cross-table key confusion is exercised. Fits the 24
 /// guard bits of a 256-entry table's table-relative address.
-const TEST_TABLE_GUARD: u32 = 0xFEE_D42;
+const TEST_TABLE_GUARD: u32 = 0x6E_ED42;
 
 /// The slot half of a key in one of the suite's runtime-carved tables.
 fn test_slot(index: u32) -> KeySlot {
@@ -137,7 +137,7 @@ pub fn run() {
     let new_table_key = untyped
         .retype(
             ObjectType::KEY_TABLE,
-            8,
+            BOOT_TABLE_SIZE_BITS,
             TEST_TABLE_GUARD,
             1,
             &self_table,
@@ -176,7 +176,7 @@ pub fn run() {
     assert!(matches!(
         untyped.retype(
             ObjectType::KEY_TABLE,
-            8,
+            BOOT_TABLE_SIZE_BITS,
             TEST_TABLE_GUARD,
             1,
             &self_table,
@@ -191,7 +191,7 @@ pub fn run() {
     assert!(matches!(
         untyped.retype(
             ObjectType::KEY_TABLE,
-            8,
+            BOOT_TABLE_SIZE_BITS,
             TEST_TABLE_GUARD,
             u32::MAX,
             &self_table,
@@ -221,7 +221,7 @@ pub fn run() {
     let second_table_key = untyped
         .retype(
             ObjectType::KEY_TABLE,
-            8,
+            BOOT_TABLE_SIZE_BITS,
             TEST_TABLE_GUARD,
             1,
             &self_table,
@@ -560,8 +560,9 @@ pub fn run() {
     assert_ne!(misaligned_base % align, 0, "fixture must be misaligned");
     // Include worst-case alignment padding as well as the complete table;
     // this fixture must follow the actual entry stride, not a 16 KiB guess.
-    let misaligned_region_bytes =
-        (KeyTable::carve_size(8) + usize::try_from(align - 1).unwrap()).next_power_of_two();
+    let misaligned_region_bytes = (KeyTable::carve_size(BOOT_TABLE_SIZE_BITS)
+        + usize::try_from(align - 1).unwrap())
+    .next_power_of_two();
     let misaligned_region_bits = u8::try_from(misaligned_region_bytes.trailing_zeros()).unwrap();
     let misaligned_untyped_key = {
         // SAFETY: see above.
@@ -582,7 +583,7 @@ pub fn run() {
     let carved_key = UntypedKey::from_key(misaligned_untyped_key)
         .retype(
             ObjectType::KEY_TABLE,
-            8,
+            BOOT_TABLE_SIZE_BITS,
             TEST_TABLE_GUARD,
             1,
             &self_table,

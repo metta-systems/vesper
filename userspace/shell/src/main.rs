@@ -1,6 +1,8 @@
 // Host builds only check the command interpreter; the program itself runs on
 // Vesper.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
+// libqemu's semihosting `println!` (the lamp's progress under QEMU) expands to it.
+#![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! The shell: a command prompt on the serial console.
 //!
@@ -13,9 +15,13 @@
 //! power component (resetting the board) and, later, the display.
 
 #[cfg(target_os = "vesper")]
+mod display;
+
+#[cfg(target_os = "vesper")]
 mod program {
     use {
-        libdevice_driver::driver_init,
+        fb_client::fb_v1::{Bindings as FbBindings, Client as FbClient},
+        libdevice_driver::{DriverInit, driver_init},
         libio_channel::{Consumer, IoRec, NoEvent, Packet, Producer},
         libmeddle_runtime::ExclusiveStacks,
         libobject::{EventCountKey, RawKey},
@@ -55,7 +61,6 @@ mod program {
     /// `Failure::status` of a service the shell has no binding for, or does
     /// not provide yet.
     const NOT_GRANTED: u64 = 0x3000;
-    const NOT_PROVIDED: u64 = 0x3001;
 
     /// The console: the serial channel's two directions.
     struct SerialConsole {
@@ -189,6 +194,8 @@ mod program {
     /// What the commands act on: the components the shell imports from.
     struct Services {
         mailbox: MailboxClient,
+        fb: FbClient,
+        init: &'static DriverInit,
         /// Resets the board; under QEMU `end` exits it instead.
         #[cfg_attr(feature = "qemu", allow(dead_code))]
         power: PowerClient,
@@ -229,10 +236,7 @@ mod program {
         }
 
         fn draw(&mut self) -> Result<(), Failure> {
-            Err(Failure {
-                status: NOT_PROVIDED,
-                detail: 0,
-            })
+            crate::display::draw(self.init, &self.fb)
         }
     }
 
@@ -256,6 +260,13 @@ mod program {
         let init = unsafe { driver_init(init_va) };
         let mut console = SerialConsole::new(init);
         let mut services = Services {
+            fb: FbClient::new(
+                FbBindings::from_imports(init.imports()),
+                // SAFETY: the shell's first Thread alone calls through its
+                // imports; the drawing Thread calls nothing.
+                unsafe { ExclusiveStacks::new() },
+            ),
+            init,
             mailbox: MailboxClient::new(
                 MailboxBindings::from_imports(init.imports()),
                 // SAFETY: the shell's one Thread calls through its imports.
@@ -269,7 +280,7 @@ mod program {
         };
 
         console.print("Vesper shell, type 'help'\r\n");
-        let font = init.resource(0).and_then(shell::Font::new);
+        let font = init.resource(0).and_then(libgraphics::Font::new);
         console.print(match font {
             Some(_) => "font: 95 glyphs mapped\r\n",
             None => "font: missing\r\n",

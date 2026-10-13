@@ -9,42 +9,6 @@
 //! calls into the mailbox, power and fb components, and print through a
 //! [`Console`], which it implements on the serial channel.
 
-/// The console font resource: 8x8 glyphs for the characters from space to `~`,
-/// 8 bytes each, top row first, bit 0 the leftmost pixel.
-#[derive(Clone, Copy, Debug)]
-pub struct Font<'data> {
-    data: &'data [u8],
-}
-
-impl<'data> Font<'data> {
-    /// Bytes of one glyph.
-    pub const GLYPH_BYTES: usize = 8;
-    /// The first character the font has.
-    pub const FIRST: u8 = b' ';
-
-    /// The font held in `data`, if it is a whole number of glyphs.
-    pub const fn new(data: &'data [u8]) -> Option<Self> {
-        if data.is_empty() || !data.len().is_multiple_of(Self::GLYPH_BYTES) {
-            None
-        } else {
-            Some(Self { data })
-        }
-    }
-
-    /// How many glyphs the font has.
-    pub const fn glyph_count(&self) -> usize {
-        self.data.len() / Self::GLYPH_BYTES
-    }
-
-    /// The rows of the glyph for `character`, if the font has it.
-    pub fn glyph(&self, character: u8) -> Option<&'data [u8; 8]> {
-        let index = usize::from(character.checked_sub(Self::FIRST)?);
-        self.data
-            .get(index * Self::GLYPH_BYTES..)?
-            .first_chunk::<8>()
-    }
-}
-
 /// Longest command line, in bytes; more are ignored until the line ends.
 pub const LINE_BYTES: usize = 64;
 
@@ -199,7 +163,7 @@ pub trait Board {
     /// Switch the activity LED.
     fn set_led(&mut self, on: bool) -> Result<(), Failure>;
 
-    /// Draw the demo graphics.
+    /// Paint the static graphics and start the lava blobs.
     fn draw(&mut self) -> Result<(), Failure>;
 }
 
@@ -216,7 +180,7 @@ pub const HELP: &[&str] = &[
     "Supported console commands:",
     "  help          - print this help",
     "  led [on|off]  - change RPi LED status",
-    "  draw          - draw some graphics on the display",
+    "  draw          - draw some graphics and lava blobs on the display",
     "  end           - leave console and reset board",
 ];
 
