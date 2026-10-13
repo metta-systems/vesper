@@ -154,8 +154,6 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
   - [ ] Grow the `property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
   - [ ] Delete the old files whose modules are already gone: `libs/platform/src/raspberrypi/{fb,vc}.rs` and `libs/platform/src/raspberrypi/device_driver/bcm/{power,mailbox,mailbox_refactor}.rs`.
   - [ ] Port the rest of the old `Power::off`: the GPIO pin power-down before the halt (no GPIO component exists yet).
-- [ ] The shell (`userspace/shell/`, contract: The shell and loading components), in this order:
-  - [ ] Write-combining mappings for device Frames (waits for the decision in the decisions file).
 - [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (`property` runs to completion on the caller's Thread today).
 
 ## Phase 7 — Time and userspace scheduling

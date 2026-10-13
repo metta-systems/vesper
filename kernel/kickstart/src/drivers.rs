@@ -547,7 +547,7 @@ fn share_data_area(
                 second_participant.address_space_key,
                 base + u64::from(page) * PAGE,
                 rights,
-                0,
+                libobject::FrameAttribute::Default,
             )
             .unwrap_or_else(|error| panic!("🥾 data area Frame.Map failed: {:?}", error.code()));
     }

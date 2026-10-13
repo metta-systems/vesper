@@ -16,6 +16,87 @@ mod tests;
 // == Public user interface, usable from userspace ==
 // ==================================================
 
+/// The memory attribute of a Frame mapping (`Frame.Map`'s `x5`), and the code
+/// of a device Frame's ceiling (`Untyped.Retype`'s `x3` bits 15:8).
+///
+/// The four hardware attributes are ordered by how much freedom the hardware
+/// gets, strictest first: `DeviceStrict` < `DevicePosted` < `WriteCombining`
+/// < `Cacheable`. [`Self::Default`] stands for the Frame's own default and is
+/// not an attribute of its own.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FrameAttribute {
+    /// The Frame's default: `Cacheable` for RAM, `DeviceStrict` for device
+    /// memory. As a ceiling code: inherit the source's.
+    Default = 0,
+    /// Normal memory, write-back cacheable (MAIR index 0)
+    Cacheable = 1,
+    /// Normal memory, non-cacheable: writes may be merged and buffered
+    /// (MAIR index 1)
+    WriteCombining = 2,
+    /// Device-nGnRE: no gathering or reordering, early write acknowledgement
+    /// (MAIR index 2)
+    DevicePosted = 3,
+    /// Device-nGnRnE: no gathering, reordering or early acknowledgement
+    /// (MAIR index 3)
+    DeviceStrict = 4,
+}
+
+impl FrameAttribute {
+    /// The attribute for a wire `code`, if defined.
+    pub const fn from_code(code: u64) -> Option<Self> {
+        match code {
+            0 => Some(Self::Default),
+            1 => Some(Self::Cacheable),
+            2 => Some(Self::WriteCombining),
+            3 => Some(Self::DevicePosted),
+            4 => Some(Self::DeviceStrict),
+            _ => None,
+        }
+    }
+
+    /// The wire code.
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+
+    /// How much freedom the hardware gets under the attribute: 0 for
+    /// `DeviceStrict` up to 3 for `Cacheable`; none for [`Self::Default`].
+    pub const fn freedom(self) -> Option<u8> {
+        match self {
+            Self::Default => None,
+            Self::DeviceStrict => Some(0),
+            Self::DevicePosted => Some(1),
+            Self::WriteCombining => Some(2),
+            Self::Cacheable => Some(3),
+        }
+    }
+
+    /// The index into `MAIR_EL1` the attribute's mappings use; none for
+    /// [`Self::Default`].
+    pub const fn mair_index(self) -> Option<u8> {
+        match self {
+            Self::Default => None,
+            Self::Cacheable => Some(0),
+            Self::WriteCombining => Some(1),
+            Self::DevicePosted => Some(2),
+            Self::DeviceStrict => Some(3),
+        }
+    }
+
+    /// Whether a device Frame with `ceiling` may be mapped with `self`: not
+    /// looser than the ceiling. `Cacheable` is never allowed for a device
+    /// Frame, and [`Self::Default`] is not an attribute to compare.
+    pub const fn within_device_ceiling(self, ceiling: Self) -> bool {
+        match (self.freedom(), ceiling.freedom()) {
+            (Some(requested), Some(allowed)) => {
+                requested <= allowed && !matches!(self, Self::Cacheable)
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Userspace handle to a Frame capability.
 ///
 /// Nucleus dispatch supports `Map`, `Unmap`, `GetAddress` and the four cache
@@ -98,17 +179,16 @@ impl FrameKey {
     /// Map this frame into the target Domain's translation context at `vaddr`.
     ///
     /// Wire schema (selected 2026-09-15): `x2` target `Domain` key, `x3` virtual
-    /// address, `x4` requested rights, `x5` attributes (zero = normal
-    /// write-back cacheable; other values rejected), `x6..x7` zero. The
-    /// requested rights must be a subset of the frame capability's rights;
-    /// execute is not grantable yet. The walk requires every intermediate page
-    /// table to be present.
+    /// address, `x4` requested rights, `x5` the memory [`FrameAttribute`],
+    /// `x6..x7` zero. The requested rights must be a subset of the frame
+    /// capability's rights, and the attribute within the Frame's ceiling. The
+    /// walk requires every intermediate page table to be present.
     pub fn map(
         &self,
         domain: RawKey,
         vaddr: u64,
         rights: Rights,
-        attrs: u64,
+        attribute: FrameAttribute,
     ) -> Result<(), CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
         let result = unsafe {
@@ -118,7 +198,7 @@ impl FrameKey {
                 domain.to_wire(),
                 vaddr,
                 u64::from(rights.bits()),
-                attrs,
+                u64::from(attribute.code()),
                 0,
                 0,
             )

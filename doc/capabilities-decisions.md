@@ -118,16 +118,6 @@ Unanswered questions before implementing the scheduler record ABI:
   needs. (B) a register-inline operation, e.g. a length plus up to 40 bytes in
   `x3..x7` with client chunking, so the nucleus never reads user memory. Until
   this is decided the console stays a debug-only prototype.
-- **Write-combining mappings for device Frames (D6):** the framebuffer's
-  Frames are device Frames, which map as Device-nGnRnE: slow, and an unaligned
-  access faults. The maintainer wants an option to map them with write-combining
-  (Normal non-cacheable) attributes, either as a separate maintenance operation
-  or as part of `Frame.Map`. Open: which of the two; how the attribute word
-  (`x5` of `Frame.Map`, accepted as zero only today) encodes it; whether it is
-  gated by a Frame right; what an EL0 component must do to make its writes
-  visible (barriers, cache maintenance) and how that relates to the Frame cache
-  maintenance operations; and which Frames may be mapped this way (device Frames
-  only, or RAM too).
 
 ## Future work
 
@@ -179,3 +169,9 @@ needs them.
 - **Per-client mailbox policy:** `mailbox_v1.property` applies one fixed tag whitelist to every client. Different rules per client (for example clock and power setters for `cprman` only, memory tags for `vcsm`) need caller identity through Invocation badges (D4), which would also replace identifying the caller by its exporter stack.
 - **Count ranges on CopyDerive and Move:** an optional count that copies or moves a run of consecutive slots in one operation, like NOVA's `ctrl_pd` selector order. The framebuffer hand-off needs only two to four 2 MiB Frames, so single-slot CopyDerive is enough today; ranges would matter for hand-offs of hundreds of small Frames.
 - **Keys in call results:** letting `Thread.Return` carry a key back to the caller, and letting `CallWithKey` lend more than one key. Today a call lends one key and results carry data only.
+- **Resources named in `uses`:** declare the boot-image resources a component
+  maps in its `imports.if` as `uses resource font;`, in place of the
+  `resources = [...]` list of its manifest entry. Meddle's `uses` parser, AST
+  and summary would carry the resource names (their order stays the index in
+  `DriverInit::resources`), and image-build would read them from the imports
+  file. Today the manifest list does the job.

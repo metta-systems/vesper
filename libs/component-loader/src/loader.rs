@@ -184,7 +184,7 @@ impl Builder<'_> {
                         component.address_space_key,
                         segment.meta.virt_addr + index * PAGE,
                         rights,
-                        0,
+                        libobject::FrameAttribute::Default,
                     )
                     .unwrap_or_else(|error| {
                         panic!(

@@ -161,7 +161,12 @@ impl Provisioner<'_> {
                     .write_volatile(marker);
             }
             FrameKey::from_key(key)
-                .map(target, PROBE_VA, Rights(Rights::READ | Rights::WRITE), 0)
+                .map(
+                    target,
+                    PROBE_VA,
+                    Rights(Rights::READ | Rights::WRITE),
+                    libobject::FrameAttribute::Default,
+                )
                 .unwrap_or_else(|error| panic!("probe Frame.Map failed: {:?}", error.code()));
         }
         assert_ne!(physical[0], physical[1]);

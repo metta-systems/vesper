@@ -52,8 +52,10 @@ pub mod flags {
     pub const NG: u64 = 1 << 11;
 
     // Memory attributes index
+    // The `MAIR_EL1` layout (see `el_switch`): 0 write-back, 1 write-combining,
+    // 2 Device-nGnRE, 3 Device-nGnRnE.
     pub const ATTR_NORMAL: u64 = 0 << 2;
-    pub const ATTR_DEVICE: u64 = 1 << 2;
+    pub const ATTR_DEVICE_STRICT: u64 = 3 << 2;
 
     // Execute never
     pub const PXN: u64 = 1 << 53;
@@ -452,7 +454,7 @@ pub fn create_device_mapping(
         let pa = phys.as_u64() + offset;
 
         // Use device memory attributes
-        let pte_flags = pte_flags(perms) | flags::ATTR_DEVICE;
+        let pte_flags = pte_flags(perms) | flags::ATTR_DEVICE_STRICT;
         // PageFlags::KERNEL_RW | PageFlags::DEVICE_nGnRnE,
         setup.map_page_with_flags(
             Ttbr::Ttbr1,

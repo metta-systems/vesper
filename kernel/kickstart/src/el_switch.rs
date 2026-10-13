@@ -90,12 +90,6 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     execution_stack_pointer: u64,
     trap_stack_pointer: u64,
 ) -> ! {
-    // MAIR: Memory Attribute Indirection Register
-    // Index 0: Normal memory, Write-Back, Read/Write Allocate
-    // Index 1: Device-nGnRnE memory
-    #[expect(clippy::identity_op)]
-    let mair: u64 = 0xFF | (0x00 << 8);
-
     // ═══════════════════════════════════════════════════════════
     // STEP 1: Configure EL2 to allow EL1 operation
     // ═══════════════════════════════════════════════════════════
@@ -133,7 +127,21 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     // STEP 3: Configure EL1 MMU settings
     // ═══════════════════════════════════════════════════════════
 
-    MAIR_EL1.set(mair);
+    // MAIR: Memory Attribute Indirection Register. The layout is shared with
+    // the nucleus's descriptors (`FrameAttribute::mair_index`) and Kickstart's
+    // own mappings, loosest first:
+    //   0: Normal, write-back cacheable (Frame attribute `Cacheable`)
+    //   1: Normal, non-cacheable (`WriteCombining`)
+    //   2: Device-nGnRE (`DevicePosted`)
+    //   3: Device-nGnRnE (`DeviceStrict`)
+    MAIR_EL1.write(
+        MAIR_EL1::Attr0_Normal_Outer::WriteBack_NonTransient_ReadWriteAlloc
+            + MAIR_EL1::Attr0_Normal_Inner::WriteBack_NonTransient_ReadWriteAlloc
+            + MAIR_EL1::Attr1_Normal_Outer::NonCacheable
+            + MAIR_EL1::Attr1_Normal_Inner::NonCacheable
+            + MAIR_EL1::Attr2_Device::nonGathering_nonReordering_EarlyWriteAck
+            + MAIR_EL1::Attr3_Device::nonGathering_nonReordering_noEarlyWriteAck,
+    );
 
     TCR_EL1.write(
         TCR_EL1::TBI0::Ignored // Top byte ignored, can be used for tagging.

@@ -55,7 +55,9 @@ use {
         },
     },
     libaddress::PhysAddr,
-    libobject::{ArchType, CapError, KeySlot, ObjectType, RawKey, Rights, UntypedOp},
+    libobject::{
+        ArchType, CapError, FrameAttribute, KeySlot, ObjectType, RawKey, Rights, UntypedOp,
+    },
     libqemu::semihosting as semi,
 };
 
@@ -147,20 +149,36 @@ fn retype<A: ArchObjects>(
     // userspace-chosen table guard is packed in bits 39:8 above it (selected
     // 2026-09-23); bits 63:40 are reserved zero. Every other kind requires
     // bits 63:8 zero (the strict zero convention).
-    let (size_bits, table_guard) = if kind == ObjectType::KEY_TABLE {
+    let (size_bits, table_guard, ceiling_request) = if kind == ObjectType::KEY_TABLE {
         let size_bits = u8::try_from(args[1] & 0xFF)
             .ok()
             .ok_or(CapError::InvalidOperation)?;
         let guard_word = args[1] >> 8;
         let guard = u32::try_from(guard_word)
             .map_err(|_bits_63_40_set| CapError::InvalidSize(usize::from(size_bits)))?;
-        (size_bits, guard)
+        (size_bits, guard, FrameAttribute::Default)
+    } else if kind == ObjectType::FRAME || kind == ObjectType::UNTYPED {
+        // Bits 15:8 hold the memory-attribute ceiling code of the objects
+        // created (`Default`: inherit the source's); bits 63:16 are reserved.
+        if args[1] >> 16 != 0 {
+            return Err(CapError::InvalidOperation);
+        }
+        let ceiling =
+            FrameAttribute::from_code((args[1] >> 8) & 0xFF).ok_or(CapError::InvalidOperation)?;
+        (
+            u8::try_from(args[1] & 0xFF)
+                .ok()
+                .ok_or(CapError::InvalidOperation)?,
+            0,
+            ceiling,
+        )
     } else {
         (
             u8::try_from(args[1])
                 .ok()
                 .ok_or(CapError::InvalidOperation)?,
             0,
+            FrameAttribute::Default,
         )
     };
     let count = u32::try_from(args[2])
@@ -280,6 +298,19 @@ fn retype<A: ArchObjects>(
             return Err(CapError::InsufficientRights);
         }
         (*untyped.as_untyped()?, dst_cap)
+    };
+
+    // The memory-attribute ceiling of the Frames and child Untypeds created:
+    // the source's, or a lower one the caller asks for. RAM has no ceiling (its
+    // Frames map `Cacheable` only), and a ceiling never rises: a request
+    // looser than the source's, `Cacheable`, or any request on a RAM source is
+    // refused before anything is reserved.
+    let ceiling = if ceiling_request == FrameAttribute::Default {
+        untyped.ceiling()
+    } else if untyped.is_device && ceiling_request.within_device_ceiling(untyped.ceiling()) {
+        ceiling_request
+    } else {
+        return Err(CapError::InvalidOperation);
     };
 
     // Phase 2 — reserve: validate the region extent, align the absolute
@@ -402,7 +433,11 @@ fn retype<A: ArchObjects>(
                         core::ptr::write_bytes(addr, 0, bytes);
                     };
                 }
-                KeyEntry::new_frame(paddr, size_bits, untyped.is_device, requested)
+                if untyped.is_device {
+                    KeyEntry::new_device_frame(paddr, size_bits, ceiling, requested)
+                } else {
+                    KeyEntry::new_frame(paddr, size_bits, false, requested)
+                }
             }
             Carve::PageTable { bytes } => {
                 // Sanitization: a zeroed table so stale descriptors can never
@@ -454,7 +489,11 @@ fn retype<A: ArchObjects>(
                 // representable by construction — it fits inside the
                 // source's checked extent — and its watermark starts at
                 // zero. `is_device` propagates from the source.
-                KeyEntry::new_untyped(paddr, size_bits, untyped.is_device, requested)
+                if untyped.is_device {
+                    KeyEntry::new_device_untyped(paddr, size_bits, ceiling, requested)
+                } else {
+                    KeyEntry::new_untyped(paddr, size_bits, false, requested)
+                }
             }
         };
         match dst_table.insert(slot, entry, dst_cap.guard) {

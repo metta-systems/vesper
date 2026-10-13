@@ -465,7 +465,7 @@ pub fn map_device_pages(init: &DriverInit) -> Result<u64, CapError> {
             address_space,
             device_page_va(index),
             Rights(Rights::READ | Rights::WRITE),
-            0,
+            libobject::FrameAttribute::Default,
         )?;
     }
     Ok(slot)

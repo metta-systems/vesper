@@ -1,5 +1,5 @@
 use {
-    super::UntypedKey,
+    super::{FrameAttribute, UntypedKey},
     std::cell::Cell,
     vesper_objects::{CapError, KeySlot, ObjectType, RawKey, Rights},
 };
@@ -89,6 +89,40 @@ fn retype_preserves_request_encoding_and_accepts_success() {
             .map_err(CapError::code),
         Ok(0xfedc_ba98_ffff_fffc)
     );
+}
+
+#[test]
+fn retype_with_ceiling_packs_the_ceiling_code_above_size_bits() {
+    let untyped_key = RawKey::new(KeySlot(4), 0x89ab_cdef);
+    let table_key = RawKey::new(KeySlot(9), 0x1357_9bdf);
+    let untyped = UntypedKey::from_key(untyped_key);
+    let table = vesper_objects::KeyTableKey::from_key(table_key);
+    for (ceiling, code) in [
+        (FrameAttribute::Default, 0),
+        (FrameAttribute::WriteCombining, 2),
+        (FrameAttribute::DevicePosted, 3),
+        (FrameAttribute::DeviceStrict, 4),
+    ] {
+        RESPONSE.with(|pending| assert!(pending.replace(Some((0, 0x11, 0))).is_none()));
+        let result = untyped.retype_with_ceiling(
+            ObjectType::FRAME,
+            21,
+            ceiling,
+            1,
+            &table,
+            5,
+            Rights(Rights::READ | Rights::WRITE),
+        );
+        assert_eq!(
+            result.map(|key| key.to_wire()).map_err(CapError::code),
+            Ok(0x11)
+        );
+        REQUEST.with(|request| {
+            let (_, _, args, _) = request.take().expect("one request");
+            assert_eq!(args[0], u64::from(ObjectType::FRAME.as_u8()));
+            assert_eq!(args[1], (code << 8) | 21, "{ceiling:?}");
+        });
+    }
 }
 
 #[test]

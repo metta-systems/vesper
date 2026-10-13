@@ -140,7 +140,12 @@ impl Builder<'_> {
     ) {
         for index in 0..count {
             FrameKey::from_key(boot_key(first + index, incarnation))
-                .map(target, vaddr + u64::from(index) * PAGE, rights, 0)
+                .map(
+                    target,
+                    vaddr + u64::from(index) * PAGE,
+                    rights,
+                    libobject::FrameAttribute::Default,
+                )
                 .unwrap_or_else(|error| panic!("boot Frame.Map failed: {:?}", error.code()));
         }
     }
@@ -379,7 +384,12 @@ impl Builder<'_> {
     ) -> u32 {
         let target_id = self.object_id(target.address_space);
         FrameKey::from_key(frame)
-            .map(target.address_space, paddr, rights, 0)
+            .map(
+                target.address_space,
+                paddr,
+                rights,
+                libobject::FrameAttribute::Default,
+            )
             .unwrap_or_else(|error| {
                 panic!(
                     "retained Frame.Map at {paddr:#x} failed: {:?}",

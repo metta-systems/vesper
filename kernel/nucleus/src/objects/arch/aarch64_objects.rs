@@ -9,7 +9,7 @@ use {
         key_table::KeyTableBinding,
     },
     libaddress::PhysAddr,
-    libobject::{ArchType, CapError, ObjectType},
+    libobject::{ArchType, CapError, FrameAttribute, ObjectType},
     tock_registers::{LocalRegisterCopy, register_bitfields},
 };
 
@@ -289,7 +289,7 @@ impl ArchObjects for AArch64 {
         size_bits: u8,
         writable: bool,
         executable: bool,
-        device: bool,
+        attribute: FrameAttribute,
     ) -> Result<(), CapError> {
         super::page_table::install_frame_pte(
             root_paddr,
@@ -298,7 +298,7 @@ impl ArchObjects for AArch64 {
             size_bits,
             writable,
             executable,
-            device,
+            attribute,
         )
     }
 

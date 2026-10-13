@@ -50,6 +50,7 @@ pub mod mair {
         pub const NORMAL: u64 = 0;
         pub const NORMAL_NON_CACHEABLE: u64 = 1;
         pub const DEVICE_NGNRE: u64 = 2;
+        pub const DEVICE_NGNRNE: u64 = 3;
     }
 }
 
@@ -61,8 +62,10 @@ impl MemoryManagementUnit {
     fn set_up_mair(&self) {
         use aarch64_cpu::registers::MAIR_EL1;
         MAIR_EL1.write(
-            // Attribute 2 -- Device Memory
-            MAIR_EL1::Attr2_Device::nonGathering_nonReordering_EarlyWriteAck
+            // Attribute 3 -- Device Memory, strictest (no early write ack)
+            MAIR_EL1::Attr3_Device::nonGathering_nonReordering_noEarlyWriteAck
+                // Attribute 2 -- Device Memory
+                + MAIR_EL1::Attr2_Device::nonGathering_nonReordering_EarlyWriteAck
                 // Attribute 1 -- Non Cacheable DRAM
                 + MAIR_EL1::Attr1_Normal_Outer::NonCacheable
                 + MAIR_EL1::Attr1_Normal_Inner::NonCacheable

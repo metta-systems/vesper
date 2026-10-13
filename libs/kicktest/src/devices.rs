@@ -1,7 +1,7 @@
 //! Checks on the device Untypeds Kickstart hands out.
 
 use {
-    kickstart::bootstrap::{device_untypeds, kernel_owned_device_ranges},
+    kickstart::bootstrap::{device_untypeds, kernel_owned_device_ranges, video_untypeds},
     libcomponent_loader::keys::{BOOT_TABLE_GUARD, boot_key},
     libobject::RawKey,
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
@@ -30,6 +30,19 @@ pub fn device_untyped_extents(keytable_addr: u64) -> impl Iterator<Item = (RawKe
         assert!(region.is_device, "slot {slot} is not device memory");
         (key, region.paddr, region.paddr + (1 << region.size_bits))
     })
+}
+
+/// The first boot-table key of the `VideoCore` memory Untypeds (Kickstart sets
+/// their Frames' attribute ceiling to write-combining), if the board has any.
+pub fn first_video_untyped() -> Option<RawKey> {
+    let range = video_untypeds();
+    (range.count > 0).then(|| boot_key(range.first_slot, 1))
+}
+
+/// Whether `key` names one of the `VideoCore` memory Untypeds.
+pub fn is_video_untyped(key: RawKey) -> bool {
+    let range = video_untypeds();
+    (range.first_slot..range.first_slot + range.count).any(|slot| boot_key(slot, 1) == key)
 }
 
 /// No device Untyped covers a page of a kernel-owned range or of the ARM

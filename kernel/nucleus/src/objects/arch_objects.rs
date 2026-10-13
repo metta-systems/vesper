@@ -7,7 +7,7 @@ use {
         },
     },
     libaddress::PhysAddr,
-    libobject::{ArchType, CapError, ObjectType},
+    libobject::{ArchType, CapError, FrameAttribute, ObjectType},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -248,8 +248,9 @@ pub trait ArchObjects: Sized + 'static {
     /// versus read-only; `executable` (the `EXECUTE` right — without it every
     /// mapping stays UXN|PXN) makes the mapping executable at one exception
     /// level: a writable executable mapping at EL1 only (EL0 denied, UXN),
-    /// a read-only executable mapping at EL0 only (PXN). `device` maps the
-    /// frame as device memory (the caller rejects `executable` with it).
+    /// a read-only executable mapping at EL0 only (PXN). `attribute` is the
+    /// resolved memory attribute (never [`FrameAttribute::Default`]); every
+    /// attribute but `Cacheable` is never executable, whatever was requested.
     fn install_frame_pte(
         root_paddr: u64,
         vaddr: u64,
@@ -257,7 +258,7 @@ pub trait ArchObjects: Sized + 'static {
         size_bits: u8,
         writable: bool,
         executable: bool,
-        device: bool,
+        attribute: FrameAttribute,
     ) -> Result<(), CapError>;
 
     /// Clear the frame mapping descriptor at `vaddr`, verifying it still

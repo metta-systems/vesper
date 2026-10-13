@@ -99,7 +99,7 @@ mod component {
                 address_space,
                 address,
                 Rights(Rights::READ | Rights::WRITE),
-                0,
+                libobject::FrameAttribute::Default,
             )
         };
         match map(CONTROL_FRAME_SLOT, CONTROL_VA) {

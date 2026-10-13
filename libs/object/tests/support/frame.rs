@@ -1,5 +1,5 @@
 use {
-    super::FrameKey,
+    super::{FrameAttribute, FrameKey},
     std::cell::Cell,
     vesper_objects::{CapError, KeySlot, RawKey, Rights},
 };
@@ -35,11 +35,19 @@ pub(super) unsafe fn protected_call6(
 /// Issue `FrameKey::map` with the recorded key and return the captured
 /// request, or the kernel error decoded from `response`.
 pub(super) fn invoke_map(response: Response) -> Result<Request, CapError> {
+    invoke_map_with(response, FrameAttribute::Default)
+}
+
+/// Issue `FrameKey::map` with `attribute`.
+pub(super) fn invoke_map_with(
+    response: Response,
+    attribute: FrameAttribute,
+) -> Result<Request, CapError> {
     let frame_key = RawKey::new(KeySlot(9), 0x0246_8ace);
     let as_key = RawKey::new(KeySlot(1), 1);
     let frame = FrameKey::from_key(frame_key);
     RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
-    let result = frame.map(as_key, 0x0000_0040_0000, Rights(Rights::READ), 0);
+    let result = frame.map(as_key, 0x0000_0040_0000, Rights(Rights::READ), attribute);
     captured(result)
 }
 
@@ -77,6 +85,50 @@ fn frame_map_preserves_request_encoding_and_accepts_success() {
             0,
         ]
     );
+}
+
+#[test]
+fn frame_map_encodes_the_attribute_in_x5() {
+    for (attribute, code) in [
+        (FrameAttribute::Default, 0),
+        (FrameAttribute::Cacheable, 1),
+        (FrameAttribute::WriteCombining, 2),
+        (FrameAttribute::DevicePosted, 3),
+        (FrameAttribute::DeviceStrict, 4),
+    ] {
+        let (_, _, args, _) = invoke_map_with((0, 0, 0), attribute)
+            .map_err(CapError::code)
+            .unwrap();
+        assert_eq!(args[3], code, "{attribute:?}");
+        assert_eq!(FrameAttribute::from_code(code), Some(attribute));
+    }
+    assert_eq!(FrameAttribute::from_code(5), None);
+    assert_eq!(FrameAttribute::from_code(u64::MAX), None);
+}
+
+#[test]
+fn frame_attributes_are_ordered_strictest_first_and_index_mair() {
+    use FrameAttribute::{Cacheable, Default, DevicePosted, DeviceStrict, WriteCombining};
+    let chain = [DeviceStrict, DevicePosted, WriteCombining, Cacheable];
+    for (rank, attribute) in chain.into_iter().enumerate() {
+        assert_eq!(attribute.freedom(), Some(u8::try_from(rank).unwrap()));
+        // MAIR indices run the other way: 0 is the loosest.
+        assert_eq!(
+            attribute.mair_index(),
+            Some(u8::try_from(3 - rank).unwrap())
+        );
+    }
+    assert_eq!(Default.freedom(), None);
+    assert_eq!(Default.mair_index(), None);
+    // A device ceiling admits itself and everything stricter, never `Cacheable`.
+    assert!(DeviceStrict.within_device_ceiling(WriteCombining));
+    assert!(DevicePosted.within_device_ceiling(WriteCombining));
+    assert!(WriteCombining.within_device_ceiling(WriteCombining));
+    assert!(!WriteCombining.within_device_ceiling(DevicePosted));
+    assert!(!WriteCombining.within_device_ceiling(DeviceStrict));
+    assert!(!Cacheable.within_device_ceiling(WriteCombining));
+    assert!(!Default.within_device_ceiling(WriteCombining));
+    assert!(!DeviceStrict.within_device_ceiling(Default));
 }
 
 #[test]

@@ -1,5 +1,8 @@
 use {
-    crate::{CapError, Key, KeyTableKey, ObjectType, RawKey, Rights, decode_syscall_result},
+    crate::{
+        CapError, FrameAttribute, Key, KeyTableKey, ObjectType, RawKey, Rights,
+        decode_syscall_result,
+    },
     core::fmt,
 };
 
@@ -126,13 +129,58 @@ impl UntypedKey {
         dst_slot: u32,
         rights: Rights,
     ) -> Result<RawKey, CapError> {
+        self.retype_word(
+            kind,
+            (u64::from(guard) << 8) | u64::from(size_bits),
+            count,
+            dst_table,
+            dst_slot,
+            rights,
+        )
+    }
+
+    /// Retype a `Frame` or an `Untyped` out of a device Untyped, lowering the
+    /// memory-attribute ceiling of the objects created to `ceiling`
+    /// ([`FrameAttribute::Default`] inherits the source's). The ceiling is
+    /// carried in bits 15:8 of `x3`; a ceiling looser than the source's, or any
+    /// ceiling on a RAM source, is refused with `InvalidOperation`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn retype_with_ceiling(
+        &self,
+        kind: ObjectType,
+        size_bits: u8,
+        ceiling: FrameAttribute,
+        count: u32,
+        dst_table: &KeyTableKey,
+        dst_slot: u32,
+        rights: Rights,
+    ) -> Result<RawKey, CapError> {
+        self.retype_word(
+            kind,
+            (u64::from(ceiling.code()) << 8) | u64::from(size_bits),
+            count,
+            dst_table,
+            dst_slot,
+            rights,
+        )
+    }
+
+    fn retype_word(
+        &self,
+        kind: ObjectType,
+        x3: u64,
+        count: u32,
+        dst_table: &KeyTableKey,
+        dst_slot: u32,
+        rights: Rights,
+    ) -> Result<RawKey, CapError> {
         // SAFETY: Unsafe call.
         let result = unsafe {
             protected_call6(
                 self.key.to_wire(),
                 UntypedOp::Retype as u64,
                 u64::from(kind.as_u8()),
-                (u64::from(guard) << 8) | u64::from(size_bits),
+                x3,
                 u64::from(count),
                 dst_table.to_wire(),
                 u64::from(dst_slot),

@@ -451,7 +451,7 @@ mod component {
                 RawKey::from_wire(init.address_space),
                 bounce_va,
                 Rights(Rights::READ | Rights::WRITE),
-                0,
+                libobject::FrameAttribute::Default,
             )
             .unwrap_or_else(|error| panic!("mailbox: bounce page Map failed: {:?}", error.code()));
         let (paddr, _) = FrameKey::from_key(frame)

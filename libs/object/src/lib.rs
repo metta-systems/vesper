@@ -32,7 +32,7 @@ pub use {
     address_space::{AddressSpaceKey, AddressSpaceOp},
     asid_pool::{ASIDPoolKey, ASIDPoolOp},
     event_count::{EventCountKey, EventCountOp},
-    frame::{FrameKey, FrameOp},
+    frame::{FrameAttribute, FrameKey, FrameOp},
     invocation::{INVOCATION_STACK_DEPTH, InvocationOp, PlacementWindow},
     irq::{IrqControlKey, IrqControlOp, IrqHandlerKey, IrqHandlerOp},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},

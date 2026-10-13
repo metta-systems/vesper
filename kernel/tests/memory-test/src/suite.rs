@@ -806,7 +806,7 @@ pub fn run() {
             boot_as_key,
             0x2000_0000,
             Rights(Rights::READ | Rights::WRITE),
-            0
+            libobject::FrameAttribute::Default
         ),
         Err(CapError::MissingIntermediate { vaddr: 0x2000_0000 })
     ));
@@ -816,17 +816,17 @@ pub fn run() {
             boot_as_key,
             0x1000_0001,
             Rights(Rights::READ | Rights::WRITE),
-            0
+            libobject::FrameAttribute::Default
         ),
         Err(CapError::InvalidSize(12))
     ));
-    // Unsupported attributes are rejected.
+    // A RAM Frame maps write-back only: every other attribute is refused.
     assert!(matches!(
         frame.map(
             boot_as_key,
             0x1000_0000,
             Rights(Rights::READ | Rights::WRITE),
-            1
+            libobject::FrameAttribute::WriteCombining
         ),
         Err(CapError::InvalidOperation)
     ));
@@ -837,7 +837,7 @@ pub fn run() {
             boot_as_key,
             0x1000_0000,
             Rights(Rights::READ | Rights::WRITE),
-            0,
+            libobject::FrameAttribute::Default,
         )
         .unwrap_or_else(|error| panic!("Frame.Map failed: {:?}", error.code()));
     // A second mapping of the same capability is rejected.
@@ -846,7 +846,7 @@ pub fn run() {
             boot_as_key,
             0x1000_0000,
             Rights(Rights::READ | Rights::WRITE),
-            0
+            libobject::FrameAttribute::Default
         ),
         Err(CapError::AlreadyMapped)
     ));
@@ -942,7 +942,7 @@ pub fn run() {
             boot_as_key,
             0x1000_1000,
             Rights(Rights::READ | Rights::WRITE),
-            0
+            libobject::FrameAttribute::Default
         ),
         Err(CapError::PhysicalAlias { paddr }) if paddr == frame_paddr
     ));
@@ -951,7 +951,12 @@ pub fn run() {
     // chain (a distinct slot, read-only).
     let large_frame = FrameKey::from_key(large_frame_key);
     large_frame
-        .map(boot_as_key, 0x1020_0000, Rights(Rights::READ), 0)
+        .map(
+            boot_as_key,
+            0x1020_0000,
+            Rights(Rights::READ),
+            libobject::FrameAttribute::Default,
+        )
         .unwrap_or_else(|error| panic!("2 MiB Frame.Map failed: {:?}", error.code()));
     {
         const ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
@@ -1108,7 +1113,7 @@ pub fn run() {
             boot_as_key,
             0x1000_0000,
             Rights(Rights::READ | Rights::WRITE),
-            0,
+            libobject::FrameAttribute::Default,
         )
         .unwrap_or_else(|error| panic!("second frame Frame.Map failed: {:?}", error.code()));
     assert_eq!(
@@ -1142,6 +1147,13 @@ pub fn run() {
         MAGIC_SECOND,
     );
     device_frame_reads_pl011(&self_table, boot_as_key, keytable_addr, active_ttbr0);
+    frame_attribute_ceilings(
+        &self_table,
+        &untyped,
+        boot_as_key,
+        keytable_addr,
+        active_ttbr0,
+    );
     // Repeat in the reverse direction while the second translation is
     // warm: neither physical marker changes, only the same VA's backing.
     frame
@@ -1149,7 +1161,7 @@ pub fn run() {
             boot_as_key,
             0x1000_0000,
             Rights(Rights::READ | Rights::WRITE),
-            0,
+            libobject::FrameAttribute::Default,
         )
         .unwrap_or_else(|error| panic!("original frame remap failed: {:?}", error.code()));
     assert_eq!(
@@ -1191,7 +1203,7 @@ pub fn run() {
             boot_as_key,
             0x1000_1000,
             Rights(Rights::READ | Rights::WRITE),
-            0,
+            libobject::FrameAttribute::Default,
         )
         .unwrap_or_else(|error| panic!("post-unmap derived Frame.Map failed: {:?}", error.code()));
     {
@@ -1339,7 +1351,7 @@ fn device_frame_reads_pl011(
             boot_as_key,
             DEVICE_VA,
             Rights(Rights::READ | Rights::EXECUTE),
-            0
+            libobject::FrameAttribute::Default
         ),
         Err(CapError::InvalidOperation)
     ));
@@ -1348,13 +1360,17 @@ fn device_frame_reads_pl011(
             boot_as_key,
             DEVICE_VA,
             Rights(Rights::READ | Rights::WRITE),
-            0,
+            libobject::FrameAttribute::Default,
         )
         .unwrap_or_else(|error| panic!("device Frame.Map failed: {:?}", error.code()));
     let (level, pte) = translation::read_leaf(active_ttbr0, DEVICE_VA);
     assert_eq!(level, 3);
     assert_eq!(pte & 0x0000_FFFF_FFFF_F000, PL011_PAGE);
-    assert_eq!((pte >> 2) & 0b111, 1, "AttrIndx 1 is Device-nGnRnE");
+    assert_eq!(
+        (pte >> 2) & 0b111,
+        3,
+        "a device Frame maps Device-nGnRnE (AttrIndx 3) by default"
+    );
     assert_eq!(pte & ((1 << 53) | (1 << 54)), (1 << 53) | (1 << 54));
     // SAFETY: the active context maps DEVICE_VA to the PL011's registers as
     // device memory; UARTPeriphID0 at +0xFE0 is a read-only ID register.
@@ -1369,6 +1385,232 @@ fn device_frame_reads_pl011(
         .unmap()
         .unwrap_or_else(|error| panic!("device Frame.Unmap failed: {:?}", error.code()));
     semi::println!("Device Frame mapped the PL011: UARTPeriphID0 = {periph_id0:#x}");
+}
+
+/// First boot-table slot of the Frames and Untypeds the attribute check
+/// carves; each carve takes the next one.
+const ATTRIBUTE_SLOT: u32 = 330;
+/// Where the attribute check maps its Frames: free pages under the suite's L3
+/// table, apart from `DEVICE_VA`.
+const ATTRIBUTE_VA: u64 = 0x1000_8000;
+
+/// Frame memory attributes (contract: Frame memory attributes): the `MAIR`
+/// index each attribute writes, the ceilings Kickstart gives the register
+/// Untypeds (strict) and the video memory Untypeds (write-combining), lowering
+/// a ceiling at Retype, inheritance through `CopyDerive` and Untyped splits,
+/// and RAM Frames mapping write-back only.
+fn frame_attribute_ceilings(
+    self_table: &KeyTableKey,
+    ram: &UntypedKey,
+    boot_as_key: RawKey,
+    keytable_addr: u64,
+    active_ttbr0: u64,
+) {
+    use libobject::FrameAttribute::{self, Cacheable, DevicePosted, DeviceStrict, WriteCombining};
+    let mut next_slot = ATTRIBUTE_SLOT;
+    let mut take = || {
+        let slot = next_slot;
+        next_slot += 1;
+        slot
+    };
+    // All rights: the execute checks must reach the device rule, not fail the
+    // rights ceiling first.
+    let rights = Rights::all();
+    let invalid = |result: Result<RawKey, CapError>| {
+        assert!(matches!(result, Err(CapError::InvalidOperation)));
+    };
+    // Map `frame` with `attribute`, check the descriptor's `MAIR` index and
+    // execute-never bits, and unmap it again.
+    let mapped_index = |frame: &FrameKey, attribute: FrameAttribute| -> u64 {
+        frame
+            .map(
+                boot_as_key,
+                ATTRIBUTE_VA,
+                Rights(Rights::READ | Rights::WRITE),
+                attribute,
+            )
+            .unwrap_or_else(|error| panic!("{attribute:?} Frame.Map failed: {:?}", error.code()));
+        let (level, pte) = translation::read_leaf(active_ttbr0, ATTRIBUTE_VA);
+        assert_eq!(level, 3);
+        frame
+            .unmap()
+            .unwrap_or_else(|error| panic!("Frame.Unmap failed: {:?}", error.code()));
+        (pte >> 2) & 0b111
+    };
+    let refuses = |frame: &FrameKey, attribute: FrameAttribute| {
+        assert!(
+            matches!(
+                frame.map(
+                    boot_as_key,
+                    ATTRIBUTE_VA,
+                    Rights(Rights::READ | Rights::WRITE),
+                    attribute
+                ),
+                Err(CapError::InvalidOperation)
+            ),
+            "{attribute:?} must be refused"
+        );
+    };
+    let retype_frame = |from: &UntypedKey, ceiling: FrameAttribute, slot: u32| -> FrameKey {
+        let key = from
+            .retype_with_ceiling(ObjectType::FRAME, 12, ceiling, 1, self_table, slot, rights)
+            .unwrap_or_else(|error| panic!("{ceiling:?} Frame Retype failed: {:?}", error.code()));
+        FrameKey::from_key(key)
+    };
+
+    // Register Untypeds: the strictest ceiling. Use the first with room left
+    // (the PL011's has none after the check above carved up to its page); its
+    // one Frame is the strict one.
+    let strict_slot = take();
+    let (register, strict) = devices::device_untyped_extents(keytable_addr)
+        .filter(|&(key, _, _)| !devices::is_video_untyped(key))
+        .find_map(|(key, _, _)| {
+            let untyped = UntypedKey::from_key(key);
+            untyped
+                .retype_with_ceiling(
+                    ObjectType::FRAME,
+                    12,
+                    FrameAttribute::Default,
+                    1,
+                    self_table,
+                    strict_slot,
+                    rights,
+                )
+                .ok()
+                .map(|frame| (untyped, FrameKey::from_key(frame)))
+        })
+        .expect("a register Untyped with room for a Frame");
+    refuses(&strict, WriteCombining);
+    refuses(&strict, DevicePosted);
+    refuses(&strict, Cacheable);
+    assert_eq!(mapped_index(&strict, DeviceStrict), 3);
+    assert_eq!(mapped_index(&strict, FrameAttribute::Default), 3);
+    // A ceiling never rises: looser than the source's, `Cacheable` and an
+    // undefined code are refused, and nothing is carved.
+    for ceiling in [DevicePosted, WriteCombining, Cacheable] {
+        invalid(register.retype_with_ceiling(
+            ObjectType::FRAME,
+            12,
+            ceiling,
+            1,
+            self_table,
+            take(),
+            rights,
+        ));
+    }
+    invalid(register.retype(ObjectType::FRAME, 12, 9, 1, self_table, take(), rights));
+
+    // Video memory: write-combining ceiling, when the board has any.
+    if let Some(video_key) = devices::first_video_untyped() {
+        let video = UntypedKey::from_key(video_key);
+        let combining = retype_frame(&video, FrameAttribute::Default, take());
+        assert_eq!(mapped_index(&combining, WriteCombining), 1);
+        assert_eq!(mapped_index(&combining, DevicePosted), 2);
+        assert_eq!(mapped_index(&combining, DeviceStrict), 3);
+        assert_eq!(mapped_index(&combining, FrameAttribute::Default), 3);
+        refuses(&combining, Cacheable);
+        // Write-combining mappings are never executable.
+        assert!(matches!(
+            combining.map(
+                boot_as_key,
+                ATTRIBUTE_VA,
+                Rights(Rights::READ | Rights::EXECUTE),
+                WriteCombining
+            ),
+            Err(CapError::InvalidOperation)
+        ));
+        frame_cache_maintenance_is_refused(&combining);
+        // The mapping's descriptor is non-executable.
+        combining
+            .map(
+                boot_as_key,
+                ATTRIBUTE_VA,
+                Rights(Rights::READ | Rights::WRITE),
+                WriteCombining,
+            )
+            .unwrap_or_else(|error| panic!("write-combining Frame.Map: {:?}", error.code()));
+        let (_, pte) = translation::read_leaf(active_ttbr0, ATTRIBUTE_VA);
+        assert_eq!(pte & ((1 << 53) | (1 << 54)), (1 << 53) | (1 << 54));
+        combining
+            .unmap()
+            .unwrap_or_else(|error| panic!("Frame.Unmap failed: {:?}", error.code()));
+
+        // CopyDerive keeps the ceiling.
+        let copy_slot = take();
+        let copy = self_table
+            .copy_derive(combining.raw(), self_table, copy_slot, rights)
+            .unwrap_or_else(|error| panic!("Frame CopyDerive failed: {:?}", error.code()));
+        assert_eq!(mapped_index(&FrameKey::from_key(copy), WriteCombining), 1);
+
+        // Lowering at Retype: posted writes at most.
+        let posted = retype_frame(&video, DevicePosted, take());
+        refuses(&posted, WriteCombining);
+        assert_eq!(mapped_index(&posted, DevicePosted), 2);
+        assert_eq!(mapped_index(&posted, DeviceStrict), 3);
+
+        // A split child with a lowered ceiling passes it to its Frames.
+        let child_slot = take();
+        let child = UntypedKey::from_key(
+            video
+                .retype_with_ceiling(
+                    ObjectType::UNTYPED,
+                    16,
+                    DeviceStrict,
+                    1,
+                    self_table,
+                    child_slot,
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| panic!("child Untyped Retype failed: {:?}", error.code())),
+        );
+        let from_child = retype_frame(&child, FrameAttribute::Default, take());
+        refuses(&from_child, DevicePosted);
+        assert_eq!(mapped_index(&from_child, DeviceStrict), 3);
+        // A split without a ceiling inherits the source's.
+        let plain_child = UntypedKey::from_key(
+            video
+                .retype(
+                    ObjectType::UNTYPED,
+                    16,
+                    0,
+                    1,
+                    self_table,
+                    take(),
+                    Rights::all(),
+                )
+                .unwrap_or_else(|error| panic!("child Untyped Retype failed: {:?}", error.code())),
+        );
+        let inherited = retype_frame(&plain_child, FrameAttribute::Default, take());
+        assert_eq!(mapped_index(&inherited, WriteCombining), 1);
+    }
+
+    // RAM has no ceiling: a ceiling on a RAM source is refused, and a RAM Frame
+    // maps write-back only.
+    invalid(ram.retype_with_ceiling(
+        ObjectType::FRAME,
+        12,
+        DeviceStrict,
+        1,
+        self_table,
+        take(),
+        rights,
+    ));
+    let ram_frame = retype_frame(ram, FrameAttribute::Default, take());
+    for attribute in [WriteCombining, DevicePosted, DeviceStrict] {
+        refuses(&ram_frame, attribute);
+    }
+    assert_eq!(mapped_index(&ram_frame, Cacheable), 0);
+    assert_eq!(mapped_index(&ram_frame, FrameAttribute::Default), 0);
+    semi::println!("Frame attribute ceilings checked");
+}
+
+/// A device Frame refuses cache maintenance whatever its attribute: a
+/// non-cacheable mapping has nothing to clean or invalidate.
+fn frame_cache_maintenance_is_refused(frame: &FrameKey) {
+    assert!(matches!(
+        frame.clean_data(0, 0x1000),
+        Err(CapError::InvalidOperation)
+    ));
 }
 
 /// Boot-table slot for the read-only Frame copy the cache-maintenance check

@@ -140,6 +140,11 @@ impl GPIOInner {
         todo!()
     }
 
+    // One behaviour difference: the existing rpi3 set_pull_up_down in gpio.rs
+    // looks buggy. It writes 0 (no pull) to the pull register and then encodes
+    // the pull direction in the clock bit. My sketch writes the requested pull
+    // and then clocks the pin, which is how the BCM2837 datasheet describes
+    // the sequence. If you migrate gpio.rs, fix that there too.
     #[cfg(board_rpi3)]
     pub fn set_pull_up_down(&self, pin: usize, pull: PullUpDown) {
         use core::time::Duration;

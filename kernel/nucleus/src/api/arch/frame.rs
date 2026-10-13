@@ -3,8 +3,8 @@
 //!
 //! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `Map` `0`: `x2` target `AddressSpace` key, `x3` virtual address, `x4`
-//!   requested rights, `x5` attributes (zero = normal write-back cacheable;
-//!   other values rejected), `x6..x7` zero. **The explicit target-`AddressSpace`
+//!   requested rights, `x5` the memory `FrameAttribute` (within the Frame's
+//!   ceiling; zero is the Frame's default), `x6..x7` zero. **The explicit target-`AddressSpace`
 //!   argument is bootstrap-era mechanism**: it lets an authorized builder
 //!   populate an `AddressSpace` before its Thread can run; self-context mapping
 //!   is the intended ordinary path once syscall caller identity exists. The
@@ -12,8 +12,9 @@
 //!   (permission ceiling); requesting `EXECUTE` (within the ceiling) makes
 //!   the mapping executable — at EL1 only with `WRITE`, at EL0 only without
 //!   it — and without it every mapping stays execute-never. A device Frame
-//!   maps as Device-nGnRnE memory and never executable (`EXECUTE` is
-//!   rejected with `InvalidOperation`). The walk requires every
+//!   maps with an attribute not looser than its ceiling (Device-nGnRnE by
+//!   default) and never executable (`EXECUTE` is rejected with
+//!   `InvalidOperation`); a RAM Frame maps `Cacheable` only. The walk requires every
 //!   intermediate table to be present. The
 //!   alias policy is enforced ahead of the hardware transition: the frame's
 //!   physical extent must not overlap any live mapping in the target
@@ -47,14 +48,17 @@
 //! scheduling exists (maintainer remark, 2026-09-15).
 
 use {
-    crate::objects::{
-        ArchObjects, KeyTable, Nucleus,
-        access::Access,
-        arch_objects::{AddressSpaceObject, CacheMaintenance},
-        key_table::CallerTable,
-        object_pool::IdentityError,
+    crate::{
+        api::key_entry::FramePayload,
+        objects::{
+            ArchObjects, KeyTable, Nucleus,
+            access::Access,
+            arch_objects::{AddressSpaceObject, CacheMaintenance},
+            key_table::CallerTable,
+            object_pool::IdentityError,
+        },
     },
-    libobject::{CapError, FrameOp, ObjectType, RawKey, Rights},
+    libobject::{CapError, FrameAttribute, FrameOp, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
 };
 
@@ -114,18 +118,15 @@ fn map<A: ArchObjects>(
     let as_key = RawKey::from_wire(args[0]);
     let vaddr = args[1];
     let requested = Rights::from_wire(args[2])?;
-    let attrs = args[3];
+    let requested_attribute =
+        FrameAttribute::from_code(args[3]).ok_or(CapError::InvalidOperation)?;
     if args[4] != 0 || args[5] != 0 {
-        return Err(CapError::InvalidOperation);
-    }
-    // Attributes accept only zero (normal write-back cacheable, MAIR index 0)
-    // until the cache/device attribute dimension is contracted.
-    if attrs != 0 {
         return Err(CapError::InvalidOperation);
     }
 
     // Resolve the frame entry and the target AddressSpace capability through
     // the caller's own table, copying out what is needed later.
+    let attribute;
     let (frame, as_id) = {
         let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
         let entry = caller_table
@@ -146,8 +147,9 @@ fn map<A: ArchObjects>(
         if frame.is_mapped() {
             return Err(CapError::AlreadyMapped);
         }
-        // A device Frame maps only as device memory and never executable
-        // (device memory policy, 2026-10-10).
+        attribute = resolve_attribute(&frame, requested_attribute)?;
+        // A device Frame is never executable (device memory policy,
+        // 2026-10-10).
         if frame.is_device() && requested.has(Rights::EXECUTE) {
             return Err(CapError::InvalidOperation);
         }
@@ -198,7 +200,7 @@ fn map<A: ArchObjects>(
         frame.size_bits,
         writable,
         executable,
-        frame.is_device(),
+        attribute,
     )?;
 
     // Commit: record the mapping identity on the frame entry. The destination
@@ -209,6 +211,28 @@ fn map<A: ArchObjects>(
 
     semi::println!("✅ Frame::Map()");
     Ok((0, 0))
+}
+
+/// The attribute a mapping of `frame` gets for the requested `x5`: `Default`
+/// is the Frame's own default, and anything else must be allowed. A RAM Frame
+/// maps `Cacheable` only (the kernel's direct map aliases RAM as write-back); a
+/// device Frame maps with any attribute not looser than its ceiling, and never
+/// `Cacheable`. A refused request changes nothing.
+fn resolve_attribute(
+    frame: &FramePayload,
+    requested: FrameAttribute,
+) -> Result<FrameAttribute, CapError> {
+    if !frame.is_device() {
+        return match requested {
+            FrameAttribute::Default | FrameAttribute::Cacheable => Ok(FrameAttribute::Cacheable),
+            _ => Err(CapError::InvalidOperation),
+        };
+    }
+    match requested {
+        FrameAttribute::Default => Ok(FrameAttribute::DeviceStrict),
+        attribute if attribute.within_device_ceiling(frame.ceiling()) => Ok(attribute),
+        _ => Err(CapError::InvalidOperation),
+    }
 }
 
 /// `Unmap` `1`: clear the frame's descriptor through its recorded mapping.

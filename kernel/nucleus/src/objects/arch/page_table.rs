@@ -7,8 +7,9 @@
 //! in the Untyped's committed range, reached through the direct map.
 //!
 //! Descriptor format (`AArch64` Stage 1, 4 KiB granule, 48-bit VA): matches the
-//! boot-time configuration set by Kickstart — MAIR index 0 is normal
-//! write-back cacheable memory, and every level uses 9-bit indices.
+//! boot-time configuration set by Kickstart — the four `MAIR_EL1` entries are
+//! normal write-back (0), normal non-cacheable (1), Device-nGnRE (2) and
+//! Device-nGnRnE (3), and every level uses 9-bit indices.
 
 use {
     crate::objects::{
@@ -17,7 +18,7 @@ use {
         arch_objects::{PageTableObject, PtParent},
     },
     libaddress::PhysAddr,
-    libobject::{CapError, ObjectType},
+    libobject::{CapError, FrameAttribute, ObjectType},
 };
 
 /// Descriptor flag bits for `AArch64` Stage 1.
@@ -42,11 +43,15 @@ pub mod pte {
     pub const AP_RW_USER: u64 = 0b01 << 6;
     /// AP[2:1] = 0b11: read-only at EL0 and EL1.
     pub const AP_RO_USER: u64 = 0b11 << 6;
-    /// Memory attribute index 0 (normal write-back cacheable).
+    /// Memory attribute index 0 (normal write-back cacheable), as `MAIR_EL1`
+    /// is set up at boot (`FrameAttribute::mair_index`).
     pub const ATTR_NORMAL: u64 = 0 << 2;
-    /// Memory attribute index 1 (Device-nGnRnE), as `MAIR_EL1` is set up at
-    /// boot.
-    pub const ATTR_DEVICE: u64 = 1 << 2;
+    /// Memory attribute index 1 (Normal non-cacheable: write-combining).
+    pub const ATTR_WRITE_COMBINING: u64 = 1 << 2;
+    /// Memory attribute index 2 (Device-nGnRE).
+    pub const ATTR_DEVICE_POSTED: u64 = 2 << 2;
+    /// Memory attribute index 3 (Device-nGnRnE).
+    pub const ATTR_DEVICE_STRICT: u64 = 3 << 2;
     /// Privileged execute never.
     pub const PXN: u64 = 1 << 53;
     /// Unprivileged execute never.
@@ -257,7 +262,7 @@ pub fn install_frame_pte(
     size_bits: u8,
     writable: bool,
     executable: bool,
-    device: bool,
+    attribute: FrameAttribute,
 ) -> Result<(), CapError> {
     if vaddr >= 1 << VA_BITS {
         return Err(CapError::InvalidPointer);
@@ -275,7 +280,7 @@ pub fn install_frame_pte(
     if leaf_table.entries[slot] != 0 {
         return Err(CapError::AlreadyMapped);
     }
-    leaf_table.entries[slot] = frame_descriptor(frame_paddr, leaf, writable, executable, device);
+    leaf_table.entries[slot] = frame_descriptor(frame_paddr, leaf, writable, executable, attribute);
     publish_descriptor_store();
     Ok(())
 }
@@ -297,7 +302,7 @@ fn frame_descriptor(
     leaf: u8,
     writable: bool,
     executable: bool,
-    device: bool,
+    attribute: FrameAttribute,
 ) -> u64 {
     let (ap, execute_never) = match (writable, executable) {
         // Kernel-privilege RW+X, executable at EL1 only: EL1 cannot execute
@@ -315,11 +320,15 @@ fn frame_descriptor(
     // Level 3 uses page descriptors (bit 1 set); levels 1–2 use block
     // descriptors (bit 1 clear).
     let descriptor_bit = if leaf == 3 { pte::DESCRIPTOR } else { 0 };
-    // Device memory is never executable, whatever was requested.
-    let (attributes, execute_never) = if device {
-        (pte::ATTR_DEVICE, pte::PXN | pte::UXN)
-    } else {
-        (pte::ATTR_NORMAL, execute_never)
+    // Only cacheable memory is ever executable, whatever was requested. An
+    // unresolved `Default` gets the safest attribute, the strictest device one.
+    let (attributes, execute_never) = match attribute {
+        FrameAttribute::Cacheable => (pte::ATTR_NORMAL, execute_never),
+        FrameAttribute::WriteCombining => (pte::ATTR_WRITE_COMBINING, pte::PXN | pte::UXN),
+        FrameAttribute::DevicePosted => (pte::ATTR_DEVICE_POSTED, pte::PXN | pte::UXN),
+        FrameAttribute::DeviceStrict | FrameAttribute::Default => {
+            (pte::ATTR_DEVICE_STRICT, pte::PXN | pte::UXN)
+        }
     };
     frame_paddr
         | pte::VALID
@@ -403,7 +412,10 @@ pub fn find_physical_overlap(root_paddr: u64, paddr: u64, size_bits: u8) -> Opti
 
 #[cfg(test)]
 mod tests {
-    use super::{frame_descriptor, leaf_level};
+    use {
+        super::{frame_descriptor, leaf_level},
+        libobject::FrameAttribute,
+    };
 
     #[test_case]
     fn ttbr0_pages_and_blocks_are_non_global_for_every_permission_shape() {
@@ -420,8 +432,13 @@ mod tests {
                 // RW+X executes at EL1 only (UXN), EL0 has no access.
                 (true, true, 0, 1 << 54),
             ] {
-                let descriptor =
-                    frame_descriptor(base, leaf_level(size_bits), writable, executable, false);
+                let descriptor = frame_descriptor(
+                    base,
+                    leaf_level(size_bits),
+                    writable,
+                    executable,
+                    FrameAttribute::Cacheable,
+                );
                 // Literal flag bits pin the hardware format independently of
                 // the production constants, including nG at bit 11.
                 let expected =
@@ -432,28 +449,44 @@ mod tests {
     }
 
     #[test_case]
-    fn device_frames_use_attribute_index_one_and_never_execute() {
-        for (size_bits, base, descriptor_bits) in [(12, 0x3f20_1000, 0b11), (21, 0x3f20_0000, 0b01)]
-        {
-            for (writable, executable, ap) in [
-                (false, false, 0b11 << 6),
-                (true, false, 0b01 << 6),
-                // A requested execute permission never reaches a device mapping.
-                (false, true, 0b11 << 6),
-            ] {
-                let descriptor =
-                    frame_descriptor(base, leaf_level(size_bits), writable, executable, true);
-                // AttrIndx 1 (bit 2) selects Device-nGnRnE; PXN and UXN both set.
-                let expected = base
-                    | descriptor_bits
-                    | (1 << 10)
-                    | (1 << 11)
-                    | (0b11 << 8)
-                    | ap
-                    | (1 << 2)
-                    | (1 << 53)
-                    | (1 << 54);
-                assert_eq!(descriptor, expected);
+    fn device_attributes_use_their_mair_index_and_never_execute() {
+        // The literal indices pin the `MAIR_EL1` layout Kickstart programs:
+        // 0 write-back, 1 write-combining, 2 Device-nGnRE, 3 Device-nGnRnE.
+        for (attribute, index) in [
+            (FrameAttribute::WriteCombining, 1_u64),
+            (FrameAttribute::DevicePosted, 2),
+            (FrameAttribute::DeviceStrict, 3),
+        ] {
+            for (size_bits, base, descriptor_bits) in
+                [(12, 0x3f20_1000, 0b11), (21, 0x3f20_0000, 0b01)]
+            {
+                for (writable, executable, ap) in [
+                    (false, false, 0b11 << 6),
+                    (true, false, 0b01 << 6),
+                    // A requested execute permission never reaches a
+                    // non-cacheable mapping.
+                    (false, true, 0b11 << 6),
+                ] {
+                    let descriptor = frame_descriptor(
+                        base,
+                        leaf_level(size_bits),
+                        writable,
+                        executable,
+                        attribute,
+                    );
+                    // AttrIndx in bits 4:2; PXN and UXN both set.
+                    let expected = base
+                        | descriptor_bits
+                        | (1 << 10)
+                        | (1 << 11)
+                        | (0b11 << 8)
+                        | ap
+                        | (index << 2)
+                        | (1 << 53)
+                        | (1 << 54);
+                    assert_eq!(descriptor, expected, "{attribute:?}");
+                    assert_eq!(attribute.mair_index(), Some(u8::try_from(index).unwrap()));
+                }
             }
         }
     }

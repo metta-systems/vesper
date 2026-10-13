@@ -706,6 +706,7 @@ mod tests {
             state: 0,
             size_bits: 12,
             is_device: false,
+            ceiling: 0,
             _pad: 0,
         };
         // Capacity beyond the u16 slot index space is rejected before any
@@ -729,6 +730,7 @@ mod tests {
             state: 0,
             size_bits: 20,
             is_device: false,
+            ceiling: 0,
             _pad: 0,
         };
         // A 32-aligned carve from a base misaligned by 4: the absolute carve
@@ -750,6 +752,7 @@ mod tests {
             state: 0,
             size_bits: 12,
             is_device: false,
+            ceiling: 0,
             _pad: 0,
         };
         assert!(matches!(
@@ -762,6 +765,7 @@ mod tests {
             state: 0,
             size_bits: 64,
             is_device: false,
+            ceiling: 0,
             _pad: 0,
         };
         assert!(matches!(

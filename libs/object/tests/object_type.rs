@@ -3,6 +3,10 @@ use vesper_objects::{
     decode_syscall_result, domain, thread,
 };
 
+// The wrapper modules below name `crate::FrameAttribute`, as in the library.
+#[cfg(test)]
+pub use frame_client::FrameAttribute;
+
 #[cfg(test)]
 #[path = "support/cap_error.rs"]
 mod cap_error;

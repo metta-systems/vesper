@@ -16,7 +16,7 @@ A Frame capability tracks at most one mapping at a time. To map the same memory 
 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
-| 0 | Map | `x2` target AddressSpace, `x3` virtual address, `x4` rights, `x5` attributes | Requested rights on the Frame, `Map` on the AddressSpace | — |
+| 0 | Map | `x2` target AddressSpace, `x3` virtual address, `x4` rights, `x5` memory attribute | Requested rights on the Frame, `Map` on the AddressSpace | — |
 | 1 | Unmap | — | — | — |
 | 2 | GetAddress | — | `Grant` | `x1` physical base, `x2` size in bytes |
 | 3 | CleanData | `x2` start offset, `x3` end offset | `Read` | — |
@@ -26,7 +26,7 @@ A Frame capability tracks at most one mapping at a time. To map the same memory 
 
 ### Map
 
-Maps the Frame at virtual address `x3` in the AddressSpace named by `x2`. The address must be aligned to the Frame's size and below `2^48`. Every translation table on the way down must already be installed with [`PageTable.Map`](page_table.md#map). `x5` must be zero (normal write-back cacheable memory).
+Maps the Frame at virtual address `x3` in the AddressSpace named by `x2`. The address must be aligned to the Frame's size and below `2^48`. Every translation table on the way down must already be installed with [`PageTable.Map`](page_table.md#map). `x5` selects the memory attribute of the mapping (see [Memory attributes](#memory-attributes)); zero is the Frame's default.
 
 `x4` selects the access rights of the mapping. It must include `Read` and be a subset of the Frame capability's rights:
 
@@ -37,7 +37,7 @@ Maps the Frame at virtual address `x3` in the AddressSpace named by `x2`. The ad
 | `Read + Execute` | Read, execute | Read |
 | `Read + Write + Execute` | None | Read, write, execute |
 
-No mapping is both writable and executable at the same exception level. A device Frame maps as Device-nGnRnE memory and is never executable: requesting `Execute` fails with `InvalidOperation`.
+No mapping is both writable and executable at the same exception level. A device Frame is never executable: requesting `Execute` fails with `InvalidOperation`.
 
 Within one AddressSpace, a physical byte may be mapped at only one virtual address: Map fails with `PhysicalAlias` if the Frame overlaps memory already mapped there through any capability. Different AddressSpaces may map the same memory at any addresses.
 
@@ -47,7 +47,7 @@ Within one AddressSpace, a physical byte may be mapped at only one virtual addre
 | `AlreadyMapped` | This Frame capability is already mapped, or the virtual address is in use |
 | `MissingIntermediate` | A translation table on the path is missing (`x1` is the address) |
 | `PhysicalAlias` | The memory is already mapped in this AddressSpace (`x1` is the conflicting physical base) |
-| `InvalidOperation` | Nonzero `x5`, misaligned address, undefined rights bits, `Execute` on a device Frame, or a nonzero unused argument |
+| `InvalidOperation` | An `x5` attribute the Frame does not allow (see below), misaligned address, undefined rights bits, `Execute` on a device Frame, or a nonzero unused argument |
 | `TypeMismatch` | `x2` is not an AddressSpace |
 
 ### Unmap
@@ -57,6 +57,24 @@ Removes the Frame's mapping and flushes it from the TLB, so the address is free 
 ### GetAddress
 
 Returns the physical base address and size of the Frame. `FrameKey::get_extent` wraps it.
+
+### Memory attributes
+
+`x5` of Map names the memory attribute. The attributes are ordered by how much freedom the hardware gets, strictest first:
+
+| `x5` | Attribute | Memory type |
+|---:|---|---|
+| 0 | the Frame's default | `Cacheable` for RAM, `DeviceStrict` for device memory |
+| 4 | `DeviceStrict` | Device-nGnRnE: no gathering, reordering or early write acknowledgement; aligned access only |
+| 3 | `DevicePosted` | Device-nGnRE: no gathering or reordering, early write acknowledgement |
+| 2 | `WriteCombining` | Normal non-cacheable: writes may be merged and buffered, unaligned access allowed |
+| 1 | `Cacheable` | Normal write-back cacheable |
+
+`FrameAttribute` in `libobject` names the codes.
+
+A RAM Frame maps `Cacheable` only (`x5` 0 or 1). A device Frame carries a **ceiling**, `DeviceStrict`, `DevicePosted` or `WriteCombining`, and maps with any attribute not looser than it; `Cacheable` is never allowed. A request beyond the Frame's allowance fails with `InvalidOperation` and changes nothing. The ceiling comes from the [Untyped](../core/untyped.md#memory-attribute-ceilings) the Frame was carved from and never rises: [CopyDerive](../core/key_table.md#copyderive) and Move keep it.
+
+A device mapping is never executable, whatever the attribute. A `WriteCombining` mapping needs no cache maintenance, and the cache maintenance operations below stay refused for device Frames. Its writes can be buffered, merged and reordered: write a data synchronization barrier (`dsb`) after the data and before telling a device to read it, and use no atomic or exclusive accesses on it.
 
 ### Cache maintenance
 

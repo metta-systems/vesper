@@ -28,7 +28,7 @@ use {
     liblocking::interface::Mutex,
     libmapping::MemAttributes,
     libobject::{
-        CapError, KeySlot, ObjectType, RawKey, Rights,
+        CapError, FrameAttribute, KeySlot, ObjectType, RawKey, Rights,
         domain::DomainId,
         time::{Budget, HIGHEST_PRIORITY, INFINITE_BUDGET},
     },
@@ -767,8 +767,15 @@ fn video_memory_range() -> Option<(u64, u64)> {
 
 /// Install `[start, end)` as device Untypeds in consecutive boot-table slots
 /// from `DEVICE_UNTYPED_FIRST_SLOT + *count`, splitting it into the largest
-/// aligned power-of-two blocks so the Untypeds never overlap.
-fn install_blocks(boot_table: &mut KeyTable, start: u64, end: u64, count: &mut u32) {
+/// aligned power-of-two blocks so the Untypeds never overlap. Frames carved
+/// from them may be mapped with attributes up to `ceiling`.
+fn install_blocks(
+    boot_table: &mut KeyTable,
+    start: u64,
+    end: u64,
+    ceiling: FrameAttribute,
+    count: &mut u32,
+) {
     let mut block = start;
     while block < end {
         let align_bits = block.trailing_zeros();
@@ -781,10 +788,10 @@ fn install_blocks(boot_table: &mut KeyTable, start: u64, end: u64, count: &mut u
         boot_table
             .insert(
                 KeySlot(DEVICE_UNTYPED_FIRST_SLOT + *count),
-                KeyEntry::new_untyped(
+                KeyEntry::new_device_untyped(
                     block,
                     u8::try_from(size_bits).expect("block size fits u8"),
-                    true,
+                    ceiling,
                     Rights::all(),
                 ),
                 BOOT_TABLE_GUARD,
@@ -806,12 +813,27 @@ fn install_blocks(boot_table: &mut KeyTable, start: u64, end: u64, count: &mut u
 fn install_device_untypeds(boot_table: &mut KeyTable) {
     let mut count = 0_u32;
     if let Some((start, end)) = video_memory_range() {
-        install_blocks(boot_table, start, end, &mut count);
+        // Write-combining is what a framebuffer wants: the video memory's
+        // Frames may be mapped up to it.
+        install_blocks(
+            boot_table,
+            start,
+            end,
+            FrameAttribute::WriteCombining,
+            &mut count,
+        );
         semi::println!("🥾 Video memory {start:#x}..{end:#x} in {count} Untypeds");
     }
     let video_count = count;
     for &(start, end) in device_page_runs(privileged::kernel_owned_ranges()).as_slice() {
-        install_blocks(boot_table, start, end, &mut count);
+        // Register ranges keep the strictest attribute.
+        install_blocks(
+            boot_table,
+            start,
+            end,
+            FrameAttribute::DeviceStrict,
+            &mut count,
+        );
     }
     BOOT_INFO.lock(|boot_info| {
         boot_info.device_untypeds = DeviceUntypedRange {

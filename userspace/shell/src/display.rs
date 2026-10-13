@@ -5,8 +5,8 @@
 //! `draw` runs on the shell's first Thread. The first time, it configures the
 //! framebuffer, has the fb component install the Frames that cover it into a
 //! table the shell lends for the call (`fb_v1.frames`), maps them in the
-//! framebuffer window Kickstart provisioned (`DriverInit::fb_window`) and
-//! publishes where the pixels are. Every time, it paints the static scene:
+//! framebuffer window Kickstart provisioned (`DriverInit::fb_window`), write-combining
+//! (the video memory's ceiling allows it), and publishes where the pixels are. Every time, it paints the static scene:
 //! some text and shapes. After the first, it releases the extra Thread
 //! (`driver_threads!`), which waits on the component's `EventCount` and then
 //! draws the lava lamp continuously, a frame every few tens of milliseconds,
@@ -20,8 +20,8 @@ use {
     libdevice_driver::{DriverInit, FB_WINDOW_SPANS, FB_WINDOW_VA, driver_init, local_key},
     libgraphics::{Color, Font, Lava, Painter, PixelOrder, Surface},
     libobject::{
-        EventCountKey, FrameKey, KeySlot, KeyTableKey, NotificationKey, ObjectType, PageTableKey,
-        RawKey, Rights, UntypedKey,
+        EventCountKey, FrameAttribute, FrameKey, KeySlot, KeyTableKey, NotificationKey, ObjectType,
+        PageTableKey, RawKey, Rights, UntypedKey,
     },
     shell::Failure,
 };
@@ -199,7 +199,7 @@ fn map_framebuffer(init: &DriverInit, fb: &FbClient) -> Result<(), Failure> {
                 address_space,
                 virtual_address,
                 Rights(Rights::READ | Rights::WRITE),
-                0,
+                FrameAttribute::WriteCombining,
             )
             .map_err(|error| capability_failure(MAPPING, error))?;
         // The mapping stays; the lent-into table keeps the Frame itself.

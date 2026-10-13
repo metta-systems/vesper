@@ -82,7 +82,9 @@ use {
     },
     core::num::NonZero,
     libaddress::align,
-    libobject::{ArchType, CapError, CoreType, ObjectType, PlacementWindow, Rights},
+    libobject::{
+        ArchType, CapError, CoreType, FrameAttribute, ObjectType, PlacementWindow, Rights,
+    },
 };
 
 /// Payload for identity-based capabilities (most object types).
@@ -122,7 +124,20 @@ pub struct RegionPayload {
     pub size_bits: u8,
     /// Is this device memory (not normal RAM)?
     pub is_device: bool,
-    pub _pad: u16,
+    /// Wire code of the memory-attribute ceiling of a device region
+    /// ([`FrameAttribute`]; zero for RAM). Frames carved from the region and
+    /// its split children start at, or below, this ceiling.
+    pub ceiling: u8,
+    pub _pad: u8,
+}
+
+impl RegionPayload {
+    /// The memory-attribute ceiling of a device region: the loosest attribute
+    /// its Frames may be mapped with. [`FrameAttribute::Default`] for RAM,
+    /// which maps `Cacheable` only.
+    pub fn ceiling(&self) -> FrameAttribute {
+        FrameAttribute::from_code(u64::from(self.ceiling)).unwrap_or(FrameAttribute::Default)
+    }
 }
 
 /// Payload for inline Frame capabilities: a physical region plus the frame's
@@ -149,7 +164,8 @@ pub struct FramePayload {
     pub as_index: u16,
     /// Size as log2 (frame = `2^size_bits`).
     pub size_bits: u8,
-    /// Flag bits: bit 0 `is_device`, bit 1 `mapped`.
+    /// Flag bits: bit 0 `is_device`, bit 1 `mapped`, bits 4:2 the
+    /// memory-attribute ceiling code of a device Frame.
     pub flags: u8,
 }
 
@@ -157,6 +173,9 @@ pub struct FramePayload {
 const FRAME_IS_DEVICE: u8 = 1 << 0;
 /// Flag bit: the frame is currently mapped.
 const FRAME_MAPPED: u8 = 1 << 1;
+/// Position and mask of the ceiling code of a device Frame in `flags`.
+const FRAME_CEILING_SHIFT: u8 = 2;
+const FRAME_CEILING_MASK: u8 = 0b111 << FRAME_CEILING_SHIFT;
 
 /// A frame's recorded mapping: enough identity to locate and retire the real
 /// hardware descriptor.
@@ -428,8 +447,35 @@ impl KeyEntry {
         })
     }
 
-    /// Create an inline Untyped capability (no pool allocation).
+    /// Create an inline Untyped capability (no pool allocation). A device
+    /// Untyped gets the strictest ceiling, `DeviceStrict`.
     pub fn new_untyped(paddr: u64, size_bits: u8, is_device: bool, rights: Rights) -> Self {
+        let ceiling = if is_device {
+            FrameAttribute::DeviceStrict
+        } else {
+            FrameAttribute::Default
+        };
+        Self::new_untyped_with_ceiling(paddr, size_bits, is_device, ceiling, rights)
+    }
+
+    /// Create an inline device Untyped whose Frames may be mapped up to
+    /// `ceiling` (`DeviceStrict`, `DevicePosted` or `WriteCombining`).
+    pub fn new_device_untyped(
+        paddr: u64,
+        size_bits: u8,
+        ceiling: FrameAttribute,
+        rights: Rights,
+    ) -> Self {
+        Self::new_untyped_with_ceiling(paddr, size_bits, true, ceiling, rights)
+    }
+
+    fn new_untyped_with_ceiling(
+        paddr: u64,
+        size_bits: u8,
+        is_device: bool,
+        ceiling: FrameAttribute,
+        rights: Rights,
+    ) -> Self {
         Self {
             obj_type: ObjectType::UNTYPED,
             rights,
@@ -441,14 +487,47 @@ impl KeyEntry {
                     state: 0, // watermark starts at 0
                     size_bits,
                     is_device,
+                    ceiling: ceiling.code(),
                     _pad: 0,
                 },
             },
         }
     }
 
-    /// Create an inline Frame capability (no pool allocation).
+    /// Create an inline Frame capability (no pool allocation). A device Frame
+    /// gets the strictest ceiling, `DeviceStrict`.
     pub fn new_frame(paddr: u64, size_bits: u8, is_device: bool, rights: Rights) -> Self {
+        let ceiling = if is_device {
+            FrameAttribute::DeviceStrict
+        } else {
+            FrameAttribute::Default
+        };
+        Self::new_frame_with_ceiling(paddr, size_bits, is_device, ceiling, rights)
+    }
+
+    /// Create an inline device Frame whose mappings may use any attribute up
+    /// to `ceiling`.
+    pub fn new_device_frame(
+        paddr: u64,
+        size_bits: u8,
+        ceiling: FrameAttribute,
+        rights: Rights,
+    ) -> Self {
+        Self::new_frame_with_ceiling(paddr, size_bits, true, ceiling, rights)
+    }
+
+    fn new_frame_with_ceiling(
+        paddr: u64,
+        size_bits: u8,
+        is_device: bool,
+        ceiling: FrameAttribute,
+        rights: Rights,
+    ) -> Self {
+        let flags = if is_device {
+            FRAME_IS_DEVICE | (ceiling.code() << FRAME_CEILING_SHIFT)
+        } else {
+            0
+        };
         Self {
             obj_type: ObjectType::FRAME,
             rights,
@@ -461,7 +540,7 @@ impl KeyEntry {
                     as_index: 0,
                     as_generation: 0,
                     size_bits,
-                    flags: if is_device { FRAME_IS_DEVICE } else { 0 },
+                    flags,
                 },
             },
         }
@@ -1031,6 +1110,20 @@ impl FramePayload {
     #[inline]
     pub fn is_device(&self) -> bool {
         self.flags & FRAME_IS_DEVICE != 0
+    }
+
+    /// The loosest attribute a device Frame may be mapped with, as a ceiling;
+    /// [`FrameAttribute::Default`] for a RAM Frame (which maps `Cacheable`
+    /// only).
+    #[inline]
+    pub fn ceiling(&self) -> FrameAttribute {
+        if !self.is_device() {
+            return FrameAttribute::Default;
+        }
+        FrameAttribute::from_code(u64::from(
+            (self.flags & FRAME_CEILING_MASK) >> FRAME_CEILING_SHIFT,
+        ))
+        .unwrap_or(FrameAttribute::DeviceStrict)
     }
 
     /// Check if this frame cap is currently mapped.

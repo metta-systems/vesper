@@ -97,8 +97,8 @@ mod component {
         },
         libmeddle_runtime::ExclusiveStacks,
         libobject::{
-            EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
-            export::init_return_key, thread::ThreadReturnKey,
+            EventCountKey, FrameAttribute, KeyTableKey, NotificationKey, ObjectType, RawKey,
+            Rights, UntypedKey, export::init_return_key, thread::ThreadReturnKey,
         },
         mailbox_client::mailbox_v1::{Bindings, Client, Error, Exception as MailboxException},
     };
@@ -231,6 +231,11 @@ mod component {
     /// their extent.
     const FRAME_RIGHTS: Rights = Rights(Rights::READ | Rights::WRITE | Rights::GRANT);
 
+    /// The loosest memory attribute a client may map the framebuffer with.
+    /// A framebuffer is written, never read back for effect, so write-combining
+    /// suits it and the strict device attributes need no ceiling of their own.
+    const FRAME_ATTRIBUTE_CEILING: FrameAttribute = FrameAttribute::WriteCombining;
+
     /// Next free slot of the component's own table: the chunks of video memory
     /// skipped on the way to the framebuffer land there. The caller holding
     /// the turnstile owns it.
@@ -308,10 +313,10 @@ mod component {
                 WATERMARKS[index].store(cursor, Ordering::Release);
             }
             untyped
-                .retype(
+                .retype_with_ceiling(
                     ObjectType::FRAME,
                     run.size_bits,
-                    0,
+                    FRAME_ATTRIBUTE_CEILING,
                     run.count,
                     into,
                     slot,
