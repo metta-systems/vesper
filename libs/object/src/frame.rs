@@ -90,6 +90,11 @@ impl FrameKey {
         self.key.to_wire()
     }
 
+    /// The underlying key, for passing to `Invocation.CallWithKey`.
+    pub const fn raw(&self) -> RawKey {
+        self.key.raw()
+    }
+
     /// Map this frame into the target Domain's translation context at `vaddr`.
     ///
     /// Wire schema (selected 2026-09-15): `x2` target `Domain` key, `x3` virtual

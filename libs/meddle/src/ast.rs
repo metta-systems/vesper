@@ -42,6 +42,8 @@ pub struct Interface {
     pub exceptions: Vec<Exception>,
     /// The shared data area its functions pass references into
     pub data: Option<DataDeclaration>,
+    /// The key-placement window each client's lending functions share
+    pub placement: Option<PlacementDeclaration>,
     pub methods: Vec<Method>,
 }
 
@@ -93,8 +95,27 @@ pub struct Method {
     pub doc: Vec<String>,
     pub name: Name,
     pub parameters: Vec<Field>,
+    /// The key the function lends to its exporter for the duration of the call
+    pub lends: Vec<LentKey>,
     pub results: Vec<Field>,
     pub raises: Vec<Name>,
+}
+
+/// `lends (kind name)`: a key the caller lends to the exporter through
+/// `Invocation.CallWithKey`. It travels outside the argument words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LentKey {
+    /// The kind of key, one of the closed set the checker knows
+    pub kind: Name,
+    pub name: Name,
+}
+
+/// `placement <slots>;`: how many slots of the exporter's table each client
+/// of the interface gets for the keys its functions lend.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlacementDeclaration {
+    pub slots: u64,
+    pub span: Span,
 }
 
 /// `data <bytes>;`: the size of the data area each client of the interface

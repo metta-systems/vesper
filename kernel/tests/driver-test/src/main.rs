@@ -199,15 +199,28 @@ pub fn run() -> ! {
                     .raw()
                     .to_wire()
             );
-            // `uart1` imports both `echo_v1` functions of the `aux` instance,
+            // `uart1` imports three `echo_v1` functions of the `aux` instance,
             // on one target stack; the other nodes link to no probe.
             let imports = init.imports();
             if init.compatible_index == AUX_UART {
-                assert_eq!(imports.len(), 2, "uart1 imports identify and twice");
+                assert_eq!(
+                    imports.len(),
+                    3,
+                    "uart1 imports identify, twice and frame_base"
+                );
                 assert!(imports.iter().all(|record| record.type_code == ECHO_V1));
-                assert_eq!([imports[0].function, imports[1].function], [0, 1]);
+                assert_eq!(
+                    [
+                        imports[0].function,
+                        imports[1].function,
+                        imports[2].function
+                    ],
+                    [0, 1, 2]
+                );
                 assert_ne!(imports[0].invocation, imports[1].invocation);
                 assert_eq!(imports[0].stack_end, imports[1].stack_end);
+                assert_eq!(imports[0].stack_end, imports[2].stack_end);
+                assert_ne!(imports[1].invocation, imports[2].invocation);
             } else {
                 assert!(imports.is_empty(), "{}: links to no probe", loaded.node);
             }

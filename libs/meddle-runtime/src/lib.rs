@@ -24,7 +24,7 @@
 pub use {
     libio_channel::IoRec,
     libobject::{
-        CapError, RawKey,
+        CapError, FrameKey, KeyTableKey, RawKey,
         export::{PpcResult, init_return_key},
         invocation::InvocationKey,
         ppc_export,
@@ -189,6 +189,23 @@ impl Binding {
         }
     }
 
+    /// Call the function with `arguments` and lend it `lent` for the duration
+    /// of the call (`Invocation.CallWithKey`), returning `(r0, r1)`. The
+    /// function's interface declared the key it takes in its `lends` clause.
+    pub fn call_with_key(
+        &self,
+        _stacks: &ExclusiveStacks,
+        lent: RawKey,
+        arguments: [u64; ARGUMENT_WORDS],
+    ) -> Result<(u64, u64), CapError> {
+        // SAFETY: `ExclusiveStacks` proves this binding's stack is the
+        // calling Thread's alone.
+        unsafe {
+            self.invocation
+                .call_with_key(lent, arguments, self.stack_end)
+        }
+    }
+
     /// Call the function with `arguments`, returning `(r0, r1)`.
     pub fn call(
         &self,
@@ -331,6 +348,38 @@ macro_rules! export_function {
                 input5: u64,
             ) -> $crate::PpcResult {
                 ($dispatch)([input0, input1, input2, input3, input4, input5])
+            }
+    $crate::ppc_export!(#[allow(dead_code)] fn $entry => body);
+        };
+    };
+}
+
+/// Export one interface function that takes a lent key as a PPC entry named
+/// `$entry`.
+///
+/// As [`export_function!`], except the entry receives the borrowed key in the
+/// first of its two unused arguments (`Invocation.CallWithKey` delivers it
+/// there), and `$dispatch` is an `fn(RawKey, [u64; ARGUMENT_WORDS]) ->
+/// PpcResult` taking it first.
+#[macro_export]
+macro_rules! export_function_with_key {
+    ($entry:ident, $dispatch:expr) => {
+        const _: () = {
+            #[allow(dead_code)]
+            extern "C" fn body(
+                lent: u64,
+                _: u64,
+                input0: u64,
+                input1: u64,
+                input2: u64,
+                input3: u64,
+                input4: u64,
+                input5: u64,
+            ) -> $crate::PpcResult {
+                ($dispatch)(
+                    $crate::RawKey::from_wire(lent),
+                    [input0, input1, input2, input3, input4, input5],
+                )
             }
     $crate::ppc_export!(#[allow(dead_code)] fn $entry => body);
         };

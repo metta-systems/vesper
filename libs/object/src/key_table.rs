@@ -124,6 +124,11 @@ impl KeyTableKey {
         self.key.to_wire()
     }
 
+    /// The underlying key, for passing to `Invocation.CallWithKey`.
+    pub const fn raw(&self) -> RawKey {
+        self.key.raw()
+    }
+
     // This naturally supports cross-domain derivation:
     // "Create a read-only view of my buffer in their cspace"
     // derive(&my_captbl, buffer_slot, &their_captbl, their_slot, Rights::READ)?;

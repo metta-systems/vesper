@@ -13,13 +13,15 @@
 //! ```text
 //! file      = { interface | uses } ;
 //! interface = { doc } [ "local" ] "interface" name "{" { member } "}" ;
-//! member    = { doc } ( alias | enum | record | exception | data | method ) ;
+//! member    = { doc } ( alias | enum | record | exception | data | placement | method ) ;
 //! data      = "data" number ";" ;
+//! placement = "placement" number ";" ;
 //! alias     = "type" type name ";" ;
 //! enum      = "enum" name "{" name { "," name } [ "," ] "}" ;
 //! record    = "record" name "{" { field ";" } "}" ;
 //! exception = "exception" name "{" { field ";" } "}" ;
 //! method    = name "(" [ field { "," field } ] ")"
+//!             [ "lends" "(" kind name ")" ]
 //!             [ "returns" "(" [ field { "," field } ] ")" ]
 //!             [ "raises" "(" name { "," name } ")" ] ";" ;
 //! field     = { doc } type name ;
@@ -35,8 +37,19 @@
 //! is allowed only on parameters of `local` interfaces, which must declare the
 //! area with `data <bytes>;` (whole pages, at most 64 KiB). Kickstart gives
 //! each client of the interface one such area, mapped at the same address in
-//! the client and its exporter. Interface names carry their version
-//! (`name_vN`): a change that breaks callers makes a new version.
+//! the client and its exporter.
+//!
+//! A function that takes a key from its caller says so in a `lends` clause:
+//! `lends (key_table into)` or `lends (frame page)`, the kind being one of
+//! `key_table` and `frame`. The key travels outside the argument words, through
+//! `Invocation.CallWithKey`, so it is not a parameter; the generated Rust
+//! passes it first, as a borrowed typed handle that is valid for the call only.
+//! A function lends at most one key, and only in a `local` interface, which
+//! must declare `placement <slots>;`: the slots of the exporter's table that
+//! Kickstart reserves for each client, one for every key the client can have
+//! lent at the same time (`1` while a client calls from one Thread). Interface names carry their version
+//! (`name_vN`); while Meddle interfaces are prototypes, a change edits the
+//! version in place instead of making a new one.
 //!
 //! A `uses` declaration names the instance it calls by a chain of links, read
 //! from the device tree node of the component that uses it: each property of
@@ -268,9 +281,14 @@ pub struct InterfaceSummary {
     pub type_code: u64,
     /// Bytes of the data area each client shares with the exporter (zero: none)
     pub data_bytes: u64,
+    /// Slots of the exporter's table reserved for each client's lent keys
+    /// (zero: no function lends a key)
+    pub placement_slots: u64,
     /// The interface's functions, in declaration order: a function's
     /// position is its index in import records
     pub functions: Vec<String>,
+    /// Whether each function, by its position in `functions`, lends a key
+    pub lends: Vec<bool>,
 }
 
 impl InterfaceSummary {
@@ -308,11 +326,18 @@ pub fn summarize_interface(path: impl AsRef<Path>) -> Result<InterfaceSummary, F
         name: checked.interface().name.text.clone(),
         type_code: checked.type_code(),
         data_bytes: checked.data_bytes(),
+        placement_slots: checked.placement_slots(),
         functions: checked
             .interface()
             .methods
             .iter()
             .map(|method| method.name.text.clone())
+            .collect(),
+        lends: checked
+            .interface()
+            .methods
+            .iter()
+            .map(|method| !method.lends.is_empty())
             .collect(),
     })
 }

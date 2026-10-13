@@ -3,8 +3,8 @@
 use {
     crate::{
         ast::{
-            DataDeclaration, Exception, Field, File, Interface, Link, Method, Name, TypeDefinition,
-            TypeKind, TypeReference, Uses,
+            DataDeclaration, Exception, Field, File, Interface, LentKey, Link, Method, Name,
+            PlacementDeclaration, TypeDefinition, TypeKind, TypeReference, Uses,
         },
         diagnostic::Diagnostic,
         lexer::Token,
@@ -25,6 +25,7 @@ enum Member {
     Exception(Exception),
     Method(Method),
     Data(DataDeclaration),
+    Placement(PlacementDeclaration),
     /// A member that did not parse; its error is already reported.
     Invalid,
 }
@@ -34,9 +35,11 @@ enum MemberBody {
     Type(Name, TypeKind),
     Exception(Name, Vec<Field>),
     Data(DataDeclaration),
+    Placement(PlacementDeclaration),
     Method {
         name: Name,
         parameters: Vec<Field>,
+        lends: Vec<LentKey>,
         results: Vec<Field>,
         raises: Vec<Name>,
     },
@@ -121,8 +124,19 @@ where
 
     let exception = just(Token::Exception).ignore_then(name).then(field_block);
 
+    let lent_key = name.then(name).map(|(kind, name)| LentKey { kind, name });
+
+    let lends = just(Token::Lends).ignore_then(
+        lent_key
+            .separated_by(just(Token::Comma))
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LeftParen), just(Token::RightParen)),
+    );
+
     let method = name
         .then(parameter_list.clone())
+        .then(lends.or_not())
         .then(just(Token::Returns).ignore_then(parameter_list).or_not())
         .then(
             just(Token::Raises)
@@ -147,15 +161,29 @@ where
         )
         .then_ignore(just(Token::Semicolon));
 
+    let placement = just(Token::Placement)
+        .ignore_then(
+            select! { Token::Number(slots) => slots }.map_with(|slots: u64, extra| {
+                let span: SimpleSpan = extra.span();
+                PlacementDeclaration {
+                    slots,
+                    span: span.into_range(),
+                }
+            }),
+        )
+        .then_ignore(just(Token::Semicolon));
+
     let member = docs
         .then(choice((
             type_definition.map(|(name, kind)| MemberBody::Type(name, kind)),
             exception.map(|(name, fields)| MemberBody::Exception(name, fields)),
             data.map(MemberBody::Data),
+            placement.map(MemberBody::Placement),
             method.map(
-                |(((name, parameters), results), raises)| MemberBody::Method {
+                |((((name, parameters), lends), results), raises)| MemberBody::Method {
                     name,
                     parameters,
+                    lends: lends.unwrap_or_default(),
                     results: results.unwrap_or_default(),
                     raises: raises.unwrap_or_default(),
                 },
@@ -164,18 +192,21 @@ where
         .map(|(doc, body)| match body {
             MemberBody::Type(name, kind) => Member::Type(TypeDefinition { doc, name, kind }),
             MemberBody::Data(declaration) => Member::Data(declaration),
+            MemberBody::Placement(declaration) => Member::Placement(declaration),
             MemberBody::Exception(name, fields) => {
                 Member::Exception(Exception { doc, name, fields })
             }
             MemberBody::Method {
                 name,
                 parameters,
+                lends,
                 results,
                 raises,
             } => Member::Method(Method {
                 doc,
                 name,
                 parameters,
+                lends,
                 results,
                 raises,
             }),
@@ -210,6 +241,7 @@ where
                 types: Vec::new(),
                 exceptions: Vec::new(),
                 data: None,
+                placement: None,
                 methods: Vec::new(),
             };
             for member in members {
@@ -218,6 +250,7 @@ where
                     Member::Exception(exception) => interface.exceptions.push(exception),
                     Member::Method(method) => interface.methods.push(method),
                     Member::Data(declaration) => interface.data = Some(declaration),
+                    Member::Placement(declaration) => interface.placement = Some(declaration),
                     Member::Invalid => {}
                 }
             }

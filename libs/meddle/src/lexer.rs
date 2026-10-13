@@ -34,6 +34,10 @@ pub enum Token<'source> {
     Compatible,
     #[token("data")]
     Data,
+    #[token("lends")]
+    Lends,
+    #[token("placement")]
+    Placement,
     #[token("via")]
     Via,
     #[token("uses")]
@@ -80,6 +84,8 @@ impl fmt::Display for Token<'_> {
             Self::Uses => "`uses`",
             Self::Via => "`via`",
             Self::Data => "`data`",
+            Self::Lends => "`lends`",
+            Self::Placement => "`placement`",
             Self::Compatible => "`compatible`",
             Self::Number(number) => return write!(formatter, "{number}"),
             Self::Identifier(name) => return write!(formatter, "`{name}`"),

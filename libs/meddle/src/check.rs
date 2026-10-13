@@ -22,6 +22,10 @@ pub const ANSWER_WORDS: usize = 1;
 /// and the exporter for every pair, in a window of 2 MiB.
 pub const MAX_DATA_BYTES: u64 = 64 * 1024;
 
+/// Largest key-placement window an interface may declare: slots of the
+/// exporter's table reserved for each client.
+pub const MAX_PLACEMENT_SLOTS: u64 = 8;
+
 /// Bytes of a page: data areas are whole pages.
 pub const PAGE_BYTES: u64 = 4096;
 
@@ -78,6 +82,44 @@ impl Builtin {
     }
 }
 
+/// The kinds of key a function may lend: the closed set of kernel kinds a
+/// capability can be lent as, so interfaces are strongly typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LendKind {
+    KeyTable,
+    Frame,
+}
+
+impl LendKind {
+    /// The names `lends` accepts, in the order diagnostics list them.
+    pub const NAMES: [&'static str; 2] = ["key_table", "frame"];
+
+    /// The kind called `name`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "key_table" => Some(Self::KeyTable),
+            "frame" => Some(Self::Frame),
+            _ => None,
+        }
+    }
+
+    /// The kind's name in an interface file.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::KeyTable => "key_table",
+            Self::Frame => "frame",
+        }
+    }
+
+    /// The typed key handle the generated code uses for it.
+    pub const fn rust_name(self) -> &'static str {
+        match self {
+            Self::KeyTable => "KeyTableKey",
+            Self::Frame => "FrameKey",
+        }
+    }
+}
+
 /// What a type name refers to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Resolved {
@@ -111,6 +153,26 @@ impl<'interface> Checked<'interface> {
             .data
             .as_ref()
             .map_or(0, |declaration| declaration.bytes)
+    }
+
+    /// Slots of the exporter's table each client gets for lent keys; zero
+    /// when no function lends a key.
+    pub fn placement_slots(&self) -> u64 {
+        self.interface
+            .placement
+            .as_ref()
+            .map_or(0, |declaration| declaration.slots)
+    }
+
+    /// The key `method` lends, with its kind, if it lends one.
+    pub fn lent_key<'method>(
+        &self,
+        method: &'method ast::Method,
+    ) -> Option<(LendKind, &'method Name)> {
+        method
+            .lends
+            .first()
+            .and_then(|lent| LendKind::from_name(&lent.kind.text).map(|kind| (kind, &lent.name)))
     }
 
     /// Words a value of `ty` takes in a call.
@@ -183,6 +245,8 @@ pub fn check(interface: &Interface) -> Result<Checked<'_>, Vec<Diagnostic>> {
     pass.identifiers();
     pass.type_references();
     pass.data_area();
+    pass.lends();
+    pass.placement_window();
     let words = pass.word_counts();
     let checked = Checked { interface, words };
     pass.members(&checked);
@@ -340,7 +404,8 @@ impl<'interface> Checker<'interface> {
                     .parameters
                     .iter()
                     .chain(&method.results)
-                    .map(|field| &field.name),
+                    .map(|field| &field.name)
+                    .chain(method.lends.iter().map(|lent| &lent.name)),
                 "parameter",
                 &mut self.diagnostics,
             );
@@ -376,7 +441,8 @@ impl<'interface> Checker<'interface> {
                     .parameters
                     .iter()
                     .chain(&method.results)
-                    .map(|field| &field.name),
+                    .map(|field| &field.name)
+                    .chain(method.lends.iter().map(|lent| &lent.name)),
             );
         }
         for name in as_written {
@@ -575,6 +641,79 @@ impl<'interface> Checker<'interface> {
         }
     }
 
+    /// `lends` clauses: at most one key of a known kind, in a `local`
+    /// interface (a key names a capability of this machine).
+    fn lends(&mut self) {
+        let interface = self.interface;
+        for method in &interface.methods {
+            for lent in method.lends.iter().skip(1) {
+                self.error(
+                    &lent.name,
+                    format!(
+                        "`{}` lends more than one key; a call lends at most one",
+                        method.name.text
+                    ),
+                );
+            }
+            for lent in &method.lends {
+                if LendKind::from_name(&lent.kind.text).is_none() {
+                    self.error(
+                        &lent.kind,
+                        format!(
+                            "unknown kind of key `{}`; a function lends a `{}`",
+                            lent.kind.text,
+                            LendKind::NAMES.join("` or a `")
+                        ),
+                    );
+                }
+                if !interface.local {
+                    self.error(
+                        &lent.kind,
+                        "`lends` needs a `local` interface: a key names a capability of this machine",
+                    );
+                }
+            }
+        }
+    }
+
+    /// A `placement` declaration and the functions with a `lends` clause go
+    /// together: a lent key is placed in the exporter's table, in the window
+    /// Kickstart reserves for each client.
+    fn placement_window(&mut self) {
+        let interface = self.interface;
+        let lends_a_key = interface
+            .methods
+            .iter()
+            .any(|method| !method.lends.is_empty());
+        match (&interface.placement, lends_a_key) {
+            (Some(declaration), _) if declaration.slots == 0 => {
+                self.diagnostics.push(Diagnostic::error(
+                    declaration.span.clone(),
+                    "a placement window needs at least one slot",
+                ));
+            }
+            (Some(declaration), _) if declaration.slots > MAX_PLACEMENT_SLOTS => {
+                self.diagnostics.push(Diagnostic::error(
+                    declaration.span.clone(),
+                    format!("a placement window is at most {MAX_PLACEMENT_SLOTS} slots"),
+                ));
+            }
+            (Some(declaration), false) => {
+                self.diagnostics.push(Diagnostic::error(
+                    declaration.span.clone(),
+                    "no function has a `lends` clause, so the placement window is never used",
+                ));
+            }
+            (None, true) => {
+                self.error(
+                    &interface.name,
+                    "functions with a `lends` clause need a `placement <slots>;` window to place the key in",
+                );
+            }
+            (Some(_), true) | (None, false) => {}
+        }
+    }
+
     /// Register budgets and export names.
     fn members(&mut self, checked: &Checked<'interface>) {
         let interface = self.interface;
@@ -643,6 +782,9 @@ fn write_fingerprint(text: &mut String, interface: &Interface) -> fmt::Result {
     if let Some(declaration) = &interface.data {
         write!(text, "data {};", declaration.bytes)?;
     }
+    if let Some(declaration) = &interface.placement {
+        write!(text, "placement {};", declaration.slots)?;
+    }
     for definition in &interface.types {
         match &definition.kind {
             TypeKind::Alias(target) => {
@@ -672,7 +814,15 @@ fn write_fingerprint(text: &mut String, interface: &Interface) -> fmt::Result {
     for method in &interface.methods {
         write!(text, "{}(", method.name.text)?;
         write_fields(text, &method.parameters)?;
-        write!(text, ")returns(")?;
+        write!(text, ")")?;
+        if !method.lends.is_empty() {
+            write!(text, "lends(")?;
+            for lent in &method.lends {
+                write!(text, "{} {};", lent.kind.text, lent.name.text)?;
+            }
+            write!(text, ")")?;
+        }
+        write!(text, "returns(")?;
         write_fields(text, &method.results)?;
         write!(text, ")raises(")?;
         for raised in &method.raises {

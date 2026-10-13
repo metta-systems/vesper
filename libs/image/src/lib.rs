@@ -151,6 +151,12 @@ pub struct Import {
     /// Bytes of the data area the interface shares between a client and its
     /// exporter (zero: none)
     pub data_bytes: u64,
+    /// Slots of the exporter's table reserved for each client's lent keys
+    /// (zero: none)
+    pub placement_slots: u64,
+    /// The function lends a key through `Invocation.CallWithKey`: its
+    /// Invocation is created with the client's placement window
+    pub lends: bool,
     /// The exporter's export name for the function
     pub export: &'static str,
 }

@@ -879,7 +879,7 @@ fn emit_interfaces(
             for index in summary.functions {
                 emit!(
                     imports,
-                    "        Import {{ interface: \"{}\", type_code: 0x{:016x}, function: {index}, links: &[{}], data_bytes: {}, export: \"{}\" }},\n",
+                    "        Import {{ interface: \"{}\", type_code: 0x{:016x}, function: {index}, links: &[{}], data_bytes: {}, placement_slots: {}, lends: {}, export: \"{}\" }},\n",
                     summary.interface.name,
                     summary.interface.type_code,
                     summary
@@ -894,6 +894,8 @@ fn emit_interfaces(
                         .collect::<Vec<_>>()
                         .join(", "),
                     summary.interface.data_bytes,
+                    summary.interface.placement_slots,
+                    summary.interface.lends.get(index).copied().unwrap_or(false),
                     summary.interface.export_name(index).unwrap_or_default()
                 );
             }

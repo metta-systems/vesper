@@ -55,6 +55,7 @@ These apply to every slice and are never "done"; they are not plan checkboxes.
 
 - There is no previous version of anything: once the maintainer approves a change, preserve no backwards compatibility, migration path, deprecated alias, or legacy behavior. Functionality can be completely ripped out and replaced when necessary; update all consumers (shared ABI, wrappers, kernel API, objects, tests, documentation) in the same slice rather than keeping the old version alongside the new one.
 - This does not authorize silent divergence from approved contracts: update the contract and plan first, then remove the old behavior outright.
+- **Meddle interfaces are prototypes** (maintainer rule, 2026-10-13). Nothing built on them is in production, so a change to an interface (`<name>_vN.if`: adding, renaming, reordering or removing functions, or changing parameters, results or exceptions) edits that version in place. Do not add a `<name>_v(N+1)` file, keep the old functions, or bump the version number. A version bump is for an interface the maintainer has declared to have production users.
 
 ## Gate architectural decisions
 

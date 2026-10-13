@@ -71,8 +71,8 @@ use {
     libimage::{DriverImage, Link},
     libmeddle_runtime::ImportRecord,
     libobject::{
-        CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType, RawKey,
-        Rights, TimeKey, UntypedKey,
+        CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType,
+        PlacementWindow, RawKey, Rights, TimeKey, UntypedKey,
         address_space::AddressSpaceKey,
         irq::MAX_ISSUE_CELLS,
         scheduler::{SchedulerKey, ThreadStart},
@@ -881,6 +881,9 @@ pub fn load_drivers(
     // the next free address of the window they share, and which instances
     // already have its page table installed.
     let mut call_areas = [[None::<(u64, u64)>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
+    // The placement window of each pair with a function lending a key: slots
+    // of the exporter's table reserved for the keys the client lends it.
+    let mut call_windows = [[None::<PlacementWindow>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
     let mut data_cursor = DATA_WINDOW_VA;
     let mut window_installed = [false; MAX_DRIVER_INSTANCES];
     for client in 0..count {
@@ -982,6 +985,28 @@ pub fn load_drivers(
                 call_areas[client][exporter] = Some((base, bytes));
                 Some((base, bytes))
             };
+            // A function that lends a key gets its pair's window: reserved once,
+            // never reused, so a lent key never lands on another of the
+            // exporter's keys. A function that lends nothing accepts no key.
+            let window = import.lends.then(|| match call_windows[client][exporter] {
+                Some(window) => window,
+                None => {
+                    let slots = u32::try_from(import.placement_slots)
+                        .ok()
+                        .filter(|&slots| slots > 0)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "🥾 `{}` lends a key without a placement window",
+                                import.export
+                            )
+                        });
+                    let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
+                    let window = PlacementWindow::new(exporting.next_slot, slots);
+                    exporting.next_slot += slots;
+                    call_windows[client][exporter] = Some(window);
+                    window
+                }
+            });
             let (area_base, area_len) = area.unwrap_or((0, 0));
             let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
             let exporter_space = AddressSpaceKey::from_key(exporting.component.address_space_key);
@@ -1000,13 +1025,14 @@ pub fn load_drivers(
             let slot = calling.next_slot;
             calling.next_slot += 1;
             let invocation = exporter_space
-                .create_invocation(
+                .create_invocation_with_window(
                     entry,
                     &calling.component.table(),
                     KeySlot(slot),
                     stack.bottom,
                     stack.top,
                     EXPORT_STACK_HEADROOM,
+                    window.unwrap_or(PlacementWindow::NONE),
                 )
                 .unwrap_or_else(|error| {
                     panic!(

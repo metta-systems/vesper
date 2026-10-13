@@ -497,4 +497,187 @@ mod tests {
         // Each function's export entry is named after the interface.
         assert!(interface_module.contains("export_function!(mailbox_v1_get_clock_rate"));
     }
+
+    /// The generated source with all whitespace removed, so assertions do not
+    /// depend on the formatter's line breaks.
+    fn squash(source: &str) -> String {
+        source.split_whitespace().collect()
+    }
+
+    const LENDING: &str = "local interface a_v1 {
+        placement 2;
+        exception e { card32 x; }
+        ## Install `count` things into the table the caller lends.
+        install(card32 count) lends (key_table into) returns (card32 first) raises (e);
+        plain(card32 value) returns (card32 doubled);
+    }";
+
+    #[test]
+    fn lends_and_placement_parse_into_the_interface() {
+        let interface = interface(LENDING);
+        let placement = interface.placement.as_ref().expect("a placement window");
+        assert_eq!(placement.slots, 2);
+        let install = &interface.methods[0];
+        assert_eq!(install.lends.len(), 1);
+        assert_eq!(install.lends[0].kind.text, "key_table");
+        assert_eq!(install.lends[0].name.text, "into");
+        assert_eq!(install.parameters.len(), 1);
+        assert_eq!(install.results.len(), 1);
+        assert_eq!(install.raises.len(), 1);
+        assert!(interface.methods[1].lends.is_empty());
+        with_checked(LENDING, |checked| {
+            assert_eq!(checked.placement_slots(), 2);
+            let (kind, name) = checked
+                .lent_key(&checked.interface().methods[0])
+                .expect("a key");
+            assert_eq!(
+                (kind, name.text.as_str()),
+                (check::LendKind::KeyTable, "into")
+            );
+            assert!(checked.lent_key(&checked.interface().methods[1]).is_none());
+        });
+    }
+
+    #[test]
+    fn lends_clause_follows_the_parameters() {
+        // The clause sits between the parameters and `returns`; elsewhere it
+        // is a syntax error, and a key is not a parameter.
+        for wrong in [
+            "local interface a_v1 { placement 1; f() returns (card32 x) lends (frame page); }",
+            "local interface a_v1 { placement 1; f(lends frame page); }",
+            "local interface a_v1 { placement 1; f() lends frame page; }",
+            "local interface a_v1 { placement 1; f() lends (); }",
+        ] {
+            let (_, diagnostics) = parse(wrong);
+            assert!(!diagnostics.is_empty(), "{wrong} must not parse");
+        }
+        for fine in [
+            "local interface a_v1 { placement 1; f() lends (frame page); }",
+            "local interface a_v1 { placement 1; f(card32 x) lends (frame page) raises (e); exception e {} }",
+        ] {
+            let (_, diagnostics) = parse(fine);
+            assert!(diagnostics.is_empty(), "{fine}: {diagnostics:?}");
+        }
+    }
+
+    #[test]
+    fn lent_keys_are_checked() {
+        assert!(check_messages(LENDING).is_empty());
+        assert_reports(
+            "local interface a_v1 { placement 1; f() lends (untyped memory); }",
+            "unknown kind of key `untyped`; a function lends a `key_table` or a `frame`",
+        );
+        assert_reports(
+            "local interface a_v1 { placement 1; f() lends (frame one, key_table two); }",
+            "lends more than one key",
+        );
+        assert_reports(
+            "interface a_v1 { placement 1; f() lends (frame page); }",
+            "`lends` needs a `local` interface",
+        );
+        assert_reports(
+            "local interface a_v1 { placement 1; f(card32 page) lends (frame page); }",
+            "parameter `page` is defined twice",
+        );
+        assert_reports(
+            "local interface a_v1 { placement 1; f() lends (frame match); }",
+            "reserved word in Rust",
+        );
+    }
+
+    #[test]
+    fn placement_windows_go_with_lending_functions() {
+        assert_reports(
+            "local interface a_v1 { f() lends (frame page); }",
+            "need a `placement <slots>;` window",
+        );
+        assert_reports(
+            "local interface a_v1 { placement 1; f(card32 value); }",
+            "no function has a `lends` clause",
+        );
+        assert_reports(
+            "local interface a_v1 { placement 0; f() lends (frame page); }",
+            "at least one slot",
+        );
+        assert_reports(
+            "local interface a_v1 { placement 9; f() lends (frame page); }",
+            "at most 8 slots",
+        );
+        assert!(
+            check_messages("local interface a_v1 { placement 8; f() lends (frame page); }")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn lending_is_part_of_the_type_code() {
+        let base = type_code("local interface a_v1 { placement 1; f() lends (frame page); }");
+        assert_ne!(
+            base,
+            type_code("local interface a_v1 { placement 2; f() lends (frame page); }")
+        );
+        assert_ne!(
+            base,
+            type_code("local interface a_v1 { placement 1; f() lends (key_table page); }")
+        );
+        assert_ne!(
+            base,
+            type_code("local interface a_v1 { placement 1; f() lends (frame other); }")
+        );
+        assert_ne!(
+            base,
+            type_code("local interface a_v1 { placement 1; f() lends (frame page); g(); }")
+        );
+        // An interface that lends nothing keeps the code it always had.
+        assert_eq!(
+            type_code("interface a_v1 { f(card32 x); }"),
+            type_code("interface a_v1 { f(card32 x); }")
+        );
+    }
+
+    #[test]
+    fn lending_functions_generate_typed_code() {
+        let (interface_module, client_module) = with_checked(LENDING, |checked| {
+            (
+                squash(&emit::interface_module(checked, "a_v1.if")),
+                squash(&emit::client_module(checked, "a_v1.if", "a")),
+            )
+        });
+        let (raw_interface, raw_client) = with_checked(LENDING, |checked| {
+            (
+                emit::interface_module(checked, "a_v1.if"),
+                emit::client_module(checked, "a_v1.if", "a"),
+            )
+        });
+        syn::parse_file(&raw_interface).expect("generated interface code parses");
+        syn::parse_file(&raw_client).expect("generated client code parses");
+
+        // The lent key comes first, typed by its kind and borrowed.
+        assert!(interface_module.contains("fninstall(into:&__runtime::KeyTableKey,count:u32"));
+        assert!(
+            client_module.contains("pubfninstall(&self,into:&__runtime::KeyTableKey,count:u32")
+        );
+        // It is lent through CallWithKey, outside the argument words.
+        assert!(client_module.contains("call_with_key(&self.stacks,into.raw(),arguments)"));
+        assert!(client_module.contains("binding.call(&self.stacks,arguments)"));
+        // The dispatcher receives it first and the export uses the lending macro.
+        assert!(
+            interface_module
+                .contains("lent:__runtime::RawKey,arguments:[u64;__runtime::ARGUMENT_WORDS]")
+        );
+        assert!(interface_module.contains("letinto=__runtime::KeyTableKey::from_key(lent);"));
+        assert!(interface_module.contains("Implementation::install(&into,count)"));
+        assert!(interface_module.contains("export_function_with_key!(a_v1_install"));
+        assert!(interface_module.contains("export_function!(a_v1_plain"));
+        assert!(interface_module.contains("pubconstPLACEMENT_SLOTS:u64=2;"));
+        assert!(client_module.contains("PLACEMENT_SLOTS"));
+
+        // Frames are typed as frames.
+        let frames = with_checked(
+            "local interface b_v1 { placement 1; f() lends (frame page); }",
+            |checked| squash(&emit::interface_module(checked, "b_v1.if")),
+        );
+        assert!(frames.contains("fnf(page:&__runtime::FrameKey)"));
+        assert!(frames.contains("letpage=__runtime::FrameKey::from_key(lent);"));
+    }
 }

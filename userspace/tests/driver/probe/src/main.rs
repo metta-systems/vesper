@@ -19,8 +19,8 @@ use {
     libdevice_driver::{INIT_VA, device_address, driver_compatible, driver_init, map_device_pages},
     libmeddle_runtime::ExclusiveStacks,
     libobject::{
-        IrqHandlerKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
-        export::init_return_key, thread::ThreadReturnKey,
+        FrameKey, IrqHandlerKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
+        UntypedKey, export::init_return_key, thread::ThreadReturnKey,
     },
     libuser::semihosting as semi,
 };
@@ -57,6 +57,13 @@ impl EchoV1 for Echo {
 
     fn twice(value: u64) -> Result<u64, Exception> {
         value.checked_mul(2).ok_or(Exception::Overflow { value })
+    }
+
+    fn frame_base(page: &FrameKey) -> Result<u64, Exception> {
+        // The borrowed key is usable only during this call.
+        page.get_extent()
+            .map(|(base, _size)| base)
+            .map_err(|_error| Exception::BadFrame)
     }
 }
 
@@ -125,6 +132,41 @@ fn main(init_va: u64) -> ! {
                 value: u64::MAX
             }))
         );
+
+        // Lend Frames carved from the probe's own memory through
+        // `frame_base`: the exporter reads the extent through the borrowed
+        // key. Its placement window is one slot, so the second call works
+        // only because the first call's borrowed entry was removed.
+        let mut lend_slot = u32::try_from(next_slot + 1).unwrap_or(u32::MAX);
+        let mut carve_frame = |rights: Rights| {
+            let frame = UntypedKey::from_key(RawKey::from_wire(init.memory))
+                .retype(ObjectType::FRAME, 12, 0, 1, &own_table, lend_slot, rights)
+                .unwrap_or_else(|error| panic!("Frame Retype failed: {:?}", error.code()));
+            lend_slot += 1;
+            FrameKey::from_key(frame)
+        };
+        let lendable = carve_frame(Rights(Rights::READ | Rights::GRANT | Rights::LEND));
+        let (own_base, _size) = lendable
+            .get_extent()
+            .unwrap_or_else(|error| panic!("GetExtent failed: {:?}", error.code()));
+        assert_eq!(echo.frame_base(&lendable), Ok(own_base));
+        assert_eq!(echo.frame_base(&lendable), Ok(own_base));
+        // Without `LEND` the kernel refuses the call before it starts
+        // (`InsufficientRights`, status 5); without `GRANT` the exporter
+        // cannot read the extent and answers with its exception.
+        assert_eq!(
+            echo.frame_base(&carve_frame(Rights(Rights::READ | Rights::GRANT))),
+            Err(Error::Call {
+                status: 5,
+                detail: [0, 0]
+            })
+        );
+        assert_eq!(
+            echo.frame_base(&carve_frame(Rights(Rights::READ | Rights::LEND))),
+            Err(Error::Exception(echo_v1::Exception::BadFrame))
+        );
+        // A raised exception and a refused call both left the window free.
+        assert_eq!(echo.frame_base(&lendable), Ok(own_base));
     } else {
         assert_eq!(echo.identify(), Err(Error::NotGranted));
     }

@@ -302,6 +302,19 @@ impl Emitter<'_, '_> {
             .collect()
     }
 
+    /// `parameters`, preceded by the lent key (borrowed) of a lending
+    /// function: the key travels outside the argument words, but the generated
+    /// Rust passes it first.
+    fn parameters_with_key(&self, method: &Method) -> Vec<TokenStream> {
+        let runtime = &self.runtime;
+        let lent = self.checked.lent_key(method).map(|(kind, name)| {
+            let name = ident(&name.text);
+            let ty = ident(kind.rust_name());
+            quote! { #name: &#runtime::#ty }
+        });
+        lent.into_iter().chain(self.parameters(method)).collect()
+    }
+
     fn component_trait(&self) -> TokenStream {
         let interface = self.checked.interface();
         let doc = docs(&interface.doc);
@@ -309,7 +322,7 @@ impl Emitter<'_, '_> {
         let methods = interface.methods.iter().map(|method| {
             let doc = docs(&method.doc);
             let name = ident(&method.name.text);
-            let parameters = self.parameters(method);
+            let parameters = self.parameters_with_key(method);
             let result = self.result_type(method).map(|result| quote! { -> #result });
             quote! { #doc fn #name( #( #parameters ),* ) #result; }
         });
@@ -357,7 +370,24 @@ impl Emitter<'_, '_> {
                 .parameters
                 .iter()
                 .map(|parameter| ident(&parameter.name.text));
-            let call = quote! { Implementation::#name( #( #parameter_names ),* ) };
+            let lent = self.checked.lent_key(method);
+            let (lent_parameter, lent_binding, lent_argument) = match lent {
+                Some((kind, lent_name)) => {
+                    let lent_name = ident(&lent_name.text);
+                    let ty = ident(kind.rust_name());
+                    (
+                        quote! { lent: #runtime::RawKey, },
+                        quote! { let #lent_name = #runtime::#ty::from_key(lent); },
+                        Some(quote! { &#lent_name }),
+                    )
+                }
+                None => (TokenStream::new(), TokenStream::new(), None),
+            };
+            let call_arguments: Vec<TokenStream> = lent_argument
+                .into_iter()
+                .chain(parameter_names.map(|parameter| quote! { #parameter }))
+                .collect();
+            let call = quote! { Implementation::#name( #( #call_arguments ),* ) };
             let answer_value = quote! {
                 let mut words = [0; 1];
                 #runtime::Words::store(&result, &mut words);
@@ -382,9 +412,11 @@ impl Emitter<'_, '_> {
             items.extend(quote! {
                 #[doc(hidden)]
                 pub fn #dispatcher<Implementation: #trait_name>(
+                    #lent_parameter
                     arguments: [u64; #runtime::ARGUMENT_WORDS],
                 ) -> #runtime::PpcResult {
                     Implementation::enter();
+                    #lent_binding
                     if !#runtime::unused_words_are_zero(&arguments, #used) {
                         return #runtime::malformed();
                     }
@@ -409,8 +441,13 @@ impl Emitter<'_, '_> {
         let entries = interface.methods.iter().map(|method| {
             let dispatcher = ident(&format!("__dispatch_{}", method.name.text));
             let entry = ident(&export_name(&interface.name.text, &method.name.text));
+            let export = if method.lends.is_empty() {
+                ident("export_function")
+            } else {
+                ident("export_function_with_key")
+            };
             quote! {
-                $crate::#module::__runtime::export_function!(
+                $crate::#module::__runtime::#export!(
                     #entry,
                     $crate::#module::#dispatcher::<$implementation>
                 );
@@ -431,7 +468,11 @@ impl Emitter<'_, '_> {
         let module = ident(&interface.name.text);
         let interface_crate = ident(interface_crate);
         let has_exceptions = !interface.exceptions.is_empty();
-        let mut reexports: Vec<Ident> = vec![ident("TYPE_CODE"), ident("DATA_BYTES")];
+        let mut reexports: Vec<Ident> = vec![
+            ident("TYPE_CODE"),
+            ident("DATA_BYTES"),
+            ident("PLACEMENT_SLOTS"),
+        ];
         reexports.extend(
             interface
                 .types
@@ -545,7 +586,7 @@ impl Emitter<'_, '_> {
         let runtime = &self.runtime;
         let doc = docs(&method.doc);
         let name = ident(&method.name.text);
-        let parameters = self.parameters(method);
+        let parameters = self.parameters_with_key(method);
         let value = method
             .results
             .first()
@@ -564,6 +605,15 @@ impl Emitter<'_, '_> {
                     .ok_or(Error::UnexpectedAnswer { outcome, word }),
             },
             None => quote! { #runtime::OUTCOME_OK if word == 0 => Ok(()), },
+        };
+        // A lending function lends its key through `CallWithKey`; the key is
+        // not one of the argument words.
+        let call = match self.checked.lent_key(method) {
+            Some((_, lent)) => {
+                let lent = ident(&lent.text);
+                quote! { binding.call_with_key(&self.stacks, #lent.raw(), arguments) }
+            }
+            None => quote! { binding.call(&self.stacks, arguments) },
         };
         let other = if method.raises.is_empty() {
             quote! { _ => Err(Error::UnexpectedAnswer { outcome, word }), }
@@ -604,7 +654,7 @@ impl Emitter<'_, '_> {
             pub fn #name(&self, #( #parameters ),*) -> Result<#return_value, Error> {
                 let binding = self.bindings.#name.as_ref().ok_or(Error::NotGranted)?;
                 #declare_arguments
-                let (outcome, word) = binding.call(&self.stacks, arguments).map_err(call_error)?;
+                let (outcome, word) = #call.map_err(call_error)?;
                 match outcome {
                     #success
                     #runtime::OUTCOME_MALFORMED => Err(Error::Malformed),
@@ -629,6 +679,7 @@ pub fn interface_module(checked: &Checked<'_>, source_name: &str) -> String {
         .parse()
         .unwrap_or_else(|_| quote!(0));
     let data_bytes = Literal::u64_unsuffixed(checked.data_bytes());
+    let placement_slots = Literal::u64_unsuffixed(checked.placement_slots());
     let types = emitter.type_definitions();
     let exceptions = emitter.exceptions();
     let component_trait = emitter.component_trait();
@@ -648,6 +699,10 @@ pub fn interface_module(checked: &Checked<'_>, source_name: &str) -> String {
                 /// Bytes of the data area each client shares with the exporter
                 /// (zero: the interface passes no references).
                 pub const DATA_BYTES: u64 = #data_bytes;
+
+                /// Slots of the exporter's table each client gets for the keys
+                /// its functions lend (zero: no function lends a key).
+                pub const PLACEMENT_SLOTS: u64 = #placement_slots;
 
                 #types
                 #exceptions
