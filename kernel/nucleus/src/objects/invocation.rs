@@ -14,8 +14,8 @@ use {
         api::key_entry::KeyEntry,
         objects::{
             ArchObjects, ExecutionContext, InvocationContinuation, KeyTable, Nucleus, Placement,
-            access::{Access, ObjectId},
-            arch_objects::AddressSpaceObject,
+            access::Access,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
             key_table::CallerTable,
             resume::{PreparedTranslationContext, execution_origin, prepare_translation_context},
             thread::ThreadId,
@@ -128,7 +128,7 @@ const _: () = assert!(core::mem::align_of::<InvocationStackExtent>() == 8);
 /// `CALL` authority checks; it carries no entry reference or table guard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CallTarget {
-    pub address_space: ObjectId,
+    pub address_space: AddressSpaceId,
     pub function_address: NonZero<u64>,
     pub stack_extent: InvocationStackExtent,
     /// Where `CallWithKey` places a lent key in the target's table; empty if
@@ -232,13 +232,12 @@ impl<A: ArchObjects> Nucleus<A> {
     /// validated to name this very table. `invoked` is the key reported if the
     /// context cannot be established.
     pub(crate) fn address_space_table(
-        &self,
         access: &Access,
-        address_space: ObjectId,
+        address_space: AddressSpaceId,
         invoked: RawKey,
     ) -> Result<CallerTable, CapError> {
         let binding = access
-            .resolve(&self.pools.arch.address_spaces, address_space)
+            .resolve_object::<A::AddressSpace>(address_space)
             .map_err(|_invalid_address_space| CapError::InvalidDomain)?
             .keytable();
         let addr = binding.address();
@@ -301,7 +300,7 @@ impl<A: ArchObjects> Nucleus<A> {
 
         // Stage 1: stale or reused target identity precedes supplied values.
         access
-            .resolve(&self.pools.arch.address_spaces, target.address_space)
+            .resolve_object::<A::AddressSpace>(target.address_space)
             .map_err(|error| error.for_key(invocation_key, 0))?;
 
         // Stages 2 and 3: the exporter accepts keys, and the lent key is
@@ -315,11 +314,7 @@ impl<A: ArchObjects> Nucleus<A> {
         target.stack_extent.validate_sp(target_sp)?;
 
         // Stage 5: root/ASID readiness and backend encodability.
-        let translation = prepare_translation_context::<A>(
-            access,
-            &self.pools.arch.address_spaces,
-            target.address_space,
-        )?;
+        let translation = prepare_translation_context::<A>(access, target.address_space)?;
 
         // Stage 6: a full stack reports the current count, never depth + 1.
         let depth = source.invocation_stack.len();
@@ -331,7 +326,7 @@ impl<A: ArchObjects> Nucleus<A> {
 
         // Stage 7: the placement slot, with the exact key the callee receives.
         let placement = lend
-            .map(|lend| self.prepare_placement(access, target, invocation_key, lend))
+            .map(|lend| Self::prepare_placement(access, target, invocation_key, lend))
             .transpose()?;
 
         let mut arguments = [0; 6];
@@ -378,14 +373,12 @@ impl<A: ArchObjects> Nucleus<A> {
     /// exporter's placement window in the target's table, and the key the
     /// installation will issue there.
     fn prepare_placement(
-        &self,
         access: &Access,
         target: CallTarget,
         invocation_key: RawKey,
         lent: LendRequest,
     ) -> Result<PreparedPlacement, CapError> {
-        let target_table =
-            self.address_space_table(access, target.address_space, invocation_key)?;
+        let target_table = Self::address_space_table(access, target.address_space, invocation_key)?;
         let table = access.resolve_carved_mut::<KeyTable>(target_table.addr)?;
         let (slot, incarnation) = table
             .first_vacant_in(target.placement_window)
@@ -585,7 +578,7 @@ impl<A: ArchObjects> Nucleus<A> {
             let callee = records
                 .get(depth + 1)
                 .map_or(thread.address_space, |next| next.source_address_space);
-            if let Ok(table) = self.address_space_table(access, callee, RawKey::from_wire(0)) {
+            if let Ok(table) = Self::address_space_table(access, callee, RawKey::from_wire(0)) {
                 Self::release_placement(access, table.addr, record.placement);
             }
         }
@@ -632,7 +625,7 @@ impl From<CapError> for ReturnRejection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PreparedReturn {
     source_thread: ThreadId,
-    current_address_space: ObjectId,
+    current_address_space: AddressSpaceId,
     continuation: InvocationContinuation,
     translation: PreparedTranslationContext,
     payload: [u64; 2],
@@ -733,16 +726,10 @@ impl<A: ArchObjects> Nucleus<A> {
             .top()
             .ok_or(ReturnRejection::Fault(ReturnFault::IllegalReturn))?;
         access
-            .resolve(
-                &self.pools.arch.address_spaces,
-                continuation.source_address_space,
-            )
+            .resolve_object::<A::AddressSpace>(continuation.source_address_space)
             .map_err(|_retired| ReturnRejection::Fault(ReturnFault::ReturnTargetRetired))?;
-        let translation = prepare_translation_context::<A>(
-            access,
-            &self.pools.arch.address_spaces,
-            continuation.source_address_space,
-        )?;
+        let translation =
+            prepare_translation_context::<A>(access, continuation.source_address_space)?;
 
         Ok(PreparedReturn {
             source_thread,

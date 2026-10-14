@@ -7,7 +7,7 @@
 //!   zeros.
 //! - `Retire` `1`: no arguments (`x2..x7` zero). Tears down the invoked
 //!   `AddressSpace`: whole-ASID TLB invalidation, ASID release to the
-//!   originating pool, root/ASID fields cleared, pool slot reclaimed.
+//!   originating pool, root/ASID fields cleared, the carved record retired.
 //!   Success returns zeros.
 //! - `CreateInvocation` `3`: `x2` nonzero function address, `x3` destination
 //!   `KeyTable` capability, `x4` vacant destination slot, `x5` stack base,
@@ -47,7 +47,8 @@ use {
         objects::{
             ArchObjects, KeyTable, Nucleus,
             access::Access,
-            arch_objects::{AddressSpaceObject, AsidPoolObject},
+            arch_objects::{AddressSpaceId, AddressSpaceObject, AsidPoolObject},
+            carved::Carved,
             invocation::InvocationStackExtent,
             key_table::CallerTable,
             resume::{PreparedTranslationContext, prepare_translation_context},
@@ -74,8 +75,7 @@ pub fn invoke<A: ArchObjects>(
     match op {
         0 => activate::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Activate),
         1 => retire::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Complete),
-        3 => create_invocation::<A>(access, caller, as_key, args, x8, nucleus)
-            .map(InvokeOutcome::Complete),
+        3 => create_invocation::<A>(access, caller, as_key, args, x8).map(InvokeOutcome::Complete),
         _ => Err(CapError::InvalidOperation),
     }
 }
@@ -87,7 +87,7 @@ fn resolve(
     caller: CallerTable,
     as_key: RawKey,
     right: u8,
-) -> Result<crate::objects::access::ObjectId, CapError> {
+) -> Result<AddressSpaceId, CapError> {
     let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
     let entry = caller_table
         .lookup(as_key, caller.guard)
@@ -101,7 +101,7 @@ fn resolve(
     if !entry.rights().has(right) {
         return Err(CapError::InsufficientRights);
     }
-    entry.object_id().map_err(|e| e.with_key_operand(0))
+    entry.address_space_id().map_err(|e| e.with_key_operand(0))
 }
 
 /// `CreateInvocation` `3`: install an Invocation capability into a destination
@@ -112,7 +112,6 @@ fn create_invocation<A: ArchObjects>(
     as_key: RawKey,
     args: &[u64; 6],
     x8: u64,
-    nucleus: &Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     let destination_key = RawKey::from_wire(args[1]);
 
@@ -131,7 +130,7 @@ fn create_invocation<A: ArchObjects>(
             return Err(CapError::InsufficientRights);
         }
         let address_space_id = address_space_entry
-            .object_id()
+            .address_space_id()
             .map_err(|error| error.with_key_operand(0))?;
         let destination = resolve_table_cap(&caller_table, destination_key, caller.guard, 3)?;
         (address_space_id, destination)
@@ -145,7 +144,7 @@ fn create_invocation<A: ArchObjects>(
     // itself is intentionally stored without mapping or executable validation.
     {
         let _target = access
-            .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, address_space_id)
+            .resolve_object::<A::AddressSpace>(address_space_id)
             .map_err(|error| error.for_key(as_key, 0))?;
     }
 
@@ -159,7 +158,7 @@ fn create_invocation<A: ArchObjects>(
     // (an empty window needs no table); it fails like an out-of-range slot.
     let placement_window = PlacementWindow::from_wire(x8);
     if placement_window.accepts_keys() {
-        let target_table = nucleus.address_space_table(access, address_space_id, as_key)?;
+        let target_table = Nucleus::<A>::address_space_table(access, address_space_id, as_key)?;
         let table = access.resolve_carved_mut::<KeyTable>(target_table.addr)?;
         if !table.contains_window(placement_window) {
             return Err(CapError::InvalidSlot(KeySlot(placement_window.first())));
@@ -208,11 +207,8 @@ fn activate<A: ArchObjects>(
     let as_id = resolve(access, caller, as_key, Rights::MAP)?;
     // A retired AddressSpace is reported against its key before it is
     // compared with the caller's own.
-    nucleus
-        .pools
-        .arch
-        .address_spaces
-        .validate(as_id)
+    access
+        .resolve_object::<A::AddressSpace>(as_id)
         .map_err(|error| error.for_key(as_key, 0))?;
 
     // Bootstrap-era restriction: only the current caller's own AddressSpace
@@ -228,7 +224,7 @@ fn activate<A: ArchObjects>(
     // Hardware transition: idempotent installation of the same context.
     // Implementation status: the entry performs that transition after this
     // prepared value has left the locked invocation; no guard escapes here.
-    prepare_translation_context::<A>(access, &nucleus.pools.arch.address_spaces, as_id)
+    prepare_translation_context::<A>(access, as_id)
 }
 
 /// `Retire` `1`: tear down the invoked `AddressSpace`.
@@ -236,9 +232,9 @@ fn activate<A: ArchObjects>(
 /// Teardown scope: if an ASID is bound, execute the whole-ASID TLB
 /// invalidation, then release the ASID back to its originating pool (the
 /// boot pool is the only one today; multi-pool partitioning remains D6).
-/// Clear the root/ASID fields and reclaim the `AddressSpace`-pool slot.
-/// Threads still referencing the retired `AddressSpace` fail generation
-/// validation on their next resolution (the stale-identity rule).
+/// Clear the root/ASID fields and retire the carved `AddressSpace`, bumping
+/// its generation. Threads still referencing the retired `AddressSpace` fail
+/// generation validation on their next resolution (the stale-identity rule).
 fn retire<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,
@@ -265,13 +261,13 @@ fn retire<A: ArchObjects>(
     // empty-table-gated `PageTable.Unmap` path.
     let bound_asid = {
         let mut address_space = access
-            .resolve_mut::<A::AddressSpace>(&mut nucleus.pools.arch.address_spaces, as_id)
+            .resolve_object::<A::AddressSpace>(as_id)
             .map_err(|error| error.for_key(as_key, 0))?;
         if address_space.translation_root().is_some() {
             return Err(CapError::InvalidOperation);
         }
         let released_asid = address_space.asid();
-        // Clear the root/ASID fields before the slot is reclaimed.
+        // Clear the root/ASID fields before the object is retired.
         address_space.set_asid(None);
         released_asid
     };
@@ -287,13 +283,13 @@ fn retire<A: ArchObjects>(
         }
     }
 
-    // Reclaim the pool slot. A stale identity (already retired) fails pool
-    // validation with a defined error.
-    nucleus
-        .pools
-        .arch
-        .address_spaces
-        .deallocate(as_id)
+    // Retire the carved record: its generation advances, so every capability
+    // and Thread still naming it fails validation from now on. Its memory
+    // stays below the Untyped's watermark and is never re-carved before the
+    // cleanup manager has deleted those capabilities.
+    // SAFETY: the identity was resolved above, so it names a carved
+    // `AddressSpace` record; the guard to it ended with its block.
+    unsafe { Carved::<A::AddressSpace>::retire(as_id) }
         .map_err(|error| error.for_key(as_key, 0))?;
     semi::println!("✅ AddressSpace::Retire()");
     Ok((0, 0))

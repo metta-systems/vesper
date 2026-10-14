@@ -13,9 +13,9 @@
 // │    rights: Rights             (1 byte)       │
 // │    badge: u16                 (2 bytes)      │
 // ├──────────────────────────────────────────────┤
-// │  Payload — 48 bytes (union on obj_type)      │
+// │  Payload — 56 bytes (union on obj_type)      │
 // │                                              │
-// │  VARIANT A: Object identity (most types)     │
+// │  VARIANT A: Pool identity (ASIDPool)         │
 // │    pool: PoolTag              (1 byte)       │
 // │    _pad: u8                   (1 byte)       │
 // │    index: u16                 (2 bytes)       │
@@ -32,7 +32,7 @@
 // │  VARIANT C: Inline Frame (mapping record)    │
 // │    paddr: u64                 (8 bytes)       │
 // │    vaddr: u64  → mapped virtual address      │
-// │    as_index: u16              (2 bytes)       │
+// │    as_address: u64            (8 bytes)       │
 // │    as_generation: u32         (4 bytes)       │
 // │    size_bits: u8              (1 byte)       │
 // │    flags: u8   → is_device | mapped          │
@@ -45,15 +45,16 @@
 // │                                              │
 // │  VARIANT F: Invocation                       │
 // │    function_address: NonZero<u64>            │
-// │    AddressSpace pool/index/generation        │
+// │    AddressSpace address/generation           │
 // │    Stack base/end/minimum headroom (24 bytes)│
 // │    Placement window first/count (2 x u32)    │
 // │                                              │
 // │  VARIANT G: Thread selector                  │
-// │    Named(ObjectId) | CurrentReturnOnly        │
+// │    Named(ThreadId) | CurrentReturnOnly        │
 // │                                              │
 // │  VARIANT H: Untyped-carved object            │
-// │    (Notification, EventCount, Time)          │
+// │    (Notification, EventCount, Time,          │
+// │     Scheduler, PageTable, AddressSpace)      │
 // │    address: u64               (8 bytes)       │
 // │    generation: u32            (4 bytes)       │
 // │                                              │
@@ -63,18 +64,19 @@
 // │                                              │
 // │  IRQControl carries no payload (all zeros)   │
 // └──────────────────────────────────────────────┘
-// Total: 56 bytes before tail padding (4-byte header, flags byte, padding to
-// the 8-aligned payload), 64-byte slot aligned to 32 bytes
+// Total: 64 bytes (4-byte header, flags byte, padding to the 8-aligned
+// payload), slot aligned to 32 bytes
 //
-// Variant A stores a checked object identity (pool tag, index, generation),
-// never a raw pointer: the owning access context computes object addresses
-// from pool bases after validating authoritative pool metadata, so stale
-// pointers cannot be dereferenced (D3 concrete guarded access, 2026-09-07).
+// Variants A and H store a checked object identity, never a bare pointer:
+// the owning access context validates a pool slot's metadata, or a carved
+// object's header, before any dereference, so stale identities cannot be
+// dereferenced (D3 concrete guarded access, 2026-09-07).
 
 use {
     crate::objects::{
         NucleusObject,
         access::{ObjectId, PoolTag},
+        arch_objects::{AddressSpaceId, PageTableId},
         carved::CarvedId,
         invocation::InvocationStackExtent,
         irq::IrqHandlerId,
@@ -156,17 +158,17 @@ pub struct FramePayload {
     pub paddr: u64,
     /// Mapped virtual address; meaningful only while the mapped flag is set.
     pub vaddr: u64,
-    /// Owning `AddressSpace` allocation generation; meaningful only while
-    /// mapped.
+    /// Kernel address of the owning `AddressSpace`'s carved record;
+    /// meaningful only while the mapped flag is set.
+    pub as_address: u64,
+    /// Owning `AddressSpace` generation; meaningful only while mapped.
     pub as_generation: u32,
-    /// Owning `AddressSpace` pool index; meaningful only while the mapped
-    /// flag is set.
-    pub as_index: u16,
     /// Size as log2 (frame = `2^size_bits`).
     pub size_bits: u8,
     /// Flag bits: bit 0 `is_device`, bit 1 `mapped`, bits 4:2 the
     /// memory-attribute ceiling code of a device Frame.
     pub flags: u8,
+    pub _pad: u16,
 }
 
 /// Flag bit: the backing is device memory, not ordinary RAM.
@@ -182,7 +184,7 @@ const FRAME_CEILING_MASK: u8 = 0b111 << FRAME_CEILING_SHIFT;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameMapping {
     /// The mapping context: the owning `AddressSpace`'s checked identity.
-    pub address_space: ObjectId,
+    pub address_space: AddressSpaceId,
     /// The complete mapped virtual address.
     pub vaddr: u64,
 }
@@ -196,15 +198,12 @@ pub struct InvocationPayload {
     /// Invocation is Call-only; `CreateInvocation` rejects a zero address.
     /// Current-relative Return authority is a separate Thread selector.
     pub function_address: NonZero<u64>,
-    /// Pool tag for the target `AddressSpace`.
-    pub address_space_pool: u8,
-    pub _pad: u8,
-    /// Target `AddressSpace` pool index.
-    pub address_space_index: u16,
-    /// Target `AddressSpace` allocation generation.
-    pub address_space_generation: u32,
+    /// Kernel address of the target `AddressSpace`'s carved record.
+    pub address_space_address: u64,
     /// Numeric target stack contract, validated before construction.
     pub stack_extent: InvocationStackExtent,
+    /// Target `AddressSpace` generation.
+    pub address_space_generation: u32,
     /// First slot of the key-placement window `CallWithKey` places a lent key
     /// in, within the target `AddressSpace`'s `KeyTable`. Meaningful only when
     /// `placement_count` is nonzero.
@@ -212,6 +211,7 @@ pub struct InvocationPayload {
     /// Number of slots in the key-placement window; zero means the Invocation
     /// accepts no lent key.
     pub placement_count: u32,
+    pub _pad: u32,
 }
 
 /// Payload for a `KeyTable` capability: a reference to the carved `KeyTable`
@@ -264,12 +264,12 @@ union KeyPayload {
     carved: CarvedPayload,
     invocation: InvocationPayload,
     irq_handler: IrqHandlerPayload,
-    null: [u8; 48],
+    null: [u8; PAYLOAD_BYTES],
 }
 
 /// A single entry in a thread's capability table (`KeyTable`).
 ///
-/// 56 bytes before tail padding in a 64-byte slot aligned to 32 bytes.
+/// 64 bytes (a 56-byte payload after the header), aligned to 32 bytes.
 /// Discriminated union: `obj_type` selects the payload variant.
 #[repr(C, align(32))]
 #[derive(Clone, Copy)]
@@ -284,15 +284,18 @@ pub struct KeyEntry {
     payload: KeyPayload,
 }
 
+/// Bytes in the payload union: the 64-byte entry less its 8-byte header.
+const PAYLOAD_BYTES: usize = 56;
+
 // Verify sizes at compile time
 const _: () = assert!(core::mem::size_of::<KeyEntry>() == 64);
-const _: () = assert!(core::mem::size_of::<KeyPayload>() == 48);
+const _: () = assert!(core::mem::size_of::<KeyPayload>() == PAYLOAD_BYTES);
 const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
-const _: () = assert!(core::mem::size_of::<FramePayload>() == 24);
+const _: () = assert!(core::mem::size_of::<FramePayload>() == 32);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
 const _: () = assert!(core::mem::size_of::<CarvedPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<IrqHandlerPayload>() == 8);
-const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 48);
+const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 56);
 const _: () = assert!(core::mem::size_of::<ThreadSelector>() == 24);
 const _: () = assert!(core::mem::align_of::<ThreadSelector>() == 8);
 const _: () = assert!(core::mem::align_of::<KeyEntry>() == 32);
@@ -305,6 +308,8 @@ fn is_carved_object_kind(kind: ObjectType) -> bool {
             | ObjectType::EVENT_COUNT
             | ObjectType::TIME
             | ObjectType::SCHEDULER
+            | ObjectType::PAGE_TABLE
+            | ObjectType::ADDRESS_SPACE
     )
 }
 
@@ -386,7 +391,9 @@ impl KeyEntry {
             rights: Rights::empty(),
             badge: 0,
             flags: 0,
-            payload: KeyPayload { null: [0_u8; 48] },
+            payload: KeyPayload {
+                null: [0_u8; PAYLOAD_BYTES],
+            },
         }
     }
 
@@ -537,10 +544,11 @@ impl KeyEntry {
                 frame: FramePayload {
                     paddr,
                     vaddr: 0,
-                    as_index: 0,
+                    as_address: 0,
                     as_generation: 0,
                     size_bits,
                     flags,
+                    _pad: 0,
                 },
             },
         }
@@ -603,7 +611,8 @@ impl KeyEntry {
     }
 
     /// The identity of an Untyped-carved object (Notification, `EventCount`,
-    /// Time); `TypeMismatch` for any other kind. Resolving it goes through
+    /// Time, Scheduler, `PageTable`, `AddressSpace`); `TypeMismatch` for any
+    /// other kind. Resolving it goes through
     /// the access context, which checks the object's header.
     pub fn carved_id(&self) -> Result<CarvedId, CapError> {
         if !is_carved_object_kind(self.obj_type) {
@@ -621,6 +630,29 @@ impl KeyEntry {
         })
     }
 
+    /// The carved identity an `AddressSpace` capability names;
+    /// `TypeMismatch` for any other kind.
+    pub fn address_space_id(&self) -> Result<AddressSpaceId, CapError> {
+        self.carved_id_of(ObjectType::ADDRESS_SPACE)
+    }
+
+    /// The carved identity of the metadata record a `PageTable` capability
+    /// names; `TypeMismatch` for any other kind.
+    pub fn page_table_id(&self) -> Result<PageTableId, CapError> {
+        self.carved_id_of(ObjectType::PAGE_TABLE)
+    }
+
+    /// The carved identity of an entry of kind `kind`.
+    fn carved_id_of(&self, kind: ObjectType) -> Result<CarvedId, CapError> {
+        if self.obj_type != kind {
+            return Err(CapError::TypeMismatch {
+                expected: kind,
+                found: self.obj_type,
+            });
+        }
+        self.carved_id()
+    }
+
     /// Check if this is an inline region type (Untyped or Frame).
     #[inline]
     pub fn is_region(&self) -> bool {
@@ -633,12 +665,12 @@ impl KeyEntry {
     /// `placement_window` is where `CallWithKey` places a lent key (empty for
     /// an Invocation that accepts none).
     pub fn new_invocation(
-        address_space: ObjectId,
+        address_space: AddressSpaceId,
         function_address: NonZero<u64>,
         stack_extent: InvocationStackExtent,
         placement_window: PlacementWindow,
     ) -> Self {
-        debug_assert_eq!(address_space.pool, PoolTag::AddressSpace);
+        debug_assert_eq!(address_space.kind, ObjectType::ADDRESS_SPACE);
         Self {
             obj_type: ObjectType::INVOCATION,
             rights: Rights(Rights::CALL),
@@ -647,13 +679,12 @@ impl KeyEntry {
             payload: KeyPayload {
                 invocation: InvocationPayload {
                     function_address,
-                    address_space_pool: address_space.pool as u8,
-                    _pad: 0,
-                    address_space_index: address_space.index,
-                    address_space_generation: address_space.generation,
+                    address_space_address: address_space.address,
                     stack_extent,
+                    address_space_generation: address_space.generation,
                     placement_first: placement_window.first(),
                     placement_count: placement_window.count(),
+                    _pad: 0,
                 },
             },
         }
@@ -717,7 +748,9 @@ impl KeyEntry {
             rights,
             badge: 0,
             flags: 0,
-            payload: KeyPayload { null: [0_u8; 48] },
+            payload: KeyPayload {
+                null: [0_u8; PAYLOAD_BYTES],
+            },
         }
     }
 
@@ -927,7 +960,7 @@ impl KeyEntry {
 
     /// The `AddressSpace` identity and mandatory entry address of a Call-only
     /// `Invocation`.
-    pub fn invocation_target(&self) -> Result<(ObjectId, NonZero<u64>), CapError> {
+    pub fn invocation_target(&self) -> Result<(AddressSpaceId, NonZero<u64>), CapError> {
         if self.obj_type != ObjectType::INVOCATION {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::INVOCATION,
@@ -937,9 +970,9 @@ impl KeyEntry {
         // SAFETY: the Invocation type check selects the invocation payload.
         let payload = unsafe { self.payload.invocation };
         Ok((
-            ObjectId {
-                pool: PoolTag::from_raw(payload.address_space_pool),
-                index: payload.address_space_index,
+            CarvedId {
+                kind: ObjectType::ADDRESS_SPACE,
+                address: payload.address_space_address,
                 generation: payload.address_space_generation,
             },
             payload.function_address,
@@ -1136,9 +1169,9 @@ impl FramePayload {
     #[inline]
     pub fn mapping(&self) -> Option<FrameMapping> {
         self.is_mapped().then_some(FrameMapping {
-            address_space: ObjectId {
-                pool: PoolTag::AddressSpace,
-                index: self.as_index,
+            address_space: CarvedId {
+                kind: ObjectType::ADDRESS_SPACE,
+                address: self.as_address,
                 generation: self.as_generation,
             },
             vaddr: self.vaddr,
@@ -1148,10 +1181,10 @@ impl FramePayload {
     /// Record that this frame cap was mapped into `address_space` at `vaddr`.
     /// The vaddr must be aligned to the frame size.
     #[inline]
-    pub fn set_mapped(&mut self, address_space: ObjectId, vaddr: u64) {
-        debug_assert_eq!(address_space.pool, PoolTag::AddressSpace);
+    pub fn set_mapped(&mut self, address_space: AddressSpaceId, vaddr: u64) {
+        debug_assert_eq!(address_space.kind, ObjectType::ADDRESS_SPACE);
         debug_assert_eq!(vaddr & (self.size() as u64 - 1), 0);
-        self.as_index = address_space.index;
+        self.as_address = address_space.address;
         self.as_generation = address_space.generation;
         self.vaddr = vaddr;
         self.flags |= FRAME_MAPPED;
@@ -1162,7 +1195,7 @@ impl FramePayload {
     pub fn clear_mapped(&mut self) {
         self.flags &= !FRAME_MAPPED;
         self.vaddr = 0;
-        self.as_index = 0;
+        self.as_address = 0;
         self.as_generation = 0;
     }
 }

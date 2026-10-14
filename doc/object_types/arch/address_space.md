@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Wire type | `0x82` (arch index 2) |
-| Backing | Kernel AddressSpace pool, created at boot |
+| Backing | Kernel record carved from the boot Untyped by the boot code |
 | Operations | Activate, Retire, CreateInvocation |
 
 ## Purpose
@@ -34,7 +34,7 @@ The supported AArch64 configuration is a four-level, 48-bit translation with a 4
 
 ### Retire
 
-Destroys an AddressSpace other than the caller's. Its root must be unmapped first ([`PageTable.Unmap`](page_table.md#unmap) on the root). Retire flushes every TLB entry tagged with its ASID, returns the ASID to its pool and frees the AddressSpace. Threads still in it fail on their next invocation; retire them with [`Thread.Retire`](../core/thread.md#retire).
+Destroys an AddressSpace other than the caller's. Its root must be unmapped first ([`PageTable.Unmap`](page_table.md#unmap) on the root). Retire flushes every TLB entry tagged with its ASID, returns the ASID to its pool and retires the AddressSpace: every capability to it then fails with `ObjectRetired`, and its memory is not reused. Threads still in it fail on their next invocation; retire them with [`Thread.Retire`](../core/thread.md#retire).
 
 | Error | Cause |
 |---|---|
@@ -52,4 +52,4 @@ Failures leave the destination table unchanged.
 
 ## Implementation
 
-AddressSpaces are created by the boot code; `Untyped.Retype` cannot create them. When an AddressSpace is created, its KeyTable gets the [return key](../core/thread.md#return) in slot 1. Its translation-table leaves are tagged with its ASID, so switching AddressSpaces needs no TLB flush. The AddressSpace also records whether its fault handler is busy and how many faults went unhandled; see [fault delivery](../core/thread.md#fault-delivery). Retire does not free the KeyTable's memory.
+AddressSpaces are created by the boot code, which carves them from the boot Untyped; `Untyped.Retype` cannot create them. When an AddressSpace is created, its KeyTable gets the [return key](../core/thread.md#return) in slot 1. Its translation-table leaves are tagged with its ASID, so switching AddressSpaces needs no TLB flush. The AddressSpace also records whether its fault handler is busy and how many faults went unhandled; see [fault delivery](../core/thread.md#fault-delivery). Retire does not free the KeyTable's memory.

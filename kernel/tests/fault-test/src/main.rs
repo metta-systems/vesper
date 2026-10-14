@@ -36,7 +36,7 @@ use {
         ROLE_TERMINATE, ROLE_WHILE_BUSY, ROLE_WITNESS, SEQUENCE_BIT, STACK_REGION, WITNESS_BIT,
     },
     kickstart::{
-        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory},
+        bootstrap::{bootstrap_nucleus, retained_init_memory},
         kickstart_init_el2,
     },
     libcomponent_loader::{
@@ -57,8 +57,9 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, access::ObjectId,
-            arch_objects::AddressSpaceObject, thread::ThreadId,
+            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
+            thread::ThreadId,
         },
     },
 };
@@ -142,12 +143,9 @@ fn assert_faulted(nucleus: &Nucleus<ArchObjectsImpl>, thread: ThreadId, what: &s
 }
 
 /// The fault-handler state of an `AddressSpace`: `(busy, unhandled faults)`.
-fn fault_state(nucleus: &Nucleus<ArchObjectsImpl>, address_space: ObjectId) -> (bool, u64) {
+fn fault_state(nucleus: &Nucleus<ArchObjectsImpl>, address_space: AddressSpaceId) -> (bool, u64) {
     let space = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(address_space.index))
+        .address_space(address_space)
         .expect("AddressSpace missing");
     (space.fault_handler_busy(), space.unhandled_faults())
 }
@@ -156,14 +154,7 @@ pub fn run() -> ! {
     semi::println!("fault-test: enabled MMU and dropped to EL1");
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        // builder, faulter, bare
-        address_spaces: 3,
-        // builder: root/L1/L2 and image L3s; faulter: root/L1/L2, image span,
-        // stack region, init page; bare: root/L1/L2, image span, stack region
-        page_tables: 3 + image_tables + 6 + 5,
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let (nucleus, keytable_addr, builder_as) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
     let untyped = UntypedKey::from_key(boot.boot_untyped_key);
     let self_table = KeyTableKey::from_key(boot.self_table_key);
@@ -200,7 +191,7 @@ pub fn run() -> ! {
     assert_eq!(TTBR0_EL1.get(), builder_ttbr);
 
     // ── Components ────────────────────────────────────────────────────────
-    let faulter = builder.component(nucleus, FAULTER_GUARD, &mut slots);
+    let faulter = builder.component(FAULTER_GUARD, &mut slots);
     builder.load_component(
         &faulter,
         &components::FAULTER,
@@ -208,7 +199,7 @@ pub fn run() -> ! {
         &mut slots,
     );
     verify_component(ttbr(nucleus, faulter.address_space), &components::FAULTER);
-    let bare = builder.component(nucleus, BARE_GUARD, &mut slots);
+    let bare = builder.component(BARE_GUARD, &mut slots);
     builder.load_component(&bare, &components::BARE, BARE_GUARD ^ 0x80_0000, &mut slots);
     verify_component(ttbr(nucleus, bare.address_space), &components::BARE);
     let mut faulter_stacks = builder.stack_region(&faulter, STACK_REGION, &mut slots);

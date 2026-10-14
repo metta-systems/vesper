@@ -5,9 +5,9 @@
 
 use {
     crate::objects::{
-        ArchObjects, ExecutionContext, Nucleus, ObjectPool,
+        ArchObjects, ExecutionContext, Nucleus,
         access::{Access, ObjectId, PoolTag},
-        arch_objects::AddressSpaceObject,
+        arch_objects::{AddressSpaceId, AddressSpaceObject},
         completion::{PendingKind, PendingState},
         key_table::KeyTableBinding,
         thread::ThreadId,
@@ -25,14 +25,14 @@ use {
 /// Keeping this value for a later invocation requires fresh validation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PreparedTranslationContext {
-    address_space: ObjectId,
+    address_space: AddressSpaceId,
     keytable: KeyTableBinding,
     root: u64,
     asid: u16,
 }
 
 impl PreparedTranslationContext {
-    pub const fn address_space(self) -> ObjectId {
+    pub const fn address_space(self) -> AddressSpaceId {
         self.address_space
     }
 
@@ -55,11 +55,10 @@ impl PreparedTranslationContext {
 /// hardware-format rejection uses the architecture's existing explicit errors.
 pub fn prepare_translation_context<A: ArchObjects>(
     access: &Access,
-    pool: &ObjectPool<A::AddressSpace>,
-    id: ObjectId,
+    id: AddressSpaceId,
 ) -> Result<PreparedTranslationContext, CapError> {
     let address_space = access
-        .resolve(pool, id)
+        .resolve_object::<A::AddressSpace>(id)
         .map_err(|_invalid_identity| CapError::InvalidDomain)?;
     let root = address_space
         .translation_root()
@@ -207,11 +206,7 @@ impl<A: ArchObjects> Nucleus<A> {
         };
         // The selected Thread becomes current as a checked identity.
         let target = self.thread(next).ok_or(CapError::InvalidDomain)?;
-        let translation = prepare_translation_context::<A>(
-            access,
-            &self.pools.arch.address_spaces,
-            target.address_space,
-        )?;
+        let translation = prepare_translation_context::<A>(access, target.address_space)?;
         let (mut restored, terminal) = match target.context {
             ExecutionContext::NotStarted { saved } | ExecutionContext::Preempted { saved } => {
                 (saved, None)

@@ -166,13 +166,15 @@ fn map<A: ArchObjects>(
         if !as_entry.rights().has(Rights::MAP) {
             return Err(CapError::InsufficientRights);
         }
-        let as_id = as_entry.object_id().map_err(|e| e.with_key_operand(2))?;
+        let as_id = as_entry
+            .address_space_id()
+            .map_err(|e| e.with_key_operand(2))?;
         (frame, as_id)
     };
 
     // Resolve the target AddressSpace and its translation root.
     let address_space = access
-        .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, as_id)
+        .resolve_object::<A::AddressSpace>(as_id)
         .map_err(|error| error.for_key(as_key, 2))?;
     let root = address_space
         .translation_root()
@@ -265,7 +267,7 @@ fn unmap<A: ArchObjects>(
     // Resolve the recorded owning AddressSpace (generation-checked) and its
     // root.
     let address_space = access
-        .resolve::<A::AddressSpace>(&nucleus.pools.arch.address_spaces, mapping.address_space)
+        .resolve_object::<A::AddressSpace>(mapping.address_space)
         .map_err(IdentityError::internal)?;
     let root = address_space
         .translation_root()

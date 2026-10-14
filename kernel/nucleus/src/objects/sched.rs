@@ -138,8 +138,7 @@ mod tests {
         super::RunQueue,
         crate::objects::{
             Thread,
-            access::{ObjectId, PoolTag},
-            carved::Carved,
+            carved::{Carved, test_id},
             thread::{ExecutionContext, ThreadId},
         },
     };
@@ -160,11 +159,7 @@ mod tests {
                 Carved::<Thread>::initialize(
                     base.add(index * STRIDE),
                     Thread::new(
-                        ObjectId {
-                            pool: PoolTag::AddressSpace,
-                            index: 0,
-                            generation: 1,
-                        },
+                        test_id(libobject::ObjectType::ADDRESS_SPACE, 0x1000),
                         ExecutionContext::Running,
                     ),
                 )

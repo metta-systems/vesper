@@ -1,10 +1,12 @@
 //! `AArch64` page-table kernel metadata and descriptor mechanics.
 //!
-//! A `PageTable` capability names a Retype-carved 4 KiB physical table plus
-//! this kernel metadata: the carve address, the walk level (0 = translation
-//! root), and the installation record (parent table and slot, or the owning
-//! `AddressSpace` for a root). The hardware-format table itself is ordinary RAM
-//! in the Untyped's committed range, reached through the direct map.
+//! A `PageTable` capability names the carved kernel metadata record of a
+//! Retype-carved 4 KiB physical table: the table's address, the walk level
+//! (0 = translation root), and the installation record (parent table and
+//! slot, or the owning `AddressSpace` for a root). Retype carves both from the
+//! invoking Untyped: the hardware-format tables first, then their records.
+//! The table itself is ordinary RAM in the Untyped's committed range, reached
+//! through the direct map.
 //!
 //! Descriptor format (`AArch64` Stage 1, 4 KiB granule, 48-bit VA): matches the
 //! boot-time configuration set by Kickstart — the four `MAIR_EL1` entries are
@@ -14,8 +16,8 @@
 use {
     crate::objects::{
         NucleusObject,
-        access::ObjectId,
-        arch_objects::{PageTableObject, PtParent},
+        arch_objects::{AddressSpaceId, PageTableObject, PtParent},
+        carved::CarvedObject,
     },
     libaddress::PhysAddr,
     libobject::{CapError, FrameAttribute, ObjectType},
@@ -111,7 +113,7 @@ impl PageTableObject for AArch64PageTable {
         self.parent
     }
 
-    fn install_root(&mut self, address_space: ObjectId) {
+    fn install_root(&mut self, address_space: AddressSpaceId) {
         self.level = 0;
         self.parent = PtParent::Root { address_space };
     }
@@ -126,9 +128,10 @@ impl PageTableObject for AArch64PageTable {
     }
 }
 
+impl CarvedObject for AArch64PageTable {}
+
 impl NucleusObject for AArch64PageTable {
     const TYPE: ObjectType = ObjectType::PAGE_TABLE;
-    const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::PageTable;
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -46,7 +46,7 @@ use {
     objects::{
         ArchObjectsImpl, KeyTable, Nucleus, ObjectPool,
         access::Access,
-        arch::{AArch64PageTable, ArchPools},
+        arch::{AArch64ASIDPool, ArchPools},
         carved::{Carved, CarvedId},
         domain::DcbPages,
         nucleus::NucleusPools,
@@ -87,12 +87,9 @@ fn carve_table() -> u64 {
     TEST_BACKING
 }
 
-/// Backing bytes for the fixture nucleus's pools (u128 elements give the
-/// 16-byte minimum carve alignment). The Thread pool is built with zero
-/// capacity (never dereferenced); the page-table metadata pool holds
-/// exactly one slot so its exhaustion and rollback behavior is observable
-/// without any carve write (these MMU-off tests only exercise rejection
-/// paths).
+/// Backing bytes for the fixture nucleus's ASID-pool pool (u128 elements give
+/// the 16-byte minimum carve alignment), built with zero capacity: these
+/// MMU-off rejection-path tests never bind ASIDs.
 static mut POOL_MEM: [u128; 8] = [0; 8];
 
 /// Backing standing in for Untyped memory for the Time operation tests: a
@@ -112,7 +109,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
     unsafe {
         let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
         let pool_ptr = (&raw mut POOL_MEM).cast::<u8>();
-        assert!(ObjectPool::<AArch64PageTable>::carve_size(1) <= core::mem::size_of::<[u128; 8]>());
+        assert!(ObjectPool::<AArch64ASIDPool>::carve_size(0) <= core::mem::size_of::<[u128; 8]>());
         nucleus_ptr.write(Nucleus {
             current_thread: None,
             dcb_pages: DcbPages::new(),
@@ -122,13 +119,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
             pools: NucleusPools {
-                arch: ArchPools::new(
-                    ObjectPool::initialize(pool_ptr, 1),
-                    // Zero capacity: these MMU-off rejection-path tests never
-                    // invoke AddressSpace or ASIDPool operations.
-                    ObjectPool::initialize(pool_ptr, 0),
-                    ObjectPool::initialize(pool_ptr, 0),
-                ),
+                arch: ArchPools::new(ObjectPool::initialize(pool_ptr, 0)),
             },
         });
         &mut *nucleus_ptr
@@ -671,18 +662,16 @@ fn retype_rejects_device_untypeds_for_page_tables() {
     assert_eq!(fx.len(), before);
 }
 
-/// A PageTable batch that cannot fit the metadata pool is rejected with
-/// `PoolExhausted`, and the partially allocated slots are released: the
-/// failure precedes any carve write or destination install, and a fresh
-/// fixture exhausts at the same point (the pool capacity did not leak).
+/// A PageTable carves its kernel metadata record from the invoking Untyped
+/// too: four 4 KiB tables alone would fill a 16 KiB Untyped exactly, so with
+/// their records a batch of four does not fit. The rejection precedes any
+/// carve write or destination install and leaves the watermark unchanged.
 #[test_case]
-fn retype_page_table_batch_releases_partial_pool_slots_on_exhaustion() {
+fn retype_page_table_batch_charges_metadata_records_to_the_untyped() {
     let mut fx = Fixture::new(FULL);
-    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let ram = fx.install(KeySlot(30), ram_untyped(14));
     let before = fx.len();
 
-    // The fixture's page-table metadata pool holds exactly one slot, so a
-    // batch of two exhausts it after the first allocation.
     let result = fx.invoke(
         ram,
         UntypedOp::Retype as u64,
@@ -690,15 +679,13 @@ fn retype_page_table_batch_releases_partial_pool_slots_on_exhaustion() {
             ObjectType::PAGE_TABLE,
             12,
             0,
-            2,
+            4,
             fx.self_key,
             KeySlot(40),
             Rights::all(),
         ),
     );
-    assert!(matches!(result, Err(CapError::PoolExhausted)));
-
-    // The rollback released the first metadata slot and installed nothing.
+    assert!(matches!(result, Err(CapError::InsufficientMemory)));
     assert_eq!(fx.len(), before);
     let region = fx
         .lookup(ram)
@@ -706,25 +693,6 @@ fn retype_page_table_batch_releases_partial_pool_slots_on_exhaustion() {
         .as_untyped()
         .unwrap_or_else(|_| panic!("entry is not an Untyped"));
     assert_eq!(region.watermark_bytes(), 0);
-
-    // The released slot is usable again: a fresh fixture batch of two still
-    // exhausts at the same point.
-    let mut fx2 = Fixture::new(FULL);
-    let ram2 = fx2.install(KeySlot(30), ram_untyped(24));
-    let result2 = fx2.invoke(
-        ram2,
-        UntypedOp::Retype as u64,
-        &retype_args(
-            ObjectType::PAGE_TABLE,
-            12,
-            0,
-            2,
-            fx2.self_key,
-            KeySlot(40),
-            Rights::all(),
-        ),
-    );
-    assert!(matches!(result2, Err(CapError::PoolExhausted)));
 }
 
 // ═══════════════════════════════════════════════════════════════

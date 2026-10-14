@@ -2,8 +2,8 @@
 //! `PageTable` Retype and installation, ASID binding, `AddressSpace.Retire`
 //! (whole-ASID invalidation, ASID release and reuse), Frame.Map/Unmap with
 //! the alias policy, Frame cache maintenance, activation making the carved
-//! tables hardware-live with observable TLB invalidation, and page-table pool
-//! accounting.
+//! tables hardware-live with observable TLB invalidation, and PageTable
+//! metadata charged to the invoking Untyped.
 //!
 //! The Bounce fixture's `AddressSpace` is provisioned (no Bounce Thread runs)
 //! so the source context is activated with the retained image mapped, exactly
@@ -12,7 +12,7 @@
 use {
     aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
     core::{arch::asm, slice},
-    kickstart::bootstrap::{BootState, PoolCapacities, bootstrap_nucleus, retained_init_memory},
+    kickstart::bootstrap::{BootState, bootstrap_nucleus, retained_init_memory},
     libaddress::PhysAddr,
     libcomponent_loader::{
         builder::Builder,
@@ -33,8 +33,9 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, KeyTable, access::ObjectId,
-            arch_objects::AddressSpaceObject,
+            ArchObjects, ArchObjectsImpl, KeyTable,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
+            carved::CarvedId,
         },
     },
 };
@@ -68,7 +69,7 @@ fn create_invocation_raw(address_space: RawKey, args: [u64; 6]) -> (u64, u64, u6
 #[derive(Debug, PartialEq, Eq)]
 struct InvocationDestinationState {
     count: usize,
-    target: ObjectId,
+    target: AddressSpaceId,
     function: u64,
     rights: Rights,
     badge: u16,
@@ -117,16 +118,8 @@ fn invocation_destination_state(
 pub fn run() {
     let (_boot_execution_sp, shared_trap_sp) = record_fixture_stacks();
     let retained_init = retained_init_memory();
-    let page_table_capacity = translation::page_table_capacity(&retained_init);
     translation::observe_bootstrap(crate::run as *const u8 as u64);
-    // The boot, Bounce and two retirement-fixture
-    // AddressSpaces; every page table the suite carves (see
-    // `translation::page_table_capacity`).
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        address_spaces: 4,
-        page_tables: page_table_capacity,
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let BootState {
         nucleus,
         keytable_addr,
@@ -137,10 +130,7 @@ pub fn run() {
         ..
     } = boot;
     let boot_table_binding = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(boot_as_id.index))
+        .address_space(boot_as_id)
         .expect("boot AddressSpace missing")
         .keytable();
     let untyped = UntypedKey::from_key(boot_untyped_key);
@@ -224,16 +214,20 @@ pub fn run() {
         let id = boot_table
             .lookup(root_pt_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("root PageTable entry missing"))
-            .object_id()
+            .page_table_id()
             .unwrap_or_else(|_| panic!("root PageTable entry has no identity"));
         let paddr = nucleus
-            .pools
-            .arch
-            .page_tables
-            .get_live(usize::from(id.index))
+            .page_table(id)
             .unwrap_or_else(|| panic!("root PageTable metadata missing"))
             .paddr;
         assert_eq!(paddr % 4096, 0, "the table carve must be 4 KiB-aligned");
+        // The table's kernel metadata record is carved from the same
+        // Untyped, right after the batch's tables.
+        assert_eq!(
+            id.address,
+            PhysAddr::new(paddr + 4096).user_to_kernel().as_u64(),
+            "the metadata record must follow the table"
+        );
         // SAFETY: the table lies in the boot Untyped's committed range;
         // the direct map is live.
         let words = unsafe {
@@ -317,10 +311,7 @@ pub fn run() {
     ));
     {
         let address_space = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live(0)
+            .address_space(boot_as_id)
             .unwrap_or_else(|| panic!("boot AddressSpace missing"));
         assert!(address_space.translation_root.is_some());
     }
@@ -337,10 +328,7 @@ pub fn run() {
     assert_eq!(bound_asid, 1);
     {
         let address_space = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live(0)
+            .address_space(boot_as_id)
             .unwrap_or_else(|| panic!("boot AddressSpace missing"));
         assert_eq!(address_space.asid, Some(1));
     }
@@ -380,14 +368,14 @@ pub fn run() {
 
     // AddressSpace.Retire end-to-end: the address-space teardown —
     // whole-ASID invalidation, ASID release to the originating pool,
-    // root/ASID fields cleared, pool slot reclaimed — through the real
+    // root/ASID fields cleared, the carved AddressSpace retired — through the real
     // SVC path under `RETIRE` authority.
     // ─────────────────────────────────────────────────────────────────
     {
         // A fixture AddressSpace with its own root and ASID.
         // Provision a distinct initialized table too; its Retype carve
         // stays accounted and is never reclaimed/reinitialized, even
-        // after the AddressSpace pool slot is retired.
+        // after the AddressSpace is retired.
         let fixture_table_key = untyped
             .retype(
                 ObjectType::KEY_TABLE,
@@ -431,25 +419,16 @@ pub fn run() {
             bounce_table_binding.address()
         );
         assert_eq!(fixture_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
-        let fixture_as_id = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .allocate(ArchObjectsImpl::new_address_space(fixture_table_binding))
-            .expect("no fixture AddressSpace slot")
-            .0;
-        assert_eq!(fixture_as_id.index, 2);
+        let fixture_as_id =
+            builder.carve_object(ArchObjectsImpl::new_address_space(fixture_table_binding));
+        assert_ne!(fixture_as_id, boot_as_id);
         let fixture_as_key = {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
             let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
             boot_table
                 .insert(
                     KeySlot(54),
-                    KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                        fixture_as_id,
-                        Rights::all(),
-                        0,
-                    ),
+                    KeyEntry::new_carved(fixture_as_id, Rights::all(), 0),
                     BOOT_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
@@ -524,7 +503,7 @@ pub fn run() {
         ));
 
         // Unmap the (empty) root, then retire: the ASID is released back
-        // to the boot pool and the pool slot is reclaimed.
+        // to the boot pool and the carved AddressSpace is retired.
         // First reject withdrawal of its nonempty ancestors, then empty
         // the disposable chain innermost-first. This context never executes.
         assert!(matches!(
@@ -552,10 +531,7 @@ pub fn run() {
         ));
         assert_eq!(
             nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live(2)
+                .address_space(fixture_as_id)
                 .expect("fixture AS missing before retirement")
                 .translation_root,
             None
@@ -563,12 +539,17 @@ pub fn run() {
         fixture_as.retire().unwrap_or_else(|error| {
             panic!("fixture AddressSpace.Retire failed: {:?}", error.code())
         });
-        nucleus
-            .pools
-            .arch
-            .address_spaces
-            .validate(fixture_as_id)
-            .unwrap_err();
+        // Retire bumps the carved generation and marks the record retired:
+        // neither the old identity nor a guess at the next one resolves.
+        assert!(nucleus.address_space(fixture_as_id).is_none());
+        assert!(
+            nucleus
+                .address_space(CarvedId {
+                    generation: fixture_as_id.generation + 1,
+                    ..fixture_as_id
+                })
+                .is_none()
+        );
         // The retired AddressSpace's capability names an object that no
         // longer exists: Retire and Activate through it report the retirement
         // against the invoked key.
@@ -631,7 +612,7 @@ pub fn run() {
             let entry = table
                 .lookup(fixture_as_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|error| panic!("stale target cap changed: {:?}", error.code()));
-            assert!(matches!(entry.object_id(), Ok(id) if id == fixture_as_id));
+            assert!(matches!(entry.address_space_id(), Ok(id) if id == fixture_as_id));
             assert_eq!(entry.rights(), Rights::all());
         }
 
@@ -721,25 +702,16 @@ pub fn run() {
             fixture_table_binding.address()
         );
         assert_eq!(rebind_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
-        let rebind_as_id = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .allocate(ArchObjectsImpl::new_address_space(rebind_table_binding))
-            .expect("no rebind AddressSpace slot")
-            .0;
-        assert_eq!(rebind_as_id.index, 3);
+        let rebind_as_id =
+            builder.carve_object(ArchObjectsImpl::new_address_space(rebind_table_binding));
+        assert_ne!(rebind_as_id, fixture_as_id);
         let rebind_as_key = {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
             let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
             boot_table
                 .insert(
                     KeySlot(55),
-                    KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                        rebind_as_id,
-                        Rights::all(),
-                        0,
-                    ),
+                    KeyEntry::new_carved(rebind_as_id, Rights::all(), 0),
                     BOOT_TABLE_GUARD,
                 )
                 .unwrap_or_else(|failure| {
@@ -853,10 +825,7 @@ pub fn run() {
 
     // Verify the descriptor chain by hand through the direct map.
     let root_paddr = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(0)
+        .address_space(boot_as_id)
         .unwrap_or_else(|| panic!("boot AddressSpace missing"))
         .translation_root
         .expect("translation root missing");
@@ -1244,64 +1213,97 @@ pub fn run() {
     assert_eq!(TTBR0_EL1.get(), active_ttbr0);
     {
         let address_space = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live(0)
+            .address_space(boot_as_id)
             .unwrap_or_else(|| panic!("boot AddressSpace missing"));
         assert_eq!(address_space.translation_root, Some(root_paddr));
         assert_eq!(address_space.asid, Some(bound_asid));
     }
 
-    // Page-table pool accounting: a batch that cannot fit releases its
-    // partially allocated metadata slots, and a later smaller batch
-    // succeeds. Capacity is now exactly the retained source/Bounce tables,
-    // both disposable retirement roots and their teardown chain, this
-    // uninstalled L3 metadata, and
-    // twelve spare entries. Unmap does not release page-table pool entries.
-    assert_eq!(
-        nucleus.pools.arch.page_tables.len(),
-        page_table_capacity - 12
-    );
-    assert!(matches!(
-        untyped.retype(
-            ObjectType::PAGE_TABLE,
-            12,
-            0,
-            13,
-            &self_table,
-            KeySlot(24).0,
-            Rights::all(),
-        ),
-        Err(CapError::PoolExhausted)
-    ));
-    let refill = untyped
+    // Page-table metadata is charged to the invoking Untyped: a 16 KiB
+    // Untyped would hold four bare 4 KiB tables, but each table also carves
+    // its metadata record after the batch's tables, so a batch of four does
+    // not fit and leaves the Untyped unchanged, while a batch of three does.
+    let charge_key = untyped
         .retype(
-            ObjectType::PAGE_TABLE,
-            12,
+            ObjectType::UNTYPED,
+            14,
             0,
-            12,
+            1,
             &self_table,
             KeySlot(24).0,
             Rights::all(),
         )
-        .unwrap_or_else(|error| panic!("refill PageTable Retype failed: {:?}", error.code()));
-    assert_eq!(refill.slot(), boot_slot(24));
-    assert_eq!(nucleus.pools.arch.page_tables.len(), page_table_capacity);
-    assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
-    translation::verify_retained(&retained_init, source_root, bounce_root);
+        .unwrap_or_else(|error| panic!("16 KiB Untyped split failed: {:?}", error.code()));
+    let charge = UntypedKey::from_key(charge_key);
     assert!(matches!(
-        untyped.retype(
+        charge.retype(
+            ObjectType::PAGE_TABLE,
+            12,
+            0,
+            4,
+            &self_table,
+            KeySlot(25).0,
+            Rights::all(),
+        ),
+        Err(CapError::InsufficientMemory)
+    ));
+    let charged = charge
+        .retype(
+            ObjectType::PAGE_TABLE,
+            12,
+            0,
+            3,
+            &self_table,
+            KeySlot(25).0,
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("charged PageTable Retype failed: {:?}", error.code()));
+    {
+        // SAFETY: keytable_addr names the live boot KeyTable; no SVC runs
+        // while this shared borrow is live.
+        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let base = boot_table
+            .lookup(charge_key, BOOT_TABLE_GUARD)
+            .and_then(KeyEntry::as_untyped)
+            .unwrap_or_else(|error| panic!("16 KiB Untyped missing: {:?}", error.code()))
+            .paddr;
+        let ids: [_; 3] = core::array::from_fn(|index| {
+            let key = boot_key(25 + u32::try_from(index).unwrap(), charged.incarnation());
+            boot_table
+                .lookup(key, BOOT_TABLE_GUARD)
+                .and_then(KeyEntry::page_table_id)
+                .unwrap_or_else(|error| panic!("charged PageTable missing: {:?}", error.code()))
+        });
+        // The failed batch of four reserved nothing: the tables start at the
+        // Untyped's base, and the records follow the last table.
+        let stride = ids[1].address - ids[0].address;
+        assert!(stride > 0);
+        for (index, id) in (0_u64..).zip(ids) {
+            let table = nucleus
+                .page_table(id)
+                .unwrap_or_else(|| panic!("charged PageTable metadata missing"));
+            assert_eq!(table.paddr, base + index * 4096);
+            assert_eq!(
+                id.address,
+                PhysAddr::new(base + 3 * 4096).user_to_kernel().as_u64() + index * stride
+            );
+        }
+    }
+    // Nothing more fits: the remaining bytes hold no table and record.
+    assert!(matches!(
+        charge.retype(
             ObjectType::PAGE_TABLE,
             12,
             0,
             1,
             &self_table,
-            KeySlot(36).0,
+            KeySlot(28).0,
             Rights::all(),
         ),
-        Err(CapError::PoolExhausted)
+        Err(CapError::InsufficientMemory)
     ));
+    assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+    translation::verify_retained(&retained_init, source_root, bounce_root);
 
     semi::println!("Memory suite passed");
 }

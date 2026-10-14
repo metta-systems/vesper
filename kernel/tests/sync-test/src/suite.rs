@@ -8,12 +8,11 @@
 use {
     core::sync::atomic::{AtomicU64, Ordering},
     kickstart::bootstrap::{
-        BOOT_TIME_BUDGET_NS, BootState, PoolCapacities, bootstrap_nucleus, retained_init_memory,
+        BOOT_TIME_BUDGET_NS, BootState, bootstrap_nucleus, retained_init_memory,
     },
     libcomponent_loader::{
         builder::Builder,
         keys::{BOOT_TABLE_GUARD, boot_key, boot_slot},
-        paging::image_table_count,
     },
     libexception::arch::aarch64::ExceptionOrigin,
     libkicktest::{
@@ -46,11 +45,7 @@ pub fn run() {
     translation::observe_bootstrap(crate::run as *const u8 as u64);
     // The boot and Bounce AddressSpaces; the source and Bounce root
     // prefixes, both image closures and both probe tables.
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        address_spaces: 2,
-        page_tables: 8 + 2 * image_table_count(&retained_init),
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let BootState {
         nucleus,
         keytable_addr,
@@ -62,10 +57,7 @@ pub fn run() {
         ..
     } = boot;
     let boot_table_binding = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(boot_as_id.index))
+        .address_space(boot_as_id)
         .expect("boot AddressSpace missing")
         .keytable();
     let untyped = UntypedKey::from_key(boot_untyped_key);
@@ -96,7 +88,7 @@ pub fn run() {
         .unwrap_or_else(|error| panic!("notification Retype failed: {:?}", error.code()));
     assert_eq!(notification_key.slot(), boot_slot(24));
 
-    // A nonzero size_bits is rejected before any pool slot is taken.
+    // A nonzero size_bits is rejected before anything is carved.
     assert!(matches!(
         untyped.retype(
             ObjectType::NOTIFICATION,
@@ -280,10 +272,7 @@ pub fn run() {
         assert_eq!(bounce.address_space, bounce_as_id);
         assert_eq!(
             nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live(usize::from(bounce.address_space.index))
+                .address_space(bounce.address_space)
                 .expect("Bounce AddressSpace missing")
                 .keytable()
                 .address(),
@@ -434,7 +423,7 @@ pub fn run() {
     // ─────────────────────────────────────────────────────────────────
     // Thread.Retire end-to-end: the Thread-control teardown trigger —
     // cancel every pending record naming the target as waiter, purge its
-    // queued wakeup, reclaim its pool slot — through the real SVC path
+    // queued wakeup, retire the carved Thread — through the real SVC path
     // under `RETIRE` authority.
     // ─────────────────────────────────────────────────────────────────
     {
@@ -548,17 +537,11 @@ pub fn run() {
         // Thread retirement does not retire its AddressSpace or reset the
         // shared table's counters/backing; the binding remains live.
         nucleus
-            .pools
-            .arch
-            .address_spaces
-            .validate(bounce_as_id)
-            .unwrap_or_else(|_| panic!("Thread retirement invalidated Bounce's AddressSpace"));
+            .address_space(bounce_as_id)
+            .expect("Thread retirement invalidated Bounce's AddressSpace");
         assert_eq!(
             nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live(usize::from(bounce_as_id.index))
+                .address_space(bounce_as_id)
                 .expect("Thread retirement removed Bounce's AddressSpace")
                 .keytable()
                 .address(),

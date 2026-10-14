@@ -54,6 +54,17 @@ pub struct CarvedId {
     pub generation: u32,
 }
 
+impl CarvedId {
+    /// Names no object: an inert Thread's `AddressSpace` before
+    /// `Scheduler.ConfigureThread`. Its address is zero, so validating it
+    /// always fails.
+    pub const UNBOUND: Self = Self {
+        kind: ObjectType::NULL,
+        address: 0,
+        generation: 0,
+    };
+}
+
 /// Object kinds the kernel carves from Untyped memory.
 pub trait CarvedObject: NucleusObject {}
 

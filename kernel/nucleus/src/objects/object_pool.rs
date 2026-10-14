@@ -455,7 +455,7 @@ mod tests {
 
     impl NucleusObject for Dummy {
         const TYPE: ObjectType = ObjectType::THREAD;
-        const POOL: PoolTag = PoolTag::AddressSpace;
+        const POOL: PoolTag = PoolTag::ASIDPool;
     }
 
     /// A 16-byte-aligned backing (the minimum carve alignment) large enough
@@ -526,7 +526,7 @@ mod tests {
         let mut backing = MaybeUninit::<Backing>::uninit();
         let mut pool = pool(&mut backing, 2);
         let id = alloc(&mut pool, 7);
-        assert_eq!(id.pool, PoolTag::AddressSpace);
+        assert_eq!(id.pool, PoolTag::ASIDPool);
         assert_eq!(id.index, 0);
         assert_eq!(id.generation, 1);
         assert!(pool.validate(id).is_ok());

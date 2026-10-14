@@ -26,8 +26,9 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, access::ObjectId,
-            arch_objects::AddressSpaceObject, key_table::KeyTableBinding,
+            ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
+            key_table::KeyTableBinding,
         },
     },
 };
@@ -124,7 +125,7 @@ pub fn fixture_stack_state() -> (u64, u64) {
 /// bound `root`/`asid`, which `TTBR0_EL1` holds.
 pub fn assert_source_selected(
     nucleus: &Nucleus<ArchObjectsImpl>,
-    source: ObjectId,
+    source: AddressSpaceId,
     root: u64,
     asid: u16,
 ) {
@@ -133,18 +134,9 @@ pub fn assert_source_selected(
         .unwrap_or_else(|_| panic!("source Thread missing"));
     assert_eq!(thread.address_space, source);
     assert_eq!(thread.context, ExecutionContext::Running);
-    nucleus
-        .pools
-        .arch
-        .address_spaces
-        .validate(source)
-        .unwrap_or_else(|_| panic!("source AddressSpace identity invalid"));
     let address_space = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(source.index))
-        .expect("source AddressSpace missing");
+        .address_space(source)
+        .expect("source AddressSpace identity invalid");
     assert_eq!(address_space.translation_root, Some(root));
     assert_eq!(address_space.asid, Some(asid));
     assert_eq!(TTBR0_EL1.get(), root | (u64::from(asid) << 48));
@@ -202,7 +194,7 @@ pub struct Bounce {
     pub table_key: RawKey,
     pub table_addr: u64,
     pub table_binding: KeyTableBinding,
-    pub as_id: ObjectId,
+    pub as_id: AddressSpaceId,
     /// The boot table's capability to Bounce's `AddressSpace` (boot slot 69).
     pub as_key: RawKey,
     /// Bounce-local `DebugConsole` key (WRITE only).
@@ -213,7 +205,7 @@ pub struct Bounce {
 }
 
 /// Build Bounce on top of `source`: its stack, table (self-table and
-/// `DebugConsole` grants), `AddressSpace` (index 1), both image closures and
+/// `DebugConsole` grants), `AddressSpace`, both image closures and
 /// probes, ASID 2 — then activate the source context, which must stay
 /// selected. `boot_table_binding` is the boot `AddressSpace`'s table.
 pub fn provision(
@@ -221,7 +213,7 @@ pub fn provision(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     source: &SourceChain,
     boot_table_binding: KeyTableBinding,
-    boot_as_id: ObjectId,
+    boot_as_id: AddressSpaceId,
     debug_console_key: RawKey,
     shared_trap_sp: u64,
 ) -> Bounce {
@@ -316,13 +308,10 @@ pub fn provision(
         .unwrap_or_else(|error| panic!("Bounce table provisioning failed: {:?}", error.code()));
     assert_ne!(table_binding.address(), boot_table_binding.address());
     assert_eq!(table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
-    let (as_id, bounce_as) = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .allocate(ArchObjectsImpl::new_address_space(table_binding))
-        .expect("no Bounce AddressSpace slot");
-    assert_eq!(as_id.index, 1);
+    let as_id = builder.carve_object(ArchObjectsImpl::new_address_space(table_binding));
+    let bounce_as = nucleus
+        .address_space(as_id)
+        .expect("Bounce AddressSpace just carved");
     assert_ne!(as_id, boot_as_id);
     assert_eq!(bounce_as.keytable().address(), table_addr);
     assert_eq!(bounce_as.keytable().size_bits(), BOOT_TABLE_SIZE_BITS);
@@ -336,11 +325,7 @@ pub fn provision(
         let key = boot_table
             .insert(
                 KeySlot(69),
-                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                    as_id,
-                    Rights::all(),
-                    0,
-                ),
+                KeyEntry::new_carved(as_id, Rights::all(), 0),
                 BOOT_TABLE_GUARD,
             )
             .unwrap_or_else(|failure| panic!("Bounce AS grant failed: {:?}", failure.error.code()));
@@ -349,11 +334,7 @@ pub fn provision(
         unsafe { &mut *(table_addr as *mut KeyTable) }
             .insert(
                 KeySlot::SELF_ADDRESS_SPACE,
-                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                    as_id,
-                    Rights::all(),
-                    0,
-                ),
+                KeyEntry::new_carved(as_id, Rights::all(), 0),
                 TEST_TABLE_GUARD,
             )
             .unwrap_or_else(|failure| {
@@ -372,18 +353,15 @@ pub fn provision(
         .assign(as_key)
         .unwrap_or_else(|error| panic!("Bounce ASID assignment failed: {:?}", error.code()));
     assert_eq!(bounce_asid, 2);
-    let root_of = |index: usize, what: &str| {
+    let root_of = |id: AddressSpaceId, what: &str| {
         nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live(index)
+            .address_space(id)
             .unwrap_or_else(|| panic!("{what} AddressSpace missing"))
             .translation_root
             .unwrap_or_else(|| panic!("{what} root missing"))
     };
-    let source_root = root_of(0, "source");
-    let bounce_root = root_of(1, "Bounce");
+    let source_root = root_of(boot_as_id, "source");
+    let bounce_root = root_of(as_id, "Bounce");
     translation::verify_retained(builder.retained, source_root, bounce_root);
     translation::bind_contexts(source_root, source.asid, bounce_root, bounce_asid);
     // The source must run under its own ASID-1 root before the first wait.

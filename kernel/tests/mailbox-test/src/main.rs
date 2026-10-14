@@ -29,9 +29,7 @@ mod components {
 use {
     driver_protocol::{LEND_TABLE_SLOT, PLAIN_TABLE_SLOT, REPORT_SLOT},
     kickstart::{
-        bootstrap::{
-            PoolCapacities, bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle,
-        },
+        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle},
         drivers::{BootKeys, LoadedDriver, load_drivers},
         kickstart_init_el2,
     },
@@ -92,14 +90,7 @@ pub fn run() -> ! {
     semi::println!("mailbox-test: enabled MMU and dropped to EL1");
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        // builder and one per driver instance
-        address_spaces: 1 + INSTANCES,
-        // builder: root/L1/L2 and image L3s; each driver: root/L1/L2, image
-        // span, stack region, init page, device window, data window
-        page_tables: 3 + image_tables + INSTANCES * 16,
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let keys = BootKeys::of(&boot);
     let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
     let untyped = UntypedKey::from_key(keys.untyped);

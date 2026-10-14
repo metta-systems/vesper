@@ -9,7 +9,8 @@ use {
         api::{self, KeyEntry},
         objects::{
             ArchObjectsImpl, ExecutionContext, Notification, Nucleus, Thread, Time,
-            access::ObjectId,
+            arch_objects::AddressSpaceId,
+            carved::CarvedId,
             irq::{IrqLine, IrqTable},
             nucleus::test_arena,
         },
@@ -187,7 +188,7 @@ fn install(nucleus: &mut Nucleus<ArchObjectsImpl>, slot: u32, entry: KeyEntry) -
 fn setup(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     table_addr: u64,
-    fixture_as: ObjectId,
+    fixture_as: AddressSpaceId,
     badge: u16,
 ) -> Keys {
     install_fake_component();
@@ -204,7 +205,7 @@ fn setup(
 
     let notification = test_arena::carve(Notification::new()).expect("arena exhausted");
     let time = test_arena::carve(Time::empty(0)).expect("arena exhausted");
-    let receiver = test_arena::carve(Thread::new(ObjectId::UNBOUND, ExecutionContext::Inactive))
+    let receiver = test_arena::carve(Thread::new(CarvedId::UNBOUND, ExecutionContext::Inactive))
         .expect("arena exhausted");
     nucleus.thread_mut(receiver).unwrap().time = Some(time);
     let (guard, size_bits) = nucleus
@@ -531,7 +532,7 @@ fn set_notification_checks_its_keys() {
         ));
         // A receiver Thread without its own Time.
         let timeless =
-            test_arena::carve(Thread::new(ObjectId::UNBOUND, ExecutionContext::Inactive))
+            test_arena::carve(Thread::new(CarvedId::UNBOUND, ExecutionContext::Inactive))
                 .expect("arena exhausted");
         let timeless = install(
             nucleus,

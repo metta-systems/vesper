@@ -43,6 +43,7 @@ use {
     objects::{
         ArchObjects, ArchObjectsImpl, KeyTable,
         access::{Access, ObjectId, PoolTag},
+        arch_objects::AddressSpaceId,
         carved::{CarvedId, test_id},
         invocation::InvocationStackExtent,
         key_table::CallerTable,
@@ -340,19 +341,19 @@ fn thread_return_derivation_preserves_selector_without_authorizing_rights() {
 
 #[test_case]
 fn invocation_entries_require_and_preserve_nonzero_target() {
-    let address_space = ObjectId {
-        pool: PoolTag::AddressSpace,
-        index: u16::MAX,
+    let address_space = CarvedId {
+        kind: ObjectType::ADDRESS_SPACE,
+        address: u64::MAX & !0xF,
         generation: u32::MAX,
     };
     // These types pin both public signatures to a mandatory nonzero address.
     let constructor: fn(
-        ObjectId,
+        AddressSpaceId,
         NonZero<u64>,
         InvocationStackExtent,
         PlacementWindow,
     ) -> KeyEntry = KeyEntry::new_invocation;
-    let target_getter: fn(&KeyEntry) -> Result<(ObjectId, NonZero<u64>), CapError> =
+    let target_getter: fn(&KeyEntry) -> Result<(AddressSpaceId, NonZero<u64>), CapError> =
         KeyEntry::invocation_target;
     let extent_getter: fn(&KeyEntry) -> Result<InvocationStackExtent, CapError> =
         KeyEntry::invocation_stack_extent;
@@ -412,18 +413,13 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
 
 #[test_case]
 fn thread_selector_rejects_non_thread_payloads() {
-    let address_space = ObjectId {
-        pool: PoolTag::AddressSpace,
-        index: 3,
-        generation: 7,
-    };
+    let address_space = test_id(ObjectType::ADDRESS_SPACE, 0x3000);
     for entry in [
         KeyEntry::null(),
         KeyEntry::new_untyped(0x1000, 12, false, Rights::all()),
         KeyEntry::new_frame(0x2000, 12, false, Rights::all()),
         KeyEntry::new_keytable(TEST_BACKING, CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
-        KeyEntry::from_id(ObjectType::ADDRESS_SPACE, address_space, Rights::all(), 0)
-            .unwrap_or_else(|error| panic!("AddressSpace construction: {:?}", error.code())),
+        KeyEntry::new_carved(address_space, Rights::all(), 0),
         KeyEntry::new_invocation(
             address_space,
             NonZero::new(0x80000).unwrap(),
@@ -453,6 +449,8 @@ fn identity_entry_constructor_rejects_dedicated_payload_kinds() {
         ObjectType::EVENT_COUNT,
         ObjectType::TIME,
         ObjectType::SCHEDULER,
+        ObjectType::PAGE_TABLE,
+        ObjectType::ADDRESS_SPACE,
     ] {
         for id in [
             ObjectId {
@@ -461,7 +459,7 @@ fn identity_entry_constructor_rejects_dedicated_payload_kinds() {
                 generation: 0,
             },
             ObjectId {
-                pool: PoolTag::AddressSpace,
+                pool: PoolTag::ASIDPool,
                 index: u16::MAX,
                 generation: u32::MAX,
             },
@@ -486,16 +484,15 @@ fn thread_return_representation_preserves_entry_and_payload_layout() {
     assert_eq!(align_of::<ThreadSelector>(), 8);
     assert_eq!(size_of::<InvocationStackExtent>(), 24);
     assert_eq!(align_of::<InvocationStackExtent>(), 8);
-    assert_eq!(size_of::<InvocationPayload>(), 48);
+    assert_eq!(size_of::<InvocationPayload>(), 56);
     assert_eq!(align_of::<InvocationPayload>(), 8);
     assert_eq!(offset_of!(InvocationPayload, function_address), 0);
-    assert_eq!(offset_of!(InvocationPayload, address_space_pool), 8);
-    assert_eq!(offset_of!(InvocationPayload, address_space_index), 10);
-    assert_eq!(offset_of!(InvocationPayload, address_space_generation), 12);
+    assert_eq!(offset_of!(InvocationPayload, address_space_address), 8);
+    assert_eq!(offset_of!(InvocationPayload, address_space_generation), 40);
     assert_eq!(offset_of!(InvocationPayload, stack_extent), 16);
-    assert_eq!(offset_of!(InvocationPayload, placement_first), 40);
-    assert_eq!(offset_of!(InvocationPayload, placement_count), 44);
-    assert_eq!(size_of::<FramePayload>(), 24);
+    assert_eq!(offset_of!(InvocationPayload, placement_first), 44);
+    assert_eq!(offset_of!(InvocationPayload, placement_count), 48);
+    assert_eq!(size_of::<FramePayload>(), 32);
     assert_eq!(size_of::<KeyEntry>(), 64);
     assert_eq!(align_of::<KeyEntry>(), 32);
     assert_eq!(size_of::<[KeyEntry; 2]>(), 128);
@@ -505,7 +502,7 @@ fn thread_return_representation_preserves_entry_and_payload_layout() {
         64
     );
     // The compiled production module also asserts its private KeyPayload union
-    // is 40 bytes; do not substitute a test-only mirror of that union.
+    // is 56 bytes; do not substitute a test-only mirror of that union.
 }
 
 #[test_case]
@@ -591,17 +588,7 @@ fn invocation_getters_reject_every_non_invocation_payload() {
         KeyEntry::new_keytable(TEST_BACKING, CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
         KeyEntry::new_thread_return(),
         KeyEntry::new_thread(test_id(ObjectType::THREAD, 0x1000), Rights::all(), 0xBEEF),
-        KeyEntry::from_id(
-            ObjectType::ADDRESS_SPACE,
-            ObjectId {
-                pool: PoolTag::AddressSpace,
-                index: 3,
-                generation: 7,
-            },
-            Rights::all(),
-            0,
-        )
-        .unwrap_or_else(|error| panic!("AddressSpace construction: {:?}", error.code())),
+        KeyEntry::new_carved(test_id(ObjectType::ADDRESS_SPACE, 0x3000), Rights::all(), 0),
     ] {
         assert!(matches!(
             entry.invocation_target(),
@@ -1070,14 +1057,7 @@ fn copy_derive_rejects_occupied_destination_and_non_allowlisted_kinds() {
         let frame = mapped_frame
             .as_frame_mut()
             .unwrap_or_else(|_| panic!("not a frame"));
-        frame.set_mapped(
-            objects::access::ObjectId {
-                pool: objects::access::PoolTag::AddressSpace,
-                index: 0,
-                generation: 1,
-            },
-            0x1000_0000,
-        );
+        frame.set_mapped(test_id(ObjectType::ADDRESS_SPACE, 0x1000), 0x1000_0000);
     }
     let frame = fx.install(0, KeySlot(12), mapped_frame);
     let call = args(frame.to_wire(), fx.self_table_key.to_wire(), 22, 1, 0, 0);
@@ -1114,11 +1094,7 @@ fn copy_derive_rejects_occupied_destination_and_non_allowlisted_kinds() {
 #[test_case]
 fn thread_and_invocation_entries_remain_outside_copy_derive_and_move_allowlist() {
     let thread_id = test_id(ObjectType::THREAD, 0x1000);
-    let address_space = ObjectId {
-        pool: PoolTag::AddressSpace,
-        index: 2,
-        generation: 7,
-    };
+    let address_space = test_id(ObjectType::ADDRESS_SPACE, 0x2000);
     for entry in [
         KeyEntry::new_thread(thread_id, Rights::all(), 0xBEEF),
         KeyEntry::new_thread_return(),

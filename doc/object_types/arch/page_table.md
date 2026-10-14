@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Wire type | `0x81` (arch index 1) |
-| Backing | A 4 KiB table carved from an Untyped by Retype |
+| Backing | A 4 KiB table and its kernel record, carved from an Untyped by Retype |
 | Operations | Map, Unmap |
 
 ## Purpose
@@ -45,4 +45,4 @@ Removes the table from its parent. The table must be empty. Unmapping a root det
 
 ## Implementation
 
-Retype zeroes a PageTable before handing it out. The format is AArch64 stage 1 with a 4 KiB granule and 48-bit virtual addresses. Unmap leaves the table's memory allocated, so it can be installed again.
+Retype zeroes a PageTable before handing it out. For each table it also carves a small kernel record (the table's address, level and where it is installed) from the same Untyped, placed after all the tables of the batch, so the tables stay contiguous and page-aligned and a batch of n tables needs n × 4 KiB plus n records. The format is AArch64 stage 1 with a 4 KiB granule and 48-bit virtual addresses. Unmap leaves the table's memory allocated, so it can be installed again.

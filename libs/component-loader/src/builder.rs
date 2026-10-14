@@ -18,7 +18,11 @@ use {
     },
     nucleus::{
         api::key_entry::KeyEntry,
-        objects::{KeyTable, access::ObjectId},
+        objects::{
+            KeyTable,
+            arch_objects::AddressSpaceId,
+            carved::{CarvedId, CarvedObject},
+        },
     },
 };
 
@@ -209,21 +213,32 @@ impl Builder<'_> {
         ExecutionStack { bottom, top }
     }
 
-    /// The checked pool identity behind a boot-table key.
-    pub fn object_id(&self, key: RawKey) -> ObjectId {
+    /// Carve `object` kernel-privately from the boot Untyped (see
+    /// [`crate::carve`]): for objects no invocation creates yet, such as
+    /// component `AddressSpace`s.
+    pub fn carve_object<T: CarvedObject>(&self, object: T) -> CarvedId {
+        crate::carve::carve_object(
+            self.boot_table_addr,
+            RawKey::from_wire(self.untyped.to_wire()),
+            object,
+        )
+    }
+
+    /// The carved identity of the `AddressSpace` behind a boot-table key.
+    pub fn address_space_id(&self, key: RawKey) -> AddressSpaceId {
         // SAFETY: the boot table is the live carved boot KeyTable; this
         // read-only borrow ends before any capability invocation.
         let table = unsafe { &*(self.boot_table_addr as *const KeyTable) };
         table
             .lookup(key, BOOT_TABLE_GUARD)
-            .and_then(KeyEntry::object_id)
+            .and_then(KeyEntry::address_space_id)
             .unwrap_or_else(|error| panic!("identity lookup failed: {:?}", error.code()))
     }
 
     /// A copy of the boot-table capability `key`, for a bootstrap grant of
     /// the same object into another table.
     pub fn entry(&self, key: RawKey) -> KeyEntry {
-        // SAFETY: as in `object_id`.
+        // SAFETY: as in `address_space_id`.
         let table = unsafe { &*(self.boot_table_addr as *const KeyTable) };
         *table
             .lookup(key, BOOT_TABLE_GUARD)
@@ -233,7 +248,7 @@ impl Builder<'_> {
     /// Kernel-window address of the carved table a boot-table capability
     /// names.
     pub fn table_address(&self, key: RawKey) -> u64 {
-        // SAFETY: as in `object_id`.
+        // SAFETY: as in `address_space_id`.
         let table = unsafe { &*(self.boot_table_addr as *const KeyTable) };
         table
             .lookup(key, BOOT_TABLE_GUARD)
@@ -382,7 +397,7 @@ impl Builder<'_> {
         archive_addr: u64,
         next_slot: u32,
     ) -> u32 {
-        let target_id = self.object_id(target.address_space);
+        let target_id = self.address_space_id(target.address_space);
         FrameKey::from_key(frame)
             .map(
                 target.address_space,

@@ -32,7 +32,7 @@ use {
     aarch64_cpu::registers::{Readable, TTBR0_EL1},
     fp_trap_protocol::{INIT_VA, ProbeInit, STACK_REGION, TRAPPED_BIT, probe, trapped},
     kickstart::{
-        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory},
+        bootstrap::{bootstrap_nucleus, retained_init_memory},
         kickstart_init_el2,
     },
     libcomponent_loader::{
@@ -84,14 +84,7 @@ pub fn run() -> ! {
     // ── EL0: the probe component in its own AddressSpace ──────────────────
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        // builder, probe
-        address_spaces: 2,
-        // builder: root/L1/L2 and image L3s; probe: root/L1/L2, image span,
-        // stack region, init page
-        page_tables: 3 + image_tables + 6,
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let (nucleus, keytable_addr, builder_as) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
     let untyped = UntypedKey::from_key(boot.boot_untyped_key);
     let self_table = KeyTableKey::from_key(boot.self_table_key);
@@ -126,7 +119,7 @@ pub fn run() -> ! {
         .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
     assert_eq!(TTBR0_EL1.get(), builder_ttbr);
 
-    let probe_component = builder.component(nucleus, PROBE_GUARD, &mut slots);
+    let probe_component = builder.component(PROBE_GUARD, &mut slots);
     builder.load_component(
         &probe_component,
         &components::PROBE,
@@ -223,10 +216,7 @@ pub fn run() -> ! {
     assert_eq!(thread.address_space, probe_component.address_space);
     assert_eq!(thread.invocation_stack.len(), 0);
     let space = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(probe_component.address_space.index))
+        .address_space(probe_component.address_space)
         .expect("probe AddressSpace missing");
     assert!(!space.fault_handler_busy());
     assert_eq!(space.unhandled_faults(), 0);

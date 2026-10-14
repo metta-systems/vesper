@@ -37,7 +37,7 @@ use {
         sync::atomic::{AtomicPtr, AtomicU64, Ordering},
     },
     kickstart::{
-        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory, spawn_idle},
+        bootstrap::{bootstrap_nucleus, retained_init_memory, spawn_idle},
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
@@ -187,14 +187,7 @@ pub fn run() -> ! {
     semi::println!("preempt-test: enabled MMU and dropped to EL1");
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        // builder, EL0 spinner
-        address_spaces: 2,
-        // builder: root/L1/L2 and image L3s; EL0 spinner: root/L1/L2, image
-        // span, stack region, counter page
-        page_tables: 3 + image_tables + 6,
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
     let untyped = UntypedKey::from_key(boot.boot_untyped_key);
     let self_table = KeyTableKey::from_key(boot.self_table_key);
@@ -246,7 +239,7 @@ pub fn run() -> ! {
     let wake = NotificationKey::from_key(wake_key);
 
     // ── The EL0 spinner: its own AddressSpace, image, stack and counter ───
-    let spinner = builder.component(nucleus, SPINNER_GUARD, &mut slots);
+    let spinner = builder.component(SPINNER_GUARD, &mut slots);
     builder.load_component(
         &spinner,
         &components::SPINNER,

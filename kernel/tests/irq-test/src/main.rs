@@ -32,10 +32,7 @@ use {
     aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Readable, Writeable},
     irq_protocol::{INIT_VA, IRQ_BADGE, ROUNDS, ReceiverInit, STACK_REGION},
     kickstart::{
-        bootstrap::{
-            PoolCapacities, bootstrap_nucleus, interrupt_controllers, retained_init_memory,
-            spawn_idle,
-        },
+        bootstrap::{bootstrap_nucleus, interrupt_controllers, retained_init_memory, spawn_idle},
         kickstart_init_el2,
     },
     libcomponent_loader::{
@@ -129,14 +126,7 @@ pub fn run() -> ! {
     semi::println!("irq-test: enabled MMU and dropped to EL1");
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        // builder, receiver
-        address_spaces: 2,
-        // builder: root/L1/L2 and image L3s; receiver: root/L1/L2, image
-        // span, stack region, init page
-        page_tables: 3 + image_tables + 6,
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
     let untyped = UntypedKey::from_key(boot.boot_untyped_key);
     let self_table = KeyTableKey::from_key(boot.self_table_key);
@@ -235,7 +225,7 @@ pub fn run() -> ! {
     ));
 
     // ── The receiver: component, Thread and its own Time ─────────────────
-    let receiver = builder.component(nucleus, RECEIVER_GUARD, &mut slots);
+    let receiver = builder.component(RECEIVER_GUARD, &mut slots);
     builder.load_component(
         &receiver,
         &components::RECEIVER,

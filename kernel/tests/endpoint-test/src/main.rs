@@ -37,7 +37,7 @@ use {
         ServerInit, work as check_work,
     },
     kickstart::{
-        bootstrap::{PoolCapacities, bootstrap_nucleus, retained_init_memory},
+        bootstrap::{bootstrap_nucleus, retained_init_memory},
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
@@ -59,7 +59,7 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, access::ObjectId,
+            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, arch_objects::AddressSpaceId,
             thread::ThreadId,
         },
     },
@@ -94,7 +94,7 @@ fn load(
     guard: u32,
     slots: &mut SlotCursor,
 ) -> Component {
-    let component = builder.component(nucleus, guard, slots);
+    let component = builder.component(guard, slots);
     // The table archiving the image page capabilities gets its own guard,
     // derived from the component's.
     builder.load_component(&component, image, guard ^ 0x80_0000, slots);
@@ -138,7 +138,7 @@ fn grant_notification(component: &Component, entry: KeyEntry, slot: u32) -> RawK
 fn assert_parked_el0(
     nucleus: &Nucleus<ArchObjectsImpl>,
     thread: ThreadId,
-    address_space: ObjectId,
+    address_space: AddressSpaceId,
     depth: usize,
 ) {
     let parked = nucleus.thread(thread).expect("Thread missing");
@@ -157,14 +157,7 @@ pub fn run() -> ! {
     libkicktest::assert_el0_visible_state();
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        // builder, client, endpoint, server, hello
-        address_spaces: 5,
-        // builder: root/L1/L2 and image L3s; each of the four components:
-        // root/L1/L2, image span, stack region; client/endpoint/server: init
-        page_tables: 3 + image_tables + 4 * 5 + 3,
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let (nucleus, keytable_addr, builder_as) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
     let untyped = UntypedKey::from_key(boot.boot_untyped_key);
     let self_table = KeyTableKey::from_key(boot.self_table_key);

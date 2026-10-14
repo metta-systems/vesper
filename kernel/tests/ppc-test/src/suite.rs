@@ -9,11 +9,10 @@ use {
     crate::ppc,
     aarch64_cpu::registers::{Readable, TCR_EL1},
     core::arch::asm,
-    kickstart::bootstrap::{BootState, PoolCapacities, bootstrap_nucleus, retained_init_memory},
+    kickstart::bootstrap::{BootState, bootstrap_nucleus, retained_init_memory},
     libcomponent_loader::{
         builder::Builder,
         keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, boot_key, boot_slot},
-        paging::image_table_count,
     },
     libkicktest::{
         bounce::{
@@ -30,8 +29,8 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, KeyTable, Nucleus, access::ObjectId,
-            arch_objects::AddressSpaceObject,
+            ArchObjectsImpl, KeyTable, Nucleus,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
         },
     },
 };
@@ -87,7 +86,7 @@ fn assert_invalid_stack(
 #[derive(Debug, PartialEq, Eq)]
 struct InvocationDestinationState {
     count: usize,
-    target: ObjectId,
+    target: AddressSpaceId,
     function: u64,
     rights: Rights,
     badge: u16,
@@ -143,11 +142,7 @@ pub fn run() {
     translation::observe_bootstrap(crate::run as *const u8 as u64);
     // The boot and Bounce AddressSpaces; the source and Bounce root prefixes,
     // both image closures and both probe tables.
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        address_spaces: 2,
-        page_tables: 8 + 2 * image_table_count(&retained_init),
-        asid_pools: 1,
-    });
+    let boot = bootstrap_nucleus();
     let BootState {
         nucleus,
         keytable_addr,
@@ -158,10 +153,7 @@ pub fn run() {
         ..
     } = boot;
     let boot_table_binding = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(boot_as_id.index))
+        .address_space(boot_as_id)
         .expect("boot AddressSpace missing")
         .keytable();
     let untyped = UntypedKey::from_key(boot_untyped_key);
@@ -440,10 +432,7 @@ pub fn run() {
         assert_eq!(invocation.rights(), Rights(Rights::CALL));
         assert_ne!(export_table_addr, boot_table_binding.address());
         let target_table = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live(usize::from(target.index))
+            .address_space(target)
             .expect("Invocation target AddressSpace missing")
             .keytable();
         assert_eq!(target_table.address(), boot_table_binding.address());
@@ -552,11 +541,7 @@ pub fn run() {
     let no_grant_address_space = unsafe { &mut *(keytable_addr as *mut KeyTable) }
         .insert(
             KeySlot(63),
-            KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                boot_as_id,
-                Rights(Rights::MAP),
-                0,
-            ),
+            KeyEntry::new_carved(boot_as_id, Rights(Rights::MAP), 0),
             BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {
@@ -676,7 +661,7 @@ pub fn run() {
             .unwrap_or_else(|error| {
                 panic!("restricted AddressSpace cap changed: {:?}", error.code())
             });
-        assert!(matches!(address_space_entry.object_id(), Ok(id) if id == boot_as_id));
+        assert!(matches!(address_space_entry.address_space_id(), Ok(id) if id == boot_as_id));
         assert_eq!(address_space_entry.rights(), Rights(Rights::MAP));
         assert_eq!(address_space_entry.badge(), 0);
         let table_entry = table

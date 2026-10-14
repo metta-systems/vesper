@@ -1,5 +1,5 @@
 use {
-    crate::objects::{NucleusObject, access::PoolTag, key_table::KeyTableBinding},
+    crate::objects::{NucleusObject, carved::CarvedObject, key_table::KeyTableBinding},
     libobject::ObjectType,
 };
 
@@ -8,7 +8,7 @@ use {
 ///
 /// Holds the translation root and the bound ASID: everything that makes a
 /// hardware translation context. The executing `Thread` (a core object)
-/// references its address space through a checked pool identity.
+/// references its address space through its carved identity.
 #[expect(
     clippy::partial_pub_fields,
     reason = "the table binding must be immutable; translation root and ASID remain kernel-managed mapping state"
@@ -53,9 +53,10 @@ impl AArch64AddressSpace {
     }
 }
 
+impl CarvedObject for AArch64AddressSpace {}
+
 impl NucleusObject for AArch64AddressSpace {
     const TYPE: ObjectType = ObjectType::ADDRESS_SPACE;
-    const POOL: PoolTag = PoolTag::AddressSpace;
 }
 
 impl crate::objects::arch_objects::AddressSpaceObject for AArch64AddressSpace {

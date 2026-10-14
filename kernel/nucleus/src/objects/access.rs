@@ -43,8 +43,6 @@ pub enum PoolTag {
     Pending = 2,
     // Arch pool tags are appended after core tags. Values are kernel-internal
     // and may be renumbered between builds; they are never serialized.
-    PageTable = 16,
-    AddressSpace = 17,
     ASIDPool = 18,
     #[expect(
         clippy::upper_case_acronyms,
@@ -60,8 +58,6 @@ impl PoolTag {
         match raw {
             1 => Self::KeyTable,
             2 => Self::Pending,
-            16 => Self::PageTable,
-            17 => Self::AddressSpace,
             18 => Self::ASIDPool,
             19 => Self::ASIDControl,
             _ => Self::Region,
@@ -87,17 +83,6 @@ pub struct ObjectId {
     pub index: u16,
     /// Expected allocation generation of that slot.
     pub generation: u32,
-}
-
-impl ObjectId {
-    /// Names no object: an inert Thread's `AddressSpace` before
-    /// `Scheduler.ConfigureThread`. It carries the `Region` tag, which no pool
-    /// accepts, so validating it always fails.
-    pub const UNBOUND: Self = Self {
-        pool: PoolTag::Region,
-        index: 0,
-        generation: 0,
-    };
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -138,7 +138,7 @@ fn caller_table<A: ArchObjects>(
     invoked: RawKey,
 ) -> Result<CallerTable, CapError> {
     let thread = nucleus.current_thread_ref()?;
-    nucleus.address_space_table(access, thread.address_space, invoked)
+    Nucleus::<A>::address_space_table(access, thread.address_space, invoked)
 }
 
 /// Core object dispatch
@@ -277,7 +277,7 @@ fn arch_invoke<A: ArchObjects>(
         }
 
         ArchType::PageTable => {
-            crate::api::arch::page_table::invoke::<A>(access, caller, key, op, args, nucleus)
+            crate::api::arch::page_table::invoke::<A>(access, caller, key, op, args)
                 .map(InvokeOutcome::Complete)
         }
 

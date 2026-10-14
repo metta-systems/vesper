@@ -15,8 +15,8 @@
 use {
     crate::objects::{
         ArchObjects, ExecutionContext, Nucleus, ThreadFault,
-        access::{Access, ObjectId},
-        arch_objects::AddressSpaceObject,
+        access::Access,
+        arch_objects::{AddressSpaceId, AddressSpaceObject},
         invocation::{CallTarget, CommittedCall},
         key_table::KeyTable,
         resume::PreparedResume,
@@ -62,7 +62,7 @@ impl<A: ArchObjects> Nucleus<A> {
         let handler = if thread.fault.is_some() {
             None
         } else {
-            self.available_fault_handler(access, faulting_address_space)
+            Self::available_fault_handler(access, faulting_address_space)
         };
         if let Some(target) = handler {
             let mut call_frame = faulting;
@@ -82,7 +82,7 @@ impl<A: ArchObjects> Nucleus<A> {
             }
         }
 
-        if let Some(space) = self.live_address_space_mut(faulting_address_space) {
+        if let Some(space) = self.address_space_mut(faulting_address_space) {
             space.count_unhandled_fault();
         }
         self.park_faulted(access, current, faulting)
@@ -117,12 +117,11 @@ impl<A: ArchObjects> Nucleus<A> {
     /// The fault handler of `address_space`, if it has one and it is not
     /// already running a fault.
     fn available_fault_handler(
-        &self,
         access: &Access,
-        address_space: ObjectId,
+        address_space: AddressSpaceId,
     ) -> Option<CallTarget> {
         let space = access
-            .resolve(&self.pools.arch.address_spaces, address_space)
+            .resolve_object::<A::AddressSpace>(address_space)
             .ok()?;
         if space.fault_handler_busy() {
             return None;
@@ -133,17 +132,10 @@ impl<A: ArchObjects> Nucleus<A> {
         table.fault_handler()
     }
 
-    pub(crate) fn set_fault_handler_busy(&mut self, address_space: ObjectId, busy: bool) {
+    pub(crate) fn set_fault_handler_busy(&mut self, address_space: AddressSpaceId, busy: bool) {
         // A retired AddressSpace has no handler left to free.
-        if let Some(space) = self.live_address_space_mut(address_space) {
+        if let Some(space) = self.address_space_mut(address_space) {
             space.set_fault_handler_busy(busy);
         }
-    }
-
-    /// The live `AddressSpace` named by `id` (generation-checked), if any.
-    fn live_address_space_mut(&mut self, id: ObjectId) -> Option<&mut A::AddressSpace> {
-        let pool = &mut self.pools.arch.address_spaces;
-        pool.validate(id).ok()?;
-        pool.get_live_mut(usize::from(id.index))
     }
 }

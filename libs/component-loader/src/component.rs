@@ -10,16 +10,16 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, KeyTable, Nucleus, access::ObjectId,
-            arch_objects::AddressSpaceObject,
+            ArchObjects, ArchObjectsImpl, KeyTable, Nucleus,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
         },
     },
 };
 
 /// A provisioned component `AddressSpace`.
 pub struct Component {
-    /// Pool identity of the component's `AddressSpace`.
-    pub address_space: ObjectId,
+    /// Carved identity of the component's `AddressSpace`.
+    pub address_space: AddressSpaceId,
     /// Boot-table capability to the `AddressSpace` (full rights).
     pub address_space_key: RawKey,
     /// Boot-table capability to the component's table (full rights): the
@@ -53,15 +53,10 @@ impl Builder<'_> {
     /// `AddressSpace` provisioning (which installs the `Thread.Return`
     /// sentinel at Slot(1)), then give it a root chain and an ASID.
     ///
-    /// `AddressSpace` creation has no public ABI yet: the builder allocates
-    /// it kernel-privately and grants itself the capability, as Kickstart
-    /// does for the boot `AddressSpace`.
-    pub fn component(
-        &self,
-        nucleus: &mut Nucleus<ArchObjectsImpl>,
-        guard: u32,
-        slots: &mut SlotCursor,
-    ) -> Component {
+    /// `AddressSpace` creation has no public ABI yet: the builder carves it
+    /// kernel-privately from the boot Untyped and grants itself the
+    /// capability, as Kickstart does for the boot `AddressSpace`.
+    pub fn component(&self, guard: u32, slots: &mut SlotCursor) -> Component {
         let table_key = self
             .untyped
             .retype(
@@ -97,19 +92,8 @@ impl Builder<'_> {
         let binding = unsafe { table.bind_address_space() }.unwrap_or_else(|error| {
             panic!("component table provisioning failed: {:?}", error.code())
         });
-        let (address_space, _) = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .allocate(ArchObjectsImpl::new_address_space(binding))
-            .expect("no component AddressSpace slot");
-        let address_space_entry = || {
-            KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                address_space,
-                Rights::all(),
-                0,
-            )
-        };
+        let address_space = self.carve_object(ArchObjectsImpl::new_address_space(binding));
+        let address_space_entry = || KeyEntry::new_carved(address_space, Rights::all(), 0);
         let address_space_key = {
             // SAFETY: the live carved boot KeyTable, exclusively borrowed for
             // this bootstrap grant.
@@ -150,12 +134,9 @@ impl Builder<'_> {
 }
 
 /// The TTBR0 value an `AddressSpace` activates with: root | ASID << 48.
-pub fn ttbr(nucleus: &Nucleus<ArchObjectsImpl>, address_space: ObjectId) -> u64 {
+pub fn ttbr(nucleus: &Nucleus<ArchObjectsImpl>, address_space: AddressSpaceId) -> u64 {
     let space = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(address_space.index))
+        .address_space(address_space)
         .expect("AddressSpace missing");
     let root = space.translation_root().expect("AddressSpace has no root");
     let asid = space.asid().expect("AddressSpace has no ASID");

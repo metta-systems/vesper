@@ -2,7 +2,11 @@ use {
     crate::{
         api::key_entry::KeyEntry,
         objects::{
-            NucleusObject, access::ObjectId, arch::ArchPools, key_table::KeyTableBinding,
+            NucleusObject,
+            access::ObjectId,
+            arch::ArchPools,
+            carved::{CarvedId, CarvedObject},
+            key_table::KeyTableBinding,
             nucleus::Nucleus,
         },
     },
@@ -48,6 +52,15 @@ impl FrameSize {
     }
 }
 
+/// Identity of a carved `AddressSpace`: kind, kernel address of its carved
+/// record, and generation.
+pub type AddressSpaceId = CarvedId;
+
+/// Identity of a carved `PageTable`'s kernel metadata record. The 4 KiB
+/// hardware table itself is a separate carve the record names by physical
+/// address.
+pub type PageTableId = CarvedId;
+
 /// Installation record of a page table (architecture-neutral).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PtParent {
@@ -55,7 +68,7 @@ pub enum PtParent {
     Uninstalled,
     /// Installed as the translation root of an `AddressSpace` (checked
     /// identity).
-    Root { address_space: ObjectId },
+    Root { address_space: AddressSpaceId },
     /// Installed in the parent table (physical address) at `slot`.
     Table { parent_paddr: u64, slot: u16 },
 }
@@ -79,7 +92,7 @@ pub trait AsidPoolObject: NucleusObject {
     fn release(&mut self, asid: u16);
 }
 
-pub trait PageTableObject: NucleusObject {
+pub trait PageTableObject: CarvedObject {
     /// Physical address of the carved table.
     fn paddr(&self) -> u64;
     /// Walk level: 0 is the translation root, 3 the leaf-level table.
@@ -89,7 +102,7 @@ pub trait PageTableObject: NucleusObject {
     /// The installation record.
     fn parent(&self) -> PtParent;
     /// Record root installation into `address_space` at walk level 0.
-    fn install_root(&mut self, address_space: ObjectId);
+    fn install_root(&mut self, address_space: AddressSpaceId);
     /// Record intermediate installation into the parent at `parent_level`.
     fn install_table(&mut self, parent_paddr: u64, parent_level: u8, slot: u16);
     /// Clear the installation record.
@@ -98,7 +111,7 @@ pub trait PageTableObject: NucleusObject {
 
 /// Behavior of an architecture's address-space object: the translation
 /// context state (mapping foundation).
-pub trait AddressSpaceObject: NucleusObject {
+pub trait AddressSpaceObject: CarvedObject {
     /// The table bound at provisioning, shared by all executing Threads.
     fn keytable(&self) -> KeyTableBinding;
     /// Physical address of the installed translation root, if any.
@@ -143,7 +156,7 @@ pub enum CacheMaintenance {
 }
 
 pub trait ArchObjects: Sized + 'static {
-    // ─── Associated Types (pool-backed arch objects only) ───
+    // ─── Associated Types (carved and pool-backed arch objects) ───
     type PageTable: PageTableObject;
     type AddressSpace: AddressSpaceObject;
     type ASIDPool: AsidPoolObject;
@@ -163,7 +176,7 @@ pub trait ArchObjects: Sized + 'static {
     /// Returns the frame size in bytes on success.
     fn validate_frame_size(size_bits: u8) -> Result<usize, CapError>;
 
-    /// Validate and return object size for pool-backed arch types.
+    /// Validate and return the carve size of an arch kind Retype creates.
     fn validate_retype(arch_type: ArchType, size_bits: u8) -> Result<usize, CapError>;
 
     /// Construct the kernel metadata object for a freshly carved page table
@@ -175,8 +188,8 @@ pub trait ArchObjects: Sized + 'static {
     fn new_asid_pool() -> Self::ASIDPool;
 
     /// Construct a fresh, unbound `AddressSpace` (no translation root, no
-    /// ASID). Boot-provisioned only: address spaces are not
-    /// Retype-creatable yet.
+    /// ASID), to be carved from Untyped memory. Boot and trusted loader code
+    /// carve them; `Untyped.Retype` does not create them yet.
     /// The initialized keytable association is mandatory and immutable.
     fn new_address_space(keytable: KeyTableBinding) -> Self::AddressSpace;
 

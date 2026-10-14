@@ -8,7 +8,9 @@ use {
         api::KeyEntry,
         objects::{
             ArchObjects, ArchObjectsImpl, ExecutionContext, Nucleus, Scheduler, Thread, Time,
-            access::ObjectId, arch_objects::AddressSpaceObject, nucleus::test_arena,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
+            carved::CarvedId,
+            nucleus::test_arena,
             thread::ThreadId,
         },
     },
@@ -43,7 +45,7 @@ fn install(nucleus: &mut Nucleus<ArchObjectsImpl>, slot: u32, entry: KeyEntry) -
 /// `scheduler_rights`).
 fn setup(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
-    fixture_as: ObjectId,
+    fixture_as: AddressSpaceId,
     rights: Rights,
     scheduler: Scheduler,
 ) -> Keys {
@@ -51,18 +53,13 @@ fn setup(
         .create_console_thread(fixture_as)
         .expect("caller Thread");
     nucleus.current_thread = nucleus.fixture_thread(0);
-    let address_space = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live_mut(usize::from(fixture_as.index))
-        .unwrap();
+    let address_space = nucleus.address_space_mut(fixture_as).unwrap();
     address_space.set_translation_root(Some(ROOT));
     address_space.set_asid(Some(3));
 
     let scheduler_id = test_arena::carve(scheduler).expect("arena exhausted");
     let time_id = test_arena::carve(Time::empty(0)).expect("arena exhausted");
-    let thread_id = test_arena::carve(Thread::new(ObjectId::UNBOUND, ExecutionContext::Inactive))
+    let thread_id = test_arena::carve(Thread::new(CarvedId::UNBOUND, ExecutionContext::Inactive))
         .expect("arena exhausted");
     Keys {
         scheduler: install(
@@ -72,11 +69,7 @@ fn setup(
         ),
         thread: install(nucleus, 21, KeyEntry::new_thread(thread_id, rights, 0)),
         thread_id,
-        address_space: install(
-            nucleus,
-            22,
-            KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(fixture_as, rights, 0),
-        ),
+        address_space: install(nucleus, 22, KeyEntry::new_carved(fixture_as, rights, 0)),
         time: install(nucleus, 23, KeyEntry::new_carved(time_id, rights, 0)),
     }
 }
@@ -195,10 +188,7 @@ fn configure_requires_rights_a_mapped_address_space_and_the_root_scheduler() {
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
         nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live_mut(usize::from(fixture_as.index))
+            .address_space_mut(fixture_as)
             .unwrap()
             .set_asid(None);
         assert!(matches!(
@@ -304,7 +294,7 @@ fn a_bound_time_is_its_threads_own() {
         .unwrap_or_else(|error| panic!("top up the bound Time: {:?}", error.code()));
 
         // A second Thread cannot be bound to the same Time.
-        let second = test_arena::carve(Thread::new(ObjectId::UNBOUND, ExecutionContext::Inactive))
+        let second = test_arena::carve(Thread::new(CarvedId::UNBOUND, ExecutionContext::Inactive))
             .expect("arena exhausted");
         let second_keys = Keys {
             thread: install(nucleus, 26, KeyEntry::new_thread(second, Rights::all(), 0)),

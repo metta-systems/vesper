@@ -7,14 +7,10 @@ use crate::objects::{ArchObjects, ObjectPool};
 /// Pools for architecture-specific objects.
 ///
 /// Pool backing is explicitly carved and charged (boot Untyped or Retype), never
-/// a silent second source of kernel memory. The page-table pool holds only
-/// kernel metadata (carve address, installation record); the 4 KiB tables
-/// themselves are Retype carves charged to the invoking Untyped.
+/// a silent second source of kernel memory. Page tables (the 4 KiB tables and
+/// their kernel metadata records) and `AddressSpace`s are carved from Untyped
+/// memory and named by their carved identity; they take no pool slot.
 pub struct ArchPools<A: ArchObjects> {
-    pub page_tables: ObjectPool<A::PageTable>,
-    /// Address spaces: the protection/mapping-context objects. Boot-carved;
-    /// not Retype-creatable yet.
-    pub address_spaces: ObjectPool<A::AddressSpace>,
     /// ASID pools: boot-provided capability-protected namespace resources
     /// (selected 2026-09-15); not Retype-creatable, so the only backing today
     /// is the boot pool carved at bootstrap.
@@ -29,17 +25,10 @@ impl<A: ArchObjects> ArchPools<A> {
     /// Create the arch pools with explicitly carved backings.
     ///
     /// # Safety
-    /// `page_tables`, `address_spaces`, and `asid_pools` must be backed by
-    /// memory exclusively owned by this pool: carved from an Untyped's
-    /// committed range and never freed.
-    pub unsafe fn new(
-        page_tables: ObjectPool<A::PageTable>,
-        address_spaces: ObjectPool<A::AddressSpace>,
-        asid_pools: ObjectPool<A::ASIDPool>,
-    ) -> Self {
+    /// `asid_pools` must be backed by memory exclusively owned by this pool:
+    /// carved from an Untyped's committed range and never freed.
+    pub unsafe fn new(asid_pools: ObjectPool<A::ASIDPool>) -> Self {
         Self {
-            page_tables,
-            address_spaces,
             asid_pools,
             _marker: core::marker::PhantomData,
         }

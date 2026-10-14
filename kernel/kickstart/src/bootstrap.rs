@@ -21,6 +21,7 @@ use {
     core::cell::UnsafeCell,
     libaddress::PhysAddr,
     libcomponent_loader::{
+        carve::{carve_bytes, carve_object},
         keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS},
         retained::RetainedInitMemory,
     },
@@ -40,6 +41,7 @@ use {
             ObjectPool, PendingPool, RunQueue, Scheduler, Thread, Time,
             access::{ObjectId, PoolTag},
             arch::ArchPools,
+            arch_objects::AddressSpaceId,
             carved::{Carved, CarvedId, CarvedObject},
             domain::DcbPages,
             irq::{IrqLine, IrqTable},
@@ -69,9 +71,6 @@ pub const BOOT_TIME_BUDGET_NS: Budget = 3_600 * 1_000_000_000;
 /// watermark granularity and object alignment for all pool types.
 const CARVE_ALIGN: u64 = 4096;
 
-/// Minimum alignment of a carved object: the 16-byte watermark granularity.
-const CARVE_ALIGN_MIN: usize = 16;
-
 /// Carve `size` bytes from the boot Untyped's unused watermark range.
 ///
 /// Advances the watermark only on success, so a failed carve leaves the
@@ -83,29 +82,10 @@ fn carve_region(boot: &mut RegionPayload, size: usize) -> Result<PhysAddr, CapEr
     Ok(paddr)
 }
 
-/// Capacities for the initial pool extents carved at boot. Each pool is one
-/// variable-size carve from the boot Untyped — the per-slot metadata and the
-/// object storage together, sized solely by the capacity given here.
-pub struct PoolCapacities {
-    /// Number of `AddressSpace` slots in the initial architecture address-space
-    /// pool. Address spaces are the protection/mapping-context objects;
-    /// boot-carved, not Retype-creatable yet.
-    pub address_spaces: usize,
-    /// Number of page-table metadata slots in the initial architecture
-    /// page-table pool. The pool holds only kernel metadata (carve address,
-    /// installation record); the 4 KiB tables themselves are Retype carves
-    /// charged to the invoking Untyped.
-    pub page_tables: usize,
-    /// Number of ASID-pool slots in the initial architecture ASID-pool pool.
-    /// ASID pools are boot-provided capability-protected resources (not
-    /// Retype-creatable); one slot backs the boot pool.
-    pub asid_pools: usize,
-}
-
 /// Build the initial [`Nucleus`] in memory carved from the boot Untyped.
 ///
-/// Carves the `Nucleus` struct region, the Thread and `AddressSpace` pool
-/// backings, and the boot Thread's `KeyTable` region from `boot`'s unused
+/// Carves the `Nucleus` struct region, the ASID-pool pool backing (one boot
+/// ASID pool), and the boot Thread's `KeyTable` region from `boot`'s unused
 /// watermark range, constructs the pools, initializes the boot `KeyTable`
 /// kernel-privately, writes the `Nucleus` into the carved region, and returns
 /// its address together with the boot `KeyTable`'s kernel address. The caller
@@ -113,14 +93,11 @@ pub struct PoolCapacities {
 /// reads on entry.
 pub fn build_initial_nucleus<A: ArchObjects>(
     boot: &mut RegionPayload,
-    capacities: &PoolCapacities,
 ) -> Result<(*mut Nucleus<A>, u64), CapError> {
     let nucleus_paddr = carve_region(boot, core::mem::size_of::<Nucleus<A>>())?;
     let nucleus_ptr = nucleus_paddr.user_to_kernel().as_mut_ptr::<Nucleus<A>>();
 
-    let address_spaces = ObjectPool::<A::AddressSpace>::carve(boot, capacities.address_spaces)?;
-    let page_tables = ObjectPool::<A::PageTable>::carve(boot, capacities.page_tables)?;
-    let asid_pools = ObjectPool::<A::ASIDPool>::carve(boot, capacities.asid_pools)?;
+    let asid_pools = ObjectPool::<A::ASIDPool>::carve(boot, 1)?;
 
     // Carve the boot Thread's KeyTable region and initialize it kernel-privately
     // (the same unused-watermark allocation Retype performs at runtime). The
@@ -147,7 +124,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
             // SAFETY: the architecture pool backings were carved above from
             // the boot Untyped's unused watermark range and are exclusively
             // owned.
-            arch: unsafe { ArchPools::new(page_tables, address_spaces, asid_pools) },
+            arch: unsafe { ArchPools::new(asid_pools) },
         },
     };
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.
@@ -209,8 +186,7 @@ pub fn retained_init_memory() -> RetainedInitMemory {
 /// The boot-time kernel state the post-boot continuation continues from.
 ///
 /// Shared by the real kickstart kernel and the `kernel/tests` e2e kernels:
-/// everything here is real boot state (no test fixtures), sized by the
-/// [`PoolCapacities`] the caller passes to [`bootstrap_nucleus`].
+/// everything here is real boot state (no test fixtures).
 pub struct BootState {
     /// The boot-carved, live initial [`Nucleus`]. Exclusively boot-owned; the
     /// inert nucleus reads it through the anchor recorded at bootstrap.
@@ -218,9 +194,9 @@ pub struct BootState {
     /// Kernel-window address of the boot Thread's carved, variable-size
     /// `KeyTable`.
     pub keytable_addr: u64,
-    /// The boot `AddressSpace`'s pool identity (the protection/mapping
+    /// The boot `AddressSpace`'s carved identity (the protection/mapping
     /// context the boot Thread executes in).
-    pub boot_as_id: ObjectId,
+    pub boot_as_id: AddressSpaceId,
     /// Key of the boot Thread's self-table capability (slot `SELF_KEYTABLE`).
     pub self_table_key: RawKey,
     /// Key of the boot Untyped grant (slot `BOOT_UNTYPED`).
@@ -237,18 +213,6 @@ pub struct BootState {
     pub debug_console_key: RawKey,
 }
 
-/// Bootstrap the initial kernel state and return the boot continuation's
-/// starting point.
-///
-/// Carves the boot Untyped, builds the initial [`Nucleus`] and its pools,
-/// allocates the boot `AddressSpace` and boot Thread, installs the bootstrap
-/// grants (self-table, boot Untyped, self-AddressSpace, boot Thread, boot ASID
-/// pool, boot Time, and the debug console under `debug_kernel`), and records the nucleus
-/// anchor the inert nucleus reads on syscall entry.
-///
-/// The `capacities` size the carved pools for the caller's continuation: the
-/// real kickstart passes its own needs; each e2e test kernel passes its own
-/// fixture extents (fixture Threads and `AddressSpace`s, page tables).
 /// Execution stack of the idle Thread. It only runs `wfi`; interrupts are
 /// taken on the shared `SP_EL1` trap stack.
 #[repr(C, align(16))]
@@ -268,59 +232,11 @@ extern "C" fn idle_loop() -> ! {
     }
 }
 
-/// Carve `object` from the boot Untyped (the capability `boot_untyped_key` in
-/// the boot `KeyTable` at `keytable_addr`), kernel-privately, through the
-/// same reserve-then-advance path as `Untyped.Retype`. Boot and trusted test
-/// code use it for objects they set up before any component runs.
-pub fn carve_boot_object<T: CarvedObject>(
-    keytable_addr: u64,
-    boot_untyped_key: RawKey,
-    object: T,
-) -> CarvedId {
-    let address = carve_boot_bytes(
-        keytable_addr,
-        boot_untyped_key,
-        Carved::<T>::SIZE,
-        Carved::<T>::ALIGN,
-    );
-    // SAFETY: `carve_boot_bytes` reserved the bytes, aligned and sized for
-    // the record, exclusively for this object.
-    unsafe { Carved::<T>::initialize(address, object) }
-}
-
-/// Reserve `size` bytes aligned to `align` from the boot Untyped and return
-/// their kernel address. The watermark advances past them, so nothing else
-/// is ever carved there; the caller initializes them.
-fn carve_boot_bytes(
-    keytable_addr: u64,
-    boot_untyped_key: RawKey,
-    size: usize,
-    align: usize,
-) -> *mut u8 {
-    // SAFETY: the boot table is the live carved boot KeyTable; this borrow
-    // ends before any capability invocation.
-    let table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
-    let region = *table
-        .lookup(boot_untyped_key, BOOT_TABLE_GUARD)
-        .and_then(KeyEntry::as_untyped)
-        .unwrap_or_else(|error| panic!("boot Untyped lookup failed: {:?}", error.code()));
-    let align = align.max(CARVE_ALIGN_MIN);
-    let size = size.next_multiple_of(align);
-    let reservation = region
-        .reserve(u64::try_from(align).unwrap(), u64::try_from(size).unwrap())
-        .unwrap_or_else(|error| panic!("boot Untyped exhausted: {:?}", error.code()));
-    let paddr = region.paddr + u64::try_from(reservation.start).unwrap();
-    table
-        .advance_untyped_watermark(boot_untyped_key, BOOT_TABLE_GUARD, reservation.end)
-        .unwrap_or_else(|error| panic!("boot Untyped watermark failed: {:?}", error.code()));
-    PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>()
-}
-
 /// Carve the records of the interrupt-controller component's `line_count`
 /// lines from the boot Untyped and give them to the nucleus.
 #[expect(
     clippy::cast_ptr_alignment,
-    reason = "`carve_boot_bytes` aligns the carve to `IrqLine`"
+    reason = "`carve_bytes` aligns the carve to `IrqLine`"
 )]
 fn carve_irq_table(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
@@ -329,7 +245,7 @@ fn carve_irq_table(
     line_count: u32,
 ) {
     let size = core::mem::size_of::<IrqLine>() * line_count as usize;
-    let lines = carve_boot_bytes(
+    let lines = carve_bytes(
         keytable_addr,
         boot_untyped_key,
         size,
@@ -347,14 +263,14 @@ pub fn spawn_idle(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     keytable_addr: u64,
     boot_untyped_key: RawKey,
-    address_space: ObjectId,
+    address_space: AddressSpaceId,
 ) -> ThreadId {
     assert!(
         nucleus.idle_thread.is_none(),
         "the idle Thread already exists"
     );
     let stack_top = IDLE_STACK.0.get() as u64 + IDLE_STACK_BYTES as u64;
-    let idle = carve_boot_object(
+    let idle = carve_object(
         keytable_addr,
         boot_untyped_key,
         Thread::new(
@@ -368,7 +284,17 @@ pub fn spawn_idle(
     idle
 }
 
-pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
+/// Bootstrap the initial kernel state and return the boot continuation's
+/// starting point.
+///
+/// Carves the boot Untyped, builds the initial [`Nucleus`] and its ASID-pool
+/// pool, carves the boot `AddressSpace` and boot Thread, installs the
+/// bootstrap grants (self-table, boot Untyped, self-AddressSpace, boot Thread,
+/// boot ASID pool, boot Time, and the debug console under `debug_kernel`), and
+/// records the nucleus anchor the inert nucleus reads on syscall entry. Every
+/// later object — page tables, component `AddressSpace`s, fixture Threads — is
+/// carved from the boot Untyped by the continuation.
+pub fn bootstrap_nucleus() -> BootState {
     // Allocate a power-of-2 boot region for the boot Untyped.
     let boot_region = BOOT_INFO
         .lock(|bi| bi.alloc_region(usize::from(BOOT_UNTYPED_SIZE_BITS), "Boot Untyped"))
@@ -386,8 +312,7 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     let Ok(boot_payload) = boot_untyped.as_region_mut() else {
         panic!("boot Untyped is not a region")
     };
-    let Ok((nucleus_ptr, keytable_addr)) =
-        build_initial_nucleus::<ArchObjectsImpl>(boot_payload, capacities)
+    let Ok((nucleus_ptr, keytable_addr)) = build_initial_nucleus::<ArchObjectsImpl>(boot_payload)
     else {
         panic!("failed to build the initial nucleus")
     };
@@ -412,7 +337,7 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.
     let nucleus: &'static mut Nucleus<ArchObjectsImpl> = unsafe { &mut *nucleus_ptr };
 
-    // Allocate the boot AddressSpace (the protection/mapping context) and the
+    // Carve the boot AddressSpace (the protection/mapping context) and the
     // boot Thread that executes in it; the Thread's KeyTable was carved and
     // initialized kernel-privately by build_initial_nucleus.
     // Implementation status: the table belongs to the AddressSpace and is
@@ -426,13 +351,22 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     // exists, so the boot AddressSpace has it before it can be activated.
     let boot_table_binding = unsafe { boot_table.bind_address_space() }
         .unwrap_or_else(|error| panic!("boot table provisioning failed: {:?}", error.code()));
-    let boot_as_id = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .allocate(ArchObjectsImpl::new_address_space(boot_table_binding))
-        .expect("no boot AddressSpace slot")
-        .0;
+    // Carve the boot AddressSpace from the boot Untyped, like every
+    // AddressSpace.
+    let boot_as_paddr = carve_region(
+        boot_payload,
+        Carved::<<ArchObjectsImpl as ArchObjects>::AddressSpace>::SIZE,
+    )
+    .unwrap_or_else(|error| panic!("boot AddressSpace carve failed: {:?}", error.code()));
+    // SAFETY: carve_region reserved the record from the boot Untyped's unused
+    // watermark range at page alignment, and the direct map makes it
+    // kernel-writable.
+    let boot_as_id = unsafe {
+        Carved::initialize(
+            boot_as_paddr.user_to_kernel().as_mut_ptr::<u8>(),
+            ArchObjectsImpl::new_address_space(boot_table_binding),
+        )
+    };
     // Carve the boot Thread from the boot Untyped, like every Thread.
     let boot_thread_paddr = carve_region(boot_payload, Carved::<Thread>::SIZE)
         .unwrap_or_else(|error| panic!("boot Thread carve failed: {:?}", error.code()));
@@ -480,11 +414,7 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
     let _boot_as_key = boot_table
         .insert(
             KeySlot::SELF_ADDRESS_SPACE,
-            KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                boot_as_id,
-                Rights::all(),
-                0,
-            ),
+            KeyEntry::new_carved(boot_as_id, Rights::all(), 0),
             BOOT_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {
@@ -537,7 +467,7 @@ pub fn bootstrap_nucleus(capacities: &PoolCapacities) -> BootState {
 
     // The root Scheduler, carved from the boot Untyped: the only authority
     // that configures and starts Threads created by `Untyped.Retype`.
-    let root_scheduler_id = carve_boot_object(keytable_addr, boot_untyped_key, Scheduler::root());
+    let root_scheduler_id = carve_object(keytable_addr, boot_untyped_key, Scheduler::root());
     let root_scheduler_key = boot_table
         .insert(
             KeySlot::ROOT_SCHEDULER,

@@ -49,8 +49,7 @@ use {
     cfg_if::cfg_if,
     kickstart::{
         bootstrap::{
-            BootState, PoolCapacities, bootstrap_nucleus, device_untypeds, retained_init_memory,
-            spawn_idle,
+            BootState, bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle,
         },
         drivers::{BootKeys, instance_count, load_drivers},
         kickstart_init_el2, print_my_sp,
@@ -104,21 +103,12 @@ pub fn kickstart_run() -> ! {
     // Build the initial kernel state in carved memory (inert nucleus).
     // ─────────────────────────────────────────────────────────────────────
 
-    // The real boot's own extents: the boot Thread and its AddressSpace, the
-    // boot ASID pool, and an AddressSpace and page tables for the builder and
-    // each bundled driver instance. Everything else is carved at runtime
-    // through Retype.
+    // The boot Thread, its AddressSpace and the boot ASID pool come first;
+    // every page table, component AddressSpace and Thread after them is
+    // carved from the boot Untyped as the builder goes.
     let instances = instance_count(components::DRIVERS);
     let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot_state = bootstrap_nucleus(&PoolCapacities {
-        address_spaces: 1 + instances,
-        // builder: root/L1/L2 and image L3s; each driver: root/L1/L2, image
-        // span, stack region, init page, device window, resource span, data
-        // window and the framebuffer window's tables
-        page_tables: 3 + image_tables + instances * 16,
-        asid_pools: 1,
-    });
+    let boot_state = bootstrap_nucleus();
     let park = start_drivers(boot_state, &retained, instances);
 
     // ─────────────────────────────────────────────────────────────────────

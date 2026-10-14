@@ -22,8 +22,8 @@
 
 use {
     crate::objects::{
-        ArchObjects, KeyTable, Nucleus,
-        access::{Access, ObjectId},
+        ArchObjects, KeyTable,
+        access::Access,
         arch_objects::{AddressSpaceObject, PageTableObject, PtParent},
         key_table::CallerTable,
         object_pool::{IdentityError, PairIdentityError},
@@ -42,12 +42,11 @@ pub fn invoke<A: ArchObjects>(
     pt_key: RawKey,
     op: u64,
     args: &[u64; 6],
-    nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     let op = PageTableOp::try_from(op)?;
     match op {
-        PageTableOp::Map => map::<A>(access, caller, pt_key, args, nucleus),
-        PageTableOp::Unmap => unmap::<A>(access, caller, pt_key, args, nucleus),
+        PageTableOp::Map => map::<A>(access, caller, pt_key, args),
+        PageTableOp::Unmap => unmap::<A>(access, caller, pt_key, args),
     }
 }
 
@@ -57,7 +56,6 @@ fn map<A: ArchObjects>(
     caller: CallerTable,
     pt_key: RawKey,
     args: &[u64; 6],
-    nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     let parent_key = RawKey::from_wire(args[0]);
     let vaddr = args[1];
@@ -78,7 +76,7 @@ fn map<A: ArchObjects>(
                 found: entry.object_type(),
             });
         }
-        let pt_id = entry.object_id().map_err(|e| e.with_key_operand(0))?;
+        let pt_id = entry.page_table_id().map_err(|e| e.with_key_operand(0))?;
         let parent_entry = caller_table
             .lookup(parent_key, caller.guard)
             .map_err(|e| e.with_key_operand(2))?;
@@ -86,7 +84,7 @@ fn map<A: ArchObjects>(
             pt_id,
             parent_entry.object_type(),
             parent_entry
-                .object_id()
+                .carved_id()
                 .map_err(|e| e.with_key_operand(2))?,
             parent_entry.rights(),
         )
@@ -103,16 +101,16 @@ fn map<A: ArchObjects>(
             if vaddr != 0 {
                 return Err(CapError::InvalidOperation);
             }
-            // Distinct pools: the AddressSpace and the page-table metadata
+            // Distinct kinds: the AddressSpace and the page-table metadata
             // object cannot alias.
             let mut address_space = access
-                .resolve_mut::<A::AddressSpace>(&mut nucleus.pools.arch.address_spaces, parent_id)
+                .resolve_object::<A::AddressSpace>(parent_id)
                 .map_err(|error| error.for_key(parent_key, 2))?;
             if address_space.translation_root().is_some() {
                 return Err(CapError::AlreadyMapped);
             }
             let mut pt = access
-                .resolve_mut::<A::PageTable>(&mut nucleus.pools.arch.page_tables, pt_id)
+                .resolve_object::<A::PageTable>(pt_id)
                 .map_err(|error| error.for_key(pt_key, 0))?;
             if pt.is_installed() {
                 return Err(CapError::AlreadyMapped);
@@ -126,15 +124,11 @@ fn map<A: ArchObjects>(
             Ok((0, 0))
         }
         ObjectType::PAGE_TABLE => {
-            // Intermediate installation: same pool, so the child and parent
+            // Intermediate installation: same kind, so the child and parent
             // are resolved as an alias-rejecting pair (mapping a table into
             // itself is rejected, not attempted).
             let (mut pt, parent) = access
-                .resolve_pair_mut::<A::PageTable>(
-                    &mut nucleus.pools.arch.page_tables,
-                    pt_id,
-                    parent_id,
-                )
+                .resolve_object_pair_mut::<A::PageTable>(pt_id, parent_id)
                 .map_err(|error| match error {
                     PairIdentityError::First(error) => error.for_key(pt_key, 0),
                     PairIdentityError::Second(error) => error.for_key(parent_key, 2),
@@ -171,7 +165,6 @@ fn unmap<A: ArchObjects>(
     caller: CallerTable,
     pt_key: RawKey,
     args: &[u64; 6],
-    nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     if args.iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
@@ -188,11 +181,11 @@ fn unmap<A: ArchObjects>(
                 found: entry.object_type(),
             });
         }
-        entry.object_id().map_err(|e| e.with_key_operand(0))?
+        entry.page_table_id().map_err(|e| e.with_key_operand(0))?
     };
 
     let mut pt = access
-        .resolve_mut::<A::PageTable>(&mut nucleus.pools.arch.page_tables, pt_id)
+        .resolve_object::<A::PageTable>(pt_id)
         .map_err(|error| error.for_key(pt_key, 0))?;
     // A non-empty table would orphan its children; require every descriptor to
     // be zero before clearing the installation.
@@ -202,13 +195,10 @@ fn unmap<A: ArchObjects>(
     match pt.parent() {
         PtParent::Uninstalled => Err(CapError::NotMapped),
         PtParent::Root { address_space } => {
-            // Distinct pools: the AddressSpace and the table metadata cannot
+            // Distinct kinds: the AddressSpace and the table metadata cannot
             // alias.
             let mut address_space = access
-                .resolve_mut::<A::AddressSpace>(
-                    &mut nucleus.pools.arch.address_spaces,
-                    address_space,
-                )
+                .resolve_object::<A::AddressSpace>(address_space)
                 .map_err(IdentityError::internal)?;
             // Defensive: the recorded root must match this table.
             if address_space.translation_root() != Some(pt.paddr()) {

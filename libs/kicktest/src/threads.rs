@@ -1,16 +1,15 @@
 //! Fixture Threads queued runnable by the bootstrap builder.
 //!
 //! Each Thread is carved from the boot Untyped kernel-privately (see
-//! `kickstart::bootstrap::carve_boot_object`); the fixture execution
+//! `libcomponent_loader::carve`); the fixture execution
 //! contexts (`EL1t`, a chosen entry and stack) have no public creation ABI.
 
 use {
-    kickstart::bootstrap::carve_boot_object,
     libcomponent_loader::builder::Builder,
     libexception::arch::aarch64::SavedContext,
-    libobject::RawKey,
     nucleus::objects::{
-        ArchObjectsImpl, ExecutionContext, Nucleus, Thread, access::ObjectId, thread::ThreadId,
+        ArchObjectsImpl, ExecutionContext, Nucleus, Thread, arch_objects::AddressSpaceId,
+        thread::ThreadId,
     },
 };
 
@@ -19,17 +18,13 @@ use {
 fn spawn_with(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     builder: &Builder<'_>,
-    address_space: ObjectId,
+    address_space: AddressSpaceId,
     saved: &SavedContext,
 ) -> ThreadId {
-    let thread = carve_boot_object(
-        builder.boot_table_addr,
-        RawKey::from_wire(builder.untyped.to_wire()),
-        Thread::new(
-            address_space,
-            ExecutionContext::NotStarted { saved: *saved },
-        ),
-    );
+    let thread = builder.carve_object(Thread::new(
+        address_space,
+        ExecutionContext::NotStarted { saved: *saved },
+    ));
     assert!(
         nucleus.run_queue.push(thread),
         "fixture Thread did not queue"
@@ -43,7 +38,7 @@ fn spawn_with(
 pub fn spawn(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     builder: &Builder<'_>,
-    address_space: ObjectId,
+    address_space: AddressSpaceId,
     entry: u64,
     stack_top: u64,
 ) -> ThreadId {
@@ -60,7 +55,7 @@ pub fn spawn(
 pub fn spawn_interruptible(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     builder: &Builder<'_>,
-    address_space: ObjectId,
+    address_space: AddressSpaceId,
     entry: u64,
     stack_top: u64,
 ) -> ThreadId {
@@ -78,7 +73,7 @@ pub fn spawn_interruptible(
 pub fn spawn_el0(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     builder: &Builder<'_>,
-    address_space: ObjectId,
+    address_space: AddressSpaceId,
     entry: u64,
     stack_top: u64,
     argument: u64,

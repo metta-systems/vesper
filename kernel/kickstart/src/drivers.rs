@@ -617,7 +617,7 @@ pub fn load_drivers(
         let image = driver.component;
         let name = instance.name();
         let guard = FIRST_DRIVER_GUARD + u32::try_from(number).unwrap_or(0);
-        let component = builder.component(nucleus, guard, slots);
+        let component = builder.component(guard, slots);
         builder.load_component(&component, image, guard ^ 0x40_0000, slots);
         let mut stacks = builder.stack_region(&component, STACK_REGION, slots);
         let stack = builder.user_stack(&mut stacks, STACK_PAGES, slots);

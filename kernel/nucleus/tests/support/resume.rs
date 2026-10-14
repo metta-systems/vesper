@@ -7,8 +7,8 @@ use {
         api::{InvokeOutcome, KeyEntry},
         objects::{
             ArchObjects, ArchObjectsImpl, ExecutionContext, Nucleus,
-            access::{Access, ObjectId, PoolTag},
-            arch_objects::AddressSpaceObject,
+            access::{Access, ObjectId},
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
             completion::{PendingKind, PendingState},
             resume::prepare_translation_context,
             thread::ThreadId,
@@ -16,7 +16,7 @@ use {
     },
     aarch64_cpu::registers::{Readable, SCTLR_EL1, TCR_EL1, Writeable},
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
-    libobject::{CapError, KeySlot, RawKey, Rights, syscall_status},
+    libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, syscall_status},
 };
 
 const ROOT: u64 = 0x2100_0000;
@@ -44,7 +44,7 @@ struct Waits {
     tail: ThreadId,
     incoming: ObjectId,
     terminal: ObjectId,
-    target_as: ObjectId,
+    target_as: AddressSpaceId,
 }
 
 fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
@@ -89,12 +89,7 @@ fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
                 saved: target_saved(),
                 record: terminal,
             };
-            let address_space = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live_mut(usize::from(target_as.index))
-                .unwrap();
+            let address_space = nucleus.address_space_mut(target_as).unwrap();
             address_space.set_translation_root(Some(ROOT));
             address_space.set_asid(Some(2));
             nucleus.current_thread = Some(source);
@@ -169,24 +164,28 @@ fn reject_unchanged(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits, expec
 
 #[test_case]
 fn resume_rejects_invalid_as_identity_before_consuming_any_state() {
-    for identity in [
-        ObjectId {
-            pool: PoolTag::PageTable,
-            index: 1,
-            generation: 1,
-        },
-        ObjectId {
-            pool: PoolTag::AddressSpace,
-            index: u16::MAX,
-            generation: 1,
-        },
-        ObjectId {
-            pool: PoolTag::AddressSpace,
-            index: 1,
-            generation: 0,
-        },
-    ] {
+    for invalid in 0..4 {
         with_resume(|nucleus, waits| {
+            let live = waits.target_as;
+            let identity = match invalid {
+                // Another kind at the AddressSpace's address.
+                0 => AddressSpaceId {
+                    kind: ObjectType::PAGE_TABLE,
+                    ..live
+                },
+                // No object at all.
+                1 => AddressSpaceId::UNBOUND,
+                // An address no carve could have produced.
+                2 => AddressSpaceId {
+                    address: live.address + 8,
+                    ..live
+                },
+                // A generation the record never had.
+                _ => AddressSpaceId {
+                    generation: live.generation + 1,
+                    ..live
+                },
+            };
             nucleus.thread_mut(waits.target).unwrap().address_space = identity;
             reject_unchanged(nucleus, &waits, CapError::InvalidDomain);
         });
@@ -197,32 +196,17 @@ fn resume_rejects_invalid_as_identity_before_consuming_any_state() {
 fn resume_rejects_retired_and_reused_as_before_consuming_completed_wait() {
     for reuse in [false, true] {
         with_resume(|nucleus, waits| {
-            let binding = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live(usize::from(waits.target_as.index))
-                .unwrap()
-                .keytable();
-            nucleus
-                .pools
-                .arch
-                .address_spaces
-                .deallocate(waits.target_as)
+            let binding = nucleus.address_space(waits.target_as).unwrap().keytable();
+            crate::retire_address_space(waits.target_as)
                 .unwrap_or_else(|e| panic!("AS retirement: {e:?}"));
             if reuse {
                 let mut replacement = ArchObjectsImpl::new_address_space(binding);
                 replacement.set_translation_root(Some(ROOT));
                 replacement.set_asid(Some(3));
-                let replacement_id = nucleus
-                    .pools
-                    .arch
-                    .address_spaces
-                    .allocate(replacement)
-                    .unwrap()
-                    .0;
-                assert_eq!(replacement_id.index, waits.target_as.index);
-                assert_ne!(replacement_id.generation, waits.target_as.generation);
+                let replacement_id =
+                    crate::objects::nucleus::test_arena::carve(replacement).unwrap();
+                assert_ne!(replacement_id, waits.target_as);
+                assert_ne!(replacement_id.address, waits.target_as.address);
             }
             reject_unchanged(nucleus, &waits, CapError::InvalidDomain);
         });
@@ -233,12 +217,7 @@ fn resume_rejects_retired_and_reused_as_before_consuming_completed_wait() {
 fn resume_rejects_missing_root_or_asid_without_losing_context_or_pending() {
     for (root, asid) in [(None, None), (None, Some(2)), (Some(ROOT), None)] {
         with_resume(|nucleus, waits| {
-            let address_space = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live_mut(usize::from(waits.target_as.index))
-                .unwrap();
+            let address_space = nucleus.address_space_mut(waits.target_as).unwrap();
             address_space.set_translation_root(root);
             address_space.set_asid(asid);
             reject_unchanged(nucleus, &waits, CapError::NotMapped);
@@ -254,12 +233,7 @@ fn resume_rejects_unencodable_root_or_reserved_asid_atomically() {
         (ROOT, 0, CapError::InvalidOperation),
     ] {
         with_resume(|nucleus, waits| {
-            let address_space = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live_mut(usize::from(waits.target_as.index))
-                .unwrap();
+            let address_space = nucleus.address_space_mut(waits.target_as).unwrap();
             address_space.set_translation_root(Some(root));
             address_space.set_asid(Some(asid));
             reject_unchanged(nucleus, &waits, error);
@@ -347,10 +321,7 @@ fn first_start_failure_preserves_its_initial_context_and_runnable_position() {
             saved: target_saved(),
         };
         nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live_mut(usize::from(waits.target_as.index))
+            .address_space_mut(waits.target_as)
             .unwrap()
             .set_translation_root(None);
         reject_unchanged(nucleus, &waits, CapError::NotMapped);
@@ -360,13 +331,7 @@ fn first_start_failure_preserves_its_initial_context_and_runnable_position() {
 #[test_case]
 fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result() {
     with_resume(|nucleus, waits| {
-        let target_binding = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live(usize::from(waits.target_as.index))
-            .unwrap()
-            .keytable();
+        let target_binding = nucleus.address_space(waits.target_as).unwrap().keytable();
         // SAFETY: serial exclusive fixture; the access/guards end before any
         // subsequent state inspection, and no hardware install occurs here.
         let resumed = {
@@ -444,12 +409,7 @@ fn first_start_preparation_preserves_all_saved_registers_and_selects_its_table()
 fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_change() {
     with_resume(|nucleus, waits| {
         let source_as = nucleus.thread(waits.source).unwrap().address_space;
-        let source_address_space = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live_mut(usize::from(source_as.index))
-            .unwrap();
+        let source_address_space = nucleus.address_space_mut(source_as).unwrap();
         source_address_space.set_translation_root(Some(ROOT + 0x1000));
         source_address_space.set_asid(Some(1));
         let source_binding = source_address_space.keytable();
@@ -458,11 +418,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             .unwrap()
             .insert(
                 KeySlot::SELF_ADDRESS_SPACE,
-                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                    source_as,
-                    Rights::all(),
-                    0,
-                ),
+                KeyEntry::new_carved(source_as, Rights::all(), 0),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|e| panic!("AS cap: {:?}", e.error.code()));
@@ -487,13 +443,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
         assert_eq!(nucleus.pending.len(), 2);
         assert_eq!(nucleus.run_queue.len(), 2);
         // Same prepared helper also rejects missing metadata through Activate.
-        nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live_mut(usize::from(source_as.index))
-            .unwrap()
-            .set_asid(None);
+        nucleus.address_space_mut(source_as).unwrap().set_asid(None);
         assert!(matches!(
             cap_invoke(nucleus, key, 0, &[0; 6]),
             Err(CapError::NotMapped)
@@ -503,11 +453,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             .unwrap()
             .insert(
                 KeySlot(20),
-                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                    waits.target_as,
-                    Rights::all(),
-                    0,
-                ),
+                KeyEntry::new_carved(waits.target_as, Rights::all(), 0),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|e| panic!("foreign AS cap: {:?}", e.error.code()));
@@ -520,11 +466,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             .unwrap()
             .insert(
                 KeySlot(21),
-                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                    source_as,
-                    Rights(Rights::READ),
-                    0,
-                ),
+                KeyEntry::new_carved(source_as, Rights(Rights::READ), 0),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|e| panic!("attenuated AS cap: {:?}", e.error.code()));
@@ -539,11 +481,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
         // SAFETY: exclusive serial fixture, dispatch's Access has ended.
         let access = unsafe { Access::new() };
         assert!(matches!(
-            prepare_translation_context::<ArchObjectsImpl>(
-                &access,
-                &nucleus.pools.arch.address_spaces,
-                source_as
-            ),
+            prepare_translation_context::<ArchObjectsImpl>(&access, source_as),
             Err(CapError::NotMapped)
         ));
     });
@@ -553,12 +491,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
 /// the FIFO tail Thread (in the source `AddressSpace`) the idle Thread.
 fn with_idle(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> ThreadId {
     let source_as = nucleus.thread(waits.source).unwrap().address_space;
-    let address_space = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live_mut(usize::from(source_as.index))
-        .unwrap();
+    let address_space = nucleus.address_space_mut(source_as).unwrap();
     address_space.set_translation_root(Some(ROOT + 0x1000));
     address_space.set_asid(Some(1));
     let idle = waits.tail;

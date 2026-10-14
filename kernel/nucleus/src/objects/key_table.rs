@@ -1,7 +1,7 @@
 use {
     crate::{
         api::key_entry::KeyEntry,
-        objects::{NucleusObject, access::ObjectId},
+        objects::{NucleusObject, arch_objects::AddressSpaceId},
     },
     core::num::NonZero,
     libobject::{
@@ -492,7 +492,7 @@ impl KeyTable {
         &mut self,
         key: RawKey,
         guard: u32,
-        domain: ObjectId,
+        address_space: AddressSpaceId,
         vaddr: u64,
     ) -> Result<(), CapError> {
         let idx = self.validate_key(key, guard)?;
@@ -503,7 +503,7 @@ impl KeyTable {
                 found: entry.object_type(),
             });
         }
-        entry.as_frame_mut()?.set_mapped(domain, vaddr);
+        entry.as_frame_mut()?.set_mapped(address_space, vaddr);
         Ok(())
     }
 

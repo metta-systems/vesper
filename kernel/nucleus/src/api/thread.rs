@@ -3,7 +3,7 @@
 //! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Retire` `4`: no arguments (`x2..x7` zero). Tears down the invoked
 //!   Thread: cancels every pending record naming it as waiter, purges its
-//!   queued wakeup, and reclaims its Thread-pool slot. Success returns
+//!   queued wakeup, and retires the carved Thread. Success returns
 //!   zeros.
 //!
 //! Authority: `RETIRE` (selected 2026-09-19, D4): delegable lifecycle control —

@@ -1,9 +1,8 @@
 use {
     crate::objects::{
         ArchObjects, EventCount, KeyTable, Notification, PendingPool, RunQueue, Thread,
-        access::ObjectId,
         arch::ArchPools,
-        arch_objects::AddressSpaceObject,
+        arch_objects::{AddressSpaceId, AddressSpaceObject, PageTableId},
         carved::Carved,
         domain::DcbPages,
         irq::IrqTable,
@@ -31,8 +30,7 @@ use {
 //  │  │   │                                                              │
 //  │  │   └── arch: ArchPools<A>                                         │
 //  │  │       ├── frames: inline regions (no pool)                       │
-//  │  │       ├── page_tables: ObjectPool<A::PageTable>                  │
-//  │  │       ├── address_spaces: ObjectPool<A::AddressSpace>            │
+//  │  │       ├── page_tables, address_spaces: carved by Retype/boot     │
 //  │  │       ├── asid_pools: ObjectPool<A::ASIDPool>                    │
 //  │  │       └── asid_controls: reserved with the kind                   │
 //  │  │                                                                  │
@@ -170,29 +168,61 @@ impl<A: ArchObjects> Nucleus<A> {
 
     fn current_thread_table_binding(&self) -> Option<KeyTableBinding> {
         let thread = self.current_thread_ref().ok()?;
-        self.pools
-            .arch
-            .address_spaces
-            .validate(thread.address_space)
-            .ok()?;
-        Some(
-            self.pools
-                .arch
-                .address_spaces
-                .get_live(usize::from(thread.address_space.index))?
-                .keytable(),
-        )
+        Some(self.address_space(thread.address_space)?.keytable())
+    }
+
+    /// The live `AddressSpace` behind `id`, or `None` once it is retired.
+    #[expect(
+        clippy::unused_self,
+        reason = "the receiver ties the reference to the locked nucleus"
+    )]
+    pub fn address_space(&self, id: AddressSpaceId) -> Option<&A::AddressSpace> {
+        // SAFETY: AddressSpace identities name carved records that are never
+        // freed; the kernel lock serializes access, and the borrow of `self`
+        // bounds the reference.
+        unsafe {
+            Carved::<A::AddressSpace>::validate(id)
+                .ok()
+                .map(|address_space| &*address_space)
+        }
+    }
+
+    /// Exclusive access to the live `AddressSpace` behind `id`.
+    #[expect(
+        clippy::unused_self,
+        reason = "the receiver ties the reference to the locked nucleus"
+    )]
+    pub fn address_space_mut(&mut self, id: AddressSpaceId) -> Option<&mut A::AddressSpace> {
+        // SAFETY: as in `address_space`; `&mut self` makes the reference
+        // exclusive.
+        unsafe {
+            Carved::<A::AddressSpace>::validate(id)
+                .ok()
+                .map(|address_space| &mut *address_space)
+        }
+    }
+
+    /// The live page-table metadata record behind `id`, or `None` once it is
+    /// retired.
+    #[expect(
+        clippy::unused_self,
+        reason = "the receiver ties the reference to the locked nucleus"
+    )]
+    pub fn page_table(&self, id: PageTableId) -> Option<&A::PageTable> {
+        // SAFETY: as in `address_space`: page-table identities name carved
+        // records that are never freed.
+        unsafe {
+            Carved::<A::PageTable>::validate(id)
+                .ok()
+                .map(|page_table| &*page_table)
+        }
     }
 
     /// Unit-test fixture: carve a running Thread in `address_space` from a
     /// test arena standing in for Untyped memory.
     #[cfg(test)]
-    pub fn create_thread(&mut self, address_space: ObjectId) -> Option<ThreadId> {
-        self.pools
-            .arch
-            .address_spaces
-            .validate(address_space)
-            .ok()?;
+    pub fn create_thread(&mut self, address_space: AddressSpaceId) -> Option<ThreadId> {
+        self.address_space(address_space)?;
         let id = test_arena::carve(Thread::new(address_space, ExecutionContext::Running))?;
         test_arena::record_thread(id);
         Some(id)
@@ -391,9 +421,9 @@ mod tests {
         super::{Nucleus, NucleusPools, test_arena},
         crate::objects::{
             ArchObjectsImpl, EventCount, Notification, ObjectPool, PendingPool, RunQueue, Thread,
-            access::{ObjectId, PoolTag},
-            arch::{AArch64PageTable, ArchPools},
-            carved::{Carved, CarvedId},
+            access::ObjectId,
+            arch::{AArch64ASIDPool, ArchPools},
+            carved::{self, Carved, CarvedId},
             completion::PendingState,
             event_count::{AdvanceOutcome, AwaitOutcome},
             notification::WaitOutcome,
@@ -403,7 +433,7 @@ mod tests {
         libobject::syscall_status,
     };
 
-    // Backing bytes for the fixture's one page-table metadata slot
+    // Backing bytes for the fixture's one ASID-pool slot
     // (structural only; these tests never touch the arch pools). u128
     // elements give the 16-byte minimum carve alignment; the fixture
     // asserts the carve fits.
@@ -427,7 +457,7 @@ mod tests {
             let nucleus_ptr = (&raw mut NUCLEUS_MEM).cast::<Nucleus<ArchObjectsImpl>>();
             let arch_ptr = (&raw mut ARCH_POOL_MEM).cast::<u8>();
             assert!(
-                ObjectPool::<AArch64PageTable>::carve_size(1) <= core::mem::size_of::<[u128; 8]>()
+                ObjectPool::<AArch64ASIDPool>::carve_size(1) <= core::mem::size_of::<[u128; 8]>()
             );
             nucleus_ptr.write(Nucleus {
                 current_thread: None,
@@ -440,11 +470,7 @@ mod tests {
                 pools: NucleusPools {
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.
-                    arch: ArchPools::new(
-                        ObjectPool::initialize(arch_ptr, 1),
-                        ObjectPool::initialize(arch_ptr, 0),
-                        ObjectPool::initialize(arch_ptr, 0),
-                    ),
+                    arch: ArchPools::new(ObjectPool::initialize(arch_ptr, 1)),
                 },
             });
             &mut *nucleus_ptr
@@ -478,11 +504,7 @@ mod tests {
     /// never resolve it) from the test arena.
     fn carve_thread() -> ThreadId {
         test_arena::carve(Thread::new(
-            ObjectId {
-                pool: PoolTag::AddressSpace,
-                index: 0,
-                generation: 1,
-            },
+            carved::test_id(libobject::ObjectType::ADDRESS_SPACE, 0x1000),
             ExecutionContext::Running,
         ))
         .expect("test arena exhausted")

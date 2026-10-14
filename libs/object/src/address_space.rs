@@ -17,7 +17,7 @@ pub enum AddressSpaceOp {
     /// translation context.
     Activate = 0,
     /// Tear the address space down: release the bound ASID, clear the
-    /// root/ASID fields, reclaim the pool slot.
+    /// root/ASID fields, retire the carved object.
     Retire = 1,
     /// Construct an `Invocation` for an entry point in this `AddressSpace`.
     CreateInvocation = 3,
@@ -157,7 +157,8 @@ impl AddressSpaceKey {
 
     /// Retire this address space: release its bound ASID back to the
     /// originating pool (after the whole-ASID TLB invalidation), clear the
-    /// root/ASID fields, and reclaim its AddressSpace-pool slot.
+    /// root/ASID fields, and retire the carved object (its generation is
+    /// bumped, so every capability to it fails).
     ///
     /// Wire schema: no arguments. Authority: `RETIRE`
     /// on the invoked `AddressSpace` capability. The current caller's own

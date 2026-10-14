@@ -8,8 +8,8 @@ use {
         objects::{
             ArchObjects, ArchObjectsImpl, ExecutionContext, InvocationContinuation,
             InvocationStack, KeyTable, Nucleus, Placement, ThreadFault,
-            access::{Access, ObjectId},
-            arch_objects::AddressSpaceObject,
+            access::Access,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
             fault::FaultDelivery,
             invocation::{
                 CallTarget, CommittedCall, CommittedReturn, InvocationStackExtent, PreparedCall,
@@ -40,8 +40,8 @@ const LOWEST_SP: u64 = STACK_BASE + MINIMUM_HEADROOM;
 const INVOCATION_SLOT: KeySlot = KeySlot(10);
 
 struct CallFixture {
-    source_as: ObjectId,
-    target_as: ObjectId,
+    source_as: AddressSpaceId,
+    target_as: AddressSpaceId,
     source_table: u64,
     target_table: u64,
     key: RawKey,
@@ -63,20 +63,10 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
                 .create_thread(source_as)
                 .expect("source Thread allocation");
             nucleus.current_thread = Some(source);
-            let address_space = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live_mut(usize::from(target_as.index))
-                .unwrap();
+            let address_space = nucleus.address_space_mut(target_as).unwrap();
             address_space.set_translation_root(Some(ROOT));
             address_space.set_asid(Some(2));
-            let source_address_space = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live_mut(usize::from(source_as.index))
-                .unwrap();
+            let source_address_space = nucleus.address_space_mut(source_as).unwrap();
             source_address_space.set_translation_root(Some(SOURCE_ROOT));
             source_address_space.set_asid(Some(1));
             let source_return_key = provisioned_return_key(source_table);
@@ -172,7 +162,7 @@ fn table_digest(address: u64) -> u64 {
 #[derive(Debug, PartialEq, Eq)]
 struct Snapshot {
     current_thread: Option<ThreadId>,
-    source_address_space: ObjectId,
+    source_address_space: AddressSpaceId,
     source_context: crate::objects::ExecutionContext,
     source_stack: InvocationStack,
     target_root: Option<u64>,
@@ -185,11 +175,7 @@ struct Snapshot {
 }
 
 fn snapshot(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) -> Snapshot {
-    let target = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(fixture.target_as.index));
+    let target = nucleus.address_space(fixture.target_as);
     let current_thread = nucleus.current_thread;
     let target_root = target.and_then(|address_space| address_space.translation_root());
     let target_asid = target.and_then(|address_space| address_space.asid());
@@ -274,12 +260,7 @@ fn invalid_stack(value: u64, reason: InvalidStackReason) -> CapError {
 }
 
 fn break_translation(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
-    let address_space = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live_mut(usize::from(fixture.target_as.index))
-        .unwrap();
+    let address_space = nucleus.address_space_mut(fixture.target_as).unwrap();
     address_space.set_translation_root(None);
     address_space.set_asid(None);
 }
@@ -383,12 +364,7 @@ fn translation_failure_is_reported_before_depth_exhaustion() {
     ] {
         with_call(|nucleus, fixture| {
             fill_stack(nucleus, INVOCATION_STACK_DEPTH);
-            let address_space = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live_mut(usize::from(fixture.target_as.index))
-                .unwrap();
+            let address_space = nucleus.address_space_mut(fixture.target_as).unwrap();
             address_space.set_translation_root(root);
             address_space.set_asid(asid);
             let saved = call_frame(fixture.key, LOWEST_SP);
@@ -459,31 +435,16 @@ fn fill_stack_one_more(nucleus: &mut Nucleus<ArchObjectsImpl>) {
 fn stale_target_identity_precedes_invalid_sp() {
     for reuse in [false, true] {
         with_call(|nucleus, fixture| {
-            let binding = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live(usize::from(fixture.target_as.index))
-                .unwrap()
-                .keytable();
-            nucleus
-                .pools
-                .arch
-                .address_spaces
-                .deallocate(fixture.target_as)
+            let binding = nucleus.address_space(fixture.target_as).unwrap().keytable();
+            crate::retire_address_space(fixture.target_as)
                 .unwrap_or_else(|e| panic!("AS retirement: {e:?}"));
             if reuse {
                 let mut replacement = ArchObjectsImpl::new_address_space(binding);
                 replacement.set_translation_root(Some(ROOT));
                 replacement.set_asid(Some(3));
-                let replacement_id = nucleus
-                    .pools
-                    .arch
-                    .address_spaces
-                    .allocate(replacement)
-                    .unwrap()
-                    .0;
-                assert_eq!(replacement_id.index, fixture.target_as.index);
+                let replacement_id =
+                    crate::objects::nucleus::test_arena::carve(replacement).unwrap();
+                assert_ne!(replacement_id, fixture.target_as);
             }
             fill_stack(nucleus, INVOCATION_STACK_DEPTH);
             let saved = call_frame(fixture.key, STACK_BASE);
@@ -532,11 +493,7 @@ fn operation_kind_and_authority_precede_supplied_values() {
             .unwrap()
             .insert(
                 KeySlot(12),
-                KeyEntry::new::<<ArchObjectsImpl as ArchObjects>::AddressSpace>(
-                    fixture.target_as,
-                    Rights::all(),
-                    0,
-                ),
+                KeyEntry::new_carved(fixture.target_as, Rights::all(), 0),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|error| panic!("wrong-kind install: {:?}", error.error.code()));
@@ -583,7 +540,7 @@ fn call(
 
 fn prepare_direct(
     nucleus: &Nucleus<ArchObjectsImpl>,
-    target_as: ObjectId,
+    target_as: AddressSpaceId,
     saved: &SavedContext,
 ) -> Result<PreparedCall, CapError> {
     let target = CallTarget {
@@ -1012,31 +969,15 @@ fn retired_source_is_a_return_target_retired_fault_without_pop() {
     for reuse in [false, true] {
         with_call(|nucleus, fixture| {
             committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
-            let binding = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live(usize::from(fixture.source_as.index))
-                .unwrap()
-                .keytable();
-            nucleus
-                .pools
-                .arch
-                .address_spaces
-                .deallocate(fixture.source_as)
+            let binding = nucleus.address_space(fixture.source_as).unwrap().keytable();
+            crate::retire_address_space(fixture.source_as)
                 .unwrap_or_else(|e| panic!("source AS retirement: {e:?}"));
             if reuse {
                 let mut replacement = ArchObjectsImpl::new_address_space(binding);
                 replacement.set_translation_root(Some(SOURCE_ROOT));
                 replacement.set_asid(Some(1));
-                let replacement_id = nucleus
-                    .pools
-                    .arch
-                    .address_spaces
-                    .allocate(replacement)
-                    .unwrap()
-                    .0;
-                assert_eq!(replacement_id.index, fixture.source_as.index);
+                let replacement_id =
+                    crate::objects::nucleus::test_arena::carve(replacement).unwrap();
                 assert_ne!(replacement_id, fixture.source_as);
             }
             let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
@@ -1051,10 +992,7 @@ fn live_but_unready_source_is_rejected_without_pop() {
     with_call(|nucleus, fixture| {
         committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
         nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live_mut(usize::from(fixture.source_as.index))
+            .address_space_mut(fixture.source_as)
             .unwrap()
             .set_asid(None);
         let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
@@ -1289,13 +1227,8 @@ fn deliver(
         .unwrap_or_else(|error| panic!("fault delivery failed: {:?}", error.code()))
 }
 
-fn handler_state(nucleus: &Nucleus<ArchObjectsImpl>, address_space: ObjectId) -> (bool, u64) {
-    let space = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(address_space.index))
-        .unwrap();
+fn handler_state(nucleus: &Nucleus<ArchObjectsImpl>, address_space: AddressSpaceId) -> (bool, u64) {
+    let space = nucleus.address_space(address_space).unwrap();
     (space.fault_handler_busy(), space.unhandled_faults())
 }
 
@@ -1436,10 +1369,7 @@ fn a_fault_while_the_handler_is_busy_is_unhandled() {
     with_call(|nucleus, fixture| {
         install_fault_handler(nucleus, &fixture);
         nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live_mut(usize::from(fixture.source_as.index))
+            .address_space_mut(fixture.source_as)
             .unwrap()
             .set_fault_handler_busy(true);
         let faulted = nucleus.current_thread.unwrap();

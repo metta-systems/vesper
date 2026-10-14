@@ -30,7 +30,7 @@ pub enum ThreadOp {
     Grant = 1,   // Grant a capability to this thread's table
     Suspend = 2, // Suspend the thread
     Resume = 3,  // Resume a suspended thread
-    Retire = 4,  // Tear down: cancel pending, reclaim the pool slot
+    Retire = 4,  // Tear down: cancel pending, retire the carved Thread
 }
 
 impl TryFrom<u64> for ThreadOp {
@@ -150,8 +150,8 @@ impl ThreadKey {
     }
 
     /// Retire this thread: tear it down — cancel every pending record naming
-    /// it as waiter, purge its queued wakeup — and reclaim its Thread-pool
-    /// slot.
+    /// it as waiter, purge its queued wakeup — and retire the carved Thread
+    /// (its generation is bumped, so every capability to it fails).
     ///
     /// Wire schema: no arguments. Authority: `RETIRE` on the invoked Thread capability. The
     /// current Thread may not retire itself (`InvalidOperation`): the caller

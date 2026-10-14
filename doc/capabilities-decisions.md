@@ -97,6 +97,15 @@ Unanswered questions before implementing the scheduler record ABI:
   budgets; badge width, zero-badge meaning, and mint/rebadge policy.
 - **D4/bootstrap:** ownership of well-known `KeySlot` constants—shared object
   API versus bootstrap/libOS composition layout.
+- **D3/D6 — AddressSpace creation through Retype:** an AddressSpace is carved
+  but only Kickstart and the loader create one, kernel-privately. Its
+  `KeyTable` binding is immutable and set at creation, so `Untyped.Retype` of
+  an AddressSpace needs a table operand: which register carries it, what
+  authority it needs (`INSTALL`, a new right, or the table's own
+  capability), whether one table may be bound to several AddressSpaces, how
+  the well-known self slots (`SELF_KEYTABLE`, `SELF_ADDRESS_SPACE`, the
+  `THREAD_RETURN` sentinel) are installed, and whether a batch shares one
+  table or takes one per object.
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
 - **D8:** whether the root budget is infinite or a large finite amount (both

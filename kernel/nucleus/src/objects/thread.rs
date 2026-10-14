@@ -2,6 +2,7 @@ use {
     crate::objects::{
         NucleusObject,
         access::ObjectId,
+        arch_objects::AddressSpaceId,
         carved::{CarvedId, CarvedObject},
     },
     core::mem::{align_of, size_of},
@@ -68,7 +69,7 @@ pub struct ThreadFault {
     /// The complete state of the faulting instruction.
     pub frame: SavedContext,
     /// The `AddressSpace` whose handler took the fault (and is busy).
-    pub address_space: ObjectId,
+    pub address_space: AddressSpaceId,
     /// Stack length while the fault continuation is on top.
     pub depth: usize,
 }
@@ -106,7 +107,7 @@ impl Placement {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvocationContinuation {
-    pub source_address_space: ObjectId,
+    pub source_address_space: AddressSpaceId,
     pub source_pc: u64,
     pub source_sp: u64,
     pub stamp: u64,
@@ -124,11 +125,7 @@ pub struct InvocationContinuation {
 impl InvocationContinuation {
     pub const fn empty() -> Self {
         Self {
-            source_address_space: ObjectId {
-                pool: crate::objects::access::PoolTag::AddressSpace,
-                index: 0,
-                generation: 0,
-            },
+            source_address_space: AddressSpaceId::UNBOUND,
             source_pc: 0,
             source_sp: 0,
             stamp: 0,
@@ -140,7 +137,11 @@ impl InvocationContinuation {
         }
     }
 
-    pub fn from_saved(source_address_space: ObjectId, saved: SavedContext, stamp: u64) -> Self {
+    pub fn from_saved(
+        source_address_space: AddressSpaceId,
+        saved: SavedContext,
+        stamp: u64,
+    ) -> Self {
         let mut source_x19_x30 = [0; 12];
         source_x19_x30[..11].copy_from_slice(&saved.gpr[19..30]);
         source_x19_x30[11] = saved.lr;
@@ -260,9 +261,9 @@ pub struct Thread {
     /// The checked identity of this thread's `AddressSpace` (the
     /// protection/mapping context). A thread executes in exactly one address
     /// space;
-    /// resolution validates the identity against the address-space pool, so a
-    /// retired address space fails here with a defined error.
-    pub address_space: ObjectId,
+    /// resolution validates the identity against the carved record's header,
+    /// so a retired address space fails here with a defined error.
+    pub address_space: AddressSpaceId,
     /// Execution context for stopping and resuming this Thread (blocked
     /// callers park here; never-run threads carry their first-start entry).
     pub context: ExecutionContext,
@@ -293,7 +294,7 @@ pub type ThreadId = CarvedId;
 impl Thread {
     /// A Thread in `address_space` with execution state `context`, an empty
     /// invocation stack, no fault and not queued.
-    pub const fn new(address_space: ObjectId, context: ExecutionContext) -> Self {
+    pub const fn new(address_space: AddressSpaceId, context: ExecutionContext) -> Self {
         Self {
             address_space,
             context,
@@ -309,9 +310,9 @@ impl Thread {
 
 // The record and array sizes are part of the storage/accounting contract.
 const _: () = {
-    assert!(size_of::<InvocationContinuation>() == 160);
+    assert!(size_of::<InvocationContinuation>() == 168);
     assert!(align_of::<InvocationContinuation>() == 8);
-    assert!(size_of::<InvocationStack>() >= 160 * INVOCATION_STACK_DEPTH);
+    assert!(size_of::<InvocationStack>() >= 168 * INVOCATION_STACK_DEPTH);
 };
 // Thread backing is type-derived and is not required to fit in one page.
 const _: () = {
@@ -338,17 +339,14 @@ mod tests {
         super::{ExecutionContext, InvocationContinuation, InvocationStack, Thread},
         crate::objects::{
             access::{ObjectId, PoolTag},
-            carved::Carved,
+            arch_objects::AddressSpaceId,
+            carved::{self, Carved},
         },
         libexception::arch::aarch64::{ExceptionContext, ExceptionOrigin, SavedContext},
     };
 
-    fn address_space() -> ObjectId {
-        ObjectId {
-            pool: PoolTag::AddressSpace,
-            index: 0,
-            generation: 1,
-        }
+    fn address_space() -> AddressSpaceId {
+        carved::test_id(libobject::ObjectType::ADDRESS_SPACE, 0x1000)
     }
 
     fn saved_fixture(seed: u64) -> SavedContext {

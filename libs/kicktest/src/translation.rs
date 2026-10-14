@@ -15,7 +15,7 @@ use {
     libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         keys::boot_key,
-        paging::{ADDR_MASK, PAGE, image_table_count},
+        paging::{ADDR_MASK, PAGE},
         retained::RetainedInitMemory,
     },
     libexception::arch::aarch64::SavedContext,
@@ -55,14 +55,6 @@ static SOURCE_KEY: AtomicU64 = AtomicU64::new(0);
 static BOUNCE_KEY: AtomicU64 = AtomicU64::new(0);
 static SOURCE_ROUNDS: AtomicU64 = AtomicU64::new(0);
 static BOUNCE_ROUNDS: AtomicU64 = AtomicU64::new(0);
-
-/// Exact metadata capacity: source prefix + later test L3 (4), Bounce prefix
-/// (3), image L3s in both roots (2*N), probe L3s (2), retirement roots (2)
-/// with a disposable L1/L2 chain (2), and the existing twelve-entry pool
-/// refill. Unmap does not free metadata.
-pub fn page_table_capacity(retained: &RetainedInitMemory) -> usize {
-    25 + 2 * image_table_count(retained)
-}
 
 /// Preserve bootstrap nG/global coverage before replacing its ASID-0 root.
 /// `code` is an address in the running low image (the test kernel's entry).
@@ -203,19 +195,18 @@ impl Provisioner<'_> {
         assert_eq!(image.archived, 2 * image.image_pages + image.stack_pages);
         #[cfg(feature = "qemu")]
         {
-            let count = image_table_count(builder.retained);
+            let count = libcomponent_loader::paging::image_table_count(builder.retained);
             let (image_start, image_end) = builder.retained.image();
             let (stack_start, stack_end) = builder.retained.stack();
             semi::println!(
-                "Translation backing: image=[{image_start:#x},{image_end:#x}) {} pages x2; source stack=[{stack_start:#x},{stack_end:#x}) {} pages; archive=2^{} entries, occupied={}, carve={} bytes; installed_tables={}, metadata_entries={}, capacity={}",
+                "Translation backing: image=[{image_start:#x},{image_end:#x}) {} pages x2; source stack=[{stack_start:#x},{stack_end:#x}) {} pages; archive=2^{} entries, occupied={}, carve={} bytes; installed_tables={}, metadata_entries={}",
                 image.image_pages,
                 image.stack_pages,
                 image.archive_bits,
                 image.archived,
                 nucleus::objects::KeyTable::carve_size(image.archive_bits),
                 8 + 2 * count,
-                9 + 2 * count,
-                page_table_capacity(builder.retained)
+                9 + 2 * count
             );
         }
         bounce_prefix

@@ -91,7 +91,9 @@ fn assign<A: ArchObjects>(
         if !as_entry.rights().has(Rights::MAP) {
             return Err(CapError::InsufficientRights);
         }
-        let as_id = as_entry.object_id().map_err(|e| e.with_key_operand(2))?;
+        let as_id = as_entry
+            .address_space_id()
+            .map_err(|e| e.with_key_operand(2))?;
         (pool_id, as_id)
     };
 
@@ -102,7 +104,7 @@ fn assign<A: ArchObjects>(
         .resolve_mut::<A::ASIDPool>(&mut nucleus.pools.arch.asid_pools, pool_id)
         .map_err(|error| error.for_key(pool_key, 0))?;
     let mut address_space = access
-        .resolve_mut::<A::AddressSpace>(&mut nucleus.pools.arch.address_spaces, as_id)
+        .resolve_object::<A::AddressSpace>(as_id)
         .map_err(|error| error.for_key(as_key, 2))?;
     if address_space.translation_root().is_none() {
         return Err(CapError::NotMapped);

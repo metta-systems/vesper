@@ -7,8 +7,8 @@
 //! `PageTable` Retype and installation, ASID binding, `AddressSpace.Retire`
 //! (whole-ASID invalidation, ASID release and reuse), Frame.Map/Unmap with the
 //! alias policy, activation making the carved tables hardware-live with
-//! observable TLB invalidation, and page-table pool accounting — all through
-//! the real SVC path.
+//! observable TLB invalidation, and PageTable metadata charged to the invoking
+//! Untyped — all through the real SVC path.
 //!
 //! Runs on the real Kickstart boot path; in-guest assertions and the QEMU
 //! semihosting exit status are the result (`just test-memory`). The suite

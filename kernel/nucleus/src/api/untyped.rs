@@ -13,32 +13,27 @@
 //! The kind allowlist is `KeyTable` (a variable-size carve: `size_bits` selects
 //! the capacity, 1..=20 entries as `2^size_bits`, and the packed guard — fixed
 //! for the table's lifetime, recorded in the created capability — must fit
-//! `32 − size_bits` bits), `Frame` (architecture-validated `size_bits`, added
-//! 2026-09-15), `PageTable` (fixed architecture-validated 4 KiB carve, added
-//! 2026-09-15), `Notification` (pure kernel synchronization state, added
-//! 2026-09-16: no Untyped bytes are carved — the object is allocated from the
-//! bootstrap-carved notification pool and the capability is a checked pool
-//! identity), `EventCount` (pure kernel synchronization state, added 2026-09-18:
-//! same pool-backed carve — no Untyped bytes, the object is allocated from the
-//! bootstrap-carved event-count pool), `Time` (an empty budget on the
-//! creating core, same pool-backed carve from the Time pool), and `Untyped` itself (added 2026-09-23:
-//! a split into smaller Untypeds — the child region is `2^size_bits` bytes, at
-//! least the watermark encoding granularity, its own alignment, with the child
-//! watermark starting at zero; no bytes are initialized or sanitized because
-//! the split is pure bookkeeping); other kinds remain unsupported. A device
-//! Untyped is a source only for the `Untyped` split (which propagates
-//! `is_device`) and for device `Frame`s, which are never zeroed; every other
-//! kind is rejected. A batch is bounded by
-//! `MAX_RETYPE_BATCH` (256 objects; larger counts are rejected with
+//! `32 − size_bits` bits), `Frame` (architecture-validated `size_bits`),
+//! `PageTable` (a fixed architecture-validated 4 KiB table plus its kernel
+//! metadata record), the carved kernel objects `Notification`, `EventCount`,
+//! `Time` (an empty budget on the creating core) and `Thread` (inert), each
+//! with `size_bits` zero, and `Untyped` itself (a split into smaller Untypeds
+//! — the child region is `2^size_bits` bytes, at least the watermark encoding
+//! granularity, its own alignment, with the child watermark starting at zero;
+//! no bytes are initialized or sanitized because the split is pure
+//! bookkeeping); other kinds remain unsupported. A device Untyped is a source
+//! only for the `Untyped` split (which propagates `is_device`) and for device
+//! `Frame`s, which are never zeroed; every other kind is rejected. A batch is
+//! bounded by `MAX_RETYPE_BATCH` (256 objects; larger counts are rejected with
 //! `InvalidOperation` and split by the caller).
 //!
 //! Transaction: validate → reserve (watermark fit) → initialize each object
 //! kernel-privately in the carved region (a `KeyTable`'s header, entries, and
 //! counters are written/zeroed there; a `Frame`'s and a `PageTable`'s contents
 //! are sanitized by zeroing — stale descriptors would leak prior contents into
-//! hardware walks) → install capabilities → advance the watermark last. Any
-//! failure before the watermark advance leaves the Untyped and the destination
-//! table unchanged.
+//! hardware walks; a carved kernel object's header and state are written) →
+//! install capabilities → advance the watermark last. Any failure before the
+//! watermark advance leaves the Untyped and the destination table unchanged.
 
 use {
     crate::{
@@ -49,7 +44,7 @@ use {
         objects::{
             ArchObjects, EventCount, ExecutionContext, KeyTable, Notification, Nucleus, Thread,
             Time,
-            access::{Access, ObjectId},
+            access::Access,
             carved::{Carved, CarvedId, CarvedObject},
             key_table::CallerTable,
         },
@@ -98,25 +93,20 @@ enum Carve {
     /// kernel object at the carve; the capability stores the region inline,
     /// and the contents are sanitized (zeroed) before installation.
     Frame { bytes: usize },
-    /// A carved `PageTable`: a sanitized (zeroed) 4 KiB hardware-format table.
-    /// The capability is a checked pool identity over kernel metadata (carve
-    /// address, installation record); the metadata slot is allocated from the
-    /// architecture page-table pool, whose backing is charged at bootstrap.
+    /// A carved `PageTable`: a sanitized (zeroed) 4 KiB hardware-format table
+    /// plus its kernel metadata record (table address, walk level,
+    /// installation record), both carved from the Untyped. The capability
+    /// carries the record's carved identity.
     PageTable { bytes: usize },
     /// A `Notification`: pure kernel synchronization state (bitmap + bounded
-    /// wait queue). No Untyped bytes are carved (`size_bits` zero); the
-    /// object is allocated from the bootstrap-carved notification pool and
-    /// the capability is a checked pool identity over it.
+    /// wait queue), carved from the Untyped (`size_bits` zero).
     Notification,
     /// An `EventCount`: pure kernel synchronization state (a monotonic
-    /// counter with a bounded await queue). No Untyped bytes are carved
-    /// (`size_bits` zero); the object is allocated from the
-    /// bootstrap-carved event-count pool and the capability is a checked
-    /// pool identity over it.
+    /// counter with a bounded await queue), carved from the Untyped
+    /// (`size_bits` zero).
     EventCount,
     /// A `Time`: an empty budget (zero budget, empty priority chain) on the
-    /// creating core. No Untyped bytes are carved (`size_bits` zero); the
-    /// object is allocated from the bootstrap-carved Time pool.
+    /// creating core, carved from the Untyped (`size_bits` zero).
     Time,
     /// A carved `Untyped`: a child region of `bytes` bytes split off from the
     /// source. No bytes are initialized or sanitized — an Untyped's contents
@@ -324,7 +314,8 @@ fn retype<A: ArchObjects>(
     // A frame, a page table, and a split-off Untyped are each their own
     // alignment; a KeyTable's carve size and alignment derive from its
     // capacity exponent (at least the watermark encoding granularity); a
-    // Notification, an EventCount and a Time carve no bytes.
+    // carved kernel object takes its carved record, aligned to at least the
+    // watermark granularity.
     let (obj_size, align) = match carve {
         Carve::KeyTable { size_bits } => (
             u64::try_from(KeyTable::carve_size(size_bits)).unwrap(),
@@ -339,8 +330,19 @@ fn retype<A: ArchObjects>(
         Carve::Time => carved_layout::<Time>(),
         Carve::Thread => carved_layout::<Thread>(),
     };
-    let total = obj_size
+    // A PageTable also carves its kernel metadata record: the records of a
+    // batch follow all its tables, so each table keeps its page alignment
+    // without padding between them.
+    let record_stride = match carve {
+        Carve::PageTable { .. } => carved_layout::<A::PageTable>().0,
+        _ => 0,
+    };
+    let tables = obj_size
         .checked_mul(u64::from(count))
+        .ok_or(CapError::InvalidSize(0))?;
+    let total = record_stride
+        .checked_mul(u64::from(count))
+        .and_then(|records| tables.checked_add(records))
         .ok_or(CapError::InvalidSize(0))?;
     let reservation = untyped.reserve(align, total)?;
 
@@ -359,39 +361,12 @@ fn retype<A: ArchObjects>(
         dst_table.check_insert(slot)?;
     }
 
-    // Phase 3.5 — for a PageTable, allocate its kernel metadata slot before
-    // any memory is touched (its metadata pool is charged at bootstrap until
-    // it is carved like the other kinds); on exhaustion the
-    // already-taken slots are released, leaving every part of the
-    // transaction unchanged.
-    let mut pt_ids: [Option<ObjectId>; MAX_RETYPE_BATCH_LEN] =
-        [const { None }; MAX_RETYPE_BATCH_LEN];
-    if matches!(carve, Carve::PageTable { .. }) {
-        let base = untyped.paddr + u64::try_from(reservation.start).unwrap();
-        for i in 0..u64::from(count) {
-            let index = usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?;
-            match nucleus
-                .pools
-                .arch
-                .page_tables
-                .allocate(A::new_page_table(base + obj_size * i))
-            {
-                Some((id, _)) => pt_ids[index] = Some(id),
-                None => {
-                    for id in pt_ids[..index].iter().flatten().copied() {
-                        let _rolled_back = nucleus.pools.arch.page_tables.deallocate(id);
-                    }
-                    return Err(CapError::PoolExhausted);
-                }
-            }
-        }
-    }
-
     // Phase 4+5 — initialize each object kernel-privately in the carved region
     // and install its capability. The region is not yet committed (watermark
     // unchanged); stale writes are overwritten by the next carve if the
     // transaction aborts.
     let base = untyped.paddr + u64::try_from(reservation.start).unwrap();
+    let records_base = base + tables;
     let core = nucleus.current_cpu();
     let mut installed: [RawKey; MAX_RETYPE_BATCH_LEN] =
         [RawKey::new(KeySlot(0), 0); MAX_RETYPE_BATCH_LEN];
@@ -450,9 +425,17 @@ fn retype<A: ArchObjects>(
                 unsafe {
                     core::ptr::write_bytes(addr, 0, bytes);
                 }
-                let id = pt_ids[usize::try_from(i).ok().ok_or(CapError::InvalidOperation)?]
-                    .expect("page-table metadata slot pre-allocated");
-                KeyEntry::new::<A::PageTable>(id, requested, 0)
+                // The table's kernel metadata record follows every table of
+                // the batch, so the tables stay contiguous and page-aligned.
+                let record = records_base + record_stride * i;
+                KeyEntry::new_carved(
+                    // SAFETY: as for `carve_object`: the record lies in this
+                    // batch's reservation after the tables, at a multiple of
+                    // its carved stride from a page-aligned base.
+                    unsafe { carve_object(record, A::new_page_table(paddr)) },
+                    requested,
+                    0,
+                )
             }
             Carve::Notification => KeyEntry::new_carved(
                 // SAFETY: as for `carve_object`.
@@ -477,7 +460,7 @@ fn retype<A: ArchObjects>(
                 unsafe {
                     carve_object(
                         paddr,
-                        Thread::new(ObjectId::UNBOUND, ExecutionContext::Inactive),
+                        Thread::new(CarvedId::UNBOUND, ExecutionContext::Inactive),
                     )
                 },
                 requested,
@@ -505,15 +488,13 @@ fn retype<A: ArchObjects>(
                 }
             }
             Err(failure) => {
-                // Defensive rollback: remove the already-installed capabilities
-                // and release any pre-allocated pool slots. The
-                // watermark is unchanged, so the Untyped's accounting is
-                // preserved and the destination table is restored.
+                // Defensive rollback: remove the already-installed
+                // capabilities. The watermark is unchanged, so the Untyped's
+                // accounting is preserved, the destination table is restored,
+                // and the records written above stay unreachable until the
+                // next carve overwrites them.
                 for key in installed[..installed_count].iter().rev() {
                     drop(dst_table.remove(*key, dst_cap.guard));
-                }
-                for id in pt_ids.iter().flatten().copied() {
-                    let _rolled_back = nucleus.pools.arch.page_tables.deallocate(id);
                 }
                 return Err(failure.error.with_key_operand(6));
             }

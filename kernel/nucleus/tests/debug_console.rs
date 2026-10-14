@@ -54,13 +54,14 @@ use {
         ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, ObjectPool, Thread,
         access::{Access, ObjectId, PoolTag},
         arch::ArchPools,
-        arch_objects::AddressSpaceObject,
+        arch_objects::{AddressSpaceId, AddressSpaceObject},
         carved::{Carved, CarvedId, FIRST_GENERATION},
         completion::{PendingKind, PendingState},
         domain::DcbPages,
         invocation::InvocationStackExtent,
         key_table::{CallerTable, KeyTableBinding},
         nucleus::NucleusPools,
+        object_pool::IdentityError,
         thread::ThreadId,
     },
 };
@@ -143,16 +144,8 @@ impl Nucleus<ArchObjectsImpl> {
     /// Implementation status: console authority is test-local; production Thread
     /// creation validates the AddressSpace and allocates without changing its table
     /// or selecting a current caller.
-    fn create_console_thread(&mut self, address_space: ObjectId) -> Option<RawKey> {
-        let binding = {
-            // SAFETY: the serial QEMU fixture provides exclusive kernel access;
-            // no other Access context overlaps this short validation scope.
-            let access = unsafe { Access::new() };
-            access
-                .resolve(&self.pools.arch.address_spaces, address_space)
-                .ok()?
-                .keytable()
-        };
+    fn create_console_thread(&mut self, address_space: AddressSpaceId) -> Option<RawKey> {
+        let binding = self.address_space(address_space)?.keytable();
         let key = {
             // SAFETY: this live AddressSpace binding names a fixed, initialized
             // carve owned by the serial fixture. No table reference or other
@@ -207,45 +200,39 @@ fn retire_thread(id: ThreadId) -> bool {
     unsafe { Carved::<Thread>::retire(id) }.is_ok()
 }
 
-fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, ObjectId, ObjectId)) {
-    // 16-byte-aligned carve backings (the minimum pool carve alignment), each
-    // large enough for its pool's carve (asserted below).
-    type Pt = objects::arch::AArch64PageTable;
-    const PT_WORDS: usize = ObjectPool::<Pt>::carve_size(2).div_ceil(size_of::<u128>());
-    type As = objects::arch::AArch64AddressSpace;
-    const AS_WORDS: usize = ObjectPool::<As>::carve_size(2).div_ceil(size_of::<u128>());
-    let mut pt_backing = MaybeUninit::<[u128; PT_WORDS]>::uninit();
-    let mut as_backing = MaybeUninit::<[u128; AS_WORDS]>::uninit();
-    const _: () = {
-        assert!(align_of::<[u128; PT_WORDS]>() >= ObjectPool::<Pt>::ALIGN);
-        assert!(align_of::<[u128; AS_WORDS]>() >= ObjectPool::<As>::ALIGN);
-    };
-    assert!(ObjectPool::<Pt>::carve_size(2) <= size_of::<[u128; PT_WORDS]>());
-    assert!(ObjectPool::<As>::carve_size(2) <= size_of::<[u128; AS_WORDS]>());
+/// Retire a fixture `AddressSpace` (bump its generation), as
+/// `AddressSpace.Retire` does after its teardown checks.
+pub(crate) fn retire_address_space(id: AddressSpaceId) -> Result<(), IdentityError> {
+    // SAFETY: fixture AddressSpaces are carved test-arena records; nothing
+    // holds a reference to one across this call.
+    unsafe { Carved::<objects::arch::AArch64AddressSpace>::retire(id) }
+}
+
+fn with_nucleus(
+    test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, AddressSpaceId, AddressSpaceId),
+) {
+    // A 16-byte-aligned carve backing (the minimum pool carve alignment) for
+    // the empty ASID-pool pool.
+    type Asid = objects::arch::AArch64ASIDPool;
+    const ASID_WORDS: usize = ObjectPool::<Asid>::carve_size(0).div_ceil(size_of::<u128>()) + 1;
+    let mut asid_backing = MaybeUninit::<[u128; ASID_WORDS]>::uninit();
+    const _: () = assert!(align_of::<[u128; ASID_WORDS]>() >= ObjectPool::<Asid>::ALIGN);
     // Fixture Threads are carved from the test arena; start a fresh list.
     crate::objects::nucleus::test_arena::reset_threads();
-    // SAFETY: The backings are carve-aligned and remain exclusively owned
-    // here until after the nucleus and its pools are dropped. The callback
-    // cannot return a borrowed nucleus/object reference. Only the pools
-    // access the backing while they are live.
-    let page_tables = unsafe { ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 2) };
-    let address_spaces = unsafe { ObjectPool::initialize(as_backing.as_mut_ptr().cast::<u8>(), 2) };
     // Carve two KeyTable regions from the fixed test backing (mirrors the boot
     // carve / runtime Retype: the table's storage is the carved region).
     let table_binding = carve(0);
     let second_table_binding = carve(1);
     let mut nucleus = Nucleus {
         pools: NucleusPools {
-            // SAFETY: the page-table, address-space, and ASID-pool backings are
-            // exclusively owned by this fixture; this test does not invoke
-            // arch objects (the ASID pool has zero capacity for the same
-            // reason).
+            // SAFETY: the ASID-pool backing is carve-aligned and exclusively
+            // owned by this fixture until the nucleus is dropped; the pool has
+            // zero capacity because these tests do not bind ASIDs.
             arch: unsafe {
-                ArchPools::new(
-                    page_tables,
-                    address_spaces,
-                    ObjectPool::initialize(pt_backing.as_mut_ptr().cast::<u8>(), 0),
-                )
+                ArchPools::new(ObjectPool::initialize(
+                    asid_backing.as_mut_ptr().cast::<u8>(),
+                    0,
+                ))
             },
         },
         current_thread: None,
@@ -262,20 +249,14 @@ fn with_nucleus(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, u64, u64, Objec
     // identity. Each distinct fixture table is bound to its own AddressSpace
     // at provisioning; Threads in the same AddressSpace share its one table.
     // No translation root or hardware context is installed by this fixture.
-    let fixture_as = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .allocate(ArchObjectsImpl::new_address_space(table_binding))
-        .expect("no fixture AddressSpace slot")
-        .0;
-    let second_as = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .allocate(ArchObjectsImpl::new_address_space(second_table_binding))
-        .expect("no second fixture AddressSpace slot")
-        .0;
+    let fixture_as = crate::objects::nucleus::test_arena::carve(
+        ArchObjectsImpl::new_address_space(table_binding),
+    )
+    .expect("no fixture AddressSpace slot");
+    let second_as = crate::objects::nucleus::test_arena::carve(ArchObjectsImpl::new_address_space(
+        second_table_binding,
+    ))
+    .expect("no second fixture AddressSpace slot");
     assert_ne!(fixture_as, second_as);
     assert_ne!(table_binding.address(), second_table_binding.address());
     assert_eq!(table_binding.size_bits(), SIZE_BITS);
@@ -645,14 +626,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                             assert_eq!(thread.address_space, fixture_as);
                             assert_eq!(thread.context, context);
                         }
-                        assert!(
-                            nucleus
-                                .pools
-                                .arch
-                                .address_spaces
-                                .validate(fixture_as)
-                                .is_ok()
-                        );
+                        assert!(nucleus.address_space(fixture_as).is_some());
                         assert_eq!(nucleus.pending.len(), 2);
                         for (record, waiter, kind, state) in [
                             (
@@ -963,14 +937,8 @@ fn changing_thread_address_space_selects_its_table_on_the_next_dispatch() {
                 Some((Rights::all(), 0)),
             );
             for (id, address) in [(fixture_as, table_addr), (second_as, second_table_addr)] {
-                assert!(nucleus.pools.arch.address_spaces.validate(id).is_ok());
-                let binding = nucleus
-                    .pools
-                    .arch
-                    .address_spaces
-                    .get_live(usize::from(id.index))
-                    .unwrap()
-                    .keytable();
+                assert!(nucleus.address_space(id).is_some());
+                let binding = nucleus.address_space(id).unwrap().keytable();
                 assert_eq!(binding.address(), address);
                 assert_eq!(binding.size_bits(), SIZE_BITS);
             }
@@ -999,14 +967,7 @@ fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
             // 3), before SELF or key lookup, not an object-retirement status.
             let malformed = RawKey::from_wire(0);
             assert_dispatch_error(nucleus, malformed, 0, (27, 0, 2));
-            assert!(
-                nucleus
-                    .pools
-                    .arch
-                    .address_spaces
-                    .deallocate(fixture_as)
-                    .is_ok()
-            );
+            assert!(crate::retire_address_space(fixture_as).is_ok());
             assert_eq!(
                 nucleus.current_thread_mut().unwrap().address_space,
                 fixture_as
@@ -1017,46 +978,16 @@ fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
                 assert_dispatch_error(nucleus, key, 0, (3, 0, 0));
             }
 
-            let replacement_binding = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .get_live(usize::from(second_as.index))
-                .unwrap()
-                .keytable();
-            assert!(
-                nucleus
-                    .pools
-                    .arch
-                    .address_spaces
-                    .deallocate(second_as)
-                    .is_ok()
-            );
-            let replacement_as = nucleus
-                .pools
-                .arch
-                .address_spaces
-                .allocate(ArchObjectsImpl::new_address_space(replacement_binding))
-                .expect("replacement AddressSpace allocation failed")
-                .0;
-            assert_eq!(replacement_as.index, fixture_as.index);
-            assert_eq!(replacement_as.generation, fixture_as.generation + 1);
-            assert!(
-                nucleus
-                    .pools
-                    .arch
-                    .address_spaces
-                    .validate(replacement_as)
-                    .is_ok()
-            );
-            assert!(
-                nucleus
-                    .pools
-                    .arch
-                    .address_spaces
-                    .validate(fixture_as)
-                    .is_err()
-            );
+            let replacement_binding = nucleus.address_space(second_as).unwrap().keytable();
+            assert!(crate::retire_address_space(second_as).is_ok());
+            let replacement_as = crate::objects::nucleus::test_arena::carve(
+                ArchObjectsImpl::new_address_space(replacement_binding),
+            )
+            .expect("replacement AddressSpace allocation failed");
+            assert_ne!(replacement_as, fixture_as);
+            assert_eq!(replacement_as.generation, FIRST_GENERATION);
+            assert!(nucleus.address_space(replacement_as).is_some());
+            assert!(nucleus.address_space(fixture_as).is_none());
             assert!(nucleus.current_thread_table_addr().is_none());
             assert!(nucleus.current_thread_table_mut().is_none());
             for key in [malformed, issued] {
@@ -1078,37 +1009,20 @@ fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
 #[test_case]
 fn fixture_thread_creation_rejects_stale_address_space_without_allocating() {
     with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
-        let binding = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .get_live(usize::from(fixture_as.index))
-            .unwrap()
-            .keytable();
+        let binding = nucleus.address_space(fixture_as).unwrap().keytable();
         assert_eq!(nucleus.fixture_thread_count(), 0);
-        assert!(
-            nucleus
-                .pools
-                .arch
-                .address_spaces
-                .deallocate(fixture_as)
-                .is_ok()
-        );
+        assert!(crate::retire_address_space(fixture_as).is_ok());
         // These rejection checks exercise production creation, not the console
         // provisioning helper: a stale AddressSpace must consume no Thread slot.
         assert!(nucleus.create_thread(fixture_as).is_none());
         assert_eq!(nucleus.fixture_thread_count(), 0);
         assert_eq!(nucleus.current_thread, None);
 
-        let replacement_as = nucleus
-            .pools
-            .arch
-            .address_spaces
-            .allocate(ArchObjectsImpl::new_address_space(binding))
-            .expect("replacement AddressSpace allocation failed")
-            .0;
-        assert_eq!(replacement_as.index, fixture_as.index);
-        assert_eq!(replacement_as.generation, fixture_as.generation + 1);
+        let replacement_as =
+            crate::objects::nucleus::test_arena::carve(ArchObjectsImpl::new_address_space(binding))
+                .expect("replacement AddressSpace allocation failed");
+        assert_ne!(replacement_as, fixture_as);
+        assert_eq!(replacement_as.generation, FIRST_GENERATION);
         assert!(nucleus.create_thread(fixture_as).is_none());
         assert_eq!(nucleus.fixture_thread_count(), 0);
         assert_eq!(nucleus.current_thread, None);

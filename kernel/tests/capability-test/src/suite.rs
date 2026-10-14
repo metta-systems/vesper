@@ -9,7 +9,7 @@ use {
         mem::{align_of, size_of},
         slice,
     },
-    kickstart::bootstrap::{BootState, PoolCapacities, bootstrap_nucleus},
+    kickstart::bootstrap::{BootState, bootstrap_nucleus},
     libaddress::{PhysAddr, VirtAddr},
     libcomponent_loader::keys::{
         BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, boot_key, boot_slot, table_slot,
@@ -21,7 +21,7 @@ use {
     libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::{KeyEntry, ThreadSelector},
-        objects::{KeyTable, arch_objects::AddressSpaceObject},
+        objects::{KeyTable, arch_objects::AddressSpaceObject, carved::FIRST_GENERATION},
     },
 };
 
@@ -36,12 +36,8 @@ fn test_slot(index: u32) -> KeySlot {
 }
 
 pub fn run() {
-    // Only the boot AddressSpace exists; Retype needs no other pool.
-    let boot = bootstrap_nucleus(&PoolCapacities {
-        address_spaces: 1,
-        page_tables: 0,
-        asid_pools: 1,
-    });
+    // Only the boot AddressSpace exists; everything else is carved by Retype.
+    let boot = bootstrap_nucleus();
     let BootState {
         nucleus,
         keytable_addr,
@@ -52,15 +48,13 @@ pub fn run() {
         ..
     } = boot;
 
-    assert_eq!(boot_as_id.index, 0);
-    // Bootstrap sizes every pool exactly as requested.
-    assert_eq!(nucleus.pools.arch.address_spaces.capacity(), 1);
-    assert_eq!(nucleus.pools.arch.page_tables.capacity(), 0);
+    // The boot AddressSpace is carved from the boot Untyped; the boot ASID
+    // pool is the one pooled object bootstrap creates.
+    assert_eq!(boot_as_id.kind, ObjectType::ADDRESS_SPACE);
+    assert_eq!(boot_as_id.generation, FIRST_GENERATION);
+    assert_eq!(nucleus.pools.arch.asid_pools.capacity(), 1);
     let boot_table_binding = nucleus
-        .pools
-        .arch
-        .address_spaces
-        .get_live(usize::from(boot_as_id.index))
+        .address_space(boot_as_id)
         .expect("boot AddressSpace missing")
         .keytable();
     assert_eq!(boot_table_binding.address(), keytable_addr);

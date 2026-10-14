@@ -75,7 +75,7 @@ fn configure_thread<A: ArchObjects>(
         ObjectType::ADDRESS_SPACE,
         Rights::MAP,
     )
-    .and_then(|entry| entry.object_id().map_err(|e| e.with_key_operand(3)))?;
+    .and_then(|entry| entry.address_space_id().map_err(|e| e.with_key_operand(3)))?;
     let time_id = lookup(access, caller, time_key, 6, ObjectType::TIME, Rights::WRITE)
         .and_then(|entry| entry.carved_id().map_err(|e| e.with_key_operand(6)))?;
 
@@ -87,7 +87,7 @@ fn configure_thread<A: ArchObjects>(
     }
     {
         let address_space = access
-            .resolve(&nucleus.pools.arch.address_spaces, as_id)
+            .resolve_object::<A::AddressSpace>(as_id)
             .map_err(|error| error.for_key(as_key, 3))?;
         if address_space.translation_root().is_none() {
             return Err(CapError::NotMapped);
