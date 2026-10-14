@@ -96,7 +96,8 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Give carved objects (KeyTables, Frames) a retirement identity so retirement rejects old capabilities in every table without an ancestry walk.
 - [ ] Implement permission-based retirement for the remaining kinds (only Thread and AddressSpace have `Retire`); test that creator control survives delegation and that accepted leaks cause no automatic destruction or conflicting reuse.
 - [ ] Define the retirement-to-background-cleanup handoff to entrusted managers (no central post-hoc registration).
-- [ ] Hold retired pooled objects in `SlotState::Retired` until manager cleanup completes ([contract](capabilities-contract.md#lifecycle-and-authority-contract)): `Thread.Retire` and `AddressSpace.Retire` retire the slot instead of freeing it (today `ObjectPool::deallocate` marks it `Free` and nothing sets `Retired`), `ObjectPool::allocate` never reuses a `Retired` slot, and only the cleanup handoff above returns a slot to `Free`. Rollback of a failed Retype still frees directly. Test that a retired slot is not reallocated before cleanup, that its stale keys report `ObjectRetired` before and after release, and that pool exhaustion counts held slots. Prerequisite: the handoff item above (D2 completion handshake).
+- [ ] Carve PageTable metadata and AddressSpaces from the invoking Untyped (carved-object identity) and remove their boot pools; keep failure atomicity and watermark accounting.
+- [ ] Hold retired pooled objects in `SlotState::Retired` until manager cleanup completes ([contract](capabilities-contract.md#lifecycle-and-authority-contract)): `AddressSpace.Retire` retires the slot instead of freeing it (today `ObjectPool::deallocate` marks it `Free` and nothing sets `Retired`; Threads are carved and already stay retired until their memory is re-carved), `ObjectPool::allocate` never reuses a `Retired` slot, and only the cleanup handoff above returns a slot to `Free`. Rollback of a failed Retype still frees directly. Test that a retired slot is not reallocated before cleanup, that its stale keys report `ObjectRetired` before and after release, and that pool exhaustion counts held slots. Prerequisite: the handoff item above (D2 completion handshake).
 - [ ] Settle pool retirement, reuse validation and the zero-sized-type policy for `ObjectPool`; create pools at runtime, not only at bootstrap.
 - [ ] After implementation experience, review the guarded key-space configuration (per-table guards, bare destination slots, guard-in-capability storage sourced from `SELF_KEYTABLE`) and confirm or revise it.
 
@@ -107,7 +108,6 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private.
 - [ ] Implement hierarchical Scheduler derivation, root-only Thread creation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
 - [ ] Move notification and block-reason accounting into the shared records, with event-summary indexing and Thread-retirement cleanup.
-- [ ] Carry incarnation-checked Thread identities in the kernel run queue: `Scheduler` still queues bare pool indices, and selection mints the current Thread's identity from the live slot (`ObjectPool::live_identity`).
 - [ ] Test scheduler/Frame authority, mapped and unmapped ShareRegion inputs, re-share rejection, stride placement, identity reuse, tree constraints, root creation/donation, publication/reuse and Thread teardown; run target checks for record access and kernel-private state isolation.
 
 ## Phase 5 — Memory and safe reclamation
@@ -121,7 +121,7 @@ Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memo
 - [ ] Implement the revocation/reclamation completion protocol: teardown bookkeeping retained across partial map/unmap failures, Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
 - [ ] Implement fbuf setup that agrees addresses for every participant before mapping, with reservation/conflict handling and rollback before pointers are published.
 - [ ] Implement exclusive, immutable-shared and mutable-shared modes with explicit transitions, and `MappedSlice` ownership of a private, non-derivable capability and mapping with incarnation-checked Drop cleanup.
-- [ ] Add a normal non-cacheable `Frame.Map` attribute for memory shared with non-coherent devices.
+- [ ] Let RAM Frames map `WriteCombining` (Normal non-cacheable) for memory shared with non-coherent devices; today RAM maps `Cacheable` only and the attribute serves device Frames. Settle the mismatched-attribute alias with the kernel's cacheable direct map.
 - [ ] Decide and implement EL0 cache maintenance (`SCTLR_EL1.UCI`) for components that maintain shared buffers themselves.
 - [ ] Define per-target MMU/MPU/IOMMU, address-width and DMA restrictions, with a protected-context fallback that never downgrades hostile-code isolation.
 - [ ] Implement `ASIDControl` pool creation and partitioning of the 16-bit ASID space once its schema is selected.
@@ -144,16 +144,13 @@ Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
 
 - [ ] Hand the boot IRQControl to an EL0 `irq-manager` component for good.
 - [ ] Let an IRQHandler deliver to an EventCount as well as a Notification, so an interrupt Thread can sleep on either: each delivery advances the count, and one wakeup can drain every event the advance delta reports (for example several received bytes at once) and advance the client's channel count in turn.
-- [ ] Carve PageTable metadata and AddressSpaces from the invoking Untyped (carved-object identity) and remove their boot pools; keep failure atomicity and watermark accounting.
 
 ### Components and interfaces
 
 Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts), [Frame cache maintenance](capabilities-contract.md#mapping-and-sharing).
 
-- [ ] `mailbox` component serving `mailbox_v1` (`drivers/mailbox`): the typed functions and `property` over the client's data area are served.
-  - [ ] Grow the `property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
-  - [ ] Delete the old files whose modules are already gone: `libs/platform/src/raspberrypi/{fb,vc}.rs` and `libs/platform/src/raspberrypi/device_driver/bcm/{power,mailbox,mailbox_refactor}.rs`.
-  - [ ] Port the rest of the old `Power::off`: the GPIO pin power-down before the halt (no GPIO component exists yet).
+- [ ] Grow the `mailbox_v1.property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
+- [ ] Port the rest of the old `Power::off` into `power`: the GPIO pin power-down before the halt (no GPIO component exists yet).
 - [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (`property` runs to completion on the caller's Thread today).
 
 ## Phase 7 — Time and userspace scheduling
@@ -178,7 +175,7 @@ Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduli
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`) and enable the protections the running core supports.
   - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN: set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN`. Prerequisite: the EL1t boot Thread stops using its EL0-accessible low stack. Validate on a core with FEAT_PAN (QEMU `virt` with a newer CPU).
   - [ ] Select `CPTR_EL2.TZ`/`TSM` by feature: `libboot`'s `_startup_in_rust` sets them (RES1 on ARMv8.0); with SVE or SME they must be cleared so traps reach EL1 through `CPACR_EL1.ZEN`/`SMEN`.
-- [ ] Replace the temporary `[patch.crates-io]` local path for `aarch64-cpu` (`CPTR_EL2` trap fields, `PMUSERENR_EL0`) with the released version once published.
+- [ ] Replace the temporary `aarch64-cpu` git dependency on its `main` branch (`CPTR_EL2` trap fields, `PMUSERENR_EL0`) with the released version once published.
 - [ ] Retire the legacy kernel-era driver stack in `libs/platform`: `device_driver/bcm/{pl011_uart,gpio,mini_uart}.rs`, `interrupt_controller/` and `raspberrypi/drivers.rs` (the driver manager that instantiates them). The kernel no longer uses them (the PL011 and interrupt controller are EL0 and privileged components), but `bin/chainboot` (its serial console and kernel download) and the QEMU device-test console (`libmachine` through `drivers::qemu_bring_up_console`) still do; replace those two uses first.
 - [ ] Harden the boot linear map: exclude kernel-image physical memory and replace blanket init RWX with per-segment permissions.
 - [ ] Finish the `Domain` → `Thread`/`AddressSpace` rename in code (`CapError::InvalidDomain`, `DomainState` and the DCB types go with the D5 record replacement).
