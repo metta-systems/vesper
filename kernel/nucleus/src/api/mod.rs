@@ -130,8 +130,8 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 ///
 /// An invocation whose `SELF_KEYTABLE` entry is missing, is not a `KeyTable`
 /// capability, or names a different table cannot establish its key-resolution
-/// context and is rejected before any key validation (provisional status:
-/// `InconsistentKey`/`CapabilityInvalidated`; the exact status is D9).
+/// context and is rejected before any key validation with
+/// `InvalidSelfReference::KeyTableKey(SELF_KEYTABLE)` and the invoked key.
 fn caller_table<A: ArchObjects>(
     nucleus: &Nucleus<A>,
     access: &Access,

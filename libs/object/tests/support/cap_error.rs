@@ -1,5 +1,6 @@
 use vesper_objects::{
-    ArchType, CapError, CoreType, InvalidStackReason, KeySlot, ObjectType, decode_syscall_result,
+    ArchType, CapError, CoreType, InvalidStackReason, KeySlot, ObjectType, RawKey,
+    decode_syscall_result,
 };
 
 // Check literal wire values and the actual decoded variant independently.
@@ -470,7 +471,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 32, u64::MAX, 1));
     }
-    for wire in [(41, 0, 0), (41, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(42, 0, 0), (42, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -571,5 +572,29 @@ fn not_bound_status_round_trips_with_zero_details() {
     assert_error!((40, 0, 0), CapError::NotBound, CapError::NotBound);
     for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
         assert_unknown_response((40, detail1, detail2));
+    }
+}
+
+#[test]
+fn invalid_self_reference_names_the_slot_and_the_key() {
+    use vesper_objects::syscall_status::{INVALID_SELF_REFERENCE, InvalidSelfReference};
+
+    assert_eq!(INVALID_SELF_REFERENCE, 41);
+    for key in [0, 1, 0x1234_5678_9abc_def0, u64::MAX] {
+        assert_error!(
+            (41, 4, key),
+            CapError::InvalidSelfReference {
+                reference: InvalidSelfReference::KeyTableKey(KeySlot(4)),
+                key: RawKey::from_wire(key),
+            },
+            CapError::InvalidSelfReference {
+                reference: InvalidSelfReference::KeyTableKey(KeySlot(4)),
+                key: actual,
+            } if actual.to_wire() == key
+        );
+    }
+    // Only well-known self slots are self references.
+    for slot in [0, 1, 2, 3, 5, u64::MAX] {
+        assert_unknown_response((41, slot, 0));
     }
 }

@@ -14,7 +14,7 @@
 //!   table to the invoked, still unbound `AddressSpace` (`AlreadyMapped`
 //!   otherwise), once and for its lifetime; one table may be bound to several
 //!   `AddressSpace`s. The table's `SELF_KEYTABLE` capability must name it
-//!   (`InconsistentKey`/`CapabilityInvalidated` on `x2` otherwise); Bind
+//!   (`InvalidSelfReference` naming slot 4 and the `x2` key otherwise); Bind
 //!   installs the `THREAD_RETURN` sentinel. Requires `MAP` on this
 //!   `AddressSpace` and `INSTALL` on the table. Success returns zeros.
 //! - `CreateInvocation` `3`: `x2` nonzero function address, `x3` destination
@@ -65,8 +65,8 @@ use {
     },
     core::num::NonZero,
     libobject::{
-        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow,
-        RawKey, Rights,
+        CapError, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights,
+        syscall_status::InvalidSelfReference,
     },
     libqemu::semihosting as semi,
 };
@@ -151,16 +151,19 @@ fn bind<A: ArchObjects>(
     }
 
     // Syscall entry reads a table's guard from its `SELF_KEYTABLE`
-    // capability, so the table must name itself there, as at entry.
+    // capability, so the table must name itself there; the check and its
+    // `InvalidSelfReference` status are the same as at entry.
     let mut keytable = access.resolve_carved_mut::<KeyTable>(table.address)?;
+    let table_size_bits = keytable.size_bits();
     if keytable
         .self_table_capability()
-        .is_none_or(|(address, _guard, _size_bits)| address != table.address)
+        .is_none_or(|(address, _guard, size_bits)| {
+            address != table.address || size_bits != table_size_bits
+        })
     {
-        return Err(CapError::InconsistentKey {
+        return Err(CapError::InvalidSelfReference {
+            reference: InvalidSelfReference::KeyTableKey(KeySlot::SELF_KEYTABLE),
             key: table_key,
-            reason: InconsistencyReason::CapabilityInvalidated,
-            operand: 2,
         });
     }
     // SAFETY: the table was carved by Retype or bootstrap and is

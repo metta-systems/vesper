@@ -97,12 +97,6 @@ Unanswered questions before implementing the scheduler record ABI:
   budgets; badge width, zero-badge meaning, and mint/rebadge policy.
 - **D4/bootstrap:** ownership of well-known `KeySlot` constants—shared object
   API versus bootstrap/libOS composition layout.
-- **D9 — `InvalidSelfReference` encoding:** syscall entry and
-  `AddressSpace.Bind` report a table whose `SELF_KEYTABLE` capability does not
-  name it with the new status `InvalidSelfReference` (selected in the
-  contract). Open: its status number, the name of the reference kind
-  (`InvalidSelfReference::Key(4)` or `InvalidSelfReference::KeyTableKey(4)`),
-  and which words carry the slot and the offending key.
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
 - **D8:** whether the root budget is infinite or a large finite amount (both

@@ -57,7 +57,8 @@ Until it is bound, an AddressSpace cannot be activated, cannot create Invocation
 | `InsufficientRights` | The AddressSpace capability lacks `Map`, or the KeyTable capability lacks `Install` |
 | `AlreadyMapped` | A KeyTable is already bound |
 | `TypeMismatch` | `x2` is not a KeyTable capability |
-| `InconsistentKey` | Slot 4 of the table does not hold a capability to the table itself (`CapabilityInvalidated`, argument register 2); or the AddressSpace was retired (`ObjectRetired`) |
+| `InvalidSelfReference` | Slot 4 of the table does not hold a capability to the table itself (`x1` = 4, `x2` = the table key) |
+| `InconsistentKey` | The AddressSpace was retired (`ObjectRetired`) |
 | `SlotOccupied`, `InvalidOperation` | Slot 1 of the table holds another capability, or once held one |
 | `InvalidOperation` | A nonzero `x3..x7` |
 
@@ -65,7 +66,7 @@ Until it is bound, an AddressSpace cannot be activated, cannot create Invocation
 
 Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSpace on the stack extent `[x5, x6)` with minimum headroom `x7` bytes, and installs it into slot `x4` of the table named by `x3`. The new capability carries only `Call` right. The entry address must be nonzero (`InvalidPointer`); the stack rules and errors are on the [Invocation](../core/invocation.md#stack-extent) page.
 
-`x8` is the key-placement window that [`CallWithKey`](../core/invocation.md#callwithkey) uses: bits 31:0 are the first slot and bits 63:32 the number of slots, in this AddressSpace's own KeyTable. Zero means the Invocation accepts no lent key. A window that does not fit the table fails with `InvalidSlot`, naming its first slot. The slots need not be vacant when the Invocation is created.
+`x8` is the key-placement window that [`CallWithKey`](../core/invocation.md#callwithkey) uses: bits 31:0 are the first slot and bits 63:32 the number of slots, in this AddressSpace's own KeyTable. Zero means the Invocation accepts no lent key. A window that does not fit the table fails with `InvalidSlot`, naming its first slot. If the window is nonzero and the KeyTable does not hold a capability to itself in slot 4, CreateInvocation fails with `InvalidSelfReference` (`x1` = 4, `x2` = the AddressSpace key). The slots need not be vacant when the Invocation is created.
 
 An AddressSpace with no KeyTable bound fails with `NotBound`. Failures leave the destination table unchanged.
 

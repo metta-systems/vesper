@@ -54,7 +54,7 @@ Every failure leaves both tables unchanged.
 
 Each slot counts how many capabilities it has held. Installing a capability increments the counter and stamps it into the new key as its incarnation; deleting or moving the capability leaves the counter as it is. A key whose incarnation no longer matches the slot fails with `InconsistentKey`, so an old key never reaches a later occupant of the same slot. A slot whose counter reaches `u32::MAX` accepts no further installs (`KeySlotExhausted`); its current entry stays usable and deletable.
 
-Each table also has a guard, chosen at Retype and fixed for the table's lifetime. Every key issued for the table carries the guard above the slot index, so a key presented to a different table fails with `GuardMismatch`.
+Each table also has a guard, chosen at Retype and fixed for the table's lifetime. Every key issued for the table carries the guard above the slot index, so a key presented to a different table fails with `GuardMismatch`. The kernel reads a table's guard from the KeyTable capability in its slot 4 (`SELF_KEYTABLE`), which must name the table itself. If it does not, every invocation by a Thread whose AddressSpace uses the table fails with `InvalidSelfReference` before any key is looked up, with `x1` = 4 and `x2` = the invoked key.
 
 ## Implementation
 

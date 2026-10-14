@@ -25,6 +25,7 @@ use {
     libexception::arch::aarch64::SavedContext,
     libobject::{
         CapError, InvalidStackReason, KeySlot, PlacementWindow, RawKey, Rights, fault::FaultAction,
+        syscall_status::InvalidSelfReference,
     },
 };
 
@@ -242,10 +243,9 @@ impl<A: ArchObjects> Nucleus<A> {
             .keytable()
             .ok_or(CapError::NotBound)?;
         let addr = binding.address();
-        let no_context = || CapError::InconsistentKey {
+        let no_context = || CapError::InvalidSelfReference {
+            reference: InvalidSelfReference::KeyTableKey(KeySlot::SELF_KEYTABLE),
             key: invoked,
-            reason: libobject::InconsistencyReason::CapabilityInvalidated,
-            operand: 0,
         };
         let table = access.resolve_carved_mut::<KeyTable>(addr)?;
         let (cap_addr, guard, size_bits) = table.self_table_capability().ok_or_else(no_context)?;
@@ -375,13 +375,21 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Stage 7 of `CallWithKey` admission: the first vacant slot of the
     /// exporter's placement window in the target's table, and the key the
     /// installation will issue there.
+    ///
+    /// A target table that does not name itself is the exporter's internal
+    /// state: the caller holds only `CALL` on it, so it learns that the
+    /// target cannot receive keys (`NotBound`), not why.
     fn prepare_placement(
         access: &Access,
         target: CallTarget,
         invocation_key: RawKey,
         lent: LendRequest,
     ) -> Result<PreparedPlacement, CapError> {
-        let target_table = Self::address_space_table(access, target.address_space, invocation_key)?;
+        let target_table = Self::address_space_table(access, target.address_space, invocation_key)
+            .map_err(|error| match error {
+                CapError::InvalidSelfReference { .. } => CapError::NotBound,
+                other => other,
+            })?;
         let table = access.resolve_carved_mut::<KeyTable>(target_table.addr)?;
         let (slot, incarnation) = table
             .first_vacant_in(target.placement_window)

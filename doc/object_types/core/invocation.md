@@ -45,6 +45,7 @@ A call can nest: code running inside a target can call further Invocations, up t
 | `InsufficientRights` | The key in `x8` lacks `Lend` (or the Invocation key lacks `Call`) |
 | `InvalidStack`, `NestingDepth` | As for `Call` |
 | `NoPlacementSlot` | No slot of the placement window is vacant |
+| `NotBound` | The target AddressSpace cannot receive keys: its KeyTable does not hold a capability to itself in slot 4 |
 
 All rejections happen before migration and leave both tables and the Thread unchanged.
 

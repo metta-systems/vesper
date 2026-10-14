@@ -42,7 +42,7 @@ pub use {
     page_table::{PageTableKey, PageTableOp},
     rights::Rights,
     scheduler::{SchedulerKey, SchedulerOp},
-    syscall_status::InvalidStackReason,
+    syscall_status::{InvalidSelfReference, InvalidStackReason},
     thread::{ThreadKey, ThreadOp},
     time::{TimeKey, TimeOp},
     untyped::{UntypedKey, UntypedOp},
@@ -135,6 +135,10 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::KEY_NOT_ACCEPTED, 0, 0) => CapError::KeyNotAccepted,
             (code::NO_PLACEMENT_SLOT, 0, 0) => CapError::NoPlacementSlot,
             (code::NOT_BOUND, 0, 0) => CapError::NotBound,
+            (code::INVALID_SELF_REFERENCE, slot, key) => CapError::InvalidSelfReference {
+                reference: InvalidSelfReference::from_slot(slot)?,
+                key: RawKey::from_wire(key),
+            },
             _ => return None,
         })
     })();
@@ -245,6 +249,13 @@ pub enum CapError {
     /// The operation needs the `AddressSpace`'s keytable, and none has been
     /// bound to it with `AddressSpace.Bind` yet.
     NotBound,
+    /// A `KeyTable` does not name itself in the well-known self slot
+    /// `reference` names; `key` led to the table (the invoked key at syscall
+    /// entry, the table key of `AddressSpace.Bind`).
+    InvalidSelfReference {
+        reference: InvalidSelfReference,
+        key: RawKey,
+    },
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
     UnknownResponse {
@@ -345,6 +356,11 @@ impl CapError {
             CapError::KeyNotAccepted => (code::KEY_NOT_ACCEPTED, 0, 0),
             CapError::NoPlacementSlot => (code::NO_PLACEMENT_SLOT, 0, 0),
             CapError::NotBound => (code::NOT_BOUND, 0, 0),
+            CapError::InvalidSelfReference { reference, key } => (
+                code::INVALID_SELF_REFERENCE,
+                u64::from(reference.slot().0),
+                key.to_wire(),
+            ),
             CapError::UnknownResponse {
                 status,
                 detail1,

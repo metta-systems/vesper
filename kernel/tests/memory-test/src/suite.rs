@@ -29,6 +29,7 @@ use {
         KeyTableKey, ObjectType, PageTableKey, RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,
         scheduler::{SchedulerKey, ThreadStart},
+        syscall_status::InvalidSelfReference,
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -1840,10 +1841,9 @@ fn address_space_bind(
     ));
     assert!(matches!(
         first.bind(&KeyTableKey::from_key(selfless_key)),
-        Err(CapError::InconsistentKey {
+        Err(CapError::InvalidSelfReference {
+            reference: InvalidSelfReference::KeyTableKey(KeySlot::SELF_KEYTABLE),
             key,
-            reason: InconsistencyReason::CapabilityInvalidated,
-            operand: 2,
         }) if key == selfless_key
     ));
     assert!(

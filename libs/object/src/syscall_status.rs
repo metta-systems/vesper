@@ -3,6 +3,8 @@
 //! These values are wire ABI, shared by kernel encoding and client decoding.
 //! Unknown nonzero values must remain observable rather than becoming success.
 
+use crate::KeySlot;
+
 pub const SUCCESS: u64 = 0;
 pub const UNKNOWN: u64 = 1;
 pub const NULL_CAPABILITY: u64 = 2;
@@ -73,6 +75,36 @@ pub const NO_PLACEMENT_SLOT: u64 = 39;
 /// The operation needs the `AddressSpace`'s keytable, and no keytable has been
 /// bound to it with `AddressSpace.Bind` yet. Details are zero.
 pub const NOT_BOUND: u64 = 40;
+/// A `KeyTable` used for an invocation or bound by `AddressSpace.Bind` does
+/// not name itself in a well-known self slot. Detail 1 is the slot; detail 2
+/// is the key that led to the table (the invoked key at syscall entry, the
+/// table key of `Bind`). See [`InvalidSelfReference`].
+pub const INVALID_SELF_REFERENCE: u64 = 41;
+
+/// Which self reference of a `KeyTable` is wrong, by the well-known slot that
+/// must hold it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum InvalidSelfReference {
+    /// The `SELF_KEYTABLE` slot does not hold a `KeyTable` capability naming
+    /// the table itself.
+    KeyTableKey(KeySlot),
+}
+
+impl InvalidSelfReference {
+    /// The self reference that `slot` must hold, if it is a well-known self
+    /// slot.
+    pub fn from_slot(slot: u64) -> Option<Self> {
+        (slot == u64::from(KeySlot::SELF_KEYTABLE.0))
+            .then_some(Self::KeyTableKey(KeySlot::SELF_KEYTABLE))
+    }
+
+    /// The well-known slot of this self reference.
+    pub const fn slot(self) -> KeySlot {
+        match self {
+            Self::KeyTableKey(slot) => slot,
+        }
+    }
+}
 
 /// Field-specific Invocation stack diagnostics, carried as the complete `x2` word.
 ///

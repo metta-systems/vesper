@@ -1754,6 +1754,21 @@ fn call_with_key_rejections_preserve_every_table() {
                 operand: 8,
             },
         );
+        // An exporter whose table no longer names itself cannot receive the
+        // key. The caller holds only CALL on it, so it learns NotBound, not
+        // the exporter's broken self slot.
+        let target_self = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
+        // SAFETY: the fixture's target table is a live private carve; no
+        // dispatch runs during this borrow.
+        unsafe { &mut *(fixture.target_table as *mut KeyTable) }
+            .remove(target_self, FIXTURE_GUARD)
+            .unwrap_or_else(|_| panic!("target self-table removal failed"));
+        reject_preserved(
+            nucleus,
+            &fixture,
+            &keyed_frame(invocation, lent, LOWEST_SP),
+            CapError::NotBound,
+        );
     });
 }
 
