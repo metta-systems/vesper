@@ -38,10 +38,16 @@ objcopy         := 'rust-objcopy'
 nm              := 'rust-nm'
 volume          := env('VOLUME', '/Volumes/BOOT')
 
-release_dir     := justfile_directory() / 'target' / target / 'release'
-kernel_elf      := release_dir / 'kickstart'
+# Profile of the cross-built images (`debug` or `release`); Kickstart's build script embeds the
+# nucleus and components from this profile's directory (VESPER_IMAGE_PROFILE)
+image_profile   := env('VESPER_IMAGE_PROFILE', 'release')
+export VESPER_IMAGE_PROFILE := image_profile
+image_dir       := justfile_directory() / 'target' / target / image_profile
+# Cargo names the debug profile `dev` (`debug` is reserved); its outputs go to `debug/`
+cargo_profile   := if image_profile == 'debug' { 'dev' } else { image_profile }
+kernel_elf      := image_dir / 'kickstart'
 kernel_bin      := justfile_directory() / 'target/kernel.bin'
-chainboot_elf   := release_dir / 'chainboot'
+chainboot_elf   := image_dir / 'chainboot'
 chainboot_bin   := justfile_directory() / 'target/chainboot.bin'
 
 chainboot_serial := '/dev/tty.SLAB_USBtoUART'
@@ -81,7 +87,7 @@ _cross-build crates board='rpi4' linker_script='' features='' rustflags='':
     cargo build {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --release -p {{ replace(crates, ' ', ' -p ') }}
+      --profile {{ cargo_profile }} -p {{ replace(crates, ' ', ' -p ') }}
 
 # === Kernel (nucleus + kickstart -> kernel.bin) ===
 
@@ -301,7 +307,7 @@ alias t := test
 
 # Run device crate tests in QEMU (rpi3) --verbose
 [group("test")]
-test-device:
+test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (build-privileged 'rpi3') (build-drivers 'rpi3' 'qemu')
     RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
       --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=vesper-meddle --exclude=meddler --exclude=chainboot
@@ -334,7 +340,7 @@ test-untyped: (_test-nucleus 'untyped')
 # Kernels bundling userspace components build them first (build-endpoint-test …).
 [private]
 _build-test-kernel crate board='rpi3' features='qemu,debug_kernel': (_cross-build 'nucleus' board nucleus_link features) (build-privileged board) (_cross-build crate board init_link features)
-    {{ objcopy }} --strip-all -O binary "{{ release_dir / crate }}" "{{ justfile_directory() / 'target' / crate + '.bin' }}"
+    {{ objcopy }} --strip-all -O binary "{{ image_dir / crate }}" "{{ justfile_directory() / 'target' / crate + '.bin' }}"
     @echo "{{ok_label}} {{ crate }} built for {{ board }} [{{ features }}]"
 
 # Rebuild `crate` unconditionally with the `build` recipe line and boot it;
@@ -570,7 +576,7 @@ fmt-check:
 audit-fp-simd: (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-preempt-test 'rpi3') (build-irq-test 'rpi3') (build-driver-test 'rpi3') (build-mailbox-test 'rpi3') (build-uart-test 'rpi3') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
-    artifacts="{{ release_dir }}"
+    artifacts="{{ image_dir }}"
     # An instruction line whose mnemonic is an FP one (f…), or whose operands name an
     # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
     fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'

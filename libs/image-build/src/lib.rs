@@ -256,33 +256,33 @@ pub fn artifact_dir() -> PathBuf {
     target_dir.join(triple)
 }
 
-/// Locate the built binary `binary` under [`artifact_dir`], trying
-/// `release/<binary>`, then `debug/<binary>`, then `<binary>` itself, and
-/// register the one found for rebuilds. The embedded image's profile is
-/// independent of the profile the bundling crate is built or linted with.
+/// The profile whose images are embedded, named by its output directory
+/// (`debug` or `release`): `VESPER_IMAGE_PROFILE` (exported by the Justfile),
+/// `release` when unset. The embedded image's profile is independent of the
+/// profile the bundling crate is built or linted with.
+pub fn image_profile() -> String {
+    println!("cargo::rerun-if-env-changed={IMAGE_PROFILE_VARIABLE}");
+    env::var(IMAGE_PROFILE_VARIABLE).unwrap_or_else(|_| "release".to_string())
+}
+
+const IMAGE_PROFILE_VARIABLE: &str = "VESPER_IMAGE_PROFILE";
+
+/// Locate the built binary `binary` in the [`image_profile`] directory under
+/// [`artifact_dir`] and register it for rebuilds.
 ///
 /// # Panics
 ///
-/// If none of the candidates exists.
+/// If the binary has not been built with that profile.
 pub fn find_artifact(binary: &str) -> PathBuf {
-    let artifacts = artifact_dir();
-    let candidates = [
-        artifacts.join("release").join(binary),
-        artifacts.join("debug").join(binary),
-        artifacts.join(binary),
-    ];
-    let found = candidates
-        .iter()
-        .find(|candidate| candidate.is_file())
-        .unwrap_or_else(|| {
-            let tried: Vec<_> = candidates
-                .iter()
-                .map(|candidate| candidate.display().to_string())
-                .collect();
-            panic!("cannot find binary `{binary}`; tried {}", tried.join(", "))
-        });
-    rerun_if_changed(found);
-    found.clone()
+    let profile = image_profile();
+    let path = artifact_dir().join(&profile).join(binary);
+    assert!(
+        path.is_file(),
+        "cannot find binary `{binary}` at {}; build it with the `{profile}` profile first",
+        path.display()
+    );
+    rerun_if_changed(&path);
+    path
 }
 
 fn rerun_if_changed(path: &Path) {
@@ -326,7 +326,14 @@ pub fn generate_kernel(manifest: &str) {
         .and_then(|nucleus| nucleus.get("binary"))
         .and_then(toml::Value::as_str)
         .unwrap_or_else(|| panic!("{}: expected [nucleus] binary", manifest_path.display()));
-    let image = ElfImage::read(&find_artifact(binary));
+    let path = find_artifact(binary);
+    let image = ElfImage::read(&path);
+    assert!(
+        image.load_sections.iter().any(|section| section.executable),
+        "{}: the nucleus has no code; it was linked without the nucleus linker script \
+         (a test build overwrites it under the same profile)",
+        path.display()
+    );
     let out = out_dir();
 
     let sections: Vec<_> = image
