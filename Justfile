@@ -58,9 +58,6 @@ chainboot_baud   := '115200'
 qemu_stdio_opts   := '-chardev stdio,mux=on,id=char0,logfile=qemu.log,signal=off -object monitor-hmp,chardev=char0,id=mon0 -semihosting-config enable=on,userspace=on,chardev=char0'
 qemu_io_opts      := '-serial chardev:char0 ' + qemu_stdio_opts
 qemu_base_opts    := '-M ' + qemu_machine + ' ' + qemu_io_opts
-# The zellij runs name their serial ports themselves (the PL011, then the mini UART, each
-# on its own pane), so only the monitor and semihosting stay on stdio
-qemu_zellij_opts  := '-M ' + qemu_machine + ' ' + qemu_stdio_opts
 qemu_disasm       := '-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin'
 qemu_gdb_opts     := '-gdb tcp::5555 -S'
 qemu_test_opts    := '-nographic'
@@ -163,6 +160,13 @@ chainofcommand:
 
 alias coc := chainofcommand
 
+# === Meddler (host tool) ===
+
+# Build the Meddle interface compiler (target/debug/meddler)
+[group("tools")]
+meddler:
+    @cargo build -p meddler
+
 # === QEMU runners ===
 
 # Build and run kernel in QEMU
@@ -199,12 +203,14 @@ cb-qemu-gdb: (build-chainboot 'rpi3' 'qemu')
 
 # === Zellij (QEMU in split terminal) ===
 
+# The zellij runs name their serial ports themselves (the PL011, then the mini UART, each
+# on its own pane), so only the monitor and semihosting stay on stdio
 [private]
-_write-zellij-config bin runner_opts dtb:
+_write-zellij-config bin runner_opts dtb machine=qemu_machine:
     #!/usr/bin/env bash
     cat > emulation/zellij-config.sh <<EOF
     QEMU="{{ qemu }}"
-    QEMU_OPTS="{{ qemu_zellij_opts }}"
+    QEMU_OPTS="-M {{ machine }} {{ qemu_stdio_opts }}"
     QEMU_RUNNER_OPTS="{{ runner_opts }}"
     CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY="{{ justfile_directory() }}"
     TARGET_DTB="{{ dtb }}"
@@ -222,6 +228,11 @@ zellij-gdb: (build 'rpi3' 'qemu') (_write-zellij-config kernel_bin qemu_disasm_g
     zellij --layout emulation/layout.zellij
 
 alias z-qemu := zellij
+
+# Like zellij, for the Raspberry Pi 4 kernel on QEMU's raspi4b machine
+[group("emu")]
+zellij-rpi4: (build 'rpi4' 'qemu') (_write-zellij-config kernel_bin '' rpi4_dtb 'raspi4b')
+    zellij --layout emulation/layout.zellij
 
 # Build and run chainboot in QEMU with serial port emulation
 [group("emu")]
