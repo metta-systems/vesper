@@ -1,9 +1,9 @@
 use crate::{CapError, Key, KeySlot, KeyTableKey, PlacementWindow, RawKey, decode_syscall_result};
 
 #[cfg(not(test))]
-use libsyscall::{protected_call0, protected_call6_with_x8};
+use libsyscall::{protected_call0, protected_call1, protected_call6_with_x8};
 #[cfg(test)]
-use tests::{protected_call0, protected_call6_with_x8};
+use tests::{protected_call0, protected_call1, protected_call6_with_x8};
 
 #[cfg(test)]
 #[path = "../tests/support/address_space.rs"]
@@ -19,6 +19,8 @@ pub enum AddressSpaceOp {
     /// Tear the address space down: release the bound ASID, clear the
     /// root/ASID fields, retire the carved object.
     Retire = 1,
+    /// Bind a `KeyTable` to an inert `AddressSpace`, once.
+    Bind = 2,
     /// Construct an `Invocation` for an entry point in this `AddressSpace`.
     CreateInvocation = 3,
 }
@@ -30,6 +32,7 @@ impl TryFrom<u64> for AddressSpaceOp {
         match op {
             0 => Ok(Self::Activate),
             1 => Ok(Self::Retire),
+            2 => Ok(Self::Bind),
             3 => Ok(Self::CreateInvocation),
             _ => Err(CapError::InvalidOperation),
         }
@@ -39,7 +42,7 @@ impl TryFrom<u64> for AddressSpaceOp {
 /// `AddressSpace` capability — handle to a protection/mapping context
 /// (Vesper's equivalent of seL4's `VSpace`).
 ///
-/// `Activate` and `Retire` are dispatched. `CreateInvocation` installs an
+/// `Activate`, `Retire` and `Bind` are dispatched. `CreateInvocation` installs an
 /// `Invocation` capability into a destination `KeyTable`; PPC invocation itself
 /// remains unsupported.
 pub struct AddressSpaceKey {
@@ -138,10 +141,35 @@ impl AddressSpaceKey {
         Ok(RawKey::from_wire(key))
     }
 
+    /// Bind `table` to this inert `AddressSpace`: Threads running in it then
+    /// resolve their keys through `table`.
+    ///
+    /// Wire schema: `x2` the `KeyTable` capability, `x3..x7` zero. Authority:
+    /// `MAP` on this `AddressSpace` and `INSTALL` on `table`. A binding is
+    /// made once (`AlreadyMapped` on a bound `AddressSpace`) and lasts for the
+    /// `AddressSpace`'s lifetime; one table may be bound to several
+    /// `AddressSpace`s. The table's `SELF_KEYTABLE` capability must name the
+    /// table itself; Bind installs the `THREAD_RETURN` sentinel and nothing
+    /// else. Until bound, an `AddressSpace` cannot be activated, called into
+    /// or receive Threads (`NotBound`).
+    pub fn bind(&self, table: &KeyTableKey) -> Result<(), CapError> {
+        // SAFETY: protected_call1 encapsulates the SVC ABI; the operand is
+        // the table key from the Bind wire schema.
+        let response = unsafe {
+            protected_call1(
+                self.key.to_wire(),
+                AddressSpaceOp::Bind as u64,
+                table.to_wire(),
+            )
+        };
+        decode_syscall_result(response).map(|_| ())
+    }
+
     /// Activate this address space: install its bound translation root as
     /// the current hardware translation context (requires syscall).
     ///
-    /// Wire schema: no arguments. The `AddressSpace` must
+    /// Wire schema: no arguments. The `AddressSpace` must be bound
+    /// (`NotBound` otherwise), must
     /// have a translation root installed and an ASID bound (`NotMapped`
     /// otherwise) and must be the current caller's own `AddressSpace`
     /// (`InvalidOperation` otherwise). Authority: `MAP` on the `AddressSpace`

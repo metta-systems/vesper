@@ -61,6 +61,17 @@ pub type AddressSpaceId = CarvedId;
 /// address.
 pub type PageTableId = CarvedId;
 
+/// An `AddressSpace` already bound to `keytable`, for bootstrap and trusted
+/// fixtures that carve one kernel-privately. Components create theirs with
+/// `Untyped.Retype` and bind it with `AddressSpace.Bind`.
+pub fn bound_address_space<A: ArchObjects>(keytable: KeyTableBinding) -> A::AddressSpace {
+    let mut address_space = A::new_address_space();
+    address_space
+        .bind(keytable)
+        .unwrap_or_else(|_| unreachable!("a fresh AddressSpace is unbound"));
+    address_space
+}
+
 /// Installation record of a page table (architecture-neutral).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PtParent {
@@ -112,8 +123,11 @@ pub trait PageTableObject: CarvedObject {
 /// Behavior of an architecture's address-space object: the translation
 /// context state (mapping foundation).
 pub trait AddressSpaceObject: CarvedObject {
-    /// The table bound at provisioning, shared by all executing Threads.
-    fn keytable(&self) -> KeyTableBinding;
+    /// The bound table, shared by all executing Threads; `None` until
+    /// `AddressSpace.Bind`.
+    fn keytable(&self) -> Option<KeyTableBinding>;
+    /// Bind `keytable`, once: `AlreadyMapped` if a table is already bound.
+    fn bind(&mut self, keytable: KeyTableBinding) -> Result<(), CapError>;
     /// Physical address of the installed translation root, if any.
     fn translation_root(&self) -> Option<u64>;
     /// Record or clear the translation root (root installation/withdrawal).
@@ -187,11 +201,10 @@ pub trait ArchObjects: Sized + 'static {
     /// context). Boot-provisioned only: ASID pools are not Retype-creatable.
     fn new_asid_pool() -> Self::ASIDPool;
 
-    /// Construct a fresh, unbound `AddressSpace` (no translation root, no
-    /// ASID), to be carved from Untyped memory. Boot and trusted loader code
-    /// carve them; `Untyped.Retype` does not create them yet.
-    /// The initialized keytable association is mandatory and immutable.
-    fn new_address_space(keytable: KeyTableBinding) -> Self::AddressSpace;
+    /// Construct a fresh, inert `AddressSpace` (no keytable, translation
+    /// root or ASID), to be carved from Untyped memory by `Untyped.Retype` or
+    /// by bootstrap.
+    fn new_address_space() -> Self::AddressSpace;
 
     // ─── TLB maintenance (hardware translation withdrawal) ───
 

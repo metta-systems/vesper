@@ -6,7 +6,7 @@ use {
     crate::{
         api::{InvokeOutcome, KeyEntry},
         objects::{
-            ArchObjects, ArchObjectsImpl, ExecutionContext, Nucleus,
+            ArchObjectsImpl, ExecutionContext, Nucleus,
             access::{Access, ObjectId},
             arch_objects::{AddressSpaceId, AddressSpaceObject},
             completion::{PendingKind, PendingState},
@@ -196,11 +196,16 @@ fn resume_rejects_invalid_as_identity_before_consuming_any_state() {
 fn resume_rejects_retired_and_reused_as_before_consuming_completed_wait() {
     for reuse in [false, true] {
         with_resume(|nucleus, waits| {
-            let binding = nucleus.address_space(waits.target_as).unwrap().keytable();
+            let binding = nucleus
+                .address_space(waits.target_as)
+                .unwrap()
+                .keytable()
+                .unwrap();
             crate::retire_address_space(waits.target_as)
                 .unwrap_or_else(|e| panic!("AS retirement: {e:?}"));
             if reuse {
-                let mut replacement = ArchObjectsImpl::new_address_space(binding);
+                let mut replacement =
+                    crate::objects::arch_objects::bound_address_space::<ArchObjectsImpl>(binding);
                 replacement.set_translation_root(Some(ROOT));
                 replacement.set_asid(Some(3));
                 let replacement_id =
@@ -331,7 +336,11 @@ fn first_start_failure_preserves_its_initial_context_and_runnable_position() {
 #[test_case]
 fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result() {
     with_resume(|nucleus, waits| {
-        let target_binding = nucleus.address_space(waits.target_as).unwrap().keytable();
+        let target_binding = nucleus
+            .address_space(waits.target_as)
+            .unwrap()
+            .keytable()
+            .unwrap();
         // SAFETY: serial exclusive fixture; the access/guards end before any
         // subsequent state inspection, and no hardware install occurs here.
         let resumed = {
@@ -412,7 +421,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
         let source_address_space = nucleus.address_space_mut(source_as).unwrap();
         source_address_space.set_translation_root(Some(ROOT + 0x1000));
         source_address_space.set_asid(Some(1));
-        let source_binding = source_address_space.keytable();
+        let source_binding = source_address_space.keytable().unwrap();
         let key = nucleus
             .current_thread_table_mut()
             .unwrap()

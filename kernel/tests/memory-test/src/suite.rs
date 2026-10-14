@@ -2,7 +2,7 @@
 //! `PageTable` Retype and installation, ASID binding, `AddressSpace.Retire`
 //! (whole-ASID invalidation, ASID release and reuse), Frame.Map/Unmap with
 //! the alias policy, Frame cache maintenance, activation making the carved
-//! tables hardware-live with observable TLB invalidation, and PageTable
+//! tables hardware-live with observable TLB invalidation, and `PageTable`
 //! metadata charged to the invoking Untyped.
 //!
 //! The Bounce fixture's `AddressSpace` is provisioned (no Bounce Thread runs)
@@ -28,13 +28,14 @@ use {
         ASIDPoolKey, CapError, FrameKey, InconsistencyReason, InvalidKeyReason, KeySlot,
         KeyTableKey, ObjectType, PageTableKey, RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,
+        scheduler::{SchedulerKey, ThreadStart},
     },
     libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, KeyTable,
-            arch_objects::{AddressSpaceId, AddressSpaceObject},
+            ArchObjectsImpl, KeyTable, Nucleus,
+            arch_objects::{AddressSpaceId, AddressSpaceObject, bound_address_space},
             carved::CarvedId,
         },
     },
@@ -127,12 +128,14 @@ pub fn run() {
         self_table_key,
         boot_untyped_key,
         debug_console_key,
+        root_scheduler_key,
         ..
     } = boot;
     let boot_table_binding = nucleus
         .address_space(boot_as_id)
         .expect("boot AddressSpace missing")
-        .keytable();
+        .keytable()
+        .expect("AddressSpace bound");
     let untyped = UntypedKey::from_key(boot_untyped_key);
     let self_table = KeyTableKey::from_key(self_table_key);
     let builder = Builder {
@@ -419,8 +422,9 @@ pub fn run() {
             bounce_table_binding.address()
         );
         assert_eq!(fixture_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
-        let fixture_as_id =
-            builder.carve_object(ArchObjectsImpl::new_address_space(fixture_table_binding));
+        let fixture_as_id = builder.carve_object(bound_address_space::<ArchObjectsImpl>(
+            fixture_table_binding,
+        ));
         assert_ne!(fixture_as_id, boot_as_id);
         let fixture_as_key = {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
@@ -703,7 +707,7 @@ pub fn run() {
         );
         assert_eq!(rebind_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
         let rebind_as_id =
-            builder.carve_object(ArchObjectsImpl::new_address_space(rebind_table_binding));
+            builder.carve_object(bound_address_space::<ArchObjectsImpl>(rebind_table_binding));
         assert_ne!(rebind_as_id, fixture_as_id);
         let rebind_as_key = {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
@@ -1305,6 +1309,8 @@ pub fn run() {
     assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
     translation::verify_retained(&retained_init, source_root, bounce_root);
 
+    address_space_bind(&builder, nucleus, root_scheduler_key, &boot_asid_pool);
+
     semi::println!("Memory suite passed");
 }
 
@@ -1694,4 +1700,214 @@ fn frame_cache_maintenance(
         Err(CapError::InsufficientRights)
     ));
     semi::println!("Frame cache maintenance: four operations, ranges and rights checked");
+}
+
+/// First boot-table slot of the `AddressSpace.Bind` checks.
+const BIND_SLOT: u32 = 140;
+/// The guard of the tables the Bind checks carve (16 entries, so it must fit
+/// 28 bits).
+const BIND_TABLE_GUARD: u32 = 0x0AB_CDE;
+
+/// `AddressSpace` creation end to end: Retype creates inert, unbound
+/// `AddressSpace`s, which refuse activation, Invocation construction and
+/// Threads with `NotBound` but accept translation setup; `AddressSpace.Bind`
+/// checks its authority and the table's self capability, binds once, and lets
+/// two `AddressSpace`s share one table.
+fn address_space_bind(
+    builder: &Builder<'_>,
+    nucleus: &Nucleus<ArchObjectsImpl>,
+    root_scheduler_key: RawKey,
+    boot_asid_pool: &ASIDPoolKey,
+) {
+    let (untyped, self_table, keytable_addr) =
+        (builder.untyped, builder.self_table, builder.boot_table_addr);
+    let slot = |offset: u32| KeySlot(BIND_SLOT + offset).0;
+    let retype = |kind: ObjectType, size_bits: u8, guard: u32, count: u32, offset: u32| {
+        untyped
+            .retype(
+                kind,
+                size_bits,
+                guard,
+                count,
+                self_table,
+                slot(offset),
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("Bind fixture Retype failed: {:?}", error.code()))
+    };
+    let boot_install = |offset: u32, entry: KeyEntry| {
+        // SAFETY: keytable_addr names the live boot KeyTable; each borrow
+        // ends before the next SVC.
+        unsafe { &mut *(keytable_addr as *mut KeyTable) }
+            .insert(KeySlot(slot(offset)), entry, BOOT_TABLE_GUARD)
+            .unwrap_or_else(|failure| {
+                panic!("Bind fixture grant failed: {:?}", failure.error.code())
+            })
+    };
+
+    // Two inert AddressSpaces in one batch, a table that names itself in
+    // `SELF_KEYTABLE` and a table that does not.
+    let first_key = retype(ObjectType::ADDRESS_SPACE, 0, 0, 2, 0);
+    let second_key = boot_key(slot(1), first_key.incarnation());
+    let (first, second) = (
+        AddressSpaceKey::from_key(first_key),
+        AddressSpaceKey::from_key(second_key),
+    );
+    let first_id = builder.address_space_id(first_key);
+    let second_id = builder.address_space_id(second_key);
+    assert_ne!(first_id, second_id);
+    for id in [first_id, second_id] {
+        let address_space = nucleus
+            .address_space(id)
+            .expect("Retyped AddressSpace missing");
+        assert!(address_space.keytable().is_none());
+        assert!(address_space.translation_root.is_none());
+        assert!(address_space.asid.is_none());
+    }
+    let table_key = retype(ObjectType::KEY_TABLE, 4, BIND_TABLE_GUARD, 1, 2);
+    let table_addr = builder.table_address(table_key);
+    // SAFETY: Retype initialized the private carve; no SVC runs during this
+    // borrow.
+    unsafe { &mut *(table_addr as *mut KeyTable) }
+        .insert(
+            KeySlot::SELF_KEYTABLE,
+            KeyEntry::new_keytable(table_addr, BIND_TABLE_GUARD, 4, Rights::all(), 0),
+            BIND_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| {
+            panic!("Bind table self grant failed: {:?}", failure.error.code())
+        });
+    let table = KeyTableKey::from_key(table_key);
+    let selfless_key = retype(ObjectType::KEY_TABLE, 4, BIND_TABLE_GUARD, 1, 3);
+
+    // Unbound: no activation, no Invocation construction, no Threads.
+    assert!(matches!(first.activate(), Err(CapError::NotBound)));
+    assert!(matches!(
+        first.create_invocation(0x1000, self_table, KeySlot(slot(4)), 0, 16, 16),
+        Err(CapError::NotBound)
+    ));
+    let thread_key = retype(ObjectType::THREAD, 0, 0, 1, 5);
+    let time_key = retype(ObjectType::TIME, 0, 0, 1, 6);
+    let scheduler = SchedulerKey::from_key(root_scheduler_key);
+    let start = ThreadStart {
+        entry: 0x1000,
+        stack_pointer: 0x2000,
+        argument: 0,
+    };
+    assert!(matches!(
+        scheduler.configure_thread(thread_key, first_key, start, time_key),
+        Err(CapError::NotBound)
+    ));
+
+    // Translation setup works before binding: a root and an ASID.
+    let root_key = retype(ObjectType::PAGE_TABLE, 12, 0, 1, 7);
+    let root = PageTableKey::from_key(root_key);
+    root.map(second_key, 0)
+        .unwrap_or_else(|error| panic!("unbound root PageTable.Map failed: {:?}", error.code()));
+    boot_asid_pool
+        .assign(second_key)
+        .unwrap_or_else(|error| panic!("unbound ASIDPool.Assign failed: {:?}", error.code()));
+    root.unmap()
+        .unwrap_or_else(|error| panic!("unbound root PageTable.Unmap failed: {:?}", error.code()));
+
+    // Authority: `MAP` on the AddressSpace, `INSTALL` on the table.
+    let no_map = boot_install(
+        8,
+        KeyEntry::new_carved(first_id, Rights(Rights::all().0 & !Rights::MAP), 0),
+    );
+    assert!(matches!(
+        AddressSpaceKey::from_key(no_map).bind(&table),
+        Err(CapError::InsufficientRights)
+    ));
+    let no_install = boot_install(
+        9,
+        KeyEntry::new_keytable(
+            table_addr,
+            BIND_TABLE_GUARD,
+            4,
+            Rights(Rights::all().0 & !Rights::INSTALL),
+            0,
+        ),
+    );
+    assert!(matches!(
+        first.bind(&KeyTableKey::from_key(no_install)),
+        Err(CapError::InsufficientRights)
+    ));
+    // The table operand must be a KeyTable that names itself.
+    assert!(matches!(
+        first.bind(&KeyTableKey::from_key(second_key)),
+        Err(CapError::TypeMismatch { expected, .. }) if expected == ObjectType::KEY_TABLE
+    ));
+    assert!(matches!(
+        first.bind(&KeyTableKey::from_key(selfless_key)),
+        Err(CapError::InconsistentKey {
+            key,
+            reason: InconsistencyReason::CapabilityInvalidated,
+            operand: 2,
+        }) if key == selfless_key
+    ));
+    assert!(
+        nucleus
+            .address_space(first_id)
+            .expect("AddressSpace missing")
+            .keytable()
+            .is_none()
+    );
+
+    // Bind once; the table gets its Return sentinel.
+    first
+        .bind(&table)
+        .unwrap_or_else(|error| panic!("AddressSpace.Bind failed: {:?}", error.code()));
+    let binding = nucleus
+        .address_space(first_id)
+        .expect("AddressSpace missing")
+        .keytable()
+        .expect("Bind recorded no table");
+    assert_eq!(binding.address(), table_addr);
+    assert_eq!(binding.size_bits(), 4);
+    assert!(
+        // SAFETY: Retype initialized the table'''s private carve; no SVC runs
+        // during this borrow.
+        unsafe { &*(table_addr as *const KeyTable) }
+            .lookup(
+                table_key_for(BIND_TABLE_GUARD, KeySlot::THREAD_RETURN),
+                BIND_TABLE_GUARD
+            )
+            .is_ok_and(KeyEntry::is_thread_return_key)
+    );
+    assert!(matches!(first.bind(&table), Err(CapError::AlreadyMapped)));
+    // Bound: the AddressSpace is past the binding check (it is not the
+    // caller's own, so Activate still refuses), takes Invocations, and a
+    // Thread now fails on its missing root instead.
+    assert!(matches!(first.activate(), Err(CapError::InvalidOperation)));
+    first
+        .create_invocation(0x1000, self_table, KeySlot(slot(4)), 0, 16, 16)
+        .unwrap_or_else(|error| panic!("bound CreateInvocation failed: {:?}", error.code()));
+    assert!(matches!(
+        scheduler.configure_thread(thread_key, first_key, start, time_key),
+        Err(CapError::NotMapped)
+    ));
+
+    // One table may serve several AddressSpaces.
+    second
+        .bind(&table)
+        .unwrap_or_else(|error| panic!("second AddressSpace.Bind failed: {:?}", error.code()));
+    assert_eq!(
+        nucleus
+            .address_space(second_id)
+            .and_then(AddressSpaceObject::keytable),
+        Some(binding)
+    );
+
+    for address_space in [first, second] {
+        address_space
+            .retire()
+            .unwrap_or_else(|error| panic!("Bind fixture Retire failed: {:?}", error.code()));
+    }
+}
+
+/// The key of `slot` in a table guarded by `guard`, at the sentinel's fixed
+/// incarnation.
+fn table_key_for(guard: u32, slot: KeySlot) -> RawKey {
+    RawKey::from_parts(guard, 4, slot.0, KeySlot::THREAD_RETURN_INCARNATION)
 }

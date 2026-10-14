@@ -36,7 +36,7 @@ Indices 11–126 are unassigned.
 |---|---:|---|---|
 | Frame | `0x80` | [frame.md](arch/frame.md) | Map, Unmap, GetAddress, cache maintenance |
 | PageTable | `0x81` | [page_table.md](arch/page_table.md) | Map, Unmap |
-| AddressSpace | `0x82` | [address_space.md](arch/address_space.md) | Activate, Retire, CreateInvocation |
+| AddressSpace | `0x82` | [address_space.md](arch/address_space.md) | Activate, Retire, Bind, CreateInvocation |
 | ASIDPool | `0x83` | [asid_pool.md](arch/asid_pool.md) | Assign |
 | ASIDControl | `0x84` | [asid_control.md](arch/asid_control.md) | Not implemented |
 | IOSpace | `0x85` | [io_space.md](arch/io_space.md) | Not implemented |
@@ -118,6 +118,7 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 37 | `IrqLineActive` | the line | 0 |
 | 38 | `KeyNotAccepted` | 0 | 0 |
 | 39 | `NoPlacementSlot` | 0 | 0 |
+| 40 | `NotBound` | 0 | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 

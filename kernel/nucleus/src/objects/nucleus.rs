@@ -168,7 +168,7 @@ impl<A: ArchObjects> Nucleus<A> {
 
     fn current_thread_table_binding(&self) -> Option<KeyTableBinding> {
         let thread = self.current_thread_ref().ok()?;
-        Some(self.address_space(thread.address_space)?.keytable())
+        self.address_space(thread.address_space)?.keytable()
     }
 
     /// The live `AddressSpace` behind `id`, or `None` once it is retired.

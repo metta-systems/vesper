@@ -51,7 +51,8 @@ impl PreparedTranslationContext {
 
 /// Resolve the AS incarnation before reading its root, ASID, or table binding.
 /// No allocation, hardware write, or object mutation occurs on this path.
-/// Missing root/ASID is `NotMapped`; invalid/stale AS is `InvalidDomain`;
+/// An unbound AS is `NotBound`; missing root/ASID is `NotMapped`; invalid/stale
+/// AS is `InvalidDomain`;
 /// hardware-format rejection uses the architecture's existing explicit errors.
 pub fn prepare_translation_context<A: ArchObjects>(
     access: &Access,
@@ -60,6 +61,7 @@ pub fn prepare_translation_context<A: ArchObjects>(
     let address_space = access
         .resolve_object::<A::AddressSpace>(id)
         .map_err(|_invalid_identity| CapError::InvalidDomain)?;
+    let keytable = address_space.keytable().ok_or(CapError::NotBound)?;
     let root = address_space
         .translation_root()
         .ok_or(CapError::NotMapped)?;
@@ -67,7 +69,7 @@ pub fn prepare_translation_context<A: ArchObjects>(
     A::validate_translation_context(root, asid)?;
     Ok(PreparedTranslationContext {
         address_space: id,
-        keytable: address_space.keytable(),
+        keytable,
         root,
         asid,
     })

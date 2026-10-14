@@ -155,7 +155,8 @@ pub fn run() {
     let boot_table_binding = nucleus
         .address_space(boot_as_id)
         .expect("boot AddressSpace missing")
-        .keytable();
+        .keytable()
+        .expect("AddressSpace bound");
     let untyped = UntypedKey::from_key(boot_untyped_key);
     let self_table = KeyTableKey::from_key(self_table_key);
     let builder = Builder {
@@ -434,7 +435,8 @@ pub fn run() {
         let target_table = nucleus
             .address_space(target)
             .expect("Invocation target AddressSpace missing")
-            .keytable();
+            .keytable()
+            .expect("AddressSpace bound");
         assert_eq!(target_table.address(), boot_table_binding.address());
         assert_eq!(target_table.size_bits(), boot_table_binding.size_bits());
     }

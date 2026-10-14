@@ -59,7 +59,8 @@ pub fn run() {
     let boot_table_binding = nucleus
         .address_space(boot_as_id)
         .expect("boot AddressSpace missing")
-        .keytable();
+        .keytable()
+        .expect("AddressSpace bound");
     let untyped = UntypedKey::from_key(boot_untyped_key);
     let self_table = KeyTableKey::from_key(self_table_key);
     let builder = Builder {
@@ -275,6 +276,7 @@ pub fn run() {
                 .address_space(bounce.address_space)
                 .expect("Bounce AddressSpace missing")
                 .keytable()
+                .expect("AddressSpace bound")
                 .address(),
             bounce_table_binding.address()
         );
@@ -544,6 +546,7 @@ pub fn run() {
                 .address_space(bounce_as_id)
                 .expect("Thread retirement removed Bounce's AddressSpace")
                 .keytable()
+                .expect("AddressSpace bound")
                 .address(),
             bounce_table_binding.address()
         );

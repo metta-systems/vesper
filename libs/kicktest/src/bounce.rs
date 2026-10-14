@@ -26,8 +26,8 @@ use {
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus,
-            arch_objects::{AddressSpaceId, AddressSpaceObject},
+            ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus,
+            arch_objects::{AddressSpaceId, AddressSpaceObject, bound_address_space},
             key_table::KeyTableBinding,
         },
     },
@@ -308,13 +308,16 @@ pub fn provision(
         .unwrap_or_else(|error| panic!("Bounce table provisioning failed: {:?}", error.code()));
     assert_ne!(table_binding.address(), boot_table_binding.address());
     assert_eq!(table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
-    let as_id = builder.carve_object(ArchObjectsImpl::new_address_space(table_binding));
+    let as_id = builder.carve_object(bound_address_space::<ArchObjectsImpl>(table_binding));
     let bounce_as = nucleus
         .address_space(as_id)
         .expect("Bounce AddressSpace just carved");
     assert_ne!(as_id, boot_as_id);
-    assert_eq!(bounce_as.keytable().address(), table_addr);
-    assert_eq!(bounce_as.keytable().size_bits(), BOOT_TABLE_SIZE_BITS);
+    assert_eq!(bounce_as.keytable().unwrap().address(), table_addr);
+    assert_eq!(
+        bounce_as.keytable().unwrap().size_bits(),
+        BOOT_TABLE_SIZE_BITS
+    );
     assert!(bounce_as.translation_root.is_none());
     assert!(bounce_as.asid.is_none());
     let as_key = {

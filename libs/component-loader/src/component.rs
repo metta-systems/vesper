@@ -4,13 +4,13 @@
 use {
     crate::{
         builder::Builder,
-        keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, SlotCursor, table_key},
+        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, table_key},
     },
-    libobject::{KeySlot, KeyTableKey, ObjectType, RawKey, Rights},
+    libobject::{AddressSpaceKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights},
     nucleus::{
         api::key_entry::KeyEntry,
         objects::{
-            ArchObjects, ArchObjectsImpl, KeyTable, Nucleus,
+            ArchObjectsImpl, KeyTable, Nucleus,
             arch_objects::{AddressSpaceId, AddressSpaceObject},
         },
     },
@@ -49,13 +49,10 @@ impl Component {
 
 impl Builder<'_> {
     /// Provision a component: carve its table with `guard`, seed the
-    /// well-known self-table/self-`AddressSpace` slots, bind the table at
-    /// `AddressSpace` provisioning (which installs the `Thread.Return`
-    /// sentinel at Slot(1)), then give it a root chain and an ASID.
-    ///
-    /// `AddressSpace` creation has no public ABI yet: the builder carves it
-    /// kernel-privately from the boot Untyped and grants itself the
-    /// capability, as Kickstart does for the boot `AddressSpace`.
+    /// well-known self-table slot, create its `AddressSpace` with Retype and
+    /// bind the table to it (which installs the `Thread.Return` sentinel at
+    /// Slot(1)), grant the self-`AddressSpace` slot, then give it a root
+    /// chain and an ASID.
     pub fn component(&self, guard: u32, slots: &mut SlotCursor) -> Component {
         let table_key = self
             .untyped
@@ -88,31 +85,37 @@ impl Builder<'_> {
                     failure.error.code()
                 )
             });
-        // SAFETY: as above.
-        let binding = unsafe { table.bind_address_space() }.unwrap_or_else(|error| {
-            panic!("component table provisioning failed: {:?}", error.code())
-        });
-        let address_space = self.carve_object(ArchObjectsImpl::new_address_space(binding));
-        let address_space_entry = || KeyEntry::new_carved(address_space, Rights::all(), 0);
-        let address_space_key = {
-            // SAFETY: the live carved boot KeyTable, exclusively borrowed for
-            // this bootstrap grant.
-            unsafe { &mut *(self.boot_table_addr as *mut KeyTable) }
-                .insert(
-                    KeySlot(slots.take(1)),
-                    address_space_entry(),
-                    BOOT_TABLE_GUARD,
-                )
-                .unwrap_or_else(|failure| {
-                    panic!(
-                        "component AddressSpace grant failed: {:?}",
-                        failure.error.code()
-                    )
-                })
-        };
-        // SAFETY: the component table again; no other borrow is live.
+        // A component AddressSpace is created inert through Retype, then
+        // bound to the table through `AddressSpace.Bind`, which installs the
+        // `Thread.Return` sentinel at Slot(1).
+        let address_space_key = self
+            .untyped
+            .retype(
+                ObjectType::ADDRESS_SPACE,
+                0,
+                0,
+                1,
+                self.self_table,
+                slots.take(1),
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| {
+                panic!("component AddressSpace Retype failed: {:?}", error.code())
+            });
+        AddressSpaceKey::from_key(address_space_key)
+            .bind(&KeyTableKey::from_key(table_key))
+            .unwrap_or_else(|error| {
+                panic!("component AddressSpace.Bind failed: {:?}", error.code())
+            });
+        let address_space = self.address_space_id(address_space_key);
+        // SAFETY: the component table again; no other borrow is live and no
+        // invocation runs while it is held.
         unsafe { &mut *(table_addr as *mut KeyTable) }
-            .insert(KeySlot::SELF_ADDRESS_SPACE, address_space_entry(), guard)
+            .insert(
+                KeySlot::SELF_ADDRESS_SPACE,
+                self.entry(address_space_key),
+                guard,
+            )
             .unwrap_or_else(|failure| {
                 panic!(
                     "component self-AddressSpace grant failed: {:?}",

@@ -38,6 +38,7 @@ Retype creates `count` objects and installs their capabilities into consecutive 
 | EventCount | 0 | An EventCount at 0 |
 | Time | 0 | An empty Time on the creating core: zero budget, empty priority chain |
 | Thread | 0 | An inert Thread: no AddressSpace or execution state until the root [Scheduler](scheduler.md) configures and starts it |
+| AddressSpace | 0 | An inert [AddressSpace](../arch/address_space.md): no KeyTable, translation root or ASID until [`Bind`](../arch/address_space.md#bind), [`PageTable.Map`](../arch/page_table.md#map) and [`ASIDPool.Assign`](../arch/asid_pool.md) |
 | Untyped | At least 4 (16 bytes) | A smaller Untyped covering part of the region |
 
 Other kinds fail with `InvalidObjectType`. A device Untyped covers hardware registers: it can be split into smaller device Untypeds or carved into device [Frames](../arch/frame.md), which Retype never zeroes or otherwise touches. Every other kind from a device Untyped fails with `InvalidObjectType`.

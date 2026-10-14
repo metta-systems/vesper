@@ -16,7 +16,8 @@
 //! `32 − size_bits` bits), `Frame` (architecture-validated `size_bits`),
 //! `PageTable` (a fixed architecture-validated 4 KiB table plus its kernel
 //! metadata record), the carved kernel objects `Notification`, `EventCount`,
-//! `Time` (an empty budget on the creating core) and `Thread` (inert), each
+//! `Time` (an empty budget on the creating core), `Thread` (inert) and
+//! `AddressSpace` (inert, with no keytable until `AddressSpace.Bind`), each
 //! with `size_bits` zero, and `Untyped` itself (a split into smaller Untypeds
 //! — the child region is `2^size_bits` bytes, at least the watermark encoding
 //! granularity, its own alignment, with the child watermark starting at zero;
@@ -119,6 +120,10 @@ enum Carve {
     /// runnable until the root Scheduler configures and starts it. Carved from
     /// the Untyped (`size_bits` zero).
     Thread,
+    /// An inert `AddressSpace`: no keytable, translation root or ASID until
+    /// `AddressSpace.Bind`, `PageTable.Map` and `ASIDPool.Assign`. Carved from
+    /// the Untyped (`size_bits` zero).
+    AddressSpace,
 }
 
 /// `Retype` `0`: carve `count` objects of one kind from the Untyped's unused
@@ -232,6 +237,12 @@ fn retype<A: ArchObjects>(
             }
             Carve::Thread
         }
+        ObjectType::ADDRESS_SPACE => {
+            if size_bits != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::AddressSpace
+        }
         ObjectType::UNTYPED => {
             // A split (selected 2026-09-23): the child is its own region of
             // `2^size_bits` bytes. A region smaller than the watermark
@@ -329,6 +340,7 @@ fn retype<A: ArchObjects>(
         Carve::EventCount => carved_layout::<EventCount>(),
         Carve::Time => carved_layout::<Time>(),
         Carve::Thread => carved_layout::<Thread>(),
+        Carve::AddressSpace => carved_layout::<A::AddressSpace>(),
     };
     // A PageTable also carves its kernel metadata record: the records of a
     // batch follow all its tables, so each table keeps its page alignment
@@ -455,6 +467,12 @@ fn retype<A: ArchObjects>(
                 requested,
                 0,
             ),
+            Carve::AddressSpace => KeyEntry::new_carved(
+                // SAFETY: as for `carve_object`.
+                unsafe { carve_object(paddr, A::new_address_space()) },
+                requested,
+                0,
+            ),
             Carve::Thread => KeyEntry::new_thread(
                 // SAFETY: as for `carve_object`.
                 unsafe {
@@ -521,6 +539,7 @@ fn retype<A: ArchObjects>(
         Carve::EventCount => "EventCount",
         Carve::Time => "Time",
         Carve::Thread => "Thread",
+        Carve::AddressSpace => "AddressSpace",
         Carve::Untyped { .. } => "Untyped",
     };
     semi::println!("✅ Untyped::Retype({kind_name}, count {count})");

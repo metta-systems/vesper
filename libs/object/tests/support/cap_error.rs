@@ -470,7 +470,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 32, u64::MAX, 1));
     }
-    for wire in [(40, 0, 0), (40, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(41, 0, 0), (41, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -560,5 +560,16 @@ fn call_with_key_statuses_round_trip_with_zero_details() {
         for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
             assert_unknown_response((status, detail1, detail2));
         }
+    }
+}
+
+#[test]
+fn not_bound_status_round_trips_with_zero_details() {
+    use vesper_objects::syscall_status::NOT_BOUND;
+
+    assert_eq!(NOT_BOUND, 40);
+    assert_error!((40, 0, 0), CapError::NotBound, CapError::NotBound);
+    for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
+        assert_unknown_response((40, detail1, detail2));
     }
 }

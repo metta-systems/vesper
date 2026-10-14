@@ -6,7 +6,8 @@
 //! - `ConfigureThread` `1`: `x2` Thread key (`WRITE`), `x3` `AddressSpace` key
 //!   (`MAP`), `x4` entry PC, `x5` stack SP, `x6` the Thread's own Time key
 //!   (`WRITE`), `x7` the argument delivered in `x0`. The Thread must be inert;
-//!   the `AddressSpace` needs a translation root (`NotMapped`) and an ASID
+//!   the `AddressSpace` must be bound (`NotBound`) and needs a translation
+//!   root (`NotMapped`) and an ASID
 //!   (`NoASIDAssigned`); PC and SP must lie below the end of the user range,
 //!   PC 4-byte and SP 16-byte aligned; the Time must be on this core. The
 //!   Thread records the `AddressSpace`, its Time and this Scheduler and will
@@ -89,6 +90,9 @@ fn configure_thread<A: ArchObjects>(
         let address_space = access
             .resolve_object::<A::AddressSpace>(as_id)
             .map_err(|error| error.for_key(as_key, 3))?;
+        if address_space.keytable().is_none() {
+            return Err(CapError::NotBound);
+        }
         if address_space.translation_root().is_none() {
             return Err(CapError::NotMapped);
         }

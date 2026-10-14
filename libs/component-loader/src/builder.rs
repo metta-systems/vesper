@@ -214,8 +214,8 @@ impl Builder<'_> {
     }
 
     /// Carve `object` kernel-privately from the boot Untyped (see
-    /// [`crate::carve`]): for objects no invocation creates yet, such as
-    /// component `AddressSpace`s.
+    /// [`crate::carve`]): for trusted fixtures set up before any component
+    /// runs.
     pub fn carve_object<T: CarvedObject>(&self, object: T) -> CarvedId {
         crate::carve::carve_object(
             self.boot_table_addr,

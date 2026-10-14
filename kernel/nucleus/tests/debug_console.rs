@@ -145,7 +145,7 @@ impl Nucleus<ArchObjectsImpl> {
     /// creation validates the AddressSpace and allocates without changing its table
     /// or selecting a current caller.
     fn create_console_thread(&mut self, address_space: AddressSpaceId) -> Option<RawKey> {
-        let binding = self.address_space(address_space)?.keytable();
+        let binding = self.address_space(address_space)?.keytable()?;
         let key = {
             // SAFETY: this live AddressSpace binding names a fixed, initialized
             // carve owned by the serial fixture. No table reference or other
@@ -250,12 +250,12 @@ fn with_nucleus(
     // at provisioning; Threads in the same AddressSpace share its one table.
     // No translation root or hardware context is installed by this fixture.
     let fixture_as = crate::objects::nucleus::test_arena::carve(
-        ArchObjectsImpl::new_address_space(table_binding),
+        crate::objects::arch_objects::bound_address_space::<ArchObjectsImpl>(table_binding),
     )
     .expect("no fixture AddressSpace slot");
-    let second_as = crate::objects::nucleus::test_arena::carve(ArchObjectsImpl::new_address_space(
-        second_table_binding,
-    ))
+    let second_as = crate::objects::nucleus::test_arena::carve(
+        crate::objects::arch_objects::bound_address_space::<ArchObjectsImpl>(second_table_binding),
+    )
     .expect("no second fixture AddressSpace slot");
     assert_ne!(fixture_as, second_as);
     assert_ne!(table_binding.address(), second_table_binding.address());
@@ -938,7 +938,7 @@ fn changing_thread_address_space_selects_its_table_on_the_next_dispatch() {
             );
             for (id, address) in [(fixture_as, table_addr), (second_as, second_table_addr)] {
                 assert!(nucleus.address_space(id).is_some());
-                let binding = nucleus.address_space(id).unwrap().keytable();
+                let binding = nucleus.address_space(id).unwrap().keytable().unwrap();
                 assert_eq!(binding.address(), address);
                 assert_eq!(binding.size_bits(), SIZE_BITS);
             }
@@ -978,10 +978,16 @@ fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
                 assert_dispatch_error(nucleus, key, 0, (3, 0, 0));
             }
 
-            let replacement_binding = nucleus.address_space(second_as).unwrap().keytable();
+            let replacement_binding = nucleus
+                .address_space(second_as)
+                .unwrap()
+                .keytable()
+                .unwrap();
             assert!(crate::retire_address_space(second_as).is_ok());
             let replacement_as = crate::objects::nucleus::test_arena::carve(
-                ArchObjectsImpl::new_address_space(replacement_binding),
+                crate::objects::arch_objects::bound_address_space::<ArchObjectsImpl>(
+                    replacement_binding,
+                ),
             )
             .expect("replacement AddressSpace allocation failed");
             assert_ne!(replacement_as, fixture_as);
@@ -1009,7 +1015,11 @@ fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
 #[test_case]
 fn fixture_thread_creation_rejects_stale_address_space_without_allocating() {
     with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
-        let binding = nucleus.address_space(fixture_as).unwrap().keytable();
+        let binding = nucleus
+            .address_space(fixture_as)
+            .unwrap()
+            .keytable()
+            .unwrap();
         assert_eq!(nucleus.fixture_thread_count(), 0);
         assert!(crate::retire_address_space(fixture_as).is_ok());
         // These rejection checks exercise production creation, not the console
@@ -1018,9 +1028,10 @@ fn fixture_thread_creation_rejects_stale_address_space_without_allocating() {
         assert_eq!(nucleus.fixture_thread_count(), 0);
         assert_eq!(nucleus.current_thread, None);
 
-        let replacement_as =
-            crate::objects::nucleus::test_arena::carve(ArchObjectsImpl::new_address_space(binding))
-                .expect("replacement AddressSpace allocation failed");
+        let replacement_as = crate::objects::nucleus::test_arena::carve(
+            crate::objects::arch_objects::bound_address_space::<ArchObjectsImpl>(binding),
+        )
+        .expect("replacement AddressSpace allocation failed");
         assert_ne!(replacement_as, fixture_as);
         assert_eq!(replacement_as.generation, FIRST_GENERATION);
         assert!(nucleus.create_thread(fixture_as).is_none());

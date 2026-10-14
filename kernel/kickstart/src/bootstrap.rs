@@ -41,7 +41,7 @@ use {
             ObjectPool, PendingPool, RunQueue, Scheduler, Thread, Time,
             access::{ObjectId, PoolTag},
             arch::ArchPools,
-            arch_objects::AddressSpaceId,
+            arch_objects::{AddressSpaceId, bound_address_space},
             carved::{Carved, CarvedId, CarvedObject},
             domain::DcbPages,
             irq::{IrqLine, IrqTable},
@@ -364,7 +364,7 @@ pub fn bootstrap_nucleus() -> BootState {
     let boot_as_id = unsafe {
         Carved::initialize(
             boot_as_paddr.user_to_kernel().as_mut_ptr::<u8>(),
-            ArchObjectsImpl::new_address_space(boot_table_binding),
+            bound_address_space::<ArchObjectsImpl>(boot_table_binding),
         )
     };
     // Carve the boot Thread from the boot Untyped, like every Thread.

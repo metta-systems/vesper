@@ -1,4 +1,5 @@
-//! `AddressSpace.Activate`/`Retire` and Invocation-capability construction.
+//! `AddressSpace.Activate`/`Retire`/`Bind` and Invocation-capability
+//! construction.
 //!
 //! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `Activate` `0`: no arguments (`x2..x7` zero). Installs the invoked
@@ -9,6 +10,13 @@
 //!   `AddressSpace`: whole-ASID TLB invalidation, ASID release to the
 //!   originating pool, root/ASID fields cleared, the carved record retired.
 //!   Success returns zeros.
+//! - `Bind` `2`: `x2` a `KeyTable` capability, `x3..x7` zero. Binds that
+//!   table to the invoked, still unbound `AddressSpace` (`AlreadyMapped`
+//!   otherwise), once and for its lifetime; one table may be bound to several
+//!   `AddressSpace`s. The table's `SELF_KEYTABLE` capability must name it
+//!   (`InconsistentKey`/`CapabilityInvalidated` on `x2` otherwise); Bind
+//!   installs the `THREAD_RETURN` sentinel. Requires `MAP` on this
+//!   `AddressSpace` and `INSTALL` on the table. Success returns zeros.
 //! - `CreateInvocation` `3`: `x2` nonzero function address, `x3` destination
 //!   `KeyTable` capability, `x4` vacant destination slot, `x5` stack base,
 //!   `x6` exclusive stack end, `x7` positive minimum headroom in bytes, and `x8`
@@ -26,7 +34,8 @@
 //! capability (authority over the mapping context, consistent with root
 //! installation, frame mapping, and ASID binding). `Retire` requires
 //! `RETIRE` — the same delegable lifecycle-control right under its per-kind
-//! interpretation.
+//! interpretation. Activate and `CreateInvocation` on an unbound
+//! `AddressSpace` fail with `NotBound`.
 //!
 //! `Activate` is the translation-context installation step of activation
 //! only; until Thread scheduling exists, only the current caller's own
@@ -55,7 +64,10 @@ use {
         },
     },
     core::num::NonZero,
-    libobject::{CapError, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights},
+    libobject::{
+        CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow,
+        RawKey, Rights,
+    },
     libqemu::semihosting as semi,
 };
 
@@ -75,6 +87,7 @@ pub fn invoke<A: ArchObjects>(
     match op {
         0 => activate::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Activate),
         1 => retire::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Complete),
+        2 => bind::<A>(access, caller, as_key, args).map(InvokeOutcome::Complete),
         3 => create_invocation::<A>(access, caller, as_key, args, x8).map(InvokeOutcome::Complete),
         _ => Err(CapError::InvalidOperation),
     }
@@ -102,6 +115,61 @@ fn resolve(
         return Err(CapError::InsufficientRights);
     }
     entry.address_space_id().map_err(|e| e.with_key_operand(0))
+}
+
+/// `Bind` `2`: bind the `KeyTable` named by `x2` to the invoked, still unbound
+/// `AddressSpace`. Every check precedes the two commits: the table's
+/// `THREAD_RETURN` sentinel, then the binding itself, which cannot fail.
+fn bind<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    as_key: RawKey,
+    args: &[u64; 6],
+) -> Result<(u64, u64), CapError> {
+    if args[1..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let table_key = RawKey::from_wire(args[0]);
+
+    // Authority: the mapping context, and installation into the table (Bind
+    // writes the Return sentinel there). The caller's table guard ends with
+    // this block, so the bound table may be the caller's own.
+    let as_id = resolve(access, caller, as_key, Rights::MAP)?;
+    let table = {
+        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        resolve_table_cap(&caller_table, table_key, caller.guard, 2)?
+    };
+    if !table.rights.has(Rights::INSTALL) {
+        return Err(CapError::InsufficientRights);
+    }
+
+    let mut address_space = access
+        .resolve_object::<A::AddressSpace>(as_id)
+        .map_err(|error| error.for_key(as_key, 0))?;
+    if address_space.keytable().is_some() {
+        return Err(CapError::AlreadyMapped);
+    }
+
+    // Syscall entry reads a table's guard from its `SELF_KEYTABLE`
+    // capability, so the table must name itself there, as at entry.
+    let mut keytable = access.resolve_carved_mut::<KeyTable>(table.address)?;
+    if keytable
+        .self_table_capability()
+        .is_none_or(|(address, _guard, _size_bits)| address != table.address)
+    {
+        return Err(CapError::InconsistentKey {
+            key: table_key,
+            reason: InconsistencyReason::CapabilityInvalidated,
+            operand: 2,
+        });
+    }
+    // SAFETY: the table was carved by Retype or bootstrap and is
+    // kernel-private; carved memory is never reclaimed or reinitialized, so
+    // the binding stays valid for every copy.
+    let binding = unsafe { keytable.bind_address_space() }?;
+    address_space.bind(binding)?;
+    semi::println!("✅ AddressSpace::Bind()");
+    Ok((0, 0))
 }
 
 /// `CreateInvocation` `3`: install an Invocation capability into a destination
@@ -140,12 +208,16 @@ fn create_invocation<A: ArchObjects>(
         return Err(CapError::InsufficientRights);
     }
 
-    // The target identity must still name a live AddressSpace. The entry point
-    // itself is intentionally stored without mapping or executable validation.
+    // The target identity must still name a live, bound AddressSpace. The
+    // entry point itself is intentionally stored without mapping or
+    // executable validation.
     {
-        let _target = access
+        let target = access
             .resolve_object::<A::AddressSpace>(address_space_id)
             .map_err(|error| error.for_key(as_key, 0))?;
+        if target.keytable().is_none() {
+            return Err(CapError::NotBound);
+        }
     }
 
     // Supplied-value diagnostics follow authority/liveness, but precede
@@ -205,11 +277,17 @@ fn activate<A: ArchObjects>(
 
     // Authority over the mapping context.
     let as_id = resolve(access, caller, as_key, Rights::MAP)?;
-    // A retired AddressSpace is reported against its key before it is
-    // compared with the caller's own.
-    access
-        .resolve_object::<A::AddressSpace>(as_id)
-        .map_err(|error| error.for_key(as_key, 0))?;
+    // A retired or unbound AddressSpace is reported before it is compared
+    // with the caller's own. The guard ends with this block, before
+    // translation preparation resolves the AddressSpace again.
+    {
+        let address_space = access
+            .resolve_object::<A::AddressSpace>(as_id)
+            .map_err(|error| error.for_key(as_key, 0))?;
+        if address_space.keytable().is_none() {
+            return Err(CapError::NotBound);
+        }
+    }
 
     // Bootstrap-era restriction: only the current caller's own AddressSpace
     // activates. Switching the caller's own hardware context to a different

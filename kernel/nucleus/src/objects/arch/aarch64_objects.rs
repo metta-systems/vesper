@@ -164,8 +164,8 @@ impl ArchObjects for AArch64 {
         AArch64ASIDPool::new()
     }
 
-    fn new_address_space(keytable: KeyTableBinding) -> AArch64AddressSpace {
-        AArch64AddressSpace::new(keytable)
+    fn new_address_space() -> AArch64AddressSpace {
+        AArch64AddressSpace::new()
     }
 
     fn invalidate_tlb_by_vaddr(asid: u16, vaddr: u64) {

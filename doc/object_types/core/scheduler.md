@@ -27,6 +27,7 @@ Binds the inert Thread `x2` to the AddressSpace `x3`, an EL0 start state (entry 
 | Error | Cause |
 |---|---|
 | `InvalidOperation` | The Thread is not inert (already configured or started); the entry is not 4-byte aligned or not below the end of the user address range; the stack pointer is not 16-byte aligned or above that end; the Time belongs to another core or is already bound to a live Thread |
+| `NotBound` | The AddressSpace has no KeyTable bound ([`AddressSpace.Bind`](../arch/address_space.md#bind)) |
 | `NotMapped` | The AddressSpace has no translation root |
 | `NoAsidAssigned` | The AddressSpace has no ASID |
 | `InsufficientRights` | A missing right, or the Scheduler is not the root |

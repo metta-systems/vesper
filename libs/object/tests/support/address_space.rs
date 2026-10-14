@@ -21,6 +21,10 @@ fn respond(request: Request) -> Response {
     RESPONSE.with(|response| response.take().expect("unexpected syscall"))
 }
 
+pub(super) unsafe fn protected_call1(key: u64, op: u64, arg0: u64) -> Response {
+    respond((key, op, [arg0, 0, 0, 0, 0, 0]))
+}
+
 pub(super) unsafe fn protected_call0(key: u64, op: u64) -> Response {
     respond((key, op, [0; 6]))
 }
@@ -71,13 +75,14 @@ fn address_space_operation_ids_are_stable() {
 
     assert_eq!(AddressSpaceOp::Activate as u8, 0);
     assert_eq!(AddressSpaceOp::Retire as u8, 1);
+    assert_eq!(AddressSpaceOp::Bind as u8, 2);
     assert_eq!(AddressSpaceOp::CreateInvocation as u8, 3);
     assert!(matches!(
         AddressSpaceOp::try_from(3),
         Ok(AddressSpaceOp::CreateInvocation)
     ));
     assert!(matches!(
-        AddressSpaceOp::try_from(2),
+        AddressSpaceOp::try_from(4),
         Err(CapError::InvalidOperation)
     ));
 }
@@ -451,4 +456,30 @@ fn placement_window_wire_form_round_trips() {
     }
     assert_eq!(PlacementWindow::new(5, 3).end(), Some(8));
     assert_eq!(PlacementWindow::new(u32::MAX, 2).end(), None);
+}
+
+#[test]
+fn bind_encodes_the_table_key_and_decodes_its_statuses() {
+    let address_space_key = RawKey::new(KeySlot(2), 0x89ab_cdef);
+    let table_key = RawKey::new(KeySlot(4), 0x1357_2468);
+    let address_space = AddressSpaceKey::from_key(address_space_key);
+    let table = KeyTableKey::from_key(table_key);
+    for (response, expected) in [
+        ((0, 0, 0), Ok(())),
+        ((40, 0, 0), Err(CapError::NotBound.code())),
+        ((7, 0, 0), Err(CapError::AlreadyMapped.code())),
+    ] {
+        RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
+        assert_eq!(address_space.bind(&table).map_err(CapError::code), expected);
+        REQUEST.with(|request| {
+            assert_eq!(
+                request.take(),
+                Some((
+                    address_space_key.to_wire(),
+                    2,
+                    [table_key.to_wire(), 0, 0, 0, 0, 0]
+                ))
+            );
+        });
+    }
 }

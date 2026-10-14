@@ -1,11 +1,11 @@
 //! Kernel-private carves from the boot Untyped.
 //!
-//! Boot and trusted loader code create the objects they set up before any
-//! component runs — the boot and fixture Threads, the idle Thread, component
-//! `AddressSpace`s, the root Scheduler — directly in the boot Untyped's unused
-//! watermark range, through the same reserve-then-advance path as
-//! `Untyped.Retype`. The watermark advances past each carve, so nothing else
-//! is ever carved there.
+//! Boot and trusted test code create the objects they set up before any
+//! component runs — the boot and fixture Threads, the idle Thread, the boot
+//! and trusted fixture `AddressSpace`s, the root Scheduler — directly in the
+//! boot Untyped's unused watermark range, through the same reserve-then-advance
+//! path as `Untyped.Retype`. The watermark advances past each carve, so
+//! nothing else is ever carved there.
 
 use {
     crate::keys::BOOT_TABLE_GUARD,

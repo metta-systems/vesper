@@ -56,7 +56,8 @@ pub fn run() {
     let boot_table_binding = nucleus
         .address_space(boot_as_id)
         .expect("boot AddressSpace missing")
-        .keytable();
+        .keytable()
+        .expect("AddressSpace bound");
     assert_eq!(boot_table_binding.address(), keytable_addr);
     assert_eq!(boot_table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
     {

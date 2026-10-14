@@ -1,6 +1,6 @@
 use {
     crate::objects::{NucleusObject, carved::CarvedObject, key_table::KeyTableBinding},
-    libobject::ObjectType,
+    libobject::{CapError, ObjectType},
 };
 
 /// Kernel state of one `AddressSpace` — the protection/mapping-context
@@ -11,12 +11,14 @@ use {
 /// references its address space through its carved identity.
 #[expect(
     clippy::partial_pub_fields,
-    reason = "the table binding must be immutable; translation root and ASID remain kernel-managed mapping state"
+    reason = "the table binding is set once; translation root and ASID remain kernel-managed mapping state"
 )]
 pub struct AArch64AddressSpace {
-    /// Immutable table association established during provisioning. Every
-    /// Thread executing in this `AddressSpace` uses this same table.
-    keytable: KeyTableBinding,
+    /// Table association, set once by `AddressSpace.Bind` (or by bootstrap
+    /// for the boot `AddressSpace`) and fixed from then on. Every Thread
+    /// executing in this `AddressSpace` uses this same table; `None` until
+    /// bound.
+    keytable: Option<KeyTableBinding>,
     /// Physical address of this address space's translation-root page table,
     /// if a root has been installed (mapping context, selected 2026-09-15).
     ///
@@ -42,9 +44,10 @@ pub struct AArch64AddressSpace {
 }
 
 impl AArch64AddressSpace {
-    pub const fn new(keytable: KeyTableBinding) -> Self {
+    /// An inert `AddressSpace`: no keytable, translation root or ASID.
+    pub const fn new() -> Self {
         Self {
-            keytable,
+            keytable: None,
             translation_root: None,
             asid: None,
             fault_handler_busy: false,
@@ -60,8 +63,16 @@ impl NucleusObject for AArch64AddressSpace {
 }
 
 impl crate::objects::arch_objects::AddressSpaceObject for AArch64AddressSpace {
-    fn keytable(&self) -> KeyTableBinding {
+    fn keytable(&self) -> Option<KeyTableBinding> {
         self.keytable
+    }
+
+    fn bind(&mut self, keytable: KeyTableBinding) -> Result<(), CapError> {
+        if self.keytable.is_some() {
+            return Err(CapError::AlreadyMapped);
+        }
+        self.keytable = Some(keytable);
+        Ok(())
     }
 
     fn translation_root(&self) -> Option<u64> {

@@ -127,7 +127,7 @@ impl<A: ArchObjects> Nucleus<A> {
             return None;
         }
         let table = access
-            .resolve_carved_mut::<KeyTable>(space.keytable().address())
+            .resolve_carved_mut::<KeyTable>(space.keytable()?.address())
             .ok()?;
         table.fault_handler()
     }

@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn address_space_operation_decoder_is_exact() {
         assert_operation_decoder_is_exact::<vesper_objects::address_space::AddressSpaceOp>(&[
-            0, 1, 3,
+            0, 1, 2, 3,
         ]);
     }
 

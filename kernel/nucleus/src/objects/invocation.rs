@@ -239,7 +239,8 @@ impl<A: ArchObjects> Nucleus<A> {
         let binding = access
             .resolve_object::<A::AddressSpace>(address_space)
             .map_err(|_invalid_address_space| CapError::InvalidDomain)?
-            .keytable();
+            .keytable()
+            .ok_or(CapError::NotBound)?;
         let addr = binding.address();
         let no_context = || CapError::InconsistentKey {
             key: invoked,
@@ -273,7 +274,8 @@ impl<A: ArchObjects> Nucleus<A> {
     ///    (reported against operand `x8`), is a lendable kind
     ///    (`InvalidObjectType`) and carries `LEND` (`InsufficientRights`);
     /// 4. ordered SP predicates (`InvalidStack`);
-    /// 5. target translation-context readiness/encodability;
+    /// 5. target keytable binding (`NotBound`) and translation-context
+    ///    readiness/encodability;
     /// 6. invocation-stack capacity (`NestingDepth { count }`);
     /// 7. `CallWithKey` only: a vacant placement slot in the target's table
     ///    (`NoPlacementSlot`).
@@ -313,7 +315,8 @@ impl<A: ArchObjects> Nucleus<A> {
         let target_sp = saved.gpr[9];
         target.stack_extent.validate_sp(target_sp)?;
 
-        // Stage 5: root/ASID readiness and backend encodability.
+        // Stage 5: keytable binding, root/ASID readiness and backend
+        // encodability.
         let translation = prepare_translation_context::<A>(access, target.address_space)?;
 
         // Stage 6: a full stack reports the current count, never depth + 1.

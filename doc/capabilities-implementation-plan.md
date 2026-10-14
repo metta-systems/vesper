@@ -96,7 +96,6 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Give carved objects (KeyTables, Frames) a retirement identity so retirement rejects old capabilities in every table without an ancestry walk.
 - [ ] Implement permission-based retirement for the remaining kinds (only Thread and AddressSpace have `Retire`); test that creator control survives delegation and that accepted leaks cause no automatic destruction or conflicting reuse.
 - [ ] Define the retirement-to-background-cleanup handoff to entrusted managers (no central post-hoc registration).
-- [ ] Create AddressSpaces through `Untyped.Retype` once their creation schema is selected (open in [`capabilities-decisions.md`](capabilities-decisions.md) under D3/D6), and replace Kickstart's and the loader's kernel-private AddressSpace carves (`libcomponent_loader::carve`) with it.
 - [ ] Settle pool retirement, reuse validation and the zero-sized-type policy for `ObjectPool`; create pools at runtime, not only at bootstrap.
 - [ ] After implementation experience, review the guarded key-space configuration (per-table guards, bare destination slots, guard-in-capability storage sourced from `SELF_KEYTABLE`) and confirm or revise it.
 

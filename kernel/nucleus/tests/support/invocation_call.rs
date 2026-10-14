@@ -435,11 +435,16 @@ fn fill_stack_one_more(nucleus: &mut Nucleus<ArchObjectsImpl>) {
 fn stale_target_identity_precedes_invalid_sp() {
     for reuse in [false, true] {
         with_call(|nucleus, fixture| {
-            let binding = nucleus.address_space(fixture.target_as).unwrap().keytable();
+            let binding = nucleus
+                .address_space(fixture.target_as)
+                .unwrap()
+                .keytable()
+                .unwrap();
             crate::retire_address_space(fixture.target_as)
                 .unwrap_or_else(|e| panic!("AS retirement: {e:?}"));
             if reuse {
-                let mut replacement = ArchObjectsImpl::new_address_space(binding);
+                let mut replacement =
+                    crate::objects::arch_objects::bound_address_space::<ArchObjectsImpl>(binding);
                 replacement.set_translation_root(Some(ROOT));
                 replacement.set_asid(Some(3));
                 let replacement_id =
@@ -969,11 +974,16 @@ fn retired_source_is_a_return_target_retired_fault_without_pop() {
     for reuse in [false, true] {
         with_call(|nucleus, fixture| {
             committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
-            let binding = nucleus.address_space(fixture.source_as).unwrap().keytable();
+            let binding = nucleus
+                .address_space(fixture.source_as)
+                .unwrap()
+                .keytable()
+                .unwrap();
             crate::retire_address_space(fixture.source_as)
                 .unwrap_or_else(|e| panic!("source AS retirement: {e:?}"));
             if reuse {
-                let mut replacement = ArchObjectsImpl::new_address_space(binding);
+                let mut replacement =
+                    crate::objects::arch_objects::bound_address_space::<ArchObjectsImpl>(binding);
                 replacement.set_translation_root(Some(SOURCE_ROOT));
                 replacement.set_asid(Some(1));
                 let replacement_id =

@@ -134,6 +134,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             },
             (code::KEY_NOT_ACCEPTED, 0, 0) => CapError::KeyNotAccepted,
             (code::NO_PLACEMENT_SLOT, 0, 0) => CapError::NoPlacementSlot,
+            (code::NOT_BOUND, 0, 0) => CapError::NotBound,
             _ => return None,
         })
     })();
@@ -241,6 +242,9 @@ pub enum CapError {
     /// The Invocation's key-placement window has no slot that is vacant and
     /// able to issue a fresh incarnation, so the lent key cannot be placed.
     NoPlacementSlot,
+    /// The operation needs the `AddressSpace`'s keytable, and none has been
+    /// bound to it with `AddressSpace.Bind` yet.
+    NotBound,
     /// Client-side lossless fallback, not a new wire status. The nonzero status
     /// ensures that re-encoding an error can never produce success.
     UnknownResponse {
@@ -340,6 +344,7 @@ impl CapError {
             CapError::IrqLineActive { line } => (code::IRQ_LINE_ACTIVE, u64::from(line), 0),
             CapError::KeyNotAccepted => (code::KEY_NOT_ACCEPTED, 0, 0),
             CapError::NoPlacementSlot => (code::NO_PLACEMENT_SLOT, 0, 0),
+            CapError::NotBound => (code::NOT_BOUND, 0, 0),
             CapError::UnknownResponse {
                 status,
                 detail1,

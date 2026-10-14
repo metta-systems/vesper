@@ -70,6 +70,9 @@ pub const KEY_NOT_ACCEPTED: u64 = 38;
 /// issue a fresh incarnation, so the lent key has nowhere to be placed.
 /// Details are zero.
 pub const NO_PLACEMENT_SLOT: u64 = 39;
+/// The operation needs the `AddressSpace`'s keytable, and no keytable has been
+/// bound to it with `AddressSpace.Bind` yet. Details are zero.
+pub const NOT_BOUND: u64 = 40;
 
 /// Field-specific Invocation stack diagnostics, carried as the complete `x2` word.
 ///
