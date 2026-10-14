@@ -8,78 +8,82 @@ use crate::KeySlot;
 pub const SUCCESS: u64 = 0;
 pub const UNKNOWN: u64 = 1;
 pub const NULL_CAPABILITY: u64 = 2;
-pub const INVALID_DOMAIN: u64 = 3;
-pub const INVALID_POINTER: u64 = 4;
-pub const INSUFFICIENT_RIGHTS: u64 = 5;
-pub const NOT_MAPPED: u64 = 6;
-pub const ALREADY_MAPPED: u64 = 7;
-pub const INVALID_OPERATION: u64 = 8;
-pub const ASID_POOL_EXHAUSTED: u64 = 9;
-pub const NO_ASID_ASSIGNED: u64 = 10;
-pub const INVALID_SLOT: u64 = 11;
-pub const EMPTY_SLOT: u64 = 12;
-pub const SLOT_OCCUPIED: u64 = 13;
-pub const NOT_CORE_TYPE: u64 = 14;
-pub const UNKNOWN_CORE_TYPE: u64 = 15;
-pub const UNSUPPORTED_CORE_TYPE: u64 = 16;
-pub const NOT_ARCH_TYPE: u64 = 17;
-pub const UNKNOWN_ARCH_TYPE: u64 = 18;
-pub const UNSUPPORTED_ARCH_TYPE: u64 = 19;
-pub const INVALID_OBJECT_TYPE: u64 = 20;
-pub const TYPE_MISMATCH: u64 = 21;
-pub const INSUFFICIENT_MEMORY: u64 = 22;
-pub const POOL_EXHAUSTED: u64 = 23;
-pub const INVALID_SIZE: u64 = 24;
-pub const INVALID_FRAME_SIZE: u64 = 25;
-pub const INVALID_KEY: u64 = 26;
-pub const INCONSISTENT_KEY: u64 = 27;
-pub const KEY_SLOT_EXHAUSTED: u64 = 28;
+/// The current or target Thread is missing or stale, or a capability entry
+/// came from a stack origin that has no schedulable caller. Details are zero.
+pub const INVALID_THREAD: u64 = 3;
+/// The `AddressSpace` is stale. Details are zero.
+pub const INVALID_ADDRESS_SPACE: u64 = 4;
+pub const INVALID_POINTER: u64 = 5;
+pub const INSUFFICIENT_RIGHTS: u64 = 6;
+pub const NOT_MAPPED: u64 = 7;
+pub const ALREADY_MAPPED: u64 = 8;
+pub const INVALID_OPERATION: u64 = 9;
+pub const ASID_POOL_EXHAUSTED: u64 = 10;
+pub const NO_ASID_ASSIGNED: u64 = 11;
+pub const INVALID_SLOT: u64 = 12;
+pub const EMPTY_SLOT: u64 = 13;
+pub const SLOT_OCCUPIED: u64 = 14;
+pub const NOT_CORE_TYPE: u64 = 15;
+pub const UNKNOWN_CORE_TYPE: u64 = 16;
+pub const UNSUPPORTED_CORE_TYPE: u64 = 17;
+pub const NOT_ARCH_TYPE: u64 = 18;
+pub const UNKNOWN_ARCH_TYPE: u64 = 19;
+pub const UNSUPPORTED_ARCH_TYPE: u64 = 20;
+pub const INVALID_OBJECT_TYPE: u64 = 21;
+pub const TYPE_MISMATCH: u64 = 22;
+pub const INSUFFICIENT_MEMORY: u64 = 23;
+pub const POOL_EXHAUSTED: u64 = 24;
+pub const INVALID_SIZE: u64 = 25;
+pub const INVALID_FRAME_SIZE: u64 = 26;
+pub const INVALID_KEY: u64 = 27;
+pub const INCONSISTENT_KEY: u64 = 28;
+pub const KEY_SLOT_EXHAUSTED: u64 = 29;
 /// A mapping walk reached an absent intermediate page table.
 /// Detail 1 is the faulting virtual address; detail 2 is zero.
-pub const MISSING_INTERMEDIATE: u64 = 29;
+pub const MISSING_INTERMEDIATE: u64 = 30;
 /// The mapping violates the alias policy: the frame's physical extent
-/// overlaps a live mapping in the target Domain. Detail 1 is the physical
+/// overlaps a live mapping in the target `AddressSpace`. Detail 1 is the physical
 /// base of the conflicting live mapping; detail 2 is zero.
-pub const PHYSICAL_ALIAS: u64 = 30;
+pub const PHYSICAL_ALIAS: u64 = 31;
 /// An `EventCount.Advance` would exceed the counter's `u64` range
 /// (selected 2026-09-18): the counter is unchanged and every queued
 /// `Await` completes with this same error. Details are zero.
-pub const COUNTER_OVERFLOW: u64 = 31;
+pub const COUNTER_OVERFLOW: u64 = 32;
 /// Invalid Invocation stack extent, minimum headroom, or submitted SP.
 /// Detail 1 is the offending submitted value; detail 2 is an `InvalidStackReason`.
-pub const INVALID_STACK: u64 = 32;
+pub const INVALID_STACK: u64 = 33;
 /// A Call would exceed the fixed depth-16 invocation continuation stack.
 /// Detail 1 is the current saved-continuation count; detail 2 is zero.
-pub const NESTING_DEPTH: u64 = 33;
+pub const NESTING_DEPTH: u64 = 34;
 /// A `Thread.Return` helper observed a local `SUCCESS` response, which a
 /// completed Return never produces. Userspace-synthesized protocol/invariant
 /// error, never emitted by the kernel: details are the local x1/x2 verbatim.
-pub const UNEXPECTED_RETURN: u64 = 34;
+pub const UNEXPECTED_RETURN: u64 = 35;
 /// A finite source Time holds less budget than a `Time.Transfer` asks for.
 /// Detail 1 is the source's remaining budget in nanoseconds; detail 2 is zero.
-pub const INSUFFICIENT_BUDGET: u64 = 35;
+pub const INSUFFICIENT_BUDGET: u64 = 36;
 /// A `Time.Transfer` would leave the destination with more
 /// than 16 priority-chain entries. Details are zero.
-pub const PRIORITY_CHAIN_FULL: u64 = 36;
+pub const PRIORITY_CHAIN_FULL: u64 = 37;
 /// `IRQControl.Issue` named a line that already has a live `IRQHandler`, or
 /// the line the nucleus keeps for its own timer. Detail 1 is the line;
 /// detail 2 is zero.
-pub const IRQ_LINE_ACTIVE: u64 = 37;
+pub const IRQ_LINE_ACTIVE: u64 = 38;
 /// An `Invocation.CallWithKey` named an Invocation whose exporter declared no
 /// key-placement window (count 0), so it accepts no lent key. Details are zero.
-pub const KEY_NOT_ACCEPTED: u64 = 38;
+pub const KEY_NOT_ACCEPTED: u64 = 39;
 /// Every slot of the Invocation's key-placement window is occupied or cannot
 /// issue a fresh incarnation, so the lent key has nowhere to be placed.
 /// Details are zero.
-pub const NO_PLACEMENT_SLOT: u64 = 39;
+pub const NO_PLACEMENT_SLOT: u64 = 40;
 /// The operation needs the `AddressSpace`'s keytable, and no keytable has been
 /// bound to it with `AddressSpace.Bind` yet. Details are zero.
-pub const NOT_BOUND: u64 = 40;
+pub const NOT_BOUND: u64 = 41;
 /// A `KeyTable` used for an invocation or bound by `AddressSpace.Bind` does
 /// not name itself in a well-known self slot. Detail 1 is the slot; detail 2
 /// is the key that led to the table (the invoked key at syscall entry, the
 /// table key of `Bind`). See [`InvalidSelfReference`].
-pub const INVALID_SELF_REFERENCE: u64 = 41;
+pub const INVALID_SELF_REFERENCE: u64 = 42;
 
 /// Which self reference of a `KeyTable` is wrong, by the well-known slot that
 /// must hold it.

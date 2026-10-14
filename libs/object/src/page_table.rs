@@ -29,7 +29,7 @@ enum PageTableType {}
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PageTableOp {
-    /// Install this table into a parent named by capability type: a `Domain`
+    /// Install this table into a parent named by capability type: an `AddressSpace`
     /// capability installs the translation root (vaddr must be zero), a
     /// `PageTable` capability installs one intermediate level (vaddr selects the
     /// parent slot).
@@ -69,10 +69,10 @@ impl PageTableKey {
         self.key.to_wire()
     }
 
-    /// Install this table into `parent` (a `Domain` or `PageTable` capability).
+    /// Install this table into `parent` (an `AddressSpace` or `PageTable` capability).
     ///
     /// Wire schema (selected 2026-09-15): `x2` parent key, `x3` virtual
-    /// address, `x4..x7` zero. For a `Domain` parent the virtual address must be
+    /// address, `x4..x7` zero. For an `AddressSpace` parent the virtual address must be
     /// zero (root installation); for a `PageTable` parent the virtual address
     /// selects the parent slot and the parent must already be installed.
     pub fn map(&self, parent: RawKey, vaddr: u64) -> Result<(), CapError> {

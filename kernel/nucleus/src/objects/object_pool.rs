@@ -384,7 +384,7 @@ impl<T: NucleusObject> ObjectPool<T> {
 
     /// The current allocation generation of a live slot by index, without
     /// constructing an object reference. Kernel-internal callers use this to
-    /// build incarnation-checked identities for the current domain, where no
+    /// build incarnation-checked identities for the current Thread, where no
     /// capability-carried identity exists yet.
     pub fn generation_of(&self, index: usize) -> Option<u32> {
         if index >= self.capacity() {
@@ -685,9 +685,9 @@ mod tests {
             }
             .code()
         );
-        // Wire layout: status 27, the submitted key, reason 3 with the
+        // Wire layout: status 28, the submitted key, reason 3 with the
         // operand register in bits 8–15.
-        assert_eq!(wire, (27, key.to_wire(), 3 | (2 << 8)));
+        assert_eq!(wire, (28, key.to_wire(), 3 | (2 << 8)));
         // A malformed identity is a kernel fault, not a key diagnostic.
         assert_eq!(
             IdentityError::Malformed.for_key(key, 2).code(),

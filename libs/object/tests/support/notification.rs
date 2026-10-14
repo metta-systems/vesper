@@ -94,15 +94,15 @@ fn notification_poll_sends_no_arguments_and_decodes_bits() {
 #[test]
 fn notification_wrappers_preserve_kernel_errors() {
     assert!(matches!(
-        invoke_signal((5, 0, 0)),
+        invoke_signal((6, 0, 0)),
         Err(CapError::InsufficientRights)
     ));
     assert!(matches!(
-        invoke_wait((8, 0, 0)),
+        invoke_wait((9, 0, 0)),
         Err(CapError::InvalidOperation)
     ));
     assert!(matches!(
-        invoke_poll((23, 0, 0)),
+        invoke_poll((24, 0, 0)),
         Err(CapError::PoolExhausted)
     ));
     assert!(matches!(

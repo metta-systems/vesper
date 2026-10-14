@@ -67,16 +67,16 @@ fn asid_pool_assign_rejects_out_of_range_success_word() {
 #[test]
 fn asid_pool_wrappers_preserve_kernel_errors() {
     assert!(matches!(
-        invoke_assign((9, 0, 0)),
+        invoke_assign((10, 0, 0)),
         Err(CapError::ASIDPoolExhausted)
     ));
-    assert!(matches!(invoke_assign((6, 0, 0)), Err(CapError::NotMapped)));
+    assert!(matches!(invoke_assign((7, 0, 0)), Err(CapError::NotMapped)));
     assert!(matches!(
-        invoke_assign((7, 0, 0)),
+        invoke_assign((8, 0, 0)),
         Err(CapError::AlreadyMapped)
     ));
     assert!(matches!(
-        invoke_assign((5, 0, 0)),
+        invoke_assign((6, 0, 0)),
         Err(CapError::InsufficientRights)
     ));
     assert!(matches!(

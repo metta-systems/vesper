@@ -140,27 +140,27 @@ fn retype_ignores_nonzero_second_success_word() {
 #[test]
 fn retype_reports_unsupported_dispatch_and_authority_errors() {
     assert!(matches!(
-        invoke((16, 1, 0)),
+        invoke((17, 1, 0)),
         Err(CapError::UnsupportedCoreType(
             vesper_objects::CoreType::Untyped
         ))
     ));
-    assert!(matches!(invoke((3, 0, 0)), Err(CapError::InvalidDomain)));
+    assert!(matches!(invoke((3, 0, 0)), Err(CapError::InvalidThread)));
     assert!(matches!(
-        invoke((5, 0, 0)),
+        invoke((6, 0, 0)),
         Err(CapError::InsufficientRights)
     ));
     assert!(matches!(
-        invoke((22, 0, 0)),
+        invoke((23, 0, 0)),
         Err(CapError::InsufficientMemory)
     ));
-    assert!(matches!(invoke((24, 0, 0)), Err(CapError::InvalidSize(0))));
+    assert!(matches!(invoke((25, 0, 0)), Err(CapError::InvalidSize(0))));
 }
 
 #[test]
 fn retype_preserves_key_diagnostics() {
     let wire_key = 0x1357_9bdf_ffff_fffd;
-    match invoke((26, wire_key, 0x0203)) {
+    match invoke((27, wire_key, 0x0203)) {
         Err(CapError::InvalidKey {
             key,
             reason,
@@ -172,7 +172,7 @@ fn retype_preserves_key_diagnostics() {
         }
         _ => panic!("lost invalid-key diagnostic"),
     }
-    match invoke((27, wire_key, 0x0202)) {
+    match invoke((28, wire_key, 0x0202)) {
         Err(CapError::InconsistentKey {
             key,
             reason,
@@ -194,12 +194,12 @@ fn retype_preserves_unknown_statuses_and_malformed_details() {
     for wire in [
         (u64::MAX, 42, 99),
         (1 << 32, 1, 2),
-        (16, 259, 0),
-        (11, 1 << 32, 0),
-        (5, 0, 1),
-        (26, 0x1357_9bdf_ffff_fffd, 0x0901),
-        (27, 0x1357_9bdf_ffff_fffd, 0x0100_0001),
-        (28, 1 << 32, 0),
+        (17, 259, 0),
+        (12, 1 << 32, 0),
+        (6, 0, 1),
+        (27, 0x1357_9bdf_ffff_fffd, 0x0901),
+        (28, 0x1357_9bdf_ffff_fffd, 0x0100_0001),
+        (29, 1 << 32, 0),
     ] {
         match invoke(wire) {
             Err(error @ CapError::UnknownResponse { .. }) => assert_eq!(error.code(), wire),
@@ -254,11 +254,11 @@ fn retype_preserves_invalid_frame_size_errors() {
     // Non-granular frame sizes are rejected with the requested size, from
     // size_bits 0 (no 1-byte frames) up.
     assert!(matches!(
-        invoke_with(ObjectType::FRAME, 0, 0, (25, 0, 0)),
+        invoke_with(ObjectType::FRAME, 0, 0, (26, 0, 0)),
         Err(CapError::InvalidFrameSize(0))
     ));
     assert!(matches!(
-        invoke_with(ObjectType::FRAME, 13, 0, (25, 13, 0)),
+        invoke_with(ObjectType::FRAME, 13, 0, (26, 13, 0)),
         Err(CapError::InvalidFrameSize(13))
     ));
 }

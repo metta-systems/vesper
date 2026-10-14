@@ -78,7 +78,7 @@ pub enum PendingState {
 /// by direct field mutation.
 #[derive(Clone, Copy, Debug)]
 pub struct PendingInvocation {
-    /// The blocked domain (domains-pool identity, stored verbatim and
+    /// The blocked Thread (Thread identity, stored verbatim and
     /// validated against the pool when the record is resolved at wake time).
     waiter: ThreadId,
     /// What the invocation waits on.
@@ -90,7 +90,7 @@ pub struct PendingInvocation {
 }
 
 impl PendingInvocation {
-    /// The blocked domain's identity (validated at wake time).
+    /// The blocked Thread's identity (validated at wake time).
     pub fn waiter(&self) -> ThreadId {
         self.waiter
     }
@@ -154,7 +154,7 @@ impl PendingPool {
     /// Register a blocked invocation, returning the new record's identity.
     ///
     /// The waiter identity is stored verbatim; it is incarnation-checked
-    /// against the domains pool when the record is resolved at wake time.
+    /// against the Thread pool when the record is resolved at wake time.
     /// Fails with `PoolExhausted` when every slot is live or exhausted.
     pub fn block(
         &mut self,
@@ -294,7 +294,7 @@ impl PendingPool {
             .map(|record| record.object)
     }
 
-    /// Domain-teardown sweep: give every live record naming `waiter` its
+    /// Thread-teardown sweep: give every live record naming `waiter` its
     /// terminal disposition and release it.
     ///
     /// The teardown orchestrator (`Nucleus::cancel_thread_pending`) first
@@ -306,7 +306,7 @@ impl PendingPool {
     /// would release them and the bounded slots must return to the
     /// reservation. Returns how many records were released.
     ///
-    /// This is the domain-teardown path, distinct from object teardown
+    /// This is the Thread-teardown path, distinct from object teardown
     /// (`Notification::cancel_waiters` and `EventCount::cancel_waiters`),
     /// whose waiters are still alive and resume with their outcome.
     pub fn teardown_waiter(&mut self, waiter: ThreadId) -> Result<usize, CapError> {
@@ -478,7 +478,7 @@ impl WaitQueue {
         true
     }
 
-    /// Remove every queued record naming `waiter` (domain-teardown
+    /// Remove every queued record naming `waiter` (Thread-teardown
     /// cancellation), preserving the FIFO order of the remaining waiters.
     ///
     /// A queue holds record identities; the waiter each record blocks is
@@ -533,7 +533,7 @@ mod tests {
         test_id(ObjectType::NOTIFICATION, 0x1000)
     }
 
-    /// A stand-in waiter identity: a domains-pool identity as stored by
+    /// A stand-in waiter identity: a Thread identity as stored by
     /// `block`.
     fn waiter(index: u16) -> ThreadId {
         test_id(
@@ -769,7 +769,7 @@ mod tests {
             assert!(queue.push(*record).is_ok());
         }
 
-        // Domain teardown of waiter 1: only its record leaves the queue, and
+        // Thread teardown of waiter 1: only its record leaves the queue, and
         // the FIFO order of the surviving waiters is preserved.
         assert_eq!(queue.remove_waiter(waiter(1), &pending), 1);
         assert_eq!(queue.len(), 2);

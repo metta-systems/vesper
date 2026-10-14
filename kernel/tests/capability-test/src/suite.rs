@@ -99,11 +99,11 @@ pub fn run() {
         );
     }
 
-    // We have domain caps here, can use:
-    // Prototype status: use only the key actually issued to this boot Domain.
+    // We have the boot AddressSpace's keys here, can use:
+    // Prototype status: use only the key actually issued to this boot AddressSpace.
     let dbg = DebugConsoleKey::from_key(debug_console_key);
     dbg.write(
-        "DEBCON| Debug output via capability invocation on domain's debug console capability\n",
+        "DEBCON| Debug output via capability invocation on the boot AddressSpace's debug console capability\n",
     )
     .unwrap_or_else(|error| {
         panic!(

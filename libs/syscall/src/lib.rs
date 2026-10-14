@@ -3,7 +3,7 @@
 
 // Syscall ABI:
 // ┌───────────────────────────────────────────────────────────────────────┐
-// │  CAPTBL COPY (cross-domain grant):                                    │
+// │  CAPTBL COPY (cross-AddressSpace grant):                              │
 // │  ┌─────────────────────────────────────────────────────────────────┐  │
 // │  │ x0 = src_captbl    x3 = dst_captbl                              │  │
 // │  │ x1 = COPY op       x4 = dst_slot                                │  │

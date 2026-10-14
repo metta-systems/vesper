@@ -2289,7 +2289,6 @@ dependencies = [
 name = "vesper-objects"
 version = "0.0.1"
 dependencies = [
- "vesper-address",
  "vesper-print",
  "vesper-qemu",
  "vesper-syscalls",

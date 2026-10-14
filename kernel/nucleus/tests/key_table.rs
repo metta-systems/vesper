@@ -38,7 +38,7 @@ use {
     },
     libobject::{
         CapError, InconsistencyReason, InvalidStackReason, KeySlot, ObjectType, PlacementWindow,
-        RawKey, Rights, domain::DomainId,
+        RawKey, Rights,
     },
     objects::{
         ArchObjects, ArchObjectsImpl, KeyTable,
@@ -98,7 +98,7 @@ fn carve(index: usize) -> u64 {
     // exclusively owned by the test fixture for its lifetime; the stride
     // covers the full variable-size carve.
     unsafe {
-        KeyTable::initialize(obj, DomainId(0), SIZE_BITS);
+        KeyTable::initialize(obj, SIZE_BITS);
     }
     obj as u64
 }
@@ -241,7 +241,7 @@ fn assert_invalid_stack<T>(
             if found_value == value && found_reason == reason
     ));
     // Pin the complete diagnostic words independently of enum discriminants.
-    assert_eq!(error.code(), (32, value, reason_id));
+    assert_eq!(error.code(), (33, value, reason_id));
 }
 
 // ═══════════════════════════════════════════════════════════════════

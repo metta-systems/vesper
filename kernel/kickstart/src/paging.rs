@@ -8,7 +8,7 @@
 /// 0xFFFF_FFFF_8000_0000  ├─────────────────────┤
 ///                        │  Kernel heap        │  (if any - we try to avoid)
 /// 0xFFFF_FFFF_0000_0000  ├─────────────────────┤
-///                        │  DCB shared pages   │  Read-only mapped to user too
+///                        │  Unused             │
 /// 0xFFFF_FF00_0000_0000  ├─────────────────────┤
 ///                        │  Device MMIO        │  1:1 mapped device regions
 /// 0xFFFF_0080_0000_0000  ├─────────────────────┤
@@ -28,7 +28,6 @@ use {
 const KERNEL_BASE: u64 = 0xFFFF_8000_0000_0000;
 const KERNEL_PHYS_MAP: u64 = 0xFFFF_8000_0000_0000; // Linear map base
 const KERNEL_DEVICE_BASE: u64 = 0xFFFF_8080_0000_0000;
-const KERNEL_DCB_BASE: u64 = 0xFFFF_FF00_0000_0000;
 const KERNEL_HEAP_BASE: u64 = 0xFFFF_FFFF_0000_0000;
 const KERNEL_STACK_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 

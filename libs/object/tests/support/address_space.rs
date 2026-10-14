@@ -171,15 +171,15 @@ fn create_invocation_preserves_kernel_errors() {
 fn all_address_space_wrappers_report_unsupported_dispatch_and_lookup_errors() {
     for op in 0..=1 {
         assert!(matches!(
-            invoke(op, (19, 2, 0)),
+            invoke(op, (20, 2, 0)),
             Err(CapError::UnsupportedArchType(ArchType::AddressSpace))
         ));
         assert!(matches!(
-            invoke(op, (3, 0, 0)),
-            Err(CapError::InvalidDomain)
+            invoke(op, (4, 0, 0)),
+            Err(CapError::InvalidAddressSpace)
         ));
         assert!(matches!(
-            invoke(op, (5, 0, 0)),
+            invoke(op, (6, 0, 0)),
             Err(CapError::InsufficientRights)
         ));
     }
@@ -189,7 +189,7 @@ fn all_address_space_wrappers_report_unsupported_dispatch_and_lookup_errors() {
 fn all_address_space_wrappers_preserve_key_diagnostics() {
     let wire_key = 0x7654_3210_ffff_fffe;
     for op in 0..=1 {
-        match invoke(op, (26, wire_key, 0x0202)) {
+        match invoke(op, (27, wire_key, 0x0202)) {
             Err(CapError::InvalidKey {
                 key,
                 reason,
@@ -201,7 +201,7 @@ fn all_address_space_wrappers_preserve_key_diagnostics() {
             }
             _ => panic!("lost invalid-key diagnostic"),
         }
-        match invoke(op, (27, wire_key, 0x0201)) {
+        match invoke(op, (28, wire_key, 0x0201)) {
             Err(CapError::InconsistentKey {
                 key,
                 reason,
@@ -214,8 +214,8 @@ fn all_address_space_wrappers_preserve_key_diagnostics() {
             _ => panic!("lost inconsistency diagnostic"),
         }
         assert_eq!(
-            invoke(op, (28, 42, 0)).map_err(CapError::code),
-            Err((28, 42, 0))
+            invoke(op, (29, 42, 0)).map_err(CapError::code),
+            Err((29, 42, 0))
         );
     }
 }
@@ -226,11 +226,11 @@ fn all_address_space_wrappers_preserve_unknown_statuses_and_malformed_details() 
         for wire in [
             (u64::MAX, 42, 99),
             (1 << 32, 1, 2),
-            (19, 258, 0),
+            (20, 258, 0),
             (3, 0, 1),
-            (26, 0x7654_3210_ffff_fffe, 0x0901),
-            (27, 0x7654_3210_ffff_fffe, 0x0100_0001),
-            (28, 1 << 32, 0),
+            (27, 0x7654_3210_ffff_fffe, 0x0901),
+            (28, 0x7654_3210_ffff_fffe, 0x0100_0001),
+            (29, 1 << 32, 0),
         ] {
             match invoke(op, wire) {
                 Err(error @ CapError::UnknownResponse { .. }) => assert_eq!(error.code(), wire),
@@ -307,8 +307,8 @@ fn create_invocation_forwards_malformed_values_without_client_validation() {
             minimum,
         ];
         assert_eq!(
-            invoke_create_invocation(args, (5, 0, 0)).map_err(CapError::code),
-            Err((5, 0, 0))
+            invoke_create_invocation(args, (6, 0, 0)).map_err(CapError::code),
+            Err((6, 0, 0))
         );
     }
 }
@@ -330,7 +330,7 @@ fn create_invocation_decodes_all_typed_stack_reasons_without_losing_values() {
         (12, InvalidStackReason::SpInsufficientHeadroom),
     ] {
         for value in [0, 0x1234_5678_9abc_def0, u64::MAX] {
-            match invoke_create_invocation(CREATE_INVOCATION_ARGS, (32, value, id)) {
+            match invoke_create_invocation(CREATE_INVOCATION_ARGS, (33, value, id)) {
                 Err(CapError::InvalidStack {
                     value: actual_value,
                     reason: actual_reason,
@@ -350,12 +350,13 @@ fn create_invocation_preserves_existing_admission_errors_and_key_diagnostics() {
         (3, 0, 0),
         (4, 0, 0),
         (5, 0, 0),
-        (11, u64::from(u32::MAX), 0),
-        (13, 42, 0),
-        (19, 2, 0),
-        (26, 0x7654_3210_ffff_fffe, 0x0304),
-        (27, 0x7654_3210_ffff_fffe, 0x0301),
-        (28, 42, 0),
+        (6, 0, 0),
+        (12, u64::from(u32::MAX), 0),
+        (14, 42, 0),
+        (20, 2, 0),
+        (27, 0x7654_3210_ffff_fffe, 0x0304),
+        (28, 0x7654_3210_ffff_fffe, 0x0301),
+        (29, 42, 0),
     ] {
         match invoke_create_invocation(CREATE_INVOCATION_ARGS, wire) {
             Err(CapError::UnknownResponse { .. }) | Ok(_) => panic!("lost known error {wire:?}"),
@@ -368,16 +369,16 @@ fn create_invocation_preserves_existing_admission_errors_and_key_diagnostics() {
 fn create_invocation_preserves_unknown_statuses_and_extended_stack_reasons() {
     for wire in [
         (u64::MAX, u64::MAX, 0x1234_5678_9abc_def0),
-        ((1 << 32) | 32, u64::MAX, 1),
-        (32, u64::MAX, 0),
-        (32, u64::MAX, 13),
-        (32, 0x1234_5678_9abc_def0, 0x0101),
-        (32, u64::MAX, (1 << 32) | 12),
-        (32, u64::MAX, (1 << 63) | 1),
-        (32, u64::MAX, u64::MAX),
-        (35, u64::MAX, u64::MAX),
-        (5, 0, 1),
-        (26, 0x7654_3210_ffff_fffe, 0x0901),
+        ((1 << 32) | 33, u64::MAX, 1),
+        (33, u64::MAX, 0),
+        (33, u64::MAX, 13),
+        (33, 0x1234_5678_9abc_def0, 0x0101),
+        (33, u64::MAX, (1 << 32) | 12),
+        (33, u64::MAX, (1 << 63) | 1),
+        (33, u64::MAX, u64::MAX),
+        (36, u64::MAX, u64::MAX),
+        (6, 0, 1),
+        (27, 0x7654_3210_ffff_fffe, 0x0901),
     ] {
         match invoke_create_invocation(CREATE_INVOCATION_ARGS, wire) {
             Err(error @ CapError::UnknownResponse { .. }) => assert_eq!(error.code(), wire),
@@ -466,8 +467,8 @@ fn bind_encodes_the_table_key_and_decodes_its_statuses() {
     let table = KeyTableKey::from_key(table_key);
     for (response, expected) in [
         ((0, 0, 0), Ok(())),
-        ((40, 0, 0), Err(CapError::NotBound.code())),
-        ((7, 0, 0), Err(CapError::AlreadyMapped.code())),
+        ((41, 0, 0), Err(CapError::NotBound.code())),
+        ((8, 0, 0), Err(CapError::AlreadyMapped.code())),
     ] {
         RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
         assert_eq!(address_space.bind(&table).map_err(CapError::code), expected);

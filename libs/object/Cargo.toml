@@ -24,7 +24,6 @@ debug_kernel = []
 host-tests = []
 
 [dependencies]
-libaddress = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 libsyscall = { workspace = true }

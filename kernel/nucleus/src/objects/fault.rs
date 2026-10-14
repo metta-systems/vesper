@@ -51,7 +51,7 @@ impl<A: ArchObjects> Nucleus<A> {
         info: FaultInfo,
     ) -> Result<FaultDelivery, CapError> {
         let current = self.current_thread_id()?;
-        let thread = self.thread(current).ok_or(CapError::InvalidDomain)?;
+        let thread = self.thread(current).ok_or(CapError::InvalidThread)?;
         if thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
@@ -71,7 +71,7 @@ impl<A: ArchObjects> Nucleus<A> {
             call_frame.gpr[9] = target.stack_extent.end();
             if let Ok(prepared) = self.prepare_call(access, &call_frame, target, None) {
                 let committed = self.commit_call(access, prepared)?;
-                let thread = self.thread_mut(current).ok_or(CapError::InvalidDomain)?;
+                let thread = self.thread_mut(current).ok_or(CapError::InvalidThread)?;
                 thread.fault = Some(ThreadFault {
                     frame: faulting,
                     address_space: faulting_address_space,

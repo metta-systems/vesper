@@ -5,7 +5,6 @@ pub mod carved;
 pub mod completion;
 #[cfg(feature = "debug_kernel")]
 pub mod debug_console;
-pub mod domain;
 pub mod event_count;
 pub mod fault;
 pub mod invocation;

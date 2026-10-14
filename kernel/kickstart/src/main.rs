@@ -158,30 +158,19 @@ pub fn kickstart_run() -> ! {
     // semi::println!("🥾 Total untyped caps - {}", untyped_list.len());
 
     // ─────────────────────────────────────────────────────────────────────
-    // Initialize DCB shared pages - replace with scheduler component calls
+    // Create the kernel idle Thread
     // ─────────────────────────────────────────────────────────────────────
 
-    // semi::println!("🥾 Initializing DCB pages...");
+    // semi::println!("🥾 Creating idle Thread...");
 
-    // // Allocate DCB pages from a reserved untyped
-    // // These are special: mapped RW in kernel, RO in all user domains
-    // let dcb_pages = allocate_dcb_pages(&mut untyped_list, MAX_DOMAINS);
-    // dcb::init(dcb_pages);
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Create kernel idle domain (domain 0)
-    // ─────────────────────────────────────────────────────────────────────
-
-    // semi::println!("🥾 Creating idle domain...");
-
-    // let idle_domain = create_idle_domain();
-    // SCHEDULER.set_idle(idle_domain);
+    // let idle_thread = create_idle_thread();
+    // SCHEDULER.set_idle(idle_thread);
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // PHASE 6: Create the init domain and its capability space
+    // PHASE 6: Create the init component and its capability space
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // semi::println!("🥾 Creating init domain...");
+    // semi::println!("🥾 Creating init component...");
 
     // let init_module = boot_info
     //     .modules
@@ -192,7 +181,7 @@ pub fn kickstart_run() -> ! {
     //     })
     //     .expect("🥾 No init module found in boot modules");
 
-    // let init_domain = create_init_domain(init_module, &mut untyped_list);
+    // let init_component = create_init_component(init_module, &mut untyped_list);
 
     // ─────────────────────────────────────────────────────────────────────
     // Mark init thread memory as reclaimable
@@ -204,7 +193,7 @@ pub fn kickstart_run() -> ! {
     // mark_init_memory_reclaimable(boot_info, &mut untyped_list);
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // PHASE 7: Delegate all resources to init domain
+    // PHASE 7: Delegate all resources to init component
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     // semi::println!(
@@ -212,13 +201,13 @@ pub fn kickstart_run() -> ! {
     //     untyped_list.len()
     // );
 
-    // delegate_untypeds_to_init(&init_domain, untyped_list);
+    // delegate_untypeds_to_init(&init_component, untyped_list);
 
     // // Create module caps for other boot modules and delegate
-    // delegate_module_caps_to_init(&init_domain, boot_info);
+    // delegate_module_caps_to_init(&init_component, boot_info);
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // PHASE 8: Context switch to init domain
+    // PHASE 8: Context switch to init component
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     let (_, privilege_level) = libexception::current_privilege_level();
@@ -227,7 +216,7 @@ pub fn kickstart_run() -> ! {
     liblog::info!("🥾 Exception handling state:");
     libexception::asynchronous::print_state();
 
-    // semi::println!("🥾 Switching to init domain...");
+    // semi::println!("🥾 Switching to init component...");
     // semi::println!("════════════════════════════✂️🥾🥾🥾🥾🥾✂️═══════════════════════════════");
 
     // // Init runs on the boot Time (KeySlot::BOOT_TIME)
@@ -237,7 +226,7 @@ pub fn kickstart_run() -> ! {
     // // This replaces TTBR0 with init's page tables
     // // Kernel high map (TTBR1) is ready for when init makes syscalls
     // // This never returns
-    // switch_to_domain(init_domain, init_time);
+    // switch_to_component(init_component, init_time);
     print_my_sp();
 
     // Nothing else runs on the boot Thread yet: park it for good, leaving the
@@ -387,23 +376,23 @@ fn start_drivers(
 
 /*
 // ─────────────────────────────────────────────────────────────────────
-// Create init domain from boot module
+// Create init component from boot module
 // ─────────────────────────────────────────────────────────────────────
 
-/// Create the init domain from a loaded ELF module
-fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> DomainRef {
+/// Create the init component from a loaded ELF module
+fn create_init_component(module: &LoadedModule, untyped_list: &mut UntypedList) -> ComponentRef {
     // ─────────────────────────────────────────────────────────────────────
-    // Allocate domain kernel structures
+    // Allocate component kernel structures
     // ─────────────────────────────────────────────────────────────────────
 
-    // Take an untyped for domain structures
-    let domain_untyped = untyped_list
-        .take_of_size(DOMAIN_STRUCT_SIZE)
-        .expect("🥾 No memory for init domain");
+    // Take an untyped for component structures
+    let component_untyped = untyped_list
+        .take_of_size(COMPONENT_STRUCT_SIZE)
+        .expect("🥾 No memory for init component");
 
-    let domain = Domain::create_from_untyped(
-        domain_untyped,
-        DomainId(1), // Init is domain 1 (0 is idle)
+    let component = Component::create_from_untyped(
+        component_untyped,
+        ComponentId(1), // Init is component 1 (0 is idle)
         "init",
     );
 
@@ -417,7 +406,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         .expect("🥾 No memory for init page tables");
 
     let page_tables = UserPageTables::create_from_untyped(pt_untyped);
-    domain.set_page_tables(page_tables);
+    component.set_page_tables(page_tables);
 
     // ─────────────────────────────────────────────────────────────────────
     // Parse ELF and create address space
@@ -462,7 +451,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
 
         // Map pages into init's address space
         let phys_base = segment_untyped.phys_addr();
-        domain
+        component
             .page_tables()
             .map_range(virt_start, phys_base, pages_needed, flags);
 
@@ -478,10 +467,10 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         write_bytes(&mut dst[file_size..], 0, dst.len() - file_size);
 
         // Pass the segment region to init as Untyped/Frame capabilities -- FIXME: This is how we pass
-        // the process images to init domain. Buffer is a userspace/libOS construct (selected
+        // the process images to init component. Buffer is a userspace/libOS construct (selected
         // 2026-09-15): the kernel hands over memory via Untyped/Frame capabilities only.
         // let segment_cap = FrameCap::create_from_untyped(segment_untyped, flags.into());
-        // domain.cspace().insert_at_next_free(segment_cap);
+        // component.cspace().insert_at_next_free(segment_cap);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -495,7 +484,7 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
         .take_of_size(INIT_STACK_SIZE)
         .expect("🥾 No memory for init stack");
 
-    domain.page_tables().map_range(
+    component.page_tables().map_range(
         VirtAddr::new(INIT_STACK_TOP - INIT_STACK_SIZE as u64),
         stack_untyped.phys_addr(),
         INIT_STACK_SIZE / PAGE_SIZE,
@@ -512,20 +501,20 @@ fn create_init_domain(module: &LoadedModule, untyped_list: &mut UntypedList) -> 
     // Setup initial register state
     // ─────────────────────────────────────────────────────────────────────
 
-    domain.set_entry_point(VirtAddr::new(elf.entry_point()));
-    domain.set_stack_pointer(VirtAddr::new(INIT_STACK_TOP));
+    component.set_entry_point(VirtAddr::new(elf.entry_point()));
+    component.set_stack_pointer(VirtAddr::new(INIT_STACK_TOP));
 
     // ─────────────────────────────────────────────────────────────────────
     // Create init's initial capability space
     // ─────────────────────────────────────────────────────────────────────
 
-    setup_init_cspace(&domain);
+    setup_init_cspace(&component);
 
-    domain
+    component
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Create domain's initial capability space
+// Create the component's initial capability space
 // ─────────────────────────────────────────────────────────────────────
 
 /// Setup init's capability space with well-known slots
@@ -533,10 +522,10 @@ fn setup_init_keyspace(thread: &ThreadRef) {
     let keyspace = thread.keyspace();
 
     // Slot 0: NULL (always invalid)
-    // Slot 1: Self domain cap
+    // Slot 1: Self component cap
     keyspace.insert(KEYSPACE_SLOT_SELF, thread.self_cap());
 
-    // Slot 2: Parent domain cap (for init, this is invalid/null)
+    // Slot 2: Parent component cap (for init, this is invalid/null)
     // Slot 17: the boot Time (KeySlot::BOOT_TIME)
 
     // Slots 0x10-0x1F: Will be filled with notification caps
@@ -553,8 +542,8 @@ fn setup_init_keyspace(thread: &ThreadRef) {
 // ─────────────────────────────────────────────────────────────────────
 
 /// Delegate all untyped caps to init's cspace
-fn delegate_untypeds_to_init(init_domain: &DomainRef, untyped_list: UntypedList) {
-    let cspace = init_domain.cspace();
+fn delegate_untypeds_to_init(init_component: &ComponentRef, untyped_list: UntypedList) {
+    let cspace = init_component.cspace();
 
     // Start placing untypeds at well-known slot range
     const UNTYPED_SLOT_START: u32 = 0x1000;
@@ -567,9 +556,6 @@ fn delegate_untypeds_to_init(init_domain: &DomainRef, untyped_list: UntypedList)
         slot += 1;
     }
 
-    // Store count so init knows how many it received
-    init_domain.dcb_mut().untyped_cap_count = slot - UNTYPED_SLOT_START;
-
     semi_prinln!(
         "🥾  Delegated {} untyped caps to slots {:#x}-{:#x}",
         slot - UNTYPED_SLOT_START,
@@ -579,8 +565,8 @@ fn delegate_untypeds_to_init(init_domain: &DomainRef, untyped_list: UntypedList)
 }
 
 /// Create caps for boot modules and delegate to init
-fn delegate_module_caps_to_init(init_domain: &DomainRef, boot_info: &BootInfo) {
-    let cspace = init_domain.cspace();
+fn delegate_module_caps_to_init(init_component: &ComponentRef, boot_info: &BootInfo) {
+    let cspace = init_component.cspace();
 
     const MODULE_SLOT_START: u32 = 0x2000;
     let mut slot = MODULE_SLOT_START;
@@ -602,20 +588,15 @@ fn delegate_module_caps_to_init(init_domain: &DomainRef, boot_info: &BootInfo) {
 
         // cspace.insert(slot, module_cap);
 
-        // Also store module metadata in a well-known location
-        // (Init can query its DCB for module info)
-
         semi::println!("🥾  Module '{}' at slot {:#x}", name, slot);
         slot += 1;
     }
-
-    init_domain.dcb_mut().module_cap_count = slot - MODULE_SLOT_START;
 }
 
 /// Mark init thread memory as reclaimable
 /// TODO: this memory should've been first removed from the DTB memory map!
 fn mark_init_memory_reclaimable(boot_info: &BootInfo, untypeds_list: ) {
-    // The init thread area is entirely one blob of reclaimable memory. Convert it to untyped and donate to init domain.
+    // The init thread area is entirely one blob of reclaimable memory. Convert it to untyped and donate to init component.
 
     // Also mark .init sections in kernel image
     extern "C" {
@@ -645,33 +626,23 @@ fn mark_init_memory_reclaimable(boot_info: &BootInfo, untypeds_list: ) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Switch to init domain
+// Switch to init component
 // ─────────────────────────────────────────────────────────────────────
 
-/// Final step: switch to init domain with initial time budget
-fn switch_to_domain(domain: DomainRef, time: TimeKey) -> ! {
-    // Update domain state 💫
-    {
-        let dcb = domain.dcb_mut();
-        dcb.state
-            .store(DomainState::Running as u32, Ordering::Release);
-        dcb.time_remaining_ns
-            .store(time.query().budget_ns, Ordering::Relaxed);
-        dcb.activation_count.fetch_add(1, Ordering::Relaxed);
-    }
-
+/// Final step: switch to init component with initial time budget
+fn switch_to_component(component: ComponentRef, time: TimeKey) -> ! {
     // Install the Time init runs on in its key table
-    domain.cspace().insert(KeySlot::BOOT_TIME, time);
+    component.cspace().insert(KeySlot::BOOT_TIME, time);
 
     // Setup TTBR0 for user space
-    let ttbr0 = domain.page_tables().root_phys();
+    let ttbr0 = component.page_tables().root_phys();
 
     // Get entry context
-    let entry_point = domain.entry_point();
-    let stack_pointer = domain.stack_pointer();
+    let entry_point = component.entry_point();
+    let stack_pointer = component.stack_pointer();
 
-    // Record this as current domain -- why percpu??
-    percpu::set_current_domain(domain);
+    // Record this as current component -- why percpu??
+    percpu::set_current_component(component);
 
     semi::println!(
         "🥾 Entering init at {:#x} with SP={:#x}",

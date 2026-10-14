@@ -52,7 +52,7 @@ impl PreparedTranslationContext {
 /// Resolve the AS incarnation before reading its root, ASID, or table binding.
 /// No allocation, hardware write, or object mutation occurs on this path.
 /// An unbound AS is `NotBound`; missing root/ASID is `NotMapped`; invalid/stale
-/// AS is `InvalidDomain`;
+/// AS is `InvalidAddressSpace`;
 /// hardware-format rejection uses the architecture's existing explicit errors.
 pub fn prepare_translation_context<A: ArchObjects>(
     access: &Access,
@@ -60,7 +60,7 @@ pub fn prepare_translation_context<A: ArchObjects>(
 ) -> Result<PreparedTranslationContext, CapError> {
     let address_space = access
         .resolve_object::<A::AddressSpace>(id)
-        .map_err(|_invalid_identity| CapError::InvalidDomain)?;
+        .map_err(|_invalid_identity| CapError::InvalidAddressSpace)?;
     let keytable = address_space.keytable().ok_or(CapError::NotBound)?;
     let root = address_space
         .translation_root()
@@ -109,10 +109,10 @@ impl<A: ArchObjects> Nucleus<A> {
         record: ObjectId,
     ) -> Result<PreparedResume, CapError> {
         if !execution_origin(saved.origin) {
-            return Err(CapError::InvalidDomain);
+            return Err(CapError::InvalidThread);
         }
         let current = self.current_thread_id()?;
-        let current_thread = self.thread(current).ok_or(CapError::InvalidDomain)?;
+        let current_thread = self.thread(current).ok_or(CapError::InvalidThread)?;
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
@@ -137,10 +137,10 @@ impl<A: ArchObjects> Nucleus<A> {
         saved: SavedContext,
     ) -> Result<PreparedResume, CapError> {
         if !execution_origin(saved.origin) {
-            return Err(CapError::InvalidDomain);
+            return Err(CapError::InvalidThread);
         }
         let current = self.current_thread_id()?;
-        let current_thread = self.thread(current).ok_or(CapError::InvalidDomain)?;
+        let current_thread = self.thread(current).ok_or(CapError::InvalidThread)?;
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
@@ -160,10 +160,10 @@ impl<A: ArchObjects> Nucleus<A> {
         saved: SavedContext,
     ) -> Result<Option<PreparedResume>, CapError> {
         if !execution_origin(saved.origin) {
-            return Err(CapError::InvalidDomain);
+            return Err(CapError::InvalidThread);
         }
         let current = self.current_thread_id()?;
-        let current_thread = self.thread(current).ok_or(CapError::InvalidDomain)?;
+        let current_thread = self.thread(current).ok_or(CapError::InvalidThread)?;
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
@@ -207,7 +207,7 @@ impl<A: ArchObjects> Nucleus<A> {
             (None, _) => return Err(CapError::InvalidOperation),
         };
         // The selected Thread becomes current as a checked identity.
-        let target = self.thread(next).ok_or(CapError::InvalidDomain)?;
+        let target = self.thread(next).ok_or(CapError::InvalidThread)?;
         let translation = prepare_translation_context::<A>(access, target.address_space)?;
         let (mut restored, terminal) = match target.context {
             ExecutionContext::NotStarted { saved } | ExecutionContext::Preempted { saved } => {
@@ -250,7 +250,7 @@ impl<A: ArchObjects> Nucleus<A> {
             }
         };
         if !execution_origin(restored.origin) {
-            return Err(CapError::InvalidDomain);
+            return Err(CapError::InvalidThread);
         }
 
         // Commit: all identities/state/translation metadata were checked, and

@@ -10,7 +10,7 @@ use {
     core::mem::size_of,
     libobject::{
         CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow,
-        RawKey, domain::DomainId,
+        RawKey,
     },
 };
 
@@ -18,9 +18,9 @@ use {
 // == Nucleus object ==
 // ====================
 
-/// A capability table for a domain.
+/// A capability table for an `AddressSpace`.
 ///
-/// This is what seL4 calls a `CNode`. Each domain has one. The table itself is
+/// This is what seL4 calls a `CNode`. Each `AddressSpace` has one. The table itself is
 /// a kernel object that can be referenced by capabilities (for capability
 /// space manipulation).
 ///
@@ -37,14 +37,12 @@ use {
 /// into the table packs it above the slot index.
 #[repr(C, align(32))]
 pub struct KeyTable {
-    /// Domain that owns this table
-    owner: DomainId,
     /// Number of valid entries (for iteration)
     count: u32,
     /// Capacity exponent: the table holds `2^size_bits` entries.
     size_bits: u8,
     /// Padding to the 32-byte header size (`KeyEntry` alignment).
-    _pad: [u8; 23],
+    _pad: [u8; 27],
 }
 
 /// An `AddressSpace`'s association with its carved table.
@@ -239,7 +237,7 @@ impl KeyTable {
         clippy::cast_ptr_alignment,
         reason = "the carve's 32-byte alignment is the caller's documented SAFETY obligation"
     )]
-    pub unsafe fn initialize(carve: *mut u8, owner: DomainId, size_bits: u8) -> CarvedId {
+    pub unsafe fn initialize(carve: *mut u8, size_bits: u8) -> CarvedId {
         debug_assert!((Self::MIN_SIZE_BITS..=Self::MAX_SIZE_BITS).contains(&size_bits));
         let capacity = Self::capacity_for(size_bits);
         // SAFETY: the caller guaranteed the aligned, exclusively-owned carve
@@ -248,10 +246,9 @@ impl KeyTable {
             let id = Carved::<Self>::initialize(
                 carve,
                 Self {
-                    owner,
                     count: 0,
                     size_bits,
-                    _pad: [0; 23],
+                    _pad: [0; 27],
                 },
             );
             let entries = carve.add(Self::HEADER_SIZE).cast::<KeyEntry>();
@@ -392,11 +389,6 @@ impl KeyTable {
 
     pub fn len(&self) -> usize {
         usize::try_from(self.count).unwrap()
-    }
-
-    /// The domain that owns this table.
-    pub fn owner(&self) -> DomainId {
-        self.owner
     }
 
     /// The self-table capability at the well-known `SELF_KEYTABLE` slot: the
@@ -652,7 +644,6 @@ mod tests {
         core::mem::{align_of, size_of},
         libobject::{
             CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights,
-            domain::DomainId,
         },
     };
 
@@ -674,12 +665,12 @@ mod tests {
 
     /// A fresh 256-entry table over the shared backing; tests run
     /// sequentially and each call re-initializes it.
-    fn table(owner: DomainId) -> &'static mut KeyTable {
+    fn table() -> &'static mut KeyTable {
         // SAFETY: the backing is exclusively owned by the currently running
         // test, is 32-byte aligned, and covers the full carve size.
         unsafe {
             let ptr = (&raw mut BACKING.0).cast::<u8>();
-            let id = KeyTable::initialize(ptr, owner, SIZE_BITS);
+            let id = KeyTable::initialize(ptr, SIZE_BITS);
             &mut *KeyTable::at_carve(id.address)
         }
     }
@@ -741,7 +732,6 @@ mod tests {
     struct TableState {
         entries: [EntryState; CAPACITY],
         incarnations: [u32; CAPACITY],
-        owner: DomainId,
         count: usize,
     }
 
@@ -749,13 +739,11 @@ mod tests {
         TableState {
             entries: core::array::from_fn(|index| entry_state(table.entry(index))),
             incarnations: core::array::from_fn(|index| table.incarnation_of(index)),
-            owner: table.owner,
             count: table.len(),
         }
     }
 
     fn assert_unchanged(table: &KeyTable, before: &TableState) {
-        assert_eq!(table.owner, before.owner);
         assert_eq!(table.len(), before.count);
         for index in 0..CAPACITY {
             assert_eq!(table.incarnation_of(index), before.incarnations[index]);
@@ -832,8 +820,7 @@ mod tests {
 
     #[test_case]
     fn table_layout_and_carve_size_follow_the_capacity_exponent() {
-        let table = table(DomainId(42));
-        assert_eq!(table.owner, DomainId(42));
+        let table = table();
         assert_eq!(table.len(), 0);
         assert_eq!(table.capacity(), CAPACITY);
         assert_eq!(table.size_bits(), SIZE_BITS);
@@ -908,13 +895,12 @@ mod tests {
             let (base, table) = unsafe {
                 let ptr = (&raw mut LAYOUT_BACKING.0).cast::<u8>();
                 core::ptr::write_bytes(ptr, 0xA5, 17_504);
-                let id = KeyTable::initialize(ptr, DomainId(42), bits);
+                let id = KeyTable::initialize(ptr, bits);
                 assert_eq!(id.address, ptr as u64);
                 (ptr as usize, &mut *KeyTable::at_carve(id.address))
             };
             assert_eq!(base % 32, 0);
             assert_eq!(core::ptr::from_ref(table) as usize - base, 32);
-            assert_eq!(table.owner(), DomainId(42));
             assert_eq!(table.len(), 0);
             assert_eq!(table.size_bits(), bits);
             assert_eq!(table.capacity(), capacity);
@@ -981,14 +967,13 @@ mod tests {
                 )
             };
             assert!(untouched.iter().all(|byte| *byte == 0xA5));
-            assert_eq!(table.owner(), DomainId(42));
             assert_eq!(table.size_bits(), bits);
         }
     }
 
     #[test_case]
     fn null_installation_is_atomic_in_every_slot_state() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         for index in 0..CAPACITY {
             let slot = slot(index);
             reject_install(&mut table, slot, KeyEntry::null(), CapError::NullCapability);
@@ -1006,7 +991,7 @@ mod tests {
 
     #[test_case]
     fn out_of_bounds_installation_returns_the_submitted_entry_unchanged() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         let first = install(&mut table, slot(0), frame(7));
         let capacity = u32::try_from(CAPACITY).unwrap();
         // Include the exact boundary and each high-bit slot alias, not just MAX.
@@ -1041,7 +1026,7 @@ mod tests {
 
     #[test_case]
     fn occupied_installation_preserves_both_entries_and_all_counters() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         for index in 0..CAPACITY {
             let slot = slot(index);
             assert_eq!(install(&mut table, slot, frame(slot.0 + 1)), key(slot, 1));
@@ -1075,7 +1060,7 @@ mod tests {
 
     #[test_case]
     fn lookup_and_remove_use_canonical_validation_precedence() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         let capacity = u32::try_from(CAPACITY).unwrap();
         for value in [0, capacity - 1, capacity, u32::MAX] {
             let bad = RawKey::new(KeySlot(value), 0);
@@ -1155,7 +1140,7 @@ mod tests {
 
     #[test_case]
     fn same_type_replacement_rejects_stale_removal_without_consuming_incarnations() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         let slot = slot(CAPACITY - 1);
         let first = install(&mut table, slot, frame(7));
         let returned = reject_install(&mut table, slot, frame(99), CapError::SlotOccupied(slot));
@@ -1200,7 +1185,7 @@ mod tests {
 
     #[test_case]
     fn exhaustion_is_slot_local_and_the_final_live_key_remains_usable_and_removable() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         let exhausted = slot(0);
         table.set_incarnation(0, u32::MAX - 1);
         let previous = key(exhausted, u32::MAX - 1);
@@ -1260,7 +1245,7 @@ mod tests {
             submitted,
             CapError::KeySlotExhausted(exhausted),
         );
-        assert_eq!(CapError::KeySlotExhausted(exhausted).code(), (28, 0, 0));
+        assert_eq!(CapError::KeySlotExhausted(exhausted).code(), (29, 0, 0));
         let other = install(&mut table, slot(1), returned);
         assert_eq!(other, key(slot(1), 1));
         assert_eq!(table.len(), 1);
@@ -1287,7 +1272,7 @@ mod tests {
 
     #[test_case]
     fn full_capacity_count_and_cleanup_follow_the_arrays_without_wrapping() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         for incarnation in [1, 2] {
             for index in 0..CAPACITY {
                 let slot = slot(index);
@@ -1319,7 +1304,7 @@ mod tests {
 
     #[test_case]
     fn guard_mismatch_rejects_keys_minted_for_another_table() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         let installed = install(&mut table, slot(5), frame(7));
         // The minted key carries the table's guard above the index.
         assert_eq!(installed.slot().0, (GUARD << SIZE_BITS) | 5);
@@ -1362,7 +1347,7 @@ mod tests {
         // test, is 32-byte aligned, and covers the full carve size.
         let table = unsafe {
             let ptr = (&raw mut SMALL_BACKING.0).cast::<u8>();
-            let id = KeyTable::initialize(ptr, DomainId(7), SMALL_BITS);
+            let id = KeyTable::initialize(ptr, SMALL_BITS);
             &mut *KeyTable::at_carve(id.address)
         };
         assert_eq!(table.capacity(), 4);
@@ -1399,7 +1384,7 @@ mod tests {
 
     #[test_case]
     fn self_table_capability_reads_the_well_known_slot() {
-        let mut table = table(DomainId(42));
+        let mut table = table();
         // Absent: the well-known slot is vacant.
         assert_eq!(table.self_table_capability(), None);
         // Wrong kind: a non-KeyTable entry does not anchor invocation.

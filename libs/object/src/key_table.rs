@@ -129,7 +129,7 @@ impl KeyTableKey {
         self.key.raw()
     }
 
-    // This naturally supports cross-domain derivation:
+    // This naturally supports cross-AddressSpace derivation:
     // "Create a read-only view of my buffer in their cspace"
     // derive(&my_captbl, buffer_slot, &their_captbl, their_slot, Rights::READ)?;
     /// Copy with derivation in single syscall
@@ -232,7 +232,7 @@ impl KeyTableKey {
         decode_syscall_result(result).map(|_| ())
     }
 
-    // User code to copy cap to another domain (if you have their captbl cap):
+    // User code to copy cap to another AddressSpace (if you have its KeyTable cap):
     /// Implementation status: retains the provisional all-rights request; no
     /// authority amplification policy is implied before the rights matrix settles.
     ///

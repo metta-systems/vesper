@@ -911,7 +911,7 @@ pub fn run() {
 
     // Alias policy: the derived capability names the same physical frame
     // the original maps at 0x1000_0000. Mapping it at a second virtual
-    // address in the same Domain is rejected whatever capability carries
+    // address in the same AddressSpace is rejected whatever capability carries
     // it; the error names the conflicting live mapping's physical base.
     assert!(matches!(
         FrameKey::from_key(derived_frame_key).map(
@@ -961,11 +961,11 @@ pub fn run() {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Domain activation (2026-09-15): install the bound root into
+    // AddressSpace activation (2026-09-15): install the bound root into
     // TTBR0_EL1 with the bound ASID, making the carved tables the live
     // hardware translation context for the low half. The kernel executes
     // through the TTBR1 high map, so kernel code keeps running unchanged
-    // while the Domain's context is installed.
+    // while the AddressSpace's context is installed.
     // ─────────────────────────────────────────────────────────────────
 
     // Distinct marker contents: the original frame carries one magic
@@ -1001,7 +1001,7 @@ pub fn run() {
     // TTBR0 page exists to test map_page's TTBR0 branch.
     let read_leaf = translation::read_leaf;
 
-    // A real Domain's address space contains its own image and stack by
+    // A real AddressSpace contains its own image and stack by
     // construction, and the bootstrap caller is no exception. Its stack
     // sits below the image base at 0x80000; the linked image extends beyond
     // the 2 MiB boundary. Both were mapped before the first handoff using
@@ -1170,7 +1170,7 @@ pub fn run() {
     // disposable test mappings and their now-empty L3 are torn down.
 
     // With the original unmapped, the physical extent is free in this
-    // Domain again: the derived capability now maps at the second address,
+    // AddressSpace again: the derived capability now maps at the second address,
     // proving the policy tracks live physical mappings, not capability
     // identity. The 2 MiB block remains mapped and disjoint, so the overlap
     // walk must not reject the unrelated extent.

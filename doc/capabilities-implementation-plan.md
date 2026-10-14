@@ -100,9 +100,8 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 
 ### Scheduler-shared records (D5)
 
-- [ ] Remove `DcbPages`/`DcbView`, the global DCB view, `libs/object/src/domain.rs` and the duplicated `USER_BASE`/`MAX_DOMAINS` constants; replace them with scheduler-owned shared records behind shared constants and size/offset assertions.
 - [ ] Implement `Scheduler.ShareRegion` across shared ABI, wrapper, dispatch and object state: one already scheduler-mapped Frame per call, reject conflicting re-share, check Scheduler and Frame authority.
-- [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private.
+- [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private. `ThreadKey::state`, `time_used_ns` and `pending_notifications` (`libs/object/src/thread.rs`, `unimplemented!()` today) read these records.
 - [ ] Implement hierarchical Scheduler derivation, root-only Thread creation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
 - [ ] Move notification and block-reason accounting into the shared records, with event-summary indexing and Thread-retirement cleanup.
 - [ ] Test scheduler/Frame authority, mapped and unmapped ShareRegion inputs, re-share rejection, stride placement, identity reuse, tree constraints, root creation/donation, publication/reuse and Thread teardown; run target checks for record access and kernel-private state isolation.
@@ -174,6 +173,5 @@ Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduli
 - [ ] Replace the temporary `aarch64-cpu` git dependency on its `main` branch (`CPTR_EL2` trap fields, `PMUSERENR_EL0`) with the released version once published.
 - [ ] Retire the legacy kernel-era driver stack in `libs/platform`: `device_driver/bcm/{pl011_uart,gpio,mini_uart}.rs`, `interrupt_controller/` and `raspberrypi/drivers.rs` (the driver manager that instantiates them). The kernel no longer uses them (the PL011 and interrupt controller are EL0 and privileged components), but `bin/chainboot` (its serial console and kernel download) and the QEMU device-test console (`libmachine` through `drivers::qemu_bring_up_console`) still do; replace those two uses first.
 - [ ] Harden the boot linear map: exclude kernel-image physical memory and replace blanket init RWX with per-segment permissions.
-- [ ] Finish the `Domain` → `Thread`/`AddressSpace` rename in code (`CapError::InvalidDomain`, `DomainState` and the DCB types go with the D5 record replacement).
 - [ ] Audit every wrapper against dispatch for false success or undocumented stubs, and run the full ABI, target-build and QEMU suites; record unavailable validation separately.
 - [ ] After correctness is established, measure memory and performance costs and do a separate optimization pass without weakening the contracts.

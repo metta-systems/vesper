@@ -53,7 +53,7 @@ fn call_success_keeps_both_full_width_result_words() {
 
 #[test]
 fn call_rejections_decode_through_the_shared_decoder() {
-    let (result, _) = call((32, 0x1800_0ff8, 10));
+    let (result, _) = call((33, 0x1800_0ff8, 10));
     assert!(matches!(
         result,
         Err(CapError::InvalidStack {
@@ -61,9 +61,9 @@ fn call_rejections_decode_through_the_shared_decoder() {
             reason: InvalidStackReason::SpMisaligned
         })
     ));
-    let (result, _) = call((33, INVOCATION_STACK_DEPTH as u64, 0));
+    let (result, _) = call((34, INVOCATION_STACK_DEPTH as u64, 0));
     assert!(matches!(result, Err(CapError::NestingDepth { count: 16 })));
-    let (result, _) = call((8, 0, 0));
+    let (result, _) = call((9, 0, 0));
     assert!(matches!(result, Err(CapError::InvalidOperation)));
     let (result, _) = call((0x99, 1, 2));
     assert!(matches!(result, Err(CapError::UnknownResponse { .. })));
@@ -124,13 +124,13 @@ fn call_with_key_submits_both_keys_six_inputs_and_target_sp_unchanged() {
 
 #[test]
 fn call_with_key_rejections_decode_through_the_shared_decoder() {
-    let (result, _) = call_with_key((38, 0, 0));
-    assert!(matches!(result, Err(CapError::KeyNotAccepted)));
     let (result, _) = call_with_key((39, 0, 0));
+    assert!(matches!(result, Err(CapError::KeyNotAccepted)));
+    let (result, _) = call_with_key((40, 0, 0));
     assert!(matches!(result, Err(CapError::NoPlacementSlot)));
-    let (result, _) = call_with_key((5, 0, 0));
+    let (result, _) = call_with_key((6, 0, 0));
     assert!(matches!(result, Err(CapError::InsufficientRights)));
-    let (result, _) = call_with_key((33, INVOCATION_STACK_DEPTH as u64, 0));
+    let (result, _) = call_with_key((34, INVOCATION_STACK_DEPTH as u64, 0));
     assert!(matches!(result, Err(CapError::NestingDepth { count: 16 })));
 }
 

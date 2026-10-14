@@ -240,7 +240,7 @@ impl<A: ArchObjects> Nucleus<A> {
     ) -> Result<CallerTable, CapError> {
         let binding = access
             .resolve_object::<A::AddressSpace>(address_space)
-            .map_err(|_invalid_address_space| CapError::InvalidDomain)?
+            .map_err(|_invalid_address_space| CapError::InvalidAddressSpace)?
             .keytable()
             .ok_or(CapError::NotBound)?;
         let no_context = || CapError::InvalidSelfReference {
@@ -298,7 +298,7 @@ impl<A: ArchObjects> Nucleus<A> {
         lend: Option<LendRequest>,
     ) -> Result<PreparedCall, CapError> {
         if !execution_origin(saved.origin) {
-            return Err(CapError::InvalidDomain);
+            return Err(CapError::InvalidThread);
         }
         let source_thread = self.current_thread_id()?;
         let source = self.current_thread_ref()?;
@@ -481,7 +481,7 @@ impl<A: ArchObjects> Nucleus<A> {
         access: &Access,
         prepared: PreparedCall,
     ) -> Result<CommittedCall, CapError> {
-        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
+        let current = self.current_thread.ok_or(CapError::InvalidThread)?;
         let source_thread = prepared.source_thread;
         if source_thread != current {
             return Err(CapError::InvalidOperation);
@@ -730,7 +730,7 @@ impl<A: ArchObjects> Nucleus<A> {
         saved: &SavedContext,
     ) -> Result<PreparedReturn, ReturnRejection> {
         if !execution_origin(saved.origin) {
-            return Err(CapError::InvalidDomain.into());
+            return Err(CapError::InvalidThread.into());
         }
         let source_thread = self.current_thread_id()?;
         let thread = self.current_thread_ref()?;
@@ -767,7 +767,7 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Per-call time attribution from the record's stamp stays inert until
     /// the Time subsystem exists.
     pub fn commit_return(&mut self, prepared: PreparedReturn) -> Result<CommittedReturn, CapError> {
-        let current = self.current_thread.ok_or(CapError::InvalidDomain)?;
+        let current = self.current_thread.ok_or(CapError::InvalidThread)?;
         let source_thread = prepared.source_thread;
         if source_thread != current {
             return Err(CapError::InvalidOperation);

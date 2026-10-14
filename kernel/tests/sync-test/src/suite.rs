@@ -25,7 +25,6 @@ use {
     libobject::{
         CapError, EventCountKey, InconsistencyReason, KeySlot, KeyTableKey, NotificationKey,
         ObjectType, RawKey, Rights, TimeKey, UntypedKey,
-        domain::DomainId,
         thread::ThreadKey,
         time::{DEFAULT_PRIORITY, HIGHEST_PRIORITY, INFINITE_BUDGET, LOWEST_PRIORITY, TimeQuery},
     },
@@ -132,9 +131,9 @@ pub fn run() {
     // Wait tests follow complete source/Bounce provisioning below, so even
     // the already-satisfied/rejected waits enter from the bound source root.
 
-    // N1: the notification the boot domain blocks on. N2: the one
+    // N1: the notification the boot Thread blocks on. N2: the one
     // Bounce parks on between its rounds. EC: the event count whose
-    // awaits the boot domain blocks on and Bounce advances. All carved
+    // awaits the boot Thread blocks on and Bounce advances. All carved
     // through the public Retype path.
     let n1_key = untyped
         .retype(
@@ -239,8 +238,8 @@ pub fn run() {
     );
 
     // A wait that would block now blocks for real (completion foundation,
-    // 2026-09-16): the end-to-end proof below parks the boot domain and
-    // resumes it through the Bounce fixture domain. A finite timeout is
+    // 2026-09-16): the end-to-end proof below parks the boot Thread and
+    // resumes it through the Bounce fixture Thread. A finite timeout is
     // still rejected: the time subsystem does not exist yet.
     assert!(matches!(
         notification.wait(1_000_000),
@@ -268,7 +267,7 @@ pub fn run() {
     let first_bounce_parked = {
         let bounce = nucleus
             .thread(bounce_id)
-            .unwrap_or_else(|| panic!("Bounce Domain missing"));
+            .unwrap_or_else(|| panic!("Bounce Thread missing"));
         assert_bounce_parked_context(bounce, bounce_stack_bottom, bounce_stack_top);
         assert_eq!(bounce.address_space, bounce_as_id);
         assert_eq!(
@@ -362,7 +361,7 @@ pub fn run() {
 
     // Blocking Await end-to-end: request Bounce's +3 advance by
     // signaling N2 (bit 0), then block on target 10. Bounce advances the
-    // counter, this domain's record completes with the new value, and
+    // counter, this Thread's record completes with the new value, and
     // Bounce parks again.
     NotificationKey::from_key(n2_key)
         .signal(0b1)
@@ -413,12 +412,12 @@ pub fn run() {
     translation::observe_source();
     translation::assert_rounds();
     assert_eq!(fixture_stack_state(), (boot_execution_sp, shared_trap_sp));
-    // Bounce is parked on N2 for good; the boot domain resumed with the
+    // Bounce is parked on N2 for good; the boot Thread resumed with the
     // error completion.
     {
         let bounce = nucleus
             .thread(bounce_id)
-            .unwrap_or_else(|| panic!("Bounce Domain missing"));
+            .unwrap_or_else(|| panic!("Bounce Thread missing"));
         assert_bounce_parked_context(bounce, bounce_stack_bottom, bounce_stack_top);
     }
 
@@ -433,7 +432,7 @@ pub fn run() {
         // teardown state of a blocked Thread.
         let ExecutionContext::Parked { saved, record } = nucleus
             .thread(bounce_id)
-            .unwrap_or_else(|| panic!("Bounce Domain missing"))
+            .unwrap_or_else(|| panic!("Bounce Thread missing"))
             .context
         else {
             panic!("Bounce is not parked")
@@ -479,7 +478,7 @@ pub fn run() {
         // Authority is explicit: a capability without `RETIRE` is
         // rejected before any teardown effect — Bounce stays parked.
         assert!(matches!(
-            ThreadKey::from_key(unprivileged_bounce_key, DomainId(1)).retire(),
+            ThreadKey::from_key(unprivileged_bounce_key).retire(),
             Err(CapError::InsufficientRights)
         ));
         assert_eq!(
@@ -494,7 +493,7 @@ pub fn run() {
         // invoked key.
         let boot_thread_key = boot_key(50, 1);
         assert!(matches!(
-            ThreadKey::from_key(boot_thread_key, DomainId(0)).retire(),
+            ThreadKey::from_key(boot_thread_key).retire(),
             Err(CapError::InvalidOperation)
         ));
         assert_eq!(
@@ -513,7 +512,7 @@ pub fn run() {
 
         // Retire Bounce through the real SVC path: the parked record is
         // cancelled and released, and no queued wakeup survives.
-        ThreadKey::from_key(bounce_thread_key, DomainId(1))
+        ThreadKey::from_key(bounce_thread_key)
             .retire()
             .unwrap_or_else(|error| panic!("Bounce Retire failed: {:?}", error.code()));
         assert!(nucleus.pending.is_empty());
@@ -554,7 +553,7 @@ pub fn run() {
         // Its capability still passes key lookup, but names a retired
         // object: Retire reports that against the invoked key.
         assert_eq!(
-            ThreadKey::from_key(bounce_thread_key, DomainId(1))
+            ThreadKey::from_key(bounce_thread_key)
                 .retire()
                 .map_err(CapError::code),
             Err(CapError::InconsistentKey {
@@ -595,7 +594,7 @@ pub fn run() {
             .code()
         };
         assert_eq!(
-            ThreadKey::from_key(bounce_thread_key, DomainId(1))
+            ThreadKey::from_key(bounce_thread_key)
                 .retire()
                 .map_err(CapError::code),
             Err(deleted(0))
@@ -638,21 +637,21 @@ fn assert_bounce_parked_context(thread: &Thread, stack_bottom: u64, stack_top: u
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Bounce fixture domain (completion foundation, 2026-09-16)
+// Bounce fixture Thread (completion foundation, 2026-09-16)
 // ─────────────────────────────────────────────────────────────────────
 
-/// The bits Bounce delivers to the blocked boot domain.
+/// The bits Bounce delivers to the blocked boot Thread.
 const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 
-/// The Bounce fixture domain's entry (N4-A, 2026-09-16): a second EL1
-/// execution context that unlocks the first blocked domain for testing.
+/// The Bounce fixture Thread's entry (N4-A, 2026-09-16): a second EL1
+/// execution context that unlocks the first blocked Thread for testing.
 ///
-/// Bounce first signals the notification the boot domain is blocked on
+/// Bounce first signals the notification the boot Thread is blocked on
 /// (waking it). It then serves one `EventCount` advance per N2 trigger:
 /// trigger bit 0 requests a plain +3 advance, trigger bit 1 an overflowing
 /// one (which completes waiters with the shared `CounterOverflow` error,
 /// 2026-09-18). After two rounds it parks forever on N2 — nothing ever
-/// signals it again, so the scheduler resumes the boot domain.
+/// signals it again, so the scheduler resumes the boot Thread.
 /// Bootstrap-era fixture mechanism, not the Phase 7 Activate contract: no
 /// budget, no EL0 entry, no legal-transition enforcement beyond what this
 /// path exercises.
@@ -682,7 +681,7 @@ extern "C" fn bounce_entry() -> ! {
         assert_eq!(fixture_stack_state(), initial_stack_state);
         translation::observe_bounce();
         let result = match trigger {
-            // A plain +3 advance that satisfies the boot domain's target.
+            // A plain +3 advance that satisfies the boot Thread's target.
             0b1 => ec.advance(3),
             // The overflowing advance: it completes waiters with the shared
             // error and leaves the counter unchanged (selected 2026-09-18).
@@ -701,7 +700,7 @@ extern "C" fn bounce_entry() -> ! {
         }
     }
     // Park forever: this wait blocks, so the scheduler resumes the boot
-    // domain. Reaching either arm below is a fixture failure.
+    // Thread. Reaching either arm below is a fixture failure.
     match translation::notification_wait(n2_key) {
         Ok(bits) => panic!("Bounce: unexpected wakeup with bits {bits:#x}"),
         Err(error) => panic!("Bounce: Notification.Wait failed: {:?}", error.code()),

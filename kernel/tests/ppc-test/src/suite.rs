@@ -77,7 +77,7 @@ fn assert_invalid_stack(
         "wrong stack diagnostic: {:?}",
         error.code()
     );
-    assert_eq!(error.code(), (32, value, reason_id));
+    assert_eq!(error.code(), (33, value, reason_id));
 }
 
 /// Snapshot only initialized semantic fields, never union padding. Checked
@@ -375,7 +375,7 @@ pub fn run() {
                     stack[2]
                 ]
             ),
-            (32, value, reason_id)
+            (33, value, reason_id)
         );
         assert_eq!(
             invocation_destination_state(keytable_addr, invocation_key, KeySlot(63)),

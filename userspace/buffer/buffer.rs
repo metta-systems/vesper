@@ -33,7 +33,7 @@ impl Permission for ReadOnly {}
 impl Permission for ReadWrite {}
 
 impl<P: Permission> BufferKey<P> {
-    /// Map buffer into current domain's address space.
+    /// Map buffer into the current AddressSpace.
     ///
     /// # Arguments
     /// * `hint` - Optional preferred virtual address (kernel may ignore)
@@ -61,7 +61,7 @@ impl<P: Permission> BufferKey<P> {
         }
     }
 
-    /// Unmap buffer from current domain's address space.
+    /// Unmap buffer from the current AddressSpace.
     pub fn unmap(&self) -> Result<(), Error> {
         let ret = unsafe { protected_call1(self.key.slot as u64, BufferOp::Unmap as u64, 0) };
         Error::from_code(ret)

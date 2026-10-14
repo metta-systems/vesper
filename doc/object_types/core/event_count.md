@@ -22,7 +22,7 @@ An EventCount is a 64-bit counter that only increases. Producers advance it; con
 
 ### Advance
 
-Adds `x2` (nonzero) to the counter and wakes every Thread waiting for a target the new value has reached. If the sum would exceed `u64::MAX`, Advance fails with `CounterOverflow` (status 31), the counter stays unchanged, and every waiting Thread also resumes with `CounterOverflow`.
+Adds `x2` (nonzero) to the counter and wakes every Thread waiting for a target the new value has reached. If the sum would exceed `u64::MAX`, Advance fails with `CounterOverflow` (status 32), the counter stays unchanged, and every waiting Thread also resumes with `CounterOverflow`.
 
 ### Await
 

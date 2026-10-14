@@ -112,9 +112,9 @@ enum FrameType {}
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FrameOp {
-    /// Map the frame into a target Domain's translation context at a virtual
-    /// address. Bootstrap-era schema: the explicit target Domain capability
-    /// exists so an authorized builder can populate a Domain's address space
+    /// Map the frame into a target `AddressSpace`'s translation context at a virtual
+    /// address. Bootstrap-era schema: the explicit target `AddressSpace` capability
+    /// exists so an authorized builder can populate an `AddressSpace`
     /// before it runs; self-context mapping is the intended ordinary path once
     /// syscall caller identity exists.
     Map = 0,
@@ -176,16 +176,16 @@ impl FrameKey {
         self.key.raw()
     }
 
-    /// Map this frame into the target Domain's translation context at `vaddr`.
+    /// Map this frame into the target `AddressSpace`'s translation context at `vaddr`.
     ///
-    /// Wire schema (selected 2026-09-15): `x2` target `Domain` key, `x3` virtual
+    /// Wire schema (selected 2026-09-15): `x2` target `AddressSpace` key, `x3` virtual
     /// address, `x4` requested rights, `x5` the memory [`FrameAttribute`],
     /// `x6..x7` zero. The requested rights must be a subset of the frame
     /// capability's rights, and the attribute within the Frame's ceiling. The
     /// walk requires every intermediate page table to be present.
     pub fn map(
         &self,
-        domain: RawKey,
+        address_space: RawKey,
         vaddr: u64,
         rights: Rights,
         attribute: FrameAttribute,
@@ -195,7 +195,7 @@ impl FrameKey {
             protected_call6(
                 self.key.to_wire(),
                 FrameOp::Map as u64,
-                domain.to_wire(),
+                address_space.to_wire(),
                 vaddr,
                 u64::from(rights.bits()),
                 u64::from(attribute.code()),

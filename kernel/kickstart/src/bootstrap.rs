@@ -30,7 +30,6 @@ use {
     libmapping::MemAttributes,
     libobject::{
         CapError, FrameAttribute, KeySlot, ObjectType, RawKey, Rights,
-        domain::DomainId,
         time::{Budget, HIGHEST_PRIORITY, INFINITE_BUDGET},
     },
     libqemu::semihosting as semi,
@@ -43,7 +42,6 @@ use {
             arch::ArchPools,
             arch_objects::{AddressSpaceId, bound_address_space},
             carved::{Carved, CarvedId, CarvedObject},
-            domain::DcbPages,
             irq::{IrqLine, IrqTable},
             nucleus::NucleusPools,
             thread::ThreadId,
@@ -109,12 +107,11 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     // Untyped's unused watermark range at the table's 32-byte alignment, and
     // the direct map makes the bytes kernel-dereferenceable.
     unsafe {
-        KeyTable::initialize(keytable_ptr, DomainId(0), BOOT_TABLE_SIZE_BITS);
+        KeyTable::initialize(keytable_ptr, BOOT_TABLE_SIZE_BITS);
     }
 
     let nucleus = Nucleus::<A> {
         current_thread: None,
-        dcb_pages: DcbPages::new(),
         pending: PendingPool::new(),
         run_queue: RunQueue::new(),
         idle_thread: None,

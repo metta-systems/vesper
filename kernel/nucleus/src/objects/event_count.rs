@@ -2,7 +2,7 @@
 //! waits (Phase 6 vertical, 2026-09-18).
 //!
 //! Realizes the excluded sketch's intent — a monotonically increasing
-//! counter with domains waiting for `value >= target` — on the completion
+//! counter with Threads waiting for `value >= target` — on the completion
 //! foundation's pending-invocation records. Unlike Notification's
 //! one-consumer delivery, an advance completes *every* queued `Await` whose
 //! target the new value satisfies: readers hold independent positions and
@@ -92,7 +92,7 @@ impl AwaitQueue {
         Some(entry)
     }
 
-    /// Remove every queued record naming `waiter` (domain-teardown
+    /// Remove every queued record naming `waiter` (Thread-teardown
     /// cancellation), preserving the FIFO order of the remaining awaits.
     ///
     /// As `WaitQueue::remove_waiter`: the queue holds record identities, the
@@ -337,11 +337,11 @@ impl EventCount {
         Ok(())
     }
 
-    /// Domain-teardown cancellation: stop holding the torn-down `waiter`'s
+    /// Thread-teardown cancellation: stop holding the torn-down `waiter`'s
     /// queued awaits, preserving the FIFO order of the remaining waiters.
     ///
     /// Distinct from object teardown ([`Self::cancel_waiters`]): the
-    /// waiter's Domain is going away, so its records are cancelled and
+    /// waiter's Thread is going away, so its records are cancelled and
     /// released by the pending-pool teardown sweep
     /// (`PendingPool::teardown_waiter`) instead of being left terminal for a
     /// resume that never happens. Returns how many of the waiter's records
@@ -633,7 +633,7 @@ mod tests {
     }
 
     #[test_case]
-    fn domain_teardown_unqueues_only_the_torn_down_waiter() {
+    fn thread_teardown_unqueues_only_the_torn_down_waiter() {
         let mut pending = PendingPool::new();
         let mut event_count = EventCount::new();
 
@@ -642,7 +642,7 @@ mod tests {
         let gone = block_waiter(&mut event_count, &mut pending, 0, 5);
         let survivor = block_waiter(&mut event_count, &mut pending, 1, 10);
 
-        // Unqueue the torn-down Domain's await; the sweep (not the object)
+        // Unqueue the torn-down Thread's await; the sweep (not the object)
         // gives it its terminal transition and releases it.
         assert_eq!(event_count.remove_waiter(waiter(0), &pending), 1);
         assert_eq!(pending.teardown_waiter(waiter(0)).ok(), Some(1));
@@ -656,7 +656,7 @@ mod tests {
         let outcome = event_count
             .advance(10, &mut pending)
             .ok()
-            .expect("advance after domain teardown failed");
+            .expect("advance after Thread teardown failed");
         assert_woken(&outcome, &[survivor]);
         assert_eq!(
             pending.state(survivor).ok(),
@@ -667,7 +667,7 @@ mod tests {
             })
         );
 
-        // A Domain with nothing queued removes nothing.
+        // A Thread with nothing queued removes nothing.
         assert_eq!(event_count.remove_waiter(waiter(0), &pending), 0);
     }
 

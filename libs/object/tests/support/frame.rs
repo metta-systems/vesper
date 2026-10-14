@@ -143,18 +143,18 @@ fn frame_unmap_preserves_request_encoding_and_accepts_success() {
 #[test]
 fn frame_wrappers_preserve_kernel_errors() {
     assert!(matches!(
-        invoke_map((7, 0, 0)),
+        invoke_map((8, 0, 0)),
         Err(CapError::AlreadyMapped)
     ));
     assert!(matches!(
-        invoke_map((29, 0x2000_0000, 0)),
+        invoke_map((30, 0x2000_0000, 0)),
         Err(CapError::MissingIntermediate { vaddr: 0x2000_0000 })
     ));
     assert!(matches!(
-        invoke_map((30, 0x0040_0000, 0)),
+        invoke_map((31, 0x0040_0000, 0)),
         Err(CapError::PhysicalAlias { paddr: 0x0040_0000 })
     ));
-    assert!(matches!(invoke_unmap((6, 0, 0)), Err(CapError::NotMapped)));
+    assert!(matches!(invoke_unmap((7, 0, 0)), Err(CapError::NotMapped)));
     assert!(matches!(
         invoke_map((u64::MAX, 42, 99)),
         Err(CapError::UnknownResponse { .. })
@@ -200,11 +200,11 @@ fn frame_cache_maintenance_preserves_request_encoding() {
 #[test]
 fn frame_cache_maintenance_preserves_kernel_errors() {
     assert!(matches!(
-        invoke_cache((8, 0, 0), FrameKey::clean_data),
+        invoke_cache((9, 0, 0), FrameKey::clean_data),
         Err(CapError::InvalidOperation)
     ));
     assert!(matches!(
-        invoke_cache((5, 0, 0), FrameKey::invalidate_data),
+        invoke_cache((6, 0, 0), FrameKey::invalidate_data),
         Err(CapError::InsufficientRights)
     ));
 }

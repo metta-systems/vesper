@@ -75,7 +75,7 @@ fn rejected_return_hands_exact_diagnostics_and_original_words_to_the_handler() {
         reason: InconsistencyReason::SlotIncarnationMismatch,
         operand: 0,
     };
-    let expected = (27, stale.to_wire(), 1);
+    let expected = (28, stale.to_wire(), 1);
     let result = PpcResult {
         r0: 0xAAAA,
         r1: 0xBBBB,
@@ -97,7 +97,7 @@ fn unexpected_local_success_reaches_the_handler_with_original_words() {
             word2: 0xBEEF,
         },
     );
-    assert_eq!(handoff, (34, 0xDEAD, 0xBEEF, 7, 8));
+    assert_eq!(handoff, (35, 0xDEAD, 0xBEEF, 7, 8));
 }
 
 #[test]

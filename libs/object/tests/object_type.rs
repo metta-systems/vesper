@@ -1,6 +1,6 @@
 use vesper_objects::{
     CapError, Key, KeySlot, KeyTableKey, ObjectType, PlacementWindow, RawKey, Rights,
-    decode_syscall_result, domain, thread,
+    decode_syscall_result, thread,
 };
 
 // The wrapper modules below name `crate::FrameAttribute`, as in the library.
@@ -15,8 +15,7 @@ mod cap_error;
 #[path = "support/key_identity.rs"]
 mod key_identity;
 
-// Compile the actual wrapper methods with a test-only transport. DCB accessors
-// remain uncalled: constructing a test handle does not establish a user mapping.
+// Compile the actual wrapper methods with a test-only transport.
 #[cfg(test)]
 #[path = "../src/asid_pool.rs"]
 pub mod asid_pool_client;
@@ -809,18 +808,18 @@ mod tests {
                     .iter()
                     .find(|entry| entry.2 == raw)
                     .map(|entry| entry.0)
-                    .ok_or((15, u64::from(raw), 0))
+                    .ok_or((16, u64::from(raw), 0))
             } else {
-                Err((14, u64::from(raw), 0))
+                Err((15, u64::from(raw), 0))
             };
             let expected_arch = if raw >= 0x80 {
                 ARCH_TYPES
                     .iter()
                     .find(|entry| entry.3 == raw)
                     .map(|entry| entry.0)
-                    .ok_or((18, u64::from(raw & 0x7f), 0))
+                    .ok_or((19, u64::from(raw & 0x7f), 0))
             } else {
-                Err((17, u64::from(raw), 0))
+                Err((18, u64::from(raw), 0))
             };
 
             assert_eq!(
@@ -843,12 +842,12 @@ mod tests {
                 .iter()
                 .find(|entry| entry.2 == raw)
                 .map(|entry| entry.0)
-                .ok_or((15, u64::from(raw), 0));
+                .ok_or((16, u64::from(raw), 0));
             let expected_arch = ARCH_TYPES
                 .iter()
                 .find(|entry| entry.2 == raw)
                 .map(|entry| entry.0)
-                .ok_or((18, u64::from(raw), 0));
+                .ok_or((19, u64::from(raw), 0));
 
             assert_eq!(
                 CoreType::try_from(raw).map_err(CapError::code),
@@ -899,18 +898,18 @@ mod tests {
         for raw in u8::MIN..=u8::MAX {
             let object = ObjectType::from(raw);
             let payload = u64::from(raw);
-            assert_eq!(CapError::NotCoreType(object).code(), (14, payload, 0));
-            assert_eq!(CapError::UnknownCoreType(raw).code(), (15, payload, 0));
-            assert_eq!(CapError::NotArchType(object).code(), (17, payload, 0));
-            assert_eq!(CapError::UnknownArchType(raw).code(), (18, payload, 0));
-            assert_eq!(CapError::InvalidObjectType(object).code(), (20, payload, 0));
+            assert_eq!(CapError::NotCoreType(object).code(), (15, payload, 0));
+            assert_eq!(CapError::UnknownCoreType(raw).code(), (16, payload, 0));
+            assert_eq!(CapError::NotArchType(object).code(), (18, payload, 0));
+            assert_eq!(CapError::UnknownArchType(raw).code(), (19, payload, 0));
+            assert_eq!(CapError::InvalidObjectType(object).code(), (21, payload, 0));
             assert_eq!(
                 CapError::TypeMismatch {
                     expected: object,
                     found: ObjectType::FRAME,
                 }
                 .code(),
-                (21, payload, 0x80)
+                (22, payload, 0x80)
             );
             assert_eq!(
                 CapError::TypeMismatch {
@@ -918,7 +917,7 @@ mod tests {
                     found: object,
                 }
                 .code(),
-                (21, 0x80, payload)
+                (22, 0x80, payload)
             );
         }
     }
@@ -928,14 +927,14 @@ mod tests {
         for (kind, _, index) in CORE_TYPES {
             assert_eq!(
                 CapError::UnsupportedCoreType(kind).code(),
-                (16, u64::from(index), 0),
+                (17, u64::from(index), 0),
                 "{kind:?}"
             );
         }
         for (kind, _, index, _) in ARCH_TYPES {
             assert_eq!(
                 CapError::UnsupportedArchType(kind).code(),
-                (19, u64::from(index), 0),
+                (20, u64::from(index), 0),
                 "{kind:?}"
             );
         }
@@ -951,7 +950,7 @@ mod tests {
                         found: arch,
                     }
                     .code(),
-                    (21, u64::from(core_wire), u64::from(arch_wire))
+                    (22, u64::from(core_wire), u64::from(arch_wire))
                 );
                 assert_eq!(
                     CapError::TypeMismatch {
@@ -959,7 +958,7 @@ mod tests {
                         found: core,
                     }
                     .code(),
-                    (21, u64::from(arch_wire), u64::from(core_wire))
+                    (22, u64::from(arch_wire), u64::from(core_wire))
                 );
             }
         }

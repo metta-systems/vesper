@@ -40,7 +40,7 @@ The key is the same for every Thread in the AddressSpace: `ThreadReturnKey::prov
 
 The two faults are reported at the Return's `svc` through [fault delivery](#fault-delivery); the call is not ended.
 
-`ThreadReturnKey::return_from_invocation(r0, r1)` wraps Return. It returns `Result<Infallible, CapError>`: on success it does not return; a rejection is `Err`; a local `Success` status is reported as `CapError::UnexpectedReturn` (status 34).
+`ThreadReturnKey::return_from_invocation(r0, r1)` wraps Return. It returns `Result<Infallible, CapError>`: on success it does not return; a rejection is `Err`; a local `Success` status is reported as `CapError::UnexpectedReturn` (status 35).
 
 ### Retire
 

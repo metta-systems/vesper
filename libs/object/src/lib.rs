@@ -4,7 +4,6 @@
 pub mod address_space;
 pub mod asid_pool;
 pub mod debug_console;
-pub mod domain;
 pub mod event_count;
 pub mod export;
 pub mod fault;
@@ -64,7 +63,8 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
         Some(match (status.get(), detail1, detail2) {
             (code::UNKNOWN, 0, 0) => CapError::Unknown,
             (code::NULL_CAPABILITY, 0, 0) => CapError::NullCapability,
-            (code::INVALID_DOMAIN, 0, 0) => CapError::InvalidDomain,
+            (code::INVALID_THREAD, 0, 0) => CapError::InvalidThread,
+            (code::INVALID_ADDRESS_SPACE, 0, 0) => CapError::InvalidAddressSpace,
             (code::INVALID_POINTER, 0, 0) => CapError::InvalidPointer,
             (code::INSUFFICIENT_RIGHTS, 0, 0) => CapError::InsufficientRights,
             (code::NOT_MAPPED, 0, 0) => CapError::NotMapped,
@@ -153,7 +153,8 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
 pub enum CapError {
     Unknown,
     NullCapability,
-    InvalidDomain,
+    InvalidThread,
+    InvalidAddressSpace,
     InvalidPointer,
     InsufficientRights,
     NotMapped,
@@ -200,7 +201,7 @@ pub enum CapError {
         vaddr: u64,
     },
     /// The alias policy rejected the mapping: the frame's physical extent
-    /// overlaps a live mapping in the target Domain.
+    /// overlaps a live mapping in the target `AddressSpace`.
     PhysicalAlias {
         /// The physical base of the conflicting live mapping.
         paddr: u64,
@@ -292,7 +293,8 @@ impl CapError {
         match self {
             CapError::Unknown => (code::UNKNOWN, 0, 0),
             CapError::NullCapability => (code::NULL_CAPABILITY, 0, 0),
-            CapError::InvalidDomain => (code::INVALID_DOMAIN, 0, 0),
+            CapError::InvalidThread => (code::INVALID_THREAD, 0, 0),
+            CapError::InvalidAddressSpace => (code::INVALID_ADDRESS_SPACE, 0, 0),
             CapError::InvalidPointer => (code::INVALID_POINTER, 0, 0),
             CapError::InsufficientRights => (code::INSUFFICIENT_RIGHTS, 0, 0),
             CapError::NotMapped => (code::NOT_MAPPED, 0, 0),

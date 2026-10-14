@@ -237,14 +237,11 @@ impl Default for InvocationStack {
 /// Implementation status: the carved `KeyTable` is associated with the
 /// `AddressSpace`, not stored separately in each Thread. It is resolved through
 /// the guarded `Access` context (see `doc/capabilities-design.md` §3).
-/// Placement of its userspace capability in the DCB's fixed slots remains D5.
 /// The fully interrupt-kernel saved-context conversion remains separate work.
 /// Implementation status: this Thread now owns its saved context; trap-frame
 /// capture/restore and the shared per-core stack are entry/backend responsibilities.
 /// The bounded PPC invocation stack is inline below; Call/Return admission
 /// and migration remain separate work.
-///
-/// The `DomainControlBlock` is user-visible and is defined in libobject.
 pub struct Thread {
     // ═══════════════════════════════════════════════════════════
     // PRIVATE SECTION (kernel only, NOT mapped to userspace)

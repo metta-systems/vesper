@@ -94,7 +94,7 @@ fn transfer_encodes_destination_amount_and_priority() {
 
 #[test]
 fn transfer_decodes_insufficient_budget_with_the_remaining_amount() {
-    arm((35, 42, 0));
+    arm((36, 42, 0));
     let error = source_key().transfer(&other_key(), 100, 1).unwrap_err();
     take_request();
     assert!(matches!(
@@ -119,7 +119,7 @@ fn merge_encodes_the_source_key() {
 
 #[test]
 fn transfer_decodes_priority_chain_full() {
-    arm((36, 0, 0));
+    arm((37, 0, 0));
     let error = source_key().transfer(&other_key(), 1, 1).unwrap_err();
     take_request();
     assert!(matches!(error, CapError::PriorityChainFull));

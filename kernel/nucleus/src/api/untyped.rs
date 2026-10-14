@@ -362,7 +362,6 @@ fn retype<A: ArchObjects>(
     // destination slots (in range, vacant, incarnation not exhausted) so the
     // installs below cannot fail.
     let mut dst_table = dst_cap.resolve(access)?;
-    let owner = dst_table.owner();
     let first_slot = u64::from(dst_slot.0);
     for i in 0..u64::from(count) {
         let slot = KeySlot(
@@ -398,7 +397,7 @@ fn retype<A: ArchObjects>(
                 // watermark range, is kernel-private, is exclusively owned by
                 // this invocation, and is aligned to the table's 32-byte
                 // header/entry alignment with room for the full carve.
-                let table = unsafe { KeyTable::initialize(addr, owner, size_bits) };
+                let table = unsafe { KeyTable::initialize(addr, size_bits) };
                 KeyEntry::new_keytable(table, table_guard, size_bits, requested, 0)
             }
             Carve::Frame { bytes } => {

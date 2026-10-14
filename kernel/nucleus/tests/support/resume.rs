@@ -187,7 +187,7 @@ fn resume_rejects_invalid_as_identity_before_consuming_any_state() {
                 },
             };
             nucleus.thread_mut(waits.target).unwrap().address_space = identity;
-            reject_unchanged(nucleus, &waits, CapError::InvalidDomain);
+            reject_unchanged(nucleus, &waits, CapError::InvalidAddressSpace);
         });
     }
 }
@@ -213,7 +213,7 @@ fn resume_rejects_retired_and_reused_as_before_consuming_completed_wait() {
                 assert_ne!(replacement_id, waits.target_as);
                 assert_ne!(replacement_id.address, waits.target_as.address);
             }
-            reject_unchanged(nucleus, &waits, CapError::InvalidDomain);
+            reject_unchanged(nucleus, &waits, CapError::InvalidAddressSpace);
         });
     }
 }
@@ -310,7 +310,7 @@ fn resume_rejects_incoherent_context_and_completion_before_commit() {
                 nucleus,
                 &waits,
                 if case == 0 {
-                    CapError::InvalidDomain
+                    CapError::InvalidThread
                 } else {
                     CapError::InvalidOperation
                 },
@@ -587,7 +587,7 @@ fn preemption_rejects_kernel_mode_state_without_changes() {
         };
         assert_eq!(
             result.expect_err("kernel-mode preemption").code(),
-            CapError::InvalidDomain.code()
+            CapError::InvalidThread.code()
         );
         assert_eq!(nucleus.current_thread, Some(waits.source));
         assert_eq!(nucleus.run_queue.len(), 2);

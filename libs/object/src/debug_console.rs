@@ -44,7 +44,7 @@ impl TryFrom<u32> for DebugConsoleOp {
     }
 }
 
-// Root domain gets a DebugConsoleCap, can delegate to others
+// The root component gets a DebugConsoleCap, can delegate to others
 #[cfg(feature = "debug_kernel")]
 impl DebugConsoleKey {
     /// Construct a non-owning handle from an issued key, not a slot convention.

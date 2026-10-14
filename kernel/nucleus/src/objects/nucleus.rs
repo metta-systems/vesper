@@ -4,16 +4,11 @@ use {
         arch::ArchPools,
         arch_objects::{AddressSpaceId, AddressSpaceObject, PageTableId},
         carved::Carved,
-        domain::DcbPages,
         irq::IrqTable,
         key_table::KeyTableBinding,
         thread::{ExecutionContext, ThreadId},
     },
-    core::sync::atomic::Ordering,
-    libobject::{
-        CapError, KeySlot,
-        domain::{BlockReason, DomainControlBlock, DomainId, DomainState},
-    },
+    libobject::CapError,
 };
 
 // ┌─────────────────────────────────────────────────────────────────────┐
@@ -35,7 +30,6 @@ use {
 //  │  │       └── asid_controls: reserved with the kind                   │
 //  │  │                                                                  │
 //  │  ├── current_thread: Option<ThreadId>                              │
-//  │  ├── dcb_pages: DcbPages (thread scheduling pages, D5)              │
 //  │  └── pending: PendingPool (blocked-invocation records, 2026-09-16)  │
 //  │                                                                     │
 //  └─────────────────────────────────────────────────────────────────┘
@@ -63,13 +57,11 @@ pub struct Nucleus<A: ArchObjects> {
     /// its generation against the Thread's header, so a retired Thread is
     /// never mistaken for the current Thread.
     pub current_thread: Option<ThreadId>, // FIXME: not option, always something (Idle or other)
-    /// DCB shared pages
-    pub dcb_pages: DcbPages,
     /// Pending-invocation records for blocked callers (completion
     /// foundation, 2026-09-16): bounded kernel-private storage, the
     /// closed-wait identity for blocked invocations.
     pub pending: PendingPool,
-    /// Runnable-domain queue: the minimal "run someone else" substrate
+    /// Runnable-Thread queue: the minimal "run someone else" substrate
     /// (completion foundation, 2026-09-16). Kernel mechanism only;
     /// scheduling policy stays in userspace.
     pub run_queue: RunQueue,
@@ -99,11 +91,11 @@ impl<A: ArchObjects> Nucleus<A> {
         crate::timer::now_ns()
     }
 
-    /// The current Thread's identity. `InvalidDomain` when no Thread is
+    /// The current Thread's identity. `InvalidThread` when no Thread is
     /// current or the recorded identity no longer names a live Thread.
     pub fn current_thread_id(&self) -> Result<ThreadId, CapError> {
-        let id = self.current_thread.ok_or(CapError::InvalidDomain)?;
-        self.thread(id).ok_or(CapError::InvalidDomain)?;
+        let id = self.current_thread.ok_or(CapError::InvalidThread)?;
+        self.thread(id).ok_or(CapError::InvalidThread)?;
         Ok(id)
     }
 
@@ -111,7 +103,7 @@ impl<A: ArchObjects> Nucleus<A> {
     /// [`Self::current_thread_id`].
     pub fn current_thread_ref(&self) -> Result<&Thread, CapError> {
         self.thread(self.current_thread_id()?)
-            .ok_or(CapError::InvalidDomain)
+            .ok_or(CapError::InvalidThread)
     }
 
     /// Nucleus-private thread data, like keytables
@@ -254,73 +246,6 @@ impl<A: ArchObjects> Nucleus<A> {
             .count()
     }
 
-    /// Update the DCB when a thread is activated
-    pub fn activate_thread(&mut self, id: DomainId, time_budget_ns: u64) {
-        let cpu = self.current_cpu();
-        let time = self.current_time_ns();
-        if let Some(dcb) = self.dcb_pages.get_mut(id) {
-            // Update time budget
-            dcb.time_remaining_ns
-                .store(time_budget_ns, Ordering::Relaxed);
-            dcb.last_activated_ns.store(time, Ordering::Relaxed);
-            dcb.activation_count.fetch_add(1, Ordering::Relaxed);
-            dcb.cpu
-                .store(u32::try_from(cpu).unwrap(), Ordering::Relaxed);
-
-            // Set state last (Release ensures all above writes are visible)
-            dcb.state
-                .store(DomainState::Running as u32, Ordering::Release);
-        }
-    }
-
-    /// Update the DCB when a thread yields/blocks/faults
-    pub fn deactivate_thread(&mut self, id: DomainId, reason: DeactivateReason) {
-        let elapsed = 0; //self.time_since_activation(id);
-
-        if let Some(dcb) = self.dcb_pages.get_mut(id) {
-            // Update time accounting
-            dcb.time_consumed_ns.fetch_add(elapsed, Ordering::Relaxed);
-            dcb.time_remaining_ns.fetch_sub(
-                elapsed.min(dcb.time_remaining_ns.load(Ordering::Relaxed)),
-                Ordering::Relaxed,
-            );
-
-            // Update state based on reason
-            match reason {
-                DeactivateReason::TimeExhausted | DeactivateReason::Yielded => {
-                    dcb.state
-                        .store(DomainState::Runnable as u32, Ordering::Release);
-                }
-
-                DeactivateReason::Blocked { reason, slot } => {
-                    dcb.block_reason.store(reason as u32, Ordering::Relaxed);
-                    dcb.blocked_on_slot.store(slot.0, Ordering::Relaxed);
-                    dcb.state
-                        .store(DomainState::Blocked as u32, Ordering::Release);
-                }
-
-                DeactivateReason::Faulted {
-                    fault_type,
-                    code,
-                    addr,
-                    slot,
-                } => {
-                    dcb.fault_type.store(fault_type as u32, Ordering::Relaxed);
-                    dcb.fault_code.store(code, Ordering::Relaxed);
-                    dcb.fault_addr.store(addr, Ordering::Relaxed);
-                    dcb.fault_slot.store(slot.0, Ordering::Relaxed);
-                    dcb.state
-                        .store(DomainState::Faulted as u32, Ordering::Release);
-                }
-
-                DeactivateReason::Suspended => {
-                    dcb.state
-                        .store(DomainState::Suspended as u32, Ordering::Release);
-                }
-            }
-        }
-    }
-
     /// Thread-teardown-driven cancellation (the selected D7 cancellation
     /// trigger, 2026-09-16): cancel every pending-invocation record naming
     /// `thread` as its waiter and purge every queued wakeup for it.
@@ -345,8 +270,8 @@ impl<A: ArchObjects> Nucleus<A> {
     /// No cancellation status crosses the wire: the torn-down waiter is
     /// gone, so its outcome is never delivered (the D9 cancellation
     /// encodings stay open for the timeout and object-teardown paths, whose
-    /// waiters do resume). DCB release and thread-slot deallocation are the
-    /// teardown path's separate steps (Phase 7 Thread control).
+    /// waiters do resume). Thread-slot deallocation is the teardown path's
+    /// separate step (Phase 7 Thread control).
     pub fn cancel_thread_pending(&mut self, thread: ThreadId) -> Result<(), CapError> {
         // Teardown cancels pending records while the Thread slot is live; a
         // stale identity means the caller tore the Thread down out of order.
@@ -378,52 +303,6 @@ impl<A: ArchObjects> Nucleus<A> {
         self.run_queue.remove(thread);
         Ok(())
     }
-
-    /// Update DCB when notification is signaled to a domain
-    pub fn signal_notification(&mut self, id: DomainId, slot: KeySlot, bits: u64) {
-        if let Some(dcb) = self.dcb_pages.get_mut(id) {
-            // OR the notification bits
-            dcb.pending_notifications
-                .fetch_or(1 << slot.0, Ordering::Release);
-
-            // If domain was blocked on notifications, make it runnable
-            let state = dcb.state.load(Ordering::Acquire);
-            let block_reason = dcb.block_reason.load(Ordering::Relaxed);
-
-            if state == DomainState::Blocked as u32
-                && block_reason == BlockReason::Notification as u32
-            {
-                dcb.state
-                    .store(DomainState::Runnable as u32, Ordering::Release);
-            }
-        }
-    }
-}
-
-pub enum DeactivateReason {
-    TimeExhausted,
-    Blocked {
-        reason: BlockReason,
-        slot: KeySlot,
-    },
-    Faulted {
-        fault_type: FaultType,
-        code: u32,
-        addr: u64,
-        slot: KeySlot,
-    },
-    Suspended,
-    Yielded,
-}
-
-#[repr(u32)]
-pub enum FaultType {
-    None = 0,
-    PageFault = 1,
-    CapFault = 2,
-    UnknownSyscall = 3,
-    UserException = 4,
-    VMFault = 5,
 }
 
 #[cfg(test)]
@@ -472,7 +351,6 @@ mod tests {
             );
             nucleus_ptr.write(Nucleus {
                 current_thread: None,
-                dcb_pages: crate::objects::domain::DcbPages::new(),
                 pending: PendingPool::new(),
                 run_queue: RunQueue::new(),
                 idle_thread: None,

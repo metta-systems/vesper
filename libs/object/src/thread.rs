@@ -1,9 +1,6 @@
 use {
-    crate::{
-        CapError, Key, KeySlot, RawKey, decode_syscall_result,
-        domain::{DcbView, DomainId, DomainState},
-    },
-    core::{convert::Infallible, sync::atomic::Ordering},
+    crate::{CapError, Key, KeySlot, RawKey, decode_syscall_result},
+    core::convert::Infallible,
 };
 
 #[cfg(not(test))]
@@ -56,65 +53,60 @@ impl TryFrom<u32> for ThreadOp {
     }
 }
 
+/// Thread execution state, as a scheduler observes it.
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ThreadState {
+    /// Just created, never activated
+    Inactive = 0,
+    /// Ready to run, waiting for CPU time
+    Runnable = 1,
+    /// Currently executing on a CPU
+    Running = 2,
+    /// Blocked waiting on IPC/notification/event
+    Blocked = 3,
+    /// Explicitly suspended by parent
+    Suspended = 4,
+    /// Faulted, needs handler
+    Faulted = 5,
+    /// Being destroyed
+    Dying = 6,
+}
+
 /// Named Thread capability — handle to an execution thread.
-/// State queries use the shared DCB (no syscall), mutations use `CapInvoke`.
-/// This management/DCB wrapper does not represent `CurrentReturnOnly` authority.
+/// This management wrapper does not represent `CurrentReturnOnly` authority.
 /// `Retire` is dispatched: it tears a non-current Thread down under `RETIRE`
 /// authority. `Grant`, `Suspend`, and `Resume` remain unsupported by nucleus
-/// dispatch and their wrappers preserve the kernel's errors; they do not
-/// establish DCB mapping or lifetime.
-///
-/// Implementation status: public construction is available for the mutation
-/// path (`from_key`), mirroring the other non-owning key wrappers. The safe
-/// observation methods still assume a valid DCB mapping and lifetime
-/// internally; a raw key alone cannot establish those prerequisites, so
-/// callers must not rely on them until DCB mapping is a supported operation
-/// (D5 — DCBs become thread scheduling pages shared with the userspace
-/// scheduler). Packed-key mutation encoding does not make these observation
-/// methods safe for arbitrary handles.
+/// dispatch and their wrappers preserve the kernel's errors.
 pub struct ThreadKey {
     key: Key<ThreadType>,
-    id: DomainId,
 }
 
 enum ThreadType {}
 
 impl ThreadKey {
     /// Construct a non-owning handle without installing or validating
-    /// authority. The observation methods still require an established DCB
-    /// mapping and lifetime (see the type-level implementation-status note).
-    pub const fn from_key(key: RawKey, id: DomainId) -> Self {
-        Self {
-            key: Key::new(key),
-            id,
-        }
+    /// authority.
+    pub const fn from_key(key: RawKey) -> Self {
+        Self { key: Key::new(key) }
     }
 
-    /// Get thread state from the shared DCB
+    /// Get thread state from the scheduler-shared Thread record
     #[inline]
-    pub fn state(&self) -> DomainState {
-        // SAFETY: Unsafe call.
-        let dcb_view = unsafe { DcbView::from_user_mapping() };
-        let dcb = dcb_view.get(self.id).expect("oh well");
-        DomainState::try_from(dcb.state.load(Ordering::Acquire)).unwrap_or(DomainState::Inactive)
+    pub fn state(&self) -> ThreadState {
+        unimplemented!("scheduler-shared Thread records (Scheduler.ShareRegion)")
     }
 
-    /// Get time used from the shared DCB
+    /// Get time used from the scheduler-shared Thread record
     #[inline]
     pub fn time_used_ns(&self) -> u64 {
-        // SAFETY: Unsafe call.
-        let dcb_view = unsafe { DcbView::from_user_mapping() };
-        let dcb = dcb_view.get(self.id).expect("oh well");
-        dcb.time_consumed_ns.load(Ordering::Relaxed)
+        unimplemented!("scheduler-shared Thread records (Scheduler.ShareRegion)")
     }
 
-    /// Get pending notifications from the shared DCB (NO SYSCALL!)
+    /// Get pending notifications from the scheduler-shared Thread record (NO SYSCALL!)
     #[inline]
     pub fn pending_notifications(&self) -> u64 {
-        // SAFETY: Unsafe call.
-        let dcb_view = unsafe { DcbView::from_user_mapping() };
-        let dcb = dcb_view.get(self.id).expect("oh well");
-        dcb.pending_notifications.load(Ordering::Relaxed)
+        unimplemented!("scheduler-shared Thread records (Scheduler.ShareRegion)")
     }
 
     /// Grant a capability to this thread
@@ -163,8 +155,7 @@ impl ThreadKey {
     /// Subsequent invocations of the retired Thread's capabilities fail pool
     /// validation with a defined error. Carved backing (keytable, kernel
     /// stack) stays leaked per accepted-leak; the `AddressSpace` is untouched —
-    /// its teardown is the separate `AddressSpace.Retire`; the DCB is
-    /// untouched (D5).
+    /// its teardown is the separate `AddressSpace.Retire`.
     pub fn retire(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
         let response = unsafe { protected_call0(self.key.to_wire(), ThreadOp::Retire as u64) };

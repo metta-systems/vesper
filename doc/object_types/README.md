@@ -81,45 +81,46 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 0 | `Success` | result | result |
 | 1 | `Unknown` | 0 | 0 |
 | 2 | `NullCapability` | 0 | 0 |
-| 3 | `InvalidDomain` | 0 | 0 |
-| 4 | `InvalidPointer` | 0 | 0 |
-| 5 | `InsufficientRights` | 0 | 0 |
-| 6 | `NotMapped` | 0 | 0 |
-| 7 | `AlreadyMapped` | 0 | 0 |
-| 8 | `InvalidOperation` | 0 | 0 |
-| 9 | `AsidPoolExhausted` | 0 | 0 |
-| 10 | `NoAsidAssigned` | 0 | 0 |
-| 11 | `InvalidSlot` | slot | 0 |
-| 12 | `EmptySlot` | slot | 0 |
-| 13 | `SlotOccupied` | slot | 0 |
-| 14 | `NotCoreType` | wire type | 0 |
-| 15 | `UnknownCoreType` | type byte | 0 |
-| 16 | `UnsupportedCoreType` | core index | 0 |
-| 17 | `NotArchType` | wire type | 0 |
-| 18 | `UnknownArchType` | type byte | 0 |
-| 19 | `UnsupportedArchType` | arch index | 0 |
-| 20 | `InvalidObjectType` | wire type | 0 |
-| 21 | `TypeMismatch` | expected wire type | found wire type |
-| 22 | `InsufficientMemory` | 0 | 0 |
-| 23 | `PoolExhausted` | 0 | 0 |
-| 24 | `InvalidSize` | size | 0 |
-| 25 | `InvalidFrameSize` | size | 0 |
-| 26 | `InvalidKey` | submitted key | reason \| (argument register << 8) |
-| 27 | `InconsistentKey` | submitted key | reason \| (argument register << 8) |
-| 28 | `KeySlotExhausted` | slot | 0 |
-| 29 | `MissingIntermediate` | virtual address | 0 |
-| 30 | `PhysicalAlias` | physical base of the conflicting mapping | 0 |
-| 31 | `CounterOverflow` | 0 | 0 |
-| 32 | `InvalidStack` | offending value | reason, see [Invocation](core/invocation.md#invalidstack) |
-| 33 | `NestingDepth` | saved continuations | 0 |
-| 34 | `UnexpectedReturn` | local `x1` | local `x2` |
-| 35 | `InsufficientBudget` | the source Time's remaining budget | 0 |
-| 36 | `PriorityChainFull` | 0 | 0 |
-| 37 | `IrqLineActive` | the line | 0 |
-| 38 | `KeyNotAccepted` | 0 | 0 |
-| 39 | `NoPlacementSlot` | 0 | 0 |
-| 40 | `NotBound` | 0 | 0 |
-| 41 | `InvalidSelfReference` | the self slot (4, `SELF_KEYTABLE`) | the key that led to the table, see [KeyTable](core/key_table.md#keys-and-incarnations) |
+| 3 | `InvalidThread` | 0 | 0 |
+| 4 | `InvalidAddressSpace` | 0 | 0 |
+| 5 | `InvalidPointer` | 0 | 0 |
+| 6 | `InsufficientRights` | 0 | 0 |
+| 7 | `NotMapped` | 0 | 0 |
+| 8 | `AlreadyMapped` | 0 | 0 |
+| 9 | `InvalidOperation` | 0 | 0 |
+| 10 | `AsidPoolExhausted` | 0 | 0 |
+| 11 | `NoAsidAssigned` | 0 | 0 |
+| 12 | `InvalidSlot` | slot | 0 |
+| 13 | `EmptySlot` | slot | 0 |
+| 14 | `SlotOccupied` | slot | 0 |
+| 15 | `NotCoreType` | wire type | 0 |
+| 16 | `UnknownCoreType` | type byte | 0 |
+| 17 | `UnsupportedCoreType` | core index | 0 |
+| 18 | `NotArchType` | wire type | 0 |
+| 19 | `UnknownArchType` | type byte | 0 |
+| 20 | `UnsupportedArchType` | arch index | 0 |
+| 21 | `InvalidObjectType` | wire type | 0 |
+| 22 | `TypeMismatch` | expected wire type | found wire type |
+| 23 | `InsufficientMemory` | 0 | 0 |
+| 24 | `PoolExhausted` | 0 | 0 |
+| 25 | `InvalidSize` | size | 0 |
+| 26 | `InvalidFrameSize` | size | 0 |
+| 27 | `InvalidKey` | submitted key | reason \| (argument register << 8) |
+| 28 | `InconsistentKey` | submitted key | reason \| (argument register << 8) |
+| 29 | `KeySlotExhausted` | slot | 0 |
+| 30 | `MissingIntermediate` | virtual address | 0 |
+| 31 | `PhysicalAlias` | physical base of the conflicting mapping | 0 |
+| 32 | `CounterOverflow` | 0 | 0 |
+| 33 | `InvalidStack` | offending value | reason, see [Invocation](core/invocation.md#invalidstack) |
+| 34 | `NestingDepth` | saved continuations | 0 |
+| 35 | `UnexpectedReturn` | local `x1` | local `x2` |
+| 36 | `InsufficientBudget` | the source Time's remaining budget | 0 |
+| 37 | `PriorityChainFull` | 0 | 0 |
+| 38 | `IrqLineActive` | the line | 0 |
+| 39 | `KeyNotAccepted` | 0 | 0 |
+| 40 | `NoPlacementSlot` | 0 | 0 |
+| 41 | `NotBound` | 0 | 0 |
+| 42 | `InvalidSelfReference` | the self slot (4, `SELF_KEYTABLE`) | the key that led to the table, see [KeyTable](core/key_table.md#keys-and-incarnations) |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 

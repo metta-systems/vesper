@@ -288,12 +288,12 @@ fn check_frames(init: &libdevice_driver::DriverInit, fb: &FbClient, address: u64
     let table = table_with(FRAME_TABLE_SLOT, FRAME_TABLE_BITS, FRAME_TABLE_GUARD);
 
     // A table key without `LEND` is refused before the call starts
-    // (`InsufficientRights`, status 5).
+    // (`InsufficientRights`, status 6).
     let plain = KeyTableKey::from_key(plain_table_key(init.table));
     assert_eq!(
         fb.frames(&plain, 0),
         Err(FbError::Call {
-            status: 5,
+            status: 6,
             detail: [0, 0]
         })
     );

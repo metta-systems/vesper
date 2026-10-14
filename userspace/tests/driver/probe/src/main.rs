@@ -152,12 +152,12 @@ fn main(init_va: u64) -> ! {
         assert_eq!(echo.frame_base(&lendable), Ok(own_base));
         assert_eq!(echo.frame_base(&lendable), Ok(own_base));
         // Without `LEND` the kernel refuses the call before it starts
-        // (`InsufficientRights`, status 5); without `GRANT` the exporter
+        // (`InsufficientRights`, status 6); without `GRANT` the exporter
         // cannot read the extent and answers with its exception.
         assert_eq!(
             echo.frame_base(&carve_frame(Rights(Rights::READ | Rights::GRANT))),
             Err(Error::Call {
-                status: 5,
+                status: 6,
                 detail: [0, 0]
             })
         );

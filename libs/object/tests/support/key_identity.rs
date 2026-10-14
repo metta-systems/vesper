@@ -143,9 +143,9 @@ fn typed_key_is_const_nonowning_and_has_no_phantom_trait_bounds() {
 
 #[test]
 fn key_statuses_and_all_reason_bytes_are_pinned() {
-    assert_eq!(syscall_status::INVALID_KEY, 26);
-    assert_eq!(syscall_status::INCONSISTENT_KEY, 27);
-    assert_eq!(syscall_status::KEY_SLOT_EXHAUSTED, 28);
+    assert_eq!(syscall_status::INVALID_KEY, 27);
+    assert_eq!(syscall_status::INCONSISTENT_KEY, 28);
+    assert_eq!(syscall_status::KEY_SLOT_EXHAUSTED, 29);
 
     for byte in 0..=u8::MAX {
         let invalid = match byte {
@@ -182,7 +182,7 @@ fn key_errors_pin_all_reasons_operands_and_submitted_key_bits() {
                 (InvalidKeyReason::NeverIssued, 0x03),
                 (InvalidKeyReason::GuardMismatch, 0x04),
             ] {
-                let wire = (26, submitted, literal | (u64::from(operand) << 8));
+                let wire = (27, submitted, literal | (u64::from(operand) << 8));
                 let error = CapError::InvalidKey {
                     key: RawKey::from_wire(submitted),
                     reason,
@@ -207,7 +207,7 @@ fn key_errors_pin_all_reasons_operands_and_submitted_key_bits() {
                 (InconsistencyReason::CapabilityInvalidated, 0x02),
                 (InconsistencyReason::ObjectRetired, 0x03),
             ] {
-                let wire = (27, submitted, literal | (u64::from(operand) << 8));
+                let wire = (28, submitted, literal | (u64::from(operand) << 8));
                 let error = CapError::InconsistentKey {
                     key: RawKey::from_wire(submitted),
                     reason,
@@ -233,11 +233,11 @@ fn key_errors_pin_all_reasons_operands_and_submitted_key_bits() {
 
 #[test]
 fn key_error_unknown_reasons_operands_and_extension_bits_are_lossless() {
-    for status in [26, 27] {
+    for status in [27, 28] {
         for reason in 0..=u8::MAX {
             // InvalidKey reasons 1..=4 and Inconsistency reasons 1..=3 are
             // known; every other reason byte stays losslessly observable.
-            let known = if status == 26 {
+            let known = if status == 27 {
                 (1..=4).contains(&reason)
             } else {
                 (1..=3).contains(&reason)
@@ -263,7 +263,7 @@ fn key_error_unknown_reasons_operands_and_extension_bits_are_lossless() {
 #[test]
 fn slot_exhaustion_checks_slot_width_and_unused_detail_word() {
     for slot in [0, 1, 255, 256, 0x8000_0000, u32::MAX] {
-        let wire = (28, u64::from(slot), 0);
+        let wire = (29, u64::from(slot), 0);
         assert_eq!(CapError::KeySlotExhausted(KeySlot(slot)).code(), wire);
         assert!(matches!(
             decode_syscall_result(wire),
@@ -271,13 +271,13 @@ fn slot_exhaustion_checks_slot_width_and_unused_detail_word() {
         ));
     }
     for bit in 32..64 {
-        assert_unknown_response((28, (1_u64 << bit) | 42, 0));
+        assert_unknown_response((29, (1_u64 << bit) | 42, 0));
     }
     for bit in 0..64 {
-        assert_unknown_response((28, 42, 1_u64 << bit));
+        assert_unknown_response((29, 42, 1_u64 << bit));
     }
-    assert_unknown_response((28, u64::MAX, 0));
-    assert_unknown_response((28, 0, u64::MAX));
+    assert_unknown_response((29, u64::MAX, 0));
+    assert_unknown_response((29, 0, u64::MAX));
 }
 
 #[test]
@@ -291,7 +291,7 @@ fn recontextualization_changes_only_key_error_operand() {
         }
         .with_key_operand(7)
         .code(),
-        (26, 0x8000_0001_89ab_cdef, 0x0703)
+        (27, 0x8000_0001_89ab_cdef, 0x0703)
     );
     assert_eq!(
         CapError::InconsistentKey {
@@ -301,19 +301,19 @@ fn recontextualization_changes_only_key_error_operand() {
         }
         .with_key_operand(2)
         .code(),
-        (27, 0x8000_0001_89ab_cdef, 0x0202)
+        (28, 0x8000_0001_89ab_cdef, 0x0202)
     );
     assert_eq!(
         CapError::KeySlotExhausted(KeySlot(42))
             .with_key_operand(7)
             .code(),
-        (28, 42, 0)
+        (29, 42, 0)
     );
     assert_eq!(
         CapError::InsufficientRights.with_key_operand(7).code(),
-        (5, 0, 0)
+        (6, 0, 0)
     );
-    let wire = (26, key.to_wire(), 0xff03);
+    let wire = (27, key.to_wire(), 0xff03);
     assert_eq!(
         CapError::InvalidKey {
             key,

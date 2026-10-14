@@ -3,7 +3,7 @@
 //!
 //! Realizes the excluded sketch's intent — bitmap state, blocked waiters,
 //! and `signal`/`wait`/`poll` semantics ("if bits are already set, clear and
-//! immediately return; otherwise block the domain") — on the completion
+//! immediately return; otherwise block the Thread") — on the completion
 //! foundation's pending-invocation records. The sketch's handler-side intent
 //! (SEND/RECV rights and badge-or-argument signal bits) stays recorded in
 //! the excluded `api/notification.rs` until the Signal authority decision
@@ -164,11 +164,11 @@ impl Notification {
         Ok(())
     }
 
-    /// Domain-teardown cancellation: stop holding the torn-down `waiter`'s
+    /// Thread-teardown cancellation: stop holding the torn-down `waiter`'s
     /// queued records, preserving the FIFO order of the remaining waiters.
     ///
     /// Distinct from object teardown ([`Self::cancel_waiters`]): the waiter's
-    /// Domain is going away, so its records are cancelled and released by
+    /// Thread is going away, so its records are cancelled and released by
     /// the pending-pool teardown sweep (`PendingPool::teardown_waiter`)
     /// instead of being left terminal for a resume that never happens.
     /// Returns how many of the waiter's records were unqueued.
@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[test_case]
-    fn domain_teardown_unqueues_only_the_torn_down_waiter() {
+    fn thread_teardown_unqueues_only_the_torn_down_waiter() {
         let mut pending = PendingPool::new();
         let mut notification = Notification::new();
 
@@ -359,7 +359,7 @@ mod tests {
         let gone = block_waiter(&mut notification, &mut pending, 0);
         let survivor = block_waiter(&mut notification, &mut pending, 1);
 
-        // Unqueue the torn-down Domain's record; the sweep (not the object)
+        // Unqueue the torn-down Thread's record; the sweep (not the object)
         // gives it its terminal transition and releases it.
         assert_eq!(notification.remove_waiter(waiter(0), &pending), 1);
         assert_eq!(pending.teardown_waiter(waiter(0)).ok(), Some(1));
@@ -383,7 +383,7 @@ mod tests {
             })
         );
 
-        // A Domain with nothing queued removes nothing.
+        // A Thread with nothing queued removes nothing.
         assert_eq!(notification.remove_waiter(waiter(0), &pending), 0);
     }
 }

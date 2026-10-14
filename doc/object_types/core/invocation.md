@@ -57,7 +57,7 @@ The stack pointer passed in `x9` must be 16-byte aligned, with `base < SP <= end
 
 ### `InvalidStack`
 
-Stack checks fail with `InvalidStack` (status 32), the offending value in `x1` and a reason in `x2`:
+Stack checks fail with `InvalidStack` (status 33), the offending value in `x1` and a reason in `x2`:
 
 | Reason | Name | Condition | `x1` |
 |---:|---|---|---|

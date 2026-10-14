@@ -147,27 +147,27 @@ fn copy_derive_move_and_grant_to_ignore_nonzero_second_success_word() {
 fn all_key_table_wrappers_report_unsupported_dispatch_and_authority_errors() {
     for method in METHODS {
         assert!(matches!(
-            invoke(method, (16, 2, 0)),
+            invoke(method, (17, 2, 0)),
             Err(CapError::UnsupportedCoreType(CoreType::KeyTable))
         ));
         assert!(matches!(
             invoke(method, (3, 0, 0)),
-            Err(CapError::InvalidDomain)
+            Err(CapError::InvalidThread)
         ));
         assert!(matches!(
-            invoke(method, (11, u64::from(u32::MAX), 0)),
+            invoke(method, (12, u64::from(u32::MAX), 0)),
             Err(CapError::InvalidSlot(KeySlot(u32::MAX)))
         ));
         assert!(matches!(
-            invoke(method, (12, 42, 0)),
+            invoke(method, (13, 42, 0)),
             Err(CapError::EmptySlot(KeySlot(42)))
         ));
         assert!(matches!(
-            invoke(method, (13, 43, 0)),
+            invoke(method, (14, 43, 0)),
             Err(CapError::SlotOccupied(KeySlot(43)))
         ));
         assert!(matches!(
-            invoke(method, (5, 0, 0)),
+            invoke(method, (6, 0, 0)),
             Err(CapError::InsufficientRights)
         ));
     }
@@ -177,7 +177,7 @@ fn all_key_table_wrappers_report_unsupported_dispatch_and_authority_errors() {
 fn all_key_table_wrappers_preserve_key_diagnostics() {
     let wire_key = 0x1357_9bdf_ffff_fffd;
     for method in METHODS {
-        match invoke(method, (26, wire_key, 0x0203)) {
+        match invoke(method, (27, wire_key, 0x0203)) {
             Err(CapError::InvalidKey {
                 key,
                 reason,
@@ -189,7 +189,7 @@ fn all_key_table_wrappers_preserve_key_diagnostics() {
             }
             _ => panic!("lost invalid-key diagnostic"),
         }
-        match invoke(method, (27, wire_key, 0x0202)) {
+        match invoke(method, (28, wire_key, 0x0202)) {
             Err(CapError::InconsistentKey {
                 key,
                 reason,
@@ -202,8 +202,8 @@ fn all_key_table_wrappers_preserve_key_diagnostics() {
             _ => panic!("lost inconsistency diagnostic"),
         }
         assert_eq!(
-            invoke(method, (28, 43, 0)).map_err(CapError::code),
-            Err((28, 43, 0))
+            invoke(method, (29, 43, 0)).map_err(CapError::code),
+            Err((29, 43, 0))
         );
     }
 }
@@ -214,12 +214,12 @@ fn all_key_table_wrappers_preserve_unknown_statuses_and_malformed_details() {
         for wire in [
             (u64::MAX, 42, 99),
             (1 << 32, 1, 2),
-            (16, 259, 0),
-            (11, 1 << 32, 0),
-            (5, 0, 1),
-            (26, 0x1357_9bdf_ffff_fffd, 0x0901),
-            (27, 0x1357_9bdf_ffff_fffd, 0x0100_0001),
-            (28, 1 << 32, 0),
+            (17, 259, 0),
+            (12, 1 << 32, 0),
+            (6, 0, 1),
+            (27, 0x1357_9bdf_ffff_fffd, 0x0901),
+            (28, 0x1357_9bdf_ffff_fffd, 0x0100_0001),
+            (29, 1 << 32, 0),
         ] {
             match invoke(method, wire) {
                 Err(error @ CapError::UnknownResponse { .. }) => assert_eq!(error.code(), wire),

@@ -37,9 +37,7 @@ mod timer;
 use {
     api::KeyEntry,
     core::mem::MaybeUninit,
-    libobject::{
-        CapError, KeySlot, ObjectType, RawKey, Rights, TimeOp, UntypedOp, domain::DomainId,
-    },
+    libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, TimeOp, UntypedOp},
     // `Nucleus` is not used directly here: binding it at the crate root lets
     // the included production tree resolve `crate::Nucleus`
     // (objects/arch/aarch64_objects.rs, as the nucleus lib re-exports it).
@@ -48,7 +46,6 @@ use {
         access::Access,
         arch::{AArch64ASIDPool, ArchPools},
         carved::{Carved, CarvedId},
-        domain::DcbPages,
         nucleus::NucleusPools,
     },
 };
@@ -82,7 +79,7 @@ fn carve_table() -> u64 {
     // exclusively owned by the test fixture for its lifetime; the fixed
     // backing covers the full variable-size carve.
     unsafe {
-        KeyTable::initialize(TEST_BACKING as *mut u8, DomainId(0), SIZE_BITS);
+        KeyTable::initialize(TEST_BACKING as *mut u8, SIZE_BITS);
     }
     TEST_BACKING
 }
@@ -119,7 +116,6 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
         assert!(ObjectPool::<AArch64ASIDPool>::carve_size(0) <= core::mem::size_of::<[u128; 8]>());
         nucleus_ptr.write(Nucleus {
             current_thread: None,
-            dcb_pages: DcbPages::new(),
             pending: crate::objects::PendingPool::new(),
             run_queue: crate::objects::RunQueue::new(),
             idle_thread: None,

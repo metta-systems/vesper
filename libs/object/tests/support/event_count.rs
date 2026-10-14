@@ -102,15 +102,15 @@ fn event_count_read_sends_no_arguments_and_decodes_value() {
 #[test]
 fn event_count_wrappers_preserve_kernel_errors() {
     assert!(matches!(
-        invoke_advance((5, 0, 0)),
+        invoke_advance((6, 0, 0)),
         Err(CapError::InsufficientRights)
     ));
     assert!(matches!(
-        invoke_await((8, 0, 0)),
+        invoke_await((9, 0, 0)),
         Err(CapError::InvalidOperation)
     ));
     assert!(matches!(
-        invoke_read((31, 0, 0)),
+        invoke_read((32, 0, 0)),
         Err(CapError::CounterOverflow)
     ));
     assert!(matches!(

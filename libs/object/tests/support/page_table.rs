@@ -91,10 +91,10 @@ fn page_table_unmap_preserves_request_encoding_and_accepts_success() {
 #[test]
 fn page_table_wrappers_preserve_kernel_errors() {
     assert!(matches!(
-        invoke_map((7, 0, 0)),
+        invoke_map((8, 0, 0)),
         Err(CapError::AlreadyMapped)
     ));
-    assert!(matches!(invoke_unmap((6, 0, 0)), Err(CapError::NotMapped)));
+    assert!(matches!(invoke_unmap((7, 0, 0)), Err(CapError::NotMapped)));
     assert!(matches!(
         invoke_map((u64::MAX, 42, 99)),
         Err(CapError::UnknownResponse { .. })

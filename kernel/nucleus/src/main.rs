@@ -363,7 +363,7 @@ extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
         frame.origin,
         ExceptionOrigin::CurrentSp0 | ExceptionOrigin::LowerAarch64
     ) {
-        let (status, detail0, detail1) = CapError::InvalidDomain.code();
+        let (status, detail0, detail1) = CapError::InvalidThread.code();
         frame.gpr[0] = status;
         frame.gpr[1] = detail0;
         frame.gpr[2] = detail1;

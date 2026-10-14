@@ -385,7 +385,7 @@ fn depth_sixteen_is_rejected_with_current_count_and_fifteen_is_admitted() {
         assert_eq!(snapshot(nucleus, &fixture), before);
 
         fill_stack_one_more(nucleus);
-        assert_eq!(CapError::NestingDepth { count: 16 }.code(), (33, 16, 0));
+        assert_eq!(CapError::NestingDepth { count: 16 }.code(), (34, 16, 0));
         reject_preserved(
             nucleus,
             &fixture,
@@ -687,7 +687,7 @@ fn nested_commits_fill_sixteen_records_then_reject_the_seventeenth() {
         let saved = call_frame(fixture.key, STACK_END);
         let error = prepare_direct(nucleus, fixture.target_as, &saved)
             .expect_err("seventeenth Call admitted");
-        assert_eq!(error.code(), (33, 16, 0));
+        assert_eq!(error.code(), (34, 16, 0));
         assert_eq!(source_mut(nucleus).invocation_stack, stack);
         assert_eq!(source_mut(nucleus).address_space, fixture.target_as);
     });
@@ -735,7 +735,7 @@ fn rejected_call_commits_nothing() {
         let saved = call_frame(fixture.key, LOWEST_SP);
         let before = snapshot(nucleus, &fixture);
         let error = call(nucleus, &fixture, &saved).expect_err("full stack committed");
-        assert_eq!(error.code(), (33, 16, 0));
+        assert_eq!(error.code(), (34, 16, 0));
         assert_eq!(snapshot(nucleus, &fixture), before);
     });
 }
