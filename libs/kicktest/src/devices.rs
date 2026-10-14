@@ -22,7 +22,7 @@ pub fn device_untyped_extents(keytable_addr: u64) -> impl Iterator<Item = (RawKe
         let key = boot_key(slot, 1);
         // SAFETY: the boot table is the live carved boot KeyTable; this
         // read-only borrow ends within the closure.
-        let table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let region = *table
             .lookup(key, BOOT_TABLE_GUARD)
             .and_then(KeyEntry::as_untyped)

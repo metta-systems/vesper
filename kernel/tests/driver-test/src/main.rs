@@ -231,7 +231,7 @@ pub fn run() -> ! {
             };
             // The report key, badged with this instance's bit.
             // SAFETY: the driver's retained table; no invocation overlaps.
-            unsafe { &mut *(loaded.component.table_addr as *mut KeyTable) }
+            unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
                 .insert(
                     KeySlot(REPORT_SLOT),
                     KeyEntry::new_carved(report_id, Rights(Rights::SEND), 1 << count),

@@ -52,7 +52,7 @@ pub fn carve_bytes(
 ) -> *mut u8 {
     // SAFETY: the boot table is the live carved boot KeyTable; this borrow
     // ends before any capability invocation.
-    let table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+    let table = unsafe { &mut *KeyTable::at_carve(keytable_addr) };
     let region = *table
         .lookup(boot_untyped_key, BOOT_TABLE_GUARD)
         .and_then(KeyEntry::as_untyped)

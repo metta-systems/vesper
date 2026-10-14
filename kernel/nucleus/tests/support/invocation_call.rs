@@ -206,7 +206,7 @@ fn prepare(
     let result = {
         let access = unsafe { Access::new() };
         let caller = CallerTable {
-            addr: fixture.source_table,
+            table: super::table_id(fixture.source_table),
             guard: FIXTURE_GUARD,
         };
         api::invocation::prepare_call(&access, caller, saved, nucleus)
@@ -527,7 +527,7 @@ const TARGET_TLS: u64 = 0x7a40_0000_0000_7a40;
 
 fn caller(fixture: &CallFixture) -> CallerTable {
     CallerTable {
-        addr: fixture.source_table,
+        table: super::table_id(fixture.source_table),
         guard: FIXTURE_GUARD,
     }
 }
@@ -771,8 +771,8 @@ fn provisioned_return_key(table_address: u64) -> RawKey {
     // aliases it during this read.
     let access = unsafe { Access::new() };
     let table = access
-        .resolve_carved_mut::<KeyTable>(table_address)
-        .unwrap_or_else(|error| panic!("fixture table: {:?}", error.code()));
+        .resolve_object::<KeyTable>(super::table_id(table_address))
+        .unwrap_or_else(|error| panic!("fixture table: {error:?}"));
     let entry = table
         .lookup(key, FIXTURE_GUARD)
         .unwrap_or_else(|error| panic!("provisioned Return key: {:?}", error.code()));
@@ -799,7 +799,7 @@ fn return_frame(key: RawKey, payload: [u64; 2], extra: [u64; 4]) -> SavedContext
 
 fn current_caller(nucleus: &Nucleus<ArchObjectsImpl>) -> CallerTable {
     CallerTable {
-        addr: nucleus.current_thread_table_addr().unwrap(),
+        table: super::table_id(nucleus.current_thread_table_addr().unwrap()),
         guard: FIXTURE_GUARD,
     }
 }
@@ -1475,8 +1475,8 @@ fn install_entry(table_address: u64, slot: KeySlot, entry: KeyEntry) -> RawKey {
     // access context or table guard overlaps this installation.
     let access = unsafe { Access::new() };
     let mut table = access
-        .resolve_carved_mut::<KeyTable>(table_address)
-        .unwrap_or_else(|error| panic!("fixture table: {:?}", error.code()));
+        .resolve_object::<KeyTable>(super::table_id(table_address))
+        .unwrap_or_else(|error| panic!("fixture table: {error:?}"));
     table
         .insert(slot, entry, FIXTURE_GUARD)
         .unwrap_or_else(|failure| panic!("install: {:?}", failure.error.code()))
@@ -1487,8 +1487,8 @@ fn entry_in(table_address: u64, key: RawKey) -> Result<KeyEntry, CapError> {
     // SAFETY: as in `install_entry`.
     let access = unsafe { Access::new() };
     let table = access
-        .resolve_carved_mut::<KeyTable>(table_address)
-        .unwrap_or_else(|error| panic!("fixture table: {:?}", error.code()));
+        .resolve_object::<KeyTable>(super::table_id(table_address))
+        .unwrap_or_else(|error| panic!("fixture table: {error:?}"));
     table.lookup(key, FIXTURE_GUARD).copied()
 }
 
@@ -1496,8 +1496,8 @@ fn remove_entry(table_address: u64, key: RawKey) -> KeyEntry {
     // SAFETY: as in `install_entry`.
     let access = unsafe { Access::new() };
     let mut table = access
-        .resolve_carved_mut::<KeyTable>(table_address)
-        .unwrap_or_else(|error| panic!("fixture table: {:?}", error.code()));
+        .resolve_object::<KeyTable>(super::table_id(table_address))
+        .unwrap_or_else(|error| panic!("fixture table: {error:?}"));
     table
         .remove(key, FIXTURE_GUARD)
         .unwrap_or_else(|error| panic!("remove: {:?}", error.code()))
@@ -1760,7 +1760,7 @@ fn call_with_key_rejections_preserve_every_table() {
         let target_self = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, KeySlot::SELF_KEYTABLE.0, 1);
         // SAFETY: the fixture's target table is a live private carve; no
         // dispatch runs during this borrow.
-        unsafe { &mut *(fixture.target_table as *mut KeyTable) }
+        unsafe { &mut *KeyTable::at_carve(fixture.target_table) }
             .remove(target_self, FIXTURE_GUARD)
             .unwrap_or_else(|_| panic!("target self-table removal failed"));
         reject_preserved(

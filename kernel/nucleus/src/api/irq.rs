@@ -91,7 +91,7 @@ fn issue<A: ArchObjects>(
         KeySlot(u32::try_from(dst_slot).map_err(|_too_wide| CapError::InvalidOperation)?);
 
     let dst_cap = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         resolve_table_cap(&caller_table, dst_table_key, caller.guard, 2)?
     };
     if !dst_cap.rights.has(Rights::INSTALL) {
@@ -105,7 +105,7 @@ fn issue<A: ArchObjects>(
         return Err(CapError::IrqLineActive { line });
     }
     nucleus.irq_table.check_issue(line)?;
-    let mut dst_table = access.resolve_carved_mut::<KeyTable>(dst_cap.address)?;
+    let mut dst_table = dst_cap.resolve(access)?;
     dst_table
         .check_insert(dst_slot)
         .map_err(|error| error.with_key_operand(3))?;
@@ -282,7 +282,7 @@ fn lookup(
     kind: ObjectType,
     required: u8,
 ) -> Result<KeyEntry, CapError> {
-    let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+    let caller_table = access.resolve_caller_table(caller)?;
     let entry = *caller_table
         .lookup(key, caller.guard)
         .map_err(|error| error.with_key_operand(operand))?;

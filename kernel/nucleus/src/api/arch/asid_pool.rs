@@ -63,7 +63,7 @@ fn assign<A: ArchObjects>(
     // capability through the caller's own table, copying out the checked
     // identities.
     let (pool_id, as_id) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(pool_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;

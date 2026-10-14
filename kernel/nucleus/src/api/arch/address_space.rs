@@ -101,7 +101,7 @@ fn resolve(
     as_key: RawKey,
     right: u8,
 ) -> Result<AddressSpaceId, CapError> {
-    let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+    let caller_table = access.resolve_caller_table(caller)?;
     let entry = caller_table
         .lookup(as_key, caller.guard)
         .map_err(|e| e.with_key_operand(0))?;
@@ -136,7 +136,7 @@ fn bind<A: ArchObjects>(
     // this block, so the bound table may be the caller's own.
     let as_id = resolve(access, caller, as_key, Rights::MAP)?;
     let table = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         resolve_table_cap(&caller_table, table_key, caller.guard, 2)?
     };
     if !table.rights.has(Rights::INSTALL) {
@@ -153,12 +153,12 @@ fn bind<A: ArchObjects>(
     // Syscall entry reads a table's guard from its `SELF_KEYTABLE`
     // capability, so the table must name itself there; the check and its
     // `InvalidSelfReference` status are the same as at entry.
-    let mut keytable = access.resolve_carved_mut::<KeyTable>(table.address)?;
+    let mut keytable = table.resolve(access)?;
     let table_size_bits = keytable.size_bits();
     if keytable
         .self_table_capability()
-        .is_none_or(|(address, _guard, size_bits)| {
-            address != table.address || size_bits != table_size_bits
+        .is_none_or(|(named, _guard, size_bits)| {
+            named != table.table || size_bits != table_size_bits
         })
     {
         return Err(CapError::InvalidSelfReference {
@@ -187,7 +187,7 @@ fn create_invocation<A: ArchObjects>(
     let destination_key = RawKey::from_wire(args[1]);
 
     let (address_space_id, destination) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let address_space_entry = caller_table
             .lookup(as_key, caller.guard)
             .map_err(|error| error.with_key_operand(0))?;
@@ -234,7 +234,7 @@ fn create_invocation<A: ArchObjects>(
     let placement_window = PlacementWindow::from_wire(x8);
     if placement_window.accepts_keys() {
         let target_table = Nucleus::<A>::address_space_table(access, address_space_id, as_key)?;
-        let table = access.resolve_carved_mut::<KeyTable>(target_table.addr)?;
+        let table = access.resolve_caller_table(target_table)?;
         if !table.contains_window(placement_window) {
             return Err(CapError::InvalidSlot(KeySlot(placement_window.first())));
         }
@@ -253,7 +253,7 @@ fn create_invocation<A: ArchObjects>(
         stack_extent,
         placement_window,
     );
-    let mut destination_table = access.resolve_carved_mut::<KeyTable>(destination.address)?;
+    let mut destination_table = destination.resolve(access)?;
     destination_table
         .insert(destination_slot, invocation, destination.guard)
         .map(|key| {

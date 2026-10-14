@@ -128,7 +128,7 @@ fn map<A: ArchObjects>(
     // the caller's own table, copying out what is needed later.
     let attribute;
     let (frame, as_id) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(frame_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
@@ -208,7 +208,7 @@ fn map<A: ArchObjects>(
     // Commit: record the mapping identity on the frame entry. The destination
     // is the caller's own table; the entry was validated above and only the
     // mapping record changes.
-    let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+    let mut caller_table = access.resolve_caller_table(caller)?;
     caller_table.record_frame_mapping(frame_key, caller.guard, as_id, vaddr)?;
 
     semi::println!("✅ Frame::Map()");
@@ -250,7 +250,7 @@ fn unmap<A: ArchObjects>(
     }
 
     let frame = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(frame_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
@@ -284,7 +284,7 @@ fn unmap<A: ArchObjects>(
     }
 
     // Commit: clear the mapping record.
-    let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+    let mut caller_table = access.resolve_caller_table(caller)?;
     caller_table.clear_frame_mapping(frame_key, caller.guard)?;
     semi::println!("✅ Frame::Unmap()");
     Ok((0, 0))
@@ -300,7 +300,7 @@ fn get_extent(
     if args.iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
-    let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+    let caller_table = access.resolve_caller_table(caller)?;
     let entry = caller_table
         .lookup(frame_key, caller.guard)
         .map_err(|e| e.with_key_operand(0))?;
@@ -332,7 +332,7 @@ fn maintain_cache<A: ArchObjects>(
         return Err(CapError::InvalidOperation);
     }
     let frame = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(frame_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;

@@ -1,9 +1,13 @@
 use {
     crate::{
         api::key_entry::KeyEntry,
-        objects::{NucleusObject, arch_objects::AddressSpaceId},
+        objects::{
+            NucleusObject,
+            arch_objects::AddressSpaceId,
+            carved::{Carved, CarvedId, CarvedObject},
+        },
     },
-    core::num::NonZero,
+    core::mem::size_of,
     libobject::{
         CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow,
         RawKey, domain::DomainId,
@@ -21,13 +25,16 @@ use {
 /// space manipulation).
 ///
 /// Guarded key-space package (selected 2026-09-23): the table is a carved,
-/// variable-size object — this fixed-size header followed, within the same
-/// carve, by `2^size_bits` `KeyEntry` slots and `2^size_bits` `u32`
-/// incarnation counters. `size_of::<KeyTable>()` is the header size only;
-/// the full carve size is [`KeyTable::carve_size`], and the header is
-/// authoritative for the capacity. The table's guard is not stored here: it
-/// lives in the capabilities naming the table (`KeyTablePayload`), and every
-/// key minted into the table packs it above the slot index.
+/// variable-size object — a [`Carved<KeyTable>`] record (the kernel
+/// [`CarvedHeader`](crate::objects::carved::CarvedHeader) and this fixed-size
+/// header) followed, within the same carve, by `2^size_bits` `KeyEntry` slots
+/// and `2^size_bits` `u32` incarnation counters. The table is named by its
+/// [`CarvedId`], so retiring it rejects every capability naming it, in any
+/// table, without an ancestry walk. The full carve size is
+/// [`KeyTable::carve_size`], and the header is authoritative for the
+/// capacity. The table's guard is not stored here: it lives in the
+/// capabilities naming the table (`KeyTablePayload`), and every key minted
+/// into the table packs it above the slot index.
 #[repr(C, align(32))]
 pub struct KeyTable {
     /// Domain that owns this table
@@ -40,20 +47,27 @@ pub struct KeyTable {
     _pad: [u8; 23],
 }
 
-/// Immutable association with initialized, kernel-private carved storage.
+/// An `AddressSpace`'s association with its carved table.
 ///
-/// Issued only by [`KeyTable::binding`], whose safety contract keeps the full
-/// carve stable for every retained copy. This is not a reclaimable object
-/// identity: adding table reclamation requires a separate lifetime mechanism.
+/// Issued only by [`KeyTable::bind_address_space`]. It carries the table's
+/// [`CarvedId`], so once the table is retired the binding no longer
+/// validates and every invocation from the `AddressSpace` fails with
+/// `InconsistentKey`/`ObjectRetired`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyTableBinding {
-    address: NonZero<u64>,
+    id: CarvedId,
     size_bits: u8,
 }
 
 impl KeyTableBinding {
+    /// The table's carved identity.
+    pub const fn id(self) -> CarvedId {
+        self.id
+    }
+
+    /// Kernel address of the table's carved record.
     pub const fn address(self) -> u64 {
-        self.address.get()
+        self.id.address
     }
 
     pub const fn size_bits(self) -> u8 {
@@ -79,16 +93,16 @@ pub struct InsertError {
 /// guards and are rejected here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CallerTable {
-    /// Kernel address of the caller's carved table.
-    pub addr: u64,
+    /// Carved identity of the caller's table.
+    pub table: CarvedId,
     /// The table's guard, from the validated `SELF_KEYTABLE` capability.
     pub guard: u32,
 }
 
 impl KeyTable {
-    /// Header size in bytes; the entry array starts at this offset within the
-    /// carve. Equal to `size_of::<KeyTable>()`.
-    pub const HEADER_SIZE: usize = core::mem::size_of::<Self>();
+    /// Bytes from the start of the carve to the entry array: the
+    /// [`Carved<KeyTable>`] record, kernel header and table header together.
+    pub const HEADER_SIZE: usize = Carved::<Self>::SIZE;
 
     /// Capacity-exponent bounds (selected 2026-09-23): a table holds
     /// `2^size_bits` entries with `size_bits` from 1 to 20.
@@ -169,15 +183,53 @@ impl KeyTable {
     /// See [`KeyTable::bind_address_space`].
     unsafe fn issue_binding(&self) -> KeyTableBinding {
         KeyTableBinding {
-            address: NonZero::new(core::ptr::from_ref(self) as u64)
-                .expect("a referenced table has a nonzero address"),
+            // SAFETY: forwarded caller contract: `self` lives in a carved record.
+            id: unsafe { self.id() },
             size_bits: self.size_bits,
         }
     }
 
-    /// Initialize a freshly carved table kernel-privately: write the header
-    /// and zero the entry and incarnation arrays (a null `KeyEntry` is the
-    /// all-zero value, so this both initializes and sanitizes the carve).
+    /// The table inside the carved record at `carve`, for boot code that holds
+    /// a table's carve address rather than a capability. Invocations resolve
+    /// tables through their checked [`CarvedId`] instead.
+    ///
+    /// # Safety
+    /// `carve` must be the start of a record initialized by
+    /// [`KeyTable::initialize`]; dereferencing the result carries the usual
+    /// aliasing obligations.
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "carved records are aligned to the table header (the caller's SAFETY obligation)"
+    )]
+    pub const unsafe fn at_carve(carve: u64) -> *mut Self {
+        (carve + Carved::<Self>::OBJECT_OFFSET as u64) as *mut Self
+    }
+
+    /// The identity of the table carved at `carve`, read from its header, for
+    /// boot code minting the first capabilities to a table.
+    ///
+    /// # Safety
+    /// As [`KeyTable::at_carve`].
+    pub unsafe fn carve_id(carve: u64) -> CarvedId {
+        // SAFETY: forwarded caller contract.
+        unsafe { Carved::<Self>::id_of(Self::at_carve(carve)) }
+    }
+
+    /// This table's carved identity, read from the header in front of it.
+    ///
+    /// # Safety
+    /// `self` must live in a record initialized by [`KeyTable::initialize`],
+    /// not a relocated copy of the header.
+    pub unsafe fn id(&self) -> CarvedId {
+        // SAFETY: forwarded caller contract.
+        unsafe { Carved::<Self>::id_of(self) }
+    }
+
+    /// Initialize a freshly carved table kernel-privately: write the carved
+    /// record (a live kernel header at the first generation, then the table
+    /// header) and zero the entry and incarnation arrays (a null `KeyEntry` is
+    /// the all-zero value, so this both initializes and sanitizes the carve).
+    /// Returns the table's identity.
     ///
     /// # Safety
     /// `carve` must name an exclusively-owned, 32-byte-aligned region of at
@@ -187,24 +239,28 @@ impl KeyTable {
         clippy::cast_ptr_alignment,
         reason = "the carve's 32-byte alignment is the caller's documented SAFETY obligation"
     )]
-    pub unsafe fn initialize(carve: *mut u8, owner: DomainId, size_bits: u8) {
+    pub unsafe fn initialize(carve: *mut u8, owner: DomainId, size_bits: u8) -> CarvedId {
         debug_assert!((Self::MIN_SIZE_BITS..=Self::MAX_SIZE_BITS).contains(&size_bits));
         let capacity = Self::capacity_for(size_bits);
         // SAFETY: the caller guaranteed the aligned, exclusively-owned carve
-        // of carve_size(size_bits) bytes; the arrays lie inside it.
+        // of carve_size(size_bits) bytes; the record and arrays lie inside it.
         unsafe {
-            carve.cast::<Self>().write(Self {
-                owner,
-                count: 0,
-                size_bits,
-                _pad: [0; 23],
-            });
+            let id = Carved::<Self>::initialize(
+                carve,
+                Self {
+                    owner,
+                    count: 0,
+                    size_bits,
+                    _pad: [0; 23],
+                },
+            );
             let entries = carve.add(Self::HEADER_SIZE).cast::<KeyEntry>();
             core::ptr::write_bytes(entries, 0, capacity);
             let counters = carve
                 .add(Self::HEADER_SIZE + capacity * core::mem::size_of::<KeyEntry>())
                 .cast::<u32>();
             core::ptr::write_bytes(counters, 0, capacity);
+            id
         }
     }
 
@@ -223,7 +279,7 @@ impl KeyTable {
             core::ptr::from_ref::<Self>(self)
                 .cast_mut()
                 .cast::<u8>()
-                .add(Self::HEADER_SIZE)
+                .add(size_of::<Self>())
                 .cast::<KeyEntry>()
         }
     }
@@ -240,7 +296,7 @@ impl KeyTable {
             core::ptr::from_ref::<Self>(self)
                 .cast_mut()
                 .cast::<u8>()
-                .add(Self::HEADER_SIZE + self.capacity() * core::mem::size_of::<KeyEntry>())
+                .add(size_of::<Self>() + self.capacity() * size_of::<KeyEntry>())
                 .cast::<u32>()
         }
     }
@@ -345,11 +401,11 @@ impl KeyTable {
 
     /// The self-table capability at the well-known `SELF_KEYTABLE` slot: the
     /// kernel's source for the caller's own-table guard (guarded key-space
-    /// package, selected 2026-09-23). Returns the carved address, guard, and
+    /// package, selected 2026-09-23). Returns the carved identity, guard, and
     /// capacity exponent recorded in the capability payload, or `None` when
     /// the slot is beyond the table's capacity, vacant, or holds a non-
     /// `KeyTable` entry.
-    pub fn self_table_capability(&self) -> Option<(u64, u32, u8)> {
+    pub fn self_table_capability(&self) -> Option<(CarvedId, u32, u8)> {
         let idx = usize::try_from(KeySlot::SELF_KEYTABLE.0).ok()?;
         if idx >= self.capacity() {
             return None;
@@ -358,9 +414,9 @@ impl KeyTable {
         if entry.object_type() != ObjectType::KEY_TABLE {
             return None;
         }
-        let address = entry.keytable_address().ok()?;
+        let table = entry.keytable_id().ok()?;
         let (guard, size_bits) = entry.keytable_guard_and_size().ok()?;
-        Some((address, guard, size_bits))
+        Some((table, guard, size_bits))
     }
 
     /// The fault handler at the well-known `FAULT_HANDLER` slot: the target of
@@ -578,11 +634,21 @@ impl NucleusObject for KeyTable {
     const POOL: crate::objects::access::PoolTag = crate::objects::access::PoolTag::KeyTable;
 }
 
+impl CarvedObject for KeyTable {}
+
+// The carved record is the kernel header padded to the table header's 32-byte
+// alignment, then the table header; the entry array follows at that boundary.
+const _: () = assert!(KeyTable::HEADER_SIZE == 64);
+const _: () = assert!(KeyTable::HEADER_SIZE.is_multiple_of(core::mem::align_of::<KeyEntry>()));
+
 #[cfg(test)]
 mod tests {
     use {
         super::{InsertError, KeyTable},
-        crate::api::KeyEntry,
+        crate::{
+            api::KeyEntry,
+            objects::carved::{Carved, test_id},
+        },
         core::mem::{align_of, size_of},
         libobject::{
             CapError, InconsistencyReason, InvalidKeyReason, KeySlot, ObjectType, RawKey, Rights,
@@ -613,8 +679,8 @@ mod tests {
         // test, is 32-byte aligned, and covers the full carve size.
         unsafe {
             let ptr = (&raw mut BACKING.0).cast::<u8>();
-            KeyTable::initialize(ptr, owner, SIZE_BITS);
-            &mut *(ptr as *mut KeyTable)
+            let id = KeyTable::initialize(ptr, owner, SIZE_BITS);
+            &mut *KeyTable::at_carve(id.address)
         }
     }
 
@@ -775,13 +841,17 @@ mod tests {
             assert!(!table.entry(index).is_valid());
             assert_eq!(table.incarnation_of(index), 0);
         }
-        // The header remains 32 bytes, independent of the 64-byte KeyEntry
-        // stride; the carve covers header + entries + counters at that alignment.
+        // The table header remains 32 bytes, independent of the 64-byte
+        // KeyEntry stride; the carved record puts the kernel header in front
+        // of it, padded to that alignment, and the carve covers the record,
+        // entries and counters.
         assert_eq!(size_of::<KeyTable>(), 32);
         assert_eq!(align_of::<KeyTable>(), align_of::<KeyEntry>());
+        assert_eq!(Carved::<KeyTable>::OBJECT_OFFSET, 32);
+        assert_eq!(KeyTable::HEADER_SIZE, 64);
         assert_eq!(
             KeyTable::carve_size(SIZE_BITS),
-            size_of::<KeyTable>() + CAPACITY * (size_of::<KeyEntry>() + size_of::<u32>())
+            KeyTable::HEADER_SIZE + CAPACITY * (size_of::<KeyEntry>() + size_of::<u32>())
         );
         assert_eq!(KeyTable::carve_size(SIZE_BITS) % align_of::<KeyEntry>(), 0);
         // Capacity-exponent bounds: 2^1 .. 2^20 entries, power-of-two sizes.
@@ -795,23 +865,23 @@ mod tests {
         assert_eq!(size_of::<KeyEntry>(), 64);
         assert_eq!(align_of::<KeyEntry>(), 32);
         assert_eq!(size_of::<u32>(), 4);
-        assert_eq!(KeyTable::HEADER_SIZE, 32);
+        assert_eq!(KeyTable::HEADER_SIZE, 64);
         assert_eq!(KeyTable::MIN_SIZE_BITS, 1);
         assert_eq!(KeyTable::MAX_SIZE_BITS, 20);
         for (bits, capacity, unrounded, rounded) in [
-            (1, 2, 168, 192),
-            (2, 4, 304, 320),
-            (3, 8, 576, 576),
-            (8, 256, 17_440, 17_440),
-            (20, 1_048_576, 71_303_200, 71_303_200),
+            (1, 2, 200, 224),
+            (2, 4, 336, 352),
+            (3, 8, 608, 608),
+            (8, 256, 17_472, 17_472),
+            (20, 1_048_576, 71_303_232, 71_303_232),
         ] {
             assert_eq!(KeyTable::capacity_for(bits), capacity);
-            assert_eq!(32 + capacity * (64 + 4), unrounded);
+            assert_eq!(64 + capacity * (64 + 4), unrounded);
             assert_eq!(KeyTable::carve_size(bits), rounded);
         }
         // Check every supported exponent without allocating a maximum table.
         for bits in KeyTable::MIN_SIZE_BITS..=KeyTable::MAX_SIZE_BITS {
-            let unrounded = 32 + (1_usize << bits) * 68;
+            let unrounded = 64 + (1_usize << bits) * 68;
             let rounded = KeyTable::carve_size(bits);
             assert!(rounded >= unrounded);
             assert!(rounded - unrounded < 32);
@@ -823,37 +893,40 @@ mod tests {
     fn literal_entry_and_counter_arrays_initialize_without_overlap_or_overrun() {
         // Include a canary after even the largest exercised carve. Smaller
         // capacity cases also expose the rounding tail (which is not an array).
-        static mut LAYOUT_BACKING: Backing<17_472> = Backing([0; 17_472]);
+        static mut LAYOUT_BACKING: Backing<17_504> = Backing([0; 17_504]);
+        // Offsets are from the start of the carve: the 64-byte carved record
+        // (kernel header, padding, table header), then the arrays.
         for (bits, capacity, counter_offset, array_end, carve_end) in [
-            (1, 2, 160, 168, 192),
-            (2, 4, 288, 304, 320),
-            (3, 8, 544, 576, 576),
-            (8, 256, 16_416, 17_440, 17_440),
+            (1, 2, 192, 200, 224),
+            (2, 4, 320, 336, 352),
+            (3, 8, 576, 608, 608),
+            (8, 256, 16_448, 17_472, 17_472),
         ] {
             // SAFETY: this serial test exclusively owns the aligned static
             // backing; every exercised full carve plus its canary fits. The
             // prior iteration's table borrow has ended before reinitialization.
-            let table = unsafe {
+            let (base, table) = unsafe {
                 let ptr = (&raw mut LAYOUT_BACKING.0).cast::<u8>();
-                core::ptr::write_bytes(ptr, 0xA5, 17_472);
-                KeyTable::initialize(ptr, DomainId(42), bits);
-                &mut *ptr.cast::<KeyTable>()
+                core::ptr::write_bytes(ptr, 0xA5, 17_504);
+                let id = KeyTable::initialize(ptr, DomainId(42), bits);
+                assert_eq!(id.address, ptr as u64);
+                (ptr as usize, &mut *KeyTable::at_carve(id.address))
             };
-            let base = core::ptr::from_ref(table) as usize;
             assert_eq!(base % 32, 0);
+            assert_eq!(core::ptr::from_ref(table) as usize - base, 32);
             assert_eq!(table.owner(), DomainId(42));
             assert_eq!(table.len(), 0);
             assert_eq!(table.size_bits(), bits);
             assert_eq!(table.capacity(), capacity);
-            assert_eq!(table.entries_base() as usize - base, 32);
+            assert_eq!(table.entries_base() as usize - base, 64);
             assert_eq!(table.counters_base() as usize - base, counter_offset);
-            assert_eq!(32 + capacity * 64, counter_offset);
+            assert_eq!(64 + capacity * 64, counter_offset);
             assert_eq!(counter_offset + capacity * 4, array_end);
             assert_eq!(KeyTable::carve_size(bits), carve_end);
             for index in 0..capacity {
                 assert_eq!(
                     core::ptr::from_ref(table.entry(index)) as usize - base,
-                    32 + index * 64
+                    64 + index * 64
                 );
                 assert!(!table.entry(index).is_valid());
                 assert_eq!(table.entry(index).object_type(), ObjectType::NULL);
@@ -868,7 +941,7 @@ mod tests {
             // SAFETY: both arrays were byte-initialized by initialize; this
             // shared byte view stays within the exclusively owned static carve.
             let initialized = unsafe {
-                core::slice::from_raw_parts(table.entries_base().cast::<u8>(), array_end - 32)
+                core::slice::from_raw_parts(table.entries_base().cast::<u8>(), array_end - 64)
             };
             assert!(initialized.iter().all(|byte| *byte == 0));
 
@@ -1289,8 +1362,8 @@ mod tests {
         // test, is 32-byte aligned, and covers the full carve size.
         let table = unsafe {
             let ptr = (&raw mut SMALL_BACKING.0).cast::<u8>();
-            KeyTable::initialize(ptr, DomainId(7), SMALL_BITS);
-            &mut *(ptr as *mut KeyTable)
+            let id = KeyTable::initialize(ptr, DomainId(7), SMALL_BITS);
+            &mut *KeyTable::at_carve(id.address)
         };
         assert_eq!(table.capacity(), 4);
         assert_eq!(table.size_bits(), SMALL_BITS);
@@ -1337,11 +1410,17 @@ mod tests {
         install(
             &mut table,
             KeySlot::SELF_KEYTABLE,
-            KeyEntry::new_keytable(0x1000, GUARD, SIZE_BITS, Rights::all(), 0),
+            KeyEntry::new_keytable(
+                test_id(ObjectType::KEY_TABLE, 0x1000),
+                GUARD,
+                SIZE_BITS,
+                Rights::all(),
+                0,
+            ),
         );
         assert_eq!(
             table.self_table_capability(),
-            Some((0x1000, GUARD, SIZE_BITS))
+            Some((test_id(ObjectType::KEY_TABLE, 0x1000), GUARD, SIZE_BITS))
         );
     }
 }

@@ -100,7 +100,7 @@ fn invocation_destination_state(
 ) -> InvocationDestinationState {
     // SAFETY: callers supply the retained, initialized private boot table.
     // This borrow ends before any subsequent SVC or mutable fixture access.
-    let table = unsafe { &*(table_addr as *const KeyTable) };
+    let table = unsafe { &*KeyTable::at_carve(table_addr) };
     let entry = table
         .lookup(occupied, BOOT_TABLE_GUARD)
         .unwrap_or_else(|error| panic!("occupied destination changed: {:?}", error.code()));
@@ -204,7 +204,7 @@ pub fn run() {
     assert_ne!(invocation_key.incarnation(), 0);
     {
         // SAFETY: keytable_addr names the live carved boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let Ok(invocation) = boot_table.lookup(invocation_key, BOOT_TABLE_GUARD) else {
             panic!("CreateInvocation did not install its destination cap");
         };
@@ -254,7 +254,7 @@ pub fn run() {
     );
     {
         // SAFETY: keytable_addr names the live carved boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         assert_eq!(boot_table.len(), table_len_before_zero);
         let existing = boot_table
             .lookup(invocation_key, BOOT_TABLE_GUARD)
@@ -389,11 +389,11 @@ pub fn run() {
     // it does not replace the target AddressSpace's provisioned keytable.
     let export_table_addr = {
         // SAFETY: keytable_addr names the live carved boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let Ok(export_table_cap) = boot_table.lookup(new_table_key, BOOT_TABLE_GUARD) else {
             panic!("export KeyTable capability is missing");
         };
-        let Ok(address) = export_table_cap.keytable_address() else {
+        let Ok(address) = export_table_cap.keytable_id().map(|table| table.address) else {
             panic!("export destination is not a KeyTable");
         };
         address
@@ -412,7 +412,7 @@ pub fn run() {
     assert_eq!(cross_table_invocation.slot(), test_slot(3));
     {
         // SAFETY: export_table_addr came from its live kernel-issued cap.
-        let export_table = unsafe { &*(export_table_addr as *const KeyTable) };
+        let export_table = unsafe { &*KeyTable::at_carve(export_table_addr) };
         let Ok(invocation) = export_table.lookup(cross_table_invocation, TEST_TABLE_GUARD) else {
             panic!("cross-table Invocation key did not resolve in its target table");
         };
@@ -469,7 +469,7 @@ pub fn run() {
         assert_eq!(key.incarnation(), 1);
         // SAFETY: retained initialized export table, borrowed only after
         // SVC completion; no SVC/mutation occurs while this borrow is live.
-        let table = unsafe { &*(export_table_addr as *const KeyTable) };
+        let table = unsafe { &*KeyTable::at_carve(export_table_addr) };
         let entry = table
             .lookup(key, TEST_TABLE_GUARD)
             .unwrap_or_else(|error| panic!("valid stack cap missing: {:?}", error.code()));
@@ -540,7 +540,7 @@ pub fn run() {
     // GRANT on the source AddressSpace and INSTALL on the destination
     // KeyTable are independently enforced by the kernel.
     // SAFETY: keytable_addr names the live carved boot KeyTable.
-    let no_grant_address_space = unsafe { &mut *(keytable_addr as *mut KeyTable) }
+    let no_grant_address_space = unsafe { &mut *KeyTable::at_carve(keytable_addr) }
         .insert(
             KeySlot(63),
             KeyEntry::new_carved(boot_as_id, Rights(Rights::MAP), 0),
@@ -565,11 +565,13 @@ pub fn run() {
         Err(CapError::InsufficientRights)
     ));
     // SAFETY: keytable_addr names the live carved boot KeyTable.
-    let no_install_table = unsafe { &mut *(keytable_addr as *mut KeyTable) }
+    let boot_table_id = unsafe { KeyTable::carve_id(keytable_addr) };
+    // SAFETY: as above.
+    let no_install_table = unsafe { &mut *KeyTable::at_carve(keytable_addr) }
         .insert(
             KeySlot(64),
             KeyEntry::new_keytable(
-                keytable_addr,
+                boot_table_id,
                 BOOT_TABLE_GUARD,
                 BOOT_TABLE_SIZE_BITS,
                 Rights(Rights::DERIVE),
@@ -599,7 +601,7 @@ pub fn run() {
     ));
     {
         // SAFETY: keytable_addr names the live carved boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         assert!(
             boot_table.check_insert(KeySlot(65)).is_ok(),
             "failed INSTALL check modified the destination table"
@@ -657,7 +659,7 @@ pub fn run() {
     {
         // SAFETY: retained boot table; all rejected SVCs have returned and
         // these shared fixture borrows end before the next construction.
-        let table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let address_space_entry = table
             .lookup(no_grant_address_space, BOOT_TABLE_GUARD)
             .unwrap_or_else(|error| {
@@ -669,7 +671,10 @@ pub fn run() {
         let table_entry = table
             .lookup(no_install_table, BOOT_TABLE_GUARD)
             .unwrap_or_else(|error| panic!("restricted KeyTable cap changed: {:?}", error.code()));
-        assert_eq!(table_entry.keytable_address().ok(), Some(keytable_addr));
+        assert_eq!(
+            table_entry.keytable_id().ok().map(|table| table.address),
+            Some(keytable_addr)
+        );
         assert_eq!(
             table_entry.keytable_guard_and_size().ok(),
             Some((BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS))
@@ -687,7 +692,7 @@ pub fn run() {
     );
     {
         // SAFETY: retained boot table, borrowed after construction commits.
-        let table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let entry = table
             .lookup(after_rejections, BOOT_TABLE_GUARD)
             .unwrap_or_else(|error| panic!("post-rejection cap missing: {:?}", error.code()));
@@ -729,7 +734,7 @@ pub fn run() {
         // check overlaps no capability invocation.
         // SAFETY: Bounce's retained table; no capability invocation is in
         // flight while this shared borrow lives.
-        let bounce_table = unsafe { &*(bounce_table_addr as *const KeyTable) };
+        let bounce_table = unsafe { &*KeyTable::at_carve(bounce_table_addr) };
         let entry = bounce_table
             .lookup(ppc_return_key, TEST_TABLE_GUARD)
             .unwrap_or_else(|error| {
@@ -838,12 +843,12 @@ pub fn run() {
     let bounce_named_thread_key = {
         // SAFETY: both initialized private tables have retained accounted
         // carves; neither borrow survives a capability invocation.
-        let boot_thread_id = unsafe { &*(keytable_addr as *const KeyTable) }
+        let boot_thread_id = unsafe { &*KeyTable::at_carve(keytable_addr) }
             .lookup(boot_key(50, 1), BOOT_TABLE_GUARD)
             .and_then(KeyEntry::thread_id)
             .unwrap_or_else(|_| panic!("boot Thread entry missing"));
         // SAFETY: as above; exclusively borrowed for this bootstrap grant.
-        unsafe { &mut *(bounce_table_addr as *mut KeyTable) }
+        unsafe { &mut *KeyTable::at_carve(bounce_table_addr) }
             .insert(
                 KeySlot(9),
                 KeyEntry::new_thread(boot_thread_id, Rights::all(), 0),
@@ -986,7 +991,7 @@ pub fn run() {
     {
         // SAFETY: both retained tables; every SVC has returned and these
         // shared borrows end before the next capability invocation.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let installed = boot_table
             .lookup(boot_key(111, 1), BOOT_TABLE_GUARD)
             .unwrap_or_else(|error| panic!("installed key missing: {:?}", error.code()));
@@ -1000,7 +1005,7 @@ pub fn run() {
         assert!(!kept.is_lent());
         // SAFETY: Bounce's retained table; no capability invocation is in
         // flight while this shared borrow lives.
-        let bounce_table = unsafe { &*(bounce_table_addr as *const KeyTable) };
+        let bounce_table = unsafe { &*KeyTable::at_carve(bounce_table_addr) };
         assert!(
             matches!(
                 bounce_table.lookup(placed, TEST_TABLE_GUARD),
@@ -1044,7 +1049,7 @@ pub fn run() {
         .unwrap_or_else(|error| panic!("full-window CreateInvocation failed: {:?}", error.code()));
     // SAFETY: Bounce's retained table; no capability invocation is in
     // flight, and the borrow ends with this statement.
-    unsafe { &mut *(bounce_table_addr as *mut KeyTable) }
+    unsafe { &mut *KeyTable::at_carve(bounce_table_addr) }
         .insert(
             KeySlot(124),
             KeyEntry::new_frame(0x1000, 12, false, Rights::all()),

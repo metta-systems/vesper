@@ -156,7 +156,7 @@ pub fn run() -> ! {
     // the probe's capability kernel-privately.
     // SAFETY: the probe's retained initialized table, exclusively borrowed for
     // this bootstrap grant; no capability invocation overlaps it.
-    let probe_key = unsafe { &mut *(probe_component.table_addr as *mut KeyTable) }
+    let probe_key = unsafe { &mut *KeyTable::at_carve(probe_component.table_addr) }
         .insert(
             KeySlot(PROBE_NOTIFICATION_SLOT),
             builder.entry(result_notification),

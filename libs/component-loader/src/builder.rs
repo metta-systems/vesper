@@ -228,7 +228,7 @@ impl Builder<'_> {
     pub fn address_space_id(&self, key: RawKey) -> AddressSpaceId {
         // SAFETY: the boot table is the live carved boot KeyTable; this
         // read-only borrow ends before any capability invocation.
-        let table = unsafe { &*(self.boot_table_addr as *const KeyTable) };
+        let table = unsafe { &*KeyTable::at_carve(self.boot_table_addr) };
         table
             .lookup(key, BOOT_TABLE_GUARD)
             .and_then(KeyEntry::address_space_id)
@@ -239,7 +239,7 @@ impl Builder<'_> {
     /// the same object into another table.
     pub fn entry(&self, key: RawKey) -> KeyEntry {
         // SAFETY: as in `address_space_id`.
-        let table = unsafe { &*(self.boot_table_addr as *const KeyTable) };
+        let table = unsafe { &*KeyTable::at_carve(self.boot_table_addr) };
         *table
             .lookup(key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|error| panic!("entry lookup failed: {:?}", error.code()))
@@ -249,11 +249,14 @@ impl Builder<'_> {
     /// names.
     pub fn table_address(&self, key: RawKey) -> u64 {
         // SAFETY: as in `address_space_id`.
-        let table = unsafe { &*(self.boot_table_addr as *const KeyTable) };
+        let table = unsafe { &*KeyTable::at_carve(self.boot_table_addr) };
         table
             .lookup(key, BOOT_TABLE_GUARD)
-            .and_then(KeyEntry::keytable_address)
-            .unwrap_or_else(|error| panic!("table capability lookup failed: {:?}", error.code()))
+            .and_then(KeyEntry::keytable_id)
+            .map_or_else(
+                |error| panic!("table capability lookup failed: {:?}", error.code()),
+                |table| table.address,
+            )
     }
 
     /// Map the retained init image (identity VA, RW+X) into every target
@@ -316,7 +319,7 @@ impl Builder<'_> {
                 let original = {
                     // SAFETY: the initialized private boot carve; no table
                     // reference survives the following capability calls.
-                    let table = unsafe { &mut *(self.boot_table_addr as *mut KeyTable) };
+                    let table = unsafe { &mut *KeyTable::at_carve(self.boot_table_addr) };
                     self.retained.grant_page(
                         table,
                         KeySlot(archive.grant_scratch),
@@ -371,7 +374,7 @@ impl Builder<'_> {
         {
             // SAFETY: full initialized retained private archive carve; no SVC
             // or mutable table access occurs while this borrow is live.
-            let table = unsafe { &*(archive_addr as *const KeyTable) };
+            let table = unsafe { &*KeyTable::at_carve(archive_addr) };
             assert_eq!(table.capacity(), 1_usize << bits);
             assert_eq!(u64::try_from(table.len()).unwrap_or(u64::MAX), entries - 1);
         }
@@ -418,7 +421,7 @@ impl Builder<'_> {
         // SAFETY: archive_addr came from the live capability to the full
         // private Retype carve. This borrow ends before the next SVC; Move
         // must preserve the mapping record.
-        let table = unsafe { &*(archive_addr as *const KeyTable) };
+        let table = unsafe { &*KeyTable::at_carve(archive_addr) };
         let archived_frame = table
             .lookup(archived, archive.guard)
             .and_then(KeyEntry::as_frame)

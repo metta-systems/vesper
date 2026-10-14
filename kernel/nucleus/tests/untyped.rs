@@ -87,6 +87,13 @@ fn carve_table() -> u64 {
     TEST_BACKING
 }
 
+/// The identity of the fixture table carved at `addr`.
+fn table_id(addr: u64) -> CarvedId {
+    // SAFETY: the fixture table is carved by `carve_table` and stays
+    // initialized.
+    unsafe { KeyTable::carve_id(addr) }
+}
+
 /// Backing bytes for the fixture nucleus's ASID-pool pool (u128 elements give
 /// the 16-byte minimum carve alignment), built with zero capacity: these
 /// MMU-off rejection-path tests never bind ASIDs.
@@ -138,11 +145,11 @@ impl Fixture {
     fn new(table_rights: u8) -> Self {
         let table_addr = carve_table();
         // SAFETY: table_addr names the freshly carved, live fixture table.
-        let self_key = unsafe { &mut *(table_addr as *mut KeyTable) }
+        let self_key = unsafe { &mut *KeyTable::at_carve(table_addr) }
             .insert(
                 KeySlot::SELF_KEYTABLE,
                 KeyEntry::new_keytable(
-                    table_addr,
+                    table_id(table_addr),
                     FIXTURE_GUARD,
                     SIZE_BITS,
                     Rights(table_rights),
@@ -161,7 +168,7 @@ impl Fixture {
     /// Install an entry into the fixture table.
     fn install(&mut self, slot: KeySlot, entry: KeyEntry) -> RawKey {
         // SAFETY: the address names a live carved table owned by the fixture.
-        unsafe { &mut *(self.table_addr as *mut KeyTable) }
+        unsafe { &mut *KeyTable::at_carve(self.table_addr) }
             .insert(slot, entry, FIXTURE_GUARD)
             .unwrap_or_else(|_| panic!("fixture installation failed"))
     }
@@ -169,13 +176,13 @@ impl Fixture {
     /// Look up an entry in the fixture table.
     fn lookup(&self, key: RawKey) -> Result<&KeyEntry, CapError> {
         // SAFETY: see install.
-        Ok(unsafe { &*(self.table_addr as *const KeyTable) }.lookup(key, FIXTURE_GUARD)?)
+        Ok(unsafe { &*KeyTable::at_carve(self.table_addr) }.lookup(key, FIXTURE_GUARD)?)
     }
 
     /// The fixture table's live-entry count.
     fn len(&self) -> usize {
         // SAFETY: see install.
-        unsafe { &*(self.table_addr as *const KeyTable) }.len()
+        unsafe { &*KeyTable::at_carve(self.table_addr) }.len()
     }
 
     /// Invoke the Untyped handler against the fixture.
@@ -188,7 +195,7 @@ impl Fixture {
         // SAFETY: test-only; no overlapping access context.
         let access = unsafe { Access::new() };
         let caller = crate::objects::key_table::CallerTable {
-            addr: self.table_addr,
+            table: table_id(self.table_addr),
             guard: FIXTURE_GUARD,
         };
         api::untyped::invoke::<ArchObjectsImpl>(
@@ -1441,7 +1448,7 @@ impl Fixture {
         // SAFETY: test-only; no overlapping access context.
         let access = unsafe { Access::new() };
         let caller = crate::objects::key_table::CallerTable {
-            addr: self.table_addr,
+            table: table_id(self.table_addr),
             guard: FIXTURE_GUARD,
         };
         api::time::invoke(&access, caller, key, op, args)

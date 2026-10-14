@@ -314,7 +314,7 @@ pub fn run() -> ! {
         .unwrap_or_else(|error| panic!("StartThread failed: {:?}", error.code()));
     // SAFETY: the boot table is the live carved boot KeyTable; this read-only
     // borrow ends before any capability invocation.
-    let el0_spinner = unsafe { &*(keytable_addr as *const KeyTable) }
+    let el0_spinner = unsafe { &*KeyTable::at_carve(keytable_addr) }
         .lookup(spinner_thread_key, BOOT_TABLE_GUARD)
         .and_then(KeyEntry::thread_id)
         .unwrap_or_else(|error| panic!("spinner Thread key lookup failed: {:?}", error.code()));

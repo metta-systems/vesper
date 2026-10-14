@@ -85,7 +85,7 @@ fn invocation_destination_state(
 ) -> InvocationDestinationState {
     // SAFETY: callers supply the retained, initialized private boot table.
     // This borrow ends before any subsequent SVC or mutable fixture access.
-    let table = unsafe { &*(table_addr as *const KeyTable) };
+    let table = unsafe { &*KeyTable::at_carve(table_addr) };
     let entry = table
         .lookup(occupied, BOOT_TABLE_GUARD)
         .unwrap_or_else(|error| panic!("occupied destination changed: {:?}", error.code()));
@@ -163,7 +163,7 @@ pub fn run() {
             .unwrap_or_else(|error| panic!("Frame Retype failed: {:?}", error.code()));
         // SAFETY: keytable_addr names the live boot KeyTable; the borrow ends
         // before any further SVC.
-        let paddr = unsafe { &*(keytable_addr as *const KeyTable) }
+        let paddr = unsafe { &*KeyTable::at_carve(keytable_addr) }
             .lookup(key, BOOT_TABLE_GUARD)
             .and_then(KeyEntry::as_frame)
             .unwrap_or_else(|error| panic!("Frame entry missing: {:?}", error.code()))
@@ -214,7 +214,7 @@ pub fn run() {
     // must never leak prior contents into hardware walks.
     {
         // SAFETY: keytable_addr names the live boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let id = boot_table
             .lookup(root_pt_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("root PageTable entry missing"))
@@ -395,16 +395,17 @@ pub fn run() {
             });
         let fixture_table_binding = {
             // SAFETY: the live boot table is borrowed only for this lookup.
-            let entry = unsafe { &*(keytable_addr as *const KeyTable) }
+            let entry = unsafe { &*KeyTable::at_carve(keytable_addr) }
                 .lookup(fixture_table_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("retirement KeyTable capability missing"));
             let address = entry
-                .keytable_address()
-                .unwrap_or_else(|_| panic!("retirement table capability has the wrong kind"));
+                .keytable_id()
+                .unwrap_or_else(|_| panic!("retirement table capability has the wrong kind"))
+                .address;
             // SAFETY: the kernel-issued address names the full initialized
             // private Retype carve retained without relocation, reclaim,
             // or reinitialization while any binding is live.
-            let binding = unsafe { (&mut *(address as *mut KeyTable)).bind_address_space() }
+            let binding = unsafe { (&mut *KeyTable::at_carve(address)).bind_address_space() }
                 .unwrap_or_else(|error| {
                     panic!("fixture table provisioning failed: {:?}", error.code())
                 });
@@ -429,7 +430,7 @@ pub fn run() {
         assert_ne!(fixture_as_id, boot_as_id);
         let fixture_as_key = {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
-            let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+            let boot_table = unsafe { &mut *KeyTable::at_carve(keytable_addr) };
             boot_table
                 .insert(
                     KeySlot(54),
@@ -613,7 +614,7 @@ pub fn run() {
         }
         {
             // SAFETY: retained boot table, borrowed only after rejected SVCs.
-            let table = unsafe { &*(keytable_addr as *const KeyTable) };
+            let table = unsafe { &*KeyTable::at_carve(keytable_addr) };
             let entry = table
                 .lookup(fixture_as_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|error| panic!("stale target cap changed: {:?}", error.code()));
@@ -625,7 +626,7 @@ pub fn run() {
         // it checks only the slot incarnation and never resolves the object.
         let occupied_before = {
             // SAFETY: retained boot table, borrowed only between SVCs.
-            unsafe { &*(keytable_addr as *const KeyTable) }.len()
+            unsafe { &*KeyTable::at_carve(keytable_addr) }.len()
         };
         KeyTableKey::from_key(self_table_key)
             .delete(fixture_as_key)
@@ -637,7 +638,7 @@ pub fn run() {
             });
         assert_eq!(
             // SAFETY: as above.
-            unsafe { &*(keytable_addr as *const KeyTable) }.len(),
+            unsafe { &*KeyTable::at_carve(keytable_addr) }.len(),
             occupied_before - 1
         );
         // The deleted key now fails lookup ahead of the object check, both
@@ -678,16 +679,17 @@ pub fn run() {
             .unwrap_or_else(|error| panic!("rebind KeyTable Retype failed: {:?}", error.code()));
         let rebind_table_binding = {
             // SAFETY: the live boot table is borrowed only for this lookup.
-            let entry = unsafe { &*(keytable_addr as *const KeyTable) }
+            let entry = unsafe { &*KeyTable::at_carve(keytable_addr) }
                 .lookup(rebind_table_key, BOOT_TABLE_GUARD)
                 .unwrap_or_else(|_| panic!("rebind KeyTable capability missing"));
             let address = entry
-                .keytable_address()
-                .unwrap_or_else(|_| panic!("rebind table capability has the wrong kind"));
+                .keytable_id()
+                .unwrap_or_else(|_| panic!("rebind table capability has the wrong kind"))
+                .address;
             // SAFETY: the kernel-issued address names the full initialized
             // private Retype carve retained without relocation, reclaim,
             // or reinitialization while any binding is live.
-            let binding = unsafe { (&mut *(address as *mut KeyTable)).bind_address_space() }
+            let binding = unsafe { (&mut *KeyTable::at_carve(address)).bind_address_space() }
                 .unwrap_or_else(|error| {
                     panic!("fixture table provisioning failed: {:?}", error.code())
                 });
@@ -712,7 +714,7 @@ pub fn run() {
         assert_ne!(rebind_as_id, fixture_as_id);
         let rebind_as_key = {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
-            let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+            let boot_table = unsafe { &mut *KeyTable::at_carve(keytable_addr) };
             boot_table
                 .insert(
                     KeySlot(55),
@@ -882,7 +884,7 @@ pub fn run() {
     // The frame entry records the full mapping identity.
     {
         // SAFETY: keytable_addr names the live boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let f = boot_table
             .lookup(frame_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("frame entry missing"))
@@ -1266,7 +1268,7 @@ pub fn run() {
     {
         // SAFETY: keytable_addr names the live boot KeyTable; no SVC runs
         // while this shared borrow is live.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let base = boot_table
             .lookup(charge_key, BOOT_TABLE_GUARD)
             .and_then(KeyEntry::as_untyped)
@@ -1739,7 +1741,7 @@ fn address_space_bind(
     let boot_install = |offset: u32, entry: KeyEntry| {
         // SAFETY: keytable_addr names the live boot KeyTable; each borrow
         // ends before the next SVC.
-        unsafe { &mut *(keytable_addr as *mut KeyTable) }
+        unsafe { &mut *KeyTable::at_carve(keytable_addr) }
             .insert(KeySlot(slot(offset)), entry, BOOT_TABLE_GUARD)
             .unwrap_or_else(|failure| {
                 panic!("Bind fixture grant failed: {:?}", failure.error.code())
@@ -1767,12 +1769,14 @@ fn address_space_bind(
     }
     let table_key = retype(ObjectType::KEY_TABLE, 4, BIND_TABLE_GUARD, 1, 2);
     let table_addr = builder.table_address(table_key);
+    // SAFETY: Retype initialized the private carve.
+    let table_id = unsafe { KeyTable::carve_id(table_addr) };
     // SAFETY: Retype initialized the private carve; no SVC runs during this
     // borrow.
-    unsafe { &mut *(table_addr as *mut KeyTable) }
+    unsafe { &mut *KeyTable::at_carve(table_addr) }
         .insert(
             KeySlot::SELF_KEYTABLE,
-            KeyEntry::new_keytable(table_addr, BIND_TABLE_GUARD, 4, Rights::all(), 0),
+            KeyEntry::new_keytable(table_id, BIND_TABLE_GUARD, 4, Rights::all(), 0),
             BIND_TABLE_GUARD,
         )
         .unwrap_or_else(|failure| {
@@ -1823,7 +1827,7 @@ fn address_space_bind(
     let no_install = boot_install(
         9,
         KeyEntry::new_keytable(
-            table_addr,
+            table_id,
             BIND_TABLE_GUARD,
             4,
             Rights(Rights::all().0 & !Rights::INSTALL),
@@ -1868,7 +1872,7 @@ fn address_space_bind(
     assert!(
         // SAFETY: Retype initialized the table'''s private carve; no SVC runs
         // during this borrow.
-        unsafe { &*(table_addr as *const KeyTable) }
+        unsafe { &*KeyTable::at_carve(table_addr) }
             .lookup(
                 table_key_for(BIND_TABLE_GUARD, KeySlot::THREAD_RETURN),
                 BIND_TABLE_GUARD

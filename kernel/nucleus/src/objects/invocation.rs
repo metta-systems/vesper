@@ -16,6 +16,7 @@ use {
             ArchObjects, ExecutionContext, InvocationContinuation, KeyTable, Nucleus, Placement,
             access::Access,
             arch_objects::{AddressSpaceId, AddressSpaceObject},
+            carved::CarvedId,
             key_table::CallerTable,
             resume::{PreparedTranslationContext, execution_origin, prepare_translation_context},
             thread::ThreadId,
@@ -242,20 +243,26 @@ impl<A: ArchObjects> Nucleus<A> {
             .map_err(|_invalid_address_space| CapError::InvalidDomain)?
             .keytable()
             .ok_or(CapError::NotBound)?;
-        let addr = binding.address();
         let no_context = || CapError::InvalidSelfReference {
             reference: InvalidSelfReference::KeyTableKey(KeySlot::SELF_KEYTABLE),
             key: invoked,
         };
-        let table = access.resolve_carved_mut::<KeyTable>(addr)?;
-        let (cap_addr, guard, size_bits) = table.self_table_capability().ok_or_else(no_context)?;
-        if cap_addr != addr
+        // A retired table fails every invocation from the AddressSpace bound
+        // to it, reported against the invoked key.
+        let table = access
+            .resolve_object::<KeyTable>(binding.id())
+            .map_err(|error| error.for_key(invoked, 0))?;
+        let (named, guard, size_bits) = table.self_table_capability().ok_or_else(no_context)?;
+        if named != binding.id()
             || size_bits != binding.size_bits()
             || table.size_bits() != binding.size_bits()
         {
             return Err(no_context());
         }
-        Ok(CallerTable { addr, guard })
+        Ok(CallerTable {
+            table: binding.id(),
+            guard,
+        })
     }
 
     /// Admit and prepare `Invocation.Call` (or, with `lend`,
@@ -359,7 +366,7 @@ impl<A: ArchObjects> Nucleus<A> {
         if !window.accepts_keys() {
             return Err(CapError::KeyNotAccepted);
         }
-        let caller_table = access.resolve_carved_mut::<KeyTable>(lend.caller.addr)?;
+        let caller_table = access.resolve_caller_table(lend.caller)?;
         let entry = caller_table
             .lookup(lend.key, lend.caller.guard)
             .map_err(|error| error.with_key_operand(LENT_KEY_OPERAND))?;
@@ -390,7 +397,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 CapError::InvalidSelfReference { .. } => CapError::NotBound,
                 other => other,
             })?;
-        let table = access.resolve_carved_mut::<KeyTable>(target_table.addr)?;
+        let table = access.resolve_caller_table(target_table)?;
         let (slot, incarnation) = table
             .first_vacant_in(target.placement_window)
             .ok_or(CapError::NoPlacementSlot)?;
@@ -505,7 +512,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 access,
                 prepared
                     .placement
-                    .map_or(0, |placement| placement.target_table.addr),
+                    .map_or(CarvedId::UNBOUND, |placement| placement.target_table.table),
                 continuation.placement,
             );
             return Err(CapError::NestingDepth {
@@ -531,14 +538,13 @@ impl<A: ArchObjects> Nucleus<A> {
         placement: PreparedPlacement,
     ) -> Result<Placement, CapError> {
         let borrowed = {
-            let caller_table = access.resolve_carved_mut::<KeyTable>(placement.lent.caller.addr)?;
+            let caller_table = access.resolve_caller_table(placement.lent.caller)?;
             caller_table
                 .lookup(placement.lent.key, placement.lent.caller.guard)
                 .map_err(|error| error.with_key_operand(LENT_KEY_OPERAND))?
                 .borrowed_copy()
         };
-        let mut target_table =
-            access.resolve_carved_mut::<KeyTable>(placement.target_table.addr)?;
+        let mut target_table = access.resolve_caller_table(placement.target_table)?;
         let placed = target_table
             .insert(placement.slot, borrowed, placement.target_table.guard)
             .map_err(|failure| failure.error)?;
@@ -555,16 +561,16 @@ impl<A: ArchObjects> Nucleus<A> {
         Ok(installed)
     }
 
-    /// Remove the borrowed entry `placement` names from the table at
-    /// `table_address`, if it is still the entry issued then. Called when a
+    /// Remove the borrowed entry `placement` names from `table`, if the table
+    /// is live and it is still the entry issued then. Called when a
     /// call that lent a key returns, and when its Thread stops for good.
     /// Returns whether an entry was removed; a callee that already deleted it
     /// leaves nothing to do.
-    pub fn release_placement(access: &Access, table_address: u64, placement: Placement) -> bool {
+    pub fn release_placement(access: &Access, table: CarvedId, placement: Placement) -> bool {
         if !placement.is_some() {
             return false;
         }
-        let Ok(mut table) = access.resolve_carved_mut::<KeyTable>(table_address) else {
+        let Ok(mut table) = access.resolve_object::<KeyTable>(table) else {
             return false;
         };
         table.release_placed(KeySlot(placement.slot), placement.incarnation)
@@ -590,7 +596,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 .get(depth + 1)
                 .map_or(thread.address_space, |next| next.source_address_space);
             if let Ok(table) = Self::address_space_table(access, callee, RawKey::from_wire(0)) {
-                Self::release_placement(access, table.addr, record.placement);
+                Self::release_placement(access, table.table, record.placement);
             }
         }
     }

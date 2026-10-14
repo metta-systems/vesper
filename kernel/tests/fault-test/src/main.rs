@@ -86,7 +86,7 @@ fn boot_main(dtb: u32) -> ! {
 fn grant_notification(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
     // SAFETY: the component's retained initialized table, exclusively
     // borrowed for this bootstrap grant; no capability invocation overlaps it.
-    unsafe { &mut *(component.table_addr as *mut KeyTable) }
+    unsafe { &mut *KeyTable::at_carve(component.table_addr) }
         .insert(KeySlot(slot), entry, component.guard)
         .unwrap_or_else(|failure| panic!("Notification grant failed: {:?}", failure.error.code()))
 }

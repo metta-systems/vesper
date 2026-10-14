@@ -48,6 +48,8 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 - [x] Inert-nucleus boot: Kickstart carves the `Nucleus`, the boot Thread/AddressSpace and table, and installs the boot grants.
 - [x] Scheduler, IRQControl and IRQHandler registered as core wire kinds (`5`, `9`, `10`) with no handlers; there is no Brand kind (`libs/object` catalogue tests).
 
+- [x] KeyTable retirement identity: a KeyTable is a `Carved<KeyTable>` named by its `CarvedId` in `KeyTablePayload`, `KeyTableBinding` and `CallerTable` (`kernel/nucleus/src/objects/key_table.rs`); every table resolution validates the header (`Access::resolve_caller_table`, `TableCap::resolve`), and a retired bound table fails syscall entry with `InconsistentKey`/`ObjectRetired`. Exercised by `retired_table_rejects_capabilities_in_every_table` (`kernel/nucleus/tests/key_table.rs`) and `retired_bound_table_rejects_every_invocation_from_its_address_space` (`kernel/nucleus/tests/debug_console.rs`).
+
 ## Phase 5 — Memory and safe reclamation
 
 - [x] Buffer is a userspace construct over Frames; no kernel Buffer kind.

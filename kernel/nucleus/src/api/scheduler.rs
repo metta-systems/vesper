@@ -201,7 +201,7 @@ fn lookup(
     kind: ObjectType,
     required: u8,
 ) -> Result<KeyEntry, CapError> {
-    let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+    let caller_table = access.resolve_caller_table(caller)?;
     let entry = *caller_table
         .lookup(key, caller.guard)
         .map_err(|error| error.with_key_operand(operand))?;

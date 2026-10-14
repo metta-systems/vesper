@@ -90,7 +90,7 @@ fn retire<A: ArchObjects>(
     // Resolve the invoked Thread capability through the caller's own table,
     // copying out the checked identity.
     let thread_id = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(thread_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
@@ -158,7 +158,7 @@ pub fn prepare_return<A: ArchObjects>(
         return Err(CapError::InvalidOperation.into());
     }
     {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(return_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
@@ -193,6 +193,6 @@ pub fn return_from_call<A: ArchObjects>(
     // The call returned: a key it borrowed (CallWithKey) leaves the callee's
     // table, which is the table this Return ran in. A callee that already
     // deleted it leaves nothing to remove.
-    Nucleus::<A>::release_placement(access, caller.addr, committed.placement);
+    Nucleus::<A>::release_placement(access, caller.table, committed.placement);
     Ok(committed)
 }

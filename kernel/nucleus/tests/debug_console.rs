@@ -98,6 +98,12 @@ const SIZE_BITS: u8 = 8;
 /// fits the 24 guard bits of a 256-entry table's table-relative address.
 const FIXTURE_GUARD: u32 = 0xD1A_5EE;
 
+/// The identity of the fixture table carved at `addr`.
+pub(crate) fn table_id(addr: u64) -> CarvedId {
+    // SAFETY: fixture tables are carved by `carve` and stay initialized.
+    unsafe { KeyTable::carve_id(addr) }
+}
+
 /// The bare slot index of a fixture key (its low `SIZE_BITS` address bits).
 fn bare_index(key: RawKey) -> KeySlot {
     KeySlot(key.slot().0 & ((1_u32 << u32::from(SIZE_BITS)) - 1))
@@ -116,12 +122,12 @@ fn carve(index: usize) -> KeyTableBinding {
     // exclusively owned by the test fixture for its lifetime; the stride
     // covers the full variable-size carve.
     unsafe {
-        KeyTable::initialize(obj, DomainId(0), SIZE_BITS);
-        let table = &mut *(obj as *mut KeyTable);
+        let id = KeyTable::initialize(obj, DomainId(0), SIZE_BITS);
+        let table = &mut *KeyTable::at_carve(id.address);
         table
             .insert(
                 KeySlot::SELF_KEYTABLE,
-                KeyEntry::new_keytable(obj as u64, FIXTURE_GUARD, SIZE_BITS, Rights::all(), 0),
+                KeyEntry::new_keytable(id, FIXTURE_GUARD, SIZE_BITS, Rights::all(), 0),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|_| panic!("fixture self-table installation failed"));
@@ -152,9 +158,7 @@ impl Nucleus<ArchObjectsImpl> {
             // Access context overlaps this scope, and the guard is dropped
             // before production Thread creation or subsequent dispatch.
             let access = unsafe { Access::new() };
-            let mut table = access
-                .resolve_carved_mut::<KeyTable>(binding.address())
-                .ok()?;
+            let mut table = access.resolve_object::<KeyTable>(binding.id()).ok()?;
             // Discover the guard through SELF, the same source used by syscall
             // entry, so the fixture installs a resolvable guarded console key.
             let (_self_addr, guard, _size_bits) = table
@@ -424,7 +428,7 @@ fn threads_in_the_same_address_space_share_one_dispatch_table() {
             assert_console_table(table, issued, Some((Rights::all(), 0)));
             assert_eq!(
                 table.self_table_capability(),
-                Some((table_addr, FIXTURE_GUARD, SIZE_BITS))
+                Some((table_id(table_addr), FIXTURE_GUARD, SIZE_BITS))
             );
             let self_cap = table
                 .lookup(self_key, FIXTURE_GUARD)
@@ -598,7 +602,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                             match api::thread::invoke(
                                 &access,
                                 CallerTable {
-                                    addr: table_addr,
+                                    table: table_id(table_addr),
                                     guard: FIXTURE_GUARD,
                                 },
                                 key,
@@ -662,7 +666,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                         assert_eq!(table.len(), 2);
                         assert_eq!(
                             table.self_table_capability(),
-                            Some((table_addr, FIXTURE_GUARD, SIZE_BITS))
+                            Some((table_id(table_addr), FIXTURE_GUARD, SIZE_BITS))
                         );
                         let retained = table.lookup(key, FIXTURE_GUARD).unwrap_or_else(|error| {
                             panic!("Thread key preserved: {:?}", error.code())
@@ -789,7 +793,7 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                             assert_eq!(table.len(), 1 + usize::from(live.is_some()));
                             assert_eq!(
                                 table.self_table_capability(),
-                                Some((table_addr, FIXTURE_GUARD, SIZE_BITS))
+                                Some((table_id(table_addr), FIXTURE_GUARD, SIZE_BITS))
                             );
                             if let Some(live) = live {
                                 let entry =
@@ -1090,7 +1094,7 @@ fn mismatched_self_table_address_or_size_rejects_dispatch_without_changes() {
                     .insert(
                         KeySlot::SELF_KEYTABLE,
                         KeyEntry::new_keytable(
-                            address,
+                            table_id(address),
                             FIXTURE_GUARD,
                             size_bits,
                             Rights::all(),
@@ -1107,15 +1111,14 @@ fn mismatched_self_table_address_or_size_rejects_dispatch_without_changes() {
                         assert_eq!(table.size_bits(), SIZE_BITS);
                         assert_eq!(
                             table.self_table_capability(),
-                            Some((address, FIXTURE_GUARD, size_bits))
+                            Some((table_id(address), FIXTURE_GUARD, size_bits))
                         );
                         let cap = table
                             .lookup(self_key, FIXTURE_GUARD)
                             .unwrap_or_else(|_| panic!("rejected dispatch changed SELF identity"));
                         assert_eq!(
-                            cap.keytable_address()
-                                .unwrap_or_else(|_| panic!("not a table")),
-                            address
+                            cap.keytable_id().unwrap_or_else(|_| panic!("not a table")),
+                            table_id(address)
                         );
                         assert_eq!(
                             cap.keytable_guard_and_size()
@@ -1171,7 +1174,13 @@ fn self_table_capability_remains_the_source_of_the_caller_guard() {
         table
             .insert(
                 KeySlot::SELF_KEYTABLE,
-                KeyEntry::new_keytable(table_addr, changed_guard, SIZE_BITS, Rights::all(), 0),
+                KeyEntry::new_keytable(
+                    table_id(table_addr),
+                    changed_guard,
+                    SIZE_BITS,
+                    Rights::all(),
+                    0,
+                ),
                 changed_guard,
             )
             .unwrap_or_else(|_| panic!("changed-guard self-table installation failed"));
@@ -1187,7 +1196,7 @@ fn self_table_capability_remains_the_source_of_the_caller_guard() {
         assert_eq!(table.len(), 3);
         assert_eq!(
             table.self_table_capability(),
-            Some((table_addr, changed_guard, SIZE_BITS))
+            Some((table_id(table_addr), changed_guard, SIZE_BITS))
         );
         let cap = table
             .lookup(rebound_key, changed_guard)
@@ -1195,6 +1204,41 @@ fn self_table_capability_remains_the_source_of_the_caller_guard() {
         assert_eq!(cap.object_type(), ObjectType::DEBUG_CONSOLE);
         assert_eq!(cap.rights(), Rights::all());
         assert_eq!(cap.badge(), 0);
+    });
+}
+
+/// An `AddressSpace` whose bound table is retired can invoke nothing: syscall
+/// entry rejects every invocation with `InconsistentKey`/`ObjectRetired` on
+/// the invoked key, before dispatch, and the other `AddressSpace` is
+/// unaffected.
+#[test_case]
+fn retired_bound_table_rejects_every_invocation_from_its_address_space() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, second_as| {
+        let issued = nucleus
+            .create_console_thread(fixture_as)
+            .expect("bootstrap console key missing");
+        let second_issued = nucleus
+            .create_console_thread(second_as)
+            .expect("second console key missing");
+        nucleus.current_thread = nucleus.fixture_thread(0);
+        // SAFETY: the fixture table is a live carve; no guard to it is held.
+        unsafe { Carved::<KeyTable>::retire(table_id(table_addr)) }
+            .unwrap_or_else(|_| panic!("table retirement failed"));
+        assert!(nucleus.current_thread_table_mut().is_none());
+        for key in [issued, RawKey::from_wire(0), RawKey::from_wire(u64::MAX)] {
+            for op in [0, 1] {
+                assert_dispatch_error(
+                    nucleus,
+                    key,
+                    op,
+                    (27, key.to_wire(), InconsistencyReason::ObjectRetired as u64),
+                );
+            }
+        }
+        nucleus.current_thread = nucleus.fixture_thread(1);
+        assert!(nucleus.current_thread_table_mut().is_some());
+        // Entry admits the call; the console rejects the undefined op itself.
+        assert_dispatch_error(nucleus, second_issued, 1, (8, 0, 0));
     });
 }
 
@@ -1495,8 +1539,8 @@ fn table_lookup_still_requires_an_installed_capability() {
     // covers the full variable-size carve at the table's alignment.
     let table = unsafe {
         let ptr = (&raw mut TABLE_BACKING.0).cast::<u8>();
-        KeyTable::initialize(ptr, DomainId(0), SIZE_BITS);
-        &mut *(ptr as *mut KeyTable)
+        let id = KeyTable::initialize(ptr, DomainId(0), SIZE_BITS);
+        &mut *KeyTable::at_carve(id.address)
     };
     let slot = KeySlot::DEBUG_CONSOLE;
     let never_issued = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, slot.0, 1);

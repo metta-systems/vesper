@@ -171,7 +171,7 @@ impl Builder<'_> {
                 let frame = {
                     // SAFETY: the live boot table; no reference survives the
                     // capability calls below.
-                    let table = unsafe { &mut *(self.boot_table_addr as *mut KeyTable) };
+                    let table = unsafe { &mut *KeyTable::at_carve(self.boot_table_addr) };
                     self.retained.grant_page(
                         table,
                         KeySlot(scratch),

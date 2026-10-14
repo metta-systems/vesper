@@ -272,7 +272,7 @@ fn retype<A: ArchObjects>(
     // Phase 1 — read the Untyped entry and the destination-table capability
     // through the caller's own table, copying out the values needed later.
     let (untyped, dst_cap) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let untyped = caller_table.lookup(untyped_key, caller.guard)?;
         if untyped.object_type() != ObjectType::UNTYPED {
             return Err(CapError::TypeMismatch {
@@ -330,7 +330,7 @@ fn retype<A: ArchObjects>(
     let (obj_size, align) = match carve {
         Carve::KeyTable { size_bits } => (
             u64::try_from(KeyTable::carve_size(size_bits)).unwrap(),
-            u64::try_from(core::mem::align_of::<KeyTable>().max(MIN_ALIGN)).unwrap(),
+            u64::try_from(Carved::<KeyTable>::ALIGN.max(MIN_ALIGN)).unwrap(),
         ),
         Carve::Frame { bytes } | Carve::PageTable { bytes } | Carve::Untyped { bytes } => {
             let size = u64::try_from(bytes).unwrap();
@@ -361,7 +361,7 @@ fn retype<A: ArchObjects>(
     // Phase 3 — resolve the destination table and pre-validate the run of
     // destination slots (in range, vacant, incarnation not exhausted) so the
     // installs below cannot fail.
-    let mut dst_table = access.resolve_carved_mut::<KeyTable>(dst_cap.address)?;
+    let mut dst_table = dst_cap.resolve(access)?;
     let owner = dst_table.owner();
     let first_slot = u64::from(dst_slot.0);
     for i in 0..u64::from(count) {
@@ -398,10 +398,8 @@ fn retype<A: ArchObjects>(
                 // watermark range, is kernel-private, is exclusively owned by
                 // this invocation, and is aligned to the table's 32-byte
                 // header/entry alignment with room for the full carve.
-                unsafe {
-                    KeyTable::initialize(addr, owner, size_bits);
-                }
-                KeyEntry::new_keytable(addr as u64, table_guard, size_bits, requested, 0)
+                let table = unsafe { KeyTable::initialize(addr, owner, size_bits) };
+                KeyEntry::new_keytable(table, table_guard, size_bits, requested, 0)
             }
             Carve::Frame { bytes } => {
                 // A device Frame names MMIO registers: it is never zeroed or
@@ -522,12 +520,12 @@ fn retype<A: ArchObjects>(
     // Phase 6 — commit: advance the watermark last. The destination table may
     // be the caller's own table; re-resolve it only when they differ.
     let new_watermark = reservation.end;
-    if dst_cap.address == caller.addr {
+    if dst_cap.table.address == caller.table.address {
         dst_table.advance_untyped_watermark(untyped_key, caller.guard, new_watermark)?;
     } else {
         // Distinct tables: the destination guard's borrow ended at its last
         // use above, so resolving the caller's own table cannot alias it.
-        let mut caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let mut caller_table = access.resolve_caller_table(caller)?;
         caller_table.advance_untyped_watermark(untyped_key, caller.guard, new_watermark)?;
     }
 

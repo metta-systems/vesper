@@ -93,7 +93,6 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 
 ### Keys, identity and retirement
 
-- [ ] Give carved objects (KeyTables, Frames) a retirement identity so retirement rejects old capabilities in every table without an ancestry walk.
 - [ ] Implement permission-based retirement for the remaining kinds (only Thread and AddressSpace have `Retire`); test that creator control survives delegation and that accepted leaks cause no automatic destruction or conflicting reuse.
 - [ ] Define the retirement-to-background-cleanup handoff to entrusted managers (no central post-hoc registration).
 - [ ] Settle pool retirement, reuse validation and the zero-sized-type policy for `ObjectPool`; create pools at runtime, not only at bootstrap.
@@ -112,7 +111,7 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 
 Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
 
-- [ ] Separate backing size/alignment from descriptor storage and slot quotas, with provenance, for kinds outside the kernel object pools.
+- [ ] Separate backing size/alignment from descriptor storage and slot quotas, with provenance, for kinds outside the kernel object pools. Give Frames their retirement identity in that descriptor, so retiring a Frame rejects its capabilities in every table without an ancestry walk ([contract](capabilities-contract.md#lifecycle-and-authority-contract)).
 - [ ] Define the sanitization duties beyond Retype-carved Frames and PageTables, distinguishing intentional content-preserving sharing.
 - [ ] Implement mapping-local Unmap versus origin-capability Revoke of descendants: retain the origin, define partial completion, and prevent racing mapping installation.
 - [ ] Encode and enforce origin-only remap, virtual relocation versus physical replacement, descendant effects, and the interim full-revoke/no-Frame-slot-reuse rule.

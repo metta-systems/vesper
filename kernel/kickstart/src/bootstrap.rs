@@ -345,7 +345,7 @@ pub fn bootstrap_nucleus() -> BootState {
     // SAFETY: build_initial_nucleus initialized the full private boot carve.
     // Boot allocations remain accounted below the Untyped watermark and are
     // never relocated, reclaimed, or reinitialized while a binding is live.
-    let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+    let boot_table = unsafe { &mut *KeyTable::at_carve(keytable_addr) };
     // SAFETY: the initialized boot table has the retained backing described above.
     // Provisioning installs the Slot(1) Return sentinel before the binding
     // exists, so the boot AddressSpace has it before it can be activated.
@@ -392,7 +392,7 @@ pub fn bootstrap_nucleus() -> BootState {
         .insert(
             KeySlot::SELF_KEYTABLE,
             KeyEntry::new_keytable(
-                boot_table_binding.address(),
+                boot_table_binding.id(),
                 BOOT_TABLE_GUARD,
                 boot_table_binding.size_bits(),
                 Rights::all(),

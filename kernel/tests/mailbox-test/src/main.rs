@@ -277,7 +277,7 @@ pub fn run() -> ! {
                 client_area = area_of_mailbox_imports;
                 // The report key, in the client's table only.
                 // SAFETY: the driver's retained table; no invocation overlaps.
-                unsafe { &mut *(loaded.component.table_addr as *mut KeyTable) }
+                unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
                     .insert(
                         KeySlot(REPORT_SLOT),
                         KeyEntry::new_carved(report_id, Rights(Rights::SEND), 1),
@@ -289,16 +289,18 @@ pub fn run() -> ! {
                 // Keys to the client's own table, for it to lend to fb through
                 // `CallWithKey`: one carries `INSTALL | LEND`, the other
                 // only `INSTALL`.
+                // SAFETY: the driver's retained table is an initialized carve.
+                let client_table = unsafe { KeyTable::carve_id(loaded.component.table_addr) };
                 for (slot, rights) in [
                     (LEND_TABLE_SLOT, Rights(Rights::INSTALL | Rights::LEND)),
                     (PLAIN_TABLE_SLOT, Rights(Rights::INSTALL)),
                 ] {
                     // SAFETY: as above.
-                    unsafe { &mut *(loaded.component.table_addr as *mut KeyTable) }
+                    unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
                         .insert(
                             KeySlot(slot),
                             KeyEntry::new_keytable(
-                                loaded.component.table_addr,
+                                client_table,
                                 loaded.component.guard,
                                 BOOT_TABLE_SIZE_BITS,
                                 rights,

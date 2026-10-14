@@ -214,24 +214,24 @@ pub struct InvocationPayload {
     pub _pad: u32,
 }
 
-/// Payload for a `KeyTable` capability: a reference to the carved `KeyTable`
-/// kernel object (Retype-created). Retype-created objects are
-/// addressed directly; the carved region is never freed under the accepted-leak
-/// model, so the address never goes stale. The kind lives in the entry header;
-/// this payload is interpreted per actual object type, not as a storage
-/// mechanism.
+/// Payload for a `KeyTable` capability: the carved `KeyTable`'s identity
+/// (its [`CarvedId`] without the kind, which lives in the entry header) plus
+/// the table's guard and capacity exponent. Retiring the table bumps its
+/// generation, so every capability still naming it fails.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct KeyTablePayload {
-    /// Kernel virtual address of the carved `KeyTable` object.
+    /// Kernel virtual address of the carved `KeyTable` record.
     pub address: u64,
+    /// The table's generation when this capability was minted.
+    pub generation: u32,
     /// The table's guard (guarded key-space package, selected 2026-09-23):
     /// a userspace-chosen value fixed at Retype, carried by every key minted
     /// into the table above the slot index. Copied verbatim on derivation.
     pub guard: u32,
     /// The table's capacity exponent: `2^size_bits` entries.
     pub size_bits: u8,
-    pub _pad: [u8; 3],
+    pub _pad: [u8; 7],
 }
 
 /// Payload for an Untyped-carved object (Notification, `EventCount`, Time):
@@ -292,7 +292,7 @@ const _: () = assert!(core::mem::size_of::<KeyEntry>() == 64);
 const _: () = assert!(core::mem::size_of::<KeyPayload>() == PAYLOAD_BYTES);
 const _: () = assert!(core::mem::size_of::<RegionPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<FramePayload>() == 32);
-const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 16);
+const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<CarvedPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<IrqHandlerPayload>() == 8);
 const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 56);
@@ -556,19 +556,18 @@ impl KeyEntry {
 
     /// Create a capability for a carved `KeyTable` object (Retype-created).
     ///
-    /// The payload is a reference to the carved `KeyTable` kernel object plus
-    /// its guard and capacity exponent; the kind is the entry header. The
-    /// address is kernel-issued (from Retype or the boot carve) and the region
-    /// is never freed under the accepted-leak model, so it never goes stale.
-    /// The guard and `size_bits` are fixed at table creation and copied
-    /// verbatim by derivation.
+    /// The payload is the table's carved identity (from Retype or the boot
+    /// carve) plus its guard and capacity exponent; the kind is the entry
+    /// header. The guard and `size_bits` are fixed at table creation and
+    /// copied verbatim by derivation.
     pub fn new_keytable(
-        address: u64,
+        table: CarvedId,
         guard: u32,
         size_bits: u8,
         rights: Rights,
         badge: u16,
     ) -> Self {
+        debug_assert_eq!(table.kind, ObjectType::KEY_TABLE);
         Self {
             obj_type: ObjectType::KEY_TABLE,
             rights,
@@ -576,10 +575,11 @@ impl KeyEntry {
             flags: 0,
             payload: KeyPayload {
                 keytable: KeyTablePayload {
-                    address,
+                    address: table.address,
+                    generation: table.generation,
                     guard,
                     size_bits,
-                    _pad: [0; 3],
+                    _pad: [0; 7],
                 },
             },
         }
@@ -798,8 +798,9 @@ impl KeyEntry {
 
     /// Check if this is a Retype-created (carved) object kind.
     ///
-    /// Carved objects are addressed directly through a per-type payload rather
-    /// than a pooled identity; see `doc/capabilities-design.md` §3.
+    /// A carved `KeyTable` is named through its own payload (identity plus
+    /// guard and capacity) rather than a pooled identity; see
+    /// `doc/capabilities-design.md` §3.
     #[inline]
     pub fn is_carved(&self) -> bool {
         self.obj_type == ObjectType::KEY_TABLE
@@ -848,7 +849,7 @@ impl KeyEntry {
     /// This is a handle, not a reference: dereferencing requires the owning
     /// access context, which validates the identity against authoritative
     /// pool metadata first. Returns error on region types and carved-object
-    /// kinds — use `as_region()` / `keytable_address()` instead.
+    /// kinds — use `as_region()` / `keytable_id()` instead.
     #[inline]
     pub fn object_id(&self) -> Result<ObjectId, CapError> {
         if self.is_region()
@@ -874,13 +875,13 @@ impl KeyEntry {
         })
     }
 
-    /// Get the carved `KeyTable` object address (`KeyTable` caps only).
+    /// Get the carved `KeyTable`'s identity (`KeyTable` caps only).
     ///
-    /// The address is kernel-issued and the carved region is never freed under
-    /// the accepted-leak model; dereferencing requires the owning access
-    /// context, which ties the resulting guard to the locked invocation.
+    /// Dereferencing goes through the owning access context, which validates
+    /// the identity against the table's header and ties the resulting guard
+    /// to the locked invocation.
     #[inline]
-    pub fn keytable_address(&self) -> Result<u64, CapError> {
+    pub fn keytable_id(&self) -> Result<CarvedId, CapError> {
         if self.obj_type != ObjectType::KEY_TABLE {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::KEY_TABLE,
@@ -888,7 +889,12 @@ impl KeyEntry {
             });
         }
         // SAFETY: keytable variant guaranteed by the type check above.
-        Ok(unsafe { self.payload.keytable.address })
+        let payload = unsafe { self.payload.keytable };
+        Ok(CarvedId {
+            kind: ObjectType::KEY_TABLE,
+            address: payload.address,
+            generation: payload.generation,
+        })
     }
 
     /// Get the carved table's guard and capacity exponent (`KeyTable` caps

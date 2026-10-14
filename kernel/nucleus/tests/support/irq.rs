@@ -223,7 +223,13 @@ fn setup(
         table: install(
             nucleus,
             SELF_TABLE_SLOT,
-            KeyEntry::new_keytable(table_addr, guard, size_bits, Rights::all(), 0),
+            KeyEntry::new_keytable(
+                super::table_id(table_addr),
+                guard,
+                size_bits,
+                Rights::all(),
+                0,
+            ),
         ),
         notification: install(
             nucleus,
@@ -450,7 +456,13 @@ fn issue_requires_grant_and_install() {
         keys.table = install(
             nucleus,
             25,
-            KeyEntry::new_keytable(table_addr, guard, size_bits, Rights(Rights::DERIVE), 0),
+            KeyEntry::new_keytable(
+                super::table_id(table_addr),
+                guard,
+                size_bits,
+                Rights(Rights::DERIVE),
+                0,
+            ),
         );
         assert!(matches!(
             issue(nucleus, &keys, HANDLER_SLOT, 5, 4),

@@ -253,23 +253,24 @@ pub fn provision(
             Rights::all(),
         )
         .unwrap_or_else(|error| panic!("Bounce KeyTable Retype failed: {:?}", error.code()));
-    let table_addr = {
+    let table_id = {
         // SAFETY: the boot table is the live carved boot KeyTable.
-        let entry = unsafe { &*(keytable_addr as *const KeyTable) }
+        let entry = unsafe { &*KeyTable::at_carve(keytable_addr) }
             .lookup(table_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("Bounce KeyTable entry missing"));
         entry
-            .keytable_address()
+            .keytable_id()
             .unwrap_or_else(|_| panic!("Bounce KeyTable entry is not carved"))
     };
+    let table_addr = table_id.address;
     // The self-table capability anchors Bounce's invocations: the syscall
     // entry sources the caller's own-table guard from this well-known slot.
     // SAFETY: Bounce's table is the freshly carved, live KeyTable.
-    unsafe { &mut *(table_addr as *mut KeyTable) }
+    unsafe { &mut *KeyTable::at_carve(table_addr) }
         .insert(
             KeySlot::SELF_KEYTABLE,
             KeyEntry::new_keytable(
-                table_addr,
+                table_id,
                 TEST_TABLE_GUARD,
                 BOOT_TABLE_SIZE_BITS,
                 Rights::all(),
@@ -304,7 +305,7 @@ pub fn provision(
     // SAFETY: Retype initialized the full private carve; its accounted
     // backing is never relocated, reclaimed, or reinitialized while the
     // binding is live, including after Bounce's Thread is retired.
-    let table_binding = unsafe { (&mut *(table_addr as *mut KeyTable)).bind_address_space() }
+    let table_binding = unsafe { (&mut *KeyTable::at_carve(table_addr)).bind_address_space() }
         .unwrap_or_else(|error| panic!("Bounce table provisioning failed: {:?}", error.code()));
     assert_ne!(table_binding.address(), boot_table_binding.address());
     assert_eq!(table_binding.size_bits(), BOOT_TABLE_SIZE_BITS);
@@ -324,7 +325,7 @@ pub fn provision(
         // SAFETY: both initialized private tables have retained accounted
         // carves; the source and target are distinct, and neither borrow
         // survives a capability invocation.
-        let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+        let boot_table = unsafe { &mut *KeyTable::at_carve(keytable_addr) };
         let key = boot_table
             .insert(
                 KeySlot(69),
@@ -334,7 +335,7 @@ pub fn provision(
             .unwrap_or_else(|failure| panic!("Bounce AS grant failed: {:?}", failure.error.code()));
         // SAFETY: distinct retained initialized Bounce table, exclusively
         // borrowed for this bootstrap grant.
-        unsafe { &mut *(table_addr as *mut KeyTable) }
+        unsafe { &mut *KeyTable::at_carve(table_addr) }
             .insert(
                 KeySlot::SELF_ADDRESS_SPACE,
                 KeyEntry::new_carved(as_id, Rights::all(), 0),

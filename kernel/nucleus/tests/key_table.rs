@@ -37,14 +37,14 @@ use {
         num::NonZero,
     },
     libobject::{
-        CapError, InvalidStackReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights,
-        domain::DomainId,
+        CapError, InconsistencyReason, InvalidStackReason, KeySlot, ObjectType, PlacementWindow,
+        RawKey, Rights, domain::DomainId,
     },
     objects::{
         ArchObjects, ArchObjectsImpl, KeyTable,
         access::{Access, ObjectId, PoolTag},
         arch_objects::AddressSpaceId,
-        carved::{CarvedId, test_id},
+        carved::{Carved, CarvedId, test_id},
         invocation::InvocationStackExtent,
         key_table::CallerTable,
     },
@@ -103,6 +103,12 @@ fn carve(index: usize) -> u64 {
     obj as u64
 }
 
+/// The identity of the fixture table carved at `addr`.
+fn table_id(addr: u64) -> CarvedId {
+    // SAFETY: fixture tables are carved by `carve` and stay initialized.
+    unsafe { KeyTable::carve_id(addr) }
+}
+
 /// A carved-table test fixture: a caller table (with a self-table capability at
 /// `SELF_KEYTABLE`) and a second, initially vacant table for cross-table
 /// operations. The two tables carry distinct guards.
@@ -116,11 +122,11 @@ impl Fixture {
     fn new(table_rights: u8) -> Self {
         let caller_table_addr = carve(0);
         let dst_table_addr = carve(1);
-        let self_table_key = unsafe { &mut *(caller_table_addr as *mut KeyTable) }
+        let self_table_key = unsafe { &mut *KeyTable::at_carve(caller_table_addr) }
             .insert(
                 KeySlot::SELF_KEYTABLE,
                 KeyEntry::new_keytable(
-                    caller_table_addr,
+                    table_id(caller_table_addr),
                     CALLER_GUARD,
                     SIZE_BITS,
                     Rights(table_rights),
@@ -158,7 +164,7 @@ impl Fixture {
         let addr = self.table_addr(index);
         let guard = self.table_guard(index);
         // SAFETY: the address names a live carved table owned by the fixture.
-        unsafe { &mut *(addr as *mut KeyTable) }
+        unsafe { &mut *KeyTable::at_carve(addr) }
             .insert(slot, entry, guard)
             .unwrap_or_else(|_| panic!("fixture installation failed"))
     }
@@ -168,7 +174,7 @@ impl Fixture {
         let addr = self.table_addr(index);
         let guard = self.table_guard(index);
         // SAFETY: the address names a live carved table owned by the fixture.
-        Ok(unsafe { &*(addr as *const KeyTable) }.lookup(key, guard)?)
+        Ok(unsafe { &*KeyTable::at_carve(addr) }.lookup(key, guard)?)
     }
 
     /// Remove an entry from a table by fixture index.
@@ -176,13 +182,13 @@ impl Fixture {
         let addr = self.table_addr(index);
         let guard = self.table_guard(index);
         // SAFETY: the address names a live carved table owned by the fixture.
-        unsafe { &mut *(addr as *mut KeyTable) }.remove(key, guard)
+        unsafe { &mut *KeyTable::at_carve(addr) }.remove(key, guard)
     }
 
     /// The caller table's live-entry count.
     fn caller_len(&self) -> usize {
         // SAFETY: see lookup.
-        unsafe { &*(self.caller_table_addr as *const KeyTable) }.len()
+        unsafe { &*KeyTable::at_carve(self.caller_table_addr) }.len()
     }
 
     /// Invoke the KeyTable management handler against the fixture.
@@ -195,7 +201,7 @@ impl Fixture {
         // SAFETY: test-only; no overlapping access context.
         let access = unsafe { Access::new() };
         let caller = CallerTable {
-            addr: self.caller_table_addr,
+            table: table_id(self.caller_table_addr),
             guard: CALLER_GUARD,
         };
         api::key_table::invoke(&access, caller, table_key, op, args)
@@ -207,7 +213,7 @@ impl Fixture {
 /// destination table's guard and capacity exponent, copied verbatim by
 /// derivation.
 fn table_cap(addr: u64, rights: Rights, badge: u16) -> KeyEntry {
-    KeyEntry::new_keytable(addr, DST_GUARD, SIZE_BITS, rights, badge)
+    KeyEntry::new_keytable(table_id(addr), DST_GUARD, SIZE_BITS, rights, badge)
 }
 
 fn args(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> [u64; 6] {
@@ -418,7 +424,13 @@ fn thread_selector_rejects_non_thread_payloads() {
         KeyEntry::null(),
         KeyEntry::new_untyped(0x1000, 12, false, Rights::all()),
         KeyEntry::new_frame(0x2000, 12, false, Rights::all()),
-        KeyEntry::new_keytable(TEST_BACKING, CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
+        KeyEntry::new_keytable(
+            test_id(ObjectType::KEY_TABLE, TEST_BACKING),
+            CALLER_GUARD,
+            SIZE_BITS,
+            Rights::all(),
+            0,
+        ),
         KeyEntry::new_carved(address_space, Rights::all(), 0),
         KeyEntry::new_invocation(
             address_space,
@@ -508,9 +520,9 @@ fn thread_return_representation_preserves_entry_and_payload_layout() {
 #[test_case]
 fn fixture_table_carves_use_literal_non_overlapping_grown_entry_stride() {
     let mut fx = Fixture::new(FULL);
-    assert_eq!(KeyTable::carve_size(SIZE_BITS), 17_440);
+    assert_eq!(KeyTable::carve_size(SIZE_BITS), 17_472);
     assert_eq!(fx.caller_table_addr, TEST_BACKING);
-    assert_eq!(fx.dst_table_addr, TEST_BACKING + 17_440);
+    assert_eq!(fx.dst_table_addr, TEST_BACKING + 17_472);
     assert_eq!(fx.caller_table_addr % 32, 0);
     assert_eq!(fx.dst_table_addr % 32, 0);
     let first = fx.install(
@@ -522,7 +534,7 @@ fn fixture_table_carves_use_literal_non_overlapping_grown_entry_stride() {
         1,
         KeySlot(0),
         KeyEntry::new_keytable(
-            fx.caller_table_addr,
+            table_id(fx.caller_table_addr),
             CALLER_GUARD,
             SIZE_BITS,
             Rights::all(),
@@ -567,9 +579,9 @@ fn fixture_table_carves_use_literal_non_overlapping_grown_entry_stride() {
         .unwrap_or_else(|error| panic!("self-table entry preserved: {:?}", error.code()));
     assert_eq!(
         self_entry
-            .keytable_address()
-            .unwrap_or_else(|error| panic!("self-table address preserved: {:?}", error.code())),
-        fx.caller_table_addr
+            .keytable_id()
+            .unwrap_or_else(|error| panic!("self-table identity preserved: {:?}", error.code())),
+        table_id(fx.caller_table_addr)
     );
     assert_eq!(
         self_entry
@@ -585,7 +597,13 @@ fn invocation_getters_reject_every_non_invocation_payload() {
         KeyEntry::null(),
         KeyEntry::new_untyped(0x1000, 12, false, Rights::all()),
         KeyEntry::new_frame(0x2000, 12, false, Rights::all()),
-        KeyEntry::new_keytable(TEST_BACKING, CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
+        KeyEntry::new_keytable(
+            test_id(ObjectType::KEY_TABLE, TEST_BACKING),
+            CALLER_GUARD,
+            SIZE_BITS,
+            Rights::all(),
+            0,
+        ),
         KeyEntry::new_thread_return(),
         KeyEntry::new_thread(test_id(ObjectType::THREAD, 0x1000), Rights::all(), 0xBEEF),
         KeyEntry::new_carved(test_id(ObjectType::ADDRESS_SPACE, 0x3000), Rights::all(), 0),
@@ -928,6 +946,83 @@ fn copy_derive_attenuates_rights_and_preserves_badge() {
         .unwrap_or_else(|_| panic!("source entry lost"));
     assert_eq!(source.rights(), Rights::all());
     assert_eq!(source.badge(), 0xBEEF);
+}
+
+/// Retiring a table bumps its generation, so every capability naming it fails
+/// with `InconsistentKey`/`ObjectRetired` on the key that named it, whichever
+/// table holds the capability, without walking any derivation tree. Other
+/// tables keep working, and a rejected operation changes nothing.
+#[test_case]
+fn retired_table_rejects_capabilities_in_every_table() {
+    let mut fx = Fixture::new(FULL);
+    let to_dst = fx.install(
+        0,
+        KeySlot(10),
+        table_cap(fx.dst_table_addr, Rights::all(), 0),
+    );
+    // A second capability to the destination table, held in that table.
+    let in_dst = fx.install(
+        1,
+        KeySlot(3),
+        table_cap(fx.dst_table_addr, Rights::all(), 0),
+    );
+    let movable = fx.install(
+        0,
+        KeySlot(11),
+        KeyEntry::new_frame(0x4000, 12, false, Rights::all()),
+    );
+
+    // SAFETY: the fixture table is a live carve; no guard to it is held.
+    unsafe { Carved::<KeyTable>::retire(table_id(fx.dst_table_addr)) }
+        .unwrap_or_else(|_| panic!("destination table retirement failed"));
+
+    // Both capabilities carry the old generation and fail on their own.
+    for (index, key) in [(0, to_dst), (1, in_dst)] {
+        let entry = *fx
+            .lookup(index, key)
+            .unwrap_or_else(|_| panic!("capability entry missing"));
+        let named = entry
+            .keytable_id()
+            .unwrap_or_else(|_| panic!("not a table capability"));
+        // SAFETY: the address names the fixture carve.
+        assert_eq!(
+            unsafe { Carved::<KeyTable>::validate(named) }.err(),
+            Some(objects::object_pool::IdentityError::Retired)
+        );
+    }
+
+    let retired = |key: RawKey, operand: u8| CapError::InconsistentKey {
+        key,
+        reason: InconsistencyReason::ObjectRetired,
+        operand,
+    };
+    // The retired table as the invoked table (x0).
+    let result = fx.invoke(to_dst, 2, &args(in_dst.to_wire(), 0, 0, 0, 0, 0));
+    assert_eq!(
+        result.err().map(|error| error.code()),
+        Some(retired(to_dst, 0).code())
+    );
+    // The retired table as the destination table (x3): the source stays put.
+    let result = fx.invoke(
+        fx.self_table_key,
+        1,
+        &args(movable.to_wire(), to_dst.to_wire(), 20, 0, 0, 0),
+    );
+    assert_eq!(
+        result.err().map(|error| error.code()),
+        Some(retired(to_dst, 3).code())
+    );
+    assert_eq!(fx.caller_len(), 3);
+    assert!(fx.lookup(0, movable).is_ok());
+
+    // The live caller table still serves its own capabilities.
+    let result = fx.invoke(
+        fx.self_table_key,
+        2,
+        &args(movable.to_wire(), 0, 0, 0, 0, 0),
+    );
+    assert!(result.is_ok());
+    assert_eq!(fx.caller_len(), 2);
 }
 
 #[test_case]
@@ -1571,7 +1666,7 @@ fn return_slot_state(table: &KeyTable) -> (Option<bool>, usize) {
 fn address_space_provisioning_installs_the_return_sentinel_once() {
     let address = carve(0);
     // SAFETY: freshly initialized fixture carve, exclusively owned here.
-    let table = unsafe { &mut *(address as *mut KeyTable) };
+    let table = unsafe { &mut *KeyTable::at_carve(address) };
     assert_eq!(return_slot_state(table), (None, 0));
 
     // A fresh table gets the sentinel at the deterministic first incarnation.
@@ -1594,11 +1689,11 @@ fn address_space_provisioning_installs_the_return_sentinel_once() {
 fn address_space_provisioning_rejects_a_foreign_or_reissued_slot_one() {
     let address = carve(0);
     // SAFETY: freshly initialized fixture carve, exclusively owned here.
-    let table = unsafe { &mut *(address as *mut KeyTable) };
+    let table = unsafe { &mut *KeyTable::at_carve(address) };
     let foreign = table
         .insert(
             KeySlot::THREAD_RETURN,
-            KeyEntry::new_keytable(address, CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
+            KeyEntry::new_keytable(table_id(address), CALLER_GUARD, SIZE_BITS, Rights::all(), 0),
             CALLER_GUARD,
         )
         .unwrap_or_else(|_| panic!("foreign Slot(1) entry"));
@@ -1641,7 +1736,13 @@ fn address_space_provisioning_rejects_a_foreign_or_reissued_slot_one() {
 #[test_case]
 fn borrowed_entries_are_not_copy_derive_or_move_sources() {
     for entry in [
-        table_cap(0, Rights::all(), 0),
+        KeyEntry::new_keytable(
+            test_id(ObjectType::KEY_TABLE, 0x1000),
+            DST_GUARD,
+            SIZE_BITS,
+            Rights::all(),
+            0,
+        ),
         KeyEntry::new_frame(0x1000, 12, false, Rights::all()),
     ] {
         let mut fx = Fixture::new(FULL);

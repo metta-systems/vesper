@@ -193,7 +193,7 @@ pub fn run() {
     // builder, like the boot console grant).
     {
         // SAFETY: the boot table is the live carved boot KeyTable.
-        let boot_table_ref = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table_ref = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let n1_entry = *boot_table_ref
             .lookup(n1_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("N1 entry missing"));
@@ -204,7 +204,7 @@ pub fn run() {
             .lookup(ec_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("EC entry missing"));
         // SAFETY: Bounce's table is the freshly carved, live KeyTable.
-        let bounce_table = unsafe { &mut *(bounce_table_addr as *mut KeyTable) };
+        let bounce_table = unsafe { &mut *KeyTable::at_carve(bounce_table_addr) };
         let bounce_n1 = bounce_table
             .insert(KeySlot(5), n1_entry, TEST_TABLE_GUARD)
             .unwrap_or_else(|failure| panic!("Bounce N1 grant failed: {:?}", failure.error.code()));
@@ -451,7 +451,7 @@ pub fn run() {
         // CopyDerive allowlist, so no public path could build these.
         let (bounce_thread_key, unprivileged_bounce_key) = {
             // SAFETY: keytable_addr names the live carved boot KeyTable.
-            let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+            let boot_table = unsafe { &mut *KeyTable::at_carve(keytable_addr) };
             let full = boot_table
                 .insert(
                     KeySlot(38),
@@ -569,7 +569,7 @@ pub fn run() {
         // checks only the slot incarnation and never resolves the object.
         let occupied_before = {
             // SAFETY: retained boot table, borrowed only between SVCs.
-            unsafe { &*(keytable_addr as *const KeyTable) }.len()
+            unsafe { &*KeyTable::at_carve(keytable_addr) }.len()
         };
         KeyTableKey::from_key(self_table_key)
             .delete(bounce_thread_key)
@@ -581,7 +581,7 @@ pub fn run() {
             });
         assert_eq!(
             // SAFETY: as above.
-            unsafe { &*(keytable_addr as *const KeyTable) }.len(),
+            unsafe { &*KeyTable::at_carve(keytable_addr) }.len(),
             occupied_before - 1
         );
         // The deleted key now fails lookup ahead of the object check, both

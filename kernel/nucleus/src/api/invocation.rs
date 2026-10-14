@@ -41,7 +41,7 @@ pub fn prepare_call<A: ArchObjects>(
 
     // Copy the checked target out of the entry; no table guard survives.
     let target = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(invocation_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;

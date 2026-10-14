@@ -70,13 +70,15 @@ impl Builder<'_> {
         // SAFETY: Retype initialized the full private carve; its accounted
         // backing is never relocated, reclaimed or reinitialized while the
         // binding is live. This exclusive borrow overlaps no invocation.
-        let table = unsafe { &mut *(table_addr as *mut KeyTable) };
+        let table = unsafe { &mut *KeyTable::at_carve(table_addr) };
+        // SAFETY: as above: the carve holds an initialized table record.
+        let table_id = unsafe { KeyTable::carve_id(table_addr) };
         // The self-table capability anchors the component's invocations:
         // the syscall entry sources the caller's own-table guard from it.
         table
             .insert(
                 KeySlot::SELF_KEYTABLE,
-                KeyEntry::new_keytable(table_addr, guard, BOOT_TABLE_SIZE_BITS, Rights::all(), 0),
+                KeyEntry::new_keytable(table_id, guard, BOOT_TABLE_SIZE_BITS, Rights::all(), 0),
                 guard,
             )
             .unwrap_or_else(|failure| {
@@ -110,7 +112,7 @@ impl Builder<'_> {
         let address_space = self.address_space_id(address_space_key);
         // SAFETY: the component table again; no other borrow is live and no
         // invocation runs while it is held.
-        unsafe { &mut *(table_addr as *mut KeyTable) }
+        unsafe { &mut *KeyTable::at_carve(table_addr) }
             .insert(
                 KeySlot::SELF_ADDRESS_SPACE,
                 self.entry(address_space_key),

@@ -9,13 +9,13 @@
 //! 2026-09-15), and debug-gated `DebugConsole`; other kinds, `Revoke`, and
 //! rebadging remain unsupported.
 //!
-//! `KeyTable`s are Retype-created carved objects referenced by per-type
-//! capability payloads (their kernel address). The invoked `table_key` and the
-//! destination-table key are resolved through the caller's own table (its
-//! `keytable_addr`) to distinct carved tables, so `CopyDerive`/`Move` can
-//! target a table other than the caller's. Same-object operands are handled
-//! through a single mutable guard; distinct objects use the alias-rejecting
-//! pair-resolution form.
+//! `KeyTable`s are Retype-created carved objects named by their carved
+//! identity in per-type capability payloads, so a retired table fails every
+//! capability naming it. The invoked `table_key` and the destination-table key
+//! are resolved through the caller's own table to distinct carved tables, so
+//! `CopyDerive`/`Move` can target a table other than the caller's. Same-object
+//! operands are handled through a single mutable guard; distinct objects use
+//! the alias-rejecting pair-resolution form.
 //!
 //! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `CopyDerive` `0`: `x2` source selector, `x3` destination-table key,
@@ -29,7 +29,13 @@
 use {
     crate::{
         api::key_entry::KeyEntry,
-        objects::{KeyTable, access::Access, key_table::CallerTable},
+        objects::{
+            KeyTable,
+            access::{Access, GuardMut},
+            carved::CarvedId,
+            key_table::CallerTable,
+            object_pool::PairIdentityError,
+        },
     },
     libobject::{CapError, KeySlot, KeyTableOp, ObjectType, RawKey, Rights},
     libqemu::semihosting as semi,
@@ -83,7 +89,7 @@ fn copy_derive(
     // Resolve the invoked source and destination table capabilities through
     // the caller's own table, checking type and per-table rights.
     let (src_cap, dst_cap) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let src_cap = resolve_table_cap(&caller_table, table_key, caller.guard, 0)?;
         let dst_cap = resolve_table_cap(&caller_table, dst_table_key, caller.guard, 3)?;
         (src_cap, dst_cap)
@@ -96,11 +102,11 @@ fn copy_derive(
         return Err(CapError::InsufficientRights);
     }
 
-    if src_cap.address == dst_cap.address {
+    if src_cap.same_table(&dst_cap) {
         // Same table: one mutable guard. No amplification: requested rights
         // must be a subset of the source's; CopyDerive preserves the badge and
         // payload and only attenuates rights.
-        let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
+        let mut table = src_cap.resolve(access)?;
         let derived = {
             let src_entry = table
                 .lookup(src_sel, src_cap.guard)
@@ -120,8 +126,7 @@ fn copy_derive(
             .map_err(|failure| failure.error.with_key_operand(4))
     } else {
         // Distinct tables: alias-safe pair resolution (destination mutable).
-        let (mut dst_table, src_table) =
-            access.resolve_carved_pair_mut::<KeyTable>(dst_cap.address, src_cap.address)?;
+        let (mut dst_table, src_table) = TableCap::resolve_pair(access, &dst_cap, &src_cap)?;
         let src_entry = src_table
             .lookup(src_sel, src_cap.guard)
             .map_err(|e| e.with_key_operand(2))?;
@@ -162,7 +167,7 @@ fn move_key(
     }
 
     let (src_cap, dst_cap) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let src_cap = resolve_table_cap(&caller_table, table_key, caller.guard, 0)?;
         let dst_cap = resolve_table_cap(&caller_table, dst_table_key, caller.guard, 3)?;
         (src_cap, dst_cap)
@@ -180,14 +185,14 @@ fn move_key(
     // tables may use the same slot number in each. The selector's low
     // `size_bits` bits are its bare index; the guard above them is validated
     // against the source table during lookup.
-    if src_cap.address == dst_cap.address && bare_index(&src_cap, src_sel) == dst_slot {
+    if src_cap.same_table(&dst_cap) && bare_index(&src_cap, src_sel) == dst_slot {
         return Err(CapError::SlotOccupied(dst_slot));
     }
 
-    if src_cap.address == dst_cap.address {
+    if src_cap.same_table(&dst_cap) {
         // Same table: validate and remove the source, then install, rolling
         // back into the source slot on installation failure.
-        let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
+        let mut table = src_cap.resolve(access)?;
         check_source_allowlisted(&table, src_sel, src_cap.guard, 2)?;
         let moved = table
             .remove(src_sel, src_cap.guard)
@@ -207,28 +212,21 @@ fn move_key(
             }
         }
     } else {
-        // Distinct tables: remove from the source, then install into the
-        // destination, rolling back into the source on failure. The source
-        // guard is dropped before the destination is resolved, so no aliased
-        // mutable references are constructed.
-        let moved = {
-            let mut src_table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
-            check_source_allowlisted(&src_table, src_sel, src_cap.guard, 2)?;
-            src_table
-                .remove(src_sel, src_cap.guard)
-                .map_err(|e| e.with_key_operand(2))?
-        };
-        let install_result = {
-            let mut dst_table = access.resolve_carved_mut::<KeyTable>(dst_cap.address)?;
-            dst_table.insert(dst_slot, moved, dst_cap.guard)
-        };
-        match install_result {
+        // Distinct tables: resolve both through the alias-rejecting pair form
+        // before anything moves, so a retired table rejects the operation
+        // with the source intact. Then remove from the source and install into
+        // the destination, rolling back into the source on failure.
+        let (mut dst_table, mut src_table) = TableCap::resolve_pair(access, &dst_cap, &src_cap)?;
+        check_source_allowlisted(&src_table, src_sel, src_cap.guard, 2)?;
+        let moved = src_table
+            .remove(src_sel, src_cap.guard)
+            .map_err(|e| e.with_key_operand(2))?;
+        match dst_table.insert(dst_slot, moved, dst_cap.guard) {
             Ok(key) => {
                 semi::println!("✅ KeyTable::Move()");
                 Ok((key.to_wire(), 0))
             }
             Err(failure) => {
-                let mut src_table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
                 drop(src_table.insert(bare_index(&src_cap, src_sel), failure.entry, src_cap.guard));
                 Err(failure.error.with_key_operand(4))
             }
@@ -249,7 +247,7 @@ fn delete(
     }
 
     let src_cap = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         resolve_table_cap(&caller_table, table_key, caller.guard, 0)?
     };
     // Authority: REMOVE on the invoked table.
@@ -257,7 +255,7 @@ fn delete(
         return Err(CapError::InsufficientRights);
     }
 
-    let mut table = access.resolve_carved_mut::<KeyTable>(src_cap.address)?;
+    let mut table = src_cap.resolve(access)?;
     table
         .remove(target_sel, src_cap.guard)
         .map_err(|e| e.with_key_operand(2))?;
@@ -269,14 +267,51 @@ fn delete(
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════
 
-/// A resolved table capability: the carved table's address, its guard and
+/// A resolved table capability: the carved table's identity, its guard and
 /// capacity exponent (copied verbatim by derivation, so every capability
-/// naming a table carries them), and its rights.
+/// naming a table carries them), its rights, and the key and input register
+/// that named it, which a retired table's failure is reported against.
 pub(crate) struct TableCap {
-    pub(crate) address: u64,
+    pub(crate) table: CarvedId,
     pub(crate) guard: u32,
     pub(crate) size_bits: u8,
     pub(crate) rights: Rights,
+    pub(crate) key: RawKey,
+    pub(crate) operand: u8,
+}
+
+impl TableCap {
+    /// Whether both capabilities name the same carved table.
+    pub(crate) fn same_table(&self, other: &Self) -> bool {
+        self.table.address == other.table.address
+    }
+
+    /// Resolve the named table to an exclusive guard; a retired table is
+    /// `InconsistentKey`/`ObjectRetired` on this capability's key.
+    pub(crate) fn resolve<'ctx>(
+        &self,
+        access: &Access<'ctx>,
+    ) -> Result<GuardMut<'ctx, KeyTable>, CapError> {
+        access
+            .resolve_object::<KeyTable>(self.table)
+            .map_err(|error| error.for_key(self.key, self.operand))
+    }
+
+    /// Resolve two distinct tables, `first` for update and `second` for
+    /// reading, rejecting a same-table alias.
+    pub(crate) fn resolve_pair<'ctx>(
+        access: &Access<'ctx>,
+        first: &Self,
+        second: &Self,
+    ) -> Result<(GuardMut<'ctx, KeyTable>, GuardMut<'ctx, KeyTable>), CapError> {
+        access
+            .resolve_object_pair_mut::<KeyTable>(first.table, second.table)
+            .map_err(|error| match error {
+                PairIdentityError::First(error) => error.for_key(first.key, first.operand),
+                PairIdentityError::Second(error) => error.for_key(second.key, second.operand),
+                PairIdentityError::Aliased => CapError::InvalidOperation,
+            })
+    }
 }
 
 /// The bare slot index of a selector against a table capability's layout: the
@@ -304,17 +339,19 @@ pub(crate) fn resolve_table_cap(
             found: entry.object_type(),
         });
     }
-    let address = entry
-        .keytable_address()
+    let table = entry
+        .keytable_id()
         .map_err(|e| e.with_key_operand(operand))?;
     let (guard, size_bits) = entry
         .keytable_guard_and_size()
         .map_err(|e| e.with_key_operand(operand))?;
     Ok(TableCap {
-        address,
+        table,
         guard,
         size_bits,
         rights: entry.rights(),
+        key,
+        operand,
     })
 }
 

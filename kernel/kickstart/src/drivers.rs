@@ -434,7 +434,7 @@ impl DeviceMemory {
 pub(crate) fn grant(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
     // SAFETY: the component's retained table, borrowed for this bootstrap
     // grant only; no capability invocation overlaps it.
-    unsafe { &mut *(component.table_addr as *mut KeyTable) }
+    unsafe { &mut *KeyTable::at_carve(component.table_addr) }
         .insert(KeySlot(slot), entry, component.guard)
         .unwrap_or_else(|failure| panic!("🥾 driver grant failed: {:?}", failure.error.code()))
 }
@@ -458,7 +458,7 @@ fn move_to(
 /// Install `entry` in the boot table at `slot`.
 fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
     // SAFETY: the live boot table, borrowed for this bootstrap grant only.
-    unsafe { &mut *(builder.boot_table_addr as *mut KeyTable) }
+    unsafe { &mut *KeyTable::at_carve(builder.boot_table_addr) }
         .insert(KeySlot(slot), entry, BOOT_TABLE_GUARD)
         .unwrap_or_else(|failure| panic!("🥾 boot install failed: {:?}", failure.error.code()))
 }

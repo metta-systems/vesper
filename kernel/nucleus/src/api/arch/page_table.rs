@@ -66,7 +66,7 @@ fn map<A: ArchObjects>(
     // Resolve the invoked PageTable capability and the parent capability
     // through the caller's own table, copying out the checked identities.
     let (pt_id, parent_type, parent_id, parent_rights) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(pt_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;
@@ -171,7 +171,7 @@ fn unmap<A: ArchObjects>(
     }
 
     let pt_id = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(pt_key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;

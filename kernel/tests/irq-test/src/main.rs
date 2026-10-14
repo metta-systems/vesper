@@ -99,7 +99,7 @@ fn quiet_virtual_timer() {
 fn grant(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
     // SAFETY: the component's retained initialized table, exclusively
     // borrowed for this bootstrap grant; no capability invocation overlaps it.
-    unsafe { &mut *(component.table_addr as *mut KeyTable) }
+    unsafe { &mut *KeyTable::at_carve(component.table_addr) }
         .insert(KeySlot(slot), entry, component.guard)
         .unwrap_or_else(|failure| panic!("grant failed: {:?}", failure.error.code()))
 }
@@ -107,7 +107,7 @@ fn grant(component: &Component, entry: KeyEntry, slot: u32) -> RawKey {
 /// Install `entry` in the boot table at `slot`; the boot-table key.
 fn install_boot(keytable_addr: u64, entry: KeyEntry, slot: u32) -> RawKey {
     // SAFETY: the live boot table, borrowed for this bootstrap grant only.
-    unsafe { &mut *(keytable_addr as *mut KeyTable) }
+    unsafe { &mut *KeyTable::at_carve(keytable_addr) }
         .insert(KeySlot(slot), entry, BOOT_TABLE_GUARD)
         .unwrap_or_else(|failure| panic!("boot install failed: {:?}", failure.error.code()))
 }

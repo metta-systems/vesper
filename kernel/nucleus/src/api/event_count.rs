@@ -54,7 +54,7 @@ pub fn invoke<A: ArchObjects>(
     // Resolve the invoked EventCount capability through the caller's own
     // table, copying out the checked identity and authority.
     let (id, rights) = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         let entry = caller_table
             .lookup(key, caller.guard)
             .map_err(|e| e.with_key_operand(0))?;

@@ -147,18 +147,29 @@ impl<A: ArchObjects> Nucleus<A> {
     }
 
     /// Shared access to the current thread's capability table.
+    /// `None` once the table is retired.
     pub fn current_thread_table(&self) -> Option<&KeyTable> {
-        let addr = self.current_thread_table_addr()?;
-        // SAFETY: validated AddressSpace identity supplies an issued binding;
-        // its full kernel-private carve stays stable under binding's contract.
-        Some(unsafe { &*(addr as *const KeyTable) })
+        let binding = self.current_thread_table_binding()?;
+        // SAFETY: the binding's identity names a carved record that is never
+        // freed; validation rejects a retired table.
+        unsafe {
+            Carved::<KeyTable>::validate(binding.id())
+                .ok()
+                .map(|table| &*table)
+        }
     }
 
-    /// Exclusive access to the current thread's capability table.
+    /// Exclusive access to the current thread's capability table; `None` once
+    /// the table is retired.
     pub fn current_thread_table_mut(&mut self) -> Option<&mut KeyTable> {
-        let addr = self.current_thread_table_addr()?;
-        // SAFETY: see current_thread_table; &mut self guarantees exclusivity.
-        Some(unsafe { &mut *(addr as *mut KeyTable) })
+        let binding = self.current_thread_table_binding()?;
+        // SAFETY: as in `current_thread_table`; `&mut self` makes the
+        // reference exclusive.
+        unsafe {
+            Carved::<KeyTable>::validate(binding.id())
+                .ok()
+                .map(|table| &mut *table)
+        }
     }
 
     /// Address of the current thread's capability table (a carved `KeyTable`).

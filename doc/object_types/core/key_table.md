@@ -58,7 +58,9 @@ Each table also has a guard, chosen at Retype and fixed for the table's lifetime
 
 ## Implementation
 
-A table of `2^size_bits` entries takes a 32-byte header, 64 bytes per entry and 4 bytes per incarnation counter, rounded up to 32-byte alignment: 17,440 bytes for 256 entries. A new table is all empty slots.
+A table of `2^size_bits` entries takes a 64-byte header, 64 bytes per entry and 4 bytes per incarnation counter, rounded up to 32-byte alignment: 17,472 bytes for 256 entries. A new table is all empty slots.
+
+A KeyTable capability names the table by its kernel identity, which includes a generation. Once a table is retired, every capability naming it fails with `InconsistentKey` (`ObjectRetired`), whichever table holds the capability. Every invocation by a Thread whose AddressSpace is bound to that table fails the same way, reported against the invoked key. KeyTable has no Retire operation yet.
 
 ## Planned changes
 

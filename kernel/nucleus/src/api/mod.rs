@@ -106,7 +106,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
     let access = unsafe { Access::new() };
     let caller = caller_table(nucleus, &access, key)?;
     let obj_type = {
-        let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+        let caller_table = access.resolve_caller_table(caller)?;
         // semi::println!("handle_cap_invoke(got entry)");
         caller_table.lookup(key, caller.guard)?.object_type()
     };
@@ -166,7 +166,7 @@ fn core_invoke<A: ArchObjects>(
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
             semi::println!("core_invoke: DebugConsole");
-            let caller_table = access.resolve_carved_mut::<KeyTable>(caller.addr)?;
+            let caller_table = access.resolve_caller_table(caller)?;
             let entry = caller_table.lookup(key, caller.guard)?;
             crate::api::debug_console::invoke(entry, op, args[0], args[1])
                 .map(InvokeOutcome::Complete)

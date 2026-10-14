@@ -63,7 +63,7 @@ pub fn run() {
     {
         // SAFETY: bootstrap retained the initialized, private boot carve;
         // no SVC or mutable table access occurs while this borrow is live.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         assert_eq!(
             boot_table.capacity(),
             1_usize << boot_table_binding.size_bits()
@@ -72,7 +72,7 @@ pub fn run() {
             .lookup(self_table_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("boot self-table capability missing"));
         assert_eq!(
-            self_entry.keytable_address().ok(),
+            self_entry.keytable_id().ok().map(|table| table.address),
             Some(boot_table_binding.address())
         );
         assert_eq!(
@@ -272,7 +272,7 @@ pub fn run() {
     // The frame entry records the aligned absolute carve and the granule.
     let frame_paddr = {
         // SAFETY: keytable_addr names the live boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let frame = boot_table
             .lookup(frame_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("frame entry missing"))
@@ -320,7 +320,7 @@ pub fn run() {
     assert_eq!(second_frame_key.slot(), boot_slot(11));
     let second_frame_paddr = {
         // SAFETY: see above.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         boot_table
             .lookup(second_frame_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("second frame entry missing"))
@@ -350,7 +350,7 @@ pub fn run() {
     assert_eq!(large_frame_key.slot(), boot_slot(12));
     let large_frame_paddr = {
         // SAFETY: see above.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         boot_table
             .lookup(large_frame_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("large frame entry missing"))
@@ -393,7 +393,7 @@ pub fn run() {
     // the next 4 KiB boundary at or past the watermark.
     let (boot_paddr, pre_split_wm) = {
         // SAFETY: keytable_addr names the live boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let region = boot_table
             .lookup(boot_untyped_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("boot Untyped entry missing"))
@@ -425,7 +425,7 @@ pub fn run() {
     // two child regions — no gap, no overlap.
     {
         // SAFETY: see above.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let child0 = boot_table
             .lookup(split_children, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("first split child missing"))
@@ -473,7 +473,7 @@ pub fn run() {
     assert_eq!(child_frame_key.slot(), boot_slot(58));
     {
         // SAFETY: see above.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let frame = boot_table
             .lookup(child_frame_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("child frame entry missing"))
@@ -518,7 +518,7 @@ pub fn run() {
     ));
     {
         // SAFETY: see above.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let child0 = boot_table
             .lookup(child0_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("first split child missing"))
@@ -534,7 +534,7 @@ pub fn run() {
     // committed watermark) and retype from it through the real SVC path.
     let (boot_paddr, boot_wm) = {
         // SAFETY: keytable_addr names the live boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let region = boot_table
             .lookup(boot_untyped_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("boot Untyped entry missing"))
@@ -561,7 +561,7 @@ pub fn run() {
     let misaligned_region_bits = u8::try_from(misaligned_region_bytes.trailing_zeros()).unwrap();
     let misaligned_untyped_key = {
         // SAFETY: see above.
-        let boot_table = unsafe { &mut *(keytable_addr as *mut KeyTable) };
+        let boot_table = unsafe { &mut *KeyTable::at_carve(keytable_addr) };
         boot_table
             .insert(
                 KeySlot(8),
@@ -593,12 +593,13 @@ pub fn run() {
     // address of the carve; convert it back to physical to compare.
     let carved_paddr = {
         // SAFETY: see above.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let window_addr = boot_table
             .lookup(carved_key, BOOT_TABLE_GUARD)
             .unwrap_or_else(|_| panic!("carved entry missing"))
-            .keytable_address()
-            .unwrap_or_else(|_| panic!("carved entry is not a KeyTable cap"));
+            .keytable_id()
+            .unwrap_or_else(|_| panic!("carved entry is not a KeyTable cap"))
+            .address;
         VirtAddr::new(window_addr).kernel_to_user().as_u64()
     };
     assert_eq!(
@@ -621,7 +622,7 @@ pub fn run() {
     // named Thread or an Invocation. Return execution still awaits PPC.
     {
         // SAFETY: keytable_addr names the live carved boot KeyTable.
-        let boot_table = unsafe { &*(keytable_addr as *const KeyTable) };
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
         let return_key = boot_key(KeySlot::THREAD_RETURN.0, 1);
         let return_entry = boot_table
             .lookup(return_key, BOOT_TABLE_GUARD)

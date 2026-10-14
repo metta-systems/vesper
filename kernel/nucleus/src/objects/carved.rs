@@ -73,6 +73,8 @@ impl<T: CarvedObject> Carved<T> {
     pub const SIZE: usize = size_of::<Self>();
     /// Alignment of one carved object.
     pub const ALIGN: usize = align_of::<Self>();
+    /// Offset of the object from the start of its record.
+    pub const OBJECT_OFFSET: usize = core::mem::offset_of!(Self, object);
 
     /// Write a live `object` with a fresh header at `address` and return its
     /// identity.
@@ -147,6 +149,26 @@ impl<T: CarvedObject> Carved<T> {
             header.state = STATE_RETIRED;
         }
         Ok(())
+    }
+
+    /// The identity of the live object at `object`, read from the header that
+    /// precedes it.
+    ///
+    /// # Safety
+    /// `object` must point at the object inside a record initialized by
+    /// [`Self::initialize`] that is still mapped.
+    pub unsafe fn id_of(object: *const T) -> CarvedId {
+        let record = object
+            .cast::<u8>()
+            .wrapping_sub(Self::OBJECT_OFFSET)
+            .cast::<Self>();
+        // SAFETY: the caller guarantees `object` sits inside a carved record.
+        let header = unsafe { (*record).header };
+        CarvedId {
+            kind: header.kind,
+            address: record as u64,
+            generation: header.generation,
+        }
     }
 
     /// The generation currently recorded in the header at `id.address`.
