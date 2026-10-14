@@ -12,7 +12,8 @@
 //!   `IrqLineActive`; an undecodable specifier with `InvalidOperation`.
 //! - `IRQHandler.SetNotification` `0`: `x2` Notification key (`SEND`,
 //!   nonzero badge), `x3` receiver Thread key (`WRITE`), which must own a
-//!   Time; `x4..x7` zero. Replaces any earlier binding.
+//!   Time; `x4..x7` zero. A line that is already bound fails with
+//!   `AlreadyMapped`; `Clear` removes the binding first.
 //! - `IRQHandler.Clear` `1`: removes the binding.
 //! - `IRQHandler.Ack` `2`: unmasks the line.
 //! - `IRQHandler.Retire` `3` (`RETIRE`): clears the binding, masks the line
@@ -163,6 +164,10 @@ pub fn invoke_handler<A: ArchObjects>(
 
     match op {
         IrqHandlerOp::SetNotification => {
+            // No silent rebinding: a bound line must be cleared first.
+            if nucleus.irq_table.binding(id.line).is_some() {
+                return Err(CapError::AlreadyMapped);
+            }
             let binding = binding(access, caller, args, nucleus)?;
             nucleus
                 .irq_table

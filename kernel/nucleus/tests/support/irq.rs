@@ -597,6 +597,36 @@ fn set_notification_checks_its_keys() {
     });
 }
 
+/// A bound line refuses a second `SetNotification` with `AlreadyMapped` and
+/// keeps delivering to its first binding; after `Clear` it can be bound again.
+#[test_case]
+fn set_notification_refuses_to_rebind_until_cleared() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
+        let keys = setup(nucleus, table_addr, fixture_as, 0x4);
+        let handler = issue(nucleus, &keys, HANDLER_SLOT, 5, 4)
+            .unwrap_or_else(|error| panic!("Issue: {:?}", error.code()));
+        set_notification(nucleus, handler, keys.notification, keys.receiver)
+            .unwrap_or_else(|error| panic!("bind: {:?}", error.code()));
+        let bound = nucleus.irq_table.binding(5);
+        assert!(bound.is_some());
+
+        let rebind = set_notification(nucleus, handler, keys.notification, keys.receiver);
+        assert_eq!(
+            rebind.err().map(|error| error.code()),
+            Some(CapError::AlreadyMapped.code())
+        );
+        assert_eq!(nucleus.irq_table.binding(5), bound);
+        assert!(deliver(nucleus, 5));
+
+        handler_op(nucleus, handler, IrqHandlerOp::Clear, [0; 6])
+            .unwrap_or_else(|error| panic!("Clear: {:?}", error.code()));
+        assert_eq!(nucleus.irq_table.binding(5), None);
+        set_notification(nucleus, handler, keys.notification, keys.receiver)
+            .unwrap_or_else(|error| panic!("rebind after Clear: {:?}", error.code()));
+        assert_eq!(nucleus.irq_table.binding(5), bound);
+    });
+}
+
 #[test_case]
 fn a_retired_notification_leaves_the_line_unbound() {
     with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {

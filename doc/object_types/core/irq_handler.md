@@ -23,7 +23,7 @@ Unused argument registers must be zero (`InvalidOperation` otherwise). `IrqHandl
 
 ### SetNotification
 
-Binds the line to the Notification `x2` for the receiver Thread `x3`, replacing any earlier binding. Each interrupt signals the Notification with the badge of the `x2` capability, which must be nonzero. The receiver must have its own Time, bound by [`Scheduler.ConfigureThread`](scheduler.md#configurethread).
+Binds the line to the Notification `x2` for the receiver Thread `x3`. A line that is already bound fails with `AlreadyMapped`; call [Clear](#clear) first to rebind it. Each interrupt signals the Notification with the badge of the `x2` capability, which must be nonzero. The receiver must have its own Time, bound by [`Scheduler.ConfigureThread`](scheduler.md#configurethread).
 
 | Error | Cause |
 |---|---|
@@ -31,6 +31,7 @@ Binds the line to the Notification `x2` for the receiver Thread `x3`, replacing 
 | `InsufficientRights` | A missing right |
 | `TypeMismatch` | A key names the wrong kind |
 | `InconsistentKey` | The IRQHandler, Notification or Thread is retired |
+| `AlreadyMapped` | The line is already bound |
 
 ### Clear
 

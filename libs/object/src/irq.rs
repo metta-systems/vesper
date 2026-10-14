@@ -180,7 +180,7 @@ impl IrqHandlerKey {
 
     /// `SetNotification`: on each interrupt, signal `notification` with its
     /// badge (which must be nonzero) for the receiver Thread `receiver`,
-    /// which must have its own Time. Replaces any earlier binding.
+    /// which must have its own Time. A line that is already bound fails with /// `AlreadyMapped`; [`Self::clear`] removes the binding first.
     ///
     /// Wire schema: `x2` Notification key (`SEND`), `x3` Thread key
     /// (`WRITE`). Authority: `WRITE` on the handler.
