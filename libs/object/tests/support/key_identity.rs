@@ -77,8 +77,8 @@ fn raw_key_preserves_every_bit_and_field_boundaries() {
 
 #[test]
 fn raw_key_from_parts_packs_guard_above_the_index() {
-    // The table-relative address (guarded key-space package, selected
-    // 2026-09-23): the guard occupies the top `32 − size_bits` bits of the
+    // The table-relative address
+    // the guard occupies the top `32 − size_bits` bits of the
     // low word, the index the bottom `size_bits` bits, and the index is
     // masked so a stray high bit can never corrupt the guard.
     const RAW: RawKey = RawKey::from_parts(0xC0F_FEE, 8, 0x42, 7);

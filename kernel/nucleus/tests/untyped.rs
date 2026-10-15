@@ -764,7 +764,7 @@ fn retype_carved_kinds_reject_size_bits_device_sources_and_small_untypeds() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// UNTYPED SPLIT (allowlisted 2026-09-23)
+// UNTYPED SPLIT
 // ═══════════════════════════════════════════════════════════════
 
 /// A split writes no Untyped bytes — the child capability is an inline
@@ -1220,7 +1220,7 @@ fn retype_untyped_split_from_device_propagates_the_device_flag() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// KEYTABLE RETYPE SCHEMA (guarded key-space package, 2026-09-23)
+// KEYTABLE RETYPE SCHEMA
 // ═══════════════════════════════════════════════════════════════
 
 /// A successful KeyTable carve writes the table at the carve (header,

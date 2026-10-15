@@ -113,7 +113,7 @@ fn notification_wrappers_preserve_kernel_errors() {
 
 #[test]
 fn notification_wait_infinite_is_the_selected_encoding() {
-    // The timeout model (selected 2026-09-16): u64::MAX means infinite;
+    // The timeout model: u64::MAX means infinite;
     // zero and finite values are invalid/unsupported on the wire.
     assert_eq!(NotificationKey::WAIT_INFINITE, u64::MAX);
 }

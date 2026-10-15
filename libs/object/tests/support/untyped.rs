@@ -235,7 +235,7 @@ fn retype_encodes_untyped_split_kind_and_size_bits() {
 #[test]
 fn retype_encodes_the_keytable_guard_into_the_size_word() {
     // The KeyTable guard rides bits 39:8 of `x3` above the capacity
-    // exponent (selected 2026-09-23); every other kind passes zero.
+    // exponent; every other kind passes zero.
     assert_eq!(
         invoke_with(
             ObjectType::KEY_TABLE,

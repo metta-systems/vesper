@@ -553,7 +553,7 @@ fn deliver_irq(line: u32) -> bool {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// CONTEXT SWITCHING (completion foundation, 2026-09-16)
+// CONTEXT SWITCHING
 // ═══════════════════════════════════════════════════════════════════
 
 /// Park the current Thread in private storage and select a runnable context.

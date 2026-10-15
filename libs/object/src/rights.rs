@@ -34,7 +34,7 @@ impl Rights {
     pub const LEND: u8 = 0x40;
 
     // ── KeyTable-management permissions (per-kind interpretation) ──
-    // Selected 2026-09-07 (D4): KeyTable capabilities interpret the rights
+    // KeyTable capabilities interpret the rights
     // field as table-management permissions, reusing the same bit positions
     // as other kinds (per-kind bit reuse is permitted by the contract).
     /// Source derivation: CopyDerive/Move from entries in this table.

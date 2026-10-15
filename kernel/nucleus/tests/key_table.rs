@@ -1143,7 +1143,7 @@ fn copy_derive_rejects_occupied_destination_and_non_allowlisted_kinds() {
         Err(CapError::InvalidObjectType(ObjectType::UNTYPED))
     ));
 
-    // Frame is allowlisted for capability-only derivation (2026-09-15): a
+    // Frame is allowlisted for capability-only derivation: a
     // mapped frame derives into an unmapped capability with no mapping
     // association, while the original keeps its mapping.
     let mut fx = Fixture::new(FULL);
@@ -1561,7 +1561,7 @@ fn cross_table_move_rolls_back_on_occupied_destination() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// GUARDED KEY SPACE (selected 2026-09-23)
+// GUARDED KEY SPACE
 // ═══════════════════════════════════════════════════════════════════
 
 /// A key minted into one table never resolves in another, even on an equal

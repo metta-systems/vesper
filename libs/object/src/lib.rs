@@ -207,7 +207,7 @@ pub enum CapError {
         paddr: u64,
     },
     /// An `EventCount.Advance` would exceed the counter's `u64` range
-    /// (selected 2026-09-18): the counter is unchanged and queued `Await`s
+    /// The counter is unchanged and queued `Await`s
     /// complete with this same error.
     CounterOverflow,
     /// Invalid Invocation stack extent, minimum headroom, or submitted SP.

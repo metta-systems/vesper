@@ -1,5 +1,4 @@
-//! `EventCount` operations: `Advance`/`Await`/`Read` (Phase 6 vertical,
-//! 2026-09-18).
+//! `EventCount` operations: `Advance`/`Await`/`Read`
 //!
 //! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Advance` `0`: `x2` delta (nonzero), `x3..x7` zero. Adds the delta and
@@ -8,15 +7,13 @@
 //!   returns the new value. An advance that would exceed `u64::MAX`
 //!   returns `CounterOverflow`, leaves the counter unchanged, and completes
 //!   every queued `Await` with the same error so waiters observe the
-//!   producer's failure instead of blocking indefinitely (selected
-//!   2026-09-18).
+//!   producer's failure instead of blocking indefinitely
 //! - `Await` `1`: `x2` target, `x3` timeout (nanoseconds; `u64::MAX` =
 //!   infinite; zero and finite values are invalid/unsupported until the
 //!   time subsystem exists), `x4..x7` zero. An already-satisfied await
 //!   returns the current value. An await that would block reports
 //!   `InvokeOutcome::Blocked`: the syscall entry parks the caller and
-//!   switches, and the caller's return happens when the record completes
-//!   (completion foundation, 2026-09-16).
+//!   switches, and the caller's return happens when the record completes.
 //! - `Read` `2`: no arguments. Returns the current value. Never blocks.
 //!
 //! Authority (per-kind rights reuse): `Advance` requires `SEND`; `Await`
@@ -108,7 +105,7 @@ pub fn invoke<A: ArchObjects>(
             if args[2..].iter().any(|&arg| arg != 0) {
                 return Err(CapError::InvalidOperation);
             }
-            // Timeout model (selected 2026-09-16): `u64::MAX` = infinite.
+            // Timeout model: `u64::MAX` = infinite.
             // Zero is invalid and finite values are unsupported until the
             // time subsystem exists — both rejected with a defined error
             // rather than pretending to time out.

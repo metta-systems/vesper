@@ -13,7 +13,7 @@ use libobject::{KeySlot, RawKey};
 /// reuses a deleted one).
 pub const BOOT_TABLE_SIZE_BITS: u8 = 9;
 
-/// The boot table's guard (guarded key-space package, selected 2026-09-23):
+/// The boot table's guard:
 /// Kickstart picks a nonzero value so every hand-constructed boot key
 /// exercises the guard machinery. It fits the 23 guard bits left in a
 /// 512-entry table's table-relative address.

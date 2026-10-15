@@ -35,11 +35,10 @@ pub use key_entry::KeyEntry;
 // INVOCATION OUTCOME
 // ═════════════════════════════
 
-/// The outcome of one capability invocation (completion foundation,
-/// 2026-09-16).
+/// The outcome of one capability invocation
 ///
 /// A blocking operation does not return until completion or cancellation
-/// (selected D7 model): `Blocked` tells the syscall entry that the caller's
+/// `Blocked` tells the syscall entry that the caller's
 /// return happens later, when the pending-invocation record `record` reaches
 /// its terminal transition. The entry parks the caller and switches; it must
 /// not write a result and return.
@@ -126,7 +125,7 @@ pub fn handle_cap_invoke<A: ArchObjects>(
 /// current Thread's live `AddressSpace` binding) plus its guard, sourced from
 /// the `SELF_KEYTABLE`
 /// capability and validated to name this very table (guarded key-space
-/// package, selected 2026-09-23).
+/// package).
 ///
 /// An invocation whose `SELF_KEYTABLE` entry is missing, is not a `KeyTable`
 /// capability, or names a different table cannot establish its key-resolution

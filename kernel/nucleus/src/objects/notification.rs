@@ -1,10 +1,10 @@
 //! Notification kernel object: a word-sized coalescing signal bitmap with
-//! one-consumer waiter delivery (selected 2026-09-16).
+//! one-consumer waiter delivery.
 //!
 //! Realizes the excluded sketch's intent — bitmap state, blocked waiters,
 //! and `signal`/`wait`/`poll` semantics ("if bits are already set, clear and
 //! immediately return; otherwise block the Thread") — on the completion
-//! foundation's pending-invocation records. The sketch's handler-side intent
+//! completion layer's pending-invocation records. The sketch's handler-side intent
 //! (SEND/RECV rights and badge-or-argument signal bits) stays recorded in
 //! the excluded `api/notification.rs` until the Signal authority decision
 //! (D4) is settled; this object is the state core only.
@@ -30,7 +30,7 @@ use crate::objects::access::{ObjectId, PoolTag};
 
 /// Notification kernel object.
 ///
-/// Pool-backed kernel metadata (Retype-creatable, selected 2026-09-16): the
+/// Pool-backed kernel metadata: the
 /// capability is a checked pool identity, like page-table metadata.
 pub struct Notification {
     /// Pending signal bits (coalescing bitmap).

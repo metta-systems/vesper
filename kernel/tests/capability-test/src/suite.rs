@@ -182,7 +182,7 @@ pub fn run() {
     ));
     // A batch beyond the kernel's bound is malformed input, not a
     // resource limit: the transaction's defensive rollback records are
-    // stack arrays sized by the bound (selected 2026-09-23).
+    // stack arrays sized by the bound.
     assert!(matches!(
         untyped.retype(
             ObjectType::KEY_TABLE,

@@ -181,7 +181,7 @@ impl KeyTableKey {
     /// source on commit. Named "transfer" to avoid clashing with Rust's
     /// reserved word.
     ///
-    /// Wire schema (approved 2026-09-07): `x2` source selector, `x3`
+    /// Wire schema: `x2` source selector, `x3`
     /// destination-table key, `x4` vacant destination slot, `x5..x7` zero.
     /// Returns the destination-local packed key from the first success word
     /// and ignores the second. Rights and per-capability state are preserved.
@@ -209,7 +209,7 @@ impl KeyTableKey {
     /// Delete the entry selected by its incarnation in the invoked table,
     /// without automatic object retirement.
     ///
-    /// Wire schema (approved 2026-09-07): `x2` target selector, `x3..x7` zero.
+    /// Wire schema: `x2` target selector, `x3..x7` zero.
     /// Requires `REMOVE` permission on the invoked table capability.
     pub fn delete(&mut self, key: RawKey) -> Result<(), CapError> {
         // SAFETY: Unsafe call.

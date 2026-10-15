@@ -428,7 +428,7 @@ pub fn bootstrap_nucleus() -> BootState {
         )
         .unwrap_or_else(|failure| panic!("boot Thread install failed: {:?}", failure.error.code()));
 
-    // Provision the boot ASID pool (seL4-style, selected 2026-09-15): ASIDs
+    // Provision the boot ASID pool: ASIDs
     // are a hardware namespace, not memory-backed, so the pool is carved and
     // initialized kernel-privately here rather than Retype-created. Its
     // capability is the authoritative grant the bootstrap builder assigns

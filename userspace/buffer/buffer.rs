@@ -2,8 +2,8 @@
 // == Public user interface, usable from userspace ==
 // ==================================================
 
-// Buffer is a userspace/libOS construct over frame capabilities (selected
-// 2026-09-15, see doc/capabilities-contract.md): there is no kernel Buffer
+// Buffer is a userspace/libOS construct over frame capabilities:
+// there is no kernel Buffer
 // object, handler, or pool, and the Buffer kind was removed from the shared
 // core catalogue. This sketch
 // is excluded from compilation and must be reworked onto frame capabilities —

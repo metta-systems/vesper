@@ -71,7 +71,7 @@ impl PageTableKey {
 
     /// Install this table into `parent` (an `AddressSpace` or `PageTable` capability).
     ///
-    /// Wire schema (selected 2026-09-15): `x2` parent key, `x3` virtual
+    /// Wire schema: `x2` parent key, `x3` virtual
     /// address, `x4..x7` zero. For an `AddressSpace` parent the virtual address must be
     /// zero (root installation); for a `PageTable` parent the virtual address
     /// selects the parent slot and the parent must already be installed.

@@ -1,15 +1,15 @@
 //! `EventCount` kernel object: a monotonic counter with broadcast target
-//! waits (Phase 6 vertical, 2026-09-18).
+//! waits.
 //!
 //! Realizes the excluded sketch's intent — a monotonically increasing
 //! counter with Threads waiting for `value >= target` — on the completion
-//! foundation's pending-invocation records. Unlike Notification's
+//! completion layer's pending-invocation records. Unlike Notification's
 //! one-consumer delivery, an advance completes *every* queued `Await` whose
 //! target the new value satisfies: readers hold independent positions and
 //! awaiting/reading does not consume the counter (broadcast-style
 //! observation, per the contract's Notification/EventCount selection).
 //!
-//! Overflow policy (selected 2026-09-18, D7/D9): `Advance` requires a
+//! Overflow policy: `Advance` requires a
 //! nonzero delta; an advance whose sum would exceed `u64::MAX` completes
 //! with the shared `CounterOverflow` error, leaves the counter unchanged,
 //! and completes every queued `Await` with the same error so waiters
@@ -171,7 +171,7 @@ pub enum AdvanceOutcome {
     Advanced { new_value: u64, woken: WokenRecords },
     /// The advance overflowed: the counter is unchanged, the advancer
     /// reports `CounterOverflow`, and every queued waiter was completed
-    /// with the same error (selected 2026-09-18).
+    /// with the same error.
     Overflow { woken: WokenRecords },
 }
 
@@ -192,7 +192,7 @@ pub enum AwaitOutcome {
 /// capability is a checked pool identity, and no Untyped bytes are carved.
 pub struct EventCount {
     /// The monotonic counter. Never wraps, never saturates: an advance that
-    /// would exceed `u64::MAX` is rejected (selected 2026-09-18).
+    /// would exceed `u64::MAX` is rejected.
     value: u64,
     /// Blocked awaits, FIFO, bounded (the per-object wait reservation).
     waiters: AwaitQueue,
@@ -560,7 +560,7 @@ mod tests {
         let second = block_waiter(&mut event_count, &mut pending, 1, 20);
 
         // The overflowing advance: counter unchanged, every queued waiter
-        // completed with the shared error (selected 2026-09-18).
+        // completed with the shared error.
         let outcome = event_count
             .advance(u64::MAX, &mut pending)
             .ok()

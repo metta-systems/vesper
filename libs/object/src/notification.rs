@@ -19,10 +19,10 @@ mod tests;
 /// Userspace handle to a `Notification` capability: bitmap-based async
 /// signaling. Best for IRQs, completion events, wakeups.
 ///
-/// Nucleus dispatch supports `Signal`, `Wait`, and `Poll` (2026-09-16;
-/// `Wait`'s blocking path through the park/resume entry handling landed
-/// 2026-09-18). Signal bits come from the capability badge when
-/// nonzero, else the caller-supplied argument (selected 2026-09-16).
+/// Nucleus dispatch supports `Signal`, `Wait`, and `Poll`.
+/// `Wait` blocks through the park/resume entry handling.
+/// Signal bits come from the capability badge when
+/// nonzero, else the caller-supplied argument.
 pub struct NotificationKey {
     key: Key<NotificationType>,
 }
@@ -71,7 +71,7 @@ impl TryFrom<u32> for NotificationOp {
 
 impl NotificationKey {
     /// Infinite-timeout encoding for [`Self::wait`]: block until completion
-    /// or teardown cancellation (selected 2026-09-16).
+    /// or teardown cancellation.
     pub const WAIT_INFINITE: u64 = u64::MAX;
 
     /// Construct a non-owning handle without installing or validating

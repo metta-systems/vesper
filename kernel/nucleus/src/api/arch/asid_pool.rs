@@ -1,4 +1,4 @@
-//! `ASIDPool.Assign`: capability-protected ASID binding (selected 2026-09-15).
+//! `ASIDPool.Assign`: capability-protected ASID binding.
 //!
 //! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Assign` `0`: `x2` target `AddressSpace` key, `x3..x7` zero. Allocates the

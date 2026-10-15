@@ -961,7 +961,7 @@ pub fn run() {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // AddressSpace activation (2026-09-15): install the bound root into
+    // AddressSpace activation: install the bound root into
     // TTBR0_EL1 with the bound ASID, making the carved tables the live
     // hardware translation context for the low half. The kernel executes
     // through the TTBR1 high map, so kernel code keeps running unchanged

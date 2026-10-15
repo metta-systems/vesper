@@ -121,7 +121,7 @@ pub trait PageTableObject: CarvedObject {
 }
 
 /// Behavior of an architecture's address-space object: the translation
-/// context state (mapping foundation).
+/// context state.
 pub trait AddressSpaceObject: CarvedObject {
     /// The bound table, shared by all executing Threads; `None` until
     /// `AddressSpace.Bind`.

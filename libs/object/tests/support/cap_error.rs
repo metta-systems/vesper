@@ -373,7 +373,7 @@ fn counter_overflow_pins_status_and_lossless_fallback() {
     use vesper_objects::syscall_status::COUNTER_OVERFLOW;
 
     assert_eq!(COUNTER_OVERFLOW, 32);
-    // The overflow error carries zero details (selected 2026-09-18).
+    // The overflow error carries zero details.
     assert_error!(
         (32, 0, 0),
         CapError::CounterOverflow,

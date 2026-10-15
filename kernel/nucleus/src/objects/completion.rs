@@ -1,8 +1,7 @@
-//! Completion foundation: pending-invocation records and bounded wait queues
-//! (Phase 6, selected 2026-09-16).
+//! Completion: pending-invocation records and bounded wait queues
 //!
-//! A blocking invocation does not return until completion or cancellation
-//! (selected D7 model): no "blocked" wire status exists, and the eventual
+//! A blocking invocation does not return until completion or cancellation. No
+//! "blocked" wire status exists, and the eventual
 //! return is the completion or a cancellation error. While a caller is
 //! blocked, its invocation is represented here as a pending-invocation
 //! record — the bounded, kernel-private state the contract requires.
@@ -39,11 +38,11 @@ use {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingKind {
     /// `Notification.Wait`: completion delivers the consumed signal bitmap
-    /// in the first result word (one-consumer delivery, selected 2026-09-16).
+    /// in the first result word.
     NotificationWait,
     /// `EventCount.Await`: completion delivers the observed counter value
     /// in the first result word, or the shared `CounterOverflow` error when
-    /// an advance's overflow wakes the waiter (selected 2026-09-18).
+    /// an advance's overflow wakes the waiter.
     EventCountAwait,
 }
 

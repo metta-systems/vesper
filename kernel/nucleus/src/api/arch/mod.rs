@@ -7,5 +7,5 @@ pub mod page_table;
 // not creatable (Retype allowlist) and their dispatch arms are inactive, so
 // no draft handler is built until their contracts are implemented.
 // ASIDPool is dispatched through its API handler above (boot-provided
-// capability-protected resource, selected 2026-09-15); the registered
+// capability-protected resource); the registered
 // ASIDControl kind stays reserved with no pool or handler.

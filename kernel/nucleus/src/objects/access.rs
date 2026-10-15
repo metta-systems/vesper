@@ -1,4 +1,4 @@
-//! Guarded kernel object access (D3 concrete guarded-access selection, 2026-09-07).
+//! Guarded kernel object access.
 //!
 //! Capabilities store only a checked object identity — pool tag, pool index,
 //! and allocation generation — never a raw object pointer. The owning access
@@ -38,8 +38,8 @@ pub enum PoolTag {
     /// Marker for inline region types (Untyped, Frame) that are never pooled.
     Region = 255,
     KeyTable = 1,
-    /// Kernel-internal pending-invocation records (completion foundation,
-    /// 2026-09-16). Never capability-addressed; the tag exists so record
+    /// Kernel-internal pending-invocation records
+    /// Never capability-addressed; the tag exists so record
     /// identities reuse the checked `ObjectId` shape.
     Pending = 2,
     // Arch pool tags are appended after core tags. Values are kernel-internal

@@ -118,8 +118,7 @@ pub unsafe fn protected_call5(
             in("x5") a3,
             in("x6") a4,
             // The kernel reads every argument register; unused words are
-            // transmitted as zero (strict wire-argument convention,
-            // selected 2026-09-15).
+            // transmitted as zero (strict wire-argument convention).
             in("x7") 0_u64,
             options(nostack),
         );
@@ -181,8 +180,7 @@ pub unsafe fn protected_call3(cap: u64, op: u64, a0: u64, a1: u64, a2: u64) -> (
             in("x3") a1,
             in("x4") a2,
             // The kernel reads every argument register; unused words are
-            // transmitted as zero (strict wire-argument convention,
-            // selected 2026-09-15).
+            // transmitted as zero (strict wire-argument convention).
             in("x5") 0_u64,
             in("x6") 0_u64,
             in("x7") 0_u64,
@@ -210,8 +208,7 @@ pub unsafe fn protected_call2(cap: u64, op: u64, a0: u64, a1: u64) -> (u64, u64,
             inlateout("x2") a0 => r2,
             in("x3") a1,
             // The kernel reads every argument register; unused words are
-            // transmitted as zero (strict wire-argument convention,
-            // selected 2026-09-15).
+            // transmitted as zero (strict wire-argument convention).
             in("x4") 0_u64,
             in("x5") 0_u64,
             in("x6") 0_u64,
@@ -227,7 +224,7 @@ pub unsafe fn protected_call2(cap: u64, op: u64, a0: u64, a1: u64) -> (u64, u64,
 /// The unused argument registers (`x3..x7`) are transmitted as zero: the
 /// kernel reads every argument register, so an unspecified value would
 /// arrive as a defined-but-arbitrary argument (strict wire-argument
-/// convention, selected 2026-09-15).
+/// convention).
 ///
 /// # Safety
 /// - Not safe.
@@ -292,7 +289,7 @@ pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
 /// Returns the raw `(x0, x1, x2)` response: `SUCCESS` with the target's
 /// `(r0, r1)`, or a pre-commit rejection's status and details.
 ///
-/// Register effects follow the selected conservative declarations: x0..x2
+/// Register effects follow the conservative declarations: x0..x2
 /// carry inputs and responses; x3..x7 and x9 are inputs with discarded
 /// outputs; x8, x10..x17 and the caller-volatile x18 are discarded clobbers.
 /// The kernel restores x19..x30, SP and NZCV, but memory and flags are left

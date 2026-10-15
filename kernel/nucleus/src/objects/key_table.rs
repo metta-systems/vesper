@@ -24,7 +24,7 @@ use {
 /// a kernel object that can be referenced by capabilities (for capability
 /// space manipulation).
 ///
-/// Guarded key-space package (selected 2026-09-23): the table is a carved,
+/// Guarded key-space package: the table is a carved,
 /// variable-size object — a [`Carved<KeyTable>`] record (the kernel
 /// [`CarvedHeader`](crate::objects::carved::CarvedHeader) and this fixed-size
 /// header) followed, within the same carve, by `2^size_bits` `KeyEntry` slots
@@ -80,8 +80,7 @@ pub struct InsertError {
     pub entry: KeyEntry,
 }
 
-/// The caller's own table for one invocation (guarded key-space package,
-/// selected 2026-09-23).
+/// The caller's own table for one invocation.
 ///
 /// Resolved once at the syscall entry: the address comes from the current
 /// Thread's live `AddressSpace` binding, and the guard comes from the
@@ -102,7 +101,7 @@ impl KeyTable {
     /// [`Carved<KeyTable>`] record, kernel header and table header together.
     pub const HEADER_SIZE: usize = Carved::<Self>::SIZE;
 
-    /// Capacity-exponent bounds (selected 2026-09-23): a table holds
+    /// Capacity-exponent bounds: a table holds
     /// `2^size_bits` entries with `size_bits` from 1 to 20.
     pub const MIN_SIZE_BITS: u8 = 1;
     pub const MAX_SIZE_BITS: u8 = 20;
@@ -361,7 +360,7 @@ impl KeyTable {
         if key.incarnation() == 0 {
             return Err(invalid(InvalidKeyReason::ZeroIncarnation));
         }
-        // Guard check (selected 2026-09-23): the table-relative address packs
+        // Guard check: the table-relative address packs
         // the table's guard above the slot index, and a mismatch rejects before
         // indexing. A matching guard implies the index is exactly the low
         // `size_bits` bits, so it is in bounds by construction; the explicit
@@ -393,7 +392,7 @@ impl KeyTable {
 
     /// The self-table capability at the well-known `SELF_KEYTABLE` slot: the
     /// kernel's source for the caller's own-table guard (guarded key-space
-    /// package, selected 2026-09-23). Returns the carved identity, guard, and
+    /// package). Returns the carved identity, guard, and
     /// capacity exponent recorded in the capability payload, or `None` when
     /// the slot is beyond the table's capacity, vacant, or holds a non-
     /// `KeyTable` entry.

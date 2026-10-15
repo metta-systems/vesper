@@ -92,7 +92,7 @@ const TEST_BACKING: u64 = 0x2000_0000;
 /// Fixture-table capacity exponent: the historical 256-slot table.
 const SIZE_BITS: u8 = 8;
 
-/// The fixture tables' guard (guarded key-space package, selected 2026-09-23):
+/// The fixture tables' guard:
 /// every key minted into a fixture table carries it above the slot index. It
 /// fits the 24 guard bits of a 256-entry table's table-relative address.
 const FIXTURE_GUARD: u32 = 0xD1A_5EE;
@@ -1363,7 +1363,7 @@ fn malformed_dispatch_keys_encode_literal_error_words_without_changing_table() {
         // Literal wire words deliberately avoid deriving expectations from the
         // encoder under test. Zero incarnation wins even over a wrong guard;
         // with a nonzero table guard, every address whose guard bits do not
-        // match rejects as GuardMismatch before indexing (selected 2026-09-23).
+        // match rejects as GuardMismatch before indexing.
         for (wire, reason, details) in [
             (0x0000_0000_0000_0000, InvalidKeyReason::ZeroIncarnation, 1),
             (0x0000_0000_0000_007f, InvalidKeyReason::ZeroIncarnation, 1),

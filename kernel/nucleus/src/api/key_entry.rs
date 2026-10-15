@@ -70,7 +70,7 @@
 // Variants A and H store a checked object identity, never a bare pointer:
 // the owning access context validates a pool slot's metadata, or a carved
 // object's header, before any dereference, so stale identities cannot be
-// dereferenced (D3 concrete guarded access, 2026-09-07).
+// dereferenced.
 
 use {
     crate::objects::{
@@ -225,7 +225,7 @@ pub struct KeyTablePayload {
     pub address: u64,
     /// The table's generation when this capability was minted.
     pub generation: u32,
-    /// The table's guard (guarded key-space package, selected 2026-09-23):
+    /// The table's guard:
     /// a userspace-chosen value fixed at Retype, carried by every key minted
     /// into the table above the slot index. Copied verbatim on derivation.
     pub guard: u32,

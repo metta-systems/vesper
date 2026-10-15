@@ -14,8 +14,7 @@ use {
 // == Nucleus object ==
 // ====================
 
-/// Kernel-private execution context of a Thread (completion foundation,
-/// 2026-09-16).
+/// Kernel-private execution context of a Thread
 ///
 /// This records only what the kernel needs to stop and later resume the
 /// thread's execution; the saved register state itself lives in the

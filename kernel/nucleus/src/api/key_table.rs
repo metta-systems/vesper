@@ -1,12 +1,12 @@
 //! `KeyTable` management operations: `CopyDerive`, `Move`, `Delete`.
 //!
-//! Implements the approved minimal `KeyTable` lifecycle (D4, 2026-09-07):
+//! Implements the approved minimal `KeyTable` lifecycle:
 //! incarnation-checked selectors, separately grantable table permissions
 //! (`DERIVE`/`REMOVE`/`INSTALL`), vacant destinations, same-slot `Move`
 //! rejection, badge preservation on `CopyDerive`, state preservation on
 //! `Move`, and `Delete` without automatic object retirement. The target-kind
-//! allowlist is `KeyTable`, `Frame` (capability-only derivation; added
-//! 2026-09-15), and debug-gated `DebugConsole`; other kinds, `Revoke`, and
+//! allowlist is `KeyTable`, `Frame` (capability-only derivation),
+//! and debug-gated `DebugConsole`; other kinds, `Revoke`, and
 //! rebadging remain unsupported.
 //!
 //! `KeyTable`s are Retype-created carved objects named by their carved
@@ -370,7 +370,7 @@ fn check_source_allowlisted(
 }
 
 /// Only the approved initial target kinds may be derived/moved: `KeyTable`,
-/// debug-gated `DebugConsole`, and `Frame` (added 2026-09-15: Copy is
+/// debug-gated `DebugConsole`, and `Frame` (Copy is
 /// capability-only derivation — a derived Frame starts unmapped, with no
 /// active mapping association; Move preserves the mapping record; Delete of a
 /// mapped frame leaves the mapping in place under the accepted-leak model).

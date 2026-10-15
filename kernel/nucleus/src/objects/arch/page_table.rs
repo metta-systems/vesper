@@ -403,7 +403,7 @@ fn overlap_walk(table_paddr: u64, level: u8, start: u64, end: u64) -> Option<u64
 /// overlaps the frame extent `[paddr, paddr + (1 << size_bits))`, returning
 /// the conflicting descriptor's physical base.
 ///
-/// Enforces the selected alias policy — no two virtual addresses for
+/// Enforces the no-alias rule — no two virtual addresses for
 /// overlapping physical backing within one `AddressSpace` — ahead of the hardware
 /// transition, so a rejected mapping leaves every table and record unchanged.
 pub fn find_physical_overlap(root_paddr: u64, paddr: u64, size_bits: u8) -> Option<u64> {

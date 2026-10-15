@@ -40,7 +40,7 @@ pub enum EventCountOp {
     /// whose target the new value satisfies. Requires `SEND`. An advance
     /// that would exceed `u64::MAX` completes with the shared
     /// `CounterOverflow` error, leaves the counter unchanged, and completes
-    /// every queued `Await` with the same error (selected 2026-09-18).
+    /// every queued `Await` with the same error.
     Advance = 0,
     /// Block until the counter is `>= target`, then return the observed
     /// value. Requires `RECV`. Takes one relative timeout argument
@@ -74,7 +74,7 @@ impl TryFrom<u32> for EventCountOp {
 
 impl EventCountKey {
     /// Infinite-timeout encoding for [`Self::await_ge`]: block until
-    /// completion or teardown cancellation (selected 2026-09-16).
+    /// completion or teardown cancellation.
     pub const WAIT_INFINITE: u64 = u64::MAX;
 
     /// Construct a non-owning handle without installing or validating
@@ -94,7 +94,7 @@ impl EventCountKey {
     /// Wire schema: `x2` delta, `x3..x7` zero. Authority: `SEND`. Zero is
     /// invalid; an advance that would exceed `u64::MAX` returns
     /// `CounterOverflow` and leaves the counter unchanged, completing every
-    /// queued `Await` with the same error (selected 2026-09-18).
+    /// queued `Await` with the same error.
     pub fn advance(&self, delta: u64) -> Result<u64, CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
         let result =

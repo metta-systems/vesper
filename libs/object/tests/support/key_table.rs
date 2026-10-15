@@ -94,7 +94,7 @@ fn invoke(method: Method, response: Response) -> Result<Option<RawKey>, CapError
                 0x7654_3210_ffff_fffe,
                 0xffff_fffc,
                 // The prototype `Rights::all()` request, including `EXECUTE`
-                // since 2026-09-15 and `RETIRE` since 2026-09-19.
+                // and `RETIRE`.
                 u64::from(Rights::all().bits()),
             ],
             4,

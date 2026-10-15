@@ -55,7 +55,7 @@ impl RawKey {
 
     /// Compose a key from its table-relative parts: the table's guard, the
     /// table's capacity exponent `size_bits`, the bare slot index, and the
-    /// incarnation (guarded key-space package, selected 2026-09-23).
+    /// incarnation.
     ///
     /// The guard occupies the top `32 − size_bits` bits of the low word and
     /// the index the bottom `size_bits` bits; the index is masked to the low
@@ -145,8 +145,8 @@ pub enum InvalidKeyReason {
     ZeroIncarnation = 1,
     SlotOutOfRange = 2,
     NeverIssued = 3,
-    /// The key's guard bits do not address the resolving table (selected
-    /// 2026-09-23): the table-relative address packs the table's guard above
+    /// The key's guard bits do not address the resolving table
+    /// the table-relative address packs the table's guard above
     /// the slot index, and a mismatch rejects before indexing.
     GuardMismatch = 4,
 }

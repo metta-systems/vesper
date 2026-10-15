@@ -68,7 +68,7 @@ impl ASIDPoolKey {
 
     /// Assign an ASID from this pool to `address_space`'s translation root.
     ///
-    /// Wire schema (selected 2026-09-15): `x2` target `AddressSpace` key,
+    /// Wire schema: `x2` target `AddressSpace` key,
     /// `x3..x7` zero. Success returns the assigned ASID in `x1` and zero in
     /// `x2`. The `AddressSpace` must have a translation root installed (`NotMapped`
     /// otherwise) and no ASID yet (`AlreadyMapped` otherwise); pool

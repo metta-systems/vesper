@@ -1,26 +1,23 @@
-//! `Notification` operations: `Signal`/`Wait`/`Poll` (Phase 6 vertical,
-//! 2026-09-16).
+//! `Notification` operations: `Signal`/`Wait`/`Poll`
 //!
 //! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Signal` `0`: `x2` bits — used when the capability badge is zero —
 //!   `x3..x7` zero. ORs the authorized bits into the bitmap and wakes at
-//!   most one waiter (one-consumer delivery, selected 2026-09-16). Success
-//!   returns zeros.
+//!   most one waiter. Success returns zeros.
 //! - `Wait` `1`: `x2` timeout (nanoseconds; `u64::MAX` = infinite; zero and
 //!   finite values are invalid/unsupported until the time subsystem exists),
 //!   `x3..x7` zero. An already-satisfied wait consumes and returns the
 //!   pending bits. A wait that would block reports `InvokeOutcome::Blocked`:
 //!   the syscall entry parks the caller and switches, and the caller's
-//!   return happens when the record completes (completion foundation,
-//!   2026-09-16).
+//!   return happens when the record completes
 //! - `Poll` `2`: no arguments. Consumes and returns pending bits (zero =
 //!   none pending). Never blocks.
 //!
 //! Authority (per-kind rights reuse): `Signal` requires `SEND`; `Wait` and
-//! `Poll` require `RECV`. Signal bits follow the selected hybrid (2026-09-16):
-//! the capability's badge when nonzero, else the caller-supplied argument.
-//! Retype installs badge zero, so the argument path is the initially
-//! reachable one; badge derivation (D4) activates the badge path.
+//! `Poll` require `RECV`. Signal bits come from the capability's badge when
+//! nonzero, else the caller-supplied argument.
+//! Retype installs badge zero, so the argument path is the one reached
+//! until badge derivation (D4) exists.
 
 use {
     crate::{
@@ -72,7 +69,7 @@ pub fn invoke<A: ArchObjects>(
             if args[1..].iter().any(|&arg| arg != 0) {
                 return Err(CapError::InvalidOperation);
             }
-            // Selected hybrid (2026-09-16): a badged capability signals its
+            // Selected hybrid: a badged capability signals its
             // badge; an unbadged one (badge zero — what Retype installs)
             // signals the caller-supplied argument.
             let bits = if badge != 0 {
@@ -99,7 +96,7 @@ pub fn invoke<A: ArchObjects>(
             if args[1..].iter().any(|&arg| arg != 0) {
                 return Err(CapError::InvalidOperation);
             }
-            // Timeout model (selected 2026-09-16): `u64::MAX` = infinite.
+            // Timeout model: `u64::MAX` = infinite.
             // Zero is invalid and finite values are unsupported until the
             // time subsystem exists — both rejected with a defined error
             // rather than a pretended timeout.

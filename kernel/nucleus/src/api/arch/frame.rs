@@ -1,5 +1,5 @@
 //! `Frame.Map`/`Unmap`/`GetAddress`: real descriptor installation through the
-//! target `AddressSpace`'s translation context (selected 2026-09-15).
+//! target `AddressSpace`'s translation context.
 //!
 //! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `Map` `0`: `x2` target `AddressSpace` key, `x3` virtual address, `x4`
@@ -45,7 +45,7 @@
 //! cached translation), remaps different backing at the same address, and
 //! verifies the freshly walked contents. Gating the invalidation on live
 //! TTBR installation may be more efficient in the long term once Thread
-//! scheduling exists (maintainer remark, 2026-09-15).
+//! scheduling exists.
 
 use {
     crate::{
@@ -149,7 +149,6 @@ fn map<A: ArchObjects>(
         }
         attribute = resolve_attribute(&frame, requested_attribute)?;
         // A device Frame is never executable (device memory policy,
-        // 2026-10-10).
         if frame.is_device() && requested.has(Rights::EXECUTE) {
             return Err(CapError::InvalidOperation);
         }

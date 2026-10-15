@@ -70,7 +70,7 @@ pub fn run() {
     };
 
     // ─────────────────────────────────────────────────────────────────
-    // Notification: Retype-creatable synchronization state (2026-09-16)
+    // Notification: Retype-creatable synchronization state
     // ─────────────────────────────────────────────────────────────────
 
     // Retype two Notifications: pure kernel state allocated from the
@@ -237,8 +237,8 @@ pub fn run() {
         0b1
     );
 
-    // A wait that would block now blocks for real (completion foundation,
-    // 2026-09-16): the end-to-end proof below parks the boot Thread and
+    // A wait that would block now blocks for real.
+    // The end-to-end proof below parks the boot Thread and
     // resumes it through the Bounce fixture Thread. A finite timeout is
     // still rejected: the time subsystem does not exist yet.
     assert!(matches!(
@@ -283,8 +283,8 @@ pub fn run() {
     };
 
     // ─────────────────────────────────────────────────────────────────
-    // EventCount end-to-end (2026-09-18): monotonic counting, the
-    // selected overflow policy, and blocking Await through the Bounce
+    // EventCount end-to-end: monotonic counting, the
+    // the overflow policy, and blocking Await through the Bounce
     // fixture (broadcast wakeups, error wakeups)
     // ─────────────────────────────────────────────────────────────────
 
@@ -310,14 +310,13 @@ pub fn run() {
             .unwrap_or_else(|error| panic!("second EventCount.Read failed: {:?}", error.code())),
         7
     );
-    // Zero is invalid: an advance must strictly increase (selected
-    // 2026-09-18).
+    // Zero is invalid: an advance must strictly increase.
     assert!(matches!(
         event_count.advance(0),
         Err(CapError::InvalidOperation)
     ));
     // Overflow rejects, leaves the counter unchanged, and carries the
-    // shared status (selected 2026-09-18). No waiter is queued here, so
+    // shared status. No waiter is queued here, so
     // only the advancer observes the error.
     assert!(matches!(
         event_count.advance(u64::MAX),
@@ -390,8 +389,8 @@ pub fn run() {
         bounce_stack_top,
     );
 
-    // Overflow wakes blocked waiters with the shared error (selected
-    // 2026-09-18): request Bounce's overflowing advance (bit 1), then
+    // Overflow wakes blocked waiters with the shared error
+    // request Bounce's overflowing advance (bit 1), then
     // block on an unreachable target. The advance completes the await
     // with `CounterOverflow`, the counter stays unchanged, and Bounce
     // parks for good.
@@ -637,20 +636,20 @@ fn assert_bounce_parked_context(thread: &Thread, stack_bottom: u64, stack_top: u
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Bounce fixture Thread (completion foundation, 2026-09-16)
+// Bounce fixture Thread
 // ─────────────────────────────────────────────────────────────────────
 
 /// The bits Bounce delivers to the blocked boot Thread.
 const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 
-/// The Bounce fixture Thread's entry (N4-A, 2026-09-16): a second EL1
+/// The Bounce fixture Thread's entry is a second EL1
 /// execution context that unlocks the first blocked Thread for testing.
 ///
 /// Bounce first signals the notification the boot Thread is blocked on
 /// (waking it). It then serves one `EventCount` advance per N2 trigger:
 /// trigger bit 0 requests a plain +3 advance, trigger bit 1 an overflowing
-/// one (which completes waiters with the shared `CounterOverflow` error,
-/// 2026-09-18). After two rounds it parks forever on N2 — nothing ever
+/// one (which completes waiters with the shared `CounterOverflow` error).
+/// After two rounds it parks forever on N2 — nothing ever
 /// signals it again, so the scheduler resumes the boot Thread.
 /// Bootstrap-era fixture mechanism, not the Phase 7 Activate contract: no
 /// budget, no EL0 entry, no legal-transition enforcement beyond what this
@@ -684,7 +683,7 @@ extern "C" fn bounce_entry() -> ! {
             // A plain +3 advance that satisfies the boot Thread's target.
             0b1 => ec.advance(3),
             // The overflowing advance: it completes waiters with the shared
-            // error and leaves the counter unchanged (selected 2026-09-18).
+            // error and leaves the counter unchanged.
             0b10 => ec.advance(u64::MAX),
             other => panic!("Bounce: unexpected trigger bits {other:#x}"),
         };

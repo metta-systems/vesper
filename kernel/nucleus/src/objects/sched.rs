@@ -1,4 +1,4 @@
-//! Minimal kernel scheduling substrate (completion foundation, 2026-09-16).
+//! Minimal kernel scheduling substrate.
 //!
 //! This is kernel mechanism only — a FIFO of runnable Threads. Scheduling
 //! *policy* stays in userspace (the contract's userspace-scheduling

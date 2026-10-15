@@ -120,10 +120,6 @@ pub fn kickstart_run() -> ! {
     // Initialize per-CPU data structures
     // percpu::init();
 
-    // Initialize interrupt controller (GIC on RPi4)
-    // let boot_info = unsafe { &BOOT_INFO };
-    // interrupts::init_gic(boot_info);
-
     // ─────────────────────────────────────────────────────────────────────
     // Build physical memory map and create Untyped caps
     // ─────────────────────────────────────────────────────────────────────
@@ -133,7 +129,7 @@ pub fn kickstart_run() -> ! {
     // Create the root untyped capability list
     // This will be delegated to init process
     // let mut untyped_list = UntypedList::new();
-    // // let mut untyped_list = create_untyped_caps();
+    // let mut untyped_list = create_untyped_caps();
 
     // for i in 0..boot_info.memory_region_count {
     //     let region = &boot_info.memory_regions[i];
@@ -467,8 +463,8 @@ fn create_init_component(module: &LoadedModule, untyped_list: &mut UntypedList) 
         write_bytes(&mut dst[file_size..], 0, dst.len() - file_size);
 
         // Pass the segment region to init as Untyped/Frame capabilities -- FIXME: This is how we pass
-        // the process images to init component. Buffer is a userspace/libOS construct (selected
-        // 2026-09-15): the kernel hands over memory via Untyped/Frame capabilities only.
+        // the process images to init component. Buffer is a userspace/libOS construct:
+        // the kernel hands over memory via Untyped/Frame capabilities only.
         // let segment_cap = FrameCap::create_from_untyped(segment_untyped, flags.into());
         // component.cspace().insert_at_next_free(segment_cap);
     }
@@ -581,8 +577,8 @@ fn delegate_module_caps_to_init(init_component: &ComponentRef, boot_info: &BootI
         }
 
         // Pass the module's memory to init as a read-only Untyped/Frame capability -- FIXME: this
-        // is how process images are passed on. Buffer is a userspace/libOS construct (selected
-        // 2026-09-15): the kernel hands over memory via Untyped/Frame capabilities only.
+        // is how process images are passed on. Buffer is a userspace/libOS construct:
+        // the kernel hands over memory via Untyped/Frame capabilities only.
         // let module_cap =
         //     FrameCap::create_for_phys_range(module.phys_start, module.size, Rights::READ);
 

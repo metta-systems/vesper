@@ -6,7 +6,7 @@
 //!   queued wakeup, and retires the carved Thread. Success returns
 //!   zeros.
 //!
-//! Authority: `RETIRE` (selected 2026-09-19, D4): delegable lifecycle control —
+//! Authority: `RETIRE`: delegable lifecycle control —
 //! retirement authorization follows capability permissions, not a privileged
 //! owner identity.
 //!
@@ -105,7 +105,7 @@ fn retire<A: ArchObjects>(
         if entry.is_thread_return_key() {
             return Err(CapError::InvalidOperation);
         }
-        // Delegable lifecycle-control authority (selected 2026-09-19, D4).
+        // Delegable lifecycle-control authority.
         if !entry.rights().has(Rights::RETIRE) {
             return Err(CapError::InsufficientRights);
         }

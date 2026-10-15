@@ -20,7 +20,7 @@ pub struct AArch64AddressSpace {
     /// bound.
     keytable: Option<KeyTableBinding>,
     /// Physical address of this address space's translation-root page table,
-    /// if a root has been installed (mapping context, selected 2026-09-15).
+    /// if a root has been installed.
     ///
     /// The root is a Retype-carved `PageTable` installed through
     /// `PageTable.Map` with this `AddressSpace`'s capability as the parent. The
@@ -28,7 +28,7 @@ pub struct AArch64AddressSpace {
     /// reached through the direct map.
     pub translation_root: Option<u64>,
     /// The hardware ASID bound to this address space's translation root, if
-    /// any (selected 2026-09-15: capability-protected `ASIDPool` resources
+    /// any
     /// with authorized `ASIDPool.Assign` binding).
     ///
     /// Unmap paths use the bound ASID to withdraw cached translations for

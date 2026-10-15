@@ -1,5 +1,5 @@
 //! `PageTable.Map`/`Unmap`: installation of explicitly managed translation
-//! tables (selected 2026-09-15).
+//! tables.
 //!
 //! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `Map` `0`: `x2` parent key, `x3` virtual address, `x4..x7` zero. The
@@ -17,8 +17,7 @@
 //! An intermediate table's descriptors are all zero (required), so no cached
 //! translation can exist beneath it and no invalidation is needed there.
 //! Gating the root-unmap invalidation on live TTBR installation may be more
-//! efficient in the long term once Thread scheduling exists (maintainer
-//! remark, 2026-09-15).
+//! efficient in the long term once Thread scheduling exists.
 
 use {
     crate::objects::{

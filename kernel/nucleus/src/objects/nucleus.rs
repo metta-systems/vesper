@@ -30,7 +30,7 @@ use {
 //  │  │       └── asid_controls: reserved with the kind                   │
 //  │  │                                                                  │
 //  │  ├── current_thread: Option<ThreadId>                              │
-//  │  └── pending: PendingPool (blocked-invocation records, 2026-09-16)  │
+//  │  └── pending: PendingPool  │
 //  │                                                                     │
 //  └─────────────────────────────────────────────────────────────────┘
 
@@ -57,12 +57,11 @@ pub struct Nucleus<A: ArchObjects> {
     /// its generation against the Thread's header, so a retired Thread is
     /// never mistaken for the current Thread.
     pub current_thread: Option<ThreadId>, // FIXME: not option, always something (Idle or other)
-    /// Pending-invocation records for blocked callers (completion
-    /// foundation, 2026-09-16): bounded kernel-private storage, the
-    /// closed-wait identity for blocked invocations.
+    /// Pending-invocation records for blocked callers.
+    /// Bounded kernel-private storage: the closed-wait identity for blocked invocations.
     pub pending: PendingPool,
     /// Runnable-Thread queue: the minimal "run someone else" substrate
-    /// (completion foundation, 2026-09-16). Kernel mechanism only;
+    /// Kernel mechanism only:
     /// scheduling policy stays in userspace.
     pub run_queue: RunQueue,
     /// The idle Thread, if boot created one: selected when nothing else is
@@ -246,8 +245,8 @@ impl<A: ArchObjects> Nucleus<A> {
             .count()
     }
 
-    /// Thread-teardown-driven cancellation (the selected D7 cancellation
-    /// trigger, 2026-09-16): cancel every pending-invocation record naming
+    /// Thread-teardown-driven cancellation (the D7 cancellation
+    /// trigger: cancel every pending-invocation record naming
     /// `thread` as its waiter and purge every queued wakeup for it.
     ///
     /// Call this while the Thread slot is still live — before the teardown

@@ -73,7 +73,7 @@ impl TryFrom<u32> for UntypedOp {
 // │  ✗ CNode_Mutate    → Cannot modify                        │
 // └────────────────────────────────────────────────────────────┘
 // Contract status: Retype is implemented (KeyTable/Frame/PageTable/
-// Notification/EventCount allowlist, plus the Untyped split added 2026-09-23:
+// Notification/EventCount allowlist, plus the Untyped split:
 // the child region is `2^size_bits` bytes at minimum the watermark encoding
 // granularity, and a device Untyped may be split with the flag propagating).
 // Revoke remains unsupported pending its scope/completion contract (D2).
@@ -96,8 +96,8 @@ impl UntypedKey {
     /// range, installing capabilities into `count` consecutive vacant slots of
     /// the destination table.
     ///
-    /// Wire schema (approved 2026-09-13, `KeyTable` guard packing selected
-    /// 2026-09-23): `x2` object kind, `x3` `size_bits` with the table guard
+    /// Wire schema
+    /// `x2` object kind, `x3` `size_bits` with the table guard
     /// packed in bits 39:8 (`KeyTable` kind only; zero for every other kind),
     /// `x4` count, `x5` destination-table key, `x6` first destination slot,
     /// `x7` requested rights. Returns the first destination-local key from

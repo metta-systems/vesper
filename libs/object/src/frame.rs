@@ -178,7 +178,7 @@ impl FrameKey {
 
     /// Map this frame into the target `AddressSpace`'s translation context at `vaddr`.
     ///
-    /// Wire schema (selected 2026-09-15): `x2` target `AddressSpace` key, `x3` virtual
+    /// Wire schema: `x2` target `AddressSpace` key, `x3` virtual
     /// address, `x4` requested rights, `x5` the memory [`FrameAttribute`],
     /// `x6..x7` zero. The requested rights must be a subset of the frame
     /// capability's rights, and the attribute within the Frame's ceiling. The

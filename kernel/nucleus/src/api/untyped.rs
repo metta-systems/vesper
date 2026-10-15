@@ -1,7 +1,7 @@
 //! `Untyped.Retype`: create objects from an Untyped's unused watermark range.
 //!
-//! Wire schema (approved 2026-09-13; `KeyTable` guard packing selected
-//! 2026-09-23): invoked on the Untyped capability key; `x2` object kind,
+//! Wire schema:
+//! invoked on the Untyped capability key; `x2` object kind,
 //! `x3` `size_bits` — with, for the `KeyTable` kind only, the userspace-chosen
 //! table guard packed in bits 39:8 above the `size_bits` byte (bits 63:40
 //! reserved zero; every other kind requires bits 63:8 zero) — `x4` count,
@@ -57,7 +57,7 @@ use {
     libqemu::semihosting as semi,
 };
 
-/// Upper bound on one Retype batch (selected 2026-09-23): the transaction's
+/// Upper bound on one Retype batch: the transaction's
 /// defensive rollback records are kernel stack arrays sized by this bound.
 /// Larger counts are rejected with `InvalidOperation`; callers split them.
 const MAX_RETYPE_BATCH: u32 = 256;
@@ -141,8 +141,8 @@ fn retype<A: ArchObjects>(
             .ok_or(CapError::InvalidOperation)?,
     );
     // `x3` carries `size_bits` in its low byte. For the `KeyTable` kind the
-    // userspace-chosen table guard is packed in bits 39:8 above it (selected
-    // 2026-09-23); bits 63:40 are reserved zero. Every other kind requires
+    // userspace-chosen table guard is packed in bits 39:8 above it;
+    // bits 63:40 are reserved zero. Every other kind requires
     // bits 63:8 zero (the strict zero convention).
     let (size_bits, table_guard, ceiling_request) = if kind == ObjectType::KEY_TABLE {
         let size_bits = u8::try_from(args[1] & 0xFF)
@@ -195,7 +195,7 @@ fn retype<A: ArchObjects>(
     // silently created with wrong semantics.
     let carve = match kind {
         ObjectType::KEY_TABLE => {
-            // A variable-size carve (selected 2026-09-23): `size_bits` selects
+            // A variable-size carve: `size_bits` selects
             // the capacity (2^size_bits entries), and the packed guard — fixed
             // for the table's lifetime — must fit the table-relative address
             // layout: `32 − size_bits` bits above the slot index.
@@ -244,7 +244,7 @@ fn retype<A: ArchObjects>(
             Carve::AddressSpace
         }
         ObjectType::UNTYPED => {
-            // A split (selected 2026-09-23): the child is its own region of
+            // A split: the child is its own region of
             // `2^size_bits` bytes. A region smaller than the watermark
             // encoding granularity could not keep its committed carve ends
             // encodable — the encoding would discard sub-granular bytes and
@@ -283,7 +283,7 @@ fn retype<A: ArchObjects>(
         if !untyped.rights().has(Rights::WRITE) {
             return Err(CapError::InsufficientRights);
         }
-        // Device memory (maintainer decision, 2026-10-10): a device Untyped
+        // Device memory: a device Untyped
         // splits into device Untypeds and carves into device Frames, which
         // are never touched; every other kind would write kernel state into
         // MMIO and is rejected before any reservation, initialization, or
@@ -402,9 +402,9 @@ fn retype<A: ArchObjects>(
             }
             Carve::Frame { bytes } => {
                 // A device Frame names MMIO registers: it is never zeroed or
-                // otherwise touched (device memory policy, 2026-10-10).
+                // otherwise touched.
                 if !untyped.is_device {
-                    // Sanitization (selected 2026-09-15): the kernel zeroes
+                    // Sanitization: the kernel zeroes
                     // the carved frame contents before the capability is
                     // installed, so a fresh frame never carries prior-owner
                     // or kernel data when first exposed across a protection

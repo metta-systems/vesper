@@ -12,7 +12,7 @@ use crate::objects::{ArchObjects, ObjectPool};
 /// memory and named by their carved identity; they take no pool slot.
 pub struct ArchPools<A: ArchObjects> {
     /// ASID pools: boot-provided capability-protected namespace resources
-    /// (selected 2026-09-15); not Retype-creatable, so the only backing today
+    ///; not Retype-creatable, so the only backing today
     /// is the boot pool carved at bootstrap.
     pub asid_pools: ObjectPool<A::ASIDPool>,
     // Pools for ASIDControl/I/O remain deferred with their kinds: no
