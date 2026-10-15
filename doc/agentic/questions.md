@@ -1,3 +1,15 @@
+DESIGN CHANGE: As explained [here](https://sel4.discourse.group/t/why-do-cnodes-have-guard-bits/49/5?utm_source=chatgpt.com) the KeyTable should not have a SELF_KEYTABLE slot by default and it shouldn't be required either.
+
+---
+
+move AS first in the arch key numbers
+
+---
+
+should we use svc #op instead of just svc #0 and free up one arg register?
+
+---
+
 ### 2. Finish the already-started interrupt-kernel foundation
 
 Integrate the new exception carrier into Thread/main/bootstrap:
@@ -72,10 +84,6 @@ A crash inside a called component kills the caller's thread
 ---
 
 a finite sum reaching `u64::MAX`,  - currently in Time, but it should just saturate?
-
----
-
-A PageTable also takes a slot in the kernel PageTable pool. - do we need this kernel pool?
 
 ---
 

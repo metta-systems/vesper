@@ -14,12 +14,12 @@ This is a TODO list, not a claim of implementation. This file holds only open wo
 - Preserve user work. This repository uses JJ: no raw Git, commits, history changes, new changes/branches, or pushes by default. Version-control mutation requires an explicit request.
 - Use **`just` for project build, test, formatting, and lint workflows**. Read the current `Justfile`; do not replace its recipes with hand-assembled Cargo/rustfmt commands or assume a native build validates the embedded target.
 - When an item is finished, replace it with a one-line marker in [`capabilities-completed.md`](capabilities-completed.md): what exists and where it is exercised. No narratives, dates or validation logs; version control keeps the history. Supplemental diagnostics and dry runs do not count as completed project validation.
-- Keep [`doc/object_types/`](object_types/) current with every capability refactor: when a refactor invalidates a per-kind document, replace the no-longer-valid content with new data instead of layering amendments on top of stale text. The catalogue tables, wire IDs, operation lists, and status columns must describe the implemented reality after each slice. Documentation states the **current contract only** — no selection dates, no "selected/moved/renamed from" history, no "formerly…" chains; the contract and this plan carry the history.
+- Keep [`doc/object_types/`](../object_types/) current with every capability refactor: when a refactor invalidates a per-kind document, replace the no-longer-valid content with new data instead of layering amendments on top of stale text. The catalogue tables, wire IDs, operation lists, and status columns must describe the implemented reality after each slice. Documentation states the **current contract only** — no selection dates, no "selected/moved/renamed from" history, no "formerly…" chains; the contract and this plan carry the history.
 - There is no previous version of anything: once a change is approved, preserve no backwards compatibility, migration path, deprecated alias, or legacy behavior. Functionality can be completely removed and replaced when necessary; update all consumers in the same slice.
 
 ## Project validation commands
 
-Run these from the repository root. The [Justfile](../Justfile) is authoritative; this table is a navigation aid, not a replacement for reading recipe bodies and dependencies. Discover recipes with `just --list`; inspect a workflow without running it with `just --dry-run <recipe>`.
+Run these from the repository root. The [Justfile](../../Justfile) is authoritative; this table is a navigation aid, not a replacement for reading recipe bodies and dependencies. Discover recipes with `just --list`; inspect a workflow without running it with `just --dry-run <recipe>`.
 
 Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-metta-none-eabi` target, `build-std`, board CPU/cfg flags, feature matrices, linker scripts, warning policy, and QEMU runner. **Use `just clippy`, not bare `cargo clippy`.** The same rule applies to build/test/format workflows. Do not copy private helper commands or override away their configuration to get a passing result.
 
@@ -43,7 +43,7 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just test-fault` | Boot fault-test: EL0 fault delivery — skip, retry, terminate, Return faults, and every unhandled case parking the Thread as faulted; included in `just test` |
 | `just audit-fp-simd` | Disassemble every image that runs under the integer-only policy and reject FP/SIMD instructions; part of `just lint` |
 | `just test-chainboot` | Chainboot tests with its own linker script and target runner |
-| `just test-object-host` | Opt-in capability ABI integration tests on the native host (currently AArch64) |
+| `just test-object-host` | Opt-in capability ABI integration tests on the native host (requires AArch64) |
 | `just test-host` | Capability ABI, boot-platform and Meddle tests, then native `chainofcommand` tests |
 | `just test` | Device, chainboot, host (capability, boot-platform, Meddle, tools), debug handler/storage, and every e2e test kernel (capability, memory, sync, ppc, preempt, irq, driver, mailbox, uart, endpoint, fp-trap, fault; the board-dependent ones on both boards) |
 | `just pre-push` | Formatting, shortened Clippy, and tests; does not itself push anything |
@@ -75,7 +75,7 @@ Reference: [type numbering](capabilities-contract.md#object-type-numbering), [wi
 
 **Phase complete:** every item has moved to [`capabilities-completed.md`](capabilities-completed.md#phase-2--one-shared-testable-abi). Version/support discovery for separately built components is parked in [`capabilities-decisions.md`](capabilities-decisions.md) under D9.
 
-## Phase 3 — Repair the active syscall/console path
+## Phase 3 — Repair the debug console path
 
 Reference: [wire contracts](capabilities-contract.md#invocation-and-wire-contracts), [authorization](capabilities-contract.md#authorization). Prerequisites: relevant Phase 2 definitions; console authority decision under D4.
 
@@ -93,7 +93,7 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 
 ### Keys, identity and retirement
 
-- [ ] Implement permission-based retirement for the remaining kinds (only Thread and AddressSpace have `Retire`); test that creator control survives delegation and that accepted leaks cause no automatic destruction or conflicting reuse.
+- [ ] Add a permission-based `Retire` operation, gated by the `RETIRE` right on the target capability, to every kind that does not yet define one in the [object operation baseline](capabilities-contract.md#object-operation-baseline); test that creator control survives delegation and that accepted leaks cause no automatic destruction or conflicting reuse.
 - [ ] Define the retirement-to-background-cleanup handoff to entrusted managers (no central post-hoc registration).
 - [ ] Settle pool retirement, reuse validation and the zero-sized-type policy for `ObjectPool`; create pools at runtime, not only at bootstrap.
 - [ ] After implementation experience, review the guarded key-space configuration (per-table guards, bare destination slots, guard-in-capability storage sourced from `SELF_KEYTABLE`) and confirm or revise it.
@@ -101,7 +101,7 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 ### Scheduler-shared records (D5)
 
 - [ ] Implement `Scheduler.ShareRegion` across shared ABI, wrapper, dispatch and object state: one already scheduler-mapped Frame per call, reject conflicting re-share, check Scheduler and Frame authority.
-- [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private. `ThreadKey::state`, `time_used_ns` and `pending_notifications` (`libs/object/src/thread.rs`, `unimplemented!()` today) read these records.
+- [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private. `ThreadKey::state`, `time_used_ns` and `pending_notifications` (`libs/object/src/thread.rs`) read these records instead of panicking through `unimplemented!()`.
 - [ ] Implement hierarchical Scheduler derivation, root-only Thread creation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
 - [ ] Move notification and block-reason accounting into the shared records, with event-summary indexing and Thread-retirement cleanup.
 - [ ] Test scheduler/Frame authority, mapped and unmapped ShareRegion inputs, re-share rejection, stride placement, identity reuse, tree constraints, root creation/donation, publication/reuse and Thread teardown; run target checks for record access and kernel-private state isolation.
@@ -117,7 +117,7 @@ Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memo
 - [ ] Implement the revocation/reclamation completion protocol: teardown bookkeeping retained across partial map/unmap failures, Unmap before invalidation, pending-use retirement, PTE removal, TLB/device synchronization and safe backing/metadata reuse, with kernel retirement separate from manager subtree cleanup.
 - [ ] Implement fbuf setup that agrees addresses for every participant before mapping, with reservation/conflict handling and rollback before pointers are published.
 - [ ] Implement exclusive, immutable-shared and mutable-shared modes with explicit transitions, and `MappedSlice` ownership of a private, non-derivable capability and mapping with incarnation-checked Drop cleanup.
-- [ ] Let RAM Frames map `WriteCombining` (Normal non-cacheable) for memory shared with non-coherent devices; today RAM maps `Cacheable` only and the attribute serves device Frames. Settle the mismatched-attribute alias with the kernel's cacheable direct map.
+- [ ] Let RAM Frames map `WriteCombining` (Normal non-cacheable) for memory shared with non-coherent devices. Settle the mismatched-attribute alias with the kernel's cacheable direct map.
 - [ ] Decide and implement EL0 cache maintenance (`SCTLR_EL1.UCI`) for components that maintain shared buffers themselves.
 - [ ] Define per-target MMU/MPU/IOMMU, address-width and DMA restrictions, with a protected-context fallback that never downgrades hostile-code isolation.
 - [ ] Implement `ASIDControl` pool creation and partitioning of the 16-bit ASID space once its schema is selected.
@@ -145,8 +145,8 @@ Reference: [IRQ delivery](capabilities-contract.md#irq-delivery).
 Reference: [component interfaces and imports](capabilities-contract.md#component-interfaces-and-imports), [Raspberry Pi mailbox](capabilities-contract.md#resource-storage-and-memory-contracts), [Frame cache maintenance](capabilities-contract.md#mapping-and-sharing).
 
 - [ ] Grow the `mailbox_v1.property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
-- [ ] Port the rest of the old `Power::off` into `power`: the GPIO pin power-down before the halt (no GPIO component exists yet).
-- [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (`property` runs to completion on the caller's Thread today).
+- [ ] Port the rest of the old `Power::off` into `power`: the GPIO pin power-down before the halt (requires a GPIO component).
+- [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (such as `property`).
 
 ## Phase 7 — Time and userspace scheduling
 
@@ -155,7 +155,7 @@ Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduli
 - [ ] Implement per-dispatch execution: dispatch (Thread, Time, priority, timeout), charging the current Time, one-shot timer programming in place of the periodic tick, and block/expiry switching to the scheduler Thread with an event in its records.
 - [ ] Give receiver Threads their own Time and decide wake-time preemption by priority-chain comparison (Notification and IRQ delivery).
 - [ ] Implement Thread Start/Suspend/Resume with initialized contexts, explicit authority, legal transitions and preserved blocked completions and budget; never-returning self-retirement.
-- [ ] Align consumed/remaining/activation/deadline observations with the scheduler records; charge PPC per-call time on Return once a real clock exists (`current_time_ns()` returns zero today).
+- [ ] Align consumed/remaining/activation/deadline observations with the scheduler records; charge PPC per-call time on Return once `current_time_ns()` reads a real clock.
 - [ ] Provide client ownership APIs that preserve budget on pre-commit errors without relying on destructor side effects.
 - [ ] Test conservation, insufficient budget, failed transfer, incompatible merge, expiry, cancellation, nested delegation and simultaneous spending; run target scheduling tests with a userspace policy example.
 
@@ -165,13 +165,13 @@ Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduli
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
   - [ ] Move endpoint-test's fixture init pages and hand-wired Invocations onto the init record and the generated-interface import wiring Kickstart gives drivers (`DriverInit`, `imports.if`).
-  - [ ] Copy a component's `.data` per instance before loading the same component twice; it is mapped in place from the bundle today, so a driver with several instances (an exporter included) may keep per-instance state only in `.bss`.
+  - [ ] Copy a component's `.data` per instance before loading the same component twice, so each instance of a driver (an exporter included) has its own `.data` state.
   - [ ] Move the Bounce fixture (sync-test, ppc-test, via `libkicktest::bounce`) onto EL0 components where it does not need EL1 register access.
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`) and enable the protections the running core supports.
   - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN: set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN`. Prerequisite: the EL1t boot Thread stops using its EL0-accessible low stack. Validate on a core with FEAT_PAN (QEMU `virt` with a newer CPU).
   - [ ] Select `CPTR_EL2.TZ`/`TSM` by feature: `libboot`'s `_startup_in_rust` sets them (RES1 on ARMv8.0); with SVE or SME they must be cleared so traps reach EL1 through `CPACR_EL1.ZEN`/`SMEN`.
 - [ ] Replace the temporary `aarch64-cpu` git dependency on its `main` branch (`CPTR_EL2` trap fields, `PMUSERENR_EL0`) with the released version once published.
-- [ ] Retire the legacy kernel-era driver stack in `libs/platform`: `device_driver/bcm/{pl011_uart,gpio,mini_uart}.rs`, `interrupt_controller/` and `raspberrypi/drivers.rs` (the driver manager that instantiates them). The kernel no longer uses them (the PL011 and interrupt controller are EL0 and privileged components), but `bin/chainboot` (its serial console and kernel download) and the QEMU device-test console (`libmachine` through `drivers::qemu_bring_up_console`) still do; replace those two uses first.
+- [ ] Remove the legacy kernel-era driver stack in `libs/platform`: `device_driver/bcm/{pl011_uart,gpio,mini_uart}.rs`, `interrupt_controller/` and `raspberrypi/drivers.rs` (the driver manager that instantiates them). Before deletion, move `bin/chainboot` (its serial console and kernel download) and the QEMU device-test console (`libmachine` through `drivers::qemu_bring_up_console`) onto the EL0 PL011 and interrupt-controller components.
 - [ ] Harden the boot linear map: exclude kernel-image physical memory and replace blanket init RWX with per-segment permissions.
 - [ ] Audit every wrapper against dispatch for false success or undocumented stubs, and run the full ABI, target-build and QEMU suites; record unavailable validation separately.
 - [ ] After correctness is established, measure memory and performance costs and do a separate optimization pass without weakening the contracts.

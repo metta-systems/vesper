@@ -115,13 +115,4 @@ Conclusion. Your IRQ model already needs per-thread binding for receivers, so pe
 
 What per-dispatch really adds is group budgets and hierarchical accounts kept by the scheduler, at the cost of reworking the kernel's run queue and block paths.
 
-
-
 ---
-
-
-so this is a big chunk of decisions:
-- We remove Brand completely
-- We decide Time is behaving more like Composite tcap (carries a priority, transferred only, and the budget binding needs a bit of more research - i need a comparison of what functionally would change between per-thread budget and per-dispatch budget)
-- We move IRQControl and IRQHandler to core
-- The irq handler model changes to a receiver Thread (created by the device driver and bound to IRQHandler via Notification - a Time cap controls priority of that thread - and is probably obtained from the time cap given by the device driver loader [kickstart]). The irq handler then waits on the notification and the kernel stores branded notification key in its IRQ table to signal whenever this interrup happens.
