@@ -237,9 +237,16 @@ fn parse_exports(content: &[u8], path: &Path) -> Vec<(String, u64)> {
         .collect()
 }
 
-/// The workspace's `target/<triple>` directory, under which the embedded
-/// images (nucleus, userspace components) are found by [`find_artifact`].
+/// The `<target-dir>/<triple>` directory under which the embedded images
+/// (nucleus, userspace components) are found by [`find_artifact`]:
+/// `VESPER_ARTIFACT_DIR` when set (lints, docs and device tests build the
+/// bundling crate outside the configuration whose images it embeds), else the
+/// build's own target directory.
 pub fn artifact_dir() -> PathBuf {
+    println!("cargo::rerun-if-env-changed={ARTIFACT_DIR_VARIABLE}");
+    if let Some(directory) = env::var_os(ARTIFACT_DIR_VARIABLE) {
+        return PathBuf::from(directory);
+    }
     let target_dir = env::var_os("CARGO_TARGET_DIR").map_or_else(
         || {
             let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default());
@@ -266,6 +273,7 @@ pub fn image_profile() -> String {
 }
 
 const IMAGE_PROFILE_VARIABLE: &str = "VESPER_IMAGE_PROFILE";
+const ARTIFACT_DIR_VARIABLE: &str = "VESPER_ARTIFACT_DIR";
 
 /// Locate the built binary `binary` in the [`image_profile`] directory under
 /// [`artifact_dir`] and register it for rebuilds.
