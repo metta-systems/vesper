@@ -34,14 +34,23 @@ pub fn now_ns() -> u64 {
     u64::try_from(nanoseconds).unwrap_or(u64::MAX)
 }
 
-/// Counter ticks in `duration` (at least 1).
-fn counter_ticks(duration: Duration) -> u64 {
-    let ticks = duration.as_nanos() * u128::from(frequency()) / NANOS_PER_SECOND;
-    u64::try_from(ticks).unwrap_or(u64::MAX).max(1)
+/// Counter value at `deadline_ns` on the [`now_ns`] timeline.
+fn counter_at(deadline_ns: u64) -> u64 {
+    let ticks = u128::from(deadline_ns) * u128::from(frequency()) / NANOS_PER_SECOND;
+    u64::try_from(ticks).unwrap_or(u64::MAX)
+}
+
+/// Fire the timer once, at `deadline_ns` on the [`now_ns`] timeline.
+///
+/// A deadline already in the past fires immediately. Arming also deasserts
+/// the interrupt, so the handler only has to call this to acknowledge it.
+pub fn arm_at(deadline_ns: u64) {
+    CNTP_CVAL_EL0.set(counter_at(deadline_ns));
+    CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::SET + CNTP_CTL_EL0::IMASK::CLEAR);
 }
 
 /// Fire the timer one [`TICK`] from now; this also deasserts its interrupt.
 pub fn arm_next_tick() {
-    CNTP_CVAL_EL0.set(counter().saturating_add(counter_ticks(TICK)));
-    CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::SET + CNTP_CTL_EL0::IMASK::CLEAR);
+    let tick_ns = u64::try_from(TICK.as_nanos()).unwrap_or(u64::MAX);
+    arm_at(now_ns().saturating_add(tick_ns));
 }

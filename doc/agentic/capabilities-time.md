@@ -1,3 +1,39 @@
+# Time and userspace scheduling: gaps
+
+Status as of 2026-10-16. Sources: `kernel/nucleus/src/{timer.rs,objects/time.rs,objects/scheduler.rs,objects/sched.rs,objects/thread.rs,api/event_count.rs}`, `libs/object/src/thread.rs`, `doc/agentic/capabilities-implementation-plan.md` (Phases 4, 6, 7), `doc/agentic/capabilities-decisions.md` (D5, D8).
+
+## Time: missing
+
+- Nothing charges any Time. Budgets never drain or expire (`objects/time.rs`).
+- `timer::arm_at(deadline_ns)` is a one-shot primitive, and the tick is built on it (`timer.rs`). The tick itself is still a fixed 10 ms periodic timer. It must be replaced by per-dispatch deadlines.
+- No deadline, sleep or alarm. `EventCount.Await` rejects finite timeouts (`api/event_count.rs:108`).
+- No clock-read capability for EL0.
+- PPC per-call time is recorded but not charged on Return.
+- Open D8: root budget finite or infinite, budget on Time delete, dispatch register schema, scheduling-token race protection, clock source and rounding.
+
+## Userspace scheduling: missing
+
+- No dispatch syscall (Thread, Time, priority, timeout) and no Yield.
+- No scheduler activations. Nothing is posted to the scheduler Thread on block, wake, expiry or preemption. The kernel run queue is FIFO and not priority-aware.
+- `Scheduler.ShareRegion` returns `InvalidOperation`. The shared record table, publication protocol and record schema are undecided (D5).
+- No sub-schedulers, hierarchical derivation or Thread donation.
+- Thread `Suspend`, `Resume` and `Grant` return `InvalidOperation`. `ThreadKey::state`, `time_used_ns` and `pending_notifications` are `unimplemented!()` (`libs/object/src/thread.rs:96-109`).
+- Wake-time preemption by priority-chain comparison is unbuilt. So is the IRQ receiver Thread with its own Time.
+- Phase 6 race and multi-waiter tests for Notification and EventCount are unchecked.
+- Single core only. Multicore Time is classed "very large".
+
+## Suggested order
+
+1. Settle D8 and D5 (record schema, dispatch op). These are blockers.
+2. Charging, plus the one-shot timer.
+3. Dispatch op with expiry and block events posted to the scheduler Thread, then ShareRegion records.
+4. Timeouts on Await, then sleep.
+5. Thread Suspend/Resume, then sub-schedulers and donation.
+
+---
+
+# Research: Time vs Composite tcap
+
 Composite's tcaps are closer to vesper's Time than I expected. The main differences are what a budget is attached to, and that Composite puts priority inside the budget. Sources: vesper's doc/object_types/core/time.md, doc/capabilities-contract.md ("Time and userspace scheduling"), D8 and the objects/time.rs sketch, compared with Composite main's kernel/tcap.c, include/tcap.h and the tcap operations in capinv.c.
 
 Where they agree
