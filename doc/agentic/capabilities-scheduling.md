@@ -1,43 +1,47 @@
-# OS scheduling policies: priorities, time budgets, and fairness
+# OS scheduling policies: priorities, budgets, deadlines, and fairness
 
-Operating systems have developed surprisingly different approaches to CPU scheduling. The interesting differences aren't just *which thread runs next*, but also:
+Operating systems take substantially different approaches to CPU scheduling. The most interesting differences aren't merely *which thread runs next*, but how scheduling priority interacts with CPU-time accounting.
 
-- **Priority:** Who is entitled to run before whom?
-- **Time budget:** How much CPU time is a thread entitled to consume?
-- **Preemption:** When can another thread take over?
-- **Fairness:** How is CPU time distributed among competing threads?
-- **Latency:** How quickly can a newly runnable thread begin executing?
-- **Isolation:** Can one thread exhaust CPU resources needed by another?
-- **Admission control:** Can the system guarantee that requested CPU budgets are actually available?
+There are six questions worth asking about every scheduler:
 
-The distinction between **priority** and **budget** is particularly important. Many traditional schedulers treat priority as a way to influence CPU allocation. More sophisticated real-time and capability-based systems treat priority and budget as separate resources.
+1. **Priority:** Which runnable thread gets to execute first?
+2. **Time budget:** How much CPU time can a thread consume?
+3. **Preemption:** When can another thread take over?
+4. **Fairness:** How is CPU capacity distributed among competing threads?
+5. **Latency:** How quickly can a newly runnable thread begin executing?
+6. **Isolation:** Can one thread consume CPU capacity intended for another?
 
-I'll compare Linux, Windows, macOS, FreeBSD, seL4, QNX, and several real-time scheduling models, with particular attention to how their mechanisms work internally.
+A seventh question becomes important for real-time systems: **Does the scheduler merely enforce CPU limits, or can it guarantee CPU availability?**
 
-## 1. The fundamental scheduling models
+We'll compare Linux (EEVDF, FIFO, RR, DEADLINE), **Con Kolivas's MuQSS**, Windows, macOS, FreeBSD, seL4, QNX, Zephyr, RTEMS, and Xen.
 
-Before comparing operating systems, it's useful to distinguish five major families.
+## 1. Fundamental scheduling models
 
-| Model | Scheduling decision | Budget mechanism | Typical use |
+Most schedulers combine several of these approaches:
+
+| Model | Scheduling decision | CPU-time accounting | Typical use |
 |---|---|---|---|
-| Fixed-priority preemptive | Highest-priority runnable thread | Optional quantum or replenished budget | RTOS, kernel threads |
-| Round-robin | Rotate among equal-priority threads | Fixed quantum | General-purpose and RTOS |
-| Fair-share | Thread with lowest accumulated service | Virtual runtime or equivalent | Desktop/server workloads |
-| Deadline-based | Thread with earliest scheduling deadline | Runtime reservation | Hard/soft real-time |
-| Feedback/heuristic | Dynamically adjusted priority or urgency | Quantum, decay, usage history | Interactive workloads |
+| Fixed-priority preemptive | Highest-priority runnable thread | Optional quantum or budget | RTOS, kernel threads |
+| Round-robin | Rotate equal-priority threads | Fixed quantum | General-purpose and RTOS |
+| Fair-share | Lowest accumulated service or equivalent | Virtual runtime, weights | Desktop/server |
+| Deadline-based | Earliest deadline | Runtime reservation or virtual deadline | Real-time and interactive |
+| Feedback-based | Dynamically adjusted priority | CPU usage, sleep history | Interactive workloads |
+| Partition-based | Priority subject to partition eligibility | Group bandwidth allocation | Mixed-criticality systems |
 
-These aren't mutually exclusive. An OS commonly implements several scheduling classes with a strict precedence relationship between them.
+These approaches are not mutually exclusive.
+
+In particular, **deadline scheduling doesn't necessarily imply real-time guarantees**. Both Linux EEVDF and MuQSS use deadlines, but their deadlines serve different purposes from those of an admission-controlled real-time scheduler.
 
 ### Priority versus budget
 
 Consider two threads:
 
-- **A:** priority 10, budget 2 ms per 10 ms
-- **B:** priority 5, budget 8 ms per 10 ms
+| Thread | Priority | Budget | Period |
+|---|---:|---:|---:|
+| A | 10 | 2 ms | 10 ms |
+| B | 5 | 8 ms | 10 ms |
 
-If both are runnable, A executes first, but after consuming 2 ms, it becomes ineligible until its budget is replenished.
-
-B can then execute.
+If both are runnable, A executes first. Once A consumes its 2 ms budget, it becomes ineligible until replenishment.
 
 ```text
 Time (ms)
@@ -45,62 +49,53 @@ Time (ms)
 |---------|--------------------------|
 |    A    |             B            |
 |---------|--------------------------|
-
-A: priority 10, budget 2/10 ms
-B: priority  5, budget 8/10 ms
 ```
 
-This is fundamentally different from traditional priority scheduling, where A could monopolize the CPU indefinitely as long as it remains runnable.
+This is fundamentally different from traditional fixed-priority scheduling, where A could monopolize the CPU indefinitely.
 
-**A priority determines who runs first. A budget determines how long they are allowed to run.**
+**Priority determines who runs first. Budget determines how much execution is permitted.**
 
-That distinction is central to understanding seL4's MCS scheduler, Linux SCHED_DEADLINE, and QNX adaptive partitioning.
+That distinction is central to seL4 MCS, Linux SCHED_DEADLINE, and QNX adaptive partitioning.
 
 ---
 
-# 2. Linux
+# 2. Linux: multiple scheduling classes
 
-Linux is interesting because it effectively contains several schedulers, organized into scheduling classes.
+Linux implements several scheduling classes, with a precedence relationship between them.
 
-### Scheduling classes
-
-In simplified precedence order:
-
-| Class | Policy | Priority | CPU budget |
+| Class | Policy | Priority | Budget |
 |---|---|---|---|
-| Deadline | `SCHED_DEADLINE` | Deadline-based | Explicit runtime/period |
+| Deadline | `SCHED_DEADLINE` | Dynamic deadline | Runtime/period |
 | Real-time | `SCHED_FIFO` | Static RT priority | Normally unlimited |
-| Real-time | `SCHED_RR` | Static RT priority | Quantum, but no periodic budget |
-| Fair | `SCHED_OTHER` | Weight derived from nice | Fair-share allocation |
-| Fair | `SCHED_BATCH` | Weight derived from nice | Fair-share allocation |
-| Fair | `SCHED_IDLE` | Very low scheduling precedence | Opportunistic CPU use |
+| Real-time | `SCHED_RR` | Static RT priority | Quantum, not periodic budget |
+| Fair | `SCHED_OTHER` | Weight from nice | Proportional CPU share |
+| Fair | `SCHED_BATCH` | Weight from nice | Proportional CPU share |
+| Fair | `SCHED_IDLE` | Very low precedence | Opportunistic CPU |
 | Idle | Kernel idle task | Lowest | N/A |
 
-Linux also has `SCHED_EXT`, which allows scheduling policies to be implemented using BPF.
+Linux also supports `SCHED_EXT`, allowing BPF-based scheduling policies.
 
-## 2.1 CFS and EEVDF: fair scheduling
+## 2.1 CFS and EEVDF
 
-Linux used the Completely Fair Scheduler (CFS) for many years. Starting with Linux 6.6, its fair scheduling class began transitioning to **EEVDF — Earliest Eligible Virtual Deadline First**.
+Linux historically used the Completely Fair Scheduler (CFS), with its fair scheduling class transitioning to **EEVDF — Earliest Eligible Virtual Deadline First** beginning in Linux 6.6.
 
-The underlying goal remains proportional CPU allocation.
+The underlying objective is proportional CPU allocation.
 
-Suppose three CPU-bound threads have equal weights.
-
-Ideally:
+Suppose three CPU-bound threads have equal weights:
 
 ```text
-Thread A: 33.3% CPU
-Thread B: 33.3% CPU
-Thread C: 33.3% CPU
+A: 33.3%
+B: 33.3%
+C: 33.3%
 ```
 
-Neither CFS nor EEVDF needs to maintain an explicit periodic CPU budget for each thread.
+Neither CFS nor EEVDF requires an explicit periodic CPU budget for every thread.
 
-Instead, they account for how much CPU service each thread has received.
+Instead, the scheduler accounts for CPU service received.
 
 ### CFS: virtual runtime
 
-CFS maintained a quantity approximately equivalent to:
+CFS used virtual runtime:
 
 \[
 \Delta v = \Delta t \cdot \frac{w_0}{w}
@@ -110,95 +105,86 @@ Where:
 
 - \(v\) is virtual runtime.
 - \(t\) is actual execution time.
-- \(w\) is the thread's scheduling weight.
+- \(w\) is scheduling weight.
 - \(w_0\) is a reference weight.
 
 A thread with twice the weight accumulates virtual runtime at half the rate.
 
-CFS generally selected the runnable thread with the smallest virtual runtime.
-
-This naturally distributes CPU time according to weights.
+The scheduler generally selected the runnable thread with the smallest virtual runtime.
 
 ### EEVDF: virtual deadlines
 
-EEVDF introduces two important concepts:
+EEVDF introduces two key concepts:
 
-1. **Lag:** How much CPU service a thread is owed relative to its fair allocation.
-2. **Virtual deadline:** When the thread should receive its next portion of service in virtual time.
+- **Lag:** How much CPU service a thread is owed relative to its fair allocation.
+- **Virtual deadline:** A scheduling deadline calculated in virtual time.
 
-It chooses the earliest virtual deadline among eligible threads.
+The scheduler selects the earliest virtual deadline among eligible threads.
 
-This improves the ability to distinguish latency-sensitive tasks from CPU-intensive tasks while maintaining long-term fairness.
+This makes it possible to distinguish latency-sensitive threads from CPU-intensive threads while preserving long-term fairness.
 
-A short requested slice can result in a short virtual deadline, allowing interactive tasks to run sooner.
+Shorter requested slices generally produce earlier virtual deadlines.
 
-**Important:** EEVDF virtual deadlines are not hard real-time deadlines.
+However, EEVDF deadlines are **not hard real-time deadlines**.
 
-They are accounting constructs used to implement fairness and latency preferences.
+They are part of the fairness mechanism.
 
-### Where do budgets come from?
+### Budgets in the fair scheduler
 
-For ordinary Linux threads, CPU budgets are mostly implicit.
+For ordinary Linux threads, CPU budgets are implicit.
 
-A thread's entitlement is determined by its weight relative to other runnable threads:
+The approximate entitlement is:
 
 \[
-\text{CPU share}_i =
-\frac{w_i}{\sum_j w_j}
+\text{CPU share}_i = \frac{w_i}{\sum_j w_j}
 \]
 
-For explicit limits, Linux provides cgroup CPU bandwidth control.
-
-For example:
+For explicit CPU bandwidth limits, Linux provides cgroups:
 
 ```text
 cpu.max = 20000 100000
 ```
 
-This limits a cgroup to 20 ms of CPU time per 100 ms period, equivalent to 20% of one CPU.
+This limits the cgroup to 20 ms of aggregate CPU time per 100 ms period.
 
-On multicore systems, the quota is aggregate CPU time across CPUs.
-
-This is an actual enforced bandwidth budget, unlike a nice value.
+Unlike a nice value, this is an enforced quota.
 
 ## 2.2 SCHED_FIFO and SCHED_RR
 
 These are traditional fixed-priority real-time policies.
 
-Linux provides RT priorities 1–99, with 99 highest.
+Linux provides RT priorities 1–99.
 
-`SCHED_FIFO` behaves as follows:
+`SCHED_FIFO`:
 
-- The highest-priority runnable thread executes.
-- A higher-priority thread immediately preempts it.
-- Equal-priority threads generally do not preempt each other simply because time passes.
-- A thread continues until it blocks, yields, or is preempted.
+- Highest-priority runnable thread executes.
+- Higher-priority threads preempt lower-priority threads.
+- Equal-priority threads don't normally preempt one another due to time passage alone.
+- Execution continues until blocking, yielding, or preemption.
 
-`SCHED_RR` adds a quantum for rotation among threads of equal priority.
+`SCHED_RR` adds a quantum for rotation among equal-priority threads.
 
-However, **the RR quantum is not a CPU budget**.
+But **the RR quantum is not a CPU budget**.
 
-A single runnable `SCHED_RR` thread can still consume 100% of a CPU.
+A single runnable RR thread can still consume 100% of a CPU.
 
-Linux does provide RT bandwidth throttling, controlled through mechanisms such as:
+Linux additionally provides aggregate RT bandwidth throttling, commonly configured through:
 
 ```text
 /proc/sys/kernel/sched_rt_period_us
 /proc/sys/kernel/sched_rt_runtime_us
 ```
 
-Common defaults reserve 5% of CPU bandwidth for non-RT tasks by limiting RT execution to 950 ms per 1-second period.
+Typical defaults allow RT tasks to consume up to 950 ms per 1-second period.
 
-These are aggregate controls, not individual thread reservations.
+These are aggregate limits, not individual reservations.
 
 ## 2.3 SCHED_DEADLINE
 
-This is Linux's most interesting scheduler from a budget-management perspective.
+Linux SCHED_DEADLINE combines:
 
-It combines:
-
-- Earliest Deadline First (EDF)
-- Constant Bandwidth Server (CBS)
+- Earliest Deadline First (EDF).
+- Constant Bandwidth Server (CBS).
 
 Each thread requests three parameters:
 
@@ -210,19 +196,7 @@ period   = 10 ms
 
 Meaning:
 
-> Give this thread up to 2 ms of CPU execution per 10 ms period, with a scheduling deadline 8 ms after the start of each period.
-
-The scheduler tracks remaining runtime and an absolute scheduling deadline.
-
-A simplified timeline:
-
-```text
-Period 1                         Period 2
-0                                10 ms
-|--------------------------------|
-[ A: 2 ms ]                      [ A: 2 ms ]
-         ^ deadline at 8 ms
-```
+> Provide up to 2 ms of CPU execution per 10 ms period, with a scheduling deadline 8 ms after the beginning of each period.
 
 The utilization reservation is:
 
@@ -230,127 +204,390 @@ The utilization reservation is:
 U = \frac{Q}{P}
 \]
 
-Where:
-
-- \(Q\) is reserved runtime.
-- \(P\) is period.
-
-For this thread:
+For this example:
 
 \[
 U = \frac{2}{10} = 0.2
 \]
 
-It reserves 20% of one CPU.
+The thread reserves 20% of one CPU.
 
-Linux performs admission control to avoid accepting reservations that exceed its configured capacity constraints.
+Linux performs admission control against available scheduling capacity.
 
-CBS prevents a thread from monopolizing the CPU when it exceeds its reserved runtime. Runtime depletion results in throttling until replenishment.
+When a thread exhausts its runtime, CBS throttles it until replenishment.
 
-An important distinction is that a deadline reservation provides scheduling guarantees only under the relevant schedulability assumptions. Admission does not guarantee arbitrary application-level deadlines will be met.
+Unlike EEVDF, this is an explicit bandwidth reservation.
 
 ### Linux summary
 
-Linux has three quite different resource models:
+Linux offers three substantially different resource models:
 
-- **Fair:** Proportional entitlement, tracked through virtual time.
-- **RT:** Strict priority, generally without individual budget enforcement.
-- **Deadline:** Explicit periodic CPU reservations with bandwidth enforcement.
-
-This combination makes Linux unusually flexible, although scheduling behavior across classes can be complex.
+| Model | Priority | CPU entitlement |
+|---|---|---|
+| EEVDF | Virtual deadline | Proportional share |
+| FIFO/RR | Fixed RT priority | No individual periodic reservation |
+| DEADLINE | Absolute deadline | Explicit runtime/period reservation |
 
 ---
 
-# 3. seL4: capability-controlled CPU time
+# 3. MuQSS: Con Kolivas's deadline-based interactive scheduler
 
-seL4 is particularly interesting because its MCS (Mixed-Criticality Systems) extensions make CPU time an explicitly controlled kernel resource.
+**MuQSS (Multiple Queue Skiplist Scheduler)** is an alternative Linux CPU scheduler developed by Con Kolivas as the successor to BFS (Brain Fuck Scheduler).
 
-There are two relevant scheduling models.
+Its primary goals are:
 
-## 3.1 Traditional seL4
+- Low scheduling latency.
+- Excellent desktop responsiveness.
+- Predictable scheduling behavior.
+- Simple scheduling decisions.
+- Good multicore scalability.
 
-The original scheduler is straightforward:
+MuQSS is particularly interesting because it combines **fixed time slices, nice-dependent virtual deadlines, and priority-ordered run queues**.
+
+It achieves interactive responsiveness without the complex sleep-history heuristics traditionally associated with desktop scheduling.
+
+MuQSS was originally introduced in 2016. Notably, Kolivas revived the out-of-tree `-ck` patchset in August 2026, targeting Linux 7.2 with additional features including I/O-aware scheduling and accounting kernel-thread work to the originating task. The revived scheduler remains outside mainline Linux. [Linux-Kernel Archive](https://lkml.iu.edu/2608.2/00788.html?utm_source=chatgpt.com)
+
+The following describes the core MuQSS algorithm documented in the original design.
+
+## 3.1 Scheduling model
+
+MuQSS uses:
+
+- One run queue per CPU.
+- An eight-level skip list for each run queue.
+- Static priority ordering, followed by virtual deadlines.
+- A configurable round-robin interval.
+- Cross-CPU task selection to improve responsiveness.
+
+The run queues are ordered so that the scheduler can retrieve the best candidate in constant time.
+
+For a single run queue:
+
+| Operation | Complexity |
+|---|---|
+| Insert thread | O(log N) |
+| Select next thread | O(1) |
+| Remove thread | Amortized O(1) |
+
+Cross-CPU selection can examine other CPUs' run queues, making that part of scheduling O(P), where P is the number of CPUs.
+
+This is a deliberate tradeoff: MuQSS spends some additional effort finding a good task globally rather than relying exclusively on local run-queue decisions. [Linux-Kernel Archive](https://lkml.iu.edu/1612.1/01866.html?utm_source=chatgpt.com)
+
+## 3.2 Virtual deadlines
+
+MuQSS calculates virtual deadlines using:
+
+\[
+D = \text{niffies} + (\text{prio\_ratio} \times \text{rr\_interval})
+\]
+
+Where:
+
+- `niffies` is a monotonic, nanosecond-resolution time counter.
+- `prio_ratio` depends on the thread's nice level.
+- `rr_interval` is the configured round-robin interval.
+
+The priority ratio increases by approximately 10% per nice level.
+
+Higher-priority threads receive earlier virtual deadlines.
+
+For example, suppose:
+
+```text
+rr_interval = 6 ms
+```
+
+Two threads become runnable at the same time:
+
+```text
+Thread A: nice 0
+Thread B: nice 5
+```
+
+B has a larger priority ratio, so its virtual deadline is later.
+
+A will generally be preferred.
+
+**Unlike Linux EEVDF, MuQSS does not use accumulated virtual runtime and lag as the central mechanism for scheduling eligibility.**
+
+Instead, it assigns a virtual deadline to a slice of CPU time and preserves that deadline until the slice is exhausted.
+
+This is a substantial algorithmic difference despite both schedulers using virtual deadlines.
+
+## 3.3 Time slices and budget accounting
+
+Every ordinary runnable thread receives a time slice corresponding to `rr_interval`.
+
+For example:
+
+```text
+Thread A:
+    time_slice = 6 ms
+    deadline   = 20 ms
+```
+
+Suppose A executes for 2 ms and then blocks.
+
+Its state becomes:
+
+```text
+Thread A:
+    time_slice = 4 ms
+    deadline   = 20 ms
+```
+
+When A wakes, **it retains both the remaining slice and its original deadline**.
+
+This is a key property of MuQSS.
+
+The scheduler does not simply assign a fresh deadline whenever a thread wakes.
+
+Consequently, an interactive thread that frequently sleeps can retain an earlier deadline than CPU-intensive threads that continuously exhaust their slices.
+
+Consider:
+
+```text
+A: interactive
+B: CPU-intensive
+
+Time →
+A: [run] [sleep........] [run] [sleep........] [run]
+B:       [run][run][run]       [run][run]
+```
+
+B repeatedly exhausts its time slices and receives new deadlines.
+
+A retains its deadline while sleeping.
+
+When A becomes runnable again, it often has an earlier deadline than B and can preempt it.
+
+This produces interactive responsiveness without requiring an explicit interactive-thread classification heuristic.
+
+### What happens when the slice expires?
+
+When A exhausts its time slice:
+
+1. Its current execution interval ends.
+2. Its time slice is replenished.
+3. Its virtual deadline is recalculated.
+4. It competes again for CPU time.
+
+Crucially, **MuQSS's time slice is a quantum, not a periodic CPU budget**.
+
+The thread does not become ineligible for a fixed replenishment period.
+
+If it remains the best runnable candidate, it can execute again.
+
+This makes MuQSS much closer to EEVDF than to Linux SCHED_DEADLINE or seL4 MCS in terms of resource enforcement.
+
+## 3.4 Priority handling
+
+MuQSS distinguishes between real-time and ordinary scheduling priorities.
+
+For ordinary threads, nice values influence virtual deadlines.
+
+For real-time threads, static priorities take precedence.
+
+Conceptually:
+
+```text
+RT priority
+    ↓
+Scheduling policy / priority class
+    ↓
+Nice-dependent virtual deadline
+    ↓
+Next runnable thread
+```
+
+The exact ordering is implemented through MuQSS's priority and deadline comparisons.
+
+Unlike a pure EDF scheduler, MuQSS does not simply choose the globally earliest deadline regardless of scheduling class.
+
+## 3.5 SCHED_ISO: an unusual middle ground
+
+One of MuQSS's distinctive features is `SCHED_ISO`, an *isochronous* scheduling policy inherited from BFS.
+
+It was designed for workloads such as audio and multimedia processing that benefit from low latency but should not require unrestricted real-time scheduling privileges.
+
+Conceptually, it provides:
+
+- Scheduling treatment above ordinary workloads.
+- No requirement for full real-time scheduling privileges.
+- CPU usage monitoring.
+- Automatic demotion when the configured CPU usage threshold is exceeded.
+
+This is quite different from a traditional real-time reservation.
+
+Suppose an isochronous thread consumes substantial CPU time continuously.
+
+Rather than allowing it to monopolize the CPU indefinitely at elevated priority, MuQSS can temporarily reduce its scheduling precedence.
+
+Once its measured CPU usage falls sufficiently, it can regain isochronous treatment.
+
+The associated configuration includes an `iso_cpu` threshold.
+
+This creates an interesting distinction:
+
+| Mechanism | What happens when CPU usage is excessive? |
+|---|---|
+| Linux SCHED_FIFO | Normally continues at RT priority |
+| Linux SCHED_RR | Rotates among equal-priority RT threads |
+| Linux SCHED_DEADLINE | Throttled until replenishment |
+| seL4 MCS | Scheduling context becomes ineligible |
+| MuQSS SCHED_ISO | Falls back to ordinary scheduling precedence |
+
+**SCHED_ISO is best understood as CPU-usage-controlled priority, not a strict CPU reservation.**
+
+The thread can continue executing after demotion, but without the elevated scheduling precedence.
+
+## 3.6 SCHED_IDLEPRIO
+
+MuQSS also introduces `SCHED_IDLEPRIO`.
+
+This provides extremely low scheduling precedence for work that should run only when more important tasks do not need the CPU.
+
+Examples include:
+
+- Background compilation.
+- Indexing.
+- Batch processing.
+- Maintenance tasks.
+
+Unlike a strict CPU quota, idle-priority scheduling doesn't enforce a particular percentage.
+
+It simply makes the task yield scheduling precedence to more important work.
+
+## 3.7 MuQSS versus EEVDF
+
+This is probably the most interesting comparison.
+
+| Property | MuQSS | Linux EEVDF |
+|---|---|---|
+| Primary objective | Interactive responsiveness | Weighted fairness and latency |
+| Scheduling metric | Virtual deadline | Eligibility lag + virtual deadline |
+| Nice handling | Deadline scaling | Weighted virtual time |
+| Time slice | Explicit `rr_interval` | Requested slice, scheduling granularity |
+| Sleeping thread | Retains remaining slice and deadline | Lag preservation/decay mechanisms |
+| CPU accounting | Slice-based | Continuous service accounting |
+| Run queue | Per-CPU skip list | Fair scheduling run-queue structures |
+| Cross-CPU selection | Explicit search across run queues | Load balancing and migration |
+| Hard CPU budgets | No | No, not in fair class |
+| Real-time guarantees | No | No |
+
+The philosophical distinction is important.
+
+**MuQSS uses deadlines to make scheduling latency predictable and to distribute CPU time. EEVDF uses deadlines together with lag to approximate an ideal weighted fair scheduler.**
+
+MuQSS's approach is comparatively direct:
+
+```text
+Assign slice
+    ↓
+Calculate deadline
+    ↓
+Run earliest eligible task
+    ↓
+Preserve deadline across sleeps
+    ↓
+Recalculate when slice expires
+```
+
+EEVDF instead continuously reasons about how much CPU service a thread is owed relative to ideal fairness.
+
+Neither provides hard real-time guarantees through these mechanisms.
+
+### MuQSS versus BFS
+
+BFS originally used a single global run queue, which made global scheduling decisions relatively straightforward but introduced scalability problems on larger multicore systems.
+
+MuQSS replaces this with per-CPU run queues and skip lists.
+
+The essential virtual-deadline scheduling idea remains similar.
+
+This preserves the responsiveness-oriented scheduling behavior while reducing global lock contention.
+
+Kolivas's original documentation explicitly describes MuQSS as a scalable evolution of BFS. [Linux-Kernel Archive](https://lkml.iu.edu/hypermail/linux/kernel/1610.3/04905.html?utm_source=chatgpt.com)
+
+---
+
+# 4. seL4: capability-controlled CPU time
+
+seL4 is particularly interesting because its Mixed-Criticality Systems (MCS) extensions make CPU time an explicitly managed kernel resource.
+
+## 4.1 Traditional seL4
+
+The original scheduler uses:
 
 - Fixed priorities, typically 0–255.
 - Highest-priority runnable thread wins.
-- Round-robin among equal-priority threads.
-- Each thread has a timeslice.
-- No general per-thread periodic CPU reservation.
-
-This resembles traditional RTOS scheduling.
+- Round-robin scheduling among equal-priority threads.
+- Per-thread timeslices.
+- No general periodic CPU reservation.
 
 A high-priority CPU-bound thread can starve lower-priority threads.
 
-## 3.2 seL4 MCS: scheduling contexts
+## 4.2 seL4 MCS: scheduling contexts
 
-MCS introduces a separate kernel object:
+MCS introduces a separate kernel object called a **Scheduling Context (SC)**.
 
 ```text
 Thread Control Block
-    |
-    | bound to
-    v
+        |
+        | bound to
+        v
 Scheduling Context
-    |
-    +-- Budget: 2 ms
-    +-- Period: 10 ms
-    +-- Replenishment queue
+        |
+        +-- Budget: 2 ms
+        +-- Period: 10 ms
+        +-- Replenishment queue
 ```
 
-A thread needs an eligible scheduling context to execute.
+A thread requires an eligible scheduling context to execute.
 
-The scheduling context specifies an upper bound on CPU consumption:
+The context defines an upper bound on CPU consumption:
 
 \[
-U_{\max} = \frac{\text{budget}}{\text{period}}
+U_{\max}=\frac{\text{budget}}{\text{period}}
 \]
 
-The kernel still chooses the highest-priority eligible runnable thread.
+The scheduler still selects the highest-priority eligible runnable thread.
 
-The crucial difference is that **a high-priority thread can run out of CPU time and become temporarily ineligible**.
+But when a high-priority thread exhausts its budget, it becomes ineligible until replenishment.
 
-This gives the system temporal isolation even when priorities are unfavorable.
+Unlike MuQSS, replenishing the execution budget is not simply a consequence of exhausting a timeslice.
 
-### Sporadic server replenishment
+### Sporadic replenishment
 
-Unlike a simple periodic scheduler that resets the entire budget every 10 ms, seL4 MCS uses a sporadic-server mechanism.
-
-Consider:
+Suppose:
 
 ```text
 Budget = 3 ms
 Period = 10 ms
 ```
 
-The thread executes:
+The thread consumes:
 
 ```text
-Time:  0       1       3       5       10      13
-       |-------|-------|-------|-------|-------|
-Run:   [1 ms]          [2 ms]
+t=0:  1 ms
+t=3:  2 ms
 ```
 
-The scheduler records replenishments approximately as follows:
+Conceptually, these consumptions create future replenishments:
 
 ```text
-Consumed 1 ms at t=0:
-    replenish 1 ms at t=10
-
-Consumed 2 ms at t=3:
-    replenish 2 ms at t=13
+t=10: +1 ms
+t=13: +2 ms
 ```
 
-This prevents a thread from consuming its full budget at the end of one period and immediately consuming another full budget at the beginning of the next.
+The implementation uses refill records, with rules for merging and advancing them.
 
-That phenomenon is called *budget bunching*.
+This prevents a thread from repeatedly consuming more than its configured long-term execution entitlement.
 
-Sporadic replenishment provides a stronger bound on CPU consumption over time than a naive periodic reset.
+### Scheduling-context donation
 
-Actual seL4 accounting involves refill records, eligibility timestamps, and rules for merging refills when the queue reaches its configured capacity. [seL4 Documentation](https://docs.sel4.systems/Tutorials/mcs.html?utm_source=chatgpt.com)
-
-### Scheduling context donation
-
-One of seL4 MCS's most interesting features is that scheduling contexts are independent of threads.
+One of MCS's most distinctive features is that scheduling contexts are independent of threads.
 
 Consider:
 
@@ -359,15 +596,9 @@ Client A ──RPC──> Server S
 Client B ──RPC──> Server S
 ```
 
-A traditional system might give S its own CPU budget.
+A passive server may have no scheduling context of its own.
 
-But this introduces a problem: whose CPU time should be charged for processing A's request?
-
-MCS allows **passive servers**.
-
-A passive server does not have a scheduling context of its own while waiting for requests.
-
-Instead:
+When A calls S, the server executes using A's scheduling context.
 
 ```text
 Client A:
@@ -381,28 +612,21 @@ Server S:
 A calls S
     |
     v
-S executes using A's scheduling context
+S executes using A's budget
     |
     v
-CPU consumption charged to A
+CPU time charged to A
 ```
 
-When S replies, the scheduling context returns along the IPC chain.
+When S replies, the scheduling context returns.
 
-This makes it possible to isolate clients from each other's CPU consumption even when they share the same server.
+This provides a useful form of temporal isolation: one client's requests cannot indefinitely consume CPU time allocated to another client merely by using the same server.
 
-It also separates two forms of authority:
+Scheduling-context donation does not automatically imply priority donation.
 
-- Authority to execute at a particular priority.
-- Authority to consume a particular amount of CPU time.
+### What seL4 doesn't guarantee
 
-Importantly, donation of a scheduling context does not automatically mean donation of the caller's priority. The server's effective priority is governed separately.
-
-### What seL4 does not guarantee
-
-An important subtlety:
-
-**A budget is an upper bound, not a guaranteed minimum allocation.**
+A budget is an upper bound, not a guaranteed minimum allocation.
 
 Suppose:
 
@@ -411,41 +635,35 @@ A: priority 200, budget 8/10 ms
 B: priority 100, budget 5/10 ms
 ```
 
-Both configurations are individually valid, but the combined requested utilization is 130%.
+The combined requested utilization is 130%.
 
-The scheduler cannot guarantee that both receive their full budgets.
+The kernel cannot guarantee both budgets will be delivered.
 
-In particular, B can be deprived of its desired execution time by A.
+Unlike Linux SCHED_DEADLINE, seL4 MCS does not generally perform admission control for these allocations.
 
-The kernel enforces consumption limits, but schedulability analysis and resource allocation remain the responsibility of the system designer.
+Schedulability remains the system designer's responsibility.
 
-This differs from Linux SCHED_DEADLINE, which includes admission control.
+### seL4 versus MuQSS
 
-The seL4 manual explicitly distinguishes the CPU upper bound from a lower-bound execution guarantee. [seL4](https://www.sel4.com/Info/Docs/seL4-manual-latest.pdf?utm_source=chatgpt.com)
+| Property | MuQSS | seL4 MCS |
+|---|---|---|
+| Primary scheduling order | Priority, then virtual deadline | Fixed priority |
+| Execution allowance | Timeslice | Budget/period |
+| On exhaustion | Renew slice and deadline | Wait for replenishment |
+| CPU isolation | No strict per-thread budget | Explicit upper bound |
+| Scheduling resource transferable | No | Yes, scheduling contexts |
+| Admission control | No | No general admission control |
+| Main objective | Interactive responsiveness | Temporal isolation |
 
-### Why this design is important
-
-seL4 effectively turns CPU execution time into something resembling a capability-controlled resource.
-
-The kernel enforces the maximum consumption, while higher-level components can implement policies such as:
-
-- Periodic reservations.
-- Sporadic execution.
-- Temporal isolation between components.
-- Budget donation for RPC.
-- User-level scheduling and resource management.
-
-This is particularly attractive for microkernels because it allows CPU resource management to follow the same delegation principles as memory and IPC authority.
+The most important difference is that **MuQSS manages the order in which CPU time is distributed, while seL4 MCS additionally manages the authority to consume CPU time**.
 
 ---
 
-# 4. Windows: dynamic priority scheduling
+# 5. Windows: dynamic priorities and quantums
 
-Windows uses a priority-driven, preemptive scheduler, but with considerably more dynamic behavior than a traditional RTOS.
+Windows uses a priority-driven preemptive scheduler.
 
-## 4.1 Priority structure
-
-Windows has 32 scheduling priority levels:
+Its scheduling priorities range from 0 to 31.
 
 | Priority | Meaning |
 |---|---|
@@ -453,113 +671,72 @@ Windows has 32 scheduling priority levels:
 | 1–15 | Variable-priority range |
 | 16–31 | Real-time range |
 
-A thread's base priority depends on its process priority class and thread-relative priority.
-
-Windows can temporarily boost the priorities of variable-priority threads in response to events such as I/O completion.
-
-This helps interactive threads run promptly after waking.
+The scheduler uses priority boosts to improve responsiveness.
 
 For example:
 
 ```text
 CPU-bound thread:
-    base priority 8
+    Base priority = 8
 
 Interactive thread:
-    base priority 8
-    receives I/O completion
-    temporarily boosted to 12
+    Base priority = 8
+    I/O completion → temporary boost to 12
 ```
 
 The interactive thread preempts the CPU-bound thread.
 
-Its priority subsequently decays toward its base level as it executes.
+Its priority subsequently decays toward the base level.
 
-## 4.2 Quantums
+## Quantums
 
-Windows assigns execution quantums to threads.
+Threads receive execution quantums.
 
-Threads at the same priority generally share CPU time through quantum-based rotation.
+When a quantum expires, another thread at the same priority may run.
 
-When a thread exhausts its quantum, it may be preempted by another runnable thread.
+As with MuQSS, a quantum is not a periodic CPU reservation.
 
-However, this quantum is not a periodic CPU reservation.
+A thread can continue consuming CPU if no equally or more highly prioritized thread needs execution.
 
-A high-priority thread can continue consuming CPU if no equally or more highly prioritized thread needs it.
+## Budget enforcement
 
-## 4.3 Budget enforcement
+Traditional Windows scheduling does not provide an interface equivalent to Linux's `(runtime, deadline, period)`.
 
-Traditional Windows thread scheduling does not expose a Linux SCHED_DEADLINE-style `(runtime, deadline, period)` interface.
+However, Windows Job Objects can enforce CPU rate limits on groups of processes.
 
-Instead, Windows provides several other resource-management mechanisms.
+These limits are separate from thread priorities and quantum scheduling.
 
-**Job Objects** can enforce CPU usage limits on groups of processes.
+### Windows versus MuQSS
 
-For example, a job can be configured with a hard CPU rate limit.
+Both target interactive responsiveness, but their mechanisms differ.
 
-Windows also provides CPU rate weighting and processor affinity controls.
+Windows relies substantially on dynamic priority adjustments, while MuQSS relies on virtual deadlines and preservation of unused timeslices across sleeps.
 
-These operate at a different level from the thread scheduler's dynamic priority and quantum mechanisms.
-
-### Windows scheduling philosophy
-
-Windows primarily optimizes for:
-
-- Responsiveness.
-- Throughput.
-- Dynamic priority adjustments.
-- Avoiding unnecessary starvation of ordinary workloads.
-
-It is less oriented toward explicit per-thread real-time execution contracts.
+MuQSS's original design explicitly avoids complex interactivity heuristics.
 
 ---
 
-# 5. macOS and Darwin: priority plus QoS
+# 6. macOS: QoS and time constraints
 
-Darwin's scheduler combines traditional priority scheduling with application-level Quality of Service (QoS) information.
-
-The central idea is that the system should understand the *importance of the work*, rather than relying solely on numeric priorities.
-
-## 5.1 QoS classes
-
-macOS exposes several QoS categories:
+Darwin combines priority scheduling with Quality of Service (QoS) classifications.
 
 | QoS | Intended use |
 |---|---|
-| User Interactive | UI interaction, animations |
-| User Initiated | Work initiated by the user |
-| Default | Ordinary application work |
-| Utility | Longer-running, lower-urgency work |
-| Background | Maintenance, indexing, background operations |
+| User Interactive | UI interaction |
+| User Initiated | User-requested work |
+| Default | Ordinary work |
+| Utility | Longer-running work |
+| Background | Maintenance and indexing |
 
-These influence scheduling priority and other system resource policies.
+QoS influences scheduling priority and other resource-management policies.
 
-For example:
-
-```text
-UI thread:
-    QoS = User Interactive
-
-Image processing:
-    QoS = User Initiated
-
-Background indexing:
-    QoS = Background
-```
-
-The scheduler favors latency-sensitive work over background computation.
-
-Darwin also maintains internal scheduling priority bands and supports real-time scheduling constraints.
-
-## 5.2 Time constraints
-
-Darwin provides a time-constraint policy through Mach:
+Darwin also supports real-time scheduling constraints through Mach:
 
 ```c
 thread_time_constraint_policy_data_t
 ```
 
-It contains:
+Its fields include:
 
 ```c
 period
@@ -568,58 +745,37 @@ constraint
 preemptible
 ```
 
-Conceptually:
+These describe a thread's expected execution requirements.
 
-- `period`: Expected interval between activations.
-- `computation`: Expected CPU execution time.
-- `constraint`: Completion-time constraint.
-- `preemptible`: Whether the thread can be preempted under the policy.
+However, this interface should not be interpreted as providing the same reservation guarantees as Linux SCHED_DEADLINE.
 
-This resembles a reservation interface, although Darwin's implementation and guarantees are not equivalent to Linux SCHED_DEADLINE.
+macOS also propagates scheduling importance through some synchronization and work-dependency mechanisms.
 
-In particular, it should not be interpreted as a general hard real-time guarantee.
+### macOS versus MuQSS
 
-macOS uses this functionality for latency-sensitive workloads, including audio processing.
+macOS relies on explicit workload classification, dynamic priorities, and system-level policies.
 
-## 5.3 Priority propagation
+MuQSS instead aims to make ordinary interactive applications responsive without requiring special scheduling classifications.
 
-Darwin also has mechanisms for propagating scheduling importance through synchronization and work dependencies.
-
-For example, when high-priority work depends on a lower-priority thread, the system may temporarily increase the effective priority of the thread performing the required work.
-
-This is related to priority inheritance, although Darwin's broader QoS propagation mechanisms operate at several levels.
-
-### macOS scheduling philosophy
-
-Darwin emphasizes:
-
-- Interactive responsiveness.
-- Energy efficiency.
-- Workload classification.
-- Priority propagation.
-- Special handling for latency-sensitive work.
-
-Unlike seL4 MCS, ordinary applications do not receive independent, capability-controlled CPU budgets.
+Both favor latency-sensitive workloads, but MuQSS attempts to achieve that through a comparatively uniform scheduling algorithm.
 
 ---
 
-# 6. FreeBSD: ULE and traditional real-time scheduling
+# 7. FreeBSD: ULE
 
-FreeBSD's default scheduler is **ULE**, which combines priority scheduling, interactivity heuristics, and CPU affinity.
+FreeBSD's default scheduler, ULE, combines:
 
-It also has a strong focus on multicore scheduling.
+- Dynamic priorities.
+- Interactivity heuristics.
+- Per-CPU run queues.
+- CPU affinity.
+- Load balancing.
 
-## 6.1 ULE
-
-ULE maintains per-CPU scheduling queues and attempts to balance work between processors.
-
-It distinguishes between interactive and CPU-intensive threads using their recent behavior.
-
-For example:
+ULE distinguishes interactive and CPU-intensive threads partly through recent execution and sleep behavior.
 
 ```text
 Thread A:
-    Frequently sleeps waiting for input
+    Frequently sleeps
     → Interactive
 
 Thread B:
@@ -627,94 +783,73 @@ Thread B:
     → CPU-intensive
 ```
 
-Interactive threads receive favorable scheduling treatment to reduce latency.
+Interactive threads can receive favorable scheduling treatment.
 
-ULE also tries to preserve cache locality by avoiding unnecessary thread migrations.
+ULE also tries to preserve cache locality by avoiding unnecessary migrations.
 
-Unlike Linux's fair scheduler, ULE is not fundamentally organized around a single virtual-runtime fairness metric.
+FreeBSD supports real-time scheduling policies such as `SCHED_FIFO` and `SCHED_RR`.
 
-## 6.2 Priorities
+However, ULE doesn't normally associate explicit periodic CPU budgets with individual threads.
 
-FreeBSD supports multiple scheduling priority classes, including real-time, timeshare, and idle.
+### FreeBSD versus MuQSS
 
-The timeshare class uses dynamic priorities.
+Both support per-CPU run queues and interactive scheduling.
 
-Real-time threads receive stronger scheduling precedence and can starve ordinary threads if improperly configured.
+The difference is in how interactivity is recognized.
 
-FreeBSD also exposes POSIX scheduling policies such as `SCHED_FIFO` and `SCHED_RR`.
+ULE uses dynamic priority calculations influenced by observed behavior.
 
-## 6.3 Budgets
-
-ULE doesn't generally associate periodic CPU budgets with individual threads.
-
-Instead, it uses:
-
-- Timeslices.
-- Dynamic priorities.
-- CPU usage accounting.
-- Resource limits.
-- CPU affinity and processor sets.
-
-FreeBSD also provides `rctl` for resource control, including CPU usage constraints, although these are not equivalent to hard real-time scheduling reservations.
-
-**FreeBSD is closer to traditional Unix scheduling than to the explicit budget-based model of seL4 MCS.**
+MuQSS relies primarily on virtual deadlines and preserving unused timeslices.
 
 ---
 
-# 7. QNX: fixed priorities with adaptive partitioning
+# 8. QNX: fixed priorities and adaptive partitioning
 
-QNX Neutrino is particularly interesting because it combines traditional real-time scheduling with an optional resource-partitioning mechanism.
+QNX Neutrino supports traditional real-time scheduling alongside more sophisticated CPU partitioning.
 
-## 7.1 Traditional QNX scheduling
+## 8.1 Traditional QNX scheduling
 
-QNX primarily uses fixed-priority preemptive scheduling.
-
-It supports:
+QNX supports:
 
 - `SCHED_FIFO`
 - `SCHED_RR`
 - `SCHED_SPORADIC`
 
-The last one is especially interesting.
+FIFO and RR behave similarly to their counterparts in other real-time operating systems.
+
+Sporadic scheduling is more interesting.
 
 ### Sporadic scheduling
 
-A sporadic server is intended to provide predictable execution capacity to a thread that wakes intermittently.
-
-For example:
+A thread has:
 
 ```text
 High priority: 20
-Low priority:  5
+Low priority:   5
 
-Initial budget: 2 ms
-Replenishment period: 10 ms
+Budget: 2 ms
+Period: 10 ms
 ```
 
-The thread initially executes at priority 20.
+Initially, it executes at priority 20.
 
-After exhausting its available high-priority budget, it drops to priority 5 until its budget is replenished.
+When its high-priority budget is exhausted, it drops to priority 5.
 
-This differs from seL4 MCS.
+It can continue executing at the lower priority.
 
-In seL4 MCS, an exhausted scheduling context makes its thread ineligible to execute until replenishment.
+When the budget is replenished, it can regain high-priority execution.
 
-In QNX's sporadic scheduling policy, the thread can continue executing at a lower priority.
+This resembles MuQSS's `SCHED_ISO` in one respect: **excessive CPU consumption results in reduced scheduling precedence rather than complete ineligibility**.
 
-This distinction matters:
+However, their accounting mechanisms differ.
 
-| | seL4 MCS | QNX sporadic scheduling |
-|---|---|---|
-| Budget exhaustion | Thread becomes ineligible | Thread drops to low priority |
-| CPU usage strictly capped? | Yes, by scheduling context | No, low-priority execution remains possible |
-| Replenishment | Sporadic | Sporadic |
-| Primary purpose | Temporal isolation | Real-time responsiveness with graceful degradation |
+QNX sporadic scheduling uses an explicit replenishment period and high-priority execution budget.
 
-## 7.2 Adaptive Partitioning Scheduler (APS)
+MuQSS SCHED_ISO monitors aggregate isochronous CPU usage and temporarily demotes isochronous tasks when the configured threshold is exceeded.
 
-QNX also provides an Adaptive Partitioning Scheduler.
+## 8.2 Adaptive Partitioning Scheduler (APS)
 
-Rather than assigning budgets to individual threads, APS assigns CPU bandwidth to **partitions**.
+QNX APS allocates CPU bandwidth to partitions.
 
 For example:
 
@@ -724,37 +859,7 @@ Partition B: Device drivers    30%
 Partition C: Diagnostics       20%
 ```
 
-Threads belong to partitions, and each partition has a CPU budget.
-
-The scheduler combines:
-
-1. Thread priorities.
-2. Partition CPU consumption.
-3. Partition bandwidth reservations.
-
-### What makes it adaptive?
-
-Suppose diagnostics is idle.
-
-```text
-Control:      wants 70%
-Drivers:      wants 30%
-Diagnostics:  wants  0%
-```
-
-Instead of leaving 20% of the CPU unused, APS can allow control to consume the spare capacity.
-
-But if diagnostics becomes runnable and needs its reserved bandwidth, the scheduler can restrict the other partitions to preserve the reservation.
-
-The bandwidth accounting is based on an averaging window rather than simply resetting all partitions' budgets at fixed period boundaries.
-
-This makes APS a form of **work-conserving resource partitioning**: unused capacity can be borrowed, subject to the scheduler's reservation rules.
-
-QNX documents the conditions under which partitions receive their guaranteed bandwidth, including restrictions related to multicore capacity and critical-time execution. [QNX](https://www.qnx.com/developers/docs/6.4.0/adaptive_partitioning_en/user_guide/faq_ap.html?utm_source=chatgpt.com)
-
-### Why APS is interesting
-
-APS separates scheduling into two levels:
+Each partition contains threads with their own priorities.
 
 ```text
 Global scheduler
@@ -765,59 +870,62 @@ Global scheduler
     |
     +-- Partition B: 30%
     |       +-- Thread B1: priority 40
-    |       +-- Thread B2: priority 10
     |
     +-- Partition C: 20%
             +-- Thread C1: priority 15
 ```
 
-Priorities determine urgency, while partition budgets constrain resource consumption.
+The scheduler combines thread priorities with partition bandwidth accounting.
 
-This resembles hierarchical scheduling, where one scheduler allocates resources to groups and another determines execution order within each group.
+If diagnostics is idle, other partitions can borrow unused CPU capacity.
+
+When diagnostics needs CPU time again, the scheduler can constrain competing partitions to preserve its allocation.
+
+APS accounts for CPU usage over an averaging window rather than merely resetting budgets at fixed period boundaries.
+
+This makes it a form of work-conserving resource partitioning.
+
+### QNX versus MuQSS
+
+| Property | MuQSS | QNX APS |
+|---|---|---|
+| Scheduling entity | Thread | Thread within partition |
+| Priority | Static class + virtual deadline | Fixed thread priority |
+| Budget | Timeslice | Partition bandwidth |
+| Unused CPU | Available to other threads | Borrowable by partitions |
+| Isolation | No strict CPU partitioning | Partition bandwidth enforcement |
+| Main objective | Responsiveness | Predictable subsystem allocation |
 
 ---
 
-# 8. Other notable scheduling designs
+# 9. Other interesting systems
 
-Several additional systems are worth mentioning because they illustrate approaches that differ from mainstream Unix scheduling.
+## Zephyr
 
-## 8.1 Zephyr: configurable embedded scheduling
+Zephyr is a configurable embedded RTOS.
 
-Zephyr is a configurable RTOS that supports cooperative and preemptive threads.
+It supports:
 
-Its scheduling model is relatively simple:
-
-- Numeric thread priorities.
-- Cooperative threads that retain the CPU until they yield or block.
-- Preemptive threads scheduled according to priority.
-- Optional timeslicing among equal-priority threads.
+- Cooperative threads.
+- Fixed-priority preemptive threads.
+- Optional round-robin timeslicing.
 - Optional deadline-related scheduling features.
 
-Zephyr's ordinary timeslicing is not a CPU reservation mechanism.
+Its ordinary scheduler does not provide general periodic CPU reservations.
 
-It generally leaves application-level periodic execution and budget enforcement to higher-level logic.
+Applications are typically responsible for ensuring that their task sets are schedulable.
 
-This is common in embedded RTOS designs: keep the scheduler small and predictable, and let the application engineer ensure schedulability.
+## RTEMS
 
-## 8.2 RTEMS: multiple scheduling algorithms
+RTEMS supports multiple scheduler implementations, including fixed-priority and EDF variants.
 
-RTEMS is notable for supporting different scheduler implementations.
+Rather than providing one universal scheduling policy, RTEMS allows an embedded system to select a scheduler appropriate for its workload.
 
-Depending on configuration, these include:
+## Xen
 
-- Fixed-priority scheduling.
-- Earliest Deadline First.
-- Scheduling variants designed for symmetric multiprocessing.
+Xen schedules virtual CPUs rather than application threads.
 
-RTEMS demonstrates an alternative philosophy: rather than implementing one sophisticated general-purpose policy, an embedded system can select a scheduler appropriate for its workload.
-
-## 8.3 Xen: scheduling virtual CPUs
-
-Hypervisors introduce another level of scheduling.
-
-Xen has supported several scheduling policies, including Credit, Credit2, and RTDS.
-
-The interesting one here is **RTDS**, a real-time scheduler using budget and period parameters for virtual CPUs.
+Its RTDS scheduler uses budget and period parameters.
 
 For example:
 
@@ -831,66 +939,68 @@ VM B / vCPU 0:
     Period = 10 ms
 ```
 
-This resembles thread-level reservations, except the scheduled entities are virtual CPUs.
-
-There is an important complication: the guest OS has its own scheduler.
-
-Consequently, end-to-end scheduling behavior depends on both:
+This creates another scheduling level:
 
 ```text
-Hypervisor scheduling
+Hypervisor scheduler
         ↓
-Guest OS scheduling
+Guest OS scheduler
         ↓
 Application thread
 ```
 
-A thread's deadline can be missed even if the guest scheduler behaves correctly, because its virtual CPU might not be executing.
+Even if the guest OS schedules an application correctly, its deadlines can be missed if the hypervisor doesn't provide sufficient execution capacity.
 
-This motivates hierarchical real-time scheduling and compositional schedulability analysis.
+This motivates hierarchical scheduling and compositional schedulability analysis.
 
 ---
 
-# 9. The deeper distinction: four meanings of a time budget
+# 10. Four fundamentally different meanings of CPU budget
 
-One of the most confusing aspects of OS scheduling terminology is that *budget* can mean several fundamentally different things.
+The word *budget* is used for several mechanisms that should be distinguished.
 
-## 9.1 Quantum: when to reconsider scheduling
+## 10.1 Quantum
 
-A quantum is simply the maximum continuous execution interval before the scheduler reconsideres its choice.
+A quantum is an execution interval after which the scheduler may reconsider its choice.
 
 ```text
 Quantum = 5 ms
 ```
 
-After 5 ms, the thread may be moved to the back of its priority queue.
+After 5 ms, the thread may be moved behind other runnable threads.
 
-But it may immediately run again.
+But it can immediately execute again.
 
-**A quantum does not limit total CPU consumption.**
+A quantum doesn't limit total CPU consumption.
 
-Examples: Windows timeslices, Linux `SCHED_RR`, traditional seL4.
+Examples:
 
-## 9.2 Quota: an upper bound on CPU consumption
+- MuQSS `rr_interval`.
+- Windows timeslices.
+- Linux `SCHED_RR`.
+- Traditional seL4 timeslices.
 
-A quota restricts the CPU time consumed during some interval.
+## 10.2 Quota
+
+A quota limits CPU consumption over some interval.
 
 ```text
-Quota = 20 ms
+Quota  = 20 ms
 Period = 100 ms
 ```
 
-Once the quota is exhausted, execution is throttled.
+Once the quota is exhausted, execution is restricted until replenishment.
 
-This provides isolation from excessive CPU consumption.
+Examples:
 
-Examples: Linux cgroup CPU quotas, seL4 MCS scheduling contexts.
+- Linux cgroup CPU quotas.
+- seL4 MCS scheduling contexts.
 
-However, a quota by itself does not guarantee the thread will receive that much execution time.
+A quota is an upper bound, not necessarily a guaranteed allocation.
 
-## 9.3 Reservation: an entitlement to CPU time
+## 10.3 Reservation
 
-A reservation promises access to some amount of CPU capacity, provided the relevant assumptions hold.
+A reservation promises CPU capacity under specified assumptions.
 
 ```text
 Runtime  = 2 ms
@@ -900,23 +1010,13 @@ Deadline = 8 ms
 
 The scheduler must account for competing reservations.
 
-This usually requires admission control or offline schedulability analysis.
+This typically requires admission control or offline schedulability analysis.
 
 Example: Linux `SCHED_DEADLINE`.
 
-**A reservation is a stronger contract than a quota.**
+## 10.4 Share
 
-A quota says:
-
-> You cannot use more than this.
-
-A reservation says:
-
-> Under the scheduling assumptions, this much capacity is available to you.
-
-## 9.4 Share: a relative entitlement
-
-A share describes how CPU capacity should be distributed under contention.
+A share determines how CPU capacity is distributed under contention.
 
 ```text
 A: weight 100
@@ -926,36 +1026,34 @@ B: weight 200
 When both are runnable:
 
 ```text
-A gets approximately 33%
-B gets approximately 67%
+A: approximately 33%
+B: approximately 67%
 ```
 
-But when B sleeps, A may use the entire CPU.
+If B sleeps, A can use the entire CPU.
 
-Examples: Linux EEVDF, CPU weight controls.
-
-This is neither a strict quota nor a guaranteed real-time reservation.
+Examples include Linux EEVDF and weighted CPU resource controls.
 
 ### Comparison
 
 | Property | Quantum | Quota | Reservation | Share |
 |---|---|---|---|---|
 | Limits continuous execution | Yes | Sometimes | Sometimes | Indirectly |
-| Limits total CPU usage | No | Yes | Typically enforced | No |
+| Limits total CPU usage | No | Yes | Usually enforced | No |
 | Guarantees CPU allocation | No | No | Conditionally | Relative fairness |
 | Requires replenishment | No | Yes | Yes | No |
-| Work-conserving by default | Yes | Not necessarily | Depends on policy | Yes |
-| Supports temporal isolation | No | Yes | Yes | Limited |
+| Work-conserving by default | Yes | Not necessarily | Depends | Yes |
+| Temporal isolation | No | Yes | Yes | Limited |
 
-This distinction is more important than the specific names operating systems give their scheduling policies.
+MuQSS's ordinary scheduling model is primarily quantum-based, even though its time slices are sometimes described as quotas in its documentation.
 
 ---
 
-# 10. Priority inversion and budget inheritance
+# 11. Priority inversion and budget inheritance
 
-Once priorities and budgets are separated, another interesting problem appears.
+Once priorities and budgets are separated, an interesting problem appears.
 
-Suppose:
+Consider:
 
 ```text
 Client A:
@@ -970,73 +1068,67 @@ Background B:
     Priority = 150
 ```
 
-A sends a synchronous request to S.
-
-A blocks waiting for the reply.
+A calls S and waits for a reply.
 
 But B has higher priority than S, so B can prevent S from executing.
 
-A is indirectly blocked by a lower-priority server.
+This is priority inversion.
 
-This is **priority inversion**.
+Traditional systems address it using priority inheritance or priority ceiling protocols.
 
-Traditional systems address this with priority inheritance or priority ceiling protocols.
-
-But with explicit CPU budgets, we have two independent questions:
+With explicit CPU budgets, however, two independent questions arise:
 
 1. At what priority should S execute?
 2. Whose CPU budget should S consume?
 
-These produce four conceptual combinations:
+There are four conceptual combinations:
 
 | Priority | Budget | Interpretation |
 |---|---|---|
-| Server | Server | Ordinary independent server |
+| Server | Server | Independent server |
 | Client | Server | Priority inheritance |
 | Server | Client | Budget donation |
 | Client | Client | Priority and budget inheritance |
 
-These choices have different implications.
+### Priority inheritance
 
-### Priority inheritance alone
+S executes at A's priority but consumes its own budget.
 
-S executes at A's priority, but consumes its own budget.
+This solves priority inversion, but a client can still exhaust a shared server's CPU allocation.
 
-This solves priority inversion but can allow one client to exhaust a shared server's budget.
+### Budget donation
 
-### Budget donation alone
+S consumes A's budget but executes at its own priority.
 
-S consumes A's budget, but executes at its own priority.
-
-This isolates CPU accounting but does not necessarily solve priority inversion.
+This isolates CPU accounting, but doesn't necessarily solve priority inversion.
 
 ### Both
 
 S executes at A's effective priority using A's budget.
 
-This is often the most intuitive model for synchronous RPC, but it requires careful handling of nested calls, cycles, exhaustion, and restoration of scheduling state.
-
-For example:
+This can be useful for synchronous RPC chains:
 
 ```text
 A → S1 → S2 → S3
 ```
 
-If the budget propagates through the entire call chain, CPU consumption by S3 is ultimately charged to A.
+CPU consumption throughout the chain can be charged to A.
 
-This is a powerful property for microkernel architectures, where ordinary OS services are implemented as userspace servers.
+seL4 MCS explicitly supports scheduling-context donation, although it does not automatically imply unrestricted priority inheritance.
 
-However, the exact semantics vary between kernels. seL4 MCS provides scheduling-context donation, not unrestricted automatic priority inheritance.
+MuQSS doesn't provide an equivalent general scheduling-context donation mechanism.
+
+Its virtual deadlines are properties of individual tasks rather than transferable execution authorities.
 
 ---
 
-# 11. Fixed-priority scheduling versus EDF
+# 12. Fixed-priority scheduling versus EDF
 
-There's a deeper algorithmic distinction worth exploring.
+Another important distinction is between static priorities and dynamic deadline ordering.
 
 ## Rate Monotonic Scheduling (RMS)
 
-Rate Monotonic Scheduling assigns fixed priorities based on periods.
+RMS assigns fixed priorities based on task periods.
 
 Shorter-period tasks receive higher priorities.
 
@@ -1048,165 +1140,206 @@ Consider:
 | B | 2 ms | 5 ms | Medium |
 | C | 2 ms | 10 ms | Low |
 
-Their total utilization is:
+Their utilization is:
 
 \[
-U = \frac14 + \frac25 + \frac2{10} = 0.85
+U=\frac14+\frac25+\frac2{10}=0.85
 \]
 
 For three independent periodic tasks with deadlines equal to periods, the classical sufficient RMS utilization bound is:
 
 \[
-U \leq 3(2^{1/3}-1) \approx 0.7798
+U\leq3(2^{1/3}-1)\approx0.7798
 \]
 
-Our task set exceeds that bound.
+This task set exceeds the sufficient bound, but that doesn't necessarily mean it is unschedulable.
 
-This does **not** mean it is necessarily unschedulable. The bound is sufficient, not necessary.
+More precise response-time analysis may establish schedulability.
 
-More precise response-time analysis can establish schedulability for task sets that exceed it.
+## Earliest Deadline First
 
-## Earliest Deadline First (EDF)
+EDF dynamically selects the job with the earliest absolute deadline.
 
-EDF dynamically prioritizes whichever job has the nearest absolute deadline.
-
-For independent, preemptible periodic tasks on a single processor, with deadlines equal to periods and negligible scheduling overhead, EDF can schedule task sets with:
+For independent, preemptible periodic tasks on one processor, with deadlines equal to periods and negligible overhead, EDF can schedule task sets satisfying:
 
 \[
-U \leq 1
+U\leq1
 \]
 
-This is a major theoretical advantage.
+However, EDF and fixed-priority scheduling behave differently under overload.
 
-However, EDF has tradeoffs.
+Fixed-priority scheduling tends to preserve execution for higher-priority tasks at the expense of lower-priority ones.
 
-With fixed priorities, overload behavior is often relatively predictable: high-priority tasks remain favored, while lower-priority tasks miss deadlines.
-
-Under EDF, overload can affect a broader set of tasks.
+EDF can distribute deadline misses more broadly when the system becomes overloaded.
 
 This is one reason fixed-priority scheduling remains attractive for safety-critical systems.
 
-### A crucial qualification
+### Where MuQSS fits
 
-Neither RMS nor EDF guarantees deadlines solely because a task has a budget.
+MuQSS uses earliest-effective-virtual-deadline scheduling for ordinary tasks, but it isn't a conventional real-time EDF scheduler.
 
-A complete analysis may need to account for:
+Its deadlines:
 
-- Worst-case execution time (WCET).
-- Blocking on locks and IPC.
-- Interrupt interference.
-- Kernel execution time.
-- Cache effects.
-- Multicore interference.
-- Release jitter.
-- Priority inversion.
+- Are derived from nice levels and time slices.
+- Aren't application completion deadlines.
+- Don't represent guaranteed execution deadlines.
+- Are recalculated when slices expire.
+- Are preserved across sleeps.
 
-A CPU reservation is one component of a real-time guarantee, not the entire guarantee.
+Consequently, the classical EDF schedulability results don't apply directly to MuQSS.
 
 ---
 
-# 12. Overall comparison
+# 13. Overall comparison
 
-Here's the condensed comparison across the systems we've discussed.
+This table brings the different scheduling models together.
 
-| OS / Scheduler | Priority model | Budget model | Exhaustion behavior | Main objective |
+| OS / Scheduler | Priority model | Time budget | Exhaustion behavior | Primary objective |
 |---|---|---|---|---|
-| Linux EEVDF | Virtual deadlines, weights | Proportional share | No periodic exhaustion | Fairness and latency |
+| **Linux EEVDF** | Virtual deadlines + eligibility | Weighted service share | Accumulate service debt | Fairness and latency |
+| **MuQSS** | Priority + virtual deadline | Fixed timeslice | Renew slice and deadline | Interactive responsiveness |
+| **MuQSS SCHED_ISO** | Elevated pseudo-RT priority | CPU usage threshold | Demote to normal precedence | Low-latency multimedia |
 | Linux FIFO | Fixed priority | None by default | N/A | RT responsiveness |
 | Linux RR | Fixed priority | Quantum | Rotate among peers | RT time sharing |
-| Linux DEADLINE | EDF | Runtime/period | Throttle/replenish | Real-time reservations |
-| Windows | Dynamic priorities | Quantum | Reschedule | Responsiveness |
-| macOS | QoS, priorities | Quantum / RT constraints | Policy-dependent | Latency and energy |
-| FreeBSD ULE | Dynamic priorities | Timeslice | Reschedule | Interactive throughput |
+| Linux DEADLINE | EDF | Runtime/period | Throttle/replenish | RT reservations |
+| Windows | Dynamic priority | Quantum | Reschedule | Responsiveness |
+| macOS | QoS + priority | Quantum / RT constraints | Policy-dependent | Latency and energy |
+| FreeBSD ULE | Dynamic priority | Timeslice | Reschedule | Interactive throughput |
 | seL4 traditional | Fixed priority | Timeslice | Rotate among peers | Simple RT scheduling |
 | seL4 MCS | Fixed priority | Sporadic budget/period | Ineligible until refill | Temporal isolation |
 | QNX FIFO/RR | Fixed priority | None / quantum | Continue / rotate | Deterministic RT |
-| QNX sporadic | Fixed priority with fallback | Sporadic high-priority budget | Drop priority | RT responsiveness |
+| QNX sporadic | High/low fixed priorities | Sporadic high-priority budget | Drop priority | RT responsiveness |
 | QNX APS | Priority + partition | Partition bandwidth | Partition constrained | CPU isolation |
 | Zephyr | Fixed priority | Optional timeslice | Rotate among peers | Embedded RT |
 | RTEMS EDF | Dynamic deadline | Task execution requirements | Policy-dependent | Embedded RT |
 | Xen RTDS | Deadline-based | vCPU budget/period | Replenishment | VM-level RT |
 
-## 13. What I find most interesting architecturally
+---
 
-Three approaches stand out.
+# 14. Architectural comparison
 
-### Linux: scheduling as an optimization problem
+Four approaches stand out.
 
-Linux's fair scheduler treats CPU time as a continuously distributed resource.
+### Linux EEVDF: scheduling as proportional fairness
 
-The scheduler tries to optimize fairness and latency while adapting to the current workload.
+EEVDF treats CPU time as a continuously distributed resource.
 
-It doesn't require applications to know their CPU requirements beforehand.
+The scheduler tracks which threads are owed service and uses virtual deadlines to decide which should execute.
 
-This is excellent for general-purpose systems but offers limited predictability for individual threads.
+Applications don't need to declare their execution requirements.
+
+This is well suited to general-purpose systems but doesn't provide hard real-time guarantees.
+
+### MuQSS: scheduling as latency management
+
+MuQSS uses a comparatively simple mechanism:
+
+```text
+Assign timeslice
+       ↓
+Calculate virtual deadline
+       ↓
+Select earliest effective deadline
+       ↓
+Preserve deadline across sleeps
+       ↓
+Recalculate on slice exhaustion
+```
+
+Its distinctive insight is that **preserving a sleeping thread's unused slice and deadline naturally favors interactive workloads**.
+
+A thread that frequently blocks on input doesn't need to be classified as interactive through elaborate heuristics.
+
+It simply tends to retain an earlier deadline than threads that continuously consume their slices.
+
+The scheduler's primary concern is distributing CPU opportunities with low latency, not enforcing resource reservations.
 
 ### seL4 MCS: scheduling as resource authority
 
-seL4 treats CPU execution capacity as an explicitly managed resource.
+seL4 MCS treats CPU execution capacity as an explicitly managed resource.
 
-The kernel provides a relatively small mechanism:
+A scheduling context represents permission to consume CPU time within configured bounds.
 
-```text
-(priority, scheduling context)
-```
+This makes it possible to:
 
-The scheduling context defines the permitted execution budget, while priority determines precedence.
+- Enforce CPU consumption limits.
+- Delegate execution capacity.
+- Donate CPU budgets across IPC.
+- Isolate clients sharing userspace servers.
 
-Higher-level scheduling policy can be implemented outside the kernel.
-
-This is conceptually elegant because it separates mechanism from policy and supports explicit CPU resource delegation.
-
-But it also pushes responsibility for schedulability and resource allocation onto the system designer.
+It is particularly well suited to microkernel architectures where CPU resource management should follow explicit delegation principles.
 
 ### QNX APS: scheduling as resource partitioning
 
-QNX APS takes a more system-oriented approach.
+QNX APS reserves CPU capacity for groups of threads rather than requiring every thread to have an individual reservation.
 
-Instead of requiring every thread to have its own budget, it reserves CPU capacity for groups of threads.
+It combines ordinary priority scheduling with partition-level bandwidth accounting.
 
-Within those groups, ordinary priority scheduling remains useful.
+Unused capacity can be borrowed, but competing partitions can be constrained when reservations need to be honored.
 
-This is particularly attractive for systems containing multiple subsystems with different criticality requirements.
+This is useful for systems containing several subsystems with different criticality requirements.
 
 ---
 
-## 14. Three questions that expose a scheduler's real semantics
+## 15. Three questions that reveal a scheduler's semantics
 
 When examining an unfamiliar scheduler, I would start with these questions.
 
 **First: What happens when a thread exhausts its quantum or budget?**
 
-Does it rotate, become ineligible, drop priority, or simply accumulate scheduling debt?
+Does it rotate, receive a new deadline, become ineligible, drop priority, or accumulate scheduling debt?
 
-These produce fundamentally different guarantees.
+For example:
 
-**Second: Does the scheduler enforce only upper bounds, or does it guarantee minimum service?**
+- MuQSS: renew the slice and virtual deadline.
+- MuQSS SCHED_ISO: demote after excessive CPU usage.
+- seL4 MCS: wait for budget replenishment.
+- QNX sporadic: drop to a lower priority.
+- Linux SCHED_DEADLINE: throttle until replenishment.
 
-This distinguishes CPU isolation from CPU reservations.
+These produce fundamentally different scheduling guarantees.
 
-For example, seL4 MCS enforces upper bounds, while Linux SCHED_DEADLINE combines bandwidth enforcement with admission-controlled reservations. [seL4 Documentation](https://docs.sel4.systems/Tutorials/mcs.html?utm_source=chatgpt.com)
+**Second: Does the scheduler enforce upper bounds, guarantee minimum service, or merely distribute CPU fairly?**
+
+This distinguishes CPU isolation from CPU reservations and fair-share scheduling.
+
+MuQSS and EEVDF primarily distribute CPU opportunities.
+
+seL4 MCS enforces execution limits.
+
+Linux SCHED_DEADLINE combines bandwidth enforcement with admission-controlled reservations.
 
 **Third: Who pays for CPU time spent servicing another thread?**
 
-This is particularly important in microkernels.
+This matters particularly in microkernels.
 
-If a client calls a filesystem server, network server, or device driver, does that execution consume the client's budget or the server's?
+If a client invokes a filesystem server or device driver, is the CPU time charged to the client or the server?
 
-The answer determines whether shared services can provide temporal isolation between their clients.
+The answer determines whether shared services can provide temporal isolation between clients.
+
+---
 
 ## Further reading
 
-For the most technically interesting designs, I'd prioritize these:
+The most useful primary sources for understanding these mechanisms are:
 
-1. **[seL4 MCS documentation](https://docs.sel4.systems/Tutorials/mcs.html)** — scheduling contexts, sporadic replenishment, passive servers, and CPU-time donation.
-2. **[Linux SCHED_DEADLINE documentation](https://www.kernel.org/doc/html/latest/scheduler/sched-deadline.html)** — EDF, Constant Bandwidth Server, replenishment, and admission control.
-3. **[Linux EEVDF documentation](https://kernel.org/doc/html/latest/scheduler/sched-eevdf.html)** — virtual deadlines, lag, and proportional fairness.
-4. **[seL4 whitepaper](https://www.sel4.com/About/seL4-whitepaper.pdf)** — particularly the discussion of temporal isolation and scheduling-context capabilities.
-5. **[QNX Adaptive Partitioning documentation](https://www.qnx.com/developers/docs/6.4.0/adaptive_partitioning_en/user_guide/faq_ap.html)** — bandwidth guarantees and partition behavior.
+- **[Con Kolivas — MuQSS documentation](https://www.mail-archive.com/linux-kernel@vger.kernel.org/msg1260699.html)** — complete original description of virtual deadlines, time slices, run queues, SCHED_ISO, and SCHED_IDLEPRIO.
+- **[MuQSS's 2026 revival](https://lkml.iu.edu/2608.2/00788.html)** — new features and the return of the `-ck` patchset.
+- **[Linux EEVDF documentation](https://kernel.org/doc/html/latest/scheduler/sched-eevdf.html)** — virtual deadlines, lag, and eligibility.
+- **[Linux SCHED_DEADLINE documentation](https://www.kernel.org/doc/html/latest/scheduler/sched-deadline.html)** — EDF, CBS, replenishment, and admission control.
+- **[seL4 MCS tutorial](https://docs.sel4.systems/Tutorials/mcs.html)** — scheduling contexts and budget donation.
+- **[QNX Adaptive Partitioning documentation](https://www.qnx.com/developers/docs/6.4.0/adaptive_partitioning_en/user_guide/faq_ap.html)** — partition bandwidth and guarantees.
 
-**The biggest conceptual divide is between schedulers that distribute CPU time according to observed demand and schedulers that enforce explicitly allocated execution capacity.**
+### Final perspective
 
-Linux EEVDF and Windows largely belong to the first category. seL4 MCS and Linux SCHED_DEADLINE belong to the second, although they differ substantially in their guarantees.
+The most revealing comparison is between **MuQSS, Linux EEVDF, and seL4 MCS**.
 
-QNX APS occupies an interesting middle ground: explicit resource partitioning combined with adaptive use of otherwise idle CPU capacity.
+All three account for CPU execution, but they use that accounting for different purposes.
+
+MuQSS uses consumed timeslices to advance virtual deadlines, producing responsive scheduling without complex interactivity heuristics.
+
+EEVDF uses accumulated service and eligibility lag to approximate weighted fairness while allowing latency-sensitive scheduling.
+
+seL4 MCS uses explicit execution budgets to enforce temporal resource boundaries independently of priority.
+
+These illustrate three distinct interpretations of CPU time: **an opportunity to schedule, a share of a resource, and an authority to execute**.
