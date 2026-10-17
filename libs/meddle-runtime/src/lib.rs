@@ -277,6 +277,39 @@ impl DataArea {
         true
     }
 
+    /// Write `bytes` at byte `offset` inside the area.
+    pub fn write_bytes(&self, offset: u64, bytes: &[u8]) -> bool {
+        let Some(span) = self.byte_span(offset, bytes.len()) else {
+            return false;
+        };
+        for (index, &byte) in bytes.iter().enumerate() {
+            // SAFETY: `byte_span` checked that the bytes lie inside the area;
+            // see `write_words`.
+            unsafe {
+                span.add(index).write_volatile(byte);
+            }
+        }
+        true
+    }
+
+    /// Read `bytes.len()` bytes from byte `offset` inside the area.
+    pub fn read_bytes(&self, offset: u64, bytes: &mut [u8]) -> bool {
+        let Some(span) = self.byte_span(offset, bytes.len()) else {
+            return false;
+        };
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            // SAFETY: as in `write_bytes`.
+            *byte = unsafe { span.add(index).read_volatile() };
+        }
+        true
+    }
+
+    /// Address of `count` bytes at `offset`, if inside the area.
+    fn byte_span(&self, offset: u64, count: usize) -> Option<*mut u8> {
+        let end = offset.checked_add(u64::try_from(count).ok()?)?;
+        (end <= self.len).then(|| (self.base + offset) as *mut u8)
+    }
+
     /// Address of `count` words at `offset`, if aligned and inside the area.
     fn word_span(&self, offset: u64, count: usize) -> Option<*mut u32> {
         let bytes = u64::try_from(count).ok()?.checked_mul(4)?;

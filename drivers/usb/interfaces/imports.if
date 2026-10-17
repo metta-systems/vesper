@@ -1,0 +1,11 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Functions of other components the USB core calls: the DWC2 host controller
+# (`usb_hcd_v1`). The link is the DWC2 device tree node; its compatible string
+# is taken from the Raspberry Pi 3 device tree and still needs checking.
+uses usb_hcd_v1 via compatible "brcm,bcm2708-usb"
+{
+    reset_port, port_status, open_pipe, set_route, close_pipe, clear_halt, control
+}

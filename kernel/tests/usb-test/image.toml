@@ -1,0 +1,26 @@
+# What usb-test bundles (see vesper-image-build): the DWC2 host controller
+# component, loaded by Kickstart once per enabled `brcm,bcm2708-usb` node, and
+# a test client. The client is a program (a component with `program = true`):
+# Kickstart starts it at boot, without a device tree node, with an extra
+# Thread. It imports usb_hcd_v1 through the controller's compatible string.
+
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../../drivers/usb-hcd-dwc2/interfaces"
+
+[[component]]
+name = "client"
+binary = "usb-test-client"
+interfaces = "../../../userspace/tests/usb/client/interfaces"
+active = true
+program = true
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

@@ -1,0 +1,35 @@
+[package]
+name = "vesper-usb-protocol"
+
+description = "Pure USB protocol logic for Vesper: setup packets, descriptor parsing, the enumeration state machine and HID boot reports. No I/O."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+# Host tests bring their own harness; the embedded test workflow skips them.
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "protocol"
+path = "tests/protocol/main.rs"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

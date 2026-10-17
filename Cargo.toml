@@ -33,6 +33,12 @@ members = [
   "drivers/fb",
   "drivers/fb/client",
   "drivers/fb/server",
+  # USB pure protocol logic (host-testable)
+  "drivers/usb/protocol",
+  "drivers/usb-hcd-dwc2",
+  "drivers/usb-hcd-dwc2/client",
+  "drivers/usb-hcd-dwc2/server",
+  "kernel/tests/usb-test",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -88,6 +94,7 @@ members = [
   "userspace/tests/hello",
   "userspace/tests/irq/protocol",
   "userspace/tests/mailbox/client",
+  "userspace/tests/usb/client",
   "userspace/tests/irq/receiver",
   "userspace/tests/preempt/spinner",
 ]
@@ -141,6 +148,8 @@ libmeddle = { path = "libs/meddle", package = "vesper-meddle" }
 libmeddle-runtime = { path = "libs/meddle-runtime", package = "vesper-meddle-runtime" }
 mailbox = { path = "drivers/mailbox/server" }
 mailbox-client = { path = "drivers/mailbox/client" }
+usb-hcd = { path = "drivers/usb-hcd-dwc2/server" }
+usb-hcd-client = { path = "drivers/usb-hcd-dwc2/client" }
 power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }
 fb = { path = "drivers/fb/server" }

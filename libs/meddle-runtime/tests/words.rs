@@ -130,6 +130,30 @@ mod tests {
     }
 
     #[test]
+    fn data_area_bytes_round_trip_at_any_offset_and_respect_bounds() {
+        let mut storage = vec![0_u32; 4];
+        let area = DataArea {
+            base: storage.as_mut_ptr() as u64,
+            len: 16,
+        };
+        assert!(area.write_bytes(3, &[1, 2, 3, 4, 5]));
+        let mut bytes = [0; 5];
+        assert!(area.read_bytes(3, &mut bytes));
+        assert_eq!(bytes, [1, 2, 3, 4, 5]);
+        assert!(
+            area.write_bytes(11, &[9; 5]),
+            "ends exactly at the area end"
+        );
+        assert!(
+            area.write_bytes(16, &[]),
+            "an empty write at the end is inside"
+        );
+        assert!(!area.write_bytes(12, &[0; 5]));
+        assert!(!area.read_bytes(u64::MAX, &mut bytes));
+        assert!(!area.read_bytes(14, &mut bytes));
+    }
+
+    #[test]
     fn import_records_carry_their_data_area() {
         let record = ImportRecord {
             area_base: 0x3a00_0000,

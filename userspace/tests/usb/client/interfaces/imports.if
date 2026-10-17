@@ -1,0 +1,10 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The test client has no device tree node, so the chain starts from the node
+# found by its compatible string: the DWC2 host controller.
+uses usb_hcd_v1 via device compatible "brcm,bcm2708-usb"
+{
+    reset_port, port_status, open_pipe, set_route, close_pipe, clear_halt, control
+}

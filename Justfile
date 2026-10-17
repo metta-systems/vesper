@@ -24,12 +24,13 @@ pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 # Device tests run in QEMU (rpi3) with the test linker script
 device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-arg=--script=' + test_link
 
+# Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'hello endpoint-client endpoint-component endpoint-server fp-probe fault-faulter fault-bare preempt-spinner irq-receiver driver-probe uart-pl011 mailbox-impl power-impl fb-impl mailbox-test-client shell'
+user_components := 'driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-spinner shell uart-pl011 usb-hcd-dwc2 usb-test-client'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'uart-pl011 mailbox-impl power-impl fb-impl shell'
+driver_components := 'fb-impl mailbox-impl power-impl shell uart-pl011 usb-hcd-dwc2'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -150,6 +151,16 @@ build-preempt-test board='rpi3': (build-components board 'qemu' test_kernel_feat
 # Build the driver-test e2e kernel (Kickstart driver matching and the driver init page)
 [group("test")]
 build-driver-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'driver-test' board)
+
+# Build the usb-test e2e kernel (the DWC2 host controller component, loaded by Kickstart)
+[group("test")]
+build-usb-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-test' board)
+
+# Boot usb-test on raspi3b with a hub on the root port: the DWC2 component resets the port and enumerates the hub
+[group("test")]
+test-usb board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-usb-test board)
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-test-' + config + '.bin' }}"
 
 # Build the mailbox-test e2e kernel (the mailbox component and a client wired through the firmware node)
 [group("test")]
@@ -338,7 +349,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("test")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-mailbox test-mailbox-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-mailbox test-mailbox-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault test-usb
 
 alias t := test
 
@@ -488,7 +499,7 @@ test-chainboot:
 
 # Run capability, boot-platform and host tool tests natively
 [group("test")]
-test-host: test-object-host test-platform-host test-meddle
+test-host: test-object-host test-platform-host test-meddle test-usb-host
     cargo test -p chainofcommand
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
@@ -510,6 +521,10 @@ test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'v
 [group("test")]
 test-meddle: (_host-test 'vesper-meddle-runtime' 'words')
     cargo test -p vesper-meddle
+
+# Run the USB protocol logic tests natively: setup packets, descriptors, enumeration, HID boot reports
+[group("test")]
+test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2')
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -537,11 +552,11 @@ _cross-clippy board='rpi3' features='':
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host clippy-meddle
+clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
-clippy-pre-push: (build 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') clippy-object-host clippy-platform-host clippy-meddle
+clippy-pre-push: (build 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 [private]
@@ -562,6 +577,10 @@ clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-cli
 [group("maintenance")]
 clippy-meddle: (_host-clippy 'vesper-meddle-runtime' 'words')
     cargo clippy -p vesper-meddle -p meddler --tests -- --deny warnings --allow deprecated
+
+# Lint the USB protocol host tests with their native host harness
+[group("maintenance")]
+clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2')
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]
