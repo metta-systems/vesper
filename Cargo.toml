@@ -54,6 +54,7 @@ members = [
   "libs/graphics",
   "libs/image",
   "libs/image-build",
+  "libs/input-event",
   "libs/io-channel",
   "libs/irqchip",
   "libs/kicktest",

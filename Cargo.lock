@@ -2310,6 +2310,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-input-event"
+version = "0.0.1"
+
+[[package]]
 name = "vesper-io-channel"
 version = "0.0.1"
 dependencies = [

@@ -511,7 +511,7 @@ test-chainboot:
 
 # Run capability, boot-platform and host tool tests natively
 [group("test")]
-test-host: test-object-host test-platform-host test-meddle test-usb-host
+test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host
     cargo test -p chainofcommand
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
@@ -537,6 +537,10 @@ test-meddle: (_host-test 'vesper-meddle-runtime' 'words')
 # Run the USB protocol logic tests natively: setup packets, descriptors, enumeration, HID boot reports
 [group("test")]
 test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2')
+
+# Run the input event library tests natively: record layout, descriptor, state tracker
+[group("test")]
+test-input-host: (_host-test 'vesper-input-event' 'input_event')
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -564,11 +568,11 @@ _cross-clippy board='rpi3' features='':
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host
+clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
-clippy-pre-push: (build 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host
+clippy-pre-push: (build 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 [private]
@@ -593,6 +597,10 @@ clippy-meddle: (_host-clippy 'vesper-meddle-runtime' 'words')
 # Lint the USB protocol host tests with their native host harness
 [group("maintenance")]
 clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2')
+
+# Lint the input event library tests with their native host harness
+[group("maintenance")]
+clippy-input-host: (_host-clippy 'vesper-input-event' 'input_event')
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]
