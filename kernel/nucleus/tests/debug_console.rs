@@ -248,6 +248,7 @@ fn with_nucleus(
         dispatched: None,
         dispatch_next: None,
         preempt_requested: false,
+        timers: crate::objects::timers::SchedulerTimers::new(),
     };
     // One fixture AddressSpace shared by the fixture Threads: these tests
     // never resolve translation state.

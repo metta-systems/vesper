@@ -19,6 +19,7 @@ pub mod sched;
 pub mod scheduler;
 pub mod thread;
 pub mod time;
+pub mod timers;
 
 #[cfg(feature = "debug_kernel")]
 pub use debug_console::DebugConsole;

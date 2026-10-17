@@ -82,6 +82,7 @@ fn scheduler_op_ids_match_the_wire_baseline() {
     assert_eq!(SchedulerOp::BindDispatcher as u64, 5);
     assert_eq!(SchedulerOp::Dispatch as u64, 6);
     assert_eq!(SchedulerOp::ConfigureActivation as u64, 7);
+    assert_eq!(SchedulerOp::ArmTimer as u64, 8);
     for (id, op) in [
         (0, SchedulerOp::ShareRegion),
         (1, SchedulerOp::ConfigureThread),
@@ -91,10 +92,11 @@ fn scheduler_op_ids_match_the_wire_baseline() {
         (5, SchedulerOp::BindDispatcher),
         (6, SchedulerOp::Dispatch),
         (7, SchedulerOp::ConfigureActivation),
+        (8, SchedulerOp::ArmTimer),
     ] {
         assert_eq!(SchedulerOp::try_from(id).map_err(CapError::code), Ok(op));
     }
-    for id in [8, 255, u64::MAX] {
+    for id in [9, 255, u64::MAX] {
         assert_eq!(
             SchedulerOp::try_from(id).map_err(CapError::code),
             Err(CapError::InvalidOperation.code())
@@ -287,9 +289,25 @@ fn activation_reasons_are_distinct_bits() {
         activation_reason::YIELDED,
         activation_reason::FAULTED,
         activation_reason::EXITED,
+        activation_reason::TIMER,
     ];
     for (index, reason) in reasons.iter().enumerate() {
         assert_eq!(reason.count_ones(), 1);
         assert_eq!(*reason, 1 << index);
     }
+}
+
+#[test]
+fn arm_timer_encodes_the_deadline_and_decodes_now_and_the_previous_deadline() {
+    arm((0, 1_000, 500));
+    let armed = root_scheduler()
+        .arm_timer(2_000)
+        .map_err(CapError::code)
+        .unwrap();
+    let (_, op, args, len) = take_request();
+    assert_eq!(len, 1);
+    assert_eq!(op, SchedulerOp::ArmTimer as u64);
+    assert_eq!(args, [2_000, 0, 0, 0, 0, 0]);
+    assert_eq!(armed.now_ns, 1_000);
+    assert_eq!(armed.previous_ns, 500);
 }

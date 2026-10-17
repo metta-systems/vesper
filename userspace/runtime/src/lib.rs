@@ -10,6 +10,8 @@
 //! panic handler and the default `vesper_thread_return_fault` handler that
 //! `ppc_export!` adapters call when a Return is rejected.
 
+pub mod clock;
+
 use {core::panic::PanicInfo, libqemu::semihosting as semi};
 
 pub use libqemu::semihosting;

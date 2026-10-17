@@ -477,7 +477,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 33, u64::MAX, 1));
     }
-    for wire in [(43, 0, 0), (43, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(44, 0, 0), (44, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -608,5 +608,20 @@ fn stale_generation_status_round_trips_the_current_generation() {
             CapError::StaleGeneration { current: actual } if actual == current
         );
         assert_unknown_response((42, current, 1));
+    }
+}
+
+#[test]
+fn timed_out_status_round_trips_the_value() {
+    use vesper_objects::syscall_status::TIMED_OUT;
+
+    assert_eq!(TIMED_OUT, 43);
+    for value in [0, 1, 0x1234_5678_9abc_def0, u64::MAX] {
+        assert_error!(
+            (43, value, 0),
+            CapError::TimedOut { value },
+            CapError::TimedOut { value: actual } if actual == value
+        );
+        assert_unknown_response((43, value, 1));
     }
 }

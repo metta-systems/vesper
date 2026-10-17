@@ -125,6 +125,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             dispatched: None,
             dispatch_next: None,
             preempt_requested: false,
+            timers: crate::objects::timers::SchedulerTimers::new(),
             pools: NucleusPools {
                 arch: ArchPools::new(ObjectPool::initialize(pool_ptr, 0)),
             },

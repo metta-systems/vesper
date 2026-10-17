@@ -24,6 +24,11 @@ const COUNT: usize = 2;
 
 const WAITER: u64 = 0;
 const KICKER: u64 = 1;
+/// Waits with a timeout nobody signals within, and counts each timeout.
+const TIMED: u64 = 2;
+
+/// How long a timed waiter waits: ten milliseconds.
+const TIMEOUT_NS: u64 = 10_000_000;
 
 /// Stop on an unexpected error (`CapError` has no `Debug`).
 fn fail(what: &str, error: CapError) -> ! {
@@ -53,6 +58,15 @@ fn main(page: u64) -> ! {
                 core::hint::spin_loop();
             }
         }
+        TIMED => loop {
+            match notification.wait(TIMEOUT_NS) {
+                Err(CapError::TimedOut { value: 0 }) => {
+                    words[COUNT].fetch_add(1, Ordering::Release);
+                }
+                Err(error) => fail("Notification.Wait with a timeout", error),
+                Ok(_) => panic!("dispatch actor: a timed wait was signalled"),
+            }
+        },
         _ => panic!("dispatch actor: unknown role"),
     }
 }

@@ -126,6 +126,15 @@ const ACTOR_THREAD_SLOT: u32 = 48;
 const BURST_SLOT: u32 = 54;
 const PHASE_THREE_SLOT: u32 = 56;
 
+/// Phase four: the dispatcher's keys to the timed waiter's Thread and to the
+/// `EventCount` it sleeps on. The timed waiter is the sixth Thread of the actor
+/// component, with its own record slot and Notification.
+const TIMED_THREAD_SLOT: u32 = 57;
+const SLEEPER_SLOT: u32 = 58;
+const TIMED_RECORD_SLOT: u32 = 9;
+const TIMED_ROLE: u64 = 2;
+const TIMED_ACTOR: usize = 5;
+
 /// Threads of the actor component: waiters on Notifications 0, 1 and 2, a
 /// kicker that signals Notification 0, and a spare that never runs.
 const ACTORS: usize = 5;
@@ -169,6 +178,14 @@ mod page {
     pub const P3_RETIRED_REFUSED: usize = 51;
     pub const P3_FOREIGN_REFUSED: usize = 52;
     pub const P3_BURST_RUNNABLE: usize = 53;
+    pub const P4_TIMED_KEY: usize = 54;
+    pub const P4_TIMED_SLOT: usize = 55;
+    pub const P4_SLEEPER: usize = 56;
+    pub const P4_SLEPT_NS: usize = 57;
+    pub const P4_TIMER_REASONS: usize = 58;
+    pub const P4_TIMER_ON_TIME: usize = 59;
+    pub const P4_TIMEOUT_REASONS: usize = 60;
+    pub const P4_TIMEOUT_NS: usize = 61;
 }
 
 /// A word of a page the kernel window maps.
@@ -244,7 +261,11 @@ pub fn run() -> ! {
     let actor_thread_keys: [RawKey; ACTORS] = core::array::from_fn(|_| retype(ObjectType::THREAD));
     let actor_time_keys: [RawKey; ACTORS] = core::array::from_fn(|_| retype(ObjectType::TIME));
     let never_configured_key = retype(ObjectType::THREAD);
-    let notification_keys: [RawKey; 3] = core::array::from_fn(|_| retype(ObjectType::NOTIFICATION));
+    // Notifications 0 to 2 for the waiters, 3 for the timed waiter.
+    let notification_keys: [RawKey; 4] = core::array::from_fn(|_| retype(ObjectType::NOTIFICATION));
+    let timed_thread_key = retype(ObjectType::THREAD);
+    let timed_time_key = retype(ObjectType::TIME);
+    let sleeper_key = retype(ObjectType::EVENT_COUNT);
     let phase_three_key = retype(ObjectType::NOTIFICATION);
     let boot_time = TimeKey::from_key(boot.boot_time_key);
     for (worker, time_key) in worker_time_keys.iter().enumerate() {
@@ -260,7 +281,7 @@ pub fn run() -> ! {
     boot_time
         .transfer(&TimeKey::from_key(dispatcher_time_key), INFINITE_BUDGET)
         .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
-    for time_key in actor_time_keys {
+    for time_key in actor_time_keys.into_iter().chain([timed_time_key]) {
         boot_time
             .transfer(&TimeKey::from_key(time_key), INFINITE_BUDGET)
             .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
@@ -350,7 +371,7 @@ pub fn run() -> ! {
     );
     verify_component(ttbr(nucleus, actor.address_space), &components::ACTOR);
     let mut actor_stacks = builder.stack_region(&actor, STACK_REGION, &mut slots);
-    let actor_stack_tops: [u64; ACTORS] = core::array::from_fn(|_| {
+    let actor_stack_tops: [u64; ACTORS + 1] = core::array::from_fn(|_| {
         builder
             .user_stack(&mut actor_stacks, STACK_PAGES, &mut slots)
             .top
@@ -385,6 +406,14 @@ pub fn run() -> ! {
                 .to_wire(),
         );
     }
+
+    // The timed waiter: the sixth Thread of the actor component, waiting on
+    // Notification 3 with a timeout.
+    actor_words.write(TIMED_ACTOR * 8, TIMED_ROLE);
+    actor_words.write(
+        TIMED_ACTOR * 8 + 1,
+        actor.local_key(ACTOR_NOTIFICATION_SLOT + 3, 1).to_wire(),
+    );
 
     // The dispatcher's keys: the Scheduler, the workers' Threads and the two
     // Notifications it signals, in slots of its own table.
@@ -433,13 +462,19 @@ pub fn run() -> ! {
         page::P3_THREADS + ACTORS,
         grant(ACTOR_THREAD_SLOT + ACTOR_COUNT, never_configured_key),
     );
-    for (index, key) in (0_u32..).zip(&notification_keys[1..]) {
+    for (index, key) in (0_u32..).zip(&notification_keys[1..3]) {
         words.write(
             page::P3_NOTIFICATIONS + index as usize,
             grant(BURST_SLOT + index, *key),
         );
     }
     words.write(page::PHASE_THREE, grant(PHASE_THREE_SLOT, phase_three_key));
+    words.write(
+        page::P4_TIMED_KEY,
+        grant(TIMED_THREAD_SLOT, timed_thread_key),
+    );
+    words.write(page::P4_TIMED_SLOT, u64::from(TIMED_RECORD_SLOT));
+    words.write(page::P4_SLEEPER, grant(SLEEPER_SLOT, sleeper_key));
 
     // The scheduler shares the table, then takes over the workers' records.
     root_scheduler
@@ -487,6 +522,24 @@ pub fn run() -> ! {
             .start_thread(*thread_key)
             .unwrap_or_else(|error| panic!("actor StartThread failed: {:?}", error.code()));
     }
+    root_scheduler
+        .configure_thread(
+            timed_thread_key,
+            actor.address_space_key,
+            ThreadStart {
+                entry: components::ACTOR.entry.expect("the actor has an entry"),
+                stack_pointer: actor_stack_tops[ACTORS],
+                argument: COUNTER_VA + TIMED_ACTOR as u64 * 64,
+            },
+            timed_time_key,
+        )
+        .unwrap_or_else(|error| panic!("timed ConfigureThread failed: {:?}", error.code()));
+    root_scheduler
+        .assign_record(timed_thread_key, TIMED_RECORD_SLOT)
+        .unwrap_or_else(|error| panic!("timed AssignRecord failed: {:?}", error.code()));
+    root_scheduler
+        .start_thread(timed_thread_key)
+        .unwrap_or_else(|error| panic!("timed StartThread failed: {:?}", error.code()));
     root_scheduler
         .configure_thread(
             dispatcher_thread_key,
@@ -641,8 +694,36 @@ pub fn run() -> ! {
     // began counting; the dispatcher already checked its record changed.
     assert_eq!(actor_count(SPARE), 0, "the retired spare ran");
 
+    // ── Fourth phase: the clock, a timer, a timeout and a sleep ──────────
+    // The armed timer activated the waiting dispatcher with TIMER, though
+    // the mask asks only for runnable Threads, and not before its deadline.
+    assert_eq!(
+        words.read(page::P4_TIMER_REASONS) & activation_reason::TIMER,
+        activation_reason::TIMER
+    );
+    assert_eq!(words.read(page::P4_TIMER_ON_TIME), 1);
+    // The timed wait ended by its ten-millisecond timeout: the Thread became
+    // runnable, which woke the idle-waiting dispatcher, and it counted one
+    // timeout (and is waiting again).
+    assert_eq!(
+        words.read(page::P4_TIMEOUT_REASONS),
+        activation_reason::EVENT
+    );
+    let timeout_ns = words.read(page::P4_TIMEOUT_NS);
+    assert!(
+        (10_000_000..1_000_000_000).contains(&timeout_ns),
+        "the wait timed out after {timeout_ns} ns"
+    );
+    assert_eq!(actor_count(TIMED_ACTOR), 1);
+    // The sleep lasted its fifteen milliseconds, no less.
+    let slept_ns = words.read(page::P4_SLEPT_NS);
+    assert!(
+        (15_000_000..1_000_000_000).contains(&slept_ns),
+        "the sleep took {slept_ns} ns"
+    );
+
     semi::println!(
-        "dispatch-test: ✅ bind, round-robin dispatch, wake preemption, burst coalescing, refusals and activation passed"
+        "dispatch-test: ✅ bind, round-robin dispatch, wake preemption, burst coalescing, refusals, timers, timeouts and sleep passed"
     );
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {

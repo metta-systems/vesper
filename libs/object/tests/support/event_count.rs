@@ -125,3 +125,27 @@ fn event_count_wait_infinite_is_the_selected_encoding() {
     // zero and finite values are invalid/unsupported on the wire.
     assert_eq!(EventCountKey::WAIT_INFINITE, u64::MAX);
 }
+
+#[test]
+fn a_finite_await_times_out_with_the_value_and_sleep_treats_that_as_success() {
+    // The wait ends by timeout: status 43 with the counter value.
+    RESPONSE.with(|pending| assert!(pending.replace(Some((43, 7, 0))).is_none()));
+    let timed_out = event_count_key().await_ge(0x10, 5_000);
+    let (_, op, args, len) = take_request();
+    assert_eq!(len, 2);
+    assert_eq!(op, EventCountOp::Await as u64);
+    assert_eq!(args, [0x10, 5_000, 0, 0, 0, 0]);
+    assert!(matches!(timed_out, Err(CapError::TimedOut { value: 7 })));
+
+    // A sleep waits for a target the counter cannot reach and is happy with
+    // the timeout.
+    RESPONSE.with(|pending| assert!(pending.replace(Some((43, 0, 0))).is_none()));
+    assert!(event_count_key().sleep(1_000_000).is_ok());
+    let (_, _, args, _) = take_request();
+    assert_eq!(args, [u64::MAX, 1_000_000, 0, 0, 0, 0]);
+
+    // Any other failure is still a failure.
+    RESPONSE.with(|pending| assert!(pending.replace(Some((16, 0, 0))).is_none()));
+    assert!(event_count_key().sleep(1_000_000).is_err());
+    take_request();
+}

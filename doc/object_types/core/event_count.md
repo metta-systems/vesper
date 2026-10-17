@@ -26,7 +26,7 @@ Adds `x2` (nonzero) to the counter and wakes every Thread waiting for a target t
 
 ### Await
 
-Returns at once if the counter is already at least `x2`; otherwise blocks until an Advance reaches it. `x3` is the timeout; only `u64::MAX` (wait forever, `EventCountKey::WAIT_INFINITE`) is accepted.
+Returns at once if the counter is already at least `x2`; otherwise blocks until an Advance reaches it. `x3` is the timeout in nanoseconds from now: `u64::MAX` (`EventCountKey::WAIT_INFINITE`) waits forever and 0 is invalid. A finite timeout ends the wait with `TimedOut` at the first timer interrupt at or after the deadline (the timeout rounded up to counter ticks); `x1` is then the counter value. An Advance that reaches the target first wins and the deadline is forgotten. `EventCountKey::sleep(ns)` is a wait on an EventCount nobody advances, for a target it cannot reach, that treats `TimedOut` as success.
 
 ### Read
 
@@ -37,7 +37,8 @@ Returns the current value without blocking. `EventCountReader` in `libs/object` 
 | Error | Cause |
 |---|---|
 | `InsufficientRights` | Missing `Send` or `Receive` |
-| `InvalidOperation` | Delta 0, a timeout other than `u64::MAX`, or a nonzero unused argument |
+| `InvalidOperation` | Delta 0, a timeout of 0, or a nonzero unused argument |
+| `TimedOut` | The timeout ended the wait (`x1` the counter value) |
 | `CounterOverflow` | The advance would exceed `u64::MAX` |
 | `PoolExhausted` | Too many Threads already waiting on this EventCount |
 | `TypeMismatch` | The key does not name an EventCount |
@@ -48,6 +49,6 @@ Data written to shared memory before an Advance is visible to a Thread that obse
 
 ## Planned changes
 
-Finite timeouts for Await, once the kernel has a clock.
+None yet.
 
 An [IRQHandler](irq_handler.md) target, as an alternative to a Notification: each interrupt advances the count, so a Thread sleeping on it learns from one wakeup how many events arrived ([plan](../../capabilities-implementation-plan.md#interrupt-delivery)).

@@ -1409,3 +1409,145 @@ fn binding_a_dispatcher_takes_the_schedulers_threads_off_the_queue_and_runs_it_n
         assert!(nucleus.bind_dispatcher(scheduler_id, waits.source).is_err());
     });
 }
+
+fn arm_timer_call(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    dispatching: &Dispatching,
+    deadline_ns: u64,
+) -> Result<InvokeOutcome, CapError> {
+    cap_invoke(
+        nucleus,
+        dispatching.scheduler,
+        SchedulerOp::ArmTimer as u64,
+        &[deadline_ns, 0, 0, 0, 0, 0],
+    )
+}
+
+#[test_case]
+fn arm_timer_belongs_to_the_dispatcher_and_replaces_its_deadline() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        let far = nucleus.current_time_ns() + 3_600_000_000_000;
+
+        // A Scheduler whose dispatcher is not the caller, or a nonzero
+        // reserved register: refused.
+        let other = test_arena::carve(Scheduler::root()).expect("arena exhausted");
+        let other_key = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(60),
+                KeyEntry::new_carved(other, Rights::all(), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|failure| panic!("install: {:?}", failure.error.code()));
+        assert!(matches!(
+            cap_invoke(
+                nucleus,
+                other_key,
+                SchedulerOp::ArmTimer as u64,
+                &[far, 0, 0, 0, 0, 0],
+            ),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(matches!(
+            cap_invoke(
+                nucleus,
+                dispatching.scheduler,
+                SchedulerOp::ArmTimer as u64,
+                &[far, 1, 0, 0, 0, 0],
+            ),
+            Err(CapError::InvalidOperation)
+        ));
+        assert_eq!(nucleus.next_wakeup_ticks(), None);
+
+        // Arming reports the time now and no previous deadline.
+        let Ok(InvokeOutcome::Complete((now_ns, previous_ns))) =
+            arm_timer_call(nucleus, &dispatching, far)
+        else {
+            panic!("ArmTimer completes");
+        };
+        assert!(now_ns > 0 && now_ns < far);
+        assert_eq!(previous_ns, 0);
+        assert!(nucleus.next_wakeup_ticks().is_some());
+
+        // Re-arming replaces it and reports the earlier deadline, rounded up
+        // to the counter's resolution.
+        let sooner = far - 1_000_000_000;
+        let Ok(InvokeOutcome::Complete((_, previous_ns))) =
+            arm_timer_call(nucleus, &dispatching, sooner)
+        else {
+            panic!("ArmTimer completes");
+        };
+        assert!(previous_ns >= far && previous_ns < far + 1_000_000);
+        // Zero disarms and reports what was armed.
+        let Ok(InvokeOutcome::Complete((_, previous_ns))) =
+            arm_timer_call(nucleus, &dispatching, 0)
+        else {
+            panic!("ArmTimer completes");
+        };
+        assert!(previous_ns >= sooner && previous_ns < sooner + 1_000_000);
+        assert_eq!(nucleus.next_wakeup_ticks(), None);
+        let Ok(InvokeOutcome::Complete((_, previous_ns))) =
+            arm_timer_call(nucleus, &dispatching, 0)
+        else {
+            panic!("ArmTimer completes");
+        };
+        assert_eq!(previous_ns, 0);
+    });
+}
+
+#[test_case]
+fn an_expired_timer_activates_a_parked_dispatcher_whatever_the_mask() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        // The empty mask asks for nothing; a timer is not maskable.
+        arm_timer_call(nucleus, &dispatching, 1)
+            .ok()
+            .expect("ArmTimer");
+        dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, u64::MAX);
+        assert!(scheduler_of(&dispatching).parked().is_some());
+        // The deadline has passed: the timer interrupt's work activates the
+        // dispatcher at once and disarms the timer.
+        nucleus.expire_deadlines();
+        assert!(scheduler_of(&dispatching).parked().is_none());
+        assert!(nucleus.preempt_requested);
+        assert_eq!(nucleus.next_wakeup_ticks(), None);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("the dispatcher preempts")
+        };
+        assert_eq!(resumed.next, waits.source);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::TIMER
+        );
+    });
+}
+
+#[test_case]
+fn a_timer_that_expires_while_the_dispatcher_runs_is_kept_for_its_next_dispatch() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        arm_timer_call(nucleus, &dispatching, 1)
+            .ok()
+            .expect("ArmTimer");
+        nucleus.expire_deadlines();
+        assert_eq!(
+            scheduler_of(&dispatching).pending(),
+            activation_reason::TIMER
+        );
+        // The next Dispatch returns the reason at once and runs nothing.
+        let Ok(InvokeOutcome::Complete((reasons, _events))) =
+            dispatch_call(nucleus, &dispatching, Some(dispatching.tail_key), 1_000, 0)
+        else {
+            panic!("a pending activation returns at once");
+        };
+        assert_eq!(reasons, activation_reason::TIMER);
+        assert_eq!(scheduler_of(&dispatching).pending(), 0);
+    });
+}

@@ -239,10 +239,10 @@ pub fn run() {
 
     // A wait that would block now blocks for real.
     // The end-to-end proof below parks the boot Thread and
-    // resumes it through the Bounce fixture Thread. A finite timeout is
-    // still rejected: the time subsystem does not exist yet.
+    // resumes it through the Bounce fixture Thread. A zero timeout is
+    // invalid for any wait (finite timeouts are exercised by dispatch-test).
     assert!(matches!(
-        notification.wait(1_000_000),
+        notification.wait(0),
         Err(CapError::InvalidOperation)
     ));
     assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
@@ -339,10 +339,9 @@ pub fn run() {
             )),
         7
     );
-    // A finite timeout is still rejected: the time subsystem does not
-    // exist yet.
+    // A zero timeout is invalid for any wait.
     assert!(matches!(
-        event_count.await_ge(100, 1_000_000),
+        event_count.await_ge(100, 0),
         Err(CapError::InvalidOperation)
     ));
 

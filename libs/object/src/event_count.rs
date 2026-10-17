@@ -123,6 +123,20 @@ impl EventCountKey {
         decode_syscall_result(result).map(|(value, _)| value)
     }
 
+    /// Sleep for `ns` nanoseconds: wait on an `EventCount` nobody advances
+    /// for a target it can never reach, so the wait ends by its timeout. The
+    /// `EventCount` must be one only the caller holds with `RECV`; if some
+    /// other holder advanced it to the maximum the sleep would end early.
+    ///
+    /// `ns` must be nonzero (zero is invalid for any wait) and below
+    /// `WAIT_INFINITE`.
+    pub fn sleep(&self, ns: u64) -> Result<(), CapError> {
+        match self.await_ge(u64::MAX, ns) {
+            Ok(_) | Err(CapError::TimedOut { .. }) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Read: observe the counter without blocking. Does not consume.
     ///
     /// Wire schema: no arguments. Authority: `RECV`.

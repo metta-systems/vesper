@@ -51,6 +51,7 @@ pub enum SchedulerOp {
     Dispatch = 6,
     /// Choose which events activate the dispatcher.
     ConfigureActivation = 7,
+    ArmTimer = 8,
 }
 
 impl TryFrom<u64> for SchedulerOp {
@@ -66,6 +67,7 @@ impl TryFrom<u64> for SchedulerOp {
             5 => Ok(Self::BindDispatcher),
             6 => Ok(Self::Dispatch),
             7 => Ok(Self::ConfigureActivation),
+            8 => Ok(Self::ArmTimer),
             _ => Err(CapError::InvalidOperation),
         }
     }
@@ -99,6 +101,9 @@ pub mod activation_reason {
     pub const FAULTED: u64 = 1 << 5;
     /// The dispatched Thread exited.
     pub const EXITED: u64 = 1 << 6;
+    /// The dispatcher's timer (`Scheduler.ArmTimer`) reached its deadline.
+    /// Mandatory: the activation mask does not affect it.
+    pub const TIMER: u64 = 1 << 7;
 }
 
 /// What `Scheduler.Dispatch` reports when it returns.
@@ -108,6 +113,15 @@ pub struct Activation {
     pub reasons: u64,
     /// Scheduling events the nucleus has published so far.
     pub events: u64,
+}
+
+/// What `Scheduler.ArmTimer` reports.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ArmedTimer {
+    /// The monotonic clock now, in nanoseconds.
+    pub now_ns: u64,
+    /// The deadline the call replaced, or 0 if the timer was not armed.
+    pub previous_ns: u64,
 }
 
 /// Where a configured Thread starts.
@@ -295,6 +309,30 @@ impl SchedulerKey {
             )
         };
         decode_syscall_result(result).map(|_| ())
+    }
+
+    /// `ArmTimer`: arm the dispatcher's timer for the absolute `deadline_ns`
+    /// on the monotonic clock (0 disarms it), replacing any earlier deadline.
+    /// When the clock reaches it the timer disarms and activates the
+    /// dispatcher with `activation_reason::TIMER`, whatever the mask.
+    ///
+    /// Wire schema: `x2` deadline in nanoseconds, `x3..x7` zero; the result
+    /// is `x1` the time now and `x2` the previous deadline. Authority:
+    /// `WRITE` on the Scheduler; the caller must be the bound dispatcher.
+    pub fn arm_timer(&self, deadline_ns: u64) -> Result<ArmedTimer, CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result = unsafe {
+            protected_call1(
+                self.key.to_wire(),
+                SchedulerOp::ArmTimer as u64,
+                deadline_ns,
+            )
+        };
+        let (now_ns, previous_ns) = decode_syscall_result(result)?;
+        Ok(ArmedTimer {
+            now_ns,
+            previous_ns,
+        })
     }
 
     /// `StartThread`: make the configured Thread `thread` runnable.

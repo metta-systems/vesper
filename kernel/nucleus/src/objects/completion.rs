@@ -90,6 +90,10 @@ pub struct PendingInvocation {
     /// so teardown can find it without scanning every object.
     object: CarvedId,
     state: PendingState,
+    /// When a finite timeout ends the wait, in counter ticks: an entry of
+    /// the kernel's deadline queue, which the pool's bounded size keeps
+    /// small enough to scan.
+    deadline_ticks: Option<u64>,
 }
 
 impl PendingInvocation {
@@ -178,10 +182,53 @@ impl PendingPool {
             object,
             kind,
             state: PendingState::Waiting,
+            deadline_ticks: None,
         });
         Ok(ObjectId {
             pool: PoolTag::Pending,
             index: u16::try_from(slot).map_err(|_error| CapError::PoolExhausted)?,
+            generation: self.generations[slot],
+        })
+    }
+
+    /// Give the waiting record `id` a deadline: the counter value at which
+    /// its wait times out. Only a `Waiting` record has one.
+    pub fn set_deadline(&mut self, id: ObjectId, deadline_ticks: u64) -> Result<(), CapError> {
+        let record = self.live_mut(id)?;
+        if record.state != PendingState::Waiting {
+            return Err(CapError::InvalidOperation);
+        }
+        record.deadline_ticks = Some(deadline_ticks);
+        Ok(())
+    }
+
+    /// The earliest deadline among the waiting records.
+    pub fn next_deadline(&self) -> Option<u64> {
+        self.records
+            .iter()
+            .flatten()
+            .filter(|record| record.state == PendingState::Waiting)
+            .filter_map(|record| record.deadline_ticks)
+            .min()
+    }
+
+    /// The waiting record with the earliest deadline at or before
+    /// `now_ticks`. Its terminal transition is the caller's.
+    pub fn earliest_expired(&self, now_ticks: u64) -> Option<ObjectId> {
+        let (slot, _deadline) = self
+            .records
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, record)| {
+                let record = record.as_ref()?;
+                let deadline = record.deadline_ticks?;
+                (record.state == PendingState::Waiting && deadline <= now_ticks)
+                    .then_some((slot, deadline))
+            })
+            .min_by_key(|&(_slot, deadline)| deadline)?;
+        Some(ObjectId {
+            pool: PoolTag::Pending,
+            index: u16::try_from(slot).ok()?,
             generation: self.generations[slot],
         })
     }
@@ -234,6 +281,11 @@ impl PendingPool {
             }
             _ => Err(CapError::InvalidOperation),
         }
+    }
+
+    /// The synchronization object whose wait queue holds the record.
+    pub fn object(&self, id: ObjectId) -> Option<CarvedId> {
+        self.live(id).ok().map(PendingInvocation::object)
     }
 
     /// The record's state, if the identity is live.

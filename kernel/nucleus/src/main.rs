@@ -540,6 +540,8 @@ fn handle_irq(frame: &mut ExceptionContext) {
         nucleus.account_interrupts(&handled[..handled_count], interrupt_ticks);
         if ticked {
             nucleus.ticks += 1;
+            // Whatever is due wakes: timed-out waits, dispatcher timers.
+            nucleus.expire_deadlines();
         }
         if !ticked && !nucleus.idle_is_current() && !nucleus.preempt_requested {
             return Ok(None);

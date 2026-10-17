@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x05` (core) |
 | Backing | Kernel object carved from the boot Untyped by Kickstart |
-| Operations | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation (on the root Scheduler) |
+| Operations | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation, ArmTimer (on the root Scheduler) |
 
 ## Purpose
 
@@ -24,6 +24,7 @@ A Scheduler also owns a table of scheduling records. The nucleus writes each of 
 | 5 | BindDispatcher | `x2` Thread | `Write` on the Scheduler; `Write` on the Thread | — |
 | 6 | Dispatch | `x2` Thread or 0, `x3` Time or 0, `x4` limit ns, `x5` generation, `x6`, `x7` zero | `Write` on the Scheduler | `x1` reasons, `x2` events |
 | 7 | ConfigureActivation | `x2` mask | `Write` on the Scheduler | — |
+| 8 | ArmTimer | `x2` deadline in nanoseconds (0 disarms) | `Write` on the Scheduler | `x1` the time now, `x2` the previous deadline |
 
 `Read` is rights bit 0, `Write` and `Map` are bit 1. `SchedulerKey` in `libs/object` wraps the operations. Unused argument registers must be zero.
 
@@ -105,6 +106,18 @@ The named Thread must belong to this Scheduler, not be the dispatcher, be runnab
 | `InvalidOperation` | The caller is not the bound dispatcher; a Thread of another Scheduler or the dispatcher itself; a Thread that cannot run now; a zero limit; a nonzero CPU or reserved register; a Time that is not the Thread's own |
 | `TypeMismatch`, `InsufficientRights` | A key names the wrong kind or lacks `Write` (Time) |
 
+### ArmTimer
+
+Arms the dispatcher's timer for the absolute deadline `x2`, in nanoseconds on the monotonic clock (the physical counter, nanoseconds since it started; 0 disarms). Only the bound dispatcher may call it, and it has one timer: arming replaces the previous deadline. The call returns `x1` the time now and `x2` the previous deadline (0 if none). When the clock reaches the deadline the timer disarms itself and activates the dispatcher with the `TIMER` reason (`1 << 7`), whatever the activation mask says; a deadline already in the past fires at the next kernel exit. A timer ends with its dispatcher. The deadline is converted to counter ticks rounded up and kept in the nucleus's small table of dispatcher timers, which, with the wait timeouts, decides when the one-shot hardware timer next fires.
+
+EL0 reads the same clock with no system call: `CNTVCT_EL0` and `CNTFRQ_EL0` (the nucleus leaves the virtual counter enabled for EL0 with a zero offset); `libuser::clock::now_ns` does the conversion.
+
+| Error | Cause |
+|---|---|
+| `InvalidOperation` | The caller is not the bound dispatcher, or a nonzero unused register |
+| `PoolExhausted` | The table of dispatcher timers is full (8 Schedulers) |
+| `InsufficientRights` | Missing `Write` |
+
 ### ConfigureActivation
 
 Sets which events activate a parked dispatcher besides the ones that always do. The mask has bit 0 `THREAD_RUNNABLE` (a Thread became runnable, including a blocked one waking) and bit 1 `TIME_AVAILABLE` (budget arrived for a Thread that was waiting for it). The dispatched Thread's blocking, fault, exit, yield, exhaustion and limit always activate it. The initial mask is empty. Bits outside the mask fail with `InvalidOperation`. A masked event raised while the dispatcher is not parked is kept as a pending bit and returned by the next `Dispatch`. When the dispatcher activates it is made the next to run and the timer fires at once, so it runs before the preempted Thread.
@@ -153,4 +166,4 @@ The nucleus publishes a Thread's record when it starts, queues, waits for budget
 
 ## Planned changes
 
-Scheduler derivation and handing Threads to subordinate schedulers, a timer a scheduler can arm, a dispatcher per subordinate scheduler, non-blocking dispatch and replacing the running Thread on other CPUs, and retiring the first-in, first-out queue.
+Scheduler derivation and handing Threads to subordinate schedulers, a dispatcher and timer per subordinate scheduler, non-blocking dispatch and replacing the running Thread on other CPUs, and retiring the first-in, first-out queue.

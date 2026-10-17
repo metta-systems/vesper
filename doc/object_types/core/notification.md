@@ -26,7 +26,7 @@ ORs bits into the Notification. A capability with a nonzero badge signals its ba
 
 ### Wait
 
-Returns and clears all pending bits. If none are pending, the caller blocks until a Signal arrives. `x2` is the timeout; only `u64::MAX` (wait forever, `NotificationKey::WAIT_INFINITE`) is accepted.
+Returns and clears all pending bits. If none are pending, the caller blocks until a Signal arrives. `x2` is the timeout in nanoseconds from now: `u64::MAX` (`NotificationKey::WAIT_INFINITE`) waits forever and 0 is invalid. A finite timeout ends the wait with `TimedOut` at the first timer interrupt at or after the deadline; `x1` is then 0, because a wait that timed out consumed nothing. A Signal that arrives first wins and the deadline is forgotten.
 
 ### Poll
 
@@ -37,7 +37,8 @@ Returns and clears all pending bits without blocking; `x1` is 0 if none were pen
 | Error | Cause |
 |---|---|
 | `InsufficientRights` | Missing `Send` or `Recv` |
-| `InvalidOperation` | A timeout other than `u64::MAX`, or a nonzero unused argument |
+| `InvalidOperation` | A timeout of 0, or a nonzero unused argument |
+| `TimedOut` | The timeout ended the wait (`x1` always 0) |
 | `PoolExhausted` | Too many Threads already waiting on this Notification |
 | `TypeMismatch` | The key does not name a Notification |
 
@@ -47,4 +48,4 @@ Bits written to shared memory before a Signal are visible to the Thread that rec
 
 ## Planned changes
 
-Finite timeouts for Wait, once the kernel has a clock.
+None yet.

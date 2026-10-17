@@ -20,7 +20,7 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | KeyTable | `0x02` | [key_table.md](core/key_table.md) | CopyDerive, Move, Delete |
 | Thread | `0x03` | [thread.md](core/thread.md) | Return, Retire |
 | Time | `0x04` | [time.md](core/time.md) | Transfer, Merge, Query |
-| Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation (root Scheduler) |
+| Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation, ArmTimer (root Scheduler) |
 | Invocation | `0x06` | [invocation.md](core/invocation.md) | Call, CallWithKey |
 | Notification | `0x07` | [notification.md](core/notification.md) | Signal, Wait, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
@@ -121,6 +121,7 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 40 | `NotBound` | 0 | 0 |
 | 41 | `InvalidSelfReference` | the self slot (4, `SELF_KEYTABLE`) | the key that led to the table, see [KeyTable](core/key_table.md#keys-and-incarnations) |
 | 42 | `StaleGeneration` | the Thread's current generation | 0 |
+| 43 | `TimedOut` | the EventCount value (0 for a Notification) | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 

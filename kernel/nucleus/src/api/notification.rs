@@ -96,11 +96,10 @@ pub fn invoke<A: ArchObjects>(
             if args[1..].iter().any(|&arg| arg != 0) {
                 return Err(CapError::InvalidOperation);
             }
-            // Timeout model: `u64::MAX` = infinite.
-            // Zero is invalid and finite values are unsupported until the
-            // time subsystem exists — both rejected with a defined error
-            // rather than a pretended timeout.
-            if args[0] != u64::MAX {
+            // Timeout model: `u64::MAX` = infinite, zero is invalid, and any
+            // other value is a relative deadline in nanoseconds.
+            let timeout_ns = args[0];
+            if timeout_ns == 0 {
                 return Err(CapError::InvalidOperation);
             }
             // The already-satisfied path is real behavior: consume and
@@ -119,6 +118,11 @@ pub fn invoke<A: ArchObjects>(
                 // The blocking path's success line prints at the resume that
                 // delivers the completed result (see `park_and_resume`).
                 crate::objects::notification::WaitOutcome::Blocked(record) => {
+                    if timeout_ns != u64::MAX {
+                        nucleus
+                            .set_wait_timeout(record, timeout_ns)
+                            .unwrap_or_else(|_| panic!("a fresh waiting record takes a deadline"));
+                    }
                     Ok(InvokeOutcome::Blocked(record))
                 }
             }

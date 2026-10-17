@@ -63,10 +63,10 @@ The dispatcher, dispatch and activation rules are in the [Time contract](capabil
 
 Needs Phase 3.
 
-- [ ] A kernel deadline queue ordered by next event; `CNTP_CVAL` programmed to its head.
-- [ ] `EventCount.Await` finite timeout (currently `InvalidOperation`), then a sleep built on it.
-- [ ] `Scheduler.arm_timer(deadline)`: an absolute monotonic deadline that is an explicit activation request for the scheduler. Activation timers only; a notify-only timer mode is added only if a real use needs it.
-- [ ] Expose a clock read to EL0 only if the virtual counter is not sufficient.
+- [x] A kernel deadline queue ordered by next event; `CNTP_CVAL` programmed to its head. The queue is the pending-record pool's finite deadlines (`PendingPool::next_deadline`, a scan of at most 32 records) together with the table of dispatcher timers (`objects/timers.rs`); `Nucleus::timer_deadline_ticks` takes the earliest of those and the slice, limit and exhaustion, and `timer::program` writes it. The timer interrupt runs `Nucleus::expire_deadlines`.
+- [x] `EventCount.Await` and `Notification.Wait` finite timeouts, completing with `TIMED_OUT` (status 43, `CapError::TimedOut`), then a sleep built on it (`EventCountKey::sleep`).
+- [x] `Scheduler.ArmTimer` (op 8): an absolute monotonic deadline in nanoseconds that is an explicit activation request for the dispatcher (`TIMER` reason, not maskable); one timer per dispatcher. Activation timers only; a notify-only timer mode is added only if a real use needs it.
+- [x] The virtual counter is sufficient: the nucleus already leaves `CNTKCTL_EL1.EL0VCTEN` set with a zero virtual offset, so EL0 reads the nucleus's clock with `CNTVCT_EL0` (`libuser::clock`). No clock-read operation. Tests: nucleus tests for timeouts, completion-versus-deadline races, the earliest deadline, ArmTimer rules, timer activation with an empty mask and a pending TIMER; host tests for the ABI and `sleep`; `dispatch-test` phase four (the EL0 clock against the kernel's, a timer waking the idle-waiting dispatcher at its deadline, a ten-millisecond Notification timeout, a fifteen-millisecond sleep).
 
 ## Phase 7 — Receiver Times and wakeups
 

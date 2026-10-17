@@ -4,6 +4,7 @@ use {
         objects::{
             ArchObjects, EventCount, KeyTable, Notification, PendingPool, RunQueue, Scheduler,
             Thread, Time,
+            access::ObjectId,
             arch::ArchPools,
             arch_objects::{AddressSpaceId, AddressSpaceObject, PageTableId},
             carved::{Carved, CarvedId},
@@ -13,7 +14,8 @@ use {
             key_table::KeyTableBinding,
             scheduler::Region,
             thread::{ExecutionContext, RecordSlot, ThreadId},
-            time::ticks_to_ns_ceil,
+            time::{ns_to_ticks_ceil, ticks_to_ns_ceil},
+            timers::SchedulerTimers,
         },
     },
     libaddress::PhysAddr,
@@ -117,6 +119,8 @@ pub struct Nucleus<A: ArchObjects> {
     /// An activation made the dispatcher runnable ahead of the Thread that
     /// is running: the timer fires at once so the nucleus switches.
     pub preempt_requested: bool,
+    /// The dispatchers' armed timers (`Scheduler.ArmTimer`).
+    pub timers: SchedulerTimers,
 }
 
 /// A Thread that a dispatcher's `Dispatch` runs.
@@ -381,6 +385,115 @@ impl<A: ArchObjects> Nucleus<A> {
     /// the slice length. The idle Thread, waiting for interrupts, and a
     /// Thread running alone on an unlimited budget need no timer.
     pub fn timer_deadline_ticks(&mut self, slice_ticks: u64) -> Option<u64> {
+        // A wait timeout or a dispatcher's timer needs the timer even when
+        // nothing else does, the idle Thread running included.
+        let wakeup = self.next_wakeup_ticks();
+        let own = self.running_deadline_ticks(slice_ticks);
+        match (own, wakeup) {
+            (Some(own), Some(wakeup)) => Some(own.min(wakeup)),
+            (own, wakeup) => own.or(wakeup),
+        }
+    }
+
+    /// The earliest instant a wait times out or a dispatcher's timer is due.
+    pub fn next_wakeup_ticks(&self) -> Option<u64> {
+        match (self.pending.next_deadline(), self.timers.next_deadline()) {
+            (Some(wait), Some(timer)) => Some(wait.min(timer)),
+            (wait, timer) => wait.or(timer),
+        }
+    }
+
+    /// Give the waiting record `record` a timeout of `timeout_ns` from now.
+    pub fn set_wait_timeout(&mut self, record: ObjectId, timeout_ns: u64) -> Result<(), CapError> {
+        let deadline = self
+            .counter_ticks()
+            .saturating_add(ns_to_ticks_ceil(timeout_ns, self.counter_frequency()));
+        self.pending.set_deadline(record, deadline)
+    }
+
+    /// Arm (or, for `deadline_ns` 0, disarm) `scheduler`'s dispatcher timer
+    /// for the absolute `deadline_ns` on the monotonic clock. Returns the time
+    /// now and the previous deadline, both in nanoseconds, the latter 0 if
+    /// the timer was not armed.
+    pub fn arm_dispatcher_timer(
+        &mut self,
+        scheduler: CarvedId,
+        deadline_ns: u64,
+    ) -> Result<(u64, u64), CapError> {
+        let frequency = self.counter_frequency();
+        let previous = if deadline_ns == 0 {
+            self.timers.disarm(scheduler)
+        } else {
+            self.timers
+                .arm(scheduler, ns_to_ticks_ceil(deadline_ns, frequency))?
+        };
+        Ok((
+            ticks_to_ns_ceil(self.counter_ticks(), frequency),
+            previous.map_or(0, |ticks| ticks_to_ns_ceil(ticks, frequency)),
+        ))
+    }
+
+    /// End a dispatcher's timer with its dispatcher.
+    pub fn disarm_dispatcher_timer(&mut self, scheduler: CarvedId) {
+        self.timers.disarm(scheduler);
+    }
+
+    /// Process everything that is due: waits whose timeout has passed
+    /// complete with `TIMED_OUT`, and dispatcher timers activate their
+    /// dispatchers. The timer interrupt calls this.
+    pub fn expire_deadlines(&mut self) {
+        let now = self.counter_ticks();
+        while let Some(record) = self.pending.earliest_expired(now) {
+            self.time_out_wait(record);
+        }
+        while let Some(scheduler) = self.timers.take_expired(now) {
+            self.request_activation(scheduler, activation_reason::TIMER, 0);
+        }
+    }
+
+    /// Give the waiting record `record` its terminal transition by timeout:
+    /// the waiter leaves the object's wait queue, completes with
+    /// `TIMED_OUT` and the object's current value, and becomes runnable.
+    fn time_out_wait(&mut self, record: ObjectId) {
+        let Ok(waiter) = self.pending.waiter(record) else {
+            return;
+        };
+        let object = self.pending.object(record);
+        let mut value = 0;
+        if let Some(object) = object {
+            // SAFETY: the identity comes from a pending record, which only a
+            // wait on a resolved carved object creates; carved memory is never
+            // freed. A retired object fails validation and holds no queue.
+            unsafe {
+                if let Ok(notification) = Carved::<Notification>::validate(object) {
+                    (*notification).remove_waiter(waiter, &self.pending);
+                    value = (*notification).pending_bits();
+                } else if let Ok(event_count) = Carved::<EventCount>::validate(object) {
+                    (*event_count).remove_waiter(waiter, &self.pending);
+                    value = (*event_count).read();
+                }
+            }
+        }
+        // Only a `Waiting` record has a deadline, so this transition wins.
+        if self
+            .pending
+            .complete_with_status(record, syscall_status::TIMED_OUT, value, 0)
+            .is_err()
+        {
+            return;
+        }
+        // A completed record's waiter is parked, so it is not already queued.
+        // A waiter that was torn down will never resume: release the record.
+        if self.thread(waiter).is_some() {
+            self.make_runnable(waiter);
+        } else {
+            self.pending.release(record).ok();
+        }
+    }
+
+    /// The earliest counter value at which the running Thread needs the
+    /// timer, apart from timeouts and dispatcher timers.
+    fn running_deadline_ticks(&mut self, slice_ticks: u64) -> Option<u64> {
         let current = self.current_thread?;
         // An activation made the dispatcher runnable ahead of the running
         // Thread: fire at once so the nucleus switches.
@@ -839,10 +952,13 @@ impl<A: ArchObjects> Nucleus<A> {
         let scheduler = self
             .thread(thread)
             .and_then(|torn_down| torn_down.scheduler);
-        if let Some(scheduler) = scheduler.and_then(|id| self.scheduler_mut(id))
+        if let Some(scheduler_id) = scheduler
+            && let Some(scheduler) = self.scheduler_mut(scheduler_id)
             && scheduler.dispatcher() == Some(thread)
         {
             scheduler.take_parked();
+            // Its timer ends with it.
+            self.timers.disarm(scheduler_id);
         }
         self.run_queue.remove(thread);
         Ok(())
@@ -905,6 +1021,7 @@ mod tests {
                 dispatched: None,
                 dispatch_next: None,
                 preempt_requested: false,
+                timers: crate::objects::timers::SchedulerTimers::new(),
                 pools: NucleusPools {
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.
@@ -1045,6 +1162,122 @@ mod tests {
             Ok(AdvanceOutcome::Overflow { .. }) => panic!("advance should not overflow"),
             Err(_) => panic!("advance after teardown failed"),
         }
+    }
+
+    #[test_case]
+    fn a_notification_wait_past_its_deadline_times_out_and_leaves_the_queue() {
+        let nucleus = fixture_nucleus();
+        let waiter = carve_thread();
+        let (n, _e) = carve_objects();
+        let record = block_on_notification(nucleus, n, waiter);
+        // No deadline: nothing to expire.
+        assert_eq!(nucleus.next_wakeup_ticks(), None);
+        nucleus.expire_deadlines();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Waiting)
+        );
+
+        // A deadline in the past: the wait completes with TIMED_OUT, the
+        // waiter is runnable, and a later signal finds nobody queued.
+        nucleus.pending.set_deadline(record, 0).ok().unwrap();
+        assert_eq!(nucleus.next_wakeup_ticks(), Some(0));
+        nucleus.expire_deadlines();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::TIMED_OUT,
+                result0: 0,
+                result1: 0
+            })
+        );
+        assert_eq!(nucleus.run_queue.len(), 1);
+        assert_eq!(nucleus.next_wakeup_ticks(), None);
+        let notification = object::<Notification>(n);
+        assert!(matches!(
+            notification.signal(0b1, &mut nucleus.pending),
+            Ok(None)
+        ));
+        assert_eq!(notification.pending_bits(), 0b1);
+    }
+
+    #[test_case]
+    fn an_await_past_its_deadline_times_out_with_the_current_value() {
+        let nucleus = fixture_nucleus();
+        let waiter = carve_thread();
+        let (_n, e) = carve_objects();
+        match object::<EventCount>(e).advance(3, &mut nucleus.pending) {
+            Ok(AdvanceOutcome::Advanced { .. }) => {}
+            _ => panic!("advance failed"),
+        }
+        let record = match object::<EventCount>(e).await_ge(e, 10, waiter, &mut nucleus.pending) {
+            Ok(AwaitOutcome::Blocked(record)) => record,
+            _ => panic!("await should block"),
+        };
+        nucleus.pending.set_deadline(record, 0).ok().unwrap();
+        nucleus.expire_deadlines();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::TIMED_OUT,
+                result0: 3,
+                result1: 0
+            })
+        );
+        // The wait left the queue: reaching the target wakes no one.
+        match object::<EventCount>(e).advance(7, &mut nucleus.pending) {
+            Ok(AdvanceOutcome::Advanced { woken, new_value }) => {
+                assert_eq!(woken.iter().count(), 0);
+                assert_eq!(new_value, 10);
+            }
+            _ => panic!("advance failed"),
+        }
+    }
+
+    #[test_case]
+    fn a_completion_before_the_deadline_wins_and_the_deadline_is_forgotten() {
+        let nucleus = fixture_nucleus();
+        let waiter = carve_thread();
+        let (n, _e) = carve_objects();
+        let record = block_on_notification(nucleus, n, waiter);
+        nucleus.pending.set_deadline(record, 0).ok().unwrap();
+        // The signal completes the record first.
+        match object::<Notification>(n).signal(0b10, &mut nucleus.pending) {
+            Ok(Some(woken)) => assert_eq!(woken, record),
+            _ => panic!("signal should wake the waiter"),
+        }
+        assert_eq!(nucleus.next_wakeup_ticks(), None);
+        nucleus.expire_deadlines();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
+                result0: 0b10,
+                result1: 0
+            })
+        );
+        assert!(nucleus.run_queue.is_empty());
+    }
+
+    #[test_case]
+    fn the_next_wakeup_is_the_earliest_wait_deadline() {
+        let nucleus = fixture_nucleus();
+        let (a, b) = (carve_thread(), carve_thread());
+        let (n, e) = carve_objects();
+        let first = block_on_notification(nucleus, n, a);
+        let second = match object::<EventCount>(e).await_ge(e, 1, b, &mut nucleus.pending) {
+            Ok(AwaitOutcome::Blocked(record)) => record,
+            _ => panic!("await should block"),
+        };
+        nucleus.pending.set_deadline(first, 900).ok().unwrap();
+        nucleus.pending.set_deadline(second, 400).ok().unwrap();
+        assert_eq!(nucleus.next_wakeup_ticks(), Some(400));
+        assert_eq!(nucleus.pending.earliest_expired(399), None);
+        assert_eq!(nucleus.pending.earliest_expired(500), Some(second));
+        // A record that is not waiting takes no deadline.
+        nucleus.pending.cancel(first).ok().unwrap();
+        assert!(nucleus.pending.set_deadline(first, 1).is_err());
+        assert_eq!(nucleus.next_wakeup_ticks(), Some(400));
     }
 
     #[test_case]

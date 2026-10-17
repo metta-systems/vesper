@@ -71,6 +71,7 @@ pub fn invoke<A: ArchObjects>(
         SchedulerOp::ConfigureActivation => {
             complete(configure_activation(access, key, scheduler, args))
         }
+        SchedulerOp::ArmTimer => complete(arm_timer(access, key, scheduler, args, nucleus)),
     }
 }
 
@@ -300,6 +301,32 @@ fn bind_dispatcher<A: ArchObjects>(
     nucleus.bind_dispatcher(scheduler, thread_id)?;
     semi::println!("✅ Scheduler::BindDispatcher()");
     Ok((0, 0))
+}
+
+/// `ArmTimer` `8`: arm the dispatcher's timer for an absolute deadline on the
+/// monotonic clock, in nanoseconds (0 disarms it). Only the bound dispatcher
+/// may call it. The result is the time now and the previous deadline.
+fn arm_timer<A: ArchObjects>(
+    access: &Access,
+    key: RawKey,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
+) -> Result<(u64, u64), CapError> {
+    if args[1..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let dispatcher = nucleus.current_thread_id()?;
+    let bound = access
+        .resolve_object::<Scheduler>(scheduler)
+        .map_err(|error| error.for_key(key, 0))?
+        .dispatcher();
+    if bound != Some(dispatcher) {
+        return Err(CapError::InvalidOperation);
+    }
+    let armed = nucleus.arm_dispatcher_timer(scheduler, args[0])?;
+    semi::println!("✅ Scheduler::ArmTimer(deadline {} ns)", args[0]);
+    Ok(armed)
 }
 
 /// `ConfigureActivation` `7`: choose the events that activate the

@@ -18,7 +18,6 @@ The record ABI and the Phase 5 single-CPU dispatcher design are selected (see
 the contract); the record numbers and `AssignRecord` are trial choices to
 revisit after use. Unanswered questions:
 
-- What are the register schema and clock of `Scheduler.arm_timer` (Phase 6)?
 - What is the scheduler donation schema, and how is strict-tree scheduler
   ownership enforced (Phase 9)?
 - What does multicore need: `Scheduler.replace`, a non-blocking dispatch, and
@@ -96,8 +95,9 @@ revisit after use. Unanswered questions:
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
 - **D8:** what happens to remaining budget when a Time is deleted; the
-  `dispatch` and `replace` register schemas, rights and generation encoding;
-  the clock source (the physical counter today).
+  `replace` register schema, rights and generation encoding (multicore). The
+  `Dispatch` and `ArmTimer` schemas and the clock are selected: see the
+  contract.
 - **IRQ follow-up:** whether a Thread may bind one Notification for both
   PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built

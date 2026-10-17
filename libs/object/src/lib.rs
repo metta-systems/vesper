@@ -136,6 +136,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::NO_PLACEMENT_SLOT, 0, 0) => CapError::NoPlacementSlot,
             (code::NOT_BOUND, 0, 0) => CapError::NotBound,
             (code::STALE_GENERATION, current, 0) => CapError::StaleGeneration { current },
+            (code::TIMED_OUT, value, 0) => CapError::TimedOut { value },
             (code::INVALID_SELF_REFERENCE, slot, key) => CapError::InvalidSelfReference {
                 reference: InvalidSelfReference::from_slot(slot)?,
                 key: RawKey::from_wire(key),
@@ -254,6 +255,11 @@ pub enum CapError {
     StaleGeneration {
         current: u64,
     },
+    /// A wait with a finite timeout reached its deadline first; `value` is
+    /// the `EventCount` value (or the Notification bitmap, always zero).
+    TimedOut {
+        value: u64,
+    },
     /// A `KeyTable` does not name itself in the well-known self slot
     /// `reference` names; `key` led to the table (the invoked key at syscall
     /// entry, the table key of `AddressSpace.Bind`).
@@ -362,6 +368,7 @@ impl CapError {
             CapError::NoPlacementSlot => (code::NO_PLACEMENT_SLOT, 0, 0),
             CapError::NotBound => (code::NOT_BOUND, 0, 0),
             CapError::StaleGeneration { current } => (code::STALE_GENERATION, current, 0),
+            CapError::TimedOut { value } => (code::TIMED_OUT, value, 0),
             CapError::InvalidSelfReference { reference, key } => (
                 code::INVALID_SELF_REFERENCE,
                 u64::from(reference.slot().0),

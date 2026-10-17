@@ -12,7 +12,7 @@
 use {
     core::sync::atomic::{AtomicU64, Ordering},
     libobject::{
-        CapError, NotificationKey, RawKey, ThreadKey,
+        CapError, EventCountKey, NotificationKey, RawKey, ThreadKey,
         scheduler::{SchedulerKey, activation_mask, activation_reason},
         scheduler_record::ThreadRecord,
         thread::ThreadState,
@@ -68,7 +68,22 @@ const P3_AFTER_REASONS: usize = 50;
 const P3_RETIRED_REFUSED: usize = 51;
 const P3_FOREIGN_REFUSED: usize = 52;
 const P3_BURST_RUNNABLE: usize = 53;
-const WORDS: usize = 64;
+/// Phase four parameters: the timed waiter's Thread key and record slot, the
+/// `EventCount` the dispatcher sleeps on, and the Notification signalled at the
+/// end.
+const P4_TIMED_KEY: usize = 54;
+const P4_TIMED_SLOT: usize = 55;
+const P4_SLEEPER: usize = 56;
+/// Phase four observations: the time the sleep took, the reasons of the
+/// activation the armed timer caused and whether it came at or after the
+/// deadline, and the reasons and duration of the wait for the timed
+/// waiter's timeout.
+const P4_SLEPT_NS: usize = 57;
+const P4_TIMER_REASONS: usize = 58;
+const P4_TIMER_ON_TIME: usize = 59;
+const P4_TIMEOUT_REASONS: usize = 60;
+const P4_TIMEOUT_NS: usize = 61;
+const WORDS: usize = 80;
 
 const WORKERS: usize = 3;
 
@@ -85,6 +100,8 @@ const KICKER_INDEX: usize = 3;
 const SPARE_INDEX: usize = 4;
 const NEVER_CONFIGURED_INDEX: usize = 5;
 const SECOND: u64 = 1_000_000_000;
+/// A millisecond in nanoseconds.
+const MILLISECOND: u64 = 1_000_000;
 
 fn main(page: u64) -> ! {
     // SAFETY: the loader maps the page for this component before it starts;
@@ -174,6 +191,10 @@ fn main(page: u64) -> ! {
         .unwrap_or_else(|error| fail("phase two signal", error));
 
     phase_three(page, &scheduler, records, stride);
+    phase_four(page, &scheduler, records, stride);
+    NotificationKey::from_key(RawKey::from_wire(word(PHASE_THREE)))
+        .signal(1)
+        .unwrap_or_else(|error| fail("phase three signal", error));
     loop {
         // Nothing left to run; wait for nothing in particular.
         scheduler.dispatch(None, u64::MAX, 0).ok();
@@ -273,8 +294,76 @@ fn phase_three(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8,
         Err(CapError::InvalidOperation)
     ));
     page[P3_FOREIGN_REFUSED].store(1, Ordering::Release);
+}
 
-    NotificationKey::from_key(RawKey::from_wire(word(PHASE_THREE)))
-        .signal(1)
-        .unwrap_or_else(|error| fail("phase three signal", error));
+/// Time: the clock EL0 reads, a timer armed for a deadline, a wait that times
+/// out and a sleep.
+fn phase_four(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, stride: usize) {
+    let word = |index: usize| page[index].load(Ordering::Relaxed);
+
+    // The clock EL0 reads is the one the nucleus keeps: the kernel's reading
+    // lies between two of ours. Disarming (there is no timer yet) reports it.
+    let before = libuser::clock::now_ns();
+    let kernel_now = scheduler
+        .arm_timer(0)
+        .unwrap_or_else(|error| fail("ArmTimer (disarm)", error))
+        .now_ns;
+    let after = libuser::clock::now_ns();
+    assert!(before <= kernel_now + 1_000 && kernel_now <= after + 1_000);
+
+    // An armed timer activates the waiting dispatcher with `TIMER`, at or
+    // after its deadline, though the mask asks for no such event.
+    let deadline = after + 20 * MILLISECOND;
+    scheduler
+        .arm_timer(deadline)
+        .unwrap_or_else(|error| fail("ArmTimer", error));
+    let woken = scheduler
+        .dispatch(None, u64::MAX, 0)
+        .unwrap_or_else(|error| fail("Dispatch (waiting for the timer)", error));
+    page[P4_TIMER_REASONS].store(woken.reasons, Ordering::Release);
+    page[P4_TIMER_ON_TIME].store(
+        u64::from(libuser::clock::now_ns() >= deadline),
+        Ordering::Release,
+    );
+
+    // A Notification wait with a timeout nobody signals within: the timed
+    // waiter blocks, and ten milliseconds later its timeout makes it runnable.
+    let timed = RawKey::from_wire(word(P4_TIMED_KEY));
+    let timed_record = {
+        let slot = usize::try_from(word(P4_TIMED_SLOT)).unwrap_or(usize::MAX);
+        // SAFETY: the record table is mapped for this component, 64-byte
+        // aligned, and the slot lies inside it; records are read through
+        // atomics.
+        unsafe { ThreadRecord::at(records.add(slot * stride)) }
+    };
+    let generation = timed_record
+        .try_snapshot(SNAPSHOT_RETRIES)
+        .expect("a consistent record")
+        .generation;
+    let blocked = scheduler
+        .dispatch(Some(timed), 1_000 * MILLISECOND, generation)
+        .unwrap_or_else(|error| fail("Dispatch (timed waiter)", error));
+    assert_eq!(blocked.reasons, activation_reason::BLOCKED);
+    let waiting_since = libuser::clock::now_ns();
+    let timed_out = scheduler
+        .dispatch(None, u64::MAX, 0)
+        .unwrap_or_else(|error| fail("Dispatch (waiting for the timeout)", error));
+    page[P4_TIMEOUT_REASONS].store(timed_out.reasons, Ordering::Release);
+    page[P4_TIMEOUT_NS].store(libuser::clock::now_ns() - waiting_since, Ordering::Release);
+    let snapshot = timed_record
+        .try_snapshot(SNAPSHOT_RETRIES)
+        .expect("a consistent record");
+    assert_eq!(snapshot.thread_state(), Some(ThreadState::Runnable));
+    // It runs, sees the timeout, counts it and waits again.
+    let again = scheduler
+        .dispatch(Some(timed), 1_000 * MILLISECOND, snapshot.generation)
+        .unwrap_or_else(|error| fail("Dispatch (timed waiter again)", error));
+    assert_eq!(again.reasons, activation_reason::BLOCKED);
+
+    // A sleep: an EventCount nobody advances, awaited with a timeout.
+    let started = libuser::clock::now_ns();
+    EventCountKey::from_key(RawKey::from_wire(word(P4_SLEEPER)))
+        .sleep(15 * MILLISECOND)
+        .unwrap_or_else(|error| fail("sleep", error));
+    page[P4_SLEPT_NS].store(libuser::clock::now_ns() - started, Ordering::Release);
 }
