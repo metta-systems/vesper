@@ -1,0 +1,8 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Functions of other components the USB HID driver calls: the USB core
+# (`usb_v1`) to claim its interface, and the host controller (`usb_hcd_v1`) for
+# interrupt-IN reports. Both `uses` declarations need the device tree link of
+# the HID component, which is an open decision (see doc/agentic/usb-design.md).

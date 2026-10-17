@@ -1,0 +1,58 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The USB core (enumeration, descriptors, hubs) for class drivers: a driver
+## claims an interface by its class codes and then talks to that interface on
+## its own. The core is off the data path: after a claim, interrupt and bulk
+## data go straight from the host controller to the claimant, and this
+## interface carries control transfers only. Prototype: edited in place.
+local interface usb_v1
+{
+    ## Control transfers on a claimed interface are staged in the claimant's data
+    ## area, with the same layout as `usb_hcd_v1.control`.
+    data 4096;
+
+    ## No claim with that handle exists, or it was released.
+    exception no_claim {}
+
+    ## The claimed device was unplugged; the claim is gone.
+    exception device_gone {}
+
+    ## The device answered a control transfer with a STALL.
+    exception stalled {}
+
+    ## The control transfer failed on the bus; `status` is the controller's status.
+    exception transfer_failed { card32 status; }
+
+    ## The controller is busy with another exclusive operation.
+    exception busy {}
+
+    ## The request is not allowed for this claim.
+    exception not_permitted {}
+
+    ## Claim an interface of an attached device whose class, subclass and
+    ## protocol match; returns the claim's handle. The call waits until such a
+    ## device is attached, so a class driver can start before its device.
+    claim_interface(card32 class_code, card32 subclass, card32 protocol)
+        returns (card32 claim)
+        raises (busy);
+
+    ## Release a claim. The interface's pipes are closed, and a device left
+    ## without any claim is left idle.
+    release(card32 claim)
+        raises (no_claim);
+
+    ## The pipe handle of the claimed interface's interrupt-IN endpoint, which the
+    ## claimant then uses with `usb_hcd_v1` for its reports. The core has no
+    ## other part in the data path.
+    interrupt_pipe(card32 claim)
+        returns (card32 pipe)
+        raises (no_claim, device_gone);
+
+    ## Run a control transfer on the claimed interface's device, such as a HID
+    ## class request. `stage` has the same layout as `usb_hcd_v1.control`.
+    control(card32 claim, octet& stage)
+        returns (card32 transferred)
+        raises (no_claim, device_gone, stalled, transfer_failed, busy, not_permitted);
+}

@@ -33,6 +33,10 @@ members = [
   "drivers/fb",
   "drivers/fb/client",
   "drivers/fb/server",
+  # USB pure protocol logic (host-testable)
+  "drivers/usb/protocol",
+  "drivers/usb-hcd-dwc2",
+  "kernel/tests/usb-test",
   # Libraries
   "libs/address",
   "libs/alloc",

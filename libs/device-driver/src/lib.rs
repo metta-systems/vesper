@@ -117,7 +117,7 @@ pub const FB_WINDOW_SPANS: usize = 4;
 /// Most register ranges of one node.
 pub const MAX_REGIONS: usize = 4;
 /// Most register pages of one node.
-pub const MAX_DEVICE_PAGES: usize = 16;
+pub const MAX_DEVICE_PAGES: usize = 32;
 /// [`DriverInit::memory_bus`] when the device cannot reach the driver's memory.
 pub const NO_BUS_ADDRESS: u64 = u64::MAX;
 

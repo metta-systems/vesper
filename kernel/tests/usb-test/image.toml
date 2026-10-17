@@ -1,0 +1,6 @@
+# What usb-test bundles (see vesper-image-build): the DWC2 host controller
+# component, loaded by Kickstart once per enabled `brcm,bcm2708-usb` node.
+
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"

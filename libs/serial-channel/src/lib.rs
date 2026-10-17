@@ -59,7 +59,7 @@ pub const DATA_PAGES: u32 = 4;
 
 /// Where the driver maps the control page: in its device window, above
 /// every register page (`libdevice-driver`).
-pub const CONTROL_VA: u64 = 0x3801_0000;
+pub const CONTROL_VA: u64 = 0x3802_0000;
 
 /// Where both sides map the data area: the address every [`IoRec`] names.
 ///
