@@ -66,4 +66,4 @@ Kickstart carves the line table from the boot Untyped, one record per line of th
 
 ## Planned changes
 
-Direct switch to the interrupt handler's thread if it's priority is higher than the currently executing thread. This may cause hardware to starve the running app so needs to be investigated first.
+The wakeup will be reported to the responsible scheduler, which decides whether the interrupt handler's thread runs at once in place of the currently executing thread. Running it immediately may cause the hardware to starve the running app, so this needs to be investigated first.

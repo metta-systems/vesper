@@ -71,6 +71,11 @@ pub struct Nucleus<A: ArchObjects> {
     pub irq_table: IrqTable,
     /// Preemption-timer ticks taken since boot.
     pub ticks: u64,
+    /// When the current Thread was last made current, in nanoseconds on the
+    /// [`Nucleus::current_time_ns`] timeline. The next switch away charges
+    /// the elapsed time to that Thread's `run_time_ns`. Starts at zero, so
+    /// the boot Thread is charged from counter start.
+    pub current_since_ns: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -88,6 +93,13 @@ impl<A: ArchObjects> Nucleus<A> {
     #[expect(clippy::unused_self)]
     pub fn current_time_ns(&self) -> u64 {
         crate::timer::now_ns()
+    }
+
+    /// Nanoseconds `id` has executed as of its last switch-out; `None` when
+    /// the identity no longer names a live Thread. The interval of a Thread
+    /// that is running now is charged when it is next switched away from.
+    pub fn run_time_ns(&self, id: ThreadId) -> Option<u64> {
+        self.thread(id).map(|thread| thread.run_time_ns)
     }
 
     /// The current Thread's identity. `InvalidThread` when no Thread is
@@ -355,6 +367,7 @@ mod tests {
                 idle_thread: None,
                 irq_table: crate::objects::irq::IrqTable::empty(),
                 ticks: 0,
+                current_since_ns: 0,
                 pools: NucleusPools {
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.

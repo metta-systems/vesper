@@ -30,7 +30,7 @@ use {
     libmapping::MemAttributes,
     libobject::{
         CapError, FrameAttribute, KeySlot, ObjectType, RawKey, Rights,
-        time::{Budget, HIGHEST_PRIORITY, INFINITE_BUDGET},
+        time::{Budget, INFINITE_BUDGET},
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -117,6 +117,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         idle_thread: None,
         irq_table: IrqTable::empty(),
         ticks: 0,
+        current_since_ns: 0,
         pools: NucleusPools::<A> {
             // SAFETY: the architecture pool backings were carved above from
             // the boot Untyped's unused watermark range and are exclusively
@@ -315,9 +316,8 @@ pub fn bootstrap_nucleus() -> BootState {
     };
 
     // Carve the boot Time from the boot Untyped, like any Retype-created
-    // object: the root budget on core 0, whose chain names itself at the most
-    // urgent priority. Retype only creates empty Times, so every other budget
-    // is transferred out of this one.
+    // object: the root budget on core 0. Retype only creates empty Times, so
+    // every other budget is transferred out of this one.
     let boot_time_paddr = carve_region(boot_payload, Carved::<Time>::SIZE)
         .unwrap_or_else(|error| panic!("boot Time carve failed: {:?}", error.code()));
     let boot_time_address = boot_time_paddr.user_to_kernel().as_mut_ptr::<u8>();
@@ -328,7 +328,7 @@ pub fn bootstrap_nucleus() -> BootState {
     // SAFETY: the record was initialized just above and nothing else names it.
     unsafe {
         *Carved::<Time>::validate(boot_time_id).expect("boot Time just carved") =
-            Time::root(0, boot_time_id, BOOT_TIME_BUDGET_NS, HIGHEST_PRIORITY);
+            Time::root(0, BOOT_TIME_BUDGET_NS);
     }
 
     // SAFETY: nucleus_ptr points to the freshly carved, exclusively-owned region.

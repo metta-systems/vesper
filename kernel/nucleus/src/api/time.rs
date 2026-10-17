@@ -3,16 +3,15 @@
 //! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Transfer` `0`, invoked on the source: `x2` destination Time key, `x3`
 //!   amount in nanoseconds (`u64::MAX` = infinite, only from an infinite
-//!   source), `x4` the priority the sender assigns (16 bits), `x5..x7` zero.
-//!   `WRITE` on both. Success returns zeros.
+//!   source), `x4..x7` zero. `WRITE` on both. Success returns zeros.
 //! - `Merge` `1`, invoked on the destination: `x2` source Time key, `x3..x7`
 //!   zero. `WRITE` on both. Moves all of the source's budget and leaves it
 //!   empty. Success returns zeros.
 //! - `Query` `2`: no arguments; `READ`. Returns the remaining budget in `x1`
-//!   and the priority at the last chain entry in `x2`.
+//!   and zero in `x2`.
 //!
-//! The same Time as both operands, Times of different cores, a zero amount, a
-//! priority wider than 16 bits, nonzero reserved words, and a source bound
+//! The same Time as both operands, Times of different cores, a zero amount,
+//! nonzero reserved words, and a source bound
 //! to a live Thread (by `Scheduler.ConfigureThread`) fail with
 //! `InvalidOperation`. Both new states are computed before either is
 //! written, so every failure leaves both Times unchanged.
@@ -25,10 +24,7 @@ use {
         key_table::CallerTable,
         object_pool::PairIdentityError,
     },
-    libobject::{
-        CapError, ObjectType, RawKey, Rights,
-        time::{Priority, TimeOp},
-    },
+    libobject::{CapError, ObjectType, RawKey, Rights, time::TimeOp},
     libqemu::semihosting as semi,
 };
 
@@ -43,13 +39,11 @@ pub fn invoke(
     let op = TimeOp::try_from(op)?;
     match op {
         TimeOp::Transfer => {
-            if args[3..].iter().any(|&arg| arg != 0) {
+            if args[2..].iter().any(|&arg| arg != 0) {
                 return Err(CapError::InvalidOperation);
             }
             let destination_key = RawKey::from_wire(args[0]);
             let amount = args[1];
-            let priority = Priority::try_from(args[2])
-                .map_err(|_wider_than_16_bits| CapError::InvalidOperation)?;
             let source_id = resolve_time(access, caller, key, 0, Rights::WRITE)?;
             let destination_id = resolve_time(access, caller, destination_key, 2, Rights::WRITE)?;
             let (mut source, mut destination) = resolve_both(
@@ -62,11 +56,10 @@ pub fn invoke(
             if source.is_bound() {
                 return Err(CapError::InvalidOperation);
             }
-            let (new_source, new_destination) =
-                Time::transfer(&source, source_id, &destination, amount, priority)?;
+            let (new_source, new_destination) = Time::transfer(&source, &destination, amount)?;
             *source = new_source;
             *destination = new_destination;
-            semi::println!("✅ Time::Transfer({amount}ns, priority 0x{priority:x})");
+            semi::println!("✅ Time::Transfer({amount}ns)");
             Ok((0, 0))
         }
 
@@ -99,9 +92,9 @@ pub fn invoke(
             let time = access
                 .resolve_object::<Time>(id)
                 .map_err(|error| error.for_key(key, 0))?;
-            let (budget_ns, priority) = (time.budget_ns(), time.priority());
-            semi::println!("✅ Time::Query({budget_ns}ns, priority 0x{priority:x})");
-            Ok((budget_ns, u64::from(priority)))
+            let budget_ns = time.budget_ns();
+            semi::println!("✅ Time::Query({budget_ns}ns)");
+            Ok((budget_ns, 0))
         }
     }
 }

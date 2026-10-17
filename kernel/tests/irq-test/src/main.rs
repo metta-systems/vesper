@@ -53,7 +53,6 @@ use {
         NotificationKey, ObjectType, RawKey, Rights, TimeKey, UntypedKey,
         address_space::AddressSpaceKey,
         scheduler::{SchedulerKey, ThreadStart},
-        time::DEFAULT_PRIORITY,
     },
     libqemu::semihosting as semi,
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
@@ -247,11 +246,7 @@ pub fn run() -> ! {
     let receiver_thread = retype(ObjectType::THREAD);
     let receiver_time = retype(ObjectType::TIME);
     TimeKey::from_key(boot.boot_time_key)
-        .transfer(
-            &TimeKey::from_key(receiver_time),
-            RECEIVER_BUDGET_NS,
-            DEFAULT_PRIORITY,
-        )
+        .transfer(&TimeKey::from_key(receiver_time), RECEIVER_BUDGET_NS)
         .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
     let root_scheduler = SchedulerKey::from_key(boot.root_scheduler_key);
     root_scheduler

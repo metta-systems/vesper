@@ -231,7 +231,7 @@ fn install_root_time(nucleus: &mut Nucleus<ArchObjectsImpl>, slot: u32) -> RawKe
     unsafe {
         *crate::objects::carved::Carved::<Time>::validate(id)
             .ok()
-            .expect("root Time carved") = Time::root(0, id, libobject::time::INFINITE_BUDGET, 0);
+            .expect("root Time carved") = Time::root(0, libobject::time::INFINITE_BUDGET);
     }
     install(nucleus, slot, KeyEntry::new_carved(id, Rights::all(), 0))
 }
@@ -259,7 +259,7 @@ fn a_bound_time_is_its_threads_own() {
             nucleus,
             root,
             libobject::TimeOp::Transfer,
-            [keys.time.to_wire(), 1_000, 0x8000, 0, 0, 0],
+            [keys.time.to_wire(), 1_000, 0, 0, 0, 0],
         )
         .unwrap_or_else(|error| panic!("fund the Time: {:?}", error.code()));
         configure(nucleus, &keys, ENTRY, STACK)
@@ -271,7 +271,7 @@ fn a_bound_time_is_its_threads_own() {
                 nucleus,
                 keys.time,
                 libobject::TimeOp::Transfer,
-                [spare.to_wire(), 1, 1, 0, 0, 0],
+                [spare.to_wire(), 1, 0, 0, 0, 0],
             ),
             Err(CapError::InvalidOperation)
         ));
@@ -289,7 +289,7 @@ fn a_bound_time_is_its_threads_own() {
             nucleus,
             root,
             libobject::TimeOp::Transfer,
-            [keys.time.to_wire(), 500, 0x8000, 0, 0, 0],
+            [keys.time.to_wire(), 500, 0, 0, 0, 0],
         )
         .unwrap_or_else(|error| panic!("top up the bound Time: {:?}", error.code()));
 
@@ -319,7 +319,7 @@ fn a_bound_time_is_its_threads_own() {
             nucleus,
             keys.time,
             libobject::TimeOp::Transfer,
-            [spare.to_wire(), 1, 1, 0, 0, 0],
+            [spare.to_wire(), 1, 0, 0, 0, 0],
         )
         .unwrap_or_else(|error| panic!("drain after retirement: {:?}", error.code()));
         configure(nucleus, &second_keys, ENTRY, STACK)

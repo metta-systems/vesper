@@ -244,6 +244,7 @@ fn with_nucleus(
         idle_thread: None,
         irq_table: crate::objects::irq::IrqTable::empty(),
         ticks: 0,
+        current_since_ns: 0,
     };
     // One fixture AddressSpace shared by the fixture Threads: these tests
     // never resolve translation state.
@@ -968,7 +969,7 @@ fn stale_address_space_is_rejected_before_self_table_or_key_lookup() {
             // A stale caller AddressSpace reports InvalidAddressSpace (status
             // 4), before SELF or key lookup, not an object-retirement status.
             let malformed = RawKey::from_wire(0);
-            assert_dispatch_error(nucleus, malformed, 0, (42, 4, 0));
+            assert_dispatch_error(nucleus, malformed, 0, (41, 4, 0));
             assert!(crate::retire_address_space(fixture_as).is_ok());
             assert_eq!(
                 nucleus.current_thread_mut().unwrap().address_space,
@@ -1103,7 +1104,7 @@ fn mismatched_self_table_address_or_size_rejects_dispatch_without_changes() {
                     .unwrap_or_else(|_| panic!("mismatched self-table installation failed"));
                 for key in [issued, RawKey::from_wire(0), RawKey::from_wire(u64::MAX)] {
                     for op in [0, u64::MAX] {
-                        assert_dispatch_error(nucleus, key, op, (42, 4, key.to_wire()));
+                        assert_dispatch_error(nucleus, key, op, (41, 4, key.to_wire()));
                         let table = nucleus.current_thread_table_mut().unwrap();
                         assert_console_table(table, issued, Some((Rights::all(), 0)));
                         assert_eq!(table.size_bits(), SIZE_BITS);

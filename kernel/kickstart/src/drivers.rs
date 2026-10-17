@@ -16,13 +16,13 @@
 //!   in, outside every other Untyped (see `video_untypeds`);
 //! - a RAM Untyped, with its physical base and the bus address the node's
 //!   device reaches it at (`libdevicetree::dma_address`), a Time with the
-//!   budget and priority of its manifest entry, and one Thread configured on
+//!   budget of its manifest entry, and one Thread configured on
 //!   that Time and started at the driver's entry with the init page's address
 //!   in `x0`;
 //! - an `EventCount` for the driver's own Threads.
 //!
 //! Each further Thread the driver declares (`driver_threads!`) gets its own
-//! stack and a Time with the same budget and priority, and starts at its
+//! stack and a Time with the same budget, and starts at its
 //! entry with the init page's address in `x0`, right after the first.
 //!
 //! Once every instance is loaded, Kickstart wires their imports: for each
@@ -33,7 +33,7 @@
 //! which also carries the driver's own Return key for the functions it
 //! exports. Then the Threads start.
 //!
-//! A program, a `[[component]]` manifest entry with a `priority`, is a driver
+//! A program, a `[[component]]` manifest entry with `program = true`, is a driver
 //! without a device tree node: one instance of it loads, with no register
 //! pages, interrupts or DMA view, and the import chains of its
 //! `interfaces/imports.if` start from a `compatible` step. Its further Threads
@@ -816,7 +816,7 @@ pub fn load_drivers(
             let thread = retype(ObjectType::THREAD);
             let time = retype(ObjectType::TIME);
             boot_time
-                .transfer(&TimeKey::from_key(time), driver.budget_ns, driver.priority)
+                .transfer(&TimeKey::from_key(time), driver.budget_ns)
                 .unwrap_or_else(|error| {
                     panic!("🥾 driver Time.Transfer failed: {:?}", error.code())
                 });

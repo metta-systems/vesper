@@ -4,4 +4,3 @@
 [[driver]]
 name = "uart"
 binary = "uart-pl011"
-priority = 0x8000

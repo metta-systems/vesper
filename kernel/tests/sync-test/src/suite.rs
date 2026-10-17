@@ -26,7 +26,7 @@ use {
         CapError, EventCountKey, InconsistencyReason, KeySlot, KeyTableKey, NotificationKey,
         ObjectType, RawKey, Rights, TimeKey, UntypedKey,
         thread::ThreadKey,
-        time::{DEFAULT_PRIORITY, HIGHEST_PRIORITY, INFINITE_BUDGET, LOWEST_PRIORITY, TimeQuery},
+        time::{INFINITE_BUDGET, TimeQuery},
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -718,7 +718,6 @@ fn time_operations(untyped: &UntypedKey, self_table: &KeyTableKey, boot_time_key
         initial,
         TimeQuery {
             budget_ns: BOOT_TIME_BUDGET_NS,
-            priority: HIGHEST_PRIORITY,
         }
     );
 
@@ -737,10 +736,7 @@ fn time_operations(untyped: &UntypedKey, self_table: &KeyTableKey, boot_time_key
     assert_eq!(child_key.slot(), boot_slot(26));
     let child = TimeKey::from_key(child_key);
     let grandchild = TimeKey::from_key(boot_key(27, child_key.incarnation()));
-    let empty = TimeQuery {
-        budget_ns: 0,
-        priority: LOWEST_PRIORITY,
-    };
+    let empty = TimeQuery { budget_ns: 0 };
     let query = |time: &TimeKey| {
         time.query()
             .unwrap_or_else(|error| panic!("Time.Query failed: {:?}", error.code()))
@@ -748,27 +744,15 @@ fn time_operations(untyped: &UntypedKey, self_table: &KeyTableKey, boot_time_key
     assert_eq!(query(&child), empty);
     assert_eq!(query(&grandchild), empty);
 
-    // Root → child → grandchild, each recording its sender's priority.
+    // Root → child → grandchild.
     boot_time
-        .transfer(&child, 1_000_000, DEFAULT_PRIORITY)
+        .transfer(&child, 1_000_000)
         .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
     child
-        .transfer(&grandchild, 400_000, DEFAULT_PRIORITY + 1)
+        .transfer(&grandchild, 400_000)
         .unwrap_or_else(|error| panic!("nested Time.Transfer failed: {:?}", error.code()));
-    assert_eq!(
-        query(&child),
-        TimeQuery {
-            budget_ns: 600_000,
-            priority: DEFAULT_PRIORITY,
-        }
-    );
-    assert_eq!(
-        query(&grandchild),
-        TimeQuery {
-            budget_ns: 400_000,
-            priority: DEFAULT_PRIORITY + 1,
-        }
-    );
+    assert_eq!(query(&child), TimeQuery { budget_ns: 600_000 });
+    assert_eq!(query(&grandchild), TimeQuery { budget_ns: 400_000 });
     if BOOT_TIME_BUDGET_NS != INFINITE_BUDGET {
         assert_eq!(query(&boot_time).budget_ns, BOOT_TIME_BUDGET_NS - 1_000_000);
     }
@@ -776,18 +760,17 @@ fn time_operations(untyped: &UntypedKey, self_table: &KeyTableKey, boot_time_key
     // More than a finite source holds, and the same Time twice, change
     // nothing.
     assert!(matches!(
-        child.transfer(&grandchild, 600_001, 1),
+        child.transfer(&grandchild, 600_001),
         Err(CapError::InsufficientBudget { remaining: 600_000 })
     ));
     assert!(matches!(
-        child.transfer(&child, 1, 1),
+        child.transfer(&child, 1),
         Err(CapError::InvalidOperation)
     ));
     assert_eq!(query(&child).budget_ns, 600_000);
 
     // Merge everything back: the boot budget is whole again and both
-    // children are empty. Both merges are merges back, so the boot Time
-    // keeps its own priority.
+    // children are empty.
     boot_time
         .merge(&grandchild)
         .unwrap_or_else(|error| panic!("Time.Merge failed: {:?}", error.code()));
@@ -800,7 +783,6 @@ fn time_operations(untyped: &UntypedKey, self_table: &KeyTableKey, boot_time_key
         query(&boot_time),
         TimeQuery {
             budget_ns: BOOT_TIME_BUDGET_NS,
-            priority: HIGHEST_PRIORITY,
         }
     );
 }

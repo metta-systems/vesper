@@ -98,14 +98,6 @@ Reference: [vocabulary and identity](capabilities-contract.md#vocabulary-and-ide
 - [ ] Settle pool retirement, reuse validation and the zero-sized-type policy for `ObjectPool`; create pools at runtime, not only at bootstrap.
 - [ ] After implementation experience, review the guarded key-space configuration (per-table guards, bare destination slots, guard-in-capability storage sourced from `SELF_KEYTABLE`) and confirm or revise it.
 
-### Scheduler-shared records (D5)
-
-- [ ] Implement `Scheduler.ShareRegion` across shared ABI, wrapper, dispatch and object state: one already scheduler-mapped Frame per call, reject conflicting re-share, check Scheduler and Frame authority.
-- [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private. `ThreadKey::state`, `time_used_ns` and `pending_notifications` (`libs/object/src/thread.rs`) read these records instead of panicking through `unimplemented!()`.
-- [ ] Implement hierarchical Scheduler derivation, root-only Thread creation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
-- [ ] Move notification and block-reason accounting into the shared records, with event-summary indexing and Thread-retirement cleanup.
-- [ ] Test scheduler/Frame authority, mapped and unmapped ShareRegion inputs, re-share rejection, stride placement, identity reuse, tree constraints, root creation/donation, publication/reuse and Thread teardown; run target checks for record access and kernel-private state isolation.
-
 ## Phase 5 — Memory and safe reclamation
 
 Reference: [memory contracts](capabilities-contract.md#resource-storage-and-memory-contracts). Prerequisites: D1/D2/D4/D6.
@@ -150,16 +142,7 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
 
 ## Phase 7 — Time and userspace scheduling
 
-Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduling). Prerequisites: D2/D4/D8/D9 (open questions in [`capabilities-decisions.md`](capabilities-decisions.md)).
-
-- [ ] Implement per-dispatch execution: dispatch (Thread, Time, priority, timeout), charging the current Time, one-shot timer programming in place of the periodic tick, and block/expiry switching to the scheduler Thread with an event in its records.
-- [ ] Give receiver Threads their own Time and decide wake-time preemption by priority-chain comparison (Notification and IRQ delivery).
-- [ ] Implement Thread Start/Suspend/Resume with initialized contexts, explicit authority, legal transitions and preserved blocked completions and budget; never-returning self-retirement.
-- [ ] Align consumed/remaining/activation/deadline observations with the scheduler records; charge PPC per-call time on Return once `current_time_ns()` reads a real clock.
-- [ ] Provide client ownership APIs that preserve budget on pre-commit errors without relying on destructor side effects.
-- [ ] Test conservation, insufficient budget, failed transfer, incompatible merge, expiry, cancellation, nested delegation and simultaneous spending; run target scheduling tests with a userspace policy example.
-
-**Exit:** storage cannot mint execution authority; delegated time is spent at most once; execution, observation and ownership agree across layers.
+All Time and userspace-scheduling work, including the scheduler-shared records (D5), is tracked in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md). Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduling). Prerequisites: D2/D4/D5/D8/D9 (open questions in [`capabilities-decisions.md`](capabilities-decisions.md)).
 
 ## Final integration
 

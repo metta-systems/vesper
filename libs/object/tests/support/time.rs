@@ -27,9 +27,9 @@ pub(super) unsafe fn protected_call1(key: u64, op: u64, a0: u64) -> Response {
     respond((key, op, [a0, 0, 0, 0, 0, 0], 1))
 }
 
-// Mirrors `libsyscall::protected_call3`.
-pub(super) unsafe fn protected_call3(key: u64, op: u64, a0: u64, a1: u64, a2: u64) -> Response {
-    respond((key, op, [a0, a1, a2, 0, 0, 0], 3))
+// Mirrors `libsyscall::protected_call2`.
+pub(super) unsafe fn protected_call2(key: u64, op: u64, a0: u64, a1: u64) -> Response {
+    respond((key, op, [a0, a1, 0, 0, 0, 0], 2))
 }
 
 fn source_key() -> TimeKey {
@@ -69,33 +69,26 @@ fn time_op_ids_match_the_wire_baseline() {
 }
 
 #[test]
-fn transfer_encodes_destination_amount_and_priority() {
+fn transfer_encodes_destination_and_amount() {
     arm((0, 0, 0));
     source_key()
-        .transfer(&other_key(), 1_000_000, 0x8000)
+        .transfer(&other_key(), 1_000_000)
         .map_err(CapError::code)
         .unwrap();
     let (key, op, args, len) = take_request();
-    assert_eq!(len, 3);
+    assert_eq!(len, 2);
     assert_eq!(key, RawKey::new(KeySlot(17), 1).to_wire());
     assert_eq!(op, TimeOp::Transfer as u64);
     assert_eq!(
         args,
-        [
-            RawKey::new(KeySlot(9), 3).to_wire(),
-            1_000_000,
-            0x8000,
-            0,
-            0,
-            0
-        ]
+        [RawKey::new(KeySlot(9), 3).to_wire(), 1_000_000, 0, 0, 0, 0]
     );
 }
 
 #[test]
 fn transfer_decodes_insufficient_budget_with_the_remaining_amount() {
     arm((36, 42, 0));
-    let error = source_key().transfer(&other_key(), 100, 1).unwrap_err();
+    let error = source_key().transfer(&other_key(), 100).unwrap_err();
     take_request();
     assert!(matches!(
         error,
@@ -118,15 +111,7 @@ fn merge_encodes_the_source_key() {
 }
 
 #[test]
-fn transfer_decodes_priority_chain_full() {
-    arm((37, 0, 0));
-    let error = source_key().transfer(&other_key(), 1, 1).unwrap_err();
-    take_request();
-    assert!(matches!(error, CapError::PriorityChainFull));
-}
-
-#[test]
-fn query_returns_budget_and_priority() {
+fn query_returns_the_budget() {
     arm((0, u64::MAX, 0));
     let result = source_key().query().map_err(CapError::code).unwrap();
     let (_, op, args, len) = take_request();
@@ -134,15 +119,14 @@ fn query_returns_budget_and_priority() {
     assert_eq!(
         result,
         TimeQuery {
-            budget_ns: u64::MAX,
-            priority: 0
+            budget_ns: u64::MAX
         }
     );
 }
 
 #[test]
-fn query_rejects_a_priority_word_wider_than_sixteen_bits() {
-    arm((0, 5, 0x1_0000));
+fn query_rejects_a_nonzero_reserved_result_word() {
+    arm((0, 5, 1));
     let error = source_key().query().unwrap_err();
     take_request();
     assert!(matches!(error, CapError::Unknown));

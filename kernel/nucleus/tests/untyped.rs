@@ -121,6 +121,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             idle_thread: None,
             irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
+            current_since_ns: 0,
             pools: NucleusPools {
                 arch: ArchPools::new(ObjectPool::initialize(pool_ptr, 0)),
             },
@@ -721,8 +722,9 @@ fn retype_carved_kinds_reject_size_bits_device_sources_and_small_untypeds() {
         let mut fx = Fixture::new(FULL);
         let ram = fx.install(KeySlot(30), ram_untyped(24));
         let device = fx.install(KeySlot(31), device_untyped(24));
-        // 64 bytes: smaller than any carved record.
-        let small = fx.install(KeySlot(32), ram_untyped(6));
+        // 16 bytes: smaller than any carved record (a Time is the smallest,
+        // at an 8-byte header plus a 40-byte object).
+        let small = fx.install(KeySlot(32), ram_untyped(4));
         let before = fx.len();
         let retype = |fx: &mut Fixture, source, size_bits, count| {
             fx.invoke(
@@ -1412,9 +1414,8 @@ impl Fixture {
         self.install(slot, KeyEntry::new_carved(id, rights, 0))
     }
 
-    /// Install a root Time (budget `budget_ns`, chain naming itself at
-    /// priority 0) at `slot` with `rights`, as Kickstart does for the boot
-    /// Time.
+    /// Install a root Time (budget `budget_ns`) at `slot` with `rights`, as
+    /// Kickstart does for the boot Time.
     fn install_root_time(
         &mut self,
         slot: KeySlot,
@@ -1422,8 +1423,8 @@ impl Fixture {
         budget_ns: u64,
         rights: Rights,
     ) -> RawKey {
-        self.install_time(slot, index, rights, |id| {
-            crate::objects::Time::root(0, id, budget_ns, 0)
+        self.install_time(slot, index, rights, |_| {
+            crate::objects::Time::root(0, budget_ns)
         })
     }
 
@@ -1456,7 +1457,7 @@ impl Fixture {
     }
 }
 
-/// Transfer moves budget and records the sender's priority; Merge moves
+/// Transfer moves budget; Merge moves
 /// everything back and empties the source.
 #[test_case]
 fn time_transfer_query_and_merge_conserve_budget() {
@@ -1465,16 +1466,16 @@ fn time_transfer_query_and_merge_conserve_budget() {
     let child = fx.install_empty_time(KeySlot(40), 1);
 
     assert_eq!(fx.query(root), (1_000, 0));
-    assert_eq!(fx.query(child), (0, u64::from(u16::MAX)));
+    assert_eq!(fx.query(child), (0, 0));
 
     fx.invoke_time(
         root,
         TimeOp::Transfer as u64,
-        &[child.to_wire(), 400, 0x8000, 0, 0, 0],
+        &[child.to_wire(), 400, 0, 0, 0, 0],
     )
     .unwrap_or_else(|e| panic!("transfer failed: {:?}", e.code()));
     assert_eq!(fx.query(root), (600, 0));
-    assert_eq!(fx.query(child), (400, 0x8000));
+    assert_eq!(fx.query(child), (400, 0));
 
     fx.invoke_time(
         root,
@@ -1483,7 +1484,7 @@ fn time_transfer_query_and_merge_conserve_budget() {
     )
     .unwrap_or_else(|e| panic!("merge failed: {:?}", e.code()));
     assert_eq!(fx.query(root), (1_000, 0));
-    assert_eq!(fx.query(child), (0, u64::from(u16::MAX)));
+    assert_eq!(fx.query(child), (0, 0));
 }
 
 /// Every rejected Transfer leaves both Times unchanged.
@@ -1500,38 +1501,38 @@ fn time_transfer_failures_change_nothing() {
     let table_key = fx.self_key.to_wire();
 
     assert!(matches!(
-        transfer(&mut fx, root, [to_child, 101, 1, 0, 0, 0]),
+        transfer(&mut fx, root, [to_child, 101, 0, 0, 0, 0]),
         Err(CapError::InsufficientBudget { remaining: 100 })
     ));
     assert!(matches!(
-        transfer(&mut fx, root, [to_child, 0, 1, 0, 0, 0]),
+        transfer(&mut fx, root, [to_child, 0, 0, 0, 0, 0]),
         Err(CapError::InvalidOperation)
     ));
     assert!(matches!(
-        transfer(&mut fx, root, [to_child, 1, 0x1_0000, 0, 0, 0]),
+        transfer(&mut fx, root, [to_child, 1, 1, 0, 0, 0]),
         Err(CapError::InvalidOperation)
     ));
     assert!(matches!(
-        transfer(&mut fx, root, [to_child, 1, 1, 1, 0, 0]),
+        transfer(&mut fx, root, [to_child, 1, 0, 0, 0, 1]),
         Err(CapError::InvalidOperation)
     ));
     // The same Time as both operands.
     assert!(matches!(
-        transfer(&mut fx, root, [root.to_wire(), 1, 1, 0, 0, 0]),
+        transfer(&mut fx, root, [root.to_wire(), 1, 0, 0, 0, 0]),
         Err(CapError::InvalidOperation)
     ));
     // WRITE is needed on the source and on the destination.
     assert!(matches!(
-        transfer(&mut fx, read_only, [to_child, 1, 1, 0, 0, 0]),
+        transfer(&mut fx, read_only, [to_child, 1, 0, 0, 0, 0]),
         Err(CapError::InsufficientRights)
     ));
     assert!(matches!(
-        transfer(&mut fx, root, [read_only.to_wire(), 1, 1, 0, 0, 0]),
+        transfer(&mut fx, root, [read_only.to_wire(), 1, 0, 0, 0, 0]),
         Err(CapError::InsufficientRights)
     ));
     // The destination must be a Time.
     assert!(matches!(
-        transfer(&mut fx, root, [table_key, 1, 1, 0, 0, 0]),
+        transfer(&mut fx, root, [table_key, 1, 0, 0, 0, 0]),
         Err(CapError::TypeMismatch {
             expected: ObjectType::TIME,
             ..
@@ -1539,5 +1540,5 @@ fn time_transfer_failures_change_nothing() {
     ));
 
     assert_eq!(fx.query(root), (100, 0));
-    assert_eq!(fx.query(child), (0, u64::from(u16::MAX)));
+    assert_eq!(fx.query(child), (0, 0));
 }

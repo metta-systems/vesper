@@ -549,6 +549,12 @@ fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
         assert!(nucleus.run_queue.is_empty());
         // Unrelated pending records are untouched.
         assert_eq!(nucleus.pending.len(), 2);
+        // The switch charged the interval since the fixture started the
+        // source (at counter zero) to it alone, and restarted the clock.
+        let charged = nucleus.run_time_ns(waits.source).unwrap();
+        assert!(charged > 0);
+        assert_eq!(nucleus.run_time_ns(waits.target), Some(0));
+        assert!(nucleus.current_since_ns >= charged);
     });
 }
 
@@ -570,6 +576,9 @@ fn preemption_with_nothing_runnable_keeps_the_current_thread() {
             ExecutionContext::Running
         );
         assert!(nucleus.run_queue.is_empty());
+        // No switch happened, so nothing is charged and the clock keeps its start.
+        assert_eq!(nucleus.run_time_ns(waits.source), Some(0));
+        assert_eq!(nucleus.current_since_ns, 0);
     });
 }
 
