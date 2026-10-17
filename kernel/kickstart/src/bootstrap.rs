@@ -54,16 +54,10 @@ use {
 /// the runtime Retype carves the boot continuation performs.
 const BOOT_UNTYPED_SIZE_BITS: u8 = 24;
 
-/// Budget of the boot Time at `KeySlot::BOOT_TIME`: infinite with the
-/// `infinite-boot-time` feature, otherwise a large finite amount (one hour of
-/// CPU time). Nothing replenishes a finite boot budget yet.
-#[cfg(feature = "infinite-boot-time")]
+/// Budget of the boot Time at `KeySlot::BOOT_TIME`: infinite, so the root
+/// scheduler has an unlimited allowance to give out. Infinite budget never
+/// decreases, so nothing needs to replenish it.
 pub const BOOT_TIME_BUDGET_NS: Budget = INFINITE_BUDGET;
-/// Budget of the boot Time at `KeySlot::BOOT_TIME`: infinite with the
-/// `infinite-boot-time` feature, otherwise a large finite amount (one hour of
-/// CPU time). Nothing replenishes a finite boot budget yet.
-#[cfg(not(feature = "infinite-boot-time"))]
-pub const BOOT_TIME_BUDGET_NS: Budget = 3_600 * 1_000_000_000;
 
 /// Alignment for every boot carve. Page alignment guarantees the 16-byte
 /// watermark granularity and object alignment for all pool types.

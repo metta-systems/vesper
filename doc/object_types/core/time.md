@@ -56,7 +56,7 @@ A Time bound to a Thread by [`Scheduler.ConfigureThread`](scheduler.md#configure
 
 `Untyped.Retype` creates an empty Time on the creating core, carved from the Untyped's memory.
 
-The first component receives the boot Time at `KeySlot::BOOT_TIME` (17): core 0 and a budget of one hour of CPU time. A kernel built with the `infinite-boot-time` feature gives it an infinite budget instead.
+The first component receives the boot Time at `KeySlot::BOOT_TIME` (17): core 0 and an infinite budget.
 
 Nothing charges a Time yet: the nucleus preempts with a fixed 10 ms tick from the EL1 physical timer and runs Threads in first-in, first-out order.
 

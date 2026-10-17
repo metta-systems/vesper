@@ -5,6 +5,7 @@
 #![no_std]
 #![feature(format_args_nl)]
 
+pub mod exception;
 pub mod panic;
 
 //============================================================================
@@ -27,6 +28,7 @@ where
 }
 
 pub fn test_runner(tests: &[&dyn TestFn]) {
+    exception::install();
     liblog::println!("*TESTING* Running {} tests", tests.len());
     for test in tests {
         test.run();
