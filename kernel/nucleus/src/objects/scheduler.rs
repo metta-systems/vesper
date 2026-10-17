@@ -278,6 +278,11 @@ impl Scheduler {
         self.activation_pending
     }
 
+    /// Count an armed timer that fired.
+    pub fn count_timer_expiration(&mut self) {
+        self.timer_expirations = self.timer_expirations.saturating_add(1);
+    }
+
     /// Armed timers that fired.
     pub const fn timer_expirations(&self) -> u64 {
         self.timer_expirations

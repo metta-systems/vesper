@@ -763,3 +763,60 @@ fn interrupt_statistics_count_every_line_and_survive_retire() {
         );
     });
 }
+
+#[test_case]
+fn query_reports_the_lines_count_and_time_and_needs_read() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
+        let keys = setup(nucleus, table_addr, fixture_as, 0x4);
+        let handler = issue(nucleus, &keys, HANDLER_SLOT, 5, 4)
+            .unwrap_or_else(|error| panic!("Issue: {:?}", error.code()));
+        let query = |nucleus: &mut Nucleus<ArchObjectsImpl>, args: [u64; 6]| {
+            cap_invoke(nucleus, handler, IrqHandlerOp::Query as u64, &args)
+        };
+        let Ok(crate::api::InvokeOutcome::Complete((count, nanoseconds))) = query(nucleus, [0; 6])
+        else {
+            panic!("Query completes");
+        };
+        assert_eq!((count, nanoseconds), (0, 0));
+
+        // Two interrupts on the line, and one on another: only the line's own
+        // are reported, with the time rounded up to nanoseconds.
+        let frequency = nucleus.counter_frequency();
+        nucleus.account_interrupts(
+            &[(5, frequency / 1_000), (5, frequency / 500), (6, 99)],
+            frequency / 1_000 + frequency / 500 + 99,
+        );
+        let Ok(crate::api::InvokeOutcome::Complete((count, nanoseconds))) = query(nucleus, [0; 6])
+        else {
+            panic!("Query completes");
+        };
+        assert_eq!(count, 2);
+        assert_eq!(nanoseconds, 3_000_000);
+
+        // An unused register must be zero.
+        assert!(matches!(
+            query(nucleus, [1, 0, 0, 0, 0, 0]),
+            Err(CapError::InvalidOperation)
+        ));
+        // A copy without READ cannot ask.
+        let entry = *nucleus
+            .current_thread_table()
+            .unwrap()
+            .lookup(handler, FIXTURE_GUARD)
+            .unwrap_or_else(|error| panic!("lookup: {:?}", error.code()));
+        let write_only = install(
+            nucleus,
+            HANDLER_SLOT + 5,
+            KeyEntry::new_irq_handler(
+                entry
+                    .irq_handler_id()
+                    .unwrap_or_else(|error| panic!("handler id: {:?}", error.code())),
+                Rights(Rights::WRITE),
+            ),
+        );
+        assert!(matches!(
+            cap_invoke(nucleus, write_only, IrqHandlerOp::Query as u64, &[0; 6]),
+            Err(CapError::InsufficientRights)
+        ));
+    });
+}

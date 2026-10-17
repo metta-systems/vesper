@@ -121,6 +121,9 @@ pub struct Nucleus<A: ArchObjects> {
     pub preempt_requested: bool,
     /// The dispatchers' armed timers (`Scheduler.ArmTimer`).
     pub timers: SchedulerTimers,
+    /// Counter ticks spent handling interrupts since boot, published to the
+    /// Schedulers' records as `interrupt_ns`.
+    pub interrupt_ticks: u64,
 }
 
 /// A Thread that a dispatcher's `Dispatch` runs.
@@ -447,6 +450,10 @@ impl<A: ArchObjects> Nucleus<A> {
             self.time_out_wait(record);
         }
         while let Some(scheduler) = self.timers.take_expired(now) {
+            if let Some(object) = self.scheduler_mut(scheduler) {
+                object.count_timer_expiration();
+            }
+            self.publish_scheduler_record(scheduler);
             self.request_activation(scheduler, activation_reason::TIMER, 0);
         }
     }
@@ -576,6 +583,38 @@ impl<A: ArchObjects> Nucleus<A> {
         unsafe { (*scheduler).record_paddr(slot) }
     }
 
+    /// Write `scheduler`'s own record (slot 0), if it has one: the events
+    /// published, the timers that fired and the total time spent handling
+    /// interrupts. Not itself an event: the bound `EventCount` is not
+    /// advanced.
+    fn publish_scheduler_record(&mut self, scheduler: CarvedId) {
+        // SAFETY: as in `record_paddr`.
+        let Ok(object) = (unsafe { Carved::<Scheduler>::validate(scheduler) }) else {
+            return;
+        };
+        // SAFETY: as in `record_paddr`.
+        let (events, timer_expirations, record) = unsafe {
+            let object = &*object;
+            (
+                object.events(),
+                object.timer_expirations(),
+                object.record_paddr(SCHEDULER_SLOT),
+            )
+        };
+        let Some(paddr) = record else {
+            return;
+        };
+        let interrupt_ns = ticks_to_ns_ceil(self.interrupt_ticks, self.counter_frequency());
+        // SAFETY: slot 0 of a shared region; see `publish_thread`.
+        unsafe { SchedulerRecord::at(kernel_window(paddr)) }.publish(&SchedulerSnapshot {
+            events,
+            timer_expirations,
+            dispatcher_state: 0,
+            flags: 0,
+            interrupt_ns,
+        });
+    }
+
     /// Publish the state of the Thread `id` to its record, if the scheduler
     /// assigned it one, then count a scheduling event. `dying` marks a Thread
     /// being retired: its final record.
@@ -679,25 +718,11 @@ impl<A: ArchObjects> Nucleus<A> {
             return;
         };
         // SAFETY: as in `record_paddr`.
-        let (events, timer_expirations, event_count, record) = unsafe {
-            let object = &mut *object;
-            let events = object.count_event();
-            (
-                events,
-                object.timer_expirations(),
-                object.event_count(),
-                object.record_paddr(SCHEDULER_SLOT),
-            )
+        let event_count = unsafe {
+            (*object).count_event();
+            (*object).event_count()
         };
-        if let Some(paddr) = record {
-            // SAFETY: slot 0 of a shared region; see `publish_thread`.
-            unsafe { SchedulerRecord::at(kernel_window(paddr)) }.publish(&SchedulerSnapshot {
-                events,
-                timer_expirations,
-                dispatcher_state: 0,
-                flags: 0,
-            });
-        }
+        self.publish_scheduler_record(scheduler);
         let Some(event_count) = event_count else {
             return;
         };
@@ -737,6 +762,16 @@ impl<A: ArchObjects> Nucleus<A> {
             .current_since_ticks
             .saturating_add(total_ticks)
             .min(now);
+        self.interrupt_ticks = self.interrupt_ticks.saturating_add(total_ticks);
+        // The interrupted Thread's scheduler sees the new total with its next
+        // read; this is a counter refresh, not an event.
+        let scheduler = self
+            .current_thread
+            .and_then(|id| self.thread(id))
+            .and_then(|thread| thread.scheduler);
+        if let Some(scheduler) = scheduler {
+            self.publish_scheduler_record(scheduler);
+        }
     }
 
     /// The current Thread's identity. `InvalidThread` when no Thread is
@@ -1022,6 +1057,7 @@ mod tests {
                 dispatch_next: None,
                 preempt_requested: false,
                 timers: crate::objects::timers::SchedulerTimers::new(),
+                interrupt_ticks: 0,
                 pools: NucleusPools {
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.

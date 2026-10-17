@@ -31,29 +31,35 @@ mod components {
 }
 
 use {
+    aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Readable, Writeable},
     kickstart::{
-        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle},
+        bootstrap::{
+            bootstrap_nucleus, device_untypeds, interrupt_controllers, retained_init_memory,
+            spawn_idle,
+        },
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
     libcomponent_loader::{
         builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::ttbr,
-        keys::{SlotCursor, boot_key},
+        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
         loader::verify_component,
         paging::image_table_count,
     },
+    libdevicetree::interrupts::{TimerInterrupt, timer_interrupt},
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, TimeKey, UntypedKey,
+        IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey,
+        Rights, TimeKey, UntypedKey,
         address_space::AddressSpaceKey,
         scheduler::{SchedulerKey, ThreadStart, activation_reason},
-        scheduler_record::{StopReason, ThreadRecord},
+        scheduler_record::{SchedulerRecord, StopReason, ThreadRecord},
         time::INFINITE_BUDGET,
     },
     libqemu::semihosting as semi,
-    nucleus::objects::KeyTable,
+    nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
 };
 
 libboot::entry!(boot_main);
@@ -135,6 +141,23 @@ const TIMED_RECORD_SLOT: u32 = 9;
 const TIMED_ROLE: u64 = 2;
 const TIMED_ACTOR: usize = 5;
 
+/// Phase five: the interrupt receiver is the seventh Thread of the actor
+/// component, a waiter on the interrupt's Notification, with its own record
+/// slot; the dispatcher's keys to it and to the three Notifications of the
+/// handshake.
+const RECEIVER_ACTOR: usize = 6;
+const RECEIVER_RECORD_SLOT: u32 = 10;
+const RECEIVER_THREAD_SLOT: u32 = 60;
+const READY_SLOT: u32 = 61;
+const ARMED_SLOT: u32 = 62;
+const DONE_SLOT: u32 = 63;
+
+/// The badge the interrupt's Notification signals with.
+const IRQ_BADGE: u16 = 1;
+
+/// How far ahead the test arms the virtual timer, in microseconds.
+const TIMER_DELAY_US: u64 = 25_000;
+
 /// Threads of the actor component: waiters on Notifications 0, 1 and 2, a
 /// kicker that signals Notification 0, and a spare that never runs.
 const ACTORS: usize = 5;
@@ -186,6 +209,14 @@ mod page {
     pub const P4_TIMER_ON_TIME: usize = 59;
     pub const P4_TIMEOUT_REASONS: usize = 60;
     pub const P4_TIMEOUT_NS: usize = 61;
+    pub const P5_RECEIVER_KEY: usize = 62;
+    pub const P5_RECEIVER_SLOT: usize = 63;
+    pub const P5_READY: usize = 64;
+    pub const P5_ARMED: usize = 65;
+    pub const P5_DONE: usize = 66;
+    pub const P5_REASONS: usize = 67;
+    pub const P5_ELAPSED_NS: usize = 68;
+    pub const P5_AFTER_REASONS: usize = 69;
 }
 
 /// A word of a page the kernel window maps.
@@ -246,6 +277,24 @@ pub fn run() -> ! {
         .activate()
         .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
 
+    // The virtual timer is the interrupt source: the test arms it, the line is
+    // issued from the device tree, and a receiver Thread waits for it.
+    let device_tree = kickstart::device_tree::at_el1();
+    let virtual_timer = timer_interrupt(device_tree.index(), TimerInterrupt::Virtual)
+        .expect("the timer has a virtual interrupt");
+    let timer_controller = interrupt_controllers()
+        .index_of(virtual_timer.controller)
+        .expect("the timer's controller is driven");
+    let issued = IrqControlKey::from_key(boot.irq_control_key)
+        .issue(
+            &self_table,
+            slots.take(1),
+            timer_controller,
+            virtual_timer.cells(),
+        )
+        .unwrap_or_else(|error| panic!("IRQControl.Issue failed: {:?}", error.code()));
+    let irq_handler = IrqHandlerKey::from_key(issued.handler);
+
     let mut retype = |kind: ObjectType| {
         untyped
             .retype(kind, 0, 0, 1, &self_table, slots.take(1), Rights::all())
@@ -267,6 +316,11 @@ pub fn run() -> ! {
     let timed_time_key = retype(ObjectType::TIME);
     let sleeper_key = retype(ObjectType::EVENT_COUNT);
     let phase_three_key = retype(ObjectType::NOTIFICATION);
+    let receiver_thread_key = retype(ObjectType::THREAD);
+    let receiver_time_key = retype(ObjectType::TIME);
+    let irq_notification_key = retype(ObjectType::NOTIFICATION);
+    let [ready_key, armed_key, done_key] =
+        core::array::from_fn(|_| retype(ObjectType::NOTIFICATION));
     let boot_time = TimeKey::from_key(boot.boot_time_key);
     for (worker, time_key) in worker_time_keys.iter().enumerate() {
         let budget_ns = if worker == FINITE_WORKER {
@@ -281,7 +335,10 @@ pub fn run() -> ! {
     boot_time
         .transfer(&TimeKey::from_key(dispatcher_time_key), INFINITE_BUDGET)
         .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
-    for time_key in actor_time_keys.into_iter().chain([timed_time_key]) {
+    for time_key in actor_time_keys
+        .into_iter()
+        .chain([timed_time_key, receiver_time_key])
+    {
         boot_time
             .transfer(&TimeKey::from_key(time_key), INFINITE_BUDGET)
             .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
@@ -371,7 +428,7 @@ pub fn run() -> ! {
     );
     verify_component(ttbr(nucleus, actor.address_space), &components::ACTOR);
     let mut actor_stacks = builder.stack_region(&actor, STACK_REGION, &mut slots);
-    let actor_stack_tops: [u64; ACTORS + 1] = core::array::from_fn(|_| {
+    let actor_stack_tops: [u64; ACTORS + 2] = core::array::from_fn(|_| {
         builder
             .user_stack(&mut actor_stacks, STACK_PAGES, &mut slots)
             .top
@@ -413,6 +470,23 @@ pub fn run() -> ! {
     actor_words.write(
         TIMED_ACTOR * 8 + 1,
         actor.local_key(ACTOR_NOTIFICATION_SLOT + 3, 1).to_wire(),
+    );
+
+    // The interrupt receiver: the seventh Thread of the actor component, a
+    // waiter on the interrupt's Notification.
+    // SAFETY: the actor's retained table; no invocation overlaps and its
+    // Threads have not started.
+    unsafe { &mut *KeyTable::at_carve(actor.table_addr) }
+        .insert(
+            KeySlot(ACTOR_NOTIFICATION_SLOT + 4),
+            builder.entry(irq_notification_key),
+            actor.guard,
+        )
+        .unwrap_or_else(|failure| panic!("key grant failed: {:?}", failure.error.code()));
+    actor_words.write(RECEIVER_ACTOR * 8, 0);
+    actor_words.write(
+        RECEIVER_ACTOR * 8 + 1,
+        actor.local_key(ACTOR_NOTIFICATION_SLOT + 4, 1).to_wire(),
     );
 
     // The dispatcher's keys: the Scheduler, the workers' Threads and the two
@@ -475,6 +549,14 @@ pub fn run() -> ! {
     );
     words.write(page::P4_TIMED_SLOT, u64::from(TIMED_RECORD_SLOT));
     words.write(page::P4_SLEEPER, grant(SLEEPER_SLOT, sleeper_key));
+    words.write(
+        page::P5_RECEIVER_KEY,
+        grant(RECEIVER_THREAD_SLOT, receiver_thread_key),
+    );
+    words.write(page::P5_RECEIVER_SLOT, u64::from(RECEIVER_RECORD_SLOT));
+    words.write(page::P5_READY, grant(READY_SLOT, ready_key));
+    words.write(page::P5_ARMED, grant(ARMED_SLOT, armed_key));
+    words.write(page::P5_DONE, grant(DONE_SLOT, done_key));
 
     // The scheduler shares the table, then takes over the workers' records.
     root_scheduler
@@ -540,6 +622,44 @@ pub fn run() -> ! {
     root_scheduler
         .start_thread(timed_thread_key)
         .unwrap_or_else(|error| panic!("timed StartThread failed: {:?}", error.code()));
+    root_scheduler
+        .configure_thread(
+            receiver_thread_key,
+            actor.address_space_key,
+            ThreadStart {
+                entry: components::ACTOR.entry.expect("the actor has an entry"),
+                stack_pointer: actor_stack_tops[ACTORS + 1],
+                argument: COUNTER_VA + RECEIVER_ACTOR as u64 * 64,
+            },
+            receiver_time_key,
+        )
+        .unwrap_or_else(|error| panic!("receiver ConfigureThread failed: {:?}", error.code()));
+    root_scheduler
+        .assign_record(receiver_thread_key, RECEIVER_RECORD_SLOT)
+        .unwrap_or_else(|error| panic!("receiver AssignRecord failed: {:?}", error.code()));
+    root_scheduler
+        .start_thread(receiver_thread_key)
+        .unwrap_or_else(|error| panic!("receiver StartThread failed: {:?}", error.code()));
+    // The line signals the Notification, with a badge, for the receiver, and
+    // is then enabled.
+    let irq_id = builder
+        .entry(irq_notification_key)
+        .carved_id()
+        .unwrap_or_else(|error| panic!("Notification identity: {:?}", error.code()));
+    // SAFETY: the live boot table, borrowed for this bootstrap grant only.
+    let badged_irq = unsafe { &mut *KeyTable::at_carve(keytable_addr) }
+        .insert(
+            KeySlot(slots.take(1)),
+            KeyEntry::new_carved(irq_id, Rights::all(), IRQ_BADGE),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| panic!("boot install failed: {:?}", failure.error.code()));
+    irq_handler
+        .set_notification(badged_irq, receiver_thread_key)
+        .unwrap_or_else(|error| panic!("SetNotification failed: {:?}", error.code()));
+    irq_handler
+        .ack()
+        .unwrap_or_else(|error| panic!("Ack failed: {:?}", error.code()));
     root_scheduler
         .configure_thread(
             dispatcher_thread_key,
@@ -722,8 +842,50 @@ pub fn run() -> ! {
         "the sleep took {slept_ns} ns"
     );
 
+    // ── Fifth phase: an interrupt wakes a receiver while a spinner runs ──
+    // The dispatcher is ready: arm the virtual timer, a few milliseconds
+    // away, and let it go on to dispatch the spinner.
+    NotificationKey::from_key(ready_key)
+        .wait(NotificationKey::WAIT_INFINITE)
+        .unwrap_or_else(|error| panic!("ready wait failed: {:?}", error.code()));
+    let ticks = CNTFRQ_EL0.get() * TIMER_DELAY_US / 1_000_000;
+    CNTV_TVAL_EL0.set(ticks.max(1));
+    CNTV_CTL_EL0.write(CNTV_CTL_EL0::ENABLE::SET + CNTV_CTL_EL0::IMASK::CLEAR);
+    NotificationKey::from_key(armed_key)
+        .signal(1)
+        .unwrap_or_else(|error| panic!("armed signal failed: {:?}", error.code()));
+    NotificationKey::from_key(done_key)
+        .wait(NotificationKey::WAIT_INFINITE)
+        .unwrap_or_else(|error| panic!("done wait failed: {:?}", error.code()));
+    CNTV_CTL_EL0.write(CNTV_CTL_EL0::ENABLE::CLEAR);
+    // The wakeup alone ended the spinner's two-second dispatch, a few
+    // milliseconds after the interrupt was armed: the dispatcher decided.
+    assert_eq!(words.read(page::P5_REASONS), activation_reason::EVENT);
+    let preempted_after_ns = words.read(page::P5_ELAPSED_NS);
+    assert!(
+        (TIMER_DELAY_US * 1_000 / 2..1_000_000_000).contains(&preempted_after_ns),
+        "the spinner ran {preempted_after_ns} ns before the interrupt woke the receiver"
+    );
+    // The receiver handled it once and waits again.
+    assert_eq!(
+        words.read(page::P5_AFTER_REASONS),
+        activation_reason::BLOCKED
+    );
+    assert_eq!(actor_count(RECEIVER_ACTOR), 1);
+    // The interrupt was counted, with the time it took, on the line and in
+    // the Scheduler record (not charged to the spinner).
+    let line = irq_handler
+        .query()
+        .unwrap_or_else(|error| panic!("IRQHandler.Query failed: {:?}", error.code()));
+    assert!(line.handled >= 1 && line.nanoseconds > 0);
+    // SAFETY: slot 0 of the shared record Frame, mapped in the kernel's window.
+    let scheduler_record = unsafe { SchedulerRecord::at(records.cast_const()) }
+        .try_snapshot(1_000_000)
+        .expect("a consistent scheduler record");
+    assert!(scheduler_record.interrupt_ns > 0);
+    assert!(scheduler_record.interrupt_ns >= line.nanoseconds || line.handled > 1);
     semi::println!(
-        "dispatch-test: ✅ bind, round-robin dispatch, wake preemption, burst coalescing, refusals, timers, timeouts and sleep passed"
+        "dispatch-test: ✅ bind, round-robin dispatch, wake preemption, burst coalescing, refusals, timers, timeouts, sleep and interrupts passed"
     );
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {

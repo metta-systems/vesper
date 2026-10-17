@@ -78,11 +78,12 @@ fn irq_op_ids_match_the_wire_baseline() {
         (1, IrqHandlerOp::Clear),
         (2, IrqHandlerOp::Ack),
         (3, IrqHandlerOp::Retire),
+        (4, IrqHandlerOp::Query),
     ] {
         assert_eq!(op as u64, id);
         assert_eq!(IrqHandlerOp::try_from(id).map_err(CapError::code), Ok(op));
     }
-    for id in [4, 255, u64::MAX] {
+    for id in [5, 255, u64::MAX] {
         assert_eq!(
             IrqHandlerOp::try_from(id).map_err(CapError::code),
             Err(CapError::InvalidOperation.code())
@@ -177,4 +178,16 @@ fn handler_operations_encode_their_operands() {
     let error = handler().retire().unwrap_err();
     take_request();
     assert!(matches!(error, CapError::InsufficientRights));
+}
+
+#[test]
+fn query_decodes_the_count_and_the_time_spent_handling_interrupts() {
+    arm((0, 17, 4_200_000));
+    let stats = handler().query().map_err(CapError::code).unwrap();
+    assert_eq!(
+        take_request(),
+        (handler().to_wire(), IrqHandlerOp::Query as u64, [0; 6], 0)
+    );
+    assert_eq!(stats.handled, 17);
+    assert_eq!(stats.nanoseconds, 4_200_000);
 }

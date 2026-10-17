@@ -145,6 +145,7 @@ pub fn invoke_handler<A: ArchObjects>(
     let op = IrqHandlerOp::try_from(op)?;
     let required = match op {
         IrqHandlerOp::Retire => Rights::RETIRE,
+        IrqHandlerOp::Query => Rights::READ,
         IrqHandlerOp::SetNotification | IrqHandlerOp::Clear | IrqHandlerOp::Ack => Rights::WRITE,
     };
     let id = lookup(access, caller, key, 0, ObjectType::IRQ_HANDLER, required)?
@@ -152,7 +153,7 @@ pub fn invoke_handler<A: ArchObjects>(
         .map_err(|error| error.with_key_operand(0))?;
     let operands = match op {
         IrqHandlerOp::SetNotification => 2,
-        IrqHandlerOp::Clear | IrqHandlerOp::Ack | IrqHandlerOp::Retire => 0,
+        IrqHandlerOp::Clear | IrqHandlerOp::Ack | IrqHandlerOp::Retire | IrqHandlerOp::Query => 0,
     };
     if args[operands..].iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
@@ -185,6 +186,15 @@ pub fn invoke_handler<A: ArchObjects>(
         IrqHandlerOp::Ack => {
             platform::unmask(id.line);
             semi::println!("✅ IRQHandler::Ack(line {})", id.line);
+        }
+        IrqHandlerOp::Query => {
+            let stats = nucleus.irq_table.stats(id.line).unwrap_or_default();
+            let frequency = nucleus.counter_frequency();
+            semi::println!("✅ IRQHandler::Query(line {})", id.line);
+            return Ok((
+                stats.handled,
+                crate::objects::time::ticks_to_ns_ceil(stats.ticks, frequency),
+            ));
         }
         IrqHandlerOp::Retire => {
             nucleus

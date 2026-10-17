@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x0a` (core) |
 | Backing | A record in the kernel's interrupt-line table |
-| Operations | SetNotification, Clear, Ack, Retire |
+| Operations | SetNotification, Clear, Ack, Retire, Query |
 
 ## Purpose
 
@@ -18,6 +18,7 @@ An IRQHandler names one interrupt line, issued by [IRQControl](irq_control.md#is
 | 1 | Clear | — | `Write` | — |
 | 2 | Ack | — | `Write` | — |
 | 3 | Retire | — | `Retire` | — |
+| 4 | Query | — | `Read` | `x1` interrupts handled on the line, `x2` nanoseconds spent handling them |
 
 Unused argument registers must be zero (`InvalidOperation` otherwise). `IrqHandlerKey` in `libs/object` wraps every operation.
 
@@ -45,6 +46,16 @@ Enables the line. A freshly issued line is masked, and the kernel masks the line
 2. `Ack`.
 3. The receiver waits on the Notification, quiets the device, then acks again.
 
+### Query
+
+Reports the line's interrupt accounting: `x1` the interrupts the nucleus has handled on it and `x2` the time it spent handling them, in nanoseconds rounded up. The numbers belong to the line, not to the handler: they keep counting across Retire and a fresh Issue. Interrupt time is never charged to the interrupted Thread; the total over all lines is also in the Scheduler record as `interrupt_ns` ([records](scheduler.md#records)).
+
+| Error | Cause |
+|---|---|
+| `InvalidOperation` | A nonzero unused argument |
+| `InsufficientRights` | Missing `Read` |
+| `InconsistentKey` | The IRQHandler is retired |
+
 ### Retire
 
 Clears the binding, masks the line and frees it for a new `IRQControl.Issue`. Every copy of the IRQHandler key then fails with `InconsistentKey` (`ObjectRetired`).
@@ -62,8 +73,8 @@ The GICv2 component routes every shared peripheral interrupt (SPI) to the bootin
 
 ## Implementation
 
-Kickstart carves the line table from the boot Untyped, one record per line of the component. On an interrupt the kernel claims the pending line; the timer line is the kernel's one-shot timer, which the kernel switches off and later reprograms for its next deadline. Any other line is masked; a bound line also signals its Notification, waking the front waiter, and the kernel then ends the interrupt (on the GIC, priority drop and deactivation together). A line whose Notification was retired is treated as unbound. A woken receiver joins the kernel's first-in, first-out run queue; it runs when the current Thread's slice ends (10 ms after it started), or at once when the CPU was idle. The kernel counts each line's interrupts and the time spent handling them, and does not charge that time to the interrupted Thread.
+Kickstart carves the line table from the boot Untyped, one record per line of the component. On an interrupt the kernel claims the pending line; the timer line is the kernel's one-shot timer, which the kernel switches off and later reprograms for its next deadline. Any other line is masked; a bound line also signals its Notification, waking the front waiter, and the kernel then ends the interrupt (on the GIC, priority drop and deactivation together). A line whose Notification was retired is treated as unbound. A woken receiver is an ordinary wakeup. If its Scheduler has a bound dispatcher, the nucleus publishes the receiver's record as runnable and, if the activation mask has `THREAD_RUNNABLE`, activates the dispatcher, which decides whether the receiver preempts the running Thread (the nucleus never compares Times). Otherwise the receiver joins the kernel's first-in, first-out run queue and runs when the current Thread's slice ends (10 ms after it started), or at once when the CPU was idle. The kernel counts each line's interrupts and the time spent handling them, and does not charge that time to the interrupted Thread.
 
 ## Planned changes
 
-The wakeup will be reported to the responsible scheduler, which decides whether the interrupt handler's thread runs at once in place of the currently executing thread. Running it immediately may cause the hardware to starve the running app, so this needs to be investigated first.
+None yet.

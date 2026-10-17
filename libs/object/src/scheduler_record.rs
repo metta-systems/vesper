@@ -165,6 +165,8 @@ pub struct SchedulerSnapshot {
     /// The dispatcher's state.
     pub dispatcher_state: u32,
     pub flags: u32,
+    /// Total time spent handling interrupts, in nanoseconds, rounded up.
+    pub interrupt_ns: u64,
 }
 
 /// The record of one Thread, written by the nucleus.
@@ -194,7 +196,8 @@ pub struct SchedulerRecord {
     timer_expirations: AtomicU64,
     dispatcher_state: AtomicU32,
     flags: AtomicU32,
-    reserved: [AtomicU64; 11],
+    interrupt_ns: AtomicU64,
+    reserved: [AtomicU64; 10],
 }
 
 const _: () = {
@@ -220,6 +223,7 @@ const _: () = {
     assert!(core::mem::offset_of!(SchedulerRecord, timer_expirations) == 24);
     assert!(core::mem::offset_of!(SchedulerRecord, dispatcher_state) == 32);
     assert!(core::mem::offset_of!(SchedulerRecord, flags) == 36);
+    assert!(core::mem::offset_of!(SchedulerRecord, interrupt_ns) == 40);
 };
 
 /// The sequence value that starts a publication after `previous`, and the
@@ -344,7 +348,8 @@ impl SchedulerRecord {
             timer_expirations: AtomicU64::new(0),
             dispatcher_state: AtomicU32::new(0),
             flags: AtomicU32::new(0),
-            reserved: [const { AtomicU64::new(0) }; 11],
+            interrupt_ns: AtomicU64::new(0),
+            reserved: [const { AtomicU64::new(0) }; 10],
         }
     }
 
@@ -397,6 +402,8 @@ impl SchedulerRecord {
         self.dispatcher_state
             .store(snapshot.dispatcher_state, Ordering::Relaxed);
         self.flags.store(snapshot.flags, Ordering::Relaxed);
+        self.interrupt_ns
+            .store(snapshot.interrupt_ns, Ordering::Relaxed);
         self.sequence.store(end, Ordering::Release);
     }
 
@@ -413,6 +420,7 @@ impl SchedulerRecord {
                 timer_expirations: self.timer_expirations.load(Ordering::Relaxed),
                 dispatcher_state: self.dispatcher_state.load(Ordering::Relaxed),
                 flags: self.flags.load(Ordering::Relaxed),
+                interrupt_ns: self.interrupt_ns.load(Ordering::Relaxed),
             };
             fence(Ordering::Acquire);
             if self.sequence.load(Ordering::Relaxed) == before {

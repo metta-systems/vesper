@@ -139,6 +139,15 @@ pub struct IrqHandlerKey {
 
 enum IrqHandlerType {}
 
+/// What `IRQHandler.Query` reports for a line.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct IrqStats {
+    /// Interrupts handled.
+    pub handled: u64,
+    /// Time spent handling them, in nanoseconds, rounded up.
+    pub nanoseconds: u64,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IrqHandlerOp {
@@ -150,6 +159,8 @@ pub enum IrqHandlerOp {
     Ack = 2,
     /// Tear the handler down: clear, mask and free the line.
     Retire = 3,
+    /// Report the interrupts handled on the line and the time they took.
+    Query = 4,
 }
 
 impl TryFrom<u64> for IrqHandlerOp {
@@ -161,6 +172,7 @@ impl TryFrom<u64> for IrqHandlerOp {
             1 => Ok(Self::Clear),
             2 => Ok(Self::Ack),
             3 => Ok(Self::Retire),
+            4 => Ok(Self::Query),
             _ => Err(CapError::InvalidOperation),
         }
     }
@@ -206,6 +218,19 @@ impl IrqHandlerKey {
     /// `Ack`: enable the line. Authority: `WRITE`.
     pub fn ack(&self) -> Result<(), CapError> {
         self.call0(IrqHandlerOp::Ack)
+    }
+
+    /// `Query`: the interrupts the nucleus has handled on the line and the
+    /// nanoseconds it spent handling them (rounded up), cumulative for the
+    /// line. Authority: `READ`.
+    pub fn query(&self) -> Result<IrqStats, CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result = unsafe { protected_call0(self.key.to_wire(), IrqHandlerOp::Query as u64) };
+        let (handled, nanoseconds) = decode_syscall_result(result)?;
+        Ok(IrqStats {
+            handled,
+            nanoseconds,
+        })
     }
 
     /// `Retire`: clear the binding, mask the line and free it for a fresh

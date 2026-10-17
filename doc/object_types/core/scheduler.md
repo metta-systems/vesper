@@ -130,11 +130,11 @@ The records are in [`libobject::scheduler_record`](../../../libs/object/src/sche
 
 | Offset | Field |
 |---:|---|
-| 0 | `sequence` (u64) |
-| 8 | `layout` (u32, 1), `record_size` (u32, 128) |
+x (u32, 1), `record_size` (u32, 128) |
 | 16 | `events` (u64): events published, equal to the bound EventCount |
 | 24 | `timer_expirations` (u64) |
 | 32 | `dispatcher_state` (u32), `flags` (u32) |
+| 40 | `interrupt_ns` (u64): the total time spent handling interrupts, rounded up; refreshed with every publication and at each interrupt entry that interrupts one of the Scheduler's Threads, and not itself an event |
 
 **Thread record (slots 1 and up)**
 

@@ -981,3 +981,39 @@ fn a_woken_waiter_is_published_runnable_not_blocked() {
         assert!(woken.generation > waiting.generation);
     });
 }
+
+#[test_case]
+fn interrupt_time_is_published_in_the_scheduler_record_of_the_interrupted_thread() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        clear_pages();
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let frame = frame_key(
+            nucleus,
+            30,
+            0,
+            Rights::READ | Rights::WRITE,
+            false,
+            Some(fixture_as),
+        );
+        share(nucleus, &keys, frame, 0, 128).expect_ok();
+        configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+        assert_eq!(scheduler_record().try_snapshot(1).unwrap().interrupt_ns, 0);
+
+        // An interrupt entry that interrupted a Thread of the Scheduler
+        // refreshes the total, without counting an event.
+        let frequency = nucleus.counter_frequency();
+        let events = scheduler_record().try_snapshot(1).unwrap().events;
+        nucleus.current_thread = Some(keys.thread_id);
+        nucleus.account_interrupts(&[(5, frequency / 1_000)], frequency / 1_000);
+        let published = scheduler_record().try_snapshot(1).unwrap();
+        assert_eq!(published.interrupt_ns, 1_000_000);
+        assert_eq!(published.events, events);
+
+        // The total accumulates across entries.
+        nucleus.account_interrupts(&[(5, frequency / 1_000)], frequency / 1_000);
+        assert_eq!(
+            scheduler_record().try_snapshot(1).unwrap().interrupt_ns,
+            2_000_000
+        );
+    });
+}

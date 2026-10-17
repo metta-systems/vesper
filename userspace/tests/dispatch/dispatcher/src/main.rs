@@ -83,6 +83,19 @@ const P4_TIMER_REASONS: usize = 58;
 const P4_TIMER_ON_TIME: usize = 59;
 const P4_TIMEOUT_REASONS: usize = 60;
 const P4_TIMEOUT_NS: usize = 61;
+/// Phase five parameters: the interrupt receiver's Thread key and record slot,
+/// the Notification the dispatcher signals when it is ready, the one it waits
+/// on until the interrupt is armed, and the one it signals at the end.
+const P5_RECEIVER_KEY: usize = 62;
+const P5_RECEIVER_SLOT: usize = 63;
+const P5_READY: usize = 64;
+const P5_ARMED: usize = 65;
+const P5_DONE: usize = 66;
+/// Phase five observations: the reasons and duration of the dispatch the
+/// interrupt ended, and the reasons of the receiver's own dispatch after it.
+const P5_REASONS: usize = 67;
+const P5_ELAPSED_NS: usize = 68;
+const P5_AFTER_REASONS: usize = 69;
 const WORDS: usize = 80;
 
 const WORKERS: usize = 3;
@@ -195,6 +208,7 @@ fn main(page: u64) -> ! {
     NotificationKey::from_key(RawKey::from_wire(word(PHASE_THREE)))
         .signal(1)
         .unwrap_or_else(|error| fail("phase three signal", error));
+    phase_five(page, &scheduler, records, stride);
     loop {
         // Nothing left to run; wait for nothing in particular.
         scheduler.dispatch(None, u64::MAX, 0).ok();
@@ -366,4 +380,81 @@ fn phase_four(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, 
         .sleep(15 * MILLISECOND)
         .unwrap_or_else(|error| fail("sleep", error));
     page[P4_SLEPT_NS].store(libuser::clock::now_ns() - started, Ordering::Release);
+
+    // The timed waiter would keep timing out and activating the dispatcher;
+    // retiring it cancels its wait and its deadline.
+    ThreadKey::from_key(timed)
+        .retire()
+        .unwrap_or_else(|error| fail("Thread.Retire (timed waiter)", error));
+}
+
+/// An interrupt wakes a receiver while a spinner runs: the wakeup is an
+/// event, and the dispatcher, not the nucleus, decides what runs.
+fn phase_five(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, stride: usize) {
+    let word = |index: usize| page[index].load(Ordering::Relaxed);
+    let record = |slot: usize| {
+        // SAFETY: the record table is mapped for this component, 64-byte
+        // aligned, and the slot lies inside it; records are read through
+        // atomics.
+        unsafe { ThreadRecord::at(records.add(slot * stride)) }
+    };
+    let snapshot = |slot: usize| {
+        record(slot)
+            .try_snapshot(SNAPSHOT_RETRIES)
+            .expect("a consistent record")
+    };
+    let receiver = RawKey::from_wire(word(P5_RECEIVER_KEY));
+    let receiver_slot = usize::try_from(word(P5_RECEIVER_SLOT)).unwrap_or(usize::MAX);
+    let spinner = RawKey::from_wire(word(WORKER_KEYS));
+    let spinner_slot = usize::try_from(word(WORKER_SLOTS)).unwrap_or(usize::MAX);
+    let signal = |index: usize| {
+        NotificationKey::from_key(RawKey::from_wire(word(index)))
+            .signal(1)
+            .unwrap_or_else(|error| fail("phase five signal", error));
+    };
+
+    // The receiver runs until it waits for its interrupt. Events left over
+    // from the earlier phases (a retired Thread's wait, say) return a
+    // Dispatch at once without running it; repeat until it ran.
+    let mut warm_up = None;
+    for _ in 0..8 {
+        let activation = scheduler
+            .dispatch(Some(receiver), SECOND, snapshot(receiver_slot).generation)
+            .unwrap_or_else(|error| fail("Dispatch (receiver)", error));
+        if activation.reasons & activation_reason::BLOCKED != 0 {
+            warm_up = Some(activation);
+            break;
+        }
+    }
+    assert_eq!(
+        warm_up.expect("the receiver ran").reasons,
+        activation_reason::BLOCKED
+    );
+
+    // Ask the test to arm the interrupt, and wait (as an ordinary Thread:
+    // the kernel's queue runs the test meanwhile) until it has.
+    signal(P5_READY);
+    NotificationKey::from_key(RawKey::from_wire(word(P5_ARMED)))
+        .wait(NotificationKey::WAIT_INFINITE)
+        .unwrap_or_else(|error| fail("waiting for the armed interrupt", error));
+
+    // The spinner may run for two seconds. The interrupt arrives within
+    // milliseconds, wakes the receiver, and the wakeup ends the dispatch.
+    let started = libuser::clock::now_ns();
+    let ended = scheduler
+        .dispatch(Some(spinner), 2 * SECOND, snapshot(spinner_slot).generation)
+        .unwrap_or_else(|error| fail("Dispatch (spinner)", error));
+    page[P5_ELAPSED_NS].store(libuser::clock::now_ns() - started, Ordering::Release);
+    page[P5_REASONS].store(ended.reasons, Ordering::Release);
+    assert_eq!(
+        snapshot(receiver_slot).thread_state(),
+        Some(ThreadState::Runnable)
+    );
+
+    // The dispatcher now runs the receiver, which handles it and waits again.
+    let after = scheduler
+        .dispatch(Some(receiver), SECOND, snapshot(receiver_slot).generation)
+        .unwrap_or_else(|error| fail("Dispatch (receiver again)", error));
+    page[P5_AFTER_REASONS].store(after.reasons, Ordering::Release);
+    signal(P5_DONE);
 }

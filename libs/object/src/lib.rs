@@ -34,7 +34,7 @@ pub use {
     event_count::{EventCountKey, EventCountOp},
     frame::{FrameAttribute, FrameKey, FrameOp},
     invocation::{INVOCATION_STACK_DEPTH, InvocationOp, PlacementWindow},
-    irq::{IrqControlKey, IrqControlOp, IrqHandlerKey, IrqHandlerOp},
+    irq::{IrqControlKey, IrqControlOp, IrqHandlerKey, IrqHandlerOp, IrqStats},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},
     notification::{NotificationKey, NotificationOp},

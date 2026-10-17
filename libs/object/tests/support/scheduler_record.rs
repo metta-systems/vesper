@@ -111,6 +111,7 @@ fn publish_then_snapshot_round_trips_and_advances_the_sequence_by_two() {
         timer_expirations: 2,
         dispatcher_state: 1,
         flags: 0,
+        interrupt_ns: 123_456,
     };
     scheduler.publish(&state);
     assert_eq!(scheduler.sequence(), 2);

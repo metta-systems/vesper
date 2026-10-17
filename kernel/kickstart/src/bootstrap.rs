@@ -116,6 +116,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         dispatch_next: None,
         preempt_requested: false,
         timers: nucleus::objects::timers::SchedulerTimers::new(),
+        interrupt_ticks: 0,
         pools: NucleusPools::<A> {
             // SAFETY: the architecture pool backings were carved above from
             // the boot Untyped's unused watermark range and are exclusively

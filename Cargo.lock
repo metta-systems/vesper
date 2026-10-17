@@ -410,6 +410,7 @@ dependencies = [
  "vesper-boot",
  "vesper-component-loader",
  "vesper-cpu",
+ "vesper-devicetree",
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",

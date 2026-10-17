@@ -70,10 +70,10 @@ Needs Phase 3.
 
 ## Phase 7 — Receiver Times and wakeups
 
-- [ ] Receiver Threads own a Time; binding a Notification or IRQ line requires it, with no fallback to the interrupted Thread's budget.
-- [ ] A wakeup is reported to the responsible scheduler as an event; the nucleus does not compare Times.
-- [ ] Per-interrupt accounting once its design is decided.
-- [ ] Tests: an IRQ receiver wakeup reaches the scheduler, which preempts a spinner by `replace`; interrupt time is not charged to the interrupted Thread.
+- [x] Receiver Threads own a Time; binding a Notification or IRQ line requires it, with no fallback to the interrupted Thread's budget. Already so: `IRQHandler.SetNotification` refuses a receiver Thread with no bound Time, and no other operation binds a Notification to a receiver. Interrupt time is never charged to the interrupted Thread (`Nucleus::account_interrupts`).
+- [x] A wakeup is reported to the responsible scheduler as an event; the nucleus does not compare Times. A woken dispatcher-managed receiver is published runnable and activates the dispatcher under `THREAD_RUNNABLE` (`Nucleus::make_runnable`), as for any wakeup.
+- [x] Per-interrupt accounting (maintainer decision, 2026-10-18): `IRQHandler.Query` (op 4, `READ`) returns a line's interrupt count and nanoseconds; the Scheduler record carries the total `interrupt_ns` (offset 40). The Scheduler record's `timer_expirations` now counts fired dispatcher timers too.
+- [x] Tests: an IRQ receiver wakeup reaches the scheduler, which preempts a spinner (by ending its `Dispatch`; `replace` waits for multicore); interrupt time is not charged to the interrupted Thread. `dispatch-test` phase five: the virtual timer interrupt wakes a receiver while a spinner runs for up to two seconds, the wakeup alone ends the dispatch within milliseconds, the receiver runs, and `IRQHandler.Query` and the record's `interrupt_ns` show the time. Nucleus tests: `Query` and its rights, the record refresh, and the existing interrupt-accounting tests (the interrupted Thread's interval moves past interrupt time).
 
 ## Phase 8 — Thread lifecycle
 
