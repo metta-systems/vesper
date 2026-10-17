@@ -131,6 +131,8 @@ fn retire<A: ArchObjects>(
     nucleus.release_thread_fault(thread_id);
     // Keys its outstanding calls borrowed leave the callees' tables.
     nucleus.release_thread_placements(access, thread_id);
+    // The Thread's record, if it has one, ends as `Dying`.
+    nucleus.publish_thread(thread_id, true);
     // SAFETY: as above; no reference to the Thread is live here.
     unsafe { Carved::<Thread>::retire(thread_id) }.map_err(|error| error.for_key(thread_key, 0))?;
     semi::println!("✅ Thread::Retire()");

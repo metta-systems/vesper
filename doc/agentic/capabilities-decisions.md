@@ -14,25 +14,16 @@ plan items.
 
 ## D5: scheduler-shared thread records
 
-Unanswered questions before implementing the scheduler record ABI:
+The record ABI is selected (see the contract); its trial numbers (record size,
+region limit, `AssignRecord` instead of a start-time slot) are revisited after
+the first implementation. Unanswered questions:
 
-- What is the exact `Scheduler.ShareRegion` operation ID, register schema,
-  authority/rights, result, and failure contract?
-- How does a scheduler declare its fixed-stride record table: descriptor,
-  capacity, page-to-slot mapping, and record-slot allocation?
-- What are the exact shared-record fields and kernel-versus-scheduler
-  transition rules, publication/snapshot protocol, event-summary indexing,
-  and record retirement/reuse behavior?
-- What is the scheduler donation schema, and how is strict-tree
-  scheduler ownership enforced?
 - What are the operation IDs, register schemas, rights and results of
-  `Scheduler.BindEventCount`, `Scheduler.ConfigureActivation` (the
-  `ActivationMask` bit layout) and `Scheduler.arm_timer`, and the schemas of
-  `dispatch` and `replace`?
-- What is the scheduler event record layout, and which events carry
-  information that cannot be rebuilt from current state (a timer expiry, why an
-  execution stopped and the amount charged) and so need records that are not
-  coalesced? What is the overflow rule for those records?
+  `Scheduler.ConfigureActivation` (the `ActivationMask` bit layout),
+  `Scheduler.arm_timer` (the deadline unit and clock), `dispatch` and
+  `replace`, and which status reports a stale expected generation?
+- What is the scheduler donation schema, and how is strict-tree
+  scheduler ownership enforced (Phase 9)?
 - Should `dispatch_and_wait` (dispatch, then wait for the next event in one
   operation) be part of the first ABI, and what non-blocking dispatch does a
   centralized multicore scheduler need?
@@ -110,17 +101,9 @@ Unanswered questions before implementing the scheduler record ABI:
   API versus bootstrap/libOS composition layout.
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
-- **D8:** what happens to remaining budget when a Time is deleted; the `dispatch` and
-  `replace` register schemas, rights and generation encoding; the clock source
-  (the physical counter today); which way the accumulated charge is rounded
-  when it is compared with a limit; how interrupt handling time is accounted
-  separately from the running Time (for example per-IRQ statistics, and whether
-  the receiver Thread's Time or a kernel counter holds them); whether a Thread
-  with no bound Time (the boot and idle Threads) runs unmetered; how Kickstart
-  funds components while no userspace scheduler exists to refill an exhausted
-  Time (an infinite budget by default, or the finite `budget_ns` of the
-  manifest); and whether a Thread made eligible again by a Transfer re-enters
-  the kernel FIFO at once.
+- **D8:** what happens to remaining budget when a Time is deleted; the
+  `dispatch` and `replace` register schemas, rights and generation encoding;
+  the clock source (the physical counter today).
 - **IRQ follow-up:** whether a Thread may bind one Notification for both
   PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built

@@ -1,15 +1,45 @@
 use {
-    crate::objects::{
-        ArchObjects, EventCount, KeyTable, Notification, PendingPool, RunQueue, Thread,
-        arch::ArchPools,
-        arch_objects::{AddressSpaceId, AddressSpaceObject, PageTableId},
-        carved::Carved,
-        irq::IrqTable,
-        key_table::KeyTableBinding,
-        thread::{ExecutionContext, ThreadId},
+    crate::{
+        api::wake_waiter,
+        objects::{
+            ArchObjects, EventCount, KeyTable, Notification, PendingPool, RunQueue, Scheduler,
+            Thread, Time,
+            arch::ArchPools,
+            arch_objects::{AddressSpaceId, AddressSpaceObject, PageTableId},
+            carved::{Carved, CarvedId},
+            completion::PendingKind,
+            event_count::AdvanceOutcome,
+            irq::IrqTable,
+            key_table::KeyTableBinding,
+            scheduler::Region,
+            thread::{ExecutionContext, RecordSlot, ThreadId},
+            time::ticks_to_ns_ceil,
+        },
     },
-    libobject::CapError,
+    libaddress::PhysAddr,
+    libobject::{
+        CapError,
+        scheduler_record::{
+            BlockReason, FLAG_AWAITING_BUDGET, FLAG_HAS_TIME, NO_CPU, SCHEDULER_SLOT,
+            SchedulerRecord, SchedulerSnapshot, StopReason, ThreadRecord, ThreadSnapshot,
+        },
+        thread::ThreadState,
+    },
 };
+
+/// The kernel's pointer to the physical memory at `paddr`, through the
+/// direct map.
+#[cfg(not(test))]
+fn kernel_window(paddr: u64) -> *mut u8 {
+    PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>()
+}
+
+/// The unit-test binaries run without translation, where physical and kernel
+/// addresses coincide.
+#[cfg(test)]
+fn kernel_window(paddr: u64) -> *mut u8 {
+    paddr as *mut u8
+}
 
 // ┌─────────────────────────────────────────────────────────────────────┐
 // │                    KERNEL TYPE STRUCTURE                            │
@@ -71,11 +101,11 @@ pub struct Nucleus<A: ArchObjects> {
     pub irq_table: IrqTable,
     /// Preemption-timer ticks taken since boot.
     pub ticks: u64,
-    /// When the current Thread was last made current, in nanoseconds on the
-    /// [`Nucleus::current_time_ns`] timeline. The next switch away charges
-    /// the elapsed time to that Thread's `run_time_ns`. Starts at zero, so
+    /// When the current Thread was last made current, in counter ticks on the
+    /// [`Nucleus::counter_ticks`] timeline. The next switch away or tick charges
+    /// the elapsed ticks to that Thread and its bound Time. Starts at zero, so
     /// the boot Thread is charged from counter start.
-    pub current_since_ns: u64,
+    pub current_since_ticks: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -95,11 +125,320 @@ impl<A: ArchObjects> Nucleus<A> {
         crate::timer::now_ns()
     }
 
-    /// Nanoseconds `id` has executed as of its last switch-out; `None` when
+    /// The kernel-owned physical counter, in ticks.
+    #[expect(clippy::unused_self)]
+    pub fn counter_ticks(&self) -> u64 {
+        crate::timer::counter()
+    }
+
+    /// The counter frequency, in Hz.
+    #[expect(clippy::unused_self)]
+    pub fn counter_frequency(&self) -> u64 {
+        crate::timer::frequency()
+    }
+
+    /// Counter ticks `id` has executed as of its last charge; `None` when
     /// the identity no longer names a live Thread. The interval of a Thread
-    /// that is running now is charged when it is next switched away from.
+    /// that is running now is charged when it is next switched away from or
+    /// ticked.
+    pub fn run_time_ticks(&self, id: ThreadId) -> Option<u64> {
+        self.thread(id).map(|thread| thread.run_time_ticks)
+    }
+
+    /// Nanoseconds `id` has executed as of its last charge, rounded up.
     pub fn run_time_ns(&self, id: ThreadId) -> Option<u64> {
-        self.thread(id).map(|thread| thread.run_time_ns)
+        let frequency = self.counter_frequency();
+        self.run_time_ticks(id)
+            .map(|ticks| ticks_to_ns_ceil(ticks, frequency))
+    }
+
+    /// The bound Time of the Thread `id`, if it has one that still
+    /// validates.
+    fn thread_time(&mut self, id: ThreadId) -> Option<&mut Time> {
+        let time = self.thread(id)?.time?;
+        // SAFETY: the recorded identity was a live carved Time when
+        // `Scheduler.ConfigureThread` bound it; validation checks its header
+        // first, and the kernel lock serializes every access, so this is the
+        // only reference to the Time while `self` is borrowed.
+        unsafe { Carved::<Time>::validate(time).ok().map(|time| &mut *time) }
+    }
+
+    /// Whether the Thread `id` has a bound Time that is exhausted. A Thread
+    /// with no bound Time is never exhausted.
+    pub fn thread_exhausted(&mut self, id: ThreadId) -> bool {
+        let frequency = self.counter_frequency();
+        self.thread_time(id)
+            .is_some_and(|time| time.is_exhausted(frequency))
+    }
+
+    /// Charge the interval since `current_since_ticks` to the Thread
+    /// `current`: its kernel-private run time and, if it has one, its bound
+    /// Time. Restarts the interval at now and returns the ticks charged.
+    pub fn charge_current(&mut self, current: ThreadId) -> u64 {
+        let now = self.counter_ticks();
+        let elapsed = now.saturating_sub(self.current_since_ticks);
+        self.current_since_ticks = now;
+        if let Some(thread) = self.thread_mut(current) {
+            thread.run_time_ticks = thread.run_time_ticks.saturating_add(elapsed);
+        }
+        if let Some(time) = self.thread_time(current) {
+            time.charge(elapsed);
+        }
+        elapsed
+    }
+
+    /// Queue the runnable Thread `id` at the back, unless its bound Time is
+    /// exhausted: then it waits off the queue until budget arrives. Returns
+    /// whether it was queued.
+    pub fn make_runnable(&mut self, id: ThreadId) -> bool {
+        if self.thread_exhausted(id) {
+            if let Some(thread) = self.thread_mut(id) {
+                thread.awaiting_budget = true;
+            }
+            self.publish_thread(id, false);
+            return false;
+        }
+        assert!(self.run_queue.push(id), "runnable Thread did not queue");
+        self.publish_thread(id, false);
+        true
+    }
+
+    /// Budget arrived in the Time bound to the Thread `id`: if it was
+    /// waiting for budget and the Time is no longer exhausted, queue it at
+    /// the back. Returns whether it was queued.
+    pub fn budget_arrived(&mut self, id: ThreadId) -> bool {
+        let waiting = self.thread(id).is_some_and(|thread| thread.awaiting_budget);
+        if !waiting || self.thread_exhausted(id) {
+            return false;
+        }
+        if let Some(thread) = self.thread_mut(id) {
+            thread.awaiting_budget = false;
+        }
+        let queued = self.run_queue.push(id);
+        self.publish_thread(id, false);
+        queued
+    }
+
+    /// The counter value at which the nucleus next needs the timer, if it
+    /// does: the end of the current slice when another Thread is runnable,
+    /// or the instant the current Thread's budget runs out. `slice_ticks` is
+    /// the slice length. The idle Thread, waiting for interrupts, and a
+    /// Thread running alone on an unlimited budget need no timer.
+    pub fn timer_deadline_ticks(&mut self, slice_ticks: u64) -> Option<u64> {
+        let current = self.current_thread?;
+        if self.idle_thread == Some(current) {
+            return None;
+        }
+        let since = self.current_since_ticks;
+        let contended = !self.run_queue.is_empty();
+        let mut deadline = contended.then(|| since.saturating_add(slice_ticks));
+        // An exhausted Thread can only stop if something can take over.
+        let can_stop = contended || self.idle_thread.is_some();
+        if can_stop {
+            let frequency = self.counter_frequency();
+            let exhaustion = self
+                .thread_time(current)
+                .and_then(|time| time.ticks_until_exhausted(frequency))
+                .map(|left| since.saturating_add(left));
+            deadline = match (deadline, exhaustion) {
+                (Some(slice), Some(exhaustion)) => Some(slice.min(exhaustion)),
+                (slice, exhaustion) => slice.or(exhaustion),
+            };
+        }
+        deadline
+    }
+
+    /// Initialize the records a newly shared `region` holds: the scheduler
+    /// record, if the region covers slot 0. Thread slots are initialized
+    /// when a Thread is assigned to them.
+    pub fn initialize_region(&mut self, region: &Region) {
+        if region.first_slot != SCHEDULER_SLOT {
+            return;
+        }
+        // SAFETY: the region is a 64-byte-aligned RAM Frame the scheduler
+        // shared; records are accessed only through atomics.
+        unsafe { SchedulerRecord::at(kernel_window(region.frame_paddr)) }.initialize();
+    }
+
+    /// Link the Thread `thread` to `slot` of `scheduler`'s table: zero the
+    /// slot's record, remember the link and publish the Thread's state. The
+    /// caller checked that the Scheduler runs the Thread and covers the slot.
+    /// The nucleus does not check that no other Thread uses the slot: the
+    /// table is the scheduler's own memory.
+    pub fn assign_record(
+        &mut self,
+        thread: ThreadId,
+        scheduler: CarvedId,
+        slot: u32,
+    ) -> Result<(), CapError> {
+        let paddr = Self::record_paddr(scheduler, slot).ok_or(CapError::InvalidOperation)?;
+        let linked = self.thread_mut(thread).ok_or(CapError::InvalidOperation)?;
+        linked.record = Some(RecordSlot { scheduler, slot });
+        // SAFETY: a Thread slot of a shared region, 64-byte aligned; any
+        // earlier occupant's record is the scheduler's to discard.
+        unsafe { ThreadRecord::at(kernel_window(paddr)) }.clear();
+        self.publish_thread(thread, false);
+        Ok(())
+    }
+
+    /// The physical address of the record in `slot` of `scheduler`'s table,
+    /// if a shared region covers it.
+    fn record_paddr(scheduler: CarvedId, slot: u32) -> Option<u64> {
+        // SAFETY: Scheduler identities name carved records that are never
+        // freed; validation checks the header, and the kernel lock
+        // serializes every access.
+        let scheduler = unsafe { Carved::<Scheduler>::validate(scheduler) }.ok()?;
+        // SAFETY: as above; no other reference to the Scheduler is live.
+        unsafe { (*scheduler).record_paddr(slot) }
+    }
+
+    /// Publish the state of the Thread `id` to its record, if the scheduler
+    /// assigned it one, then count a scheduling event. `dying` marks a Thread
+    /// being retired: its final record.
+    ///
+    /// The nucleus is the only writer of a record and never reads one back.
+    /// A region's Frame stays valid because the nucleus does not reclaim
+    /// Frame memory; once Frames carry a retirement identity, it is checked
+    /// here before the write.
+    pub fn publish_thread(&mut self, id: ThreadId, dying: bool) {
+        let Some(thread) = self.thread(id) else {
+            return;
+        };
+        let Some(record) = thread.record else {
+            return;
+        };
+        let state = if dying {
+            ThreadState::Dying
+        } else {
+            match thread.context {
+                ExecutionContext::Inactive | ExecutionContext::Configured { .. } => {
+                    ThreadState::Inactive
+                }
+                ExecutionContext::NotStarted { .. } | ExecutionContext::Preempted { .. } => {
+                    ThreadState::Runnable
+                }
+                ExecutionContext::Running => ThreadState::Running,
+                ExecutionContext::Parked { .. } => ThreadState::Blocked,
+                ExecutionContext::Faulted { .. } => ThreadState::Faulted,
+            }
+        };
+        let block_reason = match thread.context {
+            ExecutionContext::Parked { record, .. } if !dying => match self.pending.kind(record) {
+                Ok(PendingKind::NotificationWait) => BlockReason::NotificationWait,
+                Ok(PendingKind::EventCountAwait) => BlockReason::EventCountAwait,
+                Err(_) => BlockReason::None,
+            },
+            _ => BlockReason::None,
+        };
+        let frequency = self.counter_frequency();
+        let (awaiting_budget, last_stop, run_ticks, last_run_ticks) = (
+            thread.awaiting_budget,
+            thread.last_stop,
+            thread.run_time_ticks,
+            thread.last_run_ticks,
+        );
+        let running = state == ThreadState::Running;
+        let (budget_remaining_ns, has_time) = match self.thread_time(id) {
+            Some(time) => (time.remaining_ns(frequency), true),
+            None => (u64::MAX, false),
+        };
+        let Some(thread) = self.thread_mut(id) else {
+            return;
+        };
+        thread.generation = thread.generation.wrapping_add(1);
+        let snapshot = ThreadSnapshot {
+            generation: thread.generation,
+            incarnation: id.generation,
+            state: state as u32,
+            flags: if awaiting_budget && !dying {
+                FLAG_AWAITING_BUDGET
+            } else {
+                0
+            } | if has_time { FLAG_HAS_TIME } else { 0 },
+            block_reason: block_reason as u32,
+            last_stop,
+            cpu: if running { 0 } else { NO_CPU },
+            run_time_ns: ticks_to_ns_ceil(run_ticks, frequency),
+            last_run_ns: ticks_to_ns_ceil(last_run_ticks, frequency),
+            budget_remaining_ns,
+        };
+        let Some(paddr) = Self::record_paddr(record.scheduler, record.slot) else {
+            return;
+        };
+        // SAFETY: the address is a Thread slot of a region the scheduler
+        // shared as a mapped RAM Frame; it is 64-byte aligned by
+        // construction, and records are accessed only through atomics.
+        unsafe { ThreadRecord::at(kernel_window(paddr)) }.publish(&snapshot);
+        self.count_scheduler_event(record.scheduler);
+    }
+
+    /// Count a published scheduling event of the Scheduler `scheduler`:
+    /// update its record and advance its bound `EventCount`, waking the
+    /// scheduler agent waiting on it.
+    fn count_scheduler_event(&mut self, scheduler: CarvedId) {
+        // SAFETY: as in `record_paddr`.
+        let Ok(object) = (unsafe { Carved::<Scheduler>::validate(scheduler) }) else {
+            return;
+        };
+        // SAFETY: as in `record_paddr`.
+        let (events, timer_expirations, event_count, record) = unsafe {
+            let object = &mut *object;
+            let events = object.count_event();
+            (
+                events,
+                object.timer_expirations(),
+                object.event_count(),
+                object.record_paddr(SCHEDULER_SLOT),
+            )
+        };
+        if let Some(paddr) = record {
+            // SAFETY: slot 0 of a shared region; see `publish_thread`.
+            unsafe { SchedulerRecord::at(kernel_window(paddr)) }.publish(&SchedulerSnapshot {
+                events,
+                timer_expirations,
+                agent_state: 0,
+                flags: 0,
+            });
+        }
+        let Some(event_count) = event_count else {
+            return;
+        };
+        // SAFETY: EventCount identities name carved records that are never
+        // freed; no API guard on it is live in the callers of this method.
+        let Ok(event_count_object) = (unsafe { Carved::<EventCount>::validate(event_count) })
+        else {
+            // The EventCount was retired: the binding ends.
+            // SAFETY: as above.
+            unsafe { (*object).unbind_event_count() }
+            return;
+        };
+        // SAFETY: as above.
+        let outcome = unsafe { (*event_count_object).advance(1, &mut self.pending) };
+        let Ok(AdvanceOutcome::Advanced { woken, .. } | AdvanceOutcome::Overflow { woken }) =
+            outcome
+        else {
+            return;
+        };
+        for record in woken.iter() {
+            // The woken scheduler agent becomes runnable; its own record, if
+            // it has one, publishes in turn.
+            wake_waiter(self, record).ok();
+        }
+    }
+
+    /// Account interrupt handling: add each handled line's ticks to its
+    /// record and move the start of the current interval past the
+    /// `total_ticks` spent, so the running Thread's Time is not charged for
+    /// them.
+    pub fn account_interrupts(&mut self, handled: &[(u32, u64)], total_ticks: u64) {
+        for &(line, ticks) in handled {
+            self.irq_table.record_handled(line, ticks);
+        }
+        let now = self.counter_ticks();
+        self.current_since_ticks = self
+            .current_since_ticks
+            .saturating_add(total_ticks)
+            .min(now);
     }
 
     /// The current Thread's identity. `InvalidThread` when no Thread is
@@ -328,7 +667,8 @@ mod tests {
             completion::PendingState,
             event_count::{AdvanceOutcome, AwaitOutcome},
             notification::WaitOutcome,
-            thread::{ExecutionContext, ThreadId},
+            scheduler::Region,
+            thread::{ExecutionContext, RecordSlot, ThreadId},
         },
         core::mem::MaybeUninit,
         libobject::syscall_status,
@@ -367,7 +707,7 @@ mod tests {
                 idle_thread: None,
                 irq_table: crate::objects::irq::IrqTable::empty(),
                 ticks: 0,
-                current_since_ns: 0,
+                current_since_ticks: 0,
                 pools: NucleusPools {
                     // SAFETY: the arch backings are exclusively owned by the
                     // fixture; the pools are structural for these tests.
@@ -550,7 +890,7 @@ pub(crate) mod test_arena {
         core::sync::atomic::{AtomicUsize, Ordering},
     };
 
-    const BYTES: usize = 1 << 20;
+    const BYTES: usize = 1 << 22;
 
     #[repr(C, align(64))]
     struct Arena([u8; BYTES]);

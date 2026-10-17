@@ -95,9 +95,9 @@ pub unsafe extern "C" fn nucleus_set_platform(handoff: *const libirqchip::Platfo
     // SAFETY: the caller's contract.
     match unsafe { nucleus::platform::install(&*handoff) } {
         Ok(line) => {
-            // The nucleus owns the tick from now on; it is taken whenever a
-            // Thread runs with interrupts unmasked.
-            nucleus::timer::arm_next_tick();
+            // The nucleus owns the timer from now on. It stays off until the
+            // first kernel exit finds something that needs it; it is taken
+            // whenever a Thread runs with interrupts unmasked.
             nucleus::platform::unmask(line);
             line
         }
@@ -252,6 +252,7 @@ extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
             depth: current_invocation_depth(),
         };
         deliver_fault(e, &faulting, info);
+        reprogram_timer();
         return;
     }
     cap_invoke_handler(e);
@@ -347,6 +348,13 @@ use owo_colors::OwoColorize;
 
 #[unsafe(no_mangle)]
 extern "C" fn cap_invoke_handler(frame: &mut ExceptionContext) {
+    cap_invoke_dispatch(frame);
+    reprogram_timer();
+}
+
+/// Decode and run one capability invocation from the saved frame, then
+/// rewrite the frame for whatever Thread continues.
+fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
     let key = RawKey::from_wire(frame.gpr[0]);
     let op = frame.gpr[1];
     // semi::println!(
@@ -493,12 +501,20 @@ fn handle_irq(frame: &mut ExceptionContext) {
     );
     let timer_line = nucleus::platform::physical_timer_line();
     let mut ticked = false;
+    // Interrupt handling is timed, line by line and in all: the interrupted
+    // Thread is not charged for it, and each line's record counts it.
+    let entered = nucleus::timer::counter();
+    let mut handled = [(0_u32, 0_u64); MAX_CLAIMS_PER_ENTRY];
+    let mut handled_count = 0;
     for _ in 0..MAX_CLAIMS_PER_ENTRY {
+        let claim_started = nucleus::timer::counter();
         let Some(line) = nucleus::platform::claim() else {
             break;
         };
         if Some(line) == timer_line {
-            nucleus::timer::arm_next_tick();
+            // One-shot: deassert it here; the kernel exit programs the next
+            // deadline, if any.
+            nucleus::timer::disarm();
             ticked = true;
         } else {
             nucleus::platform::mask(line);
@@ -507,7 +523,11 @@ fn handle_irq(frame: &mut ExceptionContext) {
             }
         }
         nucleus::platform::complete(line);
+        let spent = nucleus::timer::counter().saturating_sub(claim_started);
+        handled[handled_count] = (line, spent);
+        handled_count += 1;
     }
+    let interrupt_ticks = nucleus::timer::counter().saturating_sub(entered);
 
     let saved = frame.save();
     let resumed = KERNEL_LOCK.lock(|()| {
@@ -517,6 +537,7 @@ fn handle_irq(frame: &mut ExceptionContext) {
         // SAFETY: the anchor names the retained boot-carved Nucleus, and the
         // kernel lock gives exclusive access for this scheduling transaction.
         let nucleus = unsafe { &mut *nucleus_ptr };
+        nucleus.account_interrupts(&handled[..handled_count], interrupt_ticks);
         if ticked {
             nucleus.ticks += 1;
         }
@@ -533,6 +554,22 @@ fn handle_irq(frame: &mut ExceptionContext) {
         Ok(None) => {}
         Err(error) => panic!("preemption scheduling invariant failed: {:?}", error.code()),
     }
+    reprogram_timer();
+}
+
+/// Program the timer for the next instant the nucleus needs it, from the
+/// state the kernel entry just left: the end of the current slice when
+/// another Thread is runnable, or the exhaustion of the current Thread's
+/// budget. Every kernel exit that can change either calls this.
+fn reprogram_timer() {
+    let deadline = KERNEL_LOCK.lock(|()| {
+        let nucleus_ptr = nucleus_anchor()?;
+        // SAFETY: the anchor names the retained boot-carved Nucleus, and the
+        // kernel lock gives exclusive access.
+        let nucleus = unsafe { &mut *nucleus_ptr };
+        nucleus.timer_deadline_ticks(nucleus::timer::slice_ticks())
+    });
+    nucleus::timer::program(deadline);
 }
 
 /// Signal the Notification bound to the claimed `line`, if any; whether

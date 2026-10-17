@@ -18,7 +18,7 @@
 
 use {
     crate::objects::{
-        KeyTable, Time,
+        ArchObjects, KeyTable, Nucleus, Time,
         access::{Access, GuardMut},
         carved::CarvedId,
         key_table::CallerTable,
@@ -29,14 +29,16 @@ use {
 };
 
 /// Handle a `Time` capability invocation.
-pub fn invoke(
+pub fn invoke<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,
     key: RawKey,
     op: u64,
     args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
     let op = TimeOp::try_from(op)?;
+    let frequency = nucleus.counter_frequency();
     match op {
         TimeOp::Transfer => {
             if args[2..].iter().any(|&arg| arg != 0) {
@@ -46,19 +48,28 @@ pub fn invoke(
             let amount = args[1];
             let source_id = resolve_time(access, caller, key, 0, Rights::WRITE)?;
             let destination_id = resolve_time(access, caller, destination_key, 2, Rights::WRITE)?;
-            let (mut source, mut destination) = resolve_both(
-                access,
-                (key, source_id, 0),
-                (destination_key, destination_id, 2),
-            )?;
-            // A Time bound to a live Thread is that Thread's own: nothing
-            // drains it.
-            if source.is_bound() {
-                return Err(CapError::InvalidOperation);
+            // The guards end with this block, before the nucleus is touched.
+            let refilled = {
+                let (mut source, mut destination) = resolve_both(
+                    access,
+                    (key, source_id, 0),
+                    (destination_key, destination_id, 2),
+                )?;
+                // A Time bound to a live Thread is that Thread's own:
+                // nothing drains it.
+                if source.is_bound() {
+                    return Err(CapError::InvalidOperation);
+                }
+                let (new_source, new_destination) =
+                    Time::transfer(&source, &destination, amount, frequency)?;
+                *source = new_source;
+                *destination = new_destination;
+                destination.bound_thread()
+            };
+            // The destination's Thread may have been waiting for budget.
+            if let Some(thread) = refilled {
+                nucleus.budget_arrived(thread);
             }
-            let (new_source, new_destination) = Time::transfer(&source, &destination, amount)?;
-            *source = new_source;
-            *destination = new_destination;
             semi::println!("✅ Time::Transfer({amount}ns)");
             Ok((0, 0))
         }
@@ -70,17 +81,28 @@ pub fn invoke(
             let source_key = RawKey::from_wire(args[0]);
             let destination_id = resolve_time(access, caller, key, 0, Rights::WRITE)?;
             let source_id = resolve_time(access, caller, source_key, 2, Rights::WRITE)?;
-            let (mut destination, mut source) =
-                resolve_both(access, (key, destination_id, 0), (source_key, source_id, 2))?;
-            // A Time bound to a live Thread is that Thread's own: nothing
-            // drains it.
-            if source.is_bound() {
-                return Err(CapError::InvalidOperation);
+            // The guards end with this block, before the nucleus is touched.
+            let (remaining, refilled) = {
+                let (mut destination, mut source) =
+                    resolve_both(access, (key, destination_id, 0), (source_key, source_id, 2))?;
+                // A Time bound to a live Thread is that Thread's own:
+                // nothing drains it.
+                if source.is_bound() {
+                    return Err(CapError::InvalidOperation);
+                }
+                let (new_destination, new_source) = Time::merge(&destination, &source, frequency)?;
+                *destination = new_destination;
+                *source = new_source;
+                (
+                    destination.remaining_ns(frequency),
+                    destination.bound_thread(),
+                )
+            };
+            // The destination's Thread may have been waiting for budget.
+            if let Some(thread) = refilled {
+                nucleus.budget_arrived(thread);
             }
-            let (new_destination, new_source) = Time::merge(&destination, &source)?;
-            *destination = new_destination;
-            *source = new_source;
-            semi::println!("✅ Time::Merge({}ns)", destination.budget_ns());
+            semi::println!("✅ Time::Merge({remaining}ns)");
             Ok((0, 0))
         }
 
@@ -92,7 +114,7 @@ pub fn invoke(
             let time = access
                 .resolve_object::<Time>(id)
                 .map_err(|error| error.for_key(key, 0))?;
-            let budget_ns = time.budget_ns();
+            let budget_ns = time.remaining_ns(frequency);
             semi::println!("✅ Time::Query({budget_ns}ns)");
             Ok((budget_ns, 0))
         }

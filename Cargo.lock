@@ -1416,6 +1416,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "preempt-reader"
+version = "0.0.1"
+dependencies = [
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "preempt-spinner"
 version = "0.0.1"
 dependencies = [

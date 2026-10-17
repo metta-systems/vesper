@@ -6,10 +6,12 @@ use {
     crate::{
         api::{InvokeOutcome, KeyEntry},
         objects::{
-            ArchObjectsImpl, ExecutionContext, Nucleus,
+            ArchObjectsImpl, ExecutionContext, Nucleus, Time,
             access::{Access, ObjectId},
             arch_objects::{AddressSpaceId, AddressSpaceObject},
+            carved::Carved,
             completion::{PendingKind, PendingState},
+            nucleus::test_arena,
             resume::prepare_translation_context,
             thread::ThreadId,
         },
@@ -551,10 +553,10 @@ fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
         assert_eq!(nucleus.pending.len(), 2);
         // The switch charged the interval since the fixture started the
         // source (at counter zero) to it alone, and restarted the clock.
-        let charged = nucleus.run_time_ns(waits.source).unwrap();
+        let charged = nucleus.run_time_ticks(waits.source).unwrap();
         assert!(charged > 0);
-        assert_eq!(nucleus.run_time_ns(waits.target), Some(0));
-        assert!(nucleus.current_since_ns >= charged);
+        assert_eq!(nucleus.run_time_ticks(waits.target), Some(0));
+        assert!(nucleus.current_since_ticks >= charged);
     });
 }
 
@@ -576,9 +578,10 @@ fn preemption_with_nothing_runnable_keeps_the_current_thread() {
             ExecutionContext::Running
         );
         assert!(nucleus.run_queue.is_empty());
-        // No switch happened, so nothing is charged and the clock keeps its start.
-        assert_eq!(nucleus.run_time_ns(waits.source), Some(0));
-        assert_eq!(nucleus.current_since_ns, 0);
+        // No switch happened, but the tick charged the interval the Thread
+        // ran alone and restarted the clock.
+        assert!(nucleus.run_time_ticks(waits.source).unwrap() > 0);
+        assert!(nucleus.current_since_ticks > 0);
     });
 }
 
@@ -656,5 +659,331 @@ fn preempting_idle_selects_the_woken_thread_and_never_queues_idle() {
             nucleus.thread(idle).unwrap().context,
             ExecutionContext::Preempted { saved: idle_saved }
         );
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TIME CHARGING AND BUDGET ELIGIBILITY
+// ═══════════════════════════════════════════════════════════════
+
+/// Counter ticks in `milliseconds` of the running counter.
+fn ticks_for_ms(nucleus: &Nucleus<ArchObjectsImpl>, milliseconds: u64) -> u64 {
+    nucleus.counter_frequency() / 1_000 * milliseconds
+}
+
+/// Pretend the current Thread has been running for `milliseconds`.
+fn run_for_ms(nucleus: &mut Nucleus<ArchObjectsImpl>, milliseconds: u64) {
+    let elapsed = ticks_for_ms(nucleus, milliseconds);
+    nucleus.current_since_ticks = nucleus.counter_ticks().saturating_sub(elapsed);
+}
+
+/// Bind a fresh Time holding `budget_ns` to `thread`; its identity.
+fn bind_time(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    thread: ThreadId,
+    budget_ns: u64,
+) -> crate::objects::carved::CarvedId {
+    let id = test_arena::carve(Time::root(0, budget_ns)).expect("arena exhausted");
+    nucleus.thread_mut(thread).unwrap().time = Some(id);
+    id
+}
+
+/// The remaining budget of the Time `id`, in nanoseconds.
+fn remaining_ns(nucleus: &Nucleus<ArchObjectsImpl>, id: crate::objects::carved::CarvedId) -> u64 {
+    // SAFETY: a test-arena record nothing else references right now.
+    let time = unsafe { Carved::<Time>::validate(id) }
+        .ok()
+        .expect("Time carved");
+    // SAFETY: as above.
+    unsafe { (*time).remaining_ns(nucleus.counter_frequency()) }
+}
+
+#[test_case]
+fn a_tick_charges_a_thread_running_alone_to_its_bound_time() {
+    with_resume(|nucleus, waits| {
+        while nucleus.run_queue.pop().is_some() {}
+        let time = bind_time(nucleus, waits.source, 1_000_000_000);
+        run_for_ms(nucleus, 3);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+        };
+        // Nothing else is runnable and the budget holds, so it keeps running.
+        assert_eq!(resumed, None);
+        assert_eq!(nucleus.current_thread, Some(waits.source));
+        let remaining = remaining_ns(nucleus, time);
+        assert!(remaining <= 1_000_000_000 - 3_000_000, "{remaining}");
+        assert!(remaining > 900_000_000, "{remaining}");
+        assert!(nucleus.run_time_ticks(waits.source).unwrap() >= ticks_for_ms(nucleus, 3));
+        assert!(!nucleus.thread(waits.source).unwrap().awaiting_budget);
+    });
+}
+
+#[test_case]
+fn an_exhausted_thread_is_switched_away_from_and_kept_off_the_queue() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        while nucleus.run_queue.pop().is_some() {}
+        bind_time(nucleus, waits.source, 1_000_000);
+        run_for_ms(nucleus, 5);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("an exhausted Thread must stop")
+        };
+        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.next, idle);
+        assert_eq!(nucleus.current_thread, Some(idle));
+        // It stays runnable but waits for budget instead of queueing.
+        assert!(nucleus.run_queue.is_empty());
+        let source = nucleus.thread(waits.source).unwrap();
+        assert!(source.awaiting_budget);
+        assert_eq!(
+            source.context,
+            ExecutionContext::Preempted {
+                saved: PREEMPTED_SAVED
+            }
+        );
+    });
+}
+
+#[test_case]
+fn an_exhausted_thread_with_a_queue_behind_it_is_not_requeued() {
+    with_resume(|nucleus, waits| {
+        bind_time(nucleus, waits.source, 1_000_000);
+        run_for_ms(nucleus, 5);
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("another Thread is runnable")
+        };
+        assert_eq!(resumed.next, waits.target);
+        // Only the former tail remains queued; the exhausted source waits.
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
+    });
+}
+
+#[test_case]
+fn budget_arriving_requeues_a_waiting_thread_at_the_back() {
+    with_resume(|nucleus, waits| {
+        let time = bind_time(nucleus, waits.source, 1_000_000);
+        run_for_ms(nucleus, 5);
+        nucleus.charge_current(waits.source);
+        assert!(nucleus.thread_exhausted(waits.source));
+        // A stopped, exhausted Thread is refused by the queue gate.
+        nucleus.thread_mut(waits.source).unwrap().context = ExecutionContext::Preempted {
+            saved: PREEMPTED_SAVED,
+        };
+        nucleus.current_thread = Some(waits.target);
+        let queued_before = nucleus.run_queue.len();
+        assert!(!nucleus.make_runnable(waits.source));
+        assert_eq!(nucleus.run_queue.len(), queued_before);
+        assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
+        // Budget has not arrived yet.
+        assert!(!nucleus.budget_arrived(waits.source));
+
+        // Refill the Time the way a Transfer does.
+        let frequency = nucleus.counter_frequency();
+        // SAFETY: a test-arena record nothing else references right now.
+        unsafe {
+            let bound = Carved::<Time>::validate(time).ok().expect("Time carved");
+            let (_, refilled) =
+                Time::transfer(&Time::root(0, u64::MAX), &*bound, 50_000_000, frequency)
+                    .ok()
+                    .expect("refill");
+            *bound = refilled;
+        }
+        assert!(nucleus.budget_arrived(waits.source));
+        assert!(!nucleus.thread(waits.source).unwrap().awaiting_budget);
+        // Back of the FIFO, behind the Threads already queued.
+        assert_eq!(nucleus.run_queue.len(), queued_before + 1);
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.target));
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.source));
+        // Refilling again queues nothing twice.
+        assert!(!nucleus.budget_arrived(waits.source));
+    });
+}
+
+#[test_case]
+fn a_thread_with_no_bound_time_is_never_exhausted_and_its_run_time_is_metered() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
+        nucleus.current_thread = Some(idle);
+        run_for_ms(nucleus, 4);
+        nucleus.charge_current(idle);
+        // Idle has no Time, so it is never exhausted, but its run time counts
+        // like any other Thread's: it measures load.
+        assert!(!nucleus.thread_exhausted(idle));
+        assert!(nucleus.run_time_ticks(idle).unwrap() >= ticks_for_ms(nucleus, 4));
+        assert!(nucleus.run_time_ns(idle).unwrap() >= 4_000_000);
+        while nucleus.run_queue.pop().is_some() {}
+        assert!(nucleus.make_runnable(waits.target));
+        assert_eq!(nucleus.run_queue.len(), 1);
+    });
+}
+
+#[test_case]
+fn interrupt_time_is_not_charged_to_the_interrupted_thread() {
+    with_resume(|nucleus, waits| {
+        while nucleus.run_queue.pop().is_some() {}
+        let time = bind_time(nucleus, waits.source, 1_000_000_000);
+        // The Thread started 10 ms ago, and 4 ms of that went to interrupts.
+        run_for_ms(nucleus, 10);
+        let started = nucleus.current_since_ticks;
+        nucleus.account_interrupts(&[(5, 1_000), (6, 500)], ticks_for_ms(nucleus, 4));
+        assert_eq!(
+            nucleus.current_since_ticks,
+            started + ticks_for_ms(nucleus, 4)
+        );
+        nucleus.charge_current(waits.source);
+        let charged = nucleus.run_time_ticks(waits.source).unwrap();
+        assert!(charged >= ticks_for_ms(nucleus, 6), "{charged}");
+        assert!(charged < ticks_for_ms(nucleus, 10), "{charged}");
+        let spent = 1_000_000_000 - remaining_ns(nucleus, time);
+        assert!(spent >= 6_000_000 && spent < 10_000_000, "{spent}");
+    });
+}
+
+#[test_case]
+fn interrupt_time_never_moves_the_interval_past_now() {
+    with_resume(|nucleus, waits| {
+        run_for_ms(nucleus, 1);
+        // More interrupt time than has elapsed (a clock skew) clamps to now.
+        nucleus.account_interrupts(&[], ticks_for_ms(nucleus, 1_000));
+        assert!(nucleus.current_since_ticks <= nucleus.counter_ticks());
+        nucleus.charge_current(waits.source);
+        assert!(nucleus.run_time_ticks(waits.source).unwrap() < ticks_for_ms(nucleus, 1));
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TIMER DEADLINE
+// ═══════════════════════════════════════════════════════════════
+
+/// A slice of 10 ms, in ticks of the running counter.
+fn slice(nucleus: &Nucleus<ArchObjectsImpl>) -> u64 {
+    ticks_for_ms(nucleus, 10)
+}
+
+/// Ticks of execution a fresh `budget_ns` Time allows.
+fn budget_ticks(nucleus: &Nucleus<ArchObjectsImpl>, budget_ns: u64) -> u64 {
+    Time::root(0, budget_ns)
+        .ticks_until_exhausted(nucleus.counter_frequency())
+        .expect("a finite budget")
+}
+
+#[test_case]
+fn a_thread_running_alone_on_unlimited_time_needs_no_timer() {
+    with_resume(|nucleus, waits| {
+        while nucleus.run_queue.pop().is_some() {}
+        nucleus.current_since_ticks = 5_000;
+        let slice = slice(nucleus);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+        // The same on an infinite Time.
+        bind_time(nucleus, waits.source, u64::MAX);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+    });
+}
+
+#[test_case]
+fn the_idle_thread_needs_no_timer() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
+        nucleus.current_thread = Some(idle);
+        let slice = slice(nucleus);
+        // Even with runnable Threads queued: idle takes interrupts instead.
+        assert!(!nucleus.run_queue.is_empty());
+        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+    });
+}
+
+#[test_case]
+fn a_queued_thread_bounds_the_slice_from_when_the_current_thread_started() {
+    with_resume(|nucleus, _waits| {
+        nucleus.current_since_ticks = 5_000;
+        let slice = slice(nucleus);
+        assert!(!nucleus.run_queue.is_empty());
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + slice));
+        // A later start moves the deadline with it.
+        nucleus.current_since_ticks = 9_000;
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(9_000 + slice));
+    });
+}
+
+#[test_case]
+fn a_finite_budget_sets_a_deadline_at_exhaustion_even_when_alone() {
+    with_resume(|nucleus, waits| {
+        // Idle can take over, so the exhausted Thread can stop.
+        let _idle = with_idle(nucleus, &waits);
+        while nucleus.run_queue.pop().is_some() {}
+        nucleus.current_since_ticks = 5_000;
+        bind_time(nucleus, waits.source, 2_000_000);
+        let slice = slice(nucleus);
+        let left = budget_ticks(nucleus, 2_000_000);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + left));
+    });
+}
+
+#[test_case]
+fn the_earlier_of_the_slice_and_the_exhaustion_wins() {
+    with_resume(|nucleus, waits| {
+        nucleus.current_since_ticks = 5_000;
+        let slice = slice(nucleus);
+        // Contended, with less budget than a slice: exhaustion comes first.
+        bind_time(nucleus, waits.source, 2_000_000);
+        let left = budget_ticks(nucleus, 2_000_000);
+        assert!(left < slice);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + left));
+        // With more budget than a slice, the slice ends first.
+        bind_time(nucleus, waits.source, 1_000_000_000);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + slice));
+    });
+}
+
+#[test_case]
+fn an_exhausted_thread_with_nothing_to_switch_to_asks_for_no_timer() {
+    with_resume(|nucleus, waits| {
+        // No idle Thread and nothing queued: stopping it is impossible, and a
+        // deadline in the past would fire the timer continuously.
+        while nucleus.run_queue.pop().is_some() {}
+        assert!(nucleus.idle_thread.is_none());
+        bind_time(nucleus, waits.source, 1);
+        run_for_ms(nucleus, 1);
+        nucleus.charge_current(waits.source);
+        assert!(nucleus.thread_exhausted(waits.source));
+        let slice = slice(nucleus);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+    });
+}
+
+#[test_case]
+fn interrupt_time_pushes_the_exhaustion_deadline_out() {
+    with_resume(|nucleus, waits| {
+        let _idle = with_idle(nucleus, &waits);
+        while nucleus.run_queue.pop().is_some() {}
+        nucleus.current_since_ticks = 5_000;
+        bind_time(nucleus, waits.source, 2_000_000);
+        let slice = slice(nucleus);
+        let before = nucleus.timer_deadline_ticks(slice).unwrap();
+        // Time spent in interrupts is not the Thread's, so it gets it back.
+        nucleus.account_interrupts(&[], 700);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(before + 700));
     });
 }

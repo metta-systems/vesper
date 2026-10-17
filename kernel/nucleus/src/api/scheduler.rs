@@ -22,7 +22,7 @@ use {
     crate::{
         api::KeyEntry,
         objects::{
-            ArchObjects, ExecutionContext, KeyTable, Nucleus, Scheduler, Thread, Time,
+            ArchObjects, EventCount, ExecutionContext, KeyTable, Nucleus, Scheduler, Thread, Time,
             access::Access,
             arch_objects::AddressSpaceObject,
             carved::{Carved, CarvedId},
@@ -47,9 +47,11 @@ pub fn invoke<A: ArchObjects>(
     let op = SchedulerOp::try_from(op)?;
     let scheduler = resolve_root_scheduler(access, caller, key)?;
     match op {
-        SchedulerOp::ShareRegion => Err(CapError::InvalidOperation),
+        SchedulerOp::ShareRegion => share_region(access, caller, key, scheduler, args, nucleus),
         SchedulerOp::ConfigureThread => configure_thread(access, caller, scheduler, args, nucleus),
         SchedulerOp::StartThread => start_thread(access, caller, args, nucleus),
+        SchedulerOp::AssignRecord => assign_record(access, caller, key, scheduler, args, nucleus),
+        SchedulerOp::BindEventCount => bind_event_count(access, caller, key, scheduler, args),
     }
 }
 
@@ -137,6 +139,125 @@ fn configure_thread<A: ArchObjects>(
     Ok((0, 0))
 }
 
+/// `ShareRegion` `0`: add a mapped RAM Frame to the scheduler's record table.
+fn share_region<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    key: RawKey,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
+) -> Result<(u64, u64), CapError> {
+    let [frame_key, first_slot, stride, rest @ ..] = *args;
+    if rest.iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let first_slot = u32::try_from(first_slot).map_err(|_too_wide| CapError::InvalidOperation)?;
+    let stride = u32::try_from(stride).map_err(|_too_wide| CapError::InvalidOperation)?;
+    let entry = lookup(
+        access,
+        caller,
+        RawKey::from_wire(frame_key),
+        2,
+        ObjectType::FRAME,
+        Rights::READ | Rights::WRITE,
+    )?;
+    let frame = entry.as_frame()?;
+    // The nucleus writes the records through its own mapping, so the Frame
+    // must be ordinary RAM; it must already be mapped, in the AddressSpace
+    // the scheduler reads the records from.
+    if frame.is_device() {
+        return Err(CapError::InvalidOperation);
+    }
+    let mapping = frame.mapping().ok_or(CapError::NotMapped)?;
+    let region = {
+        let mut object = access
+            .resolve_object::<Scheduler>(scheduler)
+            .map_err(|error| error.for_key(key, 0))?;
+        object.add_region(
+            mapping.address_space,
+            frame.paddr,
+            1_u64 << frame.size_bits,
+            first_slot,
+            stride,
+        )?
+    };
+    nucleus.initialize_region(&region);
+    semi::println!(
+        "✅ Scheduler::ShareRegion(slots {}..{}, stride {stride})",
+        region.first_slot,
+        region.first_slot + region.slots
+    );
+    Ok((0, 0))
+}
+
+/// `AssignRecord` `3`: link a Thread to a record slot and publish it.
+fn assign_record<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    key: RawKey,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
+) -> Result<(u64, u64), CapError> {
+    if args[2..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let thread_id = resolve_thread(access, caller, RawKey::from_wire(args[0]))?;
+    let slot = u32::try_from(args[1]).map_err(|_too_wide| CapError::InvalidOperation)?;
+    {
+        let object = access
+            .resolve_object::<Scheduler>(scheduler)
+            .map_err(|error| error.for_key(key, 0))?;
+        if !object.covers_thread_slot(slot) {
+            return Err(CapError::InvalidOperation);
+        }
+    }
+    // Only a Thread this Scheduler runs can have a record in its table.
+    let thread = nucleus
+        .thread(thread_id)
+        .ok_or(CapError::InvalidOperation)?;
+    if thread.scheduler != Some(scheduler) {
+        return Err(CapError::InvalidOperation);
+    }
+    nucleus.assign_record(thread_id, scheduler, slot)?;
+    semi::println!("✅ Scheduler::AssignRecord(slot {slot})");
+    Ok((0, 0))
+}
+
+/// `BindEventCount` `4`: bind the `EventCount` advanced on scheduling events.
+fn bind_event_count(
+    access: &Access,
+    caller: CallerTable,
+    key: RawKey,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+) -> Result<(u64, u64), CapError> {
+    if args[1..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let event_count_key = RawKey::from_wire(args[0]);
+    let event_count = lookup(
+        access,
+        caller,
+        event_count_key,
+        2,
+        ObjectType::EVENT_COUNT,
+        Rights::SEND,
+    )
+    .and_then(|entry| entry.carved_id().map_err(|e| e.with_key_operand(2)))?;
+    // The EventCount must be live.
+    access
+        .resolve_object::<EventCount>(event_count)
+        .map_err(|error| error.for_key(event_count_key, 2))?;
+    let mut object = access
+        .resolve_object::<Scheduler>(scheduler)
+        .map_err(|error| error.for_key(key, 0))?;
+    object.bind_event_count(event_count)?;
+    semi::println!("✅ Scheduler::BindEventCount()");
+    Ok((0, 0))
+}
+
 /// `StartThread` `2`.
 fn start_thread<A: ArchObjects>(
     access: &Access,
@@ -156,11 +277,9 @@ fn start_thread<A: ArchObjects>(
         return Err(CapError::InvalidOperation);
     };
     thread.context = ExecutionContext::NotStarted { saved };
-    // A configured Thread was never queued, so the push cannot be refused.
-    assert!(
-        nucleus.run_queue.push(thread_id),
-        "configured Thread did not queue"
-    );
+    // A configured Thread was never queued, so the push cannot be refused. A
+    // Thread whose Time holds no budget yet waits for it instead.
+    nucleus.make_runnable(thread_id);
     semi::println!("✅ Scheduler::StartThread()");
     Ok((0, 0))
 }

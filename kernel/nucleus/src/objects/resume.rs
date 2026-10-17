@@ -13,7 +13,7 @@ use {
         thread::ThreadId,
     },
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
-    libobject::CapError,
+    libobject::{CapError, scheduler_record::StopReason},
 };
 
 /// Copied, checked activation metadata; contains no object guard or reference.
@@ -147,10 +147,13 @@ impl<A: ArchObjects> Nucleus<A> {
         self.switch_away(access, current, &ExecutionContext::Faulted { saved })
     }
 
-    /// Preemption-timer tick: if another Thread is runnable, stop the current
-    /// one as `Preempted` with its interrupted state `saved`, select the FIFO
-    /// front and requeue the current Thread behind it (the idle Thread is
-    /// never queued). `None` means the current Thread keeps running.
+    /// Preemption-timer tick: charge the interval to the current Thread, then,
+    /// if another Thread is runnable or the current Thread's Time ran out,
+    /// stop the current one as `Preempted` with its interrupted state
+    /// `saved`, select the FIFO front (or the idle Thread) and requeue the
+    /// current Thread behind it unless its Time is exhausted (the idle
+    /// Thread is never queued). `None` means the current Thread keeps
+    /// running.
     ///
     /// Like [`Nucleus::park_and_select`], every fallible check precedes
     /// commitment, and entry installs the returned translation.
@@ -167,17 +170,22 @@ impl<A: ArchObjects> Nucleus<A> {
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
-        if self.run_queue.is_empty() {
+        // Charge the interval whether or not the Thread is switched away from,
+        // so a Thread running alone is metered too.
+        self.charge_current(current);
+        let current_is_idle = self.idle_thread == Some(current);
+        // An exhausted Thread must stop even when nothing is queued, if the
+        // idle Thread can take over.
+        let can_switch = !self.run_queue.is_empty()
+            || (self.thread_exhausted(current) && !current_is_idle && self.idle_thread.is_some());
+        if !can_switch {
             return Ok(None);
         }
-        let current_is_idle = self.idle_thread == Some(current);
         let resumed = self.switch_away(access, current, &ExecutionContext::Preempted { saved })?;
-        // switch_away dequeued the front, and a running Thread is never queued.
+        // switch_away dequeued the front, and a running Thread is never
+        // queued. An exhausted Thread waits off the queue for budget.
         if !current_is_idle {
-            assert!(
-                self.run_queue.push(current),
-                "preempted Thread did not requeue"
-            );
+            self.make_runnable(current);
         }
         Ok(Some(resumed))
     }
@@ -266,13 +274,23 @@ impl<A: ArchObjects> Nucleus<A> {
             None
         };
         // Charge the interval the current Thread just ran. Every switch away
-        // (block, preempt, fault, Return) commits here, so this is the one
-        // place execution time is accounted.
-        let now = self.current_time_ns();
-        let elapsed = now.saturating_sub(self.current_since_ns);
-        self.current_since_ns = now;
+        // (block, preempt, fault, Return) commits here, and a tick that keeps
+        // the Thread running charges it too, so this is where execution time
+        // is accounted.
+        let elapsed = self.charge_current(current);
+        // Why it stopped, for its record: blocked, faulted, out of budget
+        // or at the end of its slice.
+        let stop = match parked {
+            ExecutionContext::Parked { .. } => StopReason::Blocked,
+            ExecutionContext::Faulted { .. } => StopReason::Faulted,
+            ExecutionContext::Preempted { .. } if self.thread_exhausted(current) => {
+                StopReason::BudgetExhausted
+            }
+            _ => StopReason::SliceEnd,
+        };
         let leaving = self.thread_mut(current).expect("validated current Thread");
-        leaving.run_time_ns = leaving.run_time_ns.saturating_add(elapsed);
+        leaving.last_stop = stop as u32;
+        leaving.last_run_ticks = elapsed;
         leaving.context = *parked;
         if queued.is_some() {
             assert_eq!(
@@ -285,6 +303,10 @@ impl<A: ArchObjects> Nucleus<A> {
             .expect("validated target Thread")
             .context = ExecutionContext::Running;
         self.current_thread = Some(next);
+        // Publish the two state changes last: a record write can wake the
+        // scheduler agent, which must see the switch complete.
+        self.publish_thread(current, false);
+        self.publish_thread(next, false);
         Ok(PreparedResume {
             current,
             next,

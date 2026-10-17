@@ -1,15 +1,20 @@
-//! The kernel-owned preemption timer: the EL1 non-secure physical timer.
+//! The kernel-owned execution timer: the EL1 non-secure physical timer.
 //!
 //! The physical counter and timers belong to the nucleus (EL0 sees only the
-//! virtual counter, see kickstart's `CNTKCTL_EL1` setup). The tick is periodic
-//! for now; tickless deadline programming comes with the Time objects.
+//! virtual counter, see kickstart's `CNTKCTL_EL1` setup). The timer is
+//! one-shot: the nucleus computes the next instant anything needs it, the end
+//! of the current slice or the exhaustion of the running Thread's budget, and
+//! [`program`] sets it, or switches it off when nothing does.
 
 use {
     aarch64_cpu::{
         asm::barrier,
         registers::{CNTFRQ_EL0, CNTP_CTL_EL0, CNTP_CVAL_EL0, CNTPCT_EL0, Readable, Writeable},
     },
-    core::time::Duration,
+    core::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    },
 };
 
 /// Length of one time slice.
@@ -17,13 +22,20 @@ pub const TICK: Duration = Duration::from_millis(10);
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
+/// No deadline is programmed.
+const OFF: u64 = u64::MAX;
+
+/// The deadline last written to the hardware, or [`OFF`]: an unchanged
+/// deadline needs no register writes.
+static PROGRAMMED: AtomicU64 = AtomicU64::new(OFF);
+
 /// The counter frequency, in Hz.
-fn frequency() -> u64 {
+pub fn frequency() -> u64 {
     CNTFRQ_EL0.get().max(1)
 }
 
 /// The physical counter, read in program order.
-fn counter() -> u64 {
+pub fn counter() -> u64 {
     barrier::isb(barrier::SY);
     CNTPCT_EL0.get()
 }
@@ -34,23 +46,30 @@ pub fn now_ns() -> u64 {
     u64::try_from(nanoseconds).unwrap_or(u64::MAX)
 }
 
-/// Counter value at `deadline_ns` on the [`now_ns`] timeline.
-fn counter_at(deadline_ns: u64) -> u64 {
-    let ticks = u128::from(deadline_ns) * u128::from(frequency()) / NANOS_PER_SECOND;
-    u64::try_from(ticks).unwrap_or(u64::MAX)
+/// Counter ticks in one time slice.
+pub fn slice_ticks() -> u64 {
+    let ticks = TICK.as_nanos() * u128::from(frequency()) / NANOS_PER_SECOND;
+    u64::try_from(ticks).unwrap_or(u64::MAX).max(1)
 }
 
-/// Fire the timer once, at `deadline_ns` on the [`now_ns`] timeline.
-///
-/// A deadline already in the past fires immediately. Arming also deasserts
-/// the interrupt, so the handler only has to call this to acknowledge it.
-pub fn arm_at(deadline_ns: u64) {
-    CNTP_CVAL_EL0.set(counter_at(deadline_ns));
-    CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::SET + CNTP_CTL_EL0::IMASK::CLEAR);
+/// Fire the timer once when the counter reaches `deadline` ticks, or switch
+/// it off for `None`. A deadline already in the past fires at once.
+pub fn program(deadline: Option<u64>) {
+    let wanted = deadline.unwrap_or(OFF);
+    if PROGRAMMED.swap(wanted, Ordering::Relaxed) == wanted {
+        return;
+    }
+    match deadline {
+        Some(ticks) => {
+            CNTP_CVAL_EL0.set(ticks);
+            CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::SET + CNTP_CTL_EL0::IMASK::CLEAR);
+        }
+        None => CNTP_CTL_EL0.write(CNTP_CTL_EL0::ENABLE::CLEAR),
+    }
 }
 
-/// Fire the timer one [`TICK`] from now; this also deasserts its interrupt.
-pub fn arm_next_tick() {
-    let tick_ns = u64::try_from(TICK.as_nanos()).unwrap_or(u64::MAX);
-    arm_at(now_ns().saturating_add(tick_ns));
+/// Switch the timer off and forget the programmed deadline. The interrupt
+/// handler calls this to deassert a timer interrupt before ending it.
+pub fn disarm() {
+    program(None);
 }

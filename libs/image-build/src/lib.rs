@@ -758,7 +758,7 @@ fn read_resources(path: &Path, table: &toml::Table) -> Vec<ResourceEntry> {
 /// What Kickstart gives each instance of a driver or program.
 #[derive(Debug)]
 struct Settings {
-    /// Budget the Time receives (default 1 s)
+    /// Budget the Time receives: infinite unless the entry names a finite one
     budget_ns: u64,
     /// Size exponent of the RAM Untyped (default 64 KiB)
     memory_bits: u8,
@@ -777,7 +777,7 @@ struct DriverEntry {
 }
 
 /// Default budget of a driver's Time.
-const DEFAULT_DRIVER_BUDGET_NS: u64 = 1_000_000_000;
+const DEFAULT_DRIVER_BUDGET_NS: u64 = u64::MAX;
 /// Default size of a driver's RAM Untyped.
 const DEFAULT_DRIVER_MEMORY: u64 = 64 * 1024;
 

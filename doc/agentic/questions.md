@@ -36,6 +36,7 @@ DESIGN CHANGE: As explained [here](https://sel4.discourse.group/t/why-do-cnodes-
 kernel runtime upgrade?
 sdcard
 usb
+is virtio-input needed for qemu??
 isochronous scheduling
 
 ---
