@@ -4,9 +4,11 @@ use {
 };
 
 #[cfg(not(test))]
-use libsyscall::{protected_call1, protected_call2, protected_call3, protected_call6};
+use libsyscall::{
+    protected_call1, protected_call2, protected_call3, protected_call5, protected_call6,
+};
 #[cfg(test)]
-use tests::{protected_call1, protected_call2, protected_call3, protected_call6};
+use tests::{protected_call1, protected_call2, protected_call3, protected_call5, protected_call6};
 
 #[cfg(test)]
 #[path = "../tests/support/scheduler.rs"]
@@ -43,6 +45,12 @@ pub enum SchedulerOp {
     AssignRecord = 3,
     /// Bind the `EventCount` the nucleus advances on scheduling events.
     BindEventCount = 4,
+    /// Bind the Thread that makes the scheduler's decisions, and start it.
+    BindDispatcher = 5,
+    /// Run a Thread until the nucleus next activates the dispatcher.
+    Dispatch = 6,
+    /// Choose which events activate the dispatcher.
+    ConfigureActivation = 7,
 }
 
 impl TryFrom<u64> for SchedulerOp {
@@ -55,9 +63,51 @@ impl TryFrom<u64> for SchedulerOp {
             2 => Ok(Self::StartThread),
             3 => Ok(Self::AssignRecord),
             4 => Ok(Self::BindEventCount),
+            5 => Ok(Self::BindDispatcher),
+            6 => Ok(Self::Dispatch),
+            7 => Ok(Self::ConfigureActivation),
             _ => Err(CapError::InvalidOperation),
         }
     }
+}
+
+/// Bits of the activation mask `Scheduler.ConfigureActivation` takes.
+pub mod activation_mask {
+    /// A Thread became runnable.
+    pub const THREAD_RUNNABLE: u64 = 1 << 0;
+    /// A Time went from exhausted to spendable.
+    pub const TIME_AVAILABLE: u64 = 1 << 1;
+    /// Every defined bit.
+    pub const ALL: u64 = THREAD_RUNNABLE | TIME_AVAILABLE;
+}
+
+/// Why `Scheduler.Dispatch` returned: reason bits, combined when several
+/// happened before the dispatcher ran.
+pub mod activation_reason {
+    /// An event the activation mask selected, or any event while the
+    /// dispatcher waited with nothing dispatched.
+    pub const EVENT: u64 = 1 << 0;
+    /// The dispatch limit was reached.
+    pub const LIMIT: u64 = 1 << 1;
+    /// The dispatched Thread's budget ran out.
+    pub const EXHAUSTED: u64 = 1 << 2;
+    /// The dispatched Thread blocked.
+    pub const BLOCKED: u64 = 1 << 3;
+    /// The dispatched Thread yielded.
+    pub const YIELDED: u64 = 1 << 4;
+    /// The dispatched Thread faulted.
+    pub const FAULTED: u64 = 1 << 5;
+    /// The dispatched Thread exited.
+    pub const EXITED: u64 = 1 << 6;
+}
+
+/// What `Scheduler.Dispatch` reports when it returns.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Activation {
+    /// `activation_reason` bits.
+    pub reasons: u64,
+    /// Scheduling events the nucleus has published so far.
+    pub events: u64,
 }
 
 /// Where a configured Thread starts.
@@ -174,6 +224,74 @@ impl SchedulerKey {
                 self.key.to_wire(),
                 SchedulerOp::BindEventCount as u64,
                 event_count.to_wire(),
+            )
+        };
+        decode_syscall_result(result).map(|_| ())
+    }
+
+    /// `BindDispatcher`: make the Thread `thread` this scheduler's
+    /// dispatcher and start it. It must be configured by this Scheduler and
+    /// not started, and a Scheduler binds only one dispatcher.
+    ///
+    /// Wire schema: `x2` Thread key, `x3..x7` zero. Authority: `WRITE` on the
+    /// Scheduler and the Thread.
+    pub fn bind_dispatcher(&self, thread: RawKey) -> Result<(), CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result = unsafe {
+            protected_call1(
+                self.key.to_wire(),
+                SchedulerOp::BindDispatcher as u64,
+                thread.to_wire(),
+            )
+        };
+        decode_syscall_result(result).map(|_| ())
+    }
+
+    /// `Dispatch`: run `thread` on its own Time for at most `limit_ns`, or
+    /// wait with nothing dispatched for `None`. Only the dispatcher calls it,
+    /// and it blocks until the nucleus activates the dispatcher, returning at
+    /// once if an activation is pending. `expected_generation` is the
+    /// Thread's `generation` from its record; a different one fails with
+    /// `StaleGeneration` and runs nothing.
+    ///
+    /// Wire schema: `x2` Thread key (0 for none), `x3` Time key (0 for the
+    /// Thread's own), `x4` limit in nanoseconds, `x5` expected generation,
+    /// `x6` CPU (0), `x7` zero. Authority: `WRITE` on the Scheduler and the
+    /// Thread.
+    pub fn dispatch(
+        &self,
+        thread: Option<RawKey>,
+        limit_ns: u64,
+        expected_generation: u64,
+    ) -> Result<Activation, CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result = unsafe {
+            protected_call5(
+                self.key.to_wire(),
+                SchedulerOp::Dispatch as u64,
+                thread.map_or(0, |thread| thread.to_wire()),
+                0,
+                limit_ns,
+                expected_generation,
+                0,
+            )
+        };
+        let (reasons, events) = decode_syscall_result(result)?;
+        Ok(Activation { reasons, events })
+    }
+
+    /// `ConfigureActivation`: choose the events that activate the dispatcher
+    /// besides the ones that always do, as `activation_mask` bits.
+    ///
+    /// Wire schema: `x2` mask, `x3..x7` zero. Authority: `WRITE` on the
+    /// Scheduler.
+    pub fn configure_activation(&self, mask: u64) -> Result<(), CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result = unsafe {
+            protected_call1(
+                self.key.to_wire(),
+                SchedulerOp::ConfigureActivation as u64,
+                mask,
             )
         };
         decode_syscall_result(result).map(|_| ())

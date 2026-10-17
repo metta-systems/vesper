@@ -206,7 +206,6 @@ fn core_invoke<A: ArchObjects>(
 
         CoreType::Scheduler => {
             crate::api::scheduler::invoke::<A>(access, caller, key, op, args, nucleus)
-                .map(InvokeOutcome::Complete)
         }
 
         CoreType::IRQControl => {

@@ -531,7 +531,7 @@ pub fn run() -> ! {
     );
     let limited_stack = builder.user_stack(&mut stacks, STACK_PAGES, &mut slots);
 
-    // ── The EL0 reader: a scheduler agent's view of the record table ──────
+    // ── The EL0 reader: a dispatcher's view of the record table ──────
     let reader = builder.component(READER_GUARD, &mut slots);
     builder.load_component(
         &reader,

@@ -13,6 +13,7 @@ members = [
   "kernel/tests/fp-trap-test",
   "kernel/tests/irq-test",
   "kernel/tests/preempt-test",
+  "kernel/tests/dispatch-test",
   "kernel/tests/uart-test",
   "bin/chainboot",
   "bin/chainofcommand",
@@ -96,8 +97,11 @@ members = [
   "userspace/tests/mailbox/client",
   "userspace/tests/usb/client",
   "userspace/tests/irq/receiver",
+  "userspace/dispatcher",
   "userspace/tests/preempt/spinner",
   "userspace/tests/preempt/reader",
+  "userspace/tests/dispatch/dispatcher",
+  "userspace/tests/dispatch/actor",
 ]
 resolver = "3"
 

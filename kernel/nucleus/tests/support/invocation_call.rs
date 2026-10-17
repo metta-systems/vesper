@@ -2020,3 +2020,46 @@ impl<T> Must<T> for Result<T, CapError> {
         self.unwrap_or_else(|error| panic!("{what}: {:?}", error.code()))
     }
 }
+
+#[test_case]
+fn a_return_is_a_preemption_point_like_any_other_kernel_exit() {
+    with_call(|nucleus, fixture| {
+        fill_stack(nucleus, 2);
+        let source = nucleus.current_thread.expect("the calling Thread");
+        let call_saved = call_frame(fixture.key, LOWEST_SP);
+        committed(call(nucleus, &fixture, &call_saved));
+        // While the callee ran, the dispatcher was activated (its limit
+        // elapsed, say); the Thread keeps running until it leaves the kernel.
+        nucleus.preempt_requested = true;
+        let next = queue_next_thread(nucleus, &fixture);
+
+        let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        let commit = returned(thread_return(nucleus, &saved));
+        assert_eq!(commit.source_thread, source);
+        // The Return changes nothing about the pending preemption: the
+        // timer is asked to fire at once, as after any other exit.
+        assert!(nucleus.preempt_requested);
+        let since = nucleus.current_since_ticks;
+        assert_eq!(nucleus.timer_deadline_ticks(1_000_000), Some(since));
+
+        // The tick right after the Return stops the caller in exactly the
+        // state the Return resumed, and runs the next Thread.
+        // SAFETY: serial fixture with exclusive nucleus/pool backing; no
+        // other access context or object/table guard overlaps this call.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, commit.resumed)
+                .unwrap_or_else(|error| panic!("tick: {:?}", error.code()))
+                .expect("the queued Thread preempts")
+        };
+        assert_eq!(resumed.next, next);
+        assert_eq!(
+            nucleus.thread(source).unwrap().context,
+            ExecutionContext::Preempted {
+                saved: commit.resumed
+            }
+        );
+        assert!(!nucleus.preempt_requested);
+    });
+}

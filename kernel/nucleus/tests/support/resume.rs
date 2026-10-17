@@ -6,10 +6,10 @@ use {
     crate::{
         api::{InvokeOutcome, KeyEntry},
         objects::{
-            ArchObjectsImpl, ExecutionContext, Nucleus, Time,
+            ArchObjectsImpl, ExecutionContext, Nucleus, Scheduler, Time,
             access::{Access, ObjectId},
             arch_objects::{AddressSpaceId, AddressSpaceObject},
-            carved::Carved,
+            carved::{Carved, CarvedId},
             completion::{PendingKind, PendingState},
             nucleus::test_arena,
             resume::prepare_translation_context,
@@ -18,7 +18,11 @@ use {
     },
     aarch64_cpu::registers::{Readable, SCTLR_EL1, TCR_EL1, Writeable},
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
-    libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, syscall_status},
+    libobject::{
+        CapError, KeySlot, ObjectType, RawKey, Rights,
+        scheduler::{SchedulerOp, activation_mask, activation_reason},
+        syscall_status,
+    },
 };
 
 const ROOT: u64 = 0x2100_0000;
@@ -985,5 +989,423 @@ fn interrupt_time_pushes_the_exhaustion_deadline_out() {
         // Time spent in interrupts is not the Thread's, so it gets it back.
         nucleus.account_interrupts(&[], 700);
         assert_eq!(nucleus.timer_deadline_ticks(slice), Some(before + 700));
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DISPATCHER
+// ═══════════════════════════════════════════════════════════════
+
+/// A bound dispatcher (the fixture's `source` Thread, running) and two
+/// Threads it dispatches: `target` (a woken waiter) and `tail`.
+struct Dispatching {
+    scheduler: RawKey,
+    scheduler_id: CarvedId,
+    target_key: RawKey,
+    tail_key: RawKey,
+}
+
+fn with_dispatcher(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> Dispatching {
+    let scheduler_id = test_arena::carve(Scheduler::root()).expect("arena exhausted");
+    // The dispatcher and its Threads belong to the Scheduler; its Threads
+    // are not in the first-in, first-out queue.
+    for thread in [waits.source, waits.target, waits.tail] {
+        nucleus.thread_mut(thread).unwrap().scheduler = Some(scheduler_id);
+    }
+    while nucleus.run_queue.pop().is_some() {}
+    let source_as = nucleus.thread(waits.source).unwrap().address_space;
+    let address_space = nucleus.address_space_mut(source_as).unwrap();
+    address_space.set_translation_root(Some(ROOT + 0x1000));
+    address_space.set_asid(Some(1));
+    nucleus.thread_mut(waits.tail).unwrap().context = ExecutionContext::Preempted {
+        saved: target_saved(),
+    };
+    // SAFETY: a test-arena Scheduler nothing else references now.
+    unsafe {
+        (*Carved::<Scheduler>::validate(scheduler_id)
+            .ok()
+            .expect("Scheduler carved"))
+        .bind_dispatcher(waits.source)
+        .ok()
+        .expect("bind");
+    }
+    let mut install = |slot: u32, entry: KeyEntry| {
+        nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(KeySlot(slot), entry, FIXTURE_GUARD)
+            .unwrap_or_else(|failure| panic!("install: {:?}", failure.error.code()))
+    };
+    Dispatching {
+        scheduler: install(50, KeyEntry::new_carved(scheduler_id, Rights::all(), 0)),
+        scheduler_id,
+        target_key: install(51, KeyEntry::new_thread(waits.target, Rights::all(), 0)),
+        tail_key: install(52, KeyEntry::new_thread(waits.tail, Rights::all(), 0)),
+    }
+}
+
+fn dispatch_call(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    dispatching: &Dispatching,
+    thread: Option<RawKey>,
+    limit_ns: u64,
+    generation: u64,
+) -> Result<InvokeOutcome, CapError> {
+    cap_invoke(
+        nucleus,
+        dispatching.scheduler,
+        SchedulerOp::Dispatch as u64,
+        &[
+            thread.map_or(0, |thread| thread.to_wire()),
+            0,
+            limit_ns,
+            generation,
+            0,
+            0,
+        ],
+    )
+}
+
+/// Dispatch `thread` and park the dispatcher, as the entry code does; the
+/// resume that results.
+fn dispatch_and_park(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    dispatching: &Dispatching,
+    thread: RawKey,
+    limit_ns: u64,
+) -> crate::objects::resume::PreparedResume {
+    let Ok(InvokeOutcome::Blocked(record)) =
+        dispatch_call(nucleus, dispatching, Some(thread), limit_ns, 0)
+    else {
+        panic!("Dispatch should block the dispatcher");
+    };
+    // SAFETY: exclusive serial fixture, no overlapping context/guard.
+    let access = unsafe { Access::new() };
+    nucleus
+        .park_and_select(&access, SOURCE_SAVED, record)
+        .unwrap_or_else(|e| panic!("park onto the dispatched Thread: {:?}", e.code()))
+}
+
+fn scheduler_of(dispatching: &Dispatching) -> &'static mut Scheduler {
+    // SAFETY: a test-arena Scheduler; serial tests.
+    unsafe {
+        &mut *Carved::<Scheduler>::validate(dispatching.scheduler_id)
+            .ok()
+            .expect("Scheduler carved")
+    }
+}
+
+#[test_case]
+fn dispatch_parks_the_dispatcher_and_runs_the_named_thread() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        let resumed = dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, 5_000_000);
+        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.next, waits.tail);
+        assert_eq!(nucleus.current_thread, Some(waits.tail));
+        let dispatched = nucleus.dispatched.expect("a dispatched Thread");
+        assert_eq!(dispatched.thread, waits.tail);
+        assert!(dispatched.deadline_ticks.is_some());
+        assert!(scheduler_of(&dispatching).parked().is_some());
+        assert!(matches!(
+            nucleus.thread(waits.source).unwrap().context,
+            ExecutionContext::Parked { .. }
+        ));
+        // The dispatched Thread is not in the queue.
+        assert!(nucleus.run_queue.is_empty());
+    });
+}
+
+#[test_case]
+fn the_dispatched_thread_blocking_activates_the_dispatcher() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, 5_000_000);
+        // The dispatched Thread waits on something.
+        let record = nucleus
+            .pending
+            .block(
+                waits.tail,
+                PendingKind::NotificationWait,
+                crate::objects::carved::test_id(ObjectType::NOTIFICATION, 0),
+            )
+            .unwrap_or_else(|e| panic!("wait: {:?}", e.code()));
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .park_and_select(&access, SOURCE_SAVED, record)
+                .unwrap_or_else(|e| panic!("park: {:?}", e.code()))
+        };
+        // The dispatcher comes back, told the Thread blocked.
+        assert_eq!(resumed.next, waits.source);
+        let completion = resumed.completion.expect("the Dispatch call completes");
+        assert_eq!(completion.kind, PendingKind::SchedulerDispatch);
+        assert_eq!(completion.status, syscall_status::SUCCESS);
+        assert_eq!(completion.result0, activation_reason::BLOCKED);
+        assert!(nucleus.dispatched.is_none());
+        assert!(scheduler_of(&dispatching).parked().is_none());
+        assert!(nucleus.run_queue.is_empty());
+    });
+}
+
+#[test_case]
+fn reaching_the_limit_or_the_budget_activates_the_dispatcher() {
+    // The limit.
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, 5_000_000);
+        nucleus.dispatched.as_mut().unwrap().deadline_ticks = Some(0);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("the limit stops the Thread")
+        };
+        assert_eq!(resumed.next, waits.source);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::LIMIT
+        );
+        // The stopped Thread is runnable but not queued: it waits for a dispatch.
+        assert!(nucleus.run_queue.is_empty());
+        assert!(!nucleus.thread(waits.tail).unwrap().queued);
+    });
+    // The budget.
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        bind_time(nucleus, waits.tail, 1_000_000);
+        dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, u64::MAX);
+        run_for_ms(nucleus, 5);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("exhaustion stops the Thread")
+        };
+        assert_eq!(resumed.next, waits.source);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::EXHAUSTED
+        );
+        assert!(nucleus.thread(waits.tail).unwrap().awaiting_budget);
+    });
+}
+
+#[test_case]
+fn an_activation_with_nobody_waiting_makes_the_next_dispatch_return_at_once() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        // The dispatcher is running, not waiting: the activation is kept.
+        nucleus.request_activation(dispatching.scheduler_id, activation_reason::EVENT, 0);
+        assert_eq!(
+            scheduler_of(&dispatching).pending(),
+            activation_reason::EVENT
+        );
+        let Ok(InvokeOutcome::Complete((reasons, _events))) =
+            dispatch_call(nucleus, &dispatching, Some(dispatching.tail_key), 1_000, 0)
+        else {
+            panic!("a pending activation returns at once");
+        };
+        assert_eq!(reasons, activation_reason::EVENT);
+        assert_eq!(scheduler_of(&dispatching).pending(), 0);
+        // Nothing was dispatched, and the next call blocks.
+        assert!(nucleus.dispatch_next.is_none());
+        assert!(matches!(
+            dispatch_call(nucleus, &dispatching, Some(dispatching.tail_key), 1_000, 0),
+            Ok(InvokeOutcome::Blocked(_))
+        ));
+    });
+}
+
+#[test_case]
+fn dispatch_refuses_a_stranger_a_stale_generation_and_a_thread_that_cannot_run() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        let invalid = |result: Result<InvokeOutcome, CapError>| {
+            matches!(result, Err(CapError::InvalidOperation))
+        };
+        // A stale generation reports the current one and runs nothing.
+        assert!(matches!(
+            dispatch_call(nucleus, &dispatching, Some(dispatching.tail_key), 1_000, 99),
+            Err(CapError::StaleGeneration { current: 0 })
+        ));
+        // A zero limit, another CPU, a Thread that is not dispatchable.
+        assert!(invalid(dispatch_call(
+            nucleus,
+            &dispatching,
+            Some(dispatching.tail_key),
+            0,
+            0
+        )));
+        assert!(invalid(cap_invoke(
+            nucleus,
+            dispatching.scheduler,
+            SchedulerOp::Dispatch as u64,
+            &[dispatching.tail_key.to_wire(), 0, 1_000, 0, 1, 0],
+        )));
+        nucleus.thread_mut(waits.tail).unwrap().context = ExecutionContext::Inactive;
+        assert!(invalid(dispatch_call(
+            nucleus,
+            &dispatching,
+            Some(dispatching.tail_key),
+            1_000,
+            0
+        )));
+        nucleus.thread_mut(waits.tail).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        // A Time that is not the Thread's own.
+        let other = test_arena::carve(Time::root(0, 1_000)).expect("arena exhausted");
+        let other_key = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(53),
+                KeyEntry::new_carved(other, Rights::all(), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|f| panic!("install: {:?}", f.error.code()));
+        assert!(invalid(cap_invoke(
+            nucleus,
+            dispatching.scheduler,
+            SchedulerOp::Dispatch as u64,
+            &[
+                dispatching.tail_key.to_wire(),
+                other_key.to_wire(),
+                1_000,
+                0,
+                0,
+                0
+            ],
+        )));
+        // Only the dispatcher dispatches.
+        nucleus.current_thread = Some(waits.tail);
+        assert!(invalid(dispatch_call(
+            nucleus,
+            &dispatching,
+            Some(dispatching.target_key),
+            1_000,
+            0
+        )));
+        // Nothing above parked or ran anything.
+        assert!(nucleus.dispatch_next.is_none());
+        assert!(scheduler_of(&dispatching).parked().is_none());
+    });
+}
+
+#[test_case]
+fn the_mask_decides_which_wakeups_preempt_the_dispatched_thread() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, u64::MAX);
+        // An empty mask: a Thread becoming runnable does not disturb the run.
+        let target = waits.target;
+        nucleus.make_runnable(target);
+        assert!(scheduler_of(&dispatching).parked().is_some());
+        assert!(!nucleus.preempt_requested);
+
+        // THREAD_RUNNABLE: it activates the dispatcher at once.
+        cap_invoke(
+            nucleus,
+            dispatching.scheduler,
+            SchedulerOp::ConfigureActivation as u64,
+            &[activation_mask::THREAD_RUNNABLE, 0, 0, 0, 0, 0],
+        )
+        .ok()
+        .expect("ConfigureActivation");
+        nucleus.make_runnable(target);
+        assert!(scheduler_of(&dispatching).parked().is_none());
+        assert!(nucleus.preempt_requested);
+        assert_eq!(nucleus.run_queue.peek(), Some(waits.source));
+        // The timer is asked to fire at once.
+        let since = nucleus.current_since_ticks;
+        assert_eq!(nucleus.timer_deadline_ticks(1_000_000), Some(since));
+        // The tick switches to the dispatcher with the event as the reason.
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("the dispatcher preempts")
+        };
+        assert_eq!(resumed.next, waits.source);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::EVENT
+        );
+        assert!(!nucleus.preempt_requested);
+    });
+}
+
+#[test_case]
+fn a_dispatcher_waiting_with_nothing_dispatched_wakes_for_any_runnable_thread() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        // An idle Thread, selected when nothing runs.
+        let source_as = nucleus.thread(waits.source).unwrap().address_space;
+        let idle = nucleus.create_thread(source_as).expect("idle Thread");
+        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::NotStarted {
+            saved: SavedContext::el1t_interruptible(0xE0000, 0xF0000),
+        };
+        nucleus.idle_thread = Some(idle);
+
+        let Ok(InvokeOutcome::Blocked(record)) = dispatch_call(nucleus, &dispatching, None, 1, 0)
+        else {
+            panic!("waiting blocks the dispatcher");
+        };
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .park_and_select(&access, SOURCE_SAVED, record)
+                .unwrap_or_else(|e| panic!("park: {:?}", e.code()))
+        };
+        assert_eq!(resumed.next, idle);
+        assert!(nucleus.dispatched.is_none());
+        // The mask is empty, but nothing is running: any runnable Thread wakes it.
+        nucleus.make_runnable(waits.target);
+        assert!(scheduler_of(&dispatching).parked().is_none());
+        assert_eq!(nucleus.run_queue.peek(), Some(waits.source));
+    });
+}
+
+#[test_case]
+fn binding_a_dispatcher_takes_the_schedulers_threads_off_the_queue_and_runs_it_next() {
+    with_resume(|nucleus, waits| {
+        let scheduler_id = test_arena::carve(Scheduler::root()).expect("arena exhausted");
+        // The queue holds `target` and `tail`; `target` belongs to the Scheduler.
+        nucleus.thread_mut(waits.target).unwrap().scheduler = Some(scheduler_id);
+        let source_as = nucleus.thread(waits.source).unwrap().address_space;
+        let dispatcher = nucleus.create_thread(source_as).expect("dispatcher Thread");
+        {
+            let thread = nucleus.thread_mut(dispatcher).unwrap();
+            thread.scheduler = Some(scheduler_id);
+            thread.context = ExecutionContext::Configured {
+                saved: SavedContext::el1t(0xC0000, 0xD0000),
+            };
+        }
+        assert_eq!(nucleus.run_queue.len(), 2);
+        nucleus
+            .bind_dispatcher(scheduler_id, dispatcher)
+            .ok()
+            .expect("bind");
+        // The Scheduler's queued Thread left; the unrelated one stayed; the
+        // dispatcher runs first.
+        assert!(!nucleus.thread(waits.target).unwrap().queued);
+        assert_eq!(nucleus.run_queue.len(), 2);
+        assert_eq!(nucleus.run_queue.pop(), Some(dispatcher));
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert!(matches!(
+            nucleus.thread(dispatcher).unwrap().context,
+            ExecutionContext::NotStarted { .. }
+        ));
+        // A second bind, and a bind of a started Thread, are refused.
+        assert!(nucleus.bind_dispatcher(scheduler_id, waits.source).is_err());
     });
 }

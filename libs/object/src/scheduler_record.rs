@@ -162,8 +162,8 @@ pub struct SchedulerSnapshot {
     pub events: u64,
     /// Armed timers that fired.
     pub timer_expirations: u64,
-    /// The scheduler agent's state.
-    pub agent_state: u32,
+    /// The dispatcher's state.
+    pub dispatcher_state: u32,
     pub flags: u32,
 }
 
@@ -192,7 +192,7 @@ pub struct SchedulerRecord {
     record_size: AtomicU32,
     events: AtomicU64,
     timer_expirations: AtomicU64,
-    agent_state: AtomicU32,
+    dispatcher_state: AtomicU32,
     flags: AtomicU32,
     reserved: [AtomicU64; 11],
 }
@@ -218,7 +218,7 @@ const _: () = {
     assert!(core::mem::offset_of!(SchedulerRecord, record_size) == 12);
     assert!(core::mem::offset_of!(SchedulerRecord, events) == 16);
     assert!(core::mem::offset_of!(SchedulerRecord, timer_expirations) == 24);
-    assert!(core::mem::offset_of!(SchedulerRecord, agent_state) == 32);
+    assert!(core::mem::offset_of!(SchedulerRecord, dispatcher_state) == 32);
     assert!(core::mem::offset_of!(SchedulerRecord, flags) == 36);
 };
 
@@ -342,7 +342,7 @@ impl SchedulerRecord {
             record_size: AtomicU32::new(RECORD_SIZE_U32),
             events: AtomicU64::new(0),
             timer_expirations: AtomicU64::new(0),
-            agent_state: AtomicU32::new(0),
+            dispatcher_state: AtomicU32::new(0),
             flags: AtomicU32::new(0),
             reserved: [const { AtomicU64::new(0) }; 11],
         }
@@ -394,8 +394,8 @@ impl SchedulerRecord {
         self.events.store(snapshot.events, Ordering::Relaxed);
         self.timer_expirations
             .store(snapshot.timer_expirations, Ordering::Relaxed);
-        self.agent_state
-            .store(snapshot.agent_state, Ordering::Relaxed);
+        self.dispatcher_state
+            .store(snapshot.dispatcher_state, Ordering::Relaxed);
         self.flags.store(snapshot.flags, Ordering::Relaxed);
         self.sequence.store(end, Ordering::Release);
     }
@@ -411,7 +411,7 @@ impl SchedulerRecord {
             let snapshot = SchedulerSnapshot {
                 events: self.events.load(Ordering::Relaxed),
                 timer_expirations: self.timer_expirations.load(Ordering::Relaxed),
-                agent_state: self.agent_state.load(Ordering::Relaxed),
+                dispatcher_state: self.dispatcher_state.load(Ordering::Relaxed),
                 flags: self.flags.load(Ordering::Relaxed),
             };
             fence(Ordering::Acquire);

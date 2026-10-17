@@ -47,6 +47,17 @@ binary = "fb"
 interfaces = "../../drivers/fb/interfaces"
 video_memory = true
 
+# The root dispatcher: the EL0 program that decides which Thread of the root
+# Scheduler runs, round-robin. Kickstart does not start it: once every other
+# program and driver is loaded it shares the record table with it and binds
+# its Thread with `Scheduler.BindDispatcher` (`dispatcher = true`).
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true
+
 # The shell: an EL0 program, loaded once without a device tree node (a
 # component with `program = true`). It has a command prompt on the PL011's serial
 # channel (`serial = true`), switches the LED through the mailbox component

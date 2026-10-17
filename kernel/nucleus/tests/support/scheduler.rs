@@ -7,10 +7,11 @@ use {
     crate::{
         api::{InvokeOutcome, KeyEntry},
         objects::{
-            ArchObjects, ArchObjectsImpl, EventCount, ExecutionContext, Nucleus, Scheduler, Thread,
-            Time,
+            ArchObjects, ArchObjectsImpl, EventCount, ExecutionContext, Notification, Nucleus,
+            Scheduler, Thread, Time,
             arch_objects::{AddressSpaceId, AddressSpaceObject},
-            carved::CarvedId,
+            carved::{Carved, CarvedId},
+            notification::WaitOutcome,
             nucleus::test_arena,
             thread::ThreadId,
         },
@@ -21,7 +22,8 @@ use {
         CapError, KeySlot, RawKey, Rights,
         scheduler::SchedulerOp,
         scheduler_record::{
-            FLAG_AWAITING_BUDGET, FLAG_HAS_TIME, SchedulerRecord, ThreadRecord, ThreadSnapshot,
+            BlockReason, FLAG_AWAITING_BUDGET, FLAG_HAS_TIME, SchedulerRecord, ThreadRecord,
+            ThreadSnapshot,
         },
         thread::ThreadState,
     },
@@ -918,5 +920,64 @@ fn a_published_change_wakes_the_agent_waiting_on_the_bound_event_count() {
             nucleus.pending.state(record),
             Ok(crate::objects::completion::PendingState::Completed { .. })
         ));
+    });
+}
+
+#[test_case]
+fn a_woken_waiter_is_published_runnable_not_blocked() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        clear_pages();
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let frame = frame_key(
+            nucleus,
+            30,
+            0,
+            Rights::READ | Rights::WRITE,
+            false,
+            Some(fixture_as),
+        );
+        share(nucleus, &keys, frame, 0, 128).expect_ok();
+        configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+        assign(nucleus, &keys, 5).unwrap_or_else(|e| panic!("AssignRecord: {:?}", e.code()));
+
+        // The Thread waits on a Notification: its record says Blocked, and
+        // why.
+        let notification = test_arena::carve(Notification::new()).expect("arena exhausted");
+        // SAFETY: a test-arena Notification nothing else references.
+        let record = match unsafe {
+            (*Carved::<Notification>::validate(notification)
+                .ok()
+                .expect("Notification carved"))
+            .wait(notification, keys.thread_id, &mut nucleus.pending)
+        } {
+            Ok(WaitOutcome::Blocked(record)) => record,
+            _ => panic!("wait should block"),
+        };
+        nucleus.thread_mut(keys.thread_id).unwrap().context = ExecutionContext::Parked {
+            saved: SavedContext::el1t_interruptible(0xE0000, 0xF0000),
+            record,
+        };
+        nucleus.publish_thread(keys.thread_id, false);
+        let waiting = thread_snapshot(5, 128);
+        assert_eq!(waiting.thread_state(), Some(ThreadState::Blocked));
+        assert_eq!(waiting.block_reason, BlockReason::NotificationWait as u32);
+
+        // A signal completes the wait. The Thread stays parked until it is
+        // resumed, but it can run: the record must say so, or a dispatcher
+        // reading it would never choose the Thread.
+        // SAFETY: as above.
+        unsafe {
+            (*Carved::<Notification>::validate(notification)
+                .ok()
+                .expect("Notification carved"))
+            .signal(0b1, &mut nucleus.pending)
+        }
+        .ok()
+        .expect("signal wakes the waiter");
+        nucleus.publish_thread(keys.thread_id, false);
+        let woken = thread_snapshot(5, 128);
+        assert_eq!(woken.thread_state(), Some(ThreadState::Runnable));
+        assert_eq!(woken.block_reason, BlockReason::None as u32);
+        assert!(woken.generation > waiting.generation);
     });
 }

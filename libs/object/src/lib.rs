@@ -135,6 +135,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::KEY_NOT_ACCEPTED, 0, 0) => CapError::KeyNotAccepted,
             (code::NO_PLACEMENT_SLOT, 0, 0) => CapError::NoPlacementSlot,
             (code::NOT_BOUND, 0, 0) => CapError::NotBound,
+            (code::STALE_GENERATION, current, 0) => CapError::StaleGeneration { current },
             (code::INVALID_SELF_REFERENCE, slot, key) => CapError::InvalidSelfReference {
                 reference: InvalidSelfReference::from_slot(slot)?,
                 key: RawKey::from_wire(key),
@@ -248,6 +249,11 @@ pub enum CapError {
     /// The operation needs the `AddressSpace`'s keytable, and none has been
     /// bound to it with `AddressSpace.Bind` yet.
     NotBound,
+    /// `Scheduler.Dispatch` named a Thread whose generation is not the
+    /// expected one; `current` is its generation now.
+    StaleGeneration {
+        current: u64,
+    },
     /// A `KeyTable` does not name itself in the well-known self slot
     /// `reference` names; `key` led to the table (the invoked key at syscall
     /// entry, the table key of `AddressSpace.Bind`).
@@ -355,6 +361,7 @@ impl CapError {
             CapError::KeyNotAccepted => (code::KEY_NOT_ACCEPTED, 0, 0),
             CapError::NoPlacementSlot => (code::NO_PLACEMENT_SLOT, 0, 0),
             CapError::NotBound => (code::NOT_BOUND, 0, 0),
+            CapError::StaleGeneration { current } => (code::STALE_GENERATION, current, 0),
             CapError::InvalidSelfReference { reference, key } => (
                 code::INVALID_SELF_REFERENCE,
                 u64::from(reference.slot().0),

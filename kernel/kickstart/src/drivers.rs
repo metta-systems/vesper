@@ -65,10 +65,11 @@ use {
         loader::{StackRegion, UserStack, update_init, write_init},
     },
     libdevice_driver::{
-        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DriverInit, ExportedArea, FB_WINDOW_SPANS,
-        FbWindow, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS,
-        MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS,
-        PAGE_FRAME, PAGE_UNTYPED, Region, ResourceRecord, STACK_REGION, VideoBlock,
+        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
+        FB_WINDOW_SPANS, FbWindow, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES,
+        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, MAX_RESOURCES,
+        MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, ResourceRecord,
+        STACK_REGION, VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, dma_address, find_compatible,
@@ -551,6 +552,98 @@ fn share_data_area(
             )
             .unwrap_or_else(|error| panic!("🥾 data area Frame.Map failed: {:?}", error.code()));
     }
+}
+
+/// Where the root dispatcher sees the Scheduler's record table.
+const RECORD_VA: u64 = 0x3c00_0000;
+
+/// Bytes between records: the nucleus's part of a record and nothing more.
+const RECORD_STRIDE: u32 = 128;
+
+/// Records a Frame holds.
+const RECORDS_PER_FRAME: u32 = 4096 / RECORD_STRIDE;
+
+/// Most Threads the root dispatcher manages: every driver instance's Threads.
+const MAX_MANAGED_THREADS: usize = MAX_DRIVER_INSTANCES * (1 + MAX_FURTHER_THREADS);
+
+/// Slot of the dispatcher's table where the key of the Thread whose record is
+/// in slot `s` sits at `FIRST_THREAD_KEY_SLOT + s`.
+const FIRST_THREAD_KEY_SLOT: u32 = 256;
+
+/// Bind the loaded component `dispatcher` as the root Scheduler's dispatcher.
+///
+/// The Scheduler's record table is shared first: records for `managed` in
+/// slots 1 up, in Frames mapped read-only in the dispatcher's
+/// `AddressSpace`. The dispatcher receives the Scheduler and one key to each
+/// managed Thread, and where all of that is (`DriverInit::dispatch`). Binding
+/// starts it and takes the managed Threads off the kernel's queue.
+fn bind_root_dispatcher(
+    builder: &Builder<'_>,
+    root_scheduler: &SchedulerKey,
+    scheduler_key: RawKey,
+    slots: &mut SlotCursor,
+    dispatcher: &mut Prepared<'_>,
+    managed: &[Option<RawKey>],
+) {
+    let slot_count = u32::try_from(managed.len()).expect("a few managed Threads");
+    let frames = (slot_count + 1).div_ceil(RECORDS_PER_FRAME);
+    let component = &dispatcher.component;
+    Builder::map_table(
+        builder.carve_tables(slots.take(1), 1),
+        component.l2,
+        RECORD_VA,
+    );
+    let first = slots.take(frames);
+    let incarnation = builder.retype_frames(first, frames).incarnation();
+    Builder::map_frames(
+        first,
+        incarnation,
+        frames,
+        component.address_space_key,
+        RECORD_VA,
+        Rights(Rights::READ),
+    );
+    for frame in 0..frames {
+        root_scheduler
+            .share_region(
+                boot_key(first + frame, incarnation),
+                frame * RECORDS_PER_FRAME,
+                RECORD_STRIDE,
+            )
+            .unwrap_or_else(|error| panic!("🥾 ShareRegion failed: {:?}", error.code()));
+    }
+    for (slot, thread) in (1..).zip(managed.iter().flatten()) {
+        root_scheduler
+            .assign_record(*thread, slot)
+            .unwrap_or_else(|error| panic!("🥾 AssignRecord failed: {:?}", error.code()));
+        let local = grant(
+            component,
+            builder.entry(*thread),
+            FIRST_THREAD_KEY_SLOT + slot,
+        );
+        assert_eq!(
+            local.incarnation(),
+            1,
+            "🥾 a fresh slot's first incarnation"
+        );
+    }
+    let scheduler_slot = dispatcher.next_slot;
+    dispatcher.next_slot += 1;
+    let scheduler = grant(component, builder.entry(scheduler_key), scheduler_slot);
+    update_init(dispatcher.init_page, |init: &mut DriverInit| {
+        init.first_free_slot = u64::from(dispatcher.next_slot);
+        init.dispatch = DispatchInit {
+            scheduler: scheduler.to_wire(),
+            records: RECORD_VA,
+            stride: u64::from(RECORD_STRIDE),
+            slot_count: u64::from(slot_count),
+            first_thread_key_slot: u64::from(FIRST_THREAD_KEY_SLOT),
+        };
+    });
+    root_scheduler
+        .bind_dispatcher(dispatcher.thread)
+        .unwrap_or_else(|error| panic!("🥾 BindDispatcher failed: {:?}", error.code()));
+    semi::println!("🥾 Root dispatcher bound over {slot_count} Threads");
 }
 
 /// Pages of each target stack an exporting driver reserves for one client.
@@ -1232,7 +1325,12 @@ pub fn load_drivers(
 
     // ── Start ───────────────────────────────────────────────────────────
     let mut started = 0;
-    for loaded in prepared.iter_mut().flatten() {
+    // The Threads the root dispatcher dispatches, and the dispatcher itself.
+    let mut managed = [None; MAX_MANAGED_THREADS];
+    let mut managed_count = 0;
+    let mut dispatcher = None;
+    for (number, loaded) in prepared.iter_mut().enumerate() {
+        let Some(loaded) = loaded else { continue };
         let instance = loaded.instance;
         let name = instance.name();
         let first_free_slot = loaded.next_slot;
@@ -1255,14 +1353,33 @@ pub fn load_drivers(
             init: &init,
             first_free_slot,
         });
+        if instance.driver.dispatcher {
+            // Bound to the Scheduler once every other Thread is known.
+            dispatcher = Some(number);
+            started += 1;
+            continue;
+        }
         for thread in
             core::iter::once(loaded.thread).chain(loaded.further_threads.into_iter().flatten())
         {
             root_scheduler
                 .start_thread(thread)
                 .unwrap_or_else(|error| panic!("🥾 driver StartThread failed: {:?}", error.code()));
+            managed[managed_count] = Some(thread);
+            managed_count += 1;
         }
         started += 1;
+    }
+    if let Some(number) = dispatcher {
+        let loaded = prepared[number].as_mut().expect("a loaded dispatcher");
+        bind_root_dispatcher(
+            builder,
+            &root_scheduler,
+            keys.root_scheduler,
+            slots,
+            loaded,
+            &managed[..managed_count],
+        );
     }
     started
 }

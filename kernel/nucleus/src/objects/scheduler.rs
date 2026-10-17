@@ -14,11 +14,13 @@
 use {
     crate::objects::{
         NucleusObject,
+        access::ObjectId,
         arch_objects::AddressSpaceId,
         carved::{CarvedId, CarvedObject},
     },
     libobject::{
         CapError, ObjectType,
+        scheduler::activation_mask,
         scheduler_record::{MAX_REGIONS, RECORD_ALIGN, SCHEDULER_SLOT, valid_stride},
     },
 };
@@ -63,6 +65,16 @@ pub struct Scheduler {
     events: u64,
     /// Armed timers that fired.
     timer_expirations: u64,
+    /// The Thread that makes this scheduler's decisions, once bound.
+    dispatcher: Option<CarvedId>,
+    /// The dispatcher's parked `Dispatch` call, if it waits, and whether it
+    /// dispatched nothing.
+    parked: Option<(ObjectId, bool)>,
+    /// The events besides the mandatory ones that activate the dispatcher.
+    activation_mask: u64,
+    /// Activation reasons raised while the dispatcher was not waiting; the
+    /// next `Dispatch` returns them at once.
+    activation_pending: u64,
 }
 
 impl Scheduler {
@@ -76,6 +88,10 @@ impl Scheduler {
             event_count: None,
             events: 0,
             timer_expirations: 0,
+            dispatcher: None,
+            parked: None,
+            activation_mask: 0,
+            activation_pending: 0,
         }
     }
 
@@ -198,6 +214,68 @@ impl Scheduler {
     /// Scheduling events published so far.
     pub const fn events(&self) -> u64 {
         self.events
+    }
+
+    /// The bound dispatcher, if any.
+    pub const fn dispatcher(&self) -> Option<CarvedId> {
+        self.dispatcher
+    }
+
+    /// Bind `thread` as the dispatcher. Binding is once-only.
+    pub fn bind_dispatcher(&mut self, thread: CarvedId) -> Result<(), CapError> {
+        if self.dispatcher.is_some() {
+            return Err(CapError::InvalidOperation);
+        }
+        self.dispatcher = Some(thread);
+        Ok(())
+    }
+
+    /// The events that activate the dispatcher besides the mandatory ones.
+    pub const fn activation_mask(&self) -> u64 {
+        self.activation_mask
+    }
+
+    /// Choose the events that activate the dispatcher; bits outside
+    /// [`activation_mask::ALL`](libobject::scheduler::activation_mask::ALL)
+    /// are refused.
+    pub fn set_activation_mask(&mut self, mask: u64) -> Result<(), CapError> {
+        if mask & !activation_mask::ALL != 0 {
+            return Err(CapError::InvalidOperation);
+        }
+        self.activation_mask = mask;
+        Ok(())
+    }
+
+    /// Record the dispatcher's `Dispatch` call `record` as waiting;
+    /// `idle` when it dispatched nothing.
+    pub fn park_dispatcher(&mut self, record: ObjectId, idle: bool) {
+        self.parked = Some((record, idle));
+    }
+
+    /// The waiting `Dispatch` call, if any, and whether it dispatched
+    /// nothing.
+    pub const fn parked(&self) -> Option<(ObjectId, bool)> {
+        self.parked
+    }
+
+    /// Take the waiting `Dispatch` call: the dispatcher is being activated.
+    pub fn take_parked(&mut self) -> Option<ObjectId> {
+        self.parked.take().map(|(record, _idle)| record)
+    }
+
+    /// Raise activation `reasons` that nobody was waiting for.
+    pub fn add_pending(&mut self, reasons: u64) {
+        self.activation_pending |= reasons;
+    }
+
+    /// Take and clear the raised activation reasons.
+    pub fn take_pending(&mut self) -> u64 {
+        core::mem::take(&mut self.activation_pending)
+    }
+
+    /// The raised activation reasons, without clearing them.
+    pub const fn pending(&self) -> u64 {
+        self.activation_pending
     }
 
     /// Armed timers that fired.

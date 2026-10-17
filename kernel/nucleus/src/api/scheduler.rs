@@ -20,14 +20,17 @@
 
 use {
     crate::{
-        api::KeyEntry,
+        api::{InvokeOutcome, KeyEntry},
         objects::{
             ArchObjects, EventCount, ExecutionContext, KeyTable, Nucleus, Scheduler, Thread, Time,
             access::Access,
             arch_objects::AddressSpaceObject,
             carved::{Carved, CarvedId},
+            completion::{PendingKind, PendingState},
             key_table::CallerTable,
+            nucleus::Dispatched,
             thread::ThreadId,
+            time::ns_to_ticks_ceil,
         },
     },
     libexception::arch::aarch64::SavedContext,
@@ -43,15 +46,31 @@ pub fn invoke<A: ArchObjects>(
     op: u64,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
-) -> Result<(u64, u64), CapError> {
+) -> Result<InvokeOutcome, CapError> {
     let op = SchedulerOp::try_from(op)?;
     let scheduler = resolve_root_scheduler(access, caller, key)?;
+    let complete = |result: Result<(u64, u64), CapError>| result.map(InvokeOutcome::Complete);
     match op {
-        SchedulerOp::ShareRegion => share_region(access, caller, key, scheduler, args, nucleus),
-        SchedulerOp::ConfigureThread => configure_thread(access, caller, scheduler, args, nucleus),
-        SchedulerOp::StartThread => start_thread(access, caller, args, nucleus),
-        SchedulerOp::AssignRecord => assign_record(access, caller, key, scheduler, args, nucleus),
-        SchedulerOp::BindEventCount => bind_event_count(access, caller, key, scheduler, args),
+        SchedulerOp::ShareRegion => {
+            complete(share_region(access, caller, key, scheduler, args, nucleus))
+        }
+        SchedulerOp::ConfigureThread => {
+            complete(configure_thread(access, caller, scheduler, args, nucleus))
+        }
+        SchedulerOp::StartThread => complete(start_thread(access, caller, args, nucleus)),
+        SchedulerOp::AssignRecord => {
+            complete(assign_record(access, caller, key, scheduler, args, nucleus))
+        }
+        SchedulerOp::BindEventCount => {
+            complete(bind_event_count(access, caller, key, scheduler, args))
+        }
+        SchedulerOp::BindDispatcher => {
+            complete(bind_dispatcher(access, caller, scheduler, args, nucleus))
+        }
+        SchedulerOp::Dispatch => dispatch(access, caller, key, scheduler, args, nucleus),
+        SchedulerOp::ConfigureActivation => {
+            complete(configure_activation(access, key, scheduler, args))
+        }
     }
 }
 
@@ -256,6 +275,171 @@ fn bind_event_count(
     object.bind_event_count(event_count)?;
     semi::println!("✅ Scheduler::BindEventCount()");
     Ok((0, 0))
+}
+
+/// `BindDispatcher` `5`: bind the Thread that makes this scheduler's
+/// decisions, and start it.
+fn bind_dispatcher<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
+) -> Result<(u64, u64), CapError> {
+    if args[1..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let thread_id = resolve_thread(access, caller, RawKey::from_wire(args[0]))?;
+    // Only a Thread this Scheduler configured can be its dispatcher.
+    let thread = nucleus
+        .thread(thread_id)
+        .ok_or(CapError::InvalidOperation)?;
+    if thread.scheduler != Some(scheduler) {
+        return Err(CapError::InvalidOperation);
+    }
+    nucleus.bind_dispatcher(scheduler, thread_id)?;
+    semi::println!("✅ Scheduler::BindDispatcher()");
+    Ok((0, 0))
+}
+
+/// `ConfigureActivation` `7`: choose the events that activate the
+/// dispatcher besides the ones that always do.
+fn configure_activation(
+    access: &Access,
+    key: RawKey,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+) -> Result<(u64, u64), CapError> {
+    if args[1..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let mut object = access
+        .resolve_object::<Scheduler>(scheduler)
+        .map_err(|error| error.for_key(key, 0))?;
+    object.set_activation_mask(args[0])?;
+    semi::println!("✅ Scheduler::ConfigureActivation(mask {:#x})", args[0]);
+    Ok((0, 0))
+}
+
+/// Whether the Thread `id` can be dispatched now: runnable, off every queue,
+/// with budget.
+fn dispatchable<A: ArchObjects>(nucleus: &Nucleus<A>, id: ThreadId) -> bool {
+    let Some(thread) = nucleus.thread(id) else {
+        return false;
+    };
+    let resumable = match thread.context {
+        ExecutionContext::NotStarted { .. } | ExecutionContext::Preempted { .. } => true,
+        // A woken waiter: its pending record has completed.
+        ExecutionContext::Parked { record, .. } => matches!(
+            nucleus.pending.state(record),
+            Ok(PendingState::Completed { .. })
+        ),
+        _ => false,
+    };
+    resumable && !thread.queued && !thread.awaiting_budget
+}
+
+/// `Dispatch` `6`: the dispatcher runs `x2` until the nucleus activates it.
+///
+/// On one CPU the dispatcher cannot run while it dispatches, so the call
+/// blocks. It returns at once if an activation is already pending.
+fn dispatch<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    key: RawKey,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
+) -> Result<InvokeOutcome, CapError> {
+    let [
+        thread_key,
+        time_key,
+        limit_ns,
+        expected_generation,
+        cpu,
+        reserved,
+    ] = *args;
+    if cpu != 0 || reserved != 0 || limit_ns == 0 {
+        return Err(CapError::InvalidOperation);
+    }
+    let dispatcher = nucleus.current_thread_id()?;
+    let (bound, pending, events) = {
+        let object = access
+            .resolve_object::<Scheduler>(scheduler)
+            .map_err(|error| error.for_key(key, 0))?;
+        (object.dispatcher(), object.pending(), object.events())
+    };
+    // Only the bound dispatcher dispatches.
+    if bound != Some(dispatcher) {
+        return Err(CapError::InvalidOperation);
+    }
+    let target = if thread_key == 0 {
+        None
+    } else {
+        Some(resolve_thread(
+            access,
+            caller,
+            RawKey::from_wire(thread_key),
+        )?)
+    };
+    // An activation raised while the dispatcher ran returns at once.
+    if pending != 0 {
+        let reasons = access
+            .resolve_object::<Scheduler>(scheduler)
+            .map_err(|error| error.for_key(key, 0))?
+            .take_pending();
+        return Ok(InvokeOutcome::Complete((reasons, events)));
+    }
+    if let Some(thread_id) = target {
+        let thread = nucleus
+            .thread(thread_id)
+            .ok_or(CapError::InvalidOperation)?;
+        if thread.scheduler != Some(scheduler) || thread_id == dispatcher {
+            return Err(CapError::InvalidOperation);
+        }
+        if thread.generation != expected_generation {
+            return Err(CapError::StaleGeneration {
+                current: thread.generation,
+            });
+        }
+        if !dispatchable(nucleus, thread_id) {
+            return Err(CapError::InvalidOperation);
+        }
+        // The Time operand is the Thread's own bound Time, or 0 for it.
+        if time_key != 0 {
+            let time_id = lookup(
+                access,
+                caller,
+                RawKey::from_wire(time_key),
+                3,
+                ObjectType::TIME,
+                Rights::WRITE,
+            )
+            .and_then(|entry| entry.carved_id().map_err(|e| e.with_key_operand(3)))?;
+            if thread.time != Some(time_id) {
+                return Err(CapError::InvalidOperation);
+            }
+        }
+    }
+    let frequency = nucleus.counter_frequency();
+    let now = nucleus.counter_ticks();
+    let next = target.map(|thread| Dispatched {
+        thread,
+        scheduler,
+        deadline_ticks: (limit_ns != u64::MAX)
+            .then(|| now.saturating_add(ns_to_ticks_ceil(limit_ns, frequency))),
+    });
+    // Commit: the dispatcher waits for its activation.
+    let record = nucleus
+        .pending
+        .block(dispatcher, PendingKind::SchedulerDispatch, scheduler)?;
+    access
+        .resolve_object::<Scheduler>(scheduler)
+        .map_err(|error| error.for_key(key, 0))?
+        .park_dispatcher(record, target.is_none());
+    nucleus.dispatch_next = next;
+    semi::println!("✅ Scheduler::Dispatch()");
+    Ok(InvokeOutcome::Blocked(record))
 }
 
 /// `StartThread` `2`.

@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! Preemption-test EL0 component acting as a scheduler agent's reader: it
+//! Preemption-test EL0 component acting as a dispatcher's reader: it
 //! reads one Thread's scheduling record from the table mapped for it, with no
 //! system call, and reports what it saw. Its loader passes the address of a
 //! page mapped writable in this component only (`x0`). The first words are

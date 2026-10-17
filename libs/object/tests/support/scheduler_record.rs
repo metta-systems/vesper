@@ -73,7 +73,7 @@ fn scheduler_record_offsets_match_the_literal_layout() {
         offset_of!(SchedulerRecord, record_size),
         offset_of!(SchedulerRecord, events),
         offset_of!(SchedulerRecord, timer_expirations),
-        offset_of!(SchedulerRecord, agent_state),
+        offset_of!(SchedulerRecord, dispatcher_state),
         offset_of!(SchedulerRecord, flags),
     ];
     assert_eq!(offsets, [0, 8, 12, 16, 24, 32, 36]);
@@ -109,7 +109,7 @@ fn publish_then_snapshot_round_trips_and_advances_the_sequence_by_two() {
     let state = SchedulerSnapshot {
         events: 5,
         timer_expirations: 2,
-        agent_state: 1,
+        dispatcher_state: 1,
         flags: 0,
     };
     scheduler.publish(&state);

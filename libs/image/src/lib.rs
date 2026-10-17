@@ -216,6 +216,9 @@ pub struct DriverImage {
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`; see `libserial-channel`)
     pub serial: bool,
+    /// Whether the program is the root dispatcher (`dispatcher = true`): the
+    /// Scheduler binds its Thread rather than the loader starting it
+    pub dispatcher: bool,
     /// Entries of the further Threads each instance runs besides the one
     /// at the component's entry
     pub threads: &'static [u64],

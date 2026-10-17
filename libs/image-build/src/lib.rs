@@ -767,6 +767,9 @@ struct Settings {
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`)
     serial: bool,
+    /// Whether the program is the root dispatcher (`dispatcher = true`):
+    /// Kickstart binds its Thread to the root Scheduler instead of starting it
+    dispatcher: bool,
 }
 
 /// A `[[driver]]` manifest entry: an active component plus what Kickstart
@@ -806,6 +809,10 @@ fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Sett
             .unwrap_or(false),
         serial: entry
             .get("serial")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false),
+        dispatcher: entry
+            .get("dispatcher")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false),
     }
@@ -1136,6 +1143,7 @@ fn emit_driver_image(
          \x20   memory_bits: {memory_bits},\n\
          \x20   video_memory: {video_memory},\n\
          \x20   serial: {serial},\n\
+         \x20   dispatcher: {dispatcher},\n\
          \x20   threads: &[{threads}],\n}};\n",
         name = component.name,
         binary = component.binary,
@@ -1148,6 +1156,7 @@ fn emit_driver_image(
         memory_bits = settings.memory_bits,
         video_memory = settings.video_memory,
         serial = settings.serial,
+        dispatcher = settings.dispatcher,
         threads = image
             .driver_threads
             .iter()

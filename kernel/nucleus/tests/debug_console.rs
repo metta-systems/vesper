@@ -245,6 +245,9 @@ fn with_nucleus(
         irq_table: crate::objects::irq::IrqTable::empty(),
         ticks: 0,
         current_since_ticks: 0,
+        dispatched: None,
+        dispatch_next: None,
+        preempt_requested: false,
     };
     // One fixture AddressSpace shared by the fixture Threads: these tests
     // never resolve translation state.

@@ -45,22 +45,19 @@ The record ABI is in the [contract](capabilities-contract.md#thread-and-addresss
 - [x] Record publication: the nucleus is the single writer of both record kinds through the kernel mapping, with the seqlock protocol; Frame identity is validated before each write.
 - [x] `Scheduler.AssignRecord`: link a Thread to a slot and publish its record at once; publish on every Thread state change (start, queued, awaiting budget, running, blocked, stopped, faulted, retired) with block-reason accounting and `last_stop`/`last_run_ns`; `Dying` on Thread retirement, and the slot association dropped.
 - [x] `Scheduler.BindEventCount`: once-only; the nucleus advances the EventCount after publishing a state change, not for counter-only refreshes; a retired EventCount ends the binding.
-- [x] Tests: ShareRegion with mapped, unmapped, device, read-only, overlapping and re-shared Frames and a mismatched stride; slot placement; sequence-lock tearing under a concurrent writer; AssignRecord and publication across the Thread lifecycle (start, waiting for budget, funded, retired); budget fields after a refill and against `Time.Query`; a reused slot starting a fresh record; EventCount advancement and the wake of an agent waiting on it; a target test where a checker Thread and an EL0 reader component read a budget-limited spinner's record and the checker reads the EventCount.
+- [x] Tests: ShareRegion with mapped, unmapped, device, read-only, overlapping and re-shared Frames and a mismatched stride; slot placement; sequence-lock tearing under a concurrent writer; AssignRecord and publication across the Thread lifecycle (start, waiting for budget, funded, retired); budget fields after a refill and against `Time.Query`; a reused slot starting a fresh record; EventCount advancement and the wake of a dispatcher waiting on it; a target test where a checker Thread and an EL0 reader component read a budget-limited spinner's record and the checker reads the EventCount.
 
-## Phase 5 — Dispatch, replace, events and activation
+## Phase 5 — Dispatch, events and activation (single CPU)
 
-Needs the D5/D8 schema questions (`dispatch`, `replace`, `ConfigureActivation`, event records). The activation contract is in [the Time contract](capabilities-contract.md#time-and-userspace-scheduling).
+The dispatcher, dispatch and activation rules are in the [Time contract](capabilities-contract.md#time-and-userspace-scheduling). `replace` and activation across cores belong to Phase 9; event notification through the bound EventCount is done in Phase 4.
 
-- [ ] `Scheduler.dispatch(thread, time, limit)` and `Scheduler.replace(cpu, thread, time, limit)` with the expected-generation check, caller scheduling authority, spendable-Time and CPU authorization checks, and a rejection that returns the current state.
-- [ ] Event notification: for a scheduling-relevant transition the nucleus publishes the records, then advances the bound EventCount with release ordering. Advance only for scheduling-relevant transitions, never for plain accounting updates. The agent reads the counter before the records and waits with `EventCount.Await(observed + 1)`. Advancement carries no scheduling privilege.
-- [ ] Event records for information that cannot be rebuilt from state (timer expiry, why an execution stopped and the amount charged), kept apart from coalescible state-change notifications, with an overflow rule.
-- [ ] Mandatory activation requests for a running Thread that blocks, exhausts its Time, yields or terminates when a new dispatch decision is needed.
-- [ ] `Scheduler.ConfigureActivation(mask)` with `THREAD_RUNNABLE` and `TIME_AVAILABLE` (a Time going from exhausted to spendable); an empty mask means notify only.
-- [ ] Activation requests coalesce to at most one outstanding per scheduler agent (waiting, activation pending, running), through one pending-state protocol shared with the EventCount wait so a notification arriving while the agent prepares to sleep is not lost. A request is not a mandatory context switch; the scheduler then issues `dispatch` or `replace`.
-- [ ] Root scheduler: privileged activation, no Time, execution accounted separately, no fallback scheduler in the nucleus. The optional diagnostic activation quantum is not part of this item.
-- [ ] The root scheduler dispatches Threads; the kernel FIFO runs only until the root scheduler is established.
-- [ ] Charge PPC per-call time on Return once `current_time_ns()` reads a real clock (the client's Time pays).
-- [ ] Tests: a userspace round-robin policy example on the target (empty mask); a fixed-priority example with `THREAD_RUNNABLE` that preempts on wake; no lost wakeup when an event lands between the counter read and `Await`; coalesced activations under a wakeup burst; adversarial dispatch and replace of a stale, blocked, retired or foreign-core Thread; cancellation; nested delegation and simultaneous spending.
+- [x] `Scheduler.BindDispatcher`: shared ABI, wrapper, object state and dispatch; once-only, the Thread must be configured by the Scheduler and not started, and the bind starts it. While no dispatcher is bound, the Scheduler's Threads run from the first-in, first-out queue, as do the Threads outside any Scheduler (boot, idle, kernel test fixtures); once it is bound they run only when dispatched.
+- [x] A root dispatcher component for the production image: a userspace round-robin policy over the record table that Kickstart loads, configures on an infinite Time and binds during boot, with its record Frame and bound EventCount. The nucleus does not charge the root dispatcher to a Time. Done as `userspace/dispatcher` (`root-dispatcher`, a `dispatcher = true` program in the Kickstart manifest): Kickstart shares the record table, hands it the Scheduler and a key per Thread through `DriverInit::dispatch`, and binds it after starting every other Thread. The dispatcher learns of changes through activation, so it binds no EventCount.
+- [x] `Scheduler.Dispatch`: blocking, with the registers, activation reason bits and `STALE_GENERATION` status (42, in the shared status table and error decoding) of the contract; the dispatch limit joins budget exhaustion in the one-shot timer's deadline; `x2 = 0` waits while the idle Thread runs.
+- [x] Activation: a Thread that blocks, exhausts its budget, yields, faults, exits or reaches its dispatch limit completes the parked dispatcher's call and switches to it; a coalesced pending flag makes a later `Dispatch` return at once.
+- [x] `Scheduler.ConfigureActivation`: the mask (`THREAD_RUNNABLE`, `TIME_AVAILABLE`); masked events request activation like the mandatory ones.
+- [x] Tests: a round-robin policy on the target with an empty mask; wake preemption with `THREAD_RUNNABLE`; a pending activation returning the next `Dispatch` at once; coalesced bursts; stale, blocked, retired and wrong-Scheduler dispatches; preemption at a `Thread.Return`; with no dispatcher bound, Scheduler-configured Threads run from the first-in, first-out queue (every test kernel but `dispatch-test`).
+  - Covered: nucleus tests for bind, dispatch, every activation reason, the mask, a pending activation, refusals and the idle wait, and for a `Thread.Return` followed at once by a tick (the Return is a preemption point like any other kernel exit). On the target, `dispatch-test`: bind (a second bind is refused), round-robin dispatch, limit and exhaustion activation, stale and zero-limit refusals, a refill waking an idle-waiting dispatcher (`TIME_AVAILABLE`), the first-in, first-out boot Thread running while the dispatcher waits, a kicker's wakeup preempting it at once (`THREAD_RUNNABLE`), two wakeups raised while the dispatcher runs coalescing into one pending activation that the next `Dispatch` returns at once, a retired Thread and a Thread no Scheduler configured both refused. The production image boots under the root dispatcher and the shell answers.
 
 ## Phase 6 — Timers and timeouts
 
@@ -86,7 +83,7 @@ Needs Phase 3.
 ## Phase 9 — Hierarchy, domains and multicore
 
 - [ ] Scheduler derivation (`Retype` of an inert Scheduler, an `Adopt` operation that sets its parent once and keeps the tree strict) and Thread donation to a child, moving the Thread's record to the child's table.
-- [ ] Child scheduler agents: an ordinary Thread on an ordinary Time the parent Transferred in, never replenished by the nucleus. Agent exhaustion makes the agent ineligible and sends the parent a distinct event; issued execution grants stay valid; when a decision is needed and the agent cannot run, control returns to the nearest eligible ancestor.
+- [ ] Child dispatchers: an ordinary Thread on an ordinary Time the parent Transferred in, never replenished by the nucleus. Agent exhaustion makes the agent ineligible and sends the parent a distinct event; issued execution grants stay valid; when a decision is needed and the agent cannot run, control returns to the nearest eligible ancestor.
 - [ ] Domain consumption stays bounded because a child holds only budget its parent Transferred and can subdivide it; add parent-enforced effective execution limits only if that proves insufficient.
 - [ ] A child's activation requests never override the parent's authority: they notify the parent or use already delegated capacity.
 - [ ] Scheduler-crash recovery (suspend the domain, or return control to the parent).
@@ -94,3 +91,12 @@ Needs Phase 3.
 - [ ] Temporal service contracts for compositional real-time guarantees, if the project needs them.
 
 **Exit:** storage cannot mint execution authority; delegated time is spent at most once; execution, observation and ownership agree across layers; the nucleus contains no scheduling policy.
+
+## Phase 10 — Retire the kernel queue
+
+After Phase 5. The Threads outside any Scheduler and the Schedulers without a dispatcher are the last users of the first-in, first-out queue.
+
+- [ ] Remove the idle Thread. When nothing is runnable (the dispatcher is parked in `Dispatch(None)`, or the first-in, first-out queue is empty), the kernel idles itself: it executes `wfi` on its own kernel stack with interrupts unmasked, and the next interrupt takes the usual path (handler, activation, switch). Select-next gains a "nothing to run" outcome that waits in the kernel instead of switching to a Thread; `spawn_idle`, `Nucleus::idle_thread` and the idle special cases in `park_and_select` and `preempt_and_select` go, and the test kernels drop their `spawn_idle` calls. The one-shot timer stays disarmed while idle unless a deadline is pending.
+- [ ] Meter idle time in the nucleus, since no Time is charged for it: an idle-ticks counter, exact like Time charging, published in the Scheduler record (slot 0) for load measurement.
+- [ ] Bring the kernel test fixtures up on a dispatcher, so the test kernels' Threads are dispatched too.
+- [ ] Remove the kernel first-in, first-out queue and the pre-dispatcher mechanism.

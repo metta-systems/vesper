@@ -26,11 +26,11 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner shell uart-pl011 usb-hcd-dwc2 usb-test-client'
+user_components := 'dispatch-actor dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher shell uart-pl011 usb-hcd-dwc2 usb-test-client'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'fb-impl mailbox-impl power-impl shell uart-pl011 usb-hcd-dwc2'
+driver_components := 'fb-impl mailbox-impl power-impl root-dispatcher shell uart-pl011 usb-hcd-dwc2'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -147,6 +147,10 @@ build-fp-trap-test board='rpi3': (build-components board 'qemu' 'qemu,fp_trap_te
 # Build the preempt-test e2e kernel (timer tick and preemption of EL1t and EL0 Threads)
 [group("test")]
 build-preempt-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board)
+
+# Build the dispatch-test e2e kernel (a userspace root dispatcher bound to the Scheduler)
+[group("test")]
+build-dispatch-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'dispatch-test' board)
 
 # Build the driver-test e2e kernel (Kickstart driver matching and the driver init page)
 [group("test")]
@@ -349,7 +353,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("test")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-mailbox test-mailbox-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault test-usb
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-dispatch test-dispatch-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-mailbox test-mailbox-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault test-usb
 
 alias t := test
 
@@ -422,6 +426,14 @@ test-preempt: (_run-test-kernel 'preempt-test' 'build-preempt-test')
 # Boot preempt-test on the Raspberry Pi 4 machine: the same image, ticking through the GICv2 component
 [group("test")]
 test-preempt-rpi4: (_run-test-kernel 'preempt-test' 'build-preempt-test rpi4' 'rpi4')
+
+# Boot dispatch-test: a userspace root dispatcher runs worker Threads round-robin through Scheduler.Dispatch
+[group("test")]
+test-dispatch: (_run-test-kernel 'dispatch-test' 'build-dispatch-test')
+
+# Boot dispatch-test on the Raspberry Pi 4 machine
+[group("test")]
+test-dispatch-rpi4: (_run-test-kernel 'dispatch-test' 'build-dispatch-test rpi4' 'rpi4')
 
 # Boot driver-test: Kickstart loads a probe driver per matching device tree node and hands it registers, interrupts, memory and a Time
 [group("test")]
@@ -631,7 +643,7 @@ fmt-check:
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
 [group("test")]
-audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-preempt-test 'rpi3') (build-irq-test 'rpi3') (build-driver-test 'rpi3') (build-mailbox-test 'rpi3') (build-uart-test 'rpi3') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
+audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-preempt-test 'rpi3') (build-dispatch-test 'rpi3') (build-irq-test 'rpi3') (build-driver-test 'rpi3') (build-mailbox-test 'rpi3') (build-uart-test 'rpi3') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
     # The production kernel and the qemu-only test kernels build in rpi3-qemu, the
@@ -644,7 +656,7 @@ audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_bu
     # fp-probe executes an FP/SIMD instruction on purpose. The driver packages name their
     # binaries after the service (mailbox-impl builds `mailbox`).
     user_components="{{ replace(replace(replace(replace(user_components, 'fp-probe', ''), 'mailbox-impl', 'mailbox'), 'power-impl', 'power'), 'fb-impl', 'fb') }}"
-    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test irq-test driver-test mailbox-test uart-test endpoint-test fault-test ${user_components}; do
+    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test dispatch-test irq-test driver-test mailbox-test uart-test endpoint-test fault-test ${user_components}; do
         audited=0
         for config in ${configs}; do
             elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"

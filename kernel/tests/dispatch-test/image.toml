@@ -1,0 +1,22 @@
+# What dispatch-test bundles (see vesper-image-build): its userspace
+# components. `binary` is the cargo binary name, built with
+# userspace/runtime/user.ld.
+
+# A worker that counts forever, reused from preempt-test.
+[[component]]
+name = "worker"
+binary = "preempt-spinner"
+active = true
+
+# The root dispatcher.
+[[component]]
+name = "dispatcher"
+binary = "dispatch-dispatcher"
+active = true
+
+# Threads that wait on a Notification and one that signals it: the wake,
+# coalescing and refusal scenarios.
+[[component]]
+name = "actor"
+binary = "dispatch-actor"
+active = true

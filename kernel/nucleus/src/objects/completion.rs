@@ -44,6 +44,10 @@ pub enum PendingKind {
     /// in the first result word, or the shared `CounterOverflow` error when
     /// an advance's overflow wakes the waiter.
     EventCountAwait,
+    /// `Scheduler.Dispatch`: the dispatcher waits to be activated;
+    /// completion delivers the activation reason bits in the first result
+    /// word and the scheduler's event count in the second.
+    SchedulerDispatch,
 }
 
 /// State of a pending invocation.

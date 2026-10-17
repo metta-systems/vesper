@@ -595,3 +595,18 @@ fn invalid_self_reference_names_the_slot_and_the_key() {
         assert_unknown_response((41, slot, 0));
     }
 }
+
+#[test]
+fn stale_generation_status_round_trips_the_current_generation() {
+    use vesper_objects::syscall_status::STALE_GENERATION;
+
+    assert_eq!(STALE_GENERATION, 42);
+    for current in [0, 1, 0x1234_5678_9abc_def0, u64::MAX] {
+        assert_error!(
+            (42, current, 0),
+            CapError::StaleGeneration { current },
+            CapError::StaleGeneration { current: actual } if actual == current
+        );
+        assert_unknown_response((42, current, 1));
+    }
+}

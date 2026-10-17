@@ -35,6 +35,13 @@ pub fn ticks_to_ns_ceil(ticks: u64, frequency: u64) -> Budget {
         .min(INFINITE_BUDGET - 1)
 }
 
+/// Counter ticks in `nanoseconds` at `frequency` Hz, rounded up and
+/// saturating at `u64::MAX`.
+pub fn ns_to_ticks_ceil(nanoseconds: u64, frequency: u64) -> u64 {
+    let ticks = (u128::from(nanoseconds) * u128::from(frequency.max(1))).div_ceil(NANOS_PER_SECOND);
+    u64::try_from(ticks).unwrap_or(u64::MAX)
+}
+
 /// A CPU budget on one core.
 #[derive(Clone, Copy, Debug)]
 pub struct Time {

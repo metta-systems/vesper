@@ -122,6 +122,9 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
             current_since_ticks: 0,
+            dispatched: None,
+            dispatch_next: None,
+            preempt_requested: false,
             pools: NucleusPools {
                 arch: ArchPools::new(ObjectPool::initialize(pool_ptr, 0)),
             },

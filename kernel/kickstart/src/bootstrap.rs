@@ -112,6 +112,9 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         irq_table: IrqTable::empty(),
         ticks: 0,
         current_since_ticks: 0,
+        dispatched: None,
+        dispatch_next: None,
+        preempt_requested: false,
         pools: NucleusPools::<A> {
             // SAFETY: the architecture pool backings were carved above from
             // the boot Untyped's unused watermark range and are exclusively

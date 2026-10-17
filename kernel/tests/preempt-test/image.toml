@@ -7,7 +7,7 @@ name = "spinner"
 binary = "preempt-spinner"
 active = true
 
-# A scheduler agent's reader: reads a Thread's record from the table shared
+# A dispatcher's reader: reads a Thread's record from the table shared
 # with it and reports what it sees.
 [[component]]
 name = "reader"

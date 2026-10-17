@@ -13,7 +13,7 @@ use {
         thread::ThreadId,
     },
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
-    libobject::{CapError, scheduler_record::StopReason},
+    libobject::{CapError, scheduler::activation_reason, scheduler_record::StopReason},
 };
 
 /// Copied, checked activation metadata; contains no object guard or reference.
@@ -122,7 +122,15 @@ impl<A: ArchObjects> Nucleus<A> {
         {
             return Err(CapError::InvalidOperation);
         }
-        self.switch_away(access, current, &ExecutionContext::Parked { saved, record })
+        let forced = self.dispatch_next.take();
+        let resumed = self.switch_away(
+            access,
+            current,
+            &ExecutionContext::Parked { saved, record },
+            forced.map(|dispatched| dispatched.thread),
+        )?;
+        self.dispatched = forced;
+        Ok(resumed)
     }
 
     /// Stop the current Thread for good after an unhandled fault (or a fault
@@ -144,7 +152,7 @@ impl<A: ArchObjects> Nucleus<A> {
         if current_thread.context != ExecutionContext::Running {
             return Err(CapError::InvalidOperation);
         }
-        self.switch_away(access, current, &ExecutionContext::Faulted { saved })
+        self.switch_away(access, current, &ExecutionContext::Faulted { saved }, None)
     }
 
     /// Preemption-timer tick: charge the interval to the current Thread, then,
@@ -173,6 +181,20 @@ impl<A: ArchObjects> Nucleus<A> {
         // Charge the interval whether or not the Thread is switched away from,
         // so a Thread running alone is metered too.
         self.charge_current(current);
+        // A tick consumes a preemption request: the dispatcher it asked for
+        // is at the front of the queue now.
+        self.preempt_requested = false;
+        // A dispatched Thread that reached its limit or ran out of budget
+        // activates the dispatcher.
+        if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
+            let now = self.counter_ticks();
+            if dispatched.deadline_ticks.is_some_and(|limit| now >= limit) {
+                self.request_activation(dispatched.scheduler, activation_reason::LIMIT, 0);
+            }
+            if self.thread_exhausted(current) {
+                self.request_activation(dispatched.scheduler, activation_reason::EXHAUSTED, 0);
+            }
+        }
         let current_is_idle = self.idle_thread == Some(current);
         // An exhausted Thread must stop even when nothing is queued, if the
         // idle Thread can take over.
@@ -181,11 +203,16 @@ impl<A: ArchObjects> Nucleus<A> {
         if !can_switch {
             return Ok(None);
         }
-        let resumed = self.switch_away(access, current, &ExecutionContext::Preempted { saved })?;
+        let resumed = self.switch_away(
+            access,
+            current,
+            &ExecutionContext::Preempted { saved },
+            None,
+        )?;
         // switch_away dequeued the front, and a running Thread is never
         // queued. An exhausted Thread waits off the queue for budget.
         if !current_is_idle {
-            self.make_runnable(current);
+            self.requeue_preempted(current);
         }
         Ok(Some(resumed))
     }
@@ -204,15 +231,34 @@ impl<A: ArchObjects> Nucleus<A> {
         access: &Access,
         current: ThreadId,
         parked: &ExecutionContext,
+        forced: Option<ThreadId>,
     ) -> Result<PreparedResume, CapError> {
+        // The Thread a dispatcher dispatched stops: that activates the
+        // dispatcher, which is then at the front of the queue. A tick stop
+        // (limit, budget) raised its activation already.
+        if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
+            let reasons = match parked {
+                ExecutionContext::Parked { .. } => activation_reason::BLOCKED,
+                ExecutionContext::Faulted { .. } => activation_reason::FAULTED,
+                _ => 0,
+            };
+            if reasons != 0 {
+                self.request_activation(dispatched.scheduler, reasons, 0);
+            }
+        }
         // Peek is sufficient only because validation and dequeue share this
-        // exclusive transaction.
-        let queued = self.run_queue.peek();
-        let next = match (queued, self.idle_thread) {
-            (Some(next), _) => next,
+        // exclusive transaction. A dispatch names its Thread, which is not
+        // queued.
+        let queued = if forced.is_some() {
+            None
+        } else {
+            self.run_queue.peek()
+        };
+        let next = match (forced, queued, self.idle_thread) {
+            (Some(next), _, _) | (None, Some(next), _) => next,
             // Nothing is runnable: fall back to the idle Thread.
-            (None, Some(idle)) if idle != current => idle,
-            (None, _) => return Err(CapError::InvalidOperation),
+            (None, None, Some(idle)) if idle != current => idle,
+            (None, None, _) => return Err(CapError::InvalidOperation),
         };
         // The selected Thread becomes current as a checked identity.
         let target = self.thread(next).ok_or(CapError::InvalidThread)?;
@@ -303,8 +349,9 @@ impl<A: ArchObjects> Nucleus<A> {
             .expect("validated target Thread")
             .context = ExecutionContext::Running;
         self.current_thread = Some(next);
+        self.preempt_requested = false;
         // Publish the two state changes last: a record write can wake the
-        // scheduler agent, which must see the switch complete.
+        // dispatcher, which must see the switch complete.
         self.publish_thread(current, false);
         self.publish_thread(next, false);
         Ok(PreparedResume {

@@ -74,6 +74,26 @@ impl RunQueue {
         true
     }
 
+    /// Enqueue a runnable Thread at the front, so it runs next. Returns
+    /// `false` when the identity no longer validates or the Thread is
+    /// already queued.
+    pub fn push_front(&mut self, id: ThreadId) -> bool {
+        let Some(entering) = thread(id) else {
+            return false;
+        };
+        if entering.queued {
+            return false;
+        }
+        entering.queued = true;
+        entering.run_next = self.head;
+        if self.head.is_none() {
+            self.tail = Some(id);
+        }
+        self.head = Some(id);
+        self.len += 1;
+        true
+    }
+
     /// Inspect the front without consuming it. Scheduling validates the
     /// selected context before dequeueing under the same kernel lock.
     pub fn peek(&self) -> Option<ThreadId> {

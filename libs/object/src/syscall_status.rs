@@ -81,6 +81,10 @@ pub const NOT_BOUND: u64 = 40;
 /// is the key that led to the table (the invoked key at syscall entry, the
 /// table key of `Bind`). See [`InvalidSelfReference`].
 pub const INVALID_SELF_REFERENCE: u64 = 41;
+/// A `Scheduler.Dispatch` named a Thread whose generation is no longer the one
+/// the dispatcher decided on. Detail 1 is the Thread's current generation;
+/// detail 2 is zero.
+pub const STALE_GENERATION: u64 = 42;
 
 /// Which self reference of a `KeyTable` is wrong, by the well-known slot that
 /// must hold it.

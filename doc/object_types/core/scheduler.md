@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x05` (core) |
 | Backing | Kernel object carved from the boot Untyped by Kickstart |
-| Operations | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount (on the root Scheduler) |
+| Operations | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation (on the root Scheduler) |
 
 ## Purpose
 
@@ -21,6 +21,9 @@ A Scheduler also owns a table of scheduling records. The nucleus writes each of 
 | 2 | StartThread | `x2` Thread | `Write` on the Scheduler and Thread | — |
 | 3 | AssignRecord | `x2` Thread, `x3` slot | `Write` on the Scheduler and Thread | — |
 | 4 | BindEventCount | `x2` EventCount | `Write` on the Scheduler; `Send` on the EventCount | — |
+| 5 | BindDispatcher | `x2` Thread | `Write` on the Scheduler; `Write` on the Thread | — |
+| 6 | Dispatch | `x2` Thread or 0, `x3` Time or 0, `x4` limit ns, `x5` generation, `x6`, `x7` zero | `Write` on the Scheduler | `x1` reasons, `x2` events |
+| 7 | ConfigureActivation | `x2` mask | `Write` on the Scheduler | — |
 
 `Read` is rights bit 0, `Write` and `Map` are bit 1. `SchedulerKey` in `libs/object` wraps the operations. Unused argument registers must be zero.
 
@@ -71,6 +74,41 @@ Links the Thread `x2` to record slot `x3` and publishes its record at once. The 
 
 Binds the EventCount `x2`. After the nucleus publishes a change to the state, flags, block reason or stop reason of any record in the table, it advances the EventCount by one, so a scheduler that waits on it with [`EventCount.Await`](event_count.md#await) learns of the change. A refresh of only the counters does not advance it. Binding is once-only; a second bind fails with `InvalidOperation`. A retired EventCount ends the binding.
 
+### BindDispatcher
+
+Binds the Thread `x2` as the scheduler's *dispatcher*, the Thread that decides what runs, and starts it. The Thread must have been configured by this Scheduler, and binding is once-only. From then on every other Thread this Scheduler configured, and every one it starts later, is dispatcher-managed: it is published in its record but never enters the first-in, first-out queue, and runs only when the dispatcher names it with `Dispatch`. Threads already queued are taken off the queue when the dispatcher is bound. A Scheduler with no bound dispatcher keeps the first-in, first-out behaviour; that is a stopgap until the queue is retired. Kickstart binds the root dispatcher (`userspace/dispatcher`, a round-robin policy) in the production image, after it has started every driver and program; the test kernels bind none, except `dispatch-test`.
+
+| Error | Cause |
+|---|---|
+| `InvalidOperation` | A dispatcher is already bound; the Thread was not configured by this Scheduler; a nonzero unused register |
+| `TypeMismatch` | `x2` is not a Thread |
+
+### Dispatch
+
+Blocks the dispatcher until something needs its attention, and meanwhile runs one Thread. Only the bound dispatcher may call it.
+
+| Register | Meaning |
+|---|---|
+| `x2` | Thread key to run, or 0 to wait with nothing dispatched |
+| `x3` | the Thread's own Time key, or 0 |
+| `x4` | limit in nanoseconds (must be nonzero; `u64::MAX` for none) |
+| `x5` | the generation the dispatcher last saw in the Thread's record |
+| `x6`, `x7` | must be 0 (`x6` is the CPU, only CPU 0 exists) |
+
+The call returns, when the dispatcher is activated, `x1` the reasons as bits (EVENT 1, LIMIT 2, EXHAUSTED 4, BLOCKED 8, YIELDED 16, FAULTED 32, EXITED 64) and `x2` the scheduler's event count at that moment. If an activation was raised while the dispatcher ran, the call returns it at once and runs nothing.
+
+The named Thread must belong to this Scheduler, not be the dispatcher, be runnable with budget and off every queue, and its generation must equal `x5`. The Time operand, if given, must be that Thread's own bound Time. The Thread runs until it blocks, faults, exits, yields, exhausts its Time, reaches the limit, or an unmasked event activates the dispatcher. Time is charged to the Thread's own Time as it runs.
+
+| Error | Cause |
+|---|---|
+| `StaleGeneration` (42) | The Thread's generation differs from `x5`; the current generation is returned so the dispatcher can retry |
+| `InvalidOperation` | The caller is not the bound dispatcher; a Thread of another Scheduler or the dispatcher itself; a Thread that cannot run now; a zero limit; a nonzero CPU or reserved register; a Time that is not the Thread's own |
+| `TypeMismatch`, `InsufficientRights` | A key names the wrong kind or lacks `Write` (Time) |
+
+### ConfigureActivation
+
+Sets which events activate a parked dispatcher besides the ones that always do. The mask has bit 0 `THREAD_RUNNABLE` (a Thread became runnable, including a blocked one waking) and bit 1 `TIME_AVAILABLE` (budget arrived for a Thread that was waiting for it). The dispatched Thread's blocking, fault, exit, yield, exhaustion and limit always activate it. The initial mask is empty. Bits outside the mask fail with `InvalidOperation`. A masked event raised while the dispatcher is not parked is kept as a pending bit and returned by the next `Dispatch`. When the dispatcher activates it is made the next to run and the timer fires at once, so it runs before the preempted Thread.
+
 ## Records
 
 The records are in [`libobject::scheduler_record`](../../../libs/object/src/scheduler_record.rs). Each is 128 bytes and 64-byte aligned, with fixed-width little-endian fields, all accessed atomically. The scheduler can write the pages it maps, but the nucleus never reads a record back, so a scheduler that overwrites one only misleads itself.
@@ -83,7 +121,7 @@ The records are in [`libobject::scheduler_record`](../../../libs/object/src/sche
 | 8 | `layout` (u32, 1), `record_size` (u32, 128) |
 | 16 | `events` (u64): events published, equal to the bound EventCount |
 | 24 | `timer_expirations` (u64) |
-| 32 | `agent_state` (u32), `flags` (u32) |
+| 32 | `dispatcher_state` (u32), `flags` (u32) |
 
 **Thread record (slots 1 and up)**
 
@@ -99,7 +137,7 @@ The records are in [`libobject::scheduler_record`](../../../libs/object/src/sche
 | 56 | `budget_remaining_ns` (u64), rounded down |
 
 - **Flags:** bit 0 `AWAITING_BUDGET` (runnable, but its Time is exhausted), bit 1 `HAS_TIME`. Without a bound Time `budget_remaining_ns` is `u64::MAX`.
-- **State:** `Inactive` for a Thread that is not started, `Runnable` for a queued Thread and one waiting for budget, `Running`, `Blocked`, `Faulted`, and `Dying` once the Thread is retired.
+- **State:** `Inactive` for a Thread that is not started, `Runnable` for a queued Thread, one waiting for budget and a woken waiter that has not resumed yet, `Running`, `Blocked`, `Faulted`, and `Dying` once the Thread is retired.
 - **Block reason:** none, Notification wait, EventCount await, protected procedure call.
 - **Stop reason:** blocked, slice end, budget exhausted, yielded, replaced, exited, faulted.
 - **`cpu`:** the CPU the Thread runs on, or `u32::MAX`.
@@ -109,10 +147,10 @@ The nucleus is the only writer. It makes `sequence` odd, writes the fields, then
 
 ## Implementation
 
-The root Scheduler is the only Scheduler; `Untyped.Retype` cannot create one. Started Threads join the kernel's first-in, first-out run queue.
+The root Scheduler is the only Scheduler; `Untyped.Retype` cannot create one. Started Threads join the kernel's first-in, first-out run queue until the Scheduler has a bound dispatcher; a dispatcher-managed Thread never enters it. The nucleus tracks which Thread the dispatcher dispatched and its limit, charges its Time as it runs, and at every kernel exit programs the one-shot timer for the nearest of the limit, the Time's exhaustion, and an immediate fire when an activation is waiting for the dispatcher.
 
 The nucleus publishes a Thread's record when it starts, queues, waits for budget, runs, blocks, stops, faults or is retired, and when `AssignRecord` links it. Retiring a Thread publishes `Dying` with its incarnation and drops the slot, and the scheduler may reuse the slot after it sees that. A shared Frame must stay mapped and must not be retired while the table uses it; the nucleus does not reclaim Frame memory.
 
 ## Planned changes
 
-Scheduler derivation and handing Threads to subordinate schedulers, a dispatch operation with scheduling events and activation, and a timer a scheduler can arm.
+Scheduler derivation and handing Threads to subordinate schedulers, a timer a scheduler can arm, a dispatcher per subordinate scheduler, non-blocking dispatch and replacing the running Thread on other CPUs, and retiring the first-in, first-out queue.

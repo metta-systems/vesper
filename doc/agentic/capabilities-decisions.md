@@ -14,22 +14,16 @@ plan items.
 
 ## D5: scheduler-shared thread records
 
-The record ABI is selected (see the contract); its trial numbers (record size,
-region limit, `AssignRecord` instead of a start-time slot) are revisited after
-the first implementation. Unanswered questions:
+The record ABI and the Phase 5 single-CPU dispatcher design are selected (see
+the contract); the record numbers and `AssignRecord` are trial choices to
+revisit after use. Unanswered questions:
 
-- What are the operation IDs, register schemas, rights and results of
-  `Scheduler.ConfigureActivation` (the `ActivationMask` bit layout),
-  `Scheduler.arm_timer` (the deadline unit and clock), `dispatch` and
-  `replace`, and which status reports a stale expected generation?
-- What is the scheduler donation schema, and how is strict-tree
-  scheduler ownership enforced (Phase 9)?
-- Should `dispatch_and_wait` (dispatch, then wait for the next event in one
-  operation) be part of the first ABI, and what non-blocking dispatch does a
-  centralized multicore scheduler need?
-- How does the nucleus keep the one-outstanding-activation invariant per
-  scheduler agent across cores, and how does it activate a scheduler whose
-  agent is already running on another core?
+- What are the register schema and clock of `Scheduler.arm_timer` (Phase 6)?
+- What is the scheduler donation schema, and how is strict-tree scheduler
+  ownership enforced (Phase 9)?
+- What does multicore need: `Scheduler.replace`, a non-blocking dispatch, and
+  an activation invariant of one outstanding request per dispatcher across
+  cores, including a dispatcher that is already running on another core?
 
 
 ## D7: Protected Procedure Call (`Invocation`)

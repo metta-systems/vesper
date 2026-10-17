@@ -220,6 +220,25 @@ pub struct SerialKeys {
     pub receive_completed: u64,
 }
 
+/// What the root dispatcher needs to find the Threads it dispatches; zero in
+/// every other component. The Scheduler's record table is mapped read-only at
+/// `records`; the record in slot `s` (1 up to `slot_count`) belongs to the
+/// Thread whose key (first incarnation) is at slot `first_thread_key_slot + s`
+/// of the dispatcher's table.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DispatchInit {
+    /// The root Scheduler (`WRITE`)
+    pub scheduler: u64,
+    /// Where the record table is mapped
+    pub records: u64,
+    /// Bytes between records
+    pub stride: u64,
+    /// Highest record slot in use
+    pub slot_count: u64,
+    pub first_thread_key_slot: u64,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct DriverInit {
@@ -276,6 +295,8 @@ pub struct DriverInit {
     /// The bundled resources mapped read-only in the component, in the order
     /// its manifest entry names them (`resources = [...]`)
     pub resources: [ResourceRecord; MAX_RESOURCES],
+    /// The Scheduler and records of the root dispatcher
+    pub dispatch: DispatchInit,
 }
 
 /// The page tables Kickstart provisions for mapping a framebuffer at
@@ -368,6 +389,13 @@ impl DriverInit {
         },
         resource_count: 0,
         resources: [ResourceRecord { base: 0, len: 0 }; MAX_RESOURCES],
+        dispatch: DispatchInit {
+            scheduler: 0,
+            records: 0,
+            stride: 0,
+            slot_count: 0,
+            first_thread_key_slot: 0,
+        },
     };
 
     /// The node's register ranges.

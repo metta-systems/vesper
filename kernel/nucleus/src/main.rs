@@ -541,7 +541,7 @@ fn handle_irq(frame: &mut ExceptionContext) {
         if ticked {
             nucleus.ticks += 1;
         }
-        if !ticked && !nucleus.idle_is_current() {
+        if !ticked && !nucleus.idle_is_current() && !nucleus.preempt_requested {
             return Ok(None);
         }
         // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other
@@ -672,6 +672,7 @@ fn resume_selected(
         let kind = match completion.kind {
             PendingKind::NotificationWait => "Notification::Wait",
             PendingKind::EventCountAwait => "EventCount::Await",
+            PendingKind::SchedulerDispatch => "Scheduler::Dispatch",
         };
         let status = completion.status;
         let result0 = completion.result0;
