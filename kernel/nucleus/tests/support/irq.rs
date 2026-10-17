@@ -11,7 +11,7 @@ use {
             ArchObjectsImpl, ExecutionContext, Notification, Nucleus, Thread, Time,
             arch_objects::AddressSpaceId,
             carved::CarvedId,
-            irq::{IrqLine, IrqTable},
+            irq::{IrqLine, IrqStats, IrqTable},
             nucleus::test_arena,
         },
         platform,
@@ -716,5 +716,50 @@ fn an_exhausted_line_is_never_issued_again() {
         ));
         let error = handler_op(nucleus, handler, IrqHandlerOp::Ack, [0; 6]).unwrap_err();
         assert!(is_retired_key(&error));
+    });
+}
+
+#[test_case]
+fn interrupt_statistics_count_every_line_and_survive_retire() {
+    with_nucleus(|nucleus, table_addr, _second, fixture_as, _second_as| {
+        let keys = setup(nucleus, table_addr, fixture_as, 0x4);
+        // A line with no handler is recorded too, like the nucleus's own
+        // timer line and an unbound line.
+        assert_eq!(nucleus.irq_table.stats(7), Some(IrqStats::default()));
+        nucleus.account_interrupts(&[(7, 40), (7, 60), (5, 10)], 110);
+        assert_eq!(
+            nucleus.irq_table.stats(7),
+            Some(IrqStats {
+                handled: 2,
+                ticks: 100
+            })
+        );
+        assert_eq!(
+            nucleus.irq_table.stats(5),
+            Some(IrqStats {
+                handled: 1,
+                ticks: 10
+            })
+        );
+        // A line beyond the table has no record and is ignored.
+        nucleus.account_interrupts(&[(u32::MAX, 5)], 5);
+        assert_eq!(nucleus.irq_table.stats(u32::MAX), None);
+
+        // The statistics belong to the line: they survive Retire and a fresh
+        // Issue, and keep counting.
+        let handler = issue(nucleus, &keys, HANDLER_SLOT, 5, 4)
+            .unwrap_or_else(|error| panic!("Issue: {:?}", error.code()));
+        handler_op(nucleus, handler, IrqHandlerOp::Retire, [0; 6])
+            .unwrap_or_else(|error| panic!("Retire: {:?}", error.code()));
+        issue(nucleus, &keys, HANDLER_SLOT + 1, 5, 4)
+            .unwrap_or_else(|error| panic!("reissue: {:?}", error.code()));
+        nucleus.account_interrupts(&[(5, 25)], 25);
+        assert_eq!(
+            nucleus.irq_table.stats(5),
+            Some(IrqStats {
+                handled: 2,
+                ticks: 35
+            })
+        );
     });
 }

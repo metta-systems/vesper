@@ -73,6 +73,23 @@ pub enum ThreadState {
     Dying = 6,
 }
 
+impl TryFrom<u32> for ThreadState {
+    type Error = ();
+
+    fn try_from(raw: u32) -> Result<Self, Self::Error> {
+        match raw {
+            0 => Ok(Self::Inactive),
+            1 => Ok(Self::Runnable),
+            2 => Ok(Self::Running),
+            3 => Ok(Self::Blocked),
+            4 => Ok(Self::Suspended),
+            5 => Ok(Self::Faulted),
+            6 => Ok(Self::Dying),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Named Thread capability — handle to an execution thread.
 /// This management wrapper does not represent `CurrentReturnOnly` authority.
 /// `Retire` is dispatched: it tears a non-current Thread down under `RETIRE`
@@ -89,24 +106,6 @@ impl ThreadKey {
     /// authority.
     pub const fn from_key(key: RawKey) -> Self {
         Self { key: Key::new(key) }
-    }
-
-    /// Get thread state from the scheduler-shared Thread record
-    #[inline]
-    pub fn state(&self) -> ThreadState {
-        unimplemented!("scheduler-shared Thread records (Scheduler.ShareRegion)")
-    }
-
-    /// Get time used from the scheduler-shared Thread record
-    #[inline]
-    pub fn time_used_ns(&self) -> u64 {
-        unimplemented!("scheduler-shared Thread records (Scheduler.ShareRegion)")
-    }
-
-    /// Get pending notifications from the scheduler-shared Thread record (NO SYSCALL!)
-    #[inline]
-    pub fn pending_notifications(&self) -> u64 {
-        unimplemented!("scheduler-shared Thread records (Scheduler.ShareRegion)")
     }
 
     /// Grant a capability to this thread

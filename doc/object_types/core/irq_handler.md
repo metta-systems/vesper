@@ -62,7 +62,7 @@ The GICv2 component routes every shared peripheral interrupt (SPI) to the bootin
 
 ## Implementation
 
-Kickstart carves the line table from the boot Untyped, one record per line of the component. On an interrupt the kernel claims the pending line; the timer line re-arms the kernel's tick. Any other line is masked; a bound line also signals its Notification, waking the front waiter, and the kernel then ends the interrupt (on the GIC, priority drop and deactivation together). A line whose Notification was retired is treated as unbound. A woken receiver joins the kernel's first-in, first-out run queue; it runs at the next tick, or at once when the CPU was idle.
+Kickstart carves the line table from the boot Untyped, one record per line of the component. On an interrupt the kernel claims the pending line; the timer line is the kernel's one-shot timer, which the kernel switches off and later reprograms for its next deadline. Any other line is masked; a bound line also signals its Notification, waking the front waiter, and the kernel then ends the interrupt (on the GIC, priority drop and deactivation together). A line whose Notification was retired is treated as unbound. A woken receiver joins the kernel's first-in, first-out run queue; it runs when the current Thread's slice ends (10 ms after it started), or at once when the CPU was idle. The kernel counts each line's interrupts and the time spent handling them, and does not charge that time to the interrupted Thread.
 
 ## Planned changes
 

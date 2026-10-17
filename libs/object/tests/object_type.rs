@@ -69,6 +69,10 @@ pub mod time_client;
 pub mod scheduler_client;
 
 #[cfg(test)]
+#[path = "../src/scheduler_record.rs"]
+pub mod scheduler_record_client;
+
+#[cfg(test)]
 #[path = "../src/irq.rs"]
 pub mod irq_client;
 

@@ -17,6 +17,7 @@ pub mod object_type;
 pub mod page_table;
 pub mod rights;
 pub mod scheduler;
+pub mod scheduler_record;
 pub mod syscall_status;
 pub mod thread;
 pub mod time;

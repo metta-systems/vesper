@@ -121,7 +121,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             idle_thread: None,
             irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
-            current_since_ns: 0,
+            current_since_ticks: 0,
             pools: NucleusPools {
                 arch: ArchPools::new(ObjectPool::initialize(pool_ptr, 0)),
             },
@@ -1448,7 +1448,7 @@ impl Fixture {
             table: table_id(self.table_addr),
             guard: FIXTURE_GUARD,
         };
-        api::time::invoke(&access, caller, key, op, args)
+        api::time::invoke(&access, caller, key, op, args, self.nucleus)
     }
 
     fn query(&mut self, key: RawKey) -> (u64, u64) {

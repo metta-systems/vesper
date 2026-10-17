@@ -11,7 +11,7 @@ Mark an item `- [x]` only after implementation and validation have passed. A fin
 Kernel-private; no ABI change.
 
 - [x] Per-Thread run time (`Thread::run_time_ns`) charged at every switch-out in `switch_away`, from `Nucleus::current_since_ns`.
-- [ ] Test a Thread charged across several switches.
+- [x] Test a Thread charged across several switches (`preempt-test`: the limited EL0 spinner accumulates its run time over several slices).
 
 ## Phase 2 — Remove kernel priorities from Time
 
@@ -27,26 +27,25 @@ The contract no longer has a priority chain. Remove it everywhere in one slice; 
 
 ## Phase 3 — Charge the bound Time and enforce limits
 
-Needs the contract's accounting rules (no per-charge rounding; kernel time charged; interrupt time excluded).
+The contract's accounting rules apply: ticks kept exact, rounded up only at limit checks; kernel time charged; interrupt time excluded.
 
-- [ ] Charge elapsed counter ticks to the running Thread's bound Time (`Thread::time`, set by `Scheduler.ConfigureThread`), keeping the fractional part; an infinite Time never decreases.
-- [ ] Convert and round the accumulated value only at limit checks and observations.
-- [ ] Exclude interrupt handling time from the running Time; account it separately (open in D8).
-- [ ] Ineligibility: a Thread whose Time is exhausted leaves the run queue until budget is Transferred in, and re-enters it then. It is not a Thread state.
-- [ ] One-shot timer in place of the free-running tick (`timer::arm_at`): the earlier of the slice end and budget exhaustion; no timer while only the idle Thread is runnable.
-- [ ] Tests: conservation, expiry, an infinite Time, a Time drained by Transfer while its Thread runs, a Thread made eligible again by a Transfer, boot Time unaffected, no charge for interrupt time. Target scheduling test with two Threads on finite Times.
+- [x] Charge elapsed counter ticks to the running Thread's bound Time (`Thread::time`, set by `Scheduler.ConfigureThread`), keeping the fractional part; an infinite Time never decreases.
+- [x] Convert and round the accumulated value only at limit checks and observations.
+- [x] Exclude interrupt handling time from the running Time; record it per interrupt line (a count and the ticks spent) in the line table.
+- [x] Ineligibility: a Thread whose Time is exhausted leaves the run queue until budget is Transferred in, and re-enters it then. It is not a Thread state.
+- [x] One-shot timer in place of the free-running tick (`timer::program`, reprogrammed at every kernel exit): the earlier of the slice end and budget exhaustion; no timer while only the idle Thread is runnable.
+- [x] Tests: conservation, expiry, an infinite Time, a Time drained by Transfer while its Thread runs, a Thread made eligible again by a Transfer, boot Time unaffected, no charge for interrupt time. Target scheduling test with two Threads on finite Times.
 
 ## Phase 4 — Scheduler-shared records (D5)
 
-Needs the D5 questions in `capabilities-decisions.md`.
+The record ABI is in the [contract](capabilities-contract.md#thread-and-addressspace-contracts). Hierarchical derivation and donation are in Phase 9.
 
-- [ ] Implement `Scheduler.ShareRegion` across shared ABI, wrapper, dispatch and object state: one already scheduler-mapped Frame per call, reject conflicting re-share, check Scheduler and Frame authority.
-- [ ] Implement `Scheduler.BindEventCount`: bind an EventCount to a Scheduler, with the designated agent as its only waiter; reject a second binding.
-- [ ] Implement the scheduler-declared fixed-stride record table: capacity, Thread identity/incarnation lookup, publication/snapshot protocol and record reuse. Kernel-private execution state stays private. `ThreadKey::state`, `time_used_ns` and `pending_notifications` (`libs/object/src/thread.rs`) read these records instead of panicking through `unimplemented!()`.
-- [ ] Implement hierarchical Scheduler derivation, root-only Thread creation and Thread donation with strict tree structure; Kickstart establishes the root scheduler before scheduling starts.
-- [ ] Move notification and block-reason accounting into the shared records, with event-summary indexing and Thread-retirement cleanup.
-- [ ] Align consumed, remaining and activation observations with the records.
-- [ ] Test scheduler/Frame authority, mapped and unmapped ShareRegion inputs, re-share rejection, stride placement, identity reuse, tree constraints, root creation/donation, publication/reuse and Thread teardown; run target checks for record access and kernel-private state isolation.
+- [x] Shared ABI (`libs/object`): `SchedulerOp` gains `AssignRecord` and `BindEventCount`; the `SchedulerRecord` and `ThreadRecord` layouts with size and offset assertions, the `ThreadState` mapping, flag, block-reason and stop-reason codes, and the seqlock snapshot helpers (`ThreadRecordView`, `SchedulerRecordView`); the panicking `ThreadKey::state`, `time_used_ns` and `pending_notifications` stubs are removed.
+- [x] `Scheduler.ShareRegion`: wrapper, dispatch and object state (the record AddressSpace, the stride and up to 8 regions in the carved Scheduler); one mapped RAM Frame per call, re-share and overlap rejected, authority checked.
+- [x] Record publication: the nucleus is the single writer of both record kinds through the kernel mapping, with the seqlock protocol; Frame identity is validated before each write.
+- [x] `Scheduler.AssignRecord`: link a Thread to a slot and publish its record at once; publish on every Thread state change (start, queued, awaiting budget, running, blocked, stopped, faulted, retired) with block-reason accounting and `last_stop`/`last_run_ns`; `Dying` on Thread retirement, and the slot association dropped.
+- [x] `Scheduler.BindEventCount`: once-only; the nucleus advances the EventCount after publishing a state change, not for counter-only refreshes; a retired EventCount ends the binding.
+- [x] Tests: ShareRegion with mapped, unmapped, device, read-only, overlapping and re-shared Frames and a mismatched stride; slot placement; sequence-lock tearing under a concurrent writer; AssignRecord and publication across the Thread lifecycle (start, waiting for budget, funded, retired); budget fields after a refill and against `Time.Query`; a reused slot starting a fresh record; EventCount advancement and the wake of an agent waiting on it; a target test where a checker Thread and an EL0 reader component read a budget-limited spinner's record and the checker reads the EventCount.
 
 ## Phase 5 — Dispatch, replace, events and activation
 
@@ -86,6 +85,7 @@ Needs Phase 3.
 
 ## Phase 9 — Hierarchy, domains and multicore
 
+- [ ] Scheduler derivation (`Retype` of an inert Scheduler, an `Adopt` operation that sets its parent once and keeps the tree strict) and Thread donation to a child, moving the Thread's record to the child's table.
 - [ ] Child scheduler agents: an ordinary Thread on an ordinary Time the parent Transferred in, never replenished by the nucleus. Agent exhaustion makes the agent ineligible and sends the parent a distinct event; issued execution grants stay valid; when a decision is needed and the agent cannot run, control returns to the nearest eligible ancestor.
 - [ ] Domain consumption stays bounded because a child holds only budget its parent Transferred and can subdivide it; add parent-enforced effective execution limits only if that proves insufficient.
 - [ ] A child's activation requests never override the parent's authority: they notify the parent or use already delegated capacity.

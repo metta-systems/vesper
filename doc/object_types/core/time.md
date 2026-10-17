@@ -37,7 +37,7 @@ Invoked on the destination Time. Moves all of the budget of the source Time name
 
 ### Query
 
-Returns the remaining budget in `x1`; `x2` is zero.
+Returns the remaining budget in `x1`, rounded down to a whole nanosecond; `x2` is zero.
 
 ### Errors
 
@@ -58,8 +58,12 @@ A Time bound to a Thread by [`Scheduler.ConfigureThread`](scheduler.md#configure
 
 The first component receives the boot Time at `KeySlot::BOOT_TIME` (17): core 0 and an infinite budget.
 
-Nothing charges a Time yet: the nucleus preempts with a fixed 10 ms tick from the EL1 physical timer and runs Threads in first-in, first-out order.
+The nucleus charges the running Thread's bound Time with the counter ticks it executes, including the time it spends in system calls. The charge is kept exactly and converted to nanoseconds, rounded up, only when it is compared with the budget, so a Thread never runs past its budget and Query reports the remaining budget rounded down. Time spent handling interrupts is not charged. An infinite budget is never charged.
+
+A Thread whose Time is exhausted stops and stays off the run queue. A Transfer or Merge that brings budget into the Time puts the Thread back at the end of the queue at once. A Thread with no bound Time, such as the boot Thread and the idle Thread, has no limit; the nucleus still measures how long it ran.
+
+The nucleus runs Threads in first-in, first-out order with a 10 ms slice. The EL1 physical timer is one-shot: it is programmed for the earlier of the end of the current slice, when another Thread is runnable, and the moment the running Thread's budget runs out, and it is off when neither applies.
 
 ## Planned changes
 
-The nucleus will charge the running Time as it executes and program a one-shot timer for the earlier of the budget running out and the end of the execution interval a scheduler requested. A Thread whose Time is exhausted will not run until budget is transferred in again.
+A scheduler will choose which Thread runs, on which Time and for how long, in place of the first-in, first-out order, and the nucleus will report a Thread blocking, running out of budget or waking to the scheduler.

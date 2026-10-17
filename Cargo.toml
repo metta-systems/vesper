@@ -97,6 +97,7 @@ members = [
   "userspace/tests/usb/client",
   "userspace/tests/irq/receiver",
   "userspace/tests/preempt/spinner",
+  "userspace/tests/preempt/reader",
 ]
 resolver = "3"
 

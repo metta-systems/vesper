@@ -281,14 +281,38 @@ pub struct Thread {
     pub time: Option<CarvedId>,
     /// The Scheduler that configured the Thread (bookkeeping, as `time`).
     pub scheduler: Option<CarvedId>,
-    /// Nanoseconds this Thread has executed, charged each time it is
-    /// switched away from. Kernel-private bookkeeping.
-    pub run_time_ns: u64,
+    /// Counter ticks this Thread has executed, charged each time it is
+    /// switched away from or ticked. Kernel-private bookkeeping.
+    pub run_time_ticks: u64,
+    /// Whether the Thread is runnable but kept off the run queue because its
+    /// bound Time is exhausted; a Transfer or Merge that refills the Time
+    /// queues it again. Not a logical Thread state, only the nucleus's note of
+    /// why a runnable Thread is not queued.
+    pub awaiting_budget: bool,
+    /// The record slot the scheduler assigned: the Scheduler whose table
+    /// holds it and the slot. Kernel bookkeeping; the Thread has a record
+    /// only once `Scheduler.AssignRecord` linked it.
+    pub record: Option<RecordSlot>,
+    /// How many times the nucleus published a state change of this Thread:
+    /// the count a scheduler's stale-decision check compares against.
+    pub generation: u64,
+    /// Why the Thread last stopped running, as a `StopReason` code.
+    pub last_stop: u32,
+    /// Counter ticks of the Thread's last run.
+    pub last_run_ticks: u64,
 }
 
 /// Kernel identity of a Thread: its carved identity. Holding one grants
 /// nothing; authority over a Thread is a key in a `KeyTable`.
 pub type ThreadId = CarvedId;
+
+/// Where a Thread's record lives: the Scheduler whose table holds it and the
+/// slot in that table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordSlot {
+    pub scheduler: CarvedId,
+    pub slot: u32,
+}
 
 impl Thread {
     /// A Thread in `address_space` with execution state `context`, an empty
@@ -303,7 +327,12 @@ impl Thread {
             queued: false,
             time: None,
             scheduler: None,
-            run_time_ns: 0,
+            run_time_ticks: 0,
+            awaiting_budget: false,
+            record: None,
+            generation: 0,
+            last_stop: 0,
+            last_run_ticks: 0,
         }
     }
 }
@@ -371,7 +400,12 @@ mod tests {
             queued: false,
             time: None,
             scheduler: None,
-            run_time_ns: 0,
+            run_time_ticks: 0,
+            awaiting_budget: false,
+            record: None,
+            generation: 0,
+            last_stop: 0,
+            last_run_ticks: 0,
         };
         let ExecutionContext::NotStarted { saved } = thread.context else {
             panic!("new Thread has no initial execution context")
@@ -405,7 +439,12 @@ mod tests {
             queued: false,
             time: None,
             scheduler: None,
-            run_time_ns: 0,
+            run_time_ticks: 0,
+            awaiting_budget: false,
+            record: None,
+            generation: 0,
+            last_stop: 0,
+            last_run_ticks: 0,
         };
 
         // Reuse every byte of the transient frame for another execution context.

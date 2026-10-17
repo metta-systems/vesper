@@ -44,12 +44,23 @@ enum LineState {
     Exhausted,
 }
 
+/// What the nucleus spent handling one line's interrupts: the interrupts
+/// taken and the counter ticks from claim to completion. The line stays
+/// counted whatever its handler state, so the nucleus's own timer line and
+/// lines with no handler are recorded too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IrqStats {
+    pub handled: u64,
+    pub ticks: u64,
+}
+
 /// One line's record.
 #[derive(Clone, Copy, Debug)]
 pub struct IrqLine {
     state: LineState,
     generation: u32,
     binding: Option<IrqBinding>,
+    stats: IrqStats,
 }
 
 impl IrqLine {
@@ -58,6 +69,10 @@ impl IrqLine {
         state: LineState::Free,
         generation: 1,
         binding: None,
+        stats: IrqStats {
+            handled: 0,
+            ticks: 0,
+        },
     };
 }
 
@@ -192,6 +207,22 @@ impl IrqTable {
         let record = &mut self.records_mut()[line as usize];
         assert_eq!(record.state, LineState::Free);
         record.generation = generation;
+    }
+
+    /// Count one interrupt of `line` that took `ticks` to handle. A line
+    /// beyond the table is ignored.
+    pub fn record_handled(&mut self, line: u32, ticks: u64) {
+        if let Some(record) = self.records_mut().get_mut(line as usize) {
+            record.stats.handled = record.stats.handled.saturating_add(1);
+            record.stats.ticks = record.stats.ticks.saturating_add(ticks);
+        }
+    }
+
+    /// What the nucleus has spent handling `line`'s interrupts; `None` for a
+    /// line beyond the table. The statistics survive `Retire` and a fresh
+    /// `Issue`.
+    pub fn stats(&self, line: u32) -> Option<IrqStats> {
+        self.records().get(line as usize).map(|record| record.stats)
     }
 
     /// The binding of `line`, if it has a live, bound handler.

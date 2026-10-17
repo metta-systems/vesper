@@ -201,9 +201,8 @@ fn core_invoke<A: ArchObjects>(
             crate::api::event_count::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
-        CoreType::Time => {
-            crate::api::time::invoke(access, caller, key, op, args).map(InvokeOutcome::Complete)
-        }
+        CoreType::Time => crate::api::time::invoke::<A>(access, caller, key, op, args, nucleus)
+            .map(InvokeOutcome::Complete),
 
         CoreType::Scheduler => {
             crate::api::scheduler::invoke::<A>(access, caller, key, op, args, nucleus)
@@ -236,8 +235,9 @@ pub(crate) fn wake_waiter<A: ArchObjects>(
     let waiter = nucleus.pending.waiter(record)?;
     if nucleus.thread(waiter).is_some() {
         // A completed record's waiter is parked, so it is not already queued;
-        // a refused push is a kernel bookkeeping bug.
-        assert!(nucleus.run_queue.push(waiter), "woken Thread did not queue");
+        // a refused push is a kernel bookkeeping bug. A waiter whose Time is
+        // exhausted waits for budget instead of queueing.
+        nucleus.make_runnable(waiter);
     } else if nucleus.pending.release(record).is_err() {
         panic!("failed to release a completed record with a stale waiter");
     }
