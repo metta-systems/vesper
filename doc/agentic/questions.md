@@ -2,6 +2,13 @@ DESIGN CHANGE: As explained [here](https://sel4.discourse.group/t/why-do-cnodes-
 
 ---
 
+kernel runtime upgrade?
+sdcard
+usb
+isochronous scheduling
+
+---
+
 move AS first in the arch key numbers
 
 ---
