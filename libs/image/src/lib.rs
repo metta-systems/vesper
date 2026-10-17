@@ -207,8 +207,6 @@ pub struct DriverImage {
     pub component: &'static ComponentImage,
     /// Device tree `compatible` strings the driver serves
     pub compatible: &'static [&'static str],
-    /// Priority of each instance's Time
-    pub priority: u16,
     /// Budget each instance's Time receives
     pub budget_ns: u64,
     /// Size exponent of each instance's RAM Untyped

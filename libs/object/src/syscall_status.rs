@@ -62,28 +62,25 @@ pub const UNEXPECTED_RETURN: u64 = 35;
 /// A finite source Time holds less budget than a `Time.Transfer` asks for.
 /// Detail 1 is the source's remaining budget in nanoseconds; detail 2 is zero.
 pub const INSUFFICIENT_BUDGET: u64 = 36;
-/// A `Time.Transfer` would leave the destination with more
-/// than 16 priority-chain entries. Details are zero.
-pub const PRIORITY_CHAIN_FULL: u64 = 37;
 /// `IRQControl.Issue` named a line that already has a live `IRQHandler`, or
 /// the line the nucleus keeps for its own timer. Detail 1 is the line;
 /// detail 2 is zero.
-pub const IRQ_LINE_ACTIVE: u64 = 38;
+pub const IRQ_LINE_ACTIVE: u64 = 37;
 /// An `Invocation.CallWithKey` named an Invocation whose exporter declared no
 /// key-placement window (count 0), so it accepts no lent key. Details are zero.
-pub const KEY_NOT_ACCEPTED: u64 = 39;
+pub const KEY_NOT_ACCEPTED: u64 = 38;
 /// Every slot of the Invocation's key-placement window is occupied or cannot
 /// issue a fresh incarnation, so the lent key has nowhere to be placed.
 /// Details are zero.
-pub const NO_PLACEMENT_SLOT: u64 = 40;
+pub const NO_PLACEMENT_SLOT: u64 = 39;
 /// The operation needs the `AddressSpace`'s keytable, and no keytable has been
 /// bound to it with `AddressSpace.Bind` yet. Details are zero.
-pub const NOT_BOUND: u64 = 41;
+pub const NOT_BOUND: u64 = 40;
 /// A `KeyTable` used for an invocation or bound by `AddressSpace.Bind` does
 /// not name itself in a well-known self slot. Detail 1 is the slot; detail 2
 /// is the key that led to the table (the invoked key at syscall entry, the
 /// table key of `Bind`). See [`InvalidSelfReference`].
-pub const INVALID_SELF_REFERENCE: u64 = 42;
+pub const INVALID_SELF_REFERENCE: u64 = 41;
 
 /// Which self reference of a `KeyTable` is wrong, by the well-known slot that
 /// must hold it.

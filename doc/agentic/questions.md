@@ -1,3 +1,34 @@
+Most important: stale against the current contract
+
+1. Retype wire diagram is wrong. libs/syscall/src/lib.rs:24-27 says x2 = obj_type, x3 = dest_captbl, x4 = dest_slot_start, x5 = count. The contract (doc/capabilities-contract.md ~line 336) defines x2 kind, x3 size_bits, x4 count, x5 destination-table key, x6 first slot, x7 rights. Replace the diagram with that schema.
+2. CopyDerive diagram is stale. libs/syscall/src/lib.rs:8 shows x0 = src_captbl, x3 = dst_captbl. The contract's status comment at lines 37-40 of the same file says CopyDerive uses packed keys in x0/x2/x3. The two disagree.
+4. Legacy catalogue naming in code. ObjectType::THREAD, KEY_TABLE, NOTIFICATION and similar constants are used in libs/object/src/object_type.rs and across kernel/nucleus/src/objects/*.rs, kernel/tests/*. The contract says to use the CoreType IDs. ObjectType is still the one-byte wire wrapper, so the question is whether its per-kind associated constants should be CoreType values. This is a naming migration to confirm with you, not a clear bug.
+6. Process language in user docs. doc/object_types/ must have no "provisional", decision IDs, "contract" or "selected". I found doc/object_types/core/thread.md:32 ("provisioned", a sentence the skill calls out as process-like), and doc/object_types/README.md:138 which names the old CapabilityInvalidated status. Most of the other hits were false positives.
+
+---
+
+Medium: dubious or contradictory comments
+
+- libs/object/src/key_table.rs:40: "Every thread has cap to own captbl here - or rather to KeyMaster". This is the old captbl naming plus an unresolved KeyMaster framing (D2/D4). Rewrite it to say what SELF_KEYTABLE is.
+- libs/object/src/key_table.rs:223: "the legacy _captbl argument is unused". The contract has no _captbl argument. Remove the argument-level note, or fix the signature, once you decide whether revoke keeps a table key. The kernel rejects the operation anyway.
+- libs/object/src/key_table.rs:139, 236 and libs/syscall/src/lib.rs:290: "provisional" rights and transport. These match the open D9 and D4 decisions, so they are correct as they stand.
+- doc/capabilities-contract.md (the Scheduling records paragraph, around line 446): "Scheduler capability derivation is supported for planned hierarchical schedulers" appears twice in a row. The second copy is a duplicate, and "supported" is ambiguous next to "planned".
+
+
+- The "explain why" rewrite was only partial. I removed the status tags and repaired the sentences around them, but I didn't rewrite each comment into why-style prose. That is a larger pass, and some comments are design intent you asked me to keep, so I'd rather not do it blind. I can take it file by file if you want.
+- Some test function names still contain "selected", for example event_count_wait_infinite_is_the_selected_encoding in libs/object/tests/support/notification.rs and thread_operations_match_selected_wire_ids in libs/object/tests/object_type.rs. These are identifiers, not comments, so I left them.
+- key_table.rs:337 still says "guarded object-identity foundation". It names a dependency rather than a phase, so I left it.
+
+---
+
+Missing caps 
+
+IOSpace
+IOPort
+ASIDControl
+
+---
+
 DESIGN CHANGE: As explained [here](https://sel4.discourse.group/t/why-do-cnodes-have-guard-bits/49/5?utm_source=chatgpt.com) the KeyTable should not have a SELF_KEYTABLE slot by default and it shouldn't be required either.
 
 ---

@@ -25,9 +25,20 @@ Unanswered questions before implementing the scheduler record ABI:
   and record retirement/reuse behavior?
 - What is the scheduler donation schema, and how is strict-tree
   scheduler ownership enforced?
-- Where does the dispatch operation (Thread, Time, priority, timeout) live
-  (Scheduler, Thread or Time), and how are block and expiry events posted to
-  the scheduler Thread through its records?
+- What are the operation IDs, register schemas, rights and results of
+  `Scheduler.BindEventCount`, `Scheduler.ConfigureActivation` (the
+  `ActivationMask` bit layout) and `Scheduler.arm_timer`, and the schemas of
+  `dispatch` and `replace`?
+- What is the scheduler event record layout, and which events carry
+  information that cannot be rebuilt from current state (a timer expiry, why an
+  execution stopped and the amount charged) and so need records that are not
+  coalesced? What is the overflow rule for those records?
+- Should `dispatch_and_wait` (dispatch, then wait for the next event in one
+  operation) be part of the first ABI, and what non-blocking dispatch does a
+  centralized multicore scheduler need?
+- How does the nucleus keep the one-outstanding-activation invariant per
+  scheduler agent across cores, and how does it activate a scheduler whose
+  agent is already running on another core?
 
 
 ## D7: Protected Procedure Call (`Invocation`)
@@ -100,11 +111,13 @@ Unanswered questions before implementing the scheduler record ABI:
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
 - **D8:** whether the root budget is infinite or a large finite amount (both
-  are buildable through the Kickstart `infinite-boot-time` feature) and who
-  replenishes a finite one; what happens to remaining budget when a Time is
-  deleted; dispatch register schema and protection against races between
-  user-level dispatch and kernel events (Composite's scheduling token); clock
-  source and rounding of charged time.
+  are buildable through the Kickstart `infinite-boot-time` feature); what
+  happens to remaining budget when a Time is deleted; the `dispatch` and
+  `replace` register schemas, rights and generation encoding; the clock source
+  (the physical counter today); which way the accumulated charge is rounded
+  when it is compared with a limit; how interrupt handling time is accounted
+  separately from the running Time (for example per-IRQ statistics, and whether
+  the receiver Thread's Time or a kernel counter holds them).
 - **IRQ follow-up:** whether a Thread may bind one Notification for both
   PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built
@@ -175,3 +188,11 @@ needs them.
   and summary would carry the resource names (their order stays the index in
   `DriverInit::resources`), and image-build would read them from the imports
   file. Today the manifest list does the job.
+- **Per-Thread scheduler event subscriptions:** investigate moving from the
+  scheduler-level activation mask towards per-Thread subscriptions, so a
+  scheduler can request activation for chosen events of chosen Threads (for
+  example a latency-critical Thread's wakeup) without a hardcoded
+  `activate_on_wake` flag. The mask stays the base mechanism and a
+  subscription would act as a finer filter on it. Weigh the extra per-Thread
+  state and the risk of a scheduler's data structures and the kernel's
+  per-Thread configuration drifting apart.

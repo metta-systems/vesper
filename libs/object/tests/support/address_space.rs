@@ -467,7 +467,7 @@ fn bind_encodes_the_table_key_and_decodes_its_statuses() {
     let table = KeyTableKey::from_key(table_key);
     for (response, expected) in [
         ((0, 0, 0), Ok(())),
-        ((41, 0, 0), Err(CapError::NotBound.code())),
+        ((40, 0, 0), Err(CapError::NotBound.code())),
         ((8, 0, 0), Err(CapError::AlreadyMapped.code())),
     ] {
         RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));

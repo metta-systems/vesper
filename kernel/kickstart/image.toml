@@ -24,7 +24,6 @@ binary = "irqchip-gicv2"
 [[driver]]
 name = "uart"
 binary = "uart-pl011"
-priority = 0x8000
 
 # The VideoCore mailbox component: on the Raspberry Pi 3 its registers share
 # the BCM interrupt controller's page, which Kickstart hands it as a device
@@ -33,7 +32,6 @@ priority = 0x8000
 name = "mailbox"
 binary = "mailbox"
 interfaces = "../../drivers/mailbox/interfaces"
-priority = 0x8000
 
 # The power control: the power management node's registers halt and reset the
 # board; powering devices off goes through the mailbox component.
@@ -41,7 +39,6 @@ priority = 0x8000
 name = "power"
 binary = "power"
 interfaces = "../../drivers/power/interfaces"
-priority = 0x8000
 
 # The display: configures the framebuffer through the mailbox component.
 [[driver]]
@@ -49,10 +46,9 @@ name = "fb"
 binary = "fb"
 interfaces = "../../drivers/fb/interfaces"
 video_memory = true
-priority = 0x8000
 
 # The shell: an EL0 program, loaded once without a device tree node (a
-# component with a `priority`). It has a command prompt on the PL011's serial
+# component with `program = true`). It has a command prompt on the PL011's serial
 # channel (`serial = true`), switches the LED through the mailbox component
 # and resets the board through the power component. Its `draw` command maps the
 # framebuffer through the fb component, which `memory` leaves room for (the
@@ -62,7 +58,7 @@ name = "shell"
 binary = "shell"
 interfaces = "../../userspace/shell/interfaces"
 active = true
-priority = 0x4000
+program = true
 serial = true
 memory = 131072
 resources = ["font"]

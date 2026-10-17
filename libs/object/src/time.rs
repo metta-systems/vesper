@@ -4,9 +4,9 @@ use {
 };
 
 #[cfg(not(test))]
-use libsyscall::{protected_call0, protected_call1, protected_call3};
+use libsyscall::{protected_call0, protected_call1, protected_call2};
 #[cfg(test)]
-use tests::{protected_call0, protected_call1, protected_call3};
+use tests::{protected_call0, protected_call1, protected_call2};
 
 #[cfg(test)]
 #[path = "../tests/support/time.rs"]
@@ -16,9 +16,7 @@ mod tests;
 // == Public user interface, usable from userspace ==
 // ==================================================
 
-/// Userspace handle to a `Time` capability: a CPU budget on one core plus a
-/// priority chain, one (scheduler, priority) entry for each scheduler the
-/// budget passed through.
+/// Userspace handle to a `Time` capability: a CPU budget on one core.
 ///
 /// Budget moves only by [`Self::transfer`] and [`Self::merge`]; nothing
 /// returns it automatically. A Time created by `Untyped.Retype` is empty.
@@ -31,39 +29,20 @@ enum TimeType {}
 /// Budget in nanoseconds. [`INFINITE_BUDGET`] never decreases.
 pub type Budget = u64;
 
-/// Priority at one scheduler: a lower number is more urgent, `0` is the most
-/// urgent, and ordinary components start around [`DEFAULT_PRIORITY`].
-pub type Priority = u16;
-
 /// The infinite budget: it never decreases, and transferring this amount
 /// makes the destination infinite.
 pub const INFINITE_BUDGET: Budget = u64::MAX;
 
-/// The most urgent priority.
-pub const HIGHEST_PRIORITY: Priority = 0;
-
-/// The least urgent priority; [`TimeKey::query`] reports it for a Time with
-/// an empty chain.
-pub const LOWEST_PRIORITY: Priority = Priority::MAX;
-
-/// Where ordinary user components start.
-pub const DEFAULT_PRIORITY: Priority = 0x8000;
-
-/// Most entries a priority chain holds.
-pub const MAX_PRIORITY_CHAIN: usize = 16;
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TimeOp {
-    /// Move budget from the invoked Time into a destination Time, recording
-    /// the sender's priority in the destination's chain. Requires `WRITE` on
-    /// both.
+    /// Move budget from the invoked Time into a destination Time. Requires
+    /// `WRITE` on both.
     Transfer = 0,
-    /// Move all budget from a source Time into the invoked Time, which keeps
-    /// its own chain; the source is left empty. Requires `WRITE` on both.
+    /// Move all budget from a source Time into the invoked Time; the source
+    /// is left empty. Requires `WRITE` on both.
     Merge = 1,
-    /// Report the remaining budget and the priority at the most recent
-    /// scheduler. Requires `READ`.
+    /// Report the remaining budget. Requires `READ`.
     Query = 2,
 }
 
@@ -85,9 +64,6 @@ impl TryFrom<u64> for TimeOp {
 pub struct TimeQuery {
     /// Remaining budget in nanoseconds; [`INFINITE_BUDGET`] when infinite.
     pub budget_ns: Budget,
-    /// Priority at the last chain entry, [`LOWEST_PRIORITY`] when the chain
-    /// is empty.
-    pub priority: Priority,
 }
 
 impl TimeKey {
@@ -103,33 +79,26 @@ impl TimeKey {
     }
 
     /// Transfer: move `amount_ns` of budget from this Time into
-    /// `destination`, which records `priority` for this Time's scheduler.
+    /// `destination`.
     ///
-    /// Wire schema: `x2` destination key, `x3` amount, `x4` priority,
-    /// `x5..x7` zero. Authority: `WRITE` on both. A finite source holding
-    /// less than `amount_ns` fails with `InsufficientBudget`.
-    pub fn transfer(
-        &self,
-        destination: &TimeKey,
-        amount_ns: Budget,
-        priority: Priority,
-    ) -> Result<(), CapError> {
+    /// Wire schema: `x2` destination key, `x3` amount, `x4..x7` zero.
+    /// Authority: `WRITE` on both. A finite source holding less than
+    /// `amount_ns` fails with `InsufficientBudget`.
+    pub fn transfer(&self, destination: &TimeKey, amount_ns: Budget) -> Result<(), CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
         let result = unsafe {
-            protected_call3(
+            protected_call2(
                 self.key.to_wire(),
                 TimeOp::Transfer as u64,
                 destination.to_wire(),
                 amount_ns,
-                u64::from(priority),
             )
         };
         decode_syscall_result(result).map(|_| ())
     }
 
-    /// Merge: move all of `source`'s budget into this Time, which keeps its
-    /// own priority chain (or takes `source`'s when its own is empty), and
-    /// leave `source` empty.
+    /// Merge: move all of `source`'s budget into this Time and leave `source`
+    /// empty.
     ///
     /// Wire schema: `x2` source key, `x3..x7` zero. Authority: `WRITE` on
     /// both.
@@ -140,20 +109,18 @@ impl TimeKey {
         decode_syscall_result(result).map(|_| ())
     }
 
-    /// Query: the remaining budget and the priority at the most recent
-    /// scheduler.
+    /// Query: the remaining budget.
     ///
-    /// Wire schema: no arguments. Authority: `READ`. A success whose
-    /// priority word is wider than 16 bits fails with `Unknown`.
+    /// Wire schema: no arguments. Authority: `READ`. The result is `x1` the
+    /// budget and `x2` zero; a nonzero `x2` fails with `Unknown`.
     pub fn query(&self) -> Result<TimeQuery, CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
         let result = unsafe { protected_call0(self.key.to_wire(), TimeOp::Query as u64) };
-        let (budget_ns, priority) = decode_syscall_result(result)?;
-        let priority = Priority::try_from(priority).map_err(|_too_wide| CapError::Unknown)?;
-        Ok(TimeQuery {
-            budget_ns,
-            priority,
-        })
+        let (budget_ns, reserved) = decode_syscall_result(result)?;
+        if reserved != 0 {
+            return Err(CapError::Unknown);
+        }
+        Ok(TimeQuery { budget_ns })
     }
 }
 

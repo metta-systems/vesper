@@ -265,9 +265,15 @@ impl<A: ArchObjects> Nucleus<A> {
         } else {
             None
         };
-        self.thread_mut(current)
-            .expect("validated current Thread")
-            .context = *parked;
+        // Charge the interval the current Thread just ran. Every switch away
+        // (block, preempt, fault, Return) commits here, so this is the one
+        // place execution time is accounted.
+        let now = self.current_time_ns();
+        let elapsed = now.saturating_sub(self.current_since_ns);
+        self.current_since_ns = now;
+        let leaving = self.thread_mut(current).expect("validated current Thread");
+        leaving.run_time_ns = leaving.run_time_ns.saturating_add(elapsed);
+        leaving.context = *parked;
         if queued.is_some() {
             assert_eq!(
                 self.run_queue.pop(),

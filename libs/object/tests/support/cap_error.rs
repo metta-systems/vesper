@@ -508,10 +508,9 @@ fn unexpected_return_status_is_lossless_for_arbitrary_words() {
 
 #[test]
 fn time_budget_statuses_round_trip_and_reject_unused_details() {
-    use vesper_objects::syscall_status::{INSUFFICIENT_BUDGET, PRIORITY_CHAIN_FULL};
+    use vesper_objects::syscall_status::INSUFFICIENT_BUDGET;
 
     assert_eq!(INSUFFICIENT_BUDGET, 36);
-    assert_eq!(PRIORITY_CHAIN_FULL, 37);
     for remaining in [0, 1, 0x1234_5678_9abc_def0, u64::MAX - 1] {
         assert_error!(
             (36, remaining, 0),
@@ -520,50 +519,42 @@ fn time_budget_statuses_round_trip_and_reject_unused_details() {
         );
         assert_unknown_response((36, remaining, 1));
     }
-    assert_error!(
-        (37, 0, 0),
-        CapError::PriorityChainFull,
-        CapError::PriorityChainFull
-    );
-    for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
-        assert_unknown_response((37, detail1, detail2));
-    }
 }
 
 #[test]
 fn irq_line_active_round_trips_the_line() {
     use vesper_objects::syscall_status::IRQ_LINE_ACTIVE;
 
-    assert_eq!(IRQ_LINE_ACTIVE, 38);
+    assert_eq!(IRQ_LINE_ACTIVE, 37);
     for line in [0, 1, 30, 1019, u32::MAX] {
         assert_error!(
-            (38, u64::from(line), 0),
+            (37, u64::from(line), 0),
             CapError::IrqLineActive { line },
             CapError::IrqLineActive { line: actual } if actual == line
         );
-        assert_unknown_response((38, u64::from(line), 1));
+        assert_unknown_response((37, u64::from(line), 1));
     }
     // A line wider than 32 bits is not this status.
-    assert_unknown_response((38, 1 << 32, 0));
+    assert_unknown_response((37, 1 << 32, 0));
 }
 
 #[test]
 fn call_with_key_statuses_round_trip_with_zero_details() {
     use vesper_objects::syscall_status::{KEY_NOT_ACCEPTED, NO_PLACEMENT_SLOT};
 
-    assert_eq!(KEY_NOT_ACCEPTED, 39);
-    assert_eq!(NO_PLACEMENT_SLOT, 40);
+    assert_eq!(KEY_NOT_ACCEPTED, 38);
+    assert_eq!(NO_PLACEMENT_SLOT, 39);
     assert_error!(
-        (39, 0, 0),
+        (38, 0, 0),
         CapError::KeyNotAccepted,
         CapError::KeyNotAccepted
     );
     assert_error!(
-        (40, 0, 0),
+        (39, 0, 0),
         CapError::NoPlacementSlot,
         CapError::NoPlacementSlot
     );
-    for status in [39, 40] {
+    for status in [38, 39] {
         for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
             assert_unknown_response((status, detail1, detail2));
         }
@@ -574,10 +565,10 @@ fn call_with_key_statuses_round_trip_with_zero_details() {
 fn not_bound_status_round_trips_with_zero_details() {
     use vesper_objects::syscall_status::NOT_BOUND;
 
-    assert_eq!(NOT_BOUND, 41);
-    assert_error!((41, 0, 0), CapError::NotBound, CapError::NotBound);
+    assert_eq!(NOT_BOUND, 40);
+    assert_error!((40, 0, 0), CapError::NotBound, CapError::NotBound);
     for (detail1, detail2) in [(1, 0), (0, 1), (u64::MAX, u64::MAX)] {
-        assert_unknown_response((41, detail1, detail2));
+        assert_unknown_response((40, detail1, detail2));
     }
 }
 
@@ -585,10 +576,10 @@ fn not_bound_status_round_trips_with_zero_details() {
 fn invalid_self_reference_names_the_slot_and_the_key() {
     use vesper_objects::syscall_status::{INVALID_SELF_REFERENCE, InvalidSelfReference};
 
-    assert_eq!(INVALID_SELF_REFERENCE, 42);
+    assert_eq!(INVALID_SELF_REFERENCE, 41);
     for key in [0, 1, 0x1234_5678_9abc_def0, u64::MAX] {
         assert_error!(
-            (42, 4, key),
+            (41, 4, key),
             CapError::InvalidSelfReference {
                 reference: InvalidSelfReference::KeyTableKey(KeySlot(4)),
                 key: RawKey::from_wire(key),
@@ -601,6 +592,6 @@ fn invalid_self_reference_names_the_slot_and_the_key() {
     }
     // Only well-known self slots are self references.
     for slot in [0, 1, 2, 3, 5, u64::MAX] {
-        assert_unknown_response((42, slot, 0));
+        assert_unknown_response((41, slot, 0));
     }
 }

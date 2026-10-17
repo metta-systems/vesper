@@ -281,6 +281,9 @@ pub struct Thread {
     pub time: Option<CarvedId>,
     /// The Scheduler that configured the Thread (bookkeeping, as `time`).
     pub scheduler: Option<CarvedId>,
+    /// Nanoseconds this Thread has executed, charged each time it is
+    /// switched away from. Kernel-private bookkeeping.
+    pub run_time_ns: u64,
 }
 
 /// Kernel identity of a Thread: its carved identity. Holding one grants
@@ -300,6 +303,7 @@ impl Thread {
             queued: false,
             time: None,
             scheduler: None,
+            run_time_ns: 0,
         }
     }
 }
@@ -367,6 +371,7 @@ mod tests {
             queued: false,
             time: None,
             scheduler: None,
+            run_time_ns: 0,
         };
         let ExecutionContext::NotStarted { saved } = thread.context else {
             panic!("new Thread has no initial execution context")
@@ -400,6 +405,7 @@ mod tests {
             queued: false,
             time: None,
             scheduler: None,
+            run_time_ns: 0,
         };
 
         // Reuse every byte of the transient frame for another execution context.

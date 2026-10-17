@@ -106,7 +106,7 @@ enum Carve {
     /// counter with a bounded await queue), carved from the Untyped
     /// (`size_bits` zero).
     EventCount,
-    /// A `Time`: an empty budget (zero budget, empty priority chain) on the
+    /// A `Time`: an empty budget (zero budget) on the
     /// creating core, carved from the Untyped (`size_bits` zero).
     Time,
     /// A carved `Untyped`: a child region of `bytes` bytes split off from the

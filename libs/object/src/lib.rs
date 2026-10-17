@@ -128,7 +128,6 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::NESTING_DEPTH, count, 0) => CapError::NestingDepth { count },
             (code::UNEXPECTED_RETURN, word1, word2) => CapError::UnexpectedReturn { word1, word2 },
             (code::INSUFFICIENT_BUDGET, remaining, 0) => CapError::InsufficientBudget { remaining },
-            (code::PRIORITY_CHAIN_FULL, 0, 0) => CapError::PriorityChainFull,
             (code::IRQ_LINE_ACTIVE, line, 0) => CapError::IrqLineActive {
                 line: u32::try_from(line).ok()?,
             },
@@ -233,8 +232,6 @@ pub enum CapError {
         /// The source's remaining budget in nanoseconds.
         remaining: u64,
     },
-    /// The destination Time's priority chain would exceed 16 entries.
-    PriorityChainFull,
     /// The interrupt line already has a live `IRQHandler`, or the nucleus
     /// keeps it for its own timer.
     IrqLineActive {
@@ -353,7 +350,6 @@ impl CapError {
             CapError::NestingDepth { count } => (code::NESTING_DEPTH, count, 0),
             CapError::UnexpectedReturn { word1, word2 } => (code::UNEXPECTED_RETURN, word1, word2),
             CapError::InsufficientBudget { remaining } => (code::INSUFFICIENT_BUDGET, remaining, 0),
-            CapError::PriorityChainFull => (code::PRIORITY_CHAIN_FULL, 0, 0),
             CapError::IrqLineActive { line } => (code::IRQ_LINE_ACTIVE, u64::from(line), 0),
             CapError::KeyNotAccepted => (code::KEY_NOT_ACCEPTED, 0, 0),
             CapError::NoPlacementSlot => (code::NO_PLACEMENT_SLOT, 0, 0),

@@ -714,7 +714,7 @@ struct ManifestEntry {
     /// `imports.if` of the functions it calls
     interfaces: Option<PathBuf>,
     /// What Kickstart gives the one instance of a program it starts at boot
-    /// (a component with a `priority`); `None` for components test builders load
+    /// (a component with `program = true`); `None` for components test builders load
     program: Option<Settings>,
     /// The `[[resource]]` entries the component maps read-only
     /// (`resources = [...]`), by name
@@ -758,8 +758,6 @@ fn read_resources(path: &Path, table: &toml::Table) -> Vec<ResourceEntry> {
 /// What Kickstart gives each instance of a driver or program.
 #[derive(Debug)]
 struct Settings {
-    /// Priority of the Time
-    priority: u16,
     /// Budget the Time receives (default 1 s)
     budget_ns: u64,
     /// Size exponent of the RAM Untyped (default 64 KiB)
@@ -786,14 +784,6 @@ const DEFAULT_DRIVER_MEMORY: u64 = 64 * 1024;
 /// The settings of the driver or program `name` from its manifest `entry`.
 fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Settings {
     let number = |key: &str| entry.get(key).and_then(toml::Value::as_integer);
-    let priority = number("priority")
-        .and_then(|priority| u16::try_from(priority).ok())
-        .unwrap_or_else(|| {
-            panic!(
-                "{}: {kind} `{name}` needs a priority (0-65535)",
-                path.display()
-            )
-        });
     let budget_ns = number("budget_ns").map_or(DEFAULT_DRIVER_BUDGET_NS, |budget| {
         u64::try_from(budget)
             .unwrap_or_else(|_| panic!("{}: {kind} `{name}` has a negative budget", path.display()))
@@ -808,7 +798,6 @@ fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Sett
         path.display()
     );
     Settings {
-        priority,
         budget_ns,
         memory_bits: u8::try_from(memory.trailing_zeros()).unwrap_or(u8::MAX),
         video_memory: entry
@@ -863,8 +852,8 @@ fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
 }
 
 /// The `[[component]]` entries of a parsed manifest at `path`. An entry with
-/// a `priority` is a program: Kickstart starts one instance of it at boot,
-/// like a driver without a device tree node.
+/// `program = true` is a program: Kickstart starts one instance of it at
+/// boot, like a driver without a device tree node.
 fn read_components(path: &Path, table: &toml::Table) -> Vec<ManifestEntry> {
     let entries = table
         .get("component")
@@ -891,8 +880,9 @@ fn read_components(path: &Path, table: &toml::Table) -> Vec<ManifestEntry> {
                 .and_then(toml::Value::as_bool)
                 .unwrap_or(false);
             let program = entry
-                .get("priority")
-                .is_some()
+                .get("program")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false)
                 .then(|| settings_of(path, "program", &name, entry));
             assert!(
                 program.is_none() || active,
@@ -1028,10 +1018,10 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
 /// `pub static COMPONENTS: &[&ComponentImage]`. A driver is an active
 /// component plus a `pub static <NAME>_DRIVER: libimage::DriverImage` with
 /// the strings of its `.driver_compatible` section, the entries of its
-/// `.driver_threads` section, its `priority`, its `budget_ns` and its
+/// `.driver_threads` section, its `budget_ns` and its
 /// `memory` size, all listed in
 /// `pub static DRIVERS: &[&DriverImage]`, followed by the programs: a
-/// `[[component]]` entry with a `priority` (and `budget_ns`, `memory`,
+/// `[[component]]` entry with `program = true` (and `budget_ns`, `memory`,
 /// `video_memory` like a driver's) gets a `DriverImage` with no `compatible`
 /// strings, which Kickstart loads once without a device tree node. The
 /// bundling image's linker
@@ -1142,7 +1132,6 @@ fn emit_driver_image(
          pub static {stem}_DRIVER: DriverImage = DriverImage {{\n\
          \x20   component: &{stem},\n\
          \x20   compatible: &[{compatible}],\n\
-         \x20   priority: 0x{priority:X},\n\
          \x20   budget_ns: {budget},\n\
          \x20   memory_bits: {memory_bits},\n\
          \x20   video_memory: {video_memory},\n\
@@ -1155,7 +1144,6 @@ fn emit_driver_image(
         } else {
             format!(", for `{}`", image.driver_compatible.join(", "))
         },
-        priority = settings.priority,
         budget = settings.budget_ns,
         memory_bits = settings.memory_bits,
         video_memory = settings.video_memory,

@@ -124,9 +124,9 @@ fn call_with_key_submits_both_keys_six_inputs_and_target_sp_unchanged() {
 
 #[test]
 fn call_with_key_rejections_decode_through_the_shared_decoder() {
-    let (result, _) = call_with_key((39, 0, 0));
+    let (result, _) = call_with_key((38, 0, 0));
     assert!(matches!(result, Err(CapError::KeyNotAccepted)));
-    let (result, _) = call_with_key((40, 0, 0));
+    let (result, _) = call_with_key((39, 0, 0));
     assert!(matches!(result, Err(CapError::NoPlacementSlot)));
     let (result, _) = call_with_key((6, 0, 0));
     assert!(matches!(result, Err(CapError::InsufficientRights)));

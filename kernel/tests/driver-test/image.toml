@@ -7,4 +7,3 @@
 name = "probe"
 binary = "driver-probe"
 interfaces = "../../../userspace/tests/driver/probe/interfaces"
-priority = 0x8000

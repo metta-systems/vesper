@@ -1732,3 +1732,460 @@ I'd probably keep the name **`Time`**, rather than `Budget`, if the object suppo
 My central design preference is therefore:
 
 > Keep policy decisions in userspace, make execution grants the kernel's fundamental scheduling primitive, and enforce CPU-time authority at scheduling-domain boundaries rather than embedding particular replenishment algorithms in the kernel.
+
+---
+
+**Why I'd choose authoritative shared state plus event notifications**:
+
+**The kernel should guarantee that the scheduler can regain control, but it shouldn't necessarily switch to the scheduler thread on every event.**
+
+This separates three concepts that are easy to conflate:
+
+1. **State:** What is the current state of each thread?
+2. **Notification:** What changed that might require a scheduling decision?
+3. **Activation:** When does the userspace scheduler actually get CPU time?
+
+C handles the first two. The third needs an explicit contract.
+
+## 1. Why C is preferable
+
+### A. Immediate scheduler activation
+
+```text
+Thread blocks
+    → Kernel updates state
+    → Kernel switches to scheduler
+```
+
+This is straightforward, particularly on a uniprocessor.
+
+But it conflates an event with a scheduling decision.
+
+For example, if a thread wakes on CPU 1 while CPU 0 is already executing a more important thread, there might be no reason to interrupt CPU 0 immediately.
+
+It also creates unnecessary scheduler activations when several events occur in quick succession.
+
+### B. Event queue only
+
+```text
+Thread blocks
+    → Kernel queues event
+    → Kernel wakes scheduler
+```
+
+The main problem is that an event queue is a history of transitions, not necessarily an authoritative representation of current state.
+
+Consider:
+
+```text
+Thread A wakes
+Thread A blocks
+Thread A wakes again
+```
+
+The scheduler could encounter all three events after the thread is already runnable.
+
+It then needs to reconstruct the current state from possibly outdated notifications.
+
+Queue overflow, event coalescing, and concurrent state changes make this more difficult.
+
+### C. Authoritative state + notifications
+
+```text
+Kernel:
+    Updates ThreadStatus
+    Increments generation
+    Signals Scheduler
+
+Userspace scheduler:
+    Receives notification
+    Reads ThreadStatus
+    Makes scheduling decision
+```
+
+This is more robust.
+
+The notification means **something changed**. The state record tells the scheduler **what is true now**.
+
+The scheduler needn't reconstruct current thread state from the event history.
+
+---
+
+## 2. But notification and activation must be separate
+
+This is where I'd modify the proposed C contract slightly.
+
+Consider three events.
+
+### Case 1: currently running thread blocks
+
+```text
+CPU 0:
+    Thread A running
+        ↓
+    A blocks on IPC
+        ↓
+    Kernel records BLOCKED(A)
+        ↓
+    Kernel activates Scheduler S
+        ↓
+    S chooses Thread B
+        ↓
+    B executes
+```
+
+Here, the kernel **must find another execution context**, because A cannot continue.
+
+If S is the designated scheduler for CPU 0, immediately activating it makes sense.
+
+There is little benefit in waking S and then requiring some other scheduler to decide whether S should execute.
+
+### Case 2: running thread exhausts its `Time`
+
+```text
+CPU 0:
+    Thread A running
+        ↓
+    Time A exhausted
+        ↓
+    Kernel records exhaustion
+        ↓
+    Kernel activates Scheduler S
+        ↓
+    S selects another execution grant
+```
+
+Again, the CPU needs a scheduling decision.
+
+I'd use an immediate scheduler activation, subject to the scheduler's own execution authority.
+
+An important detail: **budget exhaustion should not change A's logical runnable state**. It ends the current execution grant.
+
+For example:
+
+```rust
+ThreadStatus {
+    state: Runnable,
+    running: false,
+    generation: 42,
+}
+```
+
+The exhaustion notification belongs to the execution grant or `Time` object, not necessarily the thread itself.
+
+### Case 3: blocked thread wakes
+
+```text
+CPU 0:
+    Thread A running
+
+CPU 1:
+    Thread B wakes
+        ↓
+    Kernel records RUNNABLE(B)
+        ↓
+    Kernel signals Scheduler S
+```
+
+Here, immediate preemption isn't necessarily required.
+
+S might decide that A should continue executing.
+
+Or that B should execute on CPU 1.
+
+Or that B should migrate to another CPU.
+
+The kernel shouldn't impose any of those decisions.
+
+Instead, waking B generates a notification, and the scheduler's activation configuration determines how promptly it receives CPU time.
+
+This is the key distinction:
+
+| Event | State update | Notification | Immediate activation |
+|---|---|---|---|
+| Running thread blocks | Yes | Yes | If a new dispatch is required |
+| Running thread exhausts time | Yes | Yes | If a new dispatch is required |
+| Blocked thread wakes | Yes | Yes | Policy/activation dependent |
+| Running thread yields | Yes | Yes | Usually |
+| Thread terminates | Yes | Yes | If it was running |
+| Time is donated | Yes | Yes | Depends on affected execution |
+| Scheduler timer expires | Timer event | Yes | According to timer semantics |
+
+The kernel doesn't need to know the scheduler's priority policy to distinguish between *the current execution cannot continue* and *something else became runnable*.
+
+---
+
+## 3. The minimal shared state
+
+I'd start with something like:
+
+```rust
+#[repr(C)]
+struct ThreadStatus {
+    sequence: AtomicU64,
+    state: AtomicU32,
+    cpu: AtomicI32,
+}
+
+#[repr(C)]
+struct TimeStatus {
+    sequence: AtomicU64,
+    consumed: AtomicU64,
+    remaining: AtomicU64,
+}
+
+#[repr(C)]
+struct SchedulerStatus {
+    sequence: AtomicU64,
+    pending_events: AtomicU32,
+}
+```
+
+These are conceptual structures, not yet a complete concurrent-memory ABI.
+
+The kernel owns these records. Userspace maps them read-only.
+
+The scheduler can inspect the latest state without a syscall.
+
+For events, something like:
+
+```rust
+enum SchedulerEvent {
+    ThreadRunnable(ThreadId),
+    ThreadBlocked(ThreadId),
+    ThreadExited(ThreadId),
+
+    ExecutionStopped {
+        thread: ThreadId,
+        reason: StopReason,
+    },
+
+    TimeExhausted(TimeId),
+    TimerExpired(TimerId),
+}
+```
+
+Each event carries a relevant sequence number.
+
+The kernel should increment the sequence number as part of publishing the state transition.
+
+### Why sequence numbers matter
+
+Suppose the scheduler observes:
+
+```text
+B is runnable, generation 10
+```
+
+Then B blocks before the scheduler dispatches it.
+
+The kernel updates:
+
+```text
+B is blocked, generation 11
+```
+
+If the scheduler submits:
+
+```rust
+dispatch(
+    thread = B,
+    expected_generation = 10,
+)
+```
+
+The kernel rejects the stale scheduling decision.
+
+This is essentially the same problem addressed by ghOSt's agent and thread sequence numbers. ghOSt also exposes sequence numbers in shared-memory status words and validates scheduling transactions against concurrent state changes. [Computer Science](https://cs.stanford.edu/~jhumphri/documents/ghost.pdf?utm_source=chatgpt.com)
+
+One nuance: simply having an atomic sequence counter doesn't make a multi-field status record an atomic snapshot. You need an explicit publication protocol, such as a sequence-lock-style reader loop with correctly defined memory ordering, or individually atomic fields with carefully specified consistency semantics.
+
+---
+
+## 4. Avoiding lost wakeups in `Scheduler.Wait`
+
+This is a particularly important interface detail.
+
+Consider:
+
+```text
+Scheduler:
+    Read event queue → empty
+
+Kernel:
+    Thread B becomes runnable
+    Signal scheduler
+
+Scheduler:
+    Call Scheduler.Wait()
+```
+
+If `Wait()` blindly blocks, the scheduler misses the notification and may sleep indefinitely.
+
+I'd make `Scheduler.Wait` check a sequence number atomically with entering the wait state.
+
+For example:
+
+```rust
+Scheduler::wait(expected_sequence: u64);
+```
+
+Semantics:
+
+> Sleep only if the scheduler's event sequence still equals `expected_sequence`.
+
+So:
+
+```rust
+loop {
+    let sequence = scheduler.status.sequence.load(Acquire);
+
+    process_events();
+    schedule_runnable_threads();
+
+    scheduler.wait(sequence);
+}
+```
+
+If any relevant event arrived since `sequence` was read, `wait()` returns immediately.
+
+If no event arrived, the kernel atomically registers the wait and blocks the scheduler.
+
+This is effectively a futex-style compare-and-wait primitive.
+
+It avoids lost wakeups without requiring the scheduler to hold a kernel lock.
+
+For a real implementation, I'd also make event draining and dispatch commits sequence-aware so that the scheduler cannot accidentally sleep after overlooking work it still needs to process.
+
+---
+
+## 5. One thing I would *not* put in the event queue
+
+I wouldn't require the event queue to be a complete history of every scheduling transition.
+
+For example, if A goes through:
+
+```text
+Runnable → Blocked → Runnable → Blocked
+```
+
+while the scheduler isn't running, the kernel doesn't necessarily need to retain every transition.
+
+If the scheduler only needs the current state, it can observe:
+
+```text
+A: Blocked
+Generation: 17
+```
+
+The event notification can be coalesced.
+
+This makes the interface substantially more scalable.
+
+However, there is a distinction between **state-change notifications** and **events carrying information that cannot be reconstructed from current state**.
+
+For example, a one-shot timer expiration or execution completion may carry information the scheduler needs even if the corresponding thread has subsequently changed state.
+
+I'd use:
+
+- Shared records for authoritative current state.
+- Coalescible notifications for state changes.
+- Reliable event records, or persistent completion records, for non-reconstructible events.
+
+That avoids turning the kernel into a large event-history database while preserving correctness.
+
+---
+
+## 6. I'd make `Scheduler.Wait` both wait and dispatch
+
+There's another optimization worth considering.
+
+Instead of:
+
+```rust
+Scheduler::dispatch(thread, time, duration);
+Scheduler::wait(sequence);
+```
+
+you could expose:
+
+```rust
+Scheduler::dispatch_and_wait(
+    thread,
+    time,
+    duration,
+    expected_sequence,
+);
+```
+
+The kernel atomically:
+
+1. Validates the dispatch decision.
+2. Arms the execution allowance.
+3. Installs the selected thread.
+4. Suspends the scheduler agent.
+5. Returns to the scheduler when a relevant event requires its attention.
+
+This avoids a separate scheduling syscall and wait syscall.
+
+It also makes the scheduler's handoff behavior explicit.
+
+The normal userspace loop becomes:
+
+```rust
+loop {
+    process_events();
+
+    let next = policy.select_next();
+
+    scheduler.dispatch_and_wait(
+        next.thread,
+        next.time,
+        next.quantum,
+        scheduler.sequence(),
+    );
+}
+```
+
+The kernel remains completely unaware of the scheduling policy.
+
+One caveat: for centralized multicore schedulers, this synchronous interface isn't sufficient by itself. You'll still want a nonblocking dispatch or transaction mechanism that can schedule remote CPUs without putting the centralized agent to sleep after every decision.
+
+---
+
+## 7. My preferred final contract
+
+I'd settle on **C with event-driven scheduler activation**, defined approximately as follows:
+
+**Kernel responsibilities:**
+
+1. Maintain authoritative scheduling-relevant state.
+2. Publish state changes through shared records with sequence numbers.
+3. Deliver notifications through `Scheduler.Wait`.
+4. Ensure a scheduler is activated when its CPU requires another execution decision.
+5. Permit other events to request scheduler activation without forcing immediate preemption.
+6. Validate dispatch decisions against current kernel state.
+7. Enforce `Time` exhaustion independently of scheduling policy.
+
+**Userspace responsibilities:**
+
+1. Maintain policy-specific runnable queues and accounting.
+2. Interpret notifications and inspect current thread states.
+3. Choose when and where threads execute.
+4. Allocate or donate `Time`.
+5. Decide whether waking a thread justifies preemption.
+6. Implement fairness, priorities, deadlines, and replenishment.
+
+### One last important refinement
+
+I'd make **scheduler activation a property of the `Scheduler` capability/domain, not simply an ordinary wakeup of the scheduler thread**.
+
+Otherwise, you reintroduce the bootstrap problem: who schedules the thread responsible for scheduling?
+
+At the root, the kernel needs a narrowly defined activation mechanism. For child schedulers, activation must be constrained by the authority and execution capacity delegated by their parents.
+
+That activation mechanism can coexist with `Scheduler.Wait`: the wait operation registers the scheduler agent's readiness to receive control, while the kernel's dispatcher determines when control is transferred according to the established scheduling-domain authority.
+
+**So yes, this is the right foundation. But I'd describe the architecture as three independent mechanisms: authoritative state, event notification, and scheduler activation.**
+
+That separation is what gives you the flexibility to implement everything from simple round-robin through MuQSS to hierarchical EDF without turning notifications themselves into an implicit kernel scheduling policy.
