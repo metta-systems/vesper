@@ -1,0 +1,28 @@
+[package]
+name = "vesper-component-loader"
+
+description = "Boot-time component provisioning for Vesper: boot-table keys, page-table chains and Frames through ordinary capability invocations, component AddressSpaces, and loading bundled EL0 component images."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+libaddress = { workspace = true }
+libimage = { workspace = true }
+libobject = { workspace = true }
+nucleus = { path = "../../kernel/nucleus" }
+
+[lib]
+# Boot-time code exercised by Kickstart and the e2e test kernels, not a harness.
+test = false
+harness = false
+
+[lints]
+workspace = true

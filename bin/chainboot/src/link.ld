@@ -18,7 +18,7 @@
 __rpi_phys_binary_load_addr = 0x80000;
 
 
-ENTRY(__rpi_phys_binary_load_addr)
+ENTRY(_start)
 
 /* Flags:
  * R = 4
@@ -47,7 +47,7 @@ SECTIONS
                                              /*   | stack       */
         . += __rpi_phys_binary_load_addr;    /*   | growth      */
                                              /*   | direction   */
-        __boot_core_stack_end_exclusive = .; /*   |             */
+        __boot_core_stack_top_exclusive = .; /*   |             */
     } :segment_boot_core_stack
 
     . = __rpi_phys_binary_load_addr;
@@ -64,7 +64,7 @@ SECTIONS
     __binary_nonzero_lma = .;
 
     /* Set the link address to 32 MiB */
-    /* This dictates the max size of the loadable kernel. */
+    /* This dictates the max size of the loadable kernel image. */
     . += 0x2000000;
 
     /***********************************************************************************************
@@ -97,7 +97,7 @@ SECTIONS
     . = ALIGN(16);
     __binary_nonzero_vma_end_exclusive = .;
 
-    /* Align to 16 bytes, b/c BSS section is zeroed in u1238 chunks. */
+    /* Align to 16 bytes, b/c BSS section is zeroed in u128 chunks. */
     .bss (NOLOAD) : ALIGN(16)
     {
         __BSS_START = .;

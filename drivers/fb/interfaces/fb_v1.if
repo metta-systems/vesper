@@ -1,0 +1,63 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The display's framebuffer (Raspberry Pi), allocated by the `VideoCore`
+## firmware.
+local interface fb_v1
+{
+    ## A client lends one table at a time, so one slot of the component's
+    ## table is reserved for it.
+    placement 1;
+
+    ## The order of the color components in a pixel.
+    enum pixel_order { bgr, rgb }
+
+    ## The firmware refused a request; `code` is its response code.
+    exception firmware_error { card32 code; }
+
+    ## The framebuffer the firmware allocated is not in the video memory the
+    ## component holds, so it cannot hand it out.
+    exception out_of_video_memory {}
+
+    ## No framebuffer has been configured yet.
+    exception not_configured {}
+
+    ## The lent table refused a Frame: `installed` Frames of the call are in it.
+    exception install_failed { card32 installed; }
+
+    ## The framebuffer's memory was handed out already, or part of it was.
+    exception already_handed_out {}
+
+    ## Set up a framebuffer of `width` by `height` pixels of `depth` bits, with
+    ## alpha ignored, replacing any earlier one; returns its pitch in bytes.
+    configure(card32 width, card32 height, card32 depth)
+        returns (card32 pitch)
+        raises (firmware_error);
+
+    ## Physical address of the configured framebuffer.
+    address()
+        returns (card64 address)
+        raises (not_configured);
+
+    ## Size in bytes of the configured framebuffer.
+    size()
+        returns (card32 bytes)
+        raises (not_configured);
+
+    ## The configured framebuffer's pixel order.
+    pixel_order()
+        returns (pixel_order order)
+        raises (not_configured);
+
+    ## Install the Frames that cover the configured framebuffer into the table
+    ## the caller lends, at consecutive slots from `first_slot` in address
+    ## order, and return how many. A 2 MiB Frame stands for each 2 MiB the
+    ## buffer fills on that alignment, and every other page is a 4 KiB Frame,
+    ## so the first and last Frame may hold a few bytes beside the buffer. The
+    ## Frames are the caller's to map and the memory is handed out for good:
+    ## the lent key is gone when the call returns, and a second call fails.
+    frames(card32 first_slot) lends (key_table into)
+        returns (card32 installed)
+        raises (not_configured, out_of_video_memory, already_handed_out, install_failed);
+}

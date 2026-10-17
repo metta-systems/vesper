@@ -1,0 +1,22 @@
+[package]
+name = "irq-protocol"
+
+description = "What irq-test's builder and its EL0 interrupt receiver agree on: the init page and the report bits."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[lib]
+# EL0-only no_std code: no test harness or panic handler on the target.
+test = false
+harness = false
+
+[lints]
+workspace = true

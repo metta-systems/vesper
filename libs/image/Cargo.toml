@@ -1,0 +1,30 @@
+[package]
+name = "vesper-image"
+
+description = "Image descriptions shared by Vesper's boot loader and component builders: sections, permissions, the nucleus image and bundled userspace components."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+# Keep the freestanding library harness disabled; host integration tests opt in above.
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "privileged"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

@@ -1,0 +1,82 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The host controller of a USB bus (Raspberry Pi 3's DesignWare DWC2 in host
+## mode). The controller schedules every transfer: a client opens a pipe to one
+## endpoint and transfers through it. Nothing here is DWC2-specific, so a later
+## xHCI controller can serve the same interface. Prototype: edited in place.
+local interface usb_hcd_v1
+{
+    ## Control transfers are staged in the client's data area: the 8-byte setup
+    ## packet, then the data stage.
+    data 4096;
+
+    ## The speed a device runs at; a low- or full-speed device behind a
+    ## high-speed hub needs split transactions (see `set_route`).
+    enum speed { low, full, high }
+
+    ## The kinds of transfer a pipe carries.
+    enum transfer_kind { control, interrupt, bulk }
+
+    ## No device is attached to the port.
+    exception no_device {}
+
+    ## The endpoint answered with a STALL; `clear_halt` recovers the pipe.
+    exception stalled {}
+
+    ## The transfer failed on the bus; `status` is the controller's channel status.
+    exception transfer_failed { card32 status; }
+
+    ## The periodic schedule has no room left for the endpoint's bandwidth.
+    exception no_bandwidth {}
+
+    ## The controller is busy with a reset or another exclusive operation.
+    exception busy {}
+
+    ## The pipe is not open, or belongs to another client.
+    exception invalid_pipe {}
+
+    ## The request is not allowed for this pipe.
+    exception not_permitted {}
+
+    ## Reset the root port `port` for the device attached to it, and return the
+    ## speed the device runs at. Reset takes its mandated recovery time.
+    reset_port(card32 port)
+        returns (speed speed)
+        raises (no_device, busy);
+
+    ## The status bits of the root port `port`: bit 0 connected, bit 1 enabled,
+    ## bit 16 connect changed, bit 17 reset done.
+    port_status(card32 port)
+        returns (card32 bits);
+
+    ## Open a pipe to endpoint `endpoint` of device `device_address`, returning
+    ## its handle. `interval_ms` is the polling interval of an interrupt pipe,
+    ## and ignored for the other kinds.
+    open_pipe(card32 device_address, card32 endpoint, speed speed, transfer_kind kind, card16 max_packet, card32 interval_ms)
+        returns (card32 pipe)
+        raises (no_bandwidth, busy, not_permitted);
+
+    ## Set the hub a low- or full-speed device sits behind, and the hub's port
+    ## it is plugged into, so transfers use split transactions.
+    set_route(card32 pipe, card32 hub_address, card32 hub_port)
+        raises (invalid_pipe, busy);
+
+    ## Close the pipe; its bandwidth is released.
+    close_pipe(card32 pipe)
+        raises (invalid_pipe, busy);
+
+    ## Clear a stall on the pipe, resetting its data toggle.
+    clear_halt(card32 pipe)
+        raises (invalid_pipe, busy);
+
+    ## Run a control transfer on the pipe. `stage` holds the 8-byte setup packet
+    ## followed by the data stage (in, or out as the setup says); the data stage
+    ## is read or written in place. Returns the bytes transferred in the data stage.
+    ## Interrupt and bulk pipes move data over an io-channel instead, whose setup
+    ## is not defined yet.
+    control(card32 pipe, octet& stage)
+        returns (card32 transferred)
+        raises (stalled, transfer_failed, no_device, busy, invalid_pipe, not_permitted);
+}

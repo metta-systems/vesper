@@ -138,10 +138,7 @@ where
                 *slot = Some(descriptor);
                 inner.next_index = inner.next_index.wrapping_add(1);
             } else {
-                panic!(
-                    "Driver registry full - cannot register more than {} drivers",
-                    NUM_DRIVERS
-                );
+                panic!("Driver registry full - cannot register more than {NUM_DRIVERS} drivers");
             }
         });
     }

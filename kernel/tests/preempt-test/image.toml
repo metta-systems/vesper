@@ -1,0 +1,15 @@
+# What preempt-test bundles (see vesper-image-build): its userspace
+# components. `binary` is the cargo binary name, built with
+# userspace/runtime/user.ld.
+
+[[component]]
+name = "spinner"
+binary = "preempt-spinner"
+active = true
+
+# A scheduler agent's reader: reads a Thread's record from the table shared
+# with it and reports what it sees.
+[[component]]
+name = "reader"
+binary = "preempt-reader"
+active = true

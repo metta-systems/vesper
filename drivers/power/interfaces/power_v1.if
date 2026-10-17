@@ -1,0 +1,24 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The board's power control (Raspberry Pi): the firmware's device power and
+## the power management block that halts and resets the board.
+local interface power_v1
+{
+    ## The firmware refused a power request; `code` is its response code.
+    exception firmware_error { card32 code; }
+
+    ## Power every device the firmware controls off, one by one.
+    devices_off()
+        raises (firmware_error);
+
+    ## Halt the board: power every device off, mark the halt in the power
+    ## management block and reset through its watchdog. Does not return when it
+    ## succeeds.
+    halt()
+        raises (firmware_error);
+
+    ## Reset the board through the power management watchdog. Does not return.
+    reset();
+}

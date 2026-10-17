@@ -1,0 +1,6 @@
+# What uart-test bundles (see vesper-image-build): the PL011 driver, loaded
+# by Kickstart once per enabled `arm,pl011` node.
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"

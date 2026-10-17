@@ -1,0 +1,35 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## driver-test's interface between probe instances: every probe exports it,
+## and a probe whose device tree node links to another probe's node calls
+## that instance through it.
+local interface echo_v1
+{
+    ## Each client lends one key at a time, so one slot of the exporting
+    ## instance's table is reserved for it.
+    placement 1;
+
+    ## The Frame the caller lends cannot be used: it lacks the rights to read
+    ## its extent.
+    exception bad_frame {}
+
+    ## `twice` would overflow for `value`.
+    exception overflow { card64 value; }
+
+    ## The exporting instance's compatible index.
+    identify() returns (card64 index);
+
+    ## `value` doubled.
+    twice(card64 value)
+        returns (card64 doubled)
+        raises (overflow);
+
+    ## The physical address of the Frame the caller lends, read through the
+    ## borrowed key. The key is gone from this instance's table when the call
+    ## returns.
+    frame_base() lends (frame page)
+        returns (card64 base)
+        raises (bad_frame);
+}

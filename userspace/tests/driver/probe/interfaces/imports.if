@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The probe calls the probe instance its node's first clock links to: on the
+# Raspberry Pi boards, `uart1` (`clocks = <&aux 0>`) calls `aux`.
+uses echo_v1 via clocks { identify, twice, frame_base }

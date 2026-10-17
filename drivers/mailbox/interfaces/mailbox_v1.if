@@ -1,0 +1,67 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The `VideoCore` firmware's property mailbox (Raspberry Pi), served by the
+## mailbox component. Typed functions cover the requests components commonly
+## make; `property` passes a raw tag buffer for everything else.
+local interface mailbox_v1
+{
+    ## Each client shares one page with the component for property buffers.
+    data 4096;
+
+    ## A firmware clock.
+    enum clock {
+        emmc, uart, arm, core, v3d, h264, isp, sdram, pixel, pwm, hevc, emmc2, m2mc, pixel_bvb
+    }
+
+    ## A device the firmware powers on and off.
+    enum device {
+        sd_card, uart0, uart1, usb_hcd, i2c0, i2c1, i2c2, spi, ccp2tx
+    }
+
+    ## The firmware rejected the request; `code` is its response code.
+    exception firmware_error { card32 code; }
+
+    ## Another request is in flight on the mailbox.
+    exception busy {}
+
+    ## The tag buffer lies outside the client's data area, is not a well-formed
+    ## request, or asks for something clients may not do.
+    exception not_permitted {}
+
+    ## The board revision code.
+    get_board_revision()
+        returns (card32 revision)
+        raises (firmware_error, busy);
+
+    ## The board serial number.
+    get_board_serial()
+        returns (card64 serial)
+        raises (firmware_error, busy);
+
+    ## The current rate of `which`, in Hz.
+    get_clock_rate(clock which)
+        returns (card32 hz)
+        raises (firmware_error, busy);
+
+    ## Whether `which` is powered on.
+    get_power_state(device which)
+        returns (boolean on)
+        raises (firmware_error, busy);
+
+    ## Power `which` on or off, waiting for it to settle; returns whether it is on.
+    set_power_state(device which, boolean on)
+        returns (boolean is_on)
+        raises (firmware_error, busy);
+
+    ## Turn the board's activity LED on or off. The Raspberry Pi models drive
+    ## the LED differently; the component knows how.
+    set_led(boolean on)
+        raises (firmware_error, busy);
+
+    ## Send the property tag buffer in `tags`, bytes of the data area holding a complete
+    ## request; the firmware's response replaces it in place.
+    property(octet& tags)
+        raises (firmware_error, busy, not_permitted);
+}

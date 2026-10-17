@@ -1,0 +1,989 @@
+//! Production resume/activation tests using the serial QEMU nucleus fixture.
+//! Roots below are checked metadata only; these tests never install TTBR0.
+
+use {
+    super::{FIXTURE_GUARD, SIZE_BITS, cap_invoke, with_nucleus},
+    crate::{
+        api::{InvokeOutcome, KeyEntry},
+        objects::{
+            ArchObjectsImpl, ExecutionContext, Nucleus, Time,
+            access::{Access, ObjectId},
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
+            carved::Carved,
+            completion::{PendingKind, PendingState},
+            nucleus::test_arena,
+            resume::prepare_translation_context,
+            thread::ThreadId,
+        },
+    },
+    aarch64_cpu::registers::{Readable, SCTLR_EL1, TCR_EL1, Writeable},
+    libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
+    libobject::{CapError, KeySlot, ObjectType, RawKey, Rights, syscall_status},
+};
+
+const ROOT: u64 = 0x2100_0000;
+/// Each Thread carries its own EL0 TLS (`TPIDR_EL0`) through park and resume.
+const SOURCE_SAVED: SavedContext = SavedContext {
+    tpidr_el0: 0x7150_0000_0000_1500,
+    ..SavedContext::el1t(0x80000, 0x90000)
+};
+
+fn target_saved() -> SavedContext {
+    let mut saved = SavedContext::el1t(0xA0000, 0xB0000);
+    for (index, register) in saved.gpr.iter_mut().enumerate() {
+        *register = 0xC000 + u64::try_from(index).unwrap();
+    }
+    saved.lr = 0xD0000;
+    saved.spsr_el1 |= 0xA000_0000;
+    saved.tpidr_el0 = 0x7a40_0000_0000_7a40;
+    saved
+}
+
+struct Waits {
+    source: ThreadId,
+    target: ThreadId,
+    /// The second queued Thread, behind `target`.
+    tail: ThreadId,
+    incoming: ObjectId,
+    terminal: ObjectId,
+    target_as: AddressSpaceId,
+}
+
+fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
+    // The serial harness runs without translation; provide the backend's
+    // supported TCR profile for metadata validation only. Never install these
+    // synthetic roots, enable the MMU, or leak the profile to another test.
+    assert_eq!(SCTLR_EL1.get() & 1, 0);
+    let original_tcr = TCR_EL1.get();
+    TCR_EL1.set(16);
+    with_nucleus(
+        |nucleus, _source_table, _target_table, source_as, target_as| {
+            let source = nucleus
+                .create_thread(source_as)
+                .expect("source Thread allocation");
+            let target = nucleus
+                .create_thread(target_as)
+                .expect("target Thread allocation");
+            let tail = nucleus
+                .create_thread(source_as)
+                .expect("FIFO tail Thread allocation");
+            let incoming = nucleus
+                .pending
+                .block(
+                    source,
+                    PendingKind::NotificationWait,
+                    crate::objects::carved::test_id(libobject::ObjectType::NOTIFICATION, 0),
+                )
+                .unwrap_or_else(|e| panic!("incoming wait: {:?}", e.code()));
+            let terminal = nucleus
+                .pending
+                .block(
+                    target,
+                    PendingKind::EventCountAwait,
+                    crate::objects::carved::test_id(libobject::ObjectType::EVENT_COUNT, 0),
+                )
+                .unwrap_or_else(|e| panic!("target wait: {:?}", e.code()));
+            nucleus
+                .pending
+                .complete_with_status(terminal, syscall_status::COUNTER_OVERFLOW, 0x1234, 0x5678)
+                .unwrap_or_else(|e| panic!("target completion: {:?}", e.code()));
+            nucleus.thread_mut(target).unwrap().context = ExecutionContext::Parked {
+                saved: target_saved(),
+                record: terminal,
+            };
+            let address_space = nucleus.address_space_mut(target_as).unwrap();
+            address_space.set_translation_root(Some(ROOT));
+            address_space.set_asid(Some(2));
+            nucleus.current_thread = Some(source);
+            assert!(nucleus.run_queue.push(target));
+            assert!(nucleus.run_queue.push(tail));
+            test(
+                nucleus,
+                Waits {
+                    source,
+                    target,
+                    tail,
+                    incoming,
+                    terminal,
+                    target_as,
+                },
+            );
+        },
+    );
+    TCR_EL1.set(original_tcr);
+}
+
+fn reject_unchanged(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits, expected: CapError) {
+    let source_before = nucleus.thread(waits.source).unwrap().context;
+    let target_before = nucleus.thread(waits.target).unwrap().context;
+    let pending_len = nucleus.pending.len();
+    let terminal_before = nucleus
+        .pending
+        .state(waits.terminal)
+        .unwrap_or_else(|e| panic!("terminal snapshot: {:?}", e.code()));
+    let parked_before = match target_before {
+        ExecutionContext::Parked { record, .. } => {
+            Some((record, nucleus.pending.state(record).ok()))
+        }
+        _ => None,
+    };
+    let table_before = nucleus.current_thread_table_addr();
+    // SAFETY: this fixture is serial and owns exclusive nucleus/pool backing;
+    // no other access context or object/table guard overlaps this transaction.
+    let result = {
+        let access = unsafe { Access::new() };
+        nucleus.park_and_select(&access, SOURCE_SAVED, waits.incoming)
+    };
+    let error = result.expect_err("rejected scheduling metadata succeeded");
+    assert_eq!(error.code(), expected.code());
+    assert_eq!(nucleus.current_thread, Some(waits.source));
+    assert_eq!(nucleus.current_thread_table_addr(), table_before);
+    assert_eq!(nucleus.thread(waits.source).unwrap().context, source_before);
+    assert_eq!(nucleus.thread(waits.target).unwrap().context, target_before);
+    assert_eq!(nucleus.pending.len(), pending_len);
+    if let Some((record, state)) = parked_before {
+        assert_eq!(nucleus.pending.state(record).ok(), state);
+    }
+    assert_eq!(
+        nucleus
+            .pending
+            .state(waits.incoming)
+            .unwrap_or_else(|e| panic!("incoming preserved: {:?}", e.code())),
+        PendingState::Waiting
+    );
+    assert_eq!(
+        nucleus
+            .pending
+            .state(waits.terminal)
+            .unwrap_or_else(|e| panic!("terminal preserved: {:?}", e.code())),
+        terminal_before
+    );
+    assert_eq!(nucleus.run_queue.len(), 2);
+    assert_eq!(nucleus.run_queue.peek(), Some(waits.target));
+    assert_eq!(nucleus.run_queue.pop(), Some(waits.target));
+    assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+}
+
+#[test_case]
+fn resume_rejects_invalid_as_identity_before_consuming_any_state() {
+    for invalid in 0..4 {
+        with_resume(|nucleus, waits| {
+            let live = waits.target_as;
+            let identity = match invalid {
+                // Another kind at the AddressSpace's address.
+                0 => AddressSpaceId {
+                    kind: ObjectType::PAGE_TABLE,
+                    ..live
+                },
+                // No object at all.
+                1 => AddressSpaceId::UNBOUND,
+                // An address no carve could have produced.
+                2 => AddressSpaceId {
+                    address: live.address + 8,
+                    ..live
+                },
+                // A generation the record never had.
+                _ => AddressSpaceId {
+                    generation: live.generation + 1,
+                    ..live
+                },
+            };
+            nucleus.thread_mut(waits.target).unwrap().address_space = identity;
+            reject_unchanged(nucleus, &waits, CapError::InvalidAddressSpace);
+        });
+    }
+}
+
+#[test_case]
+fn resume_rejects_retired_and_reused_as_before_consuming_completed_wait() {
+    for reuse in [false, true] {
+        with_resume(|nucleus, waits| {
+            let binding = nucleus
+                .address_space(waits.target_as)
+                .unwrap()
+                .keytable()
+                .unwrap();
+            crate::retire_address_space(waits.target_as)
+                .unwrap_or_else(|e| panic!("AS retirement: {e:?}"));
+            if reuse {
+                let mut replacement =
+                    crate::objects::arch_objects::bound_address_space::<ArchObjectsImpl>(binding);
+                replacement.set_translation_root(Some(ROOT));
+                replacement.set_asid(Some(3));
+                let replacement_id =
+                    crate::objects::nucleus::test_arena::carve(replacement).unwrap();
+                assert_ne!(replacement_id, waits.target_as);
+                assert_ne!(replacement_id.address, waits.target_as.address);
+            }
+            reject_unchanged(nucleus, &waits, CapError::InvalidAddressSpace);
+        });
+    }
+}
+
+#[test_case]
+fn resume_rejects_missing_root_or_asid_without_losing_context_or_pending() {
+    for (root, asid) in [(None, None), (None, Some(2)), (Some(ROOT), None)] {
+        with_resume(|nucleus, waits| {
+            let address_space = nucleus.address_space_mut(waits.target_as).unwrap();
+            address_space.set_translation_root(root);
+            address_space.set_asid(asid);
+            reject_unchanged(nucleus, &waits, CapError::NotMapped);
+        });
+    }
+}
+
+#[test_case]
+fn resume_rejects_unencodable_root_or_reserved_asid_atomically() {
+    for (root, asid, error) in [
+        (ROOT + 1, 2, CapError::InvalidPointer),
+        (1 << 52, 2, CapError::InvalidPointer),
+        (ROOT, 0, CapError::InvalidOperation),
+    ] {
+        with_resume(|nucleus, waits| {
+            let address_space = nucleus.address_space_mut(waits.target_as).unwrap();
+            address_space.set_translation_root(Some(root));
+            address_space.set_asid(Some(asid));
+            reject_unchanged(nucleus, &waits, error);
+        });
+    }
+}
+
+#[test_case]
+fn resume_rejects_unsupported_ttbr0_walk_profile_atomically() {
+    for tcr in [0, 25, 16 | (1 << 7)] {
+        with_resume(|nucleus, waits| {
+            TCR_EL1.set(tcr);
+            reject_unchanged(nucleus, &waits, CapError::InvalidOperation);
+        });
+    }
+}
+
+#[test_case]
+fn resume_rejects_incoherent_context_and_completion_before_commit() {
+    for case in 0..6 {
+        with_resume(|nucleus, waits| {
+            let mut saved = target_saved();
+            match case {
+                0 => {
+                    saved.origin = ExceptionOrigin::CurrentSpx;
+                    nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Parked {
+                        saved,
+                        record: waits.terminal,
+                    };
+                }
+                1 => nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Running,
+                2 | 5 => {
+                    let waiting = nucleus
+                        .pending
+                        .block(
+                            waits.target,
+                            PendingKind::EventCountAwait,
+                            crate::objects::carved::test_id(libobject::ObjectType::EVENT_COUNT, 0),
+                        )
+                        .unwrap_or_else(|e| panic!("waiting record: {:?}", e.code()));
+                    if case == 5 {
+                        nucleus
+                            .pending
+                            .cancel(waiting)
+                            .unwrap_or_else(|e| panic!("cancelled record: {:?}", e.code()));
+                    }
+                    nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Parked {
+                        saved,
+                        record: waiting,
+                    };
+                }
+                3 => {
+                    nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Parked {
+                        saved,
+                        record: ObjectId {
+                            generation: 0,
+                            ..waits.terminal
+                        },
+                    }
+                }
+                _ => {
+                    nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Parked {
+                        saved,
+                        record: waits.incoming,
+                    }
+                }
+            }
+            reject_unchanged(
+                nucleus,
+                &waits,
+                if case == 0 {
+                    CapError::InvalidThread
+                } else {
+                    CapError::InvalidOperation
+                },
+            );
+        });
+    }
+}
+
+#[test_case]
+fn first_start_failure_preserves_its_initial_context_and_runnable_position() {
+    with_resume(|nucleus, waits| {
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::NotStarted {
+            saved: target_saved(),
+        };
+        nucleus
+            .address_space_mut(waits.target_as)
+            .unwrap()
+            .set_translation_root(None);
+        reject_unchanged(nucleus, &waits, CapError::NotMapped);
+    });
+}
+
+#[test_case]
+fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result() {
+    with_resume(|nucleus, waits| {
+        let target_binding = nucleus
+            .address_space(waits.target_as)
+            .unwrap()
+            .keytable()
+            .unwrap();
+        // SAFETY: serial exclusive fixture; the access/guards end before any
+        // subsequent state inspection, and no hardware install occurs here.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .park_and_select(&access, SOURCE_SAVED, waits.incoming)
+                .unwrap_or_else(|e| panic!("prepared resume: {:?}", e.code()))
+        };
+        assert_eq!(resumed.translation.address_space(), waits.target_as);
+        assert_eq!(resumed.translation.root(), ROOT);
+        assert_eq!(resumed.translation.asid(), 2);
+        assert_eq!(resumed.translation.keytable(), target_binding);
+        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.next, waits.target);
+        let mut expected = target_saved();
+        expected.gpr[0] = syscall_status::COUNTER_OVERFLOW;
+        expected.gpr[1] = 0x1234;
+        expected.gpr[2] = 0x5678;
+        assert_eq!(resumed.saved, expected);
+        assert_eq!(
+            resumed.completion.unwrap().kind,
+            PendingKind::EventCountAwait
+        );
+        assert_eq!(nucleus.current_thread, Some(waits.target));
+        assert_eq!(
+            nucleus.current_thread_table_addr(),
+            Some(target_binding.address())
+        );
+        assert_eq!(
+            nucleus.thread(waits.source).unwrap().context,
+            ExecutionContext::Parked {
+                saved: SOURCE_SAVED,
+                record: waits.incoming
+            }
+        );
+        assert_eq!(
+            nucleus.thread(waits.target).unwrap().context,
+            ExecutionContext::Running
+        );
+        assert!(nucleus.pending.state(waits.terminal).is_err());
+        assert_eq!(nucleus.pending.len(), 1);
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert!(nucleus.run_queue.is_empty());
+    });
+}
+
+#[test_case]
+fn first_start_preparation_preserves_all_saved_registers_and_selects_its_table() {
+    with_resume(|nucleus, waits| {
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::NotStarted {
+            saved: target_saved(),
+        };
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .park_and_select(&access, SOURCE_SAVED, waits.incoming)
+                .unwrap_or_else(|e| panic!("prepared first start: {:?}", e.code()))
+        };
+        assert_eq!(resumed.saved, target_saved());
+        assert_eq!(resumed.completion, None);
+        assert_eq!(resumed.translation.root(), ROOT);
+        assert_eq!(resumed.translation.asid(), 2);
+        assert_eq!(
+            nucleus.current_thread_table_addr(),
+            Some(resumed.translation.keytable().address())
+        );
+        // Unrelated pending records are never destroyed by a first start.
+        assert!(nucleus.pending.state(waits.terminal).is_ok());
+        assert_eq!(nucleus.pending.len(), 2);
+    });
+}
+
+#[test_case]
+fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_change() {
+    with_resume(|nucleus, waits| {
+        let source_as = nucleus.thread(waits.source).unwrap().address_space;
+        let source_address_space = nucleus.address_space_mut(source_as).unwrap();
+        source_address_space.set_translation_root(Some(ROOT + 0x1000));
+        source_address_space.set_asid(Some(1));
+        let source_binding = source_address_space.keytable().unwrap();
+        let key = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot::SELF_ADDRESS_SPACE,
+                KeyEntry::new_carved(source_as, Rights::all(), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|e| panic!("AS cap: {:?}", e.error.code()));
+        let ttbr_before = {
+            use aarch64_cpu::registers::{Readable, TTBR0_EL1};
+            TTBR0_EL1.get()
+        };
+        let prepared = match cap_invoke(nucleus, key, 0, &[0; 6]) {
+            Ok(InvokeOutcome::Activate(prepared)) => prepared,
+            Err(e) => panic!("activation preparation: {:?}", e.code()),
+            Ok(_) => panic!("activation reported completion before installing hardware"),
+        };
+        assert_eq!(prepared.address_space(), source_as);
+        assert_eq!(prepared.root(), ROOT + 0x1000);
+        assert_eq!(prepared.asid(), 1);
+        assert_eq!(prepared.keytable(), source_binding);
+        {
+            use aarch64_cpu::registers::{Readable, TTBR0_EL1};
+            assert_eq!(TTBR0_EL1.get(), ttbr_before);
+        }
+        assert_eq!(nucleus.current_thread, Some(waits.source));
+        assert_eq!(nucleus.pending.len(), 2);
+        assert_eq!(nucleus.run_queue.len(), 2);
+        // Same prepared helper also rejects missing metadata through Activate.
+        nucleus.address_space_mut(source_as).unwrap().set_asid(None);
+        assert!(matches!(
+            cap_invoke(nucleus, key, 0, &[0; 6]),
+            Err(CapError::NotMapped)
+        ));
+        let foreign_key = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(20),
+                KeyEntry::new_carved(waits.target_as, Rights::all(), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|e| panic!("foreign AS cap: {:?}", e.error.code()));
+        assert!(matches!(
+            cap_invoke(nucleus, foreign_key, 0, &[0; 6]),
+            Err(CapError::InvalidOperation)
+        ));
+        let no_map = nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(
+                KeySlot(21),
+                KeyEntry::new_carved(source_as, Rights(Rights::READ), 0),
+                FIXTURE_GUARD,
+            )
+            .unwrap_or_else(|e| panic!("attenuated AS cap: {:?}", e.error.code()));
+        assert!(matches!(
+            cap_invoke(nucleus, no_map, 0, &[0; 6]),
+            Err(CapError::InsufficientRights)
+        ));
+        // Foreign guarded table selectors stay ordinary errors, not activation.
+        let foreign_guard =
+            RawKey::from_parts(FIXTURE_GUARD ^ 1, SIZE_BITS, 20, foreign_key.incarnation());
+        assert!(cap_invoke(nucleus, foreign_guard, 0, &[0; 6]).is_err());
+        // SAFETY: exclusive serial fixture, dispatch's Access has ended.
+        let access = unsafe { Access::new() };
+        assert!(matches!(
+            prepare_translation_context::<ArchObjectsImpl>(&access, source_as),
+            Err(CapError::NotMapped)
+        ));
+    });
+}
+
+/// Map the source `AddressSpace` so Threads there can be selected, and make
+/// the FIFO tail Thread (in the source `AddressSpace`) the idle Thread.
+fn with_idle(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> ThreadId {
+    let source_as = nucleus.thread(waits.source).unwrap().address_space;
+    let address_space = nucleus.address_space_mut(source_as).unwrap();
+    address_space.set_translation_root(Some(ROOT + 0x1000));
+    address_space.set_asid(Some(1));
+    let idle = waits.tail;
+    nucleus.thread_mut(idle).unwrap().context = ExecutionContext::NotStarted {
+        saved: SavedContext::el1t_interruptible(0xE0000, 0xF0000),
+    };
+    nucleus.idle_thread = Some(idle);
+    idle
+}
+
+/// The interrupted state of a preempted source Thread.
+const PREEMPTED_SAVED: SavedContext = SavedContext {
+    gpr: [0x5A; 30],
+    ..SavedContext::el0(0x40_1000, 0x80_0000, 0)
+};
+
+#[test_case]
+fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
+    with_resume(|nucleus, waits| {
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("preemption: {:?}", e.code()))
+                .expect("another Thread is runnable")
+        };
+        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.next, waits.target);
+        // A preempted Thread owes no completion: its registers come back as-is.
+        assert_eq!(resumed.saved, target_saved());
+        assert_eq!(resumed.completion, None);
+        assert_eq!(nucleus.current_thread, Some(waits.target));
+        assert_eq!(
+            nucleus.thread(waits.source).unwrap().context,
+            ExecutionContext::Preempted {
+                saved: PREEMPTED_SAVED
+            }
+        );
+        // The preempted Thread queues behind the former FIFO tail.
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.source));
+        assert!(nucleus.run_queue.is_empty());
+        // Unrelated pending records are untouched.
+        assert_eq!(nucleus.pending.len(), 2);
+        // The switch charged the interval since the fixture started the
+        // source (at counter zero) to it alone, and restarted the clock.
+        let charged = nucleus.run_time_ticks(waits.source).unwrap();
+        assert!(charged > 0);
+        assert_eq!(nucleus.run_time_ticks(waits.target), Some(0));
+        assert!(nucleus.current_since_ticks >= charged);
+    });
+}
+
+#[test_case]
+fn preemption_with_nothing_runnable_keeps_the_current_thread() {
+    with_resume(|nucleus, waits| {
+        while nucleus.run_queue.pop().is_some() {}
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("preemption: {:?}", e.code()))
+        };
+        assert_eq!(resumed, None);
+        assert_eq!(nucleus.current_thread, Some(waits.source));
+        assert_eq!(
+            nucleus.thread(waits.source).unwrap().context,
+            ExecutionContext::Running
+        );
+        assert!(nucleus.run_queue.is_empty());
+        // No switch happened, but the tick charged the interval the Thread
+        // ran alone and restarted the clock.
+        assert!(nucleus.run_time_ticks(waits.source).unwrap() > 0);
+        assert!(nucleus.current_since_ticks > 0);
+    });
+}
+
+#[test_case]
+fn preemption_rejects_kernel_mode_state_without_changes() {
+    with_resume(|nucleus, waits| {
+        let kernel_mode = SavedContext {
+            origin: ExceptionOrigin::CurrentSpx,
+            ..PREEMPTED_SAVED
+        };
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let result = {
+            let access = unsafe { Access::new() };
+            nucleus.preempt_and_select(&access, kernel_mode)
+        };
+        assert_eq!(
+            result.expect_err("kernel-mode preemption").code(),
+            CapError::InvalidThread.code()
+        );
+        assert_eq!(nucleus.current_thread, Some(waits.source));
+        assert_eq!(nucleus.run_queue.len(), 2);
+    });
+}
+
+#[test_case]
+fn parking_with_nothing_runnable_selects_the_idle_thread() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        while nucleus.run_queue.pop().is_some() {}
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .park_and_select(&access, SOURCE_SAVED, waits.incoming)
+                .unwrap_or_else(|e| panic!("park onto idle: {:?}", e.code()))
+        };
+        assert_eq!(resumed.next, idle);
+        assert_eq!(
+            resumed.saved,
+            SavedContext::el1t_interruptible(0xE0000, 0xF0000)
+        );
+        assert_eq!(nucleus.current_thread, Some(idle));
+        assert!(nucleus.idle_is_current());
+        // The idle Thread is never queued.
+        assert!(nucleus.run_queue.is_empty());
+    });
+}
+
+#[test_case]
+fn preempting_idle_selects_the_woken_thread_and_never_queues_idle() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        // Idle is running; only the target is runnable.
+        while nucleus.run_queue.pop().is_some() {}
+        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
+        nucleus.current_thread = Some(idle);
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        assert!(nucleus.run_queue.push(waits.target));
+
+        let idle_saved = SavedContext::el1t_interruptible(0xE0004, 0xF0000);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, idle_saved)
+                .unwrap_or_else(|e| panic!("preempt idle: {:?}", e.code()))
+                .expect("the target is runnable")
+        };
+        assert_eq!(resumed.next, waits.target);
+        assert!(!nucleus.idle_is_current());
+        assert!(nucleus.run_queue.is_empty());
+        assert_eq!(
+            nucleus.thread(idle).unwrap().context,
+            ExecutionContext::Preempted { saved: idle_saved }
+        );
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TIME CHARGING AND BUDGET ELIGIBILITY
+// ═══════════════════════════════════════════════════════════════
+
+/// Counter ticks in `milliseconds` of the running counter.
+fn ticks_for_ms(nucleus: &Nucleus<ArchObjectsImpl>, milliseconds: u64) -> u64 {
+    nucleus.counter_frequency() / 1_000 * milliseconds
+}
+
+/// Pretend the current Thread has been running for `milliseconds`.
+fn run_for_ms(nucleus: &mut Nucleus<ArchObjectsImpl>, milliseconds: u64) {
+    let elapsed = ticks_for_ms(nucleus, milliseconds);
+    nucleus.current_since_ticks = nucleus.counter_ticks().saturating_sub(elapsed);
+}
+
+/// Bind a fresh Time holding `budget_ns` to `thread`; its identity.
+fn bind_time(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    thread: ThreadId,
+    budget_ns: u64,
+) -> crate::objects::carved::CarvedId {
+    let id = test_arena::carve(Time::root(0, budget_ns)).expect("arena exhausted");
+    nucleus.thread_mut(thread).unwrap().time = Some(id);
+    id
+}
+
+/// The remaining budget of the Time `id`, in nanoseconds.
+fn remaining_ns(nucleus: &Nucleus<ArchObjectsImpl>, id: crate::objects::carved::CarvedId) -> u64 {
+    // SAFETY: a test-arena record nothing else references right now.
+    let time = unsafe { Carved::<Time>::validate(id) }
+        .ok()
+        .expect("Time carved");
+    // SAFETY: as above.
+    unsafe { (*time).remaining_ns(nucleus.counter_frequency()) }
+}
+
+#[test_case]
+fn a_tick_charges_a_thread_running_alone_to_its_bound_time() {
+    with_resume(|nucleus, waits| {
+        while nucleus.run_queue.pop().is_some() {}
+        let time = bind_time(nucleus, waits.source, 1_000_000_000);
+        run_for_ms(nucleus, 3);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+        };
+        // Nothing else is runnable and the budget holds, so it keeps running.
+        assert_eq!(resumed, None);
+        assert_eq!(nucleus.current_thread, Some(waits.source));
+        let remaining = remaining_ns(nucleus, time);
+        assert!(remaining <= 1_000_000_000 - 3_000_000, "{remaining}");
+        assert!(remaining > 900_000_000, "{remaining}");
+        assert!(nucleus.run_time_ticks(waits.source).unwrap() >= ticks_for_ms(nucleus, 3));
+        assert!(!nucleus.thread(waits.source).unwrap().awaiting_budget);
+    });
+}
+
+#[test_case]
+fn an_exhausted_thread_is_switched_away_from_and_kept_off_the_queue() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        while nucleus.run_queue.pop().is_some() {}
+        bind_time(nucleus, waits.source, 1_000_000);
+        run_for_ms(nucleus, 5);
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("an exhausted Thread must stop")
+        };
+        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.next, idle);
+        assert_eq!(nucleus.current_thread, Some(idle));
+        // It stays runnable but waits for budget instead of queueing.
+        assert!(nucleus.run_queue.is_empty());
+        let source = nucleus.thread(waits.source).unwrap();
+        assert!(source.awaiting_budget);
+        assert_eq!(
+            source.context,
+            ExecutionContext::Preempted {
+                saved: PREEMPTED_SAVED
+            }
+        );
+    });
+}
+
+#[test_case]
+fn an_exhausted_thread_with_a_queue_behind_it_is_not_requeued() {
+    with_resume(|nucleus, waits| {
+        bind_time(nucleus, waits.source, 1_000_000);
+        run_for_ms(nucleus, 5);
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("another Thread is runnable")
+        };
+        assert_eq!(resumed.next, waits.target);
+        // Only the former tail remains queued; the exhausted source waits.
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
+    });
+}
+
+#[test_case]
+fn budget_arriving_requeues_a_waiting_thread_at_the_back() {
+    with_resume(|nucleus, waits| {
+        let time = bind_time(nucleus, waits.source, 1_000_000);
+        run_for_ms(nucleus, 5);
+        nucleus.charge_current(waits.source);
+        assert!(nucleus.thread_exhausted(waits.source));
+        // A stopped, exhausted Thread is refused by the queue gate.
+        nucleus.thread_mut(waits.source).unwrap().context = ExecutionContext::Preempted {
+            saved: PREEMPTED_SAVED,
+        };
+        nucleus.current_thread = Some(waits.target);
+        let queued_before = nucleus.run_queue.len();
+        assert!(!nucleus.make_runnable(waits.source));
+        assert_eq!(nucleus.run_queue.len(), queued_before);
+        assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
+        // Budget has not arrived yet.
+        assert!(!nucleus.budget_arrived(waits.source));
+
+        // Refill the Time the way a Transfer does.
+        let frequency = nucleus.counter_frequency();
+        // SAFETY: a test-arena record nothing else references right now.
+        unsafe {
+            let bound = Carved::<Time>::validate(time).ok().expect("Time carved");
+            let (_, refilled) =
+                Time::transfer(&Time::root(0, u64::MAX), &*bound, 50_000_000, frequency)
+                    .ok()
+                    .expect("refill");
+            *bound = refilled;
+        }
+        assert!(nucleus.budget_arrived(waits.source));
+        assert!(!nucleus.thread(waits.source).unwrap().awaiting_budget);
+        // Back of the FIFO, behind the Threads already queued.
+        assert_eq!(nucleus.run_queue.len(), queued_before + 1);
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.target));
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.source));
+        // Refilling again queues nothing twice.
+        assert!(!nucleus.budget_arrived(waits.source));
+    });
+}
+
+#[test_case]
+fn a_thread_with_no_bound_time_is_never_exhausted_and_its_run_time_is_metered() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
+        nucleus.current_thread = Some(idle);
+        run_for_ms(nucleus, 4);
+        nucleus.charge_current(idle);
+        // Idle has no Time, so it is never exhausted, but its run time counts
+        // like any other Thread's: it measures load.
+        assert!(!nucleus.thread_exhausted(idle));
+        assert!(nucleus.run_time_ticks(idle).unwrap() >= ticks_for_ms(nucleus, 4));
+        assert!(nucleus.run_time_ns(idle).unwrap() >= 4_000_000);
+        while nucleus.run_queue.pop().is_some() {}
+        assert!(nucleus.make_runnable(waits.target));
+        assert_eq!(nucleus.run_queue.len(), 1);
+    });
+}
+
+#[test_case]
+fn interrupt_time_is_not_charged_to_the_interrupted_thread() {
+    with_resume(|nucleus, waits| {
+        while nucleus.run_queue.pop().is_some() {}
+        let time = bind_time(nucleus, waits.source, 1_000_000_000);
+        // The Thread started 10 ms ago, and 4 ms of that went to interrupts.
+        run_for_ms(nucleus, 10);
+        let started = nucleus.current_since_ticks;
+        nucleus.account_interrupts(&[(5, 1_000), (6, 500)], ticks_for_ms(nucleus, 4));
+        assert_eq!(
+            nucleus.current_since_ticks,
+            started + ticks_for_ms(nucleus, 4)
+        );
+        nucleus.charge_current(waits.source);
+        let charged = nucleus.run_time_ticks(waits.source).unwrap();
+        assert!(charged >= ticks_for_ms(nucleus, 6), "{charged}");
+        assert!(charged < ticks_for_ms(nucleus, 10), "{charged}");
+        let spent = 1_000_000_000 - remaining_ns(nucleus, time);
+        assert!(spent >= 6_000_000 && spent < 10_000_000, "{spent}");
+    });
+}
+
+#[test_case]
+fn interrupt_time_never_moves_the_interval_past_now() {
+    with_resume(|nucleus, waits| {
+        run_for_ms(nucleus, 1);
+        // More interrupt time than has elapsed (a clock skew) clamps to now.
+        nucleus.account_interrupts(&[], ticks_for_ms(nucleus, 1_000));
+        assert!(nucleus.current_since_ticks <= nucleus.counter_ticks());
+        nucleus.charge_current(waits.source);
+        assert!(nucleus.run_time_ticks(waits.source).unwrap() < ticks_for_ms(nucleus, 1));
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TIMER DEADLINE
+// ═══════════════════════════════════════════════════════════════
+
+/// A slice of 10 ms, in ticks of the running counter.
+fn slice(nucleus: &Nucleus<ArchObjectsImpl>) -> u64 {
+    ticks_for_ms(nucleus, 10)
+}
+
+/// Ticks of execution a fresh `budget_ns` Time allows.
+fn budget_ticks(nucleus: &Nucleus<ArchObjectsImpl>, budget_ns: u64) -> u64 {
+    Time::root(0, budget_ns)
+        .ticks_until_exhausted(nucleus.counter_frequency())
+        .expect("a finite budget")
+}
+
+#[test_case]
+fn a_thread_running_alone_on_unlimited_time_needs_no_timer() {
+    with_resume(|nucleus, waits| {
+        while nucleus.run_queue.pop().is_some() {}
+        nucleus.current_since_ticks = 5_000;
+        let slice = slice(nucleus);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+        // The same on an infinite Time.
+        bind_time(nucleus, waits.source, u64::MAX);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+    });
+}
+
+#[test_case]
+fn the_idle_thread_needs_no_timer() {
+    with_resume(|nucleus, waits| {
+        let idle = with_idle(nucleus, &waits);
+        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
+        nucleus.current_thread = Some(idle);
+        let slice = slice(nucleus);
+        // Even with runnable Threads queued: idle takes interrupts instead.
+        assert!(!nucleus.run_queue.is_empty());
+        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+    });
+}
+
+#[test_case]
+fn a_queued_thread_bounds_the_slice_from_when_the_current_thread_started() {
+    with_resume(|nucleus, _waits| {
+        nucleus.current_since_ticks = 5_000;
+        let slice = slice(nucleus);
+        assert!(!nucleus.run_queue.is_empty());
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + slice));
+        // A later start moves the deadline with it.
+        nucleus.current_since_ticks = 9_000;
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(9_000 + slice));
+    });
+}
+
+#[test_case]
+fn a_finite_budget_sets_a_deadline_at_exhaustion_even_when_alone() {
+    with_resume(|nucleus, waits| {
+        // Idle can take over, so the exhausted Thread can stop.
+        let _idle = with_idle(nucleus, &waits);
+        while nucleus.run_queue.pop().is_some() {}
+        nucleus.current_since_ticks = 5_000;
+        bind_time(nucleus, waits.source, 2_000_000);
+        let slice = slice(nucleus);
+        let left = budget_ticks(nucleus, 2_000_000);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + left));
+    });
+}
+
+#[test_case]
+fn the_earlier_of_the_slice_and_the_exhaustion_wins() {
+    with_resume(|nucleus, waits| {
+        nucleus.current_since_ticks = 5_000;
+        let slice = slice(nucleus);
+        // Contended, with less budget than a slice: exhaustion comes first.
+        bind_time(nucleus, waits.source, 2_000_000);
+        let left = budget_ticks(nucleus, 2_000_000);
+        assert!(left < slice);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + left));
+        // With more budget than a slice, the slice ends first.
+        bind_time(nucleus, waits.source, 1_000_000_000);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + slice));
+    });
+}
+
+#[test_case]
+fn an_exhausted_thread_with_nothing_to_switch_to_asks_for_no_timer() {
+    with_resume(|nucleus, waits| {
+        // No idle Thread and nothing queued: stopping it is impossible, and a
+        // deadline in the past would fire the timer continuously.
+        while nucleus.run_queue.pop().is_some() {}
+        assert!(nucleus.idle_thread.is_none());
+        bind_time(nucleus, waits.source, 1);
+        run_for_ms(nucleus, 1);
+        nucleus.charge_current(waits.source);
+        assert!(nucleus.thread_exhausted(waits.source));
+        let slice = slice(nucleus);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+    });
+}
+
+#[test_case]
+fn interrupt_time_pushes_the_exhaustion_deadline_out() {
+    with_resume(|nucleus, waits| {
+        let _idle = with_idle(nucleus, &waits);
+        while nucleus.run_queue.pop().is_some() {}
+        nucleus.current_since_ticks = 5_000;
+        bind_time(nucleus, waits.source, 2_000_000);
+        let slice = slice(nucleus);
+        let before = nucleus.timer_deadline_ticks(slice).unwrap();
+        // Time spent in interrupts is not the Thread's, so it gets it back.
+        nucleus.account_interrupts(&[], 700);
+        assert_eq!(nucleus.timer_deadline_ticks(slice), Some(before + 700));
+    });
+}

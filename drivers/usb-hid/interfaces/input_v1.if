@@ -1,0 +1,16 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## Keyboard and pointer input from the USB HID driver. Input events themselves
+## travel over an io-channel (layout not defined yet); this interface carries
+## the control calls. Prototype: edited in place.
+local interface input_v1
+{
+    ## No keyboard is attached, so there are no LEDs to set.
+    exception no_keyboard {}
+
+    ## Set the keyboard LEDs: bit 0 Num Lock, bit 1 Caps Lock, bit 2 Scroll Lock.
+    set_leds(card32 bits)
+        raises (no_keyboard);
+}
