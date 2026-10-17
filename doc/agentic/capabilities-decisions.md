@@ -110,14 +110,17 @@ Unanswered questions before implementing the scheduler record ABI:
   API versus bootstrap/libOS composition layout.
 - **D6:** whether ASID identity should occupy high `VirtAddr` bits, or whether
   that proposal should be rejected.
-- **D8:** whether the root budget is infinite or a large finite amount (both
-  are buildable through the Kickstart `infinite-boot-time` feature); what
-  happens to remaining budget when a Time is deleted; the `dispatch` and
+- **D8:** what happens to remaining budget when a Time is deleted; the `dispatch` and
   `replace` register schemas, rights and generation encoding; the clock source
   (the physical counter today); which way the accumulated charge is rounded
   when it is compared with a limit; how interrupt handling time is accounted
   separately from the running Time (for example per-IRQ statistics, and whether
-  the receiver Thread's Time or a kernel counter holds them).
+  the receiver Thread's Time or a kernel counter holds them); whether a Thread
+  with no bound Time (the boot and idle Threads) runs unmetered; how Kickstart
+  funds components while no userspace scheduler exists to refill an exhausted
+  Time (an infinite budget by default, or the finite `budget_ns` of the
+  manifest); and whether a Thread made eligible again by a Transfer re-enters
+  the kernel FIFO at once.
 - **IRQ follow-up:** whether a Thread may bind one Notification for both
   PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
 - **D9:** ABI version and optional-operation discovery for separately built

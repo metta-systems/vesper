@@ -753,9 +753,8 @@ fn time_operations(untyped: &UntypedKey, self_table: &KeyTableKey, boot_time_key
         .unwrap_or_else(|error| panic!("nested Time.Transfer failed: {:?}", error.code()));
     assert_eq!(query(&child), TimeQuery { budget_ns: 600_000 });
     assert_eq!(query(&grandchild), TimeQuery { budget_ns: 400_000 });
-    if BOOT_TIME_BUDGET_NS != INFINITE_BUDGET {
-        assert_eq!(query(&boot_time).budget_ns, BOOT_TIME_BUDGET_NS - 1_000_000);
-    }
+    // The boot Time is infinite, so giving budget away does not reduce it.
+    assert_eq!(query(&boot_time).budget_ns, INFINITE_BUDGET);
 
     // More than a finite source holds, and the same Time twice, change
     // nothing.

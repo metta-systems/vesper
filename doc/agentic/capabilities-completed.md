@@ -76,7 +76,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 
 ## Phase 7 — Time and userspace scheduling
 
-- [x] Pool-backed Time objects: Retype creates an empty Time on the creating core; the boot Time at `KeySlot::BOOT_TIME` holds the only initial budget (finite by default, infinite with `infinite-boot-time`) (`kernel/nucleus/src/objects/time.rs`; nucleus `untyped` tests, `sync-test`).
+- [x] Pool-backed Time objects: Retype creates an empty Time on the creating core; the boot Time at `KeySlot::BOOT_TIME` holds the only initial budget (infinite) (`kernel/nucleus/src/objects/time.rs`; nucleus `untyped` tests, `sync-test`).
 - [x] `Time.Transfer`/`Merge`/`Query` as a budget-only transfer with per-core checks, `INSUFFICIENT_BUDGET` and all-or-nothing updates (`libs/object/src/time.rs`, `kernel/nucleus/src/api/time.rs`; host ABI tests, nucleus `time` and `untyped` tests, `sync-test`).
 
 - [x] Carved-object identity (header with kind, state and generation; identity = kind, kernel address, generation): Notification, EventCount and Time are carved from the invoking Untyped, their boot pools are gone, the boot Time is carved from the boot Untyped, and pending records name the object they wait on (`kernel/nucleus/src/objects/carved.rs`; nucleus `carved`, `nucleus` and `untyped` tests, `sync-test`, `endpoint-test`, `fault-test`, `fp-trap-test`).

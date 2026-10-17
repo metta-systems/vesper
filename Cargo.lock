@@ -2354,6 +2354,7 @@ version = "0.0.1"
 name = "vesper-tests"
 version = "0.0.1"
 dependencies = [
+ "aarch64-cpu",
  "vesper-log",
  "vesper-qemu",
 ]
