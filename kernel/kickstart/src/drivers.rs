@@ -76,7 +76,7 @@ use {
         interrupts::{MAX_INTERRUPT_CELLS, interrupts},
         is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
     },
-    libimage::{DriverImage, Link},
+    libimage::{DriverImage, Link, Provider},
     libmeddle_runtime::ImportRecord,
     libobject::{
         CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType,
@@ -493,21 +493,58 @@ fn same_node(first: &Node<'_, '_, '_>, second: &Node<'_, '_, '_>) -> bool {
     first.name().ok() == second.name().ok() && phandle(first) == phandle(second)
 }
 
-/// A link chain for messages: the steps separated by commas.
-struct Links(&'static [Link]);
+/// A provider for messages: a device tree chain, its steps separated by
+/// commas, or a component name.
+struct Provided(Provider);
 
-impl core::fmt::Display for Links {
+impl core::fmt::Display for Provided {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for (index, link) in self.0.iter().enumerate() {
-            if index > 0 {
-                formatter.write_str(", ")?;
+        match self.0 {
+            Provider::Device(links) => {
+                formatter.write_str("device ")?;
+                for (index, link) in links.iter().enumerate() {
+                    if index > 0 {
+                        formatter.write_str(", ")?;
+                    }
+                    match link {
+                        Link::Property(property) => formatter.write_str(property)?,
+                        Link::Compatible(compatible) => {
+                            write!(formatter, "compatible \"{compatible}\"")?;
+                        }
+                    }
+                }
+                Ok(())
             }
-            match link {
-                Link::Property(property) => formatter.write_str(property)?,
-                Link::Compatible(compatible) => write!(formatter, "compatible \"{compatible}\"")?,
-            }
+            Provider::Component(name) => write!(formatter, "component {name}"),
         }
-        Ok(())
+    }
+}
+
+/// The one loaded instance of the manifest component `name` that exports
+/// `interface` at `type_code`: `Ok(None)` when no loaded instance does, and
+/// `Err` with their count when more than one does.
+fn component_exporter(
+    prepared: &[Option<Prepared<'_>>],
+    name: &str,
+    interface: &str,
+    type_code: u64,
+) -> Result<Option<usize>, usize> {
+    let mut exporters = prepared
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate.as_ref().is_some_and(|candidate| {
+                let component = candidate.instance.driver.component;
+                component.name == name && component.exports_interface(interface, type_code)
+            })
+        })
+        .map(|(index, _)| index);
+    let first = exporters.next();
+    let count = usize::from(first.is_some()) + exporters.count();
+    match (first, count) {
+        (None, _) => Ok(None),
+        (Some(_), 1) => Ok(first),
+        (Some(_), count) => Err(count),
     }
 }
 
@@ -1065,34 +1102,55 @@ pub fn load_drivers(
         // Imports of one interface are consecutive: report a missing link once.
         let mut unlinked: Option<&str> = None;
         for import in client_image.imports {
-            let target = follow_links(tree, client_instance.node.as_ref(), import.links);
-            let exporter = prepared.iter().position(|candidate| {
-                candidate.as_ref().is_some_and(|candidate| {
-                    target.as_ref().is_some_and(|target| {
-                        candidate
-                            .instance
-                            .node
-                            .as_ref()
-                            .is_some_and(|node| same_node(node, target))
-                    }) && candidate
-                        .instance
-                        .driver
-                        .component
-                        .exports_interface(import.interface, import.type_code)
-                })
-            });
-            let Some(exporter) = exporter else {
-                if unlinked == Some(import.interface) {
+            let exporter = match import.provider {
+                Provider::Device(links) => {
+                    let target = follow_links(tree, client_instance.node.as_ref(), links);
+                    Ok(prepared.iter().position(|candidate| {
+                        candidate.as_ref().is_some_and(|candidate| {
+                            target.as_ref().is_some_and(|target| {
+                                candidate
+                                    .instance
+                                    .node
+                                    .as_ref()
+                                    .is_some_and(|node| same_node(node, target))
+                            }) && candidate
+                                .instance
+                                .driver
+                                .component
+                                .exports_interface(import.interface, import.type_code)
+                        })
+                    }))
+                }
+                Provider::Component(name) => {
+                    component_exporter(prepared, name, import.interface, import.type_code)
+                }
+            };
+            let exporter = match exporter {
+                Ok(Some(exporter)) => exporter,
+                Ok(None) => {
+                    if unlinked == Some(import.interface) {
+                        continue;
+                    }
+                    unlinked = Some(import.interface);
+                    semi::println!(
+                        "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
+                        client_image.name,
+                        import.interface,
+                        Provided(import.provider)
+                    );
                     continue;
                 }
-                unlinked = Some(import.interface);
-                semi::println!(
-                    "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
-                    client_image.name,
-                    import.interface,
-                    Links(import.links)
-                );
-                continue;
+                Err(count) => {
+                    // Not granted: the client's call reports it, and naming a
+                    // different provider in the manifest is the fix.
+                    semi::println!(
+                        "🥾 Driver {}: {client_name} imports {} through `{}`, which {count} loaded instances export",
+                        client_image.name,
+                        import.interface,
+                        Provided(import.provider)
+                    );
+                    continue;
+                }
             };
             let stack = match call_stacks[client][exporter] {
                 Some(stack) => stack,

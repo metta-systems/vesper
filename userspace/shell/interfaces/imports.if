@@ -7,6 +7,6 @@
 # power management node. The shell switches the LED through the mailbox and
 # resets the board through the power component and draws through the fb
 # component.
-uses mailbox_v1 via compatible "raspberrypi,bcm2835-firmware", mboxes { set_led }
-uses power_v1 via compatible "brcm,bcm2835-pm" { reset }
-uses fb_v1 via compatible "brcm,bcm2708-fb" { configure, address, size, pixel_order, frames }
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { set_led }
+uses power_v1 via device compatible "brcm,bcm2835-pm" { reset }
+uses fb_v1 via device compatible "brcm,bcm2708-fb" { configure, address, size, pixel_order, frames }

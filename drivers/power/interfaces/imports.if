@@ -4,4 +4,4 @@
 #
 # The power management node has no link to the firmware, so the mailbox is
 # reached through the firmware node found by its compatible string.
-uses mailbox_v1 via compatible "raspberrypi,bcm2835-firmware", mboxes { set_power_state }
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { set_power_state }

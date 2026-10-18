@@ -3,4 +3,4 @@
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 # The framebuffer node links to the firmware node, which links to the mailbox.
-uses mailbox_v1 via firmware, mboxes { property }
+uses mailbox_v1 via device firmware, mboxes { property }

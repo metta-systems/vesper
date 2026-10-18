@@ -4,8 +4,8 @@
 mod tests {
     use {
         libmeddle::{
-            LinkSummary, SourceFile,
-            ast::{Interface, Link},
+            LinkSummary, ProviderSummary, SourceFile,
+            ast::{Interface, Link, Provider},
             check::{self, Checked},
             emit, parse,
         },
@@ -304,7 +304,7 @@ mod tests {
 
         let file = source(
             "a_v1.if",
-            "interface a_v1 { f(); } uses b_v1 via links { g }",
+            "interface a_v1 { f(); } uses b_v1 via device links { g }",
         );
         let failure = file.interface().expect_err("uses in an interface file");
         assert!(
@@ -322,14 +322,14 @@ mod tests {
         ))];
         let imports = source(
             "imports.if",
-            "uses mailbox_v1 via mboxes { get_clock_rate, set_power_state }",
+            "uses mailbox_v1 via device mboxes { get_clock_rate, set_power_state }",
         );
         let uses = imports.imports(&directories).expect("valid imports");
         assert_eq!(uses[0].functions.len(), 2);
 
         let imports = source(
             "imports.if",
-            "uses mailbox_v1 via mboxes { get_clock_rate, reboot }",
+            "uses mailbox_v1 via device mboxes { get_clock_rate, reboot }",
         );
         let failure = imports
             .imports(&directories)
@@ -343,19 +343,19 @@ mod tests {
 
         // A chain of links reaches the exporter through intermediate nodes.
         let (file, diagnostics) = parse(
-            "uses mailbox_v1 via firmware, mboxes { get_clock_rate }\n\
-             uses mailbox_v1 via \"raspberrypi,firmware\", mboxes { get_board_serial }",
+            "uses mailbox_v1 via device firmware, mboxes { get_clock_rate }\n\
+             uses mailbox_v1 via device \"raspberrypi,firmware\", mboxes { get_board_serial }",
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let file = file.expect("parsed uses");
         let links: Vec<Vec<&str>> = file
             .uses
             .iter()
-            .map(|uses| {
-                uses.links
-                    .iter()
-                    .map(|link| link.name().text.as_str())
-                    .collect()
+            .map(|uses| match &uses.provider {
+                Provider::Device(links) => {
+                    links.iter().map(|link| link.name().text.as_str()).collect()
+                }
+                Provider::Component(name) => panic!("a device chain, not `{}`", name.text),
             })
             .collect();
         assert_eq!(
@@ -365,14 +365,18 @@ mod tests {
 
         // A chain can start at the one node with a compatible string.
         let (file, diagnostics) = parse(
-            "uses mailbox_v1 via compatible \"raspberrypi,bcm2835-firmware\", mboxes { get_board_serial }",
+            "uses mailbox_v1 via device compatible \"raspberrypi,bcm2835-firmware\", mboxes { get_board_serial }",
         );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let file = file.expect("parsed uses");
         assert!(matches!(
-            file.uses[0].links.as_slice(),
-            [Link::Compatible(first), Link::Property(second)]
-                if first.text == "raspberrypi,bcm2835-firmware" && second.text == "mboxes"
+            &file.uses[0].provider,
+            Provider::Device(links)
+                if matches!(
+                    links.as_slice(),
+                    [Link::Compatible(first), Link::Property(second)]
+                        if first.text == "raspberrypi,bcm2835-firmware" && second.text == "mboxes"
+                )
         ));
         let directories = [PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -380,7 +384,7 @@ mod tests {
         ))];
         let misplaced = source(
             "imports.if",
-            "uses mailbox_v1 via firmware, compatible \"x\" { get_board_serial }",
+            "uses mailbox_v1 via device firmware, compatible \"x\" { get_board_serial }",
         );
         let failure = misplaced
             .imports(&directories)
@@ -391,14 +395,14 @@ mod tests {
                 .contains("can only start a chain")
         );
 
-        // A use names the device tree property linking to the exporter.
+        // A use names its provider after `via`.
         let (_, diagnostics) = parse("uses mailbox_v1 { get_clock_rate }");
         assert!(
             diagnostics[0].message.contains("expected `via`"),
             "{diagnostics:?}"
         );
 
-        let imports = source("imports.if", "uses timer_v1 via timers { now }");
+        let imports = source("imports.if", "uses timer_v1 via device timers { now }");
         let failure = imports
             .imports(&directories)
             .expect_err("an unknown interface");
@@ -433,20 +437,68 @@ mod tests {
         let imports_file = imports.join("imports.if");
         std::fs::write(
             &imports_file,
-            "uses mailbox_v1 via \"raspberrypi,firmware\" { set_power_state, get_clock_rate }",
+            "uses mailbox_v1 via device \"raspberrypi,firmware\" { set_power_state, get_clock_rate }",
         )
         .expect("the imports file");
         let summaries =
-            libmeddle::summarize_imports(&imports_file, &[directory]).expect("valid imports");
-        std::fs::remove_dir_all(&imports).ok();
+            libmeddle::summarize_imports(&imports_file, std::slice::from_ref(&directory))
+                .expect("valid imports");
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].interface.type_code, mailbox.type_code);
         // In the order `uses` names them, as declaration indices.
         assert_eq!(summaries[0].functions, [4, 2]);
         assert_eq!(
-            summaries[0].links,
-            [LinkSummary::Property("raspberrypi,firmware".to_owned())]
+            summaries[0].provider,
+            ProviderSummary::Device(vec![LinkSummary::Property(
+                "raspberrypi,firmware".to_owned()
+            )])
         );
+
+        // A component provider names the manifest component.
+        std::fs::write(
+            &imports_file,
+            "uses mailbox_v1 via component fb { property }",
+        )
+        .expect("the imports file");
+        let summaries =
+            libmeddle::summarize_imports(&imports_file, std::slice::from_ref(&directory))
+                .expect("valid imports");
+        std::fs::remove_dir_all(&imports).ok();
+        assert_eq!(
+            summaries[0].provider,
+            ProviderSummary::Component("fb".to_owned())
+        );
+    }
+
+    #[test]
+    fn providers_are_device_chains_or_components() {
+        // The old spellings, without `device`, are not accepted.
+        for old in [
+            "uses mailbox_v1 via firmware, mboxes { get_clock_rate }",
+            "uses mailbox_v1 via compatible \"x\", mboxes { get_clock_rate }",
+            "uses mailbox_v1 via mboxes { get_clock_rate }",
+        ] {
+            let (_, diagnostics) = parse(old);
+            assert!(
+                diagnostics[0].message.contains("`device` or `component`"),
+                "{old}: {diagnostics:?}"
+            );
+        }
+
+        // `component` takes exactly one name: no chain follows it.
+        let (_, diagnostics) = parse("uses mailbox_v1 via component fb, mboxes { get_clock_rate }");
+        assert!(
+            !diagnostics.is_empty(),
+            "a component provider takes no chain"
+        );
+
+        // `device` and `component` stay ordinary identifiers outside `via`:
+        // mailbox_v1 declares an enum named `device`.
+        let (file, diagnostics) = parse(
+            "interface device_v1 { enum device { a, b } get_power_state(device which) returns (boolean on); }",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(file.is_some());
     }
     #[test]
     fn type_code_ignores_documentation_and_tracks_signatures() {
