@@ -72,7 +72,7 @@ pub mod build;
 pub mod check;
 pub mod diagnostic;
 pub mod emit;
-mod lexer;
+pub mod lexer;
 mod parser;
 
 use {
