@@ -20,3 +20,10 @@ active = true
 name = "actor"
 binary = "dispatch-actor"
 active = true
+
+# The dispatcher of a child Scheduler: runs a Thread inside the grant its
+# parent gives it.
+[[component]]
+name = "child"
+binary = "dispatch-child"
+active = true

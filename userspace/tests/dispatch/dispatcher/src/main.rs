@@ -103,7 +103,21 @@ const P6_EXITER_KEY: usize = 70;
 const P6_EXITER_SLOT: usize = 71;
 const P6_DONE: usize = 72;
 const P6_EXIT_REASONS: usize = 73;
-const WORDS: usize = 80;
+/// Phase seven parameters: the child dispatcher's Thread key and record
+/// slot, the child's Thread key, and the Notification signalled at the end.
+/// Observations: what the dispatches of the child dispatcher returned and how
+/// long they took, and what a dispatch returned after the child dispatcher
+/// was retired.
+const P7_CHILD_KEY: usize = 80;
+const P7_CHILD_SLOT: usize = 81;
+const P7_THREAD_KEY: usize = 82;
+const P7_DONE: usize = 83;
+const P7_FIRST_REASONS: usize = 84;
+const P7_FIRST_NS: usize = 85;
+const P7_SECOND_REASONS: usize = 86;
+const P7_SECOND_NS: usize = 87;
+const P7_FAILED_REASONS: usize = 88;
+const WORDS: usize = 128;
 
 const WORKERS: usize = 3;
 
@@ -222,6 +236,7 @@ fn main(page: u64) -> ! {
         .unwrap_or_else(|error| fail("phase three signal", error));
     phase_five(page, &scheduler, records, stride);
     phase_six(page, &scheduler, records, stride);
+    phase_seven(page, &scheduler, records, stride);
     loop {
         // Nothing left to run; wait for nothing in particular.
         scheduler.dispatch(None, u64::MAX, 0).ok();
@@ -591,4 +606,62 @@ fn phase_six(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, s
     NotificationKey::from_key(RawKey::from_wire(word(P6_DONE)))
         .signal(1)
         .unwrap_or_else(|error| fail("phase six signal", error));
+}
+
+/// A child domain: the parent dispatches the child's dispatcher with a limit,
+/// which is the child's grant; the child runs its Thread inside it.
+fn phase_seven(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, stride: usize) {
+    let word = |index: usize| page[index].load(Ordering::Relaxed);
+    let child = RawKey::from_wire(word(P7_CHILD_KEY));
+    let child_slot = usize::try_from(word(P7_CHILD_SLOT)).unwrap_or(usize::MAX);
+    let snapshot = || {
+        // SAFETY: the record table is mapped for this component, 64-byte
+        // aligned, and the slot lies inside it; records are read through
+        // atomics.
+        unsafe { ThreadRecord::at(records.add(child_slot * stride)) }
+            .try_snapshot(SNAPSHOT_RETRIES)
+            .expect("a consistent record")
+    };
+    // The record tells the parent that this Thread runs a domain.
+    assert!(snapshot().is_dispatcher());
+
+    // A 60 ms grant. The child runs its Thread for ten seconds; the grant
+    // ends it, and the parent, not the child, is activated.
+    let started = libuser::clock::now_ns();
+    let first = scheduler
+        .dispatch(Some(child), 60 * MILLISECOND, snapshot().generation)
+        .unwrap_or_else(|error| fail("Dispatch (child dispatcher)", error));
+    page[P7_FIRST_NS].store(libuser::clock::now_ns() - started, Ordering::Release);
+    page[P7_FIRST_REASONS].store(first.reasons, Ordering::Release);
+    assert_eq!(first.reasons, activation_reason::LIMIT);
+    // The child dispatcher stays parked, now a woken Thread of the parent.
+    assert_eq!(snapshot().thread_state(), Some(ThreadState::Runnable));
+
+    // A second grant: the child's own short dispatches end inside it, then
+    // it has nothing to run and hands the CPU back.
+    let started = libuser::clock::now_ns();
+    let second = scheduler
+        .dispatch(Some(child), SECOND, snapshot().generation)
+        .unwrap_or_else(|error| fail("Dispatch (child dispatcher again)", error));
+    page[P7_SECOND_NS].store(libuser::clock::now_ns() - started, Ordering::Release);
+    page[P7_SECOND_REASONS].store(second.reasons, Ordering::Release);
+
+    // The child dispatcher is retired: its domain fails. The parent hears
+    // it with its next Dispatch, and the child's Thread is suspended.
+    ThreadKey::from_key(child)
+        .retire()
+        .unwrap_or_else(|error| fail("Thread.Retire (child dispatcher)", error));
+    let thread = RawKey::from_wire(word(P7_THREAD_KEY));
+    let failed = scheduler
+        .dispatch(Some(thread), SECOND, 0)
+        .unwrap_or_else(|error| fail("Dispatch (after the failure)", error));
+    page[P7_FAILED_REASONS].store(failed.reasons, Ordering::Release);
+    assert!(matches!(
+        ThreadKey::from_key(thread).suspend(),
+        Err(CapError::InvalidOperation)
+    ));
+
+    NotificationKey::from_key(RawKey::from_wire(word(P7_DONE)))
+        .signal(1)
+        .unwrap_or_else(|error| fail("phase seven signal", error));
 }

@@ -51,7 +51,12 @@ pub enum SchedulerOp {
     Dispatch = 6,
     /// Choose which events activate the dispatcher.
     ConfigureActivation = 7,
+    /// Arm the dispatcher's timer for an absolute deadline.
     ArmTimer = 8,
+    /// Make a fresh Scheduler a child of the invoked one.
+    Adopt = 9,
+    /// Move a Thread between a Scheduler and its direct child.
+    MoveThread = 10,
 }
 
 impl TryFrom<u64> for SchedulerOp {
@@ -68,6 +73,8 @@ impl TryFrom<u64> for SchedulerOp {
             6 => Ok(Self::Dispatch),
             7 => Ok(Self::ConfigureActivation),
             8 => Ok(Self::ArmTimer),
+            9 => Ok(Self::Adopt),
+            10 => Ok(Self::MoveThread),
             _ => Err(CapError::InvalidOperation),
         }
     }
@@ -104,6 +111,9 @@ pub mod activation_reason {
     /// The dispatcher's timer (`Scheduler.ArmTimer`) reached its deadline.
     /// Mandatory: the activation mask does not affect it.
     pub const TIMER: u64 = 1 << 7;
+    /// The dispatcher of a child Scheduler faulted or was retired: the
+    /// child's Threads were suspended. Mandatory.
+    pub const SCHED_DOMAIN_FAILED: u64 = 1 << 8;
 }
 
 /// What `Scheduler.Dispatch` reports when it returns.
@@ -306,6 +316,56 @@ impl SchedulerKey {
                 self.key.to_wire(),
                 SchedulerOp::ConfigureActivation as u64,
                 mask,
+            )
+        };
+        decode_syscall_result(result).map(|_| ())
+    }
+
+    /// `Adopt`: make the fresh Scheduler `child` a child of this one. It must
+    /// have no parent, not be the root, and have no children, Threads or
+    /// dispatcher yet; the tree is at most four levels deep. The parent is
+    /// set once and never changes.
+    ///
+    /// Wire schema: `x2` Scheduler key (`WRITE`), `x3..x7` zero. Authority:
+    /// `WRITE` on this Scheduler.
+    pub fn adopt(&self, child: RawKey) -> Result<(), CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result = unsafe {
+            protected_call1(
+                self.key.to_wire(),
+                SchedulerOp::Adopt as u64,
+                child.to_wire(),
+            )
+        };
+        decode_syscall_result(result).map(|_| ())
+    }
+
+    /// `MoveThread`: move `thread` between this Scheduler and its direct
+    /// child. Invoked on the Thread's owner, `destination` is a direct child
+    /// of this Scheduler (donation); invoked on the owner's parent,
+    /// `destination` is this Scheduler itself (taking the Thread back). The
+    /// caller picks the `slot` of the destination's record table. The
+    /// Thread must be started and not running, dispatched, the idle Thread or
+    /// a dispatcher; its wait, completion and Time move with it. The record
+    /// it leaves reads `ThreadState::Donated`.
+    ///
+    /// Wire schema: `x2` Thread key, `x3` destination Scheduler key, `x4`
+    /// slot, `x5..x7` zero. Authority: `WRITE` on this Scheduler, the Thread
+    /// and the destination.
+    pub fn move_thread(
+        &self,
+        thread: RawKey,
+        destination: RawKey,
+        slot: u32,
+    ) -> Result<(), CapError> {
+        // SAFETY: the syscall transport is the encapsulated unsafe boundary.
+        let result = unsafe {
+            protected_call3(
+                self.key.to_wire(),
+                SchedulerOp::MoveThread as u64,
+                thread.to_wire(),
+                destination.to_wire(),
+                u64::from(slot),
             )
         };
         decode_syscall_result(result).map(|_| ())

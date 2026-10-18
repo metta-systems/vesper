@@ -112,6 +112,7 @@ fn publish_then_snapshot_round_trips_and_advances_the_sequence_by_two() {
         dispatcher_state: 1,
         flags: 0,
         interrupt_ns: 123_456,
+        grant_end_ns: 987_654,
     };
     scheduler.publish(&state);
     assert_eq!(scheduler.sequence(), 2);
@@ -189,7 +190,8 @@ fn decoding_helpers_name_the_raw_values() {
     assert!(!blocked.has_time());
 
     assert_eq!(ThreadState::try_from(6), Ok(ThreadState::Dying));
-    assert_eq!(ThreadState::try_from(7), Err(()));
+    assert_eq!(ThreadState::try_from(7), Ok(ThreadState::Donated));
+    assert_eq!(ThreadState::try_from(8), Err(()));
     assert_eq!(BlockReason::from_raw(3), Some(BlockReason::PpcCall));
     assert_eq!(BlockReason::from_raw(4), None);
     assert_eq!(StopReason::from_raw(7), Some(StopReason::Faulted));

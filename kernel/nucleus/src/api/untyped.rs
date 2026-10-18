@@ -43,8 +43,8 @@ use {
             key_table::resolve_table_cap,
         },
         objects::{
-            ArchObjects, EventCount, ExecutionContext, KeyTable, Notification, Nucleus, Thread,
-            Time,
+            ArchObjects, EventCount, ExecutionContext, KeyTable, Notification, Nucleus, Scheduler,
+            Thread, Time,
             access::Access,
             carved::{Carved, CarvedId, CarvedObject},
             key_table::CallerTable,
@@ -109,6 +109,10 @@ enum Carve {
     /// A `Time`: an empty budget (zero budget) on the
     /// creating core, carved from the Untyped (`size_bits` zero).
     Time,
+    /// A `Scheduler`: inert (no parent, no Threads, no dispatcher) and with
+    /// no execution authority until a parent adopts it, carved from the
+    /// Untyped (`size_bits` zero).
+    Scheduler,
     /// A carved `Untyped`: a child region of `bytes` bytes split off from the
     /// source. No bytes are initialized or sanitized — an Untyped's contents
     /// are never directly exposed; they become observable only through later
@@ -237,6 +241,12 @@ fn retype<A: ArchObjects>(
             }
             Carve::Thread
         }
+        ObjectType::SCHEDULER => {
+            if size_bits != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::Scheduler
+        }
         ObjectType::ADDRESS_SPACE => {
             if size_bits != 0 {
                 return Err(CapError::InvalidSize(usize::from(size_bits)));
@@ -340,6 +350,7 @@ fn retype<A: ArchObjects>(
         Carve::EventCount => carved_layout::<EventCount>(),
         Carve::Time => carved_layout::<Time>(),
         Carve::Thread => carved_layout::<Thread>(),
+        Carve::Scheduler => carved_layout::<Scheduler>(),
         Carve::AddressSpace => carved_layout::<A::AddressSpace>(),
     };
     // A PageTable also carves its kernel metadata record: the records of a
@@ -464,6 +475,12 @@ fn retype<A: ArchObjects>(
                 requested,
                 0,
             ),
+            Carve::Scheduler => KeyEntry::new_carved(
+                // SAFETY: as for `carve_object`.
+                unsafe { carve_object(paddr, Scheduler::inert()) },
+                requested,
+                0,
+            ),
             Carve::AddressSpace => KeyEntry::new_carved(
                 // SAFETY: as for `carve_object`.
                 unsafe { carve_object(paddr, A::new_address_space()) },
@@ -536,6 +553,7 @@ fn retype<A: ArchObjects>(
         Carve::EventCount => "EventCount",
         Carve::Time => "Time",
         Carve::Thread => "Thread",
+        Carve::Scheduler => "Scheduler",
         Carve::AddressSpace => "AddressSpace",
         Carve::Untyped { .. } => "Untyped",
     };

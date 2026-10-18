@@ -158,7 +158,7 @@ pub fn run() {
     // Validation failures leave the Untyped and destination unchanged.
     assert!(matches!(
         untyped.retype(
-            ObjectType::SCHEDULER,
+            ObjectType::IRQ_HANDLER,
             0,
             0,
             1,
@@ -166,7 +166,7 @@ pub fn run() {
             KeySlot(7).0,
             Rights::all(),
         ),
-        Err(CapError::InvalidObjectType(ObjectType::SCHEDULER))
+        Err(CapError::InvalidObjectType(ObjectType::IRQ_HANDLER))
     ));
     assert!(matches!(
         untyped.retype(

@@ -712,11 +712,12 @@ fn retype_page_table_batch_charges_metadata_records_to_the_untyped() {
 /// reserved zero. Their successful Retype writes through the direct map, so
 /// it runs in the boot test kernels; these MMU-off tests cover the
 /// rejections, which happen before any byte is written.
-const CARVED_KINDS: [ObjectType; 4] = [
+const CARVED_KINDS: [ObjectType; 5] = [
     ObjectType::NOTIFICATION,
     ObjectType::EVENT_COUNT,
     ObjectType::TIME,
     ObjectType::THREAD,
+    ObjectType::SCHEDULER,
 ];
 
 /// Nonzero `size_bits`, a device source and an Untyped too small for the

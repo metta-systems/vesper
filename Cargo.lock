@@ -390,6 +390,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dispatch-child"
+version = "0.0.1"
+dependencies = [
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "dispatch-dispatcher"
 version = "0.0.1"
 dependencies = [

@@ -55,6 +55,11 @@ pub const FLAG_AWAITING_BUDGET: u32 = 1 << 0;
 /// `budget_remaining_ns` is `u64::MAX`.
 pub const FLAG_HAS_TIME: u32 = 1 << 1;
 
+/// `ThreadRecord::flags` bit: the Thread is the dispatcher of a Scheduler.
+/// For the Thread of a parent that is a child's dispatcher it tells the
+/// parent that the Thread runs a domain.
+pub const FLAG_DISPATCHER: u32 = 1 << 2;
+
 /// What a blocked Thread waits for.
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -153,6 +158,11 @@ impl ThreadSnapshot {
     pub const fn has_time(&self) -> bool {
         self.flags & FLAG_HAS_TIME != 0
     }
+
+    /// Whether the Thread is a Scheduler's dispatcher.
+    pub const fn is_dispatcher(&self) -> bool {
+        self.flags & FLAG_DISPATCHER != 0
+    }
 }
 
 /// A consistent copy of the [`SchedulerRecord`].
@@ -167,6 +177,9 @@ pub struct SchedulerSnapshot {
     pub flags: u32,
     /// Total time spent handling interrupts, in nanoseconds, rounded up.
     pub interrupt_ns: u64,
+    /// When the parent's grant to this (child) Scheduler ends, on the
+    /// monotonic clock in nanoseconds, rounded up; 0 when none is in force.
+    pub grant_end_ns: u64,
 }
 
 /// The record of one Thread, written by the nucleus.
@@ -197,7 +210,8 @@ pub struct SchedulerRecord {
     dispatcher_state: AtomicU32,
     flags: AtomicU32,
     interrupt_ns: AtomicU64,
-    reserved: [AtomicU64; 10],
+    grant_end_ns: AtomicU64,
+    reserved: [AtomicU64; 9],
 }
 
 const _: () = {
@@ -224,6 +238,7 @@ const _: () = {
     assert!(core::mem::offset_of!(SchedulerRecord, dispatcher_state) == 32);
     assert!(core::mem::offset_of!(SchedulerRecord, flags) == 36);
     assert!(core::mem::offset_of!(SchedulerRecord, interrupt_ns) == 40);
+    assert!(core::mem::offset_of!(SchedulerRecord, grant_end_ns) == 48);
 };
 
 /// The sequence value that starts a publication after `previous`, and the
@@ -349,7 +364,8 @@ impl SchedulerRecord {
             dispatcher_state: AtomicU32::new(0),
             flags: AtomicU32::new(0),
             interrupt_ns: AtomicU64::new(0),
-            reserved: [const { AtomicU64::new(0) }; 10],
+            grant_end_ns: AtomicU64::new(0),
+            reserved: [const { AtomicU64::new(0) }; 9],
         }
     }
 
@@ -404,6 +420,8 @@ impl SchedulerRecord {
         self.flags.store(snapshot.flags, Ordering::Relaxed);
         self.interrupt_ns
             .store(snapshot.interrupt_ns, Ordering::Relaxed);
+        self.grant_end_ns
+            .store(snapshot.grant_end_ns, Ordering::Relaxed);
         self.sequence.store(end, Ordering::Release);
     }
 
@@ -421,6 +439,7 @@ impl SchedulerRecord {
                 dispatcher_state: self.dispatcher_state.load(Ordering::Relaxed),
                 flags: self.flags.load(Ordering::Relaxed),
                 interrupt_ns: self.interrupt_ns.load(Ordering::Relaxed),
+                grant_end_ns: self.grant_end_ns.load(Ordering::Relaxed),
             };
             fence(Ordering::Acquire);
             if self.sequence.load(Ordering::Relaxed) == before {

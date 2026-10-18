@@ -195,7 +195,7 @@ fn configure_rejects_bad_start_state_and_leaves_the_thread_inert() {
 }
 
 #[test_case]
-fn configure_requires_rights_a_mapped_address_space_and_the_root_scheduler() {
+fn configure_requires_rights_and_a_mapped_address_space() {
     // Missing WRITE/MAP on the Thread, AddressSpace and Time keys.
     with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
         let keys = setup(nucleus, fixture_as, Rights(Rights::READ), Scheduler::root());
@@ -1015,5 +1015,370 @@ fn interrupt_time_is_published_in_the_scheduler_record_of_the_interrupted_thread
             scheduler_record().try_snapshot(1).unwrap().interrupt_ns,
             2_000_000
         );
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCHEDULER TREE: ADOPT, NON-ROOT SCHEDULERS
+// ═══════════════════════════════════════════════════════════════
+
+fn install_scheduler(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    slot: u32,
+    scheduler: Scheduler,
+) -> (RawKey, CarvedId) {
+    let id = test_arena::carve(scheduler).expect("arena exhausted");
+    (
+        install(nucleus, slot, KeyEntry::new_carved(id, Rights::all(), 0)),
+        id,
+    )
+}
+
+fn scheduler_object(id: CarvedId) -> &'static mut Scheduler {
+    // SAFETY: a test-arena Scheduler; serial tests.
+    unsafe {
+        &mut *Carved::<Scheduler>::validate(id)
+            .ok()
+            .expect("Scheduler carved")
+    }
+}
+
+fn adopt(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    parent: RawKey,
+    child: RawKey,
+) -> Result<(), CapError> {
+    cap_invoke(
+        nucleus,
+        parent,
+        SchedulerOp::Adopt as u64,
+        &[child.to_wire(), 0, 0, 0, 0, 0],
+    )
+    .map(|_| ())
+}
+
+#[test_case]
+fn adopt_makes_a_fresh_scheduler_a_child_once() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let (child_key, child) = install_scheduler(nucleus, 30, Scheduler::inert());
+        let (other_key, other) = install_scheduler(nucleus, 31, Scheduler::inert());
+        // An inert Scheduler is fresh; the root never is.
+        assert!(scheduler_object(child).is_fresh());
+        assert_eq!(scheduler_object(child).parent(), None);
+
+        adopt(nucleus, keys.scheduler, child_key)
+            .unwrap_or_else(|error| panic!("Adopt: {:?}", error.code()));
+        assert_eq!(scheduler_object(child).depth(), 1);
+        assert!(scheduler_object(child).parent().is_some());
+        assert!(!scheduler_object(child).is_fresh());
+
+        // The parent is set once, never to itself, and the root cannot be
+        // adopted.
+        assert!(matches!(
+            adopt(nucleus, other_key, child_key),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(matches!(
+            adopt(nucleus, keys.scheduler, child_key),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(matches!(
+            adopt(nucleus, other_key, other_key),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(matches!(
+            adopt(nucleus, child_key, keys.scheduler),
+            Err(CapError::InvalidOperation)
+        ));
+        // Rights and kinds are checked.
+        let weak = install(
+            nucleus,
+            32,
+            KeyEntry::new_carved(other, Rights(Rights::READ), 0),
+        );
+        assert!(matches!(
+            adopt(nucleus, keys.scheduler, weak),
+            Err(CapError::InsufficientRights)
+        ));
+        assert!(matches!(
+            adopt(nucleus, keys.scheduler, keys.thread),
+            Err(CapError::TypeMismatch { .. })
+        ));
+        assert!(scheduler_object(other).is_fresh());
+    });
+}
+
+#[test_case]
+fn adopt_refuses_a_scheduler_that_has_children_threads_or_a_dispatcher() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let root_key = keys.scheduler;
+        let (busy_key, busy) = install_scheduler(nucleus, 30, Scheduler::inert());
+        // A Thread configured on it: not fresh.
+        keys.scheduler = busy_key;
+        configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+        assert_eq!(scheduler_object(busy).thread_count(), 1);
+        assert!(matches!(
+            adopt(nucleus, root_key, busy_key),
+            Err(CapError::InvalidOperation)
+        ));
+        // A child of its own: not fresh.
+        let (parent_key, _) = install_scheduler(nucleus, 31, Scheduler::inert());
+        let (grandchild_key, _) = install_scheduler(nucleus, 32, Scheduler::inert());
+        adopt(nucleus, parent_key, grandchild_key).expect_ok();
+        assert!(matches!(
+            adopt(nucleus, root_key, parent_key),
+            Err(CapError::InvalidOperation)
+        ));
+        // A dispatcher: not fresh.
+        let (dispatched_key, dispatched) = install_scheduler(nucleus, 33, Scheduler::inert());
+        scheduler_object(dispatched)
+            .bind_dispatcher(keys.thread_id)
+            .ok()
+            .expect("bind");
+        assert!(matches!(
+            adopt(nucleus, root_key, dispatched_key),
+            Err(CapError::InvalidOperation)
+        ));
+    });
+}
+
+#[test_case]
+fn the_tree_is_at_most_four_levels_deep() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let mut parent = keys.scheduler;
+        // The root plus three levels.
+        for level in 1..=Scheduler::MAX_DEPTH {
+            let (child_key, child) =
+                install_scheduler(nucleus, 40 + u32::from(level), Scheduler::inert());
+            adopt(nucleus, parent, child_key)
+                .unwrap_or_else(|error| panic!("level {level}: {:?}", error.code()));
+            assert_eq!(scheduler_object(child).depth(), level);
+            parent = child_key;
+        }
+        let (too_deep, _) = install_scheduler(nucleus, 50, Scheduler::inert());
+        assert!(matches!(
+            adopt(nucleus, parent, too_deep),
+            Err(CapError::InvalidOperation)
+        ));
+    });
+}
+
+#[test_case]
+fn a_child_scheduler_has_no_authority_to_run_threads_until_it_has_a_dispatcher() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let root_key = keys.scheduler;
+        let (child_key, child) = install_scheduler(nucleus, 30, Scheduler::inert());
+        adopt(nucleus, root_key, child_key).expect_ok();
+        // Every operation works on the child; the Thread is its own.
+        keys.scheduler = child_key;
+        configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+        // Only the Scheduler that owns a Thread starts it.
+        keys.scheduler = root_key;
+        assert!(matches!(
+            start(nucleus, &keys),
+            Err(CapError::InvalidOperation)
+        ));
+        keys.scheduler = child_key;
+        let queued_before = nucleus.run_queue.len();
+        start(nucleus, &keys).expect_ok();
+        // Started, but the first-in, first-out queue is not its way to run.
+        assert_eq!(nucleus.run_queue.len(), queued_before);
+        assert!(!nucleus.thread(keys.thread_id).unwrap().queued);
+        // Retiring the Thread releases it from the child.
+        assert_eq!(scheduler_object(child).thread_count(), 1);
+        cap_invoke(
+            nucleus,
+            keys.thread,
+            libobject::thread::ThreadOp::Retire as u64,
+            &[0; 6],
+        )
+        .expect_ok();
+        assert_eq!(scheduler_object(child).thread_count(), 0);
+    });
+}
+
+fn move_thread_call(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    invoked: RawKey,
+    thread: RawKey,
+    destination: RawKey,
+    slot: u64,
+) -> Result<(), CapError> {
+    cap_invoke(
+        nucleus,
+        invoked,
+        SchedulerOp::MoveThread as u64,
+        &[thread.to_wire(), destination.to_wire(), slot, 0, 0, 0],
+    )
+    .map(|_| ())
+}
+
+#[test_case]
+fn a_thread_moves_down_to_a_child_and_back_and_the_old_record_reads_donated() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        clear_pages();
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let root_key = keys.scheduler;
+        let rw = Rights::READ | Rights::WRITE;
+        let (child_key, child) = install_scheduler(nucleus, 30, Scheduler::inert());
+        let (stranger_key, stranger) = install_scheduler(nucleus, 31, Scheduler::inert());
+        adopt(nucleus, root_key, child_key).expect_ok();
+        // The root's table is page 0, the child's page 1.
+        let root_frame = frame_key(nucleus, 32, 0, rw, false, Some(fixture_as));
+        let child_frame = frame_key(nucleus, 33, 1, rw, false, Some(fixture_as));
+        share(nucleus, &keys, root_frame, 0, 128).expect_ok();
+        keys.scheduler = child_key;
+        share(nucleus, &keys, child_frame, 0, 128).expect_ok();
+        keys.scheduler = root_key;
+
+        // A started Thread of the root, queued, with a record in slot 5.
+        fund(nucleus, &keys);
+        configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+        assign(nucleus, &keys, 5).expect_ok();
+        start(nucleus, &keys).expect_ok();
+        assert!(nucleus.thread(keys.thread_id).unwrap().queued);
+
+        // Moves go only between a Scheduler and its direct child.
+        for (invoked, destination) in [
+            (child_key, root_key),
+            (root_key, root_key),
+            (root_key, stranger_key),
+            (stranger_key, child_key),
+        ] {
+            assert!(matches!(
+                move_thread_call(nucleus, invoked, keys.thread, destination, 3),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        // A slot the destination does not cover, and slot 0, are refused.
+        for slot in [0, 64] {
+            assert!(matches!(
+                move_thread_call(nucleus, root_key, keys.thread, child_key, slot),
+                Err(CapError::InvalidOperation)
+            ));
+        }
+        assert_eq!(
+            nucleus.thread(keys.thread_id).unwrap().scheduler.is_some(),
+            true
+        );
+        assert_eq!(scheduler_object(child).thread_count(), 0);
+        assert!(nucleus.thread(keys.thread_id).unwrap().queued);
+        let _ = stranger;
+
+        // Donation: the child owns it, in its slot 3; it leaves the queue
+        // (a child without a dispatcher cannot run it) and the root's record
+        // reads Donated.
+        move_thread_call(nucleus, root_key, keys.thread, child_key, 3)
+            .unwrap_or_else(|error| panic!("MoveThread: {:?}", error.code()));
+        assert!(!nucleus.thread(keys.thread_id).unwrap().queued);
+        assert_eq!(scheduler_object(child).thread_count(), 1);
+        let left = thread_snapshot(5, 128);
+        assert_eq!(left.thread_state(), Some(ThreadState::Donated));
+        // SAFETY: serial tests; the child's page is live and aligned.
+        let arrived = unsafe { ThreadRecord::at((page_paddr(1) + 3 * 128) as *const u8) }
+            .try_snapshot(1)
+            .expect("a consistent record");
+        assert_eq!(arrived.thread_state(), Some(ThreadState::Runnable));
+        assert_eq!(arrived.incarnation, keys.thread_id.generation);
+
+        // Only the owner's parent takes it back; the child cannot hand it
+        // to its own child or away.
+        assert!(matches!(
+            move_thread_call(nucleus, root_key, keys.thread, child_key, 4),
+            Err(CapError::InvalidOperation)
+        ));
+        move_thread_call(nucleus, root_key, keys.thread, root_key, 6)
+            .unwrap_or_else(|error| panic!("MoveThread back: {:?}", error.code()));
+        assert!(nucleus.thread(keys.thread_id).unwrap().queued);
+        assert_eq!(scheduler_object(child).thread_count(), 0);
+        // SAFETY: serial tests; the child's page is live and aligned.
+        let gone = unsafe { ThreadRecord::at((page_paddr(1) + 3 * 128) as *const u8) }
+            .try_snapshot(1)
+            .expect("a consistent record");
+        assert_eq!(gone.thread_state(), Some(ThreadState::Donated));
+        assert_eq!(
+            thread_snapshot(6, 128).thread_state(),
+            Some(ThreadState::Runnable)
+        );
+    });
+}
+
+#[test_case]
+fn only_a_started_thread_that_is_not_running_or_a_dispatcher_moves() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        clear_pages();
+        let mut keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let root_key = keys.scheduler;
+        let rw = Rights::READ | Rights::WRITE;
+        let (child_key, _child) = install_scheduler(nucleus, 30, Scheduler::inert());
+        adopt(nucleus, root_key, child_key).expect_ok();
+        let child_frame = frame_key(nucleus, 33, 1, rw, false, Some(fixture_as));
+        keys.scheduler = child_key;
+        share(nucleus, &keys, child_frame, 0, 128).expect_ok();
+        keys.scheduler = root_key;
+
+        fund(nucleus, &keys);
+        // Never started: refused.
+        configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+        assert!(matches!(
+            move_thread_call(nucleus, root_key, keys.thread, child_key, 3),
+            Err(CapError::InvalidOperation)
+        ));
+        start(nucleus, &keys).expect_ok();
+        // The root's dispatcher is never donated.
+        let root_id = nucleus.thread(keys.thread_id).unwrap().scheduler.unwrap();
+        scheduler_object(root_id)
+            .bind_dispatcher(keys.thread_id)
+            .ok()
+            .expect("bind");
+        assert!(matches!(
+            move_thread_call(nucleus, root_key, keys.thread, child_key, 3),
+            Err(CapError::InvalidOperation)
+        ));
+    });
+}
+
+/// Give the Time of `keys` an infinite budget, so its Thread is not held
+/// back waiting for budget when it starts.
+fn fund(nucleus: &mut Nucleus<ArchObjectsImpl>, keys: &Keys) {
+    let id = nucleus
+        .current_thread_table()
+        .unwrap()
+        .lookup(keys.time, FIXTURE_GUARD)
+        .and_then(KeyEntry::carved_id)
+        .unwrap_or_else(|error| panic!("Time lookup: {:?}", error.code()));
+    // SAFETY: the record is in the test arena and nothing else references it.
+    unsafe {
+        *Carved::<Time>::validate(id).ok().expect("Time carved") =
+            Time::root(0, libobject::time::INFINITE_BUDGET);
+    }
+}
+
+#[test_case]
+fn a_dispatchers_record_carries_the_dispatcher_flag() {
+    with_nucleus(|nucleus, _table, _second, fixture_as, _second_as| {
+        clear_pages();
+        let keys = setup(nucleus, fixture_as, Rights::all(), Scheduler::root());
+        let frame = frame_key(
+            nucleus,
+            30,
+            0,
+            Rights::READ | Rights::WRITE,
+            false,
+            Some(fixture_as),
+        );
+        share(nucleus, &keys, frame, 0, 128).expect_ok();
+        configure(nucleus, &keys, ENTRY, STACK).expect_ok();
+        assign(nucleus, &keys, 5).expect_ok();
+        assert!(!thread_snapshot(5, 128).is_dispatcher());
+        // Dispatching a domain: the Thread runs a Scheduler.
+        let domain = test_arena::carve(Scheduler::inert()).expect("arena exhausted");
+        nucleus.thread_mut(keys.thread_id).unwrap().dispatches = Some(domain);
+        nucleus.publish_thread(keys.thread_id, false);
+        assert!(thread_snapshot(5, 128).is_dispatcher());
     });
 }

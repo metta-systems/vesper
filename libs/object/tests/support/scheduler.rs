@@ -83,6 +83,8 @@ fn scheduler_op_ids_match_the_wire_baseline() {
     assert_eq!(SchedulerOp::Dispatch as u64, 6);
     assert_eq!(SchedulerOp::ConfigureActivation as u64, 7);
     assert_eq!(SchedulerOp::ArmTimer as u64, 8);
+    assert_eq!(SchedulerOp::Adopt as u64, 9);
+    assert_eq!(SchedulerOp::MoveThread as u64, 10);
     for (id, op) in [
         (0, SchedulerOp::ShareRegion),
         (1, SchedulerOp::ConfigureThread),
@@ -93,10 +95,12 @@ fn scheduler_op_ids_match_the_wire_baseline() {
         (6, SchedulerOp::Dispatch),
         (7, SchedulerOp::ConfigureActivation),
         (8, SchedulerOp::ArmTimer),
+        (9, SchedulerOp::Adopt),
+        (10, SchedulerOp::MoveThread),
     ] {
         assert_eq!(SchedulerOp::try_from(id).map_err(CapError::code), Ok(op));
     }
-    for id in [9, 255, u64::MAX] {
+    for id in [11, 255, u64::MAX] {
         assert_eq!(
             SchedulerOp::try_from(id).map_err(CapError::code),
             Err(CapError::InvalidOperation.code())
@@ -290,6 +294,7 @@ fn activation_reasons_are_distinct_bits() {
         activation_reason::FAULTED,
         activation_reason::EXITED,
         activation_reason::TIMER,
+        activation_reason::SCHED_DOMAIN_FAILED,
     ];
     for (index, reason) in reasons.iter().enumerate() {
         assert_eq!(reason.count_ones(), 1);
@@ -310,4 +315,33 @@ fn arm_timer_encodes_the_deadline_and_decodes_now_and_the_previous_deadline() {
     assert_eq!(args, [2_000, 0, 0, 0, 0, 0]);
     assert_eq!(armed.now_ns, 1_000);
     assert_eq!(armed.previous_ns, 500);
+}
+
+#[test]
+fn adopt_encodes_the_child_key() {
+    arm((0, 0, 0));
+    let child = RawKey::new(KeySlot(55), 2);
+    root_scheduler()
+        .adopt(child)
+        .map_err(CapError::code)
+        .unwrap();
+    let (_, op, args, len) = take_request();
+    assert_eq!(len, 1);
+    assert_eq!(op, SchedulerOp::Adopt as u64);
+    assert_eq!(args, [child.to_wire(), 0, 0, 0, 0, 0]);
+}
+
+#[test]
+fn move_thread_encodes_the_thread_destination_and_slot() {
+    arm((0, 0, 0));
+    let thread = RawKey::new(KeySlot(41), 1);
+    let destination = RawKey::new(KeySlot(42), 2);
+    root_scheduler()
+        .move_thread(thread, destination, 7)
+        .map_err(CapError::code)
+        .unwrap();
+    let (_, op, args, len) = take_request();
+    assert_eq!(len, 3);
+    assert_eq!(op, SchedulerOp::MoveThread as u64);
+    assert_eq!(args, [thread.to_wire(), destination.to_wire(), 7, 0, 0, 0]);
 }

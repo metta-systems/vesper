@@ -23,8 +23,9 @@ use {
         CapError,
         scheduler::{activation_mask, activation_reason},
         scheduler_record::{
-            BlockReason, FLAG_AWAITING_BUDGET, FLAG_HAS_TIME, NO_CPU, SCHEDULER_SLOT,
-            SchedulerRecord, SchedulerSnapshot, StopReason, ThreadRecord, ThreadSnapshot,
+            BlockReason, FLAG_AWAITING_BUDGET, FLAG_DISPATCHER, FLAG_HAS_TIME, NO_CPU,
+            SCHEDULER_SLOT, SchedulerRecord, SchedulerSnapshot, StopReason, ThreadRecord,
+            ThreadSnapshot,
         },
         syscall_status,
         thread::ThreadState,
@@ -221,7 +222,7 @@ impl<A: ArchObjects> Nucleus<A> {
         clippy::unused_self,
         reason = "ties the Scheduler borrow to the Nucleus"
     )]
-    fn scheduler_mut(&mut self, id: CarvedId) -> Option<&mut Scheduler> {
+    pub(crate) fn scheduler_mut(&mut self, id: CarvedId) -> Option<&mut Scheduler> {
         // SAFETY: Scheduler identities name carved records that are never
         // freed; validation checks the header, and the kernel lock
         // serializes every access, so this is the only reference to the
@@ -244,6 +245,14 @@ impl<A: ArchObjects> Nucleus<A> {
     /// nothing is activated by any event, whatever the mask. A waiting
     /// dispatcher's `Dispatch` call completes and the dispatcher is queued to
     /// run next; otherwise the reasons stay pending for its next `Dispatch`.
+    ///
+    /// A child Scheduler's activation depends on whether its domain is
+    /// running, that is, whether its parent's grant is in force. With a
+    /// grant, the dispatcher runs at once, within it. Without one the
+    /// dispatcher is an ordinary Thread of the parent that has become
+    /// runnable: its record is published, and the parent's dispatcher is
+    /// activated only if the parent's mask asks for it. A child never forces
+    /// its parent.
     pub fn request_activation(&mut self, scheduler: CarvedId, reasons: u64, mask_bit: u64) {
         let Some(object) = self.scheduler_mut(scheduler) else {
             return;
@@ -258,6 +267,7 @@ impl<A: ArchObjects> Nucleus<A> {
         };
         let bits = object.take_pending();
         let (dispatcher, events) = (object.dispatcher(), object.events());
+        let (parent, grant) = (object.parent(), object.grant());
         if self
             .pending
             .complete_with_status(record, syscall_status::SUCCESS, bits, events)
@@ -271,9 +281,96 @@ impl<A: ArchObjects> Nucleus<A> {
         {
             self.dispatched = None;
         }
-        if let Some(dispatcher) = dispatcher {
-            self.run_queue.push_front(dispatcher);
-            self.preempt_requested = true;
+        let Some(dispatcher) = dispatcher else {
+            return;
+        };
+        match (parent, grant) {
+            // The domain is not running: the parent decides when its
+            // dispatcher, now runnable, gets the CPU.
+            (Some(_), None) => {
+                self.make_runnable(dispatcher);
+            }
+            (parent, grant) => {
+                self.run_queue.push_front(dispatcher);
+                self.preempt_requested = true;
+                // Within a grant the parent's limit goes on applying to the
+                // dispatcher.
+                if let (Some(parent), Some(grant)) = (parent, grant) {
+                    self.dispatched = Some(Dispatched {
+                        thread: dispatcher,
+                        scheduler: parent,
+                        deadline_ticks: grant.deadline_ticks,
+                    });
+                }
+            }
+        }
+    }
+
+    /// The parent's grant to the child Scheduler `child` ends: the child
+    /// dispatcher's parked `Dispatch` completes with `LIMIT`, which makes it a
+    /// woken Thread of the parent, and the parent's dispatcher is activated
+    /// with `LIMIT`. The child's Threads keep their state.
+    pub fn end_grant(&mut self, child: CarvedId) {
+        let Some(object) = self.scheduler_mut(child) else {
+            return;
+        };
+        if object.grant().is_none() {
+            return;
+        }
+        object.set_grant(None);
+        let parent = object.parent();
+        let parked = object.take_parked();
+        let pending = object.take_pending();
+        let (dispatcher, events) = (object.dispatcher(), object.events());
+        if let Some(record) = parked
+            && self
+                .pending
+                .complete_with_status(
+                    record,
+                    syscall_status::SUCCESS,
+                    pending | activation_reason::LIMIT,
+                    events,
+                )
+                .is_ok()
+            && let Some(dispatcher) = dispatcher
+        {
+            self.publish_thread(dispatcher, false);
+        }
+        if self
+            .dispatched
+            .is_some_and(|dispatched| dispatched.scheduler == child)
+        {
+            self.dispatched = None;
+        }
+        self.publish_scheduler_record(child);
+        if let Some(parent) = parent {
+            self.request_activation(parent, activation_reason::LIMIT, 0);
+        }
+    }
+
+    /// The parent dispatched the dispatcher of the child Scheduler `child`:
+    /// its grant runs until `deadline_ticks` (no limit for `None`), and the
+    /// child sees when it ends in its record.
+    pub fn set_child_grant(&mut self, child: CarvedId, deadline_ticks: Option<u64>) {
+        if let Some(object) = self.scheduler_mut(child) {
+            object.set_grant(Some(crate::objects::scheduler::Grant { deadline_ticks }));
+            self.publish_scheduler_record(child);
+        }
+    }
+
+    /// The grant of the child Scheduler `thread` is the dispatcher of ends
+    /// because that dispatcher left the CPU without handing it to one of its
+    /// Threads (it was preempted, blocked or waits idle). Nothing is
+    /// completed: the dispatcher is not parked in a nested `Dispatch`.
+    pub fn drop_grant_of(&mut self, thread: ThreadId) {
+        let Some(child) = self.thread(thread).and_then(|thread| thread.dispatches) else {
+            return;
+        };
+        if let Some(object) = self.scheduler_mut(child)
+            && object.grant().is_some()
+        {
+            object.set_grant(None);
+            self.publish_scheduler_record(child);
         }
     }
 
@@ -297,6 +394,12 @@ impl<A: ArchObjects> Nucleus<A> {
             self.publish_thread(id, false);
             return false;
         }
+        // A Thread of a Scheduler that is not the root and has no dispatcher
+        // yet has no execution authority: it is published and waits.
+        if self.held_by_scheduler(id) {
+            self.publish_thread(id, false);
+            return false;
+        }
         if let Some(scheduler) = managed {
             self.publish_thread(id, false);
             self.request_activation(
@@ -309,6 +412,173 @@ impl<A: ArchObjects> Nucleus<A> {
         assert!(self.run_queue.push(id), "runnable Thread did not queue");
         self.publish_thread(id, false);
         true
+    }
+
+    /// `Scheduler.MoveThread`: move the Thread `id` to the Scheduler
+    /// `destination`, linking it to `slot` of that Scheduler's table. The
+    /// caller has checked that the move is between a Scheduler and its direct
+    /// child. The Thread must be started and not running, dispatched, the
+    /// idle Thread or a dispatcher; every check precedes the change. The
+    /// record it leaves ends as `Donated`; its wait, completion and Time move
+    /// with it, and if it can run the new Scheduler is told as for any
+    /// wakeup.
+    pub fn move_thread(
+        &mut self,
+        id: ThreadId,
+        destination: CarvedId,
+        slot: u32,
+    ) -> Result<(), CapError> {
+        let thread = self.thread(id).ok_or(CapError::InvalidOperation)?;
+        let owner = thread.scheduler.ok_or(CapError::InvalidOperation)?;
+        let started = matches!(
+            thread.context,
+            ExecutionContext::NotStarted { .. }
+                | ExecutionContext::Preempted { .. }
+                | ExecutionContext::Parked { .. }
+        );
+        if !started
+            || owner == destination
+            || self.current_thread == Some(id)
+            || self.idle_thread == Some(id)
+            || [self.dispatched, self.dispatch_next]
+                .into_iter()
+                .flatten()
+                .any(|dispatched| dispatched.thread == id)
+        {
+            return Err(CapError::InvalidOperation);
+        }
+        if self
+            .scheduler_mut(owner)
+            .is_none_or(|owner| owner.dispatcher() == Some(id))
+        {
+            return Err(CapError::InvalidOperation);
+        }
+        let covered = self
+            .scheduler_mut(destination)
+            .is_some_and(|destination| destination.covers_thread_slot(slot));
+        if !covered {
+            return Err(CapError::InvalidOperation);
+        }
+
+        // Commit. The old record says where the Thread went; the new one
+        // starts from the Thread's state as it is.
+        self.publish_thread_with(id, Some(ThreadState::Donated));
+        self.run_queue.remove(id);
+        self.leave_scheduler(id);
+        if let Some(thread) = self.thread_mut(id) {
+            thread.scheduler = Some(destination);
+            thread.record = None;
+        }
+        self.join_scheduler(id, destination);
+        self.assign_record(id, destination, slot)?;
+        let ready = self.thread(id).is_some_and(|thread| {
+            !thread.suspended
+                && match thread.context {
+                    ExecutionContext::NotStarted { .. } | ExecutionContext::Preempted { .. } => {
+                        true
+                    }
+                    ExecutionContext::Parked { record, .. } => matches!(
+                        self.pending.state(record),
+                        Ok(PendingState::Completed { .. })
+                    ),
+                    _ => false,
+                }
+        });
+        if ready {
+            self.make_runnable(id);
+        }
+        Ok(())
+    }
+
+    /// Whether the Thread `id` belongs to a Scheduler that has no execution
+    /// authority yet: not the root, and no dispatcher bound. Such a Thread
+    /// never enters the first-in, first-out queue; its Scheduler's parent has
+    /// to give the Scheduler a dispatcher and a grant first.
+    pub fn held_by_scheduler(&mut self, id: ThreadId) -> bool {
+        let Some(scheduler) = self.thread(id).and_then(|thread| thread.scheduler) else {
+            return false;
+        };
+        self.scheduler_mut(scheduler)
+            .is_some_and(|scheduler| !scheduler.is_root() && scheduler.dispatcher().is_none())
+    }
+
+    /// The Thread `id` joins `scheduler`'s list of owned Threads.
+    pub fn join_scheduler(&mut self, id: ThreadId, scheduler: CarvedId) {
+        let Some(owner) = self.scheduler_mut(scheduler) else {
+            return;
+        };
+        owner.thread_joined();
+        let first = owner.first_thread();
+        owner.set_first_thread(Some(id));
+        if let Some(thread) = self.thread_mut(id) {
+            thread.owner_next = first;
+        }
+    }
+
+    /// The Thread `id` is going away, or moving: its Scheduler stops
+    /// counting it and drops it from the list of owned Threads.
+    pub fn leave_scheduler(&mut self, id: ThreadId) {
+        let Some(thread) = self.thread(id) else {
+            return;
+        };
+        let (scheduler, next) = (thread.scheduler, thread.owner_next);
+        let Some(scheduler) = scheduler else {
+            return;
+        };
+        let Some(owner) = self.scheduler_mut(scheduler) else {
+            return;
+        };
+        owner.thread_left();
+        let mut cursor = owner.first_thread();
+        if cursor == Some(id) {
+            owner.set_first_thread(next);
+        } else {
+            while let Some(current) = cursor {
+                let following = self.thread(current).and_then(|thread| thread.owner_next);
+                if following == Some(id) {
+                    if let Some(thread) = self.thread_mut(current) {
+                        thread.owner_next = next;
+                    }
+                    break;
+                }
+                cursor = following;
+            }
+        }
+        if let Some(thread) = self.thread_mut(id) {
+            thread.owner_next = None;
+        }
+    }
+
+    /// The dispatcher of the child Scheduler `child` faulted or was
+    /// retired. The child has no dispatcher now, so its Threads would have
+    /// nobody to dispatch them: every one that can be is suspended (its
+    /// state, waits and Time kept), the child's grant and timer end, and the
+    /// parent's dispatcher is activated with `SCHED_DOMAIN_FAILED`. The parent can
+    /// retire the child, bind a new dispatcher or resume the Threads.
+    pub fn fail_domain(&mut self, child: CarvedId) {
+        if let Some(parent) = self.fail_domain_state(child) {
+            self.request_activation(parent, activation_reason::SCHED_DOMAIN_FAILED, 0);
+        }
+    }
+
+    /// [`Self::fail_domain`] without the activation, for a caller that
+    /// reports the parent's activation itself: the parent, if the child
+    /// had a dispatcher to lose.
+    pub fn fail_domain_state(&mut self, child: CarvedId) -> Option<CarvedId> {
+        let object = self.scheduler_mut(child)?;
+        let parent = object.parent()?;
+        object.dispatcher()?;
+        object.unbind_dispatcher();
+        object.set_grant(None);
+        let mut cursor = object.first_thread();
+        self.timers.disarm(child);
+        while let Some(thread) = cursor {
+            cursor = self.thread(thread).and_then(|thread| thread.owner_next);
+            // Illegal states (never started, faulted, running) stay as they are.
+            let _suspended = self.suspend_thread(thread);
+        }
+        self.publish_scheduler_record(child);
+        Some(parent)
     }
 
     /// `Thread.Suspend`: take the Thread `id` out of scheduling without
@@ -401,7 +671,7 @@ impl<A: ArchObjects> Nucleus<A> {
         if let Some(thread) = self.thread_mut(id) {
             thread.awaiting_budget = false;
         }
-        if self.thread(id).is_some_and(|thread| thread.suspended) {
+        if self.thread(id).is_some_and(|thread| thread.suspended) || self.held_by_scheduler(id) {
             self.publish_thread(id, false);
             return false;
         }
@@ -422,11 +692,52 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Bind `thread` as the dispatcher of `scheduler` and start it. The
     /// Scheduler's Threads the first-in, first-out queue already holds leave
     /// it: they run only when dispatched from now on. The dispatcher runs next.
+    ///
+    /// A child Scheduler's dispatcher is a Thread of its parent: it must have
+    /// been configured by the parent, is not started by the bind, and runs
+    /// when the parent dispatches it. Only a Scheduler that has been adopted
+    /// can bind one.
     pub fn bind_dispatcher(
         &mut self,
         scheduler: CarvedId,
         thread: ThreadId,
     ) -> Result<(), CapError> {
+        let object = self
+            .scheduler_mut(scheduler)
+            .ok_or(CapError::InvalidOperation)?;
+        let (is_root, parent) = (object.is_root(), object.parent());
+        let owner = self
+            .thread(thread)
+            .ok_or(CapError::InvalidOperation)?
+            .scheduler;
+        if self
+            .thread(thread)
+            .is_some_and(|thread| thread.dispatches.is_some())
+        {
+            return Err(CapError::InvalidOperation);
+        }
+        if !is_root {
+            let parent = parent.ok_or(CapError::InvalidOperation)?;
+            if owner != Some(parent)
+                || !matches!(
+                    self.thread(thread).map(|thread| thread.context),
+                    Some(ExecutionContext::Configured { .. })
+                )
+            {
+                return Err(CapError::InvalidOperation);
+            }
+            self.scheduler_mut(scheduler)
+                .ok_or(CapError::InvalidOperation)?
+                .bind_dispatcher(thread)?;
+            if let Some(thread_object) = self.thread_mut(thread) {
+                thread_object.dispatches = Some(scheduler);
+            }
+            self.publish_thread(thread, false);
+            return Ok(());
+        }
+        if owner != Some(scheduler) {
+            return Err(CapError::InvalidOperation);
+        }
         let ExecutionContext::Configured { saved } = self
             .thread(thread)
             .ok_or(CapError::InvalidOperation)?
@@ -446,9 +757,9 @@ impl<A: ArchObjects> Nucleus<A> {
             }
             cursor = next;
         }
-        self.thread_mut(thread)
-            .ok_or(CapError::InvalidOperation)?
-            .context = ExecutionContext::NotStarted { saved };
+        let thread_object = self.thread_mut(thread).ok_or(CapError::InvalidOperation)?;
+        thread_object.context = ExecutionContext::NotStarted { saved };
+        thread_object.dispatches = Some(scheduler);
         self.run_queue.push_front(thread);
         self.publish_thread(thread, false);
         Ok(())
@@ -665,18 +976,23 @@ impl<A: ArchObjects> Nucleus<A> {
             return;
         };
         // SAFETY: as in `record_paddr`.
-        let (events, timer_expirations, record) = unsafe {
+        let (events, timer_expirations, record, grant) = unsafe {
             let object = &*object;
             (
                 object.events(),
                 object.timer_expirations(),
                 object.record_paddr(SCHEDULER_SLOT),
+                object.grant(),
             )
         };
         let Some(paddr) = record else {
             return;
         };
-        let interrupt_ns = ticks_to_ns_ceil(self.interrupt_ticks, self.counter_frequency());
+        let frequency = self.counter_frequency();
+        let interrupt_ns = ticks_to_ns_ceil(self.interrupt_ticks, frequency);
+        let grant_end_ns = grant
+            .and_then(|grant| grant.deadline_ticks)
+            .map_or(0, |ticks| ticks_to_ns_ceil(ticks, frequency));
         // SAFETY: slot 0 of a shared region; see `publish_thread`.
         unsafe { SchedulerRecord::at(kernel_window(paddr)) }.publish(&SchedulerSnapshot {
             events,
@@ -684,6 +1000,7 @@ impl<A: ArchObjects> Nucleus<A> {
             dispatcher_state: 0,
             flags: 0,
             interrupt_ns,
+            grant_end_ns,
         });
     }
 
@@ -696,14 +1013,22 @@ impl<A: ArchObjects> Nucleus<A> {
     /// Frame memory; once Frames carry a retirement identity, it is checked
     /// here before the write.
     pub fn publish_thread(&mut self, id: ThreadId, dying: bool) {
+        self.publish_thread_with(id, dying.then_some(ThreadState::Dying));
+    }
+
+    /// [`Self::publish_thread`], with `ended` the final state of a record
+    /// that is being left behind: `Dying` for a retired Thread, `Donated`
+    /// for one that moved to another Scheduler.
+    fn publish_thread_with(&mut self, id: ThreadId, ended: Option<ThreadState>) {
+        let dying = ended.is_some();
         let Some(thread) = self.thread(id) else {
             return;
         };
         let Some(record) = thread.record else {
             return;
         };
-        let state = if dying {
-            ThreadState::Dying
+        let state = if let Some(ended) = ended {
+            ended
         } else if thread.suspended {
             ThreadState::Suspended
         } else {
@@ -749,6 +1074,9 @@ impl<A: ArchObjects> Nucleus<A> {
             thread.last_run_ticks,
         );
         let running = state == ThreadState::Running;
+        let dispatcher = self
+            .thread(id)
+            .is_some_and(|thread| thread.dispatches.is_some());
         let (budget_remaining_ns, has_time) = match self.thread_time(id) {
             Some(time) => (time.remaining_ns(frequency), true),
             None => (u64::MAX, false),
@@ -765,7 +1093,8 @@ impl<A: ArchObjects> Nucleus<A> {
                 FLAG_AWAITING_BUDGET
             } else {
                 0
-            } | if has_time { FLAG_HAS_TIME } else { 0 },
+            } | if has_time { FLAG_HAS_TIME } else { 0 }
+                | if dispatcher { FLAG_DISPATCHER } else { 0 },
             block_reason: block_reason as u32,
             last_stop,
             cpu: if running { 0 } else { NO_CPU },
@@ -1060,16 +1389,24 @@ impl<A: ArchObjects> Nucleus<A> {
         // A dispatcher torn down while it waits leaves no parked call behind.
         let scheduler = self
             .thread(thread)
-            .and_then(|torn_down| torn_down.scheduler);
+            .and_then(|torn_down| torn_down.dispatches.or(torn_down.scheduler));
         if let Some(scheduler_id) = scheduler
             && let Some(scheduler) = self.scheduler_mut(scheduler_id)
             && scheduler.dispatcher() == Some(thread)
         {
             scheduler.take_parked();
+            scheduler.set_grant(None);
             // Its timer ends with it.
             self.timers.disarm(scheduler_id);
         }
         self.run_queue.remove(thread);
+        // A child's dispatcher that is retired takes its domain down.
+        if let Some(child) = self
+            .thread(thread)
+            .and_then(|torn_down| torn_down.dispatches)
+        {
+            self.fail_domain(child);
+        }
         Ok(())
     }
 }

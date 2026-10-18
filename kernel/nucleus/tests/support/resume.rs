@@ -1711,3 +1711,350 @@ fn a_dispatched_thread_exiting_activates_its_dispatcher_with_exited() {
         assert!(nucleus.thread(waits.tail).is_none());
     });
 }
+
+// ═══════════════════════════════════════════════════════════════
+// CHILD DOMAINS: GRANTS
+// ═══════════════════════════════════════════════════════════════
+
+/// A root Scheduler with its dispatcher (the fixture's `source` Thread), and
+/// a child Scheduler whose dispatcher `dc` is a Thread of the root, with one
+/// Thread `t` of its own.
+struct Domain {
+    root: Dispatching,
+    child_id: CarvedId,
+    child: RawKey,
+    dc: ThreadId,
+    dc_key: RawKey,
+    t: ThreadId,
+    t_key: RawKey,
+}
+
+fn with_domain(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> Domain {
+    let root = with_dispatcher(nucleus, waits);
+    let space = nucleus.thread(waits.source).unwrap().address_space;
+    let child_id = test_arena::carve(Scheduler::inert()).expect("arena exhausted");
+    let dc = nucleus.create_thread(space).expect("child dispatcher");
+    let t = nucleus.create_thread(space).expect("child Thread");
+    for thread in [dc, t] {
+        nucleus.thread_mut(thread).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+    }
+    nucleus.thread_mut(dc).unwrap().scheduler = Some(root.scheduler_id);
+    nucleus.thread_mut(dc).unwrap().dispatches = Some(child_id);
+    nucleus.thread_mut(t).unwrap().scheduler = Some(child_id);
+    {
+        let child = nucleus.scheduler_mut(child_id).unwrap();
+        child.set_parent(root.scheduler_id, 1);
+        child.bind_dispatcher(dc).ok().expect("bind");
+    }
+    nucleus.join_scheduler(t, child_id);
+    let mut install = |slot: u32, entry: KeyEntry| {
+        nucleus
+            .current_thread_table_mut()
+            .unwrap()
+            .insert(KeySlot(slot), entry, FIXTURE_GUARD)
+            .unwrap_or_else(|failure| panic!("install: {:?}", failure.error.code()))
+    };
+    let child = install(60, KeyEntry::new_carved(child_id, Rights::all(), 0));
+    let dc_key = install(61, KeyEntry::new_thread(dc, Rights::all(), 0));
+    let t_key = install(62, KeyEntry::new_thread(t, Rights::all(), 0));
+    Domain {
+        root,
+        child_id,
+        child,
+        dc,
+        dc_key,
+        t,
+        t_key,
+    }
+}
+
+fn child_object(domain: &Domain) -> &'static mut Scheduler {
+    // SAFETY: a test-arena Scheduler; serial tests.
+    unsafe {
+        &mut *Carved::<Scheduler>::validate(domain.child_id)
+            .ok()
+            .expect("Scheduler carved")
+    }
+}
+
+/// The root dispatcher dispatches the child dispatcher for `limit_ns`; it
+/// runs.
+fn run_child_dispatcher(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    domain: &Domain,
+    limit_ns: u64,
+) -> crate::objects::resume::PreparedResume {
+    dispatch_and_park(nucleus, &domain.root, domain.dc_key, limit_ns)
+}
+
+/// The child dispatcher (current) dispatches `t` for `limit_ns`; it runs.
+fn child_dispatches(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    domain: &Domain,
+    limit_ns: u64,
+) -> crate::objects::resume::PreparedResume {
+    let Ok(InvokeOutcome::Blocked(record)) = cap_invoke(
+        nucleus,
+        domain.child,
+        SchedulerOp::Dispatch as u64,
+        &[domain.t_key.to_wire(), 0, limit_ns, 0, 0, 0],
+    ) else {
+        panic!("Dispatch should block the child dispatcher");
+    };
+    // SAFETY: exclusive serial fixture, no overlapping context/guard.
+    let access = unsafe { Access::new() };
+    nucleus
+        .park_and_select(&access, SOURCE_SAVED, record)
+        .unwrap_or_else(|e| panic!("park onto the child's Thread: {:?}", e.code()))
+}
+
+#[test_case]
+fn dispatching_a_child_dispatcher_starts_its_grant_and_the_childs_limits_are_clamped() {
+    with_resume(|nucleus, waits| {
+        let domain = with_domain(nucleus, &waits);
+        assert!(child_object(&domain).grant().is_none());
+
+        let resumed = run_child_dispatcher(nucleus, &domain, 50_000_000);
+        assert_eq!(resumed.next, domain.dc);
+        let grant = child_object(&domain).grant().expect("a grant is in force");
+        let end = grant.deadline_ticks.expect("a limited grant");
+        let now = nucleus.counter_ticks();
+        assert!(end > now);
+        // The root dispatcher waits; the grant is the root's limit on the
+        // child dispatcher.
+        assert!(scheduler_of(&domain.root).parked().is_some());
+        assert_eq!(nucleus.dispatched.map(|d| d.thread), Some(domain.dc));
+
+        // The child dispatches its Thread for far longer than the grant: the
+        // Thread runs, the grant stays, and the limit is cut to its end.
+        let resumed = child_dispatches(nucleus, &domain, 10_000_000_000);
+        assert_eq!(resumed.next, domain.t);
+        let dispatched = nucleus.dispatched.expect("the Thread is dispatched");
+        assert_eq!(dispatched.thread, domain.t);
+        assert_eq!(dispatched.scheduler, domain.child_id);
+        assert_eq!(dispatched.deadline_ticks, Some(end));
+        assert!(child_object(&domain).grant().is_some());
+        // The root dispatcher still waits: the child's switch is not a stop
+        // of the domain.
+        assert!(scheduler_of(&domain.root).parked().is_some());
+    });
+}
+
+#[test_case]
+fn a_child_threads_stop_activates_the_child_dispatcher_inside_the_grant_not_the_parent() {
+    with_resume(|nucleus, waits| {
+        let domain = with_domain(nucleus, &waits);
+        run_child_dispatcher(nucleus, &domain, u64::MAX);
+        child_dispatches(nucleus, &domain, u64::MAX);
+        let grant = child_object(&domain).grant().expect("a grant");
+
+        // The Thread faults: that is the child's event.
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .park_faulted_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("fault: {:?}", e.code()))
+        };
+        assert_eq!(resumed.next, domain.dc);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::FAULTED
+        );
+        // The root dispatcher was not activated, and the parent's limit
+        // goes on applying to the child dispatcher.
+        assert!(scheduler_of(&domain.root).parked().is_some());
+        assert!(child_object(&domain).grant().is_some());
+        let dispatched = nucleus
+            .dispatched
+            .expect("the child dispatcher is dispatched");
+        assert_eq!(dispatched.thread, domain.dc);
+        assert_eq!(dispatched.scheduler, domain.root.scheduler_id);
+        assert_eq!(dispatched.deadline_ticks, grant.deadline_ticks);
+    });
+}
+
+#[test_case]
+fn the_end_of_the_grant_stops_the_childs_thread_and_activates_the_parent_with_limit() {
+    with_resume(|nucleus, waits| {
+        let domain = with_domain(nucleus, &waits);
+        run_child_dispatcher(nucleus, &domain, 50_000_000);
+        child_dispatches(nucleus, &domain, 10_000_000_000);
+        // The grant ends: its deadline is now behind us.
+        child_object(&domain).set_grant(Some(crate::objects::scheduler::Grant {
+            deadline_ticks: Some(0),
+        }));
+        nucleus.dispatched.as_mut().unwrap().deadline_ticks = Some(0);
+
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .preempt_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
+                .expect("the parent preempts")
+        };
+        // The root dispatcher runs, told that its dispatch hit its limit.
+        assert_eq!(resumed.next, waits.source);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::LIMIT
+        );
+        assert!(child_object(&domain).grant().is_none());
+        // The child's Thread is stopped and runnable; the child dispatcher
+        // is a woken waiter of the root: its Dispatch completed with LIMIT.
+        assert!(matches!(
+            nucleus.thread(domain.t).unwrap().context,
+            ExecutionContext::Preempted { .. }
+        ));
+        let Some(ExecutionContext::Parked { record, .. }) =
+            nucleus.thread(domain.dc).map(|dc| dc.context)
+        else {
+            panic!("the child dispatcher stays parked");
+        };
+        assert!(matches!(
+            nucleus.pending.state(record),
+            Ok(PendingState::Completed { result0, .. }) if result0 == activation_reason::LIMIT
+        ));
+
+        // The root dispatcher can dispatch it again, with a new grant: the
+        // parked call returns LIMIT to the child dispatcher.
+        let resumed = dispatch_and_park(nucleus, &domain.root, domain.dc_key, u64::MAX);
+        assert_eq!(resumed.next, domain.dc);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::LIMIT
+        );
+        assert!(child_object(&domain).grant().is_some());
+    });
+}
+
+#[test_case]
+fn a_child_activation_without_a_grant_is_a_wakeup_the_parents_mask_decides_on() {
+    with_resume(|nucleus, waits| {
+        let domain = with_domain(nucleus, &waits);
+        // The child dispatcher waits idle, with no grant in force.
+        nucleus.thread_mut(domain.dc).unwrap().context = ExecutionContext::Parked {
+            saved: target_saved(),
+            record: nucleus
+                .pending
+                .block(domain.dc, PendingKind::SchedulerDispatch, domain.child_id)
+                .unwrap_or_else(|e| panic!("park: {:?}", e.code())),
+        };
+        let Ok(PendingState::Waiting) = (match nucleus.thread(domain.dc).unwrap().context {
+            ExecutionContext::Parked { record, .. } => {
+                child_object(&domain).park_dispatcher(record, true);
+                nucleus.pending.state(record)
+            }
+            _ => unreachable!(),
+        }) else {
+            panic!("the call waits");
+        };
+        // The root asks for nothing.
+        nucleus.request_activation(domain.child_id, activation_reason::EVENT, 0);
+        // The call completed and the child dispatcher is a runnable Thread
+        // of the root; the root dispatcher is not activated and nothing
+        // preempts.
+        assert!(child_object(&domain).parked().is_none());
+        assert_eq!(scheduler_of(&domain.root).pending(), 0);
+        assert!(!nucleus.preempt_requested);
+        assert!(!nucleus.thread(domain.dc).unwrap().queued);
+
+        // The root asks to hear about runnable Threads: the next such
+        // wakeup of the child dispatcher is an event for the root, which
+        // still does not preempt by itself.
+        scheduler_of(&domain.root)
+            .set_activation_mask(libobject::scheduler::activation_mask::THREAD_RUNNABLE)
+            .ok()
+            .expect("mask");
+        let record = nucleus
+            .pending
+            .block(domain.dc, PendingKind::SchedulerDispatch, domain.child_id)
+            .unwrap_or_else(|e| panic!("park: {:?}", e.code()));
+        nucleus.thread_mut(domain.dc).unwrap().context = ExecutionContext::Parked {
+            saved: target_saved(),
+            record,
+        };
+        child_object(&domain).park_dispatcher(record, true);
+        nucleus.request_activation(domain.child_id, activation_reason::EVENT, 0);
+        assert_eq!(
+            scheduler_of(&domain.root).pending(),
+            activation_reason::EVENT
+        );
+    });
+}
+
+#[test_case]
+fn a_child_dispatcher_that_faults_suspends_its_domain_and_tells_the_parent() {
+    with_resume(|nucleus, waits| {
+        let domain = with_domain(nucleus, &waits);
+        run_child_dispatcher(nucleus, &domain, u64::MAX);
+        assert_eq!(nucleus.current_thread, Some(domain.dc));
+
+        // The child dispatcher faults.
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .park_faulted_and_select(&access, PREEMPTED_SAVED)
+                .unwrap_or_else(|e| panic!("fault: {:?}", e.code()))
+        };
+        // The root dispatcher runs, told of the fault and of the domain.
+        assert_eq!(resumed.next, waits.source);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::FAULTED | activation_reason::SCHED_DOMAIN_FAILED
+        );
+        // The child has no dispatcher and no grant; its Thread is suspended
+        // with its state kept.
+        assert!(child_object(&domain).dispatcher().is_none());
+        assert!(child_object(&domain).grant().is_none());
+        assert!(nucleus.thread(domain.t).unwrap().suspended);
+        assert!(matches!(
+            nucleus.thread(domain.t).unwrap().context,
+            ExecutionContext::Preempted { .. }
+        ));
+    });
+}
+
+#[test_case]
+fn retiring_a_child_dispatcher_suspends_its_domain_and_a_new_dispatcher_can_be_bound() {
+    with_resume(|nucleus, waits| {
+        let domain = with_domain(nucleus, &waits);
+        cap_invoke(
+            nucleus,
+            domain.dc_key,
+            libobject::thread::ThreadOp::Retire as u64,
+            &[0; 6],
+        )
+        .ok()
+        .expect("Retire");
+        assert!(child_object(&domain).dispatcher().is_none());
+        assert!(nucleus.thread(domain.t).unwrap().suspended);
+        // The root dispatcher is running, so the failure waits for its next
+        // Dispatch.
+        assert_eq!(
+            scheduler_of(&domain.root).pending(),
+            activation_reason::SCHED_DOMAIN_FAILED
+        );
+
+        // The parent recovers: a new dispatcher, then the Thread resumes.
+        let space = nucleus.thread(waits.source).unwrap().address_space;
+        let replacement = nucleus.create_thread(space).expect("replacement");
+        {
+            let thread = nucleus.thread_mut(replacement).unwrap();
+            thread.scheduler = Some(domain.root.scheduler_id);
+            thread.context = ExecutionContext::Configured {
+                saved: target_saved(),
+            };
+        }
+        nucleus
+            .bind_dispatcher(domain.child_id, replacement)
+            .unwrap_or_else(|e| panic!("rebind: {:?}", e.code()));
+        assert_eq!(child_object(&domain).dispatcher(), Some(replacement));
+        nucleus.resume_thread(domain.t).ok().expect("Resume");
+        assert!(!nucleus.thread(domain.t).unwrap().suspended);
+    });
+}

@@ -71,6 +71,9 @@ pub enum ThreadState {
     Faulted = 5,
     /// Being destroyed
     Dying = 6,
+    /// The Thread moved to another Scheduler (`Scheduler.MoveThread`): the
+    /// final state of the record it left, which the scheduler may reuse.
+    Donated = 7,
 }
 
 impl TryFrom<u32> for ThreadState {
@@ -85,6 +88,7 @@ impl TryFrom<u32> for ThreadState {
             4 => Ok(Self::Suspended),
             5 => Ok(Self::Faulted),
             6 => Ok(Self::Dying),
+            7 => Ok(Self::Donated),
             _ => Err(()),
         }
     }

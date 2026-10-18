@@ -20,7 +20,7 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | KeyTable | `0x02` | [key_table.md](core/key_table.md) | CopyDerive, Move, Delete |
 | Thread | `0x03` | [thread.md](core/thread.md) | Return, Suspend, Resume, Retire |
 | Time | `0x04` | [time.md](core/time.md) | Transfer, Merge, Query |
-| Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation, ArmTimer (root Scheduler) |
+| Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation, ArmTimer, Adopt, MoveThread |
 | Invocation | `0x06` | [invocation.md](core/invocation.md) | Call, CallWithKey |
 | Notification | `0x07` | [notification.md](core/notification.md) | Signal, Wait, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |

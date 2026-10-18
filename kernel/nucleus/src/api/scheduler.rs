@@ -48,7 +48,7 @@ pub fn invoke<A: ArchObjects>(
     nucleus: &mut Nucleus<A>,
 ) -> Result<InvokeOutcome, CapError> {
     let op = SchedulerOp::try_from(op)?;
-    let scheduler = resolve_root_scheduler(access, caller, key)?;
+    let scheduler = resolve_scheduler(access, caller, key)?;
     let complete = |result: Result<(u64, u64), CapError>| result.map(InvokeOutcome::Complete);
     match op {
         SchedulerOp::ShareRegion => {
@@ -57,7 +57,13 @@ pub fn invoke<A: ArchObjects>(
         SchedulerOp::ConfigureThread => {
             complete(configure_thread(access, caller, scheduler, args, nucleus))
         }
-        SchedulerOp::StartThread => complete(start_thread(access, caller, args, nucleus)),
+        SchedulerOp::StartThread => {
+            complete(start_thread(access, caller, scheduler, args, nucleus))
+        }
+        SchedulerOp::Adopt => complete(adopt(access, caller, key, scheduler, args)),
+        SchedulerOp::MoveThread => {
+            complete(move_thread(access, caller, key, scheduler, args, nucleus))
+        }
         SchedulerOp::AssignRecord => {
             complete(assign_record(access, caller, key, scheduler, args, nucleus))
         }
@@ -155,6 +161,7 @@ fn configure_thread<A: ArchObjects>(
         saved: SavedContext::el0(entry, stack_pointer, argument),
     };
     time.bind(thread_id);
+    nucleus.join_scheduler(thread_id, scheduler);
     semi::println!("✅ Scheduler::ConfigureThread(entry {entry:#x}, sp {stack_pointer:#x})");
     Ok((0, 0))
 }
@@ -291,13 +298,8 @@ fn bind_dispatcher<A: ArchObjects>(
         return Err(CapError::InvalidOperation);
     }
     let thread_id = resolve_thread(access, caller, RawKey::from_wire(args[0]))?;
-    // Only a Thread this Scheduler configured can be its dispatcher.
-    let thread = nucleus
-        .thread(thread_id)
-        .ok_or(CapError::InvalidOperation)?;
-    if thread.scheduler != Some(scheduler) {
-        return Err(CapError::InvalidOperation);
-    }
+    // The root's dispatcher is a Thread the root configured; a child's is a
+    // Thread its parent configured (checked in the nucleus).
     nucleus.bind_dispatcher(scheduler, thread_id)?;
     semi::println!("✅ Scheduler::BindDispatcher()");
     Ok((0, 0))
@@ -390,11 +392,16 @@ fn dispatch<A: ArchObjects>(
         return Err(CapError::InvalidOperation);
     }
     let dispatcher = nucleus.current_thread_id()?;
-    let (bound, pending, events) = {
+    let (bound, pending, events, own_grant) = {
         let object = access
             .resolve_object::<Scheduler>(scheduler)
             .map_err(|error| error.for_key(key, 0))?;
-        (object.dispatcher(), object.pending(), object.events())
+        (
+            object.dispatcher(),
+            object.pending(),
+            object.events(),
+            object.grant(),
+        )
     };
     // Only the bound dispatcher dispatches.
     if bound != Some(dispatcher) {
@@ -450,12 +457,26 @@ fn dispatch<A: ArchObjects>(
     }
     let frequency = nucleus.counter_frequency();
     let now = nucleus.counter_ticks();
+    // The limit, clamped to what is left of the grant a child dispatcher
+    // runs in: its Threads never outlast the parent's allowance.
+    let limit_deadline =
+        (limit_ns != u64::MAX).then(|| now.saturating_add(ns_to_ticks_ceil(limit_ns, frequency)));
+    let deadline_ticks = match (
+        limit_deadline,
+        own_grant.and_then(|grant| grant.deadline_ticks),
+    ) {
+        (Some(limit), Some(end)) => Some(limit.min(end)),
+        (limit, end) => limit.or(end),
+    };
     let next = target.map(|thread| Dispatched {
         thread,
         scheduler,
-        deadline_ticks: (limit_ns != u64::MAX)
-            .then(|| now.saturating_add(ns_to_ticks_ceil(limit_ns, frequency))),
+        deadline_ticks,
     });
+    // Dispatching a child's dispatcher starts the grant its Threads run in.
+    let child_domain = target
+        .and_then(|thread| nucleus.thread(thread))
+        .and_then(|thread| thread.dispatches);
     // Commit: the dispatcher waits for its activation.
     let record = nucleus
         .pending
@@ -465,14 +486,128 @@ fn dispatch<A: ArchObjects>(
         .map_err(|error| error.for_key(key, 0))?
         .park_dispatcher(record, target.is_none());
     nucleus.dispatch_next = next;
+    if let Some(child) = child_domain {
+        nucleus.set_child_grant(child, deadline_ticks);
+    }
     semi::println!("✅ Scheduler::Dispatch()");
     Ok(InvokeOutcome::Blocked(record))
+}
+
+/// `Adopt` `9`: make the fresh Scheduler at `x2` a child of the invoked one.
+///
+/// The child must be live, not the invoked Scheduler, not the root, without
+/// a parent, and have no children, Threads or dispatcher; the invoked
+/// Scheduler must sit above the depth limit. Every check precedes the
+/// change.
+fn adopt(
+    access: &Access,
+    caller: CallerTable,
+    key: RawKey,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+) -> Result<(u64, u64), CapError> {
+    if args[1..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let child_key = RawKey::from_wire(args[0]);
+    let child = lookup(
+        access,
+        caller,
+        child_key,
+        2,
+        ObjectType::SCHEDULER,
+        Rights::WRITE,
+    )
+    .and_then(|entry| entry.carved_id().map_err(|e| e.with_key_operand(2)))?;
+    if child == scheduler {
+        return Err(CapError::InvalidOperation);
+    }
+    let depth = {
+        let parent = access
+            .resolve_object::<Scheduler>(scheduler)
+            .map_err(|error| error.for_key(key, 0))?;
+        if parent.depth() >= Scheduler::MAX_DEPTH {
+            return Err(CapError::InvalidOperation);
+        }
+        parent.depth() + 1
+    };
+    {
+        let candidate = access
+            .resolve_object::<Scheduler>(child)
+            .map_err(|error| error.for_key(child_key, 2))?;
+        if !candidate.is_fresh() {
+            return Err(CapError::InvalidOperation);
+        }
+    }
+    access
+        .resolve_object::<Scheduler>(child)
+        .map_err(|error| error.for_key(child_key, 2))?
+        .set_parent(scheduler, depth);
+    access
+        .resolve_object::<Scheduler>(scheduler)
+        .map_err(|error| error.for_key(key, 0))?
+        .child_adopted();
+    semi::println!("✅ Scheduler::Adopt(depth {depth})");
+    Ok((0, 0))
+}
+
+/// `MoveThread` `10`: move the Thread at `x2` to the Scheduler at `x3`, into
+/// slot `x4` of its table.
+///
+/// Invoked on the Thread's owner, the destination is a direct child of the
+/// invoked Scheduler (donation); invoked on the owner's parent, the
+/// destination is the invoked Scheduler itself (taking the Thread back).
+fn move_thread<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    key: RawKey,
+    scheduler: CarvedId,
+    args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
+) -> Result<(u64, u64), CapError> {
+    let [thread_key, destination_key, slot, rest @ ..] = *args;
+    if rest.iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let slot = u32::try_from(slot).map_err(|_too_wide| CapError::InvalidOperation)?;
+    let thread_id = resolve_thread(access, caller, RawKey::from_wire(thread_key))?;
+    let destination_key = RawKey::from_wire(destination_key);
+    let destination = lookup(
+        access,
+        caller,
+        destination_key,
+        3,
+        ObjectType::SCHEDULER,
+        Rights::WRITE,
+    )
+    .and_then(|entry| entry.carved_id().map_err(|e| e.with_key_operand(3)))?;
+    let parent_of = |id: CarvedId, key: RawKey, operand: u8| {
+        access
+            .resolve_object::<Scheduler>(id)
+            .map(|object| object.parent())
+            .map_err(|error| error.for_key(key, operand))
+    };
+    let destination_parent = parent_of(destination, destination_key, 3)?;
+    let owner = nucleus
+        .thread(thread_id)
+        .and_then(|thread| thread.scheduler)
+        .ok_or(CapError::InvalidOperation)?;
+    let owner_parent = parent_of(owner, key, 0)?;
+    let donation = owner == scheduler && destination_parent == Some(scheduler);
+    let reclaim = destination == scheduler && owner_parent == Some(scheduler);
+    if !(donation || reclaim) {
+        return Err(CapError::InvalidOperation);
+    }
+    nucleus.move_thread(thread_id, destination, slot)?;
+    semi::println!("✅ Scheduler::MoveThread(slot {slot})");
+    Ok((0, 0))
 }
 
 /// `StartThread` `2`.
 fn start_thread<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,
+    scheduler: CarvedId,
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
@@ -484,6 +619,10 @@ fn start_thread<A: ArchObjects>(
     let thread = nucleus
         .thread_mut(thread_id)
         .ok_or(CapError::InvalidOperation)?;
+    // Only the Scheduler that owns a Thread starts it.
+    if thread.scheduler != Some(scheduler) {
+        return Err(CapError::InvalidOperation);
+    }
     let ExecutionContext::Configured { saved } = thread.context else {
         return Err(CapError::InvalidOperation);
     };
@@ -495,20 +634,20 @@ fn start_thread<A: ArchObjects>(
     Ok((0, 0))
 }
 
-/// The invoked Scheduler: a live root Scheduler capability with `WRITE`.
-fn resolve_root_scheduler(
+/// The invoked Scheduler: a live Scheduler capability with `WRITE`. Every
+/// operation works on any Scheduler, root or not (maintainer decision,
+/// 2026-10-18); a child has no execution authority until it is adopted and
+/// its dispatcher is dispatched.
+fn resolve_scheduler(
     access: &Access,
     caller: CallerTable,
     key: RawKey,
 ) -> Result<CarvedId, CapError> {
     let id = lookup(access, caller, key, 0, ObjectType::SCHEDULER, Rights::WRITE)
         .and_then(|entry| entry.carved_id().map_err(|e| e.with_key_operand(0)))?;
-    let scheduler = access
+    access
         .resolve_object::<Scheduler>(id)
         .map_err(|error| error.for_key(key, 0))?;
-    if !scheduler.is_root() {
-        return Err(CapError::InsufficientRights);
-    }
     Ok(id)
 }
 

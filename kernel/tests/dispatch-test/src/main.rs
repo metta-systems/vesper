@@ -156,6 +156,21 @@ const EXITER_RECORD_SLOT: u32 = 11;
 const EXITER_THREAD_SLOT: u32 = 64;
 const EXITER_DONE_SLOT: u32 = 65;
 const EXITER_OWN_SLOT: u32 = 37;
+
+/// Phase seven: a child Scheduler with its own dispatcher component, record
+/// table and one Thread (a worker, donated to it). The dispatcher holds keys
+/// to the child dispatcher and the Thread.
+const CHILD_GUARD: u32 = 0x05_7204;
+const CHILD_DISPATCHER_RECORD_SLOT: u32 = 12;
+const CHILD_THREAD_RECORD_SLOT: u32 = 1;
+const CHILD_DISPATCHER_SLOT: u32 = 66;
+const CHILD_THREAD_SLOT: u32 = 67;
+const CHILD_DONE_SLOT: u32 = 68;
+/// Slots of the child dispatcher's own table: the child Scheduler and its Thread.
+const CHILD_SCHEDULER_KEY_SLOT: u32 = 32;
+const CHILD_THREAD_KEY_SLOT: u32 = 33;
+/// The child Thread is a worker, counting in the fourth word group.
+const CHILD_WORKER: usize = 3;
 const RECEIVER_RECORD_SLOT: u32 = 10;
 const RECEIVER_THREAD_SLOT: u32 = 60;
 const READY_SLOT: u32 = 61;
@@ -231,6 +246,26 @@ mod page {
     pub const P6_EXITER_SLOT: usize = 71;
     pub const P6_DONE: usize = 72;
     pub const P6_EXIT_REASONS: usize = 73;
+    pub const P7_CHILD_KEY: usize = 80;
+    pub const P7_CHILD_SLOT: usize = 81;
+    pub const P7_THREAD_KEY: usize = 82;
+    pub const P7_DONE: usize = 83;
+    pub const P7_FIRST_REASONS: usize = 84;
+    pub const P7_FIRST_NS: usize = 85;
+    pub const P7_SECOND_REASONS: usize = 86;
+    pub const P7_SECOND_NS: usize = 87;
+    pub const P7_FAILED_REASONS: usize = 88;
+    /// The child dispatcher's page.
+    pub const C_RECORDS: usize = 0;
+    pub const C_STRIDE: usize = 1;
+    pub const C_SCHEDULER: usize = 2;
+    pub const C_THREAD: usize = 3;
+    pub const C_THREAD_SLOT: usize = 4;
+    pub const C_GRANT_ONE_END_NS: usize = 8;
+    pub const C_FIRST_RESUME_REASONS: usize = 9;
+    pub const C_GRANT_TWO_END_NS: usize = 10;
+    pub const C_INNER_LIMITS: usize = 11;
+    pub const C_INNER_REASONS: usize = 12;
 }
 
 /// A word of a page the kernel window maps.
@@ -336,6 +371,12 @@ pub fn run() -> ! {
     let exiter_thread_key = retype(ObjectType::THREAD);
     let exiter_time_key = retype(ObjectType::TIME);
     let exiter_done_key = retype(ObjectType::NOTIFICATION);
+    let child_scheduler_key = retype(ObjectType::SCHEDULER);
+    let child_thread_key = retype(ObjectType::THREAD);
+    let child_thread_time_key = retype(ObjectType::TIME);
+    let child_dispatcher_key = retype(ObjectType::THREAD);
+    let child_dispatcher_time_key = retype(ObjectType::TIME);
+    let child_done_key = retype(ObjectType::NOTIFICATION);
     let [ready_key, armed_key, done_key] =
         core::array::from_fn(|_| retype(ObjectType::NOTIFICATION));
     let boot_time = TimeKey::from_key(boot.boot_time_key);
@@ -352,11 +393,13 @@ pub fn run() -> ! {
     boot_time
         .transfer(&TimeKey::from_key(dispatcher_time_key), INFINITE_BUDGET)
         .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
-    for time_key in
-        actor_time_keys
-            .into_iter()
-            .chain([timed_time_key, receiver_time_key, exiter_time_key])
-    {
+    for time_key in actor_time_keys.into_iter().chain([
+        timed_time_key,
+        receiver_time_key,
+        exiter_time_key,
+        child_thread_time_key,
+        child_dispatcher_time_key,
+    ]) {
         boot_time
             .transfer(&TimeKey::from_key(time_key), INFINITE_BUDGET)
             .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
@@ -608,6 +651,63 @@ pub fn run() -> ! {
     words.write(page::P6_EXITER_SLOT, u64::from(EXITER_RECORD_SLOT));
     words.write(page::P6_DONE, grant(EXITER_DONE_SLOT, exiter_done_key));
 
+    // ── The child domain: a component, a record table and a Thread ───────
+    let child = builder.component(CHILD_GUARD, &mut slots);
+    builder.load_component(
+        &child,
+        &components::CHILD,
+        CHILD_GUARD ^ 0x80_0000,
+        &mut slots,
+    );
+    verify_component(ttbr(nucleus, child.address_space), &components::CHILD);
+    let mut child_stacks = builder.stack_region(&child, STACK_REGION, &mut slots);
+    let child_stack = builder.user_stack(&mut child_stacks, STACK_PAGES, &mut slots);
+    let child_page =
+        builder.private_pages(child.address_space_key, child.l2, PAGE_VA, 1, &mut slots);
+    Builder::map_table(builder.carve_tables(slots.take(1), 1), child.l2, RECORD_VA);
+    let child_record_first = slots.take(1);
+    let child_record_frames = builder.retype_frames(child_record_first, 1);
+    Builder::map_frames(
+        child_record_first,
+        child_record_frames.incarnation(),
+        1,
+        child.address_space_key,
+        RECORD_VA,
+        Rights(Rights::READ),
+    );
+    let child_record_frame = boot_key(child_record_first, child_record_frames.incarnation());
+    let child_words = Words(dispatcher_page_pointer(child_page));
+    let child_grant = |slot: u32, key: RawKey| {
+        // SAFETY: the child dispatcher's retained table; no invocation overlaps
+        // and its Thread has not started.
+        unsafe { &mut *KeyTable::at_carve(child.table_addr) }
+            .insert(KeySlot(slot), builder.entry(key), child.guard)
+            .unwrap_or_else(|failure| panic!("key grant failed: {:?}", failure.error.code()));
+        child.local_key(slot, 1).to_wire()
+    };
+    child_words.write(page::C_RECORDS, RECORD_VA);
+    child_words.write(page::C_STRIDE, u64::from(RECORD_STRIDE));
+    child_words.write(
+        page::C_SCHEDULER,
+        child_grant(CHILD_SCHEDULER_KEY_SLOT, child_scheduler_key),
+    );
+    child_words.write(
+        page::C_THREAD,
+        child_grant(CHILD_THREAD_KEY_SLOT, child_thread_key),
+    );
+    child_words.write(page::C_THREAD_SLOT, u64::from(CHILD_THREAD_RECORD_SLOT));
+    words.write(
+        page::P7_CHILD_KEY,
+        grant(CHILD_DISPATCHER_SLOT, child_dispatcher_key),
+    );
+    words.write(page::P7_CHILD_SLOT, u64::from(CHILD_DISPATCHER_RECORD_SLOT));
+    words.write(
+        page::P7_THREAD_KEY,
+        grant(CHILD_THREAD_SLOT, child_thread_key),
+    );
+    words.write(page::P7_DONE, grant(CHILD_DONE_SLOT, child_done_key));
+    let child_worker_stack = builder.user_stack(&mut worker_stacks, STACK_PAGES, &mut slots);
+
     // The scheduler shares the table, then takes over the workers' records.
     root_scheduler
         .share_region(record_frame, 0, RECORD_STRIDE)
@@ -728,6 +828,64 @@ pub fn run() -> ! {
     irq_handler
         .ack()
         .unwrap_or_else(|error| panic!("Ack failed: {:?}", error.code()));
+    // The child Scheduler: adopted by the root, with its own record table; its
+    // Thread is a worker the root configures and starts, then donates; its
+    // dispatcher is a Thread of the root, bound to the child.
+    let child_scheduler = SchedulerKey::from_key(child_scheduler_key);
+    root_scheduler
+        .adopt(child_scheduler_key)
+        .unwrap_or_else(|error| panic!("Adopt failed: {:?}", error.code()));
+    child_scheduler
+        .share_region(child_record_frame, 0, RECORD_STRIDE)
+        .unwrap_or_else(|error| panic!("child ShareRegion failed: {:?}", error.code()));
+    root_scheduler
+        .configure_thread(
+            child_thread_key,
+            worker.address_space_key,
+            ThreadStart {
+                entry: components::WORKER.entry.expect("the worker has an entry"),
+                stack_pointer: child_worker_stack.top,
+                argument: COUNTER_VA + CHILD_WORKER as u64 * 64,
+            },
+            child_thread_time_key,
+        )
+        .unwrap_or_else(|error| panic!("child Thread ConfigureThread failed: {:?}", error.code()));
+    root_scheduler
+        .start_thread(child_thread_key)
+        .unwrap_or_else(|error| panic!("child Thread StartThread failed: {:?}", error.code()));
+    root_scheduler
+        .move_thread(
+            child_thread_key,
+            child_scheduler_key,
+            CHILD_THREAD_RECORD_SLOT,
+        )
+        .unwrap_or_else(|error| panic!("MoveThread failed: {:?}", error.code()));
+    root_scheduler
+        .configure_thread(
+            child_dispatcher_key,
+            child.address_space_key,
+            ThreadStart {
+                entry: components::CHILD.entry.expect("the child has an entry"),
+                stack_pointer: child_stack.top,
+                argument: PAGE_VA,
+            },
+            child_dispatcher_time_key,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "child dispatcher ConfigureThread failed: {:?}",
+                error.code()
+            )
+        });
+    root_scheduler
+        .assign_record(child_dispatcher_key, CHILD_DISPATCHER_RECORD_SLOT)
+        .unwrap_or_else(|error| panic!("child dispatcher AssignRecord failed: {:?}", error.code()));
+    child_scheduler
+        .bind_dispatcher(child_dispatcher_key)
+        .unwrap_or_else(|error| panic!("child BindDispatcher failed: {:?}", error.code()));
+    root_scheduler
+        .start_thread(child_dispatcher_key)
+        .unwrap_or_else(|error| panic!("child dispatcher StartThread failed: {:?}", error.code()));
     root_scheduler
         .configure_thread(
             dispatcher_thread_key,
@@ -968,8 +1126,49 @@ pub fn run() -> ! {
         nucleus.thread(exiter_id).is_none(),
         "the exiter is still a Thread"
     );
+    // ── Seventh phase: a child domain ─────────────────────────────────────
+    NotificationKey::from_key(child_done_key)
+        .wait(NotificationKey::WAIT_INFINITE)
+        .unwrap_or_else(|error| panic!("phase seven wait failed: {:?}", error.code()));
+    // The first grant (60 ms) stopped the child's ten-second dispatch and
+    // activated the parent, not the child.
+    assert_eq!(words.read(page::P7_FIRST_REASONS), activation_reason::LIMIT);
+    let first_ns = words.read(page::P7_FIRST_NS);
+    assert!(
+        (50_000_000..1_000_000_000).contains(&first_ns),
+        "the first grant lasted {first_ns} ns"
+    );
+    // The child saw both grants end later than the one before, its parked
+    // Dispatch returned LIMIT when the parent dispatched it again, and its own
+    // short dispatches ended at their own limit inside the second grant.
+    assert_ne!(child_words.read(page::C_GRANT_ONE_END_NS), 0);
+    assert_eq!(
+        child_words.read(page::C_FIRST_RESUME_REASONS),
+        activation_reason::LIMIT
+    );
+    assert!(
+        child_words.read(page::C_GRANT_TWO_END_NS) > child_words.read(page::C_GRANT_ONE_END_NS)
+    );
+    assert_eq!(child_words.read(page::C_INNER_LIMITS), 3);
+    assert_eq!(
+        child_words.read(page::C_INNER_REASONS),
+        activation_reason::LIMIT
+    );
+    // With nothing left to run, the child handed the CPU back: the parent's
+    // second dispatch ended as a block, well inside the second grant.
+    assert_eq!(
+        words.read(page::P7_SECOND_REASONS),
+        activation_reason::BLOCKED
+    );
+    assert!(words.read(page::P7_SECOND_NS) < 1_000_000_000);
+    // Retiring the child dispatcher failed the domain.
+    assert_eq!(
+        words.read(page::P7_FAILED_REASONS),
+        activation_reason::SCHED_DOMAIN_FAILED
+    );
+    assert!(counter(CHILD_WORKER) > 0, "the child's Thread never ran");
     semi::println!(
-        "dispatch-test: ✅ bind, round-robin dispatch, wake preemption, burst coalescing, refusals, timers, timeouts, sleep, interrupts, suspend and self-retire passed"
+        "dispatch-test: ✅ bind, round-robin dispatch, wake preemption, burst coalescing, refusals, timers, timeouts, sleep, interrupts, suspend, self-retire and child domains passed"
     );
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {

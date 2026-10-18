@@ -102,6 +102,7 @@ members = [
   "userspace/tests/preempt/reader",
   "userspace/tests/dispatch/dispatcher",
   "userspace/tests/dispatch/actor",
+  "userspace/tests/dispatch/child",
 ]
 resolver = "3"
 

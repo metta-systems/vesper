@@ -37,7 +37,8 @@ Retype creates `count` objects and installs their capabilities into consecutive 
 | Notification | 0 | A Notification with no pending bits |
 | EventCount | 0 | An EventCount at 0 |
 | Time | 0 | An empty Time on the creating core: zero budget |
-| Thread | 0 | An inert Thread: no AddressSpace or execution state until the root [Scheduler](scheduler.md) configures and starts it |
+| Thread | 0 | An inert Thread: no AddressSpace or execution state until a [Scheduler](scheduler.md) configures and starts it |
+| Scheduler | 0 | An inert [Scheduler](scheduler.md): not the root, no parent, no Threads, no dispatcher; it has no execution authority until a parent adopts it |
 | AddressSpace | 0 | An inert [AddressSpace](../arch/address_space.md): no KeyTable, translation root or ASID until [`Bind`](../arch/address_space.md#bind), [`PageTable.Map`](../arch/page_table.md#map) and [`ASIDPool.Assign`](../arch/asid_pool.md) |
 | Untyped | At least 4 (16 bytes) | A smaller Untyped covering part of the region |
 
@@ -66,4 +67,4 @@ Kickstart gives the first component device Untypeds over the `VideoCore` memory 
 
 An Untyped tracks a watermark: Retype allocates from the unused part of the region above it and only ever moves it forward. Memory below the watermark is never handed out again, even after the objects created there are retired. Each new object is aligned to its own alignment (a Frame to its size), and the watermark advances in 16-byte steps.
 
-Every object Retype creates takes its memory from the region, so the number of objects a component can create is bounded by the memory it holds. The memory of a KeyTable, Notification, EventCount, Time or Thread holds kernel state that the caller cannot read or map. A PageTable also takes a small kernel record of the same kind, placed after the batch's tables (see [PageTable](../arch/page_table.md#implementation)).
+Every object Retype creates takes its memory from the region, so the number of objects a component can create is bounded by the memory it holds. The memory of a KeyTable, Notification, EventCount, Time, Thread or Scheduler holds kernel state that the caller cannot read or map. A PageTable also takes a small kernel record of the same kind, placed after the batch's tables (see [PageTable](../arch/page_table.md#implementation)).

@@ -130,7 +130,18 @@ impl<A: ArchObjects> Nucleus<A> {
             &ExecutionContext::Parked { saved, record },
             forced.map(|dispatched| dispatched.thread),
         )?;
-        self.dispatched = forced;
+        // A dispatch names its Thread, which is now the dispatched one. A stop
+        // of the dispatched Thread has already settled `dispatched` (for a
+        // child domain, to the child dispatcher's entry): it only stays
+        // stale when nothing was activated.
+        if forced.is_some() {
+            self.dispatched = forced;
+        } else if self
+            .dispatched
+            .is_some_and(|dispatched| dispatched.thread == current)
+        {
+            self.dispatched = None;
+        }
         Ok(resumed)
     }
 
@@ -174,6 +185,7 @@ impl<A: ArchObjects> Nucleus<A> {
         self.cancel_thread_pending(current)?;
         self.release_thread_fault(current);
         self.release_thread_placements(access, current);
+        self.leave_scheduler(current);
         self.publish_thread(current, true);
         // SAFETY: Thread identities name carved records that are never freed;
         // the Thread is stopped and nothing else holds a reference to it.
@@ -215,11 +227,36 @@ impl<A: ArchObjects> Nucleus<A> {
         // activates the dispatcher.
         if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
             let now = self.counter_ticks();
-            if dispatched.deadline_ticks.is_some_and(|limit| now >= limit) {
-                self.request_activation(dispatched.scheduler, activation_reason::LIMIT, 0);
+            // The Thread of a child domain stops for the parent when the
+            // grant is over, whatever its own limit says.
+            let grant_over = self
+                .scheduler_mut(dispatched.scheduler)
+                .and_then(|scheduler| scheduler.grant())
+                .and_then(|grant| grant.deadline_ticks)
+                .is_some_and(|end| now >= end);
+            if grant_over {
+                self.end_grant(dispatched.scheduler);
+            } else {
+                if dispatched.deadline_ticks.is_some_and(|limit| now >= limit) {
+                    self.request_activation(dispatched.scheduler, activation_reason::LIMIT, 0);
+                }
+                if self.thread_exhausted(current) {
+                    self.request_activation(dispatched.scheduler, activation_reason::EXHAUSTED, 0);
+                }
             }
-            if self.thread_exhausted(current) {
-                self.request_activation(dispatched.scheduler, activation_reason::EXHAUSTED, 0);
+        }
+        // A child domain's Thread that the next Thread in line is not the
+        // child's dispatcher for is stopped by the parent: the grant ends.
+        if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
+            let child_dispatcher = self
+                .scheduler_mut(dispatched.scheduler)
+                .filter(|scheduler| scheduler.grant().is_some())
+                .map(|scheduler| scheduler.dispatcher());
+            if let Some(child_dispatcher) = child_dispatcher
+                && !self.run_queue.is_empty()
+                && self.run_queue.peek() != child_dispatcher
+            {
+                self.end_grant(dispatched.scheduler);
             }
         }
         let current_is_idle = self.idle_thread == Some(current);
@@ -263,16 +300,49 @@ impl<A: ArchObjects> Nucleus<A> {
         // The Thread a dispatcher dispatched stops: that activates the
         // dispatcher, which is then at the front of the queue. A tick stop
         // (limit, budget) raised its activation already.
+        // A child dispatcher that faults or exits takes its domain down; the
+        // parent hears of it together with the stop itself.
+        let failed_domain = if matches!(
+            parked,
+            ExecutionContext::Faulted { .. } | ExecutionContext::Inactive
+        ) {
+            self.thread(current)
+                .and_then(|thread| thread.dispatches)
+                .and_then(|child| self.fail_domain_state(child))
+        } else {
+            None
+        };
+        let mut failed_reported = false;
         if let Some(dispatched) = self.dispatched.filter(|d| d.thread == current) {
-            let reasons = match parked {
-                ExecutionContext::Parked { .. } => activation_reason::BLOCKED,
-                ExecutionContext::Faulted { .. } => activation_reason::FAULTED,
-                ExecutionContext::Inactive => activation_reason::EXITED,
-                _ => 0,
-            };
-            if reasons != 0 {
-                self.request_activation(dispatched.scheduler, reasons, 0);
+            // A child's dispatcher handing the CPU to one of its Threads is
+            // not a stop: the grant stays in force. Any other way the child
+            // dispatcher leaves the CPU ends the grant.
+            let handing_on = forced.is_some()
+                && matches!(parked, ExecutionContext::Parked { .. })
+                && self
+                    .thread(current)
+                    .is_some_and(|thread| thread.dispatches.is_some());
+            if !handing_on {
+                self.drop_grant_of(current);
+                let reasons = match parked {
+                    ExecutionContext::Parked { .. } => activation_reason::BLOCKED,
+                    ExecutionContext::Faulted { .. } => activation_reason::FAULTED,
+                    ExecutionContext::Inactive => activation_reason::EXITED,
+                    _ => 0,
+                };
+                let reasons = if failed_domain.is_some() {
+                    failed_reported = true;
+                    reasons | activation_reason::SCHED_DOMAIN_FAILED
+                } else {
+                    reasons
+                };
+                if reasons != 0 {
+                    self.request_activation(dispatched.scheduler, reasons, 0);
+                }
             }
+        }
+        if let (Some(parent), false) = (failed_domain, failed_reported) {
+            self.request_activation(parent, activation_reason::SCHED_DOMAIN_FAILED, 0);
         }
         // Peek is sufficient only because validation and dequeue share this
         // exclusive transaction. A dispatch names its Thread, which is not

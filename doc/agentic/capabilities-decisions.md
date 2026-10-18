@@ -18,11 +18,13 @@ The record ABI and the Phase 5 single-CPU dispatcher design are selected (see
 the contract); the record numbers and `AssignRecord` are trial choices to
 revisit after use. Unanswered questions:
 
-- What is the scheduler donation schema, and how is strict-tree scheduler
-  ownership enforced (Phase 9)?
-- What does multicore need: `Scheduler.replace`, a non-blocking dispatch, and
-  an activation invariant of one outstanding request per dispatcher across
-  cores, including a dispatcher that is already running on another core?
+- What is the scheduler donation schema (Phase 9)? Strict-tree ownership is
+  decided: `Adopt` succeeds only on a fresh, parentless, non-root Scheduler.
+  The other hierarchy rules (parent-granted allowance, exhaustion flag,
+  `SCHED_DOMAIN_FAILED` crash handling) are selected: see the plan.
+- Multicore (`Scheduler.replace`, a non-blocking dispatch, and an activation
+  invariant of one outstanding request per dispatcher across cores) is gated
+  behind future kernel multicore work (Phase 11) and not addressed now.
 
 
 ## D7: Protected Procedure Call (`Invocation`)

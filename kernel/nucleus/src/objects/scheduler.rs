@@ -49,10 +49,34 @@ impl Region {
     }
 }
 
+/// The execution a parent granted its child by dispatching the child's
+/// dispatcher.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Grant {
+    /// The counter value at which the grant ends, if it is limited.
+    pub deadline_ticks: Option<u64>,
+}
+
 /// A scheduler in the scheduler tree.
 #[derive(Clone, Copy, Debug)]
 pub struct Scheduler {
     root: bool,
+    /// The Scheduler that adopted this one; set once, never for the root.
+    parent: Option<CarvedId>,
+    /// Levels below the root (the root is 0).
+    depth: u8,
+    /// Schedulers adopted by this one.
+    children: u32,
+    /// Threads this Scheduler owns: configured by it or moved to it, and not
+    /// yet retired or moved away.
+    threads: u32,
+    /// The parent's grant in force: the parent's dispatcher dispatched this
+    /// Scheduler's dispatcher, until the counter reaches the deadline (none
+    /// for no limit). `None` when the domain is not running.
+    grant: Option<Grant>,
+    /// The Threads this Scheduler owns form a list through
+    /// `Thread::owner_next`; this is its head.
+    first_thread: Option<CarvedId>,
     /// The `AddressSpace` the record Frames are mapped in; fixed by the first
     /// region.
     record_space: Option<AddressSpaceId>,
@@ -82,6 +106,12 @@ impl Scheduler {
     pub const fn root() -> Self {
         Self {
             root: true,
+            parent: None,
+            depth: 0,
+            children: 0,
+            threads: 0,
+            grant: None,
+            first_thread: None,
             record_space: None,
             stride: 0,
             regions: [None; MAX_REGIONS],
@@ -93,6 +123,93 @@ impl Scheduler {
             activation_mask: 0,
             activation_pending: 0,
         }
+    }
+
+    /// A fresh Scheduler as `Untyped.Retype` makes it: not the root, no
+    /// parent, nothing in it. It has no execution authority until a parent
+    /// adopts it and dispatches its dispatcher.
+    pub const fn inert() -> Self {
+        let mut scheduler = Self::root();
+        scheduler.root = false;
+        scheduler
+    }
+
+    /// The levels a Scheduler may sit below the root.
+    pub const MAX_DEPTH: u8 = 3;
+
+    /// The Scheduler that adopted this one.
+    pub const fn parent(&self) -> Option<CarvedId> {
+        self.parent
+    }
+
+    /// Levels below the root.
+    pub const fn depth(&self) -> u8 {
+        self.depth
+    }
+
+    /// Whether `Adopt` may take this Scheduler: no parent, not the root, and
+    /// no children, Threads or dispatcher. Such a Scheduler has no
+    /// descendants, so adopting it cannot close a cycle.
+    pub const fn is_fresh(&self) -> bool {
+        !self.root
+            && self.parent.is_none()
+            && self.children == 0
+            && self.threads == 0
+            && self.dispatcher.is_none()
+    }
+
+    /// Set the parent, once, and the depth that follows from it.
+    pub fn set_parent(&mut self, parent: CarvedId, depth: u8) {
+        self.parent = Some(parent);
+        self.depth = depth;
+    }
+
+    /// The parent's grant in force, if its dispatcher dispatched this
+    /// Scheduler's dispatcher and that dispatch has not ended.
+    pub const fn grant(&self) -> Option<Grant> {
+        self.grant
+    }
+
+    /// The head of the list of Threads this Scheduler owns.
+    pub const fn first_thread(&self) -> Option<CarvedId> {
+        self.first_thread
+    }
+
+    /// Set the head of the list of owned Threads.
+    pub fn set_first_thread(&mut self, thread: Option<CarvedId>) {
+        self.first_thread = thread;
+    }
+
+    /// The dispatcher is gone (it faulted or was retired); another can be
+    /// bound.
+    pub fn unbind_dispatcher(&mut self) {
+        self.dispatcher = None;
+        self.parked = None;
+    }
+
+    /// Set or end the grant.
+    pub fn set_grant(&mut self, grant: Option<Grant>) {
+        self.grant = grant;
+    }
+
+    /// A child was adopted.
+    pub fn child_adopted(&mut self) {
+        self.children = self.children.saturating_add(1);
+    }
+
+    /// A Thread joined this Scheduler.
+    pub fn thread_joined(&mut self) {
+        self.threads = self.threads.saturating_add(1);
+    }
+
+    /// A Thread left this Scheduler (retired, or moved to another).
+    pub fn thread_left(&mut self) {
+        self.threads = self.threads.saturating_sub(1);
+    }
+
+    /// Threads this Scheduler owns.
+    pub const fn thread_count(&self) -> u32 {
+        self.threads
     }
 
     /// Whether this is the root scheduler.

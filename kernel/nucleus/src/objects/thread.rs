@@ -293,6 +293,10 @@ pub struct Thread {
     /// context: its saved state, pending record and Time stay as they were,
     /// and while it is set nothing queues, dispatches or activates for it.
     pub suspended: bool,
+    /// The Scheduler this Thread is the dispatcher of, once bound.
+    pub dispatches: Option<CarvedId>,
+    /// The next Thread of the owning Scheduler's list of Threads.
+    pub owner_next: Option<ThreadId>,
     /// The record slot the scheduler assigned: the Scheduler whose table
     /// holds it and the slot. Kernel bookkeeping; the Thread has a record
     /// only once `Scheduler.AssignRecord` linked it.
@@ -334,6 +338,8 @@ impl Thread {
             run_time_ticks: 0,
             awaiting_budget: false,
             suspended: false,
+            dispatches: None,
+            owner_next: None,
             record: None,
             generation: 0,
             last_stop: 0,
@@ -408,6 +414,8 @@ mod tests {
             run_time_ticks: 0,
             awaiting_budget: false,
             suspended: false,
+            dispatches: None,
+            owner_next: None,
             record: None,
             generation: 0,
             last_stop: 0,
@@ -448,6 +456,8 @@ mod tests {
             run_time_ticks: 0,
             awaiting_budget: false,
             suspended: false,
+            dispatches: None,
+            owner_next: None,
             record: None,
             generation: 0,
             last_stop: 0,
