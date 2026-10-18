@@ -938,7 +938,7 @@ pub fn run() -> ! {
     let phase_two = NotificationKey::from_key(phase_two_key);
     assert_eq!(
         phase_one
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("phase one wait failed: {:?}", error.code())),
         1
     );
@@ -1001,7 +1001,7 @@ pub fn run() -> ! {
         .unwrap_or_else(|error| panic!("refill Transfer failed: {:?}", error.code()));
     assert_eq!(
         phase_two
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("phase two wait failed: {:?}", error.code())),
         1
     );
@@ -1022,7 +1022,7 @@ pub fn run() -> ! {
     let phase_three = NotificationKey::from_key(phase_three_key);
     assert_eq!(
         phase_three
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("phase three wait failed: {:?}", error.code())),
         1
     );
@@ -1084,7 +1084,7 @@ pub fn run() -> ! {
     // The dispatcher is ready: arm the virtual timer, a few milliseconds
     // away, and let it go on to dispatch the spinner.
     NotificationKey::from_key(ready_key)
-        .wait(NotificationKey::WAIT_INFINITE)
+        .await_bits(NotificationKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("ready wait failed: {:?}", error.code()));
     let ticks = CNTFRQ_EL0.get() * TIMER_DELAY_US / 1_000_000;
     CNTV_TVAL_EL0.set(ticks.max(1));
@@ -1093,7 +1093,7 @@ pub fn run() -> ! {
         .signal(1)
         .unwrap_or_else(|error| panic!("armed signal failed: {:?}", error.code()));
     NotificationKey::from_key(done_key)
-        .wait(NotificationKey::WAIT_INFINITE)
+        .await_bits(NotificationKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("done wait failed: {:?}", error.code()));
     CNTV_CTL_EL0.write(CNTV_CTL_EL0::ENABLE::CLEAR);
     // The wakeup alone ended the spinner's two-second dispatch, a few
@@ -1127,7 +1127,7 @@ pub fn run() -> ! {
     assert!(scheduler_record.idle_ns > 0);
     // ── Sixth phase: Suspend, Resume and a Thread retiring itself ────────
     NotificationKey::from_key(exiter_done_key)
-        .wait(NotificationKey::WAIT_INFINITE)
+        .await_bits(NotificationKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("phase six wait failed: {:?}", error.code()));
     assert_eq!(words.read(page::P6_EXIT_REASONS), activation_reason::EXITED);
     // The suspended waiter took the wakeup it missed when it was resumed,
@@ -1143,7 +1143,7 @@ pub fn run() -> ! {
     );
     // ── Seventh phase: a child domain ─────────────────────────────────────
     NotificationKey::from_key(child_done_key)
-        .wait(NotificationKey::WAIT_INFINITE)
+        .await_bits(NotificationKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("phase seven wait failed: {:?}", error.code()));
     // The first grant (60 ms) stopped the child's ten-second dispatch and
     // activated the parent, not the child.

@@ -271,7 +271,7 @@ pub fn run() -> ! {
         hello_key.to_wire(),
     );
     let bits = NotificationKey::from_key(hello_done)
-        .wait(NotificationKey::WAIT_INFINITE)
+        .await_bits(NotificationKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("hello wait failed: {:?}", error.code()));
     assert_eq!(bits, HELLO_BITS);
     assert_parked_el0(nucleus, hello_thread, hello.address_space, 0);
@@ -418,7 +418,7 @@ pub fn run() -> ! {
     let mut reported = 0;
     while reported != 0b11 {
         reported |= NotificationKey::from_key(clients_done)
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("clients wait failed: {:?}", error.code()));
     }
     assert_eq!(TTBR0_EL1.get(), builder_ttbr);

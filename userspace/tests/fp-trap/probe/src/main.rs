@@ -77,7 +77,7 @@ fn main(_argument: u64) -> ! {
     result
         .signal(bits)
         .unwrap_or_else(|error| panic!("fp-probe: signal failed: {:?}", error.code()));
-    match result.wait(NotificationKey::WAIT_INFINITE) {
+    match result.await_bits(NotificationKey::WAIT_INFINITE) {
         Ok(bits) => panic!("fp-probe: unexpected wakeup with bits {bits:#x}"),
         Err(error) => panic!("fp-probe: park failed: {:?}", error.code()),
     }

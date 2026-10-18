@@ -760,8 +760,8 @@ pub fn run() -> ! {
 
     // Park until the checker wakes us: only preemption lets it run.
     let bits = wake
-        .wait(NotificationKey::WAIT_INFINITE)
-        .unwrap_or_else(|error| panic!("Notification.Wait failed: {:?}", error.code()));
+        .await_bits(NotificationKey::WAIT_INFINITE)
+        .unwrap_or_else(|error| panic!("Notification.Await failed: {:?}", error.code()));
     assert_eq!(bits, WAKE_BITS);
 
     let elapsed_ticks = ticks() - START_TICKS.load(Ordering::Relaxed);
@@ -809,8 +809,8 @@ pub fn run() -> ! {
     // The checker now runs the budget-exhaustion scenario (it must be
     // interruptible to see ticks); wait for it to finish.
     let done_bits = done
-        .wait(NotificationKey::WAIT_INFINITE)
-        .unwrap_or_else(|error| panic!("done Notification.Wait failed: {:?}", error.code()));
+        .await_bits(NotificationKey::WAIT_INFINITE)
+        .unwrap_or_else(|error| panic!("done Notification.Await failed: {:?}", error.code()));
     assert_eq!(done_bits, WAKE_BITS);
 
     semi::println!("preempt-test: ✅ preemption, tick, clock and budget checks passed");

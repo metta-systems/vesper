@@ -562,7 +562,7 @@ mod tests {
         use vesper_objects::notification::NotificationOp;
 
         assert_eq!(NotificationOp::Signal as u8, 0);
-        assert_eq!(NotificationOp::Wait as u8, 1);
+        assert_eq!(NotificationOp::Await as u8, 1);
         assert_eq!(NotificationOp::Poll as u8, 2);
         assert_eq!(size_of::<NotificationOp>(), 1);
         assert_eq!(align_of::<NotificationOp>(), 1);

@@ -742,7 +742,7 @@ fn resume_selected(
     install_selected(frame, resumed);
     if let Some(completion) = resumed.completion {
         let kind = match completion.kind {
-            PendingKind::NotificationWait => "Notification::Wait",
+            PendingKind::NotificationAwait => "Notification::Await",
             PendingKind::EventCountAwait => "EventCount::Await",
             PendingKind::SchedulerDispatch => "Scheduler::Dispatch",
         };

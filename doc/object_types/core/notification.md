@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x07` (core) |
 | Backing | Kernel object carved from an Untyped by `Untyped.Retype` |
-| Operations | Signal, Wait, Poll |
+| Operations | Signal, Await, Poll |
 
 ## Purpose
 
@@ -15,7 +15,7 @@ A Notification is a 64-bit set of pending signal bits. Signalling ORs bits into 
 | Op | Name | Arguments | Rights | Result |
 |---|---|---|---|---|
 | 0 | Signal | `x2` bits | `Send` | — |
-| 1 | Wait | `x2` timeout | `Recv` | `x1` the pending bits |
+| 1 | Await | `x2` timeout | `Recv` | `x1` the pending bits |
 | 2 | Poll | — | `Recv` | `x1` the pending bits, or 0 |
 
 `Send` is rights bit 1 and `Recv` is bit 0.
@@ -24,7 +24,7 @@ A Notification is a 64-bit set of pending signal bits. Signalling ORs bits into 
 
 ORs bits into the Notification. A capability with a nonzero badge signals its badge and ignores `x2`; a capability with badge zero signals `x2`. If a Thread is waiting, the oldest waiter receives all pending bits and resumes; the others keep waiting.
 
-### Wait
+### Await
 
 Returns and clears all pending bits. If none are pending, the caller blocks until a Signal arrives. `x2` is the timeout in nanoseconds from now: `u64::MAX` (`NotificationKey::WAIT_INFINITE`) waits forever and 0 is invalid. A finite timeout ends the wait with `TimedOut` at the first timer interrupt at or after the deadline; `x1` is then 0, because a wait that timed out consumed nothing. A Signal that arrives first wins and the deadline is forgotten.
 
@@ -44,7 +44,7 @@ Returns and clears all pending bits without blocking; `x1` is 0 if none were pen
 
 ## Implementation
 
-Bits written to shared memory before a Signal are visible to the Thread that receives those bits through Wait or Poll. Retiring a waiting Thread removes it from the queue.
+Bits written to shared memory before a Signal are visible to the Thread that receives those bits through Await or Poll. Retiring a waiting Thread removes it from the queue.
 
 ## Planned changes
 

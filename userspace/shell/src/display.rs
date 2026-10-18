@@ -349,6 +349,6 @@ fn lamp(init_va: u64) -> ! {
     }
     let park = NotificationKey::from_key(RawKey::from_wire(init.notification));
     loop {
-        let _bits = park.wait(NotificationKey::WAIT_INFINITE);
+        let _bits = park.await_bits(NotificationKey::WAIT_INFINITE);
     }
 }

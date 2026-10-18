@@ -230,9 +230,9 @@ pub fn run() {
         .unwrap_or_else(|error| panic!("third Notification.Signal failed: {:?}", error.code()));
     assert_eq!(
         notification
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!(
-                "satisfied Notification.Wait failed: {:?}",
+                "satisfied Notification.Await failed: {:?}",
                 error.code()
             )),
         0b1
@@ -243,7 +243,7 @@ pub fn run() {
     // resumes it through the Bounce fixture Thread. A zero timeout is
     // invalid for any wait (finite timeouts are exercised by dispatch-test).
     assert!(matches!(
-        notification.wait(0),
+        notification.await_bits(0),
         Err(CapError::InvalidOperation)
     ));
     assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
@@ -260,8 +260,8 @@ pub fn run() {
     // The boot thread blocks on N1: this SVC does not return — the
     // kernel parks it, starts Bounce (which signals N1 and parks on N2),
     // then resumes the boot thread with the delivered bitmap.
-    let received = translation::notification_wait(n1_key)
-        .unwrap_or_else(|error| panic!("blocking Notification.Wait failed: {:?}", error.code()));
+    let received = translation::notification_await(n1_key)
+        .unwrap_or_else(|error| panic!("blocking Notification.Await failed: {:?}", error.code()));
     assert_eq!(received, BOUNCE_MAGIC_BITS);
     assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
     translation::observe_source();
@@ -518,7 +518,7 @@ pub fn run() {
             .signal(0b100)
             .unwrap_or_else(|error| panic!("post-retire Signal failed: {:?}", error.code()));
         let bits = NotificationKey::from_key(n2_key)
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("post-retire Wait failed: {:?}", error.code()));
         assert_eq!(bits, 0b100);
 
@@ -666,7 +666,7 @@ extern "C" fn bounce_entry() -> ! {
         .unwrap_or_else(|error| panic!("Bounce: Notification.Signal failed: {:?}", error.code()));
     // Serve one EventCount advance per N2 trigger, then park forever.
     for round in 0..2_u64 {
-        let trigger = translation::notification_wait(n2_key).unwrap_or_else(|error| {
+        let trigger = translation::notification_await(n2_key).unwrap_or_else(|error| {
             panic!("Bounce: round {round} wait failed: {:?}", error.code())
         });
         assert_eq!(fixture_stack_state(), initial_stack_state);
@@ -692,9 +692,9 @@ extern "C" fn bounce_entry() -> ! {
     }
     // Park forever: this wait blocks, so the scheduler resumes the boot
     // Thread. Reaching either arm below is a fixture failure.
-    match translation::notification_wait(n2_key) {
+    match translation::notification_await(n2_key) {
         Ok(bits) => panic!("Bounce: unexpected wakeup with bits {bits:#x}"),
-        Err(error) => panic!("Bounce: Notification.Wait failed: {:?}", error.code()),
+        Err(error) => panic!("Bounce: Notification.Await failed: {:?}", error.code()),
     }
 }
 

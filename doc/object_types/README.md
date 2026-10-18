@@ -22,7 +22,7 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | Time | `0x04` | [time.md](core/time.md) | Transfer, Merge, Query |
 | Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation, ArmTimer, Adopt, MoveThread |
 | Invocation | `0x06` | [invocation.md](core/invocation.md) | Call, CallWithKey |
-| Notification | `0x07` | [notification.md](core/notification.md) | Signal, Wait, Poll |
+| Notification | `0x07` | [notification.md](core/notification.md) | Signal, Await, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
 | IRQControl | `0x09` | [irq_control.md](core/irq_control.md) | Issue |
 | IRQHandler | `0x0a` | [irq_handler.md](core/irq_handler.md) | SetNotification, Clear, Ack, Retire, Query |
@@ -162,4 +162,4 @@ flowchart TD
 
 ### Blocking and address-space switches
 
-A blocking operation (`Notification.Wait`, `EventCount.Await`) does not return to the caller until it completes. The kernel saves the caller's registers in its Thread, runs the next runnable Thread, and later resumes the caller with the result in `x0..x2`. `AddressSpace.Activate`, scheduling, `Invocation.Call` and `Thread.Return` switch the hardware translation context (`TTBR0_EL1` and the ASID) on the way back to the caller. A synchronous exception from EL0 other than `svc` is a fault, delivered to the fault handler of the faulting AddressSpace; see [Thread](core/thread.md#fault-delivery).
+A blocking operation (`Notification.Await`, `EventCount.Await`) does not return to the caller until it completes. The kernel saves the caller's registers in its Thread, runs the next runnable Thread, and later resumes the caller with the result in `x0..x2`. `AddressSpace.Activate`, scheduling, `Invocation.Call` and `Thread.Return` switch the hardware translation context (`TTBR0_EL1` and the ASID) on the way back to the caller. A synchronous exception from EL0 other than `svc` is a fault, delivered to the fault handler of the faulting AddressSpace; see [Thread](core/thread.md#fault-delivery).

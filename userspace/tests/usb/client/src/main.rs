@@ -47,7 +47,7 @@ fn background(init_va: u64) -> ! {
         .unwrap_or_else(|error| panic!("background advance failed: {:?}", error.code()));
     let park = NotificationKey::from_key(RawKey::from_wire(init.notification));
     loop {
-        let _bits = park.wait(NotificationKey::WAIT_INFINITE);
+        let _bits = park.await_bits(NotificationKey::WAIT_INFINITE);
     }
 }
 
@@ -443,6 +443,6 @@ fn main(init_va: u64) -> ! {
         .unwrap_or_else(|error| panic!("report failed: {:?}", error.code()));
     let park = NotificationKey::from_key(RawKey::from_wire(init.notification));
     loop {
-        let _bits = park.wait(NotificationKey::WAIT_INFINITE);
+        let _bits = park.await_bits(NotificationKey::WAIT_INFINITE);
     }
 }

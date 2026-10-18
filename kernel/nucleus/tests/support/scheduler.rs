@@ -11,7 +11,7 @@ use {
             Scheduler, Thread, Time,
             arch_objects::{AddressSpaceId, AddressSpaceObject},
             carved::{Carved, CarvedId},
-            notification::WaitOutcome,
+            notification::AwaitOutcome,
             nucleus::test_arena,
             thread::ThreadId,
         },
@@ -949,9 +949,9 @@ fn a_woken_waiter_is_published_runnable_not_blocked() {
             (*Carved::<Notification>::validate(notification)
                 .ok()
                 .expect("Notification carved"))
-            .wait(notification, keys.thread_id, &mut nucleus.pending)
+            .await_bits(notification, keys.thread_id, &mut nucleus.pending)
         } {
-            Ok(WaitOutcome::Blocked(record)) => record,
+            Ok(AwaitOutcome::Blocked(record)) => record,
             _ => panic!("wait should block"),
         };
         nucleus.thread_mut(keys.thread_id).unwrap().context = ExecutionContext::Parked {
@@ -961,7 +961,7 @@ fn a_woken_waiter_is_published_runnable_not_blocked() {
         nucleus.publish_thread(keys.thread_id, false);
         let waiting = thread_snapshot(5, 128);
         assert_eq!(waiting.thread_state(), Some(ThreadState::Blocked));
-        assert_eq!(waiting.block_reason, BlockReason::NotificationWait as u32);
+        assert_eq!(waiting.block_reason, BlockReason::NotificationAwait as u32);
 
         // A signal completes the wait. The Thread stays parked until it is
         // resumed, but it can run: the record must say so, or a dispatcher

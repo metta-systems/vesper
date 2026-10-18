@@ -528,7 +528,7 @@ mod component {
         let replies = EventCountKey::from_key(replies);
         loop {
             interrupts
-                .wait(NotificationKey::WAIT_INFINITE)
+                .await_bits(NotificationKey::WAIT_INFINITE)
                 .unwrap_or_else(|error| {
                     panic!("mailbox: interrupt wait failed: {:?}", error.code())
                 });

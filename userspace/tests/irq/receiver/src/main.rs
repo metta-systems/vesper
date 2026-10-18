@@ -31,17 +31,17 @@ fn main(_argument: u64) -> ! {
     handler.ack().unwrap_or_else(|_| panic!("first Ack failed"));
     for _ in 0..ROUNDS {
         let bits = irq
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|_| panic!("interrupt Wait failed"));
         report
             .signal(bits)
             .unwrap_or_else(|_| panic!("report failed"));
         resume
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|_| panic!("resume Wait failed"));
         handler.ack().unwrap_or_else(|_| panic!("Ack failed"));
     }
     loop {
-        let _bits = irq.wait(NotificationKey::WAIT_INFINITE);
+        let _bits = irq.await_bits(NotificationKey::WAIT_INFINITE);
     }
 }

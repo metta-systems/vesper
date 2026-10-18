@@ -205,7 +205,7 @@ pub fn run() -> ! {
         0,
     );
     let bits = NotificationKey::from_key(result_notification)
-        .wait(NotificationKey::WAIT_INFINITE)
+        .await_bits(NotificationKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("probe wait failed: {:?}", error.code()));
     assert_eq!(
         bits, TRAPPED_BIT,

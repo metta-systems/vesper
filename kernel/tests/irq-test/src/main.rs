@@ -315,7 +315,7 @@ pub fn run() -> ! {
     for round in 1..=ROUNDS {
         arm_virtual_timer();
         let bits = report
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("report Wait failed: {:?}", error.code()));
         assert_eq!(
             bits,

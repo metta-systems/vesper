@@ -85,7 +85,7 @@ pub const INVALID_SELF_REFERENCE: u64 = 41;
 /// the dispatcher decided on. Detail 1 is the Thread's current generation;
 /// detail 2 is zero.
 pub const STALE_GENERATION: u64 = 42;
-/// A wait with a finite timeout (`Notification.Wait`, `EventCount.Await`)
+/// A wait with a finite timeout (`Notification.Await`, `EventCount.Await`)
 /// reached its deadline first. Detail 1 is the `EventCount` value or the
 /// Notification bitmap at that moment (the bitmap is always zero: a wait
 /// that timed out consumed nothing); detail 2 is zero.

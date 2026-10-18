@@ -267,7 +267,7 @@ pub fn run() -> ! {
     let mut reported = 0;
     while reported != all {
         reported |= report
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("report Wait failed: {:?}", error.code()));
         semi::println!("driver-test: reports {reported:#b}");
     }

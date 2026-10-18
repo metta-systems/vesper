@@ -89,7 +89,7 @@ fn receive(init: &EndpointInit) -> PpcResult {
             };
         }
         doorbell(init)
-            .wait(NotificationKey::WAIT_INFINITE)
+            .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("endpoint: doorbell wait failed: {:?}", error.code()));
         // Other Threads ran (and entered the endpoint) while this one blocked.
         assert_eq!(tls(), ENDPOINT_TLS, "endpoint: TLS lost across a block");

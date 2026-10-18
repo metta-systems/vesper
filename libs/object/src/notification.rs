@@ -19,8 +19,8 @@ mod tests;
 /// Userspace handle to a `Notification` capability: bitmap-based async
 /// signaling. Best for IRQs, completion events, wakeups.
 ///
-/// Nucleus dispatch supports `Signal`, `Wait`, and `Poll`.
-/// `Wait` blocks through the park/resume entry handling.
+/// Nucleus dispatch supports `Signal`, `Await`, and `Poll`.
+/// `Await` blocks through the park/resume entry handling.
 /// Signal bits come from the capability badge when
 /// nonzero, else the caller-supplied argument.
 pub struct NotificationKey {
@@ -42,7 +42,7 @@ pub enum NotificationOp {
     /// Takes one relative timeout argument (nanoseconds; `WAIT_INFINITE`
     /// blocks forever; finite values are unsupported until the time
     /// subsystem exists).
-    Wait = 1,
+    Await = 1,
     /// Consume pending bits immediately or return zero (none pending).
     /// Requires `RECV`. Never blocks.
     Poll = 2,
@@ -54,7 +54,7 @@ impl TryFrom<u64> for NotificationOp {
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Self::Signal),
-            1 => Ok(Self::Wait),
+            1 => Ok(Self::Await),
             2 => Ok(Self::Poll),
             _ => Err(CapError::InvalidOperation),
         }
@@ -70,7 +70,7 @@ impl TryFrom<u32> for NotificationOp {
 }
 
 impl NotificationKey {
-    /// Infinite-timeout encoding for [`Self::wait`]: block until completion
+    /// Infinite-timeout encoding for [`Self::await_bits`]: block until completion
     /// or teardown cancellation.
     pub const WAIT_INFINITE: u64 = u64::MAX;
 
@@ -98,17 +98,18 @@ impl NotificationKey {
         decode_syscall_result(result).map(|_| ())
     }
 
-    /// Wait: block until bits are pending, then consume and return them.
+    /// Await: block until bits are pending, then consume and return them.
     ///
     /// Wire schema: `x2` timeout (nanoseconds; `WAIT_INFINITE` = forever),
     /// `x3..x7` zero. Authority: `RECV`. An already-satisfied wait consumes
     /// and returns the bits immediately; a wait with no pending bits parks
     /// the caller and returns when a signal completes it (finite timeouts
     /// are unsupported until the time subsystem exists).
-    pub fn wait(&self, timeout_ns: u64) -> Result<u64, CapError> {
+    pub fn await_bits(&self, timeout_ns: u64) -> Result<u64, CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
-        let result =
-            unsafe { protected_call1(self.key.to_wire(), NotificationOp::Wait as u64, timeout_ns) };
+        let result = unsafe {
+            protected_call1(self.key.to_wire(), NotificationOp::Await as u64, timeout_ns)
+        };
         decode_syscall_result(result).map(|(bits, _)| bits)
     }
 

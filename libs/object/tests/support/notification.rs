@@ -48,7 +48,7 @@ pub(super) fn invoke_signal(response: Response) -> Result<Request, CapError> {
 /// or the decoded kernel error.
 pub(super) fn invoke_wait(response: Response) -> Result<(Request, u64), CapError> {
     RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
-    let result = notification_key().wait(NotificationKey::WAIT_INFINITE);
+    let result = notification_key().await_bits(NotificationKey::WAIT_INFINITE);
     let request = take_request();
     result.map(|bits| (request, bits))
 }
@@ -72,11 +72,11 @@ fn notification_signal_preserves_request_encoding_and_decodes_success() {
 }
 
 #[test]
-fn notification_wait_encodes_the_timeout_argument() {
+fn notification_await_encodes_the_timeout_argument() {
     let ((key, op, args, len), bits) = invoke_wait((0, 0b11, 0)).map_err(CapError::code).unwrap();
     assert_eq!(len, 1);
     assert_eq!(key, RawKey::new(KeySlot(7), 1).to_wire());
-    assert_eq!(op, NotificationOp::Wait as u64);
+    assert_eq!(op, NotificationOp::Await as u64);
     assert_eq!(args, [NotificationKey::WAIT_INFINITE, 0, 0, 0, 0, 0]);
     assert_eq!(bits, 0b11);
 }
@@ -112,7 +112,7 @@ fn notification_wrappers_preserve_kernel_errors() {
 }
 
 #[test]
-fn notification_wait_infinite_is_the_selected_encoding() {
+fn notification_await_infinite_is_the_selected_encoding() {
     // The timeout model: u64::MAX means infinite;
     // zero and finite values are invalid/unsupported on the wire.
     assert_eq!(NotificationKey::WAIT_INFINITE, u64::MAX);

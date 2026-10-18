@@ -37,9 +37,9 @@ use {
 /// kernel-internal and never crosses the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingKind {
-    /// `Notification.Wait`: completion delivers the consumed signal bitmap
+    /// `Notification.Await`: completion delivers the consumed signal bitmap
     /// in the first result word.
-    NotificationWait,
+    NotificationAwait,
     /// `EventCount.Await`: completion delivers the observed counter value
     /// in the first result word, or the shared `CounterOverflow` error when
     /// an advance's overflow wakes the waiter.
@@ -598,7 +598,7 @@ mod tests {
     }
 
     fn block(pool: &mut PendingPool, index: u16) -> ObjectId {
-        match pool.block(waiter(index), PendingKind::NotificationWait, object()) {
+        match pool.block(waiter(index), PendingKind::NotificationAwait, object()) {
             Ok(id) => id,
             Err(_) => panic!("block failed"),
         }
@@ -732,7 +732,7 @@ mod tests {
         }
         assert_eq!(pool.len(), PendingPool::CAPACITY);
         assert!(matches!(
-            pool.block(waiter(255), PendingKind::NotificationWait, object()),
+            pool.block(waiter(255), PendingKind::NotificationAwait, object()),
             Err(CapError::PoolExhausted)
         ));
     }

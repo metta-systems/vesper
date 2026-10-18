@@ -1,10 +1,10 @@
-//! `Notification` operations: `Signal`/`Wait`/`Poll`
+//! `Notification` operations: `Signal`/`Await`/`Poll`
 //!
 //! Wire schema (see `doc/capabilities-contract.md`):
 //! - `Signal` `0`: `x2` bits — used when the capability badge is zero —
 //!   `x3..x7` zero. ORs the authorized bits into the bitmap and wakes at
 //!   most one waiter. Success returns zeros.
-//! - `Wait` `1`: `x2` timeout (nanoseconds; `u64::MAX` = infinite; zero and
+//! - `Await` `1`: `x2` timeout (nanoseconds; `u64::MAX` = infinite; zero and
 //!   finite values are invalid/unsupported until the time subsystem exists),
 //!   `x3..x7` zero. An already-satisfied wait consumes and returns the
 //!   pending bits. A wait that would block reports `InvokeOutcome::Blocked`:
@@ -13,7 +13,7 @@
 //! - `Poll` `2`: no arguments. Consumes and returns pending bits (zero =
 //!   none pending). Never blocks.
 //!
-//! Authority (per-kind rights reuse): `Signal` requires `SEND`; `Wait` and
+//! Authority (per-kind rights reuse): `Signal` requires `SEND`; `Await` and
 //! `Poll` require `RECV`. Signal bits come from the capability's badge when
 //! nonzero, else the caller-supplied argument.
 //! Retype installs badge zero, so the argument path is the one reached
@@ -89,7 +89,7 @@ pub fn invoke<A: ArchObjects>(
             Ok(InvokeOutcome::Complete((0, 0)))
         }
 
-        NotificationOp::Wait => {
+        NotificationOp::Await => {
             if !rights.has(Rights::RECV) {
                 return Err(CapError::InsufficientRights);
             }
@@ -110,14 +110,14 @@ pub fn invoke<A: ArchObjects>(
             let mut notification = access
                 .resolve_object::<Notification>(id)
                 .map_err(|error| error.for_key(key, 0))?;
-            match notification.wait(id, waiter, &mut nucleus.pending)? {
-                crate::objects::notification::WaitOutcome::Ready(bits) => {
-                    semi::println!("✅ Notification::Wait(0x{bits:x})");
+            match notification.await_bits(id, waiter, &mut nucleus.pending)? {
+                crate::objects::notification::AwaitOutcome::Ready(bits) => {
+                    semi::println!("✅ Notification::Await(0x{bits:x})");
                     Ok(InvokeOutcome::Complete((bits, 0)))
                 }
                 // The blocking path's success line prints at the resume that
                 // delivers the completed result (see `park_and_resume`).
-                crate::objects::notification::WaitOutcome::Blocked(record) => {
+                crate::objects::notification::AwaitOutcome::Blocked(record) => {
                     if timeout_ns != u64::MAX {
                         nucleus
                             .set_wait_timeout(record, timeout_ns)

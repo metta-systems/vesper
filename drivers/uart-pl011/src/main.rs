@@ -203,7 +203,7 @@ mod component {
         let wakeups = NotificationKey::from_key(RawKey::from_wire(init.notification));
         loop {
             let woken = wakeups
-                .wait(NotificationKey::WAIT_INFINITE)
+                .await_bits(NotificationKey::WAIT_INFINITE)
                 .unwrap_or_else(|error| panic!("uart-pl011: Wait failed: {:?}", error.code()));
             let interrupts = uart.take_interrupts();
             // Drain the receive FIFO before the transmit Thread sends more:

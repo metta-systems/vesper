@@ -390,7 +390,7 @@ fn phase_four(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, 
         Ordering::Release,
     );
 
-    // A Notification wait with a timeout nobody signals within: the timed
+    // A Notification await with a timeout nobody signals within: the timed
     // waiter blocks, and ten milliseconds later its timeout makes it runnable.
     let timed = RawKey::from_wire(word(P4_TIMED_KEY));
     let timed_record = {
@@ -532,7 +532,10 @@ fn phase_six(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, s
         .unwrap_or_else(|error| fail("Thread.Suspend", error));
     let suspended = snapshot(slot_of(FIRST));
     assert_eq!(suspended.thread_state(), Some(ThreadState::Suspended));
-    assert_eq!(suspended.block_reason, BlockReason::NotificationWait as u32);
+    assert_eq!(
+        suspended.block_reason,
+        BlockReason::NotificationAwait as u32
+    );
     // A second Suspend is refused.
     assert!(matches!(
         ThreadKey::from_key(key(FIRST)).suspend(),

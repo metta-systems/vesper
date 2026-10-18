@@ -1034,7 +1034,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 if !dying && !matches!(state, ThreadState::Runnable) =>
             {
                 match self.pending.kind(record) {
-                    Ok(PendingKind::NotificationWait) => BlockReason::NotificationWait,
+                    Ok(PendingKind::NotificationAwait) => BlockReason::NotificationAwait,
                     Ok(PendingKind::EventCountAwait) => BlockReason::EventCountAwait,
                     Ok(PendingKind::SchedulerDispatch) | Err(_) => BlockReason::None,
                 }
@@ -1398,7 +1398,7 @@ mod tests {
             carved::{self, Carved, CarvedId},
             completion::PendingState,
             event_count::{AdvanceOutcome, AwaitOutcome},
-            notification::WaitOutcome,
+            notification::AwaitOutcome as NotificationAwait,
             scheduler::Region,
             thread::{ExecutionContext, RecordSlot, ThreadId},
         },
@@ -1495,9 +1495,12 @@ mod tests {
         notification: CarvedId,
         waiter: ThreadId,
     ) -> ObjectId {
-        match object::<Notification>(notification).wait(notification, waiter, &mut nucleus.pending)
-        {
-            Ok(WaitOutcome::Blocked(record)) => record,
+        match object::<Notification>(notification).await_bits(
+            notification,
+            waiter,
+            &mut nucleus.pending,
+        ) {
+            Ok(NotificationAwait::Blocked(record)) => record,
             _ => panic!("wait should block"),
         }
     }
@@ -1588,7 +1591,7 @@ mod tests {
     }
 
     #[test_case]
-    fn a_notification_wait_past_its_deadline_times_out_and_leaves_the_queue() {
+    fn a_notification_await_past_its_deadline_times_out_and_leaves_the_queue() {
         let nucleus = fixture_nucleus();
         let waiter = carve_thread();
         let (n, _e) = carve_objects();

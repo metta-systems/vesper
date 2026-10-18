@@ -115,7 +115,7 @@ fn spawn(
 /// Block until the components report exactly `expected` on `done`.
 fn wait_for(done: &NotificationKey, expected: u64, what: &str) {
     let bits = done
-        .wait(NotificationKey::WAIT_INFINITE)
+        .await_bits(NotificationKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("{what}: wait failed: {:?}", error.code()));
     assert_eq!(bits, expected, "{what}: unexpected report");
 }

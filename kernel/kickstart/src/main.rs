@@ -218,7 +218,7 @@ pub fn kickstart_run() -> ! {
     // core to the drivers (and idle when they all wait).
     semi::println!("🥾 Boot Thread parked");
     loop {
-        let _never = park.wait(NotificationKey::WAIT_INFINITE);
+        let _never = park.await_bits(NotificationKey::WAIT_INFINITE);
     }
 
     // kernel_init_mmio_va_allocator()

@@ -47,7 +47,7 @@ fn main(index: u64) -> ! {
         .signal(1 << index)
         .unwrap_or_else(|error| panic!("client {index}: done signal failed: {:?}", error.code()));
     match NotificationKey::from_key(RawKey::from_wire(init.park))
-        .wait(NotificationKey::WAIT_INFINITE)
+        .await_bits(NotificationKey::WAIT_INFINITE)
     {
         Ok(bits) => panic!("client {index}: unexpected wakeup with bits {bits:#x}"),
         Err(error) => panic!("client {index}: park failed: {:?}", error.code()),

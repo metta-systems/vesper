@@ -183,6 +183,6 @@ fn main(init_va: u64) -> ! {
         .unwrap_or_else(|error| panic!("report failed: {:?}", error.code()));
     let interrupts = NotificationKey::from_key(RawKey::from_wire(init.notification));
     loop {
-        let _bits = interrupts.wait(NotificationKey::WAIT_INFINITE);
+        let _bits = interrupts.await_bits(NotificationKey::WAIT_INFINITE);
     }
 }

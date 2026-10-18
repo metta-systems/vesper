@@ -84,7 +84,7 @@ extern "C" fn fault_body(
             // SAFETY: as in `return_key`.
             let init = unsafe { faulter_init() };
             notification(init.block)
-                .wait(NotificationKey::WAIT_INFINITE)
+                .await_bits(NotificationKey::WAIT_INFINITE)
                 .unwrap_or_else(|error| panic!("faulter: block wait failed: {:?}", error.code()));
             FaultAction::Skip
         }
@@ -183,7 +183,7 @@ fn main(role: u64) -> ! {
         _ => panic!("faulter: unknown role {role}"),
     }
     .unwrap_or_else(|error| panic!("faulter: done signal failed: {:?}", error.code()));
-    match notification(init.park).wait(NotificationKey::WAIT_INFINITE) {
+    match notification(init.park).await_bits(NotificationKey::WAIT_INFINITE) {
         Ok(bits) => panic!("faulter: unexpected wakeup with bits {bits:#x}"),
         Err(error) => panic!("faulter: park failed: {:?}", error.code()),
     }

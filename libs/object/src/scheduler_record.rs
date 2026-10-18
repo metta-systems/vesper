@@ -65,7 +65,7 @@ pub const FLAG_DISPATCHER: u32 = 1 << 2;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BlockReason {
     None = 0,
-    NotificationWait = 1,
+    NotificationAwait = 1,
     EventCountAwait = 2,
     PpcCall = 3,
 }
@@ -74,7 +74,7 @@ impl BlockReason {
     pub const fn from_raw(raw: u32) -> Option<Self> {
         match raw {
             0 => Some(Self::None),
-            1 => Some(Self::NotificationWait),
+            1 => Some(Self::NotificationAwait),
             2 => Some(Self::EventCountAwait),
             3 => Some(Self::PpcCall),
             _ => None,

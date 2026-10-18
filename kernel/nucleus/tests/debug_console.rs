@@ -505,7 +505,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
             .pending
             .block(
                 first,
-                PendingKind::NotificationWait,
+                PendingKind::NotificationAwait,
                 crate::objects::carved::test_id(libobject::ObjectType::NOTIFICATION, 0),
             )
             .unwrap_or_else(|error| panic!("waiting record: {:?}", error.code()));
@@ -640,7 +640,7 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                             (
                                 waiting,
                                 first,
-                                PendingKind::NotificationWait,
+                                PendingKind::NotificationAwait,
                                 PendingState::Waiting,
                             ),
                             (completed, second, PendingKind::EventCountAwait, terminal),

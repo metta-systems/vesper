@@ -23,7 +23,7 @@ fn main(notification: u64) -> ! {
     notification
         .signal(HELLO_BITS)
         .unwrap_or_else(|error| panic!("hello: signal failed: {:?}", error.code()));
-    match notification.wait(NotificationKey::WAIT_INFINITE) {
+    match notification.await_bits(NotificationKey::WAIT_INFINITE) {
         Ok(bits) => panic!("hello: unexpected wakeup with bits {bits:#x}"),
         Err(error) => panic!("hello: park failed: {:?}", error.code()),
     }

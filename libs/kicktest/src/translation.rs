@@ -363,8 +363,8 @@ fn wait_with_registers(key: RawKey, op: u64, arg0: u64, arg1: u64) -> Result<u64
     decode_syscall_result(observed.result()).map(|(value, _)| value)
 }
 
-pub fn notification_wait(key: RawKey) -> Result<u64, CapError> {
-    wait_with_registers(key, NotificationOp::Wait as u64, u64::MAX, 0)
+pub fn notification_await(key: RawKey) -> Result<u64, CapError> {
+    wait_with_registers(key, NotificationOp::Await as u64, u64::MAX, 0)
 }
 
 pub fn event_count_await(key: RawKey, target: u64) -> Result<u64, CapError> {

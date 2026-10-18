@@ -12,7 +12,7 @@
 //! Contract (see `doc/capabilities-contract.md`): `Signal` ORs authorized
 //! bits and wakes at most one waiter, which consumes the delivered bitmap
 //! (one-consumer; broadcast-style observation uses `EventCount` independent
-//! readers); `Wait` blocks until bits are pending and consumes them; `Poll`
+//! readers); `Await` blocks until bits are pending and consumes them; `Poll`
 //! consumes immediately or returns zero (no pending bits). Repeated signals
 //! to a bit coalesce.
 
@@ -44,9 +44,9 @@ pub struct Notification {
     waiters: WaitQueue,
 }
 
-/// Outcome of a `Wait` attempt.
+/// Outcome of an `Await` attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WaitOutcome {
+pub enum AwaitOutcome {
     /// Already-satisfied wait: these bits were pending and are consumed;
     /// the invocation returns immediately with them.
     Ready(u64),
@@ -103,7 +103,7 @@ impl Notification {
         }
     }
 
-    /// `Wait`: consume pending bits immediately if any (already-satisfied
+    /// `Await`: consume pending bits immediately if any (already-satisfied
     /// wait); otherwise register the caller's pending record in the queue
     /// and report the caller as blocked.
     ///
@@ -112,27 +112,27 @@ impl Notification {
     /// to roll back.
     /// `own` is this Notification's carved identity, recorded in the pending
     /// record so Thread teardown can find the queue holding it.
-    pub fn wait(
+    pub fn await_bits(
         &mut self,
         own: CarvedId,
         waiter: ThreadId,
         pending: &mut PendingPool,
-    ) -> Result<WaitOutcome, CapError> {
+    ) -> Result<AwaitOutcome, CapError> {
         if self.state != 0 {
             let bits = self.state;
             self.state = 0;
-            Ok(WaitOutcome::Ready(bits))
+            Ok(AwaitOutcome::Ready(bits))
         } else {
             if self.waiters.is_full() {
                 return Err(CapError::PoolExhausted);
             }
-            let record = pending.block(waiter, PendingKind::NotificationWait, own)?;
+            let record = pending.block(waiter, PendingKind::NotificationAwait, own)?;
             // The reservation was validated above and the kernel lock
             // excludes concurrent admission, so this cannot fail; if it ever
             // does, abandon the registered record rather than leaking its
             // pool slot.
             match self.waiters.push(record) {
-                Ok(()) => Ok(WaitOutcome::Blocked(record)),
+                Ok(()) => Ok(AwaitOutcome::Blocked(record)),
                 Err(error) => {
                     pending.abandon(record);
                     Err(error)
@@ -180,7 +180,7 @@ impl Notification {
 #[cfg(test)]
 mod tests {
     use {
-        super::{Notification, WaitOutcome},
+        super::{AwaitOutcome, Notification},
         crate::objects::{
             access::{ObjectId, PoolTag},
             carved::{CarvedId, test_id},
@@ -208,8 +208,8 @@ mod tests {
         pending: &mut PendingPool,
         index: u16,
     ) -> ObjectId {
-        match notification.wait(own(), waiter(index), pending) {
-            Ok(WaitOutcome::Blocked(record)) => record,
+        match notification.await_bits(own(), waiter(index), pending) {
+            Ok(AwaitOutcome::Blocked(record)) => record,
             _ => panic!("wait should block"),
         }
     }
@@ -236,8 +236,8 @@ mod tests {
         // Already-satisfied wait: the bits are consumed and returned without
         // registering a record.
         assert_eq!(
-            notification.wait(own(), waiter(0), &mut pending).ok(),
-            Some(WaitOutcome::Ready(0b101))
+            notification.await_bits(own(), waiter(0), &mut pending).ok(),
+            Some(AwaitOutcome::Ready(0b101))
         );
         assert_eq!(notification.pending_bits(), 0);
         assert!(pending.is_empty());
@@ -327,7 +327,7 @@ mod tests {
         // The next wait is rejected before admission: no record registered,
         // nothing to roll back.
         assert!(matches!(
-            notification.wait(own(), waiter(255), &mut pending),
+            notification.await_bits(own(), waiter(255), &mut pending),
             Err(CapError::PoolExhausted)
         ));
         assert_eq!(pending.len(), before);

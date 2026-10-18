@@ -75,7 +75,7 @@ fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
                 .pending
                 .block(
                     source,
-                    PendingKind::NotificationWait,
+                    PendingKind::NotificationAwait,
                     crate::objects::carved::test_id(libobject::ObjectType::NOTIFICATION, 0),
                 )
                 .unwrap_or_else(|e| panic!("incoming wait: {:?}", e.code()));
@@ -1141,7 +1141,7 @@ fn the_dispatched_thread_blocking_activates_the_dispatcher() {
             .pending
             .block(
                 waits.tail,
-                PendingKind::NotificationWait,
+                PendingKind::NotificationAwait,
                 crate::objects::carved::test_id(ObjectType::NOTIFICATION, 0),
             )
             .unwrap_or_else(|e| panic!("wait: {:?}", e.code()));
@@ -1641,7 +1641,7 @@ fn a_suspended_waiter_keeps_its_wait_and_resume_cannot_skip_it() {
             .pending
             .block(
                 blocked,
-                PendingKind::NotificationWait,
+                PendingKind::NotificationAwait,
                 crate::objects::carved::test_id(libobject::ObjectType::NOTIFICATION, 0x100),
             )
             .unwrap_or_else(|e| panic!("wait: {:?}", e.code()));

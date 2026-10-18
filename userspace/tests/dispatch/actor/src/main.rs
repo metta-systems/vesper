@@ -50,8 +50,8 @@ fn main(page: u64) -> ! {
     match words[ROLE].load(Ordering::Relaxed) {
         WAITER => loop {
             notification
-                .wait(NotificationKey::WAIT_INFINITE)
-                .unwrap_or_else(|error| fail("Notification.Wait", error));
+                .await_bits(NotificationKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| fail("Notification.Await", error));
             words[COUNT].fetch_add(1, Ordering::Release);
         },
         KICKER => {
@@ -64,11 +64,11 @@ fn main(page: u64) -> ! {
             }
         }
         TIMED => loop {
-            match notification.wait(TIMEOUT_NS) {
+            match notification.await_bits(TIMEOUT_NS) {
                 Err(CapError::TimedOut { value: 0 }) => {
                     words[COUNT].fetch_add(1, Ordering::Release);
                 }
-                Err(error) => fail("Notification.Wait with a timeout", error),
+                Err(error) => fail("Notification.Await with a timeout", error),
                 Ok(_) => panic!("dispatch actor: a timed wait was signalled"),
             }
         },
