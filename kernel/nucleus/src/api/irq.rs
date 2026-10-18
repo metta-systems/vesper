@@ -284,6 +284,7 @@ pub fn deliver<A: ArchObjects>(access: &Access, line: u32, nucleus: &mut Nucleus
         Ok(None) => {}
         Err(error) => panic!("IRQ signal failed: {:?}", error.code()),
     }
+    nucleus.wake_wait_sets();
     true
 }
 

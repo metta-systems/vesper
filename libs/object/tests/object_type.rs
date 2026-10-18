@@ -663,6 +663,7 @@ mod tests {
             (CoreType::Invocation, "Invocation"),
             (CoreType::Notification, "Notification"),
             (CoreType::EventCount, "EventCount"),
+            (CoreType::WaitSet, "WaitSet"),
             (CoreType::IRQControl, "IRQControl"),
             (CoreType::IRQHandler, "IRQHandler"),
             (CoreType::DebugConsole, "DebugConsole"),
@@ -737,7 +738,7 @@ mod tests {
     }
 
     // Literal ABI oracles: do not derive these IDs from the production catalogue.
-    const CORE_TYPES: [(CoreType, ObjectType, u8); 12] = [
+    const CORE_TYPES: [(CoreType, ObjectType, u8); 13] = [
         (CoreType::Null, ObjectType::NULL, 0),
         (CoreType::Untyped, ObjectType::UNTYPED, 1),
         (CoreType::KeyTable, ObjectType::KEY_TABLE, 2),
@@ -747,8 +748,9 @@ mod tests {
         (CoreType::Invocation, ObjectType::INVOCATION, 6),
         (CoreType::Notification, ObjectType::NOTIFICATION, 7),
         (CoreType::EventCount, ObjectType::EVENT_COUNT, 8),
-        (CoreType::IRQControl, ObjectType::IRQ_CONTROL, 9),
-        (CoreType::IRQHandler, ObjectType::IRQ_HANDLER, 10),
+        (CoreType::WaitSet, ObjectType::WAIT_SET, 9),
+        (CoreType::IRQControl, ObjectType::IRQ_CONTROL, 10),
+        (CoreType::IRQHandler, ObjectType::IRQ_HANDLER, 11),
         (CoreType::DebugConsole, ObjectType::DEBUG_CONSOLE, 127),
     ];
 

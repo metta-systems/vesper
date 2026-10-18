@@ -33,9 +33,9 @@ DESIGN CHANGE: As explained [here](https://sel4.discourse.group/t/why-do-cnodes-
 
 ---
 
-usb
++usb
 sdcard
-compositor
++compositor
 "terminal" windows
 
 kernel runtime upgrade?
@@ -48,10 +48,6 @@ move AS first in the arch key numbers
 
 ---
 
-should we use svc #op instead of just svc #0 and free up one arg register?
-
----
-
 ### 2. Finish the already-started interrupt-kernel foundation
 
 Integrate the new exception carrier into Thread/main/bootstrap:
@@ -60,14 +56,6 @@ Integrate the new exception carrier into Thread/main/bootstrap:
 - Thread-owned parked contexts, no retained exception-frame addresses.
 - Normal handler unwind and exception return through the rewritten transient frame.
 - Preserve the existing Notification/EventCount regressions.
-
----
-
-extern "C" fn current_elx_irq(e: &mut ExceptionContext) {
-// -- @todo
-// let token = unsafe { &exception::asynchronous::IRQContext::new() };
-// exception::asynchronous::irq_manager().handle_pending_irqs(token);
-}
 
 ---
 

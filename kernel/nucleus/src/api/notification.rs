@@ -13,6 +13,8 @@
 //! - `Poll` `2`: no arguments. Consumes and returns pending bits (zero =
 //!   none pending). Never blocks.
 //!
+//! A Notification listed in a `WaitSet` refuses `Await` with `Watched`.
+//!
 //! Authority (per-kind rights reuse): `Signal` requires `SEND`; `Await` and
 //! `Poll` require `RECV`. Signal bits come from the capability's badge when
 //! nonzero, else the caller-supplied argument.
@@ -85,6 +87,7 @@ pub fn invoke<A: ArchObjects>(
             if let Some(record) = notification.signal(bits, &mut nucleus.pending)? {
                 wake_waiter(nucleus, record)?;
             }
+            nucleus.wake_wait_sets();
             semi::println!("✅ Notification::Signal(0x{bits:x})");
             Ok(InvokeOutcome::Complete((0, 0)))
         }

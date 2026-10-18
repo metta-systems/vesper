@@ -90,6 +90,13 @@ pub const STALE_GENERATION: u64 = 42;
 /// Notification bitmap at that moment (the bitmap is always zero: a wait
 /// that timed out consumed nothing); detail 2 is zero.
 pub const TIMED_OUT: u64 = 43;
+/// A Notification is listed in a `WaitSet` and cannot be awaited directly, or
+/// a Notification with a Thread waiting on it directly cannot join a `WaitSet`.
+/// Details are zero.
+pub const WATCHED: u64 = 44;
+/// A member of a `WaitSet` is no longer live. Detail 1 is the member's slot;
+/// detail 2 is zero.
+pub const MEMBER_RETIRED: u64 = 45;
 
 /// Which self reference of a `KeyTable` is wrong, by the well-known slot that
 /// must hold it.

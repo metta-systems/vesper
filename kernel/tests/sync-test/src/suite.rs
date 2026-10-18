@@ -24,7 +24,7 @@ use {
     },
     libobject::{
         CapError, EventCountKey, InconsistencyReason, KeySlot, KeyTableKey, NotificationKey,
-        ObjectType, RawKey, Rights, TimeKey, UntypedKey,
+        ObjectType, RawKey, Rights, TimeKey, UntypedKey, WaitSetKey,
         thread::ThreadKey,
         time::{INFINITE_BUDGET, TimeQuery},
     },
@@ -423,6 +423,195 @@ pub fn run() {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // WaitSet end-to-end: membership, rights, level-triggered readiness
+    // that consumes nothing, a condition updated while the member stays,
+    // and a blocking Await completed by Bounce's advance
+    // ─────────────────────────────────────────────────────────────────
+    {
+        let retype = |kind, slot: u32, rights: Rights| {
+            untyped
+                .retype(kind, 0, 0, 1, &self_table, slot, rights)
+                .unwrap_or_else(|error| panic!("Retype failed: {:?}", error.code()))
+        };
+        let set_key = retype(ObjectType::WAIT_SET, KeySlot(30).0, Rights::all());
+        let recv_only_key = retype(ObjectType::WAIT_SET, KeySlot(31).0, Rights(Rights::RECV));
+        let send_only_key = retype(
+            ObjectType::NOTIFICATION,
+            KeySlot(32).0,
+            Rights(Rights::SEND),
+        );
+        let wait_set = WaitSetKey::from_key(set_key);
+        let recv_only = WaitSetKey::from_key(recv_only_key);
+        let n1 = NotificationKey::from_key(n1_key);
+        let slot_error = |result: Result<(), CapError>, kind: &str, slot: u32| match result {
+            Err(CapError::InvalidSlot(found)) => kind == "invalid" && found == KeySlot(slot),
+            Err(CapError::SlotOccupied(found)) => kind == "occupied" && found == KeySlot(slot),
+            Err(CapError::EmptySlot(found)) => kind == "empty" && found == KeySlot(slot),
+            _ => false,
+        };
+
+        // A zero timeout is invalid for any wait.
+        assert!(matches!(
+            wait_set.await_ready(0),
+            Err(CapError::InvalidOperation)
+        ));
+
+        // Authority: membership needs WRITE on the set and RECV on the member.
+        assert!(matches!(
+            recv_only.add_member(n1_key, 0, 0b1),
+            Err(CapError::InsufficientRights)
+        ));
+        assert!(matches!(
+            recv_only.update_member(0, 1),
+            Err(CapError::InsufficientRights)
+        ));
+        assert!(matches!(
+            recv_only.remove_member(0),
+            Err(CapError::InsufficientRights)
+        ));
+        assert!(matches!(
+            wait_set.add_member(send_only_key, 0, 0b1),
+            Err(CapError::InsufficientRights)
+        ));
+        // Only a Notification or an EventCount is a member.
+        assert!(matches!(
+            wait_set.add_member(set_key, 0, 1),
+            Err(CapError::TypeMismatch { .. })
+        ));
+
+        // Fill two slots: N1 watching bits 1 and 2 (slot 2), the EventCount
+        // (now 10) waiting for 12 (slot 3).
+        wait_set
+            .add_member(n1_key, 2, 0b110)
+            .unwrap_or_else(|error| panic!("AddMember N1 failed: {:?}", error.code()));
+        wait_set
+            .add_member(ec_key, 3, 12)
+            .unwrap_or_else(|error| panic!("AddMember EC failed: {:?}", error.code()));
+        assert!(slot_error(
+            wait_set.add_member(ec_key, 3, 12),
+            "occupied",
+            3
+        ));
+        assert!(slot_error(wait_set.add_member(ec_key, 8, 12), "invalid", 8));
+        assert!(matches!(
+            wait_set.add_member(n1_key, 4, 0),
+            Err(CapError::InvalidOperation)
+        ));
+        assert!(slot_error(wait_set.update_member(5, 1), "empty", 5));
+        assert!(slot_error(wait_set.remove_member(5), "empty", 5));
+
+        // A Notification listed in a set refuses a direct Await, so nothing
+        // can take its bits ahead of the set; Poll stays allowed. One that a
+        // Thread is already waiting on (N2, where Bounce is parked) cannot
+        // join a set, and its slot stays vacant.
+        assert!(matches!(
+            n1.await_bits(WaitSetKey::WAIT_INFINITE),
+            Err(CapError::Watched)
+        ));
+        assert!(matches!(
+            wait_set.add_member(n2_key, 6, 0b1),
+            Err(CapError::Watched)
+        ));
+        assert!(slot_error(wait_set.remove_member(6), "empty", 6));
+        assert!(slot_error(wait_set.update_member(9, 1), "invalid", 9));
+
+        // Readiness is level-triggered and consumes nothing: a signal on a
+        // watched bit makes slot 2 ready, as often as it is asked, until the
+        // Notification itself is polled.
+        n1.signal(0b10)
+            .unwrap_or_else(|error| panic!("N1 signal failed: {:?}", error.code()));
+        for _ in 0..2 {
+            assert_eq!(
+                wait_set
+                    .await_ready(WaitSetKey::WAIT_INFINITE)
+                    .unwrap_or_else(|error| panic!("ready Await failed: {:?}", error.code())),
+                0b100
+            );
+        }
+        assert_eq!(
+            n1.poll()
+                .unwrap_or_else(|error| panic!("N1 poll failed: {:?}", error.code())),
+            0b10
+        );
+
+        // A condition changes while the member stays: bit 3 is outside the
+        // watched mask until the mask is updated.
+        n1.signal(0b1000)
+            .unwrap_or_else(|error| panic!("N1 signal failed: {:?}", error.code()));
+        wait_set
+            .update_member(2, 0b1000)
+            .unwrap_or_else(|error| panic!("UpdateMember failed: {:?}", error.code()));
+        assert_eq!(
+            wait_set
+                .await_ready(WaitSetKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!("updated Await failed: {:?}", error.code())),
+            0b100
+        );
+        assert_eq!(
+            n1.poll()
+                .unwrap_or_else(|error| panic!("N1 poll failed: {:?}", error.code())),
+            0b1000
+        );
+        wait_set
+            .update_member(2, 0b110)
+            .unwrap_or_else(|error| panic!("UpdateMember failed: {:?}", error.code()));
+
+        // Blocking Await end-to-end: request Bounce's +2 advance (bit 2),
+        // then block with nothing ready. Bounce advances the EventCount to 12,
+        // which reaches slot 3's target and completes this wait.
+        NotificationKey::from_key(n2_key)
+            .signal(0b100)
+            .unwrap_or_else(|error| panic!("N2 WaitSet trigger failed: {:?}", error.code()));
+        assert_eq!(
+            translation::wait_set_await(set_key, WaitSetKey::WAIT_INFINITE).unwrap_or_else(
+                |error| panic!("blocking WaitSet.Await failed: {:?}", error.code())
+            ),
+            0b1000
+        );
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+        translation::observe_source();
+        assert_eq!(
+            event_count
+                .read()
+                .unwrap_or_else(|error| panic!("sixth EventCount.Read failed: {:?}", error.code())),
+            12
+        );
+        assert_eq!(fixture_stack_state(), (boot_execution_sp, shared_trap_sp));
+        assert_bounce_parked_context(
+            nucleus
+                .thread(bounce_id)
+                .expect("Bounce missing after the WaitSet round"),
+            bounce_stack_bottom,
+            bounce_stack_top,
+        );
+        // The wait completed, so the set has no waiter and answers at once.
+        assert_eq!(
+            wait_set
+                .await_ready(WaitSetKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!("later Await failed: {:?}", error.code())),
+            0b1000
+        );
+
+        // Removing the members empties the slots.
+        wait_set
+            .remove_member(3)
+            .unwrap_or_else(|error| panic!("remove slot 3 failed: {:?}", error.code()));
+        wait_set
+            .remove_member(2)
+            .unwrap_or_else(|error| panic!("remove slot 2 failed: {:?}", error.code()));
+        assert!(slot_error(wait_set.remove_member(2), "empty", 2));
+
+        // With N1 out of the set it can be awaited directly again.
+        n1.signal(0b1)
+            .unwrap_or_else(|error| panic!("N1 signal failed: {:?}", error.code()));
+        assert_eq!(
+            n1.await_bits(NotificationKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| panic!("direct Await failed: {:?}", error.code())),
+            0b1
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Thread.Retire end-to-end: the Thread-control teardown trigger —
     // cancel every pending record naming the target as waiter, purge its
     // queued wakeup, retire the carved Thread — through the real SVC path
@@ -639,9 +828,9 @@ const BOUNCE_MAGIC_BITS: u64 = 0b1010_1010;
 ///
 /// Bounce first signals the notification the boot Thread is blocked on
 /// (waking it). It then serves one `EventCount` advance per N2 trigger:
-/// trigger bit 0 requests a plain +3 advance, trigger bit 1 an overflowing
+/// trigger bit 0 requests a plain +3 advance, trigger bit 2 a +2 advance, trigger bit 1 an overflowing
 /// one (which completes waiters with the shared `CounterOverflow` error).
-/// After two rounds it parks forever on N2 — nothing ever
+/// After three rounds it parks forever on N2 — nothing ever
 /// signals it again, so the scheduler resumes the boot Thread.
 /// Bootstrap-era fixture mechanism, not the Phase 7 Activate contract: no
 /// budget, no EL0 entry, no legal-transition enforcement beyond what this
@@ -665,7 +854,7 @@ extern "C" fn bounce_entry() -> ! {
     n1.signal(BOUNCE_MAGIC_BITS)
         .unwrap_or_else(|error| panic!("Bounce: Notification.Signal failed: {:?}", error.code()));
     // Serve one EventCount advance per N2 trigger, then park forever.
-    for round in 0..2_u64 {
+    for round in 0..3_u64 {
         let trigger = translation::notification_await(n2_key).unwrap_or_else(|error| {
             panic!("Bounce: round {round} wait failed: {:?}", error.code())
         });
@@ -674,6 +863,9 @@ extern "C" fn bounce_entry() -> ! {
         let result = match trigger {
             // A plain +3 advance that satisfies the boot Thread's target.
             0b1 => ec.advance(3),
+            // A +2 advance that satisfies the WaitSet member the boot Thread
+            // waits on.
+            0b100 => ec.advance(2),
             // The overflowing advance: it completes waiters with the shared
             // error and leaves the counter unchanged.
             0b10 => ec.advance(u64::MAX),

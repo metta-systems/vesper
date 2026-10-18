@@ -3,7 +3,7 @@ use {
         api::wake_waiter,
         objects::{
             Activations, ArchObjects, EventCount, KeyTable, Notification, PendingPool, Scheduler,
-            Thread, Time,
+            Thread, Time, WaitSet,
             access::ObjectId,
             arch::ArchPools,
             arch_objects::{AddressSpaceId, AddressSpaceObject, PageTableId},
@@ -839,6 +839,8 @@ impl<A: ArchObjects> Nucleus<A> {
                 } else if let Ok(event_count) = Carved::<EventCount>::validate(object) {
                     (*event_count).remove_waiter(waiter, &self.pending);
                     value = (*event_count).read();
+                } else if let Ok(wait_set) = Carved::<WaitSet>::validate(object) {
+                    (*wait_set).remove_waiter(waiter, &self.pending);
                 }
             }
         }
@@ -856,6 +858,65 @@ impl<A: ArchObjects> Nucleus<A> {
             self.make_runnable(waiter);
         } else {
             self.pending.release(record).ok();
+        }
+    }
+
+    /// Complete the waits of the `WaitSet`s that have a ready member.
+    ///
+    /// A set registers no wake-up with its members, so every Signal, Advance
+    /// and interrupt delivery calls this after it changed a Notification or
+    /// `EventCount`. Only sets with a blocked waiter are examined, found through
+    /// their pending records, so the scan is bounded by the pool. A woken
+    /// waiter is made runnable, which can publish a scheduling record and
+    /// advance an `EventCount`, so the walk works from a snapshot and skips
+    /// records an inner call already completed.
+    pub fn wake_wait_sets(&mut self) {
+        let mut waiting = [None; PendingPool::CAPACITY];
+        for (slot, entry) in waiting
+            .iter_mut()
+            .zip(self.pending.waiting_of_kind(PendingKind::WaitSetAwait))
+        {
+            *slot = Some(entry);
+        }
+        for (record, object) in waiting.into_iter().flatten() {
+            if !matches!(self.pending.state(record), Ok(PendingState::Waiting)) {
+                continue;
+            }
+            // SAFETY: the identity comes from a pending record, which only a
+            // wait on a resolved carved object creates; carved memory is never
+            // freed. A retired object fails validation and holds no waiter.
+            let Ok(wait_set) = (unsafe { Carved::<WaitSet>::validate(object) }) else {
+                continue;
+            };
+            // SAFETY: as above; the kernel lock excludes concurrent access.
+            // A retired member ends the wait with an error naming its slot.
+            let (status, result0, result1) = match unsafe { (*wait_set).ready_mask() } {
+                Ok(0) => continue,
+                Ok(mask) => (syscall_status::SUCCESS, mask, 0),
+                Err(error) => error.code(),
+            };
+            // SAFETY: as above.
+            unsafe {
+                (*wait_set).clear_waiter();
+            }
+            let Ok(waiter) = self.pending.waiter(record) else {
+                continue;
+            };
+            // The record is `Waiting`, so this transition wins.
+            if self
+                .pending
+                .complete_with_status(record, status, result0, result1)
+                .is_err()
+            {
+                continue;
+            }
+            // A completed record's waiter is parked, so it is not already
+            // queued. A waiter that was torn down will never resume.
+            if self.thread(waiter).is_some() {
+                self.make_runnable(waiter);
+            } else {
+                self.pending.release(record).ok();
+            }
         }
     }
 
@@ -1036,6 +1097,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 match self.pending.kind(record) {
                     Ok(PendingKind::NotificationAwait) => BlockReason::NotificationAwait,
                     Ok(PendingKind::EventCountAwait) => BlockReason::EventCountAwait,
+                    Ok(PendingKind::WaitSetAwait) => BlockReason::WaitSetAwait,
                     Ok(PendingKind::SchedulerDispatch) | Err(_) => BlockReason::None,
                 }
             }
@@ -1125,6 +1187,7 @@ impl<A: ArchObjects> Nucleus<A> {
             // it has one, publishes in turn.
             wake_waiter(self, record).ok();
         }
+        self.wake_wait_sets();
     }
 
     /// Account interrupt handling: add each handled line's ticks to its
@@ -1354,6 +1417,8 @@ impl<A: ArchObjects> Nucleus<A> {
                     (*notification).remove_waiter(thread, &self.pending);
                 } else if let Ok(event_count) = Carved::<EventCount>::validate(object) {
                     (*event_count).remove_waiter(thread, &self.pending);
+                } else if let Ok(wait_set) = Carved::<WaitSet>::validate(object) {
+                    (*wait_set).remove_waiter(thread, &self.pending);
                 }
             }
         }
@@ -1392,7 +1457,7 @@ mod tests {
         super::{Nucleus, NucleusPools, test_arena},
         crate::objects::{
             Activations, ArchObjectsImpl, EventCount, Notification, ObjectPool, PendingPool,
-            Thread,
+            Thread, WaitSet,
             access::ObjectId,
             arch::{AArch64ASIDPool, ArchPools},
             carved::{self, Carved, CarvedId},
@@ -1412,11 +1477,11 @@ mod tests {
     // asserts the carve fits.
     static mut ARCH_POOL_MEM: [u128; 8] = [0; 8];
 
-    /// Backing for the carved Notification and `EventCount`, standing in for
+    /// Backing for the carved Notification, `EventCount` and `WaitSet`, standing in for
     /// Untyped memory.
     #[repr(C, align(64))]
-    struct CarveBacking([u8; 1024]);
-    static mut CARVE_MEM: CarveBacking = CarveBacking([0; 1024]);
+    struct CarveBacking([u8; 2048]);
+    static mut CARVE_MEM: CarveBacking = CarveBacking([0; 2048]);
 
     /// A minimal fixture nucleus. Tests run sequentially and the fixture
     /// re-initializes the same static storage before use.
@@ -1505,6 +1570,196 @@ mod tests {
         }
     }
 
+    /// Carve a fresh empty `WaitSet` into the fixture backing.
+    fn carve_wait_set() -> CarvedId {
+        // SAFETY: the backing is exclusively owned by the sequential tests and
+        // large and aligned enough for the record, clear of the other two.
+        unsafe {
+            let base = (&raw mut CARVE_MEM).cast::<u8>();
+            Carved::<WaitSet>::initialize(base.add(1024), WaitSet::new())
+        }
+    }
+
+    /// A set holding the notification `n` (bits `0b1`) and the event count
+    /// `e` (target 3), with `waiter` blocked on it.
+    fn block_on_wait_set(
+        nucleus: &mut Nucleus<ArchObjectsImpl>,
+        waiter: ThreadId,
+        n: CarvedId,
+        e: CarvedId,
+    ) -> (CarvedId, ObjectId) {
+        let set = carve_wait_set();
+        let wait_set = object::<WaitSet>(set);
+        assert!(wait_set.add_member(0, n, 0b1).is_ok());
+        assert!(wait_set.add_member(1, e, 3).is_ok());
+        match wait_set.await_ready(set, waiter, &mut nucleus.pending) {
+            Ok(crate::objects::wait_set::WaitSetOutcome::Blocked(record)) => (set, record),
+            _ => panic!("nothing is ready, so the wait should block"),
+        }
+    }
+
+    #[test_case]
+    fn a_wait_set_waiter_completes_when_a_member_becomes_ready() {
+        let nucleus = fixture_nucleus();
+        let waiter = carve_thread();
+        let (n, e) = carve_objects();
+        let (set, record) = block_on_wait_set(nucleus, waiter, n, e);
+
+        // Nothing ready: the scan leaves the waiter alone, also after a signal
+        // outside the watched bits and an advance below the target.
+        nucleus.wake_wait_sets();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Waiting)
+        );
+        assert!(matches!(
+            object::<Notification>(n).signal(0b10, &mut nucleus.pending),
+            Ok(None)
+        ));
+        assert!(matches!(
+            object::<EventCount>(e).advance(2, &mut nucleus.pending),
+            Ok(AdvanceOutcome::Advanced { .. })
+        ));
+        nucleus.wake_wait_sets();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Waiting)
+        );
+
+        // The advance reaching the target makes slot 1 ready: the wait
+        // completes with that mask, consuming nothing, and the set is free.
+        assert!(matches!(
+            object::<EventCount>(e).advance(1, &mut nucleus.pending),
+            Ok(AdvanceOutcome::Advanced { new_value: 3, .. })
+        ));
+        nucleus.wake_wait_sets();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
+                result0: 0b10,
+                result1: 0
+            })
+        );
+        assert!(object::<WaitSet>(set).waiter().is_none());
+        assert_eq!(
+            object::<EventCount>(e).read(),
+            3,
+            "waiting consumed nothing"
+        );
+        assert_eq!(object::<Notification>(n).pending_bits(), 0b10);
+
+        // A completed record is not completed again.
+        nucleus.wake_wait_sets();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
+                result0: 0b10,
+                result1: 0
+            })
+        );
+    }
+
+    #[test_case]
+    fn a_retired_member_wakes_the_waiter_with_an_error_naming_its_slot() {
+        let nucleus = fixture_nucleus();
+        let waiter = carve_thread();
+        let (n, e) = carve_objects();
+        let (set, record) = block_on_wait_set(nucleus, waiter, n, e);
+        // A member whose identity is from another generation of the record:
+        // the object it named is gone.
+        let gone = CarvedId {
+            generation: n.generation + 1,
+            ..n
+        };
+        assert!(object::<WaitSet>(set).add_member(5, gone, 1).is_ok());
+        nucleus.wake_wait_sets();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::MEMBER_RETIRED,
+                result0: 5,
+                result1: 0
+            })
+        );
+        assert!(object::<WaitSet>(set).waiter().is_none());
+        // The member stays until it is removed, and a new wait reports it at once.
+        let again = carve_thread();
+        assert!(matches!(
+            object::<WaitSet>(set).await_ready(set, again, &mut nucleus.pending),
+            Err(libobject::CapError::MemberRetired { slot: 5 })
+        ));
+        assert!(object::<WaitSet>(set).remove_member(5).is_ok());
+    }
+
+    #[test_case]
+    fn a_wait_set_reports_every_ready_slot_at_once() {
+        let nucleus = fixture_nucleus();
+        let waiter = carve_thread();
+        let (n, e) = carve_objects();
+        let (_set, record) = block_on_wait_set(nucleus, waiter, n, e);
+        // Both members become ready before the scan runs.
+        assert!(matches!(
+            object::<Notification>(n).signal(0b1, &mut nucleus.pending),
+            Ok(None)
+        ));
+        assert!(matches!(
+            object::<EventCount>(e).advance(4, &mut nucleus.pending),
+            Ok(AdvanceOutcome::Advanced { .. })
+        ));
+        nucleus.wake_wait_sets();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::SUCCESS,
+                result0: 0b11,
+                result1: 0
+            })
+        );
+    }
+
+    #[test_case]
+    fn a_wait_set_wait_past_its_deadline_times_out_with_an_empty_mask() {
+        let nucleus = fixture_nucleus();
+        let waiter = carve_thread();
+        let (n, e) = carve_objects();
+        let (set, record) = block_on_wait_set(nucleus, waiter, n, e);
+        nucleus.pending.set_deadline(record, 0).ok().unwrap();
+        nucleus.expire_deadlines();
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Completed {
+                status: syscall_status::TIMED_OUT,
+                result0: 0,
+                result1: 0
+            })
+        );
+        assert!(
+            object::<WaitSet>(set).waiter().is_none(),
+            "the timed-out waiter left the set"
+        );
+        // The set takes a new waiter.
+        let again = carve_thread();
+        assert!(matches!(
+            object::<WaitSet>(set).await_ready(set, again, &mut nucleus.pending),
+            Ok(crate::objects::wait_set::WaitSetOutcome::Blocked(_))
+        ));
+    }
+
+    #[test_case]
+    fn thread_teardown_clears_a_wait_set_waiter() {
+        let nucleus = fixture_nucleus();
+        let waiter = carve_thread();
+        let (n, e) = carve_objects();
+        let (set, record) = block_on_wait_set(nucleus, waiter, n, e);
+        nucleus
+            .cancel_thread_pending(waiter)
+            .unwrap_or_else(|_| panic!("teardown failed"));
+        assert!(nucleus.pending.state(record).is_err());
+        assert!(object::<WaitSet>(set).waiter().is_none());
+        assert!(nucleus.pending.is_empty());
+    }
     #[test_case]
     fn thread_teardown_cancels_parked_waits_and_queued_wakeups() {
         let nucleus = fixture_nucleus();

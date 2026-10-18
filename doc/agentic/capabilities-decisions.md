@@ -40,8 +40,18 @@ revisit after use. Unanswered questions:
   become Retype-style, like Thread creation (an inert object from Retype, made
   usable by the authority that owns it)? To be looked at; the maintainer
   leans towards switching.
-- **Call-only Invocation distribution (D4):** what are the permitted
-  derivation/CopyDerive restrictions, rights attenuation, and source badges?
+- **Badge width (D4):** the key entry stores a `u16` badge in its 8-byte header
+  (type, rights, badge, flags, padding). A `u32` badge fits the same header (the flags
+  byte moves) and the 64-byte entry, table stride and `KeyTable` carve size stay
+  unchanged. A `u64` badge needs an 8-byte badge field in the header, which makes the
+  entry 72 bytes and, aligned to 32, 96 bytes (the stride and carve size grow by half),
+  unless the 56-byte `Invocation` payload, the only variant that fills the payload,
+  shrinks by 8 bytes. A `u32` badge limits a Notification badge to 32 of its 64 bits.
+  `CopyDerive` has two reserved argument words (`x6`, `x7`) and the PPC entry's `x1`
+  is a 64-bit register, so either width fits the wire.
+- **Pipe keys in Meddle (D4/D9):** how an interface expresses that a function takes
+  a key obtained from another function (a USB pipe key from `open_pipe`), and how
+  `CallWithKey` lending lets the exporter derive that key into the caller's table.
 - **Shared memory:** pointer/shared-memory rules.
 - **Fault delivery refinements (D1):** the mechanism and its details are
   selected (see the contract). Open: a small per-AddressSpace fault queue that

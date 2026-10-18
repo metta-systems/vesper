@@ -24,11 +24,12 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | Invocation | `0x06` | [invocation.md](core/invocation.md) | Call, CallWithKey |
 | Notification | `0x07` | [notification.md](core/notification.md) | Signal, Await, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
-| IRQControl | `0x09` | [irq_control.md](core/irq_control.md) | Issue |
-| IRQHandler | `0x0a` | [irq_handler.md](core/irq_handler.md) | SetNotification, Clear, Ack, Retire, Query |
+| WaitSet | `0x09` | [wait_set.md](core/wait_set.md) | AddMember, UpdateMember, RemoveMember, Await |
+| IRQControl | `0x0a` | [irq_control.md](core/irq_control.md) | Issue |
+| IRQHandler | `0x0b` | [irq_handler.md](core/irq_handler.md) | SetNotification, Clear, Ack, Retire, Query |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Write (debug kernels only) |
 
-Indices 11–126 are unassigned.
+Indices 12–126 are unassigned.
 
 ### Architecture kinds
 
@@ -122,6 +123,8 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 41 | `InvalidSelfReference` | the self slot (4, `SELF_KEYTABLE`) | the key that led to the table, see [KeyTable](core/key_table.md#keys-and-incarnations) |
 | 42 | `StaleGeneration` | the Thread's current generation | 0 |
 | 43 | `TimedOut` | the EventCount value (0 for a Notification) | 0 |
+| 44 | `Watched` | 0 | 0 |
+| 45 | `MemberRetired` | the WaitSet slot | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 
@@ -162,4 +165,4 @@ flowchart TD
 
 ### Blocking and address-space switches
 
-A blocking operation (`Notification.Await`, `EventCount.Await`) does not return to the caller until it completes. The kernel saves the caller's registers in its Thread, runs the next runnable Thread, and later resumes the caller with the result in `x0..x2`. `AddressSpace.Activate`, scheduling, `Invocation.Call` and `Thread.Return` switch the hardware translation context (`TTBR0_EL1` and the ASID) on the way back to the caller. A synchronous exception from EL0 other than `svc` is a fault, delivered to the fault handler of the faulting AddressSpace; see [Thread](core/thread.md#fault-delivery).
+A blocking operation (`Notification.Await`, `EventCount.Await`, `WaitSet.Await`) does not return to the caller until it completes. The kernel saves the caller's registers in its Thread, runs the next runnable Thread, and later resumes the caller with the result in `x0..x2`. `AddressSpace.Activate`, scheduling, `Invocation.Call` and `Thread.Return` switch the hardware translation context (`TTBR0_EL1` and the ASID) on the way back to the caller. A synchronous exception from EL0 other than `svc` is a fault, delivered to the fault handler of the faulting AddressSpace; see [Thread](core/thread.md#fault-delivery).

@@ -142,14 +142,15 @@ These follow `CoreType` in `libs/object/src/object_type.rs` and are the migratio
 | Invocation | 6 | `0x06` |
 | Notification | 7 | `0x07` |
 | EventCount | 8 | `0x08` |
-| IRQControl | 9 | `0x09` |
-| IRQHandler | 10 | `0x0a` |
-| Reserved | 11–126 | `0x0b..=0x7e` |
+| WaitSet | 9 | `0x09` |
+| IRQControl | 10 | `0x0a` |
+| IRQHandler | 11 | `0x0b` |
+| Reserved | 12–126 | `0x0c..=0x7e` |
 | DebugConsole | 127 | `0x7f` |
 
-`DebugConsole` keeps its deliberate top-of-core sentinel 127 (D9); core IDs 11–126 remain reserved.
+`DebugConsole` keeps its deliberate top-of-core sentinel 127 (D9); core IDs 12–126 remain reserved.
 
-There is no `Domain` wire kind: the execution entity is the core `Thread` and the mapping context is the arch `AddressSpace` (see [Thread and AddressSpace contracts](#thread-and-addressspace-contracts)). Core IDs are grouped by functionality: memory/capability management, execution and scheduling (`Thread`, `Time`, `Scheduler`), then invocation and synchronization (`Invocation`, `Notification`, `EventCount`), then interrupt delivery (`IRQControl`, `IRQHandler`). Interrupt kinds are core: their operations are architecture-neutral, and the interrupt controller is reached through the boot-selected privileged component (see [IRQ delivery](#irq-delivery)). Core and architecture kind IDs may be reassigned together to maintain functional grouping. Such changes require a coordinated rebuild; prior IDs are not compatibility constraints.
+There is no `Domain` wire kind: the execution entity is the core `Thread` and the mapping context is the arch `AddressSpace` (see [Thread and AddressSpace contracts](#thread-and-addressspace-contracts)). Core IDs are grouped by functionality: memory/capability management, execution and scheduling (`Thread`, `Time`, `Scheduler`), then invocation and synchronization (`Invocation`, `Notification`, `EventCount`, `WaitSet`), then interrupt delivery (`IRQControl`, `IRQHandler`). Interrupt kinds are core: their operations are architecture-neutral, and the interrupt controller is reached through the boot-selected privileged component (see [IRQ delivery](#irq-delivery)). Core and architecture kind IDs may be reassigned together to maintain functional grouping. Such changes require a coordinated rebuild; prior IDs are not compatibility constraints. `WaitSet` follows `EventCount` (maintainer decision, 2026-10-18), so the interrupt kinds moved up to 10 and 11.
 
 Each category has one declarative catalogue in `libs/object/src/object_type.rs`. A private declarative macro generates its enum, checked category-index decoder, `ObjectType` aliases, and typed-to-wire conversions. `ObjectType` remains a one-byte wire wrapper that can retain unknown/reserved values; category checks and high-bit encoding remain ordinary Rust code. Catalogue indices are checked at compile time to fit below `0x80`. The macro does not generate handlers, authorization, or object implementations. `Scheduler.ShareRegion` remains unsupported until its schema is selected.
 
@@ -221,6 +222,7 @@ The following is the operation-ID vocabulary per family. It records numbering an
 | Invocation | Call `0`, CallWithKey `1` | Protected Procedure Call: the source Thread migrates into the exported procedure's target protection context and returns on procedure completion. Under the common `CapInvoke` ABI, `x0` is the Invocation capability, `x1` is `Call` (`0`), and `x2..x7` are six `u64` Call inputs. The target entry uses two leading dummy arguments in `x0` and `x1`; the six real `u64` arguments remain unchanged in `x2..x7`, with no register shuffle. The dummy arguments are ignored by the target and are not stack metadata. Invocation has no Return form and both operations enter a mandatory `NonZero<u64>` function address, never an optional entry. `Call` carries data only; `CallWithKey` additionally lends one key for the duration of the call (see [CallWithKey](#callwithkey-invocationcallwithkey-op-1)). Return uses `Thread.Return` `0` on `CurrentReturnOnly`. Results and selected stack/context directions are specified below; remaining authority and lifecycle decisions stay open. Construction authority is defined under `AddressSpace.CreateInvocation`. |
 | Notification | Signal `0`, Await `1`, Poll `2` | Coalescing bitmap; badge and waiter delivery decisions remain |
 | EventCount | Advance `0`, Await `1`, Read `2` | Monotonic progress and threshold wait; overflow policy and wire schema selected: `Advance` `x2` delta (`SEND`), `Await` `x2` target + `x3` timeout (`RECV`), `Read` no arguments (`RECV`), two-word results, broadcast wakeups — an advance completes every queued `Await` whose target it satisfies |
+| WaitSet | AddMember `0`, UpdateMember `1`, RemoveMember `2`, Await `3` | Multiplexer over up to 8 Notifications and EventCounts; see [WaitSet](#waitset). `AddMember` `x2` member key (`RECV` on it), `x3` slot, `x4` condition (`WRITE` on the set); `UpdateMember` `x2` slot, `x3` condition (`WRITE`); `RemoveMember` `x2` slot (`WRITE`); `Await` `x2` timeout (`RECV`), result `x1` the mask of ready slots |
 | IRQControl | Issue `0` | `x2` destination-table key (`INSTALL`), `x3` destination slot, `x4` specifier cell count (1–3) in bits 7:0 and the controller index in bits 15:8 (higher bits reserved zero), `x5..x7` the cells; returns the IRQHandler key in `x1` and the line in `x2`; `GRANT` on IRQControl. An already active line, including the nucleus timer line, fails with `IRQ_LINE_ACTIVE`; an undecodable specifier or a bad count or controller index fails with `INVALID_OPERATION`. See [IRQ delivery](#irq-delivery). |
 | IRQHandler | SetNotification `0`, Clear `1`, Ack `2`, Retire `3`, Query `4` | SetNotification: `x2` Notification key (`SEND`, nonzero badge), `x3` receiver Thread key (`WRITE`), whose bound Time is the receiver's Time (`INVALID_OPERATION` if it has none); Clear and Ack take no arguments; these three need `WRITE`. Retire takes no arguments and needs `RETIRE`. Query takes no arguments, needs `READ`, and returns `x1` the interrupts the nucleus has handled on the line and `x2` the nanoseconds it spent handling them (rounded up; cumulative for the line, including interrupts before a rebinding). See [IRQ delivery](#irq-delivery). |
 | DebugConsole | Write `0` | Debug-only prototype behind explicit `debug_kernel`; checked user-memory access and explicit authority remain deferred |
@@ -260,6 +262,17 @@ Required semantic checks include:
 | DebugConsole | Possess explicit console-use authority |
 
 The exact bit assignments, badge width, badge-zero semantics, and operation-to-rights matrix must be finalized in D4. Do not continue the current `u16`/`u32`/`u64` badge disagreement or narrow badges silently.
+
+### Badges
+
+Maintainer decisions of 2026-10-18; the implementation is pending (see the [plan](capabilities-implementation-plan.md)). The badge width is still open.
+
+- **Zero means unbadged.** For a Notification, a nonzero badge overrides the caller's signal argument, as today.
+- **Mint once.** A badge is set by `CopyDerive` from an unbadged key, and a badged key's badge cannot be changed or cleared. Copies of a badged key keep the badge. There is no rebadging.
+- **Minting authority.** Setting a badge needs a new rights bit, `BADGE` (`0x80`), on the source key. It is the last free bit of the `u8` rights, and attenuation can remove it like any other right.
+- **Kinds.** `Invocation` and `Notification` can be badged on derive. `CopyDerive` accepts them, with rights that only narrow and the target identity unchanged.
+- **Delivery to an exporter.** The badge of the invoked `Invocation` key arrives in `x1` of the PPC entry. `x0` stays a dummy argument, kept for future use. The six real arguments remain in `x2..x7`.
+- **Pipe keys and revocation.** A badge naming a resource, such as a USB pipe (index plus generation), is validated by the exporter on every call, so a closed resource's stale badge fails there. Selective revocation of derived keys is not needed for this.
 
 ### Slot conventions
 
@@ -489,7 +502,7 @@ The kernel keeps one stack per core and never keeps a Thread's continuation on i
 
 ### Wait, timeout, and cancellation
 
-These rules apply to `Notification.Await` and `EventCount.Await`:
+These rules apply to `Notification.Await`, `EventCount.Await` and `WaitSet.Await`:
 
 - **Wait identity.** Pending waits are named by kernel-allocated pending-invocation records with non-wrapping 32-bit generations, never bare slot numbers or Thread indices.
 - **Timeout.** One relative `u64`-nanosecond timeout per wait; `u64::MAX` means infinite, zero is invalid. No-wait behavior uses the nonblocking Poll/Read operations. A finite timeout is a deadline of the kernel's deadline queue: the wait completes with `TIMED_OUT` (status 43) at the first timer interrupt at or after `now + timeout` (the timeout rounded up to counter ticks), `x1` the current `EventCount` value or Notification bitmap (a Notification wait that times out consumes nothing), and the waiter leaves the object's wait queue. A completion that wins the race keeps the record, and the deadline is forgotten. Both `Notification.Await` and `EventCount.Await` take timeouts. A sleep is an `EventCount.Await` on an EventCount nobody advances, whose `TIMED_OUT` is the expected outcome.
@@ -507,9 +520,20 @@ Signal/Advance/Poll/Read do not block but can fail validation/authorization. A `
 
 **EventCount overflow (D7/D9).** `Advance` requires a nonzero delta. An advance whose sum would exceed `u64::MAX` fails with `CounterOverflow` (zero details) and leaves the counter unchanged; every queued `Await` completes with the same error, and a woken waiter may re-`Await`. The counter never wraps or saturates.
 
-**Notification authority.** A Notification is Retype-creatable from ordinary memory (`size_bits` reserved zero); its capability carries its carved identity. `Signal` requires `SEND`, `Await`/`Poll` require `RECV`. The signaled bits come from the capability's badge when it is nonzero, otherwise from the caller-supplied argument word. Retype installs badge zero, so the argument path is the one reachable today; badge derivation is D4.
+**Notification authority.** A Notification is Retype-creatable from ordinary memory (`size_bits` reserved zero); its capability carries its carved identity. `Signal` requires `SEND`, `Await`/`Poll` require `RECV`. The signaled bits come from the capability's badge when it is nonzero, otherwise from the caller-supplied argument word. Retype installs badge zero, so the argument path is the one reachable today; badge derivation is D4. A Notification listed in a `WaitSet` refuses a direct `Await` (see [WaitSet](#waitset)).
 
 **Payload publication (D7).** A `Signal`/`Advance` acts as a release on its caller's behalf; observing the value or bitmap it produced — through a wakeup, an already-satisfied wait, `Poll`, `Await` or `Read` — acts as an acquire. A producer's payload writes before the operation are visible to the consumer's reads after observing it, including buffer-slot reuse. On the current single-core kernel, trap entry/exit and the kernel lock provide this; multicore needs real Acquire/Release kernel atomics. DMA and device writes carry their own coherency and completion obligations.
+
+### WaitSet
+
+A `WaitSet` is a core kind (maintainer decision, 2026-10-18: a kernel object, not a userspace composition) that lets one Thread wait on several Notifications and EventCounts. The userspace alternative, one forwarder Thread per source feeding a shared Notification, needs a Thread, stack and Time per source and an extra context switch per wake-up, so it was not chosen.
+
+- **Members.** Up to 8, each in a numbered slot with one condition: a Notification member is ready while `pending & mask != 0` (the mask is nonzero), an EventCount member while `value >= target`. The condition of a member can be updated while it stays in the set (`UpdateMember`). Adding a member needs `WRITE` on the set and `RECV` on the member's key. Slot errors reuse `InvalidSlot`, `SlotOccupied` and `EmptySlot`, with the member slot as the detail.
+- **Await** returns the mask of ready slots (bit *n* for slot *n*) and consumes nothing. Readiness is level-triggered: a condition that held before the wait began counts, and the caller polls or reads the ready members itself. The timeout rules are those of the other waits (zero invalid, `u64::MAX` infinite, `TIMED_OUT` with `x1 = 0`).
+- **One waiter per set.** A second `Await` while a Thread waits fails with `PoolExhausted`.
+- **Wake-up.** A set registers nothing with its members. After every `Signal`, `Advance`, interrupt delivery, `AddMember` and `UpdateMember`, the nucleus re-evaluates the sets that have a blocked waiter, found through their pending records. The wait completes with the usual single terminal transition; timeout and Thread teardown remove the waiter from the set.
+- **A set is the only claimant of its Notifications (maintainer decision, 2026-10-18).** Signal delivers a Notification's bits to its front direct waiter and leaves the state at zero, so a direct waiter would starve a set. A Notification therefore counts the sets that list it. While the count is nonzero, `Notification.Await` fails with `Watched` (status 44, details zero) before anything is consumed, and a Notification with a Thread already waiting on it refuses `AddMember` with `Watched`, leaving the slot vacant. `Poll` stays allowed, because the set's owner takes the bits of a ready member with it. `RemoveMember` lowers the count. A set whose key is deleted keeps the count until its members are removed, since Delete retires nothing; the `Retire` of the sync kinds will settle that.
+- **Member retirement (maintainer decision, 2026-10-18).** A member whose object is no longer live is an explicit error: `Await` fails with `MemberRetired` (status 45, `x1` the slot), also for a waiter blocked on the set, and the error comes ahead of any ready slot until `RemoveMember` empties the slot. Notifications and EventCounts cannot be retired yet, so no kernel path produces it outside tests.
 
 ### IRQ delivery
 
@@ -564,7 +588,7 @@ On success the kernel pushes a continuation, migrates the Thread, installs the t
 
 | State | Target entry (successful Call) | Source resumption (successful Return) |
 |---|---|---|
-| `x0`, `x1` | Zero — two dummy arguments | `SUCCESS (0)` / first payload word `r0` |
+| `x0`, `x1` | `x0` zero (a reserved dummy); `x1` zero until badges are implemented, then the invoked key's badge (see [Badges](#badges)) | `SUCCESS (0)` / first payload word `r0` |
 | `x2` | First argument, unchanged | Second payload word `r1` |
 | `x3..x7` | Remaining arguments, unchanged | Zero |
 | `x8..x18` | Zero (including the consumed `x9`) | Zero |

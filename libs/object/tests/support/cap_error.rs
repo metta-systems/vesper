@@ -260,8 +260,9 @@ fn unsupported_types_decode_only_known_local_indices() {
         (6, CoreType::Invocation),
         (7, CoreType::Notification),
         (8, CoreType::EventCount),
-        (9, CoreType::IRQControl),
-        (10, CoreType::IRQHandler),
+        (9, CoreType::WaitSet),
+        (10, CoreType::IRQControl),
+        (11, CoreType::IRQHandler),
         (127, CoreType::DebugConsole),
     ];
     let arch_types = [
@@ -477,7 +478,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 33, u64::MAX, 1));
     }
-    for wire in [(44, 0, 0), (44, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(46, 0, 0), (46, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -623,5 +624,31 @@ fn timed_out_status_round_trips_the_value() {
             CapError::TimedOut { value: actual } if actual == value
         );
         assert_unknown_response((43, value, 1));
+    }
+}
+
+#[test]
+fn watched_status_has_no_details() {
+    use vesper_objects::syscall_status::WATCHED;
+
+    assert_eq!(WATCHED, 44);
+    assert_error!((44, 0, 0), CapError::Watched, CapError::Watched);
+    assert_eq!(CapError::Watched.code(), (44, 0, 0));
+    assert_unknown_response((44, 1, 0));
+    assert_unknown_response((44, 0, 1));
+}
+
+#[test]
+fn member_retired_status_round_trips_the_slot() {
+    use vesper_objects::syscall_status::MEMBER_RETIRED;
+
+    assert_eq!(MEMBER_RETIRED, 45);
+    for slot in [0, 7, u64::MAX] {
+        assert_error!(
+            (45, slot, 0),
+            CapError::MemberRetired { slot },
+            CapError::MemberRetired { slot: actual } if actual == slot
+        );
+        assert_unknown_response((45, slot, 1));
     }
 }

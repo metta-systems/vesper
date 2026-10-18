@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Wire type | `0x0a` (core) |
+| Wire type | `0x0b` (core) |
 | Backing | A record in the kernel's interrupt-line table |
 | Operations | SetNotification, Clear, Ack, Retire, Query |
 

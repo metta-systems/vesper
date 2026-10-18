@@ -189,7 +189,7 @@ x (u32, 1), `record_size` (u32, 128) |
 
 - **Flags:** bit 0 `AWAITING_BUDGET` (runnable, but its Time is exhausted), bit 1 `HAS_TIME`, bit 2 `DISPATCHER` (the Thread is a Scheduler's dispatcher; for a Thread of a parent it tells the parent that the Thread runs a domain). Without a bound Time `budget_remaining_ns` is `u64::MAX`.
 - **State:** `Inactive` for a Thread that is not started, `Runnable` for a queued Thread, one waiting for budget and a woken waiter that has not resumed yet, `Running`, `Blocked`, `Faulted`, and `Dying` once the Thread is retired.
-- **Block reason:** none, Notification await, EventCount await, protected procedure call.
+- **Block reason:** none, Notification await, EventCount await, protected procedure call, WaitSet await.
 - **Stop reason:** blocked, slice end, budget exhausted, yielded, replaced, exited, faulted.
 - **`cpu`:** the CPU the Thread runs on, or `u32::MAX`.
 - **Freshness:** the counters are as of the last published change, not of the moment you read them; `Time.Query` gives the exact budget.

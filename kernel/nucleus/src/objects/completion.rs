@@ -44,6 +44,9 @@ pub enum PendingKind {
     /// in the first result word, or the shared `CounterOverflow` error when
     /// an advance's overflow wakes the waiter.
     EventCountAwait,
+    /// `WaitSet.Await`: completion delivers the mask of ready member slots
+    /// in the first result word.
+    WaitSetAwait,
     /// `Scheduler.Dispatch`: the dispatcher waits to be activated;
     /// completion delivers the activation reason bits in the first result
     /// word and the scheduler's event count in the second.
@@ -347,6 +350,30 @@ impl PendingPool {
             .flatten()
             .filter(move |record| record.waiter == waiter && record.state == PendingState::Waiting)
             .map(|record| record.object)
+    }
+
+    /// The still-waiting records of `kind`, with the objects whose wait
+    /// queues hold them, in pool order. The pool's bounded size bounds the
+    /// scan.
+    pub fn waiting_of_kind(
+        &self,
+        kind: PendingKind,
+    ) -> impl Iterator<Item = (ObjectId, CarvedId)> + '_ {
+        self.records
+            .iter()
+            .enumerate()
+            .filter_map(move |(slot, record)| {
+                let record = record.as_ref()?;
+                (record.kind == kind && record.state == PendingState::Waiting).then_some(())?;
+                Some((
+                    ObjectId {
+                        pool: PoolTag::Pending,
+                        index: u16::try_from(slot).ok()?,
+                        generation: self.generations[slot],
+                    },
+                    record.object,
+                ))
+            })
     }
 
     /// Thread-teardown sweep: give every live record naming `waiter` its

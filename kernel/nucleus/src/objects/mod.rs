@@ -20,6 +20,7 @@ pub mod scheduler;
 pub mod thread;
 pub mod time;
 pub mod timers;
+pub mod wait_set;
 
 #[cfg(feature = "debug_kernel")]
 pub use debug_console::DebugConsole;
@@ -40,4 +41,5 @@ pub use {
         ExecutionContext, InvocationContinuation, InvocationStack, Placement, Thread, ThreadFault,
     },
     time::Time,
+    wait_set::WaitSet,
 };

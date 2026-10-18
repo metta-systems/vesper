@@ -142,10 +142,12 @@ define_object_types! {
         Notification => NOTIFICATION = 7,
         /// Monotonic event count.
         EventCount => EVENT_COUNT = 8,
+        /// A Thread's multiplexer over Notifications and `EventCount`s.
+        WaitSet => WAIT_SET = 9,
         /// Issues `IRQHandler` capabilities for interrupt lines.
-        IRQControl => IRQ_CONTROL = 9,
+        IRQControl => IRQ_CONTROL = 10,
         /// One interrupt line: binds it to a Notification and acknowledges it.
-        IRQHandler => IRQ_HANDLER = 10,
+        IRQHandler => IRQ_HANDLER = 11,
         /// Debug console; availability is a separate policy decision.
         DebugConsole => DEBUG_CONSOLE = 127,
     }

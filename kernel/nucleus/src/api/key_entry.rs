@@ -306,6 +306,7 @@ fn is_carved_object_kind(kind: ObjectType) -> bool {
         kind,
         ObjectType::NOTIFICATION
             | ObjectType::EVENT_COUNT
+            | ObjectType::WAIT_SET
             | ObjectType::TIME
             | ObjectType::SCHEDULER
             | ObjectType::PAGE_TABLE

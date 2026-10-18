@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Wire type | `0x09` (core) |
+| Wire type | `0x0a` (core) |
 | Backing | None: the authority over every interrupt line |
 | Operations | Issue |
 

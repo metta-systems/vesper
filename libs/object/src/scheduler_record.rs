@@ -68,6 +68,7 @@ pub enum BlockReason {
     NotificationAwait = 1,
     EventCountAwait = 2,
     PpcCall = 3,
+    WaitSetAwait = 4,
 }
 
 impl BlockReason {
@@ -77,6 +78,7 @@ impl BlockReason {
             1 => Some(Self::NotificationAwait),
             2 => Some(Self::EventCountAwait),
             3 => Some(Self::PpcCall),
+            4 => Some(Self::WaitSetAwait),
             _ => None,
         }
     }

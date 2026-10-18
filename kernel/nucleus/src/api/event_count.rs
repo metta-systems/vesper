@@ -83,6 +83,7 @@ pub fn invoke<A: ArchObjects>(
                     for record in woken.iter() {
                         wake_waiter(nucleus, record)?;
                     }
+                    nucleus.wake_wait_sets();
                     semi::println!("✅ EventCount::Advance(0x{new_value:x})");
                     Ok(InvokeOutcome::Complete((new_value, 0)))
                 }

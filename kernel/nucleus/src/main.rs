@@ -744,6 +744,7 @@ fn resume_selected(
         let kind = match completion.kind {
             PendingKind::NotificationAwait => "Notification::Await",
             PendingKind::EventCountAwait => "EventCount::Await",
+            PendingKind::WaitSetAwait => "WaitSet::Await",
             PendingKind::SchedulerDispatch => "Scheduler::Dispatch",
         };
         let status = completion.status;

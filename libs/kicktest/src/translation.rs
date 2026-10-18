@@ -21,7 +21,7 @@ use {
     libexception::arch::aarch64::SavedContext,
     libobject::{
         CapError, EventCountOp, FrameKey, InvalidKeyReason, KeyTableKey, NotificationOp, RawKey,
-        Rights, decode_syscall_result,
+        Rights, WaitSetOp, decode_syscall_result,
     },
     libqemu::semihosting as semi,
 };
@@ -369,6 +369,10 @@ pub fn notification_await(key: RawKey) -> Result<u64, CapError> {
 
 pub fn event_count_await(key: RawKey, target: u64) -> Result<u64, CapError> {
     wait_with_registers(key, EventCountOp::Await as u64, target, u64::MAX)
+}
+
+pub fn wait_set_await(key: RawKey, timeout_ns: u64) -> Result<u64, CapError> {
+    wait_with_registers(key, WaitSetOp::Await as u64, timeout_ns, 0)
 }
 
 /// The bound source TTBR0 value (root | ASID 1).

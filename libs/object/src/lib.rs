@@ -22,6 +22,7 @@ pub mod syscall_status;
 pub mod thread;
 pub mod time;
 pub mod untyped;
+pub mod wait_set;
 
 use syscall_status as code;
 
@@ -46,6 +47,7 @@ pub use {
     thread::{ThreadKey, ThreadOp},
     time::{TimeKey, TimeOp},
     untyped::{UntypedKey, UntypedOp},
+    wait_set::{WaitSetKey, WaitSetOp},
 };
 
 pub type SyscallResult = core::result::Result<(u64, u64), CapError>;
@@ -137,6 +139,8 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::NOT_BOUND, 0, 0) => CapError::NotBound,
             (code::STALE_GENERATION, current, 0) => CapError::StaleGeneration { current },
             (code::TIMED_OUT, value, 0) => CapError::TimedOut { value },
+            (code::WATCHED, 0, 0) => CapError::Watched,
+            (code::MEMBER_RETIRED, slot, 0) => CapError::MemberRetired { slot },
             (code::INVALID_SELF_REFERENCE, slot, key) => CapError::InvalidSelfReference {
                 reference: InvalidSelfReference::from_slot(slot)?,
                 key: RawKey::from_wire(key),
@@ -260,6 +264,13 @@ pub enum CapError {
     TimedOut {
         value: u64,
     },
+    /// A Notification listed in a `WaitSet` was awaited directly, or a
+    /// Notification with a direct waiter was added to a `WaitSet`.
+    Watched,
+    /// A member of a `WaitSet` is no longer live; `slot` is its slot.
+    MemberRetired {
+        slot: u64,
+    },
     /// A `KeyTable` does not name itself in the well-known self slot
     /// `reference` names; `key` led to the table (the invoked key at syscall
     /// entry, the table key of `AddressSpace.Bind`).
@@ -369,6 +380,8 @@ impl CapError {
             CapError::NotBound => (code::NOT_BOUND, 0, 0),
             CapError::StaleGeneration { current } => (code::STALE_GENERATION, current, 0),
             CapError::TimedOut { value } => (code::TIMED_OUT, value, 0),
+            CapError::Watched => (code::WATCHED, 0, 0),
+            CapError::MemberRetired { slot } => (code::MEMBER_RETIRED, slot, 0),
             CapError::InvalidSelfReference { reference, key } => (
                 code::INVALID_SELF_REFERENCE,
                 u64::from(reference.slot().0),
