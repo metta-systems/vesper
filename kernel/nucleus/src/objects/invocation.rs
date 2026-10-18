@@ -80,7 +80,7 @@ impl InvocationStackExtent {
         if minimum_headroom & 15 != 0 {
             return Err(invalid(minimum_headroom, Reason::MinimumHeadroomMisaligned));
         }
-        if minimum_headroom > end - base {
+        if minimum_headroom > end - base || minimum_headroom >> 4 > u64::from(u32::MAX) {
             return Err(invalid(minimum_headroom, Reason::MinimumHeadroomTooLarge));
         }
         Ok(Self {
@@ -100,6 +100,27 @@ impl InvocationStackExtent {
 
     pub const fn minimum_headroom(self) -> u64 {
         self.minimum_headroom
+    }
+
+    /// The minimum headroom in 16-byte units, as a capability entry stores it.
+    /// Validation limits the headroom to what fits (`new` refuses more with
+    /// `MinimumHeadroomTooLarge`).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "validated to fit 32 bits of 16-byte units"
+    )]
+    pub const fn minimum_headroom_units(self) -> u32 {
+        (self.minimum_headroom >> 4) as u32
+    }
+
+    /// The extent a capability entry stores: parts that `new` validated, with
+    /// the headroom as a count of 16-byte units.
+    pub const fn from_validated(base: u64, end: u64, minimum_headroom_units: u32) -> Self {
+        Self {
+            base,
+            end,
+            minimum_headroom: (minimum_headroom_units as u64) << 4,
+        }
     }
 
     /// Validate the submitted descending-stack SP before any Call admission.
@@ -136,6 +157,8 @@ pub struct CallTarget {
     /// Where `CallWithKey` places a lent key in the target's table; empty if
     /// the Invocation accepts none.
     pub placement_window: PlacementWindow,
+    /// The badge of the invoked key: the exporter receives it in `x1`.
+    pub badge: u64,
 }
 
 /// A key lent through `CallWithKey`, as the caller named it: its packed key
@@ -181,6 +204,8 @@ pub struct PreparedCall {
     entry_pc: NonZero<u64>,
     target_sp: u64,
     arguments: [u64; 6],
+    /// The invoked key's badge, delivered in `x1`.
+    badge: u64,
     placement: Option<PreparedPlacement>,
     depth: usize,
 }
@@ -352,6 +377,7 @@ impl<A: ArchObjects> Nucleus<A> {
             entry_pc: target.function_address,
             target_sp,
             arguments,
+            badge: target.badge,
             placement,
             depth,
         })
@@ -422,8 +448,10 @@ const SPSR_NZCV: u64 = 0xF000_0000;
 impl PreparedCall {
     /// The scrubbed target-entry execution frame for this Call.
     ///
-    /// Only the six real inputs survive, unchanged in `x2..x7`; dummy `x0`/`x1`
-    /// and `x8..x30` (including the consumed `x9` and `x18`) are zero. PC is the
+    /// Only the six real inputs survive, unchanged in `x2..x7`. `x1` is the
+    /// badge of the invoked key (zero for an unbadged one). `x0` is a reserved
+    /// dummy, zero, except that `CallWithKey` delivers the lent key there.
+    /// `x8..x30` (including the consumed `x9` and `x18`) are zero. PC is the
     /// Invocation entry, SP the validated target SP. SPSR inherits the saved
     /// source mode, masks and other controls with only NZCV cleared; the
     /// exception origin is unchanged, so Call never changes privilege. TLS
@@ -431,6 +459,7 @@ impl PreparedCall {
     pub fn target_entry_context(&self) -> SavedContext {
         let mut gpr = [0; 30];
         gpr[2..8].copy_from_slice(&self.arguments);
+        gpr[1] = self.badge;
         if let Some(placement) = self.placement {
             gpr[0] = placement.placed_key.to_wire();
         }

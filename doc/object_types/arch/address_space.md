@@ -64,7 +64,7 @@ Until it is bound, an AddressSpace cannot be activated, cannot create Invocation
 
 ### CreateInvocation
 
-Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSpace on the stack extent `[x5, x6)` with minimum headroom `x7` bytes, and installs it into slot `x4` of the table named by `x3`. The new capability carries only `Call` right. The entry address must be nonzero (`InvalidPointer`); the stack rules and errors are on the [Invocation](../core/invocation.md#stack-extent) page.
+Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSpace on the stack extent `[x5, x6)` with minimum headroom `x7` bytes, and installs it into slot `x4` of the table named by `x3`. The new capability carries the `Call` and `Badge` rights: its holder can call it and [mint badged copies](../core/key_table.md#setting-a-badge), and a holder that does not need to mint copies it with `Badge` masked off. The entry address must be nonzero (`InvalidPointer`); the stack rules and errors are on the [Invocation](../core/invocation.md#stack-extent) page.
 
 `x8` is the key-placement window that [`CallWithKey`](../core/invocation.md#callwithkey) uses: bits 31:0 are the first slot and bits 63:32 the number of slots, in this AddressSpace's own KeyTable. Zero means the Invocation accepts no lent key. A window that does not fit the table fails with `InvalidSlot`, naming its first slot. If the window is nonzero and the KeyTable does not hold a capability to itself in slot 4, CreateInvocation fails with `InvalidSelfReference` (`x1` = 4, `x2` = the AddressSpace key). The slots need not be vacant when the Invocation is created.
 

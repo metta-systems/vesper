@@ -432,6 +432,7 @@ impl KeyTable {
             function_address,
             stack_extent: entry.invocation_stack_extent().ok()?,
             placement_window: entry.invocation_placement_window().ok()?,
+            badge: entry.badge(),
         })
     }
 
@@ -702,7 +703,7 @@ mod tests {
     struct EntryState {
         kind: ObjectType,
         rights: Rights,
-        badge: u16,
+        badge: u64,
         region: Option<(u64, u64, u8, bool, u8)>,
     }
 

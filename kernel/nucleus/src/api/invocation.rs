@@ -60,6 +60,7 @@ pub fn prepare_call<A: ArchObjects>(
             function_address,
             stack_extent: entry.invocation_stack_extent()?,
             placement_window: entry.invocation_placement_window()?,
+            badge: entry.badge(),
         }
     };
 

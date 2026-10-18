@@ -1333,16 +1333,16 @@ fn retype_rejects_guard_words_for_non_keytable_kinds() {
     assert_eq!(fx.len(), before);
 }
 
-/// Requested rights outside `Rights::all()` are malformed input: Retype
+/// Requested rights words wider than the eight rights bits are malformed input: Retype
 /// installs the requested mask verbatim on the new origin capability, so an
-/// undefined bit must never reach the table.
+/// dropped high bit must never reach the table.
 #[test_case]
-fn retype_rejects_undefined_rights_bits() {
+fn retype_rejects_rights_words_wider_than_the_defined_bits() {
     let mut fx = Fixture::new(FULL);
     let ram = fx.install(KeySlot(30), ram_untyped(24));
     let before = fx.len();
 
-    for rights_word in [0x80_u64, 0xFF, 1 << 8, u64::MAX] {
+    for rights_word in [1_u64 << 8, 0x1FF, 1 << 63, u64::MAX] {
         let mut args = retype_args(
             ObjectType::FRAME,
             12,

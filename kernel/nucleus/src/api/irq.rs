@@ -259,7 +259,7 @@ fn binding<A: ArchObjects>(
 
     Ok(IrqBinding {
         notification,
-        badge: u64::from(entry.badge()),
+        badge: entry.badge(),
         receiver,
     })
 }

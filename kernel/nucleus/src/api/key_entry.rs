@@ -200,8 +200,12 @@ pub struct InvocationPayload {
     pub function_address: NonZero<u64>,
     /// Kernel address of the target `AddressSpace`'s carved record.
     pub address_space_address: u64,
-    /// Numeric target stack contract, validated before construction.
-    pub stack_extent: InvocationStackExtent,
+    /// Numeric target stack contract, validated before construction: the
+    /// extent's base and end, and its minimum headroom in 16-byte units (the
+    /// headroom is a multiple of 16, so the `u32` count covers 2^36 bytes).
+    pub stack_base: u64,
+    pub stack_end: u64,
+    pub minimum_headroom_units: u32,
     /// Target `AddressSpace` generation.
     pub address_space_generation: u32,
     /// First slot of the key-placement window `CallWithKey` places a lent key
@@ -211,7 +215,6 @@ pub struct InvocationPayload {
     /// Number of slots in the key-placement window; zero means the Invocation
     /// accepts no lent key.
     pub placement_count: u32,
-    pub _pad: u32,
 }
 
 /// Payload for a `KeyTable` capability: the carved `KeyTable`'s identity
@@ -269,23 +272,26 @@ union KeyPayload {
 
 /// A single entry in a thread's capability table (`KeyTable`).
 ///
-/// 64 bytes (a 56-byte payload after the header), aligned to 32 bytes.
-/// Discriminated union: `obj_type` selects the payload variant.
+/// 64 bytes: a 16-byte header (type, rights, flags, a 64-bit badge) and a
+/// 48-byte payload, aligned to 32 bytes. Discriminated union: `obj_type`
+/// selects the payload variant.
 #[repr(C, align(32))]
 #[derive(Clone, Copy)]
 pub struct KeyEntry {
     obj_type: ObjectType,
     rights: Rights,
-    badge: u16,
     /// Kernel-set marks that are never part of a capability's authority (see
     /// [`KeyEntry::FLAG_LENT`]). Zero for every entry installed by Retype,
     /// bootstrap or `CopyDerive`.
     flags: u8,
+    /// The badge: zero means unbadged. Set once by a `CopyDerive` of an
+    /// unbadged key, then kept by every copy.
+    badge: u64,
     payload: KeyPayload,
 }
 
-/// Bytes in the payload union: the 64-byte entry less its 8-byte header.
-const PAYLOAD_BYTES: usize = 56;
+/// Bytes in the payload union: the 64-byte entry less its 16-byte header.
+const PAYLOAD_BYTES: usize = 48;
 
 // Verify sizes at compile time
 const _: () = assert!(core::mem::size_of::<KeyEntry>() == 64);
@@ -295,7 +301,9 @@ const _: () = assert!(core::mem::size_of::<FramePayload>() == 32);
 const _: () = assert!(core::mem::size_of::<KeyTablePayload>() == 24);
 const _: () = assert!(core::mem::size_of::<CarvedPayload>() == 16);
 const _: () = assert!(core::mem::size_of::<IrqHandlerPayload>() == 8);
-const _: () = assert!(core::mem::size_of::<InvocationPayload>() == 56);
+const _: () = assert!(core::mem::size_of::<InvocationPayload>() == PAYLOAD_BYTES);
+const _: () = assert!(core::mem::offset_of!(KeyEntry, badge) == 8);
+const _: () = assert!(core::mem::offset_of!(KeyEntry, payload) == 16);
 const _: () = assert!(core::mem::size_of::<ThreadSelector>() == 24);
 const _: () = assert!(core::mem::align_of::<ThreadSelector>() == 8);
 const _: () = assert!(core::mem::align_of::<KeyEntry>() == 32);
@@ -402,7 +410,7 @@ impl KeyEntry {
     ///
     /// The entry stores only the checked `ObjectId`; dereferencing requires
     /// the owning access context (see `doc/capabilities-design.md` §3).
-    pub fn new<T: NucleusObject>(id: ObjectId, rights: Rights, badge: u16) -> Self {
+    pub fn new<T: NucleusObject>(id: ObjectId, rights: Rights, badge: u64) -> Self {
         debug_assert_eq!(id.pool, T::POOL);
         Self::from_id(T::TYPE, id, rights, badge).unwrap_or_else(|error| {
             panic!("not an identity-backed object kind: {:?}", error.code())
@@ -417,7 +425,7 @@ impl KeyEntry {
         obj_type: ObjectType,
         id: ObjectId,
         rights: Rights,
-        badge: u16,
+        badge: u64,
     ) -> Result<Self, CapError> {
         if matches!(
             obj_type,
@@ -566,7 +574,7 @@ impl KeyEntry {
         guard: u32,
         size_bits: u8,
         rights: Rights,
-        badge: u16,
+        badge: u64,
     ) -> Self {
         debug_assert_eq!(table.kind, ObjectType::KEY_TABLE);
         Self {
@@ -594,7 +602,7 @@ impl KeyEntry {
 
     /// Create a capability for an Untyped-carved object; the kind comes from
     /// its identity.
-    pub fn new_carved(id: CarvedId, rights: Rights, badge: u16) -> Self {
+    pub fn new_carved(id: CarvedId, rights: Rights, badge: u64) -> Self {
         debug_assert!(is_carved_object_kind(id.kind));
         Self {
             obj_type: id.kind,
@@ -661,7 +669,9 @@ impl KeyEntry {
     }
 
     /// Create an `Invocation` capability targeting an entry point in an
-    /// `AddressSpace`. The capability starts with `CALL` authority and no badge.
+    /// `AddressSpace`. The capability starts with `CALL` and `BADGE` authority and no
+    /// badge: its holder can call it and mint badged copies; a copy that drops
+    /// `BADGE` can only call.
     /// The nonzero entry and validated numeric stack contract are mandatory;
     /// `placement_window` is where `CallWithKey` places a lent key (empty for
     /// an Invocation that accepts none).
@@ -674,25 +684,26 @@ impl KeyEntry {
         debug_assert_eq!(address_space.kind, ObjectType::ADDRESS_SPACE);
         Self {
             obj_type: ObjectType::INVOCATION,
-            rights: Rights(Rights::CALL),
+            rights: Rights(Rights::CALL | Rights::BADGE),
             badge: 0,
             flags: 0,
             payload: KeyPayload {
                 invocation: InvocationPayload {
                     function_address,
                     address_space_address: address_space.address,
-                    stack_extent,
+                    stack_base: stack_extent.base(),
+                    stack_end: stack_extent.end(),
+                    minimum_headroom_units: stack_extent.minimum_headroom_units(),
                     address_space_generation: address_space.generation,
                     placement_first: placement_window.first(),
                     placement_count: placement_window.count(),
-                    _pad: 0,
                 },
             },
         }
     }
 
     /// Create a named Thread capability.
-    pub fn new_thread(id: ThreadId, rights: Rights, badge: u16) -> Self {
+    pub fn new_thread(id: ThreadId, rights: Rights, badge: u64) -> Self {
         Self {
             obj_type: ObjectType::THREAD,
             rights,
@@ -839,9 +850,27 @@ impl KeyEntry {
         derived
     }
 
+    /// This entry with `badge` set. The caller has established that the key
+    /// may be badged (see `CopyDerive`): this is a pure representation
+    /// transform, not an authority check.
+    #[inline]
+    #[must_use]
+    pub const fn with_badge(mut self, badge: u64) -> Self {
+        self.badge = badge;
+        self
+    }
+
+    /// Whether this kind can be badged on derive: `Invocation` (the badge
+    /// reaches the exporter) and `Notification` (the badge is the signalled
+    /// bits).
+    #[inline]
+    pub fn is_badgeable_kind(obj_type: ObjectType) -> bool {
+        obj_type == ObjectType::INVOCATION || obj_type == ObjectType::NOTIFICATION
+    }
+
     /// Get badge value.
     #[inline]
-    pub fn badge(&self) -> u16 {
+    pub fn badge(&self) -> u64 {
         self.badge
     }
 
@@ -996,7 +1025,12 @@ impl KeyEntry {
         }
         // SAFETY: Invocation constructors initialize the validated extent;
         // the checked tag selects that payload, and no mutable accessor exposes it.
-        Ok(unsafe { self.payload.invocation.stack_extent })
+        let payload = unsafe { self.payload.invocation };
+        Ok(InvocationStackExtent::from_validated(
+            payload.stack_base,
+            payload.stack_end,
+            payload.minimum_headroom_units,
+        ))
     }
 
     /// Access the inline Frame payload, but only if this is a Frame.

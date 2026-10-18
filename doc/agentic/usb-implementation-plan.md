@@ -14,11 +14,11 @@ See [usb-completed.md](usb-completed.md).
 - **Invocation badge-on-derive** (maintainer decision 2026-10-18: a pipe handle is an
   Invocation key issued by the host controller). The HCD derives a pipe key from its
   exported Invocation, and the badge identifies the pipe and its owner to the HCD.
-  Decided in
-  [Badges](capabilities-contract.md#badges) of the capabilities contract; the
-  implementation is in Phase 6 of
-  [capabilities-implementation-plan.md](capabilities-implementation-plan.md), and the badge width is still open in [capabilities-decisions.md](capabilities-decisions.md). Until it lands, pipe
-  handles stay numeric and owned by the opening client's data area.
+  The mechanism is implemented ([Badges](capabilities-contract.md#badges): a 64-bit
+  badge set by `CopyDerive`, delivered in `x1` of the entry; `CreateInvocation` installs `CALL | BADGE`, so the exporter mints, and keys handed to clients should have `BADGE` masked off). Still open, in
+  [capabilities-decisions.md](capabilities-decisions.md): how Meddle expresses a
+  function taking a key from another function. Until it is settled, pipe handles stay
+  numeric and owned by the opening client's data area.
 
 ## USB2 follow-ups
 

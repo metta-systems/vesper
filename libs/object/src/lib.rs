@@ -140,6 +140,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::STALE_GENERATION, current, 0) => CapError::StaleGeneration { current },
             (code::TIMED_OUT, value, 0) => CapError::TimedOut { value },
             (code::WATCHED, 0, 0) => CapError::Watched,
+            (code::ALREADY_BADGED, 0, 0) => CapError::AlreadyBadged,
             (code::MEMBER_RETIRED, slot, 0) => CapError::MemberRetired { slot },
             (code::INVALID_SELF_REFERENCE, slot, key) => CapError::InvalidSelfReference {
                 reference: InvalidSelfReference::from_slot(slot)?,
@@ -267,6 +268,8 @@ pub enum CapError {
     /// A Notification listed in a `WaitSet` was awaited directly, or a
     /// Notification with a direct waiter was added to a `WaitSet`.
     Watched,
+    /// A `CopyDerive` asked to set a badge on a key that already has one.
+    AlreadyBadged,
     /// A member of a `WaitSet` is no longer live; `slot` is its slot.
     MemberRetired {
         slot: u64,
@@ -381,6 +384,7 @@ impl CapError {
             CapError::StaleGeneration { current } => (code::STALE_GENERATION, current, 0),
             CapError::TimedOut { value } => (code::TIMED_OUT, value, 0),
             CapError::Watched => (code::WATCHED, 0, 0),
+            CapError::AlreadyBadged => (code::ALREADY_BADGED, 0, 0),
             CapError::MemberRetired { slot } => (code::MEMBER_RETIRED, slot, 0),
             CapError::InvalidSelfReference { reference, key } => (
                 code::INVALID_SELF_REFERENCE,

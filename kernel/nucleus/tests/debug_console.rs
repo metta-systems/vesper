@@ -68,7 +68,7 @@ use {
 // The debug console is a stateless singleton, not a pool object; its entry
 // carries a null identity and is validated by type only (see the debug-only
 // exception in doc/capabilities-contract.md).
-fn console_entry(rights: Rights, badge: u16) -> KeyEntry {
+fn console_entry(rights: Rights, badge: u64) -> KeyEntry {
     KeyEntry::from_id(
         ObjectType::DEBUG_CONSOLE,
         ObjectId {
@@ -892,7 +892,7 @@ fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
                     )),
                 extent
             );
-            assert_eq!(entry.rights(), Rights(Rights::CALL));
+            assert_eq!(entry.rights(), Rights(Rights::CALL | Rights::BADGE));
             assert_eq!(entry.badge(), 0);
             assert!(!entry.is_thread_return_key());
         }
@@ -1295,7 +1295,7 @@ fn rejects_invalid_operations_through_shared_capability_borrows() {
 
 // Check every slot through the public API, including retained identity on deletion.
 // Only console metadata is inspected; no object pointer or write buffer is accessed.
-fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u16)>) {
+fn assert_console_table(table: &KeyTable, key: RawKey, live: Option<(Rights, u64)>) {
     // The fixture's self-table capability and provisioned Return sentinel
     // are always present alongside the console entry under test.
     assert_eq!(table.len(), 2 + usize::from(live.is_some()));

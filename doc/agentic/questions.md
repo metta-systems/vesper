@@ -38,6 +38,7 @@ sdcard
 +compositor
 "terminal" windows
 
+SMP
 kernel runtime upgrade?
 is virtio-input needed for qemu??
 isochronous scheduling

@@ -1,9 +1,9 @@
 use crate::{CapError, Key, RawKey, Rights, decode_syscall_result};
 
 #[cfg(not(test))]
-use libsyscall::{protected_call1, protected_call4};
+use libsyscall::{protected_call1, protected_call4, protected_call5};
 #[cfg(test)]
-use tests::{protected_call1, protected_call4};
+use tests::{protected_call1, protected_call4, protected_call5};
 
 #[cfg(test)]
 #[path = "../tests/support/key_table.rs"]
@@ -157,6 +157,37 @@ impl KeyTableKey {
                 dst_captbl.key.to_wire(),
                 u64::from(dst_slot),
                 u64::from(rights.bits()),
+            )
+        };
+        let (key, _) = decode_syscall_result(result)?;
+        Ok(RawKey::from_wire(key))
+    }
+
+    /// `CopyDerive` that also sets a badge on the derived key.
+    ///
+    /// `badge` is nonzero. The source key must be unbadged
+    /// (`CapError::AlreadyBadged` otherwise), carry `Rights::BADGE`, and name an
+    /// `Invocation` or a `Notification`. The derived key keeps the badge for
+    /// good and every later copy of it does too. Wire: as [`Self::copy_derive`]
+    /// with `x6` the badge.
+    pub fn copy_derive_badged(
+        &self,
+        src_key: RawKey,
+        dst_captbl: &KeyTableKey,
+        dst_slot: u32,
+        rights: Rights,
+        badge: u64,
+    ) -> Result<RawKey, CapError> {
+        // SAFETY: Unsafe call.
+        let result = unsafe {
+            protected_call5(
+                self.key.to_wire(),
+                KeyTableOp::CopyDerive as u64,
+                src_key.to_wire(),
+                dst_captbl.key.to_wire(),
+                u64::from(dst_slot),
+                u64::from(rights.bits()),
+                badge,
             )
         };
         let (key, _) = decode_syscall_result(result)?;

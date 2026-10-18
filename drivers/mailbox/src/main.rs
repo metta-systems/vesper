@@ -69,7 +69,7 @@ struct VideoCoreMailbox;
 
 impl MailboxV1 for VideoCoreMailbox {
     #[cfg(target_os = "vesper")]
-    fn enter() {
+    fn enter(_badge: u64) {
         component::record_return_key();
     }
 

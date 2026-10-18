@@ -611,6 +611,53 @@ pub fn run() {
         );
     }
 
+    // Badge on derive for a Notification, through the real SVC path: the
+    // badged copy signals its 64-bit badge whatever the caller passes, the
+    // original keeps signalling the argument, and a badge is set once.
+    {
+        let n1 = NotificationKey::from_key(n1_key);
+        let badge = 1_u64 << 40 | 0b101;
+        let badged_key = self_table
+            .copy_derive_badged(
+                n1_key,
+                &self_table,
+                KeySlot(33).0,
+                Rights(Rights::SEND | Rights::RECV | Rights::BADGE),
+                badge,
+            )
+            .unwrap_or_else(|error| {
+                panic!("badged Notification derive failed: {:?}", error.code())
+            });
+        let badged = NotificationKey::from_key(badged_key);
+        badged
+            .signal(0b10)
+            .unwrap_or_else(|error| panic!("badged Signal failed: {:?}", error.code()));
+        assert_eq!(
+            n1.poll()
+                .unwrap_or_else(|error| panic!("poll failed: {:?}", error.code())),
+            badge,
+            "the badge replaces the argument"
+        );
+        n1.signal(0b10)
+            .unwrap_or_else(|error| panic!("plain Signal failed: {:?}", error.code()));
+        assert_eq!(
+            n1.poll()
+                .unwrap_or_else(|error| panic!("poll failed: {:?}", error.code())),
+            0b10,
+            "an unbadged key signals its argument"
+        );
+        assert!(matches!(
+            self_table.copy_derive_badged(
+                badged_key,
+                &self_table,
+                KeySlot(34).0,
+                Rights(Rights::SEND),
+                1
+            ),
+            Err(CapError::AlreadyBadged)
+        ));
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Thread.Retire end-to-end: the Thread-control teardown trigger —
     // cancel every pending record naming the target as waiter, purge its

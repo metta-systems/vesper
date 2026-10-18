@@ -89,7 +89,7 @@ struct InvocationDestinationState {
     target: AddressSpaceId,
     function: u64,
     rights: Rights,
-    badge: u16,
+    badge: u64,
     stack: [u64; 3],
 }
 
@@ -183,7 +183,7 @@ pub fn run() {
     let bound_asid = source.asid;
 
     // ─────────────────────────────────────────────────────────────────
-    // AddressSpace.CreateInvocation installs a CALL-only capability into
+    // AddressSpace.CreateInvocation installs a CALL | BADGE capability into
     // the selected KeyTable without validating the supplied entry address.
     // These are numeric low/user-range contracts, not mapped stacks. The
     // existing high direct-map Bounce SP is not a valid PPC stack fixture.
@@ -209,7 +209,7 @@ pub fn run() {
             panic!("CreateInvocation did not install its destination cap");
         };
         assert_eq!(invocation.object_type(), ObjectType::INVOCATION);
-        assert_eq!(invocation.rights(), Rights(Rights::CALL));
+        assert_eq!(invocation.rights(), Rights(Rights::CALL | Rights::BADGE));
         let Ok((target, function_address)) = invocation.invocation_target() else {
             panic!("installed entry is not an Invocation");
         };
@@ -264,7 +264,7 @@ pub fn run() {
             .unwrap_or_else(|error| panic!("Invocation payload changed: {:?}", error.code()));
         assert_eq!(target.0, boot_as_id);
         assert_eq!(target.1.get(), 0x1234);
-        assert_eq!(existing.rights(), Rights(Rights::CALL));
+        assert_eq!(existing.rights(), Rights(Rights::CALL | Rights::BADGE));
         assert!(matches!(
             boot_table.lookup(boot_key(63, 1), BOOT_TABLE_GUARD),
             Err(CapError::InvalidKey {
@@ -430,7 +430,7 @@ pub fn run() {
             [extent.base(), extent.end(), extent.minimum_headroom()],
             export_stack
         );
-        assert_eq!(invocation.rights(), Rights(Rights::CALL));
+        assert_eq!(invocation.rights(), Rights(Rights::CALL | Rights::BADGE));
         assert_ne!(export_table_addr, boot_table_binding.address());
         let target_table = nucleus
             .address_space(target)
@@ -484,7 +484,7 @@ pub fn run() {
             entry.invocation_target(),
             Ok((target, function)) if target == boot_as_id && function.get() == 0x6789
         ));
-        assert_eq!(entry.rights(), Rights(Rights::CALL));
+        assert_eq!(entry.rights(), Rights(Rights::CALL | Rights::BADGE));
     }
     assert!(matches!(
         boot_as.create_invocation(0x5678, &self_table, KeySlot(62), 0x5010, 0x50A0, 0x30),
@@ -831,6 +831,54 @@ pub fn run() {
         );
         assert_boot_thread_home(nucleus);
         assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+    }
+
+    // Badges on derive, through the real SVC path: `CreateInvocation` grants
+    // `CALL | BADGE`, so the export key itself mints. A badged `CALL`-only
+    // copy delivers its badge in x1 of the entry; an unbadged copy delivers
+    // zero; the badge is set once.
+    {
+        let minting = export_key;
+        let call_only = Rights(Rights::CALL);
+        for (slot, badge) in [(221, 0x1234_5678_9ABC_DEF0_u64), (222, 7), (223, u64::MAX)] {
+            let badged = self_table
+                .copy_derive_badged(minting, &self_table, slot, call_only, badge)
+                .unwrap_or_else(|error| panic!("badged derive failed: {:?}", error.code()));
+            ppc::badged_export_round_trip(badged, badge);
+            assert_boot_thread_home(nucleus);
+            assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+            // The badged key cannot mint: it has no BADGE right.
+            assert!(matches!(
+                self_table.copy_derive_badged(badged, &self_table, 224, call_only, 1),
+                Err(CapError::InsufficientRights)
+            ));
+        }
+        // An unbadged copy without BADGE delivers zero and cannot mint.
+        let plain = self_table
+            .copy_derive(minting, &self_table, 224, call_only)
+            .unwrap_or_else(|error| panic!("plain derive failed: {:?}", error.code()));
+        ppc::badged_export_round_trip(plain, 0);
+        assert!(matches!(
+            self_table.copy_derive_badged(plain, &self_table, 226, call_only, 6),
+            Err(CapError::InsufficientRights)
+        ));
+
+        // A badged key that kept BADGE still cannot be badged again.
+        let keeps = self_table
+            .copy_derive_badged(
+                minting,
+                &self_table,
+                225,
+                Rights(Rights::CALL | Rights::BADGE),
+                5,
+            )
+            .unwrap_or_else(|error| panic!("badge-keeping derive failed: {:?}", error.code()));
+        assert!(matches!(
+            self_table.copy_derive_badged(keeps, &self_table, 226, call_only, 6),
+            Err(CapError::AlreadyBadged)
+        ));
+        ppc::badged_export_round_trip(keeps, 5);
+        ppc::badged_export_round_trip(export_key, 0);
     }
 
     // Rejected Returns from inside a migrated call: every bad key, through

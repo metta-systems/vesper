@@ -45,7 +45,7 @@ impl Echo {
 }
 
 impl EchoV1 for Echo {
-    fn enter() {
+    fn enter(_badge: u64) {
         init_return_key(&ThreadReturnKey::from_key(RawKey::from_wire(
             Self::init().return_key,
         )));

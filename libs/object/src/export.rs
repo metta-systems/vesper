@@ -7,7 +7,7 @@
 //! the open init-handoff design.
 //!
 //! Each exported procedure gets a non-returning `extern "C"` wrapper from
-//! [`ppc_export!`](crate::ppc_export): it takes two dummy words and the six
+//! [`ppc_export!`](crate::ppc_export): it takes the dummy `x0`, the badge of the invoked key (`x1`) and the six
 //! real inputs (`x2..x7`), calls its linked body normally with the same eight
 //! arguments in the same registers, and completes the invocation with
 //! [`complete_export`]. A Return the kernel rejects goes,
@@ -126,10 +126,12 @@ pub unsafe fn complete_with(
 /// Define a PPC export entry wrapper for a linked body.
 ///
 /// `ppc_export!(pub fn entry => body);` generates
-/// `extern "C" fn entry(dummy0, dummy1, a0..a5: u64) -> !`, whose address is
+/// `extern "C" fn entry(dummy0, badge, a0..a5: u64) -> !`, whose address is
 /// what `AddressSpace.CreateInvocation` publishes. The body is an
 /// `extern "C" fn(u64, u64, u64, u64, u64, u64, u64, u64) -> PpcResult`
-/// taking the same two leading dummies (x0/x1, zeroed by the kernel) and the
+/// taking the same two leading words (x0, a reserved dummy the kernel zeroes
+/// except that `CallWithKey` puts the lent key there; x1, the badge of the
+/// invoked key) and the
 /// six real inputs in x2..x7. The wrapper calls it normally, with no register
 /// shuffle, so its linkage is target-local. The kernel enters the wrapper
 /// with a zero x30, so the wrapper never returns normally.
@@ -139,7 +141,7 @@ macro_rules! ppc_export {
         $(#[$meta])*
         $visibility extern "C" fn $entry(
             dummy0: u64,
-            dummy1: u64,
+            badge: u64,
             input0: u64,
             input1: u64,
             input2: u64,
@@ -155,7 +157,7 @@ macro_rules! ppc_export {
             static EXPORT: $crate::export::ExportRecord =
                 $crate::export::ExportRecord::new(stringify!($entry), $entry);
             let result: $crate::export::PpcResult =
-                $body(dummy0, dummy1, input0, input1, input2, input3, input4, input5);
+                $body(dummy0, badge, input0, input1, input2, input3, input4, input5);
             // SAFETY: this wrapper is only ever entered by Invocation.Call.
             unsafe { $crate::export::complete_export(result) }
         }

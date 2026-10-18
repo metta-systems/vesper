@@ -125,6 +125,7 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 43 | `TimedOut` | the EventCount value (0 for a Notification) | 0 |
 | 44 | `Watched` | 0 | 0 |
 | 45 | `MemberRetired` | the WaitSet slot | 0 |
+| 46 | `AlreadyBadged` | 0 | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 

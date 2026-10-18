@@ -503,6 +503,7 @@ mod tests {
         assert_eq!(Rights::REMOVE, 0x02);
         assert_eq!(Rights::INSTALL, 0x04);
         assert_eq!(Rights::LEND, 0x40);
+        assert_eq!(Rights::BADGE, 0x80);
         assert_eq!(Rights::empty().bits(), 0);
         assert_eq!(
             Rights::all().bits(),
@@ -513,6 +514,7 @@ mod tests {
                 | Rights::EXECUTE
                 | Rights::RETIRE
                 | Rights::LEND
+                | Rights::BADGE
         );
     }
 
@@ -520,20 +522,16 @@ mod tests {
     fn rights_wire_decoding_accepts_only_defined_bits() {
         use vesper_objects::Rights;
 
-        for word in 0_u64..=0x7F {
+        // All eight bits are defined.
+        for word in 0_u64..=0xFF {
             assert!(matches!(
                 Rights::from_wire(word),
                 Ok(rights) if u64::from(rights.bits()) == word
             ));
         }
-        for word in 0x80_u64..=0xFF {
-            assert!(matches!(
-                Rights::from_wire(word),
-                Err(CapError::InvalidOperation)
-            ));
-        }
+        // Wider words would lose bits on narrowing.
         for bit in 8..64 {
-            for valid in [0_u64, 0x01, 0x7F] {
+            for valid in [0_u64, 0x01, 0x7F, 0xFF] {
                 assert!(matches!(
                     Rights::from_wire(valid | (1_u64 << bit)),
                     Err(CapError::InvalidOperation)

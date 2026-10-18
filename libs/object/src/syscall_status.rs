@@ -97,6 +97,9 @@ pub const WATCHED: u64 = 44;
 /// A member of a `WaitSet` is no longer live. Detail 1 is the member's slot;
 /// detail 2 is zero.
 pub const MEMBER_RETIRED: u64 = 45;
+/// A `CopyDerive` asked to set a badge on a key that already has one. A badge
+/// is set once and never changed or cleared. Details are zero.
+pub const ALREADY_BADGED: u64 = 46;
 
 /// Which self reference of a `KeyTable` is wrong, by the well-known slot that
 /// must hold it.

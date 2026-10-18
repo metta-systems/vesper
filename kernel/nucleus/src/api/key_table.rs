@@ -19,7 +19,8 @@
 //!
 //! Wire schemas (see `doc/capabilities-contract.md`):
 //! - `CopyDerive` `0`: `x2` source selector, `x3` destination-table key,
-//!   `x4` vacant destination slot, `x5` requested rights; `x6..x7` zero.
+//!   `x4` vacant destination slot, `x5` requested rights, `x6` the badge to set (zero:
+//!   none), `x7` zero.
 //!   Returns the destination-local packed key in `x1`, zero in `x2`.
 //! - `Move` `1`: `x2` source selector, `x3` destination-table key, `x4`
 //!   vacant destination slot; `x5..x7` zero. Returns as `CopyDerive`.
@@ -82,7 +83,9 @@ fn copy_derive(
         })?,
     );
     let requested = Rights::from_wire(args[3])?;
-    if args[4] != 0 || args[5] != 0 {
+    // `x6` requests a badge for the derived key (zero: none); `x7` is reserved.
+    let badge = args[4];
+    if args[5] != 0 {
         return Err(CapError::InvalidOperation);
     }
 
@@ -111,11 +114,11 @@ fn copy_derive(
             let src_entry = table
                 .lookup(src_sel, src_cap.guard)
                 .map_err(|e| e.with_key_operand(2))?;
-            check_copyable(src_entry, 2)?;
+            check_copy_derivable(src_entry)?;
             if !src_entry.rights().permits(requested) {
                 return Err(CapError::InsufficientRights);
             }
-            src_entry.derive(requested)
+            derive_entry(src_entry, requested, badge)?
         };
         table
             .insert(dst_slot, derived, dst_cap.guard)
@@ -130,11 +133,11 @@ fn copy_derive(
         let src_entry = src_table
             .lookup(src_sel, src_cap.guard)
             .map_err(|e| e.with_key_operand(2))?;
-        check_copyable(src_entry, 2)?;
+        check_copy_derivable(src_entry)?;
         if !src_entry.rights().permits(requested) {
             return Err(CapError::InsufficientRights);
         }
-        let derived = src_entry.derive(requested);
+        let derived = derive_entry(src_entry, requested, badge)?;
         dst_table
             .insert(dst_slot, derived, dst_cap.guard)
             .map(|key| {
@@ -387,4 +390,36 @@ fn check_copyable(entry: &KeyEntry, _operand: u8) -> Result<(), CapError> {
         return Err(CapError::InvalidOperation);
     }
     Ok(())
+}
+
+/// Whether `CopyDerive` may take `entry` as its source: a kind of the common
+/// allow-list or one that can be badged, and not a borrowed (`LENT`) entry.
+fn check_copy_derivable(entry: &KeyEntry) -> Result<(), CapError> {
+    if KeyEntry::is_badgeable_kind(entry.object_type()) && !entry.is_lent() {
+        return Ok(());
+    }
+    check_copyable(entry, 2)
+}
+
+/// The entry `CopyDerive` installs: `source` with `requested` rights and, if
+/// `badge` is nonzero, that badge.
+///
+/// A badge is set once: the source must name an `Invocation` or a
+/// `Notification` (`InvalidObjectType` otherwise), carry `BADGE`
+/// (`InsufficientRights`) and have no badge yet (`AlreadyBadged`). A zero
+/// `badge` keeps the source's badge, whatever it is.
+fn derive_entry(source: &KeyEntry, requested: Rights, badge: u64) -> Result<KeyEntry, CapError> {
+    if badge == 0 {
+        return Ok(source.derive(requested));
+    }
+    if !KeyEntry::is_badgeable_kind(source.object_type()) {
+        return Err(CapError::InvalidObjectType(source.object_type()));
+    }
+    if !source.rights().has(Rights::BADGE) {
+        return Err(CapError::InsufficientRights);
+    }
+    if source.badge() != 0 {
+        return Err(CapError::AlreadyBadged);
+    }
+    Ok(source.derive(requested).with_badge(badge))
 }

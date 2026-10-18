@@ -74,7 +74,7 @@ struct InvocationDestinationState {
     target: AddressSpaceId,
     function: u64,
     rights: Rights,
-    badge: u16,
+    badge: u64,
     stack: [u64; 3],
 }
 

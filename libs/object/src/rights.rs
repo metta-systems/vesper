@@ -33,6 +33,12 @@ impl Rights {
     /// drops it through the requested-rights subset rule.
     pub const LEND: u8 = 0x40;
 
+    /// Permission to set a badge: a `CopyDerive` that requests a badge needs
+    /// `BADGE` on its source key, which must be unbadged. The same bit
+    /// position serves every kind that can be badged (`Invocation`,
+    /// `Notification`). Derivation can drop it like any other right.
+    pub const BADGE: u8 = 0x80;
+
     // ── KeyTable-management permissions (per-kind interpretation) ──
     // KeyTable capabilities interpret the rights
     // field as table-management permissions, reusing the same bit positions
@@ -50,7 +56,7 @@ impl Rights {
         Rights(0)
     }
     pub const fn all() -> Rights {
-        Rights(0x7F)
+        Rights(0xFF)
     }
     pub fn bits(&self) -> u8 {
         self.0

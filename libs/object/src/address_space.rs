@@ -73,7 +73,8 @@ impl AddressSpaceKey {
     /// stack end, `x7` positive minimum downward headroom in bytes and `x8`
     /// the key-placement window (zero here). Requires `GRANT` on this
     /// `AddressSpace` and `INSTALL` on the destination `KeyTable`. The
-    /// installed `Invocation` capability has `CALL` authority only. The
+    /// installed `Invocation` capability has `CALL` and `BADGE` authority; a
+    /// holder that does not mint copies it with `BADGE` masked off. The
     /// address is stored as supplied; construction does not check mapping or
     /// executable permission. Returns the destination-table-local key.
     ///

@@ -15,7 +15,7 @@ pub const STACK_REGION: u64 = 0x3000_0000;
 
 /// The badge of the receiver's interrupt Notification: the bits each
 /// interrupt signals.
-pub const IRQ_BADGE: u16 = 0x10;
+pub const IRQ_BADGE: u64 = 0x10;
 
 /// Interrupts the receiver handles before it parks.
 pub const ROUNDS: u64 = 3;

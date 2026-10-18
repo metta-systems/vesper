@@ -317,11 +317,7 @@ pub fn run() -> ! {
         let bits = report
             .await_bits(NotificationKey::WAIT_INFINITE)
             .unwrap_or_else(|error| panic!("report Wait failed: {:?}", error.code()));
-        assert_eq!(
-            bits,
-            u64::from(IRQ_BADGE),
-            "round {round} delivered {bits:#x}"
-        );
+        assert_eq!(bits, IRQ_BADGE, "round {round} delivered {bits:#x}");
         quiet_virtual_timer();
         semi::println!("irq-test: round {round}: the receiver got {bits:#x}");
         resume

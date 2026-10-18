@@ -212,7 +212,7 @@ impl Fixture {
 /// as a source entry and as a destination-table capability): it carries the
 /// destination table's guard and capacity exponent, copied verbatim by
 /// derivation.
-fn table_cap(addr: u64, rights: Rights, badge: u16) -> KeyEntry {
+fn table_cap(addr: u64, rights: Rights, badge: u64) -> KeyEntry {
     KeyEntry::new_keytable(table_id(addr), DST_GUARD, SIZE_BITS, rights, badge)
 }
 
@@ -389,7 +389,7 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
                 .unwrap_or_else(|error| panic!("Invocation target: {:?}", error.code()));
             assert_eq!(target, (address_space, function));
             assert_eq!(entry.object_type(), ObjectType::INVOCATION);
-            assert_eq!(entry.rights(), Rights(Rights::CALL));
+            assert_eq!(entry.rights(), Rights(Rights::CALL | Rights::BADGE));
             assert_eq!(entry.badge(), 0);
             assert!(!entry.is_thread_return_key());
             assert!(entry.object_id().is_err());
@@ -412,7 +412,7 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
                 assert_eq!(derived.rights(), rights);
                 assert_eq!(derived.badge(), 0);
             }
-            assert_eq!(entry.rights(), Rights(Rights::CALL));
+            assert_eq!(entry.rights(), Rights(Rights::CALL | Rights::BADGE));
         }
     }
 }
@@ -491,19 +491,44 @@ fn identity_entry_constructor_rejects_dedicated_payload_kinds() {
 }
 
 #[test_case]
+fn an_invocation_entry_stores_the_headroom_in_sixteen_byte_units_without_loss() {
+    for headroom in [16_u64, 32, 0x400, 0x1_0000_0000, 0xF_FFFF_FFF0] {
+        let extent = InvocationStackExtent::new(0x1000, 0x20_0000_0000, headroom, u64::MAX)
+            .unwrap_or_else(|_| panic!("a valid extent"));
+        assert_eq!(extent.minimum_headroom(), headroom);
+        assert_eq!(
+            extent.minimum_headroom_units(),
+            u32::try_from(headroom >> 4).unwrap_or(0)
+        );
+        let entry = KeyEntry::new_invocation(
+            test_id(ObjectType::ADDRESS_SPACE, 0x2000),
+            NonZero::new(0x4_0000).unwrap_or_else(|| panic!("nonzero")),
+            extent,
+            PlacementWindow::NONE,
+        );
+        let stored = entry
+            .invocation_stack_extent()
+            .unwrap_or_else(|_| panic!("stored extent"));
+        assert_eq!(stored, extent);
+        assert_eq!(stored.minimum_headroom(), headroom);
+    }
+}
+#[test_case]
 fn thread_return_representation_preserves_entry_and_payload_layout() {
     assert_eq!(size_of::<ThreadSelector>(), 24);
     assert_eq!(align_of::<ThreadSelector>(), 8);
     assert_eq!(size_of::<InvocationStackExtent>(), 24);
     assert_eq!(align_of::<InvocationStackExtent>(), 8);
-    assert_eq!(size_of::<InvocationPayload>(), 56);
+    assert_eq!(size_of::<InvocationPayload>(), 48);
     assert_eq!(align_of::<InvocationPayload>(), 8);
     assert_eq!(offset_of!(InvocationPayload, function_address), 0);
     assert_eq!(offset_of!(InvocationPayload, address_space_address), 8);
-    assert_eq!(offset_of!(InvocationPayload, address_space_generation), 40);
-    assert_eq!(offset_of!(InvocationPayload, stack_extent), 16);
-    assert_eq!(offset_of!(InvocationPayload, placement_first), 44);
-    assert_eq!(offset_of!(InvocationPayload, placement_count), 48);
+    assert_eq!(offset_of!(InvocationPayload, stack_base), 16);
+    assert_eq!(offset_of!(InvocationPayload, stack_end), 24);
+    assert_eq!(offset_of!(InvocationPayload, minimum_headroom_units), 32);
+    assert_eq!(offset_of!(InvocationPayload, address_space_generation), 36);
+    assert_eq!(offset_of!(InvocationPayload, placement_first), 40);
+    assert_eq!(offset_of!(InvocationPayload, placement_count), 44);
     assert_eq!(size_of::<FramePayload>(), 32);
     assert_eq!(size_of::<KeyEntry>(), 64);
     assert_eq!(align_of::<KeyEntry>(), 32);
@@ -514,7 +539,8 @@ fn thread_return_representation_preserves_entry_and_payload_layout() {
         64
     );
     // The compiled production module also asserts its private KeyPayload union
-    // is 56 bytes; do not substitute a test-only mirror of that union.
+    // is 48 bytes, with the badge at entry offset 8 and the payload at 16; do not
+    // substitute a test-only mirror of that union.
 }
 
 #[test_case]
@@ -723,7 +749,7 @@ fn stack_extent_accepts_zero_base_ceiling_subpage_and_equal_headroom() {
     let ceiling = ArchObjectsImpl::USER_VA_END;
     for (base, end, minimum) in [
         (0, 16, 16),
-        (0, ceiling, ceiling),
+        (0, ceiling, 0xF_FFFF_FFF0), // the largest headroom an entry stores
         (ceiling - 16, ceiling, 16),
         (0x1010, 0x1080, 16),
         (0x1010, 0x1080, 48),
@@ -882,14 +908,25 @@ fn stack_arithmetic_near_u64_max_compares_before_subtracting_or_adding() {
         Reason::EndMisaligned,
         6,
     );
-    let almost_full = InvocationStackExtent::new(0, end, end, u64::MAX)
+    // The largest headroom a capability entry stores: 2^32 - 1 units of 16 bytes.
+    const MAX_HEADROOM: u64 = 0xF_FFFF_FFF0;
+    let top = MAX_HEADROOM + 16;
+    let almost_full = InvocationStackExtent::new(0, top, MAX_HEADROOM, u64::MAX)
         .unwrap_or_else(|error| panic!("large synthetic extent: {:?}", error.code()));
-    assert!(almost_full.validate_sp(end).is_ok());
+    assert!(almost_full.validate_sp(top).is_ok());
+    assert!(almost_full.validate_sp(MAX_HEADROOM).is_ok());
     assert_invalid_stack(
-        almost_full.validate_sp(end - 16),
-        end - 16,
+        almost_full.validate_sp(MAX_HEADROOM - 16),
+        MAX_HEADROOM - 16,
         Reason::SpInsufficientHeadroom,
         12,
+    );
+    // One unit more does not fit the entry, whatever the extent.
+    assert_invalid_stack(
+        InvocationStackExtent::new(0, u64::MAX - 15, MAX_HEADROOM + 16, u64::MAX),
+        MAX_HEADROOM + 16,
+        Reason::MinimumHeadroomTooLarge,
+        9,
     );
     let below_top = InvocationStackExtent::new(base, end - 16, 16, u64::MAX)
         .unwrap_or_else(|error| panic!("short synthetic extent: {:?}", error.code()));
@@ -946,6 +983,193 @@ fn copy_derive_attenuates_rights_and_preserves_badge() {
         .unwrap_or_else(|_| panic!("source entry lost"));
     assert_eq!(source.rights(), Rights::all());
     assert_eq!(source.badge(), 0xBEEF);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BADGES ON DERIVE
+// ═══════════════════════════════════════════════════════════════════
+
+fn notification_cap(rights: u8, badge: u64) -> KeyEntry {
+    KeyEntry::new_carved(
+        test_id(ObjectType::NOTIFICATION, 0x1000),
+        Rights(rights),
+        badge,
+    )
+}
+
+/// `CopyDerive` of `source` into slot 20 of the caller's table with `rights`
+/// and the requested `badge` (`x6`).
+fn derive_with_badge(
+    fx: &mut Fixture,
+    source: RawKey,
+    rights: u8,
+    badge: u64,
+) -> Result<(u64, u64), CapError> {
+    fx.invoke(
+        fx.self_table_key,
+        0,
+        &args(
+            source.to_wire(),
+            fx.self_table_key.to_wire(),
+            20,
+            u64::from(rights),
+            badge,
+            0,
+        ),
+    )
+}
+
+#[test_case]
+fn copy_derive_sets_a_badge_once_and_every_copy_keeps_it() {
+    let mut fx = Fixture::new(FULL);
+    let source = fx.install(0, KeySlot(10), notification_cap(Rights::all().bits(), 0));
+    let rights = Rights::RECV | Rights::SEND | Rights::BADGE;
+
+    let Ok((key, 0)) = derive_with_badge(&mut fx, source, rights, 0b101) else {
+        panic!("a badge is set on an unbadged key with BADGE");
+    };
+    let badged = RawKey::from_wire(key);
+    let entry = fx
+        .lookup(0, badged)
+        .unwrap_or_else(|_| panic!("badged entry"));
+    assert_eq!(entry.badge(), 0b101);
+    assert_eq!(entry.rights(), Rights(rights));
+    assert_eq!(entry.object_type(), ObjectType::NOTIFICATION);
+    // The source stays unbadged and can mint another badge.
+    let source_entry = fx.lookup(0, source).unwrap_or_else(|_| panic!("source"));
+    assert_eq!(source_entry.badge(), 0);
+
+    // A copy without a badge request keeps the badge.
+    let call = args(
+        badged.to_wire(),
+        fx.self_table_key.to_wire(),
+        21,
+        u64::from(Rights::RECV),
+        0,
+        0,
+    );
+    let Ok((copy, 0)) = fx.invoke(fx.self_table_key, 0, &call) else {
+        panic!("a plain copy of a badged key");
+    };
+    let copy = fx
+        .lookup(0, RawKey::from_wire(copy))
+        .unwrap_or_else(|_| panic!("copy"));
+    assert_eq!(copy.badge(), 0b101);
+
+    // Setting a badge on a badged key fails, even with BADGE and the same value.
+    assert!(matches!(
+        derive_with_badge(&mut fx, badged, rights, 0b101),
+        Err(CapError::AlreadyBadged)
+    ));
+    assert!(matches!(
+        derive_with_badge(&mut fx, badged, rights, 7),
+        Err(CapError::AlreadyBadged)
+    ));
+    assert_eq!(fx.caller_len(), 4, "a refused derive installed nothing");
+}
+
+#[test_case]
+fn setting_a_badge_needs_the_badge_right_and_a_badgeable_kind() {
+    let mut fx = Fixture::new(FULL);
+    // No BADGE on the source.
+    let plain = fx.install(
+        0,
+        KeySlot(10),
+        notification_cap(Rights::all().bits() & !Rights::BADGE, 0),
+    );
+    assert!(matches!(
+        derive_with_badge(&mut fx, plain, Rights::RECV, 9),
+        Err(CapError::InsufficientRights)
+    ));
+    // A key without BADGE still derives when it asks for no badge.
+    assert!(derive_with_badge(&mut fx, plain, Rights::RECV, 0).is_ok());
+
+    // A KeyTable carries BADGE here but is not a kind that can be badged.
+    let table = fx.install(
+        0,
+        KeySlot(11),
+        table_cap(fx.dst_table_addr, Rights(Rights::all().bits()), 0),
+    );
+    assert!(matches!(
+        derive_with_badge(&mut fx, table, Rights::DERIVE, 9),
+        Err(CapError::InvalidObjectType(ObjectType::KEY_TABLE))
+    ));
+    // The reserved argument word stays zero.
+    let source = fx.install(0, KeySlot(12), notification_cap(Rights::all().bits(), 0));
+    let call = args(
+        source.to_wire(),
+        fx.self_table_key.to_wire(),
+        22,
+        u64::from(Rights::RECV),
+        1,
+        1,
+    );
+    assert!(matches!(
+        fx.invoke(fx.self_table_key, 0, &call),
+        Err(CapError::InvalidOperation)
+    ));
+}
+
+#[test_case]
+fn an_invocation_derives_with_narrower_rights_and_a_badge_keeping_its_target() {
+    let mut fx = Fixture::new(FULL);
+    let address_space = test_id(ObjectType::ADDRESS_SPACE, 0x2000);
+    let extent = InvocationStackExtent::new(0x1000, 0x9000, 0x400, 0x1_0000)
+        .unwrap_or_else(|_| panic!("a valid extent"));
+    let mut original = KeyEntry::new_invocation(
+        address_space,
+        NonZero::new(0x4_0000).unwrap_or_else(|| panic!("nonzero")),
+        extent,
+        PlacementWindow::NONE,
+    );
+    original = original.derive(Rights(Rights::CALL | Rights::BADGE));
+    let source = fx.install(0, KeySlot(10), original);
+
+    let Ok((key, 0)) = derive_with_badge(&mut fx, source, Rights::CALL, u64::MAX) else {
+        panic!("an Invocation is badged on derive");
+    };
+    let derived = fx
+        .lookup(0, RawKey::from_wire(key))
+        .unwrap_or_else(|_| panic!("derived Invocation"));
+    assert_eq!(derived.badge(), u64::MAX);
+    assert_eq!(derived.rights(), Rights(Rights::CALL));
+    assert_eq!(derived.object_type(), ObjectType::INVOCATION);
+    let (derived_space, derived_entry) = derived
+        .invocation_target()
+        .unwrap_or_else(|_| panic!("derived target"));
+    let (space, entry) = original
+        .invocation_target()
+        .unwrap_or_else(|_| panic!("target"));
+    assert_eq!((derived_space, derived_entry), (space, entry));
+    assert_eq!(
+        derived
+            .invocation_stack_extent()
+            .unwrap_or_else(|_| panic!("derived extent")),
+        extent
+    );
+    // Rights only narrow: asking for more than the source holds fails.
+    assert!(matches!(
+        derive_with_badge(&mut fx, source, Rights::CALL | Rights::GRANT, 1),
+        Err(CapError::InsufficientRights)
+    ));
+}
+
+#[test_case]
+fn copy_derive_still_rejects_kinds_outside_the_allow_list() {
+    let mut fx = Fixture::new(FULL);
+    let time = fx.install(
+        0,
+        KeySlot(10),
+        KeyEntry::new_carved(test_id(ObjectType::TIME, 0x3000), Rights::all(), 0),
+    );
+    assert!(matches!(
+        derive_with_badge(&mut fx, time, Rights::READ, 0),
+        Err(CapError::InvalidObjectType(ObjectType::TIME))
+    ));
+    assert!(matches!(
+        derive_with_badge(&mut fx, time, Rights::READ, 5),
+        Err(CapError::InvalidObjectType(ObjectType::TIME))
+    ));
 }
 
 /// Retiring a table bumps its generation, so every capability naming it fails
@@ -1050,17 +1274,17 @@ fn copy_derive_rejects_rights_amplification() {
     assert_eq!(fx.caller_len(), 2); // self-table + source
 }
 
-/// Undefined requested-rights bits are malformed input, rejected before
+/// Requested-rights words wider than the eight defined bits are malformed input, rejected before
 /// authority checks rather than reported as an amplification attempt.
 #[test_case]
-fn copy_derive_rejects_undefined_rights_bits() {
+fn copy_derive_rejects_rights_words_wider_than_the_defined_bits() {
     let mut fx = Fixture::new(FULL);
     let src = fx.install(
         0,
         KeySlot(10),
         table_cap(fx.dst_table_addr, Rights::all(), 0),
     );
-    for rights_word in [0x80_u64, 0xFF, 1 << 8, u64::MAX] {
+    for rights_word in [1_u64 << 8, 0x1FF, 1 << 63, u64::MAX] {
         let result = fx.invoke(
             fx.self_table_key,
             0,
@@ -1187,19 +1411,12 @@ fn copy_derive_rejects_occupied_destination_and_non_allowlisted_kinds() {
 // ═══════════════════════════════════════════════════════════════════
 
 #[test_case]
-fn thread_and_invocation_entries_remain_outside_copy_derive_and_move_allowlist() {
+fn thread_entries_remain_outside_copy_derive_and_move_allowlist() {
     let thread_id = test_id(ObjectType::THREAD, 0x1000);
-    let address_space = test_id(ObjectType::ADDRESS_SPACE, 0x2000);
     for entry in [
         KeyEntry::new_thread(thread_id, Rights::all(), 0xBEEF),
         KeyEntry::new_thread_return(),
         KeyEntry::new_thread_return().derive(Rights::all()),
-        KeyEntry::new_invocation(
-            address_space,
-            NonZero::new(0x80000).unwrap(),
-            stack_extent(0x1010, 0x1080, 48),
-            PlacementWindow::NONE,
-        ),
     ] {
         let mut fx = Fixture::new(FULL);
         let src = fx.install(0, KeySlot(10), entry);
@@ -1279,6 +1496,34 @@ fn thread_and_invocation_entries_remain_outside_copy_derive_and_move_allowlist()
                 );
             }
         }
+    }
+}
+
+/// `Invocation` and `Notification` entries can be derived (and badged) but not
+/// moved: the `Move` allow-list is unchanged.
+#[test_case]
+fn invocation_and_notification_entries_derive_but_do_not_move() {
+    let address_space = test_id(ObjectType::ADDRESS_SPACE, 0x2000);
+    for entry in [
+        KeyEntry::new_invocation(
+            address_space,
+            NonZero::new(0x80000).unwrap(),
+            stack_extent(0x1010, 0x1080, 48),
+            PlacementWindow::NONE,
+        ),
+        notification_cap(Rights::all().bits(), 0),
+    ] {
+        let mut fx = Fixture::new(FULL);
+        let src = fx.install(0, KeySlot(10), entry);
+        let call = args(src.to_wire(), fx.self_table_key.to_wire(), 20, 0, 0, 0);
+        assert!(matches!(
+            fx.invoke(fx.self_table_key, 1, &call),
+            Err(CapError::InvalidObjectType(found)) if found == entry.object_type()
+        ));
+        assert!(
+            fx.invoke(fx.self_table_key, 0, &call).is_ok(),
+            "CopyDerive accepts the kind, here with empty rights"
+        );
     }
 }
 

@@ -179,7 +179,7 @@ const ARMED_SLOT: u32 = 62;
 const DONE_SLOT: u32 = 63;
 
 /// The badge the interrupt's Notification signals with.
-const IRQ_BADGE: u16 = 1;
+const IRQ_BADGE: u64 = 1;
 
 /// How far ahead the test arms the virtual timer, in microseconds.
 const TIMER_DELAY_US: u64 = 25_000;

@@ -332,10 +332,12 @@ impl Emitter<'_, '_> {
             /// A component implements this trait and exports it with the
             /// interface crate's export macro.
             pub trait #trait_name {
-                /// Runs first in every call, before the arguments are decoded:
-                /// set up what the component needs to answer, such as its
+                /// Runs first in every call, before the arguments are decoded;
+                /// `badge` is the badge of the Invocation key the caller used (zero
+                /// for an unbadged one). Set up what the component needs to answer,
+                /// such as its
                 /// `Thread.Return` key.
-                fn enter() {}
+                fn enter(_badge: u64) {}
 
                 #( #methods )*
             }
@@ -412,10 +414,11 @@ impl Emitter<'_, '_> {
             items.extend(quote! {
                 #[doc(hidden)]
                 pub fn #dispatcher<Implementation: #trait_name>(
+                    badge: u64,
                     #lent_parameter
                     arguments: [u64; #runtime::ARGUMENT_WORDS],
                 ) -> #runtime::PpcResult {
-                    Implementation::enter();
+                    Implementation::enter(badge);
                     #lent_binding
                     if !#runtime::unused_words_are_zero(&arguments, #used) {
                         return #runtime::malformed();

@@ -228,3 +228,74 @@ fn all_key_table_wrappers_preserve_unknown_statuses_and_malformed_details() {
         }
     }
 }
+
+std::thread_local! {
+    static BADGED_REQUEST: Cell<Option<(u64, u64, [u64; 5])>> = const { Cell::new(None) };
+}
+
+// Mirrors `libsyscall::protected_call5`.
+pub(super) unsafe fn protected_call5(
+    key: u64,
+    op: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+) -> Response {
+    BADGED_REQUEST.with(|recorded| recorded.set(Some((key, op, [a0, a1, a2, a3, a4]))));
+    RESPONSE.with(|response| response.take().expect("unexpected syscall"))
+}
+
+#[test]
+fn copy_derive_badged_sends_the_badge_in_the_fifth_argument() {
+    let table = KeyTableKey::from_key(RawKey::new(KeySlot(u32::MAX), 0x89ab_cdef));
+    let other = KeyTableKey::from_key(RawKey::new(KeySlot(u32::MAX - 1), 0x7654_3210));
+    let src = RawKey::new(KeySlot(u32::MAX - 2), 0x1357_9bdf);
+    for badge in [1, 0x1234_5678_9abc_def0, u64::MAX] {
+        RESPONSE.with(|pending| pending.set(Some((0, 0xfedc_ba98_ffff_fffc, 0))));
+        let key = table
+            .copy_derive_badged(
+                src,
+                &other,
+                u32::MAX - 3,
+                Rights(Rights::CALL | Rights::BADGE),
+                badge,
+            )
+            .map_err(CapError::code)
+            .unwrap();
+        assert_eq!(key.to_wire(), 0xfedc_ba98_ffff_fffc);
+        let (wire_key, op, args) = BADGED_REQUEST.with(|recorded| recorded.take().unwrap());
+        assert_eq!(wire_key, 0x89ab_cdef_ffff_ffff);
+        assert_eq!(op, 0);
+        assert_eq!(
+            args,
+            [
+                0x1357_9bdf_ffff_fffd,
+                0x7654_3210_ffff_fffe,
+                0xffff_fffc,
+                u64::from(Rights::CALL | Rights::BADGE),
+                badge
+            ]
+        );
+    }
+}
+
+#[test]
+fn copy_derive_badged_reports_already_badged_and_rights_errors() {
+    let table = KeyTableKey::from_key(RawKey::new(KeySlot(u32::MAX), 0x89ab_cdef));
+    let src = RawKey::new(KeySlot(u32::MAX - 2), 0x1357_9bdf);
+    for (response, expected) in [
+        ((46, 0, 0), "AlreadyBadged"),
+        ((6, 0, 0), "InsufficientRights"),
+    ] {
+        RESPONSE.with(|pending| pending.set(Some(response)));
+        let name = match table.copy_derive_badged(src, &table, 1, Rights(Rights::BADGE), 5) {
+            Err(CapError::AlreadyBadged) => "AlreadyBadged",
+            Err(CapError::InsufficientRights) => "InsufficientRights",
+            _ => panic!("unexpected result"),
+        };
+        BADGED_REQUEST.with(Cell::take);
+        assert_eq!(name, expected);
+    }
+}

@@ -478,7 +478,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 33, u64::MAX, 1));
     }
-    for wire in [(46, 0, 0), (46, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(47, 0, 0), (47, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -651,4 +651,15 @@ fn member_retired_status_round_trips_the_slot() {
         );
         assert_unknown_response((45, slot, 1));
     }
+}
+
+#[test]
+fn already_badged_status_has_no_details() {
+    use vesper_objects::syscall_status::ALREADY_BADGED;
+
+    assert_eq!(ALREADY_BADGED, 46);
+    assert_error!((46, 0, 0), CapError::AlreadyBadged, CapError::AlreadyBadged);
+    assert_eq!(CapError::AlreadyBadged.code(), (46, 0, 0));
+    assert_unknown_response((46, 1, 0));
+    assert_unknown_response((46, 0, 1));
 }

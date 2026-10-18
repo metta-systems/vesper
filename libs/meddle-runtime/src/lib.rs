@@ -363,8 +363,10 @@ impl ImportRecord {
 /// Export one interface function as a PPC entry named `$entry`.
 ///
 /// `$dispatch` is the interface's generic decoder instantiated for the
-/// implementing type, an `fn([u64; ARGUMENT_WORDS]) -> PpcResult`. Generated
-/// export macros expand to one of these per function.
+/// implementing type, an `fn(u64, [u64; ARGUMENT_WORDS]) -> PpcResult` taking
+/// the badge of the invoked key (the kernel delivers it in `x1`, zero for an
+/// unbadged key) and the six arguments. Generated export macros expand to one
+/// of these per function.
 #[macro_export]
 macro_rules! export_function {
     ($entry:ident, $dispatch:expr) => {
@@ -372,7 +374,7 @@ macro_rules! export_function {
             #[allow(dead_code)]
             extern "C" fn body(
                 _: u64,
-                _: u64,
+                badge: u64,
                 input0: u64,
                 input1: u64,
                 input2: u64,
@@ -380,7 +382,7 @@ macro_rules! export_function {
                 input4: u64,
                 input5: u64,
             ) -> $crate::PpcResult {
-                ($dispatch)([input0, input1, input2, input3, input4, input5])
+                ($dispatch)(badge, [input0, input1, input2, input3, input4, input5])
             }
     $crate::ppc_export!(#[allow(dead_code)] fn $entry => body);
         };
@@ -390,10 +392,10 @@ macro_rules! export_function {
 /// Export one interface function that takes a lent key as a PPC entry named
 /// `$entry`.
 ///
-/// As [`export_function!`], except the entry receives the borrowed key in the
-/// first of its two unused arguments (`Invocation.CallWithKey` delivers it
-/// there), and `$dispatch` is an `fn(RawKey, [u64; ARGUMENT_WORDS]) ->
-/// PpcResult` taking it first.
+/// As [`export_function!`], except the entry receives the borrowed key in
+/// `x0` (`Invocation.CallWithKey` delivers it there), and `$dispatch` is an
+/// `fn(u64, RawKey, [u64; ARGUMENT_WORDS]) -> PpcResult` taking the badge, then
+/// the key.
 #[macro_export]
 macro_rules! export_function_with_key {
     ($entry:ident, $dispatch:expr) => {
@@ -401,7 +403,7 @@ macro_rules! export_function_with_key {
             #[allow(dead_code)]
             extern "C" fn body(
                 lent: u64,
-                _: u64,
+                badge: u64,
                 input0: u64,
                 input1: u64,
                 input2: u64,
@@ -410,6 +412,7 @@ macro_rules! export_function_with_key {
                 input5: u64,
             ) -> $crate::PpcResult {
                 ($dispatch)(
+                    badge,
                     $crate::RawKey::from_wire(lent),
                     [input0, input1, input2, input3, input4, input5],
                 )

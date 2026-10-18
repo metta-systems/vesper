@@ -189,7 +189,7 @@ fn setup(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     table_addr: u64,
     fixture_as: AddressSpaceId,
-    badge: u16,
+    badge: u64,
 ) -> Keys {
     install_fake_component();
     MASKED.store(0, Ordering::Relaxed);

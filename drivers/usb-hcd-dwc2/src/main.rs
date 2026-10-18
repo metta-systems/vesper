@@ -604,7 +604,7 @@ mod component {
     struct Dwc2;
 
     impl UsbHcdV1 for Dwc2 {
-        fn enter() {
+        fn enter(_badge: u64) {
             init_return_key(&ThreadReturnKey::from_key(RawKey::from_wire(
                 init().return_key,
             )));

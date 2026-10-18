@@ -552,6 +552,7 @@ fn prepare_direct(
         address_space: target_as,
         function_address: NonZero::new(FUNCTION).unwrap(),
         placement_window: PlacementWindow::NONE,
+        badge: 0,
         stack_extent: InvocationStackExtent::new(
             STACK_BASE,
             STACK_END,

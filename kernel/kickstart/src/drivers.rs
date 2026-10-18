@@ -1030,7 +1030,7 @@ pub fn load_drivers(
                 }
                 Err(error) => panic!("🥾 driver IRQControl.Issue failed: {:?}", error.code()),
             };
-            let bits = 1_u16 << interrupt_count;
+            let bits = 1_u64 << interrupt_count;
             let badged = install_boot(
                 builder,
                 KeyEntry::new_carved(notification_id, Rights::all(), bits),
@@ -1053,7 +1053,7 @@ pub fn load_drivers(
                     local_slot(),
                 )
                 .to_wire(),
-                bits: u64::from(bits),
+                bits,
                 line: u64::from(issued.line),
             };
             interrupt_count += 1;

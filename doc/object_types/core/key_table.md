@@ -25,9 +25,19 @@ Table rights: bit 0 `Derive`, bit 1 `Remove`, bit 2 `Install`, bit 6 `Lend` (the
 
 ### CopyDerive
 
-Copies the entry named by `x2` (a key in the invoked table) into slot `x4` of the table named by `x3` (a key in the caller's table), with the rights in `x5`. The copy keeps the badge. Its rights must be a subset of the source's; asking for more fails with `InsufficientRights`, and a rights word with bits outside `0x7F` fails with `InvalidOperation`.
+Copies the entry named by `x2` (a key in the invoked table) into slot `x4` of the table named by `x3` (a key in the caller's table), with the rights in `x5`. `x6` is a badge to set on the copy (0: none); `x7` must be 0. The copy keeps the source's badge. Its rights must be a subset of the source's; asking for more fails with `InsufficientRights`, and a rights word wider than eight bits fails with `InvalidOperation`.
 
-CopyDerive and Move accept `KeyTable`, `Frame` and `DebugConsole` entries; other kinds fail with `InvalidObjectType`. A copied Frame starts unmapped. An entry placed by [`CallWithKey`](invocation.md#callwithkey) is never a source of either: that fails with `InvalidOperation`.
+CopyDerive and Move accept `KeyTable`, `Frame` and `DebugConsole` entries, and CopyDerive also accepts `Invocation` and `Notification` entries; other kinds fail with `InvalidObjectType`. A copied Frame starts unmapped. An entry placed by [`CallWithKey`](invocation.md#callwithkey) is never a source of either: that fails with `InvalidOperation`.
+
+#### Setting a badge
+
+A nonzero `x6` sets a badge on the copy. The badge is a 64-bit value that stays on the key and on every copy of it; it can be set once and never changed or cleared.
+
+- The source must be an `Invocation` or a `Notification` (other kinds fail with `InvalidObjectType`) and carry the `Badge` right (bit 7, `0x80`), else `InsufficientRights`.
+- A source that already has a badge fails with `AlreadyBadged`.
+- The copy's rights follow the usual subset rule, so it can drop `Badge`, and usually does.
+
+What a badge does depends on the kind. A badged Notification signals its badge and ignores the caller's argument. A badged Invocation delivers its badge to the exporter in `x1`. The exporter checks it on every call, so a closed resource's stale badge fails there.
 
 ### Move
 
@@ -41,9 +51,10 @@ Removes the entry. The object it named is unaffected: deleting a capability neit
 
 | Error | Cause |
 |---|---|
-| `InsufficientRights` | A table right is missing, or CopyDerive asks for rights the source lacks |
-| `InvalidObjectType` | CopyDerive or Move of a kind that cannot be copied |
-| `InvalidOperation` | Undefined rights bits, nonzero unused argument, or a source entry placed by `CallWithKey` |
+| `InsufficientRights` | A table right is missing, CopyDerive asks for rights the source lacks, or it sets a badge from a source without `Badge` |
+| `InvalidObjectType` | CopyDerive or Move of a kind that cannot be copied, or a badge requested on a kind that cannot be badged |
+| `AlreadyBadged` | CopyDerive sets a badge on a key that already has one |
+| `InvalidOperation` | A rights word wider than eight bits, a nonzero unused argument, or a source entry placed by `CallWithKey` |
 | `InvalidSlot`, `SlotOccupied` | Destination slot out of range or occupied (including a Move onto its own slot) |
 | `KeySlotExhausted` | The destination slot has used up its incarnations |
 | `InvalidKey`, `InconsistentKey` | A key argument failed lookup; see [key errors](../README.md#key-errors) |

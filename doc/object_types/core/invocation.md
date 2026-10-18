@@ -10,7 +10,7 @@
 
 An Invocation is a callable entry point in another component. Calling it moves the calling Thread into the target AddressSpace, where it runs the entry function on a stack the target provides; [`Thread.Return`](thread.md#return) brings it back with two result words. No server Thread is involved: the caller's own Thread executes the target code, using the target's KeyTable while it is there.
 
-Invocations are created by [`AddressSpace.CreateInvocation`](../arch/address_space.md#createinvocation) and carry only the `Call` right. Request queues and server Threads can be built in userspace on top of Invocation, Notification and EventCount; `kernel/tests/endpoint-test` shows one.
+Invocations are created by [`AddressSpace.CreateInvocation`](../arch/address_space.md#createinvocation) and carry the `Call` and `Badge` rights. [`KeyTable.CopyDerive`](key_table.md#copyderive) can copy one with fewer rights, so a holder that does not need to mint copies it with `Badge` masked off, and, from a key that carries `Badge`, set a badge on the copy; the exporter receives the badge in `x1` of its entry and uses it to tell its callers apart. Request queues and server Threads can be built in userspace on top of Invocation, Notification and EventCount; `kernel/tests/endpoint-test` shows one.
 
 ## Operations
 
@@ -88,7 +88,8 @@ Each operation stops at the first failing check and changes nothing:
 
 | State | Target entry after Call | Caller after Return |
 |---|---|---|
-| `x0`, `x1` | Zero (two unused arguments); after CallWithKey `x0` is the borrowed key | 0 / `r0` |
+| `x0` | Zero (unused); after CallWithKey the borrowed key | 0 / `r0` |
+| `x1` | The badge of the invoked key; zero for an unbadged key | 0 / `r1` |
 | `x2` | First argument | `r1` |
 | `x3..x7` | Remaining arguments | Zero |
 | `x8..x18` | Zero (including `x8`, the lent key of CallWithKey, and `x9`) | Zero |

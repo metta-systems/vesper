@@ -74,11 +74,7 @@ pub fn invoke<A: ArchObjects>(
             // Selected hybrid: a badged capability signals its
             // badge; an unbadged one (badge zero — what Retype installs)
             // signals the caller-supplied argument.
-            let bits = if badge != 0 {
-                u64::from(badge)
-            } else {
-                args[0]
-            };
+            let bits = if badge != 0 { badge } else { args[0] };
             let mut notification = access
                 .resolve_object::<Notification>(id)
                 .map_err(|error| error.for_key(key, 0))?;

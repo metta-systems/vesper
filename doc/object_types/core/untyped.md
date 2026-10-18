@@ -49,7 +49,7 @@ Other kinds fail with `InvalidObjectType`. A device Untyped covers hardware regi
 | `InvalidObjectType` | The kind cannot be created from memory, or the source is device memory and the kind is neither Untyped nor Frame |
 | `InvalidSize` | `size_bits` out of range for the kind; for a KeyTable, a guard too wide for its size or `x3` bits 63–40 set |
 | `InvalidFrameSize` | Frame `size_bits` other than 12, 21 or 30 |
-| `InvalidOperation` | Count 0 or above 256; `x3` bits above 7 set for a kind other than KeyTable, Frame or Untyped; for a Frame or Untyped, `x3` bits above 15 set or an undefined, `Cacheable` or looser-than-the-source ceiling code, or any ceiling code on a RAM source; a kind, slot or rights word that does not fit its field; undefined rights bits |
+| `InvalidOperation` | Count 0 or above 256; `x3` bits above 7 set for a kind other than KeyTable, Frame or Untyped; for a Frame or Untyped, `x3` bits above 15 set or an undefined, `Cacheable` or looser-than-the-source ceiling code, or any ceiling code on a RAM source; a kind, slot or rights word that does not fit its field (a rights word wider than eight bits) |
 | `InsufficientRights` | Missing `Write` on the Untyped or `Install` on the destination |
 | `InsufficientMemory` | The objects do not fit in the remaining region |
 | `InvalidSlot`, `SlotOccupied`, `KeySlotExhausted` | A destination slot is out of range, occupied, or has used up its incarnations |

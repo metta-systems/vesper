@@ -45,9 +45,11 @@ static RETURN_KEY: AtomicU64 = AtomicU64::new(0);
 static DEBUG_CONSOLE_KEY: AtomicU64 = AtomicU64::new(0);
 /// Successful `DebugConsole` writes issued by [`export_body`] inside Bounce.
 static CONSOLE_WRITES: AtomicU64 = AtomicU64::new(0);
-/// The dummy x0/x1 words the last [`export_body`] received, OR-ed together:
-/// the kernel zeroes them and the wrapper passes them through unshuffled.
+/// The reserved x0 word the last [`export_body`] received: the kernel zeroes it
+/// and the wrapper passes it through unshuffled.
 static BODY_DUMMIES: AtomicU64 = AtomicU64::new(u64::MAX);
+/// The badge (x1) the last [`export_body`] received.
+static BODY_BADGE: AtomicU64 = AtomicU64::new(u64::MAX);
 static CAPTURE: [AtomicU64; CAPTURE_WORDS] = [const { AtomicU64::new(0) }; CAPTURE_WORDS];
 static ENTRY_SP: AtomicU64 = AtomicU64::new(0);
 /// Select the target's Return path: the library helper, or raw asm with junk
@@ -449,11 +451,11 @@ pub fn component_init(return_key: RawKey, debug_console_key: RawKey) {
 }
 
 /// The compiled export's body: an ordinary `extern "C"` function taking the
-/// entry's eight arguments (two dummies, six real inputs) and returning
+/// entry's eight arguments (the reserved x0, the badge in x1, six real inputs) and returning
 /// its two result words in x0/x1. r1 reports the translation it ran under.
 extern "C" fn export_body(
     dummy0: u64,
-    dummy1: u64,
+    badge: u64,
     input0: u64,
     input1: u64,
     input2: u64,
@@ -469,7 +471,8 @@ extern "C" fn export_body(
         .write("DEBCON| Bounce: PPC export body writing through its own DebugConsole key\n")
         .unwrap_or_else(|error| panic!("Bounce DebugConsole write failed: {:?}", error.code()));
     CONSOLE_WRITES.fetch_add(1, Ordering::AcqRel);
-    BODY_DUMMIES.store(dummy0 | dummy1, Ordering::Release);
+    BODY_DUMMIES.store(dummy0, Ordering::Release);
+    BODY_BADGE.store(badge, Ordering::Release);
 
     PpcResult {
         r0: export_digest([input0, input1, input2, input3, input4, input5]),
@@ -573,7 +576,12 @@ pub fn export_round_trip(
     assert_eq!(
         BODY_DUMMIES.load(Ordering::Acquire),
         0,
-        "body did not receive the kernel-zeroed dummy x0/x1 unshuffled"
+        "body did not receive the kernel-zeroed reserved x0 unshuffled"
+    );
+    assert_eq!(
+        BODY_BADGE.load(Ordering::Acquire),
+        0,
+        "an unbadged key delivers badge zero in x1"
     );
 
     let faults = FAULT_COUNT.load(Ordering::Acquire);
@@ -856,4 +864,25 @@ pub fn assert_call_with_key_rejected(
         ttbr_before,
         "rejected CallWithKey switched roots"
     );
+}
+
+/// Call the compiled export through `key`, a badged derivation of its
+/// Invocation, and check that the body received `badge` in x1 and zero in the
+/// reserved x0 while running in Bounce, then returned normally.
+pub fn badged_export_round_trip(key: RawKey, badge: u64) {
+    BODY_DUMMIES.store(u64::MAX, Ordering::Release);
+    BODY_BADGE.store(u64::MAX - 1, Ordering::Release);
+    let args = [1, 2, 3, 4, 5, 6];
+    // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
+    // fixture's Invocations; nothing else uses it during the Call.
+    let (r0, r1) = unsafe { InvocationKey::from_key(key).call(args, STACK_END) }
+        .unwrap_or_else(|error| panic!("badged export Call failed: {:?}", error.code()));
+    assert_eq!(r0, export_digest(args));
+    assert_eq!(
+        r1,
+        translation::bounce_ttbr(),
+        "the body ran outside Bounce"
+    );
+    assert_eq!(BODY_BADGE.load(Ordering::Acquire), badge, "badge lost");
+    assert_eq!(BODY_DUMMIES.load(Ordering::Acquire), 0, "x0 not zero");
 }

@@ -22,7 +22,7 @@ A Notification is a 64-bit set of pending signal bits. Signalling ORs bits into 
 
 ### Signal
 
-ORs bits into the Notification. A capability with a nonzero badge signals its badge and ignores `x2`; a capability with badge zero signals `x2`. If a Thread is waiting, the oldest waiter receives all pending bits and resumes; the others keep waiting.
+ORs bits into the Notification. A capability with a nonzero badge signals its 64-bit badge and ignores `x2`; a capability with badge zero signals `x2`. [`KeyTable.CopyDerive`](key_table.md#setting-a-badge) sets a badge, once, from a key that has the `Badge` right. If a Thread is waiting, the oldest waiter receives all pending bits and resumes; the others keep waiting.
 
 ### Await
 
