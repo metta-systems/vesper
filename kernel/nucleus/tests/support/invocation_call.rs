@@ -191,7 +191,7 @@ fn snapshot(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) -> Sn
         target_table: table_digest(fixture.target_table),
         ttbr0: TTBR0_EL1.get(),
         pending: nucleus.pending.len(),
-        runnable: nucleus.run_queue.len(),
+        runnable: nucleus.activations.len(),
     }
 }
 
@@ -1248,7 +1248,7 @@ fn queue_next_thread(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixtu
     nucleus.thread_mut(next).unwrap().context = ExecutionContext::NotStarted {
         saved: SavedContext::el0(0xA_0000, STACK_END, 0),
     };
-    assert!(nucleus.run_queue.push(next));
+    assert!(nucleus.activations.push(next));
     next
 }
 
@@ -1259,10 +1259,11 @@ fn expect_unhandled(
     faulting: SavedContext,
     next: ThreadId,
 ) {
-    let FaultDelivery::Unhandled(resumed) = delivery else {
+    let FaultDelivery::Unhandled(switch) = delivery else {
         panic!("the fault must be unhandled");
     };
-    assert_eq!(resumed.current, faulted);
+    let resumed = switch.expect_resume();
+    assert_eq!(resumed.current, Some(faulted));
     assert_eq!(resumed.next, next);
     let thread = nucleus.thread(faulted).unwrap();
     assert_eq!(
@@ -2052,6 +2053,7 @@ fn a_return_is_a_preemption_point_like_any_other_kernel_exit() {
                 .preempt_and_select(&access, commit.resumed)
                 .unwrap_or_else(|error| panic!("tick: {:?}", error.code()))
                 .expect("the queued Thread preempts")
+                .expect_resume()
         };
         assert_eq!(resumed.next, next);
         assert_eq!(

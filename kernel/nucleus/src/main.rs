@@ -28,7 +28,7 @@ use {
     core::{
         arch::asm,
         panic::PanicInfo,
-        sync::atomic::{AtomicUsize, Ordering},
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
         time::Duration,
     },
     libcpu::endless_sleep,
@@ -47,6 +47,7 @@ use {
         access::{Access, ObjectId},
         completion::PendingKind,
         fault::FaultDelivery,
+        resume::{PreparedResume, Switch},
     },
 };
 
@@ -221,9 +222,14 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
 
 #[unsafe(no_mangle)]
 extern "C" fn current_elx_irq(e: &mut ExceptionContext) {
-    // The nucleus runs with interrupts masked: an IRQ taken on SP_EL1 means
-    // kernel code unmasked them, which is a bug.
-    default_exception_handler(e);
+    // The nucleus runs with interrupts masked, except where it waits for one
+    // while idle: an IRQ taken on SP_EL1 anywhere else means kernel code
+    // unmasked them, which is a bug.
+    if IDLING.load(Ordering::Acquire) {
+        handle_irq(e);
+    } else {
+        default_exception_handler(e);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -495,18 +501,23 @@ fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
 /// controller cannot keep the nucleus in the handler.
 const MAX_CLAIMS_PER_ENTRY: usize = 64;
 
+/// Whether the kernel is waiting for an interrupt with nothing to run, the
+/// one place kernel code is interruptible.
+static IDLING: AtomicBool = AtomicBool::new(false);
+
 /// Interrupt entry from an interruptible Thread: claim and handle every
 /// pending line through the interrupt-controller component, then, on a
-/// timer tick (or when idle was interrupted), preempt the current Thread.
+/// timer tick (or when a dispatcher was activated), preempt the current
+/// Thread.
 ///
 /// The timer line re-arms the tick. Every other line is masked and ended;
 /// a line bound by `IRQHandler.SetNotification` also signals its
 /// Notification, and stays masked until the handler's `Ack`.
+///
+/// An interrupt that ends the kernel's idle wait (taken on `SP_EL1`) only
+/// claims, delivers, accounts and expires deadlines; the idle loop selects.
 fn handle_irq(frame: &mut ExceptionContext) {
-    assert!(
-        frame.origin != ExceptionOrigin::CurrentSpx,
-        "kernel-mode execution cannot be interrupted"
-    );
+    let nested = frame.origin == ExceptionOrigin::CurrentSpx;
     let timer_line = nucleus::platform::physical_timer_line();
     let mut ticked = false;
     // Interrupt handling is timed, line by line and in all: the interrupted
@@ -551,7 +562,7 @@ fn handle_irq(frame: &mut ExceptionContext) {
             // Whatever is due wakes: timed-out waits, dispatcher timers.
             nucleus.expire_deadlines();
         }
-        if !ticked && !nucleus.idle_is_current() && !nucleus.preempt_requested {
+        if nested || (!ticked && !nucleus.preempt_requested) {
             return Ok(None);
         }
         // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other
@@ -560,11 +571,52 @@ fn handle_irq(frame: &mut ExceptionContext) {
         nucleus.preempt_and_select(&access, saved)
     });
     match resumed {
-        Ok(Some(resumed)) => install_selected(frame, &resumed),
+        Ok(Some(Switch::Resume(resumed))) => install_selected(frame, &resumed),
+        Ok(Some(Switch::Idle)) => {
+            let resumed = idle_until_runnable();
+            install_selected(frame, &resumed);
+        }
         Ok(None) => {}
         Err(error) => panic!("preemption scheduling invariant failed: {:?}", error.code()),
     }
     reprogram_timer();
+}
+
+/// Wait in the kernel until a Thread is runnable, then select it.
+///
+/// Nothing is current. With interrupts masked the nucleus looks for a
+/// runnable Thread; finding none it waits: `wfi` wakes for a pending
+/// interrupt even while masked, and unmasking takes it on `SP_EL1` (the
+/// restricted path of [`handle_irq`]). The trap frame that led here stays
+/// untouched below, for the caller to rewrite with the selected Thread.
+fn idle_until_runnable() -> PreparedResume {
+    loop {
+        // The timer runs only for a wait timeout or a dispatcher's timer.
+        reprogram_timer();
+        let selected = KERNEL_LOCK.lock(|()| {
+            let Some(nucleus_ptr) = nucleus_anchor() else {
+                panic!("nucleus not booted by Kickstart")
+            };
+            // SAFETY: the anchor names the retained boot-carved Nucleus, and
+            // the kernel lock gives exclusive access for this transaction.
+            let nucleus = unsafe { &mut *nucleus_ptr };
+            // SAFETY: exclusive access is serialized by KERNEL_LOCK and no
+            // other Access or guard overlaps this transaction.
+            let access = unsafe { Access::new() };
+            nucleus.select_after_idle(&access)
+        });
+        match selected {
+            Ok(Some(resumed)) => return resumed,
+            Ok(None) => {}
+            Err(error) => panic!("idle scheduling invariant failed: {:?}", error.code()),
+        }
+        IDLING.store(true, Ordering::Release);
+        aarch64_cpu::asm::wfi();
+        libexception::asynchronous::local_irq_unmask();
+        aarch64_cpu::asm::barrier::isb(aarch64_cpu::asm::barrier::SY);
+        libexception::asynchronous::local_irq_mask();
+        IDLING.store(false, Ordering::Release);
+    }
 }
 
 /// Program the timer for the next instant the nucleus needs it, from the
@@ -633,18 +685,16 @@ fn park_and_resume(frame: &mut ExceptionContext, record: ObjectId) {
         nucleus.park_and_select(&access, saved, record)
     });
 
-    // With nothing runnable the idle Thread is selected; a boot without one
-    // has nothing to run when every Thread blocks: halt honestly, rather
-    // than returning fake success to a blocked caller. Scheduler-error
+    // With nothing runnable the kernel idles (see `switch_to`). Scheduler-error
     // recovery/fault delivery has no ABI yet; trusted fixture corruption is an
     // invariant failure, after a failure-atomic preparation (not a lost wait).
-    let resumed = resumed.unwrap_or_else(|error| {
+    let switch = resumed.unwrap_or_else(|error| {
         panic!(
             "wait/resume scheduling invariant failed before commit: {:?}",
             error.code()
         )
     });
-    resume_selected(frame, &resumed, "parked");
+    switch_to(frame, &switch, "parked");
 }
 
 /// Install the Thread a scheduling transaction selected and rewrite the
@@ -666,6 +716,19 @@ fn install_selected(
     frame.restore(resumed.saved);
 }
 
+/// Enter what a scheduling transaction decided: the selected Thread, or,
+/// with nothing runnable, the first Thread to become runnable.
+fn switch_to(frame: &mut ExceptionContext, switch: &Switch, why: &str) {
+    match switch {
+        Switch::Resume(resumed) => resume_selected(frame, resumed, why),
+        Switch::Idle => {
+            semi::println!("💤 nothing runnable ({why}): idle");
+            let resumed = idle_until_runnable();
+            resume_selected(frame, &resumed, "idle");
+        }
+    }
+}
+
 /// Install and enter the Thread a scheduling transaction selected: rewrite
 /// the transient frame with its context and trace the switch. `why` names
 /// what happened to the Thread that stopped.
@@ -674,7 +737,6 @@ fn resume_selected(
     resumed: &nucleus::objects::resume::PreparedResume,
     why: &str,
 ) {
-    let current = resumed.current;
     let next = resumed.next;
     let restored = resumed.saved;
     install_selected(frame, resumed);
@@ -694,7 +756,7 @@ fn resume_selected(
     }
     semi::println!(
         "🔄 context switch: thread {:#x} {why}, resuming thread {:#x} @ SP {:#x}, PC {:#x}",
-        current.address,
+        resumed.current.map_or(0, |current| current.address),
         next.address,
         restored.sp,
         restored.elr_el1,
@@ -739,7 +801,7 @@ fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: Fa
         }
         Ok(FaultDelivery::Unhandled(resumed)) => {
             semi::println!("⛔ unhandled fault: thread parked as faulted");
-            resume_selected(frame, &resumed, "faulted");
+            switch_to(frame, &resumed, "faulted");
         }
         // Nothing is left to run (or scheduling state is corrupt).
         Err(error) => panic!("fault left nothing to run: {:?}", error.code()),
@@ -765,7 +827,7 @@ fn exit_current(frame: &mut ExceptionContext) -> Option<(u64, u64, u64)> {
     match resumed {
         Ok(resumed) => {
             semi::println!("✅ Thread::Retire() (self)");
-            resume_selected(frame, &resumed, "exited");
+            switch_to(frame, &resumed, "exited");
             None
         }
         Err(error) => Some(error.code()),
@@ -790,7 +852,7 @@ fn terminate_faulted(frame: &mut ExceptionContext, faulting: &SavedContext) {
     match resumed {
         Ok(resumed) => {
             semi::println!("⛔ fault handler terminated the thread");
-            resume_selected(frame, &resumed, "terminated");
+            switch_to(frame, &resumed, "terminated");
         }
         Err(error) => panic!("fault left nothing to run: {:?}", error.code()),
     }

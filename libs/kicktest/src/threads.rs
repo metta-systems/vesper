@@ -25,10 +25,8 @@ fn spawn_with(
         address_space,
         ExecutionContext::NotStarted { saved: *saved },
     ));
-    assert!(
-        nucleus.run_queue.push(thread),
-        "fixture Thread did not queue"
-    );
+    // A Thread of the root Scheduler, run by the fixture dispatcher.
+    crate::dispatcher::register(nucleus, builder, thread);
     thread
 }
 

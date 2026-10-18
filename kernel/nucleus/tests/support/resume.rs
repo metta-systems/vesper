@@ -12,7 +12,7 @@ use {
             carved::{Carved, CarvedId},
             completion::{PendingKind, PendingState},
             nucleus::test_arena,
-            resume::prepare_translation_context,
+            resume::{Switch, prepare_translation_context},
             thread::ThreadId,
         },
     },
@@ -99,8 +99,8 @@ fn with_resume(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, Waits)) {
             address_space.set_translation_root(Some(ROOT));
             address_space.set_asid(Some(2));
             nucleus.current_thread = Some(source);
-            assert!(nucleus.run_queue.push(target));
-            assert!(nucleus.run_queue.push(tail));
+            assert!(nucleus.activations.push(target));
+            assert!(nucleus.activations.push(tail));
             test(
                 nucleus,
                 Waits {
@@ -162,10 +162,10 @@ fn reject_unchanged(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits, expec
             .unwrap_or_else(|e| panic!("terminal preserved: {:?}", e.code())),
         terminal_before
     );
-    assert_eq!(nucleus.run_queue.len(), 2);
-    assert_eq!(nucleus.run_queue.peek(), Some(waits.target));
-    assert_eq!(nucleus.run_queue.pop(), Some(waits.target));
-    assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+    assert_eq!(nucleus.activations.len(), 2);
+    assert_eq!(nucleus.activations.peek(), Some(waits.target));
+    assert_eq!(nucleus.activations.pop(), Some(waits.target));
+    assert_eq!(nucleus.activations.pop(), Some(waits.tail));
 }
 
 #[test_case]
@@ -354,12 +354,13 @@ fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result(
             nucleus
                 .park_and_select(&access, SOURCE_SAVED, waits.incoming)
                 .unwrap_or_else(|e| panic!("prepared resume: {:?}", e.code()))
+                .expect_resume()
         };
         assert_eq!(resumed.translation.address_space(), waits.target_as);
         assert_eq!(resumed.translation.root(), ROOT);
         assert_eq!(resumed.translation.asid(), 2);
         assert_eq!(resumed.translation.keytable(), target_binding);
-        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.current, Some(waits.source));
         assert_eq!(resumed.next, waits.target);
         let mut expected = target_saved();
         expected.gpr[0] = syscall_status::COUNTER_OVERFLOW;
@@ -388,8 +389,8 @@ fn resume_commits_checked_root_asid_and_current_as_table_with_full_error_result(
         );
         assert!(nucleus.pending.state(waits.terminal).is_err());
         assert_eq!(nucleus.pending.len(), 1);
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
-        assert!(nucleus.run_queue.is_empty());
+        assert_eq!(nucleus.activations.pop(), Some(waits.tail));
+        assert!(nucleus.activations.is_empty());
     });
 }
 
@@ -405,6 +406,7 @@ fn first_start_preparation_preserves_all_saved_registers_and_selects_its_table()
             nucleus
                 .park_and_select(&access, SOURCE_SAVED, waits.incoming)
                 .unwrap_or_else(|e| panic!("prepared first start: {:?}", e.code()))
+                .expect_resume()
         };
         assert_eq!(resumed.saved, target_saved());
         assert_eq!(resumed.completion, None);
@@ -456,7 +458,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
         }
         assert_eq!(nucleus.current_thread, Some(waits.source));
         assert_eq!(nucleus.pending.len(), 2);
-        assert_eq!(nucleus.run_queue.len(), 2);
+        assert_eq!(nucleus.activations.len(), 2);
         // Same prepared helper also rejects missing metadata through Activate.
         nucleus.address_space_mut(source_as).unwrap().set_asid(None);
         assert!(matches!(
@@ -502,19 +504,12 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
     });
 }
 
-/// Map the source `AddressSpace` so Threads there can be selected, and make
-/// the FIFO tail Thread (in the source `AddressSpace`) the idle Thread.
-fn with_idle(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> ThreadId {
+/// Map the source `AddressSpace` so Threads there can be selected.
+fn map_source_address_space(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) {
     let source_as = nucleus.thread(waits.source).unwrap().address_space;
     let address_space = nucleus.address_space_mut(source_as).unwrap();
     address_space.set_translation_root(Some(ROOT + 0x1000));
     address_space.set_asid(Some(1));
-    let idle = waits.tail;
-    nucleus.thread_mut(idle).unwrap().context = ExecutionContext::NotStarted {
-        saved: SavedContext::el1t_interruptible(0xE0000, 0xF0000),
-    };
-    nucleus.idle_thread = Some(idle);
-    idle
 }
 
 /// The interrupted state of a preempted source Thread.
@@ -524,7 +519,7 @@ const PREEMPTED_SAVED: SavedContext = SavedContext {
 };
 
 #[test_case]
-fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
+fn preemption_switches_to_the_next_activation_and_resumes_a_preempted_thread_unchanged() {
     with_resume(|nucleus, waits| {
         nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
             saved: target_saved(),
@@ -536,8 +531,9 @@ fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
                 .preempt_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("preemption: {:?}", e.code()))
                 .expect("another Thread is runnable")
+                .expect_resume()
         };
-        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.current, Some(waits.source));
         assert_eq!(resumed.next, waits.target);
         // A preempted Thread owes no completion: its registers come back as-is.
         assert_eq!(resumed.saved, target_saved());
@@ -549,10 +545,10 @@ fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
                 saved: PREEMPTED_SAVED
             }
         );
-        // The preempted Thread queues behind the former FIFO tail.
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.source));
-        assert!(nucleus.run_queue.is_empty());
+        // The preempted Thread belongs to no Scheduler, so nothing queues it
+        // again; the other activation still waits.
+        assert_eq!(nucleus.activations.pop(), Some(waits.tail));
+        assert!(nucleus.activations.is_empty());
         // Unrelated pending records are untouched.
         assert_eq!(nucleus.pending.len(), 2);
         // The switch charged the interval since the fixture started the
@@ -567,7 +563,7 @@ fn preemption_rotates_the_fifo_and_resumes_a_preempted_thread_unchanged() {
 #[test_case]
 fn preemption_with_nothing_runnable_keeps_the_current_thread() {
     with_resume(|nucleus, waits| {
-        while nucleus.run_queue.pop().is_some() {}
+        while nucleus.activations.pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
         let resumed = {
             let access = unsafe { Access::new() };
@@ -581,7 +577,7 @@ fn preemption_with_nothing_runnable_keeps_the_current_thread() {
             nucleus.thread(waits.source).unwrap().context,
             ExecutionContext::Running
         );
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
         // No switch happened, but the tick charged the interval the Thread
         // ran alone and restarted the clock.
         assert!(nucleus.run_time_ticks(waits.source).unwrap() > 0);
@@ -606,63 +602,88 @@ fn preemption_rejects_kernel_mode_state_without_changes() {
             CapError::InvalidThread.code()
         );
         assert_eq!(nucleus.current_thread, Some(waits.source));
-        assert_eq!(nucleus.run_queue.len(), 2);
+        assert_eq!(nucleus.activations.len(), 2);
     });
 }
 
 #[test_case]
-fn parking_with_nothing_runnable_selects_the_idle_thread() {
+fn parking_with_nothing_runnable_idles_and_the_next_runnable_thread_ends_it() {
     with_resume(|nucleus, waits| {
-        let idle = with_idle(nucleus, &waits);
-        while nucleus.run_queue.pop().is_some() {}
+        map_source_address_space(nucleus, &waits);
+        while nucleus.activations.pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
-        let resumed = {
-            let access = unsafe { Access::new() };
+        let access = unsafe { Access::new() };
+        let switch = nucleus
+            .park_and_select(&access, SOURCE_SAVED, waits.incoming)
+            .unwrap_or_else(|e| panic!("park into idle: {:?}", e.code()));
+        // The park is committed, and no Thread is current.
+        assert_eq!(switch, Switch::Idle);
+        assert_eq!(nucleus.current_thread, None);
+        assert!(matches!(
+            nucleus.thread(waits.source).unwrap().context,
+            ExecutionContext::Parked { .. }
+        ));
+        // Nothing runnable yet: idle goes on.
+        assert!(
             nucleus
-                .park_and_select(&access, SOURCE_SAVED, waits.incoming)
-                .unwrap_or_else(|e| panic!("park onto idle: {:?}", e.code()))
-        };
-        assert_eq!(resumed.next, idle);
-        assert_eq!(
-            resumed.saved,
-            SavedContext::el1t_interruptible(0xE0000, 0xF0000)
+                .select_after_idle(&access)
+                .unwrap_or_else(|e| panic!("idle: {:?}", e.code()))
+                .is_none()
         );
-        assert_eq!(nucleus.current_thread, Some(idle));
-        assert!(nucleus.idle_is_current());
-        // The idle Thread is never queued.
-        assert!(nucleus.run_queue.is_empty());
-    });
-}
+        assert_eq!(nucleus.current_thread, None);
 
-#[test_case]
-fn preempting_idle_selects_the_woken_thread_and_never_queues_idle() {
-    with_resume(|nucleus, waits| {
-        let idle = with_idle(nucleus, &waits);
-        // Idle is running; only the target is runnable.
-        while nucleus.run_queue.pop().is_some() {}
-        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
-        nucleus.current_thread = Some(idle);
+        // A Thread becoming runnable ends idle; the selection is not owed a
+        // stopped Thread.
         nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
             saved: target_saved(),
         };
-        assert!(nucleus.run_queue.push(waits.target));
-
-        let idle_saved = SavedContext::el1t_interruptible(0xE0004, 0xF0000);
-        // SAFETY: exclusive serial fixture, no overlapping context/guard.
-        let resumed = {
-            let access = unsafe { Access::new() };
-            nucleus
-                .preempt_and_select(&access, idle_saved)
-                .unwrap_or_else(|e| panic!("preempt idle: {:?}", e.code()))
-                .expect("the target is runnable")
-        };
+        assert!(nucleus.activations.push(waits.target));
+        let resumed = nucleus
+            .select_after_idle(&access)
+            .unwrap_or_else(|e| panic!("leave idle: {:?}", e.code()))
+            .expect("the target is runnable");
+        assert_eq!(resumed.current, None);
         assert_eq!(resumed.next, waits.target);
-        assert!(!nucleus.idle_is_current());
-        assert!(nucleus.run_queue.is_empty());
-        assert_eq!(
-            nucleus.thread(idle).unwrap().context,
-            ExecutionContext::Preempted { saved: idle_saved }
-        );
+        assert_eq!(resumed.saved, target_saved());
+        assert_eq!(nucleus.current_thread, Some(waits.target));
+        assert!(nucleus.activations.is_empty());
+    });
+}
+
+#[test_case]
+fn idle_time_is_metered_apart_from_interrupt_time() {
+    with_resume(|nucleus, waits| {
+        map_source_address_space(nucleus, &waits);
+        while nucleus.activations.pop().is_some() {}
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let access = unsafe { Access::new() };
+        let switch = nucleus
+            .park_and_select(&access, SOURCE_SAVED, waits.incoming)
+            .unwrap_or_else(|e| panic!("park into idle: {:?}", e.code()));
+        assert_eq!(switch, Switch::Idle);
+        assert_eq!(nucleus.idle_ticks, 0);
+        // Pretend 10 ms went by, 4 ms of them in interrupt handlers.
+        nucleus.current_since_ticks = nucleus
+            .counter_ticks()
+            .saturating_sub(ticks_for_ms(nucleus, 10));
+        nucleus.account_interrupts(&[], ticks_for_ms(nucleus, 4));
+        // The interrupts moved the start of the idle interval 4 ms ahead.
+        let since_before = nucleus.current_since_ticks - ticks_for_ms(nucleus, 4);
+        nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        assert!(nucleus.activations.push(waits.target));
+        nucleus
+            .select_after_idle(&access)
+            .unwrap_or_else(|e| panic!("leave idle: {:?}", e.code()))
+            .expect("the target is runnable");
+        // Idle time is what is left of the interval, and the interrupts are
+        // counted where they are.
+        assert!(nucleus.idle_ticks >= ticks_for_ms(nucleus, 6));
+        assert!(nucleus.idle_ticks < ticks_for_ms(nucleus, 7));
+        assert_eq!(nucleus.interrupt_ticks, ticks_for_ms(nucleus, 4));
+        // The next Thread is charged from now, not from before the wait.
+        assert!(nucleus.current_since_ticks >= since_before + ticks_for_ms(nucleus, 10));
     });
 }
 
@@ -705,7 +726,7 @@ fn remaining_ns(nucleus: &Nucleus<ArchObjectsImpl>, id: crate::objects::carved::
 #[test_case]
 fn a_tick_charges_a_thread_running_alone_to_its_bound_time() {
     with_resume(|nucleus, waits| {
-        while nucleus.run_queue.pop().is_some() {}
+        while nucleus.activations.pop().is_some() {}
         let time = bind_time(nucleus, waits.source, 1_000_000_000);
         run_for_ms(nucleus, 3);
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
@@ -729,8 +750,8 @@ fn a_tick_charges_a_thread_running_alone_to_its_bound_time() {
 #[test_case]
 fn an_exhausted_thread_is_switched_away_from_and_kept_off_the_queue() {
     with_resume(|nucleus, waits| {
-        let idle = with_idle(nucleus, &waits);
-        while nucleus.run_queue.pop().is_some() {}
+        map_source_address_space(nucleus, &waits);
+        while nucleus.activations.pop().is_some() {}
         bind_time(nucleus, waits.source, 1_000_000);
         run_for_ms(nucleus, 5);
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
@@ -741,11 +762,11 @@ fn an_exhausted_thread_is_switched_away_from_and_kept_off_the_queue() {
                 .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
                 .expect("an exhausted Thread must stop")
         };
-        assert_eq!(resumed.current, waits.source);
-        assert_eq!(resumed.next, idle);
-        assert_eq!(nucleus.current_thread, Some(idle));
+        // Nothing can take over: the nucleus idles.
+        assert_eq!(resumed, Switch::Idle);
+        assert_eq!(nucleus.current_thread, None);
         // It stays runnable but waits for budget instead of queueing.
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
         let source = nucleus.thread(waits.source).unwrap();
         assert!(source.awaiting_budget);
         assert_eq!(
@@ -772,33 +793,35 @@ fn an_exhausted_thread_with_a_queue_behind_it_is_not_requeued() {
                 .preempt_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
                 .expect("another Thread is runnable")
+                .expect_resume()
         };
         assert_eq!(resumed.next, waits.target);
         // Only the former tail remains queued; the exhausted source waits.
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
-        assert!(nucleus.run_queue.is_empty());
+        assert_eq!(nucleus.activations.pop(), Some(waits.tail));
+        assert!(nucleus.activations.is_empty());
         assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
     });
 }
 
 #[test_case]
-fn budget_arriving_requeues_a_waiting_thread_at_the_back() {
+fn budget_arriving_clears_the_wait_for_budget_without_queueing_anything() {
     with_resume(|nucleus, waits| {
         let time = bind_time(nucleus, waits.source, 1_000_000);
         run_for_ms(nucleus, 5);
         nucleus.charge_current(waits.source);
         assert!(nucleus.thread_exhausted(waits.source));
-        // A stopped, exhausted Thread is refused by the queue gate.
+        // A stopped, exhausted Thread waits for budget.
         nucleus.thread_mut(waits.source).unwrap().context = ExecutionContext::Preempted {
             saved: PREEMPTED_SAVED,
         };
         nucleus.current_thread = Some(waits.target);
-        let queued_before = nucleus.run_queue.len();
-        assert!(!nucleus.make_runnable(waits.source));
-        assert_eq!(nucleus.run_queue.len(), queued_before);
+        let queued_before = nucleus.activations.len();
+        nucleus.make_runnable(waits.source);
+        assert_eq!(nucleus.activations.len(), queued_before);
         assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
         // Budget has not arrived yet.
-        assert!(!nucleus.budget_arrived(waits.source));
+        nucleus.budget_arrived(waits.source);
+        assert!(nucleus.thread(waits.source).unwrap().awaiting_budget);
 
         // Refill the Time the way a Transfer does.
         let frequency = nucleus.counter_frequency();
@@ -811,41 +834,39 @@ fn budget_arriving_requeues_a_waiting_thread_at_the_back() {
                     .expect("refill");
             *bound = refilled;
         }
-        assert!(nucleus.budget_arrived(waits.source));
+        nucleus.budget_arrived(waits.source);
         assert!(!nucleus.thread(waits.source).unwrap().awaiting_budget);
-        // Back of the FIFO, behind the Threads already queued.
-        assert_eq!(nucleus.run_queue.len(), queued_before + 1);
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.target));
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.source));
-        // Refilling again queues nothing twice.
-        assert!(!nucleus.budget_arrived(waits.source));
+        // Nothing is queued: only a dispatcher runs Threads, and a Thread
+        // outside every Scheduler has none.
+        assert_eq!(nucleus.activations.len(), queued_before);
+        assert_eq!(nucleus.activations.pop(), Some(waits.target));
+        assert_eq!(nucleus.activations.pop(), Some(waits.tail));
+        assert_eq!(nucleus.activations.pop(), None);
     });
 }
 
 #[test_case]
 fn a_thread_with_no_bound_time_is_never_exhausted_and_its_run_time_is_metered() {
     with_resume(|nucleus, waits| {
-        let idle = with_idle(nucleus, &waits);
-        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
-        nucleus.current_thread = Some(idle);
         run_for_ms(nucleus, 4);
-        nucleus.charge_current(idle);
-        // Idle has no Time, so it is never exhausted, but its run time counts
-        // like any other Thread's: it measures load.
-        assert!(!nucleus.thread_exhausted(idle));
-        assert!(nucleus.run_time_ticks(idle).unwrap() >= ticks_for_ms(nucleus, 4));
-        assert!(nucleus.run_time_ns(idle).unwrap() >= 4_000_000);
-        while nucleus.run_queue.pop().is_some() {}
-        assert!(nucleus.make_runnable(waits.target));
-        assert_eq!(nucleus.run_queue.len(), 1);
+        nucleus.charge_current(waits.source);
+        // No Time, so it is never exhausted, but its run time counts like
+        // any other Thread's: it measures load.
+        assert!(!nucleus.thread_exhausted(waits.source));
+        assert!(nucleus.run_time_ticks(waits.source).unwrap() >= ticks_for_ms(nucleus, 4));
+        assert!(nucleus.run_time_ns(waits.source).unwrap() >= 4_000_000);
+        while nucleus.activations.pop().is_some() {}
+        // A woken Thread outside every Scheduler is published and waits: no
+        // queue runs it.
+        nucleus.make_runnable(waits.target);
+        assert!(nucleus.activations.is_empty());
     });
 }
 
 #[test_case]
 fn interrupt_time_is_not_charged_to_the_interrupted_thread() {
     with_resume(|nucleus, waits| {
-        while nucleus.run_queue.pop().is_some() {}
+        while nucleus.activations.pop().is_some() {}
         let time = bind_time(nucleus, waits.source, 1_000_000_000);
         // The Thread started 10 ms ago, and 4 ms of that went to interrupts.
         run_for_ms(nucleus, 10);
@@ -895,7 +916,7 @@ fn budget_ticks(nucleus: &Nucleus<ArchObjectsImpl>, budget_ns: u64) -> u64 {
 #[test_case]
 fn a_thread_running_alone_on_unlimited_time_needs_no_timer() {
     with_resume(|nucleus, waits| {
-        while nucleus.run_queue.pop().is_some() {}
+        while nucleus.activations.pop().is_some() {}
         nucleus.current_since_ticks = 5_000;
         let slice = slice(nucleus);
         assert_eq!(nucleus.timer_deadline_ticks(slice), None);
@@ -906,14 +927,12 @@ fn a_thread_running_alone_on_unlimited_time_needs_no_timer() {
 }
 
 #[test_case]
-fn the_idle_thread_needs_no_timer() {
-    with_resume(|nucleus, waits| {
-        let idle = with_idle(nucleus, &waits);
-        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::Running;
-        nucleus.current_thread = Some(idle);
+fn an_idle_nucleus_needs_no_timer_unless_a_deadline_is_pending() {
+    with_resume(|nucleus, _waits| {
+        nucleus.current_thread = None;
         let slice = slice(nucleus);
-        // Even with runnable Threads queued: idle takes interrupts instead.
-        assert!(!nucleus.run_queue.is_empty());
+        // Idle waits for an interrupt, whatever is queued.
+        assert!(!nucleus.activations.is_empty());
         assert_eq!(nucleus.timer_deadline_ticks(slice), None);
     });
 }
@@ -923,7 +942,7 @@ fn a_queued_thread_bounds_the_slice_from_when_the_current_thread_started() {
     with_resume(|nucleus, _waits| {
         nucleus.current_since_ticks = 5_000;
         let slice = slice(nucleus);
-        assert!(!nucleus.run_queue.is_empty());
+        assert!(!nucleus.activations.is_empty());
         assert_eq!(nucleus.timer_deadline_ticks(slice), Some(5_000 + slice));
         // A later start moves the deadline with it.
         nucleus.current_since_ticks = 9_000;
@@ -934,9 +953,7 @@ fn a_queued_thread_bounds_the_slice_from_when_the_current_thread_started() {
 #[test_case]
 fn a_finite_budget_sets_a_deadline_at_exhaustion_even_when_alone() {
     with_resume(|nucleus, waits| {
-        // Idle can take over, so the exhausted Thread can stop.
-        let _idle = with_idle(nucleus, &waits);
-        while nucleus.run_queue.pop().is_some() {}
+        while nucleus.activations.pop().is_some() {}
         nucleus.current_since_ticks = 5_000;
         bind_time(nucleus, waits.source, 2_000_000);
         let slice = slice(nucleus);
@@ -962,26 +979,23 @@ fn the_earlier_of_the_slice_and_the_exhaustion_wins() {
 }
 
 #[test_case]
-fn an_exhausted_thread_with_nothing_to_switch_to_asks_for_no_timer() {
+fn an_exhausted_thread_with_nothing_to_switch_to_still_asks_for_a_timer() {
     with_resume(|nucleus, waits| {
-        // No idle Thread and nothing queued: stopping it is impossible, and a
-        // deadline in the past would fire the timer continuously.
-        while nucleus.run_queue.pop().is_some() {}
-        assert!(nucleus.idle_thread.is_none());
+        // Nothing is queued, but it stops all the same: the nucleus idles.
+        while nucleus.activations.pop().is_some() {}
         bind_time(nucleus, waits.source, 1);
         run_for_ms(nucleus, 1);
         nucleus.charge_current(waits.source);
         assert!(nucleus.thread_exhausted(waits.source));
         let slice = slice(nucleus);
-        assert_eq!(nucleus.timer_deadline_ticks(slice), None);
+        assert!(nucleus.timer_deadline_ticks(slice).is_some());
     });
 }
 
 #[test_case]
 fn interrupt_time_pushes_the_exhaustion_deadline_out() {
     with_resume(|nucleus, waits| {
-        let _idle = with_idle(nucleus, &waits);
-        while nucleus.run_queue.pop().is_some() {}
+        while nucleus.activations.pop().is_some() {}
         nucleus.current_since_ticks = 5_000;
         bind_time(nucleus, waits.source, 2_000_000);
         let slice = slice(nucleus);
@@ -1012,7 +1026,7 @@ fn with_dispatcher(nucleus: &mut Nucleus<ArchObjectsImpl>, waits: &Waits) -> Dis
     for thread in [waits.source, waits.target, waits.tail] {
         nucleus.thread_mut(thread).unwrap().scheduler = Some(scheduler_id);
     }
-    while nucleus.run_queue.pop().is_some() {}
+    while nucleus.activations.pop().is_some() {}
     let source_as = nucleus.thread(waits.source).unwrap().address_space;
     let address_space = nucleus.address_space_mut(source_as).unwrap();
     address_space.set_translation_root(Some(ROOT + 0x1000));
@@ -1084,6 +1098,7 @@ fn dispatch_and_park(
     nucleus
         .park_and_select(&access, SOURCE_SAVED, record)
         .unwrap_or_else(|e| panic!("park onto the dispatched Thread: {:?}", e.code()))
+        .expect_resume()
 }
 
 fn scheduler_of(dispatching: &Dispatching) -> &'static mut Scheduler {
@@ -1100,7 +1115,7 @@ fn dispatch_parks_the_dispatcher_and_runs_the_named_thread() {
     with_resume(|nucleus, waits| {
         let dispatching = with_dispatcher(nucleus, &waits);
         let resumed = dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, 5_000_000);
-        assert_eq!(resumed.current, waits.source);
+        assert_eq!(resumed.current, Some(waits.source));
         assert_eq!(resumed.next, waits.tail);
         assert_eq!(nucleus.current_thread, Some(waits.tail));
         let dispatched = nucleus.dispatched.expect("a dispatched Thread");
@@ -1112,7 +1127,7 @@ fn dispatch_parks_the_dispatcher_and_runs_the_named_thread() {
             ExecutionContext::Parked { .. }
         ));
         // The dispatched Thread is not in the queue.
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
     });
 }
 
@@ -1136,6 +1151,7 @@ fn the_dispatched_thread_blocking_activates_the_dispatcher() {
             nucleus
                 .park_and_select(&access, SOURCE_SAVED, record)
                 .unwrap_or_else(|e| panic!("park: {:?}", e.code()))
+                .expect_resume()
         };
         // The dispatcher comes back, told the Thread blocked.
         assert_eq!(resumed.next, waits.source);
@@ -1145,7 +1161,7 @@ fn the_dispatched_thread_blocking_activates_the_dispatcher() {
         assert_eq!(completion.result0, activation_reason::BLOCKED);
         assert!(nucleus.dispatched.is_none());
         assert!(scheduler_of(&dispatching).parked().is_none());
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
     });
 }
 
@@ -1163,6 +1179,7 @@ fn reaching_the_limit_or_the_budget_activates_the_dispatcher() {
                 .preempt_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
                 .expect("the limit stops the Thread")
+                .expect_resume()
         };
         assert_eq!(resumed.next, waits.source);
         assert_eq!(
@@ -1170,7 +1187,7 @@ fn reaching_the_limit_or_the_budget_activates_the_dispatcher() {
             activation_reason::LIMIT
         );
         // The stopped Thread is runnable but not queued: it waits for a dispatch.
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
         assert!(!nucleus.thread(waits.tail).unwrap().queued);
     });
     // The budget.
@@ -1186,6 +1203,7 @@ fn reaching_the_limit_or_the_budget_activates_the_dispatcher() {
                 .preempt_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
                 .expect("exhaustion stops the Thread")
+                .expect_resume()
         };
         assert_eq!(resumed.next, waits.source);
         assert_eq!(
@@ -1321,7 +1339,7 @@ fn the_mask_decides_which_wakeups_preempt_the_dispatched_thread() {
         nucleus.make_runnable(target);
         assert!(scheduler_of(&dispatching).parked().is_none());
         assert!(nucleus.preempt_requested);
-        assert_eq!(nucleus.run_queue.peek(), Some(waits.source));
+        assert_eq!(nucleus.activations.peek(), Some(waits.source));
         // The timer is asked to fire at once.
         let since = nucleus.current_since_ticks;
         assert_eq!(nucleus.timer_deadline_ticks(1_000_000), Some(since));
@@ -1333,6 +1351,7 @@ fn the_mask_decides_which_wakeups_preempt_the_dispatched_thread() {
                 .preempt_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
                 .expect("the dispatcher preempts")
+                .expect_resume()
         };
         assert_eq!(resumed.next, waits.source);
         assert_eq!(
@@ -1347,13 +1366,6 @@ fn the_mask_decides_which_wakeups_preempt_the_dispatched_thread() {
 fn a_dispatcher_waiting_with_nothing_dispatched_wakes_for_any_runnable_thread() {
     with_resume(|nucleus, waits| {
         let dispatching = with_dispatcher(nucleus, &waits);
-        // An idle Thread, selected when nothing runs.
-        let source_as = nucleus.thread(waits.source).unwrap().address_space;
-        let idle = nucleus.create_thread(source_as).expect("idle Thread");
-        nucleus.thread_mut(idle).unwrap().context = ExecutionContext::NotStarted {
-            saved: SavedContext::el1t_interruptible(0xE0000, 0xF0000),
-        };
-        nucleus.idle_thread = Some(idle);
 
         let Ok(InvokeOutcome::Blocked(record)) = dispatch_call(nucleus, &dispatching, None, 1, 0)
         else {
@@ -1366,21 +1378,22 @@ fn a_dispatcher_waiting_with_nothing_dispatched_wakes_for_any_runnable_thread() 
                 .park_and_select(&access, SOURCE_SAVED, record)
                 .unwrap_or_else(|e| panic!("park: {:?}", e.code()))
         };
-        assert_eq!(resumed.next, idle);
+        // Nothing runs: the nucleus idles.
+        assert_eq!(resumed, Switch::Idle);
         assert!(nucleus.dispatched.is_none());
         // The mask is empty, but nothing is running: any runnable Thread wakes it.
         nucleus.make_runnable(waits.target);
         assert!(scheduler_of(&dispatching).parked().is_none());
-        assert_eq!(nucleus.run_queue.peek(), Some(waits.source));
+        assert_eq!(nucleus.activations.peek(), Some(waits.source));
     });
 }
 
 #[test_case]
-fn binding_a_dispatcher_takes_the_schedulers_threads_off_the_queue_and_runs_it_next() {
+fn binding_a_dispatcher_runs_it_next() {
     with_resume(|nucleus, waits| {
         let scheduler_id = test_arena::carve(Scheduler::root()).expect("arena exhausted");
-        // The queue holds `target` and `tail`; `target` belongs to the Scheduler.
-        nucleus.thread_mut(waits.target).unwrap().scheduler = Some(scheduler_id);
+        // Nothing else is waiting to run.
+        while nucleus.activations.pop().is_some() {}
         let source_as = nucleus.thread(waits.source).unwrap().address_space;
         let dispatcher = nucleus.create_thread(source_as).expect("dispatcher Thread");
         {
@@ -1390,17 +1403,13 @@ fn binding_a_dispatcher_takes_the_schedulers_threads_off_the_queue_and_runs_it_n
                 saved: SavedContext::el1t(0xC0000, 0xD0000),
             };
         }
-        assert_eq!(nucleus.run_queue.len(), 2);
         nucleus
             .bind_dispatcher(scheduler_id, dispatcher)
             .ok()
             .expect("bind");
-        // The Scheduler's queued Thread left; the unrelated one stayed; the
-        // dispatcher runs first.
-        assert!(!nucleus.thread(waits.target).unwrap().queued);
-        assert_eq!(nucleus.run_queue.len(), 2);
-        assert_eq!(nucleus.run_queue.pop(), Some(dispatcher));
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+        // The dispatcher runs first, and it is the only one waiting.
+        assert_eq!(nucleus.activations.len(), 1);
+        assert_eq!(nucleus.activations.pop(), Some(dispatcher));
         assert!(matches!(
             nucleus.thread(dispatcher).unwrap().context,
             ExecutionContext::NotStarted { .. }
@@ -1520,6 +1529,7 @@ fn an_expired_timer_activates_a_parked_dispatcher_whatever_the_mask() {
                 .preempt_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
                 .expect("the dispatcher preempts")
+                .expect_resume()
         };
         assert_eq!(resumed.next, waits.source);
         assert_eq!(
@@ -1553,18 +1563,20 @@ fn a_timer_that_expires_while_the_dispatcher_runs_is_kept_for_its_next_dispatch(
 }
 
 #[test_case]
-fn suspend_removes_a_queued_thread_and_resume_requeues_it() {
+fn suspend_stops_a_thread_being_announced_and_resume_announces_it() {
     with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        scheduler_of(&dispatching)
+            .set_activation_mask(activation_mask::THREAD_RUNNABLE)
+            .ok()
+            .expect("mask");
         nucleus.thread_mut(waits.tail).unwrap().context = ExecutionContext::Preempted {
             saved: target_saved(),
         };
-        assert_eq!(nucleus.run_queue.len(), 2);
         nucleus
             .suspend_thread(waits.tail)
             .unwrap_or_else(|e| panic!("Suspend: {:?}", e.code()));
         assert!(nucleus.thread(waits.tail).unwrap().suspended);
-        assert_eq!(nucleus.run_queue.len(), 1);
-        assert!(!nucleus.thread(waits.tail).unwrap().queued);
 
         // Not twice, and not the caller.
         assert!(nucleus.suspend_thread(waits.tail).is_err());
@@ -1578,41 +1590,53 @@ fn suspend_removes_a_queued_thread_and_resume_requeues_it() {
         };
         nucleus.suspend_thread(waits.tail).ok().expect("Suspend");
 
-        // A wakeup is recorded in the Thread and does not queue it.
-        assert!(!nucleus.make_runnable(waits.tail));
-        assert_eq!(nucleus.run_queue.len(), 1);
+        // A wakeup is recorded in the Thread and announced to nobody.
+        scheduler_of(&dispatching).take_pending();
+        nucleus.make_runnable(waits.tail);
+        assert_eq!(scheduler_of(&dispatching).pending(), 0);
 
-        // Resume queues it again, behind the Thread already queued, and only
-        // a suspended Thread can be resumed.
+        // Resume announces it, as any wakeup is, and only a suspended Thread
+        // can be resumed.
         nucleus
             .resume_thread(waits.tail)
             .unwrap_or_else(|e| panic!("Resume: {:?}", e.code()));
         assert!(!nucleus.thread(waits.tail).unwrap().suspended);
-        assert_eq!(nucleus.run_queue.len(), 2);
+        assert_eq!(
+            scheduler_of(&dispatching).pending(),
+            activation_reason::EVENT
+        );
         assert!(nucleus.resume_thread(waits.tail).is_err());
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.target));
-        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
     });
 }
 
 #[test_case]
 fn a_suspended_waiter_keeps_its_wait_and_resume_cannot_skip_it() {
     with_resume(|nucleus, waits| {
-        // The target's wait has completed: suspended, it leaves the queue
-        // and keeps the completion until it is resumed.
+        let dispatching = with_dispatcher(nucleus, &waits);
+        scheduler_of(&dispatching)
+            .set_activation_mask(activation_mask::THREAD_RUNNABLE)
+            .ok()
+            .expect("mask");
+        // The target's wait has completed: suspended, it keeps the
+        // completion until it is resumed, and resuming it announces it.
         nucleus.suspend_thread(waits.target).ok().expect("Suspend");
-        assert_eq!(nucleus.run_queue.len(), 1);
         assert!(matches!(
             nucleus.pending.state(waits.terminal),
             Ok(PendingState::Completed { .. })
         ));
+        scheduler_of(&dispatching).take_pending();
         nucleus.resume_thread(waits.target).ok().expect("Resume");
-        assert_eq!(nucleus.run_queue.len(), 2);
+        assert_eq!(
+            scheduler_of(&dispatching).pending(),
+            activation_reason::EVENT
+        );
 
-        // A waiter whose wait is still open goes back to blocked.
+        // A waiter whose wait is still open goes back to blocked, and
+        // nothing is announced.
         let blocked = nucleus
             .create_thread(nucleus.thread(waits.source).unwrap().address_space)
             .expect("Thread");
+        nucleus.thread_mut(blocked).unwrap().scheduler = Some(dispatching.scheduler_id);
         let record = nucleus
             .pending
             .block(
@@ -1626,9 +1650,14 @@ fn a_suspended_waiter_keeps_its_wait_and_resume_cannot_skip_it() {
             record,
         };
         nucleus.suspend_thread(blocked).ok().expect("Suspend");
+        scheduler_of(&dispatching).take_pending();
         nucleus.resume_thread(blocked).ok().expect("Resume");
         assert!(!nucleus.thread(blocked).unwrap().suspended);
-        assert_eq!(nucleus.run_queue.len(), 2, "Resume skipped the wait");
+        assert_eq!(
+            scheduler_of(&dispatching).pending(),
+            0,
+            "Resume skipped the wait"
+        );
         assert_eq!(
             nucleus.pending.state(record).ok(),
             Some(PendingState::Waiting)
@@ -1662,6 +1691,7 @@ fn a_thread_retiring_itself_switches_away_and_is_gone() {
             nucleus
                 .exit_current_thread(&access)
                 .unwrap_or_else(|e| panic!("exit: {:?}", e.code()))
+                .expect_resume()
         };
         assert_eq!(resumed.next, waits.target);
         assert_eq!(nucleus.current_thread, Some(waits.target));
@@ -1672,21 +1702,19 @@ fn a_thread_retiring_itself_switches_away_and_is_gone() {
 }
 
 #[test_case]
-fn a_thread_that_cannot_exit_for_want_of_anything_to_run_is_left_alone() {
+fn the_last_thread_exiting_leaves_the_nucleus_idle() {
     with_resume(|nucleus, waits| {
-        while nucleus.run_queue.pop().is_some() {}
+        while nucleus.activations.pop().is_some() {}
         // SAFETY: exclusive serial fixture, no overlapping context/guard.
-        let result = {
+        let switch = {
             let access = unsafe { Access::new() };
-            nucleus.exit_current_thread(&access)
+            nucleus
+                .exit_current_thread(&access)
+                .unwrap_or_else(|e| panic!("exit: {:?}", e.code()))
         };
-        assert!(matches!(result, Err(CapError::InvalidOperation)));
-        assert!(nucleus.thread(waits.source).is_some());
-        assert_eq!(nucleus.current_thread, Some(waits.source));
-        assert_eq!(
-            nucleus.thread(waits.source).unwrap().context,
-            ExecutionContext::Running
-        );
+        assert_eq!(switch, Switch::Idle);
+        assert!(nucleus.thread(waits.source).is_none(), "the Thread is gone");
+        assert_eq!(nucleus.current_thread, None);
     });
 }
 
@@ -1702,6 +1730,7 @@ fn a_dispatched_thread_exiting_activates_its_dispatcher_with_exited() {
             nucleus
                 .exit_current_thread(&access)
                 .unwrap_or_else(|e| panic!("exit: {:?}", e.code()))
+                .expect_resume()
         };
         assert_eq!(resumed.next, waits.source);
         assert_eq!(
@@ -1808,6 +1837,7 @@ fn child_dispatches(
     nucleus
         .park_and_select(&access, SOURCE_SAVED, record)
         .unwrap_or_else(|e| panic!("park onto the child's Thread: {:?}", e.code()))
+        .expect_resume()
 }
 
 #[test_case]
@@ -1857,6 +1887,7 @@ fn a_child_threads_stop_activates_the_child_dispatcher_inside_the_grant_not_the_
             nucleus
                 .park_faulted_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("fault: {:?}", e.code()))
+                .expect_resume()
         };
         assert_eq!(resumed.next, domain.dc);
         assert_eq!(
@@ -1895,6 +1926,7 @@ fn the_end_of_the_grant_stops_the_childs_thread_and_activates_the_parent_with_li
                 .preempt_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("tick: {:?}", e.code()))
                 .expect("the parent preempts")
+                .expect_resume()
         };
         // The root dispatcher runs, told that its dispatch hit its limit.
         assert_eq!(resumed.next, waits.source);
@@ -2000,6 +2032,7 @@ fn a_child_dispatcher_that_faults_suspends_its_domain_and_tells_the_parent() {
             nucleus
                 .park_faulted_and_select(&access, PREEMPTED_SAVED)
                 .unwrap_or_else(|e| panic!("fault: {:?}", e.code()))
+                .expect_resume()
         };
         // The root dispatcher runs, told of the fault and of the domain.
         assert_eq!(resumed.next, waits.source);

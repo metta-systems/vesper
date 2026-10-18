@@ -34,7 +34,7 @@ pub use {
     nucleus::Nucleus,
     nucleus_object::NucleusObject,
     object_pool::ObjectPool,
-    sched::RunQueue,
+    sched::Activations,
     scheduler::Scheduler,
     thread::{
         ExecutionContext, InvocationContinuation, InvocationStack, Placement, Thread, ThreadFault,

@@ -26,7 +26,8 @@
 //!             [ "raises" "(" name { "," name } ")" ] ";" ;
 //! field     = { doc } type name ;
 //! type      = name [ "&" ] ;
-//! uses      = "uses" name "via" link { "," link } "{" name { "," name } [ "," ] "}" ;
+//! uses      = "uses" name "via" provider "{" name { "," name } [ "," ] "}" ;
+//! provider  = "device" link { "," link } | "component" name ;
 //! link      = name | string | "compatible" string ;
 //! ```
 //!
@@ -51,11 +52,15 @@
 //! (`name_vN`); while Meddle interfaces are prototypes, a change edits the
 //! version in place instead of making a new one.
 //!
-//! A `uses` declaration names the instance it calls by a chain of links, read
-//! from the device tree node of the component that uses it: each property of
-//! the current node holds the phandle of the next. The first link may instead
-//! be `compatible "string"`, the one enabled node with that compatible string,
-//! for providers no property leads to.
+//! A `uses` declaration names the instance it calls in one of two ways:
+//!
+//! - `via device` followed by a chain of links, read from the device tree node
+//!   of the component that uses it: each property of the current node holds
+//!   the phandle of the next. The first link may instead be
+//!   `compatible "string"`, the one enabled node with that compatible string,
+//!   for providers no property leads to.
+//! - `via component name`: the one loaded instance of the manifest component
+//!   `name` that exports the interface.
 //!
 //! A call passes at most six argument words and answers with an outcome word
 //! and one more word, so a function returns at most one one-word result and
@@ -310,12 +315,20 @@ pub enum LinkSummary {
     Compatible(String),
 }
 
+/// How an import finds its exporting instance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderSummary {
+    /// The steps linking the client node to the exporter, in order
+    Device(Vec<LinkSummary>),
+    /// The manifest component name
+    Component(String),
+}
+
 /// The functions a component uses of one interface.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportSummary {
     pub interface: InterfaceSummary,
-    /// The steps linking the client node to the exporter, in order
-    pub links: Vec<LinkSummary>,
+    pub provider: ProviderSummary,
     /// Indices of the used functions in `interface.functions`
     pub functions: Vec<usize>,
 }
@@ -369,14 +382,22 @@ pub fn summarize_imports(
                 })
                 .collect();
             Ok(ImportSummary {
-                links: declaration
-                    .links
-                    .iter()
-                    .map(|link| match link {
-                        ast::Link::Property(name) => LinkSummary::Property(name.text.clone()),
-                        ast::Link::Compatible(name) => LinkSummary::Compatible(name.text.clone()),
-                    })
-                    .collect(),
+                provider: match &declaration.provider {
+                    ast::Provider::Device(links) => ProviderSummary::Device(
+                        links
+                            .iter()
+                            .map(|link| match link {
+                                ast::Link::Property(name) => {
+                                    LinkSummary::Property(name.text.clone())
+                                }
+                                ast::Link::Compatible(name) => {
+                                    LinkSummary::Compatible(name.text.clone())
+                                }
+                            })
+                            .collect(),
+                    ),
+                    ast::Provider::Component(name) => ProviderSummary::Component(name.text.clone()),
+                },
                 interface,
                 functions,
             })

@@ -19,7 +19,7 @@ use {
         arch_objects::{AddressSpaceId, AddressSpaceObject},
         invocation::{CallTarget, CommittedCall},
         key_table::KeyTable,
-        resume::PreparedResume,
+        resume::Switch,
         thread::ThreadId,
     },
     libexception::arch::aarch64::SavedContext,
@@ -34,7 +34,7 @@ pub enum FaultDelivery {
     Handler(CommittedCall),
     /// Nobody took the fault: the Thread is parked as `Faulted`; entry resumes
     /// the selected next Thread.
-    Unhandled(PreparedResume),
+    Unhandled(Switch),
 }
 
 impl<A: ArchObjects> Nucleus<A> {
@@ -97,7 +97,7 @@ impl<A: ArchObjects> Nucleus<A> {
         access: &Access,
         current: ThreadId,
         faulting: SavedContext,
-    ) -> Result<PreparedResume, CapError> {
+    ) -> Result<Switch, CapError> {
         self.release_thread_fault(current);
         self.release_thread_placements(access, current);
         self.park_faulted_and_select(access, faulting)

@@ -126,7 +126,7 @@ pub struct InterfaceExport {
 }
 
 /// One step of the chain leading from a client's node to the instance it
-/// calls (see `Import::links`).
+/// calls (see `Provider::Device`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Link {
     /// The node the current node's property of this name holds the phandle of
@@ -134,6 +134,16 @@ pub enum Link {
     /// The one enabled node with this `compatible` string; only a chain's
     /// first step
     Compatible(&'static str),
+}
+
+/// How an import finds the instance it calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    /// The device tree chain from the client's node to the exporting node
+    Device(&'static [Link]),
+    /// The manifest component of this name; the one loaded instance of it
+    /// that exports the interface is the exporter
+    Component(&'static str),
 }
 
 /// One function of another component's interface that a component calls,
@@ -145,9 +155,8 @@ pub struct Import {
     pub type_code: u64,
     /// The function's declaration index in the interface
     pub function: u64,
-    /// The device tree properties leading from the client's node to the
-    /// exporting instance's node, each holding the next node's phandle
-    pub links: &'static [Link],
+    /// How the exporting instance is found
+    pub provider: Provider,
     /// Bytes of the data area the interface shares between a client and its
     /// exporter (zero: none)
     pub data_bytes: u64,

@@ -16,7 +16,7 @@
 //! - a **checker**: an interruptible Thread that waits (busy, never blocking)
 //!   until every spinner has counted across enough ticks, then signals the
 //!   boot Thread's Notification;
-//! - the **idle** Thread, selected only when nothing else is runnable.
+//! - **idle** time: when nothing is runnable the kernel waits for an interrupt.
 //!
 //! On one core, Threads that never yield can all make progress only through
 //! preemption. The boot Thread parks on the Notification and checks the
@@ -37,7 +37,7 @@ use {
         sync::atomic::{AtomicPtr, AtomicU64, Ordering},
     },
     kickstart::{
-        bootstrap::{bootstrap_nucleus, retained_init_memory, spawn_idle},
+        bootstrap::{bootstrap_nucleus, retained_init_memory},
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
@@ -588,12 +588,8 @@ pub fn run() -> ! {
     START_TICKS.store(ticks(), Ordering::Relaxed);
     let time_before = nucleus.current_time_ns();
 
-    let idle = spawn_idle(
-        nucleus,
-        keytable_addr,
-        RawKey::from_wire(untyped.to_wire()),
-        boot_as_id,
-    );
+    // The fixture Threads run on the root Scheduler's dispatcher.
+    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, boot.root_scheduler_key);
     let entries = [
         spinner_a as *const () as u64,
         spinner_b as *const () as u64,
@@ -679,6 +675,7 @@ pub fn run() -> ! {
     root_scheduler
         .start_thread(spinner_thread_key)
         .unwrap_or_else(|error| panic!("StartThread failed: {:?}", error.code()));
+    libkicktest::dispatcher::register_key(nucleus, &builder, spinner_thread_key);
     // The budget-limited spinner: the same component and AddressSpace, its
     // own stack and counter page, on the finite Time.
     let limited_thread_key = untyped
@@ -707,6 +704,7 @@ pub fn run() -> ! {
     root_scheduler
         .start_thread(limited_thread_key)
         .unwrap_or_else(|error| panic!("limited StartThread failed: {:?}", error.code()));
+    libkicktest::dispatcher::register_key(nucleus, &builder, limited_thread_key);
     // The EL0 reader: the same public path, on an infinite Time.
     let reader_thread_key = untyped
         .retype(
@@ -734,6 +732,7 @@ pub fn run() -> ! {
     root_scheduler
         .start_thread(reader_thread_key)
         .unwrap_or_else(|error| panic!("reader StartThread failed: {:?}", error.code()));
+    libkicktest::dispatcher::register_key(nucleus, &builder, reader_thread_key);
     // The scheduler takes over both EL0 spinners' records.
     root_scheduler
         .assign_record(spinner_thread_key, UNLIMITED_SLOT)
@@ -757,7 +756,7 @@ pub fn run() -> ! {
     // Kickstart withheld the interrupt controllers, the local interrupt
     // block included, from the device memory it handed out.
     devices::assert_device_untypeds_avoid_the_kernel(keytable_addr);
-    semi::println!("preempt-test: spinners, checker and idle started; parking");
+    semi::println!("preempt-test: spinners and checker started; parking");
 
     // Park until the checker wakes us: only preemption lets it run.
     let bits = wake
@@ -790,7 +789,6 @@ pub fn run() -> ! {
         "the clock ran slower than the ticks"
     );
     assert!(el0_counted > 0, "the EL0 spinner never ran");
-    assert_eq!(nucleus.idle_thread, Some(idle));
 
     // The EL0 spinner never blocks: it can only have stopped through a tick
     // taken at EL0, its complete user state saved for the next slice.

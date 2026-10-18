@@ -19,17 +19,25 @@ pub struct File {
     pub uses: Vec<Uses>,
 }
 
-/// `uses interface via property, ... { function, ... }`: the functions of
-/// `interface` a component calls, through the instance its device tree node
-/// links to through `property` (each further property read from the node
-/// the previous one reached).
+/// `uses interface via device link, ... { function, ... }` or
+/// `uses interface via component name { function, ... }`: the functions of
+/// `interface` a component calls, through the instance its `provider` names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Uses {
     pub interface: Name,
-    /// The device tree properties leading from the client node to the
-    /// exporting node: each holds the phandle of the next node
-    pub links: Vec<Link>,
+    pub provider: Provider,
     pub functions: Vec<Name>,
+}
+
+/// How a `uses` declaration finds the instance it calls.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Provider {
+    /// `via device link, ...`: the device tree chain from the client node to
+    /// the exporting node (each further property read from the node the
+    /// previous one reached)
+    Device(Vec<Link>),
+    /// `via component name`: the loaded manifest component of that name
+    Component(Name),
 }
 
 /// `[local] interface name_vN { ... }`.

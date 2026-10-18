@@ -89,7 +89,7 @@ impl SavedContext {
     }
 
     /// Like [`Self::el1t`], but IRQs are unmasked: the nucleus may interrupt
-    /// and preempt the Thread (e.g. the idle Thread waiting in `wfi`).
+    /// and preempt the Thread (e.g. a spinning Thread).
     pub const fn el1t_interruptible(pc: u64, sp: u64) -> Self {
         let mut context = Self::el1t(pc, sp);
         context.spsr_el1 = SPSR_EL1T_INTERRUPTIBLE;

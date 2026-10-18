@@ -6,7 +6,7 @@ Mark an item `- [x]` only after implementation and validation have passed. A fin
 
 **Model in one paragraph.** Time is a transferable, accounted budget with no priority. The nucleus charges the running Time, enforces limits with a one-shot timer and reports block, expiry and wakeup events to the responsible scheduler. A Thread whose Time is exhausted is ineligible to run until more budget is Transferred in. Every policy (order, priorities, renewal, fairness) is userspace scheduler code.
 
-Phases 1 to 8 are finished, as are the hierarchy items of Phase 9: see [`scheduling-completed.md`](scheduling-completed.md).
+Phases 1 to 8 and 10 are finished, as are the hierarchy items of Phase 9: see [`scheduling-completed.md`](scheduling-completed.md).
 
 ## Phase 9 — Hierarchy and domains (what is left)
 
@@ -17,14 +17,9 @@ The decisions and finished items are in [`scheduling-completed.md`](scheduling-c
 
 **Exit:** storage cannot mint execution authority; delegated time is spent at most once; execution, observation and ownership agree across layers; the nucleus contains no scheduling policy.
 
-## Phase 10 — Retire the kernel queue
+## Phase 10 — Retire the kernel queue (done)
 
-After Phase 5. The Threads outside any Scheduler and the Schedulers without a dispatcher are the last users of the first-in, first-out queue.
-
-- [ ] Remove the idle Thread. When nothing is runnable (the dispatcher is parked in `Dispatch(None)`, or the first-in, first-out queue is empty), the kernel idles itself: it executes `wfi` on its own kernel stack with interrupts unmasked, and the next interrupt takes the usual path (handler, activation, switch). Select-next gains a "nothing to run" outcome that waits in the kernel instead of switching to a Thread; `spawn_idle`, `Nucleus::idle_thread` and the idle special cases in `park_and_select` and `preempt_and_select` go, and the test kernels drop their `spawn_idle` calls. The one-shot timer stays disarmed while idle unless a deadline is pending.
-- [ ] Meter idle time in the nucleus, since no Time is charged for it: an idle-ticks counter, exact like Time charging, published in the Scheduler record (slot 0) for load measurement.
-- [ ] Bring the kernel test fixtures up on a dispatcher, so the test kernels' Threads are dispatched too.
-- [ ] Remove the kernel first-in, first-out queue and the pre-dispatcher mechanism.
+Finished: see [`scheduling-completed.md`](scheduling-completed.md#phase-10--retire-the-kernel-queue).
 
 ## Phase 11 — Multicore
 

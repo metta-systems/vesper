@@ -4,7 +4,7 @@ use {
     crate::{
         ast::{
             DataDeclaration, Exception, Field, File, Interface, LentKey, Link, Method, Name,
-            PlacementDeclaration, TypeDefinition, TypeKind, TypeReference, Uses,
+            PlacementDeclaration, Provider, TypeDefinition, TypeKind, TypeReference, Uses,
         },
         diagnostic::Diagnostic,
         lexer::Token,
@@ -270,18 +270,27 @@ where
         .or(name.or(text_name).map(Link::Property))
         .labelled("a device tree property");
 
-    let uses = just(Token::Uses)
-        .ignore_then(name)
-        .then_ignore(just(Token::Via))
-        .then(
+    // `device` and `component` are contextual: they stay ordinary identifiers
+    // elsewhere (`mailbox_v1` has an enum named `device`).
+    let device = select! { Token::Identifier("device") => () }
+        .ignore_then(
             link.separated_by(just(Token::Comma))
                 .at_least(1)
                 .collect::<Vec<_>>(),
         )
+        .map(Provider::Device);
+    let component = select! { Token::Identifier("component") => () }
+        .ignore_then(name)
+        .map(Provider::Component);
+
+    let uses = just(Token::Uses)
+        .ignore_then(name)
+        .then_ignore(just(Token::Via))
+        .then(device.or(component).labelled("`device` or `component`"))
         .then(name_list.delimited_by(just(Token::LeftBrace), just(Token::RightBrace)))
-        .map(|((interface, links), functions)| Uses {
+        .map(|((interface, provider), functions)| Uses {
             interface,
-            links,
+            provider,
             functions,
         });
 

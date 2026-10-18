@@ -6,8 +6,8 @@
 //! dispatch-test: a userspace root dispatcher end to end.
 //!
 //! Kickstart loads the privileged interrupt-controller component and the
-//! nucleus arms the timer. The boot Thread (which stays on the kernel's
-//! first-in, first-out queue) then builds:
+//! nucleus arms the timer. The boot Thread (a Thread of the root Scheduler,
+//! which the dispatcher runs whenever the test needs it to) then builds:
 //!
 //! - three **workers** in one EL0 component, each counting forever in its
 //!   own word and never blocking or yielding; the third runs on a small
@@ -35,7 +35,6 @@ use {
     kickstart::{
         bootstrap::{
             bootstrap_nucleus, device_untypeds, interrupt_controllers, retained_init_memory,
-            spawn_idle,
         },
         kickstart_init_el2,
     },
@@ -166,6 +165,8 @@ const CHILD_THREAD_RECORD_SLOT: u32 = 1;
 const CHILD_DISPATCHER_SLOT: u32 = 66;
 const CHILD_THREAD_SLOT: u32 = 67;
 const CHILD_DONE_SLOT: u32 = 68;
+/// The boot Thread's key in the dispatcher's table.
+const BOOT_THREAD_SLOT: u32 = 69;
 /// Slots of the child dispatcher's own table: the child Scheduler and its Thread.
 const CHILD_SCHEDULER_KEY_SLOT: u32 = 32;
 const CHILD_THREAD_KEY_SLOT: u32 = 33;
@@ -250,6 +251,7 @@ mod page {
     pub const P7_CHILD_SLOT: usize = 81;
     pub const P7_THREAD_KEY: usize = 82;
     pub const P7_DONE: usize = 83;
+    pub const BOOT_THREAD: usize = 89;
     pub const P7_FIRST_REASONS: usize = 84;
     pub const P7_FIRST_NS: usize = 85;
     pub const P7_SECOND_REASONS: usize = 86;
@@ -706,6 +708,24 @@ pub fn run() -> ! {
         grant(CHILD_THREAD_SLOT, child_thread_key),
     );
     words.write(page::P7_DONE, grant(CHILD_DONE_SLOT, child_done_key));
+    // The boot Thread (this test body) is a Thread of the root Scheduler,
+    // which the dispatcher runs when the test needs it to.
+    {
+        let root = builder
+            .entry(boot.root_scheduler_key)
+            .carved_id()
+            .unwrap_or_else(|error| panic!("root Scheduler identity: {:?}", error.code()));
+        let boot_thread = nucleus.current_thread.expect("the boot Thread exists");
+        nucleus
+            .thread_mut(boot_thread)
+            .expect("the boot Thread exists")
+            .scheduler = Some(root);
+        nucleus.join_scheduler(boot_thread, root);
+        words.write(
+            page::BOOT_THREAD,
+            grant(BOOT_THREAD_SLOT, boot.boot_thread_key),
+        );
+    }
     let child_worker_stack = builder.user_stack(&mut worker_stacks, STACK_PAGES, &mut slots);
 
     // The scheduler shares the table, then takes over the workers' records.
@@ -728,8 +748,7 @@ pub fn run() -> ! {
         root_scheduler
             .assign_record(*thread_key, WORKER_SLOT[index])
             .unwrap_or_else(|error| panic!("AssignRecord failed: {:?}", error.code()));
-        // Started under the first-in, first-out queue until the dispatcher
-        // binds, which takes the workers off it.
+        // Started before the dispatcher binds: nothing runs it until then.
         root_scheduler
             .start_thread(*thread_key)
             .unwrap_or_else(|error| panic!("worker StartThread failed: {:?}", error.code()));
@@ -901,13 +920,6 @@ pub fn run() -> ! {
         )
         .unwrap_or_else(|error| panic!("dispatcher ConfigureThread failed: {:?}", error.code()));
 
-    let idle = spawn_idle(
-        nucleus,
-        keytable_addr,
-        RawKey::from_wire(untyped.to_wire()),
-        boot_as_id,
-    );
-    assert_eq!(nucleus.idle_thread, Some(idle));
     root_scheduler
         .bind_dispatcher(dispatcher_thread_key)
         .unwrap_or_else(|error| panic!("BindDispatcher failed: {:?}", error.code()));
@@ -1110,6 +1122,9 @@ pub fn run() -> ! {
         .expect("a consistent scheduler record");
     assert!(scheduler_record.interrupt_ns > 0);
     assert!(scheduler_record.interrupt_ns >= line.nanoseconds || line.handled > 1);
+    // The nucleus idled while every Thread waited: that time is metered
+    // apart from the interrupts.
+    assert!(scheduler_record.idle_ns > 0);
     // ── Sixth phase: Suspend, Resume and a Thread retiring itself ────────
     NotificationKey::from_key(exiter_done_key)
         .wait(NotificationKey::WAIT_INFINITE)

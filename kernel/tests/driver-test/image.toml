@@ -7,3 +7,12 @@
 name = "probe"
 binary = "driver-probe"
 interfaces = "../../../userspace/tests/driver/probe/interfaces"
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

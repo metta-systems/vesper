@@ -132,7 +132,7 @@ impl ThreadKey {
 
     /// Suspend the Thread: take it out of scheduling, leaving its saved state,
     /// its pending wait and its Time as they are. Not the caller, an inert,
-    /// faulted or already suspended Thread, the idle Thread or the bound
+    /// faulted or already suspended Thread, or the bound
     /// dispatcher (`InvalidOperation`).
     ///
     /// Wire schema: no arguments. Authority: `WRITE` on a named Thread.

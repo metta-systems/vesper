@@ -139,7 +139,7 @@ fn configure_then_start_makes_an_inert_thread_runnable() {
                 saved: SavedContext::el0(ENTRY, STACK, ARGUMENT)
             }
         );
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
         // A configured Thread cannot be configured again.
         assert!(matches!(
             configure(nucleus, &keys, ENTRY, STACK),
@@ -162,13 +162,14 @@ fn configure_then_start_makes_an_inert_thread_runnable() {
                 saved: SavedContext::el0(ENTRY, STACK, ARGUMENT)
             }
         );
-        assert_eq!(nucleus.run_queue.peek(), Some(keys.thread_id));
+        // Nothing runs it: only a dispatcher does.
+        assert!(nucleus.activations.is_empty());
         // Starting twice is refused.
         assert!(matches!(
             start(nucleus, &keys),
             Err(CapError::InvalidOperation)
         ));
-        while nucleus.run_queue.pop().is_some() {}
+        while nucleus.activations.pop().is_some() {}
     });
 }
 
@@ -341,7 +342,7 @@ fn a_thread_started_on_an_unfunded_time_waits_until_a_transfer_arrives() {
 
         // The Time is empty: the Thread starts but stays off the run queue.
         start(nucleus, &keys).unwrap_or_else(|error| panic!("StartThread: {:?}", error.code()));
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
         let thread = nucleus.thread(keys.thread_id).unwrap();
         assert!(thread.awaiting_budget);
         assert_eq!(
@@ -351,7 +352,7 @@ fn a_thread_started_on_an_unfunded_time_waits_until_a_transfer_arrives() {
             }
         );
 
-        // A Transfer into its Time queues it at once.
+        // A Transfer into its Time ends the wait.
         time_op(
             nucleus,
             root,
@@ -359,10 +360,10 @@ fn a_thread_started_on_an_unfunded_time_waits_until_a_transfer_arrives() {
             [keys.time.to_wire(), 1_000_000, 0, 0, 0, 0],
         )
         .unwrap_or_else(|error| panic!("fund the Time: {:?}", error.code()));
-        assert_eq!(nucleus.run_queue.peek(), Some(keys.thread_id));
+        assert!(nucleus.activations.is_empty());
         assert!(!nucleus.thread(keys.thread_id).unwrap().awaiting_budget);
 
-        // A second Transfer queues nothing twice.
+        // A second Transfer changes nothing.
         time_op(
             nucleus,
             root,
@@ -370,7 +371,7 @@ fn a_thread_started_on_an_unfunded_time_waits_until_a_transfer_arrives() {
             [keys.time.to_wire(), 1_000, 0, 0, 0, 0],
         )
         .unwrap_or_else(|error| panic!("top up the Time: {:?}", error.code()));
-        assert_eq!(nucleus.run_queue.len(), 1);
+        assert!(nucleus.activations.is_empty());
     });
 }
 
@@ -657,7 +658,6 @@ fn records_follow_a_thread_from_start_through_exhaustion_to_retirement() {
         // Retiring it publishes its final state with the same incarnation.
         let thread_key = keys.thread;
         let before = thread_snapshot(3, 128).incarnation;
-        nucleus.run_queue.remove(keys.thread_id);
         cap_invoke(
             nucleus,
             thread_key,
@@ -911,11 +911,12 @@ fn a_published_change_wakes_the_agent_waiting_on_the_bound_event_count() {
         let Ok(crate::objects::event_count::AwaitOutcome::Blocked(record)) = outcome else {
             panic!("the agent should block on an unadvanced EventCount");
         };
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
 
         // A published change advances the count and wakes the agent.
         assign(nucleus, &keys, 1).expect_ok();
-        assert_eq!(nucleus.run_queue.peek(), Some(agent));
+        // The agent belongs to no Scheduler: nothing queues it, its wait is done.
+        assert!(nucleus.activations.is_empty());
         assert!(matches!(
             nucleus.pending.state(record),
             Ok(crate::objects::completion::PendingState::Completed { .. })
@@ -1183,10 +1184,10 @@ fn a_child_scheduler_has_no_authority_to_run_threads_until_it_has_a_dispatcher()
             Err(CapError::InvalidOperation)
         ));
         keys.scheduler = child_key;
-        let queued_before = nucleus.run_queue.len();
+        let queued_before = nucleus.activations.len();
         start(nucleus, &keys).expect_ok();
-        // Started, but the first-in, first-out queue is not its way to run.
-        assert_eq!(nucleus.run_queue.len(), queued_before);
+        // Started, but nothing queues it: its Scheduler has no dispatcher.
+        assert_eq!(nucleus.activations.len(), queued_before);
         assert!(!nucleus.thread(keys.thread_id).unwrap().queued);
         // Retiring the Thread releases it from the child.
         assert_eq!(scheduler_object(child).thread_count(), 1);
@@ -1235,12 +1236,11 @@ fn a_thread_moves_down_to_a_child_and_back_and_the_old_record_reads_donated() {
         share(nucleus, &keys, child_frame, 0, 128).expect_ok();
         keys.scheduler = root_key;
 
-        // A started Thread of the root, queued, with a record in slot 5.
+        // A started Thread of the root, with a record in slot 5.
         fund(nucleus, &keys);
         configure(nucleus, &keys, ENTRY, STACK).expect_ok();
         assign(nucleus, &keys, 5).expect_ok();
         start(nucleus, &keys).expect_ok();
-        assert!(nucleus.thread(keys.thread_id).unwrap().queued);
 
         // Moves go only between a Scheduler and its direct child.
         for (invoked, destination) in [
@@ -1266,15 +1266,16 @@ fn a_thread_moves_down_to_a_child_and_back_and_the_old_record_reads_donated() {
             true
         );
         assert_eq!(scheduler_object(child).thread_count(), 0);
-        assert!(nucleus.thread(keys.thread_id).unwrap().queued);
         let _ = stranger;
 
-        // Donation: the child owns it, in its slot 3; it leaves the queue
-        // (a child without a dispatcher cannot run it) and the root's record
+        // Donation: the child owns it, in its slot 3, and the root's record
         // reads Donated.
         move_thread_call(nucleus, root_key, keys.thread, child_key, 3)
             .unwrap_or_else(|error| panic!("MoveThread: {:?}", error.code()));
-        assert!(!nucleus.thread(keys.thread_id).unwrap().queued);
+        assert_eq!(
+            nucleus.thread(keys.thread_id).unwrap().scheduler,
+            Some(child)
+        );
         assert_eq!(scheduler_object(child).thread_count(), 1);
         let left = thread_snapshot(5, 128);
         assert_eq!(left.thread_state(), Some(ThreadState::Donated));
@@ -1293,7 +1294,10 @@ fn a_thread_moves_down_to_a_child_and_back_and_the_old_record_reads_donated() {
         ));
         move_thread_call(nucleus, root_key, keys.thread, root_key, 6)
             .unwrap_or_else(|error| panic!("MoveThread back: {:?}", error.code()));
-        assert!(nucleus.thread(keys.thread_id).unwrap().queued);
+        assert_ne!(
+            nucleus.thread(keys.thread_id).unwrap().scheduler,
+            Some(child)
+        );
         assert_eq!(scheduler_object(child).thread_count(), 0);
         // SAFETY: serial tests; the child's page is live and aligned.
         let gone = unsafe { ThreadRecord::at((page_paddr(1) + 3 * 128) as *const u8) }

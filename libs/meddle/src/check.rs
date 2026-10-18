@@ -284,12 +284,14 @@ pub fn check_uses(uses: &[Uses], interfaces: &[&Interface]) -> Vec<Diagnostic> {
             continue;
         };
         duplicates(&declaration.functions, "function", &mut diagnostics);
-        for link in declaration.links.iter().skip(1) {
-            if let ast::Link::Compatible(name) = link {
-                diagnostics.push(Diagnostic::error(
-                    name.span.clone(),
-                    "a `compatible` link can only start a chain: later steps follow properties",
-                ));
+        if let ast::Provider::Device(links) = &declaration.provider {
+            for link in links.iter().skip(1) {
+                if let ast::Link::Compatible(name) = link {
+                    diagnostics.push(Diagnostic::error(
+                        name.span.clone(),
+                        "a `compatible` link can only start a chain: later steps follow properties",
+                    ));
+                }
             }
         }
         for function in &declaration.functions {

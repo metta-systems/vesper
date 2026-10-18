@@ -240,8 +240,8 @@ fn with_nucleus(
         },
         current_thread: None,
         pending: crate::objects::PendingPool::new(),
-        run_queue: crate::objects::RunQueue::new(),
-        idle_thread: None,
+        activations: crate::objects::Activations::new(),
+        idle_ticks: 0,
         irq_table: crate::objects::irq::IrqTable::empty(),
         ticks: 0,
         current_since_ticks: 0,
@@ -537,8 +537,8 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
             },
         ];
         nucleus.thread_mut(second).unwrap().context = contexts[1];
-        assert!(nucleus.run_queue.push(second));
-        assert!(nucleus.run_queue.push(first));
+        assert!(nucleus.activations.push(second));
+        assert!(nucleus.activations.push(first));
         nucleus.current_thread = Some(first);
 
         let stale = CarvedId {
@@ -664,8 +664,8 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                                 state
                             );
                         }
-                        assert_eq!(nucleus.run_queue.len(), 2);
-                        assert_eq!(nucleus.run_queue.peek(), Some(second));
+                        assert_eq!(nucleus.activations.len(), 2);
+                        assert_eq!(nucleus.activations.peek(), Some(second));
                         let table = nucleus.current_thread_table_mut().unwrap();
                         assert_eq!(table.len(), 2);
                         assert_eq!(
@@ -700,9 +700,9 @@ fn thread_return_selectors_reject_without_mutating_shared_threads_or_pending() {
                 .remove(key, FIXTURE_GUARD)
                 .unwrap_or_else(|_| panic!("Thread capability cleanup"));
         }
-        assert_eq!(nucleus.run_queue.pop(), Some(second));
-        assert_eq!(nucleus.run_queue.pop(), Some(first));
-        assert!(nucleus.run_queue.is_empty());
+        assert_eq!(nucleus.activations.pop(), Some(second));
+        assert_eq!(nucleus.activations.pop(), Some(first));
+        assert!(nucleus.activations.is_empty());
     });
 }
 
@@ -792,7 +792,7 @@ fn thread_return_dispatch_requires_checked_packed_key_and_entry_presence() {
                                 assert_eq!(thread.context, ExecutionContext::Running);
                             }
                             assert!(nucleus.pending.is_empty());
-                            assert!(nucleus.run_queue.is_empty());
+                            assert!(nucleus.activations.is_empty());
                             let table = nucleus.current_thread_table_mut().unwrap();
                             assert_eq!(table.len(), 1 + usize::from(live.is_some()));
                             assert_eq!(
@@ -873,7 +873,7 @@ fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
             assert_eq!(retained.address_space, fixture_as);
             assert_eq!(retained.context, ExecutionContext::Running);
             assert!(nucleus.pending.is_empty());
-            assert!(nucleus.run_queue.is_empty());
+            assert!(nucleus.activations.is_empty());
             let table = nucleus.current_thread_table_mut().unwrap();
             assert_eq!(table.len(), 3);
             let entry = table

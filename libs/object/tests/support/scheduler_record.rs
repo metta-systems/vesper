@@ -113,6 +113,7 @@ fn publish_then_snapshot_round_trips_and_advances_the_sequence_by_two() {
         flags: 0,
         interrupt_ns: 123_456,
         grant_end_ns: 987_654,
+        idle_ns: 555_000,
     };
     scheduler.publish(&state);
     assert_eq!(scheduler.sequence(), 2);

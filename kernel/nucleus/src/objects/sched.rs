@@ -1,9 +1,11 @@
 //! Minimal kernel scheduling substrate.
 //!
-//! This is kernel mechanism only — a FIFO of runnable Threads. Scheduling
-//! *policy* stays in userspace (the contract's userspace-scheduling
-//! boundary): the kernel only needs "run someone else" when a thread blocks,
-//! and a place to queue threads whose pending invocations completed.
+//! This is kernel mechanism only — the list of dispatchers an activation has
+//! made ready to run next. The nucleus keeps no queue of runnable Threads:
+//! scheduling *policy* is userspace's (the contract's userspace-scheduling
+//! boundary), and only a Scheduler's dispatcher runs its Threads. When the
+//! running Thread stops, the next one is the dispatcher that was activated,
+//! the Thread a dispatcher just named, or nothing, when the kernel idles.
 //!
 //! Threads are carved from Untyped memory, so their number is bounded only by
 //! memory. The queue therefore links through the Thread objects themselves
@@ -11,12 +13,13 @@
 
 use crate::objects::{Thread, carved::Carved, thread::ThreadId};
 
-/// FIFO of runnable Threads, linked through the queued Threads.
+/// The dispatchers an activation made ready to run, linked through the
+/// Threads themselves.
 ///
-/// A thread enters the queue when its pending invocation completes (wakeup)
-/// or when it is created and awaits its first start. It leaves the queue
-/// when the kernel switches to it. A Thread is queued at most once.
-pub struct RunQueue {
+/// A dispatcher enters at the front when it is activated (and the oldest
+/// activation is the last to run). It leaves when the kernel switches to it.
+/// A Thread is listed at most once.
+pub struct Activations {
     head: Option<ThreadId>,
     tail: Option<ThreadId>,
     len: usize,
@@ -35,7 +38,7 @@ fn thread<'a>(id: ThreadId) -> Option<&'a mut Thread> {
     }
 }
 
-impl RunQueue {
+impl Activations {
     pub const fn new() -> Self {
         Self {
             head: None,
@@ -155,7 +158,7 @@ impl RunQueue {
 #[cfg(test)]
 mod tests {
     use {
-        super::RunQueue,
+        super::Activations,
         crate::objects::{
             Thread,
             carved::{Carved, test_id},
@@ -188,10 +191,10 @@ mod tests {
     }
 
     #[test_case]
-    fn run_queue_is_fifo_and_queues_a_thread_once() {
+    fn activations_is_fifo_and_queues_a_thread_once() {
         let mut backing = Backing([0; THREADS * STRIDE]);
         let [a, b, ..] = threads(&mut backing);
-        let mut queue = RunQueue::new();
+        let mut queue = Activations::new();
         assert!(queue.is_empty());
         assert_eq!(queue.pop(), None);
         assert_eq!(queue.peek(), None);
@@ -214,7 +217,7 @@ mod tests {
     fn remove_purges_any_position_and_preserves_fifo_order() {
         let mut backing = Backing([0; THREADS * STRIDE]);
         let [a, b, c, d] = threads(&mut backing);
-        let mut queue = RunQueue::new();
+        let mut queue = Activations::new();
         for id in [a, b, c, d] {
             assert!(queue.push(id));
         }
@@ -240,7 +243,7 @@ mod tests {
         let [a, ..] = threads(&mut backing);
         // SAFETY: the identity was issued for this backing; nothing holds it.
         unsafe { Carved::<Thread>::retire(a) }.ok().unwrap();
-        let mut queue = RunQueue::new();
+        let mut queue = Activations::new();
         assert!(!queue.push(a));
         assert!(queue.is_empty());
     }

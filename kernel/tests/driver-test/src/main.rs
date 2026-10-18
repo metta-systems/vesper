@@ -36,7 +36,7 @@ use {
     driver_echo::echo_v1::TYPE_CODE as ECHO_V1,
     driver_protocol::{AUX, AUX_UART, PL011, REPORT_SLOT},
     kickstart::{
-        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle},
+        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory},
         drivers::{BootKeys, LoadedDriver, load_drivers},
         kickstart_init_el2,
     },
@@ -51,7 +51,7 @@ use {
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
+        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
         address_space::AddressSpaceKey, thread::ThreadReturnKey,
     },
     libqemu::semihosting as semi,
@@ -152,13 +152,6 @@ pub fn run() -> ! {
         .carved_id()
         .unwrap_or_else(|error| panic!("report identity: {:?}", error.code()));
 
-    let _idle = spawn_idle(
-        nucleus,
-        keytable_addr,
-        RawKey::from_wire(untyped.to_wire()),
-        boot_as_id,
-    );
-
     // ── Driver matching ───────────────────────────────────────────────────
     let mut seen = [Seen::default(); INSTANCES];
     let mut count = 0;
@@ -166,7 +159,7 @@ pub fn run() -> ! {
         nucleus,
         &builder,
         keys,
-        &[&components::PROBE_DRIVER],
+        &[&components::PROBE_DRIVER, &components::DISPATCHER_DRIVER],
         &mut slots,
         |loaded: &LoadedDriver<'_>| {
             let init = loaded.init;
@@ -243,7 +236,11 @@ pub fn run() -> ! {
             count += 1;
         },
     );
-    assert_eq!(started, INSTANCES);
+    assert_eq!(
+        started,
+        INSTANCES + 1,
+        "the instances and the root dispatcher"
+    );
 
     // The PL011 has its page to itself; `aux` and `uart1` share one.
     for instance in &seen[..count] {

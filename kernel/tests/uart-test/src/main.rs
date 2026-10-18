@@ -33,7 +33,7 @@ mod components {
 use {
     core::sync::atomic::Ordering,
     kickstart::{
-        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle},
+        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory},
         drivers::{BootKeys, LoadedDriver, instance_count, load_drivers},
         kickstart_init_el2,
         serial::SerialChannelParts,
@@ -49,8 +49,7 @@ use {
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
-        CapError, EventCountKey, KeySlot, KeyTableKey, RawKey, UntypedKey,
-        address_space::AddressSpaceKey,
+        CapError, EventCountKey, KeySlot, KeyTableKey, UntypedKey, address_space::AddressSpaceKey,
     },
     libqemu::semihosting as semi,
     libserial_channel::{DATA_AREA, DATA_AREA_VA, DATA_PAGES, LOOPBACK, SLOTS, SerialChannel},
@@ -293,19 +292,12 @@ pub fn run() -> ! {
         parts.receive_completed,
     );
 
-    let _idle = spawn_idle(
-        nucleus,
-        keytable_addr,
-        RawKey::from_wire(untyped.to_wire()),
-        boot_as_id,
-    );
-
     // ── Load the driver and attach before it starts ───────────────────────
     let started = load_drivers(
         nucleus,
         &builder,
         keys,
-        &drivers,
+        &[drivers[0], &components::DISPATCHER_DRIVER],
         &mut slots,
         |loaded: &LoadedDriver<'_>| {
             let init = loaded.init;
@@ -315,7 +307,7 @@ pub fn run() -> ! {
             parts.attach_driver(&builder, loaded.component);
         },
     );
-    assert_eq!(started, 1);
+    assert_eq!(started, 2, "the PL011 driver and the root dispatcher");
 
     // ── Stream through the loopback ───────────────────────────────────────
     let (mut submit, mut sent) = channel.transmit.client(

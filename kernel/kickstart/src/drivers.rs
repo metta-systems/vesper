@@ -128,6 +128,7 @@ pub struct BootKeys {
     pub boot_time: RawKey,
     pub root_scheduler: RawKey,
     pub irq_control: RawKey,
+    pub boot_thread: RawKey,
 }
 
 impl BootKeys {
@@ -138,6 +139,7 @@ impl BootKeys {
             boot_time: boot.boot_time_key,
             root_scheduler: boot.root_scheduler_key,
             irq_control: boot.irq_control_key,
+            boot_thread: boot.boot_thread_key,
         }
     }
 }
@@ -1345,6 +1347,13 @@ pub fn load_drivers(
             init.interrupt_count,
             init.import_count
         );
+        if instance.driver.dispatcher {
+            // Bound to the Scheduler once every other Thread is known. It
+            // is infrastructure, not a driver: the caller's hook never sees it.
+            dispatcher = Some(number);
+            started += 1;
+            continue;
+        }
         before_start(&LoadedDriver {
             driver: instance.driver,
             node: name,
@@ -1353,12 +1362,6 @@ pub fn load_drivers(
             init: &init,
             first_free_slot,
         });
-        if instance.driver.dispatcher {
-            // Bound to the Scheduler once every other Thread is known.
-            dispatcher = Some(number);
-            started += 1;
-            continue;
-        }
         for thread in
             core::iter::once(loaded.thread).chain(loaded.further_threads.into_iter().flatten())
         {
@@ -1371,6 +1374,21 @@ pub fn load_drivers(
         started += 1;
     }
     if let Some(number) = dispatcher {
+        // The boot Thread is a Thread of the root Scheduler too: it is
+        // dispatched like the others. (It usually parks for good; a test
+        // kernel's boot Thread goes on running the test.)
+        if let Some(root) = builder.entry(keys.root_scheduler).carved_id().ok()
+            && let Some(boot) = nucleus.current_thread
+            && managed_count < MAX_MANAGED_THREADS
+        {
+            nucleus
+                .thread_mut(boot)
+                .expect("the boot Thread exists")
+                .scheduler = Some(root);
+            nucleus.join_scheduler(boot, root);
+            managed[managed_count] = Some(keys.boot_thread);
+            managed_count += 1;
+        }
         let loaded = prepared[number].as_mut().expect("a loaded dispatcher");
         bind_root_dispatcher(
             builder,

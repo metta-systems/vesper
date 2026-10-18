@@ -89,7 +89,6 @@ const P4_TIMEOUT_NS: usize = 61;
 const P5_RECEIVER_KEY: usize = 62;
 const P5_RECEIVER_SLOT: usize = 63;
 const P5_READY: usize = 64;
-const P5_ARMED: usize = 65;
 const P5_DONE: usize = 66;
 /// Phase five observations: the reasons and duration of the dispatch the
 /// interrupt ended, and the reasons of the receiver's own dispatch after it.
@@ -117,6 +116,9 @@ const P7_FIRST_NS: usize = 85;
 const P7_SECOND_REASONS: usize = 86;
 const P7_SECOND_NS: usize = 87;
 const P7_FAILED_REASONS: usize = 88;
+/// The boot Thread: the test body, a Thread of the root Scheduler like the
+/// others, which the dispatcher runs whenever the test needs it to.
+const BOOT_KEY: usize = 89;
 const WORDS: usize = 128;
 
 const WORKERS: usize = 3;
@@ -212,9 +214,11 @@ fn main(page: u64) -> ! {
     NotificationKey::from_key(RawKey::from_wire(word(PHASE_ONE)))
         .signal(1)
         .unwrap_or_else(|error| fail("phase one signal", error));
+    // The test (the boot Thread) refills the Time; the budget arriving
+    // activates the dispatcher while it runs the test.
     let woken = scheduler
-        .dispatch(None, u64::MAX, 0)
-        .unwrap_or_else(|error| fail("idle-waiting Dispatch", error));
+        .dispatch(Some(RawKey::from_wire(word(BOOT_KEY))), SECOND, 0)
+        .unwrap_or_else(|error| fail("Dispatch (boot Thread)", error));
     page[WAKE_REASONS].store(woken.reasons, Ordering::Release);
     assert_eq!(
         woken.reasons & activation_reason::EVENT,
@@ -228,18 +232,36 @@ fn main(page: u64) -> ! {
     NotificationKey::from_key(RawKey::from_wire(word(PHASE_TWO)))
         .signal(1)
         .unwrap_or_else(|error| fail("phase two signal", error));
+    let_boot_run(page, &scheduler);
 
     phase_three(page, &scheduler, records, stride);
     phase_four(page, &scheduler, records, stride);
     NotificationKey::from_key(RawKey::from_wire(word(PHASE_THREE)))
         .signal(1)
         .unwrap_or_else(|error| fail("phase three signal", error));
+    let_boot_run(page, &scheduler);
     phase_five(page, &scheduler, records, stride);
     phase_six(page, &scheduler, records, stride);
     phase_seven(page, &scheduler, records, stride);
     loop {
         // Nothing left to run; wait for nothing in particular.
         scheduler.dispatch(None, u64::MAX, 0).ok();
+    }
+}
+
+/// Run the boot Thread (the test body) until it blocks again: the test
+/// checks what the dispatcher did, then waits for the next phase.
+fn let_boot_run(page: &[AtomicU64], scheduler: &SchedulerKey) {
+    let boot = RawKey::from_wire(page[BOOT_KEY].load(Ordering::Relaxed));
+    // An activation left pending returns a `Dispatch` at once without
+    // running the Thread: ask again.
+    for _ in 0..16 {
+        match scheduler.dispatch(Some(boot), SECOND, 0) {
+            Ok(activation) if activation.reasons & activation_reason::BLOCKED != 0 => return,
+            Ok(_) => {}
+            // Not dispatchable: it has nothing more to do.
+            Err(_) => return,
+        }
     }
 }
 
@@ -459,12 +481,9 @@ fn phase_five(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, 
         activation_reason::BLOCKED
     );
 
-    // Ask the test to arm the interrupt, and wait (as an ordinary Thread:
-    // the kernel's queue runs the test meanwhile) until it has.
+    // Ask the test to arm the interrupt, and let it run until it has.
     signal(P5_READY);
-    NotificationKey::from_key(RawKey::from_wire(word(P5_ARMED)))
-        .wait(NotificationKey::WAIT_INFINITE)
-        .unwrap_or_else(|error| fail("waiting for the armed interrupt", error));
+    let_boot_run(page, scheduler);
 
     // The spinner may run for two seconds. The interrupt arrives within
     // milliseconds, wakes the receiver, and the wakeup ends the dispatch.
@@ -485,6 +504,7 @@ fn phase_five(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, 
         .unwrap_or_else(|error| fail("Dispatch (receiver again)", error));
     page[P5_AFTER_REASONS].store(after.reasons, Ordering::Release);
     signal(P5_DONE);
+    let_boot_run(page, scheduler);
 }
 
 /// Suspend and Resume keep a Thread's wait, and a Thread can retire itself.
@@ -606,6 +626,7 @@ fn phase_six(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, s
     NotificationKey::from_key(RawKey::from_wire(word(P6_DONE)))
         .signal(1)
         .unwrap_or_else(|error| fail("phase six signal", error));
+    let_boot_run(page, scheduler);
 }
 
 /// A child domain: the parent dispatches the child's dispatcher with a limit,
@@ -664,4 +685,5 @@ fn phase_seven(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8,
     NotificationKey::from_key(RawKey::from_wire(word(P7_DONE)))
         .signal(1)
         .unwrap_or_else(|error| fail("phase seven signal", error));
+    let_boot_run(page, scheduler);
 }

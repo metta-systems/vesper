@@ -36,8 +36,8 @@ use {
     nucleus::{
         api::key_entry::{KeyEntry, RegionPayload},
         objects::{
-            ArchObjects, ArchObjectsImpl, ExecutionContext, InvocationStack, KeyTable, Nucleus,
-            ObjectPool, PendingPool, RunQueue, Scheduler, Thread, Time,
+            Activations, ArchObjects, ArchObjectsImpl, ExecutionContext, InvocationStack, KeyTable,
+            Nucleus, ObjectPool, PendingPool, Scheduler, Thread, Time,
             access::{ObjectId, PoolTag},
             arch::ArchPools,
             arch_objects::{AddressSpaceId, bound_address_space},
@@ -107,8 +107,8 @@ pub fn build_initial_nucleus<A: ArchObjects>(
     let nucleus = Nucleus::<A> {
         current_thread: None,
         pending: PendingPool::new(),
-        run_queue: RunQueue::new(),
-        idle_thread: None,
+        activations: Activations::new(),
+        idle_ticks: 0,
         irq_table: IrqTable::empty(),
         ticks: 0,
         current_since_ticks: 0,
@@ -204,29 +204,12 @@ pub struct BootState {
     pub root_scheduler_key: RawKey,
     /// Key of the `IRQControl` grant (slot `IRQ_CONTROL`).
     pub irq_control_key: RawKey,
+    /// Key of the boot Thread (slot 50).
+    pub boot_thread_key: RawKey,
     /// Key of the debug console grant (slot `DEBUG_CONSOLE`), `debug_kernel`
     /// only.
     #[cfg(feature = "debug_kernel")]
     pub debug_console_key: RawKey,
-}
-
-/// Execution stack of the idle Thread. It only runs `wfi`; interrupts are
-/// taken on the shared `SP_EL1` trap stack.
-#[repr(C, align(16))]
-struct IdleStack(UnsafeCell<[u8; IDLE_STACK_BYTES]>);
-
-const IDLE_STACK_BYTES: usize = 1024;
-
-// SAFETY: only the idle Thread uses the stack, through its SP.
-unsafe impl Sync for IdleStack {}
-
-static IDLE_STACK: IdleStack = IdleStack(UnsafeCell::new([0; IDLE_STACK_BYTES]));
-
-/// The idle Thread's body: wait for the next interrupt, forever.
-extern "C" fn idle_loop() -> ! {
-    loop {
-        aarch64_cpu::asm::wfi();
-    }
 }
 
 /// Carve the records of the interrupt-controller component's `line_count`
@@ -251,34 +234,6 @@ fn carve_irq_table(
     // SAFETY: the bytes were just carved, aligned and sized for `line_count`
     // records, and nothing else uses them.
     nucleus.irq_table = unsafe { IrqTable::initialize(lines.cast::<IrqLine>(), line_count) };
-}
-
-/// Create the idle Thread in `address_space` (which must map the boot image):
-/// an interruptible `EL1t` Thread the nucleus selects when nothing else is
-/// runnable and never queues. Its memory comes from the boot Untyped.
-pub fn spawn_idle(
-    nucleus: &mut Nucleus<ArchObjectsImpl>,
-    keytable_addr: u64,
-    boot_untyped_key: RawKey,
-    address_space: AddressSpaceId,
-) -> ThreadId {
-    assert!(
-        nucleus.idle_thread.is_none(),
-        "the idle Thread already exists"
-    );
-    let stack_top = IDLE_STACK.0.get() as u64 + IDLE_STACK_BYTES as u64;
-    let idle = carve_object(
-        keytable_addr,
-        boot_untyped_key,
-        Thread::new(
-            address_space,
-            ExecutionContext::NotStarted {
-                saved: SavedContext::el1t_interruptible(idle_loop as *const () as u64, stack_top),
-            },
-        ),
-    );
-    nucleus.idle_thread = Some(idle);
-    idle
 }
 
 /// Bootstrap the initial kernel state and return the boot continuation's
@@ -419,7 +374,7 @@ pub fn bootstrap_nucleus() -> BootState {
                 failure.error.code()
             )
         });
-    let _boot_thread_key = boot_table
+    let boot_thread_key = boot_table
         .insert(
             KeySlot(50),
             KeyEntry::new_thread(boot_thread_id, Rights::all(), 0),
@@ -556,6 +511,7 @@ pub fn bootstrap_nucleus() -> BootState {
         boot_time_key,
         root_scheduler_key,
         irq_control_key,
+        boot_thread_key,
         #[cfg(feature = "debug_kernel")]
         debug_console_key,
     }

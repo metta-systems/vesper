@@ -29,7 +29,7 @@ mod components {
 use {
     driver_protocol::{LEND_TABLE_SLOT, PLAIN_TABLE_SLOT, REPORT_SLOT},
     kickstart::{
-        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle},
+        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory},
         drivers::{BootKeys, LoadedDriver, load_drivers},
         kickstart_init_el2,
     },
@@ -43,7 +43,7 @@ use {
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
+        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
         address_space::AddressSpaceKey,
     },
     libqemu::semihosting as semi,
@@ -143,13 +143,6 @@ pub fn run() -> ! {
         .carved_id()
         .unwrap_or_else(|error| panic!("report identity: {:?}", error.code()));
 
-    let _idle = spawn_idle(
-        nucleus,
-        keytable_addr,
-        RawKey::from_wire(untyped.to_wire()),
-        boot_as_id,
-    );
-
     // ── Driver loading ────────────────────────────────────────────────────
     // What each driver was handed, noted as its record is checked.
     let mut mailbox_areas: Vec4 = Vec4::default();
@@ -166,6 +159,7 @@ pub fn run() -> ! {
             &components::POWER_DRIVER,
             &components::FB_DRIVER,
             &components::CLIENT_DRIVER,
+            &components::DISPATCHER_DRIVER,
         ],
         &mut slots,
         |loaded: &LoadedDriver<'_>| {
@@ -327,7 +321,11 @@ pub fn run() -> ! {
             );
         },
     );
-    assert_eq!(started, INSTANCES);
+    assert_eq!(
+        started,
+        INSTANCES + 1,
+        "the instances and the root dispatcher"
+    );
     assert_eq!(seen, INSTANCES);
     // The areas the clients were handed are the ones the mailbox serves.
     let mut handed_out = [client_area, power_area, fb_area];

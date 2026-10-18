@@ -11,7 +11,7 @@
 //! slice, or exits activates the dispatcher, and so does a Thread becoming
 //! runnable or a budget arriving, so a woken Thread is not left waiting for
 //! the slice of the one running. When nothing can run it waits with nothing
-//! dispatched, which lets the idle Thread run.
+//! dispatched, which lets the nucleus idle.
 
 use {
     libdevice_driver::{DispatchInit, driver_init, local_key},

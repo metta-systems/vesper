@@ -53,6 +53,7 @@ pub fn run() {
         boot_untyped_key,
         boot_time_key,
         debug_console_key,
+        root_scheduler_key,
         ..
     } = boot;
     let boot_table_binding = nucleus
@@ -246,6 +247,8 @@ pub fn run() {
         Err(CapError::InvalidOperation)
     ));
     assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+    // The fixture Threads run on the root Scheduler's dispatcher.
+    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, root_scheduler_key);
     let bounce_id = threads::spawn(
         nucleus,
         &builder,
@@ -484,20 +487,9 @@ pub fn run() {
             Some(PendingState::Waiting)
         );
 
-        // Self-retirement is rejected: the current Thread must survive
-        // its own invocation (never-returns self-retirement is recorded
-        // in the contract as wanted follow-up) — and again nothing was
-        // torn down. The boot Thread's own capability (slot 40) is the
-        // invoked key.
-        let boot_thread_key = boot_key(50, 1);
-        assert!(matches!(
-            ThreadKey::from_key(boot_thread_key).retire(),
-            Err(CapError::InvalidOperation)
-        ));
-        assert_eq!(
-            nucleus.pending.state(record).ok(),
-            Some(PendingState::Waiting)
-        );
+        // Self-retirement never returns (it is refused only when nothing else
+        // can run); the nucleus tests and dispatch-test cover it, since the
+        // boot Thread must survive here.
 
         assert_eq!(
             nucleus
@@ -513,8 +505,9 @@ pub fn run() {
         ThreadKey::from_key(bounce_thread_key)
             .retire()
             .unwrap_or_else(|error| panic!("Bounce Retire failed: {:?}", error.code()));
-        assert!(nucleus.pending.is_empty());
-        assert!(nucleus.run_queue.is_empty());
+        // Only the dispatcher's own parked Dispatch is left.
+        assert_eq!(nucleus.pending.len(), 1);
+        assert!(nucleus.activations.is_empty());
         // The released record's identity is stale.
         nucleus.pending.state(record).unwrap_err();
 

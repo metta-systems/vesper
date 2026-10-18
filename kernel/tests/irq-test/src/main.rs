@@ -32,7 +32,7 @@ use {
     aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Readable, Writeable},
     irq_protocol::{INIT_VA, IRQ_BADGE, ROUNDS, ReceiverInit, STACK_REGION},
     kickstart::{
-        bootstrap::{bootstrap_nucleus, interrupt_controllers, retained_init_memory, spawn_idle},
+        bootstrap::{bootstrap_nucleus, interrupt_controllers, retained_init_memory},
         kickstart_init_el2,
     },
     libcomponent_loader::{
@@ -300,15 +300,12 @@ pub fn run() -> ! {
             resume: grant(&receiver, builder.entry(resume), 8).to_wire(),
         },
     );
-    let _idle = spawn_idle(
-        nucleus,
-        keytable_addr,
-        RawKey::from_wire(untyped.to_wire()),
-        boot_as_id,
-    );
+    // The receiver runs on the root Scheduler's dispatcher with the boot Thread.
+    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, boot.root_scheduler_key);
     root_scheduler
         .start_thread(receiver_thread)
         .unwrap_or_else(|error| panic!("StartThread failed: {:?}", error.code()));
+    libkicktest::dispatcher::register_key(nucleus, &builder, receiver_thread);
 
     // ── Rounds: arm, get the report, quiet the timer, let it ack ─────────
     let (report, resume) = (

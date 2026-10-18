@@ -13,7 +13,8 @@
 //! - [`bounce`] and [`translation`]: the Bounce fixture — a second trusted
 //!   `EL1t` context in its own `AddressSpace` — and the two-root translation
 //!   provisioning and observations it runs on;
-//! - [`threads`]: fixture Threads queued runnable by the bootstrap builder;
+//! - [`dispatcher`]: the root Scheduler's dispatcher for the test kernels;
+//! - [`threads`]: fixture Threads, run by that dispatcher;
 //! - [`registers`]: the register-preservation probe for ordinary invocations;
 //! - the panic handler, reporting through QEMU semihosting.
 //!
@@ -24,6 +25,7 @@
 
 pub mod bounce;
 pub mod devices;
+pub mod dispatcher;
 pub mod registers;
 pub mod threads;
 pub mod translation;

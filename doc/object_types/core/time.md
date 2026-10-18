@@ -60,10 +60,10 @@ The first component receives the boot Time at `KeySlot::BOOT_TIME` (17): core 0 
 
 The nucleus charges the running Thread's bound Time with the counter ticks it executes, including the time it spends in system calls. The charge is kept exactly and converted to nanoseconds, rounded up, only when it is compared with the budget, so a Thread never runs past its budget and Query reports the remaining budget rounded down. Time spent handling interrupts is not charged. An infinite budget is never charged.
 
-A Thread whose Time is exhausted stops and stays off the run queue. A Transfer or Merge that brings budget into the Time puts the Thread back at the end of the queue at once. A Thread with no bound Time, such as the boot Thread and the idle Thread, has no limit; the nucleus still measures how long it ran.
+A Thread whose Time is exhausted stops and is not run again: it is published as waiting for budget. A Transfer or Merge that brings budget into the Time ends the wait and announces the Thread to its dispatcher. A Thread with no bound Time, such as the boot Thread, has no limit; the nucleus still measures how long it ran.
 
-The nucleus runs Threads in first-in, first-out order with a 10 ms slice. The EL1 physical timer is one-shot: it is programmed for the earlier of the end of the current slice, when another Thread is runnable, and the moment the running Thread's budget runs out, and it is off when neither applies.
+The nucleus runs no Thread by itself: a Scheduler's dispatcher decides which Thread runs, on which Time and for how long (a dispatch limit). The EL1 physical timer is one-shot: it is programmed for the earliest of the dispatch limit, the moment the running Thread's budget runs out, and it is off when neither applies.
 
 ## Planned changes
 
-A scheduler will choose which Thread runs, on which Time and for how long, in place of the first-in, first-out order, and the nucleus will report a Thread blocking, running out of budget or waking to the scheduler.
+None yet.

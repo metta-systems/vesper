@@ -48,9 +48,7 @@ mod components {
 use {
     cfg_if::cfg_if,
     kickstart::{
-        bootstrap::{
-            BootState, bootstrap_nucleus, device_untypeds, retained_init_memory, spawn_idle,
-        },
+        bootstrap::{BootState, bootstrap_nucleus, device_untypeds, retained_init_memory},
         drivers::{BootKeys, instance_count, load_drivers},
         kickstart_init_el2, print_my_sp,
     },
@@ -153,15 +151,6 @@ pub fn kickstart_run() -> ! {
 
     // semi::println!("🥾 Total untyped caps - {}", untyped_list.len());
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Create the kernel idle Thread
-    // ─────────────────────────────────────────────────────────────────────
-
-    // semi::println!("🥾 Creating idle Thread...");
-
-    // let idle_thread = create_idle_thread();
-    // SCHEDULER.set_idle(idle_thread);
-
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // PHASE 6: Create the init component and its capability space
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -226,7 +215,7 @@ pub fn kickstart_run() -> ! {
     print_my_sp();
 
     // Nothing else runs on the boot Thread yet: park it for good, leaving the
-    // core to the drivers and the idle Thread.
+    // core to the drivers (and idle when they all wait).
     semi::println!("🥾 Boot Thread parked");
     loop {
         let _never = park.wait(NotificationKey::WAIT_INFINITE);
@@ -297,7 +286,7 @@ const FIRST_BUILDER_SLOT: u32 = 64;
 /// Guard of the `KeyTable` archiving the builder's image Frames.
 const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 
-/// Give the boot Thread a builder `AddressSpace`, start the idle Thread, and
+/// Give the boot Thread a builder `AddressSpace`, and
 /// load and start the bundled drivers, one instance per enabled device tree
 /// node they serve (`instances` of them). Returns a Notification nobody
 /// signals, for the boot Thread to park on.
@@ -352,7 +341,6 @@ fn start_drivers(
             Rights::all(),
         )
         .unwrap_or_else(|error| panic!("🥾 park Notification Retype failed: {:?}", error.code()));
-    let _idle = spawn_idle(nucleus, keytable_addr, keys.untyped, boot_as_id);
 
     let started = load_drivers(
         nucleus,

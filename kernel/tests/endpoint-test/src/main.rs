@@ -193,6 +193,8 @@ pub fn run() -> ! {
         .activate()
         .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
     assert_eq!(TTBR0_EL1.get(), builder_ttbr);
+    // The fixture Threads run on the root Scheduler's dispatcher.
+    libkicktest::dispatcher::init(nucleus, &builder, builder_as, boot.root_scheduler_key);
     let notification = |table: &KeyTableKey, slot: u32| {
         untyped
             .retype(

@@ -81,7 +81,7 @@ Binds the EventCount `x2`. After the nucleus publishes a change to the state, fl
 
 For a child Scheduler the dispatcher is a Thread of its parent: it must have been configured by the parent, is not started by the bind (the parent starts it, and dispatches it), and the child must have been adopted. The bind marks the Thread as the dispatcher of the child: its record carries the `DISPATCHER` flag. After the dispatcher of a child faults or is retired, another can be bound (see [Child Schedulers](#child-schedulers)).
 
-Binds the Thread `x2` as the scheduler's *dispatcher*, the Thread that decides what runs, and starts it. The Thread must have been configured by this Scheduler, and binding is once-only. From then on every other Thread this Scheduler configured, and every one it starts later, is dispatcher-managed: it is published in its record but never enters the first-in, first-out queue, and runs only when the dispatcher names it with `Dispatch`. Threads already queued are taken off the queue when the dispatcher is bound. A Scheduler with no bound dispatcher keeps the first-in, first-out behaviour; that is a stopgap until the queue is retired. Kickstart binds the root dispatcher (`userspace/dispatcher`, a round-robin policy) in the production image, after it has started every driver and program; the test kernels bind none, except `dispatch-test`.
+Binds the Thread `x2` as the scheduler's *dispatcher*, the Thread that decides what runs, and starts it. The Thread must have been configured by this Scheduler, and binding is once-only. From then on every other Thread this Scheduler configured, and every one it starts later, is dispatcher-managed: it is published in its record and runs only when the dispatcher names it with `Dispatch`. A Scheduler with no bound dispatcher runs nothing: its Threads wait. Kickstart binds the root dispatcher (`userspace/dispatcher`, a round-robin policy) in the production image, after it has started every driver and program, and registers the boot Thread with it. The test kernels run on a dispatcher too: the ones that load drivers bundle the same component, the others use the fixture dispatcher of `libkicktest`.
 
 | Error | Cause |
 |---|---|
@@ -134,11 +134,11 @@ Makes the Scheduler `x2` a child of the invoked one. The parent is set once and 
 
 ### MoveThread
 
-Moves the Thread `x2` to the Scheduler `x3`, linking it to record slot `x4` of that Scheduler's table. Invoked on the Thread's owner, the destination is a direct child of the invoked Scheduler (donation); invoked on the owner's parent, the destination is the invoked Scheduler itself (taking the Thread back). The Thread must be started and not running, dispatched, the idle Thread or a dispatcher; a blocked or suspended Thread moves with its wait, completion and Time untouched. The record it leaves reads `Donated`, which the old owner may reuse. A Thread that can run is announced to the new owner as for any wakeup; the first-in, first-out queue drops it.
+Moves the Thread `x2` to the Scheduler `x3`, linking it to record slot `x4` of that Scheduler's table. Invoked on the Thread's owner, the destination is a direct child of the invoked Scheduler (donation); invoked on the owner's parent, the destination is the invoked Scheduler itself (taking the Thread back). The Thread must be started and not running, dispatched or a dispatcher; a blocked or suspended Thread moves with its wait, completion and Time untouched. The record it leaves reads `Donated`, which the old owner may reuse. A Thread that can run is announced to the new owner as for any wakeup; the first-in, first-out queue drops it.
 
 | Error | Cause |
 |---|---|
-| `InvalidOperation` | The move is not between a Scheduler and its direct child; the Thread is inert, running, dispatched, the idle Thread or a dispatcher; the slot is 0 or not covered by the destination's table; a nonzero unused register |
+| `InvalidOperation` | The move is not between a Scheduler and its direct child; the Thread is inert, running, dispatched or a dispatcher; the slot is 0 or not covered by the destination's table; a nonzero unused register |
 | `InsufficientRights` | A missing right |
 | `TypeMismatch` | A key names the wrong kind |
 
@@ -156,7 +156,7 @@ A child Scheduler runs inside a **grant** from its parent.
 - **Activation.** A child activation while the grant is in force runs the child dispatcher at once. Without a grant the parked `Dispatch` completes and the child dispatcher becomes an ordinary runnable Thread of the parent: its record is published, and the parent's dispatcher is activated only if the parent's mask has `THREAD_RUNNABLE`. A child never forces its parent.
 - **Exhaustion** of the child dispatcher is ordinary exhaustion of a Thread of the parent; its record has the `DISPATCHER` flag so that the parent can tell.
 - **Failure.** When the child dispatcher faults or is retired, the child has no dispatcher: its Threads that can be are suspended, its grant and timer end, and the parent's dispatcher is activated with `SCHED_DOMAIN_FAILED` (`1 << 8`, mandatory). The parent can retire the child, bind another dispatcher, or resume the Threads.
-- **No dispatcher yet.** A Thread of a non-root Scheduler with no dispatcher never enters the first-in, first-out queue.
+- **No dispatcher yet.** A Thread of a Scheduler with no dispatcher, root or not, does not run.
 
 ## Records
 
@@ -171,6 +171,8 @@ x (u32, 1), `record_size` (u32, 128) |
 | 24 | `timer_expirations` (u64) |
 | 32 | `dispatcher_state` (u32), `flags` (u32) |
 | 40 | `interrupt_ns` (u64): the total time spent handling interrupts, rounded up; refreshed with every publication and at each interrupt entry that interrupts one of the Scheduler's Threads, and not itself an event |
+| 48 | `grant_end_ns` (u64): when the parent's grant to this Scheduler ends, 0 for none |
+| 56 | `idle_ns` (u64): the total time the nucleus had nothing to run and waited for an interrupt, rounded up, excluding the interrupts handled meanwhile; published when the wait ends, and not itself an event |
 
 **Thread record (slots 1 and up)**
 
@@ -196,10 +198,10 @@ The nucleus is the only writer. It makes `sequence` odd, writes the fields, then
 
 ## Implementation
 
-The root Scheduler is carved by Kickstart; `Untyped.Retype` makes inert ones (no parent, no Threads, no dispatcher), which have no execution authority until a parent adopts them. Started Threads of a Scheduler that has no dispatcher and is the root join the kernel's first-in, first-out run queue until the Scheduler has a bound dispatcher; a dispatcher-managed Thread never enters it. The nucleus tracks which Thread the dispatcher dispatched and its limit, charges its Time as it runs, and at every kernel exit programs the one-shot timer for the nearest of the limit, the Time's exhaustion, and an immediate fire when an activation is waiting for the dispatcher.
+The root Scheduler is carved by Kickstart; `Untyped.Retype` makes inert ones (no parent, no Threads, no dispatcher), which have no execution authority until a parent adopts them. No queue runs Threads: a Thread runs only when its Scheduler's dispatcher dispatches it, and a Scheduler with no dispatcher runs nothing. The only list the nucleus keeps is the dispatchers an activation made ready to run next. The nucleus tracks which Thread the dispatcher dispatched and its limit, charges its Time as it runs, and at every kernel exit programs the one-shot timer for the nearest of the limit, the Time's exhaustion, and an immediate fire when an activation is waiting for the dispatcher.
 
 The nucleus publishes a Thread's record when it starts, queues, moves to another Scheduler (`Donated` in the record it leaves), waits for budget, runs, blocks, stops, faults or is retired, and when `AssignRecord` links it. Retiring a Thread publishes `Dying` with its incarnation and drops the slot, and the scheduler may reuse the slot after it sees that. A shared Frame must stay mapped and must not be retired while the table uses it; the nucleus does not reclaim Frame memory.
 
 ## Planned changes
 
-Non-blocking dispatch and replacing the running Thread on other CPUs (future kernel multicore work), and retiring the first-in, first-out queue.
+Non-blocking dispatch and replacing the running Thread on other CPUs (future kernel multicore work).

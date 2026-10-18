@@ -49,7 +49,7 @@ Takes the Thread out of scheduling. A suspended Thread is a flag on the Thread, 
 | Error | Cause |
 |---|---|
 | `InsufficientRights` | The capability lacks `Write` |
-| `InvalidOperation` | The target is the caller, is inert (never started), faulted, already suspended, the idle Thread or the bound dispatcher of its Scheduler; the capability is the return key; an argument is nonzero |
+| `InvalidOperation` | The target is the caller, is inert (never started), faulted, already suspended, or the bound dispatcher of its Scheduler; the capability is the return key; an argument is nonzero |
 | `InconsistentKey` | The Thread was retired (`ObjectRetired`) |
 
 ### Resume
@@ -58,14 +58,14 @@ Ends a suspension. A Thread whose wait has not completed goes back to blocked, a
 
 ### Retire
 
-Tears down a named Thread: cancels its pending waits, removes it from the run queue and retires it: every capability to it, including copies, then fails with `InconsistentKey` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
+Tears down a named Thread: cancels its pending waits, cancels any activation it caused and retires it: every capability to it, including copies, then fails with `InconsistentKey` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
 
-A Thread may retire itself with its own capability. That call never returns: the nucleus first selects the next Thread, and only then tears the caller down, so if nothing else can run the call fails with `InvalidOperation` and nothing has changed. A Thread run by a [dispatcher](scheduler.md#dispatch) activates it with the `EXITED` reason, and the Thread's record ends `Dying`. Mid-call, the whole Thread goes, callee included. The idle Thread cannot retire itself.
+A Thread may retire itself with its own capability. That call never returns: the nucleus first selects the next Thread, and only then tears the caller down, and if nothing else can run the kernel idles until something does. A Thread run by a [dispatcher](scheduler.md#dispatch) activates it with the `EXITED` reason, and the Thread's record ends `Dying`. Mid-call, the whole Thread goes, callee included.
 
 | Error | Cause |
 |---|---|
 | `InsufficientRights` | The capability lacks `Retire` |
-| `InvalidOperation` | The capability is the return key, an argument is nonzero, or the target is the calling Thread and nothing else can run (or it is the idle Thread) |
+| `InvalidOperation` | The capability is the return key, an argument is nonzero, or the target is not in a state to retire |
 | `InconsistentKey` | The Thread was already retired (`ObjectRetired`) |
 
 ## Fault delivery

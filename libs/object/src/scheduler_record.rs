@@ -180,6 +180,9 @@ pub struct SchedulerSnapshot {
     /// When the parent's grant to this (child) Scheduler ends, on the
     /// monotonic clock in nanoseconds, rounded up; 0 when none is in force.
     pub grant_end_ns: u64,
+    /// Total time nothing was runnable and the nucleus waited for an
+    /// interrupt, in nanoseconds, rounded up.
+    pub idle_ns: u64,
 }
 
 /// The record of one Thread, written by the nucleus.
@@ -211,7 +214,8 @@ pub struct SchedulerRecord {
     flags: AtomicU32,
     interrupt_ns: AtomicU64,
     grant_end_ns: AtomicU64,
-    reserved: [AtomicU64; 9],
+    idle_ns: AtomicU64,
+    reserved: [AtomicU64; 8],
 }
 
 const _: () = {
@@ -239,6 +243,7 @@ const _: () = {
     assert!(core::mem::offset_of!(SchedulerRecord, flags) == 36);
     assert!(core::mem::offset_of!(SchedulerRecord, interrupt_ns) == 40);
     assert!(core::mem::offset_of!(SchedulerRecord, grant_end_ns) == 48);
+    assert!(core::mem::offset_of!(SchedulerRecord, idle_ns) == 56);
 };
 
 /// The sequence value that starts a publication after `previous`, and the
@@ -365,7 +370,8 @@ impl SchedulerRecord {
             flags: AtomicU32::new(0),
             interrupt_ns: AtomicU64::new(0),
             grant_end_ns: AtomicU64::new(0),
-            reserved: [const { AtomicU64::new(0) }; 9],
+            idle_ns: AtomicU64::new(0),
+            reserved: [const { AtomicU64::new(0) }; 8],
         }
     }
 
@@ -422,6 +428,7 @@ impl SchedulerRecord {
             .store(snapshot.interrupt_ns, Ordering::Relaxed);
         self.grant_end_ns
             .store(snapshot.grant_end_ns, Ordering::Relaxed);
+        self.idle_ns.store(snapshot.idle_ns, Ordering::Relaxed);
         self.sequence.store(end, Ordering::Release);
     }
 
@@ -440,6 +447,7 @@ impl SchedulerRecord {
                 flags: self.flags.load(Ordering::Relaxed),
                 interrupt_ns: self.interrupt_ns.load(Ordering::Relaxed),
                 grant_end_ns: self.grant_end_ns.load(Ordering::Relaxed),
+                idle_ns: self.idle_ns.load(Ordering::Relaxed),
             };
             fence(Ordering::Acquire);
             if self.sequence.load(Ordering::Relaxed) == before {

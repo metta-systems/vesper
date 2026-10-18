@@ -166,12 +166,9 @@ fn retire<A: ArchObjects>(
     let thread_id = named_thread(access, caller, thread_key, Rights::RETIRE)?;
 
     // The current Thread retiring itself never returns: the entry selects
-    // the next Thread first, so a failure there still returns an error to
-    // the caller, and only then tears the Thread down.
+    // the next Thread (or idles) first, so a failure there still returns an
+    // error to the caller, and only then tears the Thread down.
     if thread_id == nucleus.current_thread_id()? {
-        if nucleus.idle_thread == Some(thread_id) {
-            return Err(CapError::InvalidOperation);
-        }
         return Ok(InvokeOutcome::Exit);
     }
 

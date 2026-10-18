@@ -345,8 +345,7 @@ impl SchedulerKey {
     /// of this Scheduler (donation); invoked on the owner's parent,
     /// `destination` is this Scheduler itself (taking the Thread back). The
     /// caller picks the `slot` of the destination's record table. The
-    /// Thread must be started and not running, dispatched, the idle Thread or
-    /// a dispatcher; its wait, completion and Time move with it. The record
+    /// Thread must be started and not running, dispatched or a dispatcher; its wait, completion and Time move with it. The record
     /// it leaves reads `ThreadState::Donated`.
     ///
     /// Wire schema: `x2` Thread key, `x3` destination Scheduler key, `x4`

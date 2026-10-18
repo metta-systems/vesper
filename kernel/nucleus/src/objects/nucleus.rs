@@ -2,7 +2,7 @@ use {
     crate::{
         api::wake_waiter,
         objects::{
-            ArchObjects, EventCount, KeyTable, Notification, PendingPool, RunQueue, Scheduler,
+            Activations, ArchObjects, EventCount, KeyTable, Notification, PendingPool, Scheduler,
             Thread, Time,
             access::ObjectId,
             arch::ArchPools,
@@ -98,10 +98,7 @@ pub struct Nucleus<A: ArchObjects> {
     /// Runnable-Thread queue: the minimal "run someone else" substrate
     /// Kernel mechanism only:
     /// scheduling policy stays in userspace.
-    pub run_queue: RunQueue,
-    /// The idle Thread, if boot created one: selected when nothing else is
-    /// runnable and never queued.
-    pub idle_thread: Option<ThreadId>,
+    pub activations: Activations,
     /// The interrupt lines' records: live `IRQHandler`s and their bindings.
     pub irq_table: IrqTable,
     /// Preemption-timer ticks taken since boot.
@@ -125,6 +122,11 @@ pub struct Nucleus<A: ArchObjects> {
     /// Counter ticks spent handling interrupts since boot, published to the
     /// Schedulers' records as `interrupt_ns`.
     pub interrupt_ticks: u64,
+    /// Counter ticks spent with nothing to run, waiting in the kernel for an
+    /// interrupt, since boot; published to the Schedulers' records as
+    /// `idle_ns`. Time spent handling interrupts while idle is counted as
+    /// interrupt time, not idle time.
+    pub idle_ticks: u64,
 }
 
 /// A Thread that a dispatcher's `Dispatch` runs.
@@ -231,8 +233,8 @@ impl<A: ArchObjects> Nucleus<A> {
     }
 
     /// The Scheduler whose bound dispatcher runs the Thread `id`, if there
-    /// is one and `id` is not the dispatcher itself. Such a Thread never
-    /// enters the first-in, first-out queue: it waits to be dispatched.
+    /// is one and `id` is not the dispatcher itself. Such a Thread waits to
+    /// be dispatched.
     pub fn dispatching_scheduler(&mut self, id: ThreadId) -> Option<CarvedId> {
         let scheduler = self.thread(id)?.scheduler?;
         let dispatcher = self.scheduler_mut(scheduler)?.dispatcher()?;
@@ -291,7 +293,7 @@ impl<A: ArchObjects> Nucleus<A> {
                 self.make_runnable(dispatcher);
             }
             (parent, grant) => {
-                self.run_queue.push_front(dispatcher);
+                self.activations.push_front(dispatcher);
                 self.preempt_requested = true;
                 // Within a grant the parent's limit goes on applying to the
                 // dispatcher.
@@ -374,51 +376,58 @@ impl<A: ArchObjects> Nucleus<A> {
         }
     }
 
-    /// Queue the runnable Thread `id` at the back, unless its bound Time is
-    /// exhausted: then it waits off the queue until budget arrives. A Thread
-    /// a dispatcher runs is not queued either: it is published as runnable and
-    /// the dispatcher is activated if its mask asks for it. Returns whether
-    /// it was queued.
-    pub fn make_runnable(&mut self, id: ThreadId) -> bool {
+    /// The Thread `id` became runnable (it started, its wait completed, or it
+    /// was resumed): publish that, and tell its Scheduler's dispatcher if the
+    /// activation mask asks for it. Nothing here runs a Thread; only a
+    /// dispatcher does. A Thread whose bound Time is exhausted waits for
+    /// budget; a suspended Thread, one of a Scheduler with no dispatcher, and
+    /// one outside every Scheduler are published and wait.
+    pub fn make_runnable(&mut self, id: ThreadId) {
         let managed = self.dispatching_scheduler(id);
         if self.thread_exhausted(id) {
             if let Some(thread) = self.thread_mut(id) {
                 thread.awaiting_budget = true;
             }
             self.publish_thread(id, false);
-            return false;
+            return;
         }
+        self.publish_thread(id, false);
         // A suspended Thread records the wakeup in itself and nothing more:
-        // it is not queued, and nobody is told it could run.
-        if self.thread(id).is_some_and(|thread| thread.suspended) {
-            self.publish_thread(id, false);
-            return false;
-        }
-        // A Thread of a Scheduler that is not the root and has no dispatcher
-        // yet has no execution authority: it is published and waits.
-        if self.held_by_scheduler(id) {
-            self.publish_thread(id, false);
-            return false;
+        // nobody is told it could run. A Scheduler with no dispatcher has no
+        // execution authority yet, so its Threads wait too.
+        let suspended = self.thread(id).is_some_and(|thread| thread.suspended);
+        if suspended {
+            return;
         }
         if let Some(scheduler) = managed {
-            self.publish_thread(id, false);
             self.request_activation(
                 scheduler,
                 activation_reason::EVENT,
                 activation_mask::THREAD_RUNNABLE,
             );
-            return false;
+        } else if self.is_top_dispatcher(id) {
+            // The root dispatcher itself, woken from a wait of its own (not a
+            // `Dispatch`): nobody dispatches the dispatcher, so it runs next.
+            self.activations.push_front(id);
+            self.preempt_requested = true;
         }
-        assert!(self.run_queue.push(id), "runnable Thread did not queue");
-        self.publish_thread(id, false);
-        true
+    }
+
+    /// Whether `id` is the bound dispatcher of the Scheduler it belongs to,
+    /// that is, of a Scheduler with no parent to dispatch it.
+    fn is_top_dispatcher(&mut self, id: ThreadId) -> bool {
+        let Some(scheduler) = self.thread(id).and_then(|thread| thread.scheduler) else {
+            return false;
+        };
+        self.scheduler_mut(scheduler)
+            .is_some_and(|scheduler| scheduler.dispatcher() == Some(id))
     }
 
     /// `Scheduler.MoveThread`: move the Thread `id` to the Scheduler
     /// `destination`, linking it to `slot` of that Scheduler's table. The
     /// caller has checked that the move is between a Scheduler and its direct
-    /// child. The Thread must be started and not running, dispatched, the
-    /// idle Thread or a dispatcher; every check precedes the change. The
+    /// child. The Thread must be started and not running, dispatched or a
+    /// dispatcher; every check precedes the change. The
     /// record it leaves ends as `Donated`; its wait, completion and Time move
     /// with it, and if it can run the new Scheduler is told as for any
     /// wakeup.
@@ -439,7 +448,6 @@ impl<A: ArchObjects> Nucleus<A> {
         if !started
             || owner == destination
             || self.current_thread == Some(id)
-            || self.idle_thread == Some(id)
             || [self.dispatched, self.dispatch_next]
                 .into_iter()
                 .flatten()
@@ -463,7 +471,6 @@ impl<A: ArchObjects> Nucleus<A> {
         // Commit. The old record says where the Thread went; the new one
         // starts from the Thread's state as it is.
         self.publish_thread_with(id, Some(ThreadState::Donated));
-        self.run_queue.remove(id);
         self.leave_scheduler(id);
         if let Some(thread) = self.thread_mut(id) {
             thread.scheduler = Some(destination);
@@ -488,18 +495,6 @@ impl<A: ArchObjects> Nucleus<A> {
             self.make_runnable(id);
         }
         Ok(())
-    }
-
-    /// Whether the Thread `id` belongs to a Scheduler that has no execution
-    /// authority yet: not the root, and no dispatcher bound. Such a Thread
-    /// never enters the first-in, first-out queue; its Scheduler's parent has
-    /// to give the Scheduler a dispatcher and a grant first.
-    pub fn held_by_scheduler(&mut self, id: ThreadId) -> bool {
-        let Some(scheduler) = self.thread(id).and_then(|thread| thread.scheduler) else {
-            return false;
-        };
-        self.scheduler_mut(scheduler)
-            .is_some_and(|scheduler| !scheduler.is_root() && scheduler.dispatcher().is_none())
     }
 
     /// The Thread `id` joins `scheduler`'s list of owned Threads.
@@ -584,7 +579,7 @@ impl<A: ArchObjects> Nucleus<A> {
     /// `Thread.Suspend`: take the Thread `id` out of scheduling without
     /// touching its saved state, its pending wait or its Time. Legal for a
     /// Thread that is runnable (not yet run, or preempted) or blocked, other
-    /// than the caller, the idle Thread and a bound dispatcher.
+    /// than the caller and a bound dispatcher.
     pub fn suspend_thread(&mut self, id: ThreadId) -> Result<(), CapError> {
         let thread = self.thread(id).ok_or(CapError::InvalidOperation)?;
         let legal = !thread.suspended
@@ -595,7 +590,7 @@ impl<A: ArchObjects> Nucleus<A> {
                     | ExecutionContext::Parked { .. }
             );
         let scheduler = thread.scheduler;
-        if !legal || self.current_thread == Some(id) || self.idle_thread == Some(id) {
+        if !legal || self.current_thread == Some(id) {
             return Err(CapError::InvalidOperation);
         }
         if let Some(scheduler) = scheduler.and_then(|scheduler| self.scheduler_mut(scheduler))
@@ -606,7 +601,6 @@ impl<A: ArchObjects> Nucleus<A> {
         if let Some(thread) = self.thread_mut(id) {
             thread.suspended = true;
         }
-        self.run_queue.remove(id);
         if self
             .dispatched
             .is_some_and(|dispatched| dispatched.thread == id)
@@ -659,39 +653,32 @@ impl<A: ArchObjects> Nucleus<A> {
         self.publish_thread(id, false);
     }
 
-    /// Budget arrived in the Time bound to the Thread `id`: if it was
-    /// waiting for budget and the Time is no longer exhausted, queue it at
-    /// the back, or, if a dispatcher runs it, activate the dispatcher when
-    /// the mask asks for time availability. Returns whether it was queued.
-    pub fn budget_arrived(&mut self, id: ThreadId) -> bool {
+    /// Budget arrived in the Time bound to the Thread `id`: if it was waiting
+    /// for budget and the Time is no longer exhausted, publish that, and
+    /// activate its dispatcher if the mask asks for time availability.
+    pub fn budget_arrived(&mut self, id: ThreadId) {
         let waiting = self.thread(id).is_some_and(|thread| thread.awaiting_budget);
         if !waiting || self.thread_exhausted(id) {
-            return false;
+            return;
         }
         if let Some(thread) = self.thread_mut(id) {
             thread.awaiting_budget = false;
         }
-        if self.thread(id).is_some_and(|thread| thread.suspended) || self.held_by_scheduler(id) {
-            self.publish_thread(id, false);
-            return false;
-        }
-        if let Some(scheduler) = self.dispatching_scheduler(id) {
-            self.publish_thread(id, false);
+        self.publish_thread(id, false);
+        let suspended = self.thread(id).is_some_and(|thread| thread.suspended);
+        if let Some(scheduler) = self.dispatching_scheduler(id)
+            && !suspended
+        {
             self.request_activation(
                 scheduler,
                 activation_reason::EVENT,
                 activation_mask::TIME_AVAILABLE,
             );
-            return false;
         }
-        let queued = self.run_queue.push(id);
-        self.publish_thread(id, false);
-        queued
     }
 
-    /// Bind `thread` as the dispatcher of `scheduler` and start it. The
-    /// Scheduler's Threads the first-in, first-out queue already holds leave
-    /// it: they run only when dispatched from now on. The dispatcher runs next.
+    /// Bind `thread` as the dispatcher of `scheduler` and start it. Its
+    /// Threads run only when dispatched from now on. The dispatcher runs next.
     ///
     /// A child Scheduler's dispatcher is a Thread of its parent: it must have
     /// been configured by the parent, is not started by the bind, and runs
@@ -748,19 +735,10 @@ impl<A: ArchObjects> Nucleus<A> {
         self.scheduler_mut(scheduler)
             .ok_or(CapError::InvalidOperation)?
             .bind_dispatcher(thread)?;
-        let mut cursor = self.run_queue.peek();
-        while let Some(id) = cursor {
-            let queued = self.thread(id);
-            let next = queued.and_then(|queued| queued.run_next);
-            if queued.is_some_and(|queued| queued.scheduler == Some(scheduler)) {
-                self.run_queue.remove(id);
-            }
-            cursor = next;
-        }
         let thread_object = self.thread_mut(thread).ok_or(CapError::InvalidOperation)?;
         thread_object.context = ExecutionContext::NotStarted { saved };
         thread_object.dispatches = Some(scheduler);
-        self.run_queue.push_front(thread);
+        self.activations.push_front(thread);
         self.publish_thread(thread, false);
         Ok(())
     }
@@ -768,11 +746,11 @@ impl<A: ArchObjects> Nucleus<A> {
     /// The counter value at which the nucleus next needs the timer, if it
     /// does: the end of the current slice when another Thread is runnable,
     /// or the instant the current Thread's budget runs out. `slice_ticks` is
-    /// the slice length. The idle Thread, waiting for interrupts, and a
-    /// Thread running alone on an unlimited budget need no timer.
+    /// the slice length. Idling needs no timer, nor does a Thread running
+    /// alone on an unlimited budget.
     pub fn timer_deadline_ticks(&mut self, slice_ticks: u64) -> Option<u64> {
         // A wait timeout or a dispatcher's timer needs the timer even when
-        // nothing else does, the idle Thread running included.
+        // nothing else does, idling included.
         let wakeup = self.next_wakeup_ticks();
         let own = self.running_deadline_ticks(slice_ticks);
         match (own, wakeup) {
@@ -890,9 +868,6 @@ impl<A: ArchObjects> Nucleus<A> {
         if self.preempt_requested {
             return Some(self.current_since_ticks);
         }
-        if self.idle_thread == Some(current) {
-            return None;
-        }
         let since = self.current_since_ticks;
         let frequency = self.counter_frequency();
         let exhaustion = |nucleus: &mut Self| {
@@ -909,16 +884,14 @@ impl<A: ArchObjects> Nucleus<A> {
                 (limit, exhaustion) => limit.or(exhaustion),
             };
         }
-        let contended = !self.run_queue.is_empty();
+        let contended = !self.activations.is_empty();
         let mut deadline = contended.then(|| since.saturating_add(slice_ticks));
-        // An exhausted Thread can only stop if something can take over.
-        let can_stop = contended || self.idle_thread.is_some();
-        if can_stop {
-            deadline = match (deadline, exhaustion(self)) {
-                (Some(slice), Some(exhaustion)) => Some(slice.min(exhaustion)),
-                (slice, exhaustion) => slice.or(exhaustion),
-            };
-        }
+        // An exhausted Thread stops even when nothing can take over: the
+        // nucleus idles.
+        deadline = match (deadline, exhaustion(self)) {
+            (Some(slice), Some(exhaustion)) => Some(slice.min(exhaustion)),
+            (slice, exhaustion) => slice.or(exhaustion),
+        };
         deadline
     }
 
@@ -970,7 +943,7 @@ impl<A: ArchObjects> Nucleus<A> {
     /// published, the timers that fired and the total time spent handling
     /// interrupts. Not itself an event: the bound `EventCount` is not
     /// advanced.
-    fn publish_scheduler_record(&mut self, scheduler: CarvedId) {
+    pub(crate) fn publish_scheduler_record(&mut self, scheduler: CarvedId) {
         // SAFETY: as in `record_paddr`.
         let Ok(object) = (unsafe { Carved::<Scheduler>::validate(scheduler) }) else {
             return;
@@ -990,6 +963,7 @@ impl<A: ArchObjects> Nucleus<A> {
         };
         let frequency = self.counter_frequency();
         let interrupt_ns = ticks_to_ns_ceil(self.interrupt_ticks, frequency);
+        let idle_ns = ticks_to_ns_ceil(self.idle_ticks, frequency);
         let grant_end_ns = grant
             .and_then(|grant| grant.deadline_ticks)
             .map_or(0, |ticks| ticks_to_ns_ceil(ticks, frequency));
@@ -1001,6 +975,7 @@ impl<A: ArchObjects> Nucleus<A> {
             flags: 0,
             interrupt_ns,
             grant_end_ns,
+            idle_ns,
         });
     }
 
@@ -1399,7 +1374,7 @@ impl<A: ArchObjects> Nucleus<A> {
             // Its timer ends with it.
             self.timers.disarm(scheduler_id);
         }
-        self.run_queue.remove(thread);
+        self.activations.remove(thread);
         // A child's dispatcher that is retired takes its domain down.
         if let Some(child) = self
             .thread(thread)
@@ -1416,7 +1391,8 @@ mod tests {
     use {
         super::{Nucleus, NucleusPools, test_arena},
         crate::objects::{
-            ArchObjectsImpl, EventCount, Notification, ObjectPool, PendingPool, RunQueue, Thread,
+            Activations, ArchObjectsImpl, EventCount, Notification, ObjectPool, PendingPool,
+            Thread,
             access::ObjectId,
             arch::{AArch64ASIDPool, ArchPools},
             carved::{self, Carved, CarvedId},
@@ -1459,8 +1435,8 @@ mod tests {
             nucleus_ptr.write(Nucleus {
                 current_thread: None,
                 pending: PendingPool::new(),
-                run_queue: RunQueue::new(),
-                idle_thread: None,
+                activations: Activations::new(),
+                idle_ticks: 0,
                 irq_table: crate::objects::irq::IrqTable::empty(),
                 ticks: 0,
                 current_since_ticks: 0,
@@ -1553,8 +1529,8 @@ mod tests {
             Ok(Some(woken)) => assert_eq!(woken, record_c),
             _ => panic!("signal should wake C"),
         }
-        assert!(nucleus.run_queue.push(c));
-        assert_eq!(nucleus.run_queue.len(), 1);
+        assert!(nucleus.activations.push(c));
+        assert_eq!(nucleus.activations.len(), 1);
 
         // Teardown of A: its queued wait is cancelled and released; C's
         // completed record and queued wakeup, and B's await, are untouched.
@@ -1574,7 +1550,7 @@ mod tests {
             nucleus.pending.state(record_b).ok(),
             Some(PendingState::Waiting)
         );
-        assert_eq!(nucleus.run_queue.len(), 1);
+        assert_eq!(nucleus.activations.len(), 1);
 
         // The notification no longer holds A: the next signal delivers to no
         // one (the queue is empty), so the bits stay pending.
@@ -1591,7 +1567,7 @@ mod tests {
             .cancel_thread_pending(c)
             .unwrap_or_else(|_| panic!("teardown of C failed"));
         assert!(nucleus.pending.state(record_c).is_err());
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
 
         // Teardown of B: the queued await is cancelled and released.
         nucleus
@@ -1638,7 +1614,8 @@ mod tests {
                 result1: 0
             })
         );
-        assert_eq!(nucleus.run_queue.len(), 1);
+        // No queue holds the waiter: only a dispatcher runs Threads.
+        assert!(nucleus.activations.is_empty());
         assert_eq!(nucleus.next_wakeup_ticks(), None);
         let notification = object::<Notification>(n);
         assert!(matches!(
@@ -1703,7 +1680,7 @@ mod tests {
                 result1: 0
             })
         );
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
     }
 
     #[test_case]
@@ -1737,7 +1714,7 @@ mod tests {
             .cancel_thread_pending(a)
             .unwrap_or_else(|_| panic!("teardown with nothing pending failed"));
         assert!(nucleus.pending.is_empty());
-        assert!(nucleus.run_queue.is_empty());
+        assert!(nucleus.activations.is_empty());
     }
 
     #[test_case]

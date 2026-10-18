@@ -117,8 +117,8 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
         nucleus_ptr.write(Nucleus {
             current_thread: None,
             pending: crate::objects::PendingPool::new(),
-            run_queue: crate::objects::RunQueue::new(),
-            idle_thread: None,
+            activations: crate::objects::Activations::new(),
+            idle_ticks: 0,
             irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
             current_since_ticks: 0,
