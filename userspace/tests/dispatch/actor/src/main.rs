@@ -11,7 +11,7 @@
 
 use {
     core::sync::atomic::{AtomicU64, Ordering},
-    libobject::{CapError, NotificationKey, RawKey},
+    libobject::{CapError, NotificationKey, RawKey, ThreadKey},
 };
 
 libuser::entry!(main);
@@ -26,6 +26,11 @@ const WAITER: u64 = 0;
 const KICKER: u64 = 1;
 /// Waits with a timeout nobody signals within, and counts each timeout.
 const TIMED: u64 = 2;
+/// Counts that it ran, then retires itself with the Thread key in the fourth
+/// word of its page.
+const EXITER: u64 = 3;
+/// The exiter's own Thread key.
+const OWN_THREAD: usize = 3;
 
 /// How long a timed waiter waits: ten milliseconds.
 const TIMEOUT_NS: u64 = 10_000_000;
@@ -67,6 +72,16 @@ fn main(page: u64) -> ! {
                 Ok(_) => panic!("dispatch actor: a timed wait was signalled"),
             }
         },
+        EXITER => {
+            words[COUNT].fetch_add(1, Ordering::Release);
+            let own =
+                ThreadKey::from_key(RawKey::from_wire(words[OWN_THREAD].load(Ordering::Relaxed)));
+            // Success never returns.
+            match own.retire() {
+                Ok(()) => panic!("dispatch actor: self-retire returned"),
+                Err(error) => fail("Thread.Retire (self)", error),
+            }
+        }
         _ => panic!("dispatch actor: unknown role"),
     }
 }

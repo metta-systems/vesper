@@ -291,6 +291,12 @@ impl<A: ArchObjects> Nucleus<A> {
             self.publish_thread(id, false);
             return false;
         }
+        // A suspended Thread records the wakeup in itself and nothing more:
+        // it is not queued, and nobody is told it could run.
+        if self.thread(id).is_some_and(|thread| thread.suspended) {
+            self.publish_thread(id, false);
+            return false;
+        }
         if let Some(scheduler) = managed {
             self.publish_thread(id, false);
             self.request_activation(
@@ -303,6 +309,68 @@ impl<A: ArchObjects> Nucleus<A> {
         assert!(self.run_queue.push(id), "runnable Thread did not queue");
         self.publish_thread(id, false);
         true
+    }
+
+    /// `Thread.Suspend`: take the Thread `id` out of scheduling without
+    /// touching its saved state, its pending wait or its Time. Legal for a
+    /// Thread that is runnable (not yet run, or preempted) or blocked, other
+    /// than the caller, the idle Thread and a bound dispatcher.
+    pub fn suspend_thread(&mut self, id: ThreadId) -> Result<(), CapError> {
+        let thread = self.thread(id).ok_or(CapError::InvalidOperation)?;
+        let legal = !thread.suspended
+            && matches!(
+                thread.context,
+                ExecutionContext::NotStarted { .. }
+                    | ExecutionContext::Preempted { .. }
+                    | ExecutionContext::Parked { .. }
+            );
+        let scheduler = thread.scheduler;
+        if !legal || self.current_thread == Some(id) || self.idle_thread == Some(id) {
+            return Err(CapError::InvalidOperation);
+        }
+        if let Some(scheduler) = scheduler.and_then(|scheduler| self.scheduler_mut(scheduler))
+            && scheduler.dispatcher() == Some(id)
+        {
+            return Err(CapError::InvalidOperation);
+        }
+        if let Some(thread) = self.thread_mut(id) {
+            thread.suspended = true;
+        }
+        self.run_queue.remove(id);
+        if self
+            .dispatched
+            .is_some_and(|dispatched| dispatched.thread == id)
+        {
+            self.dispatched = None;
+        }
+        self.publish_thread(id, false);
+        Ok(())
+    }
+
+    /// `Thread.Resume`: end a suspension. A Thread still waiting for its
+    /// wait to complete goes back to blocked; any other becomes runnable as
+    /// an ordinary wakeup would make it.
+    pub fn resume_thread(&mut self, id: ThreadId) -> Result<(), CapError> {
+        let thread = self.thread(id).ok_or(CapError::InvalidOperation)?;
+        if !thread.suspended {
+            return Err(CapError::InvalidOperation);
+        }
+        let still_waiting = match thread.context {
+            ExecutionContext::Parked { record, .. } => !matches!(
+                self.pending.state(record),
+                Ok(PendingState::Completed { .. })
+            ),
+            _ => false,
+        };
+        if let Some(thread) = self.thread_mut(id) {
+            thread.suspended = false;
+        }
+        if still_waiting {
+            self.publish_thread(id, false);
+        } else {
+            self.make_runnable(id);
+        }
+        Ok(())
     }
 
     /// Make the Thread `id`, which a tick just stopped, runnable again.
@@ -332,6 +400,10 @@ impl<A: ArchObjects> Nucleus<A> {
         }
         if let Some(thread) = self.thread_mut(id) {
             thread.awaiting_budget = false;
+        }
+        if self.thread(id).is_some_and(|thread| thread.suspended) {
+            self.publish_thread(id, false);
+            return false;
         }
         if let Some(scheduler) = self.dispatching_scheduler(id) {
             self.publish_thread(id, false);
@@ -632,6 +704,8 @@ impl<A: ArchObjects> Nucleus<A> {
         };
         let state = if dying {
             ThreadState::Dying
+        } else if thread.suspended {
+            ThreadState::Suspended
         } else {
             match thread.context {
                 ExecutionContext::Inactive | ExecutionContext::Configured { .. } => {

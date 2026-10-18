@@ -77,8 +77,7 @@ Needs Phase 3.
 
 ## Phase 8 — Thread lifecycle
 
-- [ ] Thread `Start`/`Suspend`/`Resume` with initialized contexts, explicit authority, legal transitions and preserved blocked completions and budget; never-returning self-retirement.
-- [ ] Client ownership APIs that preserve budget on pre-commit errors without relying on destructor side effects.
+- [x] Thread lifecycle. A Thread first starts only through `Scheduler.StartThread` (maintainer decision, 2026-10-18: no `Thread.Start`). `Thread.Suspend` (2) and `Thread.Resume` (3), `WRITE`, are a flag on the Thread that keeps its saved state, wait, completion and Time, with explicit legal transitions (contract: Thread control). A suspended Thread is never queued, dispatched or activated for; Resume of an incomplete wait returns it to blocked. `Thread.Retire` on the caller never returns: the next Thread is selected first, the dispatcher is activated with `EXITED`, and the record ends `Dying`. Tests: nucleus tests for the transitions, wakeups while suspended, dispatch refusal, exit with and without something else to run, and the `EXITED` activation; `dispatch-test` phase six on the target.
 
 ## Phase 9 — Hierarchy, domains and multicore
 
@@ -87,6 +86,7 @@ Needs Phase 3.
 - [ ] Domain consumption stays bounded because a child holds only budget its parent Transferred and can subdivide it; add parent-enforced effective execution limits only if that proves insufficient.
 - [ ] A child's activation requests never override the parent's authority: they notify the parent or use already delegated capacity.
 - [ ] Scheduler-crash recovery (suspend the domain, or return control to the parent).
+- [ ] Client ownership APIs that preserve budget on pre-commit errors without relying on destructor side effects (moved here from Phase 8, maintainer decision 2026-10-18, since donation and the strict scheduler tree decide how budget is owned). Candidate shape: an explicit `Loan` handle with `commit` and `refund`, no `Drop`.
 - [ ] Multicore Times, per-CPU schedulers, batched remote dispatch.
 - [ ] Temporal service contracts for compositional real-time guarantees, if the project needs them.
 

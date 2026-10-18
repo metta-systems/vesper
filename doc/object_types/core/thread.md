@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x03` (core) |
 | Backing | Kernel object carved from an Untyped; boot creates the first ones |
-| Operations | Return, Retire |
+| Operations | Return, Suspend, Resume, Retire |
 
 ## Purpose
 
@@ -21,9 +21,9 @@ A Thread capability takes one of two forms:
 |---|---|---|---|---|
 | 0 | Return | `x2` `r0`, `x3` `r1` | Return key | Does not return; the caller of the Invocation resumes |
 | 1 | Grant | — | — | Not implemented: `InvalidOperation` |
-| 2 | Suspend | — | — | Not implemented: `InvalidOperation` |
-| 3 | Resume | — | — | Not implemented: `InvalidOperation` |
-| 4 | Retire | — | `Retire` on a named Thread | — |
+| 2 | Suspend | — | `Write` on a named Thread | — |
+| 3 | Resume | — | `Write` on a named Thread | — |
+| 4 | Retire | — | `Retire` on a named Thread | Does not return when the Thread retires itself |
 
 ### Return
 
@@ -42,14 +42,30 @@ The two faults are reported at the Return's `svc` through [fault delivery](#faul
 
 `ThreadReturnKey::return_from_invocation(r0, r1)` wraps Return. It returns `Result<Infallible, CapError>`: on success it does not return; a rejection is `Err`; a local `Success` status is reported as `CapError::UnexpectedReturn` (status 35).
 
+### Suspend
+
+Takes the Thread out of scheduling. A suspended Thread is a flag on the Thread, not a different execution context: its saved state, its pending wait and its Time are untouched, so Suspend neither creates nor spends budget and neither completes nor cancels a wait. A queued Thread leaves the run queue; its record reads `Suspended`, and a blocked Thread's record keeps its block reason. While it is suspended the Thread is never queued, never dispatched and raises no activation: a wait that completes, a timeout, or budget arriving is recorded in the Thread and nothing more.
+
+| Error | Cause |
+|---|---|
+| `InsufficientRights` | The capability lacks `Write` |
+| `InvalidOperation` | The target is the caller, is inert (never started), faulted, already suspended, the idle Thread or the bound dispatcher of its Scheduler; the capability is the return key; an argument is nonzero |
+| `InconsistentKey` | The Thread was retired (`ObjectRetired`) |
+
+### Resume
+
+Ends a suspension. A Thread whose wait has not completed goes back to blocked, and the wait goes on: Resume cannot skip it. Any other Thread becomes runnable as an ordinary wakeup would make it: queued, or, under a dispatcher, published runnable and activating the dispatcher if its mask asks for `THREAD_RUNNABLE`. A Thread whose Time is exhausted still waits for budget. Errors are those of Suspend, with `InvalidOperation` for a Thread that is not suspended.
+
 ### Retire
 
-Tears down a named Thread other than the caller: cancels its pending waits, removes it from the run queue and retires it: every capability to it, including copies, then fails with `InconsistentKey` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
+Tears down a named Thread: cancels its pending waits, removes it from the run queue and retires it: every capability to it, including copies, then fails with `InconsistentKey` (`ObjectRetired`). The Thread's AddressSpace is unaffected; retire it separately with [`AddressSpace.Retire`](../arch/address_space.md#retire). Retire is also how a `Faulted` Thread is removed.
+
+A Thread may retire itself with its own capability. That call never returns: the nucleus first selects the next Thread, and only then tears the caller down, so if nothing else can run the call fails with `InvalidOperation` and nothing has changed. A Thread run by a [dispatcher](scheduler.md#dispatch) activates it with the `EXITED` reason, and the Thread's record ends `Dying`. Mid-call, the whole Thread goes, callee included. The idle Thread cannot retire itself.
 
 | Error | Cause |
 |---|---|
 | `InsufficientRights` | The capability lacks `Retire` |
-| `InvalidOperation` | The target is the calling Thread, the capability is the return key, or an argument is nonzero |
+| `InvalidOperation` | The capability is the return key, an argument is nonzero, or the target is the calling Thread and nothing else can run (or it is the idle Thread) |
 | `InconsistentKey` | The Thread was already retired (`ObjectRetired`) |
 
 ## Fault delivery

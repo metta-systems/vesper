@@ -146,6 +146,16 @@ const TIMED_ACTOR: usize = 5;
 /// slot; the dispatcher's keys to it and to the three Notifications of the
 /// handshake.
 const RECEIVER_ACTOR: usize = 6;
+
+/// Phase six: the exiter is the eighth Thread of the actor component. It
+/// counts, then retires itself with its own Thread key (in its page); the
+/// dispatcher holds a key to it too.
+const EXITER_ACTOR: usize = 7;
+const EXITER_ROLE: u64 = 3;
+const EXITER_RECORD_SLOT: u32 = 11;
+const EXITER_THREAD_SLOT: u32 = 64;
+const EXITER_DONE_SLOT: u32 = 65;
+const EXITER_OWN_SLOT: u32 = 37;
 const RECEIVER_RECORD_SLOT: u32 = 10;
 const RECEIVER_THREAD_SLOT: u32 = 60;
 const READY_SLOT: u32 = 61;
@@ -217,6 +227,10 @@ mod page {
     pub const P5_REASONS: usize = 67;
     pub const P5_ELAPSED_NS: usize = 68;
     pub const P5_AFTER_REASONS: usize = 69;
+    pub const P6_EXITER_KEY: usize = 70;
+    pub const P6_EXITER_SLOT: usize = 71;
+    pub const P6_DONE: usize = 72;
+    pub const P6_EXIT_REASONS: usize = 73;
 }
 
 /// A word of a page the kernel window maps.
@@ -319,6 +333,9 @@ pub fn run() -> ! {
     let receiver_thread_key = retype(ObjectType::THREAD);
     let receiver_time_key = retype(ObjectType::TIME);
     let irq_notification_key = retype(ObjectType::NOTIFICATION);
+    let exiter_thread_key = retype(ObjectType::THREAD);
+    let exiter_time_key = retype(ObjectType::TIME);
+    let exiter_done_key = retype(ObjectType::NOTIFICATION);
     let [ready_key, armed_key, done_key] =
         core::array::from_fn(|_| retype(ObjectType::NOTIFICATION));
     let boot_time = TimeKey::from_key(boot.boot_time_key);
@@ -335,9 +352,10 @@ pub fn run() -> ! {
     boot_time
         .transfer(&TimeKey::from_key(dispatcher_time_key), INFINITE_BUDGET)
         .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
-    for time_key in actor_time_keys
-        .into_iter()
-        .chain([timed_time_key, receiver_time_key])
+    for time_key in
+        actor_time_keys
+            .into_iter()
+            .chain([timed_time_key, receiver_time_key, exiter_time_key])
     {
         boot_time
             .transfer(&TimeKey::from_key(time_key), INFINITE_BUDGET)
@@ -428,7 +446,7 @@ pub fn run() -> ! {
     );
     verify_component(ttbr(nucleus, actor.address_space), &components::ACTOR);
     let mut actor_stacks = builder.stack_region(&actor, STACK_REGION, &mut slots);
-    let actor_stack_tops: [u64; ACTORS + 2] = core::array::from_fn(|_| {
+    let actor_stack_tops: [u64; ACTORS + 3] = core::array::from_fn(|_| {
         builder
             .user_stack(&mut actor_stacks, STACK_PAGES, &mut slots)
             .top
@@ -487,6 +505,32 @@ pub fn run() -> ! {
     actor_words.write(
         RECEIVER_ACTOR * 8 + 1,
         actor.local_key(ACTOR_NOTIFICATION_SLOT + 4, 1).to_wire(),
+    );
+
+    // The exiter: the eighth Thread of the actor component. It names a
+    // Notification it never uses, and holds its own Thread key to retire
+    // itself with.
+    let exiter_id = builder
+        .entry(exiter_thread_key)
+        .thread_id()
+        .unwrap_or_else(|error| panic!("exiter Thread identity: {:?}", error.code()));
+    actor_words.write(EXITER_ACTOR * 8, EXITER_ROLE);
+    actor_words.write(
+        EXITER_ACTOR * 8 + 1,
+        actor.local_key(ACTOR_NOTIFICATION_SLOT, 1).to_wire(),
+    );
+    // SAFETY: the actor's retained table; no invocation overlaps and its
+    // Threads have not started.
+    unsafe { &mut *KeyTable::at_carve(actor.table_addr) }
+        .insert(
+            KeySlot(EXITER_OWN_SLOT),
+            builder.entry(exiter_thread_key),
+            actor.guard,
+        )
+        .unwrap_or_else(|failure| panic!("key grant failed: {:?}", failure.error.code()));
+    actor_words.write(
+        EXITER_ACTOR * 8 + 3,
+        actor.local_key(EXITER_OWN_SLOT, 1).to_wire(),
     );
 
     // The dispatcher's keys: the Scheduler, the workers' Threads and the two
@@ -557,6 +601,12 @@ pub fn run() -> ! {
     words.write(page::P5_READY, grant(READY_SLOT, ready_key));
     words.write(page::P5_ARMED, grant(ARMED_SLOT, armed_key));
     words.write(page::P5_DONE, grant(DONE_SLOT, done_key));
+    words.write(
+        page::P6_EXITER_KEY,
+        grant(EXITER_THREAD_SLOT, exiter_thread_key),
+    );
+    words.write(page::P6_EXITER_SLOT, u64::from(EXITER_RECORD_SLOT));
+    words.write(page::P6_DONE, grant(EXITER_DONE_SLOT, exiter_done_key));
 
     // The scheduler shares the table, then takes over the workers' records.
     root_scheduler
@@ -640,6 +690,24 @@ pub fn run() -> ! {
     root_scheduler
         .start_thread(receiver_thread_key)
         .unwrap_or_else(|error| panic!("receiver StartThread failed: {:?}", error.code()));
+    root_scheduler
+        .configure_thread(
+            exiter_thread_key,
+            actor.address_space_key,
+            ThreadStart {
+                entry: components::ACTOR.entry.expect("the actor has an entry"),
+                stack_pointer: actor_stack_tops[ACTORS + 2],
+                argument: COUNTER_VA + EXITER_ACTOR as u64 * 64,
+            },
+            exiter_time_key,
+        )
+        .unwrap_or_else(|error| panic!("exiter ConfigureThread failed: {:?}", error.code()));
+    root_scheduler
+        .assign_record(exiter_thread_key, EXITER_RECORD_SLOT)
+        .unwrap_or_else(|error| panic!("exiter AssignRecord failed: {:?}", error.code()));
+    root_scheduler
+        .start_thread(exiter_thread_key)
+        .unwrap_or_else(|error| panic!("exiter StartThread failed: {:?}", error.code()));
     // The line signals the Notification, with a badge, for the receiver, and
     // is then enabled.
     let irq_id = builder
@@ -884,8 +952,24 @@ pub fn run() -> ! {
         .expect("a consistent scheduler record");
     assert!(scheduler_record.interrupt_ns > 0);
     assert!(scheduler_record.interrupt_ns >= line.nanoseconds || line.handled > 1);
+    // ── Sixth phase: Suspend, Resume and a Thread retiring itself ────────
+    NotificationKey::from_key(exiter_done_key)
+        .wait(NotificationKey::WAIT_INFINITE)
+        .unwrap_or_else(|error| panic!("phase six wait failed: {:?}", error.code()));
+    assert_eq!(words.read(page::P6_EXIT_REASONS), activation_reason::EXITED);
+    // The suspended waiter took the wakeup it missed when it was resumed,
+    // the one resumed while its wait was still open took nothing, and the
+    // exiter ran once.
+    assert_eq!(actor_count(1), 2);
+    assert_eq!(actor_count(2), 1);
+    assert_eq!(actor_count(EXITER_ACTOR), 1);
+    // The exiter's key no longer names a Thread.
+    assert!(
+        nucleus.thread(exiter_id).is_none(),
+        "the exiter is still a Thread"
+    );
     semi::println!(
-        "dispatch-test: ✅ bind, round-robin dispatch, wake preemption, burst coalescing, refusals, timers, timeouts, sleep and interrupts passed"
+        "dispatch-test: ✅ bind, round-robin dispatch, wake preemption, burst coalescing, refusals, timers, timeouts, sleep, interrupts, suspend and self-retire passed"
     );
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {

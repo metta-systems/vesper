@@ -414,6 +414,14 @@ fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
             park_and_resume(frame, record);
             return;
         }
+        Ok(nucleus::api::InvokeOutcome::Exit) => {
+            // The Thread is gone if this succeeds; if nothing else can run,
+            // the caller sees the error and carries on.
+            match exit_current(frame) {
+                None => return,
+                Some(code) => code,
+            }
+        }
         Ok(nucleus::api::InvokeOutcome::Call(committed)) => {
             // Committed under the lock: continuation pushed, Thread migrated.
             // Guards and KERNEL_LOCK have ended; install the target context,
@@ -735,6 +743,32 @@ fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: Fa
         }
         // Nothing is left to run (or scheduling state is corrupt).
         Err(error) => panic!("fault left nothing to run: {:?}", error.code()),
+    }
+}
+
+/// `Thread.Retire` on the calling Thread: switch to the next Thread and
+/// tear the caller down. `None` once it has switched; the error words when
+/// nothing could run and the caller continues.
+fn exit_current(frame: &mut ExceptionContext) -> Option<(u64, u64, u64)> {
+    let resumed = KERNEL_LOCK.lock(|()| {
+        let Some(nucleus_ptr) = nucleus_anchor() else {
+            panic!("nucleus not booted by Kickstart")
+        };
+        // SAFETY: the anchor names the retained boot-carved Nucleus, and the
+        // kernel lock gives exclusive access for this scheduling transaction.
+        let nucleus = unsafe { &mut *nucleus_ptr };
+        // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other
+        // Access or guard overlaps this transaction.
+        let access = unsafe { Access::new() };
+        nucleus.exit_current_thread(&access)
+    });
+    match resumed {
+        Ok(resumed) => {
+            semi::println!("✅ Thread::Retire() (self)");
+            resume_selected(frame, &resumed, "exited");
+            None
+        }
+        Err(error) => Some(error.code()),
     }
 }
 

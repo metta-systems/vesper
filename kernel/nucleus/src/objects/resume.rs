@@ -5,9 +5,10 @@
 
 use {
     crate::objects::{
-        ArchObjects, ExecutionContext, Nucleus,
+        ArchObjects, ExecutionContext, Nucleus, Thread,
         access::{Access, ObjectId, PoolTag},
         arch_objects::{AddressSpaceId, AddressSpaceObject},
+        carved::Carved,
         completion::{PendingKind, PendingState},
         key_table::KeyTableBinding,
         thread::ThreadId,
@@ -155,6 +156,32 @@ impl<A: ArchObjects> Nucleus<A> {
         self.switch_away(access, current, &ExecutionContext::Faulted { saved }, None)
     }
 
+    /// `Thread.Retire` on the current Thread: select the next Thread (or the
+    /// idle Thread), then tear the current Thread down as any retire does.
+    /// Every fallible check precedes commitment, so a failure here (nothing
+    /// else can run) leaves the Thread untouched for its caller to see the
+    /// error. A dispatched Thread activates its dispatcher with `EXITED`.
+    pub fn exit_current_thread(&mut self, access: &Access) -> Result<PreparedResume, CapError> {
+        let current = self.current_thread_id()?;
+        let current_thread = self.thread(current).ok_or(CapError::InvalidThread)?;
+        if current_thread.context != ExecutionContext::Running || self.idle_thread == Some(current)
+        {
+            return Err(CapError::InvalidOperation);
+        }
+        // `Inactive` stands for "gone": it is neither a wait nor a fault, and
+        // `switch_away` reports it as an exit.
+        let resumed = self.switch_away(access, current, &ExecutionContext::Inactive, None)?;
+        self.cancel_thread_pending(current)?;
+        self.release_thread_fault(current);
+        self.release_thread_placements(access, current);
+        self.publish_thread(current, true);
+        // SAFETY: Thread identities name carved records that are never freed;
+        // the Thread is stopped and nothing else holds a reference to it.
+        unsafe { Carved::<Thread>::retire(current) }
+            .unwrap_or_else(|_| panic!("a stopped current Thread failed to retire"));
+        Ok(resumed)
+    }
+
     /// Preemption-timer tick: charge the interval to the current Thread, then,
     /// if another Thread is runnable or the current Thread's Time ran out,
     /// stop the current one as `Preempted` with its interrupted state
@@ -240,6 +267,7 @@ impl<A: ArchObjects> Nucleus<A> {
             let reasons = match parked {
                 ExecutionContext::Parked { .. } => activation_reason::BLOCKED,
                 ExecutionContext::Faulted { .. } => activation_reason::FAULTED,
+                ExecutionContext::Inactive => activation_reason::EXITED,
                 _ => 0,
             };
             if reasons != 0 {
@@ -329,6 +357,7 @@ impl<A: ArchObjects> Nucleus<A> {
         let stop = match parked {
             ExecutionContext::Parked { .. } => StopReason::Blocked,
             ExecutionContext::Faulted { .. } => StopReason::Faulted,
+            ExecutionContext::Inactive => StopReason::Exited,
             ExecutionContext::Preempted { .. } if self.thread_exhausted(current) => {
                 StopReason::BudgetExhausted
             }

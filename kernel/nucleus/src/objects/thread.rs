@@ -289,6 +289,10 @@ pub struct Thread {
     /// queues it again. Not a logical Thread state, only the nucleus's note of
     /// why a runnable Thread is not queued.
     pub awaiting_budget: bool,
+    /// `Thread.Suspend` took it out of scheduling. A flag, not an execution
+    /// context: its saved state, pending record and Time stay as they were,
+    /// and while it is set nothing queues, dispatches or activates for it.
+    pub suspended: bool,
     /// The record slot the scheduler assigned: the Scheduler whose table
     /// holds it and the slot. Kernel bookkeeping; the Thread has a record
     /// only once `Scheduler.AssignRecord` linked it.
@@ -329,6 +333,7 @@ impl Thread {
             scheduler: None,
             run_time_ticks: 0,
             awaiting_budget: false,
+            suspended: false,
             record: None,
             generation: 0,
             last_stop: 0,
@@ -402,6 +407,7 @@ mod tests {
             scheduler: None,
             run_time_ticks: 0,
             awaiting_budget: false,
+            suspended: false,
             record: None,
             generation: 0,
             last_stop: 0,
@@ -441,6 +447,7 @@ mod tests {
             scheduler: None,
             run_time_ticks: 0,
             awaiting_budget: false,
+            suspended: false,
             record: None,
             generation: 0,
             last_stop: 0,

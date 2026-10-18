@@ -18,7 +18,7 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | Null | `0x00` | [null.md](core/null.md) | Every invocation fails |
 | Untyped | `0x01` | [untyped.md](core/untyped.md) | Retype |
 | KeyTable | `0x02` | [key_table.md](core/key_table.md) | CopyDerive, Move, Delete |
-| Thread | `0x03` | [thread.md](core/thread.md) | Return, Retire |
+| Thread | `0x03` | [thread.md](core/thread.md) | Return, Suspend, Resume, Retire |
 | Time | `0x04` | [time.md](core/time.md) | Transfer, Merge, Query |
 | Scheduler | `0x05` | [scheduler.md](core/scheduler.md) | ShareRegion, ConfigureThread, StartThread, AssignRecord, BindEventCount, BindDispatcher, Dispatch, ConfigureActivation, ArmTimer (root Scheduler) |
 | Invocation | `0x06` | [invocation.md](core/invocation.md) | Call, CallWithKey |

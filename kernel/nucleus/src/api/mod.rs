@@ -59,6 +59,11 @@ pub enum InvokeOutcome {
     /// installs the source translation after all guards/lock end, restores
     /// the resumed source frame, then traces success.
     Return(CommittedReturn),
+    /// `Thread.Retire` on the calling Thread itself, admitted: the call never
+    /// returns. The entry selects the next Thread, then tears this one down
+    /// (`Nucleus::exit_current_thread`); if nothing can run it returns the
+    /// error to the caller instead and nothing has changed.
+    Exit,
     /// `Thread.Return` hit a protocol fault (nothing popped). Entry delivers
     /// it to the fault handler as a fault at the Return's `svc`.
     Fault(libobject::fault::FaultKind),
@@ -183,8 +188,7 @@ fn core_invoke<A: ArchObjects>(
                 })),
             }
         }
-        CoreType::Thread => crate::api::thread::invoke(access, caller, key, op, args, nucleus)
-            .map(InvokeOutcome::Complete),
+        CoreType::Thread => crate::api::thread::invoke(access, caller, key, op, args, nucleus),
 
         CoreType::Invocation => {
             crate::api::invocation::call(access, caller, saved, nucleus).map(InvokeOutcome::Call)

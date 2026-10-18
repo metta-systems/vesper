@@ -126,14 +126,23 @@ impl ThreadKey {
         decode_syscall_result(response).map(|_| ())
     }
 
-    /// Suspend thread - requires syscall
+    /// Suspend the Thread: take it out of scheduling, leaving its saved state,
+    /// its pending wait and its Time as they are. Not the caller, an inert,
+    /// faulted or already suspended Thread, the idle Thread or the bound
+    /// dispatcher (`InvalidOperation`).
+    ///
+    /// Wire schema: no arguments. Authority: `WRITE` on a named Thread.
     pub fn suspend(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
         let response = unsafe { protected_call0(self.key.to_wire(), ThreadOp::Suspend as u64) };
         decode_syscall_result(response).map(|_| ())
     }
 
-    /// Resume suspended thread - requires syscall
+    /// Resume a suspended Thread: back to blocked if its wait has not
+    /// completed, otherwise runnable as an ordinary wakeup would make it
+    /// (`InvalidOperation` if it is not suspended).
+    ///
+    /// Wire schema: no arguments. Authority: `WRITE` on a named Thread.
     pub fn resume(&self) -> Result<(), CapError> {
         // SAFETY: Unsafe call.
         let response = unsafe { protected_call0(self.key.to_wire(), ThreadOp::Resume as u64) };
@@ -144,12 +153,10 @@ impl ThreadKey {
     /// it as waiter, purge its queued wakeup — and retire the carved Thread
     /// (its generation is bumped, so every capability to it fails).
     ///
-    /// Wire schema: no arguments. Authority: `RETIRE` on the invoked Thread capability. The
-    /// current Thread may not retire itself (`InvalidOperation`): the caller
-    /// must be a surviving Thread and this invocation returns normally.
-    /// Never-returns self-retirement is recorded in the contract as wanted as
-    /// soon as feasible (it needs terminal entry-path work); until then a
-    /// Thread's final exit is userspace policy.
+    /// Wire schema: no arguments. Authority: `RETIRE` on the invoked Thread capability.
+    /// The current Thread may retire itself: on success that call never
+    /// returns, and an `Err` means nothing happened (for example, nothing
+    /// else could run, `InvalidOperation`).
     ///
     /// Subsequent invocations of the retired Thread's capabilities fail pool
     /// validation with a defined error. Carved backing (keytable, kernel

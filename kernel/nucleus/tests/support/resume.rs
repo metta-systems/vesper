@@ -1551,3 +1551,163 @@ fn a_timer_that_expires_while_the_dispatcher_runs_is_kept_for_its_next_dispatch(
         assert_eq!(scheduler_of(&dispatching).pending(), 0);
     });
 }
+
+#[test_case]
+fn suspend_removes_a_queued_thread_and_resume_requeues_it() {
+    with_resume(|nucleus, waits| {
+        nucleus.thread_mut(waits.tail).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        assert_eq!(nucleus.run_queue.len(), 2);
+        nucleus
+            .suspend_thread(waits.tail)
+            .unwrap_or_else(|e| panic!("Suspend: {:?}", e.code()));
+        assert!(nucleus.thread(waits.tail).unwrap().suspended);
+        assert_eq!(nucleus.run_queue.len(), 1);
+        assert!(!nucleus.thread(waits.tail).unwrap().queued);
+
+        // Not twice, and not the caller.
+        assert!(nucleus.suspend_thread(waits.tail).is_err());
+        assert!(nucleus.suspend_thread(waits.source).is_err());
+        // An inert Thread has nothing to suspend.
+        nucleus.thread_mut(waits.tail).unwrap().suspended = false;
+        nucleus.thread_mut(waits.tail).unwrap().context = ExecutionContext::Inactive;
+        assert!(nucleus.suspend_thread(waits.tail).is_err());
+        nucleus.thread_mut(waits.tail).unwrap().context = ExecutionContext::Preempted {
+            saved: target_saved(),
+        };
+        nucleus.suspend_thread(waits.tail).ok().expect("Suspend");
+
+        // A wakeup is recorded in the Thread and does not queue it.
+        assert!(!nucleus.make_runnable(waits.tail));
+        assert_eq!(nucleus.run_queue.len(), 1);
+
+        // Resume queues it again, behind the Thread already queued, and only
+        // a suspended Thread can be resumed.
+        nucleus
+            .resume_thread(waits.tail)
+            .unwrap_or_else(|e| panic!("Resume: {:?}", e.code()));
+        assert!(!nucleus.thread(waits.tail).unwrap().suspended);
+        assert_eq!(nucleus.run_queue.len(), 2);
+        assert!(nucleus.resume_thread(waits.tail).is_err());
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.target));
+        assert_eq!(nucleus.run_queue.pop(), Some(waits.tail));
+    });
+}
+
+#[test_case]
+fn a_suspended_waiter_keeps_its_wait_and_resume_cannot_skip_it() {
+    with_resume(|nucleus, waits| {
+        // The target's wait has completed: suspended, it leaves the queue
+        // and keeps the completion until it is resumed.
+        nucleus.suspend_thread(waits.target).ok().expect("Suspend");
+        assert_eq!(nucleus.run_queue.len(), 1);
+        assert!(matches!(
+            nucleus.pending.state(waits.terminal),
+            Ok(PendingState::Completed { .. })
+        ));
+        nucleus.resume_thread(waits.target).ok().expect("Resume");
+        assert_eq!(nucleus.run_queue.len(), 2);
+
+        // A waiter whose wait is still open goes back to blocked.
+        let blocked = nucleus
+            .create_thread(nucleus.thread(waits.source).unwrap().address_space)
+            .expect("Thread");
+        let record = nucleus
+            .pending
+            .block(
+                blocked,
+                PendingKind::NotificationWait,
+                crate::objects::carved::test_id(libobject::ObjectType::NOTIFICATION, 0x100),
+            )
+            .unwrap_or_else(|e| panic!("wait: {:?}", e.code()));
+        nucleus.thread_mut(blocked).unwrap().context = ExecutionContext::Parked {
+            saved: target_saved(),
+            record,
+        };
+        nucleus.suspend_thread(blocked).ok().expect("Suspend");
+        nucleus.resume_thread(blocked).ok().expect("Resume");
+        assert!(!nucleus.thread(blocked).unwrap().suspended);
+        assert_eq!(nucleus.run_queue.len(), 2, "Resume skipped the wait");
+        assert_eq!(
+            nucleus.pending.state(record).ok(),
+            Some(PendingState::Waiting)
+        );
+    });
+}
+
+#[test_case]
+fn a_suspended_thread_cannot_be_dispatched_and_the_dispatcher_cannot_be_suspended() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        nucleus.suspend_thread(waits.tail).ok().expect("Suspend");
+        assert!(matches!(
+            dispatch_call(nucleus, &dispatching, Some(dispatching.tail_key), 1_000, 0),
+            Err(CapError::InvalidOperation)
+        ));
+        nucleus.resume_thread(waits.tail).ok().expect("Resume");
+        assert!(dispatch_call(nucleus, &dispatching, Some(dispatching.tail_key), 1_000, 0).is_ok());
+        // The bound dispatcher is never suspended.
+        nucleus.current_thread = Some(waits.target);
+        assert!(nucleus.suspend_thread(waits.source).is_err());
+    });
+}
+
+#[test_case]
+fn a_thread_retiring_itself_switches_away_and_is_gone() {
+    with_resume(|nucleus, waits| {
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .exit_current_thread(&access)
+                .unwrap_or_else(|e| panic!("exit: {:?}", e.code()))
+        };
+        assert_eq!(resumed.next, waits.target);
+        assert_eq!(nucleus.current_thread, Some(waits.target));
+        assert!(nucleus.thread(waits.source).is_none(), "the Thread is gone");
+        // The wait the Thread was named in left no record behind.
+        assert!(nucleus.pending.state(waits.incoming).is_err());
+    });
+}
+
+#[test_case]
+fn a_thread_that_cannot_exit_for_want_of_anything_to_run_is_left_alone() {
+    with_resume(|nucleus, waits| {
+        while nucleus.run_queue.pop().is_some() {}
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let result = {
+            let access = unsafe { Access::new() };
+            nucleus.exit_current_thread(&access)
+        };
+        assert!(matches!(result, Err(CapError::InvalidOperation)));
+        assert!(nucleus.thread(waits.source).is_some());
+        assert_eq!(nucleus.current_thread, Some(waits.source));
+        assert_eq!(
+            nucleus.thread(waits.source).unwrap().context,
+            ExecutionContext::Running
+        );
+    });
+}
+
+#[test_case]
+fn a_dispatched_thread_exiting_activates_its_dispatcher_with_exited() {
+    with_resume(|nucleus, waits| {
+        let dispatching = with_dispatcher(nucleus, &waits);
+        dispatch_and_park(nucleus, &dispatching, dispatching.tail_key, u64::MAX);
+        assert_eq!(nucleus.current_thread, Some(waits.tail));
+        // SAFETY: exclusive serial fixture, no overlapping context/guard.
+        let resumed = {
+            let access = unsafe { Access::new() };
+            nucleus
+                .exit_current_thread(&access)
+                .unwrap_or_else(|e| panic!("exit: {:?}", e.code()))
+        };
+        assert_eq!(resumed.next, waits.source);
+        assert_eq!(
+            resumed.completion.expect("completes").result0,
+            activation_reason::EXITED
+        );
+        assert!(nucleus.thread(waits.tail).is_none());
+    });
+}

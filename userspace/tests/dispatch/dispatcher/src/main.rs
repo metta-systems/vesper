@@ -13,8 +13,8 @@ use {
     core::sync::atomic::{AtomicU64, Ordering},
     libobject::{
         CapError, EventCountKey, NotificationKey, RawKey, ThreadKey,
-        scheduler::{SchedulerKey, activation_mask, activation_reason},
-        scheduler_record::ThreadRecord,
+        scheduler::{Activation, SchedulerKey, activation_mask, activation_reason},
+        scheduler_record::{BlockReason, ThreadRecord},
         thread::ThreadState,
     },
 };
@@ -96,6 +96,13 @@ const P5_DONE: usize = 66;
 const P5_REASONS: usize = 67;
 const P5_ELAPSED_NS: usize = 68;
 const P5_AFTER_REASONS: usize = 69;
+/// Phase six parameters: the exiter's Thread key and record slot, and the
+/// Notification signalled at the end. Observation: the reasons of the
+/// exiter's dispatch.
+const P6_EXITER_KEY: usize = 70;
+const P6_EXITER_SLOT: usize = 71;
+const P6_DONE: usize = 72;
+const P6_EXIT_REASONS: usize = 73;
 const WORDS: usize = 80;
 
 const WORKERS: usize = 3;
@@ -115,6 +122,11 @@ const NEVER_CONFIGURED_INDEX: usize = 5;
 const SECOND: u64 = 1_000_000_000;
 /// A millisecond in nanoseconds.
 const MILLISECOND: u64 = 1_000_000;
+
+/// Phase six's waiters on Notifications 1 and 2 (indexes into the phase
+/// three Threads), blocked since phase three.
+const FIRST: usize = 1;
+const SECOND_WAITER: usize = 2;
 
 fn main(page: u64) -> ! {
     // SAFETY: the loader maps the page for this component before it starts;
@@ -209,6 +221,7 @@ fn main(page: u64) -> ! {
         .signal(1)
         .unwrap_or_else(|error| fail("phase three signal", error));
     phase_five(page, &scheduler, records, stride);
+    phase_six(page, &scheduler, records, stride);
     loop {
         // Nothing left to run; wait for nothing in particular.
         scheduler.dispatch(None, u64::MAX, 0).ok();
@@ -457,4 +470,125 @@ fn phase_five(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, 
         .unwrap_or_else(|error| fail("Dispatch (receiver again)", error));
     page[P5_AFTER_REASONS].store(after.reasons, Ordering::Release);
     signal(P5_DONE);
+}
+
+/// Suspend and Resume keep a Thread's wait, and a Thread can retire itself.
+fn phase_six(page: &[AtomicU64], scheduler: &SchedulerKey, records: *const u8, stride: usize) {
+    let word = |index: usize| page[index].load(Ordering::Relaxed);
+    let key = |index: usize| RawKey::from_wire(word(P3_THREADS + index));
+    let record = |slot: usize| {
+        // SAFETY: the record table is mapped for this component, 64-byte
+        // aligned, and the slot lies inside it; records are read through
+        // atomics.
+        unsafe { ThreadRecord::at(records.add(slot * stride)) }
+    };
+    let snapshot = |slot: usize| {
+        record(slot)
+            .try_snapshot(SNAPSHOT_RETRIES)
+            .expect("a consistent record")
+    };
+    let slot_of = |index: usize| usize::try_from(word(P3_SLOTS + index)).unwrap_or(usize::MAX);
+    let invalid =
+        |result: Result<Activation, CapError>| matches!(result, Err(CapError::InvalidOperation));
+
+    // Suspend a blocked Thread: its record says so, and why it was blocked.
+    ThreadKey::from_key(key(FIRST))
+        .suspend()
+        .unwrap_or_else(|error| fail("Thread.Suspend", error));
+    let suspended = snapshot(slot_of(FIRST));
+    assert_eq!(suspended.thread_state(), Some(ThreadState::Suspended));
+    assert_eq!(suspended.block_reason, BlockReason::NotificationWait as u32);
+    // A second Suspend is refused.
+    assert!(matches!(
+        ThreadKey::from_key(key(FIRST)).suspend(),
+        Err(CapError::InvalidOperation)
+    ));
+
+    // Its wait completes while it is suspended: recorded, but it stays
+    // suspended and nobody is told it could run. A Dispatch that finds a
+    // pending activation returns at once instead of refusing, so the refusal
+    // shows there is none.
+    NotificationKey::from_key(RawKey::from_wire(word(P3_NOTIFICATIONS)))
+        .signal(1)
+        .unwrap_or_else(|error| fail("signal while suspended", error));
+    assert_eq!(
+        snapshot(slot_of(FIRST)).thread_state(),
+        Some(ThreadState::Suspended)
+    );
+    assert!(invalid(scheduler.dispatch(
+        Some(key(FIRST)),
+        SECOND,
+        snapshot(slot_of(FIRST)).generation
+    )));
+
+    // Resume: the completed wait makes it runnable, as a wakeup would.
+    ThreadKey::from_key(key(FIRST))
+        .resume()
+        .unwrap_or_else(|error| fail("Thread.Resume", error));
+    assert_eq!(
+        snapshot(slot_of(FIRST)).thread_state(),
+        Some(ThreadState::Runnable)
+    );
+    assert!(matches!(
+        ThreadKey::from_key(key(FIRST)).resume(),
+        Err(CapError::InvalidOperation)
+    ));
+    // The resume was a runnable event: the next Dispatch returns it at once,
+    // and the one after runs the Thread, which takes the wakeup it missed.
+    let at_once = scheduler
+        .dispatch(
+            Some(key(FIRST)),
+            SECOND,
+            snapshot(slot_of(FIRST)).generation,
+        )
+        .unwrap_or_else(|error| fail("Dispatch (pending resume)", error));
+    assert_eq!(at_once.reasons, activation_reason::EVENT);
+    let ran = scheduler
+        .dispatch(
+            Some(key(FIRST)),
+            SECOND,
+            snapshot(slot_of(FIRST)).generation,
+        )
+        .unwrap_or_else(|error| fail("Dispatch (resumed waiter)", error));
+    assert_eq!(ran.reasons, activation_reason::BLOCKED);
+
+    // Suspending and resuming a Thread whose wait has not completed leaves
+    // it blocked: Resume cannot skip the wait.
+    ThreadKey::from_key(key(SECOND_WAITER))
+        .suspend()
+        .unwrap_or_else(|error| fail("Thread.Suspend", error));
+    ThreadKey::from_key(key(SECOND_WAITER))
+        .resume()
+        .unwrap_or_else(|error| fail("Thread.Resume", error));
+    assert_eq!(
+        snapshot(slot_of(SECOND_WAITER)).thread_state(),
+        Some(ThreadState::Blocked)
+    );
+    assert!(invalid(scheduler.dispatch(
+        Some(key(SECOND_WAITER)),
+        SECOND,
+        snapshot(slot_of(SECOND_WAITER)).generation
+    )));
+
+    // A Thread retires itself: the call never returns, the dispatch ends
+    // with EXITED, and the Thread is gone.
+    let exiter = RawKey::from_wire(word(P6_EXITER_KEY));
+    let exiter_slot = usize::try_from(word(P6_EXITER_SLOT)).unwrap_or(usize::MAX);
+    let ended = scheduler
+        .dispatch(Some(exiter), SECOND, snapshot(exiter_slot).generation)
+        .unwrap_or_else(|error| fail("Dispatch (exiter)", error));
+    page[P6_EXIT_REASONS].store(ended.reasons, Ordering::Release);
+    assert_eq!(ended.reasons, activation_reason::EXITED);
+    assert_eq!(
+        snapshot(exiter_slot).thread_state(),
+        Some(ThreadState::Dying)
+    );
+    assert!(
+        scheduler.dispatch(Some(exiter), SECOND, 0).err().is_some(),
+        "a retired Thread was dispatched"
+    );
+
+    NotificationKey::from_key(RawKey::from_wire(word(P6_DONE)))
+        .signal(1)
+        .unwrap_or_else(|error| fail("phase six signal", error));
 }

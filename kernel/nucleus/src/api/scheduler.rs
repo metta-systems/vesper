@@ -363,7 +363,7 @@ fn dispatchable<A: ArchObjects>(nucleus: &Nucleus<A>, id: ThreadId) -> bool {
         ),
         _ => false,
     };
-    resumable && !thread.queued && !thread.awaiting_budget
+    resumable && !thread.queued && !thread.awaiting_budget && !thread.suspended
 }
 
 /// `Dispatch` `6`: the dispatcher runs `x2` until the nucleus activates it.
