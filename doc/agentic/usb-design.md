@@ -17,8 +17,14 @@ prototypes and are edited in place. Open decisions are in
   refused for RAM untypeds, so the uncached route is not available.
 - Delays use the generic timer's virtual counter, `CNTVCT_EL0`, because EL0 may not
   read the physical counter.
-- Completion is polled. `GINTSTS.CurMod` is 1 in host mode, and the component
-  waits for that bit.
+- Completion is interrupt driven. The component's own Thread is the interrupt
+  Thread: it waits on the IRQ Notification, reads `HAINT`, clears the events of
+  the transfer channel, accumulates them in an atomic while a transfer is armed,
+  advances a `completions` EventCount and acknowledges the line. A transfer arms the
+  channel with its events unmasked, then sleeps on `completions` with the remaining
+  deadline (500 ms), so a missing interrupt ends it with `transfer_failed`. Port
+  events stay masked. `GINTSTS.CurMod` is 1 in host mode, and the component waits
+  for that bit.
 - Kickstart caps a node at `MAX_DEVICE_PAGES` (32). The serial channel's control
   page sits at `0x3802_0000`, above the register pages.
 - `drivers/usb-hcd-dwc2` resets the root port and serves `usb_hcd_v1` for control

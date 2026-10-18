@@ -21,7 +21,7 @@ use {
 #[bitfield(u32, default = 0, debug)]
 #[derive(PartialEq, Eq)]
 pub struct AhbConfig {
-    /// Global interrupt enable. The driver polls, so it stays clear.
+    /// Global interrupt enable: the controller may raise its interrupt line.
     #[bit(0, rw)]
     global_interrupt_mask: bool,
     /// Transfers move packet data by DMA, through `HCDMA`, rather than by
@@ -317,7 +317,14 @@ pub struct RegisterBlock {
     _reserved1: [u32; 245],
     /// Host configuration.
     host_config: u32,
-    _reserved2: [u32; 15],
+    _reserved2: [u32; 4],
+    /// Host all-channels interrupt: bit `n` is set while host channel `n` has an
+    /// enabled event pending. Read only; clear the event in the channel.
+    #[mmio(PureRead)]
+    host_channel_interrupt: u32,
+    /// Host all-channels interrupt mask: bit `n` lets host channel `n` raise.
+    host_channel_interrupt_mask: u32,
+    _reserved2b: [u32; 9],
     /// Root port control and status.
     port: PortControl,
     _reserved3: [u32; 47],
@@ -350,6 +357,8 @@ assert_register_offsets!(RegisterBlock, 0x500, {
     rx_fifo_size: 0x024,
     tx_fifo_size: 0x028,
     host_config: 0x400,
+    host_channel_interrupt: 0x414,
+    host_channel_interrupt_mask: 0x418,
     port: 0x440,
 });
 
@@ -476,4 +485,29 @@ pub fn port_status_bits(port: PortControl) -> u32 {
         | u32::from(port.enabled()) << 1
         | u32::from(port.connect_detected()) << 16
         | u32::from(port.enable_changed()) << 17
+}
+
+/// `GINTSTS`/`GINTMSK` bit: a host channel event is pending (summary of
+/// `HAINT`). Its mask bit lets the channels raise the controller's interrupt.
+pub const GLOBAL_HOST_CHANNEL: u32 = 1 << 25;
+
+/// The `HAINT`/`HAINTMSK` bit of host channel `index`.
+#[must_use]
+pub const fn host_channel_bit(index: usize) -> u32 {
+    1 << index
+}
+
+/// The channel events a transfer waits for: every bit [`channel_outcome`]
+/// reads. Unmasked only while a transfer is armed.
+#[must_use]
+pub fn channel_event_mask() -> ChannelInterrupts {
+    ChannelInterrupts::ZERO
+        .with_transfer_complete(true)
+        .with_halted(true)
+        .with_ahb_error(true)
+        .with_stall(true)
+        .with_nak(true)
+        .with_transaction_error(true)
+        .with_babble(true)
+        .with_data_toggle_error(true)
 }

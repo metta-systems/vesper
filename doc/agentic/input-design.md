@@ -159,9 +159,9 @@ in USB4 ([usb-design.md](usb-design.md)).
   values through the data area, as `SYN_DROPPED` is followed by a state read.
   Without this, a lost key-up leaves a key stuck. The policy itself is D5, still open.
 - **Timestamps** are read from the clock when the producer handles the device
-  interrupt. While the host controller is polled, the timestamp is the time of the
-  polling pass, which includes up to one polling interval of latency. Interrupt-driven
-  completion ([usb-implementation-plan.md](usb-implementation-plan.md)) removes this.
+  interrupt. The host controller completes transfers by interrupt, so a producer's
+  interrupt Thread reads the clock when it services a report's interrupt, with no
+  polling interval in the timestamp.
 - **Typematic repeat** is a consumer-side library driven by a timer. Producers do not
   repeat in hardware, and a console and a game want different behaviour.
 - **Output direction.** Output events (LEDs, rumble) use a transmit channel with the

@@ -13,7 +13,7 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 ## USB2: DWC2 root port and EP0
 
 - [x] `drivers/usb-hcd-dwc2`: register map on `bitbybit` fields and a `derive_mmio` block, the control-stage plan, and an EL0 component that resets the root port and runs EP0 control transfers by DMA through a driver-owned, cache-maintained page. Exercised by `just test-usb` (QEMU raspi3b, hub on the root port, reported as class 9 at address 1).
-- [x] Completion is polled; only the root device is enumerated.
+- [x] Only the root device is enumerated (by the client, over `usb_hcd_v1`).
 
 ## Shared changes
 
@@ -26,3 +26,4 @@ Short markers of what is done, grouped by plan phase. Each line says what exists
 ## USB2 follow-ups
 
 - [x] `usb_hcd_v1` control pipes served by `drivers/usb-hcd-dwc2` (generated `server` and `client` crates): `reset_port`, `port_status`, `open_pipe` (control only), `set_route` (stored), `close_pipe`, `clear_halt`, `control`. Pipes are a 16-entry table of generation-checked handles owned by the opening client. Exercised by `just test-usb` (`usb-test-client` enumerates the hub through the import and checks refusals) and the host tests of `pipes`, `control::data_length` and `port_status_bits` (`just test-usb-host`).
+- [x] Interrupt-driven completion in `drivers/usb-hcd-dwc2`: the component's Thread services the controller's interrupt (`HAINT`, `GINTMSK`, `HAINTMSK` and the channel masks in `regs.rs`) and advances a `completions` EventCount that control transfers sleep on, with a transfer deadline. Exercised by `just test-usb` (the client enumerates the hub; about 20 interrupts per run) and the register tests of `just test-usb-host`.

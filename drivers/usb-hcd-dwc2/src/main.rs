@@ -31,7 +31,8 @@
 //!
 //! Only control pipes are served. Interrupt and bulk pipes, and the split
 //! transactions a routed pipe needs, come with the hub driver (USB3) and HID (USB4).
-//! Completion is polled, so this component has no interrupt Thread yet.
+//! Completion is interrupt driven: the component's own Thread services the
+//! controller's interrupt, and a transfer sleeps on an `EventCount` it advances.
 //!
 //! A pipe belongs to the client that opened it, identified by the base of its
 //! data area. This identity stands in until Invocation badges exist.
@@ -40,15 +41,19 @@
 mod component {
     use {
         aarch64_cpu::registers::{CNTFRQ_EL0, CNTVCT_EL0, Readable},
-        core::cell::UnsafeCell,
+        core::{
+            cell::UnsafeCell,
+            sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+        },
         libdevice_driver::{
             DEVICE_WINDOW_VA, DriverInit, INIT_VA, MAX_DEVICE_PAGES, NO_BUS_ADDRESS, Turn,
             Turnstile, calling_area, device_address, driver_compatible, driver_init,
             map_device_pages,
         },
         libobject::{
-            EventCountKey, FrameAttribute, FrameKey, KeyTableKey, NotificationKey, ObjectType,
-            RawKey, Rights, UntypedKey, export::init_return_key, thread::ThreadReturnKey,
+            CapError, EventCountKey, FrameAttribute, FrameKey, IrqHandlerKey, KeyTableKey,
+            NotificationKey, ObjectType, RawKey, Rights, UntypedKey, export::init_return_key,
+            thread::ThreadReturnKey,
         },
         libuser::semihosting as semi,
         usb_hcd::usb_hcd_v1::{
@@ -59,9 +64,10 @@ mod component {
             control::{self, StageError},
             pipes::{Pipe, PipeError, PipeTable, Route},
             regs::{
-                Channel, ChannelInterrupts, ChannelOutcome, MmioChannel, MmioRegisterBlock, Pid,
-                RegisterBlock, RxFifoSize, Target, TxFifoSize, channel_offset, channel_outcome,
-                characteristics, port_speed, port_status_bits, port_with_reset_and_power,
+                Channel, ChannelInterrupts, ChannelOutcome, GLOBAL_HOST_CHANNEL, MmioChannel,
+                MmioRegisterBlock, Pid, RegisterBlock, RxFifoSize, Target, TxFifoSize,
+                channel_event_mask, channel_offset, channel_outcome, characteristics,
+                host_channel_bit, port_speed, port_status_bits, port_with_reset_and_power,
                 transfer_size,
             },
         },
@@ -104,6 +110,11 @@ mod component {
 
     fn ticks_per_ms() -> u64 {
         CNTFRQ_EL0.get() / 1000
+    }
+
+    /// Nanoseconds in `ticks` ticks of the virtual counter.
+    fn ticks_to_ns(ticks: u64) -> u64 {
+        ticks.saturating_mul(1_000_000_000) / CNTFRQ_EL0.get().max(1)
     }
 
     /// Spin for `milliseconds`.
@@ -203,6 +214,9 @@ mod component {
         /// The DMA page, and its bus address.
         dma: FrameKey,
         dma_bus: u32,
+        /// Counts the interrupts the interrupt Thread has serviced; a transfer
+        /// sleeps on it.
+        completions: EventCountKey,
     }
 
     impl Controller<'_> {
@@ -249,8 +263,14 @@ mod component {
                 !self.registers.read_reset().rx_fifo_flush()
             });
 
-            // The driver polls, so no interrupt reaches the CPU.
-            self.registers.write_interrupt_mask(0);
+            // Host channel events reach the CPU through the controller's
+            // interrupt line, which the interrupt Thread services. Port events
+            // stay masked.
+            self.registers
+                .write_host_channel_interrupt_mask(host_channel_bit(CHANNEL));
+            self.registers.write_interrupt_mask(GLOBAL_HOST_CHANNEL);
+            self.registers
+                .modify_ahb_config(|ahb| ahb.with_global_interrupt_mask(true));
         }
 
         /// Power the root port and wait for a device to connect.
@@ -306,6 +326,10 @@ mod component {
         /// Halt host channel `index` and wait until it has.
         fn halt(&mut self, index: usize, target: Target) {
             let mut channel = channel(self.base, index);
+            // Nothing the halt raises is of interest: the interrupt Thread stops
+            // recording, and the channel stops raising.
+            ARMED.store(false, Ordering::Release);
+            channel.write_interrupt_mask(ChannelInterrupts::ZERO);
             channel.write_characteristics(characteristics(target, true).with_disable(true));
             wait_for(10, "the channel to halt", || {
                 channel.read_interrupt().halted()
@@ -387,23 +411,35 @@ mod component {
             let mut channel = channel(self.base, index);
             let mut status = 0;
             for _attempt in 0..ATTEMPTS {
-                channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
+                // Quiesce the channel, then arm the interrupt Thread to record its
+                // events for this attempt only.
                 channel.write_interrupt_mask(ChannelInterrupts::ZERO);
+                channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
+                STATUS.store(0, Ordering::Release);
                 channel.write_dma_address(dma_address);
                 channel.write_transfer_size(transfer_size(
                     u32::try_from(bytes).unwrap_or(u32::MAX),
                     packets,
                     pid,
                 ));
+                // Interrupts the interrupt Thread has counted so far; the next one
+                // may belong to this attempt.
+                let mut seen = INTERRUPTS.load(Ordering::Acquire);
+                ARMED.store(true, Ordering::Release);
+                channel.write_interrupt_mask(channel_event_mask());
                 channel.write_characteristics(characteristics(target, true));
 
                 let deadline = ticks() + ticks_per_ms() * TRANSFER_MS;
                 loop {
-                    let interrupts = channel.read_interrupt();
+                    let interrupts =
+                        ChannelInterrupts::new_with_raw_value(STATUS.load(Ordering::Acquire));
                     status = interrupts.raw_value();
                     match channel_outcome(interrupts) {
                         Some(ChannelOutcome::Complete) => {
-                            channel.write_interrupt(interrupts);
+                            ARMED.store(false, Ordering::Release);
+                            channel.write_interrupt_mask(ChannelInterrupts::ZERO);
+                            channel
+                                .write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
                             let remaining = channel.read_transfer_size().bytes().value();
                             let moved =
                                 bytes.saturating_sub(usize::try_from(remaining).unwrap_or(bytes));
@@ -431,9 +467,25 @@ mod component {
                         }
                         None => {}
                     }
-                    if ticks() >= deadline {
+                    // Sleep until the interrupt Thread counts another interrupt or
+                    // the transfer's deadline passes.
+                    let now = ticks();
+                    if now >= deadline {
                         self.halt(index, target);
                         return Err(Exception::TransferFailed { status });
+                    }
+                    match self
+                        .completions
+                        .await_ge(seen + 1, ticks_to_ns(deadline - now).max(1))
+                    {
+                        Ok(count) => seen = count,
+                        Err(CapError::TimedOut { .. }) => {
+                            self.halt(index, target);
+                            return Err(Exception::TransferFailed { status });
+                        }
+                        Err(error) => {
+                            panic!("usb-hcd-dwc2: completion wait failed: {:?}", error.code())
+                        }
                     }
                 }
             }
@@ -563,6 +615,18 @@ mod component {
 
     static HCD: Shared = Shared(UnsafeCell::new(None));
     static TURNSTILE: Turnstile = Turnstile::new();
+
+    /// Whether the interrupt Thread records channel events: set while a
+    /// transfer attempt is armed, clear otherwise, so a late interrupt of a
+    /// finished attempt cannot reach the next one.
+    static ARMED: AtomicBool = AtomicBool::new(false);
+    /// The channel events recorded since the attempt was armed, as a
+    /// `ChannelInterrupts` value.
+    static STATUS: AtomicU32 = AtomicU32::new(0);
+    /// Interrupts the interrupt Thread has serviced. The `completions`
+    /// `EventCount` counts the same, one `Advance` each, after `STATUS` is
+    /// updated.
+    static INTERRUPTS: AtomicU64 = AtomicU64::new(0);
 
     fn init() -> &'static DriverInit {
         // SAFETY: Kickstart maps every driver's init record at `INIT_VA`; it
@@ -729,7 +793,8 @@ mod component {
 
     usb_hcd::usb_hcd_v1_export!(Dwc2);
 
-    /// Set up the controller and the turnstile, then park: calls run on their
+    /// Set up the controller and the turnstile, then service the controller's
+    /// interrupt: calls run on their
     /// callers' Threads.
     fn main(init_va: u64) -> ! {
         // SAFETY: Kickstart passes the init page's address in x0.
@@ -748,6 +813,22 @@ mod component {
         let registers = device_address(init, registers_paddr).expect("registers mapped");
         let base = usize::try_from(registers).expect("a register address fits in usize");
         let (dma, dma_bus) = dma_page(init, next_slot);
+        let completions_key = UntypedKey::from_key(RawKey::from_wire(init.memory))
+            .retype(
+                ObjectType::EVENT_COUNT,
+                0,
+                0,
+                1,
+                &KeyTableKey::from_key(RawKey::from_wire(init.table)),
+                u32::try_from(next_slot + 2).expect("a slot fits in u32"),
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "usb-hcd-dwc2: completions Retype failed: {:?}",
+                    error.code()
+                )
+            });
         let mut controller = Controller {
             // SAFETY: `base` is the register page `map_device_pages` mapped
             // read/write as device memory for the driver's lifetime.
@@ -759,6 +840,7 @@ mod component {
             base,
             dma,
             dma_bus,
+            completions: EventCountKey::from_key(completions_key),
         };
         controller.init_core();
         controller.power_port();
@@ -795,9 +877,59 @@ mod component {
             init.areas().len()
         );
 
-        let park = NotificationKey::from_key(RawKey::from_wire(init.notification));
+        // The interrupt Thread: this one. The controller's line stays masked until
+        // the first `Ack`; each interrupt is then serviced here and the line
+        // acknowledged again. The Thread reads the host-channel summary and
+        // clears the events of the channel it saw; the calling Threads program the
+        // channel and sleep on `completions`.
+        // SAFETY: the registers stay mapped as device memory for the driver's
+        // lifetime; this Thread uses only the host-channel interrupt summary and
+        // the interrupt register of the transfer channel.
+        let service_registers = unsafe {
+            RegisterBlock::new_mmio(core::ptr::with_exposed_provenance_mut::<RegisterBlock>(
+                base,
+            ))
+        };
+        let handlers = init.interrupts();
+        let acknowledge = || {
+            for interrupt in handlers {
+                IrqHandlerKey::from_key(RawKey::from_wire(interrupt.handler))
+                    .ack()
+                    .unwrap_or_else(|error| {
+                        panic!("usb-hcd-dwc2: interrupt Ack failed: {:?}", error.code())
+                    });
+            }
+        };
+        acknowledge();
+        let interrupts = NotificationKey::from_key(RawKey::from_wire(init.notification));
         loop {
-            let _bits = park.await_bits(NotificationKey::WAIT_INFINITE);
+            interrupts
+                .await_bits(NotificationKey::WAIT_INFINITE)
+                .unwrap_or_else(|error| {
+                    panic!("usb-hcd-dwc2: interrupt wait failed: {:?}", error.code())
+                });
+            if service_registers.read_host_channel_interrupt() & host_channel_bit(CHANNEL) != 0 {
+                let mut transfer = channel(base, CHANNEL);
+                let events = transfer.read_interrupt();
+                // Clear exactly the events seen: a bit that arrives meanwhile
+                // raises the line again.
+                transfer.write_interrupt(events);
+                if ARMED.load(Ordering::Acquire) {
+                    STATUS.fetch_or(events.raw_value(), Ordering::AcqRel);
+                }
+            }
+            // Counted even when nothing was recorded, so a sleeping transfer
+            // re-reads `STATUS`.
+            INTERRUPTS.fetch_add(1, Ordering::AcqRel);
+            EventCountKey::from_key(completions_key)
+                .advance(1)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "usb-hcd-dwc2: completion advance failed: {:?}",
+                        error.code()
+                    )
+                });
+            acknowledge();
         }
     }
 }

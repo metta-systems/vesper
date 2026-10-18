@@ -206,6 +206,49 @@ mod tests {
     }
 
     #[test]
+    fn the_channel_event_mask_is_exactly_the_bits_the_outcome_reads() {
+        let mask = channel_event_mask();
+        // Complete 0, halted 1, AHB error 2, stall 3, NAK 4, transaction error 7,
+        // babble 8, data toggle error 10.
+        assert_eq!(mask.raw_value(), 0x59F);
+        for bit in 0..32 {
+            let single = ChannelInterrupts::new_with_raw_value(1 << bit);
+            let in_mask = mask.raw_value() & (1 << bit) != 0;
+            assert_eq!(
+                channel_outcome(single).is_some(),
+                in_mask,
+                "bit {bit}: the outcome reads it exactly when the mask lets it through"
+            );
+        }
+    }
+
+    #[test]
+    fn host_channel_summary_bits_are_one_per_channel() {
+        assert_eq!(host_channel_bit(0), 1);
+        assert_eq!(host_channel_bit(7), 0x80);
+        assert_eq!(host_channel_bit(15), 0x8000);
+        assert_eq!(GLOBAL_HOST_CHANNEL, 0x0200_0000);
+        // The summary bit `InterruptStatus` reads is the one the mask enables.
+        assert!(InterruptStatus::new_with_raw_value(GLOBAL_HOST_CHANNEL).host_channel());
+        assert!(!InterruptStatus::new_with_raw_value(GLOBAL_HOST_CHANNEL).host_port());
+    }
+
+    #[test]
+    fn the_global_interrupt_enable_is_ahb_config_bit_zero() {
+        assert_eq!(
+            AhbConfig::ZERO.with_global_interrupt_mask(true).raw_value(),
+            1
+        );
+        assert_eq!(
+            AhbConfig::ZERO
+                .with_global_interrupt_mask(true)
+                .with_dma_enable(true)
+                .raw_value(),
+            0x21
+        );
+    }
+
+    #[test]
     fn stage_length_needs_the_setup_packet_and_the_announced_data() {
         let get = SetupPacket::get_descriptor(1, 0, 18);
         assert_eq!(control::data_length(26, get, 4032), Ok(18));

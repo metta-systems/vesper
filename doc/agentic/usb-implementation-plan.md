@@ -22,9 +22,6 @@ See [usb-completed.md](usb-completed.md).
 
 ## USB2 follow-ups
 
-- [ ] **Do first, before USB3** (maintainer 2026-10-18; input timestamps are read at
-  interrupt time). Interrupt-driven completion: an IRQ Notification and a second Thread, as in
-  the PL011 driver.
 - [ ] Serve the rest of `usb_hcd_v1`: interrupt and bulk pipes (USB4; the pipe handle
   form is an HCD-issued Invocation key, which needs badge-on-derive) and split transactions behind `set_route` (USB3).
   Control pipes are served, see [usb-completed.md](usb-completed.md).
