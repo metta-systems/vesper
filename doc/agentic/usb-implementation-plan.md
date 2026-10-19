@@ -27,9 +27,9 @@ the serial trace; see [usb-completed.md](usb-completed.md).
   (`just boot-usb-core-test`, or copy `just build-usb-core-test-hw`'s image) with a low- or full-speed device on the LAN9514 and read
   `usb-core`'s trace on the UART. QEMU's hub is full speed and its controller has no
   transaction translator, so nothing here runs a split end to end.
-- [ ] Serve `usb_v1` claims in `usb-core`: `claim_interface` blocks until a matching
-  interface is attached, `release`, `interrupt_pipe` and `control` on a claim.
-  Today `claim_interface` raises `busy` and the other functions `no_claim`.
+- [ ] `usb_v1.control` on a claim: forward the claimant's stage to the device's control
+  pipe. It needs the core's pipes shared with the exports' Threads, which today live on
+  the enumeration Thread; a valid claim raises `not_permitted` until then.
 - [ ] Teardown of in-flight transfers when a device is unplugged, and nested hubs
   (a device behind the hub that is a hub itself is traced and left alone).
 - [ ] Bring `usb-core` and the controller into the Raspberry Pi 3 boot image
@@ -47,7 +47,6 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
   `EventCount` and re-arms the pipe, without re-arming while no buffer is posted; a channel
   per active pipe, even/odd frame placement and bandwidth accounting. See
   [usb-design.md](usb-design.md#control-and-data-planes).
-- [ ] Decide who opens the interrupt pipe of a claimed interface (see [usb-decisions.md](usb-decisions.md)).
 - [ ] `hid` component in `drivers/usb-hid`: claim the boot keyboard or mouse,
   SET_PROTOCOL and SET_IDLE, and decode reports with `hid_boot`.
 - [ ] Rework `input_v1` in place: `descriptor` and `snapshot` functions, and remove

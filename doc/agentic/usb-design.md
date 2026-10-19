@@ -78,7 +78,11 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   only.
 - `hid` claims boot-protocol keyboards and mice, posts empty IO_Recs for
   interrupt-IN, and decodes boot reports with a pure library. It imports
-  `usb_hcd_v1` as well, because its interrupt pipe is an HCD handle.
+  `usb_hcd_v1` as well, because it opens its own interrupt pipe (maintainer
+  decision, 2026-10-19): `usb_v1.interrupt_pipe` tells it the device address,
+  endpoint, speed, interval, packet size and route, so the reports arrive on its
+  own channel. The controller opens a pipe for any importer to any endpoint, so
+  a claim is a convention until the controller can check one.
 
 ## Control and data planes
 
@@ -122,8 +126,9 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
 - `drivers/usb-hcd-dwc2/interfaces/pipe_v1.if`: `configure`, `set_route`, `close_pipe`, `clear_halt`,
   `control`, the functions of one open pipe; the split-transaction route is set
   separately with `set_route`.
-- `drivers/usb/interfaces/usb_v1.if`: `claim_interface` (blocks until a matching
-  device appears), `release`, `interrupt_pipe`, `control`.
+- `drivers/usb/interfaces/usb_v1.if`: `claim_interface` (raises `not_ready` while no
+  matching interface is attached, so the claimant retries; maintainer decision,
+  2026-10-19), `release`, `interrupt_pipe` (the parameters for `open_pipe`), `control`.
 - `drivers/usb-hid/interfaces/input_v1.if`: `set_leds` today, to be replaced by `descriptor` and `snapshot` (USB4). Events travel over an
   io-channel whose records are defined in [input-design.md](input-design.md).
 - `imports.if` files: `usb-core` uses `usb_hcd_v1` via `compatible "brcm,bcm2708-usb"`

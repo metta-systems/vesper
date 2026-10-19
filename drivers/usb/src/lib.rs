@@ -9,4 +9,5 @@
 
 #![no_std]
 
+pub mod claims;
 pub mod devices;

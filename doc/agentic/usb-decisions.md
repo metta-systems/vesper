@@ -20,20 +20,3 @@ RPi4's USB-A ports sit on a VL805 xHCI behind PCIe. All work so far targets the
 RPi3 DWC2 controller. The xHCI follow-up is recorded in the design doc. The question
 is whether to plan it now, and whether the `usb_hcd_v1` interface must stay neutral
 for it. The DMA decision above applies to xHCI rings too.
-
-## 3. Who opens a claimed interface's interrupt pipe (needed by USB4)
-
-An interrupt pipe's reports travel on the io-channel of the client that opened the
-pipe (the controller finds the client from the badge of the key the pipe was opened
-through). So a pipe opened by `usb-core` cannot be handed to `hid` as keys: the
-reports would arrive on `usb-core`'s channel. Options:
-
-- **A. `hid` opens its own pipe (recommended).** `hid` imports `usb_hcd_v1` too, as
-  the design's component table already says. `usb_v1.interrupt_pipe(claim)` returns what
-  `hid` needs to open it: the device address, the endpoint address, the speed, the
-  packet size, the interval and the route. Reports then arrive on `hid`'s own channel,
-  bypassing `usb-core`. The cost: the controller opens a pipe for any importer to any
-  endpoint, so the claim is a convention until the controller can check one.
-- **B. `usb-core` opens it and relays the reports** over a second channel to `hid`.
-  The authority stays with `usb-core`, at the price of a copy and a hop for every
-  report.

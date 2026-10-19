@@ -22,8 +22,12 @@
 //! (`serial = true` in its manifest entry), and on the semihosting console
 //! under QEMU.
 //!
-//! `usb_v1` is exported but claims are not served yet: `claim_interface` raises
-//! `busy` and the other functions raise `no_claim`.
+//! `usb_v1` serves claims: every interface of an enumerated device is offered,
+//! `claim_interface` takes one by its class codes (or raises `not_ready` while
+//! none is attached), and `interrupt_pipe` tells the claimant how to open the
+//! interface's interrupt-IN pipe itself. The offers and claims are shared with
+//! the exports' Threads under a `Turnstile`. Control transfers on a claim are
+//! not served yet.
 
 #[cfg(target_os = "vesper")]
 #[macro_use]
@@ -33,13 +37,18 @@ mod trace;
 mod component {
     use {
         crate::trace::Trace,
-        libdevice_driver::{DriverInit, INIT_VA, driver_init, local_key},
+        core::cell::UnsafeCell,
+        libdevice_driver::{DriverInit, INIT_VA, Turn, Turnstile, driver_init, local_key},
+        libmeddle_runtime::DataArea,
         libobject::{
-            CapError, EventCountKey, KeyTableKey, NotificationKey, RawKey, export::init_return_key,
-            thread::ThreadReturnKey,
+            CapError, EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
+            UntypedKey, export::init_return_key, thread::ThreadReturnKey,
         },
         usb::usb_v1::{Exception, UsbV1},
-        usb_core::devices::{AddressPool, Attachment, Device, DeviceTable},
+        usb_core::{
+            claims::{ClaimError, Claims, HubRoute, PipeParams, UseError, offers_of},
+            devices::{AddressPool, Attachment, Device, DeviceTable},
+        },
         usb_hcd_client::usb_hcd_v1::{Bindings, Client, Speed as HcdSpeed},
         usb_host::{
             enumerate::{EnumerateError, Enumerated, Route, enumerate},
@@ -70,14 +79,31 @@ mod component {
     /// Milliseconds between two looks at the root port while no device is there.
     const ROOT_POLL_MS: u32 = 100;
 
-    /// The USB core. Its exported functions run on callers' Threads and use no
-    /// state yet.
+    /// The USB core. Its exported functions run on callers' Threads and use the
+    /// interfaces on offer and the claims on them.
     struct UsbCore;
 
     fn init() -> &'static DriverInit {
         // SAFETY: Kickstart maps every component's init record at `INIT_VA`; it
         // is read in this component's own `AddressSpace` only.
         unsafe { driver_init(INIT_VA) }
+    }
+
+    struct Shared(UnsafeCell<Claims>);
+
+    // SAFETY: the cell is used only by the holder of a `TURNSTILE` turn.
+    unsafe impl Sync for Shared {}
+
+    static CLAIMS: Shared = Shared(UnsafeCell::new(Claims::new()));
+    static TURNSTILE: Turnstile = Turnstile::new();
+
+    #[allow(
+        clippy::mut_from_ref,
+        reason = "the exclusive borrow of the turn proves the holder has the cell to itself"
+    )]
+    fn claims<'turn>(_turn: &'turn mut Turn<'_>) -> &'turn mut Claims {
+        // SAFETY: only the holder of a turn gets here, one at a time.
+        unsafe { &mut *CLAIMS.0.get() }
     }
 
     impl UsbV1 for UsbCore {
@@ -88,23 +114,83 @@ mod component {
         }
 
         fn claim_interface(
-            _class_code: u32,
-            _subclass: u32,
-            _protocol: u32,
+            badge: u64,
+            class_code: u32,
+            subclass: u32,
+            protocol: u32,
         ) -> Result<u32, Exception> {
-            Err(Exception::Busy)
+            let codes = (
+                u8::try_from(class_code),
+                u8::try_from(subclass),
+                u8::try_from(protocol),
+            );
+            // Class codes are bytes; nothing attached can match any other.
+            let (Ok(class_code), Ok(subclass), Ok(protocol)) = codes else {
+                return Err(Exception::NotReady);
+            };
+            let mut turn = TURNSTILE.enter(init());
+            claims(&mut turn)
+                .claim(badge, class_code, subclass, protocol)
+                .map_err(|error| match error {
+                    ClaimError::NotReady => Exception::NotReady,
+                    ClaimError::Full => Exception::Busy,
+                })
         }
 
-        fn release(_claim: u32) -> Result<(), Exception> {
-            Err(Exception::NoClaim)
+        fn release(badge: u64, claim: u32) -> Result<(), Exception> {
+            let mut turn = TURNSTILE.enter(init());
+            claims(&mut turn)
+                .release(badge, claim)
+                .map_err(|_unknown| Exception::NoClaim)
         }
 
-        fn interrupt_pipe(_claim: u32) -> Result<u32, Exception> {
-            Err(Exception::NoClaim)
+        fn interrupt_pipe(
+            badge: u64,
+            claim: u32,
+            stage: usb::usb_v1::__runtime::IoRec,
+        ) -> Result<(), Exception> {
+            let mut turn = TURNSTILE.enter(init());
+            let params =
+                claims(&mut turn)
+                    .interrupt_pipe(badge, claim)
+                    .map_err(|error| match error {
+                        UseError::NoClaim => Exception::NoClaim,
+                        UseError::DeviceGone => Exception::DeviceGone,
+                        UseError::NoEndpoint => Exception::NotPermitted,
+                    })?;
+            // The record goes to the start of the stage in the caller's own
+            // data area.
+            let (_, exported) = init()
+                .area_for_badge(badge)
+                .ok_or(Exception::NotPermitted)?;
+            let area = DataArea {
+                base: exported.base,
+                len: exported.len,
+            };
+            if !area.contains(&stage) || stage.len < PipeParams::BYTES as u64 {
+                return Err(Exception::NotPermitted);
+            }
+            if area.write_bytes(stage.base - area.base, &params.to_bytes()) {
+                Ok(())
+            } else {
+                Err(Exception::NotPermitted)
+            }
         }
 
-        fn control(_claim: u32, _stage: usb::usb_v1::__runtime::IoRec) -> Result<u32, Exception> {
-            Err(Exception::NoClaim)
+        fn control(
+            badge: u64,
+            claim: u32,
+            _stage: usb::usb_v1::__runtime::IoRec,
+        ) -> Result<u32, Exception> {
+            let mut turn = TURNSTILE.enter(init());
+            // Control transfers on a claim are not served yet.
+            claims(&mut turn)
+                .check(badge, claim)
+                .map_err(|error| match error {
+                    UseError::DeviceGone => Exception::DeviceGone,
+                    UseError::NoClaim | UseError::NoEndpoint => Exception::NoClaim,
+                })
+                .and(Err(Exception::NotPermitted))
         }
     }
 
@@ -277,7 +363,7 @@ mod component {
             );
             match result {
                 Ok(device) => {
-                    self.record(&device, Attachment::Root);
+                    self.record(&device, Attachment::Root, None);
                     Some(device)
                 }
                 Err(error) => {
@@ -291,8 +377,28 @@ mod component {
             }
         }
 
-        /// Note an enumerated device in the table and trace it.
-        fn record(&mut self, found: &Enumerated, attachment: Attachment) {
+        /// Note an enumerated device in the table, offer its interfaces to
+        /// claimants and trace it. `route` is the transaction translator route
+        /// of a device reached with split transactions.
+        fn record(&mut self, found: &Enumerated, attachment: Attachment, route: Option<Route>) {
+            let configuration = found
+                .configuration
+                .get(..found.configuration_len)
+                .unwrap_or_default();
+            let route = route.map(|route| HubRoute {
+                hub: route.hub_address,
+                port: route.hub_port,
+            });
+            {
+                let mut turn = TURNSTILE.enter(self.init);
+                let claims = claims(&mut turn);
+                for offer in offers_of(found.address, found.speed, route, configuration) {
+                    if !claims.offer(offer) {
+                        trace!(self.trace, "usb-core: the interface table is full");
+                        break;
+                    }
+                }
+            }
             let (class_code, vendor, product) = match descriptor::walk(&found.device).next() {
                 Some(Ok(Descriptor::Device(device))) => {
                     (device.class_code, device.vendor, device.product)
@@ -493,6 +599,13 @@ mod component {
                     }
                     PortAction::Teardown => {
                         let removed = self.devices.remove_port(hub.address, number);
+                        {
+                            let mut turn = TURNSTILE.enter(self.init);
+                            let claims = claims(&mut turn);
+                            for &address in removed.addresses() {
+                                claims.withdraw(address);
+                            }
+                        }
                         for &address in removed.addresses() {
                             self.addresses.release(address);
                         }
@@ -561,6 +674,7 @@ mod component {
                             hub: hub.address,
                             port: number,
                         },
+                        route,
                     );
                     if device.configuration_len > 0
                         && descriptor::walk(&device.device)
@@ -608,12 +722,27 @@ mod component {
         let area = client
             .data_area()
             .expect("usb-core shares a data area with the controller");
-        let pipes = Pipes::new(
-            &client,
-            area,
-            KeyTableKey::from_key(RawKey::from_wire(init.table)),
-            u32::try_from(init.first_free_slot).expect("a slot fits in u32"),
-        );
+        // The first free slot holds the EventCount that counts the turns of
+        // the exports; the pipes' slots follow it.
+        let table = KeyTableKey::from_key(RawKey::from_wire(init.table));
+        let turns_slot = u32::try_from(init.first_free_slot).expect("a slot fits in u32");
+        let turns = UntypedKey::from_key(RawKey::from_wire(init.memory))
+            .retype(
+                ObjectType::EVENT_COUNT,
+                0,
+                0,
+                1,
+                &table,
+                turns_slot,
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("usb-core: turns Retype failed: {:?}", error.code()));
+        TURNSTILE.open(turns);
+        // Say the exports can be served.
+        EventCountKey::from_key(RawKey::from_wire(init.event_count))
+            .advance(1)
+            .unwrap_or_else(|error| panic!("usb-core: ready advance failed: {:?}", error.code()));
+        let pipes = Pipes::new(&client, area, table, turns_slot + 1);
         let mut core = Core {
             init,
             client: &client,
