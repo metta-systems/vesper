@@ -18,7 +18,7 @@ default = []
 qemu = ["libuser/qemu"]
 
 [dependencies]
-irq-protocol = { path = "../protocol" }
+irq-protocol = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }

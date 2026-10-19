@@ -21,7 +21,7 @@ host-tests = []
 qemu = ["libserial-trace/qemu", "libuser/qemu"]
 
 [dependencies]
-vesper-usb-protocol = { path = "protocol" }
+vesper-usb-protocol = { workspace = true }
 
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]

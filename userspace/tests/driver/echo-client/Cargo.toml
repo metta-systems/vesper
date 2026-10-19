@@ -14,7 +14,7 @@ repository = { workspace = true }
 version = { workspace = true }
 
 [dependencies]
-driver-echo = { path = "../echo" }
+driver-echo = { workspace = true }
 libmeddle-runtime = { workspace = true }
 
 [build-dependencies]

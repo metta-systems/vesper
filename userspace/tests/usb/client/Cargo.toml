@@ -18,7 +18,7 @@ default = []
 qemu = ["libuser/qemu"]
 
 [dependencies]
-driver-protocol = { path = "../../driver/protocol" }
+driver-protocol = { workspace = true }
 libdevice-driver = { workspace = true }
 libio-channel = { workspace = true }
 libmeddle-runtime = { workspace = true }
@@ -28,7 +28,7 @@ usb-host = { workspace = true }
 libprint = { workspace = true }
 libuser = { workspace = true }
 usb-hcd-client = { workspace = true }
-vesper-usb-protocol = { path = "../../../../drivers/usb/protocol" }
+vesper-usb-protocol = { workspace = true }
 
 [[bin]]
 name = "usb-test-client"

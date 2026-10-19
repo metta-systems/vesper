@@ -25,7 +25,7 @@ arbitrary-int = { workspace = true }
 bitbybit = { workspace = true }
 derive-mmio = { workspace = true }
 libmmio = { workspace = true }
-vesper-usb-protocol = { path = "../usb/protocol" }
+vesper-usb-protocol = { workspace = true }
 
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]

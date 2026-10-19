@@ -33,8 +33,8 @@ qemu = [
 aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
 mailbox = { workspace = true }
-driver-protocol = { path = "../../../userspace/tests/driver/protocol" }
-kickstart = { path = "../../kickstart" }
+driver-protocol = { workspace = true }
+kickstart = { workspace = true }
 libaddress = { workspace = true }
 libboot = { workspace = true }
 libcomponent-loader = { workspace = true }
@@ -49,7 +49,7 @@ libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
 libqemu = { workspace = true }
-nucleus = { path = "../../nucleus" }
+nucleus = { workspace = true }
 
 [build-dependencies]
 libimage-build = { workspace = true }

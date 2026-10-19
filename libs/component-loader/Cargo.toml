@@ -17,7 +17,7 @@ version = { workspace = true }
 libaddress = { workspace = true }
 libimage = { workspace = true }
 libobject = { workspace = true }
-nucleus = { path = "../../kernel/nucleus" }
+nucleus = { workspace = true }
 
 [lib]
 # Boot-time code exercised by Kickstart and the e2e test kernels, not a harness.

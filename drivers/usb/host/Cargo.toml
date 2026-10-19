@@ -17,7 +17,7 @@ version = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 usb-hcd-client = { workspace = true }
-vesper-usb-protocol = { path = "../protocol" }
+vesper-usb-protocol = { workspace = true }
 
 [lib]
 name = "usb_host"

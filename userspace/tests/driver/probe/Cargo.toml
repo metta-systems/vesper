@@ -18,9 +18,9 @@ default = []
 qemu = ["libuser/qemu"]
 
 [dependencies]
-driver-protocol = { path = "../protocol" }
-driver-echo = { path = "../echo" }
-driver-echo-client = { path = "../echo-client" }
+driver-protocol = { workspace = true }
+driver-echo = { workspace = true }
+driver-echo-client = { workspace = true }
 libdevice-driver = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }

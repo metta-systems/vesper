@@ -52,7 +52,7 @@ libmapping = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 libobject = { workspace = true }
-nucleus = { path = "../nucleus" }
+nucleus = { workspace = true }
 snafu = { workspace = true }
 
 [build-dependencies]

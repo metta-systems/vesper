@@ -21,7 +21,7 @@ qemu = ["libuser/qemu"]
 
 [dependencies]
 fb = { workspace = true }
-mailbox-impl = { path = "../mailbox" }
+mailbox-impl = { workspace = true }
 
 [target.'cfg(target_os = "vesper")'.dependencies]
 libdevice-driver = { workspace = true }

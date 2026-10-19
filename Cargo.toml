@@ -151,9 +151,16 @@ libcomponent-loader = { path = "libs/component-loader", package = "vesper-compon
 vesper-input-event = { path = "libs/input-event" }
 vesper-usb-protocol = { path = "drivers/usb/protocol" }
 driver-protocol = { path = "userspace/tests/driver/protocol" }
+driver-echo = { path = "userspace/tests/driver/echo" }
+driver-echo-client = { path = "userspace/tests/driver/echo-client" }
+endpoint-protocol = { path = "userspace/tests/endpoint/protocol" }
+fault-protocol = { path = "userspace/tests/fault/protocol" }
+fp-trap-protocol = { path = "userspace/tests/fp-trap/protocol" }
+irq-protocol = { path = "userspace/tests/irq/protocol" }
+mailbox-impl = { path = "drivers/mailbox" }
 kickstart = { path = "kernel/kickstart" }
 nucleus = { path = "kernel/nucleus" }
-libcompositor-core ={ path = "userspace/libs/compositor-core", package = "vesper-compositor-core" }
+libcompositor-core = { path = "userspace/libs/compositor-core", package = "vesper-compositor-core" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdevice-driver = { path = "libs/device-driver", package = "vesper-device-driver" }
@@ -204,7 +211,6 @@ libtime = { path = "libs/time", package = "vesper-time" }
 libuser = { path = "userspace/runtime", package = "vesper-user-runtime" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
-# safe-mmio = { version = "0.3" }
 snafu = { version = "0.9", default-features = false }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
@@ -230,7 +236,7 @@ goblin = { version = "0.10" }
 minijinja = { version = "3" }
 # Meddle IDL front end and Rust emitter (libs/meddle)
 ariadne = { version = "0.6" }
-chumsky = { version = "0.12" }
+chumsky = { version = "0.13" }
 logos = { version = "0.16" }
 prettyplease = { version = "0.3" }
 proc-macro2 = { version = "1.0" }

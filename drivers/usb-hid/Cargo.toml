@@ -22,8 +22,8 @@ qemu = ["libuser/qemu"]
 
 [dependencies]
 libio-channel = { workspace = true }
-vesper-input-event = { path = "../../libs/input-event" }
-vesper-usb-protocol = { path = "../usb/protocol" }
+vesper-input-event = { workspace = true }
+vesper-usb-protocol = { workspace = true }
 
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]

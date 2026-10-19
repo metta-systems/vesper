@@ -18,7 +18,7 @@ default = []
 qemu = ["libuser/qemu"]
 
 [dependencies]
-driver-protocol = { path = "../../driver/protocol" }
+driver-protocol = { workspace = true }
 libdevice-driver = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
@@ -27,7 +27,7 @@ libprint = { workspace = true }
 libuser = { workspace = true }
 fb-client = { workspace = true }
 mailbox-client = { workspace = true }
-mailbox-impl = { path = "../../../../drivers/mailbox" }
+mailbox-impl = { workspace = true }
 power-client = { workspace = true }
 
 [[bin]]

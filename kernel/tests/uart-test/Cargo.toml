@@ -32,7 +32,7 @@ qemu = [
 [dependencies]
 aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
-kickstart = { path = "../../kickstart" }
+kickstart = { workspace = true }
 libaddress = { workspace = true }
 libboot = { workspace = true }
 libcomponent-loader = { workspace = true }
@@ -48,7 +48,7 @@ libobject = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 libserial-channel = { workspace = true }
-nucleus = { path = "../../nucleus" }
+nucleus = { workspace = true }
 
 [build-dependencies]
 libimage-build = { workspace = true }
