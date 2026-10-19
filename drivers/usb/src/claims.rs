@@ -44,6 +44,9 @@ pub struct Offer {
     pub subclass: u8,
     pub protocol: u8,
     pub interrupt_in: Option<InterruptEndpoint>,
+    /// The device's identity; [`offers_of`] leaves it zero for the caller to set.
+    pub vendor: u16,
+    pub product: u16,
 }
 
 /// The interfaces of the device at `device` in `configuration`, a
@@ -74,6 +77,8 @@ pub fn offers_of<'a>(
                         subclass: interface.subclass,
                         protocol: interface.protocol,
                         interrupt_in: None,
+                        vendor: 0,
+                        product: 0,
                     });
                     if let Some(done) = core::mem::replace(&mut current, started) {
                         return Some(done);
@@ -117,15 +122,20 @@ pub struct PipeParams {
     pub interval: u8,
     pub max_packet: u16,
     pub route: Option<HubRoute>,
+    /// The number of the claimed interface, for class requests.
+    pub interface: u8,
+    pub vendor: u16,
+    pub product: u16,
 }
 
 impl PipeParams {
     /// Bytes of the encoded record.
-    pub const BYTES: usize = 10;
+    pub const BYTES: usize = 14;
 
     /// The record: device address, endpoint address, speed (0 low, 1 full,
     /// 2 high), interval, packet size (little endian), a route flag, the hub's
-    /// address and port.
+    /// address and port, the interface number, the vendor and product ids
+    /// (little endian).
     #[must_use]
     pub const fn to_bytes(self) -> [u8; Self::BYTES] {
         let speed = match self.speed {
@@ -138,6 +148,8 @@ impl PipeParams {
             None => (0, 0, 0),
         };
         let packet = self.max_packet.to_le_bytes();
+        let vendor = self.vendor.to_le_bytes();
+        let product = self.product.to_le_bytes();
         [
             self.device,
             self.endpoint,
@@ -148,7 +160,11 @@ impl PipeParams {
             flag,
             hub,
             port,
-            0,
+            self.interface,
+            vendor[0],
+            vendor[1],
+            product[0],
+            product[1],
         ]
     }
 
@@ -165,7 +181,11 @@ impl PipeParams {
             flag,
             hub,
             port,
-            0,
+            interface,
+            vendor_low,
+            vendor_high,
+            product_low,
+            product_high,
         ] = *bytes.get(..Self::BYTES)?
         else {
             return None;
@@ -188,6 +208,9 @@ impl PipeParams {
             interval,
             max_packet: u16::from_le_bytes([low, high]),
             route,
+            interface,
+            vendor: u16::from_le_bytes([vendor_low, vendor_high]),
+            product: u16::from_le_bytes([product_low, product_high]),
         })
     }
 }
@@ -372,6 +395,9 @@ impl Claims {
             interval: endpoint.interval,
             max_packet: endpoint.max_packet,
             route: claim.offer.route,
+            interface: claim.offer.number,
+            vendor: claim.offer.vendor,
+            product: claim.offer.product,
         })
     }
 }

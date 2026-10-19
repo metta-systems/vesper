@@ -116,8 +116,9 @@ flowchart LR
 - Kickstart wires imports through device-tree links (`uses X via ...`). A program
   has no node, so a program cannot yet export an interface. The shell is a program
   but only imports.
-- `input_v1` today has only `set_leds`, and the USB HID component has no event
-  source. The compositor can be tested with injected events first.
+- The USB HID component publishes keyboard and mouse events on `input_v1`'s
+  io-channel and serves `descriptor` and `snapshot` calls. The compositor can be
+  tested with injected events first.
 
 See `ui-compositor-decisions.md` for the open choices and the hazards.
 

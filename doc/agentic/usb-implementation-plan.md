@@ -45,11 +45,11 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
   that split interrupt polls need, and the split poll itself, which QEMU's controller
   cannot run (no transaction translator). QEMU runs the unsplit poll end to end (see
   [usb-completed.md](usb-completed.md)).
-- [ ] `hid` component in `drivers/usb-hid`: claim the boot keyboard or mouse,
-  SET_PROTOCOL and SET_IDLE, and decode reports with `hid_boot`.
-- [ ] Rework `input_v1` in place: `descriptor` and `snapshot` functions, and remove
-  `set_leds` (output goes through the transmit channel, no interim Call). Publish input
-  events (the record in [input-design.md](input-design.md)) over an io-channel.
+- [ ] Verify `hid` on a Raspberry Pi 3 with `just boot-usb-hid-test` (keyboard, then
+  mouse; the mouse is untested even in QEMU) and fix what the hardware shows. Not yet
+  done in `hid`: a second keyboard or mouse (one of each is claimed), `usb_v1.control`
+  instead of its own control pipe, and the keyboard's real `max_packet0` for its
+  setup requests (it uses 8).
 
 ## USB5: keyboard behaviour
 

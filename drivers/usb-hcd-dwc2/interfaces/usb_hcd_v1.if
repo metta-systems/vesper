@@ -62,7 +62,9 @@ local interface usb_hcd_v1
     ## controller installs in the lent table `into`, at `first_slot` and the
     ## slots after it, all badged with the pipe. Their wire keys are written to
     ## the data area as 64-bit values from offset 0, because a slot's
-    ## incarnation is not predictable. The slots must be vacant, else the call
+    ## incarnation is not predictable; the pipe's handle, the badge of its keys
+    ## and the value of the reports an interrupt pipe returns, follows them as
+    ## one more 64-bit value. The slots must be vacant, else the call
     ## raises `not_permitted`. The keys belong to whoever holds them. A new pipe
     ## carries no transfer until `pipe_v1.configure` says what it transfers.
     open_pipe(card32 first_slot, card32 device_address, card32 endpoint, speed speed)

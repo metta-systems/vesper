@@ -129,8 +129,11 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
 - `drivers/usb/interfaces/usb_v1.if`: `claim_interface` (raises `not_ready` while no
   matching interface is attached, so the claimant retries; maintainer decision,
   2026-10-19), `release`, `interrupt_pipe` (the parameters for `open_pipe`), `control`.
-- `drivers/usb-hid/interfaces/input_v1.if`: `set_leds` today, to be replaced by `descriptor` and `snapshot` (USB4). Events travel over an
-  io-channel whose records are defined in [input-design.md](input-design.md).
+- `drivers/usb-hid/interfaces/input_v1.if`: `descriptor` and `snapshot` (the snapshot is
+  the records that rebuild a device's state, ending with a `Sync`; no `set_leds`, output
+  waits for the transmit channel). Events travel over an io-channel (`channel 1`) whose
+  records are defined in [input-design.md](input-design.md); the client posts empty
+  buffers and each comes back holding one frame.
 - `imports.if` files: `usb-core` uses `usb_hcd_v1` via `compatible "brcm,bcm2708-usb"`
   (the DWC2 node's compatible string, to be verified). `usb-hid` is comment-only
   until its device tree link is decided.

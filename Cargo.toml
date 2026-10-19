@@ -39,11 +39,16 @@ members = [
   "drivers/usb",
   "drivers/usb/protocol",
   "drivers/usb/server",
+  "drivers/usb/client",
+  "drivers/usb-hid",
+  "drivers/usb-hid/client",
+  "drivers/usb-hid/server",
   "drivers/usb-hcd-dwc2",
   "drivers/usb-hcd-dwc2/client",
   "drivers/usb-hcd-dwc2/server",
   "kernel/tests/usb-test",
   "kernel/tests/usb-core-test",
+  "kernel/tests/usb-hid-test",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -78,6 +83,7 @@ members = [
   "libs/print",
   "libs/qemu",
   "libs/serial-channel",
+  "libs/serial-trace",
   "libs/syscall",
   "libs/test",
   "libs/time",
@@ -101,6 +107,7 @@ members = [
   "userspace/tests/irq/protocol",
   "userspace/tests/mailbox/client",
   "userspace/tests/usb/client",
+  "userspace/tests/input/trace",
   "userspace/tests/irq/receiver",
   "userspace/dispatcher",
   "userspace/tests/preempt/spinner",
@@ -162,6 +169,11 @@ mailbox-client = { path = "drivers/mailbox/client" }
 usb-hcd = { path = "drivers/usb-hcd-dwc2/server" }
 usb-hcd-client = { path = "drivers/usb-hcd-dwc2/client" }
 usb = { path = "drivers/usb/server" }
+usb-client = { path = "drivers/usb/client" }
+usb-core = { path = "drivers/usb" }
+usb-hid = { path = "drivers/usb-hid" }
+input = { path = "drivers/usb-hid/server" }
+input-client = { path = "drivers/usb-hid/client" }
 usb-host = { path = "drivers/usb/host", package = "vesper-usb-host" }
 power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }
@@ -176,6 +188,7 @@ libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }
 libgraphics = { path = "libs/graphics", package = "vesper-graphics" }
 libserial-channel = { path = "libs/serial-channel", package = "vesper-serial-channel" }
+libserial-trace = { path = "libs/serial-trace", package = "vesper-serial-trace" }
 libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }

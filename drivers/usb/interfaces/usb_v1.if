@@ -53,10 +53,12 @@ local interface usb_v1
         raises (no_claim);
 
     ## What the claimant needs to open the claimed interface's interrupt-IN pipe
-    ## itself with `usb_hcd_v1.open_pipe`: ten bytes written at the start of
+    ## itself with `usb_hcd_v1.open_pipe`: fourteen bytes written at the start of
     ## `stage` in the claimant's data area (device address, endpoint address,
-    ## speed, interval, packet size, and the hub and port of the transaction
-    ## translator route if there is one; see `usb_core::claims::PipeParams`).
+    ## speed, interval, packet size, the hub and port of the transaction
+    ## translator route if there is one, the interface number for class
+    ## requests, and the device's vendor and product ids; see
+    ## `usb_core::claims::PipeParams`).
     ## The reports then travel on the claimant's own channel and the core has no
     ## other part in the data path.
     interrupt_pipe(card32 claim, octet& stage)

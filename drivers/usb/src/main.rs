@@ -5,8 +5,6 @@
 
 // Host tests build this binary natively too; it is only an empty `main` there.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
-// `semi::println!` expands to `format_args_nl!` only under `qemu`.
-#![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! The USB core component, `usb-core`.
 //!
@@ -46,7 +44,7 @@ mod component {
         },
         usb::usb_v1::{Exception, UsbV1},
         usb_core::{
-            claims::{ClaimError, Claims, HubRoute, PipeParams, UseError, offers_of},
+            claims::{ClaimError, Claims, HubRoute, Offer, PipeParams, UseError, offers_of},
             devices::{AddressPool, Attachment, Device, DeviceTable},
         },
         usb_hcd_client::usb_hcd_v1::{Bindings, Client, Speed as HcdSpeed},
@@ -389,22 +387,27 @@ mod component {
                 hub: route.hub_address,
                 port: route.hub_port,
             });
-            {
-                let mut turn = TURNSTILE.enter(self.init);
-                let claims = claims(&mut turn);
-                for offer in offers_of(found.address, found.speed, route, configuration) {
-                    if !claims.offer(offer) {
-                        trace!(self.trace, "usb-core: the interface table is full");
-                        break;
-                    }
-                }
-            }
             let (class_code, vendor, product) = match descriptor::walk(&found.device).next() {
                 Some(Ok(Descriptor::Device(device))) => {
                     (device.class_code, device.vendor, device.product)
                 }
                 _ => (0, 0, 0),
             };
+            {
+                let mut turn = TURNSTILE.enter(self.init);
+                let claims = claims(&mut turn);
+                for offer in offers_of(found.address, found.speed, route, configuration) {
+                    let offer = Offer {
+                        vendor,
+                        product,
+                        ..offer
+                    };
+                    if !claims.offer(offer) {
+                        trace!(self.trace, "usb-core: the interface table is full");
+                        break;
+                    }
+                }
+            }
             let interfaces = descriptor::walk(
                 found
                     .configuration

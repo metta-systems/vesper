@@ -224,3 +224,40 @@ fn a_drop_marks_the_state_stale_until_a_snapshot_replaces_it() {
     assert!(!state.is_down(A), "the stuck key is gone");
     assert!(state.is_down(button(1)));
 }
+
+#[test]
+fn the_held_keys_and_axes_can_be_walked_to_rebuild_the_state() {
+    let mut state = State::new();
+    let left = code(page::BUTTON, 1);
+    let volume = code(page::CONSUMER, consumer::AC_PAN);
+    let x = code(page::GENERIC_DESKTOP, generic_desktop::X);
+    for event in [
+        key(A, KEY_DOWN),
+        key(code(page::KEYBOARD, keyboard::LEFT_SHIFT), KEY_DOWN),
+        key(left, KEY_DOWN),
+        key(volume, KEY_DOWN),
+        abs(x, -7),
+    ] {
+        state.apply(&event).unwrap();
+    }
+    let mut held = std::vec::Vec::new();
+    state.for_each_down(|held_code| held.push(held_code));
+    assert_eq!(
+        held,
+        [A, code(page::KEYBOARD, keyboard::LEFT_SHIFT), left, volume],
+        "keyboard usages in order, then buttons, then the rest"
+    );
+    let mut axes = std::vec::Vec::new();
+    state.for_each_axis(|axis, value| axes.push((axis, value)));
+    assert_eq!(axes, [(x, -7)]);
+
+    // Replaying the walk into a fresh state reproduces the original.
+    let mut rebuilt = State::new();
+    for held_code in held {
+        rebuilt.apply(&key(held_code, KEY_DOWN)).unwrap();
+    }
+    for (axis, value) in axes {
+        rebuilt.apply(&abs(axis, value)).unwrap();
+    }
+    assert_eq!(rebuilt, state);
+}

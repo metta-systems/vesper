@@ -18,7 +18,7 @@ publish = false
 default = []
 # Opt in to standard host integration tests of the device bookkeeping.
 host-tests = []
-qemu = ["libuser/qemu"]
+qemu = ["libserial-trace/qemu", "libuser/qemu"]
 
 [dependencies]
 vesper-usb-protocol = { path = "protocol" }
@@ -26,12 +26,11 @@ vesper-usb-protocol = { path = "protocol" }
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]
 libdevice-driver = { workspace = true }
-libio-channel = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
-libserial-channel = { workspace = true }
+libserial-trace = { workspace = true }
 libuser = { workspace = true }
 usb = { workspace = true }
 usb-hcd-client = { workspace = true }

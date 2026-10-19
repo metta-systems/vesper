@@ -890,6 +890,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "input"
+version = "0.0.1"
+dependencies = [
+ "vesper-meddle",
+ "vesper-meddle-runtime",
+]
+
+[[package]]
+name = "input-client"
+version = "0.0.1"
+dependencies = [
+ "input",
+ "vesper-meddle",
+ "vesper-meddle-runtime",
+]
+
+[[package]]
+name = "input-trace"
+version = "0.0.1"
+dependencies = [
+ "driver-protocol",
+ "input-client",
+ "usb-hid",
+ "vesper-device-driver",
+ "vesper-input-event",
+ "vesper-io-channel",
+ "vesper-meddle-runtime",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-trace",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "io-kit-sys"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2123,17 +2157,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "usb-client"
+version = "0.0.1"
+dependencies = [
+ "usb",
+ "vesper-meddle",
+ "vesper-meddle-runtime",
+]
+
+[[package]]
 name = "usb-core"
 version = "0.0.1"
 dependencies = [
  "usb",
  "usb-hcd-client",
  "vesper-device-driver",
- "vesper-io-channel",
  "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
- "vesper-serial-channel",
+ "vesper-serial-trace",
  "vesper-usb-host",
  "vesper-usb-protocol",
  "vesper-user-runtime",
@@ -2198,6 +2240,50 @@ dependencies = [
  "vesper-print",
  "vesper-usb-protocol",
  "vesper-user-runtime",
+]
+
+[[package]]
+name = "usb-hid"
+version = "0.0.1"
+dependencies = [
+ "input",
+ "usb-client",
+ "usb-core",
+ "usb-hcd-client",
+ "vesper-device-driver",
+ "vesper-input-event",
+ "vesper-io-channel",
+ "vesper-meddle-runtime",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-usb-host",
+ "vesper-usb-protocol",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "usb-hid-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-component-loader",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
 ]
 
 [[package]]
@@ -2545,6 +2631,18 @@ name = "vesper-serial-channel"
 version = "0.0.1"
 dependencies = [
  "vesper-io-channel",
+]
+
+[[package]]
+name = "vesper-serial-trace"
+version = "0.0.1"
+dependencies = [
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-channel",
+ "vesper-user-runtime",
 ]
 
 [[package]]

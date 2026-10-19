@@ -25,11 +25,11 @@ constrain the decisions below.
   device-tree links (`uses X via ...`). A program (`[[component]]` with
   `program = true`) has no node, so nothing can link a client to a program that
   exports an interface. Q8 covers the choice.
-- **H4. No input source.** `drivers/usb-hid` exports only `set_leds`, and the event
-  record is decided in `input-design.md` (`input-decisions.md` has no open event-record items).
-  Routing can be
-  built and tested with injected events, but real pointer and keyboard input
-  waits on the USB4 producer; the event library `libs/input-event` exists (INPUT1).
+- **H4. Input source.** `drivers/usb-hid` publishes boot keyboard and mouse events over
+  the `input_v1` io-channel (record in `input-design.md`; `input-decisions.md` has no
+  open event-record items), with `descriptor` and `snapshot` calls. It is checked in
+  QEMU with injected keys and not yet on a Raspberry Pi; the event library is
+  `libs/input-event` (INPUT1).
 - **H5. Framebuffer hand-off is one-shot.** `fb_v1.frames` gives the framebuffer's
   memory away for good, and a second call fails. Whatever holds the framebuffer
   holds it until reset, so the compositor must be the only holder once it exists.

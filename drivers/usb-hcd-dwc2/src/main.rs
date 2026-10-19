@@ -1026,7 +1026,11 @@ mod component {
                 .masters
                 .install(into, first_slot, u64::from(handle))
                 .ok()
-                .filter(|keys| data.write_u64s(0, keys));
+                // The keys' values, then the pipe's handle.
+                .filter(|keys| {
+                    data.write_u64s(0, keys)
+                        && data.write_u64s(8 * keys.len() as u64, &[u64::from(handle)])
+                });
             if installed.is_none() {
                 hcd.pipes.close(handle).ok();
                 return Err(Exception::NotPermitted);

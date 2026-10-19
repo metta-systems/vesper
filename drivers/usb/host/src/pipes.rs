@@ -30,6 +30,9 @@ pub struct Pipe {
     pub client: pipe_v1::Client,
     pub group: usize,
     pub keys: [u64; PIPE_KEYS],
+    /// The controller's handle of the pipe: the badge of its keys, and the
+    /// value of the reports an interrupt pipe returns.
+    pub handle: u32,
 }
 
 /// The host controller, the data area it shares with the caller, and the table
@@ -138,15 +141,22 @@ impl<'a> Pipes<'a> {
             self.used[group] = false;
             return Err(error);
         }
+        // The keys, then the pipe's handle.
         let mut keys = [0; PIPE_KEYS];
+        let mut handle = [0];
         assert!(
             self.area.read_u64s(0, &mut keys),
             "the keys are in the area"
+        );
+        assert!(
+            self.area.read_u64s(8 * PIPE_KEYS as u64, &mut handle),
+            "the handle is in the area"
         );
         Ok(Pipe {
             client: self.pipe_client(&keys),
             group,
             keys,
+            handle: u32::try_from(handle[0]).expect("a handle fits in 32 bits"),
         })
     }
 

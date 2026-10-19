@@ -145,7 +145,6 @@ fn check_polling(hcd: &mut Pipes<'_>, speed: Speed) {
     // reports the change on its status-change endpoint until it is cleared.
     hcd.control(&control, set_port_feature(1, PORT_POWER), &[], &mut [])
         .expect("power port 1");
-    let mut handle = None;
     for round in 0..2_u64 {
         let buffer = IoRec {
             base: data.base,
@@ -172,13 +171,16 @@ fn check_polling(hcd: &mut Pipes<'_>, speed: Speed) {
         assert!(reader.read_bytes(1, &mut untouched));
         assert_eq!(untouched, [0xAA], "bytes past the report are untouched");
         let tag = report.value();
-        assert_ne!(tag, 0x77 + round, "the report is tagged with the pipe");
-        assert_eq!(*handle.get_or_insert(tag), tag, "the same pipe each time");
+        assert_eq!(
+            tag,
+            u64::from(status.handle),
+            "the report is tagged with the pipe's handle"
+        );
     }
     #[cfg(feature = "qemu")]
     libuser::semihosting::println!(
         "usb-test-client: the hub's status-change pipe {:#x} reported through the channel",
-        handle.unwrap_or_default()
+        status.handle
     );
     // Without a buffer the polls stop again.
     pause_ms(40);
@@ -401,6 +403,7 @@ fn check_rules(hcd: &mut Pipes<'_>, speed: Speed) {
         client: hcd.pipe_client(&copies),
         group: copy_group,
         keys: copies,
+        handle: fast.handle,
     };
     delegated.client.clear_halt().expect("a copy works");
     delegated.client.close_pipe().expect("a copy closes");

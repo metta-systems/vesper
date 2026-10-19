@@ -1,0 +1,58 @@
+[package]
+name = "usb-hid"
+
+description = "EL0 USB HID component: claims the boot keyboard and mouse from the USB core, opens their interrupt pipes on the host controller and publishes their input events over an io-channel."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+default = []
+# Opt in to standard host integration tests of the report decoding.
+host-tests = []
+qemu = ["libuser/qemu"]
+
+[dependencies]
+libio-channel = { workspace = true }
+vesper-input-event = { path = "../../libs/input-event" }
+vesper-usb-protocol = { path = "../usb/protocol" }
+
+# The component itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+input = { workspace = true }
+libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+usb-client = { workspace = true }
+usb-core = { workspace = true }
+usb-hcd-client = { workspace = true }
+usb-host = { workspace = true }
+
+[lib]
+name = "usb_hid"
+test = false
+harness = false
+
+[[bin]]
+name = "usb-hid"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "hid"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

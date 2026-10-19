@@ -148,6 +148,38 @@ impl State {
             + u32::try_from(self.other_len).unwrap_or(u32::MAX)
     }
 
+    /// Call `visit` with the code of every key and button that is down: the
+    /// keyboard page in usage order, then the buttons, then the other codes in
+    /// the order they went down.
+    pub fn for_each_down(&self, mut visit: impl FnMut(u32)) {
+        for (word_index, word) in self.keyboard.iter().enumerate() {
+            for bit in 0..64_u32 {
+                if word & (1 << bit) != 0 {
+                    let usage = u32::try_from(word_index).unwrap_or(0) * 64 + bit;
+                    visit(usage::code(
+                        page::KEYBOARD,
+                        u16::try_from(usage).unwrap_or(0),
+                    ));
+                }
+            }
+        }
+        for bit in 0..64_u16 {
+            if self.buttons & (1 << bit) != 0 {
+                visit(usage::code(page::BUTTON, bit + 1));
+            }
+        }
+        for &code in &self.other[..self.other_len] {
+            visit(code);
+        }
+    }
+
+    /// Call `visit` with the code and last value of every absolute axis seen.
+    pub fn for_each_axis(&self, mut visit: impl FnMut(u32, i32)) {
+        for &(code, value) in &self.axes[..self.axes_len] {
+            visit(code, value);
+        }
+    }
+
     fn set_key(&mut self, code: u32, down: bool) -> Result<(), StateError> {
         if let Some((word, bit)) = Self::bit_of(code) {
             let target = match word {

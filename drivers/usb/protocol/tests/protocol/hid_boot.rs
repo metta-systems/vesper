@@ -139,3 +139,21 @@ fn mouse_report_of_other_lengths_is_refused() {
     assert_eq!(MouseReport::parse(&[0, 0]), Err(ReportError::WrongLength));
     assert_eq!(MouseReport::parse(&[0; 5]), Err(ReportError::WrongLength));
 }
+
+#[test]
+fn set_protocol_and_set_idle_are_class_requests_to_the_interface() {
+    use vesper_usb_protocol::hid_boot::{set_idle, set_protocol};
+
+    assert_eq!(
+        set_protocol(2, true).to_bytes(),
+        [0x21, 0x0B, 0, 0, 2, 0, 0, 0],
+        "boot protocol is value 0"
+    );
+    assert_eq!(set_protocol(0, false).value, 1);
+    assert_eq!(
+        set_idle(1, 0, 0).to_bytes(),
+        [0x21, 0x0A, 0, 0, 1, 0, 0, 0],
+        "an idle duration of zero reports only changes"
+    );
+    assert_eq!(set_idle(1, 125, 3).value, 0x7D03);
+}

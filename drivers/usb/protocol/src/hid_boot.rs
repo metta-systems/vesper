@@ -137,3 +137,36 @@ impl MouseReport {
         }
     }
 }
+
+/// `bmRequestType` of a class request to an interface, host to device.
+pub const CLASS_INTERFACE_OUT: u8 = 0x21;
+/// `bRequest` of the HID `SET_IDLE`.
+pub const REQUEST_SET_IDLE: u8 = 0x0A;
+/// `bRequest` of the HID `SET_PROTOCOL`.
+pub const REQUEST_SET_PROTOCOL: u8 = 0x0B;
+
+/// HID `SET_PROTOCOL` to `interface`: boot protocol, or the report protocol.
+#[must_use]
+pub const fn set_protocol(interface: u8, boot: bool) -> crate::setup::SetupPacket {
+    crate::setup::SetupPacket {
+        request_type: CLASS_INTERFACE_OUT,
+        request: REQUEST_SET_PROTOCOL,
+        value: if boot { 0 } else { 1 },
+        index: interface as u16,
+        length: 0,
+    }
+}
+
+/// HID `SET_IDLE` to `interface`: the device reports a changed state only when
+/// `duration_4ms` is zero, else also every `duration_4ms` times 4 ms.
+/// `report_id` zero applies to all reports.
+#[must_use]
+pub const fn set_idle(interface: u8, duration_4ms: u8, report_id: u8) -> crate::setup::SetupPacket {
+    crate::setup::SetupPacket {
+        request_type: CLASS_INTERFACE_OUT,
+        request: REQUEST_SET_IDLE,
+        value: u16::from_le_bytes([report_id, duration_4ms]),
+        index: interface as u16,
+        length: 0,
+    }
+}

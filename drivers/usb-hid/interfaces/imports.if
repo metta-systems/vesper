@@ -3,6 +3,14 @@
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 # Functions of other components the USB HID driver calls: the USB core
-# (`usb_v1`) to claim its interface, and the host controller (`usb_hcd_v1`) for
-# interrupt-IN reports. Both `uses` declarations need the device tree link of
-# the HID component, which is an open decision (see doc/agentic/usb-design.md).
+# (`usb_v1`) to claim an interface and learn how to open its interrupt pipe, and
+# the host controller (`usb_hcd_v1`) to open that pipe and read its reports. The
+# driver is a program with no device tree node of its own, so the host
+# controller is found by its compatible string, as the USB core does. A pipe is
+# the keys `open_pipe` installs in the driver's table, so the functions of a
+# pipe (`pipe_v1`) are not listed.
+uses usb_v1 via component usb_core { claim_interface, release, interrupt_pipe }
+uses usb_hcd_v1 via device compatible "brcm,bcm2708-usb"
+{
+    open_pipe
+}

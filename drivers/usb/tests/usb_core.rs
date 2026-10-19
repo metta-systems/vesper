@@ -147,7 +147,12 @@ mod claim_tests {
             Speed::Low,
             Some(HubRoute { hub: 1, port: 2 }),
             &configuration,
-        ) {
+        )
+        .map(|offer| Offer {
+            vendor: 0x1234,
+            product: 0xabcd,
+            ..offer
+        }) {
             assert!(claims.offer(offer));
         }
         claims
@@ -210,6 +215,9 @@ mod claim_tests {
                 interval: 8,
                 max_packet: 4,
                 route: Some(HubRoute { hub: 1, port: 2 }),
+                interface: 1,
+                vendor: 0x1234,
+                product: 0xabcd,
             }
         );
         assert_eq!(PipeParams::from_bytes(&params.to_bytes()), Some(params));
