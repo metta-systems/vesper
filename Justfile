@@ -82,6 +82,10 @@ qemu_base_opts    := '-M ' + qemu_machine + ' ' + qemu_io_opts
 qemu_disasm       := '-d in_asm,unimp,int,mmu,cpu_reset,guest_errors,nochain,plugin'
 qemu_gdb_opts     := '-gdb tcp::5555 -S'
 qemu_test_opts    := '-nographic'
+# The root port of QEMU's raspi3b has no device unless one is given, and the DWC2 driver waits for one: a hub with a keyboard behind it
+qemu_usb          := '-device usb-hub,port=1 -device usb-kbd,port=1.1'
+# Real USB devices forwarded from host
+qemu_usb_forward  := '-device usb-hub,id=hub0 -device usb-host,vendorid=0x04d9,productid=0x0006 -device usb-host,vendorid=0x093a,productid=0x2510'
 qemu_disasm_gdb   := qemu_disasm + ' ' + qemu_gdb_opts
 # Boot a test image (rpi3); in-guest assertions and the QEMU exit status are the result
 qemu_test         := qemu + ' ' + qemu_base_opts + ' ' + qemu_test_opts + ' -dtb "' + rpi3_dtb + '"'
@@ -163,7 +167,7 @@ build-usb-test board='rpi3': (build-components board 'qemu' test_kernel_features
 # Boot usb-test on raspi3b with a hub on the root port: the DWC2 component resets the port and enumerates the hub
 [group("test")]
 test-usb board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-usb-test board)
-    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-test-' + config + '.bin' }}"
 
 # Build the usb-core-test e2e kernel (the DWC2 component, the PL011 driver and the USB core, loaded by Kickstart)
@@ -173,7 +177,7 @@ build-usb-core-test board='rpi3': (build-components board 'qemu' test_kernel_fea
 # Boot usb-core-test on raspi3b with a hub on the root port and a keyboard behind it: the USB core enumerates both
 [group("test")]
 test-usb-core board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-usb-core-test board)
-    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-core-test-' + config + '.bin' }}"
 
 # Build usb-core-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): `usb-core` traces on the UART
@@ -192,13 +196,13 @@ build-usb-hid-test board='rpi3': (build-components board 'qemu' test_kernel_feat
 # Boot usb-hid-test on raspi3b with a hub on the root port and a keyboard behind it: the HID component claims the keyboard and input-trace reads it through input_v1
 [group("test")]
 test-usb-hid board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-usb-hid-test board)
-    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-hid-test-' + config + '.bin' }}"
 
 # TEMP: Test the hw kernel in qemu with passthrough USB kb and mouse
 [group("test")]
 test-usb-hid-hw:
-    #sudo {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,id=hub0 -device usb-host,vendorid=0x04d9,productid=0x0006 -device usb-host,vendorid=0x093a,productid=0x2510 \
+    #sudo {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb_forward }} \
     #  -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-hid-test-rpi3.bin' }}"
 
 # Build usb-hid-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): `input-trace` prints the keyboard's events on the UART
@@ -317,7 +321,7 @@ _write-zellij-config bin runner_opts dtb machine=qemu_machine:
     #!/usr/bin/env bash
     cat > emulation/zellij-config.sh <<EOF
     QEMU="{{ qemu }}"
-    QEMU_OPTS="-M {{ machine }} {{ qemu_stdio_opts }}"
+    QEMU_OPTS="-M {{ machine }} {{ qemu_stdio_opts }} {{ if machine == 'raspi3b' { qemu_usb } else { '' } }}"
     QEMU_RUNNER_OPTS="{{ runner_opts }}"
     CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY="{{ justfile_directory() }}"
     TARGET_DTB="{{ dtb }}"
@@ -521,7 +525,7 @@ test-mailbox-rpi4: (_run-test-kernel 'mailbox-test' 'build-mailbox-test rpi4' 'r
 [group("test")]
 test-shell: (build 'rpi3' 'qemu')
     @rm -f qemu.log target/shell-test.log target/shell-semihosting.log
-    (sleep 10; printf 'help\n'; sleep 2; printf 'led on\n'; sleep 2; printf 'led off\n'; sleep 2; printf 'feats\n'; sleep 2; printf 'draw\n'; sleep 2; printf 'end\n'; sleep 3) | {{ qemu }} -M raspi3b -display none -monitor none -device usb-hub,port=1 -device usb-kbd,port=1.1 -chardev stdio,id=uart,signal=off -serial chardev:uart -chardev file,id=semihosting,path=target/shell-semihosting.log -semihosting-config enable=on,userspace=on,chardev=semihosting -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}" > target/shell-test.log
+    (sleep 10; printf 'help\n'; sleep 2; printf 'led on\n'; sleep 2; printf 'led off\n'; sleep 2; printf 'feats\n'; sleep 2; printf 'draw\n'; sleep 2; printf 'end\n'; sleep 3) | {{ qemu }} -M raspi3b -display none -monitor none {{ qemu_usb }} -chardev stdio,id=uart,signal=off -serial chardev:uart -chardev file,id=semihosting,path=target/shell-semihosting.log -semihosting-config enable=on,userspace=on,chardev=semihosting -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}" > target/shell-test.log
     @grep -q "Supported console commands" target/shell-test.log || { echo "shell-test: help printed nothing"; exit 1; }
     @grep -q "Unknown command feats, try 'help'" target/shell-test.log || { echo "shell-test: an unknown command was not reported"; exit 1; }
     @if grep -q "led on failed\|led off failed" target/shell-test.log; then echo "shell-test: the LED command failed"; exit 1; fi
