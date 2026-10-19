@@ -30,12 +30,27 @@ are in `input-implementation-plan.md`.
   resync from a snapshot), host-tested by `just test-compositor-host`.
   `userspace/gui/compositor` is the only client of the USB HID component's `input_v1`:
   it posts the buffers, folds the records into the router, recovers devices and
-  dropped records with `descriptor` and `snapshot`, and traces what each of three fixed
-  demonstration windows receives on the serial channel. `just test-compositor` checks
-  it under QEMU, and `just boot-compositor-test` is the Raspberry Pi 3 image. Still
-  open from the stages below: damage, clipping and blitting (C1), owning the screen
-  and a cursor (C2), `compositor_v1`, surfaces and clients (C3), and the per-client
-  event channels that carry the routed events to them (C4).
+  dropped records with `descriptor` and `snapshot`, and traces what each routed
+  window receives on the serial channel. `just test-compositor` checks it under
+  QEMU, and `just boot-compositor-test` is the Raspberry Pi 3 image.
+- The compositor owns the screen and serves windows (the rest of C1, C2, and C3
+  without events): `userspace/libs/compositor-core` has the damage set, clipped
+  premultiplied-alpha blitting, the cursor sprite and the surface size rule (host
+  tests in `just test-compositor-host`). `userspace/libs/framebuffer` maps the
+  framebuffer write-combining, and only the compositor does. The compositor draws a
+  background, its clients' windows and the cursor in a cacheable back buffer and
+  copies the damaged rectangles to the framebuffer from a frame Thread, with a
+  33 ms timer that runs only while there is damage (Q7). `compositor_v1` has
+  `create_window`, `commit`, `set_title`, `move_window`, `raise`, `destroy` and
+  `pixel_order`; surfaces are 2 MiB Frames the compositor carves and installs in
+  the client's lent table (Q1, Q2), and Kickstart gives importers of `compositor_v1`
+  a surface window (`DriverInit::map_window`). The shell's `draw` makes a window and
+  draws into its surface; `just test-shell` checks the lamp through it, and
+  `just test-compositor` checks that the background reaches the framebuffer. The
+  production image now carries the USB stack, so the compositor takes the pointer
+  and keyboard there. Still open: events to clients (C4), checking the cursor
+  against injected pointer motion under QEMU, resizing and an overlay layer (C6),
+  and hardware checks of the display and the cursor.
 
 ## C1: pure routing library
 
@@ -54,7 +69,7 @@ are in `input-implementation-plan.md`.
 
 ## C2: compositor owns the screen
 
-- Move the framebuffer mapping out of `userspace/shell/src/display.rs` into a
+- (Done.) Move the framebuffer mapping out of `userspace/shell/src/display.rs` into a
   shared library, so the compositor and nothing else maps it.
 - The compositor paints a background and a cursor sprite from synthetic pointer
   motion, using the frame loop chosen by Q7.

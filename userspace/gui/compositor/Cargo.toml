@@ -1,7 +1,7 @@
 [package]
 name = "compositor"
 
-description = "The compositor program: the single consumer of the USB HID component's input stream, which it routes to windows with focus and an implicit pointer grab."
+description = "The compositor program: owns the display and the USB HID component's input stream, composes the windows that clients draw into and routes input to them with focus and an implicit pointer grab."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -18,10 +18,14 @@ default = []
 qemu = ["libserial-trace/qemu", "libuser/qemu"]
 
 [dependencies]
+compositor-server = { workspace = true }
 driver-protocol = { workspace = true }
+fb-client = { workspace = true }
 input-client = { workspace = true }
 libcompositor-core = { workspace = true }
 libdevice-driver = { workspace = true }
+libframebuffer = { workspace = true }
+libgraphics = { workspace = true }
 libio-channel = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }

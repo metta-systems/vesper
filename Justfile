@@ -30,7 +30,7 @@ user_components := 'compositor dispatch-actor dispatch-child dispatch-dispatcher
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'fb-impl mailbox-impl power-impl root-dispatcher shell uart-pl011 usb-hcd-dwc2'
+driver_components := 'compositor fb-impl mailbox-impl power-impl root-dispatcher shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -195,6 +195,12 @@ test-usb-hid board='rpi3' features=test_kernel_features config=(board + '-' + re
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-hid-test-' + config + '.bin' }}"
 
+# TEMP: Test the hw kernel in qemu with passthrough USB kb and mouse
+[group("test")]
+test-usb-hid-hw:
+    #sudo {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,id=hub0 -device usb-host,vendorid=0x04d9,productid=0x0006 -device usb-host,vendorid=0x093a,productid=0x2510 \
+    #  -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-hid-test-rpi3.bin' }}"
+
 # Build usb-hid-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): `input-trace` prints the keyboard's events on the UART
 [group("hw")]
 build-usb-hid-test-hw board='rpi3': (build-components board '' '') (_build-test-kernel 'usb-hid-test' board '')
@@ -208,11 +214,14 @@ boot-usb-hid-test: build-usb-hid-test-hw chainofcommand
 [group("test")]
 build-compositor-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'compositor-test' board)
 
-# Boot compositor-test on raspi3b with a hub on the root port and a keyboard behind it: the compositor reads the keyboard through input_v1
+# Boot compositor-test on raspi3b with a hub on the root port and a keyboard behind it: the compositor reads the keyboard through input_v1 and has drawn the background on the framebuffer
 [group("test")]
 test-compositor board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-compositor-test board)
+    @rm -f target/compositor-test.log
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
-      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'compositor-test-' + config + '.bin' }}"
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'compositor-test-' + config + '.bin' }}" > target/compositor-test.log
+    @grep -q "compositor: frame 1 drew the background: true" target/compositor-test.log || { echo "compositor-test: the background did not reach the framebuffer"; exit 1; }
+    @echo "{{ ok_label }} the compositor drew the background and read the keyboard"
 
 # Build compositor-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor traces the routed input on the UART
 [group("hw")]
@@ -512,7 +521,7 @@ test-mailbox-rpi4: (_run-test-kernel 'mailbox-test' 'build-mailbox-test rpi4' 'r
 [group("test")]
 test-shell: (build 'rpi3' 'qemu')
     @rm -f qemu.log target/shell-test.log target/shell-semihosting.log
-    (sleep 10; printf 'help\n'; sleep 2; printf 'led on\n'; sleep 2; printf 'led off\n'; sleep 2; printf 'feats\n'; sleep 2; printf 'draw\n'; sleep 2; printf 'end\n'; sleep 3) | {{ qemu }} -M raspi3b -display none -monitor none -chardev stdio,id=uart,signal=off -serial chardev:uart -chardev file,id=semihosting,path=target/shell-semihosting.log -semihosting-config enable=on,userspace=on,chardev=semihosting -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}" > target/shell-test.log
+    (sleep 10; printf 'help\n'; sleep 2; printf 'led on\n'; sleep 2; printf 'led off\n'; sleep 2; printf 'feats\n'; sleep 2; printf 'draw\n'; sleep 2; printf 'end\n'; sleep 3) | {{ qemu }} -M raspi3b -display none -monitor none -device usb-hub,port=1 -device usb-kbd,port=1.1 -chardev stdio,id=uart,signal=off -serial chardev:uart -chardev file,id=semihosting,path=target/shell-semihosting.log -semihosting-config enable=on,userspace=on,chardev=semihosting -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}" > target/shell-test.log
     @grep -q "Supported console commands" target/shell-test.log || { echo "shell-test: help printed nothing"; exit 1; }
     @grep -q "Unknown command feats, try 'help'" target/shell-test.log || { echo "shell-test: an unknown command was not reported"; exit 1; }
     @if grep -q "led on failed\|led off failed" target/shell-test.log; then echo "shell-test: the LED command failed"; exit 1; fi
@@ -520,8 +529,10 @@ test-shell: (build 'rpi3' 'qemu')
     @if grep -q "draw failed" target/shell-test.log; then echo "shell-test: draw failed"; exit 1; fi
     @grep -q "lamp: frame 1, [1-9][0-9]* sampled cells lit" target/shell-semihosting.log || { echo "shell-test: the lamp drew nothing"; exit 1; }
     @grep -q "lamp: frame 20," target/shell-semihosting.log || { echo "shell-test: the lamp stopped animating"; exit 1; }
+    @grep -q "compositor: frame 1 drew the background: true" target/shell-semihosting.log || { echo "shell-test: the compositor drew no background"; exit 1; }
+    @grep -q "compositor: frame [0-9]*: 1 windows, [1-9][0-9]* sampled pixels differ from the background" target/shell-semihosting.log || { echo "shell-test: the shell's window did not reach the framebuffer"; exit 1; }
     @grep -q "Bye" target/shell-test.log || { echo "shell-test: end did not say goodbye"; exit 1; }
-    @echo "{{ ok_label }} shell answered help, the LED commands, an unknown command and end"
+    @echo "{{ ok_label }} shell answered help, the LED commands, an unknown command and end, and drew in a window of the compositor"
 
 # Boot uart-test: the PL011 driver component's two Threads serve a client's transmit and receive IO channels in loopback by interrupts
 [group("test")]

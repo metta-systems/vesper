@@ -1,3 +1,18 @@
+For your hardware test
+- Run `just boot-usb-hid-test`. It builds an image with the DWC2 driver, PL011, usb-core, usb-hid and input-trace.
+- input-trace owns the serial channel in that image. On the UART you get the device descriptor, the snapshot, and each key press and release as Key and Sync lines.
+- usb-core's trace is not on the UART in that image (only one program gets a serial channel). For the core's trace, boot `just boot-usb-core-test` instead.
+- The mouse has not been tried, even in QEMU. A keyboard behind a hub with a low-speed device is the first real split-transaction interrupt poll, so expect to debug there.
+
+---
+
+Compositor:
+
+- Clients: nothing receives the routed events. They only go to the trace. Real clients and per-client channels are C3 and C4. The three windows are hardcoded.
+- shell-in-a-window image has no usb drivers and wiring..
+
+---
+
 Most important: stale against the current contract
 
 1. Retype wire diagram is wrong. libs/syscall/src/lib.rs:24-27 says x2 = obj_type, x3 = dest_captbl, x4 = dest_slot_start, x5 = count. The contract (doc/capabilities-contract.md ~line 336) defines x2 kind, x3 size_bits, x4 count, x5 destination-table key, x6 first slot, x7 rights. Replace the diagram with that schema.

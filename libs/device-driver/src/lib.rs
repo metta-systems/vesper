@@ -111,8 +111,29 @@ pub const STACK_REGION: u64 = 0x3000_0000;
 pub const DEVICE_WINDOW_VA: u64 = 0x3800_0000;
 
 /// Where a component that imports `fb_v1` maps the framebuffer's Frames
-/// ([`FbWindow`]): `FB_WINDOW_SPANS` consecutive 2 MiB spans.
+/// ([`MapWindow`]): `FB_WINDOW_SPANS` consecutive 2 MiB spans.
 pub const FB_WINDOW_VA: u64 = 0x3e00_0000;
+
+/// Where surface memory is mapped, in a component that imports `compositor_v1`
+/// (the client) and in the compositor: `SURFACE_SLOTS` windows of
+/// `SURFACE_SPANS` 2 MiB spans each, window `n` at `SURFACE_WINDOW_VA` plus
+/// `n * SURFACE_SLOT_BYTES`. A surface is made of whole 2 MiB Frames, so only
+/// the second-level table of the component's `AddressSpace` is needed
+/// ([`MapWindow::l2`]).
+pub const SURFACE_WINDOW_VA: u64 = 0x2400_0000;
+
+/// 2 MiB spans, and so Frames, of one surface window.
+pub const SURFACE_SPANS: usize = 8;
+
+/// Bytes of address space of one surface window.
+pub const SURFACE_SLOT_BYTES: u64 = SURFACE_SPANS as u64 * (2 << 20);
+
+/// Surface windows a component has.
+pub const SURFACE_SLOTS: usize = 8;
+
+/// Where the compositor maps its back buffer, `SURFACE_SPANS` spans, below the
+/// surface windows' end.
+pub const BACK_BUFFER_VA: u64 = SURFACE_WINDOW_VA + SURFACE_SLOTS as u64 * SURFACE_SLOT_BYTES;
 
 /// Spans of 2 MiB in the framebuffer window, and so the spare page tables a
 /// component receives: a 1024x768 framebuffer at any alignment touches three.
@@ -299,8 +320,9 @@ pub struct DriverInit {
     /// The keys of the serial channel Kickstart attached the component to, if
     /// its manifest entry says `serial = true`
     pub serial: SerialKeys,
-    /// What the component needs to map a framebuffer, if it imports `fb_v1`
-    pub fb_window: FbWindow,
+    /// What the component needs to map a framebuffer or surfaces, if it
+    /// imports `fb_v1` or `compositor_v1`
+    pub map_window: MapWindow,
     pub resource_count: u64,
     /// The bundled resources mapped read-only in the component, in the order
     /// its manifest entry names them (`resources = [...]`)
@@ -310,16 +332,17 @@ pub struct DriverInit {
 }
 
 /// The page tables Kickstart provisions for mapping a framebuffer at
-/// [`FB_WINDOW_VA`].
+/// [`FB_WINDOW_VA`] and surfaces at [`SURFACE_WINDOW_VA`].
 ///
 /// A 2 MiB Frame maps as a block in the second-level table, a 4 KiB Frame
 /// needs a last-level table below it; which spans need which depends on where
 /// the firmware puts the framebuffer, so the tables come uninstalled, to be
 /// installed (`PageTable.Map` into `l2`) for the spans that hold 4 KiB Frames.
-/// All keys are zero when the component imports no `fb_v1`.
+/// `l2` is zero when the component imports neither `fb_v1` nor
+/// `compositor_v1`, and `tables` are zero when it imports no `fb_v1`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct FbWindow {
+pub struct MapWindow {
     /// The second-level `PageTable` of the component's `AddressSpace`
     pub l2: u64,
     /// Uninstalled last-level `PageTable`s
@@ -395,7 +418,7 @@ impl DriverInit {
             transmit_completed: 0,
             receive_completed: 0,
         },
-        fb_window: FbWindow {
+        map_window: MapWindow {
             l2: 0,
             tables: [0; FB_WINDOW_SPANS],
         },

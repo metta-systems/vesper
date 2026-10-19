@@ -1,0 +1,88 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## Windows on the screen. A client asks for a window and draws into its surface:
+## memory the compositor owns and lends to the client as 2 MiB Frames. The
+## surface holds 32-bit pixels in the display's native order (`pixel_order`),
+## premultiplied ARGB (alpha in the highest byte, the color channels already
+## multiplied by it), `width * 4` bytes to a row. The client maps the Frames
+## where it likes in its surface window (`SURFACE_WINDOW_VA` of `libdevice-driver`),
+## draws, and tells the compositor which part changed with `commit`. Prototype:
+## edited in place.
+local interface compositor_v1
+{
+    ## The area the compositor tells each client apart by (the key a call comes
+    ## through carries the base of the client's area as its badge) and reads
+    ## window titles from.
+    data 4096;
+
+    ## Every function receives the badge of the key it was called through.
+    badged;
+
+    ## A client lends one table at a time, so one slot of the compositor's
+    ## table is reserved for it.
+    placement 1;
+
+    ## The order of the color components in a pixel.
+    enum pixel_order { bgr, rgb }
+
+    ## The size is zero or the surface would not fit the surface window.
+    exception bad_size {}
+
+    ## The compositor has no window left to give.
+    exception too_many_windows {}
+
+    ## The compositor has no memory left for the surface.
+    exception out_of_memory {}
+
+    ## The lent table refused a Frame: `installed` Frames of the call are in it.
+    exception install_failed { card32 installed; }
+
+    ## There is no such window, or it belongs to another client.
+    exception no_window {}
+
+    ## The call did not come through a key the compositor gave a client, or the
+    ## title is not inside the client's area or longer than 64 bytes.
+    exception not_permitted {}
+
+    ## The order of the color components in the pixels of the display, and so of
+    ## every surface.
+    pixel_order()
+        returns (pixel_order order);
+
+    ## Make a window of `width` by `height` pixels, on top of the others, and
+    ## install the Frames of its surface into the table the caller lends, at
+    ## consecutive slots from `first_slot` in address order: the surface's
+    ## bytes rounded up to a multiple of 2 MiB, one Frame for each 2 MiB. The
+    ## compositor keeps its own copy of every Frame. Returns the window's id.
+    ## The window starts at a place of the compositor's choosing and its surface
+    ## starts transparent. The compositor hands out each surface's memory once
+    ## and has room for a few: a client may still hold the Frames of a window
+    ## that is gone, so `destroy` does not recycle them.
+    create_window(card32 width, card32 height, card32 first_slot) lends (key_table into)
+        returns (card32 window)
+        raises (bad_size, too_many_windows, out_of_memory, install_failed, not_permitted);
+
+    ## Say that the rectangle of `width` by `height` pixels at (`x`, `y`) of the
+    ## window's surface changed, so the compositor draws it again.
+    commit(card32 window, int32 x, int32 y, card32 width, card32 height)
+        raises (no_window);
+
+    ## Set the window's title to the bytes of `title`, at most 64. The
+    ## compositor keeps it; version 1 draws no title bars.
+    set_title(card32 window, octet& title)
+        raises (no_window, not_permitted);
+
+    ## Put the window's top left corner at (`x`, `y`) on the screen.
+    move_window(card32 window, int32 x, int32 y)
+        raises (no_window);
+
+    ## Put the window on top of the others.
+    raise(card32 window)
+        raises (no_window);
+
+    ## Take the window away; its surface memory is not given back.
+    destroy(card32 window)
+        raises (no_window);
+}

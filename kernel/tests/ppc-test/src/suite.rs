@@ -231,7 +231,7 @@ pub fn run() {
     // from userspace. Once authority/live identity are established, zero
     // wins over a stale pool and destination readiness.
     let table_len_before_zero = before_rejections.count;
-    for slot in [KeySlot(62), KeySlot(63), KeySlot(600)] {
+    for slot in [KeySlot(62), KeySlot(63), KeySlot(1100)] {
         for pool in [pool, StackPoolHandle::new(15, 0xFFFF)] {
             assert!(matches!(
                 boot_as.create_invocation(0, &self_table, slot, pool),
@@ -512,8 +512,8 @@ pub fn run() {
         Err(CapError::SlotOccupied(KeySlot(62)))
     ));
     assert!(matches!(
-        boot_as.create_invocation(0x5678, &self_table, KeySlot(600), pool),
-        Err(CapError::InvalidSlot(KeySlot(600)))
+        boot_as.create_invocation(0x5678, &self_table, KeySlot(1100), pool),
+        Err(CapError::InvalidSlot(KeySlot(1100)))
     ));
     assert_eq!(
         create_invocation_raw(
@@ -1139,7 +1139,7 @@ pub fn run() {
     }
     // A window beyond the exporter's table is refused at construction, like
     // an out-of-range slot.
-    for (first, count) in [(511, 2), (u32::MAX, 2), (WINDOW_FIRST, u32::MAX)] {
+    for (first, count) in [(1023, 2), (u32::MAX, 2), (WINDOW_FIRST, u32::MAX)] {
         assert!(
             matches!(
                 AddressSpaceKey::from_key(bounce_as_key).create_invocation_with_window(

@@ -3,15 +3,18 @@
 // `semi::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(feature = "qemu", feature(format_args_nl))]
 
-//! compositor-test: the DWC2 host controller component, the PL011 driver, the USB
-//! core, the USB HID component and the compositor, loaded by Kickstart.
+//! compositor-test: the DWC2 host controller component, the PL011 driver, the
+//! mailbox and fb components, the USB core, the USB HID component and the
+//! compositor, loaded by Kickstart.
 //!
 //! `usb-core` enumerates the hub on the root port and the keyboard behind it
 //! (on raspi3b QEMU attaches both, `just test-compositor`). `usb-hid` claims the
 //! keyboard and serves it on `input_v1`. The compositor is that interface's
 //! only client: it reads the device's descriptor and state, posts buffers on
 //! the event channel and routes the records it gets to its windows, tracing
-//! what each window receives on the PL011's serial channel.
+//! what each window receives on the PL011's serial channel. It also owns the
+//! display: it maps the framebuffer through the fb component and draws the
+//! background and the cursor, which it says under QEMU (the recipe checks).
 //!
 //! The boot Thread installs the report Notification key at `REPORT_SLOT` of the
 //! compositor's table. The compositor signals it once it has read the
@@ -145,6 +148,8 @@ pub fn run() -> ! {
         &[
             &components::USB_DRIVER,
             &components::UART_DRIVER,
+            &components::MAILBOX_DRIVER,
+            &components::FB_DRIVER,
             &components::USB_CORE_DRIVER,
             &components::USB_HID_DRIVER,
             &components::COMPOSITOR_DRIVER,
@@ -181,11 +186,14 @@ pub fn run() -> ! {
                 assert_ne!(init.areas()[0].channel_base, 0);
                 assert_ne!(init.areas()[0].channel_event, 0);
             } else if name == components::COMPOSITOR.name {
-                // The compositor: the two functions of input_v1 and the serial
-                // channel; the report key goes in its table only.
+                // The compositor: the five functions of fb_v1, the two of
+                // input_v1 and the serial channel; the report key goes in its
+                // table only.
                 assert_ne!(init.serial.transmit_submitted, 0, "a serial channel");
-                assert_eq!(imports.len(), 2, "descriptor and snapshot");
-                assert_ne!(imports[0].channel_event, 0);
+                assert_eq!(imports.len(), 7, "five of fb_v1, descriptor and snapshot");
+                assert!(imports.iter().any(|record| record.channel_event != 0));
+                assert_ne!(init.map_window.l2, 0, "a window to map the framebuffer");
+                assert!(init.map_window.tables.iter().all(|&table| table != 0));
                 // SAFETY: the driver's retained table; no invocation overlaps.
                 unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
                     .insert(
@@ -213,10 +221,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 5,
-        "the controller, the PL011, usb-core, usb-hid, the compositor and the root dispatcher"
+        INSTANCES + 7,
+        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 4);
+    assert_eq!(seen, INSTANCES + 6);
 
     // ── The compositor reports once it has read the keyboard through input_v1 ──
     let bits = NotificationKey::from_key(report)

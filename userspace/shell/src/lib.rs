@@ -6,7 +6,7 @@
 //!
 //! The commands (see [`HELP`]) are `help`, `led on`, `led off`, `draw` and
 //! `end`. They act through a [`Board`], which the EL0 program implements with
-//! calls into the mailbox, power and fb components, and print through a
+//! calls into the mailbox and power components and the compositor, and print through a
 //! [`Console`], which it implements on the serial channel.
 
 /// Longest command line, in bytes; more are ignored until the line ends.

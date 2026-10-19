@@ -50,9 +50,10 @@ use {
 };
 
 /// Size (as log2) of the boot Untyped region carved for the initial kernel
-/// state: 16 MiB, sized for the nucleus, its pools, the boot `KeyTable`, and
-/// the runtime Retype carves the boot continuation performs.
-const BOOT_UNTYPED_SIZE_BITS: u8 = 24;
+/// state: 128 MiB, sized for the nucleus, its pools, the boot `KeyTable`, and
+/// the runtime Retype carves the boot continuation performs, among them the
+/// memory of every driver and program (the compositor's surfaces take 32 MiB).
+const BOOT_UNTYPED_SIZE_BITS: u8 = 27;
 
 /// Budget of the boot Time at `KeySlot::BOOT_TIME`: infinite, so the root
 /// scheduler has an unlimited allowance to give out. Infinite budget never

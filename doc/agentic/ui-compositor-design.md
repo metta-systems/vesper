@@ -1,19 +1,19 @@
 # UI compositor design
 
-Status: design only, nothing implemented. Open decisions are listed in
+Status: the compositor owns the screen and the input and serves windows; the
+implementation plan says what is still open. Open decisions are listed in
 `ui-compositor-decisions.md`. Implementation order is in
 `ui-compositor-implementation-plan.md`.
 
 ## Scope
 
-Today the shell owns the framebuffer. `userspace/shell/src/display.rs` configures
-it through `fb_v1`, receives its Frames by `fb_v1.frames lends (key_table)` (handed
-out once), maps them write-combining in `FB_WINDOW_VA`, and paints directly: the
-static scene on the first Thread, the lava lamp on the second. Only one component
-can hold the framebuffer, and every program that wants pixels would have to take
-it over.
+Only one component can hold the framebuffer: `fb_v1.frames lends (key_table)`
+hands its Frames out once. The compositor holds it. `userspace/libs/framebuffer`
+configures it through `fb_v1`, receives the Frames and maps them write-combining
+in `FB_WINDOW_VA`. The shell draws in a window (its static scene on the first
+Thread, the lava lamp on the second) and has no mapping of the framebuffer.
 
-A compositor takes that role. It is the only holder of the framebuffer mapping.
+The compositor is the only holder of the framebuffer mapping.
 Clients (the shell first, later any program) draw into surfaces they own and ask
 the compositor to show them. The compositor also routes input to the window that
 should receive it.
@@ -80,10 +80,12 @@ flowchart LR
 - **Surfaces.** Pixels are 32-bit, in the framebuffer's native order, which
   `fb_v1.pixel_order` reports. Surfaces are ARGB with premultiplied alpha, blended by the compositor. Surface pixels contain no
   pointers, so the compositor does not need the same virtual address in every
-  AddressSpace. Each surface is mapped where its owner and the compositor find it
-  convenient, and the client learns its address from the create reply. Kickstart
-  must provision a surface window in importers of `compositor_v1`, as it already
-  does for `fb_v1` importers through `FB_WINDOW_VA`.
+  AddressSpace. A surface is its bytes rounded up to a multiple of 2 MiB, made of 2 MiB
+  Frames. The compositor carves them and installs a copy of each in the table the
+  client lends to `create_window`; the client maps them where it likes in its
+  surface window (`SURFACE_WINDOW_VA`), which Kickstart provisions in importers of
+  `compositor_v1`, as it does the framebuffer window (`FB_WINDOW_VA`) for
+  importers of `fb_v1`.
 - **Compositing.** Software, on the single core, with fixed-capacity arrays and
   no allocation on the frame path. The back buffer is cacheable RAM. Damage is a
   bounded set of rectangles, merged into their bounding box when full. One frame:
@@ -109,10 +111,9 @@ flowchart LR
 ## Constraints observed in the code
 
 - `fb_v1.frames` hands out the framebuffer once. The compositor is the one client
-  that receives it, so the shell's direct path goes away.
-- Driver and program tables are 256 slots, but the shell's frame table is 1024
-  slots (`FRAME_TABLE_BITS = 10`). A 1024x768 surface built only of 4 KiB Frames
-  needs 768 slots, so surfaces need either larger tables or 2 MiB Frames.
+  that receives it, so the shell has no direct path.
+- Driver and program tables are 256 slots. A 1024x768 surface built only of 4 KiB
+  Frames needs 768 slots, so surfaces are 2 MiB Frames (Q2).
 - Kickstart wires imports through device-tree links (`uses X via ...`). A program
   has no node, so a program cannot yet export an interface. The shell is a program
   but only imports.

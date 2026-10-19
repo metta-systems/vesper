@@ -58,12 +58,48 @@ active = true
 program = true
 dispatcher = true
 
+# The DWC2 USB host controller, loaded once per enabled `brcm,bcm2708-usb`
+# node, and the USB core and the USB HID component above it, programs without a
+# device tree node: the core enumerates devices, and the HID component claims a
+# boot keyboard and mouse from it and publishes their events to the compositor.
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../drivers/usb-hcd-dwc2/interfaces"
+
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../drivers/usb/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+# The compositor: an EL0 program that owns the display and the input. It maps
+# the framebuffer through the fb component, reads the HID component's events
+# and draws the windows that clients make through `compositor_v1`, whose
+# surfaces it carves from its own memory: the back buffer, the table of the
+# framebuffer's Frames and a few surfaces of 2 MiB Frames fit in 32 MiB.
+[[component]]
+name = "compositor"
+binary = "compositor"
+interfaces = "../../userspace/gui/compositor/interfaces"
+active = true
+program = true
+memory = 33554432
+
 # The shell: an EL0 program, loaded once without a device tree node (a
 # component with `program = true`). It has a command prompt on the PL011's serial
 # channel (`serial = true`), switches the LED through the mailbox component
-# and resets the board through the power component. Its `draw` command maps the
-# framebuffer through the fb component, which `memory` leaves room for (the
-# table of Frames the fb component fills).
+# and resets the board through the power component. Its `draw` command asks the
+# compositor for a window, which `memory` leaves room for (the table the
+# window's Frames are lent into).
 [[component]]
 name = "shell"
 binary = "shell"

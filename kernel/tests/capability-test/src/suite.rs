@@ -26,9 +26,9 @@ use {
 };
 
 /// The guard for the tables this suite carves at runtime: distinct from the
-/// boot table's guard so cross-table key confusion is exercised. Fits the 24
-/// guard bits of a 256-entry table's table-relative address.
-const TEST_TABLE_GUARD: u32 = 0x6E_ED42;
+/// boot table's guard so cross-table key confusion is exercised. Fits the 22
+/// guard bits of a 1024-entry table's table-relative address.
+const TEST_TABLE_GUARD: u32 = 0x2E_ED42;
 
 /// The slot half of a key in one of the suite's runtime-carved tables.
 fn test_slot(index: u32) -> KeySlot {
@@ -195,9 +195,22 @@ pub fn run() {
         ),
         Err(CapError::InvalidOperation)
     ));
-    // A single table too large for the boot Untyped's remaining range
-    // fails the reservation instead (2^20 type-sized entries plus counters);
-    // its guard must fit the 12 guard bits a 2^20-entry table leaves.
+    // A table of 2^20 type-sized entries (plus counters) takes about half of
+    // the boot Untyped; its guard must fit the 12 guard bits such a table
+    // leaves.
+    untyped
+        .retype(
+            ObjectType::KEY_TABLE,
+            20,
+            0xFED,
+            1,
+            &self_table,
+            KeySlot(60).0,
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("large table Retype failed: {:?}", error.code()));
+    // A second one is too large for the boot Untyped's remaining range and
+    // fails the reservation instead.
     assert!(matches!(
         untyped.retype(
             ObjectType::KEY_TABLE,

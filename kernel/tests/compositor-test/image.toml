@@ -1,11 +1,23 @@
 # What compositor-test bundles (see vesper-image-build): the DWC2 host controller
 # component, loaded by Kickstart once per enabled `brcm,bcm2708-usb` node, the
-# USB core, the USB HID component that claims the keyboard and mouse from it, and
-# the compositor, the single consumer of the HID component's input stream. The
-# PL011 driver's serial channel belongs to the compositor, so what it routes
-# shows on the UART. The core, the HID component and the compositor are programs
-# (components with `program = true`): Kickstart starts them at boot, without a
-# device tree node.
+# USB core, the USB HID component that claims the keyboard and mouse from it, the
+# mailbox and fb components the compositor draws through, and the compositor,
+# which owns the display and is the single consumer of the HID component's input
+# stream. The PL011 driver's serial channel belongs to the compositor, so what it
+# routes shows on the UART. The core, the HID component and the compositor are
+# programs (components with `program = true`): Kickstart starts them at boot,
+# without a device tree node.
+
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../../drivers/fb/interfaces"
+video_memory = true
 
 [[driver]]
 name = "usb"
@@ -37,6 +49,7 @@ interfaces = "../../../userspace/gui/compositor/interfaces"
 active = true
 program = true
 serial = true
+memory = 33554432
 
 # The root dispatcher: Kickstart binds it once every other program and driver
 # is loaded, and registers the boot Thread with it.

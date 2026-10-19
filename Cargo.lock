@@ -288,11 +288,15 @@ dependencies = [
 name = "compositor"
 version = "0.0.1"
 dependencies = [
+ "compositor-server",
  "driver-protocol",
+ "fb-client",
  "input-client",
  "usb-hid",
  "vesper-compositor-core",
  "vesper-device-driver",
+ "vesper-framebuffer",
+ "vesper-graphics",
  "vesper-input-event",
  "vesper-io-channel",
  "vesper-meddle-runtime",
@@ -300,6 +304,23 @@ dependencies = [
  "vesper-print",
  "vesper-serial-trace",
  "vesper-user-runtime",
+]
+
+[[package]]
+name = "compositor-client"
+version = "0.0.1"
+dependencies = [
+ "compositor-server",
+ "vesper-meddle",
+ "vesper-meddle-runtime",
+]
+
+[[package]]
+name = "compositor-server"
+version = "0.0.1"
+dependencies = [
+ "vesper-meddle",
+ "vesper-meddle-runtime",
 ]
 
 [[package]]
@@ -1815,9 +1836,10 @@ dependencies = [
 name = "shell"
 version = "0.0.1"
 dependencies = [
- "fb-client",
+ "compositor-client",
  "mailbox-client",
  "power-client",
+ "vesper-compositor-core",
  "vesper-device-driver",
  "vesper-graphics",
  "vesper-io-channel",
@@ -2462,6 +2484,16 @@ dependencies = [
  "vesper-log",
  "vesper-qemu",
  "vesper-tests",
+]
+
+[[package]]
+name = "vesper-framebuffer"
+version = "0.0.1"
+dependencies = [
+ "fb-client",
+ "vesper-device-driver",
+ "vesper-graphics",
+ "vesper-objects",
 ]
 
 [[package]]

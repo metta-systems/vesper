@@ -1,7 +1,7 @@
 [package]
 name = "shell"
 
-description = "The shell: an EL0 program with a command prompt on the serial console that drives the LED and the display through the mailbox, power and fb components."
+description = "The shell: an EL0 program with a command prompt on the serial console that drives the LED through the mailbox component and draws in a window of the compositor."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -20,7 +20,8 @@ host-tests = []
 qemu = ["libuser/qemu"]
 
 [target.'cfg(target_os = "vesper")'.dependencies]
-fb-client = { workspace = true }
+compositor-client = { workspace = true }
+libcompositor-core = { workspace = true }
 libdevice-driver = { workspace = true }
 libgraphics = { workspace = true }
 libio-channel = { workspace = true }

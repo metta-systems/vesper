@@ -404,3 +404,230 @@ mod tests {
         assert_eq!(router.focus(), None);
     }
 }
+
+#[cfg(test)]
+mod drawing {
+    use compositor_core::{
+        blit::{Canvas, Layer, Pixels, blend, compose, present},
+        cursor,
+        damage::{Damage, MAX_DAMAGE},
+        windows::Rect,
+    };
+
+    const OPAQUE_RED: u32 = 0xffff_0000;
+    const BACKGROUND: u32 = 0xff10_2030;
+
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn rectangles_intersect_union_and_touch() {
+        let a = rect(0, 0, 10, 10);
+        let b = rect(5, 5, 10, 10);
+        assert_eq!(a.intersect(&b), Some(rect(5, 5, 5, 5)));
+        assert_eq!(
+            a.intersect(&rect(10, 0, 5, 5)),
+            None,
+            "edges do not overlap"
+        );
+        assert!(a.touches(&rect(10, 0, 5, 5)), "edges touch");
+        assert!(!a.touches(&rect(11, 0, 5, 5)));
+        assert_eq!(a.union(&b), rect(0, 0, 15, 15));
+        assert_eq!(
+            a.union(&rect(0, 0, 0, 7)),
+            a,
+            "an empty rectangle adds nothing"
+        );
+        assert_eq!(a.intersect(&rect(-5, -5, 7, 7)), Some(rect(0, 0, 2, 2)));
+    }
+
+    #[test]
+    fn damage_merges_what_touches() {
+        let mut damage = Damage::new();
+        damage.add(rect(0, 0, 10, 10));
+        damage.add(rect(100, 100, 5, 5));
+        assert_eq!(damage.rects().len(), 2);
+        damage.add(rect(8, 8, 10, 10));
+        assert_eq!(damage.rects().len(), 2);
+        assert!(damage.rects().contains(&rect(0, 0, 18, 18)));
+        // A rectangle that bridges both merges them into one.
+        damage.add(rect(10, 10, 92, 92));
+        assert_eq!(damage.rects(), &[rect(0, 0, 105, 105)]);
+        damage.add(rect(0, 0, 0, 5));
+        assert_eq!(damage.rects().len(), 1, "an empty rectangle is no damage");
+        damage.clear();
+        assert!(damage.is_empty());
+    }
+
+    #[test]
+    fn damage_overflow_becomes_the_bounding_box() {
+        let mut damage = Damage::new();
+        for index in 0..MAX_DAMAGE {
+            damage.add(rect(i32::try_from(index).expect("a few") * 20, 0, 5, 5));
+        }
+        assert_eq!(damage.rects().len(), MAX_DAMAGE);
+        damage.add(rect(0, 500, 5, 5));
+        assert_eq!(damage.rects().len(), 1);
+        assert_eq!(damage.rects()[0], rect(0, 0, 145, 505));
+    }
+
+    #[test]
+    fn blending_follows_premultiplied_alpha() {
+        assert_eq!(blend(OPAQUE_RED, BACKGROUND), OPAQUE_RED);
+        assert_eq!(blend(0, BACKGROUND), BACKGROUND);
+        // Half transparent white over black is half white.
+        assert_eq!(blend(0x8080_8080, 0xff00_0000), 0xff80_8080);
+        // Half transparent black (all channels zero) halves the destination.
+        assert_eq!(blend(0x8000_0000, 0xffff_ffff), 0xff7f_7f7f);
+    }
+
+    fn canvas(pixels: &mut [u32], width: u32, height: u32) -> Canvas<'_> {
+        Canvas {
+            pixels,
+            pitch: width as usize,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn compose_clips_to_the_damage_and_stacks_layers() {
+        let mut pixels = [0_u32; 20 * 10];
+        let mut canvas = canvas(&mut pixels, 20, 10);
+        let lower = [OPAQUE_RED; 8 * 6];
+        let upper = [0xff00_ff00_u32; 4 * 4];
+        let layers = [
+            Layer {
+                rect: rect(2, 2, 8, 6),
+                pixels: &Pixels(&lower),
+                pitch: 8,
+            },
+            Layer {
+                rect: rect(6, 4, 4, 4),
+                pixels: &Pixels(&upper),
+                pitch: 4,
+            },
+        ];
+        compose(&mut canvas, &rect(0, 0, 12, 5), BACKGROUND, &layers, None);
+        let at = |x: usize, y: usize| canvas.pixels[y * 20 + x];
+        assert_eq!(at(0, 0), BACKGROUND);
+        assert_eq!(at(2, 2), OPAQUE_RED);
+        assert_eq!(at(9, 3), OPAQUE_RED);
+        assert_eq!(at(6, 4), 0xff00_ff00, "the upper layer covers the lower");
+        assert_eq!(at(10, 3), BACKGROUND, "right of the lower layer");
+        assert_eq!(at(2, 5), 0, "outside the damage nothing is drawn");
+        assert_eq!(at(15, 0), 0, "outside the damage nothing is drawn");
+    }
+
+    #[test]
+    fn a_layer_that_hangs_off_the_screen_is_clipped() {
+        let mut pixels = [0_u32; 10 * 10];
+        let mut canvas = canvas(&mut pixels, 10, 10);
+        let layer_pixels = [OPAQUE_RED; 6 * 6];
+        let layers = [Layer {
+            rect: rect(-3, -3, 6, 6),
+            pixels: &Pixels(&layer_pixels),
+            pitch: 6,
+        }];
+        compose(
+            &mut canvas,
+            &rect(-50, -50, 200, 200),
+            BACKGROUND,
+            &layers,
+            None,
+        );
+        assert_eq!(canvas.pixels.len(), 100);
+        assert_eq!(canvas.pixels[0], OPAQUE_RED);
+        assert_eq!(canvas.pixels[2 * 10 + 2], OPAQUE_RED);
+        assert_eq!(canvas.pixels[3], BACKGROUND);
+        assert_eq!(canvas.pixels[3 * 10], BACKGROUND);
+    }
+
+    #[test]
+    fn the_cursor_is_drawn_last_and_clipped() {
+        let mut pixels = [0_u32; 30 * 30];
+        let mut canvas = canvas(&mut pixels, 30, 30);
+        let layer_pixels = [OPAQUE_RED; 30 * 30];
+        let layers = [Layer {
+            rect: rect(0, 0, 30, 30),
+            pixels: &Pixels(&layer_pixels),
+            pitch: 30,
+        }];
+        let everything = rect(0, 0, 30, 30);
+        compose(&mut canvas, &everything, BACKGROUND, &layers, Some((5, 5)));
+        assert_eq!(canvas.pixels.len(), 900);
+        assert_eq!(
+            canvas.pixels[5 * 30 + 5],
+            0xff00_0000,
+            "the hot spot is black"
+        );
+        assert_eq!(
+            canvas.pixels[(5 + 3) * 30 + 5 + 1],
+            0xffff_ffff,
+            "inside the arrow"
+        );
+        assert_eq!(
+            canvas.pixels[5 * 30 + 5 + 4],
+            OPAQUE_RED,
+            "beside the arrow"
+        );
+        // A cursor half off the screen draws what shows, and one wholly off
+        // draws nothing.
+        compose(
+            &mut canvas,
+            &everything,
+            BACKGROUND,
+            &layers,
+            Some((-6, 28)),
+        );
+        compose(
+            &mut canvas,
+            &everything,
+            BACKGROUND,
+            &layers,
+            Some((100, 100)),
+        );
+        assert_eq!(canvas.pixels[0], OPAQUE_RED);
+        assert_eq!(cursor::pixel(40, 40), 0);
+    }
+
+    #[test]
+    fn a_surface_takes_whole_2_mib_frames() {
+        use compositor_core::surface::{MAX_FRAMES, frames, pitch_bytes};
+        assert_eq!(pitch_bytes(1000), 4000);
+        // 1000 x 500 x 4 = 2,000,000 bytes fit one Frame of 2,097,152.
+        assert_eq!(frames(1000, 500), Some(1));
+        // 3 MiB takes two.
+        assert_eq!(frames(1024, 768), Some(2));
+        assert_eq!(frames(1024, 512), Some(1));
+        assert_eq!(frames(1024, 513), Some(2));
+        assert_eq!(frames(0, 10), None);
+        assert_eq!(frames(10, 0), None);
+        // The largest surface is MAX_FRAMES Frames; one pixel more is refused.
+        assert_eq!(frames(2048, 2048), Some(MAX_FRAMES));
+        assert_eq!(frames(2048, 2049), None);
+        assert_eq!(frames(u32::MAX, u32::MAX), None);
+    }
+
+    #[test]
+    fn present_copies_only_the_area() {
+        let mut pixels = [7_u32; 8 * 4];
+        let canvas = canvas(&mut pixels, 8, 4);
+        // The display has a wider pitch than the canvas.
+        let mut display = [0_u32; 10 * 4];
+        present(&canvas, &mut display[..], 10, &rect(2, 1, 3, 2));
+        let copied = display.iter().filter(|&&pixel| pixel == 7).count();
+        assert_eq!(copied, 6);
+        assert_eq!(display.len(), 40);
+        assert_eq!(display[10 + 2], 7);
+        assert_eq!(display[2 * 10 + 4], 7);
+        assert_eq!(display[10 + 5], 0);
+        assert_eq!(display[0], 0);
+    }
+}

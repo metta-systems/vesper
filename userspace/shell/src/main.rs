@@ -12,7 +12,7 @@
 //! `libserial-channel` fixes, and its `EventCount`s are in `DriverInit::serial`.
 //! The shell echoes what it receives, collects lines (`shell::LineEditor`),
 //! and runs the commands of `shell::parse` against the mailbox (the LED), the
-//! power component (resetting the board) and, later, the display.
+//! power component (resetting the board) and the compositor (the display).
 
 #[cfg(target_os = "vesper")]
 mod display;
@@ -20,7 +20,9 @@ mod display;
 #[cfg(target_os = "vesper")]
 mod program {
     use {
-        fb_client::fb_v1::{Bindings as FbBindings, Client as FbClient},
+        compositor_client::compositor_v1::{
+            Bindings as CompositorBindings, Client as CompositorClient,
+        },
         libdevice_driver::{DriverInit, driver_init},
         libio_channel::{Consumer, IoRec, NoEvent, Packet, Producer},
         libobject::{EventCountKey, RawKey},
@@ -193,7 +195,7 @@ mod program {
     /// What the commands act on: the components the shell imports from.
     struct Services {
         mailbox: MailboxClient,
-        fb: FbClient,
+        compositor: CompositorClient,
         init: &'static DriverInit,
         /// Resets the board; under QEMU `end` exits it instead.
         #[cfg_attr(feature = "qemu", allow(dead_code))]
@@ -235,7 +237,7 @@ mod program {
         }
 
         fn draw(&mut self) -> Result<(), Failure> {
-            crate::display::draw(self.init, &self.fb)
+            crate::display::draw(self.init, &self.compositor)
         }
     }
 
@@ -259,7 +261,7 @@ mod program {
         let init = unsafe { driver_init(init_va) };
         let mut console = SerialConsole::new(init);
         let mut services = Services {
-            fb: FbClient::new(FbBindings::from_imports(init.imports())),
+            compositor: CompositorClient::new(CompositorBindings::from_imports(init.imports())),
             init,
             mailbox: MailboxClient::new(MailboxBindings::from_imports(init.imports())),
             power: PowerClient::new(PowerBindings::from_imports(init.imports())),

@@ -53,7 +53,8 @@ constrain the decisions below.
 - **B. The client carves surfaces from its own Untyped and lends a table of Frames
   to the compositor.** Memory is accounted to the client, but H1 applies.
 
-Status: open.
+Answer (2026-10-19): A, the compositor owns the surface Frames and the application
+just draws there.
 
 ## Q2. Surface granularity
 
@@ -65,8 +66,12 @@ Status: open.
 
 Recommendation: B for version 1, because it keeps slot counts under control.
 
-Answer (2026-10-18): C, granularity chosen by surface size. The size threshold and
-the rule are not specified yet.
+Answer (2026-10-18): C, granularity chosen by surface size.
+
+Rule (2026-10-19): a surface's memory is its size rounded up to a multiple of 2 MiB,
+made of 2 MiB Frames. A 3 MiB surface gets 4 MiB, two Frames. The slack
+accommodates small size changes, which change only the stride, without
+reallocating.
 
 ## Q3. Event channel granularity
 
@@ -117,8 +122,10 @@ rectangles unless a later decision says otherwise.
 - **C. Timer that runs only while damage exists**, a hybrid of A and B.
 
 Answer (2026-10-18): C, a timer driven by an adaptive target frame rate, running
-only while damage is present. The target-rate policy and the adaptation rule are not
-specified yet.
+only while damage is present.
+
+Rule (2026-10-19): A for now, a fixed 33 ms timer that runs only while damage
+exists. The adaptation rule is deferred.
 
 ## Q8. Wiring a program that exports an interface (H3)
 
