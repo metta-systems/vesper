@@ -29,11 +29,18 @@
 //! the controller reads an OUT packet and invalidates it before the CPU reads
 //! an IN reply. QEMU's model supports DMA only.
 //!
-//! Only control pipes are served. A pipe routed through a high-speed hub (`set_route`)
-//! runs one split transaction per packet (see `split`). Interrupt and bulk pipes come
-//! with HID (USB4).
+//! Control and interrupt-IN pipes are served; bulk pipes are not. A pipe routed
+//! through a high-speed hub (`set_route`) runs one split transaction per packet
+//! (see `split`).
 //! Completion is interrupt driven: the component's own Thread services the
 //! controller's interrupt, and a transfer sleeps on an `EventCount` it advances.
+//!
+//! A second Thread polls the interrupt pipes (see `periodic`): when a pipe is due
+//! and its client has posted an empty buffer on the report channel, it runs one
+//! IN transaction on the same host channel, under the same turnstile as the
+//! calls, and returns the report in the buffer. A NAK is not an error, and the
+//! pipe is due again an interval later. Frame parity placement (`HCCHAR.OddFrm`)
+//! is left to the controller.
 //!
 //! A pipe is the set of `pipe_v1` Invocation keys `open_pipe` installs in the
 //! table the caller lends, badged with the pipe's handle: holding a key is the
@@ -51,8 +58,9 @@ mod component {
         libdevice_driver::{
             DEVICE_WINDOW_VA, DriverInit, ExportedArea, INIT_VA, MAX_DEVICE_PAGES, Masters,
             NO_BUS_ADDRESS, Turn, Turnstile, device_address, driver_compatible, driver_init,
-            map_device_pages,
+            driver_threads, map_device_pages,
         },
+        libio_channel::{Cursor, NoEvent, Packet},
         libobject::{
             AddressSpaceKey, CapError, EventCountKey, FrameAttribute, FrameKey, IrqHandlerKey,
             KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, StackPoolHandle, UntypedKey,
@@ -68,24 +76,32 @@ mod component {
         },
         usb_hcd_dwc2::{
             control::{self, StageError},
+            periodic::{Polled, Poller, ScheduleError, is_pollable, transaction_us},
             pipes::{Config, Pipe, PipeError, PipeTable, Route},
             regs::{
                 Channel, ChannelInterrupts, ChannelOutcome, GLOBAL_HOST_CHANNEL, MmioChannel,
-                MmioRegisterBlock, Pid, RegisterBlock, RxFifoSize, Split, SplitRoute, Target,
-                TxFifoSize, channel_event_mask, channel_offset, channel_outcome, characteristics,
-                host_channel_bit, port_speed, port_status_bits, port_with_reset_and_power,
-                split_control, split_event_mask, transfer_size,
+                MmioRegisterBlock, Pid, PollOutcome, RegisterBlock, RxFifoSize, Split, SplitRoute,
+                Target, TxFifoSize, channel_event_mask, channel_offset, channel_outcome,
+                characteristics, host_channel_bit, poll_outcome, port_speed, port_status_bits,
+                port_with_reset_and_power, split_control, split_event_mask, transfer_size,
             },
             split::{Phase, Sequence, Step, event_of, failure_status, next_pid, packet_bytes},
         },
         vesper_usb_protocol::{
-            descriptor::TransferKind as UsbKind, enumeration::Speed as UsbSpeed, setup::SetupPacket,
+            descriptor::TransferKind as UsbKind,
+            enumeration::Speed as UsbSpeed,
+            report_channel::{ReportChannel, data_area as report_data_area},
+            setup::SetupPacket,
         },
     };
 
     libuser::entry!(main);
 
     driver_compatible!("brcm,bcm2708-usb");
+
+    // The poller Thread polls the interrupt pipes while the first Thread
+    // services the controller's interrupt.
+    driver_threads!(poller_main);
 
     /// Host channel that runs every control transfer.
     const CHANNEL: usize = 0;
@@ -570,7 +586,10 @@ mod component {
             loop {
                 let chunk = packet_bytes(bytes - moved, target.max_packet);
                 let at = offset + u64::try_from(moved).unwrap_or(u64::MAX);
-                let done = self.run_split_packet(index, target, pid, at, chunk)?;
+                let done = self
+                    .run_split_packet(index, target, pid, at, chunk, Sequence::new())?
+                    // Only a poll ends with no data.
+                    .ok_or(PipeException::TransferFailed { status: 0 })?;
                 moved += done;
                 pid = next_pid(pid);
                 if moved >= bytes || (target.input && done < usize::from(target.max_packet)) {
@@ -581,7 +600,9 @@ mod component {
 
         /// One packet through the hub's transaction translator: a start split,
         /// then complete splits until the hub has the result (see
-        /// `split::Sequence`). Returns the bytes of the packet that moved.
+        /// `split::Sequence`). Returns the bytes of the packet that moved, or
+        /// `None` for a poll (`sequence` made by `Sequence::poll`) the device
+        /// answered with a NAK.
         fn run_split_packet(
             &mut self,
             index: usize,
@@ -589,8 +610,8 @@ mod component {
             pid: Pid,
             offset: u64,
             bytes: usize,
-        ) -> Result<usize, PipeException> {
-            let mut sequence = Sequence::new();
+            mut sequence: Sequence,
+        ) -> Result<Option<usize>, PipeException> {
             loop {
                 let phase = sequence.phase();
                 let attempt = Attempt {
@@ -619,7 +640,11 @@ mod component {
                     }
                     Step::Done => {
                         let remaining = Self::finish_channel(index, self.base);
-                        return Ok(bytes.saturating_sub(remaining));
+                        return Ok(Some(bytes.saturating_sub(remaining)));
+                    }
+                    Step::NoData => {
+                        self.halt(index, target);
+                        return Ok(None);
                     }
                     Step::Stalled => {
                         self.halt(index, target);
@@ -629,6 +654,88 @@ mod component {
                         self.halt(index, target);
                         return Err(PipeException::TransferFailed { status });
                     }
+                }
+            }
+        }
+
+        /// Poll the interrupt-IN `pipe` once: one IN transaction of up to
+        /// `config.max_packet` bytes expecting DATA1 if `data1`. Returns the
+        /// bytes of the report, left in the DMA page at `DATA_OFFSET`, or
+        /// `None` if the device had nothing to send.
+        fn poll(
+            &mut self,
+            pipe: &Pipe,
+            config: Config,
+            data1: bool,
+        ) -> Result<Option<usize>, PipeException> {
+            if !self.registers.read_port().connected() {
+                return Err(PipeException::NoDevice);
+            }
+            let target = Target {
+                device_address: pipe.device_address,
+                endpoint: pipe.endpoint,
+                input: true,
+                low_speed: pipe.speed == UsbSpeed::Low,
+                kind: UsbKind::Interrupt,
+                max_packet: config.max_packet,
+                split: pipe.route.map(|route| SplitRoute {
+                    hub_address: route.hub_address,
+                    hub_port: route.hub_port,
+                }),
+            };
+            let pid = if data1 { Pid::Data1 } else { Pid::Data0 };
+            let bytes = usize::from(config.max_packet).min(DATA_CAPACITY);
+            let length = u64::try_from(bytes).unwrap_or(u64::MAX);
+            // The controller writes the page behind the CPU's back.
+            self.maintain(false, DATA_OFFSET, DATA_OFFSET + length);
+            let moved = if target.split.is_some() {
+                self.run_split_packet(CHANNEL, target, pid, DATA_OFFSET, bytes, Sequence::poll())?
+            } else {
+                self.poll_whole(target, pid, bytes)?
+            };
+            if let Some(moved) = moved {
+                self.maintain(
+                    false,
+                    DATA_OFFSET,
+                    DATA_OFFSET + u64::try_from(moved).unwrap_or(u64::MAX),
+                );
+            }
+            Ok(moved)
+        }
+
+        /// One poll of a device on the root port.
+        fn poll_whole(
+            &mut self,
+            target: Target,
+            pid: Pid,
+            bytes: usize,
+        ) -> Result<Option<usize>, PipeException> {
+            let attempt = Attempt {
+                target,
+                split: Split::ZERO,
+                pid,
+                offset: DATA_OFFSET,
+                bytes,
+                packets: 1,
+            };
+            let seen = self.start_attempt(CHANNEL, &attempt);
+            let (outcome, status) = self.wait_event(CHANNEL, target, seen, poll_outcome)?;
+            match outcome {
+                PollOutcome::Data => {
+                    let remaining = Self::finish_channel(CHANNEL, self.base);
+                    Ok(Some(bytes.saturating_sub(remaining)))
+                }
+                PollOutcome::Nothing => {
+                    self.halt(CHANNEL, target);
+                    Ok(None)
+                }
+                PollOutcome::Stalled => {
+                    self.halt(CHANNEL, target);
+                    Err(PipeException::Stalled)
+                }
+                PollOutcome::Failed => {
+                    self.halt(CHANNEL, target);
+                    Err(PipeException::TransferFailed { status })
                 }
             }
         }
@@ -763,8 +870,29 @@ mod component {
     struct Hcd {
         controller: Controller<'static>,
         pipes: PipeTable,
+        /// The interrupt pipes the poller Thread polls.
+        poller: Poller,
         /// The keys of `pipe_v1` each client gets for a pipe.
         masters: Masters<{ pipe_v1::FUNCTION_COUNT }>,
+    }
+
+    /// The `EventCount` the poller Thread sleeps on between polls, as a wire
+    /// key; calls that change the schedule advance it. Set before the
+    /// component is ready.
+    static WAKE: AtomicU64 = AtomicU64::new(0);
+
+    /// Wake the poller Thread to look at the schedule.
+    fn wake_poller() {
+        EventCountKey::from_key(RawKey::from_wire(WAKE.load(Ordering::Acquire)))
+            .advance(1)
+            .unwrap_or_else(|error| {
+                panic!("usb-hcd-dwc2: wake advance failed: {:?}", error.code())
+            });
+    }
+
+    /// Milliseconds on the virtual counter.
+    fn now_ms() -> u64 {
+        ticks() / ticks_per_ms().max(1)
     }
 
     struct Shared(UnsafeCell<Option<Hcd>>);
@@ -927,8 +1055,31 @@ mod component {
             let config = Config::new(kind, max_packet, interval_ms)
                 .map_err(|_unusable| PipeException::NotPermitted)?;
             let mut turn = TURNSTILE.enter(init());
-            let pipe = hcd(&mut turn).pipes.get_mut(handle).map_err(pipe_error)?;
-            pipe.config = Some(config);
+            let hcd = hcd(&mut turn);
+            let pipe = *hcd.pipes.get(handle).map_err(pipe_error)?;
+            if kind == UsbKind::Interrupt {
+                // Only interrupt-IN endpoints are polled.
+                if !is_pollable(kind, pipe.input) {
+                    return Err(PipeException::NotPermitted);
+                }
+                hcd.poller
+                    .schedule(
+                        handle,
+                        config.interval_ms,
+                        transaction_us(pipe.speed, config.max_packet),
+                        now_ms(),
+                    )
+                    .map_err(|error| match error {
+                        ScheduleError::NoBandwidth => PipeException::NoBandwidth,
+                        ScheduleError::Invalid => PipeException::NotPermitted,
+                        ScheduleError::Full => PipeException::Busy,
+                    })?;
+            } else {
+                hcd.poller.remove(handle);
+            }
+            hcd.pipes.get_mut(handle).map_err(pipe_error)?.config = Some(config);
+            drop(turn);
+            wake_poller();
             Ok(())
         }
 
@@ -958,7 +1109,9 @@ mod component {
         fn close_pipe(badge: u64) -> Result<(), PipeException> {
             let handle = handle(badge)?;
             let mut turn = TURNSTILE.enter(init());
-            hcd(&mut turn).pipes.close(handle).map_err(pipe_error)
+            let hcd = hcd(&mut turn);
+            hcd.poller.remove(handle);
+            hcd.pipes.close(handle).map_err(pipe_error)
         }
 
         fn clear_halt(badge: u64) -> Result<(), PipeException> {
@@ -966,12 +1119,36 @@ mod component {
             let mut turn = TURNSTILE.enter(init());
             // A control pipe starts every transfer with DATA0 SETUP, so a stall
             // leaves no toggle to reset; the halt itself is cleared by the
-            // device's CLEAR_FEATURE request through `control`.
-            hcd(&mut turn)
-                .pipes
-                .get(handle)
-                .map(|_pipe| ())
-                .map_err(pipe_error)
+            // device's CLEAR_FEATURE request through `control`. An interrupt
+            // pipe starts again at DATA0, and is polled again if a stall
+            // stopped its polls.
+            let hcd = hcd(&mut turn);
+            let pipe = *hcd.pipes.get(handle).map_err(pipe_error)?;
+            if let Some(
+                config @ Config {
+                    kind: UsbKind::Interrupt,
+                    ..
+                },
+            ) = pipe.config
+            {
+                if hcd.poller.contains(handle) {
+                    hcd.poller.reset_toggle(handle);
+                } else {
+                    // The schedule had room when the pipe was configured, and
+                    // the stalled pipe's share was given back since.
+                    hcd.poller
+                        .schedule(
+                            handle,
+                            config.interval_ms,
+                            transaction_us(pipe.speed, config.max_packet),
+                            now_ms(),
+                        )
+                        .map_err(|_unscheduled| PipeException::NoBandwidth)?;
+                }
+                drop(turn);
+                wake_poller();
+            }
+            Ok(())
         }
 
         fn control(badge: u64, stage: IoRec) -> Result<u32, PipeException> {
@@ -1010,6 +1187,135 @@ mod component {
 
     usb_hcd::usb_hcd_v1_export!(Dwc2);
     usb_hcd::pipe_v1_export!(Dwc2);
+
+    /// Bytes of a report the poller reads from the DMA page at a time.
+    const REPORT_BYTES: usize = 1024;
+
+    /// Whether the client at position `owner` has an empty buffer posted on
+    /// its report channel.
+    fn buffer_waiting(owner: usize) -> bool {
+        let Some(area) = init()
+            .areas()
+            .get(owner)
+            .filter(|area| area.channel_base != 0)
+        else {
+            return false;
+        };
+        // SAFETY: Kickstart mapped the channel's control page read/write at
+        // `channel_base` for the driver's lifetime.
+        let channel = unsafe { ReportChannel::at(area.channel_base) };
+        !channel.reports.submit.is_empty()
+    }
+
+    /// Give the client at position `owner` the `bytes` of report in the DMA
+    /// page, in the first empty buffer it posted, tagged with the pipe
+    /// `handle`. A report longer than the buffer is cut.
+    fn deliver(owner: usize, handle: u32, bytes: usize) {
+        let Some(area) = init()
+            .areas()
+            .get(owner)
+            .filter(|area| area.channel_base != 0)
+        else {
+            return;
+        };
+        // SAFETY: as in `buffer_waiting`.
+        let channel = unsafe { ReportChannel::at(area.channel_base) };
+        let data = report_data_area(area.channel_base);
+        let (mut buffers, mut reports) = channel.reports.server(
+            NoEvent,
+            EventCountKey::from_key(RawKey::from_wire(area.channel_event)),
+        );
+        let Ok(Some(mut packet)) = buffers.get() else {
+            return;
+        };
+        if data.holds(&packet) {
+            let mut report = [0_u8; REPORT_BYTES];
+            let count = bytes.min(REPORT_BYTES);
+            Controller::dma_read(DATA_OFFSET, &mut report[..count]);
+            let mut cursor = Cursor::START;
+            for &byte in &report[..count] {
+                let Some(address) = cursor.next_address(&packet) else {
+                    break;
+                };
+                // SAFETY: the data area holds the packet and is mapped
+                // read/write; the client gave the buffer to the driver until
+                // it comes back.
+                unsafe {
+                    core::ptr::with_exposed_provenance_mut::<u8>(
+                        usize::try_from(address).unwrap_or(usize::MAX),
+                    )
+                    .write_volatile(byte);
+                }
+            }
+            cursor.cut(&mut packet);
+        } else {
+            // A buffer outside the data area comes back empty.
+            Cursor::START.cut(&mut packet);
+        }
+        let Some(report) = Packet::new(u64::from(handle), packet.recs()) else {
+            return;
+        };
+        // A client with more buffers out than the FIFO holds loses the report.
+        let _lost = reports.put(&report);
+        // Only a client's EventCount can fail to advance.
+        let _signalled = reports.signal();
+    }
+
+    /// Poll the first pipe that is due and has a buffer to fill, if any; the
+    /// milliseconds until the next pipe is due, if any pipe is polled.
+    fn poll_due(hcd: &mut Hcd, now: u64) -> Option<u64> {
+        while let Some((handle, data1)) = hcd.poller.due(now) {
+            let Ok(&pipe) = hcd.pipes.get(handle) else {
+                hcd.poller.remove(handle);
+                continue;
+            };
+            let Some(config) = pipe.config else {
+                hcd.poller.remove(handle);
+                continue;
+            };
+            // Without a buffer there is nowhere to put a report: do not poll.
+            if !buffer_waiting(pipe.owner) {
+                hcd.poller.polled(handle, now, Polled::Nothing);
+                continue;
+            }
+            match hcd.controller.poll(&pipe, config, data1) {
+                Ok(Some(bytes)) => {
+                    deliver(pipe.owner, handle, bytes);
+                    hcd.poller.polled(handle, now, Polled::Data);
+                }
+                // A stall stops the polls until `clear_halt`.
+                Err(PipeException::Stalled) => hcd.poller.remove(handle),
+                Ok(None) | Err(_) => hcd.poller.polled(handle, now, Polled::Nothing),
+            }
+            break;
+        }
+        hcd.poller.wait_ms(now_ms())
+    }
+
+    /// The poller Thread: poll the interrupt pipes when they are due, and
+    /// sleep until the next is due or the schedule changes.
+    fn poller_main(init_va: u64) -> ! {
+        // SAFETY: Kickstart passes the init page's address in x0.
+        let init = unsafe { driver_init(init_va) };
+        // Wait for the component to be ready, which also sets `WAKE`.
+        drop(TURNSTILE.enter(init));
+        let wake = EventCountKey::from_key(RawKey::from_wire(WAKE.load(Ordering::Acquire)));
+        let mut seen = 0;
+        loop {
+            let wait = {
+                let mut turn = TURNSTILE.enter(init);
+                poll_due(hcd(&mut turn), now_ms())
+            };
+            let timeout = wait.map_or(EventCountKey::WAIT_INFINITE, |milliseconds| {
+                milliseconds.saturating_mul(1_000_000).max(1)
+            });
+            match wake.await_ge(seen + 1, timeout) {
+                Ok(count) => seen = count,
+                Err(CapError::TimedOut { .. }) => {}
+                Err(error) => panic!("usb-hcd-dwc2: poller wait failed: {:?}", error.code()),
+            }
+        }
+    }
 
     /// Set up the controller and the turnstile, then service the controller's
     /// interrupt: calls run on their
@@ -1087,12 +1393,28 @@ mod component {
                 panic!("usb-hcd-dwc2: turns Retype failed: {:?}", error.code())
             });
         TURNSTILE.open(turns);
+        // The poller Thread sleeps on this `EventCount`, in the slot after the
+        // masters'.
+        let wake = UntypedKey::from_key(RawKey::from_wire(init.memory))
+            .retype(
+                ObjectType::EVENT_COUNT,
+                0,
+                0,
+                1,
+                &KeyTableKey::from_key(RawKey::from_wire(init.table)),
+                u32::try_from(next_slot + 3 + pipe_v1::FUNCTION_COUNT as u64)
+                    .expect("a slot fits in u32"),
+                Rights::all(),
+            )
+            .unwrap_or_else(|error| panic!("usb-hcd-dwc2: wake Retype failed: {:?}", error.code()));
+        WAKE.store(wake.to_wire(), Ordering::Release);
         // SAFETY: nothing else touches the cell until the component says it is
         // ready, just below.
         unsafe {
             *HCD.0.get() = Some(Hcd {
                 controller,
                 pipes: PipeTable::new(),
+                poller: Poller::new(),
                 masters,
             });
         }

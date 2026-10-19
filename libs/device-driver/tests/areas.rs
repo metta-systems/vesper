@@ -10,6 +10,7 @@ mod tests {
             base: DATA_WINDOW_VA + index * 0x1000,
             len: 0x1000,
             channel_base: 0,
+            channel_event: 0,
         }
     }
 

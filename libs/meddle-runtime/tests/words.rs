@@ -194,6 +194,7 @@ mod tests {
     fn import_records_carry_their_channel_after_the_control_page() {
         let record = ImportRecord {
             channel_base: 0x3a00_1000,
+            channel_event: 0x1_0000_0200,
             ..ImportRecord::default()
         };
         assert_eq!(
@@ -203,7 +204,8 @@ mod tests {
                 data: DataArea {
                     base: 0x3a00_2000,
                     len: 0x2000
-                }
+                },
+                event: 0x1_0000_0200,
             })
         );
         assert_eq!(ImportRecord::default().channel(2), None);

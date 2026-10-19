@@ -539,6 +539,43 @@ pub fn channel_outcome(interrupts: ChannelInterrupts) -> Option<ChannelOutcome> 
     }
 }
 
+/// What a channel interrupt means for one poll of an interrupt-IN endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PollOutcome {
+    /// The device sent a packet.
+    Data,
+    /// The device answered with a NAK: it had nothing to send.
+    Nothing,
+    /// The endpoint answered with a STALL.
+    Stalled,
+    /// A bus error, or the channel halted for another reason.
+    Failed,
+}
+
+/// Read the interrupts a poll of an interrupt-IN endpoint raised; `None` while
+/// it has not ended. Unlike for other transfers, a NAK is an answer.
+#[must_use]
+pub fn poll_outcome(interrupts: ChannelInterrupts) -> Option<PollOutcome> {
+    if interrupts.stall() {
+        Some(PollOutcome::Stalled)
+    } else if interrupts.ahb_error()
+        || interrupts.babble()
+        || interrupts.transaction_error()
+        || interrupts.data_toggle_error()
+        || interrupts.frame_overrun()
+    {
+        Some(PollOutcome::Failed)
+    } else if interrupts.transfer_complete() {
+        Some(PollOutcome::Data)
+    } else if interrupts.nak() {
+        Some(PollOutcome::Nothing)
+    } else if interrupts.halted() {
+        Some(PollOutcome::Failed)
+    } else {
+        None
+    }
+}
+
 /// The value to write to the root port to set `reset` and `power`, keeping the
 /// other bits of `current` as they are and leaving its events alone.
 #[must_use]

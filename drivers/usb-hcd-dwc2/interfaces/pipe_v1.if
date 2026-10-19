@@ -42,9 +42,14 @@ local interface pipe_v1
     ## Say what the pipe transfers: its `kind`, the endpoint's `max_packet` bytes
     ## per packet and, for an interrupt pipe, its polling `interval_ms` (ignored
     ## for the other kinds). A pipe may be configured again, for example when a
-    ## device's real control packet size is learned. Implementation status: only
-    ## control pipes are served, with a `max_packet` of 8, 16, 32 or 64; the
-    ## other kinds raise `not_permitted`.
+    ## device's real control packet size is learned. A control pipe has a
+    ## `max_packet` of 8, 16, 32 or 64. An interrupt pipe must be to an IN
+    ## endpoint, with a `max_packet` of 1 to 1024 and an `interval_ms` of 1 to
+    ## 255; it is polled every `interval_ms` while its client has an empty
+    ## buffer posted on the report channel (see `usb_hcd_v1`), and the
+    ## periodic schedule must have room for it. Reports come back on that
+    ## channel, each tagged with the pipe's handle. Implementation status: bulk
+    ## pipes are not served; they raise `not_permitted`.
     configure(transfer_kind kind, card16 max_packet, card32 interval_ms)
         raises (no_bandwidth, invalid_pipe, busy, not_permitted);
 

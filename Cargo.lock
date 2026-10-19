@@ -2192,6 +2192,7 @@ dependencies = [
  "derive-mmio",
  "usb-hcd",
  "vesper-device-driver",
+ "vesper-io-channel",
  "vesper-mmio",
  "vesper-objects",
  "vesper-print",
@@ -2232,6 +2233,7 @@ dependencies = [
  "driver-protocol",
  "usb-hcd-client",
  "vesper-device-driver",
+ "vesper-io-channel",
  "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
@@ -2582,6 +2584,9 @@ dependencies = [
 [[package]]
 name = "vesper-usb-protocol"
 version = "0.0.1"
+dependencies = [
+ "vesper-io-channel",
+]
 
 [[package]]
 name = "vesper-user-runtime"

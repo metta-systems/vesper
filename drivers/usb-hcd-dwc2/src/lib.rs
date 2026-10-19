@@ -11,6 +11,7 @@
 #![no_std]
 
 pub mod control;
+pub mod periodic;
 pub mod pipes;
 pub mod regs;
 pub mod split;

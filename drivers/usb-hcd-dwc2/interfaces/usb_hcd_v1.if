@@ -18,7 +18,12 @@ local interface usb_hcd_v1
     badged;
 
     ## The io-channel interrupt-IN reports travel on: a control page and one data
-    ## page, shared by each client and the controller.
+    ## page, shared by each client and the controller. It runs in receive mode
+    ## (`vesper_usb_protocol::report_channel`): the client posts empty buffers of
+    ## the data page and waits on the channel's `EventCount`; the controller
+    ## returns each buffer with the report of one poll, its length cut to the
+    ## report and its value the pipe's handle. Pipes of the client are polled
+    ## only while a buffer waits.
     channel 1;
 
     ## The slots of the controller's table that hold the key a client lends.

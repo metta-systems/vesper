@@ -11,9 +11,8 @@ See [usb-completed.md](usb-completed.md).
 
 ## USB2 follow-ups
 
-- [ ] Serve interrupt and bulk pipes (USB4; `pipe_v1.configure` already carries their
-  kind, packet size and interval).
-  Control pipes are served, see [usb-completed.md](usb-completed.md).
+- [ ] Serve bulk pipes (`pipe_v1.configure` already carries their kind and packet
+  size). Control and interrupt-IN pipes are served, see [usb-completed.md](usb-completed.md).
 - [ ] Validate DMA and cache maintenance on a real Raspberry Pi 3. QEMU does not
   model caches, and the bus-address alias from the node's `dma-ranges` is
   unchecked on silicon.
@@ -41,12 +40,11 @@ the serial trace; see [usb-completed.md](usb-completed.md).
 
 Needs decision 1. The input event contract is decided ([input-design.md](input-design.md)); the record library is `libs/input-event`.
 
-- [ ] Interrupt-IN in the controller, over the per-client io-channel (provisioned, see
-  [usb-completed.md](usb-completed.md)): a periodic engine on the interrupt Thread that
-  fills the client's posted buffers (packet value: the pipe handle), advances its
-  `EventCount` and re-arms the pipe, without re-arming while no buffer is posted; a channel
-  per active pipe, even/odd frame placement and bandwidth accounting. See
-  [usb-design.md](usb-design.md#control-and-data-planes).
+- [ ] Verify interrupt-IN on a Raspberry Pi 3 and finish its hardware details: the
+  odd/even frame placement (`HCCHAR.OddFrm`), the periodic transmit FIFO (`HPTXFSIZ`)
+  that split interrupt polls need, and the split poll itself, which QEMU's controller
+  cannot run (no transaction translator). QEMU runs the unsplit poll end to end (see
+  [usb-completed.md](usb-completed.md)).
 - [ ] `hid` component in `drivers/usb-hid`: claim the boot keyboard or mouse,
   SET_PROTOCOL and SET_IDLE, and decode reports with `hid_boot`.
 - [ ] Rework `input_v1` in place: `descriptor` and `snapshot` functions, and remove

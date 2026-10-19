@@ -557,6 +557,8 @@ struct PairArea {
     data_bytes: u64,
     /// Base of the channel's control page (zero: no channel)
     channel_base: u64,
+    /// Key of the channel's `EventCount` in the client's table (zero: none)
+    channel_event: u64,
 }
 
 /// Bytes of the window data areas are mapped in: one 2 MiB span.
@@ -1206,6 +1208,39 @@ pub fn load_drivers(
                     data_cursor <= DATA_WINDOW_VA + DATA_WINDOW_BYTES,
                     "🥾 the data window is full"
                 );
+                // A channel gets an EventCount the exporter advances after
+                // completing packets and the client waits on: one key for
+                // each, narrowed to what it does.
+                let (exporter_event, client_event) = if import.channel_pages == 0 {
+                    (0, 0)
+                } else {
+                    let event = builder
+                        .untyped
+                        .retype(
+                            ObjectType::EVENT_COUNT,
+                            0,
+                            0,
+                            1,
+                            builder.self_table,
+                            slots.take(1),
+                            Rights::all(),
+                        )
+                        .unwrap_or_else(|error| {
+                            panic!("🥾 channel EventCount Retype failed: {:?}", error.code())
+                        });
+                    let mut place = |index: usize, rights: u8| {
+                        let loaded = prepared[index].as_mut().expect("a loaded instance");
+                        let slot = loaded.next_slot;
+                        loaded.next_slot += 1;
+                        grant(
+                            &loaded.component,
+                            builder.entry(event).derive(Rights(rights)),
+                            slot,
+                        )
+                        .to_wire()
+                    };
+                    (place(exporter, Rights::SEND), place(client, Rights::RECV))
+                };
                 let calling = prepared[client].as_ref().expect("a loaded client");
                 let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
                 for (index, component) in [
@@ -1245,6 +1280,7 @@ pub fn load_drivers(
                         } else {
                             base + import.data_bytes
                         },
+                        channel_event: exporter_event,
                     };
                     init.area_count += 1;
                 });
@@ -1256,6 +1292,7 @@ pub fn load_drivers(
                     } else {
                         base + import.data_bytes
                     },
+                    channel_event: client_event,
                 };
                 call_areas[client][exporter] = Some(pair);
                 Some(pair)
@@ -1286,6 +1323,7 @@ pub fn load_drivers(
                 base: area_base,
                 data_bytes: area_len,
                 channel_base,
+                channel_event,
             } = area.unwrap_or_default();
             let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
             let exporter_space = AddressSpaceKey::from_key(exporting.component.address_space_key);
@@ -1368,6 +1406,7 @@ pub fn load_drivers(
                     area_base,
                     area_len,
                     channel_base,
+                    channel_event,
                 };
                 init.import_count += 1;
             });

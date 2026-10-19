@@ -18,6 +18,7 @@
 use {
     driver_protocol::report_key,
     libdevice_driver::{driver_init, driver_threads},
+    libio_channel::{NoEvent, Packet},
     libmeddle_runtime::IoRec,
     libobject::{EventCountKey, KeyTableKey, NotificationKey, RawKey, Rights},
     usb_hcd_client::{
@@ -31,6 +32,8 @@ use {
     vesper_usb_protocol::{
         descriptor::{self, Descriptor},
         enumeration::Speed as UsbSpeed,
+        hub::{PORT_POWER, set_port_feature},
+        report_channel::{ReportChannel, data_area},
         setup::{DESCRIPTOR_CONFIGURATION, DESCRIPTOR_DEVICE, SetupPacket},
     },
 };
@@ -62,6 +65,142 @@ fn background(init_va: u64) -> ! {
 
 /// Pipe and stage rules the controller component enforces.
 #[allow(clippy::too_many_lines, reason = "one scenario, step by step")]
+/// Spin for `milliseconds`.
+fn pause_ms(milliseconds: u64) {
+    let end = libuser::clock::now_ns() + milliseconds * 1_000_000;
+    while libuser::clock::now_ns() < end {
+        core::hint::spin_loop();
+    }
+}
+
+/// The hub's status-change endpoint is an interrupt-IN pipe: the controller
+/// polls it while the program has an empty buffer posted on the report
+/// channel, and returns each report in a buffer tagged with the pipe's handle.
+fn check_polling(hcd: &mut Pipes<'_>, speed: Speed) {
+    use pipe_v1::Error as PipeError;
+
+    let client = hcd.client();
+    let channel = client
+        .channel()
+        .expect("the client shares an io-channel with the controller");
+    assert_ne!(channel.event, 0, "the channel has an EventCount");
+    // SAFETY: Kickstart mapped the control page read/write at the channel's base.
+    let reports = unsafe { ReportChannel::at(channel.control) };
+    let data = data_area(channel.control);
+    let reader = libmeddle_runtime::DataArea {
+        base: data.base,
+        len: data.len,
+    };
+    let (mut buffers, mut completed) = reports.reports.client(
+        NoEvent,
+        EventCountKey::from_key(RawKey::from_wire(channel.event)),
+    );
+
+    // Interrupt-IN endpoints are polled; an OUT endpoint or an interval out of
+    // range is refused, and the pipe is closed again.
+    for (endpoint, interval) in [(0x01, 8), (0x81, 0), (0x81, 256)] {
+        assert!(
+            matches!(
+                hcd.open_polled(1, endpoint, speed, TransferKind::Interrupt, 1, interval),
+                Err(OpenError::Configure(PipeError::Exception(
+                    PipeException::NotPermitted
+                )))
+            ),
+            "{endpoint:#x} {interval}"
+        );
+    }
+    // The periodic schedule has room for seven low-speed pipes of eight bytes
+    // every millisecond, and no more.
+    let mut crowd: [Option<Pipe>; 7] = [const { None }; 7];
+    for slot in &mut crowd {
+        *slot = Some(
+            hcd.open_polled(2, 0x81, Speed::Low, TransferKind::Interrupt, 8, 1)
+                .expect("room in the schedule"),
+        );
+    }
+    assert!(
+        matches!(
+            hcd.open_polled(2, 0x81, Speed::Low, TransferKind::Interrupt, 8, 1),
+            Err(OpenError::Configure(PipeError::Exception(
+                PipeException::NoBandwidth
+            )))
+        ),
+        "the schedule is full"
+    );
+    for slot in &mut crowd {
+        hcd.close(&slot.take().expect("an open pipe"));
+    }
+
+    let control = hcd
+        .open(1, 0, speed, TransferKind::Control, 64)
+        .expect("a control pipe to the hub");
+    let status = hcd
+        .open_polled(1, 0x81, speed, TransferKind::Interrupt, 1, 8)
+        .expect("the hub's status-change pipe");
+    // Nothing is reported while no buffer waits.
+    pause_ms(40);
+    assert_eq!(completed.get(), Ok(None), "no buffer, no report");
+
+    // Power the hub's first port: the keyboard behind it connects, and the hub
+    // reports the change on its status-change endpoint until it is cleared.
+    hcd.control(&control, set_port_feature(1, PORT_POWER), &[], &mut [])
+        .expect("power port 1");
+    let mut handle = None;
+    for round in 0..2_u64 {
+        let buffer = IoRec {
+            base: data.base,
+            len: 64,
+        };
+        let packet = Packet::new(0x77 + round, &[buffer]).expect("a packet");
+        assert!(reader.write_bytes(0, &[0xAA; 8]));
+        buffers.put(&packet).expect("room for the buffer");
+        let end = libuser::clock::now_ns() + 3_000_000_000;
+        let report = loop {
+            match completed.get() {
+                Ok(Some(report)) => break report,
+                Ok(None) if libuser::clock::now_ns() < end => core::hint::spin_loop(),
+                other => panic!("no report arrived: {other:?}"),
+            }
+        };
+        assert_eq!(report.recs().len(), 1);
+        assert_eq!(report.recs()[0].base, data.base);
+        assert_eq!(report.recs()[0].len, 1, "a hub reports one bitmap byte");
+        let mut bitmap = [0];
+        assert!(reader.read_bytes(0, &mut bitmap));
+        assert_eq!(bitmap[0] & 0b10, 0b10, "port 1 changed: {bitmap:?}");
+        let mut untouched = [0];
+        assert!(reader.read_bytes(1, &mut untouched));
+        assert_eq!(untouched, [0xAA], "bytes past the report are untouched");
+        let tag = report.value();
+        assert_ne!(tag, 0x77 + round, "the report is tagged with the pipe");
+        assert_eq!(*handle.get_or_insert(tag), tag, "the same pipe each time");
+    }
+    #[cfg(feature = "qemu")]
+    libuser::semihosting::println!(
+        "usb-test-client: the hub's status-change pipe {:#x} reported through the channel",
+        handle.unwrap_or_default()
+    );
+    // Without a buffer the polls stop again.
+    pause_ms(40);
+    assert_eq!(completed.get(), Ok(None));
+
+    status.client.close_pipe().expect("close");
+    hcd.release(&status);
+    // A closed pipe is not polled: a buffer stays where it is.
+    let packet = Packet::new(
+        1,
+        &[IoRec {
+            base: data.base,
+            len: 64,
+        }],
+    )
+    .expect("a packet");
+    buffers.put(&packet).expect("room for the buffer");
+    pause_ms(60);
+    assert_eq!(completed.get(), Ok(None), "a closed pipe is not polled");
+    hcd.close(&control);
+}
+
 fn check_rules(hcd: &mut Pipes<'_>, speed: Speed) {
     let client = hcd.client();
 
@@ -425,14 +564,13 @@ fn main(init_va: u64) -> ! {
     assert_eq!(root.class_code, CLASS_HUB, "the root device is a hub");
     assert!(interfaces > 0, "the hub has an interface");
 
-    check_rules(
-        &mut hcd,
-        match speed {
-            UsbSpeed::Low => Speed::Low,
-            UsbSpeed::Full => Speed::Full,
-            UsbSpeed::High => Speed::High,
-        },
-    );
+    let speed = match speed {
+        UsbSpeed::Low => Speed::Low,
+        UsbSpeed::Full => Speed::Full,
+        UsbSpeed::High => Speed::High,
+    };
+    check_rules(&mut hcd, speed);
+    check_polling(&mut hcd, speed);
 
     NotificationKey::from_key(report_key(init.table))
         .signal(0)

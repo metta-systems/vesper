@@ -89,6 +89,9 @@ pub enum Step {
     Stalled,
     /// The transaction cannot be completed.
     Failed,
+    /// The device had nothing to send: the answer of a poll of an interrupt
+    /// endpoint that answered with a NAK.
+    NoData,
 }
 
 /// One packet's split transaction, from its start split to its result.
@@ -97,6 +100,9 @@ pub struct Sequence {
     phase: Phase,
     not_yet: u32,
     restarts: u32,
+    /// Whether this is a poll of an interrupt-IN endpoint, where a NAK is an
+    /// answer.
+    poll: bool,
 }
 
 impl Sequence {
@@ -107,6 +113,17 @@ impl Sequence {
             phase: Phase::Start,
             not_yet: 0,
             restarts: 0,
+            poll: false,
+        }
+    }
+
+    /// A poll of an interrupt-IN endpoint about to run its start split: a NAK
+    /// ends it with [`Step::NoData`] instead of starting it over.
+    #[must_use]
+    pub const fn poll() -> Self {
+        Self {
+            poll: true,
+            ..Self::new()
         }
     }
 
@@ -138,6 +155,7 @@ impl Sequence {
                 Step::Issue(Phase::Complete)
             }
             (Phase::Complete, Event::Done) => Step::Done,
+            (_, Event::Nak) if self.poll => Step::NoData,
             (Phase::Complete, Event::NotYet) => {
                 self.not_yet += 1;
                 if self.not_yet > MAX_NYET {

@@ -332,8 +332,202 @@ mod tests {
                 Err(ConfigError::Invalid)
             );
         }
-        for kind in [TransferKind::Interrupt, TransferKind::Bulk] {
-            assert_eq!(Config::new(kind, 64, 10), Err(ConfigError::NotServed));
+        assert_eq!(
+            Config::new(TransferKind::Bulk, 64, 0),
+            Err(ConfigError::NotServed)
+        );
+    }
+
+    #[test]
+    fn interrupt_configurations_need_a_packet_size_and_an_interval_in_range() {
+        for (max_packet, interval) in [(1, 1), (8, 10), (64, 255), (1024, 8)] {
+            let config = Config::new(TransferKind::Interrupt, max_packet, interval).unwrap();
+            assert_eq!(config.interval_ms, interval);
+        }
+        for (max_packet, interval) in [(0, 10), (1025, 10), (8, 0), (8, 256)] {
+            assert_eq!(
+                Config::new(TransferKind::Interrupt, max_packet, interval),
+                Err(ConfigError::Invalid)
+            );
+        }
+    }
+
+    #[test]
+    fn a_nak_is_an_answer_to_a_poll() {
+        let nak = ChannelInterrupts::ZERO.with_nak(true).with_halted(true);
+        assert_eq!(poll_outcome(nak), Some(PollOutcome::Nothing));
+        let data = ChannelInterrupts::ZERO
+            .with_transfer_complete(true)
+            .with_halted(true);
+        assert_eq!(poll_outcome(data), Some(PollOutcome::Data));
+        let stall = ChannelInterrupts::ZERO.with_stall(true).with_halted(true);
+        assert_eq!(poll_outcome(stall), Some(PollOutcome::Stalled));
+        for failure in [
+            ChannelInterrupts::ZERO.with_transaction_error(true),
+            ChannelInterrupts::ZERO.with_babble(true),
+            ChannelInterrupts::ZERO.with_data_toggle_error(true),
+            ChannelInterrupts::ZERO.with_frame_overrun(true),
+            ChannelInterrupts::ZERO.with_halted(true),
+        ] {
+            assert_eq!(poll_outcome(failure), Some(PollOutcome::Failed));
+        }
+        assert_eq!(poll_outcome(ChannelInterrupts::ZERO), None);
+        // The same NAK makes a control transfer try again.
+        assert_eq!(channel_outcome(nak), Some(ChannelOutcome::Retry));
+    }
+
+    #[test]
+    fn a_poll_that_is_nakked_has_no_data_and_is_not_started_over() {
+        let mut poll = Sequence::poll();
+        assert_eq!(poll.next(Event::Accepted), Step::Issue(Phase::Complete));
+        assert_eq!(poll.next(Event::NotYet), Step::Issue(Phase::Complete));
+        assert_eq!(poll.next(Event::Nak), Step::NoData);
+
+        let mut early = Sequence::poll();
+        assert_eq!(early.next(Event::Nak), Step::NoData);
+
+        // A transfer that is not a poll starts over on a NAK.
+        let mut transfer = Sequence::new();
+        assert_eq!(transfer.next(Event::Nak), Step::Issue(Phase::Start));
+
+        let mut data = Sequence::poll();
+        data.next(Event::Accepted);
+        assert_eq!(data.next(Event::Done), Step::Done);
+    }
+
+    mod periodic {
+        use {
+            usb_hcd_dwc2::periodic::{
+                MAX_INTERVAL_MS, PERIODIC_BUDGET_US, Polled, Poller, ScheduleError, is_pollable,
+                transaction_us,
+            },
+            vesper_usb_protocol::{descriptor::TransferKind, enumeration::Speed},
+        };
+
+        #[test]
+        fn transactions_take_longer_on_slower_buses() {
+            let low = transaction_us(Speed::Low, 8);
+            let full = transaction_us(Speed::Full, 8);
+            let high = transaction_us(Speed::High, 8);
+            assert!(low > full && full > high, "{low} {full} {high}");
+            // 21 bytes of 8 bits at 1.5 Mbit/s: 112 µs.
+            assert_eq!(low, 112);
+            assert_eq!(full, 14);
+            assert_eq!(high, 1);
+        }
+
+        #[test]
+        fn a_pipe_is_due_from_its_scheduling_and_every_interval_after() {
+            let mut poller = Poller::new();
+            poller.schedule(7, 8, 14, 100).unwrap();
+            assert_eq!(poller.due(99), None);
+            assert_eq!(poller.due(100), Some((7, false)));
+            assert_eq!(poller.wait_ms(90), Some(10));
+            assert_eq!(poller.wait_ms(100), Some(0));
+            poller.polled(7, 100, Polled::Nothing);
+            assert_eq!(poller.due(107), None);
+            assert_eq!(poller.due(108), Some((7, false)), "no data, no toggle");
+            assert_eq!(poller.wait_ms(101), Some(7));
+        }
+
+        #[test]
+        fn data_flips_the_expected_pid_and_halt_clearing_resets_it() {
+            let mut poller = Poller::new();
+            poller.schedule(1, 4, 14, 0).unwrap();
+            poller.polled(1, 0, Polled::Data);
+            assert_eq!(poller.due(4), Some((1, true)));
+            poller.polled(1, 4, Polled::Data);
+            assert_eq!(poller.due(8), Some((1, false)));
+            poller.polled(1, 8, Polled::Data);
+            poller.reset_toggle(1);
+            assert_eq!(poller.due(12), Some((1, false)));
+        }
+
+        #[test]
+        fn a_pipe_that_fell_behind_is_polled_once_not_for_every_missed_interval() {
+            let mut poller = Poller::new();
+            poller.schedule(3, 2, 14, 0).unwrap();
+            poller.polled(3, 1000, Polled::Nothing);
+            assert_eq!(poller.due(1001), None);
+            assert_eq!(poller.due(1002), Some((3, false)));
+        }
+
+        #[test]
+        fn the_most_overdue_pipe_goes_first() {
+            let mut poller = Poller::new();
+            poller.schedule(1, 10, 14, 50).unwrap();
+            poller.schedule(2, 10, 14, 20).unwrap();
+            poller.schedule(3, 10, 14, 80).unwrap();
+            assert_eq!(poller.due(100).map(|due| due.0), Some(2));
+            poller.polled(2, 100, Polled::Nothing);
+            assert_eq!(poller.due(100).map(|due| due.0), Some(1));
+        }
+
+        #[test]
+        fn removing_a_pipe_stops_its_polls() {
+            let mut poller = Poller::new();
+            poller.schedule(5, 8, 14, 0).unwrap();
+            assert!(poller.contains(5));
+            poller.remove(5);
+            assert!(!poller.contains(5));
+            assert_eq!(poller.due(1000), None);
+            assert_eq!(poller.wait_ms(0), None);
+        }
+
+        #[test]
+        fn intervals_outside_one_to_the_maximum_are_refused() {
+            let mut poller = Poller::new();
+            assert_eq!(poller.schedule(1, 0, 14, 0), Err(ScheduleError::Invalid));
+            assert_eq!(
+                poller.schedule(1, MAX_INTERVAL_MS + 1, 14, 0),
+                Err(ScheduleError::Invalid)
+            );
+            poller.schedule(1, MAX_INTERVAL_MS, 14, 0).unwrap();
+        }
+
+        #[test]
+        fn the_schedule_refuses_a_pipe_that_does_not_fit_and_keeps_what_it_has() {
+            let mut poller = Poller::new();
+            // Low-speed 8-byte pipes at 112 µs every millisecond: seven fit
+            // (784 µs of 800), the eighth does not.
+            for handle in 0..7 {
+                poller.schedule(handle, 1, 112, 0).unwrap();
+            }
+            assert_eq!(poller.used_us(), 784);
+            assert_eq!(
+                poller.schedule(7, 1, 112, 0),
+                Err(ScheduleError::NoBandwidth)
+            );
+            // At a slower interval the same pipe costs less and fits.
+            poller.schedule(7, 10, 112, 0).unwrap();
+            assert_eq!(poller.used_us(), 784 + 12);
+            // Scheduling a pipe again counts it once.
+            poller.schedule(7, 10, 112, 0).unwrap();
+            assert_eq!(poller.used_us(), 784 + 12);
+            assert!(PERIODIC_BUDGET_US >= poller.used_us());
+            // A refused change leaves the earlier schedule.
+            assert_eq!(
+                poller.schedule(7, 1, 112, 0),
+                Err(ScheduleError::NoBandwidth)
+            );
+            assert_eq!(poller.used_us(), 784 + 12);
+        }
+
+        #[test]
+        fn the_table_has_a_limit() {
+            let mut poller = Poller::new();
+            for handle in 0..16 {
+                poller.schedule(handle, 100, 1, 0).unwrap();
+            }
+            assert_eq!(poller.schedule(16, 100, 1, 0), Err(ScheduleError::Full));
+        }
+
+        #[test]
+        fn only_interrupt_in_endpoints_are_polled() {
+            assert!(is_pollable(TransferKind::Interrupt, true));
+            assert!(!is_pollable(TransferKind::Interrupt, false));
+            assert!(!is_pollable(TransferKind::Bulk, true));
+            assert!(!is_pollable(TransferKind::Control, true));
         }
     }
 

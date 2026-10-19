@@ -164,10 +164,29 @@ impl<'a> Pipes<'a> {
         kind: TransferKind,
         max_packet: u16,
     ) -> Result<Pipe, OpenError> {
+        self.open_polled(address, endpoint, speed, kind, max_packet, 0)
+    }
+
+    /// Like [`open`](Self::open), for an interrupt pipe polled every
+    /// `interval_ms` milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// The controller's refusal of the open or of the configuration, such as
+    /// `no_bandwidth`.
+    pub fn open_polled(
+        &mut self,
+        address: u32,
+        endpoint: u32,
+        speed: Speed,
+        kind: TransferKind,
+        max_packet: u16,
+        interval_ms: u32,
+    ) -> Result<Pipe, OpenError> {
         let pipe = self
             .open_unconfigured(address, endpoint, speed)
             .map_err(OpenError::Open)?;
-        if let Err(error) = pipe.client.configure(kind, max_packet, 0) {
+        if let Err(error) = pipe.client.configure(kind, max_packet, interval_ms) {
             self.close(&pipe);
             return Err(OpenError::Configure(error));
         }

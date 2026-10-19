@@ -20,6 +20,7 @@ qemu = ["libuser/qemu"]
 [dependencies]
 driver-protocol = { path = "../../driver/protocol" }
 libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 usb-host = { workspace = true }

@@ -48,7 +48,9 @@ impl Config {
     /// # Errors
     ///
     /// [`ConfigError::Invalid`] for a control packet size other than 8, 16, 32
-    /// or 64 bytes, [`ConfigError::NotServed`] for interrupt and bulk pipes.
+    /// or 64 bytes, an interrupt packet size of zero or above 1024 bytes, or an
+    /// interrupt interval of zero or beyond 255 ms; [`ConfigError::NotServed`]
+    /// for bulk pipes.
     pub const fn new(
         kind: TransferKind,
         max_packet: u16,
@@ -60,7 +62,19 @@ impl Config {
                 max_packet,
                 interval_ms,
             }),
-            TransferKind::Control => Err(ConfigError::Invalid),
+            TransferKind::Interrupt
+                if max_packet >= 1
+                    && max_packet <= 1024
+                    && interval_ms >= 1
+                    && interval_ms <= crate::periodic::MAX_INTERVAL_MS =>
+            {
+                Ok(Self {
+                    kind,
+                    max_packet,
+                    interval_ms,
+                })
+            }
+            TransferKind::Control | TransferKind::Interrupt => Err(ConfigError::Invalid),
             _ => Err(ConfigError::NotServed),
         }
     }

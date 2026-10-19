@@ -21,6 +21,9 @@ maintenance = { status = "experimental" }
 # Opt in to standard host integration tests, not the freestanding test-device workflow.
 host-tests = []
 
+[dependencies]
+libio-channel = { workspace = true }
+
 # Host tests bring their own harness; the embedded test workflow skips them.
 [lib]
 test = false

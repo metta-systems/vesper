@@ -332,11 +332,15 @@ pub struct ChannelArea {
     pub control: u64,
     /// The data area that follows the control page
     pub data: DataArea,
+    /// Wire key, in this participant's table, of the `EventCount` the
+    /// exporter advances after completing packets (the client waits on it, the
+    /// exporter advances it); zero: none
+    pub event: u64,
 }
 
 impl ChannelArea {
     /// The channel whose control page is at `control`, with `pages` data pages
-    /// after it.
+    /// after it and no `EventCount`.
     pub const fn at(control: u64, pages: u64) -> Self {
         Self {
             control,
@@ -344,6 +348,7 @@ impl ChannelArea {
                 base: control + PAGE_BYTES,
                 len: pages * PAGE_BYTES,
             },
+            event: 0,
         }
     }
 }
@@ -366,6 +371,9 @@ pub struct ImportRecord {
     /// Base of the io-channel's control page (zero: none); its data area follows.
     /// The interface says how many pages the data area has (`CHANNEL_PAGES`)
     pub channel_base: u64,
+    /// Wire key of the `EventCount` the exporter advances after completing
+    /// packets of the channel, in the client's table (zero: none)
+    pub channel_event: u64,
 }
 
 impl ImportRecord {
@@ -387,7 +395,10 @@ impl ImportRecord {
         if self.channel_base == 0 {
             None
         } else {
-            Some(ChannelArea::at(self.channel_base, pages))
+            Some(ChannelArea {
+                event: self.channel_event,
+                ..ChannelArea::at(self.channel_base, pages)
+            })
         }
     }
     /// The binding this record grants.
