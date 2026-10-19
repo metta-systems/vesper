@@ -44,9 +44,9 @@ prototypes and are edited in place. Open decisions are in
   `max_packet`, and the polling interval of an interrupt pipe), again whenever a
   device's real control packet size is learned. A control pipe's `max_packet` is
   8, 16, 32 or 64; interrupt and bulk pipes raise `not_permitted`.
-- `set_route` stores the route, but split transactions are not implemented, so
-  `control` on a routed pipe raises `not_permitted`. A high-speed pipe cannot be
-  routed.
+- `set_route` stores the route, and `control` on a routed pipe runs each packet as a
+  split transaction: a start split, then complete splits until the hub has the
+  result (`split::Sequence`). A high-speed pipe cannot be routed.
 - `drivers/usb/protocol` has the setup packet, descriptor walker, enumeration state
   machine and HID boot-report decoder. The state machine has no retry and no
   timeout; the caller supplies delays and port resets as steps. Keyboard decoding

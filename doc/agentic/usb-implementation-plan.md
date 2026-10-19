@@ -11,8 +11,8 @@ See [usb-completed.md](usb-completed.md).
 
 ## USB2 follow-ups
 
-- [ ] Serve the rest of `usb_hcd_v1`: interrupt and bulk pipes (USB4; `pipe_v1.configure` already carries their
-  kind, packet size and interval) and split transactions behind `set_route` (USB3).
+- [ ] Serve interrupt and bulk pipes (USB4; `pipe_v1.configure` already carries their
+  kind, packet size and interval).
   Control pipes are served, see [usb-completed.md](usb-completed.md).
 - [ ] Validate DMA and cache maintenance on a real Raspberry Pi 3. QEMU does not
   model caches, and the bus-address alias from the node's `dma-ranges` is

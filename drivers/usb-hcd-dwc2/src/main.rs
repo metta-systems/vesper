@@ -29,8 +29,9 @@
 //! the controller reads an OUT packet and invalidates it before the CPU reads
 //! an IN reply. QEMU's model supports DMA only.
 //!
-//! Only control pipes are served. Interrupt and bulk pipes, and the split
-//! transactions a routed pipe needs, come with the hub driver (USB3) and HID (USB4).
+//! Only control pipes are served. A pipe routed through a high-speed hub (`set_route`)
+//! runs one split transaction per packet (see `split`). Interrupt and bulk pipes come
+//! with HID (USB4).
 //! Completion is interrupt driven: the component's own Thread services the
 //! controller's interrupt, and a transfer sleeps on an `EventCount` it advances.
 //!
@@ -70,11 +71,12 @@ mod component {
             pipes::{Config, Pipe, PipeError, PipeTable, Route},
             regs::{
                 Channel, ChannelInterrupts, ChannelOutcome, GLOBAL_HOST_CHANNEL, MmioChannel,
-                MmioRegisterBlock, Pid, RegisterBlock, RxFifoSize, Target, TxFifoSize,
-                channel_event_mask, channel_offset, channel_outcome, characteristics,
+                MmioRegisterBlock, Pid, RegisterBlock, RxFifoSize, Split, SplitRoute, Target,
+                TxFifoSize, channel_event_mask, channel_offset, channel_outcome, characteristics,
                 host_channel_bit, port_speed, port_status_bits, port_with_reset_and_power,
-                transfer_size,
+                split_control, split_event_mask, transfer_size,
             },
+            split::{Phase, Sequence, Step, event_of, next_pid, packet_bytes},
         },
         vesper_usb_protocol::{
             descriptor::TransferKind as UsbKind, enumeration::Speed as UsbSpeed, setup::SetupPacket,
@@ -384,11 +386,130 @@ mod component {
             }
         }
 
+        /// Program host channel `index` for `attempt` and start it. Returns the
+        /// number of interrupts counted so far: the next one may be the
+        /// attempt's, see [`Self::wait_event`].
+        fn start_attempt(&mut self, index: usize, attempt: &Attempt) -> u64 {
+            let mut channel = channel(self.base, index);
+            let dma_address = self
+                .dma_bus
+                .wrapping_add(u32::try_from(attempt.offset).unwrap_or(u32::MAX));
+            // Quiesce the channel, then arm the interrupt Thread to record its
+            // events for this attempt only.
+            channel.write_interrupt_mask(ChannelInterrupts::ZERO);
+            channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
+            STATUS.store(0, Ordering::Release);
+            channel.write_split(attempt.split);
+            channel.write_dma_address(dma_address);
+            channel.write_transfer_size(transfer_size(
+                u32::try_from(attempt.bytes).unwrap_or(u32::MAX),
+                attempt.packets,
+                attempt.pid,
+            ));
+            // Interrupts the interrupt Thread has counted so far; the next one
+            // may belong to this attempt.
+            let seen = INTERRUPTS.load(Ordering::Acquire);
+            ARMED.store(true, Ordering::Release);
+            channel.write_interrupt_mask(if attempt.split.enable() {
+                split_event_mask()
+            } else {
+                channel_event_mask()
+            });
+            channel.write_characteristics(characteristics(attempt.target, true));
+            seen
+        }
+
+        /// Sleep until the interrupt Thread has recorded events `interpret`
+        /// reads as an outcome, or the transfer's deadline passes (the channel is
+        /// halted then). Returns the outcome with the events recorded.
+        fn wait_event<Outcome>(
+            &mut self,
+            index: usize,
+            target: Target,
+            mut seen: u64,
+            interpret: impl Fn(ChannelInterrupts) -> Option<Outcome>,
+        ) -> Result<(Outcome, u32), PipeException> {
+            let deadline = ticks() + ticks_per_ms() * TRANSFER_MS;
+            loop {
+                let interrupts =
+                    ChannelInterrupts::new_with_raw_value(STATUS.load(Ordering::Acquire));
+                let status = interrupts.raw_value();
+                if let Some(outcome) = interpret(interrupts) {
+                    return Ok((outcome, status));
+                }
+                // Sleep until the interrupt Thread counts another interrupt or
+                // the deadline passes.
+                let now = ticks();
+                if now >= deadline {
+                    self.halt(index, target);
+                    return Err(PipeException::TransferFailed { status });
+                }
+                match self
+                    .completions
+                    .await_ge(seen + 1, ticks_to_ns(deadline - now).max(1))
+                {
+                    Ok(count) => seen = count,
+                    Err(CapError::TimedOut { .. }) => {
+                        self.halt(index, target);
+                        return Err(PipeException::TransferFailed { status });
+                    }
+                    Err(error) => {
+                        panic!("usb-hcd-dwc2: completion wait failed: {:?}", error.code())
+                    }
+                }
+            }
+        }
+
+        /// Disarm channel `index` after a transfer that finished, and return
+        /// the bytes it left over.
+        fn finish_channel(index: usize, base: usize) -> usize {
+            ARMED.store(false, Ordering::Release);
+            let mut channel = channel(base, index);
+            channel.write_interrupt_mask(ChannelInterrupts::ZERO);
+            channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
+            usize::try_from(channel.read_transfer_size().bytes().value()).unwrap_or(usize::MAX)
+        }
+
         /// Run one transfer of `bytes` on host channel `index` to `target`, in
         /// packets of `target.max_packet`, by DMA. The bytes sit in the DMA page
         /// at `offset`: an OUT transfer sends what the caller put there, an IN
-        /// transfer leaves the reply there. Returns the bytes moved.
+        /// transfer leaves the reply there. Returns the bytes moved. A target
+        /// behind a high-speed hub runs one split transaction per packet.
         fn run_channel(
+            &mut self,
+            index: usize,
+            target: Target,
+            pid: Pid,
+            offset: u64,
+            bytes: usize,
+        ) -> Result<usize, PipeException> {
+            let length = u64::try_from(bytes).unwrap_or(u64::MAX);
+            if target.input {
+                // The controller writes the page behind the CPU's back.
+                self.maintain(false, offset, offset + length);
+            } else {
+                // The controller reads the page from memory, not the cache.
+                self.maintain(true, offset, offset + length);
+            }
+            let moved = if target.split.is_some() {
+                self.run_split(index, target, pid, offset, bytes)?
+            } else {
+                self.run_whole(index, target, pid, offset, bytes)?
+            };
+            if target.input {
+                // The reply is in memory now; drop stale lines.
+                self.maintain(
+                    false,
+                    offset,
+                    offset + u64::try_from(moved).unwrap_or(u64::MAX),
+                );
+            }
+            Ok(moved)
+        }
+
+        /// The packets of one transfer to a device on the root port, which
+        /// the controller sends or receives in one run of the channel.
+        fn run_whole(
             &mut self,
             index: usize,
             target: Target,
@@ -401,100 +522,109 @@ mod component {
                 u32::from(target.max_packet),
             ))
             .unwrap_or(u16::MAX);
-            let length = u64::try_from(bytes).unwrap_or(u64::MAX);
-            if target.input {
-                // The controller writes the page behind the CPU's back.
-                self.maintain(false, offset, offset + length);
-            } else {
-                // The controller reads the page from memory, not the cache.
-                self.maintain(true, offset, offset + length);
-            }
-            let dma_address = self
-                .dma_bus
-                .wrapping_add(u32::try_from(offset).unwrap_or(u32::MAX));
-
-            let mut channel = channel(self.base, index);
+            let attempt = Attempt {
+                target,
+                split: Split::ZERO,
+                pid,
+                offset,
+                bytes,
+                packets,
+            };
             let mut status = 0;
             for _attempt in 0..ATTEMPTS {
-                // Quiesce the channel, then arm the interrupt Thread to record its
-                // events for this attempt only.
-                channel.write_interrupt_mask(ChannelInterrupts::ZERO);
-                channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
-                STATUS.store(0, Ordering::Release);
-                channel.write_dma_address(dma_address);
-                channel.write_transfer_size(transfer_size(
-                    u32::try_from(bytes).unwrap_or(u32::MAX),
-                    packets,
-                    pid,
-                ));
-                // Interrupts the interrupt Thread has counted so far; the next one
-                // may belong to this attempt.
-                let mut seen = INTERRUPTS.load(Ordering::Acquire);
-                ARMED.store(true, Ordering::Release);
-                channel.write_interrupt_mask(channel_event_mask());
-                channel.write_characteristics(characteristics(target, true));
-
-                let deadline = ticks() + ticks_per_ms() * TRANSFER_MS;
-                loop {
-                    let interrupts =
-                        ChannelInterrupts::new_with_raw_value(STATUS.load(Ordering::Acquire));
-                    status = interrupts.raw_value();
-                    match channel_outcome(interrupts) {
-                        Some(ChannelOutcome::Complete) => {
-                            ARMED.store(false, Ordering::Release);
-                            channel.write_interrupt_mask(ChannelInterrupts::ZERO);
-                            channel
-                                .write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
-                            let remaining = channel.read_transfer_size().bytes().value();
-                            let moved =
-                                bytes.saturating_sub(usize::try_from(remaining).unwrap_or(bytes));
-                            if target.input {
-                                // The reply is in memory now; drop stale lines.
-                                self.maintain(
-                                    false,
-                                    offset,
-                                    offset + u64::try_from(moved).unwrap_or(u64::MAX),
-                                );
-                            }
-                            return Ok(moved);
-                        }
-                        Some(ChannelOutcome::Stalled) => {
-                            self.halt(index, target);
-                            return Err(PipeException::Stalled);
-                        }
-                        Some(ChannelOutcome::Failed | ChannelOutcome::Halted) => {
-                            self.halt(index, target);
-                            return Err(PipeException::TransferFailed { status });
-                        }
-                        Some(ChannelOutcome::Retry) => {
-                            self.halt(index, target);
-                            break;
-                        }
-                        None => {}
+                let seen = self.start_attempt(index, &attempt);
+                let (outcome, events) = self.wait_event(index, target, seen, channel_outcome)?;
+                status = events;
+                match outcome {
+                    ChannelOutcome::Complete => {
+                        let remaining = Self::finish_channel(index, self.base);
+                        return Ok(bytes.saturating_sub(remaining));
                     }
-                    // Sleep until the interrupt Thread counts another interrupt or
-                    // the transfer's deadline passes.
-                    let now = ticks();
-                    if now >= deadline {
+                    ChannelOutcome::Stalled => {
+                        self.halt(index, target);
+                        return Err(PipeException::Stalled);
+                    }
+                    ChannelOutcome::Failed | ChannelOutcome::Halted => {
                         self.halt(index, target);
                         return Err(PipeException::TransferFailed { status });
                     }
-                    match self
-                        .completions
-                        .await_ge(seen + 1, ticks_to_ns(deadline - now).max(1))
-                    {
-                        Ok(count) => seen = count,
-                        Err(CapError::TimedOut { .. }) => {
-                            self.halt(index, target);
-                            return Err(PipeException::TransferFailed { status });
-                        }
-                        Err(error) => {
-                            panic!("usb-hcd-dwc2: completion wait failed: {:?}", error.code())
-                        }
-                    }
+                    ChannelOutcome::Retry => self.halt(index, target),
                 }
             }
             Err(PipeException::TransferFailed { status })
+        }
+
+        /// The packets of one transfer to a device behind a high-speed hub: one
+        /// split transaction each, with the PID alternating from `pid`. An IN
+        /// transfer ends at a short packet.
+        fn run_split(
+            &mut self,
+            index: usize,
+            target: Target,
+            pid: Pid,
+            offset: u64,
+            bytes: usize,
+        ) -> Result<usize, PipeException> {
+            let mut moved = 0;
+            let mut pid = pid;
+            loop {
+                let chunk = packet_bytes(bytes - moved, target.max_packet);
+                let at = offset + u64::try_from(moved).unwrap_or(u64::MAX);
+                let done = self.run_split_packet(index, target, pid, at, chunk)?;
+                moved += done;
+                pid = next_pid(pid);
+                if moved >= bytes || (target.input && done < usize::from(target.max_packet)) {
+                    return Ok(moved);
+                }
+            }
+        }
+
+        /// One packet through the hub's transaction translator: a start split,
+        /// then complete splits until the hub has the result (see
+        /// `split::Sequence`). Returns the bytes of the packet that moved.
+        fn run_split_packet(
+            &mut self,
+            index: usize,
+            target: Target,
+            pid: Pid,
+            offset: u64,
+            bytes: usize,
+        ) -> Result<usize, PipeException> {
+            let mut sequence = Sequence::new();
+            loop {
+                let phase = sequence.phase();
+                let attempt = Attempt {
+                    target,
+                    split: split_control(target, phase == Phase::Complete),
+                    pid,
+                    offset,
+                    bytes,
+                    packets: 1,
+                };
+                let seen = self.start_attempt(index, &attempt);
+                let (event, status) =
+                    self.wait_event(index, target, seen, |events| event_of(phase, events))?;
+                match sequence.next(event) {
+                    Step::Issue(_) => {
+                        // A run that ended on its own left the channel halted.
+                        if !ChannelInterrupts::new_with_raw_value(status).halted() {
+                            self.halt(index, target);
+                        }
+                    }
+                    Step::Done => {
+                        let remaining = Self::finish_channel(index, self.base);
+                        return Ok(bytes.saturating_sub(remaining));
+                    }
+                    Step::Stalled => {
+                        self.halt(index, target);
+                        return Err(PipeException::Stalled);
+                    }
+                    Step::Failed => {
+                        self.halt(index, target);
+                        return Err(PipeException::TransferFailed { status });
+                    }
+                }
+            }
         }
 
         /// Copy `length` bytes from `area` at `from` to the DMA page at `to`.
@@ -568,6 +698,10 @@ mod component {
                 low_speed: pipe.speed == UsbSpeed::Low,
                 kind: UsbKind::Control,
                 max_packet,
+                split: pipe.route.map(|route| SplitRoute {
+                    hub_address: route.hub_address,
+                    hub_port: route.hub_port,
+                }),
             };
             let data_offset = offset + control::SETUP_BYTES as u64;
 
@@ -605,6 +739,18 @@ mod component {
             )?;
             Ok(moved)
         }
+    }
+
+    /// One run of a host channel: what to send or receive, and how.
+    struct Attempt {
+        target: Target,
+        /// The split control; disabled for a device on the root port.
+        split: Split,
+        pid: Pid,
+        /// Offset in the DMA page of the packets' bytes.
+        offset: u64,
+        bytes: usize,
+        packets: u16,
     }
 
     /// What the calls share, used only while holding a turn.
@@ -832,11 +978,6 @@ mod component {
             let mut turn = TURNSTILE.enter(init());
             let hcd = hcd(&mut turn);
             let pipe = *hcd.pipes.get(handle).map_err(pipe_error)?;
-            // Split transactions are not implemented: a routed pipe waits for
-            // the hub driver.
-            if pipe.route.is_some() {
-                return Err(PipeException::NotPermitted);
-            }
             // Only a control pipe transfers control stages.
             let Some(Config {
                 kind: UsbKind::Control,

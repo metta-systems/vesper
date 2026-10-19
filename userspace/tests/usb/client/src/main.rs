@@ -476,10 +476,17 @@ fn check_rules(hcd: &mut Hcd<'_>, speed: Speed) {
         .client
         .set_route(1, 2)
         .expect("a full-speed device can sit behind a hub");
-    assert_eq!(
-        routed.client.control(stage(26)),
-        Err(pipe_v1::Error::Exception(PipeException::NotPermitted)),
-        "split transactions are not implemented"
+    // A routed pipe runs split transactions. QEMU's controller has no
+    // transaction translator behind its hub, so the start split gets no answer:
+    // the transfer times out and fails, and the pipe stays usable.
+    assert!(
+        matches!(
+            routed.client.control(stage(26)),
+            Err(pipe_v1::Error::Exception(
+                PipeException::TransferFailed { .. }
+            ))
+        ),
+        "a split transaction needs a high-speed hub"
     );
     let fast = hcd
         .open(3, 0, Speed::High, TransferKind::Control, 64)

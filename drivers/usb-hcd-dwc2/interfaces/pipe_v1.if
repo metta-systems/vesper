@@ -50,9 +50,10 @@ local interface pipe_v1
 
     ## Set the hub a low- or full-speed device sits behind, and the hub's port
     ## it is plugged into, so transfers use split transactions. A high-speed
-    ## device needs none and raises `not_permitted`. Implementation status:
-    ## split transactions are not implemented yet, so `control` on a routed pipe
-    ## raises `not_permitted`.
+    ## device needs none and raises `not_permitted`. `control` on a routed pipe
+    ## runs each packet as a start split and complete splits through the hub.
+    ## Implementation status: untested on hardware; QEMU has no transaction
+    ## translator, so a split transfer there fails with `transfer_failed`.
     set_route(card32 hub_address, card32 hub_port)
         raises (invalid_pipe, busy, not_permitted);
 

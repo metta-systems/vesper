@@ -177,6 +177,40 @@ pub struct Characteristics {
     enable: bool,
 }
 
+/// Where a split transaction's data sits in the full-speed or low-speed
+/// packet: a packet that fits one split carries `All`.
+#[bitenum(u2, exhaustive = true)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransactionPosition {
+    Middle = 0,
+    End = 1,
+    Begin = 2,
+    All = 3,
+}
+
+/// Host channel split control: the transaction translator a full- or
+/// low-speed endpoint behind a high-speed hub is reached through.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct Split {
+    /// The hub port the device is plugged into.
+    #[bits(0..=6, rw)]
+    port_address: u7,
+    /// The address of the hub.
+    #[bits(7..=13, rw)]
+    hub_address: u7,
+    /// Where the transaction's data sits in the packet.
+    #[bits(14..=15, rw)]
+    position: TransactionPosition,
+    /// The transaction is a complete split (collect the result) instead of a
+    /// start split (hand the transaction to the hub).
+    #[bit(16, rw)]
+    complete_split: bool,
+    /// The channel runs split transactions.
+    #[bit(31, rw)]
+    enable: bool,
+}
+
 /// PID of a transfer's first packet.
 #[bitenum(u2, exhaustive = true)]
 #[derive(Debug, PartialEq, Eq)]
@@ -224,12 +258,18 @@ pub struct ChannelInterrupts {
     /// The endpoint answered with an ACK.
     #[bit(5, rw)]
     ack: bool,
+    /// The hub answered a complete split with NYET: the transaction is not done yet.
+    #[bit(6, rw)]
+    nyet: bool,
     /// A transaction error: CRC, timeout or a bad handshake.
     #[bit(7, rw)]
     transaction_error: bool,
     /// The device sent more data than the channel expected.
     #[bit(8, rw)]
     babble: bool,
+    /// A split transaction started too late in its microframe.
+    #[bit(9, rw)]
+    frame_overrun: bool,
     /// The data toggle did not match.
     #[bit(10, rw)]
     data_toggle_error: bool,
@@ -336,7 +376,8 @@ pub struct RegisterBlock {
 #[repr(C)]
 pub struct Channel {
     characteristics: Characteristics,
-    _split: u32,
+    /// Split transaction control.
+    split: Split,
     interrupt: ChannelInterrupts,
     interrupt_mask: ChannelInterrupts,
     transfer_size: TransferSize,
@@ -364,6 +405,7 @@ assert_register_offsets!(RegisterBlock, 0x500, {
 
 assert_register_offsets!(Channel, 0x20, {
     characteristics: 0x00,
+    split: 0x04,
     interrupt: 0x08,
     interrupt_mask: 0x0c,
     transfer_size: 0x10,
@@ -406,6 +448,14 @@ pub fn characteristics(target: Target, enable: bool) -> Characteristics {
         .with_enable(enable)
 }
 
+/// The hub port a low- or full-speed endpoint is reached through, when the hub
+/// is faster than the device and runs its transactions as splits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SplitRoute {
+    pub hub_address: u8,
+    pub hub_port: u8,
+}
+
 /// The endpoint of a host channel's transfers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Target {
@@ -415,6 +465,26 @@ pub struct Target {
     pub low_speed: bool,
     pub kind: TransferKind,
     pub max_packet: u16,
+    /// The hub and port to run split transactions through, if the device sits
+    /// behind a high-speed hub.
+    pub split: Option<SplitRoute>,
+}
+
+/// The split control of a channel that talks to `target`: disabled for a
+/// device on the root port, else a start split or a complete split
+/// (`complete`) through its hub port. A packet that fits one split carries
+/// all of its data in it.
+#[must_use]
+pub fn split_control(target: Target, complete: bool) -> Split {
+    match target.split {
+        None => Split::ZERO,
+        Some(route) => Split::ZERO
+            .with_port_address(u7::masked_new(route.hub_port))
+            .with_hub_address(u7::masked_new(route.hub_address))
+            .with_position(TransactionPosition::All)
+            .with_complete_split(complete)
+            .with_enable(true),
+    }
 }
 
 const fn endpoint_kind(kind: TransferKind) -> EndpointKind {
@@ -510,4 +580,15 @@ pub fn channel_event_mask() -> ChannelInterrupts {
         .with_transaction_error(true)
         .with_babble(true)
         .with_data_toggle_error(true)
+}
+
+/// The channel events a split transaction waits for: those of
+/// [`channel_event_mask`] plus the hub's ACK of a start split, its NYET, and a
+/// split that started too late in its microframe.
+#[must_use]
+pub fn split_event_mask() -> ChannelInterrupts {
+    channel_event_mask()
+        .with_ack(true)
+        .with_nyet(true)
+        .with_frame_overrun(true)
 }

@@ -14,6 +14,10 @@ mod tests {
             control,
             pipes::{Config, ConfigError, MAX_PIPES, Pipe, PipeError, PipeTable, Route},
             regs::*,
+            split::{
+                Event, MAX_NYET, MAX_RESTARTS, Phase, Sequence, Step, event_of, next_pid,
+                packet_bytes,
+            },
         },
         vesper_usb_protocol::{descriptor::TransferKind, enumeration::Speed, setup::SetupPacket},
     };
@@ -26,6 +30,7 @@ mod tests {
             low_speed: false,
             kind: TransferKind::Control,
             max_packet,
+            split: None,
         }
     }
 
@@ -58,6 +63,7 @@ mod tests {
             low_speed: true,
             kind: TransferKind::Interrupt,
             max_packet: 8,
+            split: None,
         };
         let value = characteristics(target, false);
         assert_eq!(value.max_packet().value(), 8);
@@ -379,5 +385,162 @@ mod tests {
                 hub_port: 3
             })
         );
+    }
+
+    fn behind_a_hub(hub_address: u8, hub_port: u8) -> Target {
+        Target {
+            split: Some(SplitRoute {
+                hub_address,
+                hub_port,
+            }),
+            low_speed: true,
+            ..control_target(5, 8)
+        }
+    }
+
+    #[test]
+    fn split_control_wire_form_places_the_fields_where_the_manual_does() {
+        // HCSPLT: port 3 | hub 9 << 7 | position All (3) << 14 | enable (bit 31).
+        let start = split_control(behind_a_hub(9, 3), false);
+        assert_eq!(start.raw_value(), 3 | (9 << 7) | (3 << 14) | (1 << 31));
+        // A complete split also sets bit 16.
+        let complete = split_control(behind_a_hub(9, 3), true);
+        assert_eq!(complete.raw_value(), start.raw_value() | (1 << 16));
+        // A device on the root port runs no splits.
+        assert_eq!(split_control(control_target(1, 8), false), Split::ZERO);
+        assert_eq!(split_control(control_target(1, 8), true), Split::ZERO);
+    }
+
+    #[test]
+    fn the_split_event_mask_adds_exactly_the_split_events() {
+        let plain = channel_event_mask();
+        let split = split_event_mask();
+        assert_eq!(
+            split.raw_value() & !plain.raw_value(),
+            (1 << 5) | (1 << 6) | (1 << 9),
+            "ACK, NYET and frame overrun"
+        );
+        assert_eq!(split.raw_value() & plain.raw_value(), plain.raw_value());
+    }
+
+    fn events(configure: impl FnOnce(ChannelInterrupts) -> ChannelInterrupts) -> ChannelInterrupts {
+        configure(ChannelInterrupts::ZERO)
+    }
+
+    #[test]
+    fn channel_events_read_as_split_events_by_phase() {
+        let start = |e: ChannelInterrupts| event_of(Phase::Start, e);
+        let complete = |e: ChannelInterrupts| event_of(Phase::Complete, e);
+        assert_eq!(start(ChannelInterrupts::ZERO), None);
+        assert_eq!(start(events(|e| e.with_ack(true))), Some(Event::Accepted));
+        assert_eq!(
+            start(events(|e| e.with_ack(true).with_halted(true))),
+            Some(Event::Accepted)
+        );
+        // An ACK of a complete split alone is not a result.
+        assert_eq!(complete(events(|e| e.with_ack(true))), None);
+        assert_eq!(
+            complete(events(|e| e.with_transfer_complete(true).with_ack(true))),
+            Some(Event::Done)
+        );
+        assert_eq!(complete(events(|e| e.with_nyet(true))), Some(Event::NotYet));
+        assert_eq!(start(events(|e| e.with_nak(true))), Some(Event::Nak));
+        assert_eq!(complete(events(|e| e.with_nak(true))), Some(Event::Nak));
+        for error in [
+            events(|e| e.with_transaction_error(true)),
+            events(|e| e.with_frame_overrun(true)),
+            events(|e| e.with_data_toggle_error(true)),
+        ] {
+            assert_eq!(start(error), Some(Event::Error));
+            assert_eq!(complete(error), Some(Event::Error));
+        }
+        // A STALL outranks a result, a bus error outranks a result.
+        let stalled = events(|e| e.with_stall(true).with_transfer_complete(true));
+        assert_eq!(complete(stalled), Some(Event::Stalled));
+        let broken = events(|e| e.with_ahb_error(true).with_transfer_complete(true));
+        assert_eq!(complete(broken), Some(Event::Failed));
+        assert_eq!(
+            complete(events(|e| e.with_babble(true))),
+            Some(Event::Failed)
+        );
+        // A completed transfer of a start split is not a result.
+        assert_eq!(start(events(|e| e.with_transfer_complete(true))), None);
+    }
+
+    #[test]
+    fn a_split_transaction_runs_start_then_complete_until_done() {
+        let mut sequence = Sequence::new();
+        assert_eq!(sequence.phase(), Phase::Start);
+        assert_eq!(sequence.next(Event::Accepted), Step::Issue(Phase::Complete));
+        assert_eq!(sequence.phase(), Phase::Complete);
+        assert_eq!(sequence.next(Event::Done), Step::Done);
+    }
+
+    #[test]
+    fn nyet_repeats_the_complete_split_then_starts_over() {
+        let mut sequence = Sequence::new();
+        sequence.next(Event::Accepted);
+        for _ in 0..MAX_NYET {
+            assert_eq!(sequence.next(Event::NotYet), Step::Issue(Phase::Complete));
+        }
+        assert_eq!(
+            sequence.next(Event::NotYet),
+            Step::Issue(Phase::Start),
+            "the hub never had the result"
+        );
+        // The count starts over with the new complete split.
+        sequence.next(Event::Accepted);
+        assert_eq!(sequence.next(Event::NotYet), Step::Issue(Phase::Complete));
+        assert_eq!(sequence.next(Event::Done), Step::Done);
+    }
+
+    #[test]
+    fn a_nak_or_an_error_starts_the_packet_over_until_given_up() {
+        for event in [Event::Nak, Event::Error] {
+            let mut sequence = Sequence::new();
+            for _ in 0..MAX_RESTARTS {
+                assert_eq!(sequence.next(event), Step::Issue(Phase::Start));
+            }
+            assert_eq!(sequence.next(event), Step::Failed, "{event:?}");
+        }
+        // The same from the complete split.
+        let mut sequence = Sequence::new();
+        sequence.next(Event::Accepted);
+        assert_eq!(sequence.next(Event::Nak), Step::Issue(Phase::Start));
+        assert_eq!(sequence.phase(), Phase::Start);
+    }
+
+    #[test]
+    fn a_stall_or_a_bus_error_ends_the_transaction() {
+        for phase_events in [&[][..], &[Event::Accepted][..]] {
+            let mut stalled = Sequence::new();
+            let mut failed = Sequence::new();
+            for event in phase_events {
+                stalled.next(*event);
+                failed.next(*event);
+            }
+            assert_eq!(stalled.next(Event::Stalled), Step::Stalled);
+            assert_eq!(failed.next(Event::Failed), Step::Failed);
+        }
+    }
+
+    #[test]
+    fn events_a_phase_cannot_produce_start_the_packet_over() {
+        let mut sequence = Sequence::new();
+        assert_eq!(sequence.next(Event::Done), Step::Issue(Phase::Start));
+        assert_eq!(sequence.next(Event::NotYet), Step::Issue(Phase::Start));
+        sequence.next(Event::Accepted);
+        assert_eq!(sequence.next(Event::Accepted), Step::Issue(Phase::Start));
+    }
+
+    #[test]
+    fn packets_are_at_most_max_packet_bytes_and_pids_alternate() {
+        assert_eq!(packet_bytes(0, 8), 0);
+        assert_eq!(packet_bytes(5, 8), 5);
+        assert_eq!(packet_bytes(8, 8), 8);
+        assert_eq!(packet_bytes(4032, 64), 64);
+        assert_eq!(next_pid(Pid::Setup), Pid::Data1);
+        assert_eq!(next_pid(Pid::Data1), Pid::Data0);
+        assert_eq!(next_pid(Pid::Data0), Pid::Data1);
     }
 }
