@@ -981,7 +981,7 @@ fn emit_interfaces(
             for index in summary.functions {
                 emit!(
                     imports,
-                    "        Import {{ interface: \"{}\", type_code: 0x{:016x}, function: {index}, provider: {}, data_bytes: {}, placement_slots: {}, lends: {}, export: \"{}\" }},\n",
+                    "        Import {{ interface: \"{}\", type_code: 0x{:016x}, function: {index}, provider: {}, data_bytes: {}, placement_slots: {}, channel_pages: {}, lends: {}, export: \"{}\" }},\n",
                     summary.interface.name,
                     summary.interface.type_code,
                     match &summary.provider {
@@ -1003,6 +1003,7 @@ fn emit_interfaces(
                     },
                     summary.interface.data_bytes,
                     summary.interface.placement_slots,
+                    summary.interface.channel_pages,
                     summary.interface.lends.get(index).copied().unwrap_or(false),
                     summary.interface.export_name(index).unwrap_or_default()
                 );

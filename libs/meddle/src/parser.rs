@@ -3,8 +3,9 @@
 use {
     crate::{
         ast::{
-            DataDeclaration, Exception, Field, File, Interface, LentKey, Link, Method, Name,
-            PlacementDeclaration, Provider, TypeDefinition, TypeKind, TypeReference, Uses,
+            ChannelDeclaration, DataDeclaration, Exception, Field, File, Interface, LentKey, Link,
+            Method, Name, PlacementDeclaration, Provider, TypeDefinition, TypeKind, TypeReference,
+            Uses,
         },
         diagnostic::Diagnostic,
         lexer::Token,
@@ -26,6 +27,7 @@ enum Member {
     Method(Method),
     Data(DataDeclaration),
     Placement(PlacementDeclaration),
+    Channel(ChannelDeclaration),
     Badged,
     /// A member that did not parse; its error is already reported.
     Invalid,
@@ -37,6 +39,7 @@ enum MemberBody {
     Exception(Name, Vec<Field>),
     Data(DataDeclaration),
     Placement(PlacementDeclaration),
+    Channel(ChannelDeclaration),
     Badged,
     Method {
         name: Name,
@@ -180,6 +183,18 @@ where
         )
         .then_ignore(just(Token::Semicolon));
 
+    let channel = just(Token::Channel)
+        .ignore_then(
+            select! { Token::Number(pages) => pages }.map_with(|pages: u64, extra| {
+                let span: SimpleSpan = extra.span();
+                ChannelDeclaration {
+                    pages,
+                    span: span.into_range(),
+                }
+            }),
+        )
+        .then_ignore(just(Token::Semicolon));
+
     let badged = just(Token::Badged).ignore_then(just(Token::Semicolon));
 
     let member = docs
@@ -188,6 +203,7 @@ where
             exception.map(|(name, fields)| MemberBody::Exception(name, fields)),
             data.map(MemberBody::Data),
             placement.map(MemberBody::Placement),
+            channel.map(MemberBody::Channel),
             badged.map(|_semicolon| MemberBody::Badged),
             method.map(
                 |(((((name, parameters), lends), installs), results), raises)| MemberBody::Method {
@@ -204,6 +220,7 @@ where
             MemberBody::Type(name, kind) => Member::Type(TypeDefinition { doc, name, kind }),
             MemberBody::Data(declaration) => Member::Data(declaration),
             MemberBody::Placement(declaration) => Member::Placement(declaration),
+            MemberBody::Channel(declaration) => Member::Channel(declaration),
             MemberBody::Badged => Member::Badged,
             MemberBody::Exception(name, fields) => {
                 Member::Exception(Exception { doc, name, fields })
@@ -256,6 +273,7 @@ where
                 exceptions: Vec::new(),
                 data: None,
                 placement: None,
+                channel: None,
                 badged: false,
                 methods: Vec::new(),
             };
@@ -266,6 +284,7 @@ where
                     Member::Method(method) => interface.methods.push(method),
                     Member::Data(declaration) => interface.data = Some(declaration),
                     Member::Placement(declaration) => interface.placement = Some(declaration),
+                    Member::Channel(declaration) => interface.channel = Some(declaration),
                     Member::Badged => interface.badged = true,
                     Member::Invalid => {}
                 }

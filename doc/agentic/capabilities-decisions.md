@@ -176,3 +176,14 @@ needs them.
   subscription would act as a finer filter on it. Weigh the extra per-Thread
   state and the risk of a scheduler's data structures and the kernel's
   per-Thread configuration drifting apart.
+- **Universal channel provisioning:** a general way to set up shared control
+  pages and data areas between components, instead of per-interface wiring (the
+  per-pair data areas Kickstart builds for Meddle `data` declarations, the
+  interrupt-IN channel of the USB stack and the hand-wired serial channel are
+  three cases of it). Would need its own design, for example a Meddle `channel`
+  declaration shared by all of them, or client-lent Frames with a mapping window.
+- **Isochronous scheduler:** a nested userspace Scheduler that reserves a
+  period and budget (a SCHED_ISO-like class) for Threads with periodic CPU needs.
+  Policy lives in a scheduler component, as the nucleus has no periods or
+  deadlines. Audio is the first user that needs it; USB isochronous pipes, and
+  display, would use it too. HID interrupt pipes do not need it.

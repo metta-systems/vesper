@@ -40,6 +40,8 @@ pub enum Token<'source> {
     Installs,
     #[token("badged")]
     Badged,
+    #[token("channel")]
+    Channel,
     #[token("placement")]
     Placement,
     #[token("via")]
@@ -91,6 +93,7 @@ impl fmt::Display for Token<'_> {
             Self::Lends => "`lends`",
             Self::Installs => "`installs`",
             Self::Badged => "`badged`",
+            Self::Channel => "`channel`",
             Self::Placement => "`placement`",
             Self::Compatible => "`compatible`",
             Self::Number(number) => return write!(formatter, "{number}"),

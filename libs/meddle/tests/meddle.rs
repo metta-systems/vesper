@@ -831,6 +831,52 @@ mod tests {
     }
 
     #[test]
+    fn channels_are_local_and_bounded_and_part_of_the_type_code() {
+        let source = "local interface a_v1 { channel 2; f(); }";
+        assert!(check_messages(source).is_empty());
+        assert_reports(
+            "interface a_v1 { channel 2; f(); }",
+            "`channel` needs a `local` interface",
+        );
+        for pages in [0, 17] {
+            assert_reports(
+                &format!("local interface a_v1 {{ channel {pages}; f(); }}"),
+                "a channel has from 1 to 16 data pages",
+            );
+        }
+        assert!(check_messages("local interface a_v1 { channel 16; f(); }").is_empty());
+        let plain = "local interface a_v1 { f(); }";
+        assert_ne!(type_code(source), type_code(plain));
+        assert_ne!(
+            type_code(source),
+            type_code("local interface a_v1 { channel 3; f(); }")
+        );
+    }
+
+    #[test]
+    fn a_channel_reaches_the_generated_constants_and_bindings() {
+        let source = "local interface a_v1 { channel 2; f(); }";
+        let (interface_module, client_module) = with_checked(source, |checked| {
+            (
+                squash(&emit::interface_module(checked, "a_v1.if")),
+                squash(&emit::client_module(checked, "a_v1.if", "a")),
+            )
+        });
+        let (raw_interface, raw_client) = with_checked(source, |checked| {
+            (
+                emit::interface_module(checked, "a_v1.if"),
+                emit::client_module(checked, "a_v1.if", "a"),
+            )
+        });
+        syn::parse_file(&raw_interface).expect("generated interface code parses");
+        syn::parse_file(&raw_client).expect("generated client code parses");
+        assert!(interface_module.contains("pubconstCHANNEL_PAGES:u64=2;"));
+        assert!(client_module.contains("pubchannel:Option<__runtime::ChannelArea>"));
+        assert!(client_module.contains("bindings.channel=record.channel(CHANNEL_PAGES);"));
+        assert!(client_module.contains("pubconstfnchannel(&self)"));
+    }
+
+    #[test]
     fn badged_interfaces_pass_the_badge_to_every_function() {
         assert_reports(
             "interface a_v1 { badged; f(); }",

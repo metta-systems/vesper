@@ -88,6 +88,16 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   the HCD fills them on completion and advances the client's EventCount. With no
   empty IO_Rec posted, the HCD does not schedule the IN transfer, so backpressure
   is natural. The drop-and-count rule of `io-channel-design` remains a safety net.
+- Interrupt-IN channel (maintainer decisions, 2026-10-19): Kickstart provisions the
+  channel, from a declaration in the interface, once for each client of the controller
+  (as it does for the control data area); the channel is per client, not per pipe, and
+  each packet's value word carries the pipe's handle; while no empty buffer is posted
+  the controller does not re-arm the pipe. A more universal way to provision shared
+  channels is future work (see the Future work section of
+  [capabilities-decisions.md](capabilities-decisions.md)).
+- CPU time for the Threads that serve data pipes needs no scheduler of its own for HID
+  (an 8 ms interval). A guaranteed share for isochronous pipes belongs to a separate
+  isochronous scheduler, parked until audio needs it (same Future work section).
 - Data areas: control transfers stage the setup packet and data stage in the
   client's `data` area (`octet&`), following the mailbox convention.
 

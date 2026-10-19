@@ -13,8 +13,9 @@
 //! ```text
 //! file      = { interface | uses } ;
 //! interface = { doc } [ "local" ] "interface" name "{" { member } "}" ;
-//! member    = { doc } ( alias | enum | record | exception | data | placement | badged | method ) ;
+//! member    = { doc } ( alias | enum | record | exception | data | channel | placement | badged | method ) ;
 //! data      = "data" number ";" ;
+//! channel   = "channel" number ";" ;
 //! placement = "placement" number ";" ;
 //! badged    = "badged" ";" ;
 //! alias     = "type" type name ";" ;
@@ -41,6 +42,13 @@
 //! area with `data <bytes>;` (whole pages, at most 64 KiB). Kickstart gives
 //! each client of the interface one such area, mapped at the same address in
 //! the client and its exporter.
+//!
+//! A `local` interface can also declare `channel <pages>;` (1 to 16): an
+//! io-channel (`libio-channel`) between each client and its exporter, for data
+//! that flows without calls. Kickstart maps its control page and `<pages>`
+//! data pages right after the data area, at the same address in both. The
+//! generated client reaches it as `Bindings::channel`, and an exporter finds
+//! it in its `ExportedArea` record.
 //!
 //! A function that takes a key from its caller says so in a `lends` clause:
 //! `lends (key_table into)` or `lends (frame page)`, the kind being one of
@@ -337,6 +345,9 @@ pub struct InterfaceSummary {
     /// Slots of the exporter's table reserved for each client's lent keys
     /// (zero: no function lends a key)
     pub placement_slots: u64,
+    /// Data pages of the io-channel each client shares with the exporter
+    /// besides its control page (zero: none)
+    pub channel_pages: u64,
     /// The interface's functions, in declaration order: a function's
     /// position is its index in import records
     pub functions: Vec<String>,
@@ -394,6 +405,7 @@ pub fn summarize_interface(
         type_code: checked.type_code(),
         data_bytes: checked.data_bytes(),
         placement_slots: checked.placement_slots(),
+        channel_pages: checked.channel_pages(),
         functions: checked
             .interface()
             .methods

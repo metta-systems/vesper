@@ -26,6 +26,11 @@ pub const MAX_DATA_BYTES: u64 = 64 * 1024;
 /// exporter's table reserved for each client.
 pub const MAX_PLACEMENT_SLOTS: u64 = 8;
 
+/// Most data pages of the io-channel an interface may declare, besides its
+/// control page: both are mapped in the client and the exporter for every pair,
+/// in the same window as the data area.
+pub const MAX_CHANNEL_PAGES: u64 = 16;
+
 /// Bytes of a page: data areas are whole pages.
 pub const PAGE_BYTES: u64 = 4096;
 
@@ -157,6 +162,15 @@ impl<'interface> Checked<'interface> {
             .map_or(0, |declaration| declaration.bytes)
     }
 
+    /// Data pages of the io-channel each client shares with the exporter
+    /// besides its control page; zero when the interface has no channel.
+    pub fn channel_pages(&self) -> u64 {
+        self.interface
+            .channel
+            .as_ref()
+            .map_or(0, |declaration| declaration.pages)
+    }
+
     /// Slots of the exporter's table each client gets for lent keys; zero
     /// when no function lends a key.
     pub fn placement_slots(&self) -> u64 {
@@ -257,6 +271,7 @@ pub fn check<'interface>(
     let installed = pass.installs();
     pass.badged();
     pass.placement_window();
+    pass.channel();
     let words = pass.word_counts();
     let checked = Checked {
         interface,
@@ -819,6 +834,28 @@ impl<'interface> Checker<'interface> {
         Some(seahash::hash(fingerprint_text(other, &[]).as_bytes()) & !0xffff)
     }
 
+    /// A `channel` declaration: an io-channel is between machine-local
+    /// components, so only `local` interfaces have one, and it has a bounded
+    /// number of data pages.
+    fn channel(&mut self) {
+        let interface = self.interface;
+        let Some(declaration) = &interface.channel else {
+            return;
+        };
+        if !interface.local {
+            self.diagnostics.push(Diagnostic::error(
+                declaration.span.clone(),
+                "`channel` needs a `local` interface: memory is shared on this machine only",
+            ));
+        }
+        if declaration.pages == 0 || declaration.pages > MAX_CHANNEL_PAGES {
+            self.diagnostics.push(Diagnostic::error(
+                declaration.span.clone(),
+                format!("a channel has from 1 to {MAX_CHANNEL_PAGES} data pages"),
+            ));
+        }
+    }
+
     /// A `placement` declaration and the functions with a `lends` clause go
     /// together: a lent key is placed in the exporter's table, in the window
     /// Kickstart reserves for each client.
@@ -931,6 +968,9 @@ fn write_fingerprint(
     }
     if let Some(declaration) = &interface.placement {
         write!(text, "placement {};", declaration.slots)?;
+    }
+    if let Some(declaration) = &interface.channel {
+        write!(text, "channel {};", declaration.pages)?;
     }
     if interface.badged {
         write!(text, "badged;")?;

@@ -168,6 +168,11 @@ pub fn run() -> ! {
                     panic!("one client, one data area, found {}", init.areas().len());
                 };
                 assert_eq!(area.len, 4096);
+                assert_eq!(
+                    area.channel_base,
+                    area.base + 4096,
+                    "the channel follows the data area"
+                );
                 assert!(area.stack_bottom < area.stack_end);
                 assert!(area.base >= DATA_WINDOW_VA);
                 controller_area = area.base;
@@ -185,7 +190,8 @@ pub fn run() -> ! {
                 assert!(
                     imports.iter().all(|record| record.type_code == USB_HCD_V1
                         && record.area_len == 4096
-                        && record.area_base == imports[0].area_base),
+                        && record.area_base == imports[0].area_base
+                        && record.channel_base == record.area_base + 4096),
                     "the functions of one pair share one area"
                 );
                 assert!(imports.iter().map(|record| record.function).eq(0..3));

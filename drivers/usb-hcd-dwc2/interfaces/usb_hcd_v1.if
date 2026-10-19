@@ -13,6 +13,10 @@ local interface usb_hcd_v1
     ## `open_pipe` returns the keys it installs.
     data 4096;
 
+    ## The io-channel interrupt-IN reports travel on: a control page and one data
+    ## page, shared by each client and the controller.
+    channel 1;
+
     ## The slots of the controller's table that hold the key a client lends.
     placement 1;
 

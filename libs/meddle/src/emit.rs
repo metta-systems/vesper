@@ -514,6 +514,7 @@ impl Emitter<'_, '_> {
             ident("TYPE_CODE"),
             ident("DATA_BYTES"),
             ident("PLACEMENT_SLOTS"),
+            ident("CHANNEL_PAGES"),
             ident("FUNCTION_COUNT"),
         ];
         reexports.extend(
@@ -569,6 +570,8 @@ impl Emitter<'_, '_> {
                     #( #binding_fields )*
                     /// The data area shared with the exporter, if the interface has one.
                     pub data_area: Option<#runtime::DataArea>,
+                    /// The io-channel shared with the exporter, if the interface has one.
+                    pub channel: Option<#runtime::ChannelArea>,
                 }
 
                 impl Bindings {
@@ -579,6 +582,9 @@ impl Emitter<'_, '_> {
                         for record in imports.iter().filter(|record| record.type_code == TYPE_CODE) {
                             if record.area_len != 0 {
                                 bindings.data_area = record.data_area();
+                            }
+                            if record.channel_base != 0 {
+                                bindings.channel = record.channel(CHANNEL_PAGES);
                             }
                             match record.function {
                                 #( #assignments )*
@@ -610,6 +616,7 @@ impl Emitter<'_, '_> {
                         Some(Self {
                             #( #installed_fields: binding(#installed_names), )*
                             data_area,
+                            channel: None,
                         })
                     }
                 }
@@ -650,6 +657,12 @@ impl Emitter<'_, '_> {
                     /// one: references passed to its functions point into it.
                     pub const fn data_area(&self) -> Option<#runtime::DataArea> {
                         self.bindings.data_area
+                    }
+
+                    /// The io-channel shared with the exporter, if the interface has
+                    /// one.
+                    pub const fn channel(&self) -> Option<#runtime::ChannelArea> {
+                        self.bindings.channel
                     }
 
                     #( #functions )*
@@ -764,6 +777,7 @@ pub fn interface_module(checked: &Checked<'_>, source_name: &str) -> String {
         .unwrap_or_else(|_| quote!(0));
     let data_bytes = Literal::u64_unsuffixed(checked.data_bytes());
     let placement_slots = Literal::u64_unsuffixed(checked.placement_slots());
+    let channel_pages = Literal::u64_unsuffixed(checked.channel_pages());
     let function_count = Literal::usize_unsuffixed(interface.methods.len());
     let types = emitter.type_definitions();
     let exceptions = emitter.exceptions();
@@ -784,6 +798,10 @@ pub fn interface_module(checked: &Checked<'_>, source_name: &str) -> String {
                 /// Bytes of the data area each client shares with the exporter
                 /// (zero: the interface passes no references).
                 pub const DATA_BYTES: u64 = #data_bytes;
+
+                /// Data pages of the io-channel each client shares with the exporter,
+                /// besides its control page (zero: no channel).
+                pub const CHANNEL_PAGES: u64 = #channel_pages;
 
                 /// Slots of the exporter's table each client gets for the keys
                 /// its functions lend (zero: no function lends a key).

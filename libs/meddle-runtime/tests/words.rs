@@ -4,8 +4,8 @@
 #[cfg(test)]
 mod tests {
     use vesper_meddle_runtime::{
-        ARGUMENT_WORDS, DataArea, ImportRecord, IoRec, OUTCOME_MALFORMED, OUTCOME_OK, Words,
-        exception, malformed, ok, unused_words_are_zero,
+        ARGUMENT_WORDS, ChannelArea, DataArea, ImportRecord, IoRec, OUTCOME_MALFORMED, OUTCOME_OK,
+        Words, exception, malformed, ok, unused_words_are_zero,
     };
 
     fn round_trip<T: Words + PartialEq + core::fmt::Debug>(value: &T) {
@@ -188,5 +188,24 @@ mod tests {
             })
         );
         assert_eq!(ImportRecord::default().data_area(), None);
+    }
+
+    #[test]
+    fn import_records_carry_their_channel_after_the_control_page() {
+        let record = ImportRecord {
+            channel_base: 0x3a00_1000,
+            ..ImportRecord::default()
+        };
+        assert_eq!(
+            record.channel(2),
+            Some(ChannelArea {
+                control: 0x3a00_1000,
+                data: DataArea {
+                    base: 0x3a00_2000,
+                    len: 0x2000
+                }
+            })
+        );
+        assert_eq!(ImportRecord::default().channel(2), None);
     }
 }

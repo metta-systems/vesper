@@ -11,6 +11,7 @@ mod tests {
             stack_end: 0x3000_0000 + index * 0x1_0000 + 0x4000,
             base: DATA_WINDOW_VA + index * 0x1000,
             len: 0x1000,
+            channel_base: 0,
         }
     }
 

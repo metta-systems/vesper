@@ -205,6 +205,9 @@ pub struct ExportedArea {
     pub base: u64,
     /// Bytes of the data area
     pub len: u64,
+    /// Base of the io-channel's control page, at the same address in the client
+    /// (zero: none); the channel's data area follows it
+    pub channel_base: u64,
 }
 
 /// The init page's record.
@@ -373,6 +376,7 @@ impl DriverInit {
             stack_end: 0,
             base: 0,
             len: 0,
+            channel_base: 0,
         }; MAX_AREAS],
         imports: [ImportRecord {
             type_code: 0,
@@ -381,6 +385,7 @@ impl DriverInit {
             stack_end: 0,
             area_base: 0,
             area_len: 0,
+            channel_base: 0,
         }; MAX_IMPORTS],
         serial: SerialKeys {
             transmit_submitted: 0,

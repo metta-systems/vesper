@@ -50,6 +50,8 @@ pub struct Interface {
     pub exceptions: Vec<Exception>,
     /// The shared data area its functions pass references into
     pub data: Option<DataDeclaration>,
+    /// The io-channel each client shares with its exporter
+    pub channel: Option<ChannelDeclaration>,
     /// The key-placement window each client's lending functions share
     pub placement: Option<PlacementDeclaration>,
     /// Whether every function receives the badge of the key it was called
@@ -158,4 +160,12 @@ impl Link {
             Self::Property(name) | Self::Compatible(name) => name,
         }
     }
+}
+
+/// `channel <pages>;`: the data pages of the io-channel each client of the
+/// interface shares with its exporter, besides the one control page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelDeclaration {
+    pub pages: u64,
+    pub span: Span,
 }

@@ -355,6 +355,27 @@ fn main(init_va: u64) -> ! {
         .data_area()
         .expect("the client shares a data area with the controller");
     assert_eq!(area.len, 4096);
+    // The io-channel follows the data area: a zeroed control page and a data
+    // page, both mapped read/write.
+    let channel = client
+        .channel()
+        .expect("the client shares an io-channel with the controller");
+    assert_eq!(channel.control, area.base + 4096);
+    assert_eq!(channel.data.len, 4096);
+    let control = libmeddle_runtime::DataArea {
+        base: channel.control,
+        len: 4096,
+    };
+    let mut words = [u32::MAX; 4];
+    assert!(control.read_words(0, &mut words));
+    assert_eq!(words, [0; 4], "a fresh channel is idle");
+    for page in [control, channel.data] {
+        assert!(page.write_words(8, &[0xfeed_f00d]));
+        let mut back = [0];
+        assert!(page.read_words(8, &mut back));
+        assert_eq!(back, [0xfeed_f00d]);
+        assert!(page.write_words(8, &[0]));
+    }
     let mut hcd = Pipes::new(
         &client,
         area,

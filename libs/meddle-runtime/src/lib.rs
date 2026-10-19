@@ -352,6 +352,34 @@ impl DataArea {
     }
 }
 
+/// Bytes of a page: the channel's control page, and the unit of its data area.
+pub const PAGE_BYTES: u64 = 4096;
+
+/// The io-channel one client shares with one exporter: a control page, then
+/// the data area its packets name, at the same addresses in both (see
+/// `libio-channel`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelArea {
+    /// Base of the control page, which holds the channel's FIFOs
+    pub control: u64,
+    /// The data area that follows the control page
+    pub data: DataArea,
+}
+
+impl ChannelArea {
+    /// The channel whose control page is at `control`, with `pages` data pages
+    /// after it.
+    pub const fn at(control: u64, pages: u64) -> Self {
+        Self {
+            control,
+            data: DataArea {
+                base: control + PAGE_BYTES,
+                len: pages * PAGE_BYTES,
+            },
+        }
+    }
+}
+
 /// One function granted to a client: what Kickstart writes into the client's
 /// init record for every function its `imports.if` uses.
 #[repr(C)]
@@ -369,6 +397,9 @@ pub struct ImportRecord {
     pub area_base: u64,
     /// Bytes of the data area
     pub area_len: u64,
+    /// Base of the io-channel's control page (zero: none); its data area follows.
+    /// The interface says how many pages the data area has (`CHANNEL_PAGES`)
+    pub channel_base: u64,
 }
 
 impl ImportRecord {
@@ -384,6 +415,15 @@ impl ImportRecord {
         }
     }
 
+    /// The io-channel this record grants, if the interface has one; `pages` is
+    /// the interface's `CHANNEL_PAGES`.
+    pub const fn channel(&self, pages: u64) -> Option<ChannelArea> {
+        if self.channel_base == 0 {
+            None
+        } else {
+            Some(ChannelArea::at(self.channel_base, pages))
+        }
+    }
     /// The binding this record grants.
     pub const fn binding(&self) -> Binding {
         Binding::new(

@@ -548,6 +548,17 @@ fn component_exporter(
     }
 }
 
+/// What one (client, exporter) pair shares: a data area, and the io-channel
+/// that follows it, at one address in both.
+#[derive(Clone, Copy, Debug, Default)]
+struct PairArea {
+    base: u64,
+    /// Bytes of the data area (zero: none)
+    data_bytes: u64,
+    /// Base of the channel's control page (zero: no channel)
+    channel_base: u64,
+}
+
 /// Bytes of the window data areas are mapped in: one 2 MiB span.
 const DATA_WINDOW_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -1084,7 +1095,7 @@ pub fn load_drivers(
     // The data area of each pair whose interface has one, as `(base, len)`,
     // the next free address of the window they share, and which instances
     // already have its page table installed.
-    let mut call_areas = [[None::<(u64, u64)>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
+    let mut call_areas = [[None::<PairArea>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
     // The placement window of each pair with a function lending a key: slots
     // of the exporter's table reserved for the keys the client lends it.
     let mut call_windows = [[None::<PlacementWindow>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
@@ -1159,12 +1170,19 @@ pub fn load_drivers(
                     stack
                 }
             };
-            let area = if import.data_bytes == 0 {
+            let area = if import.data_bytes == 0 && import.channel_pages == 0 {
                 None
             } else if let Some(area) = call_areas[client][exporter] {
                 Some(area)
             } else {
-                let bytes = import.data_bytes;
+                // The data area first, then the io-channel: its control page and
+                // data pages.
+                let channel_bytes = if import.channel_pages == 0 {
+                    0
+                } else {
+                    (1 + import.channel_pages) * PAGE
+                };
+                let bytes = import.data_bytes + channel_bytes;
                 let base = data_cursor;
                 data_cursor += bytes;
                 assert!(
@@ -1206,12 +1224,26 @@ pub fn load_drivers(
                         stack_bottom: stack.bottom,
                         stack_end: stack.top,
                         base,
-                        len: bytes,
+                        len: import.data_bytes,
+                        channel_base: if import.channel_pages == 0 {
+                            0
+                        } else {
+                            base + import.data_bytes
+                        },
                     };
                     init.area_count += 1;
                 });
-                call_areas[client][exporter] = Some((base, bytes));
-                Some((base, bytes))
+                let pair = PairArea {
+                    base,
+                    data_bytes: import.data_bytes,
+                    channel_base: if import.channel_pages == 0 {
+                        0
+                    } else {
+                        base + import.data_bytes
+                    },
+                };
+                call_areas[client][exporter] = Some(pair);
+                Some(pair)
             };
             // A function that lends a key gets its pair's window: reserved once,
             // never reused, so a lent key never lands on another of the
@@ -1235,7 +1267,11 @@ pub fn load_drivers(
                     window
                 }
             });
-            let (area_base, area_len) = area.unwrap_or((0, 0));
+            let PairArea {
+                base: area_base,
+                data_bytes: area_len,
+                channel_base,
+            } = area.unwrap_or_default();
             let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
             let exporter_space = AddressSpaceKey::from_key(exporting.component.address_space_key);
             let entry = exporting
@@ -1284,6 +1320,7 @@ pub fn load_drivers(
                     stack_end: stack.top,
                     area_base,
                     area_len,
+                    channel_base,
                 };
                 init.import_count += 1;
             });

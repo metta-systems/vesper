@@ -163,6 +163,9 @@ pub struct Import {
     /// Slots of the exporter's table reserved for each client's lent keys
     /// (zero: none)
     pub placement_slots: u64,
+    /// Data pages of the io-channel the interface shares between a client and
+    /// its exporter, besides its control page (zero: none)
+    pub channel_pages: u64,
     /// The function lends a key through `Invocation.CallWithKey`: its
     /// Invocation is created with the client's placement window
     pub lends: bool,

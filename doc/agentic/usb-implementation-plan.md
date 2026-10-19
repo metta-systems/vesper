@@ -41,8 +41,13 @@ the serial trace; see [usb-completed.md](usb-completed.md).
 
 Needs decision 1. The input event contract is decided ([input-design.md](input-design.md)); the record library is `libs/input-event`.
 
-- [ ] Interrupt-IN over an io-channel. The HCD fills IO_Recs and advances the
-  client's EventCount. See [usb-design.md](usb-design.md#control-and-data-planes).
+- [ ] Interrupt-IN in the controller, over the per-client io-channel (provisioned, see
+  [usb-completed.md](usb-completed.md)): a periodic engine on the interrupt Thread that
+  fills the client's posted buffers (packet value: the pipe handle), advances its
+  `EventCount` and re-arms the pipe, without re-arming while no buffer is posted; a channel
+  per active pipe, even/odd frame placement and bandwidth accounting. See
+  [usb-design.md](usb-design.md#control-and-data-planes).
+- [ ] Decide who opens the interrupt pipe of a claimed interface (see [usb-decisions.md](usb-decisions.md)).
 - [ ] `hid` component in `drivers/usb-hid`: claim the boot keyboard or mouse,
   SET_PROTOCOL and SET_IDLE, and decode reports with `hid_boot`.
 - [ ] Rework `input_v1` in place: `descriptor` and `snapshot` functions, and remove
