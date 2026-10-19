@@ -35,11 +35,15 @@ members = [
   "drivers/fb/client",
   "drivers/fb/server",
   # USB pure protocol logic (host-testable)
+  "drivers/usb/host",
+  "drivers/usb",
   "drivers/usb/protocol",
+  "drivers/usb/server",
   "drivers/usb-hcd-dwc2",
   "drivers/usb-hcd-dwc2/client",
   "drivers/usb-hcd-dwc2/server",
   "kernel/tests/usb-test",
+  "kernel/tests/usb-core-test",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -157,6 +161,8 @@ mailbox = { path = "drivers/mailbox/server" }
 mailbox-client = { path = "drivers/mailbox/client" }
 usb-hcd = { path = "drivers/usb-hcd-dwc2/server" }
 usb-hcd-client = { path = "drivers/usb-hcd-dwc2/client" }
+usb = { path = "drivers/usb/server" }
+usb-host = { path = "drivers/usb/host", package = "vesper-usb-host" }
 power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }
 fb = { path = "drivers/fb/server" }

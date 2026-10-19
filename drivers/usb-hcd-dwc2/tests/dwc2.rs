@@ -15,8 +15,8 @@ mod tests {
             pipes::{Config, ConfigError, MAX_PIPES, Pipe, PipeError, PipeTable, Route},
             regs::*,
             split::{
-                Event, MAX_NYET, MAX_RESTARTS, Phase, Sequence, Step, event_of, next_pid,
-                packet_bytes,
+                Event, MAX_NYET, MAX_RESTARTS, Phase, STATUS_COMPLETE, STATUS_SPLIT, Sequence,
+                Step, event_of, failure_status, next_pid, packet_bytes,
             },
         },
         vesper_usb_protocol::{descriptor::TransferKind, enumeration::Speed, setup::SetupPacket},
@@ -542,5 +542,17 @@ mod tests {
         assert_eq!(next_pid(Pid::Setup), Pid::Data1);
         assert_eq!(next_pid(Pid::Data1), Pid::Data0);
         assert_eq!(next_pid(Pid::Data0), Pid::Data1);
+    }
+
+    #[test]
+    fn a_failed_split_transaction_reports_its_phase_above_the_channel_events() {
+        let events = events(|e| e.with_nak(true).with_halted(true)).raw_value();
+        let start = failure_status(events, Phase::Start);
+        let complete = failure_status(events, Phase::Complete);
+        assert_eq!(start & !STATUS_SPLIT, events);
+        assert_eq!(start & STATUS_COMPLETE, 0);
+        assert_eq!(complete, events | STATUS_SPLIT | STATUS_COMPLETE);
+        // The marker bits are above every channel event bit.
+        assert!(events < STATUS_COMPLETE);
     }
 }

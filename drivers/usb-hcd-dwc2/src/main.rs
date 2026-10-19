@@ -14,7 +14,7 @@
 //! the Raspberry Pi 3's controller. The instance maps its register page, puts
 //! the core into host mode, powers the root port, and serves `usb_hcd_v1` and
 //! `pipe_v1` (see `interfaces/`) to its clients. It does not enumerate: a client
-//! (`usbd`) resets the port, opens a control pipe to address 0 and runs the
+//! (`usb-core`) resets the port, opens a control pipe to address 0 and runs the
 //! enumeration through `vesper_usb_protocol`.
 //!
 //! A call runs on the caller's Thread, one at a time (a `Turnstile`). Each
@@ -76,7 +76,7 @@ mod component {
                 host_channel_bit, port_speed, port_status_bits, port_with_reset_and_power,
                 split_control, split_event_mask, transfer_size,
             },
-            split::{Phase, Sequence, Step, event_of, next_pid, packet_bytes},
+            split::{Phase, Sequence, Step, event_of, failure_status, next_pid, packet_bytes},
         },
         vesper_usb_protocol::{
             descriptor::TransferKind as UsbKind, enumeration::Speed as UsbSpeed, setup::SetupPacket,
@@ -602,8 +602,14 @@ mod component {
                     packets: 1,
                 };
                 let seen = self.start_attempt(index, &attempt);
-                let (event, status) =
-                    self.wait_event(index, target, seen, |events| event_of(phase, events))?;
+                let (event, status) = self
+                    .wait_event(index, target, seen, |events| event_of(phase, events))
+                    .map_err(|error| match error {
+                        PipeException::TransferFailed { status } => PipeException::TransferFailed {
+                            status: failure_status(status, phase),
+                        },
+                        other => other,
+                    })?;
                 match sequence.next(event) {
                     Step::Issue(_) => {
                         // A run that ended on its own left the channel halted.

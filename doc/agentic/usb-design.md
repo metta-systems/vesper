@@ -59,22 +59,22 @@ Modelled on CSUD (<https://github.com/Chadderz121/csud>), split into components
 that Kickstart wires statically:
 
 ```
-usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usbd: core + hub)  <- claim/control ->  hid
+usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  <- claim/control ->  hid
         ^                                                                                       |
-        +------------- interrupt-IN reports over io-channel, bypassing usbd ----------------------+
+        +------------- interrupt-IN reports over io-channel, bypassing usb-core ----------------------+
                                                                               hid -> input_v1 events (io-channel) -> shell
 ```
 
 | Component | Directory | Exports | Imports |
 |---|---|---|---|
 | `dwc2` (HCD) | `drivers/usb-hcd-dwc2/` | `usb_hcd_v1` | none |
-| `usbd` (core, hub inside) | `drivers/usb/` | `usb_v1` | `usb_hcd_v1` |
+| `usb-core` (core, hub inside) | `drivers/usb/` | `usb_v1` | `usb_hcd_v1` |
 | `hid` (keyboard, mouse) | `drivers/usb-hid/` | `input_v1` | `usb_v1`, `usb_hcd_v1` |
 
 - The HCD does registers, DMA and the schedule. It owns the MMIO frame, the
   IRQ Notification and a DMA Untyped, and runs two threads as the PL011 driver
   does.
-- `usbd` runs enumeration, descriptors and hub polling. It is control-plane
+- `usb-core` runs enumeration, descriptors and hub polling. It is control-plane
   only.
 - `hid` claims boot-protocol keyboards and mice, posts empty IO_Recs for
   interrupt-IN, and decodes boot reports with a pure library. It imports
@@ -93,7 +93,7 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usbd: core + hub)  <- c
 
 ## Interfaces (drafted)
 
-- **Hub location (maintainer decision, 2026-10-18).** The hub driver is inside `usbd`,
+- **Hub location (maintainer decision, 2026-10-18).** The hub driver is inside `usb-core`,
   not a separate component. Its pure logic (hub descriptor, class requests, port
   status, per-port state machine) goes in a `hub` module of `vesper-usb-protocol`,
   so it stays host-testable and could be extracted later.
@@ -102,7 +102,7 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usbd: core + hub)  <- c
   identity. `pipe_v1` is a `local` interface of its own, one key per function, all
   badged with the pipe's handle; `usb_hcd_v1.open_pipe` installs the keys in a key table
   the caller lends and returns their values in the data area. Holding a key is the right
-  to use the pipe, so `usbd` can hand a pipe to `hid` by installing a narrowed copy in
+  to use the pipe, so `usb-core` can hand a pipe to `hid` by installing a narrowed copy in
   `hid`'s table. The mechanism is in the
   [contract](capabilities-contract.md#component-interfaces-and-imports).
 - `drivers/usb-hcd-dwc2/interfaces/usb_hcd_v1.if`: `reset_port`, `port_status`,
@@ -116,7 +116,7 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usbd: core + hub)  <- c
   device appears), `release`, `interrupt_pipe`, `control`.
 - `drivers/usb-hid/interfaces/input_v1.if`: `set_leds` today, to be replaced by `descriptor` and `snapshot` (USB4). Events travel over an
   io-channel whose records are defined in [input-design.md](input-design.md).
-- `imports.if` files: `usbd` uses `usb_hcd_v1` via `compatible "brcm,bcm2708-usb"`
+- `imports.if` files: `usb-core` uses `usb_hcd_v1` via `compatible "brcm,bcm2708-usb"`
   (the DWC2 node's compatible string, to be verified). `usb-hid` is comment-only
   until its device tree link is decided.
 
@@ -179,7 +179,7 @@ Bring-up, in order:
 Minimum for a keyboard on RPi4: 1–5 above with control transfers and interrupt-IN.
 Hubs, isochronous transfers and xHCI error recovery can wait.
 
-Design impact: an xHCI component implements `usb_hcd_v1` unchanged, so `usbd` and
+Design impact: an xHCI component implements `usb_hcd_v1` unchanged, so `usb-core` and
 `hid` carry over. New work is the HCD, PCIe bring-up and the firmware call. The
 DMA strategy (answered in USB2, see the status section) also applies to xHCI rings.
 
@@ -194,8 +194,8 @@ for licence, maintenance activity or no_std build status beyond the listing.
   - [usb-hal](https://lib.rs/crates/usb-hal): early; its host part is listed as unimplemented.
   - [embassy-usb](https://docs.rs/crate/embassy-usb/latest) lists `embassy-usb-synopsys-otg` for the DWC2 family. Whether it supports host mode was not confirmed.
 - Device side, not useful for a host HID path:
-  - [usb-device](https://github.com/rust-embedded-community/usb-device) and [usbd-hid](https://docs.rs/usbd-hid) (latest 0.7.0 listed as Nov 2023).
-  - [usbd-human-device-interface](https://docs.rs/usbd-human-device-interface) is an alternative HID class crate.
+  - [usb-device](https://github.com/rust-embedded-community/usb-device) and [usb-core-hid](https://docs.rs/usb-core-hid) (latest 0.7.0 listed as Nov 2023).
+  - [usb-core-human-device-interface](https://docs.rs/usb-core-human-device-interface) is an alternative HID class crate.
 
 No candidate found covers DWC2 host mode and the HID host class in no_std Rust.
 

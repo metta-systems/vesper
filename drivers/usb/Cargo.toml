@@ -1,0 +1,55 @@
+[package]
+name = "usb-core"
+
+description = "EL0 USB core component: enumerates the device on the root port, runs the hub driver for the hub there and enumerates the devices behind it, through the DWC2 host controller component."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+default = []
+# Opt in to standard host integration tests of the device bookkeeping.
+host-tests = []
+qemu = ["libuser/qemu"]
+
+[dependencies]
+vesper-usb-protocol = { path = "protocol" }
+
+# The component itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libserial-channel = { workspace = true }
+libuser = { workspace = true }
+usb = { workspace = true }
+usb-hcd-client = { workspace = true }
+usb-host = { workspace = true }
+
+[lib]
+name = "usb_core"
+test = false
+harness = false
+
+[[bin]]
+name = "usb-core"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "usb_core"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

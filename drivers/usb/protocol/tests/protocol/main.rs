@@ -4,7 +4,7 @@
 //
 
 //! Host tests of the USB protocol logic: setup packets, descriptors, the
-//! enumeration state machine and HID boot reports.
+//! enumeration state machine, hubs and HID boot reports.
 
 #[cfg(test)]
 mod descriptor;
@@ -12,5 +12,7 @@ mod descriptor;
 mod enumeration;
 #[cfg(test)]
 mod hid_boot;
+#[cfg(test)]
+mod hub;
 #[cfg(test)]
 mod setup;

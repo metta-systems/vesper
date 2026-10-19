@@ -6,7 +6,7 @@ holds only open work. A finished item leaves it as a one-line marker in
 [usb-completed.md](usb-completed.md). Mark an item `- [x]` only after the command
 listed under Verification has passed for it.
 
-Done: USB0 (design, interfaces), USB1 (protocol crate), USB2 (DWC2 root port and EP0).
+Done: USB0 (design, interfaces), USB1 (protocol crate), USB2 (DWC2 root port and EP0), most of USB3 (the hub driver and `usb-core`).
 See [usb-completed.md](usb-completed.md).
 
 ## USB2 follow-ups
@@ -20,18 +20,22 @@ See [usb-completed.md](usb-completed.md).
 
 ## USB3: hub and downstream devices
 
-- [ ] `usbd` component in `drivers/usb`, serving `usb_v1`. Nothing exists yet
-  beyond the interface.
-- [ ] Hub logic in a `hub` module of `vesper-usb-protocol`, inside `usbd` (decision
-  recorded in the design): hub descriptor parse, class requests (GET_HUB_DESCRIPTOR,
-  GET_PORT_STATUS, SET_PORT_FEATURE, CLEAR_PORT_FEATURE), port status decode and the
-  per-port state machine (power, debounce, reset, speed, teardown). Host-tested.
-  `usbd` polls GET_PORT_STATUS over control until interrupt pipes exist (USB4).
-- [ ] Enumerate devices behind the LAN9514 hub with split transactions, using
-  `usb_hcd_v1.set_route`. Low- and full-speed devices need this.
-- [ ] Port-change polling and hotplug, including teardown of in-flight transfers.
-- [ ] Verify with a keyboard or mouse attached to the hub in QEMU, and with a real
-  Raspberry Pi 3 once USB2 is validated there.
+Done: the hub module, `usb-core` enumerating the root hub and the devices behind it, and
+the serial trace; see [usb-completed.md](usb-completed.md).
+
+- [ ] Verify split transactions on a Raspberry Pi 3: boot the `usb-core-test` image
+  (`just boot-usb-core-test`, or copy `just build-usb-core-test-hw`'s image) with a low- or full-speed device on the LAN9514 and read
+  `usb-core`'s trace on the UART. QEMU's hub is full speed and its controller has no
+  transaction translator, so nothing here runs a split end to end.
+- [ ] Serve `usb_v1` claims in `usb-core`: `claim_interface` blocks until a matching
+  interface is attached, `release`, `interrupt_pipe` and `control` on a claim.
+  Today `claim_interface` raises `busy` and the other functions `no_claim`.
+- [ ] Teardown of in-flight transfers when a device is unplugged, and nested hubs
+  (a device behind the hub that is a hub itself is traced and left alone).
+- [ ] Bring `usb-core` and the controller into the Raspberry Pi 3 boot image
+  (`kernel/kickstart/image.toml`) with the shell, which holds the serial channel the
+  trace uses; only one program gets a serial channel today.
+- [ ] Verify on a real Raspberry Pi 3 once USB2 is validated there.
 
 ## USB4: HID input
 
@@ -56,6 +60,7 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 - `just test-usb-host`: protocol and DWC2 host tests.
 - `just clippy-usb-host`: host lint for the same crates.
 - `just test-usb`: end-to-end root hub enumeration and pipe rules through `usb_hcd_v1` in QEMU.
+- `just test-usb-core`: `usb-core` enumerating the hub and a keyboard behind it in QEMU.
 - `just test-meddle`: `DataArea` byte access (`libs/meddle-runtime`).
 - `just test-device`, `just test-uart`, `just test-driver`, `just test-mailbox`: regression for shared
   changes.

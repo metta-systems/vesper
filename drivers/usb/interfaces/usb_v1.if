@@ -34,6 +34,8 @@ local interface usb_v1
     ## Claim an interface of an attached device whose class, subclass and
     ## protocol match; returns the claim's handle. The call waits until such a
     ## device is attached, so a class driver can start before its device.
+    ## Implementation status: claims are not served yet; this raises `busy`, and
+    ## `release`, `interrupt_pipe` and `control` raise `no_claim`.
     claim_interface(card32 class_code, card32 subclass, card32 protocol)
         returns (card32 claim)
         raises (busy);

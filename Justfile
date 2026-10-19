@@ -26,7 +26,7 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher shell uart-pl011 usb-hcd-dwc2 usb-test-client'
+user_components := 'dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher shell uart-pl011 usb-core usb-hcd-dwc2 usb-test-client'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -165,6 +165,25 @@ build-usb-test board='rpi3': (build-components board 'qemu' test_kernel_features
 test-usb board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-usb-test board)
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-test-' + config + '.bin' }}"
+
+# Build the usb-core-test e2e kernel (the DWC2 component, the PL011 driver and the USB core, loaded by Kickstart)
+[group("test")]
+build-usb-core-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-core-test' board)
+
+# Boot usb-core-test on raspi3b with a hub on the root port and a keyboard behind it: the USB core enumerates both
+[group("test")]
+test-usb-core board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-usb-core-test board)
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-core-test-' + config + '.bin' }}"
+
+# Build usb-core-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): `usb-core` traces on the UART
+[group("hw")]
+build-usb-core-test-hw board='rpi3': (build-components board '' '') (_build-test-kernel 'usb-core-test' board '')
+
+# Build usb-core-test for the Raspberry Pi 3 and boot it via chainofcommand: `usb-core`'s trace appears on the UART
+[group("hw")]
+boot-usb-core-test: build-usb-core-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'usb-core-test-rpi3.bin' }}"
 
 # Build the mailbox-test e2e kernel (the mailbox component and a client wired through the firmware node)
 [group("test")]
@@ -353,7 +372,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("test")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-dispatch test-dispatch-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-mailbox test-mailbox-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault test-usb
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-dispatch test-dispatch-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-mailbox test-mailbox-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault test-usb test-usb-core
 
 alias t := test
 
@@ -536,7 +555,7 @@ test-meddle: (_host-test 'vesper-meddle-runtime' 'words')
 
 # Run the USB protocol logic tests natively: setup packets, descriptors, enumeration, HID boot reports
 [group("test")]
-test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2')
+test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2') (_host-test 'usb-core' 'usb_core')
 
 # Run the input event library tests natively: record layout, descriptor, state tracker
 [group("test")]
@@ -596,7 +615,7 @@ clippy-meddle: (_host-clippy 'vesper-meddle-runtime' 'words')
 
 # Lint the USB protocol host tests with their native host harness
 [group("maintenance")]
-clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2')
+clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2') (_host-clippy 'usb-core' 'usb_core')
 
 # Lint the input event library tests with their native host harness
 [group("maintenance")]

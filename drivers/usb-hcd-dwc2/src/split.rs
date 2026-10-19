@@ -177,3 +177,21 @@ pub const fn next_pid(pid: Pid) -> Pid {
         Pid::Data1 | Pid::Data2 => Pid::Data0,
     }
 }
+
+/// Bit of a `transfer_failed` status that says the failed transfer ran split
+/// transactions; the other bits are the channel's events of the last run.
+pub const STATUS_SPLIT: u32 = 1 << 31;
+/// Bit of a `transfer_failed` status that says the failed split transaction
+/// was in its complete split, not its start split. Set with [`STATUS_SPLIT`].
+pub const STATUS_COMPLETE: u32 = 1 << 30;
+
+/// The status a failed split transaction reports: the channel `events` of its
+/// last run, marked as split and with the `phase` it failed in.
+#[must_use]
+pub const fn failure_status(events: u32, phase: Phase) -> u32 {
+    let complete = match phase {
+        Phase::Start => 0,
+        Phase::Complete => STATUS_COMPLETE,
+    };
+    events | STATUS_SPLIT | complete
+}

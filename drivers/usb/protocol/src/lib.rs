@@ -12,4 +12,5 @@
 pub mod descriptor;
 pub mod enumeration;
 pub mod hid_boot;
+pub mod hub;
 pub mod setup;
