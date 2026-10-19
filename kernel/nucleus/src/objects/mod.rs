@@ -17,6 +17,7 @@ pub mod object_pool;
 pub mod resume;
 pub mod sched;
 pub mod scheduler;
+pub mod stack_pool;
 pub mod thread;
 pub mod time;
 pub mod timers;
@@ -38,7 +39,8 @@ pub use {
     sched::Activations,
     scheduler::Scheduler,
     thread::{
-        ExecutionContext, InvocationContinuation, InvocationStack, Placement, Thread, ThreadFault,
+        ExecutionContext, InvocationContinuation, InvocationStack, Placement, StackUse, Thread,
+        ThreadFault,
     },
     time::Time,
     wait_set::WaitSet,

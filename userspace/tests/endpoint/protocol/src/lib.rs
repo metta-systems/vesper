@@ -48,23 +48,20 @@ pub struct EndpointInit {
     pub done: u64,
 }
 
-/// The server's init page: its two endpoint Invocations, the endpoint stack
-/// it uses with them, and its private salt.
+/// The server's init page: its two endpoint Invocations and its private salt.
 #[repr(C)]
 pub struct ServerInit {
     pub receive: u64,
     pub reply_receive: u64,
-    pub stack_end: u64,
     pub salt: u64,
 }
 
 /// The client `AddressSpace`'s init page, shared by its Threads: one `send`
-/// Invocation and endpoint stack per client Thread, the Notification that
-/// tells the builder a client is done, and one to park on.
+/// Invocation per client Thread, the Notification that tells the builder a
+/// client is done, and one to park on.
 #[repr(C)]
 pub struct ClientInit {
     pub send: [u64; 2],
-    pub stack_end: [u64; 2],
     pub done: u64,
     pub park: u64,
 }

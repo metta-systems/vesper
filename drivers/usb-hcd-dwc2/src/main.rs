@@ -55,7 +55,7 @@ mod component {
         },
         libobject::{
             AddressSpaceKey, CapError, EventCountKey, FrameAttribute, FrameKey, IrqHandlerKey,
-            KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
+            KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, StackPoolHandle, UntypedKey,
             export::init_return_key, thread::ThreadReturnKey,
         },
         libuser::semihosting as semi,
@@ -863,7 +863,7 @@ mod component {
             endpoint: u32,
             speed: Speed,
         ) -> Result<(), Exception> {
-            let (client, area, data) = caller(badge).ok_or(Exception::NotPermitted)?;
+            let (client, _area, data) = caller(badge).ok_or(Exception::NotPermitted)?;
             // `endpoint` is an endpoint address: bit 7 is the direction.
             let address = u8::try_from(device_address).ok().filter(|&a| a <= 127);
             let address_byte = u8::try_from(endpoint).ok().filter(|&e| e & 0x70 == 0);
@@ -896,7 +896,7 @@ mod component {
             // installed fail on the closed handle.
             let installed = hcd
                 .masters
-                .install(client, &area, into, first_slot, u64::from(handle))
+                .install(into, first_slot, u64::from(handle))
                 .ok()
                 .filter(|keys| data.write_u64s(0, keys));
             if installed.is_none() {
@@ -1068,6 +1068,7 @@ mod component {
         let masters = Masters::new(
             AddressSpaceKey::from_key(RawKey::from_wire(init.address_space)),
             KeyTableKey::from_key(RawKey::from_wire(init.table)),
+            StackPoolHandle::from_wire(init.export_pool).expect("a valid stack pool handle"),
             u32::try_from(next_slot + 3).expect("a slot fits in u32"),
             pipe_v1_entries(),
         );

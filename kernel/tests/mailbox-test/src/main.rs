@@ -199,12 +199,12 @@ pub fn run() -> ! {
                 );
                 assert!(imports.is_empty());
                 // Three clients call it (the vcsm client, power and fb), each
-                // with an area of one page of its own, and a stack of its own.
+                // with an area of one page of its own, and calls on a pool.
+                assert_ne!(init.export_pool, 0, "the mailbox serves calls on a pool");
                 let areas = init.areas();
                 assert_eq!(areas.len(), 3, "three clients, three data areas");
                 for (index, area) in areas.iter().enumerate() {
                     assert_eq!(area.len, 4096);
-                    assert!(area.stack_bottom < area.stack_end);
                     mailbox_areas.0[index] = area.base;
                 }
                 mailbox_areas.0[..3].sort_unstable();

@@ -171,7 +171,7 @@ pub fn run() -> ! {
                     area.base + 4096,
                     "the channel follows the data area"
                 );
-                assert!(area.stack_bottom < area.stack_end);
+                assert_ne!(init.export_pool, 0, "the controller serves calls on a pool");
                 assert!(area.base >= DATA_WINDOW_VA);
                 controller_area = area.base;
             } else {

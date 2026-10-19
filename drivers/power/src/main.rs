@@ -75,7 +75,6 @@ mod component {
         libdevice_driver::{
             INIT_VA, Turnstile, device_address, driver_compatible, driver_init, map_device_pages,
         },
-        libmeddle_runtime::ExclusiveStacks,
         libobject::{
             EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
             export::init_return_key, thread::ThreadReturnKey,
@@ -145,12 +144,7 @@ mod component {
     pub fn devices_off() -> Result<(), Exception> {
         let init = init();
         let _turn = TURNSTILE.enter(init);
-        let mailbox = Client::new(
-            Bindings::from_imports(init.imports()),
-            // SAFETY: the turnstile admits one caller at a time, so this
-            // Thread alone uses the stack reserved for the mailbox calls.
-            unsafe { ExclusiveStacks::new() },
-        );
+        let mailbox = Client::new(Bindings::from_imports(init.imports()));
         for device in DEVICES {
             mailbox
                 .set_power_state(device, false)

@@ -58,7 +58,7 @@ pub fn prepare_call<A: ArchObjects>(
         CallTarget {
             address_space,
             function_address,
-            stack_extent: entry.invocation_stack_extent()?,
+            stack_pool: entry.invocation_stack_pool()?,
             placement_window: entry.invocation_placement_window()?,
             badge: entry.badge(),
         }

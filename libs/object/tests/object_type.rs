@@ -1,6 +1,6 @@
 use vesper_objects::{
     CapError, Key, KeySlot, KeyTableKey, ObjectType, PlacementWindow, RawKey, Rights,
-    decode_syscall_result, thread,
+    decode_syscall_result, stack_pool, thread,
 };
 
 // The wrapper modules below name `crate::FrameAttribute`, as in the library.
@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn address_space_operation_decoder_is_exact() {
         assert_operation_decoder_is_exact::<vesper_objects::address_space::AddressSpaceOp>(&[
-            0, 1, 2, 3,
+            0, 1, 2, 3, 4, 5,
         ]);
     }
 

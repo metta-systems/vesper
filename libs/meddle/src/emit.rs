@@ -596,12 +596,10 @@ impl Emitter<'_, '_> {
 
                     /// The bindings for the keys an exporter installed for this
                     /// interface (`installs`): `keys[index]` is the wire key of
-                    /// the function at declaration index `index`. Calls run on
-                    /// the target stack ending at `stack_end` and reference
+                    /// the function at declaration index `index`. Calls reference
                     /// bytes in `data_area`. `None` when `keys` is not one per function.
                     pub fn from_installed(
                         keys: &[u64],
-                        stack_end: u64,
                         data_area: Option<#runtime::DataArea>,
                     ) -> Option<Self> {
                         let [ #( #installed_names ),* ] = *keys else {
@@ -610,7 +608,6 @@ impl Emitter<'_, '_> {
                         let binding = |wire: u64| {
                             Some(#runtime::Binding::new(
                                 #runtime::InvocationKey::from_key(#runtime::RawKey::from_wire(wire)),
-                                stack_end,
                             ))
                         };
                         Some(Self {
@@ -643,14 +640,12 @@ impl Emitter<'_, '_> {
                 /// Typed calls to the functions of this interface.
                 pub struct Client {
                     bindings: Bindings,
-                    stacks: #runtime::ExclusiveStacks,
                 }
 
                 impl Client {
-                    /// A client calling through `bindings`, whose target
-                    /// stacks `stacks` proves are the calling Thread's alone.
-                    pub const fn new(bindings: Bindings, stacks: #runtime::ExclusiveStacks) -> Self {
-                        Self { bindings, stacks }
+                    /// A client calling through `bindings`.
+                    pub const fn new(bindings: Bindings) -> Self {
+                        Self { bindings }
                     }
 
                     /// The data area shared with the exporter, if the interface has
@@ -700,9 +695,9 @@ impl Emitter<'_, '_> {
         let call = match self.checked.lent_key(method) {
             Some((_, lent)) => {
                 let lent = ident(&lent.text);
-                quote! { binding.call_with_key(&self.stacks, #lent.raw(), arguments) }
+                quote! { binding.call_with_key(#lent.raw(), arguments) }
             }
-            None => quote! { binding.call(&self.stacks, arguments) },
+            None => quote! { binding.call(arguments) },
         };
         let other = if method.raises.is_empty() {
             quote! { _ => Err(Error::UnexpectedAnswer { outcome, word }), }

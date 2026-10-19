@@ -15,10 +15,9 @@ use {
 
 component::entry!(main);
 
-fn call(key: u64, args: [u64; 6], stack_end: u64) -> (u64, u64) {
-    // SAFETY: `stack_end` tops the endpoint stack published with this
-    // Invocation, used only by this Thread.
-    unsafe { InvocationKey::from_key(RawKey::from_wire(key)).call(args, stack_end) }
+fn call(key: u64, args: [u64; 6]) -> (u64, u64) {
+    InvocationKey::from_key(RawKey::from_wire(key))
+        .call(args)
         .unwrap_or_else(|error| panic!("server: endpoint Call failed: {:?}", error.code()))
 }
 
@@ -28,17 +27,13 @@ fn main(_argument: u64) -> ! {
     let init: &ServerInit = unsafe { init() };
     set_tls(SERVER_TLS);
     semi::println!("server: receiving at EL0");
-    let (mut ticket, mut request) = call(init.receive, [0; 6], init.stack_end);
+    let (mut ticket, mut request) = call(init.receive, [0; 6]);
     loop {
         // Back in the server's own AddressSpace: only it can read the salt, and
         // its own TLS is restored whatever the endpoint set during the call.
         assert_eq!(tls(), SERVER_TLS, "server: TLS not restored");
         let reply = server_work(request, init.salt);
-        (ticket, request) = call(
-            init.reply_receive,
-            [ticket, reply, 0, 0, 0, 0],
-            init.stack_end,
-        );
+        (ticket, request) = call(init.reply_receive, [ticket, reply, 0, 0, 0, 0]);
         assert_ne!(ticket, 0, "server: the endpoint rejected a reply");
     }
 }

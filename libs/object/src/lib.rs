@@ -18,6 +18,7 @@ pub mod page_table;
 pub mod rights;
 pub mod scheduler;
 pub mod scheduler_record;
+pub mod stack_pool;
 pub mod syscall_status;
 pub mod thread;
 pub mod time;
@@ -43,6 +44,7 @@ pub use {
     page_table::{PageTableKey, PageTableOp},
     rights::Rights,
     scheduler::{SchedulerKey, SchedulerOp},
+    stack_pool::{MAX_POOL_STACKS, MAX_STACK_POOLS, StackPoolHandle},
     syscall_status::{InvalidSelfReference, InvalidStackReason},
     thread::{ThreadKey, ThreadOp},
     time::{TimeKey, TimeOp},
@@ -141,6 +143,7 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::TIMED_OUT, value, 0) => CapError::TimedOut { value },
             (code::WATCHED, 0, 0) => CapError::Watched,
             (code::ALREADY_BADGED, 0, 0) => CapError::AlreadyBadged,
+            (code::NO_FREE_STACK, count, 0) => CapError::NoFreeStack { count },
             (code::MEMBER_RETIRED, slot, 0) => CapError::MemberRetired { slot },
             (code::INVALID_SELF_REFERENCE, slot, key) => CapError::InvalidSelfReference {
                 reference: InvalidSelfReference::from_slot(slot)?,
@@ -217,7 +220,7 @@ pub enum CapError {
     /// The counter is unchanged and queued `Await`s
     /// complete with this same error.
     CounterOverflow,
-    /// Invalid Invocation stack extent, minimum headroom, or submitted SP.
+    /// Invalid stack pool: its extent, stack size or stack count.
     InvalidStack {
         /// The offending submitted value, not a computed difference.
         value: u64,
@@ -270,6 +273,11 @@ pub enum CapError {
     Watched,
     /// A `CopyDerive` asked to set a badge on a key that already has one.
     AlreadyBadged,
+    /// A `Call` found no free stack in its Invocation's stack pool. `count` is
+    /// the pool's stack count.
+    NoFreeStack {
+        count: u64,
+    },
     /// A member of a `WaitSet` is no longer live; `slot` is its slot.
     MemberRetired {
         slot: u64,
@@ -385,6 +393,7 @@ impl CapError {
             CapError::TimedOut { value } => (code::TIMED_OUT, value, 0),
             CapError::Watched => (code::WATCHED, 0, 0),
             CapError::AlreadyBadged => (code::ALREADY_BADGED, 0, 0),
+            CapError::NoFreeStack { count } => (code::NO_FREE_STACK, count, 0),
             CapError::MemberRetired { slot } => (code::MEMBER_RETIRED, slot, 0),
             CapError::InvalidSelfReference { reference, key } => (
                 code::INVALID_SELF_REFERENCE,

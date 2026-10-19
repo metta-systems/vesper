@@ -127,22 +127,15 @@ impl InvocationKey {
     }
 
     /// `Invocation.Call` (op 0): migrate this Thread into the target
-    /// `AddressSpace`, run its entry with `args` in x2..x7 on `target_sp`,
-    /// and return the target's `(r0, r1)` once it completes `Thread.Return`.
+    /// `AddressSpace`, run its entry with `args` in x2..x7 on a stack the
+    /// kernel takes from the Invocation's stack pool, and return the target's
+    /// `(r0, r1)` once it completes `Thread.Return`.
     ///
-    /// `target_sp` must be 16-byte aligned with `base < sp <= end` and at
-    /// least the Invocation's minimum headroom above `base`; violations are
-    /// `InvalidStack`. A full invocation stack is `NestingDepth`. Rejections
-    /// happen before migration and leave this Thread unchanged.
-    ///
-    /// # Safety
-    /// The target runs arbitrary interface code on this Thread and stack
-    /// region `target_sp` names; the caller must supply a stack that the
-    /// target component reserved for this Call and nobody else uses.
-    pub unsafe fn call(&self, args: [u64; 6], target_sp: u64) -> Result<(u64, u64), CapError> {
-        // SAFETY: forwarded caller contract; ppc_call declares every
-        // register the kernel may rewrite.
-        let response = unsafe { ppc_call(self.key.to_wire(), args, target_sp) };
+    /// An exhausted pool is `NoFreeStack`; a full invocation stack is
+    /// `NestingDepth`. Rejections happen before migration and leave this
+    /// Thread unchanged.
+    pub fn call(&self, args: [u64; 6]) -> Result<(u64, u64), CapError> {
+        let response = ppc_call(self.key.to_wire(), args);
         decode_syscall_result(response)
     }
 
@@ -156,21 +149,11 @@ impl InvocationKey {
     /// tables unchanged: `KeyNotAccepted` (the Invocation declared no
     /// key-placement window), a lookup error or `InsufficientRights` (no
     /// `LEND`) for the lent key, `InvalidObjectType` for a kind that cannot be
-    /// lent, then the stack and depth errors of `call`, then `NoPlacementSlot`.
-    ///
-    /// # Safety
-    /// As [`call`](Self::call); additionally the target may use the lent key,
-    /// within its rights, for as long as the call lasts.
-    pub unsafe fn call_with_key(
-        &self,
-        lent_key: RawKey,
-        args: [u64; 6],
-        target_sp: u64,
-    ) -> Result<(u64, u64), CapError> {
-        // SAFETY: forwarded caller contract; ppc_call_with_key declares every
-        // register the kernel may rewrite.
-        let response =
-            unsafe { ppc_call_with_key(self.key.to_wire(), lent_key.to_wire(), args, target_sp) };
+    /// lent, then `NoFreeStack` and `NestingDepth`, then `NoPlacementSlot`.
+    /// The target may use the lent key, within its rights, for as long as the
+    /// call lasts.
+    pub fn call_with_key(&self, lent_key: RawKey, args: [u64; 6]) -> Result<(u64, u64), CapError> {
+        let response = ppc_call_with_key(self.key.to_wire(), lent_key.to_wire(), args);
         decode_syscall_result(response)
     }
 }

@@ -202,8 +202,6 @@ pub fn run() -> ! {
                     [0, 1, 2]
                 );
                 assert_ne!(imports[0].invocation, imports[1].invocation);
-                assert_eq!(imports[0].stack_end, imports[1].stack_end);
-                assert_eq!(imports[0].stack_end, imports[2].stack_end);
                 assert_ne!(imports[1].invocation, imports[2].invocation);
             } else {
                 assert!(imports.is_empty(), "{}: links to no probe", loaded.node);

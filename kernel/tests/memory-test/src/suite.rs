@@ -26,7 +26,7 @@ use {
     },
     libobject::{
         ASIDPoolKey, CapError, FrameKey, InconsistencyReason, InvalidKeyReason, KeySlot,
-        KeyTableKey, ObjectType, PageTableKey, RawKey, Rights, UntypedKey,
+        KeyTableKey, ObjectType, PageTableKey, RawKey, Rights, StackPoolHandle, UntypedKey,
         address_space::AddressSpaceKey,
         scheduler::{SchedulerKey, ThreadStart},
         syscall_status::InvalidSelfReference,
@@ -75,8 +75,11 @@ struct InvocationDestinationState {
     function: u64,
     rights: Rights,
     badge: u64,
-    stack: [u64; 3],
+    pool: StackPoolHandle,
 }
+
+/// A stack pool handle for Invocations these tests construct but never call.
+const UNUSED_POOL: StackPoolHandle = StackPoolHandle::new(0, 1);
 
 fn invocation_destination_state(
     table_addr: u64,
@@ -92,9 +95,9 @@ fn invocation_destination_state(
     let (target, function) = entry
         .invocation_target()
         .unwrap_or_else(|error| panic!("Invocation target changed: {:?}", error.code()));
-    let extent = entry
-        .invocation_stack_extent()
-        .unwrap_or_else(|error| panic!("Invocation extent changed: {:?}", error.code()));
+    let pool = entry
+        .invocation_stack_pool()
+        .unwrap_or_else(|error| panic!("Invocation pool changed: {:?}", error.code()));
     let never_issued = boot_key(vacant.0, 1);
     assert!(matches!(
         table.lookup(never_issued, BOOT_TABLE_GUARD),
@@ -113,7 +116,7 @@ fn invocation_destination_state(
         function: function.get(),
         rights: entry.rights(),
         badge: entry.badge(),
-        stack: [extent.base(), extent.end(), extent.minimum_headroom()],
+        pool,
     }
 }
 
@@ -347,7 +350,7 @@ pub fn run() {
     // retired-target construction checks below compare against it. Its own
     // construction checks live in the PPC suite.
     let invocation_key = boot_as
-        .create_invocation(0x1234, &self_table, KeySlot(62), 0x1000, 0x2000, 0x40)
+        .create_invocation(0x1234, &self_table, KeySlot(62), UNUSED_POOL)
         .unwrap_or_else(|error| panic!("AddressSpace.CreateInvocation failed: {:?}", error.code()));
 
     // The Bounce AddressSpace and both image closures: the source context
@@ -576,7 +579,7 @@ pub fn run() {
 
         // Reuse this genuinely retired target: capability incarnation is
         // unchanged, but its pooled AddressSpace identity is no longer live.
-        // Identity rejection wins over zero function, malformed extent and
+        // Identity rejection wins over zero function, malformed pool and
         // destination readiness without changing either destination.
         let before_stale_rejections =
             invocation_destination_state(keytable_addr, invocation_key, KeySlot(250));
@@ -584,7 +587,7 @@ pub fn run() {
             for slot in [KeySlot(62), KeySlot(250)] {
                 assert_eq!(
                     fixture_as
-                        .create_invocation(function, &self_table, slot, 0x1001, 0x1001, 0)
+                        .create_invocation(function, &self_table, slot, UNUSED_POOL)
                         .map_err(CapError::code),
                     Err(retired_target)
                 );
@@ -600,8 +603,8 @@ pub fn run() {
                         function,
                         self_table_key.to_wire(),
                         u64::MAX,
-                        0x1001,
-                        0x1001,
+                        UNUSED_POOL.to_wire(),
+                        0,
                         0
                     ]
                 ),
@@ -1788,7 +1791,7 @@ fn address_space_bind(
     // Unbound: no activation, no Invocation construction, no Threads.
     assert!(matches!(first.activate(), Err(CapError::NotBound)));
     assert!(matches!(
-        first.create_invocation(0x1000, self_table, KeySlot(slot(4)), 0, 16, 16),
+        first.create_invocation(0x1000, self_table, KeySlot(slot(4)), UNUSED_POOL),
         Err(CapError::NotBound)
     ));
     let thread_key = retype(ObjectType::THREAD, 0, 0, 1, 5);
@@ -1885,7 +1888,7 @@ fn address_space_bind(
     // Thread now fails on its missing root instead.
     assert!(matches!(first.activate(), Err(CapError::InvalidOperation)));
     first
-        .create_invocation(0x1000, self_table, KeySlot(slot(4)), 0, 16, 16)
+        .create_invocation(0x1000, self_table, KeySlot(slot(4)), UNUSED_POOL)
         .unwrap_or_else(|error| panic!("bound CreateInvocation failed: {:?}", error.code()));
     assert!(matches!(
         scheduler.configure_thread(thread_key, first_key, start, time_key),

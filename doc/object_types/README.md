@@ -59,7 +59,7 @@ Every operation is one `svc` instruction. The immediate is ignored; the userspac
 | Out | `x0` | Status; zero is success |
 | Out | `x1`, `x2` | Two result words on success, error details on failure |
 
-Argument words an operation does not use must be zero; a nonzero unused word fails with `InvalidOperation`. Exceptions: `Thread.Return` ignores `x4..x7`; `Invocation.Call` also reads `x9`; `Invocation.CallWithKey` also reads `x8` (the key to lend) and `x9`; `AddressSpace.CreateInvocation` also reads `x8` (the key-placement window).
+Argument words an operation does not use must be zero; a nonzero unused word fails with `InvalidOperation`. Exceptions: `Thread.Return` ignores `x4..x7`; `Invocation.Call` clobbers `x9`; `Invocation.CallWithKey` also reads `x8` (the key to lend); `AddressSpace.CreateInvocation` also reads `x5` (the stack pool handle) and `x8` (the key-placement window).
 
 An invocation writes only `x0..x2`. Every other register, SP and the NZCV flags are returned unchanged, whether the operation succeeds, fails, or blocks and resumes later. `Invocation.Call` and `Thread.Return` move the Thread between address spaces and have their own register rules; see [Invocation](core/invocation.md#register-state).
 
@@ -112,7 +112,7 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 30 | `MissingIntermediate` | virtual address | 0 |
 | 31 | `PhysicalAlias` | physical base of the conflicting mapping | 0 |
 | 32 | `CounterOverflow` | 0 | 0 |
-| 33 | `InvalidStack` | offending value | reason, see [Invocation](core/invocation.md#invalidstack) |
+| 33 | `InvalidStack` | offending value | reason, see [AddressSpace](arch/address_space.md#stack-pools) |
 | 34 | `NestingDepth` | saved continuations | 0 |
 | 35 | `UnexpectedReturn` | local `x1` | local `x2` |
 | 36 | `InsufficientBudget` | the source Time's remaining budget | 0 |
@@ -121,11 +121,12 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 39 | `NoPlacementSlot` | 0 | 0 |
 | 40 | `NotBound` | 0 | 0 |
 | 41 | `InvalidSelfReference` | the self slot (4, `SELF_KEYTABLE`) | the key that led to the table, see [KeyTable](core/key_table.md#keys-and-incarnations) |
-| 42 | `StaleGeneration` | the Thread's current generation | 0 |
+| 42 | `StaleGeneration` | the current generation of the Thread or stack pool slot | 0 |
 | 43 | `TimedOut` | the EventCount value (0 for a Notification) | 0 |
 | 44 | `Watched` | 0 | 0 |
 | 45 | `MemberRetired` | the WaitSet slot | 0 |
 | 46 | `AlreadyBadged` | 0 | 0 |
+| 47 | `NoFreeStack` | the pool's stack count | 0 |
 
 `decode_syscall_result` in `libs/object/src/lib.rs` turns these into `CapError`. A status it does not recognize, or a known status with malformed details, decodes as `CapError::UnknownResponse` with all three words kept.
 

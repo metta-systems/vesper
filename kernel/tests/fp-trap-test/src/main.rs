@@ -56,7 +56,6 @@ const PROBE_GUARD: u32 = 0x0F_9701;
 /// Pages in each probe stack (each also gets a guard page on both sides).
 const STACK_PAGES: u32 = 4;
 /// Headroom the fault handler's Invocation requires below its SP.
-const MINIMUM_HEADROOM: u64 = 0x400;
 /// Fixture boot-table slots start clear of the well-known bootstrap slots.
 const FIRST_FIXTURE_SLOT: u32 = 64;
 /// Where the probe finds its Notification key.
@@ -133,8 +132,8 @@ pub fn run() -> ! {
     // The probe's main stack and its fault handler's stack, each guarded.
     let mut stacks = builder.stack_region(&probe_component, STACK_REGION, &mut slots);
     let main_stack = builder.user_stack(&mut stacks, STACK_PAGES, &mut slots);
-    let handler_stack = builder.user_stack(&mut stacks, STACK_PAGES, &mut slots);
-    for stack in [main_stack, handler_stack] {
+    let handler_pool = builder.stack_pool(&mut stacks, STACK_PAGES, 1, &mut slots);
+    for stack in [main_stack] {
         for guard in [stack.bottom - PAGE, stack.top] {
             assert!(
                 find_leaf(probe_ttbr, guard).is_none(),
@@ -188,9 +187,7 @@ pub fn run() -> ! {
                 .expect("fp-probe exports its fault handler"),
             &probe_component.table(),
             KeySlot::FAULT_HANDLER,
-            handler_stack.bottom,
-            handler_stack.top,
-            MINIMUM_HEADROOM,
+            handler_pool,
         )
         .unwrap_or_else(|error| {
             panic!("fault handler CreateInvocation failed: {:?}", error.code())

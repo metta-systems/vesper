@@ -95,7 +95,6 @@ mod component {
         libdevice_driver::{
             INIT_VA, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, Turnstile, driver_compatible, driver_init,
         },
-        libmeddle_runtime::ExclusiveStacks,
         libobject::{
             EventCountKey, FrameAttribute, KeyTableKey, NotificationKey, ObjectType, RawKey,
             Rights, UntypedKey, export::init_return_key, thread::ThreadReturnKey,
@@ -170,12 +169,7 @@ mod component {
     pub fn configure(width: u32, height: u32, depth: u32) -> Result<u32, Exception> {
         let init = init();
         let _turn = TURNSTILE.enter(init);
-        let mailbox = Client::new(
-            Bindings::from_imports(init.imports()),
-            // SAFETY: the turnstile admits one caller at a time, so this
-            // Thread alone uses the stack reserved for the mailbox calls.
-            unsafe { ExclusiveStacks::new() },
-        );
+        let mailbox = Client::new(Bindings::from_imports(init.imports()));
 
         let answer: [u32; CONFIGURE_WORDS] =
             exchange(&mailbox, &configure_request(width, height, depth))?;

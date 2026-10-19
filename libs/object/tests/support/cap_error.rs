@@ -388,19 +388,13 @@ fn counter_overflow_pins_status_and_lossless_fallback() {
     }
 }
 
-const INVALID_STACK_REASONS: [(u64, InvalidStackReason); 12] = [
-    (1, InvalidStackReason::ExtentEmpty),
-    (2, InvalidStackReason::ExtentInverted),
-    (3, InvalidStackReason::BaseOutsideUserRange),
-    (4, InvalidStackReason::EndOutsideUserRange),
-    (5, InvalidStackReason::BaseMisaligned),
-    (6, InvalidStackReason::EndMisaligned),
-    (7, InvalidStackReason::MinimumHeadroomZero),
-    (8, InvalidStackReason::MinimumHeadroomMisaligned),
-    (9, InvalidStackReason::MinimumHeadroomTooLarge),
-    (10, InvalidStackReason::SpMisaligned),
-    (11, InvalidStackReason::SpOutOfRange),
-    (12, InvalidStackReason::SpInsufficientHeadroom),
+const INVALID_STACK_REASONS: [(u64, InvalidStackReason); 6] = [
+    (1, InvalidStackReason::BaseOutsideUserRange),
+    (2, InvalidStackReason::EndOutsideUserRange),
+    (3, InvalidStackReason::BaseMisaligned),
+    (4, InvalidStackReason::StackBytesMisaligned),
+    (5, InvalidStackReason::StackBytesTooSmall),
+    (6, InvalidStackReason::StackCountOutOfRange),
 ];
 
 #[test]
@@ -431,7 +425,7 @@ fn invalid_stack_encodes_and_decodes_every_reason_and_full_width_value() {
 #[test]
 fn invalid_stack_rejects_zero_and_every_unassigned_reason_byte_losslessly() {
     for id in 0..=u64::from(u8::MAX) {
-        if !(1..=12).contains(&id) {
+        if !(1..=6).contains(&id) {
             assert_eq!(InvalidStackReason::try_from(id), Err(()));
             for value in [0, 0x1234_5678_9abc_def0, u64::MAX] {
                 assert_unknown_response((33, value, id));
@@ -443,7 +437,7 @@ fn invalid_stack_rejects_zero_and_every_unassigned_reason_byte_losslessly() {
 #[test]
 fn invalid_stack_reasons_reject_full_width_extensions_without_operand_packing() {
     for bit in 4..64 {
-        for low in 0..=12 {
+        for low in 0..=9 {
             let reason = (1_u64 << bit) | low;
             assert_eq!(InvalidStackReason::try_from(reason), Err(()));
             assert_unknown_response((33, 0xfedc_ba98_7654_3210, reason));
@@ -478,7 +472,7 @@ fn invalid_stack_status_extensions_and_unassigned_statuses_remain_unknown() {
     for bit in 6..64 {
         assert_unknown_response(((1_u64 << bit) | 33, u64::MAX, 1));
     }
-    for wire in [(47, 0, 0), (47, 0x1234_5678_9abc_def0, u64::MAX)] {
+    for wire in [(48, 0, 0), (48, 0x1234_5678_9abc_def0, u64::MAX)] {
         assert_unknown_response(wire);
     }
 }
@@ -662,4 +656,20 @@ fn already_badged_status_has_no_details() {
     assert_eq!(CapError::AlreadyBadged.code(), (46, 0, 0));
     assert_unknown_response((46, 1, 0));
     assert_unknown_response((46, 0, 1));
+}
+
+#[test]
+fn no_free_stack_status_carries_the_pool_size_and_no_second_detail() {
+    use vesper_objects::syscall_status::NO_FREE_STACK;
+
+    assert_eq!(NO_FREE_STACK, 47);
+    for count in [1, 16, 64] {
+        assert_error!(
+            (47, count, 0),
+            CapError::NoFreeStack { count },
+            CapError::NoFreeStack { count: actual } if actual == count
+        );
+        assert_eq!(CapError::NoFreeStack { count }.code(), (47, count, 0));
+    }
+    assert_unknown_response((47, 16, 1));
 }

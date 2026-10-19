@@ -74,7 +74,6 @@ const HELLO_GUARD: u32 = 0x0B_E101;
 const SALT: u64 = 0x5A17_0000_0000_00A5;
 /// The bits the `hello` component signals (see `userspace/tests/hello`).
 const HELLO_BITS: u64 = 0b1010;
-const MINIMUM_HEADROOM: u64 = 0x400;
 /// Pages per EL0 stack (each also gets a guard page on both sides).
 const STACK_PAGES: u32 = 4;
 /// Fixture boot-table slots start clear of the well-known bootstrap slots.
@@ -309,38 +308,22 @@ pub fn run() -> ! {
     );
     // One guarded endpoint stack per Thread that may be inside at once.
     let mut endpoint_stacks = builder.stack_region(&endpoint, STACK_REGION, &mut slots);
-    let [client0_stack, client1_stack, server_stack] = [0; 3].map(|_| {
-        stack(
-            &builder,
-            nucleus,
-            &endpoint,
-            &mut endpoint_stacks,
-            2,
-            &mut slots,
-        )
-    });
+    let endpoint_pool = builder.stack_pool(&mut endpoint_stacks, 2, 3, &mut slots);
     let endpoint_space = AddressSpaceKey::from_key(endpoint.address_space_key);
-    let export = |name: &str, table: &KeyTableKey, slot: u32, stack: UserStack| {
+    let export = |name: &str, table: &KeyTableKey, slot: u32| {
         let entry = components::ENDPOINT
             .export(name)
             .unwrap_or_else(|| panic!("endpoint does not export `{name}`"));
         endpoint_space
-            .create_invocation(
-                entry,
-                table,
-                KeySlot(slot),
-                stack.bottom,
-                stack.top,
-                MINIMUM_HEADROOM,
-            )
+            .create_invocation(entry, table, KeySlot(slot), endpoint_pool)
             .unwrap_or_else(|error| panic!("CreateInvocation `{name}` failed: {:?}", error.code()))
     };
 
     // ── The client AddressSpace ───────────────────────────────────────────
     let client_table = client.table();
     let send = [
-        export("send_entry", &client_table, 5, client0_stack),
-        export("send_entry", &client_table, 6, client1_stack),
+        export("send_entry", &client_table, 5),
+        export("send_entry", &client_table, 6),
     ];
     let clients_done = notification(&self_table, slots.take(1));
     let clients_done_key = grant_notification(&client, builder.entry(clients_done), 7);
@@ -351,7 +334,6 @@ pub fn run() -> ! {
         client_pages,
         ClientInit {
             send: send.map(|key| key.to_wire()),
-            stack_end: [client0_stack.top, client1_stack.top],
             done: clients_done_key.to_wire(),
             park: clients_park.to_wire(),
         },
@@ -366,9 +348,8 @@ pub fn run() -> ! {
     write_init(
         server_init,
         ServerInit {
-            receive: export("receive_entry", &server_table, 5, server_stack).to_wire(),
-            reply_receive: export("reply_receive_entry", &server_table, 6, server_stack).to_wire(),
-            stack_end: server_stack.top,
+            receive: export("receive_entry", &server_table, 5).to_wire(),
+            reply_receive: export("reply_receive_entry", &server_table, 6).to_wire(),
             salt: SALT,
         },
     );

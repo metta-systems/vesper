@@ -23,7 +23,6 @@ mod program {
         fb_client::fb_v1::{Bindings as FbBindings, Client as FbClient},
         libdevice_driver::{DriverInit, driver_init},
         libio_channel::{Consumer, IoRec, NoEvent, Packet, Producer},
-        libmeddle_runtime::ExclusiveStacks,
         libobject::{EventCountKey, RawKey},
         libserial_channel::{CONTROL_VA, DATA_AREA_VA, DATA_PAGES, SLOTS, SerialChannel},
         mailbox_client::mailbox_v1::{
@@ -260,23 +259,10 @@ mod program {
         let init = unsafe { driver_init(init_va) };
         let mut console = SerialConsole::new(init);
         let mut services = Services {
-            fb: FbClient::new(
-                FbBindings::from_imports(init.imports()),
-                // SAFETY: the shell's first Thread alone calls through its
-                // imports; the drawing Thread calls nothing.
-                unsafe { ExclusiveStacks::new() },
-            ),
+            fb: FbClient::new(FbBindings::from_imports(init.imports())),
             init,
-            mailbox: MailboxClient::new(
-                MailboxBindings::from_imports(init.imports()),
-                // SAFETY: the shell's one Thread calls through its imports.
-                unsafe { ExclusiveStacks::new() },
-            ),
-            power: PowerClient::new(
-                PowerBindings::from_imports(init.imports()),
-                // SAFETY: as above.
-                unsafe { ExclusiveStacks::new() },
-            ),
+            mailbox: MailboxClient::new(MailboxBindings::from_imports(init.imports())),
+            power: PowerClient::new(PowerBindings::from_imports(init.imports())),
         };
 
         console.print("Vesper shell, type 'help'\r\n");

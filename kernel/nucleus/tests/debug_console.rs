@@ -51,13 +51,12 @@ use {
         RawKey, Rights, decode_syscall_result,
     },
     objects::{
-        ArchObjects, ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, ObjectPool, Thread,
+        ArchObjectsImpl, ExecutionContext, KeyTable, Nucleus, ObjectPool, Thread,
         access::{Access, ObjectId, PoolTag},
         arch::ArchPools,
         arch_objects::{AddressSpaceId, AddressSpaceObject},
         carved::{Carved, CarvedId, FIRST_GENERATION},
         completion::{PendingKind, PendingState},
-        invocation::InvocationStackExtent,
         key_table::{CallerTable, KeyTableBinding},
         nucleus::NucleusPools,
         object_pool::IdentityError,
@@ -835,29 +834,22 @@ fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
         let thread = nucleus.create_thread(fixture_as).expect("caller Thread");
         nucleus.current_thread = Some(thread);
         let function = NonZero::new(0x80000).unwrap();
-        let extent = InvocationStackExtent::new(0x1010, 0x1080, 48, ArchObjectsImpl::USER_VA_END)
-            .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()));
+        // The target AddressSpace has made no stack pool.
+        let pool = libobject::StackPoolHandle::new(0, 1);
         let key = nucleus
             .current_thread_table_mut()
             .unwrap()
             .insert(
                 KeySlot(10),
-                KeyEntry::new_invocation(second_as, function, extent, PlacementWindow::NONE),
+                KeyEntry::new_invocation(second_as, function, pool, PlacementWindow::NONE),
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|_| panic!("Invocation capability installation"));
-        // Call dispatch is live. A zero saved x9 is an invalid SP, reported
-        // before the unready target translation; op 1 is CallWithKey, which this
+        // Call dispatch is live. The missing stack pool is reported before the
+        // unready target translation; op 1 is CallWithKey, which this
         // Invocation (empty placement window) rejects, and op 2 is unassigned.
         for (op, expected) in [
-            (
-                0,
-                CapError::InvalidStack {
-                    value: 0,
-                    reason: libobject::InvalidStackReason::SpOutOfRange,
-                }
-                .code(),
-            ),
+            (0, CapError::StaleGeneration { current: 1 }.code()),
             (1, CapError::KeyNotAccepted.code()),
             (2, CapError::InvalidOperation.code()),
         ] {
@@ -884,13 +876,11 @@ fn rejected_invocation_dispatch_preserves_the_mandatory_target_and_caller() {
                 Ok(target) if target == (second_as, function)
             ));
             assert_eq!(
-                entry
-                    .invocation_stack_extent()
-                    .unwrap_or_else(|error| panic!(
-                        "Invocation extent preserved: {:?}",
-                        error.code()
-                    )),
-                extent
+                entry.invocation_stack_pool().unwrap_or_else(|error| panic!(
+                    "Invocation pool preserved: {:?}",
+                    error.code()
+                )),
+                pool
             );
             assert_eq!(entry.rights(), Rights(Rights::CALL | Rights::BADGE));
             assert_eq!(entry.badge(), 0);

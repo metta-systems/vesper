@@ -65,12 +65,11 @@ revisit after use. Unanswered questions:
   status codes, leaving both words for results? Affects the Return and Call
   register contracts (D7/D9), `decode_syscall_result`, the export adapter and
   the Meddle call convention in `libs/meddle-runtime`.
-- **Freezing the provisional PPC conventions (D9):** the maintainer decides
-  when each becomes frozen ABI. Both work end-to-end through real Call/Return;
-  no validation or plan item gates either freeze, and work should not be
-  planned around them. "Provisional", "experimental" or "until field-tested"
+- **Freezing the provisional PPC convention (D9):** the maintainer decides
+  when it becomes frozen ABI. It works end-to-end through real Call/Return;
+  no validation or plan item gates the freeze, and work should not be
+  planned around it. "Provisional", "experimental" or "until field-tested"
   in the documents means this maintainer decision.
-  - the `x9` Call-time target-SP register;
   - the common native target-body return convention (`extern "C"` body
     returning a `#[repr(C)]` two-`u64` struct in x0/x1).
 
@@ -187,3 +186,8 @@ needs them.
   Policy lives in a scheduler component, as the nucleus has no periods or
   deadlines. Audio is the first user that needs it; USB isochronous pipes, and
   display, would use it too. HID interrupt pipes do not need it.
+- **Releasing the stacks of a faulted Thread:** a Thread that faults inside a
+  pooled call keeps its stack until its continuations are dropped. The
+  resource manager is meant to clean up Threads stuck in the faulted state,
+  which would also free those stacks; how it unwinds or retires them is not
+  designed (see the [stack pools](capabilities-contract.md#stack-pools-maintainer-decision-2026-10-19) section of the contract).

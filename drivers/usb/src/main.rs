@@ -34,7 +34,6 @@ mod component {
     use {
         crate::trace::Trace,
         libdevice_driver::{DriverInit, INIT_VA, driver_init, local_key},
-        libmeddle_runtime::ExclusiveStacks,
         libobject::{
             CapError, EventCountKey, KeyTableKey, NotificationKey, RawKey, export::init_return_key,
             thread::ThreadReturnKey,
@@ -605,17 +604,7 @@ mod component {
         let mut trace = Trace::new(init);
         trace!(trace, "usb-core: starting");
         let bindings = Bindings::from_imports(init.imports());
-        let stack_end = bindings
-            .open_pipe
-            .as_ref()
-            .expect("usb-core imports usb_hcd_v1.open_pipe")
-            .stack_end;
-        let client = Client::new(
-            bindings,
-            // SAFETY: this Thread is the only one calling through the client's
-            // imports.
-            unsafe { ExclusiveStacks::new() },
-        );
+        let client = Client::new(bindings);
         let area = client
             .data_area()
             .expect("usb-core shares a data area with the controller");
@@ -624,7 +613,6 @@ mod component {
             area,
             KeyTableKey::from_key(RawKey::from_wire(init.table)),
             u32::try_from(init.first_free_slot).expect("a slot fits in u32"),
-            stack_end,
         );
         let mut core = Core {
             init,

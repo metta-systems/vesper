@@ -32,11 +32,9 @@ fn main(index: u64) -> ! {
     set_tls(own_tls);
     for (row, &request) in CLIENT_REQUESTS[client].iter().enumerate() {
         semi::println!("client {index}: sending {request:#x} at EL0");
-        // SAFETY: the endpoint stack published with this client's Invocation
-        // is used only by this Thread.
-        let (ticket, reply) =
-            unsafe { send.call([request, 0, 0, 0, 0, 0], init.stack_end[client]) }
-                .unwrap_or_else(|error| panic!("client {index}: send failed: {:?}", error.code()));
+        let (ticket, reply) = send
+            .call([request, 0, 0, 0, 0, 0])
+            .unwrap_or_else(|error| panic!("client {index}: send failed: {:?}", error.code()));
         // The call migrated into the endpoint and blocked there: this Thread's
         // TLS must be its own again, whatever the endpoint and the server set.
         assert_eq!(tls(), own_tls, "client {index}: TLS not restored");

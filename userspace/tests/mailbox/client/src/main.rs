@@ -17,7 +17,7 @@ use {
         Bindings as FbBindings, Client as FbClient, Error as FbError, Exception as FbException,
     },
     libdevice_driver::{driver_init, driver_threads, local_key},
-    libmeddle_runtime::{ExclusiveStacks, IoRec},
+    libmeddle_runtime::IoRec,
     libobject::{
         EventCountKey, FrameKey, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
         UntypedKey,
@@ -178,12 +178,7 @@ fn check_property(mailbox: &Client) {
 /// The power component: the client may power the devices off, but holds no
 /// Invocation to halt or reset the board.
 fn check_power(init: &libdevice_driver::DriverInit) {
-    let power = PowerClient::new(
-        PowerBindings::from_imports(init.imports()),
-        // SAFETY: this Thread is the only one calling through the client's
-        // imports.
-        unsafe { ExclusiveStacks::new() },
-    );
+    let power = PowerClient::new(PowerBindings::from_imports(init.imports()));
     power
         .devices_off()
         .unwrap_or_else(|error| panic!("devices_off failed: {error:?}"));
@@ -221,11 +216,7 @@ fn report_framebuffer(_address: u64, _bytes: u32, _vc_base: u64, _vc_size: u64) 
 /// The fb component: nothing is configured at first; configuring a 640 by 480
 /// display of 32 bits per pixel allocates a framebuffer.
 fn check_fb(init: &libdevice_driver::DriverInit, mailbox: &Client) {
-    let fb = FbClient::new(
-        FbBindings::from_imports(init.imports()),
-        // SAFETY: as above.
-        unsafe { ExclusiveStacks::new() },
-    );
+    let fb = FbClient::new(FbBindings::from_imports(init.imports()));
     assert_eq!(
         fb.address(),
         Err(FbError::Exception(FbException::NotConfigured))
@@ -368,12 +359,7 @@ fn main(init_va: u64) -> ! {
                 error.code()
             )
         });
-    let mailbox = Client::new(
-        Bindings::from_imports(init.imports()),
-        // SAFETY: this Thread is the only one calling through the client's
-        // imports.
-        unsafe { ExclusiveStacks::new() },
-    );
+    let mailbox = Client::new(Bindings::from_imports(init.imports()));
     let revision = mailbox
         .get_board_revision()
         .unwrap_or_else(|error| panic!("get_board_revision failed: {error:?}"));

@@ -30,10 +30,10 @@ use {
     },
 };
 
-/// Extent `[base, end)`: Bounce's dedicated PPC stack Frames.
+/// Extent `[base, end)`: Bounce's dedicated PPC stack Frames, the one stack of
+/// the pool the fixture's Invocations run on.
 pub const STACK_BASE: u64 = PPC_STACK_VA;
 pub const STACK_END: u64 = PPC_STACK_VA + PPC_STACK_PAGES * 4096;
-pub const MINIMUM_HEADROOM: u64 = 0x400;
 
 /// Captured target-entry words: x0..x30, NZCV, DAIF.
 const CAPTURE_WORDS: usize = 33;
@@ -244,9 +244,8 @@ pub fn return_rejection_trip(key: RawKey, cases: [RejectedReturn; REJECTION_CASE
         }
     }
     REJECTIONS_PRESERVED.store(0, Ordering::Release);
-    // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
-    // fixture's Invocations; nothing else uses it during the Call.
-    let delivered = unsafe { InvocationKey::from_key(key).call([0; 6], STACK_END) }
+    let delivered = InvocationKey::from_key(key)
+        .call([0; 6])
         .unwrap_or_else(|error| panic!("rejection Call failed: {:?}", error.code()));
     assert_eq!(
         delivered, REJECTION_PAYLOAD,
@@ -291,12 +290,12 @@ pub struct CallOutcome {
     pub volatile_or: u64,
 }
 
-/// Invoke `key` with `op`, six inputs in x2..x7 and target SP in x9.
+/// Invoke `key` with `op` and six inputs in x2..x7.
 ///
 /// Spills the compiler's x19..x30, plants sentinels and NZCV = Z|C, then
 /// checks them after resumption against a private execution-stack copy.
 #[inline(never)]
-pub fn call_with_registers(key: RawKey, op: u64, args: [u64; 6], target_sp: u64) -> CallOutcome {
+pub fn call_with_registers(key: RawKey, op: u64, args: [u64; 6]) -> CallOutcome {
     let (status, word1, word2, check, volatile_or): (u64, u64, u64, u64, u64);
     // SAFETY: the aligned 96-byte execution-stack spill is created and
     // removed in this block; callee-saved registers/LR are restored before
@@ -347,7 +346,7 @@ pub fn call_with_registers(key: RawKey, op: u64, args: [u64; 6], target_sp: u64)
             inlateout("x5") args[3] => _,
             inlateout("x6") args[4] => _,
             inlateout("x7") args[5] => _,
-            inlateout("x9") target_sp => _,
+            lateout("x9") _,
             inlateout("x16") 0_u64 => volatile_or,
             lateout("x8") check,
             lateout("x10") _, lateout("x11") _, lateout("x12") _, lateout("x13") _,
@@ -373,9 +372,9 @@ fn read_daif() -> u64 {
 }
 
 /// Recoverable Call rejections through real SVC: no migration, no scrub.
-pub fn assert_call_rejected(key: RawKey, op: u64, target_sp: u64, expected: CapError) {
+pub fn assert_call_rejected(key: RawKey, op: u64, expected: CapError) {
     let ttbr_before = TTBR0_EL1.get();
-    let outcome = call_with_registers(key, op, [0x22, 0x33, 0x44, 0x55, 0x66, 0x77], target_sp);
+    let outcome = call_with_registers(key, op, [0x22, 0x33, 0x44, 0x55, 0x66, 0x77]);
     assert_eq!(
         (outcome.status, outcome.word1, outcome.word2),
         expected.code()
@@ -402,12 +401,11 @@ pub fn round_trip(key: RawKey, via_library: bool) -> (u64, u64) {
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
     RETURN_VIA_LIBRARY.store(via_library, Ordering::Release);
     let delivered = if via_library {
-        // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
-        // fixture's Invocation; nothing else uses it during the Call.
-        unsafe { InvocationKey::from_key(key).call(args, STACK_END) }
+        InvocationKey::from_key(key)
+            .call(args)
             .unwrap_or_else(|error| panic!("library PPC Call failed: {:?}", error.code()))
     } else {
-        let outcome = call_with_registers(key, 0, args, STACK_END);
+        let outcome = call_with_registers(key, 0, args);
         assert_eq!(outcome.check, 1, "Return corrupted x19-x30, SP or NZCV");
         assert_eq!(outcome.volatile_or, 0, "Return leaked x3-x18 state");
         decode_syscall_result((outcome.status, outcome.word1, outcome.word2))
@@ -429,7 +427,7 @@ pub fn round_trip(key: RawKey, via_library: bool) -> (u64, u64) {
     assert_eq!(
         ENTRY_SP.load(Ordering::Acquire),
         STACK_END,
-        "x9 not the target SP"
+        "SP not the end of the pool's first stack"
     );
 
     // r0: Bounce's probe word through the shared low VA; r1: target TTBR0.
@@ -557,9 +555,8 @@ pub fn export_round_trip(
         0x1234_5678_9ABC_DEF0,
         7,
     ];
-    // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
-    // fixture's Invocations; nothing else uses it during the Call.
-    let (r0, r1) = unsafe { InvocationKey::from_key(key).call(args, STACK_END) }
+    let (r0, r1) = InvocationKey::from_key(key)
+        .call(args)
         .unwrap_or_else(|error| panic!("export Call failed: {:?}", error.code()));
     assert_eq!(r0, export_digest(args), "export body result lost");
     assert_eq!(
@@ -666,9 +663,8 @@ pub fn live_values_trip(key: RawKey) {
             $(let $name: u64 = black_box($seed);)*
             // SAFETY: single-Thread access; see `MemoryWitness`.
             unsafe { MEMORY_WITNESS.0.get().write(0) };
-            // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved
-            // for this fixture's Invocations; nothing else uses it.
-            let delivered = unsafe { InvocationKey::from_key(key).call([0; 6], STACK_END) }
+            let delivered = InvocationKey::from_key(key)
+                .call([0; 6])
                 .unwrap_or_else(|error| panic!("clobber Call failed: {:?}", error.code()));
             $(assert_eq!(
                 black_box($name),
@@ -816,9 +812,8 @@ pub struct KeyedOutcome {
 pub fn keyed_round_trip(key: RawKey, lent: RawKey, destination_slot: u32) -> KeyedOutcome {
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
     let args = [u64::from(destination_slot), 2, 3, 4, 5, 6];
-    // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
-    // fixture's Invocations; nothing else uses it during the Call.
-    let delivered = unsafe { InvocationKey::from_key(key).call_with_key(lent, args, STACK_END) }
+    let delivered = InvocationKey::from_key(key)
+        .call_with_key(lent, args)
         .unwrap_or_else(|error| panic!("CallWithKey failed: {:?}", error.code()));
     assert_eq!(TTBR0_EL1.get(), translation::source_ttbr());
     let words = |words: &[AtomicU64; 3]| {
@@ -840,21 +835,10 @@ pub fn keyed_round_trip(key: RawKey, lent: RawKey, destination_slot: u32) -> Key
 
 /// A `CallWithKey` the kernel must reject before migration: the error decodes
 /// as `expected` and the source keeps its root.
-pub fn assert_call_with_key_rejected(
-    key: RawKey,
-    lent: RawKey,
-    target_sp: u64,
-    expected: CapError,
-) {
+pub fn assert_call_with_key_rejected(key: RawKey, lent: RawKey, expected: CapError) {
     let ttbr_before = TTBR0_EL1.get();
-    // SAFETY: a rejected Call leaves this Thread unchanged and runs nothing.
-    let result = unsafe {
-        InvocationKey::from_key(key).call_with_key(
-            lent,
-            [0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
-            target_sp,
-        )
-    };
+    let result =
+        InvocationKey::from_key(key).call_with_key(lent, [0x22, 0x33, 0x44, 0x55, 0x66, 0x77]);
     match result {
         Err(error) => assert_eq!(error.code(), expected.code()),
         Ok(words) => panic!("CallWithKey was not rejected: {words:?}"),
@@ -873,9 +857,8 @@ pub fn badged_export_round_trip(key: RawKey, badge: u64) {
     BODY_DUMMIES.store(u64::MAX, Ordering::Release);
     BODY_BADGE.store(u64::MAX - 1, Ordering::Release);
     let args = [1, 2, 3, 4, 5, 6];
-    // SAFETY: STACK_END is the top of Bounce's PPC stack, reserved for this
-    // fixture's Invocations; nothing else uses it during the Call.
-    let (r0, r1) = unsafe { InvocationKey::from_key(key).call(args, STACK_END) }
+    let (r0, r1) = InvocationKey::from_key(key)
+        .call(args)
         .unwrap_or_else(|error| panic!("badged export Call failed: {:?}", error.code()));
     assert_eq!(r0, export_digest(args));
     assert_eq!(

@@ -1,8 +1,8 @@
-//! Kernel-owned numeric stack contract carried inline in an Invocation.
+//! `Invocation.Call` and `Thread.Return` admission and migration.
 //!
-//! A validated extent establishes neither mapped/writable backing nor exclusive
-//! stack ownership. Component setup supplies those guarantees; no allocation or
-//! translation walk occurs here.
+//! A call runs on a stack the kernel takes from the stack pool the Invocation
+//! names (see `stack_pool`) and gives back at its return or when its Thread is
+//! torn down. No allocation or translation walk occurs here.
 //!
 //! `Nucleus::prepare_call` is the non-committing `Invocation.Call` admission
 //! and preparation primitive; `Nucleus::commit_call` is its stage-5 commit.
@@ -14,6 +14,7 @@ use {
         api::key_entry::KeyEntry,
         objects::{
             ArchObjects, ExecutionContext, InvocationContinuation, KeyTable, Nucleus, Placement,
+            StackUse,
             access::Access,
             arch_objects::{AddressSpaceId, AddressSpaceObject},
             carved::CarvedId,
@@ -25,7 +26,7 @@ use {
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
     libobject::{
-        CapError, InvalidStackReason, KeySlot, PlacementWindow, RawKey, Rights, fault::FaultAction,
+        CapError, KeySlot, PlacementWindow, RawKey, Rights, StackPoolHandle, fault::FaultAction,
         syscall_status::InvalidSelfReference,
     },
 };
@@ -33,117 +34,6 @@ use {
 /// The input register that carries the lent key of `CallWithKey` (`x8`), as
 /// key diagnostics report it.
 const LENT_KEY_OPERAND: u8 = 8;
-
-/// An immutable, validated target stack extent and downward headroom requirement.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InvocationStackExtent {
-    base: u64,
-    end: u64,
-    minimum_headroom: u64,
-}
-
-impl InvocationStackExtent {
-    /// Validate the published extent within `[0, user_end_exclusive)`.
-    /// The exclusive extent end may equal the user ceiling. Predicate order is
-    /// part of the diagnostic ABI; compare bounds before subtracting.
-    pub fn new(
-        base: u64,
-        end: u64,
-        minimum_headroom: u64,
-        user_end_exclusive: u64,
-    ) -> Result<Self, CapError> {
-        use InvalidStackReason as Reason;
-
-        let invalid = |value, reason| CapError::InvalidStack { value, reason };
-        if end == base {
-            return Err(invalid(end, Reason::ExtentEmpty));
-        }
-        if end < base {
-            return Err(invalid(end, Reason::ExtentInverted));
-        }
-        if base >= user_end_exclusive {
-            return Err(invalid(base, Reason::BaseOutsideUserRange));
-        }
-        if end > user_end_exclusive {
-            return Err(invalid(end, Reason::EndOutsideUserRange));
-        }
-        if base & 15 != 0 {
-            return Err(invalid(base, Reason::BaseMisaligned));
-        }
-        if end & 15 != 0 {
-            return Err(invalid(end, Reason::EndMisaligned));
-        }
-        if minimum_headroom == 0 {
-            return Err(invalid(minimum_headroom, Reason::MinimumHeadroomZero));
-        }
-        if minimum_headroom & 15 != 0 {
-            return Err(invalid(minimum_headroom, Reason::MinimumHeadroomMisaligned));
-        }
-        if minimum_headroom > end - base || minimum_headroom >> 4 > u64::from(u32::MAX) {
-            return Err(invalid(minimum_headroom, Reason::MinimumHeadroomTooLarge));
-        }
-        Ok(Self {
-            base,
-            end,
-            minimum_headroom,
-        })
-    }
-
-    pub const fn base(self) -> u64 {
-        self.base
-    }
-
-    pub const fn end(self) -> u64 {
-        self.end
-    }
-
-    pub const fn minimum_headroom(self) -> u64 {
-        self.minimum_headroom
-    }
-
-    /// The minimum headroom in 16-byte units, as a capability entry stores it.
-    /// Validation limits the headroom to what fits (`new` refuses more with
-    /// `MinimumHeadroomTooLarge`).
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "validated to fit 32 bits of 16-byte units"
-    )]
-    pub const fn minimum_headroom_units(self) -> u32 {
-        (self.minimum_headroom >> 4) as u32
-    }
-
-    /// The extent a capability entry stores: parts that `new` validated, with
-    /// the headroom as a count of 16-byte units.
-    pub const fn from_validated(base: u64, end: u64, minimum_headroom_units: u32) -> Self {
-        Self {
-            base,
-            end,
-            minimum_headroom: (minimum_headroom_units as u64) << 4,
-        }
-    }
-
-    /// Validate the submitted descending-stack SP before any Call admission.
-    /// This helper does not enable Call or inspect mappings, depth or AS readiness.
-    pub fn validate_sp(self, sp: u64) -> Result<(), CapError> {
-        use InvalidStackReason as Reason;
-
-        let invalid = |reason| CapError::InvalidStack { value: sp, reason };
-        if sp & 15 != 0 {
-            return Err(invalid(Reason::SpMisaligned));
-        }
-        if sp <= self.base || sp > self.end {
-            return Err(invalid(Reason::SpOutOfRange));
-        }
-        if sp - self.base < self.minimum_headroom {
-            return Err(invalid(Reason::SpInsufficientHeadroom));
-        }
-        Ok(())
-    }
-}
-
-const _: () = assert!(core::mem::size_of::<InvocationStackExtent>() == 24);
-const _: () = assert!(core::mem::align_of::<InvocationStackExtent>() == 8);
 
 /// Checked Call target copied out of a looked-up `Invocation` entry.
 ///
@@ -153,7 +43,8 @@ const _: () = assert!(core::mem::align_of::<InvocationStackExtent>() == 8);
 pub struct CallTarget {
     pub address_space: AddressSpaceId,
     pub function_address: NonZero<u64>,
-    pub stack_extent: InvocationStackExtent,
+    /// The stack pool of the target `AddressSpace` the call takes its stack from.
+    pub stack_pool: StackPoolHandle,
     /// Where `CallWithKey` places a lent key in the target's table; empty if
     /// the Invocation accepts none.
     pub placement_window: PlacementWindow,
@@ -202,7 +93,7 @@ pub struct PreparedCall {
     continuation: InvocationContinuation,
     translation: PreparedTranslationContext,
     entry_pc: NonZero<u64>,
-    target_sp: u64,
+    stack_pool: StackPoolHandle,
     arguments: [u64; 6],
     /// The invoked key's badge, delivered in `x1`.
     badge: u64,
@@ -231,9 +122,9 @@ impl PreparedCall {
         self.entry_pc
     }
 
-    /// Target SP consumed from saved `x9` and validated against the extent.
-    pub const fn target_sp(&self) -> u64 {
-        self.target_sp
+    /// The stack pool of the target `AddressSpace` the call takes its stack from.
+    pub const fn stack_pool(&self) -> StackPoolHandle {
+        self.stack_pool
     }
 
     /// The six real Call inputs from saved `x2..x7`, unchanged.
@@ -294,9 +185,9 @@ impl<A: ArchObjects> Nucleus<A> {
     /// `Invocation.CallWithKey`) for the current Thread, without committing
     /// anything.
     ///
-    /// `saved` is the caller's saved exception frame: the target SP is read
-    /// from saved `x9` (provisional transport), never the live register, and
-    /// the six Call inputs from saved `x2..x7`. Stage order follows the
+    /// `saved` is the caller's saved exception frame: the six Call inputs are
+    /// read from saved `x2..x7`, never the live registers. The stack the callee
+    /// runs on is taken at commit. Stage order follows the
     /// selected admission order after key/operation/authority checks:
     ///
     /// 1. live target `AddressSpace` identity (`InconsistentKey`/`ObjectRetired`
@@ -305,7 +196,8 @@ impl<A: ArchObjects> Nucleus<A> {
     /// 3. `CallWithKey` only: the lent key resolves through the caller's table
     ///    (reported against operand `x8`), is a lendable kind
     ///    (`InvalidObjectType`) and carries `LEND` (`InsufficientRights`);
-    /// 4. ordered SP predicates (`InvalidStack`);
+    /// 4. the target's stack pool is live (`StaleGeneration`) and has a free
+    ///    stack (`NoFreeStack { count }`);
     /// 5. target keytable binding (`NotBound`) and translation-context
     ///    readiness/encodability;
     /// 6. invocation-stack capacity (`NestingDepth { count }`);
@@ -343,9 +235,13 @@ impl<A: ArchObjects> Nucleus<A> {
             Self::admit_lent_key(access, target.placement_window, lend)?;
         }
 
-        // Stage 4: the submitted SP, from the saved frame only.
-        let target_sp = saved.gpr[9];
-        target.stack_extent.validate_sp(target_sp)?;
+        // Stage 4: the target's stack pool is live and has a free stack. The
+        // stack itself is taken at commit.
+        access
+            .resolve_object::<A::AddressSpace>(target.address_space)
+            .map_err(|error| error.for_key(invocation_key, 0))?
+            .stack_pools()
+            .admit(target.stack_pool)?;
 
         // Stage 5: keytable binding, root/ASID readiness and backend
         // encodability.
@@ -375,7 +271,7 @@ impl<A: ArchObjects> Nucleus<A> {
             ),
             translation,
             entry_pc: target.function_address,
-            target_sp,
+            stack_pool: target.stack_pool,
             arguments,
             badge: target.badge,
             placement,
@@ -456,7 +352,7 @@ impl PreparedCall {
     /// source mode, masks and other controls with only NZCV cleared; the
     /// exception origin is unchanged, so Call never changes privilege. TLS
     /// (`TPIDR_EL0`) is zero: the source's value is saved in the continuation.
-    pub fn target_entry_context(&self) -> SavedContext {
+    pub fn target_entry_context(&self, stack_pointer: u64) -> SavedContext {
         let mut gpr = [0; 30];
         gpr[2..8].copy_from_slice(&self.arguments);
         gpr[1] = self.badge;
@@ -468,7 +364,7 @@ impl PreparedCall {
             lr: 0,
             spsr_el1: self.continuation.source_spsr & !SPSR_NZCV,
             elr_el1: self.entry_pc.get(),
-            sp: self.target_sp,
+            sp: stack_pointer,
             origin: self.continuation.source_origin,
             tpidr_el0: 0,
         }
@@ -530,13 +426,34 @@ impl<A: ArchObjects> Nucleus<A> {
         // Commit. The borrowed entry goes in first; the push is the last
         // fallible step and leaves the stack unchanged on failure.
         let mut continuation = prepared.continuation;
+        let target_address_space = prepared.translation.address_space();
+        let lease = self
+            .address_space_mut(target_address_space)
+            .ok_or(CapError::InvalidOperation)?
+            .stack_pools_mut()
+            .take(prepared.stack_pool)?;
+        continuation.stack = StackUse {
+            pool: lease.slot,
+            index: lease.index,
+            taken: true,
+        };
         if let Some(placement) = prepared.placement {
-            continuation.placement = Self::install_placement(access, placement)?;
+            match Self::install_placement(access, placement) {
+                Ok(installed) => continuation.placement = installed,
+                Err(error) => {
+                    self.give_stack(target_address_space, continuation.stack);
+                    return Err(error);
+                }
+            }
         }
-        let source = self
+        let pushed = self
             .thread_mut(source_thread)
-            .ok_or(CapError::InvalidOperation)?;
-        if source.invocation_stack.push(continuation).is_err() {
+            .ok_or(CapError::InvalidOperation)?
+            .invocation_stack
+            .push(continuation)
+            .is_ok();
+        if !pushed {
+            self.give_stack(target_address_space, continuation.stack);
             Self::release_placement(
                 access,
                 prepared
@@ -548,10 +465,12 @@ impl<A: ArchObjects> Nucleus<A> {
                 count: u64::try_from(prepared.depth).unwrap_or(u64::MAX),
             });
         }
-        source.address_space = prepared.translation.address_space();
+        self.thread_mut(source_thread)
+            .ok_or(CapError::InvalidOperation)?
+            .address_space = target_address_space;
         Ok(CommittedCall {
             source_thread,
-            target: prepared.target_entry_context(),
+            target: prepared.target_entry_context(lease.sp),
             translation: prepared.translation,
             with_key: prepared.placement.is_some(),
         })
@@ -612,21 +531,38 @@ impl<A: ArchObjects> Nucleus<A> {
     /// record. A callee whose `AddressSpace` is gone took its table with it, so
     /// there is nothing to remove. Called when the Thread stops for good
     /// (retired, or parked as faulted).
-    pub fn release_thread_placements(&self, access: &Access, thread: ThreadId) {
+    pub fn release_thread_placements(&mut self, access: &Access, thread: ThreadId) {
         let Some(thread) = self.thread(thread) else {
             return;
         };
-        let records = thread.invocation_stack.records();
+        let stack = thread.invocation_stack;
+        let records = stack.records();
+        let current = thread.address_space;
         for (depth, record) in records.iter().enumerate() {
+            let callee = records
+                .get(depth + 1)
+                .map_or(current, |next| next.source_address_space);
+            self.give_stack(callee, record.stack);
             if !record.placement.is_some() {
                 continue;
             }
-            let callee = records
-                .get(depth + 1)
-                .map_or(thread.address_space, |next| next.source_address_space);
             if let Ok(table) = Self::address_space_table(access, callee, RawKey::from_wire(0)) {
                 Self::release_placement(access, table.table, record.placement);
             }
+        }
+    }
+
+    /// Give the stack `stack` names back to the pool of `address_space` it was
+    /// taken from. A record that holds no stack, or an `AddressSpace` that is
+    /// gone with its pools, changes nothing.
+    fn give_stack(&mut self, address_space: AddressSpaceId, stack: StackUse) {
+        if !stack.taken {
+            return;
+        }
+        if let Some(address_space) = self.address_space_mut(address_space) {
+            address_space
+                .stack_pools_mut()
+                .give(stack.pool, stack.index);
         }
     }
 }
@@ -821,6 +757,7 @@ impl<A: ArchObjects> Nucleus<A> {
         // the fault frame as the handler's action selects, and free it.
         let handled_fault = thread.fault.filter(|fault| fault.depth == prepared.depth);
         let Some(fault) = handled_fault else {
+            self.give_stack(prepared.current_address_space, prepared.continuation.stack);
             return Ok(CommittedReturn {
                 source_thread,
                 resumed: prepared.source_resume_context(),
@@ -836,6 +773,7 @@ impl<A: ArchObjects> Nucleus<A> {
             // Every A64 instruction is four bytes.
             resumed.elr_el1 = resumed.elr_el1.wrapping_add(4);
         }
+        self.give_stack(prepared.current_address_space, prepared.continuation.stack);
         self.set_fault_handler_busy(fault.address_space, false);
         Ok(CommittedReturn {
             source_thread,

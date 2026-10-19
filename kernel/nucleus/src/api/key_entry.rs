@@ -46,7 +46,7 @@
 // │  VARIANT F: Invocation                       │
 // │    function_address: NonZero<u64>            │
 // │    AddressSpace address/generation           │
-// │    Stack base/end/minimum headroom (24 bytes)│
+// │    Stack pool slot and generation            │
 // │    Placement window first/count (2 x u32)    │
 // │                                              │
 // │  VARIANT G: Thread selector                  │
@@ -78,7 +78,6 @@ use {
         access::{ObjectId, PoolTag},
         arch_objects::{AddressSpaceId, PageTableId},
         carved::CarvedId,
-        invocation::InvocationStackExtent,
         irq::IrqHandlerId,
         thread::ThreadId,
     },
@@ -86,6 +85,7 @@ use {
     libaddress::align,
     libobject::{
         ArchType, CapError, CoreType, FrameAttribute, ObjectType, PlacementWindow, Rights,
+        StackPoolHandle,
     },
 };
 
@@ -200,12 +200,9 @@ pub struct InvocationPayload {
     pub function_address: NonZero<u64>,
     /// Kernel address of the target `AddressSpace`'s carved record.
     pub address_space_address: u64,
-    /// Numeric target stack contract, validated before construction: the
-    /// extent's base and end, and its minimum headroom in 16-byte units (the
-    /// headroom is a multiple of 16, so the `u32` count covers 2^36 bytes).
-    pub stack_base: u64,
-    pub stack_end: u64,
-    pub minimum_headroom_units: u32,
+    /// Generation of the target stack pool named by `pool_slot` when the
+    /// Invocation was created.
+    pub pool_generation: u32,
     /// Target `AddressSpace` generation.
     pub address_space_generation: u32,
     /// First slot of the key-placement window `CallWithKey` places a lent key
@@ -215,6 +212,10 @@ pub struct InvocationPayload {
     /// Number of slots in the key-placement window; zero means the Invocation
     /// accepts no lent key.
     pub placement_count: u32,
+    /// Slot of the target `AddressSpace`'s stack pool the Invocation's calls
+    /// run on.
+    pub pool_slot: u8,
+    pub _pad: [u8; 15],
 }
 
 /// Payload for a `KeyTable` capability: the carved `KeyTable`'s identity
@@ -672,13 +673,13 @@ impl KeyEntry {
     /// `AddressSpace`. The capability starts with `CALL` and `BADGE` authority and no
     /// badge: its holder can call it and mint badged copies; a copy that drops
     /// `BADGE` can only call.
-    /// The nonzero entry and validated numeric stack contract are mandatory;
+    /// The nonzero entry and the target's stack pool are mandatory;
     /// `placement_window` is where `CallWithKey` places a lent key (empty for
     /// an Invocation that accepts none).
     pub fn new_invocation(
         address_space: AddressSpaceId,
         function_address: NonZero<u64>,
-        stack_extent: InvocationStackExtent,
+        stack_pool: StackPoolHandle,
         placement_window: PlacementWindow,
     ) -> Self {
         debug_assert_eq!(address_space.kind, ObjectType::ADDRESS_SPACE);
@@ -691,9 +692,9 @@ impl KeyEntry {
                 invocation: InvocationPayload {
                     function_address,
                     address_space_address: address_space.address,
-                    stack_base: stack_extent.base(),
-                    stack_end: stack_extent.end(),
-                    minimum_headroom_units: stack_extent.minimum_headroom_units(),
+                    pool_slot: stack_pool.slot(),
+                    _pad: [0; 15],
+                    pool_generation: stack_pool.generation(),
                     address_space_generation: address_space.generation,
                     placement_first: placement_window.first(),
                     placement_count: placement_window.count(),
@@ -1015,21 +1016,20 @@ impl KeyEntry {
         ))
     }
 
-    /// Read the immutable numeric target stack contract of an `Invocation`.
-    pub fn invocation_stack_extent(&self) -> Result<InvocationStackExtent, CapError> {
+    /// Read the stack pool an `Invocation`'s calls run on.
+    pub fn invocation_stack_pool(&self) -> Result<StackPoolHandle, CapError> {
         if self.obj_type != ObjectType::INVOCATION {
             return Err(CapError::TypeMismatch {
                 expected: ObjectType::INVOCATION,
                 found: self.obj_type,
             });
         }
-        // SAFETY: Invocation constructors initialize the validated extent;
-        // the checked tag selects that payload, and no mutable accessor exposes it.
+        // SAFETY: the checked tag selects the invocation payload, which the
+        // constructor initialized; no mutable accessor exposes it.
         let payload = unsafe { self.payload.invocation };
-        Ok(InvocationStackExtent::from_validated(
-            payload.stack_base,
-            payload.stack_end,
-            payload.minimum_headroom_units,
+        Ok(StackPoolHandle::new(
+            payload.pool_slot,
+            payload.pool_generation,
         ))
     }
 

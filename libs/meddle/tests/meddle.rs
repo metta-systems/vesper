@@ -919,8 +919,8 @@ mod tests {
             client_module.contains("pubfninstall(&self,into:&__runtime::KeyTableKey,count:u32")
         );
         // It is lent through CallWithKey, outside the argument words.
-        assert!(client_module.contains("call_with_key(&self.stacks,into.raw(),arguments)"));
-        assert!(client_module.contains("binding.call(&self.stacks,arguments)"));
+        assert!(client_module.contains("call_with_key(into.raw(),arguments)"));
+        assert!(client_module.contains("binding.call(arguments)"));
         // The dispatcher receives it first and the export uses the lending macro.
         assert!(
             interface_module

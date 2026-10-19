@@ -15,7 +15,10 @@ use {
     },
     libaddress::PhysAddr,
     libimage::{ComponentImage, PAGE_BYTES, Permissions},
-    libobject::{FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights},
+    libobject::{
+        AddressSpaceKey, FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights,
+        StackPoolHandle,
+    },
     nucleus::objects::KeyTable,
 };
 
@@ -281,6 +284,36 @@ impl Builder<'_> {
             bottom,
             top: bottom + u64::from(pages) * PAGE,
         }
+    }
+
+    /// Map `count` stacks of `pages` pages each in `region`, every stack with
+    /// an unmapped guard page below it and the last with one above it, and make
+    /// a stack pool of them in the region's `AddressSpace`.
+    ///
+    /// The pool spans `[guard][stack]…[stack]`: its stacks are
+    /// `(pages + 1) * PAGE` bytes apart, so a call's stack pointer starts at the
+    /// top of a mapped stack with the guard of the next stack above it.
+    ///
+    /// # Panics
+    ///
+    /// When the region is exhausted, or the kernel refuses the pool.
+    pub fn stack_pool(
+        &self,
+        region: &mut StackRegion,
+        pages: u32,
+        count: u32,
+        slots: &mut SlotCursor,
+    ) -> StackPoolHandle {
+        let mut base = 0;
+        for index in 0..count {
+            let stack = self.user_stack(region, pages, slots);
+            if index == 0 {
+                base = stack.bottom - PAGE;
+            }
+        }
+        AddressSpaceKey::from_key(region.address_space)
+            .create_stack_pool(base, (u64::from(pages) + 1) * PAGE, u64::from(count))
+            .unwrap_or_else(|error| panic!("CreateStackPool failed: {:?}", error.code()))
     }
 }
 

@@ -26,8 +26,8 @@
 //!   [`ImportRecord`] per function of another component its
 //!   `interfaces/imports.if` uses: the function's Invocation, in the
 //!   driver's table, into the instance the driver's node links to with the
-//!   `uses ... via` property, and the target stack reserved for the
-//!   driver's calls into that instance (one per instance it calls).
+//!   `uses ... via` property, with the data area it shares with that instance
+//!   (one per instance it calls).
 //!
 //! A driver that needs more Threads than its interrupt Thread declares their
 //! entries with [`driver_threads!`]. Kickstart starts each on its own stack
@@ -35,7 +35,7 @@
 //! only the first Thread receives the interrupts.
 mod masters;
 
-pub use masters::{EXPORT_STACK_HEADROOM, InstallError, Masters};
+pub use masters::{InstallError, Masters};
 
 use {
     core::{
@@ -190,17 +190,14 @@ impl VideoBlock {
     }
 }
 
-/// The data area an exporting driver shares with one client instance, and the
-/// stack that client's calls run on. Kickstart badges the client's keys with
-/// the area's `base`, so the exporter tells its callers apart by the badge of the
+/// The data area an exporting driver shares with one client instance.
+///
+/// Kickstart badges the client's keys with the area's `base`, so the exporter tells
+/// its callers apart by the badge of the
 /// key a call came through ([`DriverInit::area_for_badge`]).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportedArea {
-    /// Bottom of the target stack reserved for the client
-    pub stack_bottom: u64,
-    /// End (initial stack pointer) of that stack
-    pub stack_end: u64,
     /// Base of the data area, at the same address in the client
     pub base: u64,
     /// Bytes of the data area
@@ -289,6 +286,9 @@ pub struct DriverInit {
     pub import_count: u64,
     /// Data areas shared with the clients that call this driver's exports
     pub area_count: u64,
+    /// The stack pool calls into this driver's exports run on, as its wire
+    /// handle (zero: the driver exports nothing)
+    pub export_pool: u64,
     pub areas: [ExportedArea; MAX_AREAS],
     /// The functions of other components the driver imports (its
     /// `interfaces/imports.if`), each linked through its device tree node
@@ -371,9 +371,8 @@ impl DriverInit {
         }; MAX_VIDEO_BLOCKS],
         import_count: 0,
         area_count: 0,
+        export_pool: 0,
         areas: [ExportedArea {
-            stack_bottom: 0,
-            stack_end: 0,
             base: 0,
             len: 0,
             channel_base: 0,
@@ -382,7 +381,6 @@ impl DriverInit {
             type_code: 0,
             function: 0,
             invocation: 0,
-            stack_end: 0,
             area_base: 0,
             area_len: 0,
             channel_base: 0,
@@ -539,9 +537,9 @@ pub fn device_address(init: &DriverInit, paddr: u64) -> Option<u64> {
         .map(|index| device_page_va(index) + (paddr & 0xfff))
 }
 
-/// Lets one caller at a time into the part of a component that uses stacks
-/// its imports reserve for it, such as a client of another component: those
-/// stacks serve one Thread at a time (see `libmeddle_runtime::ExclusiveStacks`).
+/// Lets one caller at a time into the part of a component that uses the data
+/// areas it shares with the components it calls: those areas serve one Thread
+/// at a time.
 ///
 /// A component creates a static `Turnstile`, calls [`open`](Self::open) with an
 /// `EventCount` it carved once it is set up, and advances

@@ -3,7 +3,7 @@ use {
     std::cell::Cell,
     vesper_objects::{
         ArchType, CapError, InconsistencyReason, InvalidKeyReason, InvalidStackReason, KeySlot,
-        KeyTableKey, RawKey,
+        KeyTableKey, RawKey, StackPoolHandle,
     },
 };
 
@@ -23,6 +23,10 @@ fn respond(request: Request) -> Response {
 
 pub(super) unsafe fn protected_call1(key: u64, op: u64, arg0: u64) -> Response {
     respond((key, op, [arg0, 0, 0, 0, 0, 0]))
+}
+
+pub(super) unsafe fn protected_call3(key: u64, op: u64, a0: u64, a1: u64, a2: u64) -> Response {
+    respond((key, op, [a0, a1, a2, 0, 0, 0]))
 }
 
 pub(super) unsafe fn protected_call0(key: u64, op: u64) -> Response {
@@ -77,12 +81,22 @@ fn address_space_operation_ids_are_stable() {
     assert_eq!(AddressSpaceOp::Retire as u8, 1);
     assert_eq!(AddressSpaceOp::Bind as u8, 2);
     assert_eq!(AddressSpaceOp::CreateInvocation as u8, 3);
+    assert_eq!(AddressSpaceOp::CreateStackPool as u8, 4);
+    assert_eq!(AddressSpaceOp::DestroyStackPool as u8, 5);
     assert!(matches!(
         AddressSpaceOp::try_from(3),
         Ok(AddressSpaceOp::CreateInvocation)
     ));
     assert!(matches!(
         AddressSpaceOp::try_from(4),
+        Ok(AddressSpaceOp::CreateStackPool)
+    ));
+    assert!(matches!(
+        AddressSpaceOp::try_from(5),
+        Ok(AddressSpaceOp::DestroyStackPool)
+    ));
+    assert!(matches!(
+        AddressSpaceOp::try_from(6),
         Err(CapError::InvalidOperation)
     ));
 }
@@ -112,14 +126,8 @@ fn create_invocation_encodes_operands_and_returns_destination_key() {
         );
     });
 
-    let result = address_space.create_invocation(
-        0xfeed_cafe_1234,
-        &destination,
-        KeySlot(12),
-        0x2000_0100,
-        0x2000_0190,
-        0x30,
-    );
+    let pool = StackPoolHandle::new(5, 0x0102_0304);
+    let result = address_space.create_invocation(0xfeed_cafe_1234, &destination, KeySlot(12), pool);
 
     let Ok(actual_key) = result else {
         panic!("CreateInvocation wrapper returned an error");
@@ -135,9 +143,9 @@ fn create_invocation_encodes_operands_and_returns_destination_key() {
                     0xfeed_cafe_1234,
                     destination_key.to_wire(),
                     12,
-                    0x2000_0100,
-                    0x2000_0190,
-                    0x30,
+                    0x01_0203_0405,
+                    0,
+                    0,
                 ],
             ))
         );
@@ -161,10 +169,131 @@ fn create_invocation_preserves_kernel_errors() {
     });
 
     assert!(matches!(
-        address_space.create_invocation(0x1000, &destination, KeySlot(5), 0x2000, 0x3000, 0x80),
+        address_space.create_invocation(
+            0x1000,
+            &destination,
+            KeySlot(5),
+            StackPoolHandle::new(0, 1)
+        ),
         Err(CapError::InsufficientRights)
     ));
     REQUEST.with(|request| assert!(request.take().is_some()));
+}
+
+#[test]
+fn stack_pool_handles_round_trip_and_reject_reserved_bits() {
+    for (slot, generation) in [(0, 0), (1, 1), (15, 0x7fff_ffff), (255, u32::MAX)] {
+        let handle = StackPoolHandle::new(slot, generation);
+        assert_eq!(StackPoolHandle::from_wire(handle.to_wire()), Some(handle));
+        assert_eq!((handle.slot(), handle.generation()), (slot, generation));
+        assert_eq!(handle.to_wire() >> 40, 0);
+    }
+    assert_eq!(StackPoolHandle::new(3, 7).to_wire(), 3 | (7 << 8));
+    for word in [1 << 40, u64::MAX, 1 << 63] {
+        assert_eq!(StackPoolHandle::from_wire(word), None);
+    }
+}
+
+#[test]
+fn create_stack_pool_encodes_extent_and_returns_the_handle() {
+    let address_space_key = RawKey::new(vesper_objects::KeySlot(1), 0x89ab_cdef);
+    let address_space = AddressSpaceKey::from_key(address_space_key);
+    let returned = StackPoolHandle::new(2, 9);
+    RESPONSE.with(|pending| assert!(pending.replace(Some((0, returned.to_wire(), 0))).is_none()));
+
+    let result = address_space.create_stack_pool(0x2000_0000, 0x3000, 16);
+
+    assert_eq!(result.map_err(CapError::code), Ok(returned));
+    REQUEST.with(|request| {
+        assert_eq!(
+            request.take(),
+            Some((
+                address_space_key.to_wire(),
+                4,
+                [0x2000_0000, 0x3000, 16, 0, 0, 0]
+            ))
+        );
+    });
+}
+
+#[test]
+fn create_stack_pool_decodes_every_typed_reason_without_losing_values() {
+    let address_space = AddressSpaceKey::from_key(RawKey::new(KeySlot(1), 7));
+    for (id, reason) in [
+        (1, InvalidStackReason::BaseOutsideUserRange),
+        (2, InvalidStackReason::EndOutsideUserRange),
+        (3, InvalidStackReason::BaseMisaligned),
+        (4, InvalidStackReason::StackBytesMisaligned),
+        (5, InvalidStackReason::StackBytesTooSmall),
+        (6, InvalidStackReason::StackCountOutOfRange),
+    ] {
+        for value in [0, 0x1234_5678_9abc_def0, u64::MAX] {
+            RESPONSE.with(|pending| assert!(pending.replace(Some((33, value, id))).is_none()));
+            let result = address_space.create_stack_pool(0x2000, 0x1000, 4);
+            REQUEST.with(|request| assert!(request.take().is_some()));
+            match result {
+                Err(CapError::InvalidStack {
+                    value: actual_value,
+                    reason: actual_reason,
+                }) => {
+                    assert_eq!(actual_value, value);
+                    assert_eq!(actual_reason, reason);
+                }
+                _ => panic!("lost InvalidStack diagnostic"),
+            }
+        }
+    }
+}
+
+#[test]
+fn create_stack_pool_reports_a_full_table() {
+    let address_space = AddressSpaceKey::from_key(RawKey::new(KeySlot(1), 7));
+    RESPONSE.with(|pending| {
+        assert!(
+            pending
+                .replace(Some((vesper_objects::syscall_status::POOL_EXHAUSTED, 0, 0)))
+                .is_none()
+        );
+    });
+    assert!(matches!(
+        address_space.create_stack_pool(0x2000, 0x1000, 4),
+        Err(CapError::PoolExhausted)
+    ));
+    REQUEST.with(|request| assert!(request.take().is_some()));
+}
+
+#[test]
+fn destroy_stack_pool_encodes_the_handle_and_decodes_statuses() {
+    let address_space_key = RawKey::new(vesper_objects::KeySlot(1), 0x89ab_cdef);
+    let address_space = AddressSpaceKey::from_key(address_space_key);
+    let handle = StackPoolHandle::new(4, 0x55);
+    for (response, expected) in [
+        ((0, 0, 0), Ok(())),
+        ((9, 0, 0), Err(CapError::InvalidOperation.code())),
+        (
+            (42, 7, 0),
+            Err(CapError::StaleGeneration { current: 7 }.code()),
+        ),
+        ((6, 0, 0), Err(CapError::InsufficientRights.code())),
+    ] {
+        RESPONSE.with(|pending| assert!(pending.replace(Some(response)).is_none()));
+        assert_eq!(
+            address_space
+                .destroy_stack_pool(handle)
+                .map_err(CapError::code),
+            expected
+        );
+        REQUEST.with(|request| {
+            assert_eq!(
+                request.take(),
+                Some((
+                    address_space_key.to_wire(),
+                    5,
+                    [handle.to_wire(), 0, 0, 0, 0, 0]
+                ))
+            );
+        });
+    }
 }
 
 #[test]
@@ -251,9 +380,7 @@ fn invoke_create_invocation(args: [u64; 6], response: Response) -> Result<RawKey
         args[0],
         &destination,
         KeySlot(u32::try_from(args[2]).unwrap()),
-        args[3],
-        args[4],
-        args[5],
+        StackPoolHandle::from_wire(args[3]).unwrap(),
     );
 
     REQUEST.with(|request| {
@@ -269,9 +396,9 @@ const CREATE_INVOCATION_ARGS: [u64; 6] = [
     0xfedc_ba98_7654_3210,
     0x1357_2468_89ab_cdef,
     0xffff_ffff,
-    0x2000_0100,
-    0x2000_0190,
-    0x30,
+    0x00_0102_0304,
+    0,
+    0,
 ];
 
 #[test]
@@ -289,58 +416,28 @@ fn create_invocation_preserves_full_width_operands_and_success_key() {
 }
 
 #[test]
-fn create_invocation_forwards_malformed_values_without_client_validation() {
-    // The kernel owns stack validation and admission-stage precedence.
-    for (function, base, end, minimum) in [
-        (0, 0, 0, 0),
-        (1, 0x1001, 0x1001, 0),
-        (u64::MAX, u64::MAX, 1 << 63, u64::MAX),
-        (0x1000, 0x2000, 0x3000, 0x1001),
-        (1 << 63, 0x2000_0100, 0x2000_0190, 0x90),
+fn create_invocation_forwards_function_and_pool_without_client_validation() {
+    // The kernel owns admission: a zero function address and a stale handle
+    // are submitted as given.
+    for (function, pool) in [
+        (0, 0),
+        (1, 0xff),
+        (u64::MAX, 0xff_ffff_ffff),
+        (0x1000, 0x1_0000_0001),
+        (1 << 63, 0x01_0203_0405),
     ] {
         let args = [
             function,
             CREATE_INVOCATION_ARGS[1],
             CREATE_INVOCATION_ARGS[2],
-            base,
-            end,
-            minimum,
+            pool,
+            0,
+            0,
         ];
         assert_eq!(
             invoke_create_invocation(args, (6, 0, 0)).map_err(CapError::code),
             Err((6, 0, 0))
         );
-    }
-}
-
-#[test]
-fn create_invocation_decodes_all_typed_stack_reasons_without_losing_values() {
-    for (id, reason) in [
-        (1, InvalidStackReason::ExtentEmpty),
-        (2, InvalidStackReason::ExtentInverted),
-        (3, InvalidStackReason::BaseOutsideUserRange),
-        (4, InvalidStackReason::EndOutsideUserRange),
-        (5, InvalidStackReason::BaseMisaligned),
-        (6, InvalidStackReason::EndMisaligned),
-        (7, InvalidStackReason::MinimumHeadroomZero),
-        (8, InvalidStackReason::MinimumHeadroomMisaligned),
-        (9, InvalidStackReason::MinimumHeadroomTooLarge),
-        (10, InvalidStackReason::SpMisaligned),
-        (11, InvalidStackReason::SpOutOfRange),
-        (12, InvalidStackReason::SpInsufficientHeadroom),
-    ] {
-        for value in [0, 0x1234_5678_9abc_def0, u64::MAX] {
-            match invoke_create_invocation(CREATE_INVOCATION_ARGS, (33, value, id)) {
-                Err(CapError::InvalidStack {
-                    value: actual_value,
-                    reason: actual_reason,
-                }) => {
-                    assert_eq!(actual_value, value);
-                    assert_eq!(actual_reason, reason);
-                }
-                _ => panic!("lost InvalidStack diagnostic"),
-            }
-        }
     }
 }
 
@@ -357,6 +454,7 @@ fn create_invocation_preserves_existing_admission_errors_and_key_diagnostics() {
         (27, 0x7654_3210_ffff_fffe, 0x0304),
         (28, 0x7654_3210_ffff_fffe, 0x0301),
         (29, 42, 0),
+        (42, 7, 0),
     ] {
         match invoke_create_invocation(CREATE_INVOCATION_ARGS, wire) {
             Err(CapError::UnknownResponse { .. }) | Ok(_) => panic!("lost known error {wire:?}"),
@@ -371,9 +469,9 @@ fn create_invocation_preserves_unknown_statuses_and_extended_stack_reasons() {
         (u64::MAX, u64::MAX, 0x1234_5678_9abc_def0),
         ((1 << 32) | 33, u64::MAX, 1),
         (33, u64::MAX, 0),
-        (33, u64::MAX, 13),
+        (33, u64::MAX, 7),
         (33, 0x1234_5678_9abc_def0, 0x0101),
-        (33, u64::MAX, (1 << 32) | 12),
+        (33, u64::MAX, (1 << 32) | 6),
         (33, u64::MAX, (1 << 63) | 1),
         (33, u64::MAX, u64::MAX),
         (36, u64::MAX, u64::MAX),
@@ -398,17 +496,14 @@ fn submitted_x8(window: Option<vesper_objects::PlacementWindow>) -> u64 {
                 .is_none()
         );
     });
+    let pool = StackPoolHandle::new(0, 1);
     let result = match window {
-        None => {
-            address_space.create_invocation(0x1000, &destination, KeySlot(12), 0x2000, 0x3000, 0x40)
-        }
+        None => address_space.create_invocation(0x1000, &destination, KeySlot(12), pool),
         Some(window) => address_space.create_invocation_with_window(
             0x1000,
             &destination,
             KeySlot(12),
-            0x2000,
-            0x3000,
-            0x40,
+            pool,
             window,
         ),
     };

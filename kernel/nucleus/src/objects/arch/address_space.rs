@@ -1,5 +1,7 @@
 use {
-    crate::objects::{NucleusObject, carved::CarvedObject, key_table::KeyTableBinding},
+    crate::objects::{
+        NucleusObject, carved::CarvedObject, key_table::KeyTableBinding, stack_pool::StackPools,
+    },
     libobject::{CapError, ObjectType},
 };
 
@@ -41,6 +43,8 @@ pub struct AArch64AddressSpace {
     fault_handler_busy: bool,
     /// Faults here that no handler took.
     unhandled_faults: u64,
+    /// The stacks calls into this `AddressSpace` run on.
+    stack_pools: StackPools,
 }
 
 impl AArch64AddressSpace {
@@ -52,6 +56,7 @@ impl AArch64AddressSpace {
             asid: None,
             fault_handler_busy: false,
             unhandled_faults: 0,
+            stack_pools: StackPools::new(),
         }
     }
 }
@@ -105,5 +110,13 @@ impl crate::objects::arch_objects::AddressSpaceObject for AArch64AddressSpace {
 
     fn count_unhandled_fault(&mut self) {
         self.unhandled_faults = self.unhandled_faults.saturating_add(1);
+    }
+
+    fn stack_pools(&self) -> &StackPools {
+        &self.stack_pools
+    }
+
+    fn stack_pools_mut(&mut self) -> &mut StackPools {
+        &mut self.stack_pools
     }
 }

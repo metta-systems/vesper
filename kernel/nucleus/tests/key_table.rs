@@ -37,15 +37,14 @@ use {
         num::NonZero,
     },
     libobject::{
-        CapError, InconsistencyReason, InvalidStackReason, KeySlot, ObjectType, PlacementWindow,
-        RawKey, Rights,
+        CapError, InconsistencyReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights,
+        StackPoolHandle,
     },
     objects::{
-        ArchObjects, ArchObjectsImpl, KeyTable,
+        KeyTable,
         access::{Access, ObjectId, PoolTag},
         arch_objects::AddressSpaceId,
         carved::{Carved, CarvedId, test_id},
-        invocation::InvocationStackExtent,
         key_table::CallerTable,
     },
 };
@@ -220,28 +219,8 @@ fn args(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> [u64; 6] {
     [a0, a1, a2, a3, a4, a5]
 }
 
-fn stack_extent(base: u64, end: u64, minimum_headroom: u64) -> InvocationStackExtent {
-    InvocationStackExtent::new(base, end, minimum_headroom, ArchObjectsImpl::USER_VA_END)
-        .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()))
-}
-
-fn assert_invalid_stack<T>(
-    result: Result<T, CapError>,
-    value: u64,
-    reason: InvalidStackReason,
-    reason_id: u64,
-) {
-    let error = match result {
-        Err(error) => error,
-        Ok(_) => panic!("invalid stack input accepted"),
-    };
-    assert!(matches!(
-        error,
-        CapError::InvalidStack { value: found_value, reason: found_reason }
-            if found_value == value && found_reason == reason
-    ));
-    // Pin the complete diagnostic words independently of enum discriminants.
-    assert_eq!(error.code(), (33, value, reason_id));
+fn stack_pool(slot: u8, generation: u32) -> StackPoolHandle {
+    StackPoolHandle::new(slot, generation)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -356,24 +335,19 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
     let constructor: fn(
         AddressSpaceId,
         NonZero<u64>,
-        InvocationStackExtent,
+        StackPoolHandle,
         PlacementWindow,
     ) -> KeyEntry = KeyEntry::new_invocation;
     let target_getter: fn(&KeyEntry) -> Result<(AddressSpaceId, NonZero<u64>), CapError> =
         KeyEntry::invocation_target;
-    let extent_getter: fn(&KeyEntry) -> Result<InvocationStackExtent, CapError> =
-        KeyEntry::invocation_stack_extent;
+    let pool_getter: fn(&KeyEntry) -> Result<StackPoolHandle, CapError> =
+        KeyEntry::invocation_stack_pool;
     let window_getter: fn(&KeyEntry) -> Result<PlacementWindow, CapError> =
         KeyEntry::invocation_placement_window;
-    for extent in [
-        stack_extent(0, 16, 16),
-        stack_extent(0x1010, 0x1080, 48),
-        stack_extent(0x1010, 0x1080, 112),
-        stack_extent(
-            ArchObjectsImpl::USER_VA_END - 48,
-            ArchObjectsImpl::USER_VA_END,
-            32,
-        ),
+    for pool in [
+        stack_pool(0, 0),
+        stack_pool(3, 1),
+        stack_pool(15, 0xFFFF_FFFF),
     ] {
         for address in [1, 0x1234_5678_9ABC_DEF0, u64::MAX] {
             let function = NonZero::new(address).unwrap();
@@ -382,7 +356,7 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
             } else {
                 PlacementWindow::new(40, 3)
             };
-            let entry = constructor(address_space, function, extent, window);
+            let entry = constructor(address_space, function, pool, window);
             assert!(matches!(window_getter(&entry), Ok(found) if found == window));
             assert!(!entry.is_lent());
             let target = target_getter(&entry)
@@ -394,9 +368,9 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
             assert!(!entry.is_thread_return_key());
             assert!(entry.object_id().is_err());
             assert_eq!(
-                extent_getter(&entry)
-                    .unwrap_or_else(|error| panic!("stored stack extent: {:?}", error.code())),
-                extent
+                pool_getter(&entry)
+                    .unwrap_or_else(|error| panic!("stored stack pool: {:?}", error.code())),
+                pool
             );
             // derive is a representation helper, not permission to distribute
             // Invocation authority through the management allowlist.
@@ -405,10 +379,9 @@ fn invocation_entries_require_and_preserve_nonzero_target() {
                 assert!(matches!(derived.invocation_target(), Ok(found) if found == target));
                 assert!(matches!(window_getter(&derived), Ok(found) if found == window));
                 let stored = derived
-                    .invocation_stack_extent()
-                    .unwrap_or_else(|error| panic!("derived stack extent: {:?}", error.code()));
-                assert_eq!(stored, extent);
-                assert!(stored.validate_sp(stored.end()).is_ok());
+                    .invocation_stack_pool()
+                    .unwrap_or_else(|error| panic!("derived stack pool: {:?}", error.code()));
+                assert_eq!(stored, pool);
                 assert_eq!(derived.rights(), rights);
                 assert_eq!(derived.badge(), 0);
             }
@@ -435,7 +408,7 @@ fn thread_selector_rejects_non_thread_payloads() {
         KeyEntry::new_invocation(
             address_space,
             NonZero::new(0x80000).unwrap(),
-            stack_extent(0x1010, 0x1080, 48),
+            stack_pool(1, 1),
             PlacementWindow::NONE,
         ),
     ] {
@@ -491,44 +464,37 @@ fn identity_entry_constructor_rejects_dedicated_payload_kinds() {
 }
 
 #[test_case]
-fn an_invocation_entry_stores_the_headroom_in_sixteen_byte_units_without_loss() {
-    for headroom in [16_u64, 32, 0x400, 0x1_0000_0000, 0xF_FFFF_FFF0] {
-        let extent = InvocationStackExtent::new(0x1000, 0x20_0000_0000, headroom, u64::MAX)
-            .unwrap_or_else(|_| panic!("a valid extent"));
-        assert_eq!(extent.minimum_headroom(), headroom);
-        assert_eq!(
-            extent.minimum_headroom_units(),
-            u32::try_from(headroom >> 4).unwrap_or(0)
-        );
+fn an_invocation_entry_stores_the_pool_handle_without_loss() {
+    for (slot, generation) in [(0_u8, 0_u32), (15, 1), (255, u32::MAX)] {
+        let pool = stack_pool(slot, generation);
         let entry = KeyEntry::new_invocation(
             test_id(ObjectType::ADDRESS_SPACE, 0x2000),
             NonZero::new(0x4_0000).unwrap_or_else(|| panic!("nonzero")),
-            extent,
+            pool,
             PlacementWindow::NONE,
         );
         let stored = entry
-            .invocation_stack_extent()
-            .unwrap_or_else(|_| panic!("stored extent"));
-        assert_eq!(stored, extent);
-        assert_eq!(stored.minimum_headroom(), headroom);
+            .invocation_stack_pool()
+            .unwrap_or_else(|_| panic!("stored pool"));
+        assert_eq!(stored, pool);
+        assert_eq!(stored.slot(), slot);
+        assert_eq!(stored.generation(), generation);
     }
 }
+
 #[test_case]
 fn thread_return_representation_preserves_entry_and_payload_layout() {
     assert_eq!(size_of::<ThreadSelector>(), 24);
     assert_eq!(align_of::<ThreadSelector>(), 8);
-    assert_eq!(size_of::<InvocationStackExtent>(), 24);
-    assert_eq!(align_of::<InvocationStackExtent>(), 8);
     assert_eq!(size_of::<InvocationPayload>(), 48);
     assert_eq!(align_of::<InvocationPayload>(), 8);
     assert_eq!(offset_of!(InvocationPayload, function_address), 0);
     assert_eq!(offset_of!(InvocationPayload, address_space_address), 8);
-    assert_eq!(offset_of!(InvocationPayload, stack_base), 16);
-    assert_eq!(offset_of!(InvocationPayload, stack_end), 24);
-    assert_eq!(offset_of!(InvocationPayload, minimum_headroom_units), 32);
-    assert_eq!(offset_of!(InvocationPayload, address_space_generation), 36);
-    assert_eq!(offset_of!(InvocationPayload, placement_first), 40);
-    assert_eq!(offset_of!(InvocationPayload, placement_count), 44);
+    assert_eq!(offset_of!(InvocationPayload, pool_generation), 16);
+    assert_eq!(offset_of!(InvocationPayload, address_space_generation), 20);
+    assert_eq!(offset_of!(InvocationPayload, placement_first), 24);
+    assert_eq!(offset_of!(InvocationPayload, placement_count), 28);
+    assert_eq!(offset_of!(InvocationPayload, pool_slot), 32);
     assert_eq!(size_of::<FramePayload>(), 32);
     assert_eq!(size_of::<KeyEntry>(), 64);
     assert_eq!(align_of::<KeyEntry>(), 32);
@@ -640,303 +606,11 @@ fn invocation_getters_reject_every_non_invocation_payload() {
                 if expected == ObjectType::INVOCATION && found == entry.object_type()
         ));
         assert!(matches!(
-            entry.invocation_stack_extent(),
+            entry.invocation_stack_pool(),
             Err(CapError::TypeMismatch { expected, found })
                 if expected == ObjectType::INVOCATION && found == entry.object_type()
         ));
     }
-}
-
-// Numeric validation only: these tests neither provision mappings nor enable
-// Call admission, continuation storage, migration, Return or distribution.
-#[test_case]
-fn stack_extent_errors_report_each_submitted_field_and_literal_reason() {
-    use InvalidStackReason as Reason;
-
-    let ceiling = ArchObjectsImpl::USER_VA_END;
-    assert_eq!(ceiling, 1_u64 << 48);
-    let constructor: fn(u64, u64, u64, u64) -> Result<InvocationStackExtent, CapError> =
-        InvocationStackExtent::new;
-    for (base, end, minimum, value, reason, id) in [
-        (0x1000, 0x1000, 16, 0x1000, Reason::ExtentEmpty, 1),
-        (0x2000, 0x1000, 16, 0x1000, Reason::ExtentInverted, 2),
-        (
-            ceiling,
-            ceiling + 16,
-            16,
-            ceiling,
-            Reason::BaseOutsideUserRange,
-            3,
-        ),
-        (
-            0,
-            ceiling + 16,
-            16,
-            ceiling + 16,
-            Reason::EndOutsideUserRange,
-            4,
-        ),
-        (0x1001, 0x1200, 16, 0x1001, Reason::BaseMisaligned, 5),
-        (0x1000, 0x1201, 16, 0x1201, Reason::EndMisaligned, 6),
-        (0x1000, 0x1200, 0, 0, Reason::MinimumHeadroomZero, 7),
-        (0x1000, 0x1200, 17, 17, Reason::MinimumHeadroomMisaligned, 8),
-        (
-            0x1000,
-            0x1200,
-            0x210,
-            0x210,
-            Reason::MinimumHeadroomTooLarge,
-            9,
-        ),
-    ] {
-        assert_invalid_stack(constructor(base, end, minimum, ceiling), value, reason, id);
-    }
-}
-
-#[test_case]
-fn stack_extent_first_error_precedence_is_structure_range_alignment_then_headroom() {
-    use InvalidStackReason as Reason;
-
-    let ceiling = ArchObjectsImpl::USER_VA_END;
-    for (base, end, minimum, value, reason, id) in [
-        // Structure wins over range, alignment and headroom defects.
-        (0x1001, 0x1001, 0, 0x1001, Reason::ExtentEmpty, 1),
-        (u64::MAX, u64::MAX, 0, u64::MAX, Reason::ExtentEmpty, 1),
-        (u64::MAX, 0, u64::MAX, 0, Reason::ExtentInverted, 2),
-        (0x2001, 0x1001, 0, 0x1001, Reason::ExtentInverted, 2),
-        // Base range wins over end range; both win over boundary alignment.
-        (
-            ceiling + 1,
-            ceiling + 17,
-            0,
-            ceiling + 1,
-            Reason::BaseOutsideUserRange,
-            3,
-        ),
-        (
-            1,
-            ceiling + 1,
-            0,
-            ceiling + 1,
-            Reason::EndOutsideUserRange,
-            4,
-        ),
-        // Base alignment wins over end alignment, then zero minimum.
-        (0x1001, 0x1201, 0, 0x1001, Reason::BaseMisaligned, 5),
-        (0x1000, 0x1201, 0, 0x1201, Reason::EndMisaligned, 6),
-        (0x1000, 0x1200, 0, 0, Reason::MinimumHeadroomZero, 7),
-        // An oversized misaligned minimum is not reported as a fit failure.
-        (
-            0x1000,
-            0x1200,
-            0x211,
-            0x211,
-            Reason::MinimumHeadroomMisaligned,
-            8,
-        ),
-    ] {
-        assert_invalid_stack(
-            InvocationStackExtent::new(base, end, minimum, ceiling),
-            value,
-            reason,
-            id,
-        );
-    }
-}
-
-#[test_case]
-fn stack_extent_accepts_zero_base_ceiling_subpage_and_equal_headroom() {
-    let ceiling = ArchObjectsImpl::USER_VA_END;
-    for (base, end, minimum) in [
-        (0, 16, 16),
-        (0, ceiling, 0xF_FFFF_FFF0), // the largest headroom an entry stores
-        (ceiling - 16, ceiling, 16),
-        (0x1010, 0x1080, 16),
-        (0x1010, 0x1080, 48),
-        (0x1010, 0x1080, 112),
-    ] {
-        let extent = stack_extent(base, end, minimum);
-        assert_eq!(
-            (extent.base(), extent.end(), extent.minimum_headroom()),
-            (base, end, minimum)
-        );
-        assert!(extent.validate_sp(end).is_ok());
-        assert!(extent.validate_sp(base + minimum).is_ok());
-        if minimum == end - base {
-            assert_invalid_stack(
-                extent.validate_sp(end - 16),
-                end - 16,
-                if minimum == 16 {
-                    InvalidStackReason::SpOutOfRange
-                } else {
-                    InvalidStackReason::SpInsufficientHeadroom
-                },
-                if minimum == 16 { 11 } else { 12 },
-            );
-        }
-    }
-    // Different requirements are distinct even for the same byte extent.
-    assert_ne!(
-        stack_extent(0x1010, 0x1080, 16),
-        stack_extent(0x1010, 0x1080, 48)
-    );
-}
-
-#[test_case]
-fn stack_sp_errors_pin_alignment_bounds_headroom_and_precedence() {
-    use InvalidStackReason as Reason;
-
-    let extent = stack_extent(0x1010, 0x1080, 48);
-    let validator: fn(InvocationStackExtent, u64) -> Result<(), CapError> =
-        InvocationStackExtent::validate_sp;
-    for (sp, reason, id) in [
-        (0x1041, Reason::SpMisaligned, 10), // In range with enough headroom.
-        (0x1021, Reason::SpMisaligned, 10), // Also insufficient headroom.
-        (0x1001, Reason::SpMisaligned, 10), // Also below the base.
-        (0x1081, Reason::SpMisaligned, 10), // Also above the end.
-        (u64::MAX, Reason::SpMisaligned, 10),
-        (0, Reason::SpOutOfRange, 11),
-        (0x1000, Reason::SpOutOfRange, 11),
-        (0x1010, Reason::SpOutOfRange, 11), // Base is excluded, not a headroom error.
-        (0x1090, Reason::SpOutOfRange, 11),
-        (u64::MAX - 15, Reason::SpOutOfRange, 11),
-        (0x1020, Reason::SpInsufficientHeadroom, 12),
-        (0x1030, Reason::SpInsufficientHeadroom, 12),
-    ] {
-        assert_invalid_stack(validator(extent, sp), sp, reason, id);
-    }
-    assert!(validator(extent, 0x1040).is_ok()); // Exactly M bytes below SP.
-    assert!(validator(extent, 0x1050).is_ok());
-    assert!(validator(extent, 0x1080).is_ok()); // Exclusive byte end is a valid SP.
-}
-
-#[test_case]
-fn stack_sp_enforces_each_extents_own_minimum_without_a_page_floor() {
-    for (base, end) in [(0, 112), (0x1010, 0x1080), (0x2000, 0x2100)] {
-        for minimum in [16, 48, end - base] {
-            let extent = stack_extent(base, end, minimum);
-            for sp in (base..=end).step_by(16) {
-                if sp == base {
-                    assert_invalid_stack(
-                        extent.validate_sp(sp),
-                        sp,
-                        InvalidStackReason::SpOutOfRange,
-                        11,
-                    );
-                } else if sp - base < minimum {
-                    assert_invalid_stack(
-                        extent.validate_sp(sp),
-                        sp,
-                        InvalidStackReason::SpInsufficientHeadroom,
-                        12,
-                    );
-                } else {
-                    assert!(extent.validate_sp(sp).is_ok());
-                }
-            }
-            assert_invalid_stack(
-                extent.validate_sp(end + 16),
-                end + 16,
-                InvalidStackReason::SpOutOfRange,
-                11,
-            );
-            assert_eq!(extent.minimum_headroom(), minimum);
-        }
-    }
-    let small = stack_extent(0x1010, 0x1080, 16);
-    let large = stack_extent(0x1010, 0x1080, 48);
-    assert!(small.validate_sp(0x1020).is_ok());
-    assert_invalid_stack(
-        large.validate_sp(0x1020),
-        0x1020,
-        InvalidStackReason::SpInsufficientHeadroom,
-        12,
-    );
-}
-
-#[test_case]
-fn stack_arithmetic_near_u64_max_compares_before_subtracting_or_adding() {
-    use InvalidStackReason as Reason;
-
-    // A synthetic numeric ceiling tests arithmetic independently of AArch64's
-    // supported user interval. It grants no authority over high/privileged VAs.
-    let base = u64::MAX - 63;
-    let end = u64::MAX - 15;
-    let extent = InvocationStackExtent::new(base, end, 32, u64::MAX)
-        .unwrap_or_else(|error| panic!("synthetic extent: {:?}", error.code()));
-    assert_eq!(
-        (extent.base(), extent.end(), extent.minimum_headroom()),
-        (base, end, 32)
-    );
-    assert!(extent.validate_sp(base + 32).is_ok());
-    assert!(extent.validate_sp(end).is_ok());
-    assert_invalid_stack(extent.validate_sp(base), base, Reason::SpOutOfRange, 11);
-    assert_invalid_stack(extent.validate_sp(0), 0, Reason::SpOutOfRange, 11);
-    assert_invalid_stack(
-        extent.validate_sp(base + 16),
-        base + 16,
-        Reason::SpInsufficientHeadroom,
-        12,
-    );
-    assert_invalid_stack(
-        extent.validate_sp(u64::MAX),
-        u64::MAX,
-        Reason::SpMisaligned,
-        10,
-    );
-    assert_invalid_stack(
-        InvocationStackExtent::new(base, end, end, u64::MAX),
-        end,
-        Reason::MinimumHeadroomTooLarge,
-        9,
-    ); // base + M would overflow; M must be compared to the ordered difference.
-    assert_invalid_stack(
-        InvocationStackExtent::new(base, end, u64::MAX, u64::MAX),
-        u64::MAX,
-        Reason::MinimumHeadroomMisaligned,
-        8,
-    );
-    assert_invalid_stack(
-        InvocationStackExtent::new(end, 0, 16, u64::MAX),
-        0,
-        Reason::ExtentInverted,
-        2,
-    ); // end - base would underflow if evaluated before ordering.
-    assert_invalid_stack(
-        InvocationStackExtent::new(base, u64::MAX, 16, u64::MAX),
-        u64::MAX,
-        Reason::EndMisaligned,
-        6,
-    );
-    // The largest headroom a capability entry stores: 2^32 - 1 units of 16 bytes.
-    const MAX_HEADROOM: u64 = 0xF_FFFF_FFF0;
-    let top = MAX_HEADROOM + 16;
-    let almost_full = InvocationStackExtent::new(0, top, MAX_HEADROOM, u64::MAX)
-        .unwrap_or_else(|error| panic!("large synthetic extent: {:?}", error.code()));
-    assert!(almost_full.validate_sp(top).is_ok());
-    assert!(almost_full.validate_sp(MAX_HEADROOM).is_ok());
-    assert_invalid_stack(
-        almost_full.validate_sp(MAX_HEADROOM - 16),
-        MAX_HEADROOM - 16,
-        Reason::SpInsufficientHeadroom,
-        12,
-    );
-    // One unit more does not fit the entry, whatever the extent.
-    assert_invalid_stack(
-        InvocationStackExtent::new(0, u64::MAX - 15, MAX_HEADROOM + 16, u64::MAX),
-        MAX_HEADROOM + 16,
-        Reason::MinimumHeadroomTooLarge,
-        9,
-    );
-    let below_top = InvocationStackExtent::new(base, end - 16, 16, u64::MAX)
-        .unwrap_or_else(|error| panic!("short synthetic extent: {:?}", error.code()));
-    assert_invalid_stack(below_top.validate_sp(end), end, Reason::SpOutOfRange, 11);
-    assert_invalid_stack(
-        InvocationStackExtent::new(base, end, 16, ArchObjectsImpl::USER_VA_END),
-        base,
-        Reason::BaseOutsideUserRange,
-        3,
-    );
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1114,12 +788,11 @@ fn setting_a_badge_needs_the_badge_right_and_a_badgeable_kind() {
 fn an_invocation_derives_with_narrower_rights_and_a_badge_keeping_its_target() {
     let mut fx = Fixture::new(FULL);
     let address_space = test_id(ObjectType::ADDRESS_SPACE, 0x2000);
-    let extent = InvocationStackExtent::new(0x1000, 0x9000, 0x400, 0x1_0000)
-        .unwrap_or_else(|_| panic!("a valid extent"));
+    let pool = stack_pool(2, 7);
     let mut original = KeyEntry::new_invocation(
         address_space,
         NonZero::new(0x4_0000).unwrap_or_else(|| panic!("nonzero")),
-        extent,
+        pool,
         PlacementWindow::NONE,
     );
     original = original.derive(Rights(Rights::CALL | Rights::BADGE));
@@ -1143,9 +816,9 @@ fn an_invocation_derives_with_narrower_rights_and_a_badge_keeping_its_target() {
     assert_eq!((derived_space, derived_entry), (space, entry));
     assert_eq!(
         derived
-            .invocation_stack_extent()
-            .unwrap_or_else(|_| panic!("derived extent")),
-        extent
+            .invocation_stack_pool()
+            .unwrap_or_else(|_| panic!("derived pool")),
+        pool
     );
     // Rights only narrow: asking for more than the source holds fails.
     assert!(matches!(
@@ -1460,11 +1133,11 @@ fn thread_entries_remain_outside_copy_derive_and_move_allowlist() {
                         })
                     );
                     assert_eq!(
-                        source.invocation_stack_extent().unwrap_or_else(|error| {
-                            panic!("source Invocation extent: {:?}", error.code())
+                        source.invocation_stack_pool().unwrap_or_else(|error| {
+                            panic!("source Invocation pool: {:?}", error.code())
                         }),
-                        entry.invocation_stack_extent().unwrap_or_else(|error| {
-                            panic!("original Invocation extent: {:?}", error.code())
+                        entry.invocation_stack_pool().unwrap_or_else(|error| {
+                            panic!("original Invocation pool: {:?}", error.code())
                         })
                     );
                 }
@@ -1508,7 +1181,7 @@ fn invocation_and_notification_entries_derive_but_do_not_move() {
         KeyEntry::new_invocation(
             address_space,
             NonZero::new(0x80000).unwrap(),
-            stack_extent(0x1010, 0x1080, 48),
+            stack_pool(1, 1),
             PlacementWindow::NONE,
         ),
         notification_cap(Rights::all().bits(), 0),

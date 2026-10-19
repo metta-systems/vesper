@@ -18,8 +18,8 @@
 //!   installs the `THREAD_RETURN` sentinel. Requires `MAP` on this
 //!   `AddressSpace` and `INSTALL` on the table. Success returns zeros.
 //! - `CreateInvocation` `3`: `x2` nonzero function address, `x3` destination
-//!   `KeyTable` capability, `x4` vacant destination slot, `x5` stack base,
-//!   `x6` exclusive stack end, `x7` positive minimum headroom in bytes, and `x8`
+//!   `KeyTable` capability, `x4` vacant destination slot, `x5` stack pool handle,
+//!   `x6` and `x7` zero, and `x8`
 //!   the key-placement window (first slot in bits 31:0, count in bits 63:32;
 //!   count 0 accepts no lent key; the window must lie within this
 //!   `AddressSpace`'s `KeyTable`, else `InvalidSlot`). Requires
@@ -29,6 +29,11 @@
 //!   stored as supplied without mapping/executable validation; a zero address is
 //!   rejected with `InvalidPointer`. Invocation has a mandatory nonzero entry;
 //!   current-relative Thread.Return authority is kernel-constructed separately.
+//!
+//! - `CreateStackPool` `4`: `x2` base, `x3` bytes per stack, `x4` stack count,
+//!   `x5..x7` zero. Requires `GRANT`. Returns the pool handle in `x1`.
+//! - `DestroyStackPool` `5`: `x2` pool handle, `x3..x7` zero. Requires `GRANT`.
+//!   Fails with `InvalidOperation` while a stack of the pool is in use.
 //!
 //! Authority: `Activate` requires `MAP` on the invoked `AddressSpace`
 //! capability (authority over the mapping context, consistent with root
@@ -58,7 +63,6 @@ use {
             access::Access,
             arch_objects::{AddressSpaceId, AddressSpaceObject, AsidPoolObject},
             carved::Carved,
-            invocation::InvocationStackExtent,
             key_table::CallerTable,
             resume::{PreparedTranslationContext, prepare_translation_context},
         },
@@ -66,7 +70,7 @@ use {
     core::num::NonZero,
     libobject::{
         CapError, InvalidKeyReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights,
-        syscall_status::InvalidSelfReference,
+        StackPoolHandle, syscall_status::InvalidSelfReference,
     },
     libqemu::semihosting as semi,
 };
@@ -89,6 +93,10 @@ pub fn invoke<A: ArchObjects>(
         1 => retire::<A>(access, caller, as_key, args, nucleus).map(InvokeOutcome::Complete),
         2 => bind::<A>(access, caller, as_key, args).map(InvokeOutcome::Complete),
         3 => create_invocation::<A>(access, caller, as_key, args, x8).map(InvokeOutcome::Complete),
+        4 => create_stack_pool::<A>(access, caller, as_key, args, nucleus)
+            .map(InvokeOutcome::Complete),
+        5 => destroy_stack_pool::<A>(access, caller, as_key, args, nucleus)
+            .map(InvokeOutcome::Complete),
         _ => Err(CapError::InvalidOperation),
     }
 }
@@ -115,6 +123,50 @@ fn resolve(
         return Err(CapError::InsufficientRights);
     }
     entry.address_space_id().map_err(|e| e.with_key_operand(0))
+}
+
+/// `CreateStackPool` `4`: `x2` base, `x3` bytes per stack, `x4` stack count,
+/// `x5..x7` zero. Requires `GRANT`. Returns the pool handle in `x1`.
+fn create_stack_pool<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    as_key: RawKey,
+    args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
+) -> Result<(u64, u64), CapError> {
+    if args[3..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let address_space_id = resolve(access, caller, as_key, Rights::GRANT)?;
+    let handle = nucleus
+        .address_space_mut(address_space_id)
+        .ok_or(CapError::InvalidAddressSpace)?
+        .stack_pools_mut()
+        .create(args[0], args[1], args[2], A::USER_VA_END)?;
+    semi::println!("✅ AddressSpace::CreateStackPool()");
+    Ok((handle.to_wire(), 0))
+}
+
+/// `DestroyStackPool` `5`: `x2` pool handle, `x3..x7` zero. Requires `GRANT`.
+fn destroy_stack_pool<A: ArchObjects>(
+    access: &Access,
+    caller: CallerTable,
+    as_key: RawKey,
+    args: &[u64; 6],
+    nucleus: &mut Nucleus<A>,
+) -> Result<(u64, u64), CapError> {
+    if args[1..].iter().any(|&arg| arg != 0) {
+        return Err(CapError::InvalidOperation);
+    }
+    let handle = StackPoolHandle::from_wire(args[0]).ok_or(CapError::InvalidOperation)?;
+    let address_space_id = resolve(access, caller, as_key, Rights::GRANT)?;
+    nucleus
+        .address_space_mut(address_space_id)
+        .ok_or(CapError::InvalidAddressSpace)?
+        .stack_pools_mut()
+        .destroy(handle)?;
+    semi::println!("✅ AddressSpace::DestroyStackPool()");
+    Ok((0, 0))
 }
 
 /// `Bind` `2`: bind the `KeyTable` named by `x2` to the invoked, still unbound
@@ -228,7 +280,10 @@ fn create_invocation<A: ArchObjects>(
     // Invocation is Call-only with a mandatory nonzero entry. Userspace
     // cannot construct current-relative Thread.Return authority here.
     let function_address = NonZero::new(args[0]).ok_or(CapError::InvalidPointer)?;
-    let stack_extent = InvocationStackExtent::new(args[3], args[4], args[5], A::USER_VA_END)?;
+    let stack_pool = StackPoolHandle::from_wire(args[3]).ok_or(CapError::InvalidOperation)?;
+    if args[4] != 0 || args[5] != 0 {
+        return Err(CapError::InvalidOperation);
+    }
     // The exporter's key-placement window must lie within the target's table
     // (an empty window needs no table); it fails like an out-of-range slot.
     let placement_window = PlacementWindow::from_wire(x8);
@@ -250,7 +305,7 @@ fn create_invocation<A: ArchObjects>(
     let invocation = KeyEntry::new_invocation(
         address_space_id,
         function_address,
-        stack_extent,
+        stack_pool,
         placement_window,
     );
     let mut destination_table = destination.resolve(access)?;

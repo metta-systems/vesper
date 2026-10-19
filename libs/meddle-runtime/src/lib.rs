@@ -157,36 +157,16 @@ pub fn unused_words_are_zero(arguments: &[u64; ARGUMENT_WORDS], used: usize) -> 
     arguments.iter().skip(used).all(|&word| word == 0)
 }
 
-/// Proof that the target stacks of a client's bindings are used by one
-/// Thread only, which makes calling through them safe.
-pub struct ExclusiveStacks(());
-
-impl ExclusiveStacks {
-    /// The proof for a set of bindings.
-    ///
-    /// # Safety
-    /// The target stack of every binding it is used with is reserved for the
-    /// calling Thread: no other Thread calls through a binding with the same
-    /// stack while this one does (see [`InvocationKey::call`]).
-    pub const unsafe fn new() -> Self {
-        Self(())
-    }
-}
-
-/// One function a client may call: its Invocation and the target stack the
-/// component reserved for this client's calls through it.
+/// One function a client may call: its Invocation. The kernel takes the
+/// target stack of every call from the stack pool the Invocation names.
 pub struct Binding {
     pub invocation: InvocationKey,
-    pub stack_end: u64,
 }
 
 impl Binding {
-    /// A binding of `invocation` with the target stack ending at `stack_end`.
-    pub const fn new(invocation: InvocationKey, stack_end: u64) -> Self {
-        Self {
-            invocation,
-            stack_end,
-        }
+    /// A binding of `invocation`.
+    pub const fn new(invocation: InvocationKey) -> Self {
+        Self { invocation }
     }
 
     /// Call the function with `arguments` and lend it `lent` for the duration
@@ -194,27 +174,15 @@ impl Binding {
     /// function's interface declared the key it takes in its `lends` clause.
     pub fn call_with_key(
         &self,
-        _stacks: &ExclusiveStacks,
         lent: RawKey,
         arguments: [u64; ARGUMENT_WORDS],
     ) -> Result<(u64, u64), CapError> {
-        // SAFETY: `ExclusiveStacks` proves this binding's stack is the
-        // calling Thread's alone.
-        unsafe {
-            self.invocation
-                .call_with_key(lent, arguments, self.stack_end)
-        }
+        self.invocation.call_with_key(lent, arguments)
     }
 
     /// Call the function with `arguments`, returning `(r0, r1)`.
-    pub fn call(
-        &self,
-        _stacks: &ExclusiveStacks,
-        arguments: [u64; ARGUMENT_WORDS],
-    ) -> Result<(u64, u64), CapError> {
-        // SAFETY: `ExclusiveStacks` proves this binding's stack is the
-        // calling Thread's alone.
-        unsafe { self.invocation.call(arguments, self.stack_end) }
+    pub fn call(&self, arguments: [u64; ARGUMENT_WORDS]) -> Result<(u64, u64), CapError> {
+        self.invocation.call(arguments)
     }
 }
 
@@ -391,8 +359,6 @@ pub struct ImportRecord {
     pub function: u64,
     /// Wire key of the function's Invocation in the client's table
     pub invocation: u64,
-    /// End of the target stack reserved for this client's calls
-    pub stack_end: u64,
     /// Base of the data area shared with the exporter (zero: none)
     pub area_base: u64,
     /// Bytes of the data area
@@ -426,10 +392,7 @@ impl ImportRecord {
     }
     /// The binding this record grants.
     pub const fn binding(&self) -> Binding {
-        Binding::new(
-            InvocationKey::from_key(RawKey::from_wire(self.invocation)),
-            self.stack_end,
-        )
+        Binding::new(InvocationKey::from_key(RawKey::from_wire(self.invocation)))
     }
 }
 

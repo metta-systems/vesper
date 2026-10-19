@@ -5,10 +5,8 @@ mod tests {
     use vesper_device_driver::{DATA_WINDOW_VA, DriverInit, ExportedArea, MAX_AREAS};
 
     fn area(index: u64) -> ExportedArea {
-        // Stacks 0x1_0000 bytes apart, areas one page each in the window.
+        // Areas one page each in the window.
         ExportedArea {
-            stack_bottom: 0x3000_0000 + index * 0x1_0000,
-            stack_end: 0x3000_0000 + index * 0x1_0000 + 0x4000,
             base: DATA_WINDOW_VA + index * 0x1000,
             len: 0x1000,
             channel_base: 0,
@@ -44,14 +42,7 @@ mod tests {
         // Zero is an unbadged key; the others are not the base of any area,
         // including the base of an area the exporter does not serve and an
         // address inside a served area.
-        for badge in [
-            0,
-            1,
-            area(0).base + 1,
-            area(2).base,
-            area(0).stack_end,
-            u64::MAX,
-        ] {
+        for badge in [0, 1, area(0).base + 1, area(2).base, u64::MAX] {
             assert_eq!(init.area_for_badge(badge), None, "{badge:#x}");
         }
         assert_eq!(DriverInit::EMPTY.area_for_badge(area(0).base), None);

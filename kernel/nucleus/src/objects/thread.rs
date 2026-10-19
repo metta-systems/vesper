@@ -98,6 +98,27 @@ impl Placement {
     }
 }
 
+/// The stack a call took from the stack pool of the callee's `AddressSpace`:
+/// the pool's slot and the stack's index, given back when the call returns or
+/// its Thread is torn down.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StackUse {
+    pub pool: u8,
+    pub index: u8,
+    /// Whether a stack was taken; false for a record that holds none.
+    pub taken: bool,
+}
+
+impl StackUse {
+    /// No stack was taken.
+    pub const NONE: Self = Self {
+        pool: 0,
+        index: 0,
+        taken: false,
+    };
+}
+
 /// Kernel-owned continuation captured at a successful PPC Call.
 ///
 /// The record is deliberately independent of the transient exception frame and
@@ -119,6 +140,9 @@ pub struct InvocationContinuation {
     /// call, to be removed when the call returns or its Thread is torn down.
     /// [`Placement::NONE`] for a plain Call.
     pub placement: Placement,
+    /// The stack the call runs on, from the callee's stack pool, to be given
+    /// back when the call returns or its Thread is torn down.
+    pub stack: StackUse,
 }
 
 impl InvocationContinuation {
@@ -133,6 +157,7 @@ impl InvocationContinuation {
             source_x19_x30: [0; 12],
             source_tpidr_el0: 0,
             placement: Placement::NONE,
+            stack: StackUse::NONE,
         }
     }
 
@@ -154,6 +179,7 @@ impl InvocationContinuation {
             source_x19_x30,
             source_tpidr_el0: saved.tpidr_el0,
             placement: Placement::NONE,
+            stack: StackUse::NONE,
         }
     }
 }
@@ -350,9 +376,9 @@ impl Thread {
 
 // The record and array sizes are part of the storage/accounting contract.
 const _: () = {
-    assert!(size_of::<InvocationContinuation>() == 168);
+    assert!(size_of::<InvocationContinuation>() == 176);
     assert!(align_of::<InvocationContinuation>() == 8);
-    assert!(size_of::<InvocationStack>() >= 168 * INVOCATION_STACK_DEPTH);
+    assert!(size_of::<InvocationStack>() >= 176 * INVOCATION_STACK_DEPTH);
 };
 // Thread backing is type-derived and is not required to fit in one page.
 const _: () = {

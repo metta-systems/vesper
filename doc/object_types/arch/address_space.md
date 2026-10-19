@@ -4,7 +4,7 @@
 |---|---|
 | Wire type | `0x82` (arch index 2) |
 | Backing | Kernel record carved from an Untyped by [`Untyped.Retype`](../core/untyped.md#retype) |
-| Operations | Activate, Retire, Bind, CreateInvocation |
+| Operations | Activate, Retire, Bind, CreateInvocation, CreateStackPool, DestroyStackPool |
 
 ## Purpose
 
@@ -17,7 +17,9 @@ An AddressSpace is a protection domain: a translation root, the ASID bound to it
 | 0 | Activate | — | `Map` | — |
 | 1 | Retire | — | `Retire` | — |
 | 2 | Bind | `x2` KeyTable | `Map` on the AddressSpace, `Install` on the KeyTable | — |
-| 3 | CreateInvocation | `x2` entry, `x3` destination table, `x4` destination slot, `x5` stack base, `x6` stack end, `x7` minimum headroom, `x8` key-placement window | `Grant` on the AddressSpace, `Install` on the destination | `x1` new Invocation key |
+| 3 | CreateInvocation | `x2` entry, `x3` destination table, `x4` destination slot, `x5` stack pool handle, `x8` key-placement window | `Grant` on the AddressSpace, `Install` on the destination | `x1` new Invocation key |
+| 4 | CreateStackPool | `x2` base, `x3` bytes per stack, `x4` stack count | `Grant` | `x1` pool handle |
+| 5 | DestroyStackPool | `x2` pool handle | `Grant` | — |
 
 ### Activate
 
@@ -64,7 +66,7 @@ Until it is bound, an AddressSpace cannot be activated, cannot create Invocation
 
 ### CreateInvocation
 
-Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSpace on the stack extent `[x5, x6)` with minimum headroom `x7` bytes, and installs it into slot `x4` of the table named by `x3`. The new capability carries the `Call` and `Badge` rights: its holder can call it and [mint badged copies](../core/key_table.md#setting-a-badge), and a holder that does not need to mint copies it with `Badge` masked off. The entry address must be nonzero (`InvalidPointer`); the stack rules and errors are on the [Invocation](../core/invocation.md#stack-extent) page.
+Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSpace on stacks from the pool `x5`, and installs it into slot `x4` of the table named by `x3`. The new capability carries the `Call` and `Badge` rights: its holder can call it and [mint badged copies](../core/key_table.md#setting-a-badge), and a holder that does not need to mint copies it with `Badge` masked off. The entry address must be nonzero (`InvalidPointer`). `x6` and `x7` must be zero, and so must bits 63:40 of `x5` (`InvalidOperation`). The pool is checked at each call, so a Invocation can be created before the pool it names is destroyed or after.
 
 `x8` is the key-placement window that [`CallWithKey`](../core/invocation.md#callwithkey) uses: bits 31:0 are the first slot and bits 63:32 the number of slots, in this AddressSpace's own KeyTable. Zero means the Invocation accepts no lent key. A window that does not fit the table fails with `InvalidSlot`, naming its first slot. If the window is nonzero and the KeyTable does not hold a capability to itself in slot 4, CreateInvocation fails with `InvalidSelfReference` (`x1` = 4, `x2` = the AddressSpace key). The slots need not be vacant when the Invocation is created.
 
@@ -79,7 +81,7 @@ flowchart TD
     A -->|"SVC on AddressSpace key<br/>op = CreateInvocation"| R
 
     subgraph Regs["Register schema"]
-        R["x2 function_address (entry)<br/>x3 destination KeyTable key<br/>x4 vacant destination slot<br/>x5 stack_base<br/>x6 stack_end (exclusive)<br/>x7 minimum headroom<br/>x8 placement window (first, count)"]
+        R["x2 function_address (entry)<br/>x3 destination KeyTable key<br/>x4 vacant destination slot<br/>x5 stack pool handle<br/>x6, x7 zero<br/>x8 placement window (first, count)"]
     end
 
     R --> K1{"GRANT right on<br/>AddressSpace key?"}
@@ -88,12 +90,12 @@ flowchart TD
     K2 -- no --> E1
     K2 -- yes --> K3{"destination slot vacant?"}
     K3 -- no --> E2["slot error"]
-    K3 -- yes --> K4{"stack_base, stack_end, headroom<br/>16-byte multiples?<br/>extent nonempty, in user range,<br/>headroom positive and fits?<br/>window inside table capacity?"}
+    K3 -- yes --> K4{"x6, x7 zero, handle without<br/>reserved bits?<br/>window inside table capacity?"}
     K4 -- no --> E3["invalid argument error"]
     K4 -- yes --> N
 
     subgraph Entry["New KeyEntry installed in destination table (64 bytes)"]
-        N["obj_type = Invocation<br/>rights = CALL | BADGE<br/>badge = 0<br/>payload:<br/>function_address<br/>address_space_address + generation<br/>stack_base / stack_end<br/>minimum_headroom (16-byte units)<br/>placement_first / placement_count"]
+        N["obj_type = Invocation<br/>rights = CALL | BADGE<br/>badge = 0<br/>payload:<br/>function_address<br/>address_space_address + generation<br/>pool slot + generation<br/>placement_first / placement_count"]
     end
 
     N --> RET["Returns destination-table-local RawKey"]
@@ -101,10 +103,29 @@ flowchart TD
     RET --> D1["Client may CopyDerive with a badge<br/>(needs BADGE right)"]
     RET --> D2["CopyDerive masking BADGE off<br/>gives a CALL-only key"]
 
-    D1 --> CALL["Invocation.Call / CallWithKey<br/>target runs at function_address in the<br/>AddressSpace, on a stack inside the extent;<br/>badge arrives in x1, lent key in x0"]
+    D1 --> CALL["Invocation.Call / CallWithKey<br/>target runs at function_address in the<br/>AddressSpace, on a stack from the pool;<br/>badge arrives in x1, lent key in x0"]
     D2 --> CALL
 ```
 
+### Stack pools
+
+A stack pool is the set of stacks that calls into this AddressSpace run on. It is `count` stacks (1 to 64) of `stack_bytes` each, back to back from `base`: stack `i` is `[base + i * stack_bytes, base + (i + 1) * stack_bytes)`, and a call on it starts with `SP` at its end. An AddressSpace holds up to 16 pools. A pool is named by a handle, the slot in bits 7:0 and the slot's generation in bits 39:8; a handle is a number and needs `Grant` on the AddressSpace key to use.
+
+The kernel never reads or writes the stack memory and does not check that it is mapped. The usual layout is `[guard][stack]…[stack][guard]`: `stack_bytes` includes an unmapped guard region at the bottom of each unit, and a last guard follows the pool.
+
+**CreateStackPool** fails with `InvalidStack` (status 33; offending value in `x1`, reason in `x2`) and with `PoolExhausted` when all 16 slots are taken. `x5..x7` must be zero (`InvalidOperation`). The checks run in the order of the table.
+
+| Reason | Name | Condition | `x1` |
+|---:|---|---|---|
+| 6 | `StackCountOutOfRange` | `count` is zero or above 64 | `count` |
+| 5 | `StackBytesTooSmall` | `stack_bytes` below 16 | `stack_bytes` |
+| 4 | `StackBytesMisaligned` | `stack_bytes` not a multiple of 16 | `stack_bytes` |
+| 3 | `BaseMisaligned` | `base` not 16-byte aligned | `base` |
+| 1 | `BaseOutsideUserRange` | `base` at or beyond `2^48` | `base` |
+| 2 | `EndOutsideUserRange` | `base + count * stack_bytes` beyond `2^48` or overflowing | the end, or `stack_bytes` on overflow |
+
+**DestroyStackPool** fails with `InvalidOperation` while any stack of the pool is in use, and with `StaleGeneration` for a handle that names no pool. Afterwards the handle and every Invocation that names the pool fail with `StaleGeneration`, and the slot makes a new pool under a new generation.
+
 ## Implementation
 
-`Untyped.Retype` creates AddressSpaces (`size_bits` 0) from an Untyped's memory; the boot AddressSpace is created and bound by the boot code. An AddressSpace's translation-table leaves are tagged with its ASID, so switching AddressSpaces needs no TLB flush. The AddressSpace also records whether its fault handler is busy and how many faults went unhandled; see [fault delivery](../core/thread.md#fault-delivery). Retire does not free the KeyTable's memory.
+`Untyped.Retype` creates AddressSpaces (`size_bits` 0) from an Untyped's memory; the boot AddressSpace is created and bound by the boot code. An AddressSpace's translation-table leaves are tagged with its ASID, so switching AddressSpaces needs no TLB flush. The AddressSpace holds its stack pool table inline, so pools allocate nothing. It also records whether its fault handler is busy and how many faults went unhandled; see [fault delivery](../core/thread.md#fault-delivery). Retire does not free the KeyTable's memory.

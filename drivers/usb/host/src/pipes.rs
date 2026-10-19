@@ -2,7 +2,7 @@
 //! the caller's table, and what a caller does with them.
 
 use {
-    libmeddle_runtime::{DataArea, ExclusiveStacks},
+    libmeddle_runtime::DataArea,
     libobject::{KeyTableKey, RawKey},
     usb_hcd_client::{
         pipe_v1::{self, TransferKind},
@@ -40,30 +40,24 @@ pub struct Pipes<'a> {
     table: KeyTableKey,
     /// First slot of the first group.
     first_slot: u32,
-    /// The target stack of calls into the controller, which pipe keys share.
-    stack_end: u64,
     used: [bool; GROUPS],
 }
 
 impl<'a> Pipes<'a> {
     /// Pipes of `client`, whose data area is `area`: the keys go into `table`
-    /// from `first_slot` for `GROUPS * PIPE_KEYS` slots, and calls run on the
-    /// target stack ending at `stack_end` (the end of the stack of `open_pipe`'s
-    /// import).
+    /// from `first_slot` for `GROUPS * PIPE_KEYS` slots.
     #[must_use]
     pub const fn new(
         client: &'a Client,
         area: DataArea,
         table: KeyTableKey,
         first_slot: u32,
-        stack_end: u64,
     ) -> Self {
         Self {
             client,
             area,
             table,
             first_slot,
-            stack_end,
             used: [false; GROUPS],
         }
     }
@@ -114,14 +108,9 @@ impl<'a> Pipes<'a> {
     /// When `keys` is not one key per function.
     #[must_use]
     pub fn pipe_client(&self, keys: &[u64; PIPE_KEYS]) -> pipe_v1::Client {
-        let bindings = pipe_v1::Bindings::from_installed(keys, self.stack_end, Some(self.area))
-            .expect("one key per function");
-        pipe_v1::Client::new(
-            bindings,
-            // SAFETY: the caller's one Thread that talks to the controller is
-            // the only one calling through the controller's stacks.
-            unsafe { ExclusiveStacks::new() },
-        )
+        let bindings =
+            pipe_v1::Bindings::from_installed(keys, Some(self.area)).expect("one key per function");
+        pipe_v1::Client::new(bindings)
     }
 
     /// Open a pipe to `endpoint` (an endpoint address), installing its keys in

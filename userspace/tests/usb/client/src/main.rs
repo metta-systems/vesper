@@ -18,7 +18,7 @@
 use {
     driver_protocol::report_key,
     libdevice_driver::{driver_init, driver_threads},
-    libmeddle_runtime::{ExclusiveStacks, IoRec},
+    libmeddle_runtime::IoRec,
     libobject::{EventCountKey, KeyTableKey, NotificationKey, RawKey, Rights},
     usb_hcd_client::{
         pipe_v1::{self, Exception as PipeException, TransferKind},
@@ -339,18 +339,7 @@ fn main(init_va: u64) -> ! {
                 error.code()
             )
         });
-    let bindings = Bindings::from_imports(init.imports());
-    let stack_end = bindings
-        .open_pipe
-        .as_ref()
-        .expect("open_pipe is granted")
-        .stack_end;
-    let client = Client::new(
-        bindings,
-        // SAFETY: this Thread is the only one calling through the client's
-        // imports.
-        unsafe { ExclusiveStacks::new() },
-    );
+    let client = Client::new(Bindings::from_imports(init.imports()));
     let area = client
         .data_area()
         .expect("the client shares a data area with the controller");
@@ -381,7 +370,6 @@ fn main(init_va: u64) -> ! {
         area,
         KeyTableKey::from_key(RawKey::from_wire(init.table)),
         u32::try_from(init.first_free_slot).expect("a slot fits in u32"),
-        stack_end,
     );
 
     assert_eq!(

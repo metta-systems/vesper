@@ -62,14 +62,14 @@ use {
         builder::Builder,
         component::Component,
         keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
-        loader::{StackRegion, UserStack, update_init, write_init},
+        loader::{StackRegion, update_init, write_init},
     },
     libdevice_driver::{
-        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit,
-        EXPORT_STACK_HEADROOM, ExportedArea, FB_WINDOW_SPANS, FbWindow, INIT_VA, Interrupt,
-        MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS,
-        MAX_RESOURCES, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region,
-        ResourceRecord, STACK_REGION, VideoBlock,
+        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
+        FB_WINDOW_SPANS, FbWindow, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES,
+        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, MAX_RESOURCES,
+        MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, ResourceRecord,
+        STACK_REGION, VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, dma_address, find_compatible,
@@ -80,7 +80,7 @@ use {
     libmeddle_runtime::ImportRecord,
     libobject::{
         CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType,
-        PlacementWindow, RawKey, Rights, TimeKey, UntypedKey,
+        PlacementWindow, RawKey, Rights, StackPoolHandle, TimeKey, UntypedKey,
         address_space::AddressSpaceKey,
         irq::MAX_ISSUE_CELLS,
         scheduler::{SchedulerKey, ThreadStart},
@@ -696,17 +696,23 @@ fn bind_root_dispatcher(
     semi::println!("🥾 Root dispatcher bound over {slot_count} Threads");
 }
 
-/// Pages of each target stack an exporting driver reserves for one client.
+/// Pages of each target stack of the pool an exporting driver serves calls on.
 const EXPORT_STACK_PAGES: u32 = 4;
+
+/// Stacks of that pool: calls into the driver that can run at once.
+const EXPORT_STACKS: u32 = 16;
 
 /// An instance loaded but not started: what wiring its imports and starting
 /// it need.
 struct Prepared<'p> {
     instance: &'p Instance,
     component: Component,
-    /// The driver's guarded stack span, which also holds the target stacks
+    /// The driver's guarded stack span, which also holds the stack pool
     /// of the functions it exports
     stacks: StackRegion,
+    /// The stack pool of the driver's exports, made when the first client
+    /// is linked
+    export_pool: Option<StackPoolHandle>,
     /// Physical address of the init page
     init_page: u64,
     thread: RawKey,
@@ -1080,6 +1086,7 @@ pub fn load_drivers(
             instance,
             component,
             stacks,
+            export_pool: None,
             init_page,
             thread,
             further_threads,
@@ -1090,8 +1097,6 @@ pub fn load_drivers(
 
     // ── Imports ─────────────────────────────────────────────────────────
     let tree = device_tree::at_el1().index();
-    // Target stack each (client, exporter) pair calls on, by instance index.
-    let mut call_stacks = [[None::<UserStack>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
     // The data area of each pair whose interface has one, as `(base, len)`,
     // the next free address of the window they share, and which instances
     // already have its page table installed.
@@ -1163,14 +1168,23 @@ pub fn load_drivers(
                     continue;
                 }
             };
-            let stack = match call_stacks[client][exporter] {
-                Some(stack) => stack,
-                None => {
-                    let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
-                    let stack =
-                        builder.user_stack(&mut exporting.stacks, EXPORT_STACK_PAGES, slots);
-                    call_stacks[client][exporter] = Some(stack);
-                    stack
+            let export_pool = {
+                let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
+                match exporting.export_pool {
+                    Some(pool) => pool,
+                    None => {
+                        let pool = builder.stack_pool(
+                            &mut exporting.stacks,
+                            EXPORT_STACK_PAGES,
+                            EXPORT_STACKS,
+                            slots,
+                        );
+                        update_init(exporting.init_page, |init: &mut DriverInit| {
+                            init.export_pool = pool.to_wire();
+                        });
+                        exporting.export_pool = Some(pool);
+                        pool
+                    }
                 }
             };
             let area = if import.data_bytes == 0 && import.channel_pages == 0 {
@@ -1224,8 +1238,6 @@ pub fn load_drivers(
                         )
                     });
                     *record = ExportedArea {
-                        stack_bottom: stack.bottom,
-                        stack_end: stack.top,
                         base,
                         len: import.data_bytes,
                         channel_base: if import.channel_pages == 0 {
@@ -1308,9 +1320,7 @@ pub fn load_drivers(
                         &self_table
                     },
                     KeySlot(if area_base == 0 { slot } else { scratch_slot }),
-                    stack.bottom,
-                    stack.top,
-                    EXPORT_STACK_HEADROOM,
+                    export_pool,
                     window.unwrap_or(PlacementWindow::NONE),
                 )
                 .unwrap_or_else(|error| {
@@ -1355,7 +1365,6 @@ pub fn load_drivers(
                     type_code: import.type_code,
                     function: import.function,
                     invocation: invocation.to_wire(),
-                    stack_end: stack.top,
                     area_base,
                     area_len,
                     channel_base,

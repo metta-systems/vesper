@@ -12,8 +12,8 @@ use {
             arch_objects::{AddressSpaceId, AddressSpaceObject},
             fault::FaultDelivery,
             invocation::{
-                CallTarget, CommittedCall, CommittedReturn, InvocationStackExtent, PreparedCall,
-                ReturnFault, ReturnRejection,
+                CallTarget, CommittedCall, CommittedReturn, PreparedCall, ReturnFault,
+                ReturnRejection,
             },
             key_table::CallerTable,
             thread::ThreadId,
@@ -23,8 +23,8 @@ use {
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
     libobject::{
-        CapError, INVOCATION_STACK_DEPTH, InconsistencyReason, InvalidKeyReason,
-        InvalidStackReason, KeySlot, ObjectType, PlacementWindow, RawKey, Rights,
+        CapError, INVOCATION_STACK_DEPTH, InconsistencyReason, InvalidKeyReason, KeySlot,
+        ObjectType, PlacementWindow, RawKey, Rights, StackPoolHandle,
         fault::{FaultAction, FaultInfo, FaultKind},
     },
 };
@@ -32,11 +32,16 @@ use {
 const ROOT: u64 = 0x2100_0000;
 const SOURCE_ROOT: u64 = 0x2200_0000;
 const FUNCTION: u64 = 0x8_1000;
+/// The fixture target's stack pool: twenty stacks of 0x70 bytes from
+/// `STACK_BASE`, so the first call's stack pointer is `STACK_END`. Twenty stacks
+/// let sixteen nested calls take one each with stacks to spare.
 const STACK_BASE: u64 = 0x1010;
-const STACK_END: u64 = 0x1080;
-const MINIMUM_HEADROOM: u64 = 48;
-/// Exactly the minimum headroom above base: the lowest admissible SP.
-const LOWEST_SP: u64 = STACK_BASE + MINIMUM_HEADROOM;
+const STACK_BYTES: u64 = 0x70;
+const POOL_STACKS: u64 = 20;
+const STACK_END: u64 = STACK_BASE + STACK_BYTES;
+/// A value for the saved `x9`, which Call ignores. It is also a plausible stack
+/// pointer, so a Call that used it would show.
+const IGNORED_X9: u64 = STACK_BASE + 0x30;
 const INVOCATION_SLOT: KeySlot = KeySlot(10);
 
 struct CallFixture {
@@ -45,6 +50,8 @@ struct CallFixture {
     source_table: u64,
     target_table: u64,
     key: RawKey,
+    /// The target's stack pool, which `key` names.
+    pool: StackPoolHandle,
     /// `CurrentReturnOnly` sentinel at Slot(1) in each AS table.
     source_return_key: RawKey,
     target_return_key: RawKey,
@@ -71,13 +78,30 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
             source_address_space.set_asid(Some(1));
             let source_return_key = provisioned_return_key(source_table);
             let target_return_key = provisioned_return_key(target_table);
-            let extent = InvocationStackExtent::new(
-                STACK_BASE,
-                STACK_END,
-                MINIMUM_HEADROOM,
-                ArchObjectsImpl::USER_VA_END,
-            )
-            .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()));
+            let pool = nucleus
+                .address_space_mut(target_as)
+                .unwrap()
+                .stack_pools_mut()
+                .create(
+                    STACK_BASE,
+                    STACK_BYTES,
+                    POOL_STACKS,
+                    ArchObjectsImpl::USER_VA_END,
+                )
+                .unwrap_or_else(|error| panic!("fixture stack pool: {:?}", error.code()));
+            // The source AddressSpace has the same pool, for calls back into it.
+            let source_pool = nucleus
+                .address_space_mut(source_as)
+                .unwrap()
+                .stack_pools_mut()
+                .create(
+                    STACK_BASE,
+                    STACK_BYTES,
+                    POOL_STACKS,
+                    ArchObjectsImpl::USER_VA_END,
+                )
+                .unwrap_or_else(|error| panic!("fixture source stack pool: {:?}", error.code()));
+            assert_eq!(source_pool, pool);
             let key = nucleus
                 .current_thread_table_mut()
                 .unwrap()
@@ -86,7 +110,7 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
                     KeyEntry::new_invocation(
                         target_as,
                         NonZero::new(FUNCTION).unwrap(),
-                        extent,
+                        pool,
                         PlacementWindow::NONE,
                     ),
                     FIXTURE_GUARD,
@@ -100,6 +124,7 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
                     source_table,
                     target_table,
                     key,
+                    pool,
                     source_return_key,
                     target_return_key,
                 },
@@ -110,18 +135,19 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
 }
 
 /// A saved Call frame with distinct values in every register.
-/// `sp` is the source execution SP, deliberately a valid target SP too,
-/// so tests can tell saved-`x9` consumption from `SP` reuse.
-fn call_frame(key: RawKey, target_sp: u64) -> SavedContext {
+/// The source execution SP is `STACK_END`, also the first stack top of the
+/// target's pool, so tests can tell a Call that took its stack from the pool
+/// from one that reused the source's. Call ignores `x8`, `x9` and `x10`, which
+/// hold plausible stack pointers.
+fn call_frame(key: RawKey) -> SavedContext {
     let mut saved = SavedContext::el1t(0x9_0000, STACK_END);
     for (index, register) in saved.gpr.iter_mut().enumerate() {
         *register = 0x5A00 + u64::try_from(index).unwrap();
     }
     saved.gpr[0] = key.to_wire();
     saved.gpr[1] = 0;
-    saved.gpr[9] = target_sp;
-    // Valid target SPs in x8/x10 must not stand in for x9.
-    saved.gpr[8] = LOWEST_SP;
+    saved.gpr[9] = IGNORED_X9;
+    saved.gpr[8] = IGNORED_X9 + 0x10;
     saved.gpr[10] = STACK_END;
     saved.lr = 0x9_0040;
     saved.spsr_el1 |= 0x6000_0000;
@@ -167,6 +193,8 @@ struct Snapshot {
     source_stack: InvocationStack,
     target_root: Option<u64>,
     target_asid: Option<u16>,
+    /// Stacks of the target's pool in use; `None` once the pool is destroyed.
+    stacks_in_use: Option<u32>,
     source_table: u64,
     target_table: u64,
     ttbr0: u64,
@@ -179,6 +207,8 @@ fn snapshot(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) -> Sn
     let current_thread = nucleus.current_thread;
     let target_root = target.and_then(|address_space| address_space.translation_root());
     let target_asid = target.and_then(|address_space| address_space.asid());
+    let stacks_in_use =
+        target.and_then(|address_space| address_space.stack_pools().in_use(fixture.pool).ok());
     let source = source_mut(nucleus);
     Snapshot {
         current_thread,
@@ -187,6 +217,7 @@ fn snapshot(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) -> Sn
         source_stack: source.invocation_stack,
         target_root,
         target_asid,
+        stacks_in_use,
         source_table: table_digest(fixture.source_table),
         target_table: table_digest(fixture.target_table),
         ttbr0: TTBR0_EL1.get(),
@@ -255,8 +286,49 @@ fn dispatch_rejected(
     assert_eq!(snapshot(nucleus, fixture), before);
 }
 
-fn invalid_stack(value: u64, reason: InvalidStackReason) -> CapError {
-    CapError::InvalidStack { value, reason }
+/// Take every stack of the target's pool, as outstanding calls would.
+fn exhaust_pool(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
+    let pools = nucleus
+        .address_space_mut(fixture.target_as)
+        .unwrap()
+        .stack_pools_mut();
+    for _ in 0..POOL_STACKS {
+        pools
+            .take(fixture.pool)
+            .unwrap_or_else(|error| panic!("taking a stack: {:?}", error.code()));
+    }
+}
+
+/// Give every stack of the target's pool back.
+fn release_pool(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
+    let pools = nucleus
+        .address_space_mut(fixture.target_as)
+        .unwrap()
+        .stack_pools_mut();
+    for index in 0..POOL_STACKS {
+        assert!(pools.give(fixture.pool.slot(), u8::try_from(index).unwrap()));
+    }
+}
+
+/// Destroy the target's pool, leaving the Invocation's handle stale.
+fn destroy_pool(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
+    nucleus
+        .address_space_mut(fixture.target_as)
+        .unwrap()
+        .stack_pools_mut()
+        .destroy(fixture.pool)
+        .unwrap_or_else(|error| panic!("destroying the pool: {:?}", error.code()));
+}
+
+fn stale_pool() -> CapError {
+    // The slot's generation after the pool's destruction.
+    CapError::StaleGeneration {
+        current: u64::from(libobject::StackPoolHandle::new(0, 1).generation()) + 1,
+    }
+}
+
+fn no_free_stack() -> CapError {
+    CapError::NoFreeStack { count: POOL_STACKS }
 }
 
 fn break_translation(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
@@ -269,7 +341,7 @@ fn break_translation(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixtu
 fn call_preparation_describes_the_migration_without_mutating_anything() {
     with_call(|nucleus, fixture| {
         fill_stack(nucleus, 3);
-        let saved = call_frame(fixture.key, LOWEST_SP);
+        let saved = call_frame(fixture.key);
         let (result, before) = prepare(nucleus, &fixture, &saved);
         let prepared =
             result.unwrap_or_else(|error| panic!("valid Call rejected: {:?}", error.code()));
@@ -279,7 +351,7 @@ fn call_preparation_describes_the_migration_without_mutating_anything() {
         let current = nucleus.current_thread.unwrap();
         assert_eq!(prepared.source_thread(), current);
         assert_eq!(prepared.entry_pc().get(), FUNCTION);
-        assert_eq!(prepared.target_sp(), LOWEST_SP);
+        assert_eq!(prepared.stack_pool(), fixture.pool);
         assert_eq!(
             prepared.arguments(),
             [0x5A02, 0x5A03, 0x5A04, 0x5A05, 0x5A06, 0x5A07]
@@ -300,57 +372,66 @@ fn call_preparation_describes_the_migration_without_mutating_anything() {
         assert_eq!(prepared.continuation().source_sp, STACK_END);
         assert_eq!(prepared.continuation().source_spsr, saved.spsr_el1);
         assert_eq!(prepared.continuation().source_x19_x30[11], saved.lr);
-
-        // SP = end is the other admissible endpoint.
-        let (result, _) = prepare(nucleus, &fixture, &call_frame(fixture.key, STACK_END));
-        assert_eq!(admitted(result).target_sp(), STACK_END);
     });
 }
 
 #[test_case]
-fn call_consumes_saved_x9_not_sp_or_neighbouring_registers() {
+fn call_ignores_saved_x9_and_the_registers_around_it() {
     with_call(|nucleus, fixture| {
-        // SP, x8 and x10 all hold valid target SPs; only saved x9 decides.
-        for (submitted, reason) in [
-            (STACK_BASE, InvalidStackReason::SpOutOfRange),
-            (LOWEST_SP + 8, InvalidStackReason::SpMisaligned),
-            (0, InvalidStackReason::SpOutOfRange),
-        ] {
-            let saved = call_frame(fixture.key, submitted);
-            assert_eq!(saved.sp, STACK_END);
-            reject_preserved(nucleus, &fixture, &saved, invalid_stack(submitted, reason));
-        }
-        // Distinct valid saved x9 values are reported back verbatim.
-        for submitted in [LOWEST_SP, LOWEST_SP + 16, STACK_END - 16, STACK_END] {
-            let (result, _) = prepare(nucleus, &fixture, &call_frame(fixture.key, submitted));
-            assert_eq!(admitted(result).target_sp(), submitted);
+        // Whatever the caller leaves in x8, x9 and x10, the call is admitted
+        // against the pool alone.
+        for submitted in [0, STACK_BASE, IGNORED_X9 + 8, u64::MAX] {
+            let mut saved = call_frame(fixture.key);
+            saved.gpr[9] = submitted;
+            saved.gpr[8] = submitted;
+            saved.gpr[10] = submitted;
+            let (result, before) = prepare(nucleus, &fixture, &saved);
+            assert_eq!(admitted(result).stack_pool(), fixture.pool);
+            assert_eq!(snapshot(nucleus, &fixture), before);
         }
     });
 }
 
 #[test_case]
-fn invalid_sp_is_reported_before_unready_translation_or_full_depth() {
-    for (submitted, reason) in [
-        (LOWEST_SP + 1, InvalidStackReason::SpMisaligned),
-        (STACK_BASE, InvalidStackReason::SpOutOfRange),
-        (STACK_END + 16, InvalidStackReason::SpOutOfRange),
-        (LOWEST_SP - 16, InvalidStackReason::SpInsufficientHeadroom),
-    ] {
+fn a_stale_or_exhausted_pool_is_reported_before_unready_translation_or_full_depth() {
+    for stale in [true, false] {
         for (unready, full) in [(true, false), (false, true), (true, true)] {
             with_call(|nucleus, fixture| {
+                if stale {
+                    destroy_pool(nucleus, &fixture);
+                } else {
+                    exhaust_pool(nucleus, &fixture);
+                }
                 if unready {
                     break_translation(nucleus, &fixture);
                 }
                 if full {
                     fill_stack(nucleus, INVOCATION_STACK_DEPTH);
                 }
-                let saved = call_frame(fixture.key, submitted);
-                let expected = invalid_stack(submitted, reason).code();
+                let saved = call_frame(fixture.key);
+                let expected = if stale { stale_pool() } else { no_free_stack() }.code();
                 reject_preserved_code(nucleus, &fixture, &saved, expected);
                 dispatch_rejected(nucleus, &fixture, &saved, expected);
             });
         }
     }
+}
+
+#[test_case]
+fn calls_take_the_lowest_free_stack_and_returns_give_it_back() {
+    with_call(|nucleus, fixture| {
+        let first = committed(call(nucleus, &fixture, &call_frame(fixture.key)));
+        assert_eq!(first.target.sp, STACK_END, "the first stack's top");
+        assert_eq!(snapshot(nucleus, &fixture).stacks_in_use, Some(1));
+        let top = *source_mut(nucleus).invocation_stack.top().unwrap();
+        assert!(top.stack.taken);
+        assert_eq!((top.stack.pool, top.stack.index), (0, 0));
+
+        // The Thread now runs in the target; its next call takes the next stack.
+        let second = committed(call(nucleus, &fixture, &call_frame(fixture.key)));
+        assert_eq!(second.target.sp, STACK_END + STACK_BYTES);
+        assert_eq!(snapshot(nucleus, &fixture).stacks_in_use, Some(2));
+    });
 }
 
 #[test_case]
@@ -367,7 +448,7 @@ fn translation_failure_is_reported_before_depth_exhaustion() {
             let address_space = nucleus.address_space_mut(fixture.target_as).unwrap();
             address_space.set_translation_root(root);
             address_space.set_asid(asid);
-            let saved = call_frame(fixture.key, LOWEST_SP);
+            let saved = call_frame(fixture.key);
             let expected = expected.code();
             reject_preserved_code(nucleus, &fixture, &saved, expected);
             dispatch_rejected(nucleus, &fixture, &saved, expected);
@@ -379,7 +460,7 @@ fn translation_failure_is_reported_before_depth_exhaustion() {
 fn depth_sixteen_is_rejected_with_current_count_and_fifteen_is_admitted() {
     with_call(|nucleus, fixture| {
         fill_stack(nucleus, INVOCATION_STACK_DEPTH - 1);
-        let saved = call_frame(fixture.key, LOWEST_SP);
+        let saved = call_frame(fixture.key);
         let (result, before) = prepare(nucleus, &fixture, &saved);
         assert_eq!(admitted(result).depth(), INVOCATION_STACK_DEPTH - 1);
         assert_eq!(snapshot(nucleus, &fixture), before);
@@ -409,7 +490,7 @@ fn depth_sixteen_is_rejected_with_current_count_and_fifteen_is_admitted() {
 fn dispatched_call_at_depth_fifteen_commits() {
     with_call(|nucleus, fixture| {
         fill_stack(nucleus, INVOCATION_STACK_DEPTH - 1);
-        let saved = call_frame(fixture.key, LOWEST_SP);
+        let saved = call_frame(fixture.key);
         match api::handle_cap_invoke(nucleus, &saved) {
             Ok(api::InvokeOutcome::Call(_)) => {}
             Ok(_) => panic!("dispatched Call produced a non-Call outcome"),
@@ -452,7 +533,7 @@ fn stale_target_identity_precedes_invalid_sp() {
                 assert_ne!(replacement_id, fixture.target_as);
             }
             fill_stack(nucleus, INVOCATION_STACK_DEPTH);
-            let saved = call_frame(fixture.key, STACK_BASE);
+            let saved = call_frame(fixture.key);
             reject_preserved(
                 nucleus,
                 &fixture,
@@ -472,7 +553,7 @@ fn operation_kind_and_authority_precede_supplied_values() {
     with_call(|nucleus, fixture| {
         // Invalid SP and full depth must not mask key-stage rejections.
         fill_stack(nucleus, INVOCATION_STACK_DEPTH);
-        let mut saved = call_frame(fixture.key, STACK_BASE);
+        let mut saved = call_frame(fixture.key);
         saved.gpr[1] = 2;
         reject_preserved(nucleus, &fixture, &saved, CapError::InvalidOperation);
         // Operation 1 is CallWithKey: this Invocation accepts no key, which is
@@ -490,7 +571,7 @@ fn operation_kind_and_authority_precede_supplied_values() {
                 .insert(KeySlot(11), entry.derive(Rights::empty()), FIXTURE_GUARD)
                 .unwrap_or_else(|error| panic!("attenuated install: {:?}", error.error.code()))
         };
-        let saved = call_frame(attenuated, STACK_BASE);
+        let saved = call_frame(attenuated);
         reject_preserved(nucleus, &fixture, &saved, CapError::InsufficientRights);
 
         let wrong_kind = nucleus
@@ -502,7 +583,7 @@ fn operation_kind_and_authority_precede_supplied_values() {
                 FIXTURE_GUARD,
             )
             .unwrap_or_else(|error| panic!("wrong-kind install: {:?}", error.error.code()));
-        let saved = call_frame(wrong_kind, STACK_BASE);
+        let saved = call_frame(wrong_kind);
         reject_preserved(
             nucleus,
             &fixture,
@@ -553,13 +634,8 @@ fn prepare_direct(
         function_address: NonZero::new(FUNCTION).unwrap(),
         placement_window: PlacementWindow::NONE,
         badge: 0,
-        stack_extent: InvocationStackExtent::new(
-            STACK_BASE,
-            STACK_END,
-            MINIMUM_HEADROOM,
-            ArchObjectsImpl::USER_VA_END,
-        )
-        .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code())),
+        // The first pool the fixture's target AddressSpace made.
+        stack_pool: StackPoolHandle::new(0, 1),
     };
     // SAFETY: as in `call`.
     let access = unsafe { Access::new() };
@@ -574,7 +650,7 @@ fn committed(result: Result<CommittedCall, CapError>) -> CommittedCall {
 fn call_commit_pushes_continuation_and_migrates_into_the_target_table() {
     with_call(|nucleus, fixture| {
         fill_stack(nucleus, 2);
-        let saved = call_frame(fixture.key, LOWEST_SP);
+        let saved = call_frame(fixture.key);
         let before = snapshot(nucleus, &fixture);
         let expected = *admitted(prepare(nucleus, &fixture, &saved).0).continuation();
         let commit = committed(call(nucleus, &fixture, &saved));
@@ -587,9 +663,15 @@ fn call_commit_pushes_continuation_and_migrates_into_the_target_table() {
         // preparation `expected` came from: equal except for a later stamp.
         let top = *source.invocation_stack.top().unwrap();
         assert!(top.stamp >= expected.stamp, "continuation stamp went back");
+        // The commit also records the stack it took from the target's pool.
+        assert_eq!(
+            (top.stack.pool, top.stack.index, top.stack.taken),
+            (0, 0, true)
+        );
         assert_eq!(
             InvocationContinuation {
                 stamp: expected.stamp,
+                stack: expected.stack,
                 ..top
             },
             expected
@@ -613,6 +695,7 @@ fn call_commit_pushes_continuation_and_migrates_into_the_target_table() {
 
         // Commit touches no hardware, table, target metadata or scheduling.
         let after = snapshot(nucleus, &fixture);
+        assert_eq!(after.stacks_in_use, Some(1), "the commit took one stack");
         assert_eq!(after.ttbr0, before.ttbr0);
         assert_eq!(after.source_table, before.source_table);
         assert_eq!(after.target_table, before.target_table);
@@ -626,7 +709,7 @@ fn call_commit_pushes_continuation_and_migrates_into_the_target_table() {
 #[test_case]
 fn target_entry_frame_keeps_only_inputs_and_inherits_non_nzcv_status() {
     with_call(|nucleus, fixture| {
-        let mut saved = call_frame(fixture.key, LOWEST_SP);
+        let mut saved = call_frame(fixture.key);
         // Every condition flag and an unmasked IRQ bit set in the source.
         saved.spsr_el1 = (saved.spsr_el1 | NZCV) & !0x80;
         saved.tpidr_el0 = SOURCE_TLS;
@@ -639,7 +722,10 @@ fn target_entry_frame_keeps_only_inputs_and_inherits_non_nzcv_status() {
         assert_eq!(target.gpr[18], 0);
         assert_eq!(target.lr, 0);
         assert_eq!(target.elr_el1, FUNCTION);
-        assert_eq!(target.sp, LOWEST_SP);
+        assert_eq!(
+            target.sp, STACK_END,
+            "the call runs on the pool's first stack"
+        );
         assert_eq!(target.spsr_el1 & NZCV, 0);
         assert_eq!(target.spsr_el1, saved.spsr_el1 & !NZCV);
         assert_eq!(target.spsr_el1 & 0x3c0, saved.spsr_el1 & 0x3c0);
@@ -661,7 +747,7 @@ fn target_entry_frame_keeps_only_inputs_and_inherits_non_nzcv_status() {
 fn nested_commits_fill_sixteen_records_then_reject_the_seventeenth() {
     with_call(|nucleus, fixture| {
         for depth in 0..INVOCATION_STACK_DEPTH {
-            let mut saved = call_frame(fixture.key, STACK_END);
+            let mut saved = call_frame(fixture.key);
             saved.elr_el1 = 0x9_0000 + 4 * u64::try_from(depth).unwrap();
             let prepared = admitted(prepare_direct(nucleus, fixture.target_as, &saved));
             assert_eq!(prepared.depth(), depth);
@@ -685,7 +771,7 @@ fn nested_commits_fill_sixteen_records_then_reject_the_seventeenth() {
             assert_eq!(record.source_address_space, source);
         }
 
-        let saved = call_frame(fixture.key, STACK_END);
+        let saved = call_frame(fixture.key);
         let error = prepare_direct(nucleus, fixture.target_as, &saved)
             .expect_err("seventeenth Call admitted");
         assert_eq!(error.code(), (34, 16, 0));
@@ -698,7 +784,7 @@ fn nested_commits_fill_sixteen_records_then_reject_the_seventeenth() {
 fn stale_prepared_call_is_rejected_without_mutation() {
     for staleness in 0..3 {
         with_call(|nucleus, fixture| {
-            let saved = call_frame(fixture.key, LOWEST_SP);
+            let saved = call_frame(fixture.key);
             let prepared = admitted(prepare(nucleus, &fixture, &saved).0);
             match staleness {
                 // Another push happened after admission.
@@ -725,19 +811,23 @@ fn stale_prepared_call_is_rejected_without_mutation() {
 fn rejected_call_commits_nothing() {
     with_call(|nucleus, fixture| {
         fill_stack(nucleus, 4);
-        for submitted in [STACK_BASE, LOWEST_SP - 16, LOWEST_SP + 8] {
-            let saved = call_frame(fixture.key, submitted);
-            let before = snapshot(nucleus, &fixture);
-            let error = call(nucleus, &fixture, &saved).expect_err("invalid SP committed");
-            assert!(matches!(error, CapError::InvalidStack { .. }));
-            assert_eq!(snapshot(nucleus, &fixture), before);
-        }
+        let saved = call_frame(fixture.key);
         fill_stack_one_more_until_full(nucleus);
-        let saved = call_frame(fixture.key, LOWEST_SP);
         let before = snapshot(nucleus, &fixture);
         let error = call(nucleus, &fixture, &saved).expect_err("full stack committed");
         assert_eq!(error.code(), (34, 16, 0));
         assert_eq!(snapshot(nucleus, &fixture), before);
+
+        // An exhausted pool is reported first, and commits nothing.
+        exhaust_pool(nucleus, &fixture);
+        let exhausted = snapshot(nucleus, &fixture);
+        assert_eq!(
+            exhausted.stacks_in_use,
+            Some(u32::try_from(POOL_STACKS).unwrap())
+        );
+        let error = call(nucleus, &fixture, &saved).expect_err("exhausted pool committed");
+        assert_eq!(error.code(), no_free_stack().code());
+        assert_eq!(snapshot(nucleus, &fixture), exhausted);
     });
 }
 
@@ -784,7 +874,7 @@ fn provisioned_return_key(table_address: u64) -> RawKey {
 /// A target-side Return frame: payload in x2/x3, `extra` in x4..x7, and
 /// target sentinels everywhere else that must never reach the source.
 fn return_frame(key: RawKey, payload: [u64; 2], extra: [u64; 4]) -> SavedContext {
-    let mut saved = SavedContext::el1t(FUNCTION + 0x40, LOWEST_SP - 16);
+    let mut saved = SavedContext::el1t(FUNCTION + 0x40, STACK_END - 16);
     for (index, register) in saved.gpr.iter_mut().enumerate() {
         *register = 0x7E00 + u64::try_from(index).unwrap();
     }
@@ -865,7 +955,7 @@ fn call_then_return_restores_the_exact_source_context_and_table() {
     with_call(|nucleus, fixture| {
         fill_stack(nucleus, 2);
         let before = snapshot(nucleus, &fixture);
-        let mut call_saved = call_frame(fixture.key, LOWEST_SP);
+        let mut call_saved = call_frame(fixture.key);
         call_saved.spsr_el1 |= NZCV;
         call_saved.tpidr_el0 = SOURCE_TLS;
         committed(call(nucleus, &fixture, &call_saved));
@@ -918,7 +1008,7 @@ fn return_ignores_x4_to_x7() {
         .enumerate()
     {
         with_call(|nucleus, fixture| {
-            committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+            committed(call(nucleus, &fixture, &call_frame(fixture.key)));
             let saved = return_frame(fixture.target_return_key, [5, 6], extra);
             frames[run] = Some(returned(thread_return(nucleus, &saved)).resumed);
             assert!(source_mut(nucleus).invocation_stack.is_empty());
@@ -932,9 +1022,9 @@ fn return_ignores_x4_to_x7() {
 #[test_case]
 fn nested_returns_pop_in_lifo_order() {
     with_call(|nucleus, fixture| {
-        let first = call_frame(fixture.key, LOWEST_SP);
+        let first = call_frame(fixture.key);
         committed(call(nucleus, &fixture, &first));
-        let mut second = call_frame(fixture.key, STACK_END);
+        let mut second = call_frame(fixture.key);
         second.elr_el1 = 0x9_1000;
         second.gpr[19] = 0x1919;
         let prepared = admitted(prepare_direct(nucleus, fixture.target_as, &second));
@@ -963,7 +1053,7 @@ fn underflow_is_an_illegal_return_fault_without_mutation() {
         let saved = return_frame(fixture.source_return_key, [1, 2], [0; 4]);
         return_faulted(nucleus, &fixture, &saved, ReturnFault::IllegalReturn);
         // Also after a full round trip has emptied the stack again.
-        committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+        committed(call(nucleus, &fixture, &call_frame(fixture.key)));
         let target_saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
         returned(thread_return(nucleus, &target_saved));
         return_faulted(nucleus, &fixture, &saved, ReturnFault::IllegalReturn);
@@ -974,7 +1064,7 @@ fn underflow_is_an_illegal_return_fault_without_mutation() {
 fn retired_source_is_a_return_target_retired_fault_without_pop() {
     for reuse in [false, true] {
         with_call(|nucleus, fixture| {
-            committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+            committed(call(nucleus, &fixture, &call_frame(fixture.key)));
             let binding = nucleus
                 .address_space(fixture.source_as)
                 .unwrap()
@@ -1001,7 +1091,7 @@ fn retired_source_is_a_return_target_retired_fault_without_pop() {
 #[test_case]
 fn live_but_unready_source_is_rejected_without_pop() {
     with_call(|nucleus, fixture| {
-        committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+        committed(call(nucleus, &fixture, &call_frame(fixture.key)));
         nucleus
             .address_space_mut(fixture.source_as)
             .unwrap()
@@ -1015,7 +1105,7 @@ fn live_but_unready_source_is_rejected_without_pop() {
 #[test_case]
 fn return_key_form_and_lookup_errors_precede_the_pop() {
     with_call(|nucleus, fixture| {
-        committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+        committed(call(nucleus, &fixture, &call_frame(fixture.key)));
         let thread = nucleus.current_thread.unwrap();
         let named = nucleus
             .current_thread_table_mut()
@@ -1045,13 +1135,7 @@ fn return_key_form_and_lookup_errors_precede_the_pop() {
                 KeyEntry::new_invocation(
                     fixture.target_as,
                     NonZero::new(FUNCTION).unwrap(),
-                    InvocationStackExtent::new(
-                        STACK_BASE,
-                        STACK_END,
-                        MINIMUM_HEADROOM,
-                        ArchObjectsImpl::USER_VA_END,
-                    )
-                    .unwrap_or_else(|error| panic!("extent: {:?}", error.code())),
+                    fixture.pool,
                     PlacementWindow::NONE,
                 ),
                 FIXTURE_GUARD,
@@ -1092,7 +1176,7 @@ fn return_key_form_and_lookup_errors_precede_the_pop() {
 fn stale_prepared_return_is_rejected_without_mutation() {
     for staleness in 0..3 {
         with_call(|nucleus, fixture| {
-            committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+            committed(call(nucleus, &fixture, &call_frame(fixture.key)));
             let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
             let caller = current_caller(nucleus);
             let prepared = {
@@ -1125,13 +1209,13 @@ fn stale_prepared_return_is_rejected_without_mutation() {
 fn dispatch_routes_call_and_return_from_saved_frames() {
     with_call(|nucleus, fixture| {
         let before = snapshot(nucleus, &fixture);
-        let call_saved = call_frame(fixture.key, LOWEST_SP);
+        let call_saved = call_frame(fixture.key);
         let call = match api::handle_cap_invoke(nucleus, &call_saved) {
             Ok(api::InvokeOutcome::Call(committed)) => committed,
             Ok(_) => panic!("Invocation.Call dispatched to a non-Call outcome"),
             Err(error) => panic!("dispatched Call rejected: {:?}", error.code()),
         };
-        assert_eq!(call.target.sp, LOWEST_SP);
+        assert_eq!(call.target.sp, STACK_END);
         assert_eq!(call.translation.address_space(), fixture.target_as);
         assert_eq!(
             nucleus.current_thread_table_addr(),
@@ -1177,15 +1261,8 @@ fn dispatch_routes_call_and_return_from_saved_frames() {
 const FAULT_PC: u64 = 0x9_1230;
 
 /// Install a fault handler Invocation (into the target `AddressSpace`, with
-/// the fixture stack extent) at `FAULT_HANDLER` in the current Thread's table.
+/// the fixture stack pool) at `FAULT_HANDLER` in the current Thread's table.
 fn install_fault_handler(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
-    let extent = InvocationStackExtent::new(
-        STACK_BASE,
-        STACK_END,
-        MINIMUM_HEADROOM,
-        ArchObjectsImpl::USER_VA_END,
-    )
-    .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()));
     nucleus
         .current_thread_table_mut()
         .unwrap()
@@ -1194,7 +1271,7 @@ fn install_fault_handler(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallF
             KeyEntry::new_invocation(
                 fixture.target_as,
                 NonZero::new(FUNCTION).unwrap(),
-                extent,
+                fixture.pool,
                 PlacementWindow::NONE,
             ),
             FIXTURE_GUARD,
@@ -1352,7 +1429,7 @@ fn an_ordinary_return_inside_the_handler_does_not_end_the_fault() {
             panic!("the fault must reach the handler");
         };
         // The handler makes its own Call and Returns from it: depth 2 → 1.
-        committed(call(nucleus, &fixture, &call_frame(fixture.key, LOWEST_SP)));
+        committed(call(nucleus, &fixture, &call_frame(fixture.key)));
         let saved = return_frame(fixture.target_return_key, [0xAA, 0xBB], [1, 2, 3, 4]);
         let committed = returned(thread_return(nucleus, &saved));
         assert!(!committed.terminate);
@@ -1462,14 +1539,9 @@ const WINDOW_COUNT: u32 = 2;
 /// Slot of the window-accepting Invocation in the source table.
 const KEYED_INVOCATION_SLOT: KeySlot = KeySlot(30);
 
-fn fixture_extent() -> InvocationStackExtent {
-    InvocationStackExtent::new(
-        STACK_BASE,
-        STACK_END,
-        MINIMUM_HEADROOM,
-        ArchObjectsImpl::USER_VA_END,
-    )
-    .unwrap_or_else(|error| panic!("fixture stack extent: {:?}", error.code()))
+/// The first pool the fixture's target `AddressSpace` made.
+fn fixture_pool() -> StackPoolHandle {
+    StackPoolHandle::new(0, 1)
 }
 
 fn install_entry(table_address: u64, slot: KeySlot, entry: KeyEntry) -> RawKey {
@@ -1534,15 +1606,15 @@ fn keyed_invocation(fixture: &CallFixture) -> RawKey {
         KeyEntry::new_invocation(
             fixture.target_as,
             NonZero::new(FUNCTION).unwrap(),
-            fixture_extent(),
+            fixture_pool(),
             PlacementWindow::new(WINDOW_FIRST, WINDOW_COUNT),
         ),
     )
 }
 
 /// A `CallWithKey` frame: operation 1 and the lent key in `x8`.
-fn keyed_frame(invocation: RawKey, lent: RawKey, target_sp: u64) -> SavedContext {
-    let mut saved = call_frame(invocation, target_sp);
+fn keyed_frame(invocation: RawKey, lent: RawKey) -> SavedContext {
+    let mut saved = call_frame(invocation);
     saved.gpr[1] = 1;
     saved.gpr[8] = lent.to_wire();
     saved
@@ -1597,11 +1669,7 @@ fn call_with_key_places_the_borrowed_entry_and_return_removes_it() {
         let original = lendable_frame();
         let lent = install_entry(fixture.source_table, KeySlot(20), original);
 
-        let committed = committed(call(
-            nucleus,
-            &fixture,
-            &keyed_frame(invocation, lent, LOWEST_SP),
-        ));
+        let committed = committed(call(nucleus, &fixture, &keyed_frame(invocation, lent)));
         assert!(committed.with_key);
         // The callee receives the borrowed entry's key in x0; x1 stays zero
         // and the six arguments are untouched.
@@ -1655,11 +1723,7 @@ fn committed_call_with(
     invocation: RawKey,
     lent: RawKey,
 ) -> CommittedCall {
-    committed(call(
-        nucleus,
-        fixture,
-        &keyed_frame(invocation, lent, LOWEST_SP),
-    ))
+    committed(call(nucleus, fixture, &keyed_frame(invocation, lent)))
 }
 
 #[test_case]
@@ -1667,7 +1731,7 @@ fn dispatched_call_with_key_commits_through_the_production_entry() {
     with_call(|nucleus, fixture| {
         let invocation = keyed_invocation(&fixture);
         let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
-        let saved = keyed_frame(invocation, lent, LOWEST_SP);
+        let saved = keyed_frame(invocation, lent);
         match api::handle_cap_invoke(nucleus, &saved) {
             Ok(api::InvokeOutcome::Call(committed)) => {
                 assert!(committed.with_key);
@@ -1687,7 +1751,7 @@ fn plain_call_ignores_x8_and_places_nothing() {
         let invocation = keyed_invocation(&fixture);
         let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
         // A plain Call on an Invocation that accepts keys: x8 is just garbage.
-        let mut saved = call_frame(invocation, LOWEST_SP);
+        let mut saved = call_frame(invocation);
         saved.gpr[8] = lent.to_wire();
         let committed = committed(call(nucleus, &fixture, &saved));
         assert!(!committed.with_key);
@@ -1716,28 +1780,28 @@ fn call_with_key_rejections_preserve_every_table() {
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(fixture.key, lent, LOWEST_SP),
+            &keyed_frame(fixture.key, lent),
             CapError::KeyNotAccepted,
         );
         // A key without LEND.
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, unlendable, LOWEST_SP),
+            &keyed_frame(invocation, unlendable),
             CapError::InsufficientRights,
         );
         // A kind that cannot be lent (an Invocation).
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, fixture.key, LOWEST_SP),
+            &keyed_frame(invocation, fixture.key),
             CapError::InvalidObjectType(ObjectType::INVOCATION),
         );
         // A key that was never issued is reported against operand x8.
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, never, LOWEST_SP),
+            &keyed_frame(invocation, never),
             CapError::InvalidKey {
                 key: never,
                 reason: InvalidKeyReason::NeverIssued,
@@ -1749,7 +1813,7 @@ fn call_with_key_rejections_preserve_every_table() {
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, foreign, LOWEST_SP),
+            &keyed_frame(invocation, foreign),
             CapError::InvalidKey {
                 key: foreign,
                 reason: InvalidKeyReason::GuardMismatch,
@@ -1768,7 +1832,7 @@ fn call_with_key_rejections_preserve_every_table() {
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, lent, LOWEST_SP),
+            &keyed_frame(invocation, lent),
             CapError::NotBound,
         );
     });
@@ -1781,24 +1845,21 @@ fn call_with_key_admission_order_is_pinned() {
         let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
         let unlendable = install_entry(fixture.source_table, KeySlot(21), unlendable_frame());
         let never = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 200, 1);
-        let misaligned_sp = LOWEST_SP + 8;
-        let invalid_stack = CapError::InvalidStack {
-            value: misaligned_sp,
-            reason: InvalidStackReason::SpMisaligned,
-        };
+        // The pool has no free stack for the whole sequence below.
+        exhaust_pool(nucleus, &fixture);
 
         // KeyNotAccepted precedes any lent-key error.
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(fixture.key, never, misaligned_sp),
+            &keyed_frame(fixture.key, never),
             CapError::KeyNotAccepted,
         );
-        // Lent-key errors (lookup, then rights) precede the stack checks.
+        // Lent-key errors (lookup, then rights) precede the stack check.
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, never, misaligned_sp),
+            &keyed_frame(invocation, never),
             CapError::InvalidKey {
                 key: never,
                 reason: InvalidKeyReason::NeverIssued,
@@ -1808,7 +1869,7 @@ fn call_with_key_admission_order_is_pinned() {
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, unlendable, misaligned_sp),
+            &keyed_frame(invocation, unlendable),
             CapError::InsufficientRights,
         );
         // A full window is reported last: the stack and depth errors win.
@@ -1825,20 +1886,21 @@ fn call_with_key_admission_order_is_pinned() {
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, lent, misaligned_sp),
-            invalid_stack,
+            &keyed_frame(invocation, lent),
+            no_free_stack(),
         );
+        release_pool(nucleus, &fixture);
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, lent, LOWEST_SP),
+            &keyed_frame(invocation, lent),
             CapError::NoPlacementSlot,
         );
         fill_stack(nucleus, INVOCATION_STACK_DEPTH);
         reject_preserved(
             nucleus,
             &fixture,
-            &keyed_frame(invocation, lent, LOWEST_SP),
+            &keyed_frame(invocation, lent),
             CapError::NestingDepth {
                 count: INVOCATION_STACK_DEPTH as u64,
             },
@@ -1863,8 +1925,7 @@ fn placement_skips_occupied_slots_and_fills_the_window_in_order() {
         assert_eq!(first.target.gpr[0], placed_key(1, 1).to_wire());
         assert_borrowed(fixture.target_table, placed_key(1, 1), &original);
         // The window is now full for a concurrent second call.
-        let (result, before) =
-            prepare(nucleus, &fixture, &keyed_frame(invocation, lent, LOWEST_SP));
+        let (result, before) = prepare(nucleus, &fixture, &keyed_frame(invocation, lent));
         assert_eq!(
             result.expect_err("full window").code(),
             CapError::NoPlacementSlot.code()
@@ -1931,11 +1992,11 @@ fn a_borrowed_entry_can_be_lent_onward_without_copies() {
             KeyEntry::new_invocation(
                 fixture.source_as,
                 NonZero::new(FUNCTION).unwrap(),
-                fixture_extent(),
+                fixture_pool(),
                 PlacementWindow::new(60, 2),
             ),
         );
-        let saved = keyed_frame(onward, borrowed, LOWEST_SP);
+        let saved = keyed_frame(onward, borrowed);
         let second = committed(call_current(nucleus, &saved));
         assert!(second.with_key);
         let second_key = RawKey::from_parts(FIXTURE_GUARD, SIZE_BITS, 60, 1);
@@ -1969,14 +2030,11 @@ fn thread_teardown_removes_every_outstanding_borrowed_entry() {
             KeyEntry::new_invocation(
                 fixture.source_as,
                 NonZero::new(FUNCTION).unwrap(),
-                fixture_extent(),
+                fixture_pool(),
                 PlacementWindow::new(60, 2),
             ),
         );
-        let second = committed(call_current(
-            nucleus,
-            &keyed_frame(onward, borrowed, LOWEST_SP),
-        ));
+        let second = committed(call_current(nucleus, &keyed_frame(onward, borrowed)));
         let second_key = RawKey::from_wire(second.target.gpr[0]);
         entry_in(fixture.target_table, borrowed).must("first borrowed entry");
         entry_in(fixture.source_table, second_key).must("second borrowed entry");
@@ -1998,7 +2056,7 @@ fn a_stale_prepared_call_with_key_installs_nothing() {
     with_call(|nucleus, fixture| {
         let invocation = keyed_invocation(&fixture);
         let lent = install_entry(fixture.source_table, KeySlot(20), lendable_frame());
-        let (result, _) = prepare(nucleus, &fixture, &keyed_frame(invocation, lent, LOWEST_SP));
+        let (result, _) = prepare(nucleus, &fixture, &keyed_frame(invocation, lent));
         let prepared = admitted(result);
         // The depth changed after admission: commit refuses before touching
         // either table.
@@ -2028,7 +2086,7 @@ fn a_return_is_a_preemption_point_like_any_other_kernel_exit() {
     with_call(|nucleus, fixture| {
         fill_stack(nucleus, 2);
         let source = nucleus.current_thread.expect("the calling Thread");
-        let call_saved = call_frame(fixture.key, LOWEST_SP);
+        let call_saved = call_frame(fixture.key);
         committed(call(nucleus, &fixture, &call_saved));
         // While the callee ran, the dispatcher was activated (its limit
         // elapsed, say); the Thread keeps running until it leaves the kernel.

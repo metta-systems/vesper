@@ -22,8 +22,8 @@ use {
     },
     libobject::{
         CapError, InconsistencyReason, InvalidKeyReason, InvalidStackReason, KeySlot, KeyTableKey,
-        ObjectType, PlacementWindow, RawKey, Rights, UntypedKey, address_space::AddressSpaceKey,
-        thread::ThreadReturnKey,
+        ObjectType, PlacementWindow, RawKey, Rights, StackPoolHandle, UntypedKey,
+        address_space::AddressSpaceKey, thread::ThreadReturnKey,
     },
     libqemu::semihosting as semi,
     nucleus::{
@@ -35,9 +35,20 @@ use {
     },
 };
 
-/// Ordinary construction SVC with full-width operands, including slots the
-/// typed wrapper cannot represent. This never invokes PPC Call or Return.
+/// `AddressSpace.CreateInvocation` with full-width operands, including slots
+/// the typed wrapper cannot represent.
 fn create_invocation_raw(address_space: RawKey, args: [u64; 6]) -> (u64, u64, u64) {
+    address_space_raw(address_space, 3, args)
+}
+
+/// `AddressSpace.CreateStackPool` with full-width operands.
+fn create_pool_raw(address_space: RawKey, args: [u64; 6]) -> (u64, u64, u64) {
+    address_space_raw(address_space, 4, args)
+}
+
+/// Ordinary construction SVC with full-width operands. This never invokes PPC
+/// Call or Return.
+fn address_space_raw(address_space: RawKey, op: u64, args: [u64; 6]) -> (u64, u64, u64) {
     let (status, word1, word2): (u64, u64, u64);
     // SAFETY: construction uses the ordinary six-argument capability ABI and
     // returns locally; no execution-context migration or pointer access occurs.
@@ -45,7 +56,7 @@ fn create_invocation_raw(address_space: RawKey, args: [u64; 6]) -> (u64, u64, u6
         asm!(
             "svc #0",
             inlateout("x0") address_space.to_wire() => status,
-            inlateout("x1") 3_u64 => word1,
+            inlateout("x1") op => word1,
             inlateout("x2") args[0] => word2,
             in("x3") args[1],
             in("x4") args[2],
@@ -90,7 +101,7 @@ struct InvocationDestinationState {
     function: u64,
     rights: Rights,
     badge: u64,
-    stack: [u64; 3],
+    pool: StackPoolHandle,
 }
 
 fn invocation_destination_state(
@@ -107,9 +118,9 @@ fn invocation_destination_state(
     let (target, function) = entry
         .invocation_target()
         .unwrap_or_else(|error| panic!("Invocation target changed: {:?}", error.code()));
-    let extent = entry
-        .invocation_stack_extent()
-        .unwrap_or_else(|error| panic!("Invocation extent changed: {:?}", error.code()));
+    let pool = entry
+        .invocation_stack_pool()
+        .unwrap_or_else(|error| panic!("Invocation pool changed: {:?}", error.code()));
     let never_issued = boot_key(vacant.0, 1);
     assert!(matches!(
         table.lookup(never_issued, BOOT_TABLE_GUARD),
@@ -128,7 +139,7 @@ fn invocation_destination_state(
         function: function.get(),
         rights: entry.rights(),
         badge: entry.badge(),
-        stack: [extent.base(), extent.end(), extent.minimum_headroom()],
+        pool,
     }
 }
 
@@ -189,16 +200,11 @@ pub fn run() {
     // existing high direct-map Bounce SP is not a valid PPC stack fixture.
     assert_eq!(TCR_EL1.get() & 0x3F, 16, "the fixture uses 48-bit TTBR0");
     let user_end_exclusive = 1_u64 << 48;
-    let invocation_stack = [0x1000, 0x2000, 0x40];
+    let pool = boot_as
+        .create_stack_pool(0x1000, 0x1000, 1)
+        .unwrap_or_else(|error| panic!("AddressSpace.CreateStackPool failed: {:?}", error.code()));
     let invocation_key = boot_as
-        .create_invocation(
-            0x1234,
-            &self_table,
-            KeySlot(62),
-            invocation_stack[0],
-            invocation_stack[1],
-            invocation_stack[2],
-        )
+        .create_invocation(0x1234, &self_table, KeySlot(62), pool)
         .unwrap_or_else(|error| panic!("AddressSpace.CreateInvocation failed: {:?}", error.code()));
     assert_eq!(invocation_key.slot(), boot_slot(62));
     assert_ne!(invocation_key.incarnation(), 0);
@@ -215,15 +221,7 @@ pub fn run() {
         };
         assert_eq!(target, boot_as_id);
         assert_eq!(function_address.get(), 0x1234);
-        let extent = invocation
-            .invocation_stack_extent()
-            .unwrap_or_else(|error| {
-                panic!("installed Invocation extent missing: {:?}", error.code())
-            });
-        assert_eq!(
-            [extent.base(), extent.end(), extent.minimum_headroom()],
-            invocation_stack
-        );
+        assert_eq!(invocation.invocation_stack_pool().ok(), Some(pool));
     }
     let before_rejections =
         invocation_destination_state(keytable_addr, invocation_key, KeySlot(63));
@@ -231,12 +229,12 @@ pub fn run() {
     // Invocation always has a nonzero entry. A zero function address
     // cannot construct an Invocation (or current-relative Thread authority)
     // from userspace. Once authority/live identity are established, zero
-    // wins over malformed extents and destination readiness.
+    // wins over a stale pool and destination readiness.
     let table_len_before_zero = before_rejections.count;
     for slot in [KeySlot(62), KeySlot(63), KeySlot(600)] {
-        for stack in [invocation_stack, [0x1001, 0x1001, 0]] {
+        for pool in [pool, StackPoolHandle::new(15, 0xFFFF)] {
             assert!(matches!(
-                boot_as.create_invocation(0, &self_table, slot, stack[0], stack[1], stack[2]),
+                boot_as.create_invocation(0, &self_table, slot, pool),
                 Err(CapError::InvalidPointer)
             ));
             assert_eq!(
@@ -248,7 +246,7 @@ pub fn run() {
     assert_eq!(
         create_invocation_raw(
             boot_as_key,
-            [0, self_table_key.to_wire(), u64::MAX, 0x1001, 0x1001, 0]
+            [0, self_table_key.to_wire(), u64::MAX, pool.to_wire(), 0, 0]
         ),
         CapError::InvalidPointer.code()
     );
@@ -274,114 +272,151 @@ pub fn run() {
         ));
     }
 
-    // All construction reasons, literal wire IDs, offending submitted
-    // values, and first-error precedence go through the real SVC path.
-    // Repeat against occupied, never-issued and out-of-bounds destinations;
-    // a full-width unrepresentable slot must likewise lose to InvalidStack.
-    let malformed_stacks = [
+    // Every pool-creation failure, with its literal wire ID and the offending
+    // submitted value, through the real SVC path. Checks run in the order
+    // count, stack size, base, end.
+    let malformed_pools = [
+        // (base, bytes per stack, count, reason, reason id, reported value)
         (
-            [0x1000, 0x1000, 0x10],
-            InvalidStackReason::ExtentEmpty,
-            1,
             0x1000,
-        ),
-        (
-            [0x1001, 0x1001, 0],
-            InvalidStackReason::ExtentEmpty,
-            1,
-            0x1001,
-        ),
-        (
-            [0x2001, 0x1001, 0],
-            InvalidStackReason::ExtentInverted,
-            2,
-            0x1001,
-        ),
-        (
-            [user_end_exclusive + 1, user_end_exclusive + 0x101, 0],
-            InvalidStackReason::BaseOutsideUserRange,
-            3,
-            user_end_exclusive + 1,
-        ),
-        (
-            [
-                libaddress::PHYSICAL_KERNEL_WINDOW,
-                libaddress::PHYSICAL_KERNEL_WINDOW + 0x1000,
-                0x10,
-            ],
-            InvalidStackReason::BaseOutsideUserRange,
-            3,
-            libaddress::PHYSICAL_KERNEL_WINDOW,
-        ),
-        (
-            [0x1001, user_end_exclusive + 1, 0],
-            InvalidStackReason::EndOutsideUserRange,
-            4,
-            user_end_exclusive + 1,
-        ),
-        (
-            [0x1001, 0x2001, 0],
-            InvalidStackReason::BaseMisaligned,
-            5,
-            0x1001,
-        ),
-        (
-            [0x1000, 0x2001, 0],
-            InvalidStackReason::EndMisaligned,
+            0x1000,
+            0,
+            InvalidStackReason::StackCountOutOfRange,
             6,
-            0x2001,
-        ),
-        (
-            [0x1000, 0x2000, 0],
-            InvalidStackReason::MinimumHeadroomZero,
-            7,
             0,
         ),
         (
-            [0x1000, 0x1030, 0x41],
-            InvalidStackReason::MinimumHeadroomMisaligned,
-            8,
-            0x41,
+            0x1000,
+            0x1000,
+            65,
+            InvalidStackReason::StackCountOutOfRange,
+            6,
+            65,
+        ),
+        (0x1000, 8, 1, InvalidStackReason::StackBytesTooSmall, 5, 8),
+        (
+            0x1000,
+            0x1008,
+            1,
+            InvalidStackReason::StackBytesMisaligned,
+            4,
+            0x1008,
         ),
         (
-            [0x1000, 0x1030, 0x40],
-            InvalidStackReason::MinimumHeadroomTooLarge,
-            9,
-            0x40,
+            0x1001,
+            0x1000,
+            1,
+            InvalidStackReason::BaseMisaligned,
+            3,
+            0x1001,
+        ),
+        (
+            user_end_exclusive,
+            0x1000,
+            1,
+            InvalidStackReason::BaseOutsideUserRange,
+            1,
+            user_end_exclusive,
+        ),
+        (
+            libaddress::PHYSICAL_KERNEL_WINDOW,
+            0x1000,
+            1,
+            InvalidStackReason::BaseOutsideUserRange,
+            1,
+            libaddress::PHYSICAL_KERNEL_WINDOW,
+        ),
+        (
+            user_end_exclusive - 0x1000,
+            0x1000,
+            2,
+            InvalidStackReason::EndOutsideUserRange,
+            2,
+            user_end_exclusive + 0x1000,
+        ),
+        // The size overflows: the stack size is reported.
+        (
+            0x1000,
+            !15,
+            2,
+            InvalidStackReason::EndOutsideUserRange,
+            2,
+            !15,
         ),
     ];
-    for (stack, reason, reason_id, value) in malformed_stacks {
-        for slot in [KeySlot(62), KeySlot(63), KeySlot(600)] {
-            assert_invalid_stack(
-                boot_as.create_invocation(0x5678, &self_table, slot, stack[0], stack[1], stack[2]),
-                value,
-                reason,
-                reason_id,
-            );
-            assert_eq!(
-                invocation_destination_state(keytable_addr, invocation_key, KeySlot(63)),
-                before_rejections
-            );
-        }
+    for (base, bytes, count, reason, reason_id, value) in malformed_pools {
+        assert_invalid_stack(
+            boot_as
+                .create_stack_pool(base, bytes, count)
+                .map(|handle| RawKey::from_wire(handle.to_wire())),
+            value,
+            reason,
+            reason_id,
+        );
         assert_eq!(
-            create_invocation_raw(
-                boot_as_key,
-                [
-                    0x5678,
-                    self_table_key.to_wire(),
-                    u64::MAX,
-                    stack[0],
-                    stack[1],
-                    stack[2]
-                ]
-            ),
+            create_pool_raw(boot_as_key, [base, bytes, count, 0, 0, 0]),
             (33, value, reason_id)
+        );
+    }
+    // Reserved operands are refused, and CreateInvocation takes only a pool
+    // handle without reserved bits and zero x6 and x7.
+    assert_eq!(
+        create_pool_raw(boot_as_key, [0x1000, 0x1000, 1, 1, 0, 0]),
+        CapError::InvalidOperation.code()
+    );
+    for args in [
+        [0x5678, self_table_key.to_wire(), u64::MAX, 1 << 40, 0, 0],
+        [
+            0x5678,
+            self_table_key.to_wire(),
+            u64::MAX,
+            pool.to_wire(),
+            1,
+            0,
+        ],
+        [
+            0x5678,
+            self_table_key.to_wire(),
+            u64::MAX,
+            pool.to_wire(),
+            0,
+            1,
+        ],
+    ] {
+        assert_eq!(
+            create_invocation_raw(boot_as_key, args),
+            CapError::InvalidOperation.code()
         );
         assert_eq!(
             invocation_destination_state(keytable_addr, invocation_key, KeySlot(63)),
             before_rejections
         );
     }
+    // The pool table holds sixteen pools, and a pool with a stack in use
+    // cannot be destroyed; both are covered by the nucleus host tests. Here a
+    // full table is reached and emptied again.
+    let mut filler = [None; 16];
+    let mut made = 0;
+    loop {
+        match boot_as.create_stack_pool(0x1000, 0x1000, 1) {
+            Ok(handle) => {
+                filler[made] = Some(handle);
+                made += 1;
+            }
+            Err(CapError::PoolExhausted) => break,
+            Err(error) => panic!("filling the pool table failed: {:?}", error.code()),
+        }
+    }
+    assert_eq!(made, 15, "one of sixteen slots is taken");
+    for handle in filler.into_iter().flatten() {
+        boot_as
+            .destroy_stack_pool(handle)
+            .unwrap_or_else(|error| panic!("DestroyStackPool failed: {:?}", error.code()));
+    }
+    assert!(matches!(
+        boot_as.destroy_stack_pool(StackPoolHandle::new(3, 99)),
+        Err(CapError::StaleGeneration { .. })
+    ));
 
     // Export into a separate KeyTable as well; the result key must carry
     // that destination table's guard rather than the caller table's guard.
@@ -398,15 +433,12 @@ pub fn run() {
         };
         address
     };
-    let export_stack = [0x3010, 0x30B0, 0x30];
     let cross_table_invocation = boot_as
         .create_invocation(
             0x5678,
             &KeyTableKey::from_key(new_table_key),
             KeySlot(3),
-            export_stack[0],
-            export_stack[1],
-            export_stack[2],
+            pool,
         )
         .unwrap_or_else(|error| panic!("cross-table CreateInvocation failed: {:?}", error.code()));
     assert_eq!(cross_table_invocation.slot(), test_slot(3));
@@ -421,15 +453,7 @@ pub fn run() {
         };
         assert_eq!(target, boot_as_id);
         assert_eq!(function_address.get(), 0x5678);
-        let extent = invocation
-            .invocation_stack_extent()
-            .unwrap_or_else(|error| {
-                panic!("cross-table Invocation extent missing: {:?}", error.code())
-            });
-        assert_eq!(
-            [extent.base(), extent.end(), extent.minimum_headroom()],
-            export_stack
-        );
+        assert_eq!(invocation.invocation_stack_pool().ok(), Some(pool));
         assert_eq!(invocation.rights(), Rights(Rights::CALL | Rights::BADGE));
         assert_ne!(export_table_addr, boot_table_binding.address());
         let target_table = nucleus
@@ -440,26 +464,26 @@ pub fn run() {
         assert_eq!(target_table.address(), boot_table_binding.address());
         assert_eq!(target_table.size_bits(), boot_table_binding.size_bits());
     }
-    // Equality, sub-page/non-page-aligned boundaries, non-power-of-two
-    // extent/minimum, zero base, and the exclusive user ceiling are valid.
-    // No mapping walk or executable-entry validation is implied by success.
-    for (slot, stack) in [
-        (KeySlot(4), [0x4010, 0x40A0, 0x90]),
-        (
-            KeySlot(5),
-            [user_end_exclusive - 0x30, user_end_exclusive, 0x30],
-        ),
-        (KeySlot(6), [0, 0x30, 0x10]),
+    // Non-page-aligned boundaries, the largest count, a zero base and the
+    // exclusive user ceiling are valid pools. No mapping walk or
+    // executable-entry validation is implied by success.
+    for (slot, (base, bytes, count)) in [
+        (KeySlot(4), (0x4010, 0x90, 64)),
+        (KeySlot(5), (user_end_exclusive - 0x30, 0x30, 1)),
+        (KeySlot(6), (0, 0x30, 1)),
     ] {
+        let stack_pool = boot_as
+            .create_stack_pool(base, bytes, count)
+            .unwrap_or_else(|error| panic!("valid pool rejected: {:?}", error.code()));
         let response = create_invocation_raw(
             boot_as_key,
             [
                 0x6789,
                 new_table_key.to_wire(),
                 u64::from(slot.0),
-                stack[0],
-                stack[1],
-                stack[2],
+                stack_pool.to_wire(),
+                0,
+                0,
             ],
         );
         assert_eq!(response.0, 0, "valid stack rejected: {response:?}");
@@ -473,25 +497,22 @@ pub fn run() {
         let entry = table
             .lookup(key, TEST_TABLE_GUARD)
             .unwrap_or_else(|error| panic!("valid stack cap missing: {:?}", error.code()));
-        let extent = entry
-            .invocation_stack_extent()
-            .unwrap_or_else(|error| panic!("valid stack payload missing: {:?}", error.code()));
-        assert_eq!(
-            [extent.base(), extent.end(), extent.minimum_headroom()],
-            stack
-        );
+        assert_eq!(entry.invocation_stack_pool().ok(), Some(stack_pool));
         assert!(matches!(
             entry.invocation_target(),
             Ok((target, function)) if target == boot_as_id && function.get() == 0x6789
         ));
         assert_eq!(entry.rights(), Rights(Rights::CALL | Rights::BADGE));
+        boot_as
+            .destroy_stack_pool(stack_pool)
+            .unwrap_or_else(|error| panic!("DestroyStackPool failed: {:?}", error.code()));
     }
     assert!(matches!(
-        boot_as.create_invocation(0x5678, &self_table, KeySlot(62), 0x5010, 0x50A0, 0x30),
+        boot_as.create_invocation(0x5678, &self_table, KeySlot(62), pool),
         Err(CapError::SlotOccupied(KeySlot(62)))
     ));
     assert!(matches!(
-        boot_as.create_invocation(0x5678, &self_table, KeySlot(600), 0x5010, 0x50A0, 0x30),
+        boot_as.create_invocation(0x5678, &self_table, KeySlot(600), pool),
         Err(CapError::InvalidSlot(KeySlot(600)))
     ));
     assert_eq!(
@@ -501,9 +522,9 @@ pub fn run() {
                 0x5678,
                 self_table_key.to_wire(),
                 u64::MAX,
-                0x5010,
-                0x50A0,
-                0x30
+                pool.to_wire(),
+                0,
+                0
             ]
         ),
         CapError::InvalidKey {
@@ -518,16 +539,14 @@ pub fn run() {
             0x5678,
             &KeyTableKey::from_key(boot_untyped_key),
             KeySlot(63),
-            0x1000,
-            0x2000,
-            0x40,
+            pool,
         ),
         Err(CapError::TypeMismatch { .. })
     ));
 
     assert!(matches!(
         boot_as.create_invocation(
-            0, &KeyTableKey::from_key(boot_untyped_key), KeySlot(63), 0x1001, 0x1001, 0,
+            0, &KeyTableKey::from_key(boot_untyped_key), KeySlot(63), pool,
         ),
         Err(CapError::TypeMismatch { expected, found })
             if expected == ObjectType::KEY_TABLE && found == ObjectType::UNTYPED
@@ -558,9 +577,7 @@ pub fn run() {
             0x5678,
             &self_table,
             KeySlot(64),
-            0x1000,
-            0x2000,
-            0x40,
+            pool,
         ),
         Err(CapError::InsufficientRights)
     ));
@@ -593,9 +610,7 @@ pub fn run() {
             0x5678,
             &KeyTableKey::from_key(no_install_table),
             KeySlot(65),
-            0x1000,
-            0x2000,
-            0x40,
+            pool,
         ),
         Err(CapError::InsufficientRights)
     ));
@@ -617,9 +632,7 @@ pub fn run() {
                     function,
                     &self_table,
                     slot,
-                    0x1001,
-                    0x1001,
-                    0,
+                    pool,
                 ),
                 Err(CapError::InsufficientRights)
             ));
@@ -628,9 +641,7 @@ pub fn run() {
                     function,
                     &KeyTableKey::from_key(no_install_table),
                     slot,
-                    0x1001,
-                    0x1001,
-                    0,
+                    pool,
                 ),
                 Err(CapError::InsufficientRights)
             ));
@@ -646,7 +657,14 @@ pub fn run() {
             assert_eq!(
                 create_invocation_raw(
                     source,
-                    [function, destination.to_wire(), u64::MAX, 0x1001, 0x1001, 0]
+                    [
+                        function,
+                        destination.to_wire(),
+                        u64::MAX,
+                        pool.to_wire(),
+                        0,
+                        0
+                    ]
                 ),
                 CapError::InsufficientRights.code()
             );
@@ -683,7 +701,7 @@ pub fn run() {
         assert_eq!(table_entry.badge(), 0);
     }
     let after_rejections = boot_as
-        .create_invocation(0x789A, &self_table, KeySlot(65), 0x6010, 0x60A0, 0x30)
+        .create_invocation(0x789A, &self_table, KeySlot(65), pool)
         .unwrap_or_else(|error| panic!("post-rejection install failed: {:?}", error.code()));
     assert_eq!(
         after_rejections.incarnation(),
@@ -696,13 +714,7 @@ pub fn run() {
         let entry = table
             .lookup(after_rejections, BOOT_TABLE_GUARD)
             .unwrap_or_else(|error| panic!("post-rejection cap missing: {:?}", error.code()));
-        let extent = entry
-            .invocation_stack_extent()
-            .unwrap_or_else(|error| panic!("post-rejection extent missing: {:?}", error.code()));
-        assert_eq!(
-            [extent.base(), extent.end(), extent.minimum_headroom()],
-            [0x6010, 0x60A0, 0x30]
-        );
+        assert_eq!(entry.invocation_stack_pool().ok(), Some(pool));
         assert!(matches!(entry.invocation_target(), Ok((target, function))
                 if target == boot_as_id && function.get() == 0x789A));
     }
@@ -746,14 +758,15 @@ pub fn run() {
         assert!(entry.is_thread_return_key());
     }
     ppc::component_init(ppc_return_key, bounce_debug_console_key);
+    let ppc_pool = AddressSpaceKey::from_key(bounce_as_key)
+        .create_stack_pool(ppc::STACK_BASE, ppc::STACK_END - ppc::STACK_BASE, 1)
+        .unwrap_or_else(|error| panic!("PPC CreateStackPool failed: {:?}", error.code()));
     let ppc_key = AddressSpaceKey::from_key(bounce_as_key)
         .create_invocation(
             ppc::target_entry as *const () as u64,
             &self_table,
             KeySlot(200),
-            ppc::STACK_BASE,
-            ppc::STACK_END,
-            ppc::MINIMUM_HEADROOM,
+            ppc_pool,
         )
         .unwrap_or_else(|error| panic!("PPC CreateInvocation failed: {:?}", error.code()));
     let boot_thread_id = nucleus
@@ -769,27 +782,34 @@ pub fn run() {
 
     // Recoverable rejections through real dispatch: no push, no switch,
     // no scrubbing, source registers intact.
-    for (op, sp, expected) in [
+    // A destroyed pool leaves its Invocations stale: the generation of the
+    // slot is the diagnostic.
+    let doomed_pool = AddressSpaceKey::from_key(bounce_as_key)
+        .create_stack_pool(ppc::STACK_BASE, ppc::STACK_END - ppc::STACK_BASE, 1)
+        .unwrap_or_else(|error| panic!("second CreateStackPool failed: {:?}", error.code()));
+    let doomed_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation(
+            ppc::target_entry as *const () as u64,
+            &self_table,
+            KeySlot(207),
+            doomed_pool,
+        )
+        .unwrap_or_else(|error| panic!("doomed CreateInvocation failed: {:?}", error.code()));
+    AddressSpaceKey::from_key(bounce_as_key)
+        .destroy_stack_pool(doomed_pool)
+        .unwrap_or_else(|error| panic!("DestroyStackPool failed: {:?}", error.code()));
+    for (key, op, expected) in [
         (
+            doomed_key,
             0,
-            ppc::STACK_END - 8,
-            CapError::InvalidStack {
-                value: ppc::STACK_END - 8,
-                reason: InvalidStackReason::SpMisaligned,
+            CapError::StaleGeneration {
+                current: u64::from(doomed_pool.generation()) + 1,
             },
         ),
-        (
-            0,
-            ppc::STACK_BASE + 16,
-            CapError::InvalidStack {
-                value: ppc::STACK_BASE + 16,
-                reason: InvalidStackReason::SpInsufficientHeadroom,
-            },
-        ),
-        (1, ppc::STACK_END, CapError::KeyNotAccepted),
-        (2, ppc::STACK_END, CapError::InvalidOperation),
+        (ppc_key, 1, CapError::KeyNotAccepted),
+        (ppc_key, 2, CapError::InvalidOperation),
     ] {
-        ppc::assert_call_rejected(ppc_key, op, sp, expected);
+        ppc::assert_call_rejected(key, op, expected);
         assert_boot_thread_home(nucleus);
         assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
     }
@@ -817,9 +837,7 @@ pub fn run() {
             ppc::export_entry as *const () as u64,
             &self_table,
             KeySlot(201),
-            ppc::STACK_BASE,
-            ppc::STACK_END,
-            ppc::MINIMUM_HEADROOM,
+            ppc_pool,
         )
         .unwrap_or_else(|error| panic!("export CreateInvocation failed: {:?}", error.code()));
     for stale_init_key in [false, true] {
@@ -914,9 +932,7 @@ pub fn run() {
             ppc::rejection_entry as *const () as u64,
             &self_table,
             KeySlot(202),
-            ppc::STACK_BASE,
-            ppc::STACK_END,
-            ppc::MINIMUM_HEADROOM,
+            ppc_pool,
         )
         .unwrap_or_else(|error| panic!("rejection CreateInvocation failed: {:?}", error.code()));
     let zero_incarnation = RawKey::new(ppc_return_key.slot(), 0);
@@ -976,9 +992,7 @@ pub fn run() {
             ppc::clobber_entry as *const () as u64,
             &self_table,
             KeySlot(203),
-            ppc::STACK_BASE,
-            ppc::STACK_END,
-            ppc::MINIMUM_HEADROOM,
+            ppc_pool,
         )
         .unwrap_or_else(|error| panic!("clobber CreateInvocation failed: {:?}", error.code()));
     ppc::live_values_trip(clobber_key);
@@ -1005,9 +1019,7 @@ pub fn run() {
             ppc::keyed_entry as *const () as u64,
             &self_table,
             KeySlot(204),
-            ppc::STACK_BASE,
-            ppc::STACK_END,
-            ppc::MINIMUM_HEADROOM,
+            ppc_pool,
             PlacementWindow::new(WINDOW_FIRST, 2),
         )
         .unwrap_or_else(|error| panic!("keyed CreateInvocation failed: {:?}", error.code()));
@@ -1089,9 +1101,7 @@ pub fn run() {
             ppc::keyed_entry as *const () as u64,
             &self_table,
             KeySlot(205),
-            ppc::STACK_BASE,
-            ppc::STACK_END,
-            ppc::MINIMUM_HEADROOM,
+            ppc_pool,
             PlacementWindow::new(124, 1),
         )
         .unwrap_or_else(|error| panic!("full-window CreateInvocation failed: {:?}", error.code()));
@@ -1123,7 +1133,7 @@ pub fn run() {
         ),
         (full_window_key, lendable_table, CapError::NoPlacementSlot),
     ] {
-        ppc::assert_call_with_key_rejected(invocation, lent, ppc::STACK_END, expected);
+        ppc::assert_call_with_key_rejected(invocation, lent, expected);
         assert_boot_thread_home(nucleus);
         assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
     }
@@ -1136,9 +1146,7 @@ pub fn run() {
                     0x1234,
                     &self_table,
                     KeySlot(206),
-                    ppc::STACK_BASE,
-                    ppc::STACK_END,
-                    ppc::MINIMUM_HEADROOM,
+                    ppc_pool,
                     PlacementWindow::new(first, count),
                 ),
                 Err(CapError::InvalidSlot(slot)) if slot == KeySlot(first)

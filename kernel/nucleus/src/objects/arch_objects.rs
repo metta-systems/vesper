@@ -146,6 +146,9 @@ pub trait AddressSpaceObject: CarvedObject {
     /// for tracing).
     fn unhandled_faults(&self) -> u64;
     fn count_unhandled_fault(&mut self);
+    /// The stack pools calls into this `AddressSpace` run on.
+    fn stack_pools(&self) -> &crate::objects::stack_pool::StackPools;
+    fn stack_pools_mut(&mut self) -> &mut crate::objects::stack_pool::StackPools;
 }
 
 /// Architecture abstraction trait - extended with invoke methods.

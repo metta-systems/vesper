@@ -17,7 +17,6 @@ use {
     driver_echo_client::echo_v1::{self, Bindings, Client, Error},
     driver_protocol::{AUX, AUX_UART, PL011, report_key},
     libdevice_driver::{INIT_VA, device_address, driver_compatible, driver_init, map_device_pages},
-    libmeddle_runtime::ExclusiveStacks,
     libobject::{
         FrameKey, IrqHandlerKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
         UntypedKey, export::init_return_key, thread::ThreadReturnKey,
@@ -117,12 +116,7 @@ fn main(init_va: u64) -> ! {
 
     // `uart1` links to `aux` through `clocks`; the other nodes' first clock is
     // the clock manager, which no probe serves.
-    let echo = Client::new(
-        Bindings::from_imports(init.imports()),
-        // SAFETY: this Thread is the only one calling through the probe's
-        // imports.
-        unsafe { ExclusiveStacks::new() },
-    );
+    let echo = Client::new(Bindings::from_imports(init.imports()));
     if init.compatible_index == AUX_UART {
         assert_eq!(echo.identify(), Ok(AUX), "uart1 calls the aux instance");
         assert_eq!(echo.twice(21), Ok(42));

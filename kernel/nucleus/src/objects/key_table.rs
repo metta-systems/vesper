@@ -430,7 +430,7 @@ impl KeyTable {
         Some(crate::objects::invocation::CallTarget {
             address_space,
             function_address,
-            stack_extent: entry.invocation_stack_extent().ok()?,
+            stack_pool: entry.invocation_stack_pool().ok()?,
             placement_window: entry.invocation_placement_window().ok()?,
             badge: entry.badge(),
         })

@@ -31,8 +31,8 @@
 // in x4, provisional rights in x5, and reserved-zero x6/x7. Success returns
 // the destination-local packed key in x1 with x2 zero. Invocation.Call uses
 // x0 for the capability, x1 for operation 0, and forwards x2..x7; PPC return
-// is the dedicated `ppc_call` transport below (target SP in x9, provisional
-// and not frozen until field-tested). Return is
+// is the dedicated `ppc_call` transport below (the kernel picks the target SP
+// from the Invocation's stack pool). Return is
 // Thread.Return op 0 on CurrentReturnOnly (packed target-table key in x0,
 // r0/r1 in x2/x3) through `ppc_return`.
 
@@ -283,15 +283,15 @@ pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
 }
 
 /// PPC `Invocation.Call` transport: `x0` Invocation key, `x1` operation 0,
-/// `x2..x7` the six real inputs, `x9` the target stack pointer. The x9
-/// transport is provisional: it works end-to-end but is not frozen ABI.
+/// `x2..x7` the six real inputs. The kernel picks the target stack from the
+/// Invocation's stack pool; `x9` is reserved and ignored.
 ///
 /// Returns the raw `(x0, x1, x2)` response: `SUCCESS` with the target's
 /// `(r0, r1)`, or a pre-commit rejection's status and details.
 ///
 /// Register effects follow the conservative declarations: x0..x2
-/// carry inputs and responses; x3..x7 and x9 are inputs with discarded
-/// outputs; x8, x10..x17 and the caller-volatile x18 are discarded clobbers.
+/// carry inputs and responses; x3..x7 are inputs with discarded
+/// outputs; x8..x17 and the caller-volatile x18 are discarded clobbers.
 /// The kernel restores x19..x30, SP and NZCV, but memory and flags are left
 /// to the compiler's conservative defaults (no `nomem`, `readonly`, `pure`,
 /// `preserves_flags`), and `nostack` is deliberately omitted: the migrated
@@ -300,12 +300,11 @@ pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
 /// source reads afterwards, so `nomem`/`readonly` would be wrong, and the
 /// small gain from `nostack` is not worth an untested claim.
 ///
-/// # Safety
-/// The caller supplies a valid Invocation key and a target SP satisfying the
-/// Invocation's published stack contract; the target executes arbitrary
-/// interface code on the caller's Thread before returning here.
+/// Safe: the target runs in its own `AddressSpace` on a stack the kernel
+/// picks, so the call can touch nothing of the caller's but what the two
+/// share.
 #[inline(always)]
-pub unsafe fn ppc_call(key: u64, args: [u64; 6], target_sp: u64) -> (u64, u64, u64) {
+pub fn ppc_call(key: u64, args: [u64; 6]) -> (u64, u64, u64) {
     let status: u64;
     let word1: u64;
     let word2: u64;
@@ -322,7 +321,7 @@ pub unsafe fn ppc_call(key: u64, args: [u64; 6], target_sp: u64) -> (u64, u64, u
             inlateout("x5") args[3] => _,
             inlateout("x6") args[4] => _,
             inlateout("x7") args[5] => _,
-            inlateout("x9") target_sp => _,
+            lateout("x9") _,
             lateout("x8") _,
             lateout("x10") _,
             lateout("x11") _,
@@ -350,16 +349,10 @@ pub unsafe fn ppc_call(key: u64, args: [u64; 6], target_sp: u64) -> (u64, u64, u
 /// Register declarations match `ppc_call`: `x8` is an input with a discarded
 /// output.
 ///
-/// # Safety
-/// As [`ppc_call`]; additionally the target may use the lent key, within its
+/// Safe, like [`ppc_call`]; the target may use the lent key, within its
 /// rights, until the call returns.
 #[inline(always)]
-pub unsafe fn ppc_call_with_key(
-    key: u64,
-    lent_key: u64,
-    args: [u64; 6],
-    target_sp: u64,
-) -> (u64, u64, u64) {
+pub fn ppc_call_with_key(key: u64, lent_key: u64, args: [u64; 6]) -> (u64, u64, u64) {
     let status: u64;
     let word1: u64;
     let word2: u64;
@@ -377,7 +370,7 @@ pub unsafe fn ppc_call_with_key(
             inlateout("x6") args[4] => _,
             inlateout("x7") args[5] => _,
             inlateout("x8") lent_key => _,
-            inlateout("x9") target_sp => _,
+            lateout("x9") _,
             lateout("x10") _,
             lateout("x11") _,
             lateout("x12") _,

@@ -67,8 +67,6 @@ impl<A: ArchObjects> Nucleus<A> {
         if let Some(target) = handler {
             let mut call_frame = faulting;
             call_frame.gpr[2..8].copy_from_slice(&info.to_arguments());
-            // The handler starts at the top of its Invocation's stack.
-            call_frame.gpr[9] = target.stack_extent.end();
             if let Ok(prepared) = self.prepare_call(access, &call_frame, target, None) {
                 let committed = self.commit_call(access, prepared)?;
                 let thread = self.thread_mut(current).ok_or(CapError::InvalidThread)?;

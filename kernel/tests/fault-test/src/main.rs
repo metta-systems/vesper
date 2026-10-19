@@ -70,7 +70,6 @@ const BARE_GUARD: u32 = 0x0B_A401;
 /// Pages per stack (each also gets a guard page on both sides).
 const STACK_PAGES: u32 = 4;
 /// Headroom the fault handler's Invocation requires below its SP.
-const MINIMUM_HEADROOM: u64 = 0x400;
 /// Fixture boot-table slots start clear of the well-known bootstrap slots.
 const FIRST_FIXTURE_SLOT: u32 = 64;
 
@@ -243,7 +242,7 @@ pub fn run() -> ! {
 
     // The faulter's handler, at the well-known slot of its own table. The
     // bare component's slot stays empty.
-    let handler_stack = builder.user_stack(&mut faulter_stacks, STACK_PAGES, &mut slots);
+    let handler_pool = builder.stack_pool(&mut faulter_stacks, STACK_PAGES, 1, &mut slots);
     AddressSpaceKey::from_key(faulter.address_space_key)
         .create_invocation(
             components::FAULTER
@@ -251,9 +250,7 @@ pub fn run() -> ! {
                 .expect("the faulter exports its fault handler"),
             &faulter.table(),
             KeySlot::FAULT_HANDLER,
-            handler_stack.bottom,
-            handler_stack.top,
-            MINIMUM_HEADROOM,
+            handler_pool,
         )
         .unwrap_or_else(|error| {
             panic!("fault handler CreateInvocation failed: {:?}", error.code())
