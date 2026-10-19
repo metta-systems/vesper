@@ -12,7 +12,7 @@ mod tests {
         arbitrary_int::u4,
         usb_hcd_dwc2::{
             control,
-            pipes::{MAX_PIPES, Pipe, PipeError, PipeTable, Route},
+            pipes::{Config, ConfigError, MAX_PIPES, Pipe, PipeError, PipeTable, Route},
             regs::*,
         },
         vesper_usb_protocol::{descriptor::TransferKind, enumeration::Speed, setup::SetupPacket},
@@ -284,9 +284,9 @@ mod tests {
         Pipe {
             device_address: 0,
             endpoint: 0,
+            input: false,
             speed: Speed::Full,
-            kind: TransferKind::Control,
-            max_packet: 8,
+            config: None,
             route: None,
         }
     }
@@ -296,7 +296,38 @@ mod tests {
         let mut table = PipeTable::new();
         let handle = table.open(pipe()).unwrap();
         assert_ne!(handle, 0);
-        assert_eq!(table.get(handle).unwrap().max_packet, 8);
+        assert_eq!(
+            table.get(handle).unwrap().config,
+            None,
+            "a new pipe is unconfigured"
+        );
+    }
+
+    #[test]
+    fn a_pipe_is_configured_and_can_be_configured_again() {
+        let mut table = PipeTable::new();
+        let handle = table.open(pipe()).unwrap();
+        for max_packet in [8, 64] {
+            let config = Config::new(TransferKind::Control, max_packet, 0).unwrap();
+            table.get_mut(handle).unwrap().config = Some(config);
+            assert_eq!(table.get(handle).unwrap().config, Some(config));
+        }
+    }
+
+    #[test]
+    fn only_control_configurations_with_a_real_packet_size_are_served() {
+        for max_packet in [8, 16, 32, 64] {
+            Config::new(TransferKind::Control, max_packet, 0).unwrap();
+        }
+        for max_packet in [0, 7, 9, 128] {
+            assert_eq!(
+                Config::new(TransferKind::Control, max_packet, 0),
+                Err(ConfigError::Invalid)
+            );
+        }
+        for kind in [TransferKind::Interrupt, TransferKind::Bulk] {
+            assert_eq!(Config::new(kind, 64, 10), Err(ConfigError::NotServed));
+        }
     }
 
     #[test]

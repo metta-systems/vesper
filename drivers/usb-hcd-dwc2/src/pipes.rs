@@ -23,14 +23,60 @@ pub struct Route {
     pub hub_port: u8,
 }
 
-/// What a pipe names.
+/// How a pipe transfers, set by `configure`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Config {
+    pub kind: TransferKind,
+    pub max_packet: u16,
+    /// Polling interval of an interrupt pipe, in milliseconds; ignored for the
+    /// other kinds.
+    pub interval_ms: u32,
+}
+
+/// Why a pipe cannot be configured as asked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigError {
+    /// The packet size or interval is not valid for the kind.
+    Invalid,
+    /// The controller does not serve this kind of pipe yet.
+    NotServed,
+}
+
+impl Config {
+    /// The configuration of a `kind` pipe with `max_packet` bytes per packet.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::Invalid`] for a control packet size other than 8, 16, 32
+    /// or 64 bytes, [`ConfigError::NotServed`] for interrupt and bulk pipes.
+    pub const fn new(
+        kind: TransferKind,
+        max_packet: u16,
+        interval_ms: u32,
+    ) -> Result<Self, ConfigError> {
+        match kind {
+            TransferKind::Control if matches!(max_packet, 8 | 16 | 32 | 64) => Ok(Self {
+                kind,
+                max_packet,
+                interval_ms,
+            }),
+            TransferKind::Control => Err(ConfigError::Invalid),
+            _ => Err(ConfigError::NotServed),
+        }
+    }
+}
+
+/// What a pipe names. A pipe is opened to an endpoint of a device and then
+/// configured; it carries no transfer before.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pipe {
     pub device_address: u8,
+    /// The endpoint number, 0 to 15.
     pub endpoint: u8,
+    /// Whether the endpoint moves data to the host (bit 7 of its address).
+    pub input: bool,
     pub speed: Speed,
-    pub kind: TransferKind,
-    pub max_packet: u16,
+    pub config: Option<Config>,
     /// The split-transaction route, once one was set.
     pub route: Option<Route>,
 }

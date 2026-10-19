@@ -15,6 +15,12 @@ local interface pipe_v1
     ## Every function receives the badge of the pipe's key.
     badged;
 
+    ## The kinds of transfer a pipe carries.
+    enum transfer_kind { control, interrupt, bulk }
+
+    ## The periodic schedule has no room left for the endpoint's bandwidth.
+    exception no_bandwidth {}
+
     ## The endpoint answered with a STALL; `clear_halt` recovers the pipe.
     exception stalled {}
 
@@ -32,6 +38,15 @@ local interface pipe_v1
 
     ## The request is not allowed for this pipe.
     exception not_permitted {}
+
+    ## Say what the pipe transfers: its `kind`, the endpoint's `max_packet` bytes
+    ## per packet and, for an interrupt pipe, its polling `interval_ms` (ignored
+    ## for the other kinds). A pipe may be configured again, for example when a
+    ## device's real control packet size is learned. Implementation status: only
+    ## control pipes are served, with a `max_packet` of 8, 16, 32 or 64; the
+    ## other kinds raise `not_permitted`.
+    configure(transfer_kind kind, card16 max_packet, card32 interval_ms)
+        raises (no_bandwidth, invalid_pipe, busy, not_permitted);
 
     ## Set the hub a low- or full-speed device sits behind, and the hub's port
     ## it is plugged into, so transfers use split transactions. A high-speed

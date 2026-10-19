@@ -20,14 +20,8 @@ local interface usb_hcd_v1
     ## high-speed hub needs split transactions (see `pipe_v1.set_route`).
     enum speed { low, full, high }
 
-    ## The kinds of transfer a pipe carries.
-    enum transfer_kind { control, interrupt, bulk }
-
     ## No device is attached to the port.
     exception no_device {}
-
-    ## The periodic schedule has no room left for the endpoint's bandwidth.
-    exception no_bandwidth {}
 
     ## The controller is busy with a reset or another exclusive operation, or has
     ## no pipe left.
@@ -48,17 +42,18 @@ local interface usb_hcd_v1
     port_status(card32 port)
         returns (card32 bits);
 
-    ## Open a pipe to endpoint `endpoint` of device `device_address`. The pipe is
+    ## Open a pipe to endpoint `endpoint` of device `device_address`. `endpoint`
+    ## is the endpoint address of the USB specification: the number in bits 0 to
+    ## 3 and, for an endpoint that moves data to the host, bit 7. The pipe is
     ## the keys of `pipe_v1`, one per function in declaration order, that the
     ## controller installs in the lent table `into`, at `first_slot` and the
     ## slots after it, all badged with the pipe. Their wire keys are written to
     ## the data area as 64-bit values from offset 0, because a slot's
     ## incarnation is not predictable. The slots must be vacant, else the call
-    ## raises `not_permitted`. The keys belong to whoever holds them. Implementation
-    ## status: only control pipes are served; opening an interrupt or bulk pipe
-    ## raises `not_permitted`. A control pipe's `max_packet` is 8, 16, 32 or 64.
-    open_pipe(card32 first_slot, card32 device_address, card32 endpoint, speed speed, transfer_kind kind, card16 max_packet)
+    ## raises `not_permitted`. The keys belong to whoever holds them. A new pipe
+    ## carries no transfer until `pipe_v1.configure` says what it transfers.
+    open_pipe(card32 first_slot, card32 device_address, card32 endpoint, speed speed)
         lends (key_table into)
         installs (pipe_v1)
-        raises (no_bandwidth, busy, not_permitted);
+        raises (busy, not_permitted);
 }

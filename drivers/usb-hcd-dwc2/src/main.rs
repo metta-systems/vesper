@@ -59,15 +59,15 @@ mod component {
         },
         libuser::semihosting as semi,
         usb_hcd::{
-            pipe_v1::{self, Exception as PipeException, PipeV1},
+            pipe_v1::{self, Exception as PipeException, PipeV1, TransferKind},
             usb_hcd_v1::{
                 __runtime::{DataArea, IoRec},
-                Exception, Speed, TransferKind, UsbHcdV1,
+                Exception, Speed, UsbHcdV1,
             },
         },
         usb_hcd_dwc2::{
             control::{self, StageError},
-            pipes::{Pipe, PipeError, PipeTable, Route},
+            pipes::{Config, Pipe, PipeError, PipeTable, Route},
             regs::{
                 Channel, ChannelInterrupts, ChannelOutcome, GLOBAL_HOST_CHANNEL, MmioChannel,
                 MmioRegisterBlock, Pid, RegisterBlock, RxFifoSize, Target, TxFifoSize,
@@ -537,6 +537,7 @@ mod component {
         fn control(
             &mut self,
             pipe: &Pipe,
+            max_packet: u16,
             area: &DataArea,
             offset: u64,
             stage: usize,
@@ -566,7 +567,7 @@ mod component {
                 input,
                 low_speed: pipe.speed == UsbSpeed::Low,
                 kind: UsbKind::Control,
-                max_packet: pipe.max_packet,
+                max_packet,
             };
             let data_offset = offset + control::SETUP_BYTES as u64;
 
@@ -709,22 +710,16 @@ mod component {
             device_address: u32,
             endpoint: u32,
             speed: Speed,
-            kind: TransferKind,
-            max_packet: u16,
         ) -> Result<(), Exception> {
             let (client, area, data) = caller().ok_or(Exception::NotPermitted)?;
-            // Interrupt and bulk pipes come with HID and mass storage.
-            if !matches!(kind, TransferKind::Control) {
-                return Err(Exception::NotPermitted);
-            }
-            // A control endpoint's packet is 8, 16, 32 or 64 bytes.
+            // `endpoint` is an endpoint address: bit 7 is the direction.
             let address = u8::try_from(device_address).ok().filter(|&a| a <= 127);
-            let endpoint = u8::try_from(endpoint).ok().filter(|&e| e <= 15);
-            let (Some(device_address), Some(endpoint), true) =
-                (address, endpoint, matches!(max_packet, 8 | 16 | 32 | 64))
-            else {
+            let address_byte = u8::try_from(endpoint).ok().filter(|&e| e & 0x70 == 0);
+            let (Some(device_address), Some(address_byte)) = (address, address_byte) else {
                 return Err(Exception::NotPermitted);
             };
+            let input = address_byte & 0x80 != 0;
+            let endpoint = address_byte & 0x0f;
             let speed = match speed {
                 Speed::Low => UsbSpeed::Low,
                 Speed::Full => UsbSpeed::Full,
@@ -737,9 +732,9 @@ mod component {
                 .open(Pipe {
                     device_address,
                     endpoint,
+                    input,
                     speed,
-                    kind: UsbKind::Control,
-                    max_packet,
+                    config: None,
                     route: None,
                 })
                 .map_err(|_full| Exception::Busy)?;
@@ -762,6 +757,26 @@ mod component {
     impl PipeV1 for Dwc2 {
         fn enter(_badge: u64) {
             record_return_key();
+        }
+
+        fn configure(
+            badge: u64,
+            kind: TransferKind,
+            max_packet: u16,
+            interval_ms: u32,
+        ) -> Result<(), PipeException> {
+            let handle = handle(badge)?;
+            let kind = match kind {
+                TransferKind::Control => UsbKind::Control,
+                TransferKind::Interrupt => UsbKind::Interrupt,
+                TransferKind::Bulk => UsbKind::Bulk,
+            };
+            let config = Config::new(kind, max_packet, interval_ms)
+                .map_err(|_unusable| PipeException::NotPermitted)?;
+            let mut turn = TURNSTILE.enter(init());
+            let pipe = hcd(&mut turn).pipes.get_mut(handle).map_err(pipe_error)?;
+            pipe.config = Some(config);
+            Ok(())
         }
 
         fn set_route(badge: u64, hub_address: u32, hub_port: u32) -> Result<(), PipeException> {
@@ -822,8 +837,17 @@ mod component {
             if pipe.route.is_some() {
                 return Err(PipeException::NotPermitted);
             }
+            // Only a control pipe transfers control stages.
+            let Some(Config {
+                kind: UsbKind::Control,
+                max_packet,
+                ..
+            }) = pipe.config
+            else {
+                return Err(PipeException::NotPermitted);
+            };
             hcd.controller
-                .control(&pipe, &area, stage.base - area.base, stage_len)
+                .control(&pipe, max_packet, &area, stage.base - area.base, stage_len)
                 .map(|moved| u32::try_from(moved).unwrap_or(u32::MAX))
         }
     }

@@ -11,7 +11,7 @@
 //! and control stages, and reports on the key usb-test installed
 //! (`driver_protocol::REPORT_SLOT`).
 //!
-//! A pipe is the four `pipe_v1` keys `open_pipe` installs in this program's
+//! A pipe is the `pipe_v1` keys `open_pipe` installs in this program's
 //! table: the program lends its table, names the first of four vacant slots and
 //! reads the keys' values from the data area.
 
@@ -21,8 +21,8 @@ use {
     libmeddle_runtime::{DataArea, ExclusiveStacks, IoRec},
     libobject::{EventCountKey, KeyTableKey, NotificationKey, RawKey, Rights},
     usb_hcd_client::{
-        pipe_v1::{self, Exception as PipeException},
-        usb_hcd_v1::{Bindings, Client, Error, Exception, Speed, TransferKind},
+        pipe_v1::{self, Exception as PipeException, TransferKind},
+        usb_hcd_v1::{Bindings, Client, Error, Exception, Speed},
     },
     vesper_usb_protocol::{
         descriptor::{self, Descriptor},
@@ -69,6 +69,13 @@ fn speed_of(speed: Speed) -> UsbSpeed {
         Speed::Full => UsbSpeed::Full,
         Speed::High => UsbSpeed::High,
     }
+}
+
+/// Why a pipe could not be opened and configured.
+#[derive(Debug)]
+enum OpenError {
+    Open(Error),
+    Configure(pipe_v1::Error),
 }
 
 /// An open pipe: its keys, and where they are in the program's table.
@@ -120,26 +127,19 @@ impl Hcd<'_> {
         )
     }
 
-    /// Open a pipe, installing its keys in a group of vacant slots.
-    fn open(
+    /// Open a pipe to `endpoint` (an endpoint address), installing its keys in
+    /// a group of vacant slots, without configuring it.
+    fn open_unconfigured(
         &mut self,
         address: u32,
         endpoint: u32,
         speed: Speed,
-        kind: TransferKind,
-        max_packet: u16,
     ) -> Result<Pipe, Error> {
         let group = self.take_group();
         let slot = self.slot_of(group);
-        let opened = self.client.open_pipe(
-            &self.table,
-            slot,
-            address,
-            endpoint,
-            speed,
-            kind,
-            max_packet,
-        );
+        let opened = self
+            .client
+            .open_pipe(&self.table, slot, address, endpoint, speed);
         if let Err(error) = opened {
             self.used[group] = false;
             return Err(error);
@@ -154,6 +154,26 @@ impl Hcd<'_> {
             group,
             keys,
         })
+    }
+
+    /// Open a pipe and say what it transfers. A pipe that cannot be
+    /// configured is closed again.
+    fn open(
+        &mut self,
+        address: u32,
+        endpoint: u32,
+        speed: Speed,
+        kind: TransferKind,
+        max_packet: u16,
+    ) -> Result<Pipe, OpenError> {
+        let pipe = self
+            .open_unconfigured(address, endpoint, speed)
+            .map_err(OpenError::Open)?;
+        if let Err(error) = pipe.client.configure(kind, max_packet, 0) {
+            self.close(&pipe);
+            return Err(OpenError::Configure(error));
+        }
+        Ok(pipe)
     }
 
     /// Close `pipe` through its key and give its slots back.
@@ -222,12 +242,21 @@ fn enumerate(hcd: &mut Hcd<'_>) -> ([u8; 18], [u8; REPLY_CAPACITY], usize, UsbSp
             }
             Step::Delay { .. } => enumerator.next(Event::Delayed),
             Step::Control { setup } => {
-                // Reopen the pipe when the device's address or packet size
-                // changed since it was opened.
-                let wanted = (address, max_packet);
-                if pipe.as_ref().is_none_or(|(_, open_address, open_packet)| {
-                    (*open_address, *open_packet) != (wanted.0, wanted.1)
-                }) {
+                // Configure the pipe again when the device's packet size was
+                // learned, and reopen it when the device's address changed.
+                if let Some((open, open_address, open_packet)) = pipe.as_mut()
+                    && *open_address == address
+                    && *open_packet != max_packet
+                {
+                    open.client
+                        .configure(TransferKind::Control, max_packet, 0)
+                        .unwrap_or_else(|error| panic!("configure failed: {error:?}"));
+                    *open_packet = max_packet;
+                }
+                if pipe
+                    .as_ref()
+                    .is_none_or(|(_, open_address, _)| *open_address != address)
+                {
                     if let Some((old, _, _)) = pipe.take() {
                         hcd.close(&old);
                     }
@@ -375,37 +404,57 @@ fn check_rules(hcd: &mut Hcd<'_>, speed: Speed) {
     );
 
     // Pipes the component refuses to open.
-    for (address, endpoint, kind, max_packet) in [
-        (128, 0, TransferKind::Control, 8),
-        (1, 16, TransferKind::Control, 8),
-        (1, 0, TransferKind::Control, 7),
-        (1, 0, TransferKind::Control, 0),
-        (1, 0, TransferKind::Control, 128),
-        (1, 1, TransferKind::Interrupt, 8),
-        (1, 2, TransferKind::Bulk, 64),
+    // An address or endpoint address that does not exist is refused at open.
+    for (address, endpoint) in [(128, 0), (1, 0x10), (1, 0x90), (1, 0x100)] {
+        assert!(
+            matches!(
+                hcd.open(address, endpoint, Speed::Full, TransferKind::Control, 8),
+                Err(OpenError::Open(Error::Exception(Exception::NotPermitted)))
+            ),
+            "{address} {endpoint:#x}"
+        );
+    }
+    // A packet size or kind the controller does not serve is refused by
+    // `configure`, and the pipe is closed again.
+    for (endpoint, kind, max_packet) in [
+        (0, TransferKind::Control, 7),
+        (0, TransferKind::Control, 0),
+        (0, TransferKind::Control, 128),
+        (0x81, TransferKind::Interrupt, 8),
+        (2, TransferKind::Bulk, 64),
     ] {
         assert!(
             matches!(
-                hcd.open(address, endpoint, Speed::Full, kind, max_packet),
-                Err(Error::Exception(Exception::NotPermitted))
+                hcd.open(1, endpoint, Speed::Full, kind, max_packet),
+                Err(OpenError::Configure(pipe_v1::Error::Exception(
+                    PipeException::NotPermitted
+                )))
             ),
-            "{address} {endpoint} {max_packet}"
+            "{endpoint:#x} {max_packet}"
         );
     }
+    // A pipe is configured again when a device's real packet size is learned,
+    // and an unconfigured pipe carries no control transfer.
+    let adjustable = hcd
+        .open_unconfigured(2, 0, Speed::Full)
+        .expect("an unconfigured pipe");
+    assert_eq!(
+        adjustable.client.control(stage(8)),
+        Err(pipe_v1::Error::Exception(PipeException::NotPermitted))
+    );
+    for max_packet in [8, 64] {
+        adjustable
+            .client
+            .configure(TransferKind::Control, max_packet, 0)
+            .expect("configure");
+    }
+    hcd.close(&adjustable);
     // Slots that are not vacant, or outside the table, refuse the pipe, and the
     // controller takes the half-made pipe back.
     let taken = hcd.slot_of(pipe.group);
     for first_slot in [taken, taken + 1, u32::MAX - 1, 100_000] {
         assert_eq!(
-            client.open_pipe(
-                &hcd.table,
-                first_slot,
-                2,
-                0,
-                Speed::Full,
-                TransferKind::Control,
-                8
-            ),
+            client.open_pipe(&hcd.table, first_slot, 2, 0, Speed::Full),
             Err(Error::Exception(Exception::NotPermitted)),
             "{first_slot:#x}"
         );
@@ -515,7 +564,7 @@ fn check_rules(hcd: &mut Hcd<'_>, speed: Speed) {
     }
     assert!(
         matches!(
-            hcd.open(1, 0, Speed::Full, TransferKind::Control, 8),
+            hcd.open_unconfigured(1, 0, Speed::Full),
             Err(Error::Exception(Exception::Busy))
         ),
         "the table is full"

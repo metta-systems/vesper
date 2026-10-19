@@ -39,7 +39,10 @@ prototypes and are edited in place. Open decisions are in
 - Pipes are handles in a 16-entry table: index plus generation, never zero. The handle
   is the badge of the pipe's `pipe_v1` keys, so a closed pipe's keys fail even when its
   slot is reused. The caller's data area (found from the stack the call runs on)
-  still bounds the stage a control call may name. A control pipe's `max_packet` is
+  still bounds the stage a control call may name. A pipe is opened to an endpoint
+  address (bit 7 is the direction) and configured with `pipe_v1.configure` (kind,
+  `max_packet`, and the polling interval of an interrupt pipe), again whenever a
+  device's real control packet size is learned. A control pipe's `max_packet` is
   8, 16, 32 or 64; interrupt and bulk pipes raise `not_permitted`.
 - `set_route` stores the route, but split transactions are not implemented, so
   `control` on a routed pipe raises `not_permitted`. A high-speed pipe cannot be
@@ -103,9 +106,10 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usbd: core + hub)  <- c
   `hid`'s table. The mechanism is in the
   [contract](capabilities-contract.md#component-interfaces-and-imports).
 - `drivers/usb-hcd-dwc2/interfaces/usb_hcd_v1.if`: `reset_port`, `port_status`,
-  `open_pipe`. Parameters are DWC2-neutral. `open_pipe` takes six argument words, the
-  call limit, and installs the keys of `pipe_v1`.
-- `drivers/usb-hcd-dwc2/interfaces/pipe_v1.if`: `set_route`, `close_pipe`, `clear_halt`,
+  `open_pipe`. Parameters are DWC2-neutral. `open_pipe` takes the first slot of the
+  lent table, the device address, the endpoint address and the speed, and installs
+  the keys of `pipe_v1`.
+- `drivers/usb-hcd-dwc2/interfaces/pipe_v1.if`: `configure`, `set_route`, `close_pipe`, `clear_halt`,
   `control`, the functions of one open pipe; the split-transaction route is set
   separately with `set_route`.
 - `drivers/usb/interfaces/usb_v1.if`: `claim_interface` (blocks until a matching
