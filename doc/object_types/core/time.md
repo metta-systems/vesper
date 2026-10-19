@@ -63,7 +63,3 @@ The nucleus charges the running Thread's bound Time with the counter ticks it ex
 A Thread whose Time is exhausted stops and is not run again: it is published as waiting for budget. A Transfer or Merge that brings budget into the Time ends the wait and announces the Thread to its dispatcher. A Thread with no bound Time, such as the boot Thread, has no limit; the nucleus still measures how long it ran.
 
 The nucleus runs no Thread by itself: a Scheduler's dispatcher decides which Thread runs, on which Time and for how long (a dispatch limit). The EL1 physical timer is one-shot: it is programmed for the earliest of the dispatch limit, the moment the running Thread's budget runs out, and it is off when neither applies.
-
-## Planned changes
-
-None yet.

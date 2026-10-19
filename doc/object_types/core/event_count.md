@@ -49,6 +49,4 @@ Data written to shared memory before an Advance is visible to a Thread that obse
 
 ## Planned changes
 
-None yet.
-
-An [IRQHandler](irq_handler.md) target, as an alternative to a Notification: each interrupt advances the count, so a Thread sleeping on it learns from one wakeup how many events arrived ([plan](../../capabilities-implementation-plan.md#interrupt-delivery)).
+An [IRQHandler](irq_handler.md) target, as an alternative to a Notification: each interrupt advances the count, so a Thread sleeping on it learns from one wakeup how many events arrived ([plan](../../agentic/capabilities-implementation-plan.md#interrupt-delivery)).

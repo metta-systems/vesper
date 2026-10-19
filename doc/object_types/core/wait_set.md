@@ -35,7 +35,7 @@ Replaces the condition of the member in slot `x2` and keeps the member. A Notifi
 
 ### RemoveMember
 
-Empties slot `x2`. A Notification no set lists any more can be awaited directly again.
+Empties slot `x2`. A Notification not listed in any WaitSets any more can be awaited directly again.
 
 ### Await
 
@@ -65,7 +65,3 @@ A set registers nothing with its members. After every Signal, Advance, interrupt
 A member whose object is no longer live is reported to the waiter with `MemberRetired`, naming the slot, and stays in its slot until it is removed. Notifications and EventCounts cannot be retired yet, so this does not occur today.
 
 Retiring the waiting Thread removes it from the set.
-
-## Planned changes
-
-None yet.

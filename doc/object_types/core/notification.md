@@ -52,7 +52,3 @@ Returns and clears all pending bits without blocking; `x1` is 0 if none were pen
 ## Implementation
 
 Bits written to shared memory before a Signal are visible to the Thread that receives those bits through Await or Poll. Retiring a waiting Thread removes it from the queue.
-
-## Planned changes
-
-None yet.

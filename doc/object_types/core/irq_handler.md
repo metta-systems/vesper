@@ -74,7 +74,3 @@ The GICv2 component routes every shared peripheral interrupt (SPI) to the bootin
 ## Implementation
 
 Kickstart carves the line table from the boot Untyped, one record per line of the component. On an interrupt the kernel claims the pending line; the timer line is the kernel's one-shot timer, which the kernel switches off and later reprograms for its next deadline. Any other line is masked; a bound line also signals its Notification, waking the front waiter, and the kernel then ends the interrupt (on the GIC, priority drop and deactivation together). A line whose Notification was retired is treated as unbound. A woken receiver is an ordinary wakeup. If its Scheduler has a bound dispatcher, the nucleus publishes the receiver's record as runnable and, if the activation mask has `THREAD_RUNNABLE`, activates the dispatcher, which decides whether the receiver preempts the running Thread (the nucleus never compares Times). A receiver of no Scheduler is published and waits: no queue runs it. The kernel counts each line's interrupts and the time spent handling them, and does not charge that time to the interrupted Thread.
-
-## Planned changes
-
-None yet.
