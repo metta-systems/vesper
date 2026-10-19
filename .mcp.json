@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "rust-mcp-filesystem",
+      "args": [
+        "--allow-write",
+        "/Users/berkus/Projects/Metta/vesper"
+      ],
+      "env": {}
+    }
+  }
+}
