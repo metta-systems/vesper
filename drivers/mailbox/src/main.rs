@@ -22,8 +22,8 @@
 //!
 //! The typed functions build their buffers themselves. `property` takes a
 //! reference into the data area the caller shares with the component: the
-//! component finds the caller's area from the stack the call runs on (see
-//! `libdevice_driver::calling_area`), copies the buffer into the bounce page,
+//! component finds the caller's area from the badge of the key the call came
+//! through (`DriverInit::area_for_badge`), copies the buffer into the bounce page,
 //! checks the copy (`mailbox_impl::check_request`: only allowed tags), and
 //! copies the firmware's answer back to the area.
 
@@ -73,35 +73,35 @@ impl MailboxV1 for VideoCoreMailbox {
         component::record_return_key();
     }
 
-    fn get_board_revision() -> Result<u32, Exception> {
+    fn get_board_revision(_badge: u64) -> Result<u32, Exception> {
         call(tag::GET_BOARD_REVISION, &[], 1).map(|values| values[0])
     }
 
-    fn get_board_serial() -> Result<u64, Exception> {
+    fn get_board_serial(_badge: u64) -> Result<u64, Exception> {
         call(tag::GET_BOARD_SERIAL, &[], 2)
             .map(|values| u64::from(values[0]) | u64::from(values[1]) << 32)
     }
 
-    fn get_clock_rate(which: Clock) -> Result<u32, Exception> {
+    fn get_clock_rate(_badge: u64, which: Clock) -> Result<u32, Exception> {
         call(tag::GET_CLOCK_RATE, &[clock_id(which)], 2).map(|values| values[1])
     }
 
-    fn get_power_state(which: Device) -> Result<bool, Exception> {
+    fn get_power_state(_badge: u64, which: Device) -> Result<bool, Exception> {
         call(tag::GET_POWER_STATE, &[device_id(which)], 2).and_then(|values| power_state(values[1]))
     }
 
-    fn set_power_state(which: Device, on: bool) -> Result<bool, Exception> {
+    fn set_power_state(_badge: u64, which: Device, on: bool) -> Result<bool, Exception> {
         let state = POWER_MISSING_OR_WAIT | if on { POWER_ON } else { 0 };
         call(tag::SET_POWER_STATE, &[device_id(which), state], 2)
             .and_then(|values| power_state(values[1]))
     }
 
-    fn set_led(on: bool) -> Result<(), Exception> {
+    fn set_led(_badge: u64, on: bool) -> Result<(), Exception> {
         call(tag::SET_GPIO_STATE, &[ACT_LED_PIN, u32::from(on)], 2).map(|_values| ())
     }
 
-    fn property(tags: IoRec) -> Result<(), Exception> {
-        property(tags)
+    fn property(badge: u64, tags: IoRec) -> Result<(), Exception> {
+        property(badge, tags)
     }
 }
 
@@ -122,8 +122,8 @@ fn call(
 }
 
 #[cfg(target_os = "vesper")]
-fn property(tags: IoRec) -> Result<(), Exception> {
-    component::property(tags)
+fn property(badge: u64, tags: IoRec) -> Result<(), Exception> {
+    component::property(badge, tags)
 }
 
 #[cfg(not(target_os = "vesper"))]
@@ -136,7 +136,7 @@ fn call(
 }
 
 #[cfg(not(target_os = "vesper"))]
-fn property(_tags: IoRec) -> Result<(), Exception> {
+fn property(_badge: u64, _tags: IoRec) -> Result<(), Exception> {
     Err(Exception::FirmwareError { code: NOT_SERVED })
 }
 
@@ -149,8 +149,8 @@ mod component {
         core::sync::atomic::{AtomicU64, Ordering},
         derive_mmio::Mmio,
         libdevice_driver::{
-            DEVICE_WINDOW_VA, INIT_VA, NO_BUS_ADDRESS, calling_area, device_address,
-            driver_compatible, driver_init, map_device_pages,
+            DEVICE_WINDOW_VA, INIT_VA, NO_BUS_ADDRESS, device_address, driver_compatible,
+            driver_init, map_device_pages,
         },
         libmmio::assert_register_offsets,
         libobject::{
@@ -391,8 +391,10 @@ mod component {
     /// `property`: the caller's tag buffer `tags`, in its data area, goes to
     /// the firmware if it is a well-formed request of allowed tags; the answer
     /// replaces it in the area.
-    pub fn property(tags: IoRec) -> Result<(), Exception> {
-        let area = calling_area(init()).ok_or(Exception::NotPermitted)?;
+    pub fn property(badge: u64, tags: IoRec) -> Result<(), Exception> {
+        let (_client, area) = init()
+            .area_for_badge(badge)
+            .ok_or(Exception::NotPermitted)?;
         let data = DataArea {
             base: area.base,
             len: area.len,

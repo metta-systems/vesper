@@ -294,6 +294,7 @@ mod tests {
             speed: Speed::Full,
             config: None,
             route: None,
+            owner: 0,
         }
     }
 

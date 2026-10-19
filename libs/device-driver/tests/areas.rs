@@ -25,44 +25,36 @@ mod tests {
     }
 
     #[test]
-    fn a_stack_pointer_selects_the_area_of_the_stack_it_is_in() {
+    fn a_badge_selects_the_client_whose_area_base_it_is() {
         let init = init_with_areas(3);
         for index in 0..3 {
-            let stack = area(index);
-            // The initial stack pointer is the end of the stack; a running
-            // call is somewhere below it, above the bottom.
-            for stack_pointer in [
-                stack.stack_end,
-                stack.stack_end - 0x80,
-                stack.stack_bottom + 1,
-            ] {
-                assert_eq!(
-                    init.area_for_stack(stack_pointer),
-                    Some(stack),
-                    "{stack_pointer:#x}"
-                );
-            }
+            let expected = area(index);
+            assert_eq!(
+                init.area_for_badge(expected.base),
+                Some((usize::try_from(index).unwrap(), expected)),
+                "{:#x}",
+                expected.base
+            );
         }
     }
 
     #[test]
-    fn stack_pointers_outside_every_stack_select_nothing() {
+    fn badges_that_name_no_area_select_nothing() {
         let init = init_with_areas(2);
-        let first = area(0);
-        for stack_pointer in [
+        // Zero is an unbadged key; the others are not the base of any area,
+        // including the base of an area the exporter does not serve and an
+        // address inside a served area.
+        for badge in [
             0,
-            first.stack_bottom,
-            first.stack_end + 1,
-            area(2).stack_end,
+            1,
+            area(0).base + 1,
+            area(2).base,
+            area(0).stack_end,
             u64::MAX,
         ] {
-            assert_eq!(
-                init.area_for_stack(stack_pointer),
-                None,
-                "{stack_pointer:#x}"
-            );
+            assert_eq!(init.area_for_badge(badge), None, "{badge:#x}");
         }
-        assert_eq!(DriverInit::EMPTY.area_for_stack(first.stack_end), None);
+        assert_eq!(DriverInit::EMPTY.area_for_badge(area(0).base), None);
     }
 
     #[test]

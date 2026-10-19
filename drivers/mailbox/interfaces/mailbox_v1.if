@@ -10,6 +10,10 @@ local interface mailbox_v1
     ## Each client shares one page with the component for property buffers.
     data 4096;
 
+    ## Every function receives the badge of the key it was called through: the
+    ## component knows its caller from the key.
+    badged;
+
     ## A firmware clock.
     enum clock {
         emmc, uart, arm, core, v3d, h264, isp, sdram, pixel, pwm, hevc, emmc2, m2mc, pixel_bvb

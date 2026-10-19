@@ -38,7 +38,7 @@ prototypes and are edited in place. Open decisions are in
   byte access for this (`libs/meddle-runtime`).
 - Pipes are handles in a 16-entry table: index plus generation, never zero. The handle
   is the badge of the pipe's `pipe_v1` keys, so a closed pipe's keys fail even when its
-  slot is reused. The caller's data area (found from the stack the call runs on)
+  slot is reused. The data area of the client that opened the pipe
   still bounds the stage a control call may name. A pipe is opened to an endpoint
   address (bit 7 is the direction) and configured with `pipe_v1.configure` (kind,
   `max_packet`, and the polling interval of an interrupt pipe), again whenever a

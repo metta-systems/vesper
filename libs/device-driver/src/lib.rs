@@ -191,9 +191,9 @@ impl VideoBlock {
 }
 
 /// The data area an exporting driver shares with one client instance, and the
-/// stack that client's calls run on. A call enters the exporter with its stack
-/// pointer inside the stack of the client's own Invocation, which the kernel
-/// enforces, so the exporter tells its callers apart by [`calling_area`].
+/// stack that client's calls run on. Kickstart badges the client's keys with
+/// the area's `base`, so the exporter tells its callers apart by the badge of the
+/// key a call came through ([`DriverInit::area_for_badge`]).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportedArea {
@@ -426,19 +426,18 @@ impl DriverInit {
         &self.areas[..clamp(self.area_count, MAX_AREAS)]
     }
 
-    /// The data area of the client whose call runs with stack pointer
-    /// `stack_pointer`, if it has one.
-    pub fn area_for_stack(&self, stack_pointer: u64) -> Option<ExportedArea> {
-        self.area_index_for_stack(stack_pointer)
-            .map(|index| self.areas[index])
-    }
-
-    /// The position in [`areas`](Self::areas) of the area of the client whose
-    /// call runs with stack pointer `stack_pointer`, if it has one.
-    pub fn area_index_for_stack(&self, stack_pointer: u64) -> Option<usize> {
+    /// The client whose Invocation key carries `badge`, with the position of its
+    /// area in [`areas`](Self::areas): Kickstart badges each client's keys with the
+    /// base of the area it shares with the exporter, so a function that receives
+    /// the badge of the key it was called through knows its caller.
+    pub fn area_for_badge(&self, badge: u64) -> Option<(usize, ExportedArea)> {
+        if badge == 0 {
+            return None;
+        }
         self.areas()
             .iter()
-            .position(|area| area.stack_bottom < stack_pointer && stack_pointer <= area.stack_end)
+            .position(|area| area.base == badge)
+            .map(|index| (index, self.areas[index]))
     }
 
     /// The functions of other components the driver imports.
@@ -538,33 +537,6 @@ pub fn device_address(init: &DriverInit, paddr: u64) -> Option<u64> {
         .iter()
         .position(|candidate| candidate.paddr == page)
         .map(|index| device_page_va(index) + (paddr & 0xfff))
-}
-
-/// The data area of the client whose call this Thread is serving, found by
-/// the stack it runs on (see [`ExportedArea`]).
-///
-/// Call it from an exported function's body, which runs on the caller's
-/// stack.
-#[cfg(target_arch = "aarch64")]
-pub fn calling_area(init: &DriverInit) -> Option<ExportedArea> {
-    calling_area_index(init).map(|index| init.areas[index])
-}
-
-/// The position in [`DriverInit::areas`] of the area of the client whose call
-/// this Thread is serving (see [`calling_area`]): a stable number per client
-/// instance, below [`MAX_AREAS`].
-#[cfg(target_arch = "aarch64")]
-pub fn calling_area_index(init: &DriverInit) -> Option<usize> {
-    let stack_pointer: u64;
-    // SAFETY: reading `sp` has no side effects.
-    unsafe {
-        core::arch::asm!(
-            "mov {}, sp",
-            out(reg) stack_pointer,
-            options(nomem, nostack, preserves_flags),
-        );
-    }
-    init.area_index_for_stack(stack_pointer)
 }
 
 /// Lets one caller at a time into the part of a component that uses stacks

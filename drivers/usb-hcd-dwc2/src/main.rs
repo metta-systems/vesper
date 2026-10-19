@@ -21,7 +21,7 @@
 //! control transfer runs on host channel 0 by DMA, one endpoint 0 stage at a
 //! time. The client stages the setup packet and the data stage in the data area
 //! it shares with the component; the component finds the caller's area from the
-//! stack the call runs on (see `libdevice_driver::calling_area`), and copies
+//! badge of the key the call came through (`DriverInit::area_for_badge`), and copies
 //! between the area and its DMA page.
 //!
 //! Packet data moves by DMA through one page the driver owns: a frame retyped
@@ -50,8 +50,8 @@ mod component {
         },
         libdevice_driver::{
             DEVICE_WINDOW_VA, DriverInit, ExportedArea, INIT_VA, MAX_DEVICE_PAGES, Masters,
-            NO_BUS_ADDRESS, Turn, Turnstile, calling_area_index, device_address, driver_compatible,
-            driver_init, map_device_pages,
+            NO_BUS_ADDRESS, Turn, Turnstile, device_address, driver_compatible, driver_init,
+            map_device_pages,
         },
         libobject::{
             AddressSpaceKey, CapError, EventCountKey, FrameAttribute, FrameKey, IrqHandlerKey,
@@ -805,11 +805,10 @@ mod component {
         unsafe { (*HCD.0.get()).as_mut() }.expect("the controller is set up before it is served")
     }
 
-    /// The caller: its position among the clients, its data area as the
+    /// The client whose key carries `badge`: its position among the clients, its data area as the
     /// component's record names it and as a typed handle.
-    fn caller() -> Option<(usize, ExportedArea, DataArea)> {
-        let client = calling_area_index(init())?;
-        let area = *init().areas().get(client)?;
+    fn caller(badge: u64) -> Option<(usize, ExportedArea, DataArea)> {
+        let (client, area) = init().area_for_badge(badge)?;
         Some((
             client,
             area,
@@ -846,24 +845,25 @@ mod component {
             record_return_key();
         }
 
-        fn reset_port(port: u32) -> Result<Speed, Exception> {
+        fn reset_port(_badge: u64, port: u32) -> Result<Speed, Exception> {
             let mut turn = TURNSTILE.enter(init());
             hcd(&mut turn).controller.reset_port(port)
         }
 
-        fn port_status(port: u32) -> u32 {
+        fn port_status(_badge: u64, port: u32) -> u32 {
             let mut turn = TURNSTILE.enter(init());
             hcd(&mut turn).controller.port_status(port)
         }
 
         fn open_pipe(
+            badge: u64,
             into: &KeyTableKey,
             first_slot: u32,
             device_address: u32,
             endpoint: u32,
             speed: Speed,
         ) -> Result<(), Exception> {
-            let (client, area, data) = caller().ok_or(Exception::NotPermitted)?;
+            let (client, area, data) = caller(badge).ok_or(Exception::NotPermitted)?;
             // `endpoint` is an endpoint address: bit 7 is the direction.
             let address = u8::try_from(device_address).ok().filter(|&a| a <= 127);
             let address_byte = u8::try_from(endpoint).ok().filter(|&e| e & 0x70 == 0);
@@ -888,6 +888,7 @@ mod component {
                     speed,
                     config: None,
                     route: None,
+                    owner: client,
                 })
                 .map_err(|_full| Exception::Busy)?;
             // The pipe's keys carry its handle as their badge. A pipe whose keys
@@ -975,15 +976,23 @@ mod component {
 
         fn control(badge: u64, stage: IoRec) -> Result<u32, PipeException> {
             let handle = handle(badge)?;
-            let (_client, _area, area) = caller().ok_or(PipeException::NotPermitted)?;
+            let mut turn = TURNSTILE.enter(init());
+            let hcd = hcd(&mut turn);
+            let pipe = *hcd.pipes.get(handle).map_err(pipe_error)?;
+            // The stage lies in the data area of the client that opened the pipe.
+            let area = init()
+                .areas()
+                .get(pipe.owner)
+                .map(|owner| DataArea {
+                    base: owner.base,
+                    len: owner.len,
+                })
+                .ok_or(PipeException::NotPermitted)?;
             if !area.contains(&stage) {
                 return Err(PipeException::NotPermitted);
             }
             let stage_len =
                 usize::try_from(stage.len).map_err(|_overflow| PipeException::NotPermitted)?;
-            let mut turn = TURNSTILE.enter(init());
-            let hcd = hcd(&mut turn);
-            let pipe = *hcd.pipes.get(handle).map_err(pipe_error)?;
             // Only a control pipe transfers control stages.
             let Some(Config {
                 kind: UsbKind::Control,

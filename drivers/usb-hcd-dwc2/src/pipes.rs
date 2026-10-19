@@ -79,6 +79,9 @@ pub struct Pipe {
     pub config: Option<Config>,
     /// The split-transaction route, once one was set.
     pub route: Option<Route>,
+    /// The position, among the controller's clients, of the one that opened the
+    /// pipe: the data area its control stages lie in.
+    pub owner: usize,
 }
 
 /// Why a pipe call failed.

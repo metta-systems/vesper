@@ -24,9 +24,11 @@ for it. The DMA decision above applies to xHCI rings too.
 ## 3. Who opens a claimed interface's interrupt pipe (needed by USB4)
 
 An interrupt pipe's reports travel on the io-channel of the client that opened the
-pipe, and a pipe's keys call the controller on the stack of that client's pair, which
+pipe (the controller finds the client from the badge of the key the pipe was opened
+through), and a pipe's keys call the controller on the stack of that client's pair, which
 only one Thread can use at a time. So a pipe opened by `usb-core` cannot be handed to
-`hid` as keys, and its reports would arrive on `usb-core`'s channel. Options:
+`hid` as keys: concurrent calls would share a stack, and the reports would arrive on
+`usb-core`'s channel. Options:
 
 - **A. `hid` opens its own pipe (recommended).** `hid` imports `usb_hcd_v1` too, as
   the design's component table already says. `usb_v1.interrupt_pipe(claim)` returns what

@@ -1096,6 +1096,9 @@ pub fn load_drivers(
     // the next free address of the window they share, and which instances
     // already have its page table installed.
     let mut call_areas = [[None::<PairArea>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
+    // A slot of Kickstart's own table to make an import key in before it is
+    // badged into the client's table.
+    let scratch_slot = slots.take(1);
     // The placement window of each pair with a function lending a key: slots
     // of the exporter's table reserved for the keys the client lends it.
     let mut call_windows = [[None::<PlacementWindow>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
@@ -1288,11 +1291,23 @@ pub fn load_drivers(
             let calling = prepared[client].as_mut().expect("a loaded client");
             let slot = calling.next_slot;
             calling.next_slot += 1;
-            let invocation = exporter_space
+            // The key the client holds carries the identity of its pair as its
+            // badge (the base of the pair's shared memory, which is nonzero), so
+            // the exporter knows its caller from the key and not from where the
+            // call runs. A pair without shared memory gets an unbadged key. The
+            // badge is set by deriving from a key Kickstart makes first in its
+            // own table; the client gets `CALL` only, and a badged key cannot be
+            // badged again whatever its rights.
+            let client_table = calling.component.table();
+            let created = exporter_space
                 .create_invocation_with_window(
                     entry,
-                    &calling.component.table(),
-                    KeySlot(slot),
+                    if area_base == 0 {
+                        &client_table
+                    } else {
+                        &self_table
+                    },
+                    KeySlot(if area_base == 0 { slot } else { scratch_slot }),
                     stack.bottom,
                     stack.top,
                     EXPORT_STACK_HEADROOM,
@@ -1305,6 +1320,29 @@ pub fn load_drivers(
                         error.code()
                     )
                 });
+            let invocation = if area_base == 0 {
+                created
+            } else {
+                let badged = self_table
+                    .copy_derive_badged(
+                        created,
+                        &calling.component.table(),
+                        slot,
+                        Rights(Rights::CALL),
+                        area_base,
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "🥾 badging the import `{}` failed: {:?}",
+                            import.export,
+                            error.code()
+                        )
+                    });
+                self_table.delete(created).unwrap_or_else(|error| {
+                    panic!("🥾 deleting the unbadged import failed: {:?}", error.code())
+                });
+                badged
+            };
             update_init(calling.init_page, |init: &mut DriverInit| {
                 let index = usize::try_from(init.import_count).unwrap_or(MAX_IMPORTS);
                 let record = init.imports.get_mut(index).unwrap_or_else(|| {

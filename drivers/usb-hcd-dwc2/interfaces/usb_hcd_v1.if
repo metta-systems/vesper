@@ -13,6 +13,10 @@ local interface usb_hcd_v1
     ## `open_pipe` returns the keys it installs.
     data 4096;
 
+    ## Every function receives the badge of the key it was called through: the
+    ## controller knows its caller from the key.
+    badged;
+
     ## The io-channel interrupt-IN reports travel on: a control page and one data
     ## page, shared by each client and the controller.
     channel 1;
