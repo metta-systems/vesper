@@ -12,8 +12,8 @@
 //!
 //! Kickstart loads one instance per enabled `brcm,bcm2708-usb` node, which is
 //! the Raspberry Pi 3's controller. The instance maps its register page, puts
-//! the core into host mode, powers the root port, and serves `usb_hcd_v1` (see
-//! `interfaces/usb_hcd_v1.if`) to its clients. It does not enumerate: a client
+//! the core into host mode, powers the root port, and serves `usb_hcd_v1` and
+//! `pipe_v1` (see `interfaces/`) to its clients. It does not enumerate: a client
 //! (`usbd`) resets the port, opens a control pipe to address 0 and runs the
 //! enumeration through `vesper_usb_protocol`.
 //!
@@ -34,8 +34,10 @@
 //! Completion is interrupt driven: the component's own Thread services the
 //! controller's interrupt, and a transfer sleeps on an `EventCount` it advances.
 //!
-//! A pipe belongs to the client that opened it, identified by the base of its
-//! data area. This identity stands in until Invocation badges exist.
+//! A pipe is the set of `pipe_v1` Invocation keys `open_pipe` installs in the
+//! table the caller lends, badged with the pipe's handle: holding a key is the
+//! right to use the pipe. The component keeps one master key per client and
+//! function (see `libdevice_driver::Masters`) and derives the badged copies.
 
 #[cfg(target_os = "vesper")]
 mod component {
@@ -46,19 +48,22 @@ mod component {
             sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         },
         libdevice_driver::{
-            DEVICE_WINDOW_VA, DriverInit, INIT_VA, MAX_DEVICE_PAGES, NO_BUS_ADDRESS, Turn,
-            Turnstile, calling_area, device_address, driver_compatible, driver_init,
-            map_device_pages,
+            DEVICE_WINDOW_VA, DriverInit, ExportedArea, INIT_VA, MAX_DEVICE_PAGES, Masters,
+            NO_BUS_ADDRESS, Turn, Turnstile, calling_area_index, device_address, driver_compatible,
+            driver_init, map_device_pages,
         },
         libobject::{
-            CapError, EventCountKey, FrameAttribute, FrameKey, IrqHandlerKey, KeyTableKey,
-            NotificationKey, ObjectType, RawKey, Rights, UntypedKey, export::init_return_key,
-            thread::ThreadReturnKey,
+            AddressSpaceKey, CapError, EventCountKey, FrameAttribute, FrameKey, IrqHandlerKey,
+            KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
+            export::init_return_key, thread::ThreadReturnKey,
         },
         libuser::semihosting as semi,
-        usb_hcd::usb_hcd_v1::{
-            __runtime::{DataArea, IoRec},
-            Exception, Speed, TransferKind, UsbHcdV1,
+        usb_hcd::{
+            pipe_v1::{self, Exception as PipeException, PipeV1},
+            usb_hcd_v1::{
+                __runtime::{DataArea, IoRec},
+                Exception, Speed, TransferKind, UsbHcdV1,
+            },
         },
         usb_hcd_dwc2::{
             control::{self, StageError},
@@ -390,7 +395,7 @@ mod component {
             pid: Pid,
             offset: u64,
             bytes: usize,
-        ) -> Result<usize, Exception> {
+        ) -> Result<usize, PipeException> {
             let packets = u16::try_from(control::packet_count(
                 u32::try_from(bytes).unwrap_or(u32::MAX),
                 u32::from(target.max_packet),
@@ -455,11 +460,11 @@ mod component {
                         }
                         Some(ChannelOutcome::Stalled) => {
                             self.halt(index, target);
-                            return Err(Exception::Stalled);
+                            return Err(PipeException::Stalled);
                         }
                         Some(ChannelOutcome::Failed | ChannelOutcome::Halted) => {
                             self.halt(index, target);
-                            return Err(Exception::TransferFailed { status });
+                            return Err(PipeException::TransferFailed { status });
                         }
                         Some(ChannelOutcome::Retry) => {
                             self.halt(index, target);
@@ -472,7 +477,7 @@ mod component {
                     let now = ticks();
                     if now >= deadline {
                         self.halt(index, target);
-                        return Err(Exception::TransferFailed { status });
+                        return Err(PipeException::TransferFailed { status });
                     }
                     match self
                         .completions
@@ -481,7 +486,7 @@ mod component {
                         Ok(count) => seen = count,
                         Err(CapError::TimedOut { .. }) => {
                             self.halt(index, target);
-                            return Err(Exception::TransferFailed { status });
+                            return Err(PipeException::TransferFailed { status });
                         }
                         Err(error) => {
                             panic!("usb-hcd-dwc2: completion wait failed: {:?}", error.code())
@@ -489,7 +494,7 @@ mod component {
                     }
                 }
             }
-            Err(Exception::TransferFailed { status })
+            Err(PipeException::TransferFailed { status })
         }
 
         /// Copy `length` bytes from `area` at `from` to the DMA page at `to`.
@@ -535,23 +540,23 @@ mod component {
             area: &DataArea,
             offset: u64,
             stage: usize,
-        ) -> Result<usize, Exception> {
+        ) -> Result<usize, PipeException> {
             if stage < control::SETUP_BYTES {
-                return Err(Exception::NotPermitted);
+                return Err(PipeException::NotPermitted);
             }
             let mut packet = [0_u8; control::SETUP_BYTES];
             if !area.read_bytes(offset, &mut packet) {
-                return Err(Exception::NotPermitted);
+                return Err(PipeException::NotPermitted);
             }
             let setup = SetupPacket::from_bytes(packet);
             let length = match control::data_length(stage, setup, DATA_CAPACITY) {
                 Ok(length) => length,
                 Err(StageError::TooShort | StageError::TooLong) => {
-                    return Err(Exception::NotPermitted);
+                    return Err(PipeException::NotPermitted);
                 }
             };
             if !self.registers.read_port().connected() {
-                return Err(Exception::NoDevice);
+                return Err(PipeException::NoDevice);
             }
 
             let stages = control::plan(setup);
@@ -580,11 +585,11 @@ mod component {
                     moved =
                         self.run_channel(CHANNEL, target(true), Pid::Data1, DATA_OFFSET, length)?;
                     if !Self::copy_out(area, DATA_OFFSET, data_offset, moved) {
-                        return Err(Exception::NotPermitted);
+                        return Err(PipeException::NotPermitted);
                     }
                 } else {
                     if !Self::copy_in(area, data_offset, DATA_OFFSET, length) {
-                        return Err(Exception::NotPermitted);
+                        return Err(PipeException::NotPermitted);
                     }
                     self.run_channel(CHANNEL, target(false), Pid::Data1, DATA_OFFSET, length)?;
                     moved = length;
@@ -605,6 +610,8 @@ mod component {
     struct Hcd {
         controller: Controller<'static>,
         pipes: PipeTable,
+        /// The keys of `pipe_v1` each client gets for a pipe.
+        masters: Masters<{ pipe_v1::FUNCTION_COUNT }>,
     }
 
     struct Shared(UnsafeCell<Option<Hcd>>);
@@ -645,33 +652,45 @@ mod component {
         unsafe { (*HCD.0.get()).as_mut() }.expect("the controller is set up before it is served")
     }
 
-    /// The caller's data area, and the identity the pipes it opens belong to.
-    fn caller() -> Result<(DataArea, u64), Exception> {
-        let area = calling_area(init()).ok_or(Exception::NotPermitted)?;
-        Ok((
+    /// The caller: its position among the clients, its data area as the
+    /// component's record names it and as a typed handle.
+    fn caller() -> Option<(usize, ExportedArea, DataArea)> {
+        let client = calling_area_index(init())?;
+        let area = *init().areas().get(client)?;
+        Some((
+            client,
+            area,
             DataArea {
                 base: area.base,
                 len: area.len,
             },
-            area.base,
         ))
     }
 
-    fn pipe_error(error: PipeError) -> Exception {
+    /// The pipe handle a key's badge names.
+    fn handle(badge: u64) -> Result<u32, PipeException> {
+        u32::try_from(badge).map_err(|_overflow| PipeException::InvalidPipe)
+    }
+
+    fn pipe_error(error: PipeError) -> PipeException {
         match error {
-            PipeError::Invalid => Exception::InvalidPipe,
-            PipeError::Full => Exception::Busy,
+            PipeError::Invalid => PipeException::InvalidPipe,
+            PipeError::Full => PipeException::Busy,
         }
     }
 
     /// The host controller.
     struct Dwc2;
 
+    fn record_return_key() {
+        init_return_key(&ThreadReturnKey::from_key(RawKey::from_wire(
+            init().return_key,
+        )));
+    }
+
     impl UsbHcdV1 for Dwc2 {
         fn enter(_badge: u64) {
-            init_return_key(&ThreadReturnKey::from_key(RawKey::from_wire(
-                init().return_key,
-            )));
+            record_return_key();
         }
 
         fn reset_port(port: u32) -> Result<Speed, Exception> {
@@ -685,14 +704,15 @@ mod component {
         }
 
         fn open_pipe(
+            into: &KeyTableKey,
+            first_slot: u32,
             device_address: u32,
             endpoint: u32,
             speed: Speed,
             kind: TransferKind,
             max_packet: u16,
-            _interval_ms: u32,
-        ) -> Result<u32, Exception> {
-            let (_area, owner) = caller()?;
+        ) -> Result<(), Exception> {
+            let (client, area, data) = caller().ok_or(Exception::NotPermitted)?;
             // Interrupt and bulk pipes come with HID and mass storage.
             if !matches!(kind, TransferKind::Control) {
                 return Err(Exception::NotPermitted);
@@ -711,7 +731,8 @@ mod component {
                 Speed::High => UsbSpeed::High,
             };
             let mut turn = TURNSTILE.enter(init());
-            hcd(&mut turn)
+            let hcd = hcd(&mut turn);
+            let handle = hcd
                 .pipes
                 .open(Pipe {
                     device_address,
@@ -719,30 +740,45 @@ mod component {
                     speed,
                     kind: UsbKind::Control,
                     max_packet,
-                    owner,
                     route: None,
                 })
-                .map_err(pipe_error)
+                .map_err(|_full| Exception::Busy)?;
+            // The pipe's keys carry its handle as their badge. A pipe whose keys
+            // could not be installed or reported is closed again; keys already
+            // installed fail on the closed handle.
+            let installed = hcd
+                .masters
+                .install(client, &area, into, first_slot, u64::from(handle))
+                .ok()
+                .filter(|keys| data.write_u64s(0, keys));
+            if installed.is_none() {
+                hcd.pipes.close(handle).ok();
+                return Err(Exception::NotPermitted);
+            }
+            Ok(())
+        }
+    }
+
+    impl PipeV1 for Dwc2 {
+        fn enter(_badge: u64) {
+            record_return_key();
         }
 
-        fn set_route(pipe: u32, hub_address: u32, hub_port: u32) -> Result<(), Exception> {
-            let (_area, owner) = caller()?;
+        fn set_route(badge: u64, hub_address: u32, hub_port: u32) -> Result<(), PipeException> {
+            let handle = handle(badge)?;
             let (Some(hub_address), Some(hub_port)) = (
                 u8::try_from(hub_address)
                     .ok()
                     .filter(|a| (1..=127).contains(a)),
                 u8::try_from(hub_port).ok().filter(|&p| p >= 1),
             ) else {
-                return Err(Exception::NotPermitted);
+                return Err(PipeException::NotPermitted);
             };
             let mut turn = TURNSTILE.enter(init());
-            let pipe = hcd(&mut turn)
-                .pipes
-                .get_mut(pipe, owner)
-                .map_err(pipe_error)?;
+            let pipe = hcd(&mut turn).pipes.get_mut(handle).map_err(pipe_error)?;
             // Split transactions serve devices slower than the hub.
             if pipe.speed == UsbSpeed::High {
-                return Err(Exception::NotPermitted);
+                return Err(PipeException::NotPermitted);
             }
             pipe.route = Some(Route {
                 hub_address,
@@ -751,39 +787,40 @@ mod component {
             Ok(())
         }
 
-        fn close_pipe(pipe: u32) -> Result<(), Exception> {
-            let (_area, owner) = caller()?;
+        fn close_pipe(badge: u64) -> Result<(), PipeException> {
+            let handle = handle(badge)?;
             let mut turn = TURNSTILE.enter(init());
-            hcd(&mut turn).pipes.close(pipe, owner).map_err(pipe_error)
+            hcd(&mut turn).pipes.close(handle).map_err(pipe_error)
         }
 
-        fn clear_halt(pipe: u32) -> Result<(), Exception> {
-            let (_area, owner) = caller()?;
+        fn clear_halt(badge: u64) -> Result<(), PipeException> {
+            let handle = handle(badge)?;
             let mut turn = TURNSTILE.enter(init());
             // A control pipe starts every transfer with DATA0 SETUP, so a stall
             // leaves no toggle to reset; the halt itself is cleared by the
             // device's CLEAR_FEATURE request through `control`.
             hcd(&mut turn)
                 .pipes
-                .get(pipe, owner)
+                .get(handle)
                 .map(|_pipe| ())
                 .map_err(pipe_error)
         }
 
-        fn control(pipe: u32, stage: IoRec) -> Result<u32, Exception> {
-            let (area, owner) = caller()?;
+        fn control(badge: u64, stage: IoRec) -> Result<u32, PipeException> {
+            let handle = handle(badge)?;
+            let (_client, _area, area) = caller().ok_or(PipeException::NotPermitted)?;
             if !area.contains(&stage) {
-                return Err(Exception::NotPermitted);
+                return Err(PipeException::NotPermitted);
             }
             let stage_len =
-                usize::try_from(stage.len).map_err(|_overflow| Exception::NotPermitted)?;
+                usize::try_from(stage.len).map_err(|_overflow| PipeException::NotPermitted)?;
             let mut turn = TURNSTILE.enter(init());
             let hcd = hcd(&mut turn);
-            let pipe = *hcd.pipes.get(pipe, owner).map_err(pipe_error)?;
+            let pipe = *hcd.pipes.get(handle).map_err(pipe_error)?;
             // Split transactions are not implemented: a routed pipe waits for
             // the hub driver.
             if pipe.route.is_some() {
-                return Err(Exception::NotPermitted);
+                return Err(PipeException::NotPermitted);
             }
             hcd.controller
                 .control(&pipe, &area, stage.base - area.base, stage_len)
@@ -792,6 +829,7 @@ mod component {
     }
 
     usb_hcd::usb_hcd_v1_export!(Dwc2);
+    usb_hcd::pipe_v1_export!(Dwc2);
 
     /// Set up the controller and the turnstile, then service the controller's
     /// interrupt: calls run on their
@@ -845,6 +883,15 @@ mod component {
         controller.init_core();
         controller.power_port();
 
+        // The masters of the pipe keys sit in the slots after the DMA frame,
+        // the turnstile and the completions.
+        let masters = Masters::new(
+            AddressSpaceKey::from_key(RawKey::from_wire(init.address_space)),
+            KeyTableKey::from_key(RawKey::from_wire(init.table)),
+            u32::try_from(next_slot + 3).expect("a slot fits in u32"),
+            pipe_v1_entries(),
+        );
+
         let turns = UntypedKey::from_key(RawKey::from_wire(init.memory))
             .retype(
                 ObjectType::EVENT_COUNT,
@@ -865,6 +912,7 @@ mod component {
             *HCD.0.get() = Some(Hcd {
                 controller,
                 pipes: PipeTable::new(),
+                masters,
             });
         }
         EventCountKey::from_key(RawKey::from_wire(init.event_count))

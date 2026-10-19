@@ -13,15 +13,17 @@
 //! ```text
 //! file      = { interface | uses } ;
 //! interface = { doc } [ "local" ] "interface" name "{" { member } "}" ;
-//! member    = { doc } ( alias | enum | record | exception | data | placement | method ) ;
+//! member    = { doc } ( alias | enum | record | exception | data | placement | badged | method ) ;
 //! data      = "data" number ";" ;
 //! placement = "placement" number ";" ;
+//! badged    = "badged" ";" ;
 //! alias     = "type" type name ";" ;
 //! enum      = "enum" name "{" name { "," name } [ "," ] "}" ;
 //! record    = "record" name "{" { field ";" } "}" ;
 //! exception = "exception" name "{" { field ";" } "}" ;
 //! method    = name "(" [ field { "," field } ] ")"
 //!             [ "lends" "(" kind name ")" ]
+//!             [ "installs" "(" name ")" ]
 //!             [ "returns" "(" [ field { "," field } ] ")" ]
 //!             [ "raises" "(" name { "," name } ")" ] ";" ;
 //! field     = { doc } type name ;
@@ -48,7 +50,26 @@
 //! A function lends at most one key, and only in a `local` interface, which
 //! must declare `placement <slots>;`: the slots of the exporter's table that
 //! Kickstart reserves for each client, one for every key the client can have
-//! lent at the same time (`1` while a client calls from one Thread). Interface names carry their version
+//! lent at the same time (`1` while a client calls from one Thread).
+//!
+//! A function that lends a `key_table` can also fill it with the Invocation
+//! keys of another `local` interface, one per function of that interface: it
+//! says so in an `installs (interface)` clause and takes the slot to start at
+//! as its `card32 first_slot` parameter. The exporter creates the keys itself,
+//! from the entry addresses the installed interface's export macro lists
+//! (`<interface>_entries`), and returns their values in the data area; the
+//! clause generates no installing code, but the checker reads the installed
+//! interface's file (`<name>.if`, found only in the include directories the
+//! caller lists explicitly: `-I` of `meddler`, the `include` argument of the
+//! build helpers) and cross-checks it: it must be `local` and `badged;` (its
+//! functions need the badge to tell the installed resources apart), have
+//! functions, and declare the same data area size as the installing interface.
+//! The installed interface's fingerprint is part of the installing interface's
+//! type code, so a change to one changes the other. The installed interface
+//! says `badged;` so its functions learn which key (which pipe) they were
+//! called through: each receives the key's badge as its first parameter.
+//!
+//! Interface names carry their version
 //! (`name_vN`); while Meddle interfaces are prototypes, a change edits the
 //! version in place instead of making a new one.
 //!
@@ -215,12 +236,31 @@ impl SourceFile {
     }
 
     /// Check the interface of an interface file and hand it to `use_checked`.
+    /// The interfaces its `installs` clauses name are read from `include`, the
+    /// directories to search for `<name>.if`, in order; none is searched unless
+    /// the caller lists it.
     pub fn with_checked<Output>(
         &self,
+        include: &[PathBuf],
         use_checked: impl FnOnce(&Checked<'_>) -> Output,
     ) -> Result<Output, Failure> {
         let interface = self.interface()?;
-        let checked = check::check(&interface).map_err(|diagnostics| self.failure(diagnostics))?;
+        let mut installed = Vec::new();
+        for name in interface
+            .methods
+            .iter()
+            .filter_map(|method| method.installs.as_ref())
+        {
+            let found = include
+                .iter()
+                .map(|directory| directory.join(format!("{}.if", name.text)))
+                .find(|candidate| candidate.is_file());
+            if let Some(path) = found {
+                installed.push(Self::read(path)?.interface()?);
+            }
+        }
+        let checked = check::check(&interface, &installed)
+            .map_err(|diagnostics| self.failure(diagnostics))?;
         Ok(use_checked(&checked))
     }
 
@@ -267,16 +307,24 @@ pub fn is_imports_file(path: &Path) -> bool {
 }
 
 /// The interface crate's module generated from the interface file `path`.
-pub fn generate_interface(path: impl AsRef<Path>) -> Result<String, Failure> {
+pub fn generate_interface(path: impl AsRef<Path>, include: &[PathBuf]) -> Result<String, Failure> {
     let file = SourceFile::read(path)?;
-    file.with_checked(|checked| emit::interface_module(checked, &file.name()))
+    file.with_checked(include, |checked| {
+        emit::interface_module(checked, &file.name())
+    })
 }
 
 /// The client crate's module generated from the interface file `path`, for
 /// the interface crate `interface_crate`.
-pub fn generate_client(path: impl AsRef<Path>, interface_crate: &str) -> Result<String, Failure> {
+pub fn generate_client(
+    path: impl AsRef<Path>,
+    interface_crate: &str,
+    include: &[PathBuf],
+) -> Result<String, Failure> {
     let file = SourceFile::read(path)?;
-    file.with_checked(|checked| emit::client_module(checked, &file.name(), interface_crate))
+    file.with_checked(include, |checked| {
+        emit::client_module(checked, &file.name(), interface_crate)
+    })
 }
 
 /// What an image builder needs to know about an interface file.
@@ -294,6 +342,9 @@ pub struct InterfaceSummary {
     pub functions: Vec<String>,
     /// Whether each function, by its position in `functions`, lends a key
     pub lends: Vec<bool>,
+    /// The interface whose keys each function, by its position in `functions`,
+    /// installs in the table it borrows
+    pub installs: Vec<Option<String>>,
 }
 
 impl InterfaceSummary {
@@ -334,8 +385,11 @@ pub struct ImportSummary {
 }
 
 /// Summarize the interface file `path`.
-pub fn summarize_interface(path: impl AsRef<Path>) -> Result<InterfaceSummary, Failure> {
-    SourceFile::read(path)?.with_checked(|checked| InterfaceSummary {
+pub fn summarize_interface(
+    path: impl AsRef<Path>,
+    include: &[PathBuf],
+) -> Result<InterfaceSummary, Failure> {
+    SourceFile::read(path)?.with_checked(include, |checked| InterfaceSummary {
         name: checked.interface().name.text.clone(),
         type_code: checked.type_code(),
         data_bytes: checked.data_bytes(),
@@ -351,6 +405,12 @@ pub fn summarize_interface(path: impl AsRef<Path>) -> Result<InterfaceSummary, F
             .methods
             .iter()
             .map(|method| !method.lends.is_empty())
+            .collect(),
+        installs: checked
+            .interface()
+            .methods
+            .iter()
+            .map(|method| method.installs.as_ref().map(|name| name.text.clone()))
             .collect(),
     })
 }
@@ -370,7 +430,7 @@ pub fn summarize_imports(
                 .map(|directory| directory.join(format!("{}.if", declaration.interface.text)))
                 .find(|candidate| candidate.is_file())
                 .unwrap_or_default();
-            let interface = summarize_interface(path)?;
+            let interface = summarize_interface(path, interface_directories)?;
             let functions = declaration
                 .functions
                 .iter()

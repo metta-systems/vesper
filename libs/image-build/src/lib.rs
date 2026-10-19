@@ -952,7 +952,7 @@ fn emit_interfaces(
     let mut interfaces = String::new();
     for path in libmeddle::interface_files(directory) {
         rerun_if_changed(&path);
-        let summary = libmeddle::summarize_interface(&path)
+        let summary = libmeddle::summarize_interface(&path, std::slice::from_ref(directory))
             .unwrap_or_else(|failure| meddle_failure(&failure));
         for index in 0..summary.functions.len() {
             let export = summary.export_name(index).unwrap_or_default();

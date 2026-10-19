@@ -1,7 +1,13 @@
 //! The LSP front end: keeps open documents and answers requests from
 //! [`crate::analysis`].
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+use ignore::WalkBuilder;
 
 use tower_lsp_server::{
     Client, LanguageServer,
@@ -29,6 +35,9 @@ use crate::{
 pub struct Backend {
     client: Client,
     documents: Mutex<HashMap<Uri, String>>,
+    /// Every directory of the project holding `.if` files, searched for the
+    /// interfaces an `installs` clause names
+    include: Mutex<Vec<PathBuf>>,
 }
 
 impl Backend {
@@ -36,6 +45,7 @@ impl Backend {
         Self {
             client,
             documents: Mutex::new(HashMap::new()),
+            include: Mutex::new(Vec::new()),
         }
     }
 
@@ -55,7 +65,22 @@ impl Backend {
     }
 
     async fn publish(&self, uri: Uri, source: &str) {
-        let analysis = analysis::analyze(source);
+        // The document's own directory first, then the project's other
+        // directories with interface files: the checks are lenient about where
+        // an installed interface lives.
+        let mut include: Vec<PathBuf> = uri
+            .to_file_path()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .into_iter()
+            .collect();
+        include.extend(
+            self.include
+                .lock()
+                .expect("include lock poisoned")
+                .iter()
+                .cloned(),
+        );
+        let analysis = analysis::analyze(source, &include);
         let diagnostics = analysis
             .diagnostics
             .iter()
@@ -193,7 +218,12 @@ fn encode_tokens(source: &str, highlights: &[analysis::Highlight]) -> Vec<Semant
 }
 
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        let roots = workspace_roots(&params);
+        let found = tokio::task::spawn_blocking(move || interface_directories(&roots))
+            .await
+            .unwrap_or_default();
+        *self.include.lock().expect("include lock poisoned") = found;
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "if_lsp".to_owned(),
@@ -384,5 +414,83 @@ mod tests {
             .collect();
         // `interface`, `a_v1`, then `f` on the next line, indented by two.
         assert_eq!(deltas, [(0, 0, 9), (0, 10, 4), (1, 2, 1)]);
+    }
+}
+
+/// The project folders the client opened: its workspace folders, or else its
+/// root.
+#[allow(deprecated)] // `root_uri` is the only root older clients send
+fn workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
+    let folders = params.workspace_folders.iter().flatten();
+    folders
+        .map(|folder| &folder.uri)
+        .chain(params.root_uri.iter())
+        .filter_map(Uri::to_file_path)
+        .map(std::borrow::Cow::into_owned)
+        .collect()
+}
+
+/// Every directory below `roots` that holds a `.if` file, so the checks can
+/// find an interface another one installs wherever it lives. Hidden
+/// directories and everything a `.gitignore` (or `.ignore`) excludes are
+/// skipped, whether or not the root is inside a git repository.
+fn interface_directories(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut directories: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        let walk = WalkBuilder::new(root).require_git(false).build();
+        for entry in walk.filter_map(std::result::Result::ok) {
+            let is_interface = entry.file_type().is_some_and(|kind| kind.is_file())
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "if");
+            if is_interface
+                && let Some(directory) = entry.path().parent()
+                && !directories.iter().any(|known| known == directory)
+            {
+                directories.push(directory.to_path_buf());
+            }
+        }
+    }
+    directories
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::interface_directories;
+
+    #[test]
+    fn directories_with_interface_files_are_found_skipping_ignored_ones() {
+        let root = std::env::temp_dir().join(format!("if_lsp_walk_{}", std::process::id()));
+        for (directory, file) in [
+            ("drivers/a/interfaces", "a_v1.if"),
+            ("drivers/b/interfaces", "b_v1.if"),
+            ("drivers/b/interfaces", "imports.if"),
+            ("generated/out", "generated.if"),
+            (".", ".gitignore"),
+            (".git/hooks", "hidden.if"),
+            ("docs", "notes.md"),
+        ] {
+            std::fs::create_dir_all(root.join(directory)).expect("a scratch directory");
+            std::fs::write(
+                root.join(directory).join(file),
+                if file == ".gitignore" {
+                    "generated/\n"
+                } else {
+                    ""
+                },
+            )
+            .expect("a scratch file");
+        }
+        let mut found = interface_directories(std::slice::from_ref(&root));
+        found.sort();
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(
+            found,
+            [
+                root.join("drivers/a/interfaces"),
+                root.join("drivers/b/interfaces")
+            ]
+        );
     }
 }

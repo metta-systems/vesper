@@ -1,0 +1,63 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## One open pipe of a USB host controller: the functions that act on it. The
+## pipe is the set of Invocation keys `usb_hcd_v1.open_pipe` installs in the
+## caller's table, all badged with the pipe, so holding the keys is the right to
+## use the pipe: a client can hand the keys (or a subset) to another component,
+## and closing the pipe makes every copy fail. Prototype: edited in place.
+local interface pipe_v1
+{
+    ## The same area `usb_hcd_v1` shares: the client stages control transfers in it.
+    data 4096;
+
+    ## Every function receives the badge of the pipe's key.
+    badged;
+
+    ## The endpoint answered with a STALL; `clear_halt` recovers the pipe.
+    exception stalled {}
+
+    ## The transfer failed on the bus; `status` is the controller's channel status.
+    exception transfer_failed { card32 status; }
+
+    ## No device is attached to the port.
+    exception no_device {}
+
+    ## The controller is busy with a reset or another exclusive operation.
+    exception busy {}
+
+    ## The pipe is closed.
+    exception invalid_pipe {}
+
+    ## The request is not allowed for this pipe.
+    exception not_permitted {}
+
+    ## Set the hub a low- or full-speed device sits behind, and the hub's port
+    ## it is plugged into, so transfers use split transactions. A high-speed
+    ## device needs none and raises `not_permitted`. Implementation status:
+    ## split transactions are not implemented yet, so `control` on a routed pipe
+    ## raises `not_permitted`.
+    set_route(card32 hub_address, card32 hub_port)
+        raises (invalid_pipe, busy, not_permitted);
+
+    ## Close the pipe; its bandwidth is released and every key of the pipe stops
+    ## working.
+    close_pipe()
+        raises (invalid_pipe, busy, not_permitted);
+
+    ## Clear a stall on the pipe, resetting its data toggle.
+    clear_halt()
+        raises (invalid_pipe, busy, not_permitted);
+
+    ## Run a control transfer on the pipe. `stage` holds the 8-byte setup packet
+    ## followed by the data stage (in, or out as the setup says); the data stage
+    ## is read or written in place. `stage` lies in the caller's data area and
+    ## holds the setup packet and the data stage it announces, at most 4032
+    ## bytes. Returns the bytes transferred in the data stage.
+    ## Interrupt and bulk pipes move data over an io-channel instead, whose setup
+    ## is not defined yet.
+    control(octet& stage)
+        returns (card32 transferred)
+        raises (stalled, transfer_failed, no_device, busy, invalid_pipe, not_permitted);
+}

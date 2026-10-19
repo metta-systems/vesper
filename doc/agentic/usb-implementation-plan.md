@@ -9,29 +9,16 @@ listed under Verification has passed for it.
 Done: USB0 (design, interfaces), USB1 (protocol crate), USB2 (DWC2 root port and EP0).
 See [usb-completed.md](usb-completed.md).
 
-## Prerequisites
-
-- **Invocation badge-on-derive** (maintainer decision 2026-10-18: a pipe handle is an
-  Invocation key issued by the host controller). The HCD derives a pipe key from its
-  exported Invocation, and the badge identifies the pipe and its owner to the HCD.
-  The mechanism is implemented ([Badges](capabilities-contract.md#badges): a 64-bit
-  badge set by `CopyDerive`, delivered in `x1` of the entry; `CreateInvocation` installs `CALL | BADGE`, so the exporter mints, and keys handed to clients should have `BADGE` masked off). Still open, in
-  [capabilities-decisions.md](capabilities-decisions.md): how Meddle expresses a
-  function taking a key from another function. Until it is settled, pipe handles stay
-  numeric and owned by the opening client's data area.
-
 ## USB2 follow-ups
 
-- [ ] Serve the rest of `usb_hcd_v1`: interrupt and bulk pipes (USB4; the pipe handle
-  form is an HCD-issued Invocation key, which needs badge-on-derive) and split transactions behind `set_route` (USB3).
+- [ ] Serve the rest of `usb_hcd_v1`: interrupt and bulk pipes (USB4; they need an `interval_ms` for interrupt pipes, which
+  no longer fits `open_pipe`'s six words: a `pipe_v1` function sets it) and split transactions behind `set_route` (USB3).
   Control pipes are served, see [usb-completed.md](usb-completed.md).
 - [ ] Validate DMA and cache maintenance on a real Raspberry Pi 3. QEMU does not
   model caches, and the bus-address alias from the node's `dma-ranges` is
   unchecked on silicon.
 
 ## USB3: hub and downstream devices
-
-Needs Invocation badge-on-derive (see Prerequisites).
 
 - [ ] `usbd` component in `drivers/usb`, serving `usb_v1`. Nothing exists yet
   beyond the interface.

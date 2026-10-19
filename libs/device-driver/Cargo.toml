@@ -30,5 +30,9 @@ harness = false
 name = "areas"
 required-features = ["host-tests"]
 
+[[test]]
+name = "masters"
+required-features = ["host-tests"]
+
 [lints]
 workspace = true

@@ -26,6 +26,7 @@ enum Member {
     Method(Method),
     Data(DataDeclaration),
     Placement(PlacementDeclaration),
+    Badged,
     /// A member that did not parse; its error is already reported.
     Invalid,
 }
@@ -36,10 +37,12 @@ enum MemberBody {
     Exception(Name, Vec<Field>),
     Data(DataDeclaration),
     Placement(PlacementDeclaration),
+    Badged,
     Method {
         name: Name,
         parameters: Vec<Field>,
         lends: Vec<LentKey>,
+        installs: Option<Name>,
         results: Vec<Field>,
         raises: Vec<Name>,
     },
@@ -134,9 +137,13 @@ where
             .delimited_by(just(Token::LeftParen), just(Token::RightParen)),
     );
 
+    let installs = just(Token::Installs)
+        .ignore_then(name.delimited_by(just(Token::LeftParen), just(Token::RightParen)));
+
     let method = name
         .then(parameter_list.clone())
         .then(lends.or_not())
+        .then(installs.or_not())
         .then(just(Token::Returns).ignore_then(parameter_list).or_not())
         .then(
             just(Token::Raises)
@@ -173,17 +180,21 @@ where
         )
         .then_ignore(just(Token::Semicolon));
 
+    let badged = just(Token::Badged).ignore_then(just(Token::Semicolon));
+
     let member = docs
         .then(choice((
             type_definition.map(|(name, kind)| MemberBody::Type(name, kind)),
             exception.map(|(name, fields)| MemberBody::Exception(name, fields)),
             data.map(MemberBody::Data),
             placement.map(MemberBody::Placement),
+            badged.map(|_semicolon| MemberBody::Badged),
             method.map(
-                |((((name, parameters), lends), results), raises)| MemberBody::Method {
+                |(((((name, parameters), lends), installs), results), raises)| MemberBody::Method {
                     name,
                     parameters,
                     lends: lends.unwrap_or_default(),
+                    installs,
                     results: results.unwrap_or_default(),
                     raises: raises.unwrap_or_default(),
                 },
@@ -193,6 +204,7 @@ where
             MemberBody::Type(name, kind) => Member::Type(TypeDefinition { doc, name, kind }),
             MemberBody::Data(declaration) => Member::Data(declaration),
             MemberBody::Placement(declaration) => Member::Placement(declaration),
+            MemberBody::Badged => Member::Badged,
             MemberBody::Exception(name, fields) => {
                 Member::Exception(Exception { doc, name, fields })
             }
@@ -200,6 +212,7 @@ where
                 name,
                 parameters,
                 lends,
+                installs,
                 results,
                 raises,
             } => Member::Method(Method {
@@ -207,6 +220,7 @@ where
                 name,
                 parameters,
                 lends,
+                installs,
                 results,
                 raises,
             }),
@@ -242,6 +256,7 @@ where
                 exceptions: Vec::new(),
                 data: None,
                 placement: None,
+                badged: false,
                 methods: Vec::new(),
             };
             for member in members {
@@ -251,6 +266,7 @@ where
                     Member::Method(method) => interface.methods.push(method),
                     Member::Data(declaration) => interface.data = Some(declaration),
                     Member::Placement(declaration) => interface.placement = Some(declaration),
+                    Member::Badged => interface.badged = true,
                     Member::Invalid => {}
                 }
             }

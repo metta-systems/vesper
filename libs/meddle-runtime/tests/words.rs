@@ -130,6 +130,26 @@ mod tests {
     }
 
     #[test]
+    fn data_area_u64s_round_trip_as_low_then_high_words() {
+        let mut storage = vec![0_u32; 8];
+        let area = DataArea {
+            base: storage.as_mut_ptr() as u64,
+            len: 32,
+        };
+        assert!(area.write_u64s(0, &[0x1122_3344_5566_7788, u64::MAX]));
+        assert_eq!(
+            &storage[..4],
+            &[0x5566_7788, 0x1122_3344, u32::MAX, u32::MAX]
+        );
+        let mut values = [0; 2];
+        assert!(area.read_u64s(0, &mut values));
+        assert_eq!(values, [0x1122_3344_5566_7788, u64::MAX]);
+        // The last value must fit inside the area.
+        assert!(!area.write_u64s(24, &[1, 2]));
+        assert!(area.write_u64s(24, &[1]));
+    }
+
+    #[test]
     fn data_area_bytes_round_trip_at_any_offset_and_respect_bounds() {
         let mut storage = vec![0_u32; 4];
         let area = DataArea {

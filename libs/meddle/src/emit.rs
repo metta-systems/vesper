@@ -249,6 +249,11 @@ impl Emitter<'_, '_> {
                 decodes.extend(quote! { #outcome => Some(Self::#name { #load }), });
             }
         }
+        // Only exceptions with a field read their words.
+        let declare_words = exceptions
+            .iter()
+            .any(|exception| !exception.fields.is_empty())
+            .then(|| quote! { let words = [field]; });
         quote! {
             /// The exceptions functions of this interface raise.
             #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -263,7 +268,7 @@ impl Emitter<'_, '_> {
 
                 /// The exception a function answered with `outcome` and `field`.
                 pub fn from_answer(outcome: u64, field: u64) -> Option<Self> {
-                    let words = [field];
+                    #declare_words
                     match outcome {
                         #decodes
                         _ => None,
@@ -319,10 +324,17 @@ impl Emitter<'_, '_> {
         let interface = self.checked.interface();
         let doc = docs(&interface.doc);
         let trait_name = camel_ident(&interface.name.text);
+        // A badged interface passes each function the badge of the key it
+        // was called through, before anything else.
+        let badge_parameter = interface.badged.then(|| quote! { badge: u64 });
         let methods = interface.methods.iter().map(|method| {
             let doc = docs(&method.doc);
             let name = ident(&method.name.text);
-            let parameters = self.parameters_with_key(method);
+            let parameters: Vec<TokenStream> = badge_parameter
+                .iter()
+                .cloned()
+                .chain(self.parameters_with_key(method))
+                .collect();
             let result = self.result_type(method).map(|result| quote! { -> #result });
             quote! { #doc fn #name( #( #parameters ),* ) #result; }
         });
@@ -385,8 +397,10 @@ impl Emitter<'_, '_> {
                 }
                 None => (TokenStream::new(), TokenStream::new(), None),
             };
-            let call_arguments: Vec<TokenStream> = lent_argument
+            let badge_argument = self.checked.interface().badged.then(|| quote! { badge });
+            let call_arguments: Vec<TokenStream> = badge_argument
                 .into_iter()
+                .chain(lent_argument)
                 .chain(parameter_names.map(|parameter| quote! { #parameter }))
                 .collect();
             let call = quote! { Implementation::#name( #( #call_arguments ),* ) };
@@ -449,18 +463,43 @@ impl Emitter<'_, '_> {
             } else {
                 ident("export_function_with_key")
             };
+            let body = ident(&format!(
+                "__body_{}",
+                export_name(&interface.name.text, &method.name.text)
+            ));
             quote! {
                 $crate::#module::__runtime::#export!(
                     #entry,
+                    #body,
                     $crate::#module::#dispatcher::<$implementation>
                 );
             }
         });
+        let entry_names: Vec<Ident> = interface
+            .methods
+            .iter()
+            .map(|method| ident(&export_name(&interface.name.text, &method.name.text)))
+            .collect();
+        let entries_function = ident(&format!("{}_entries", interface.name.text));
+        let function_count = Literal::usize_unsuffixed(entry_names.len());
+        let entries_doc = format!(
+            " The entry addresses of the functions of `{}` this component exports, in \
+             declaration order: what an exporter creates the interface's Invocation keys from.",
+            interface.name.text
+        );
         quote! {
             #[doc = #doc]
             #[macro_export]
             macro_rules! #macro_name {
-                ($implementation:ty) => { #( #entries )* };
+                ($implementation:ty) => {
+                    #( #entries )*
+
+                    #[doc = #entries_doc]
+                    #[allow(dead_code)]
+                    pub fn #entries_function() -> [u64; #function_count] {
+                        [ #( #entry_names as usize as u64 ),* ]
+                    }
+                };
             }
         }
     }
@@ -475,6 +514,7 @@ impl Emitter<'_, '_> {
             ident("TYPE_CODE"),
             ident("DATA_BYTES"),
             ident("PLACEMENT_SLOTS"),
+            ident("FUNCTION_COUNT"),
         ];
         reexports.extend(
             interface
@@ -505,6 +545,14 @@ impl Emitter<'_, '_> {
             let index = word_literal(index);
             quote! { #index => bindings.#name = Some(record.binding()), }
         });
+        let installed_fields: Vec<Ident> = interface
+            .methods
+            .iter()
+            .map(|method| ident(&method.name.text))
+            .collect();
+        let installed_names: Vec<Ident> = (0..interface.methods.len())
+            .map(|index| ident(&format!("key_{index}")))
+            .collect();
         let interface_doc = docs(&interface.doc);
         quote! {
             #interface_doc
@@ -538,6 +586,31 @@ impl Emitter<'_, '_> {
                             }
                         }
                         bindings
+                    }
+
+                    /// The bindings for the keys an exporter installed for this
+                    /// interface (`installs`): `keys[index]` is the wire key of
+                    /// the function at declaration index `index`. Calls run on
+                    /// the target stack ending at `stack_end` and reference
+                    /// bytes in `data_area`. `None` when `keys` is not one per function.
+                    pub fn from_installed(
+                        keys: &[u64],
+                        stack_end: u64,
+                        data_area: Option<#runtime::DataArea>,
+                    ) -> Option<Self> {
+                        let [ #( #installed_names ),* ] = *keys else {
+                            return None;
+                        };
+                        let binding = |wire: u64| {
+                            Some(#runtime::Binding::new(
+                                #runtime::InvocationKey::from_key(#runtime::RawKey::from_wire(wire)),
+                                stack_end,
+                            ))
+                        };
+                        Some(Self {
+                            #( #installed_fields: binding(#installed_names), )*
+                            data_area,
+                        })
                     }
                 }
 
@@ -652,8 +725,16 @@ impl Emitter<'_, '_> {
                 }),
             }
         };
+        // `self` counts as an argument for clippy; an interface can take up to
+        // six words plus a lent key and an install slot.
+        let many_arguments = (parameters.len() >= 7).then(|| {
+            quote! {
+                #[allow(clippy::too_many_arguments, reason = "the interface defines the arguments")]
+            }
+        });
         quote! {
             #doc
+            #many_arguments
             pub fn #name(&self, #( #parameters ),*) -> Result<#return_value, Error> {
                 let binding = self.bindings.#name.as_ref().ok_or(Error::NotGranted)?;
                 #declare_arguments
@@ -683,6 +764,7 @@ pub fn interface_module(checked: &Checked<'_>, source_name: &str) -> String {
         .unwrap_or_else(|_| quote!(0));
     let data_bytes = Literal::u64_unsuffixed(checked.data_bytes());
     let placement_slots = Literal::u64_unsuffixed(checked.placement_slots());
+    let function_count = Literal::usize_unsuffixed(interface.methods.len());
     let types = emitter.type_definitions();
     let exceptions = emitter.exceptions();
     let component_trait = emitter.component_trait();
@@ -706,6 +788,10 @@ pub fn interface_module(checked: &Checked<'_>, source_name: &str) -> String {
                 /// Slots of the exporter's table each client gets for the keys
                 /// its functions lend (zero: no function lends a key).
                 pub const PLACEMENT_SLOTS: u64 = #placement_slots;
+
+                /// Functions of this interface, and so keys an exporter installs
+                /// for it.
+                pub const FUNCTION_COUNT: usize = #function_count;
 
                 #types
                 #exceptions

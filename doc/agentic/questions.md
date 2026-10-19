@@ -31,6 +31,8 @@ ASIDControl
 
 DESIGN CHANGE: As explained [here](https://sel4.discourse.group/t/why-do-cnodes-have-guard-bits/49/5?utm_source=chatgpt.com) the KeyTable should not have a SELF_KEYTABLE slot by default and it shouldn't be required either.
 
+This will require some changes in the API for AS.CreateInvocation and others.
+
 ---
 
 +usb

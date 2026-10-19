@@ -4,16 +4,20 @@
 #
 ## The host controller of a USB bus (Raspberry Pi 3's `DesignWare` DWC2 in host
 ## mode). The controller schedules every transfer: a client opens a pipe to one
-## endpoint and transfers through it. Nothing here is DWC2-specific, so a later
-## xHCI controller can serve the same interface. Prototype: edited in place.
+## endpoint and transfers through it (`pipe_v1`). Nothing here is DWC2-specific,
+## so a later xHCI controller can serve the same interface. Prototype: edited
+## in place.
 local interface usb_hcd_v1
 {
-    ## Control transfers are staged in the client's data area: the 8-byte setup
-    ## packet, then the data stage.
+    ## The area the client stages control transfers in (see `pipe_v1`), and where
+    ## `open_pipe` returns the keys it installs.
     data 4096;
 
+    ## The slots of the controller's table that hold the key a client lends.
+    placement 1;
+
     ## The speed a device runs at; a low- or full-speed device behind a
-    ## high-speed hub needs split transactions (see `set_route`).
+    ## high-speed hub needs split transactions (see `pipe_v1.set_route`).
     enum speed { low, full, high }
 
     ## The kinds of transfer a pipe carries.
@@ -22,22 +26,14 @@ local interface usb_hcd_v1
     ## No device is attached to the port.
     exception no_device {}
 
-    ## The endpoint answered with a STALL; `clear_halt` recovers the pipe.
-    exception stalled {}
-
-    ## The transfer failed on the bus; `status` is the controller's channel status.
-    exception transfer_failed { card32 status; }
-
     ## The periodic schedule has no room left for the endpoint's bandwidth.
     exception no_bandwidth {}
 
-    ## The controller is busy with a reset or another exclusive operation.
+    ## The controller is busy with a reset or another exclusive operation, or has
+    ## no pipe left.
     exception busy {}
 
-    ## The pipe is not open, or belongs to another client.
-    exception invalid_pipe {}
-
-    ## The request is not allowed for this pipe.
+    ## The request is not allowed: an argument or a destination slot is not usable.
     exception not_permitted {}
 
     ## Reset the root port `port` for the device attached to it, and return the
@@ -52,40 +48,17 @@ local interface usb_hcd_v1
     port_status(card32 port)
         returns (card32 bits);
 
-    ## Open a pipe to endpoint `endpoint` of device `device_address`, returning
-    ## its handle; the pipe belongs to the calling client. `interval_ms` is the
-    ## polling interval of an interrupt pipe, and ignored for the other kinds.
-    ## Implementation status: only control pipes are served; opening an
-    ## interrupt or bulk pipe raises `not_permitted`. A control pipe's
-    ## `max_packet` is 8, 16, 32 or 64.
-    open_pipe(card32 device_address, card32 endpoint, speed speed, transfer_kind kind, card16 max_packet, card32 interval_ms)
-        returns (card32 pipe)
+    ## Open a pipe to endpoint `endpoint` of device `device_address`. The pipe is
+    ## the keys of `pipe_v1`, one per function in declaration order, that the
+    ## controller installs in the lent table `into`, at `first_slot` and the
+    ## slots after it, all badged with the pipe. Their wire keys are written to
+    ## the data area as 64-bit values from offset 0, because a slot's
+    ## incarnation is not predictable. The slots must be vacant, else the call
+    ## raises `not_permitted`. The keys belong to whoever holds them. Implementation
+    ## status: only control pipes are served; opening an interrupt or bulk pipe
+    ## raises `not_permitted`. A control pipe's `max_packet` is 8, 16, 32 or 64.
+    open_pipe(card32 first_slot, card32 device_address, card32 endpoint, speed speed, transfer_kind kind, card16 max_packet)
+        lends (key_table into)
+        installs (pipe_v1)
         raises (no_bandwidth, busy, not_permitted);
-
-    ## Set the hub a low- or full-speed device sits behind, and the hub's port
-    ## it is plugged into, so transfers use split transactions. A high-speed
-    ## device needs none and raises `not_permitted`. Implementation status:
-    ## split transactions are not implemented yet, so `control` on a routed pipe
-    ## raises `not_permitted`.
-    set_route(card32 pipe, card32 hub_address, card32 hub_port)
-        raises (invalid_pipe, busy, not_permitted);
-
-    ## Close the pipe; its bandwidth is released.
-    close_pipe(card32 pipe)
-        raises (invalid_pipe, busy, not_permitted);
-
-    ## Clear a stall on the pipe, resetting its data toggle.
-    clear_halt(card32 pipe)
-        raises (invalid_pipe, busy, not_permitted);
-
-    ## Run a control transfer on the pipe. `stage` holds the 8-byte setup packet
-    ## followed by the data stage (in, or out as the setup says); the data stage
-    ## is read or written in place. `stage` lies in the client's data area and
-    ## holds the setup packet and the data stage it announces, at most 4032
-    ## bytes. Returns the bytes transferred in the data stage.
-    ## Interrupt and bulk pipes move data over an io-channel instead, whose setup
-    ## is not defined yet.
-    control(card32 pipe, octet& stage)
-        returns (card32 transferred)
-        raises (stalled, transfer_failed, no_device, busy, invalid_pipe, not_permitted);
 }

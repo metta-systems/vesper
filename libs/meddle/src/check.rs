@@ -133,6 +133,8 @@ pub struct Checked<'interface> {
     interface: &'interface Interface,
     /// Words of each defined type, by definition index
     words: Vec<usize>,
+    /// The fingerprint of each interface a function installs, by name
+    installed: Vec<(String, u64)>,
 }
 
 impl<'interface> Checked<'interface> {
@@ -202,7 +204,7 @@ impl<'interface> Checked<'interface> {
     /// The interface's type code: a 48-bit fingerprint of everything that
     /// defines its wire behavior, in the top bits; the low 16 bits are zero.
     pub fn type_code(&self) -> u64 {
-        seahash::hash(fingerprint_text(self.interface).as_bytes()) & !0xffff
+        seahash::hash(fingerprint_text(self.interface, &self.installed).as_bytes()) & !0xffff
     }
 }
 
@@ -234,10 +236,16 @@ fn resolve(interface: &Interface, name: &str) -> Option<Resolved> {
     })
 }
 
-/// Check `interface`.
-pub fn check(interface: &Interface) -> Result<Checked<'_>, Vec<Diagnostic>> {
+/// Check `interface`. `installed` holds the interfaces its `installs` clauses
+/// name, read from the files the caller found; a clause whose interface is
+/// missing there is an error.
+pub fn check<'interface>(
+    interface: &'interface Interface,
+    installed: &'interface [Interface],
+) -> Result<Checked<'interface>, Vec<Diagnostic>> {
     let mut pass = Checker {
         interface,
+        installed,
         diagnostics: Vec::new(),
     };
     pass.interface_name();
@@ -246,9 +254,15 @@ pub fn check(interface: &Interface) -> Result<Checked<'_>, Vec<Diagnostic>> {
     pass.type_references();
     pass.data_area();
     pass.lends();
+    let installed = pass.installs();
+    pass.badged();
     pass.placement_window();
     let words = pass.word_counts();
-    let checked = Checked { interface, words };
+    let checked = Checked {
+        interface,
+        words,
+        installed,
+    };
     pass.members(&checked);
     if pass.diagnostics.is_empty() {
         Ok(checked)
@@ -335,6 +349,8 @@ fn duplicates<'name>(
 
 struct Checker<'interface> {
     interface: &'interface Interface,
+    /// The interfaces the `installs` clauses name, as the caller found them
+    installed: &'interface [Interface],
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -604,11 +620,13 @@ impl<'interface> Checker<'interface> {
     /// a reference names bytes of the data area, which has a declared size.
     fn data_area(&mut self) {
         let interface = self.interface;
+        // A function that installs keys returns their values in the area.
         let takes_reference = interface.methods.iter().any(|method| {
-            method
-                .parameters
-                .iter()
-                .any(|parameter| parameter.ty.reference)
+            method.installs.is_some()
+                || method
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.ty.reference)
         });
         match (&interface.data, takes_reference) {
             (Some(declaration), _) if declaration.bytes == 0 => {
@@ -630,13 +648,13 @@ impl<'interface> Checker<'interface> {
             (Some(declaration), false) => {
                 self.diagnostics.push(Diagnostic::error(
                     declaration.span.clone(),
-                    "no function takes a reference (`&`), so the data area is never used",
+                    "no function takes a reference (`&`) or installs keys, so the data area is never used",
                 ));
             }
             (None, true) => {
                 self.error(
                     &interface.name,
-                    "functions taking references (`&`) need a `data <bytes>;` area to point into",
+                    "functions taking references (`&`) or installing keys need a `data <bytes>;` area to point into",
                 );
             }
             (Some(_), true) | (None, false) => {}
@@ -676,6 +694,129 @@ impl<'interface> Checker<'interface> {
                 }
             }
         }
+    }
+
+    /// `badged;`: the badge names an object of this machine, so only `local`
+    /// interfaces have it.
+    fn badged(&mut self) {
+        let interface = self.interface;
+        if interface.badged && !interface.local {
+            self.error(
+                &interface.name,
+                "`badged` needs a `local` interface: a badge names an object of this machine",
+            );
+        }
+    }
+
+    /// `installs` clauses: a function that fills the table it borrows with the
+    /// Invocation keys of another `local` interface says so, and takes the
+    /// slot to start at as its `card32 first_slot` parameter.
+    fn installs(&mut self) -> Vec<(String, u64)> {
+        let interface = self.interface;
+        let mut codes: Vec<(String, u64)> = Vec::new();
+        for method in &interface.methods {
+            let Some(installed) = &method.installs else {
+                continue;
+            };
+            if !interface.local {
+                self.error(
+                    installed,
+                    "`installs` needs a `local` interface: a key names a capability of this machine",
+                );
+            }
+            let lends_key_table = method
+                .lends
+                .first()
+                .is_some_and(|lent| lent.kind.text == "key_table");
+            if !lends_key_table {
+                self.error(
+                    installed,
+                    format!(
+                        "`{}` installs keys, so it must lend a `key_table`",
+                        method.name.text
+                    ),
+                );
+            }
+            let has_first_slot = method.parameters.iter().any(|parameter| {
+                parameter.name.text == "first_slot"
+                    && parameter.ty.name.text == "card32"
+                    && !parameter.ty.reference
+            });
+            if !has_first_slot {
+                self.error(
+                    installed,
+                    format!(
+                        "`{}` installs keys, so it must take a `card32 first_slot` parameter",
+                        method.name.text
+                    ),
+                );
+            }
+            if installed.text == interface.name.text {
+                self.error(installed, "an interface cannot install its own keys");
+            } else if codes.iter().all(|(name, _)| *name != installed.text)
+                && let Some(code) = self.installed_interface(installed)
+            {
+                codes.push((installed.text.clone(), code));
+            }
+        }
+        codes
+    }
+
+    /// Cross-check the interface `installed` names against this one, and
+    /// return its fingerprint. The installed interface must be a `local`,
+    /// `badged` interface (its functions need the badge to tell the resources
+    /// apart) whose data area is this interface's: the keys' values are returned in
+    /// it and the resources' functions pass references into it.
+    fn installed_interface(&mut self, installed: &Name) -> Option<u64> {
+        let interface = self.interface;
+        let Some(other) = self
+            .installed
+            .iter()
+            .find(|candidate| candidate.name.text == installed.text)
+        else {
+            self.error(
+                installed,
+                format!(
+                    "cannot find `{}.if`: add the directory holding it to the include directories",
+                    installed.text
+                ),
+            );
+            return None;
+        };
+        if !other.local {
+            self.error(
+                installed,
+                format!("`{}` must be a `local` interface", installed.text),
+            );
+        }
+        if !other.badged {
+            self.error(
+                installed,
+                format!(
+                    "`{}` must say `badged;`: its functions need the badge to tell the installed resources apart",
+                    installed.text
+                ),
+            );
+        }
+        if other.methods.is_empty() {
+            self.error(
+                installed,
+                format!("`{}` has no functions to install", installed.text),
+            );
+        }
+        let bytes = |data: &Option<ast::DataDeclaration>| data.as_ref().map(|data| data.bytes);
+        if bytes(&other.data) != bytes(&interface.data) {
+            self.error(
+                installed,
+                format!(
+                    "`{}` declares a data area of {:?} bytes and this interface {:?}: they share one area",
+                    installed.text,
+                    bytes(&other.data).unwrap_or(0),
+                    bytes(&interface.data).unwrap_or(0)
+                ),
+            );
+        }
+        Some(seahash::hash(fingerprint_text(other, &[]).as_bytes()) & !0xffff)
     }
 
     /// A `placement` declaration and the functions with a `lends` clause go
@@ -770,15 +911,19 @@ impl<'interface> Checker<'interface> {
 
 /// The text the type code hashes: names, types, values and signatures in
 /// declaration order, without documentation.
-fn fingerprint_text(interface: &Interface) -> String {
+fn fingerprint_text(interface: &Interface, installed: &[(String, u64)]) -> String {
     let mut text = String::new();
-    let Ok(()) = write_fingerprint(&mut text, interface) else {
+    let Ok(()) = write_fingerprint(&mut text, interface, installed) else {
         unreachable!("writing to a String cannot fail");
     };
     text
 }
 
-fn write_fingerprint(text: &mut String, interface: &Interface) -> fmt::Result {
+fn write_fingerprint(
+    text: &mut String,
+    interface: &Interface,
+    installed_codes: &[(String, u64)],
+) -> fmt::Result {
     let local = if interface.local { "local " } else { "" };
     write!(text, "{local}interface {}{{", interface.name.text)?;
     if let Some(declaration) = &interface.data {
@@ -786,6 +931,9 @@ fn write_fingerprint(text: &mut String, interface: &Interface) -> fmt::Result {
     }
     if let Some(declaration) = &interface.placement {
         write!(text, "placement {};", declaration.slots)?;
+    }
+    if interface.badged {
+        write!(text, "badged;")?;
     }
     for definition in &interface.types {
         match &definition.kind {
@@ -824,6 +972,10 @@ fn write_fingerprint(text: &mut String, interface: &Interface) -> fmt::Result {
             }
             write!(text, ")")?;
         }
+        if let Some(installed) = &method.installs {
+            let code = installed_code(installed_codes, &installed.text);
+            write!(text, "installs({}:{code:x});", installed.text)?;
+        }
         write!(text, "returns(")?;
         write_fields(text, &method.results)?;
         write!(text, ")raises(")?;
@@ -833,6 +985,14 @@ fn write_fingerprint(text: &mut String, interface: &Interface) -> fmt::Result {
         write!(text, ");")?;
     }
     write!(text, "}}")
+}
+
+/// The fingerprint recorded for the installed interface `name` (zero when missing).
+fn installed_code(codes: &[(String, u64)], name: &str) -> u64 {
+    codes
+        .iter()
+        .find(|(candidate, _)| candidate == name)
+        .map_or(0, |(_, code)| *code)
 }
 
 fn write_type(text: &mut String, ty: &TypeReference) -> fmt::Result {

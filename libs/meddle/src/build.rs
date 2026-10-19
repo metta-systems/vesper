@@ -18,26 +18,51 @@ use {
 };
 
 /// Generate the interface crate's module from `interface_file` (relative
-/// to the crate's manifest directory) into `OUT_DIR`.
+/// to the crate's manifest directory) into `OUT_DIR`. `include` lists the
+/// directories (also relative to the manifest directory) searched for the
+/// interfaces the file's `installs` clauses name; nothing else is searched, so
+/// a file that installs another interface lists the directory holding it,
+/// `"."` included if it is the file's own.
 ///
 /// # Panics
 /// On errors in the interface file, with the rendered diagnostics, which
 /// fails the build.
-pub fn interface_crate(interface_file: impl AsRef<Path>) {
+pub fn interface_crate(interface_file: impl AsRef<Path>, include: &[&str]) {
     let path = manifest_relative(interface_file.as_ref());
-    write_output(&path, crate::generate_interface(&path));
+    let include = include_directories(include);
+    write_output(&path, crate::generate_interface(&path, &include));
+    rerun_for_includes(&include);
 }
 
 /// Generate the client crate's module from `interface_file` (relative to
 /// the crate's manifest directory) into `OUT_DIR`; the generated code
-/// re-exports the interface's types from `interface_crate`.
+/// re-exports the interface's types from `interface_crate`. `include` is as for
+/// [`interface_crate`].
 ///
 /// # Panics
 /// On errors in the interface file, with the rendered diagnostics, which
 /// fails the build.
-pub fn client_crate(interface_file: impl AsRef<Path>, interface_crate: &str) {
+pub fn client_crate(interface_file: impl AsRef<Path>, interface_crate: &str, include: &[&str]) {
     let path = manifest_relative(interface_file.as_ref());
-    write_output(&path, crate::generate_client(&path, interface_crate));
+    let include = include_directories(include);
+    write_output(
+        &path,
+        crate::generate_client(&path, interface_crate, &include),
+    );
+    rerun_for_includes(&include);
+}
+
+fn include_directories(include: &[&str]) -> Vec<PathBuf> {
+    include
+        .iter()
+        .map(|directory| manifest_relative(Path::new(directory)))
+        .collect()
+}
+
+fn rerun_for_includes(include: &[PathBuf]) {
+    for directory in include {
+        println!("cargo::rerun-if-changed={}", directory.display());
+    }
 }
 
 fn manifest_relative(path: &Path) -> PathBuf {

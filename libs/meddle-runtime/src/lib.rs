@@ -277,6 +277,39 @@ impl DataArea {
         true
     }
 
+    /// Write `values` at byte `offset` (a multiple of 4 inside the area), each as
+    /// two words, low half first.
+    pub fn write_u64s(&self, offset: u64, values: &[u64]) -> bool {
+        let mut at = offset;
+        for &value in values {
+            // Both halves fit in 32 bits by construction.
+            let halves = [
+                u32::try_from(value & u64::from(u32::MAX)).unwrap_or(0),
+                u32::try_from(value >> 32).unwrap_or(0),
+            ];
+            if !self.write_words(at, &halves) {
+                return false;
+            }
+            at += 8;
+        }
+        true
+    }
+
+    /// Read `values.len()` values from byte `offset` (a multiple of 4 inside
+    /// the area), written by [`write_u64s`](Self::write_u64s).
+    pub fn read_u64s(&self, offset: u64, values: &mut [u64]) -> bool {
+        let mut at = offset;
+        for value in values {
+            let mut halves = [0; 2];
+            if !self.read_words(at, &mut halves) {
+                return false;
+            }
+            *value = u64::from(halves[0]) | u64::from(halves[1]) << 32;
+            at += 8;
+        }
+        true
+    }
+
     /// Write `bytes` at byte `offset` inside the area.
     pub fn write_bytes(&self, offset: u64, bytes: &[u8]) -> bool {
         let Some(span) = self.byte_span(offset, bytes.len()) else {
@@ -360,7 +393,8 @@ impl ImportRecord {
     }
 }
 
-/// Export one interface function as a PPC entry named `$entry`.
+/// Export one interface function as a PPC entry named `$entry`, whose decoder
+/// is the function `$body` (both defined where the macro is used).
 ///
 /// `$dispatch` is the interface's generic decoder instantiated for the
 /// implementing type, an `fn(u64, [u64; ARGUMENT_WORDS]) -> PpcResult` taking
@@ -369,23 +403,21 @@ impl ImportRecord {
 /// of these per function.
 #[macro_export]
 macro_rules! export_function {
-    ($entry:ident, $dispatch:expr) => {
-        const _: () = {
-            #[allow(dead_code)]
-            extern "C" fn body(
-                _: u64,
-                badge: u64,
-                input0: u64,
-                input1: u64,
-                input2: u64,
-                input3: u64,
-                input4: u64,
-                input5: u64,
-            ) -> $crate::PpcResult {
-                ($dispatch)(badge, [input0, input1, input2, input3, input4, input5])
-            }
-    $crate::ppc_export!(#[allow(dead_code)] fn $entry => body);
-        };
+    ($entry:ident, $body:ident, $dispatch:expr) => {
+        #[allow(dead_code)]
+        extern "C" fn $body(
+            _: u64,
+            badge: u64,
+            input0: u64,
+            input1: u64,
+            input2: u64,
+            input3: u64,
+            input4: u64,
+            input5: u64,
+        ) -> $crate::PpcResult {
+            ($dispatch)(badge, [input0, input1, input2, input3, input4, input5])
+        }
+        $crate::ppc_export!(#[allow(dead_code)] fn $entry => $body);
     };
 }
 
@@ -398,26 +430,24 @@ macro_rules! export_function {
 /// the key.
 #[macro_export]
 macro_rules! export_function_with_key {
-    ($entry:ident, $dispatch:expr) => {
-        const _: () = {
-            #[allow(dead_code)]
-            extern "C" fn body(
-                lent: u64,
-                badge: u64,
-                input0: u64,
-                input1: u64,
-                input2: u64,
-                input3: u64,
-                input4: u64,
-                input5: u64,
-            ) -> $crate::PpcResult {
-                ($dispatch)(
-                    badge,
-                    $crate::RawKey::from_wire(lent),
-                    [input0, input1, input2, input3, input4, input5],
-                )
-            }
-    $crate::ppc_export!(#[allow(dead_code)] fn $entry => body);
-        };
+    ($entry:ident, $body:ident, $dispatch:expr) => {
+        #[allow(dead_code)]
+        extern "C" fn $body(
+            lent: u64,
+            badge: u64,
+            input0: u64,
+            input1: u64,
+            input2: u64,
+            input3: u64,
+            input4: u64,
+            input5: u64,
+        ) -> $crate::PpcResult {
+            ($dispatch)(
+                badge,
+                $crate::RawKey::from_wire(lent),
+                [input0, input1, input2, input3, input4, input5],
+            )
+        }
+        $crate::ppc_export!(#[allow(dead_code)] fn $entry => $body);
     };
 }

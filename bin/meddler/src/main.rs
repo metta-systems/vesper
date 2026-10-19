@@ -31,8 +31,10 @@ enum Command {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "check")]
 struct Check {
-    /// directory searched for the interface files an imports file uses
-    /// (repeatable; the imports file's own directory comes first)
+    /// directory searched for the interface files an imports file uses and
+    /// the ones an `installs` clause names (repeatable; an imports file's own
+    /// directory comes first; nothing else is searched, so pass `-I .` for the
+    /// current directory)
     #[argh(option, short = 'I', long = "include")]
     include: Vec<PathBuf>,
 
@@ -45,6 +47,11 @@ struct Check {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "interface")]
 struct Interface {
+    /// directory searched for the interfaces an `installs` clause names
+    /// (repeatable; pass `-I .` for the current directory)
+    #[argh(option, short = 'I', long = "include")]
+    include: Vec<PathBuf>,
+
     /// write to this file instead of standard output
     #[argh(option, short = 'o')]
     output: Option<PathBuf>,
@@ -58,6 +65,11 @@ struct Interface {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "client")]
 struct Client {
+    /// directory searched for the interfaces an `installs` clause names
+    /// (repeatable; pass `-I .` for the current directory)
+    #[argh(option, short = 'I', long = "include")]
+    include: Vec<PathBuf>,
+
     /// name of the interface crate the client re-exports the types from
     #[argh(option)]
     interface_crate: String,
@@ -88,7 +100,7 @@ fn check(arguments: &Check) -> ExitCode {
                 file.imports(&directories)
                     .map(|uses| format!("{} uses {} interfaces", path.display(), uses.len()))
             } else {
-                file.with_checked(|checked| {
+                file.with_checked(&arguments.include, |checked| {
                     format!(
                         "{}: `{}` with {} functions, type code {:#018x}",
                         path.display(),
@@ -140,11 +152,15 @@ fn main() -> ExitCode {
     match arguments.command {
         Command::Check(arguments) => check(&arguments),
         Command::Interface(arguments) => emit(
-            libmeddle::generate_interface(&arguments.file),
+            libmeddle::generate_interface(&arguments.file, &arguments.include),
             arguments.output.as_ref(),
         ),
         Command::Client(arguments) => emit(
-            libmeddle::generate_client(&arguments.file, &arguments.interface_crate),
+            libmeddle::generate_client(
+                &arguments.file,
+                &arguments.interface_crate,
+                &arguments.include,
+            ),
             arguments.output.as_ref(),
         ),
     }

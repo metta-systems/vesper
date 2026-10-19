@@ -33,6 +33,10 @@
 //! entries with [`driver_threads!`]. Kickstart starts each on its own stack
 //! and Time with the init page's address in `x0`, alongside the first one;
 //! only the first Thread receives the interrupts.
+mod masters;
+
+pub use masters::{EXPORT_STACK_HEADROOM, InstallError, Masters};
+
 use {
     core::{
         marker::PhantomData,
@@ -420,10 +424,16 @@ impl DriverInit {
     /// The data area of the client whose call runs with stack pointer
     /// `stack_pointer`, if it has one.
     pub fn area_for_stack(&self, stack_pointer: u64) -> Option<ExportedArea> {
+        self.area_index_for_stack(stack_pointer)
+            .map(|index| self.areas[index])
+    }
+
+    /// The position in [`areas`](Self::areas) of the area of the client whose
+    /// call runs with stack pointer `stack_pointer`, if it has one.
+    pub fn area_index_for_stack(&self, stack_pointer: u64) -> Option<usize> {
         self.areas()
             .iter()
-            .find(|area| area.stack_bottom < stack_pointer && stack_pointer <= area.stack_end)
-            .copied()
+            .position(|area| area.stack_bottom < stack_pointer && stack_pointer <= area.stack_end)
     }
 
     /// The functions of other components the driver imports.
@@ -532,6 +542,14 @@ pub fn device_address(init: &DriverInit, paddr: u64) -> Option<u64> {
 /// stack.
 #[cfg(target_arch = "aarch64")]
 pub fn calling_area(init: &DriverInit) -> Option<ExportedArea> {
+    calling_area_index(init).map(|index| init.areas[index])
+}
+
+/// The position in [`DriverInit::areas`] of the area of the client whose call
+/// this Thread is serving (see [`calling_area`]): a stable number per client
+/// instance, below [`MAX_AREAS`].
+#[cfg(target_arch = "aarch64")]
+pub fn calling_area_index(init: &DriverInit) -> Option<usize> {
     let stack_pointer: u64;
     // SAFETY: reading `sp` has no side effects.
     unsafe {
@@ -541,7 +559,7 @@ pub fn calling_area(init: &DriverInit) -> Option<ExportedArea> {
             options(nomem, nostack, preserves_flags),
         );
     }
-    init.area_for_stack(stack_pointer)
+    init.area_index_for_stack(stack_pointer)
 }
 
 /// Lets one caller at a time into the part of a component that uses stacks

@@ -36,11 +36,10 @@ prototypes and are edited in place. Open decisions are in
   stages the setup packet and data stage in its data area; the component copies
   them to and from its DMA page (data stage at most 4032 bytes). `DataArea` has
   byte access for this (`libs/meddle-runtime`).
-- Pipes are numeric handles from a 16-entry table: index plus generation, never
-  zero. A pipe belongs to the client that opened it, identified by the base of its
-  data area (found from the stack the call runs on). This stands in until
-  badges exist (see the plan's Prerequisites: the answered design is an HCD-issued
-  Invocation key per pipe). A control pipe's `max_packet` is
+- Pipes are handles in a 16-entry table: index plus generation, never zero. The handle
+  is the badge of the pipe's `pipe_v1` keys, so a closed pipe's keys fail even when its
+  slot is reused. The caller's data area (found from the stack the call runs on)
+  still bounds the stage a control call may name. A control pipe's `max_packet` is
   8, 16, 32 or 64; interrupt and bulk pipes raise `not_permitted`.
 - `set_route` stores the route, but split transactions are not implemented, so
   `control` on a routed pipe raises `not_permitted`. A high-speed pipe cannot be
@@ -95,15 +94,20 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usbd: core + hub)  <- c
   not a separate component. Its pure logic (hub descriptor, class requests, port
   status, per-port state machine) goes in a `hub` module of `vesper-usb-protocol`,
   so it stays host-testable and could be extracted later.
-- **Pipe authority (maintainer decision, 2026-10-18).** A pipe handle is an Invocation
-  key issued by the host controller, not a number checked against caller identity.
-  The HCD derives the key from its exported Invocation; how calls on a pipe are
-  shaped waits on the badge-on-derive design (see the plan's Prerequisites). The
-  `card32 pipe` parameters change then, in place.
+- **Pipe authority (maintainer decisions, 2026-10-18 and 2026-10-19).** A pipe is a set of
+  Invocation keys issued by the host controller, not a number checked against caller
+  identity. `pipe_v1` is a `local` interface of its own, one key per function, all
+  badged with the pipe's handle; `usb_hcd_v1.open_pipe` installs the keys in a key table
+  the caller lends and returns their values in the data area. Holding a key is the right
+  to use the pipe, so `usbd` can hand a pipe to `hid` by installing a narrowed copy in
+  `hid`'s table. The mechanism is in the
+  [contract](capabilities-contract.md#component-interfaces-and-imports).
 - `drivers/usb-hcd-dwc2/interfaces/usb_hcd_v1.if`: `reset_port`, `port_status`,
-  `open_pipe`, `set_route`, `close_pipe`, `clear_halt`, `control`. Pipe
-  parameters are DWC2-neutral. `open_pipe` takes six argument words, the call
-  limit; the split-transaction route is set separately with `set_route`.
+  `open_pipe`. Parameters are DWC2-neutral. `open_pipe` takes six argument words, the
+  call limit, and installs the keys of `pipe_v1`.
+- `drivers/usb-hcd-dwc2/interfaces/pipe_v1.if`: `set_route`, `close_pipe`, `clear_halt`,
+  `control`, the functions of one open pipe; the split-transaction route is set
+  separately with `set_route`.
 - `drivers/usb/interfaces/usb_v1.if`: `claim_interface` (blocks until a matching
   device appears), `release`, `interrupt_pipe`, `control`.
 - `drivers/usb-hid/interfaces/input_v1.if`: `set_leds` today, to be replaced by `descriptor` and `snapshot` (USB4). Events travel over an

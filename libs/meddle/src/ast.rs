@@ -52,6 +52,9 @@ pub struct Interface {
     pub data: Option<DataDeclaration>,
     /// The key-placement window each client's lending functions share
     pub placement: Option<PlacementDeclaration>,
+    /// Whether every function receives the badge of the key it was called
+    /// through (`badged;`)
+    pub badged: bool,
     pub methods: Vec<Method>,
 }
 
@@ -105,6 +108,9 @@ pub struct Method {
     pub parameters: Vec<Field>,
     /// The key the function lends to its exporter for the duration of the call
     pub lends: Vec<LentKey>,
+    /// The interface whose Invocation keys the function installs in the lent
+    /// table
+    pub installs: Option<Name>,
     pub results: Vec<Field>,
     pub raises: Vec<Name>,
 }

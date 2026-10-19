@@ -1,3 +1,3 @@
 fn main() {
-    libmeddle::build::interface_crate("../interfaces/mailbox_v1.if");
+    libmeddle::build::interface_crate("../interfaces/mailbox_v1.if", &[]);
 }

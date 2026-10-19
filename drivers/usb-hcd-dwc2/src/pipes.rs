@@ -3,17 +3,13 @@
 // Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 //
 
-//! The pipes a client opened to device endpoints. A pipe is a handle the
-//! client passes back on every call; the table records what it names and who
-//! owns it. Nothing here touches hardware.
+//! The pipes clients opened to device endpoints. A pipe is a handle; the
+//! table records what it names. Nothing here touches hardware.
 //!
 //! A handle packs the table index and a generation, so a closed pipe's handle
-//! fails even when its slot is reused. Zero is never a handle.
-//!
-//! The owner is an opaque identity the caller supplies. The component uses
-//! the base of the client's data area, which it finds from the stack the call
-//! runs on (the same identity the mailbox component relies on until badges
-//! exist).
+//! fails even when its slot is reused. Zero is never a handle. The component
+//! badges each pipe's Invocation keys with its handle, so holding a key is the
+//! right to use the pipe.
 
 use vesper_usb_protocol::{descriptor::TransferKind, enumeration::Speed};
 
@@ -35,16 +31,14 @@ pub struct Pipe {
     pub speed: Speed,
     pub kind: TransferKind,
     pub max_packet: u16,
-    /// Who opened the pipe.
-    pub owner: u64,
-    /// The split-transaction route, once the owner set one.
+    /// The split-transaction route, once one was set.
     pub route: Option<Route>,
 }
 
 /// Why a pipe call failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PipeError {
-    /// No pipe has this handle, or another client owns it.
+    /// No pipe has this handle.
     Invalid,
     /// Every slot is taken.
     Full,
@@ -91,18 +85,17 @@ impl PipeTable {
         Ok(u32::from(slot.generation) << 16 | u32::try_from(index).unwrap_or(0))
     }
 
-    /// The pipe `handle` names, if `owner` opened it.
+    /// The pipe `handle` names.
     ///
     /// # Errors
     ///
-    /// [`PipeError::Invalid`] for a closed, stale or foreign handle.
-    pub fn get(&self, handle: u32, owner: u64) -> Result<&Pipe, PipeError> {
+    /// [`PipeError::Invalid`] for a closed or stale handle.
+    pub fn get(&self, handle: u32) -> Result<&Pipe, PipeError> {
         let (index, generation) = split(handle);
         self.slots
             .get(index)
             .filter(|slot| slot.generation == generation)
             .and_then(|slot| slot.pipe.as_ref())
-            .filter(|pipe| pipe.owner == owner)
             .ok_or(PipeError::Invalid)
     }
 
@@ -110,14 +103,13 @@ impl PipeTable {
     ///
     /// # Errors
     ///
-    /// [`PipeError::Invalid`] for a closed, stale or foreign handle.
-    pub fn get_mut(&mut self, handle: u32, owner: u64) -> Result<&mut Pipe, PipeError> {
+    /// [`PipeError::Invalid`] for a closed or stale handle.
+    pub fn get_mut(&mut self, handle: u32) -> Result<&mut Pipe, PipeError> {
         let (index, generation) = split(handle);
         self.slots
             .get_mut(index)
             .filter(|slot| slot.generation == generation)
             .and_then(|slot| slot.pipe.as_mut())
-            .filter(|pipe| pipe.owner == owner)
             .ok_or(PipeError::Invalid)
     }
 
@@ -125,9 +117,9 @@ impl PipeTable {
     ///
     /// # Errors
     ///
-    /// [`PipeError::Invalid`] for a closed, stale or foreign handle.
-    pub fn close(&mut self, handle: u32, owner: u64) -> Result<(), PipeError> {
-        self.get(handle, owner)?;
+    /// [`PipeError::Invalid`] for a closed or stale handle.
+    pub fn close(&mut self, handle: u32) -> Result<(), PipeError> {
+        self.get(handle)?;
         let (index, _) = split(handle);
         if let Some(slot) = self.slots.get_mut(index) {
             slot.pipe = None;

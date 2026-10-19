@@ -1,9 +1,12 @@
+[workspace]
+
 [package]
 name = "if_lsp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
+ignore = "0.4.33"
 logos = "0.16"
 tokio = { version = "1.53.3", features = ["full", "rt-multi-thread"] }
 tower-lsp-server = "0.23"

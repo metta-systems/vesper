@@ -1,16 +1,21 @@
 //! Language features computed from one Meddle source text, independent of
 //! the LSP transport so they can be tested on plain strings.
 
-use libmeddle::{
-    ast::{
-        Exception, Field, File, Interface, Method, Name, Provider, Span, TypeDefinition, TypeKind,
+use std::path::PathBuf;
+
+use {
+    libmeddle::{
+        ast::{
+            Exception, Field, File, Interface, Method, Name, Provider, Span, TypeDefinition,
+            TypeKind,
+        },
+        check::{self, Builtin, LendKind},
+        diagnostic::Diagnostic,
+        lexer::Token,
+        parse,
     },
-    check::{self, Builtin, LendKind},
-    diagnostic::Diagnostic,
-    lexer::Token,
-    parse,
+    logos::Logos,
 };
-use logos::Logos;
 
 /// A name written somewhere in the file, with where it leads and what to say
 /// about it.
@@ -94,6 +99,30 @@ pub enum CandidateKind {
     LendKind,
 }
 
+/// The interfaces `interface`'s `installs` clauses name, parsed from `<name>.if`
+/// in the first of `include` that has it.
+fn installed_interfaces(interface: &Interface, include: &[PathBuf]) -> Vec<Interface> {
+    let mut found: Vec<Interface> = Vec::new();
+    for name in interface
+        .methods
+        .iter()
+        .filter_map(|method| method.installs.as_ref())
+    {
+        let path = include
+            .iter()
+            .map(|directory| directory.join(format!("{}.if", name.text)))
+            .find(|candidate| candidate.is_file());
+        let parsed = path
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| parse(&text).0)
+            .and_then(|file| file.interfaces.into_iter().next());
+        if let Some(installed) = parsed {
+            found.push(installed);
+        }
+    }
+    found
+}
+
 /// The result of parsing and checking a source text.
 #[derive(Debug)]
 pub struct Analysis {
@@ -101,7 +130,7 @@ pub struct Analysis {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-const KEYWORDS: [&str; 14] = [
+const KEYWORDS: [&str; 16] = [
     "local",
     "interface",
     "exception",
@@ -113,6 +142,8 @@ const KEYWORDS: [&str; 14] = [
     "compatible",
     "data",
     "lends",
+    "installs",
+    "badged",
     "placement",
     "via",
     "uses",
@@ -123,15 +154,18 @@ const BUILTINS: [&str; 9] = [
 ];
 
 /// Parse and check `source`. Checks run per interface, and the `uses`
-/// declarations are checked against the interfaces of the same file.
-pub fn analyze(source: &str) -> Analysis {
+/// declarations are checked against the interfaces of the same file. The
+/// interfaces an `installs` clause names are read from the `include`
+/// directories (the server passes the document's own directory).
+pub fn analyze(source: &str, include: &[PathBuf]) -> Analysis {
     let (file, mut diagnostics) = parse(source);
     // Checking a tree that had parse errors would only repeat them as noise.
     if diagnostics.is_empty()
         && let Some(file) = &file
     {
         for interface in &file.interfaces {
-            if let Err(found) = check::check(interface) {
+            let installed = installed_interfaces(interface, include);
+            if let Err(found) = check::check(interface, &installed) {
                 diagnostics.extend(found);
             }
         }
@@ -152,7 +186,7 @@ pub fn analyze(source: &str) -> Analysis {
 impl Analysis {
     /// Analyze `source`.
     pub fn of(source: &str) -> Self {
-        analyze(source)
+        analyze(source, &[])
     }
 
     /// Every named construct of the file with its definition and hover text.
@@ -259,6 +293,8 @@ impl Analysis {
                 | Token::Compatible
                 | Token::Data
                 | Token::Lends
+                | Token::Installs
+                | Token::Badged
                 | Token::Placement
                 | Token::Via
                 | Token::Uses => HighlightClass::Keyword,
@@ -362,6 +398,11 @@ fn interface_range(interface: &Interface) -> Span {
     });
     interface.data.iter().for_each(|d| extend(&d.span));
     interface.placement.iter().for_each(|p| extend(&p.span));
+    interface
+        .methods
+        .iter()
+        .filter_map(|m| m.installs.as_ref())
+        .for_each(|installed| extend(&installed.span));
     // The closing brace and anything typed after the last member still
     // belong to the interface until the next one starts, so be generous.
     interface.name.span.start..end.saturating_add(1024)
@@ -416,6 +457,9 @@ fn method_hover(method: &Method) -> String {
             .map(|key| format!("{} {}", key.kind.text, key.name.text))
             .collect();
         signature.push_str(&format!(" lends ({})", keys.join(", ")));
+    }
+    if let Some(installed) = &method.installs {
+        signature.push_str(&format!(" installs ({})", installed.text));
     }
     if !method.results.is_empty() {
         signature.push_str(&format!(" returns ({})", field_list(&method.results)));
@@ -680,27 +724,27 @@ local interface mailbox_v1 {
     #[test]
     fn valid_file_has_no_diagnostics() {
         assert!(
-            analyze(SOURCE).diagnostics.is_empty(),
+            analyze(SOURCE, &[]).diagnostics.is_empty(),
             "{:?}",
-            analyze(SOURCE).diagnostics
+            analyze(SOURCE, &[]).diagnostics
         );
     }
 
     #[test]
     fn parse_error_is_reported_without_check_noise() {
-        let analysis = analyze("interface foo_v1 { send( ; }");
+        let analysis = analyze("interface foo_v1 { send( ; }", &[]);
         assert_eq!(analysis.diagnostics.len(), 1);
     }
 
     #[test]
     fn check_error_is_reported() {
-        let analysis = analyze("interface foo_v1 { send(missing item); }");
+        let analysis = analyze("interface foo_v1 { send(missing item); }", &[]);
         assert!(!analysis.diagnostics.is_empty());
     }
 
     #[test]
     fn type_use_goes_to_definition() {
-        let analysis = analyze(SOURCE);
+        let analysis = analyze(SOURCE, &[]);
         let use_offset = offset_of("message item", 0) + 2;
         let occurrence = analysis.occurrence_at(use_offset).unwrap();
         let definition = occurrence.definition.unwrap();
@@ -710,21 +754,21 @@ local interface mailbox_v1 {
 
     #[test]
     fn raises_goes_to_exception() {
-        let analysis = analyze(SOURCE);
+        let analysis = analyze(SOURCE, &[]);
         let occurrence = analysis.occurrence_at(offset_of("full", 1)).unwrap();
         assert_eq!(&SOURCE[occurrence.definition.unwrap()], "full");
     }
 
     #[test]
     fn builtin_hover_names_rust_type() {
-        let analysis = analyze(SOURCE);
+        let analysis = analyze(SOURCE, &[]);
         let occurrence = analysis.occurrence_at(offset_of("boolean", 0)).unwrap();
         assert!(occurrence.hover.contains("bool"));
     }
 
     #[test]
     fn method_hover_has_signature_and_docs() {
-        let analysis = analyze(SOURCE);
+        let analysis = analyze(SOURCE, &[]);
         let occurrence = analysis.occurrence_at(offset_of("send(", 0)).unwrap();
         assert!(
             occurrence
@@ -736,14 +780,14 @@ local interface mailbox_v1 {
 
     #[test]
     fn references_include_declaration_and_uses() {
-        let analysis = analyze(SOURCE);
+        let analysis = analyze(SOURCE, &[]);
         let spans = analysis.references(offset_of("device", 0));
         assert_eq!(spans.len(), 2);
     }
 
     #[test]
     fn symbols_outline_interface_members() {
-        let symbols = analyze(SOURCE).symbols();
+        let symbols = analyze(SOURCE, &[]).symbols();
         assert_eq!(symbols.len(), 1);
         let names: Vec<&str> = symbols[0]
             .children
@@ -756,7 +800,7 @@ local interface mailbox_v1 {
     #[test]
     fn uses_resolves_functions_in_same_file() {
         let source = format!("{SOURCE}uses mailbox_v1 via component core {{ send }}\n");
-        let analysis = analyze(&source);
+        let analysis = analyze(&source, &[]);
         let offset = source.rfind("send").unwrap();
         let occurrence = analysis.occurrence_at(offset).unwrap();
         assert_eq!(&source[occurrence.definition.unwrap()], "send");
@@ -788,7 +832,7 @@ local interface mailbox_v1 {
 
     #[test]
     fn completion_after_lends_offers_key_kinds() {
-        let analysis = analyze(SOURCE);
+        let analysis = analyze(SOURCE, &[]);
         let source = "interface a_v1 { f() lends (";
         let labels: Vec<String> = analysis
             .completions(source, source.len())
@@ -800,7 +844,7 @@ local interface mailbox_v1 {
 
     #[test]
     fn completion_offers_local_types() {
-        let analysis = analyze(SOURCE);
+        let analysis = analyze(SOURCE, &[]);
         let offset = offset_of("send(", 0);
         let labels: Vec<String> = analysis
             .completions(SOURCE, offset)
@@ -809,5 +853,31 @@ local interface mailbox_v1 {
             .collect();
         assert!(labels.contains(&"message".to_owned()));
         assert!(labels.contains(&"card32".to_owned()));
+    }
+
+    #[test]
+    fn installed_interfaces_are_read_from_the_include_directories() {
+        let directory =
+            std::env::temp_dir().join(format!("if_lsp_installs_{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a scratch directory");
+        std::fs::write(
+            directory.join("b_v1.if"),
+            "local interface b_v1 { data 4096; badged; f(octet& stage); }",
+        )
+        .expect("write the installed interface");
+        let source = "local interface a_v1 { data 4096; placement 1; \
+                      install(card32 first_slot) lends (key_table into) installs (b_v1); }";
+        let found = analyze(source, std::slice::from_ref(&directory));
+        let missing = analyze(source, &[]);
+        std::fs::remove_dir_all(&directory).ok();
+        assert!(found.diagnostics.is_empty(), "{:?}", found.diagnostics);
+        assert!(
+            missing
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("cannot find `b_v1.if`")),
+            "{:?}",
+            missing.diagnostics
+        );
     }
 }

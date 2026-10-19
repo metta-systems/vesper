@@ -40,9 +40,6 @@ revisit after use. Unanswered questions:
   become Retype-style, like Thread creation (an inert object from Retype, made
   usable by the authority that owns it)? To be looked at; the maintainer
   leans towards switching.
-- **Pipe keys in Meddle (D4/D9):** how an interface expresses that a function takes
-  a key obtained from another function (a USB pipe key from `open_pipe`), and how
-  `CallWithKey` lending lets the exporter derive that key into the caller's table.
 - **Shared memory:** pointer/shared-memory rules.
 - **Fault delivery refinements (D1):** the mechanism and its details are
   selected (see the contract). Open: a small per-AddressSpace fault queue that

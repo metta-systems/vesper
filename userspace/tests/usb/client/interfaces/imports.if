@@ -3,8 +3,10 @@
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 # The test client has no device tree node, so the chain starts from the node
-# found by its compatible string: the DWC2 host controller.
+# found by its compatible string: the DWC2 host controller. The functions of a
+# pipe (`pipe_v1`) are not imported: `open_pipe` installs their keys in the
+# client's table.
 uses usb_hcd_v1 via device compatible "brcm,bcm2708-usb"
 {
-    reset_port, port_status, open_pipe, set_route, close_pipe, clear_halt, control
+    reset_port, port_status, open_pipe
 }

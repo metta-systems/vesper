@@ -1,8 +1,8 @@
 #![no_std]
 
-//! Calls to the `usb_hcd_v1` interface, generated from
-//! `drivers/usb-hcd-dwc2/interfaces/usb_hcd_v1.if`: a [`usb_hcd_v1::Client`]
-//! holds the Invocations its component was granted and makes typed calls
-//! through them.
+//! Calls to the USB host controller, generated from
+//! `drivers/usb-hcd-dwc2/interfaces/`: a [`usb_hcd_v1::Client`] opens pipes,
+//! and the keys it installs become the [`pipe_v1::Client`] of each pipe.
 
 include!(concat!(env!("OUT_DIR"), "/usb_hcd_v1.rs"));
+include!(concat!(env!("OUT_DIR"), "/pipe_v1.rs"));

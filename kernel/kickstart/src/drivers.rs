@@ -65,11 +65,11 @@ use {
         loader::{StackRegion, UserStack, update_init, write_init},
     },
     libdevice_driver::{
-        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
-        FB_WINDOW_SPANS, FbWindow, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES,
-        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, MAX_RESOURCES,
-        MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, ResourceRecord,
-        STACK_REGION, VideoBlock,
+        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit,
+        EXPORT_STACK_HEADROOM, ExportedArea, FB_WINDOW_SPANS, FbWindow, INIT_VA, Interrupt,
+        MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS,
+        MAX_RESOURCES, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region,
+        ResourceRecord, STACK_REGION, VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, dma_address, find_compatible,
@@ -687,9 +687,6 @@ fn bind_root_dispatcher(
 
 /// Pages of each target stack an exporting driver reserves for one client.
 const EXPORT_STACK_PAGES: u32 = 4;
-
-/// Minimum headroom of every exported function's target stack.
-const EXPORT_STACK_HEADROOM: u64 = 0x400;
 
 /// An instance loaded but not started: what wiring its imports and starting
 /// it need.

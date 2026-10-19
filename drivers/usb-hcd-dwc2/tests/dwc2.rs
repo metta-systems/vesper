@@ -280,55 +280,47 @@ mod tests {
         );
     }
 
-    fn pipe(owner: u64) -> Pipe {
+    fn pipe() -> Pipe {
         Pipe {
             device_address: 0,
             endpoint: 0,
             speed: Speed::Full,
             kind: TransferKind::Control,
             max_packet: 8,
-            owner,
             route: None,
         }
     }
 
     #[test]
-    fn a_pipe_handle_is_never_zero_and_belongs_to_its_owner() {
+    fn a_pipe_handle_is_never_zero() {
         let mut table = PipeTable::new();
-        let handle = table.open(pipe(7)).unwrap();
+        let handle = table.open(pipe()).unwrap();
         assert_ne!(handle, 0);
-        assert_eq!(table.get(handle, 7).unwrap().max_packet, 8);
-        assert_eq!(table.get(handle, 8), Err(PipeError::Invalid));
-        assert_eq!(table.get_mut(handle, 8).err(), Some(PipeError::Invalid));
-        assert_eq!(table.close(handle, 8), Err(PipeError::Invalid));
-        assert!(
-            table.get(handle, 7).is_ok(),
-            "a foreign close changed nothing"
-        );
+        assert_eq!(table.get(handle).unwrap().max_packet, 8);
     }
 
     #[test]
     fn a_closed_pipes_handle_stays_dead_when_its_slot_is_reused() {
         let mut table = PipeTable::new();
-        let old = table.open(pipe(1)).unwrap();
-        table.close(old, 1).unwrap();
-        assert_eq!(table.get(old, 1), Err(PipeError::Invalid));
-        assert_eq!(table.close(old, 1), Err(PipeError::Invalid));
-        let new = table.open(pipe(1)).unwrap();
+        let old = table.open(pipe()).unwrap();
+        table.close(old).unwrap();
+        assert_eq!(table.get(old), Err(PipeError::Invalid));
+        assert_eq!(table.close(old), Err(PipeError::Invalid));
+        let new = table.open(pipe()).unwrap();
         assert_ne!(new, old, "the generation moved on");
-        assert_eq!(table.get(old, 1), Err(PipeError::Invalid));
-        table.get(new, 1).unwrap();
+        assert_eq!(table.get(old), Err(PipeError::Invalid));
+        table.get(new).unwrap();
     }
 
     #[test]
     fn a_full_table_refuses_and_a_closed_slot_is_reusable() {
         let mut table = PipeTable::new();
         let handles: Vec<u32> = (0..MAX_PIPES)
-            .map(|_| table.open(pipe(1)).unwrap())
+            .map(|_| table.open(pipe()).unwrap())
             .collect();
-        assert_eq!(table.open(pipe(1)), Err(PipeError::Full));
-        table.close(handles[3], 1).unwrap();
-        table.open(pipe(2)).unwrap();
+        assert_eq!(table.open(pipe()), Err(PipeError::Full));
+        table.close(handles[3]).unwrap();
+        table.open(pipe()).unwrap();
     }
 
     #[test]
@@ -336,25 +328,21 @@ mod tests {
         let first_outside = u32::try_from(MAX_PIPES).unwrap();
         let mut table = PipeTable::new();
         for handle in [0, 1, u32::MAX, first_outside, 0x0001_0000 | first_outside] {
-            assert_eq!(table.get(handle, 0), Err(PipeError::Invalid), "{handle:#x}");
-            assert_eq!(
-                table.close(handle, 0),
-                Err(PipeError::Invalid),
-                "{handle:#x}"
-            );
+            assert_eq!(table.get(handle), Err(PipeError::Invalid), "{handle:#x}");
+            assert_eq!(table.close(handle), Err(PipeError::Invalid), "{handle:#x}");
         }
     }
 
     #[test]
     fn a_route_is_kept_on_its_pipe() {
         let mut table = PipeTable::new();
-        let handle = table.open(pipe(5)).unwrap();
-        table.get_mut(handle, 5).unwrap().route = Some(Route {
+        let handle = table.open(pipe()).unwrap();
+        table.get_mut(handle).unwrap().route = Some(Route {
             hub_address: 1,
             hub_port: 3,
         });
         assert_eq!(
-            table.get(handle, 5).unwrap().route,
+            table.get(handle).unwrap().route,
             Some(Route {
                 hub_address: 1,
                 hub_port: 3

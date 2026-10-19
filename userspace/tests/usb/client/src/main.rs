@@ -10,13 +10,20 @@
 //! USB3), checks that the root device is a hub, then checks the rules of pipes
 //! and control stages, and reports on the key usb-test installed
 //! (`driver_protocol::REPORT_SLOT`).
+//!
+//! A pipe is the four `pipe_v1` keys `open_pipe` installs in this program's
+//! table: the program lends its table, names the first of four vacant slots and
+//! reads the keys' values from the data area.
 
 use {
     driver_protocol::report_key,
     libdevice_driver::{driver_init, driver_threads},
     libmeddle_runtime::{DataArea, ExclusiveStacks, IoRec},
-    libobject::{EventCountKey, NotificationKey, RawKey},
-    usb_hcd_client::usb_hcd_v1::{Bindings, Client, Error, Exception, Speed, TransferKind},
+    libobject::{EventCountKey, KeyTableKey, NotificationKey, RawKey, Rights},
+    usb_hcd_client::{
+        pipe_v1::{self, Exception as PipeException},
+        usb_hcd_v1::{Bindings, Client, Error, Exception, Speed, TransferKind},
+    },
     vesper_usb_protocol::{
         descriptor::{self, Descriptor},
         enumeration::{Enumerator, Event, Failure, Speed as UsbSpeed, Step},
@@ -34,6 +41,11 @@ const CLASS_HUB: u8 = 9;
 const REPLY_CAPACITY: usize = 256;
 /// Pipes the controller keeps open at once.
 const MAX_PIPES: usize = 16;
+/// Keys one pipe has: one per function of `pipe_v1`.
+const PIPE_KEYS: usize = pipe_v1::FUNCTION_COUNT;
+/// Groups of `PIPE_KEYS` slots the program sets aside for pipe keys: the
+/// controller's pipes, and a few more for copies and refused attempts.
+const GROUPS: usize = MAX_PIPES + 4;
 
 driver_threads!(background);
 
@@ -59,42 +71,134 @@ fn speed_of(speed: Speed) -> UsbSpeed {
     }
 }
 
-/// The host controller, and the data area it shares with this program.
+/// An open pipe: its keys, and where they are in the program's table.
+struct Pipe {
+    client: pipe_v1::Client,
+    group: usize,
+    keys: [u64; PIPE_KEYS],
+}
+
+/// The host controller, the data area it shares with this program, and the
+/// table the pipes' keys are installed in.
 struct Hcd<'a> {
     client: &'a Client,
     area: DataArea,
+    table: KeyTableKey,
+    /// First slot of the first group.
+    first_slot: u32,
+    /// The target stack of calls into the controller, which pipe keys share.
+    stack_end: u64,
+    used: [bool; GROUPS],
 }
 
 impl Hcd<'_> {
+    /// The first slot of group `group`.
+    fn slot_of(&self, group: usize) -> u32 {
+        self.first_slot + u32::try_from(group * PIPE_KEYS).expect("a slot fits in u32")
+    }
+
+    /// A group of vacant slots, marked used.
+    fn take_group(&mut self) -> usize {
+        let group = self
+            .used
+            .iter()
+            .position(|used| !used)
+            .expect("a free group of slots");
+        self.used[group] = true;
+        group
+    }
+
+    /// A pipe client for the keys at `keys`.
+    fn pipe_client(&self, keys: &[u64; PIPE_KEYS]) -> pipe_v1::Client {
+        let bindings = pipe_v1::Bindings::from_installed(keys, self.stack_end, Some(self.area))
+            .expect("one key per function");
+        pipe_v1::Client::new(
+            bindings,
+            // SAFETY: this Thread is the only one calling through the
+            // controller's stacks.
+            unsafe { ExclusiveStacks::new() },
+        )
+    }
+
+    /// Open a pipe, installing its keys in a group of vacant slots.
+    fn open(
+        &mut self,
+        address: u32,
+        endpoint: u32,
+        speed: Speed,
+        kind: TransferKind,
+        max_packet: u16,
+    ) -> Result<Pipe, Error> {
+        let group = self.take_group();
+        let slot = self.slot_of(group);
+        let opened = self.client.open_pipe(
+            &self.table,
+            slot,
+            address,
+            endpoint,
+            speed,
+            kind,
+            max_packet,
+        );
+        if let Err(error) = opened {
+            self.used[group] = false;
+            return Err(error);
+        }
+        let mut keys = [0; PIPE_KEYS];
+        assert!(
+            self.area.read_u64s(0, &mut keys),
+            "the keys are in the area"
+        );
+        Ok(Pipe {
+            client: self.pipe_client(&keys),
+            group,
+            keys,
+        })
+    }
+
+    /// Close `pipe` through its key and give its slots back.
+    fn close(&mut self, pipe: &Pipe) {
+        pipe.client
+            .close_pipe()
+            .unwrap_or_else(|error| panic!("close_pipe failed: {error:?}"));
+        self.release(pipe);
+    }
+
+    /// Delete the keys of `pipe` from the table and free its group.
+    fn release(&mut self, pipe: &Pipe) {
+        for key in pipe.keys {
+            self.table
+                .delete(RawKey::from_wire(key))
+                .unwrap_or_else(|error| panic!("deleting a pipe key failed: {:?}", error.code()));
+        }
+        self.used[pipe.group] = false;
+    }
+
     /// Run `setup` on `pipe`, sending `out` as its data stage. A reply goes to
     /// `reply`; returns the bytes of it.
     fn control(
         &self,
-        pipe: u32,
+        pipe: &Pipe,
         setup: SetupPacket,
         out: &[u8],
         reply: &mut [u8],
-    ) -> Result<usize, Error> {
+    ) -> Result<usize, pipe_v1::Error> {
         assert!(self.area.write_bytes(0, &setup.to_bytes()));
         assert!(self.area.write_bytes(8, out));
         let stage = self
             .area
             .reference(0, 8 + u64::from(setup.length))
             .expect("the stage lies in the area");
-        let moved = usize::try_from(self.client.control(pipe, stage)?).expect("fits");
+        let moved = usize::try_from(pipe.client.control(stage)?).expect("fits");
         let got = reply.get_mut(..moved).expect("the reply fits");
         assert!(self.area.read_bytes(8, got));
         Ok(moved)
     }
 }
 
-fn exception(exception: Exception) -> Result<u32, Error> {
-    Err(Error::Exception(exception))
-}
-
 /// Enumerate the device on the root port to `ROOT_ADDRESS`. Returns its
 /// device descriptor, its configuration descriptor and the length of that.
-fn enumerate(hcd: &Hcd<'_>) -> ([u8; 18], [u8; REPLY_CAPACITY], usize, UsbSpeed) {
+fn enumerate(hcd: &mut Hcd<'_>) -> ([u8; 18], [u8; REPLY_CAPACITY], usize, UsbSpeed) {
     let mut enumerator = Enumerator::new(ROOT_ADDRESS).expect("a valid address");
     let mut address = 0;
     let mut max_packet = 8;
@@ -104,7 +208,7 @@ fn enumerate(hcd: &Hcd<'_>) -> ([u8; 18], [u8; REPLY_CAPACITY], usize, UsbSpeed)
     let mut configuration_len = 0;
     let mut reply = [0; REPLY_CAPACITY];
     // The pipe to the device as it is addressed now.
-    let mut pipe = None::<(u32, u8, u16)>;
+    let mut pipe = None::<(Pipe, u8, u16)>;
     let mut step = enumerator.next(Event::Start);
     loop {
         step = match step {
@@ -121,17 +225,14 @@ fn enumerate(hcd: &Hcd<'_>) -> ([u8; 18], [u8; REPLY_CAPACITY], usize, UsbSpeed)
                 // Reopen the pipe when the device's address or packet size
                 // changed since it was opened.
                 let wanted = (address, max_packet);
-                if pipe.is_none_or(|(_, open_address, open_packet)| {
-                    (open_address, open_packet) != (wanted.0, wanted.1)
+                if pipe.as_ref().is_none_or(|(_, open_address, open_packet)| {
+                    (*open_address, *open_packet) != (wanted.0, wanted.1)
                 }) {
-                    if let Some((handle, _, _)) = pipe {
-                        hcd.client
-                            .close_pipe(handle)
-                            .unwrap_or_else(|error| panic!("close_pipe failed: {error:?}"));
+                    if let Some((old, _, _)) = pipe.take() {
+                        hcd.close(&old);
                     }
-                    let handle = hcd
-                        .client
-                        .open_pipe(
+                    let opened = hcd
+                        .open(
                             u32::from(address),
                             0,
                             match speed {
@@ -141,15 +242,14 @@ fn enumerate(hcd: &Hcd<'_>) -> ([u8; 18], [u8; REPLY_CAPACITY], usize, UsbSpeed)
                             },
                             TransferKind::Control,
                             max_packet,
-                            0,
                         )
                         .unwrap_or_else(|error| panic!("open_pipe failed: {error:?}"));
-                    pipe = Some((handle, address, max_packet));
+                    pipe = Some((opened, address, max_packet));
                 }
-                let (handle, _, _) = pipe.expect("a pipe is open");
+                let (open, _, _) = pipe.as_ref().expect("a pipe is open");
                 let length = usize::from(setup.length).min(reply.len());
                 let data = reply.get_mut(..length).unwrap_or(&mut []);
-                match hcd.control(handle, setup, &[], data) {
+                match hcd.control(open, setup, &[], data) {
                     Ok(moved) => {
                         let got = reply.get(..moved).unwrap_or_default();
                         let descriptor_type = setup.value >> 8;
@@ -172,7 +272,7 @@ fn enumerate(hcd: &Hcd<'_>) -> ([u8; 18], [u8; REPLY_CAPACITY], usize, UsbSpeed)
                         }
                         enumerator.next(Event::Control(got))
                     }
-                    Err(Error::Exception(Exception::Stalled)) => {
+                    Err(pipe_v1::Error::Exception(PipeException::Stalled)) => {
                         enumerator.next(Event::ControlFailed(Failure::Stalled))
                     }
                     Err(_) => enumerator.next(Event::ControlFailed(Failure::Transfer)),
@@ -182,19 +282,16 @@ fn enumerate(hcd: &Hcd<'_>) -> ([u8; 18], [u8; REPLY_CAPACITY], usize, UsbSpeed)
             Step::Failed(failure) => panic!("enumeration failed: {failure:?}"),
         };
     }
-    if let Some((handle, _, _)) = pipe {
-        hcd.client
-            .close_pipe(handle)
-            .unwrap_or_else(|error| panic!("close_pipe failed: {error:?}"));
+    if let Some((open, _, _)) = pipe {
+        hcd.close(&open);
     }
     (device, configuration, configuration_len, speed)
 }
 
 /// Pipe and stage rules the controller component enforces.
-fn check_rules(hcd: &Hcd<'_>, speed: Speed) {
+#[allow(clippy::too_many_lines, reason = "one scenario, step by step")]
+fn check_rules(hcd: &mut Hcd<'_>, speed: Speed) {
     let client = hcd.client;
-    let full =
-        |address: u32| client.open_pipe(address, 0, Speed::Full, TransferKind::Control, 8, 0);
 
     // Status of the ports: the root port is connected and enabled, and no
     // other port exists.
@@ -208,34 +305,33 @@ fn check_rules(hcd: &Hcd<'_>, speed: Speed) {
     );
 
     // A usable pipe to the enumerated device.
-    let pipe = client
-        .open_pipe(
-            u32::from(ROOT_ADDRESS),
-            0,
-            speed,
-            TransferKind::Control,
-            64,
-            0,
-        )
+    let pipe = hcd
+        .open(u32::from(ROOT_ADDRESS), 0, speed, TransferKind::Control, 64)
         .unwrap_or_else(|error| panic!("open_pipe failed: {error:?}"));
-    assert_ne!(pipe, 0, "zero is never a handle");
+    assert!(
+        pipe.keys.iter().all(|&key| key != 0),
+        "every function has a key"
+    );
     let device = SetupPacket::get_descriptor(DESCRIPTOR_DEVICE, 0, 18);
     let mut reply = [0; 18];
     assert_eq!(
-        hcd.control(pipe, device, &[], &mut reply).expect("works"),
+        hcd.control(&pipe, device, &[], &mut reply).expect("works"),
         18
     );
     assert_eq!(reply[1], 1, "a device descriptor");
-    client.clear_halt(pipe).expect("clear_halt on an open pipe");
+    pipe.client
+        .clear_halt()
+        .expect("clear_halt on an open pipe");
 
     // Stages the component refuses: too short for the setup packet, shorter
     // than the data the setup packet announces, outside the area, misplaced.
-    let stage = |len: u64| hcd.area.reference(0, len).expect("in the area");
+    let area = hcd.area;
+    let stage = |len: u64| area.reference(0, len).expect("in the area");
     assert!(hcd.area.write_bytes(0, &device.to_bytes()));
     for refused in [stage(4), stage(8 + 17), stage(0)] {
         assert_eq!(
-            client.control(pipe, refused),
-            exception(Exception::NotPermitted),
+            pipe.client.control(refused),
+            Err(pipe_v1::Error::Exception(PipeException::NotPermitted)),
             "{refused:?}"
         );
     }
@@ -255,8 +351,8 @@ fn check_rules(hcd: &Hcd<'_>, speed: Speed) {
         },
     ] {
         assert_eq!(
-            client.control(pipe, outside),
-            exception(Exception::NotPermitted),
+            pipe.client.control(outside),
+            Err(pipe_v1::Error::Exception(PipeException::NotPermitted)),
             "{outside:?}"
         );
     }
@@ -268,13 +364,13 @@ fn check_rules(hcd: &Hcd<'_>, speed: Speed) {
         len: 8 + 4033,
     };
     assert_eq!(
-        client.control(pipe, big),
-        exception(Exception::NotPermitted),
+        pipe.client.control(big),
+        Err(pipe_v1::Error::Exception(PipeException::NotPermitted)),
         "the area holds the stage, the controller's page does not hold the data"
     );
     // A refused stage leaves the pipe usable.
     assert_eq!(
-        hcd.control(pipe, device, &[], &mut reply).expect("works"),
+        hcd.control(&pipe, device, &[], &mut reply).expect("works"),
         18
     );
 
@@ -288,94 +384,149 @@ fn check_rules(hcd: &Hcd<'_>, speed: Speed) {
         (1, 1, TransferKind::Interrupt, 8),
         (1, 2, TransferKind::Bulk, 64),
     ] {
-        assert_eq!(
-            client.open_pipe(address, endpoint, Speed::Full, kind, max_packet, 0),
-            exception(Exception::NotPermitted),
+        assert!(
+            matches!(
+                hcd.open(address, endpoint, Speed::Full, kind, max_packet),
+                Err(Error::Exception(Exception::NotPermitted))
+            ),
             "{address} {endpoint} {max_packet}"
+        );
+    }
+    // Slots that are not vacant, or outside the table, refuse the pipe, and the
+    // controller takes the half-made pipe back.
+    let taken = hcd.slot_of(pipe.group);
+    for first_slot in [taken, taken + 1, u32::MAX - 1, 100_000] {
+        assert_eq!(
+            client.open_pipe(
+                &hcd.table,
+                first_slot,
+                2,
+                0,
+                Speed::Full,
+                TransferKind::Control,
+                8
+            ),
+            Err(Error::Exception(Exception::NotPermitted)),
+            "{first_slot:#x}"
         );
     }
 
     // Routes: validated, kept, and not served yet.
-    let routed = full(2).expect("a second pipe");
-    assert_ne!(routed, pipe);
-    assert_eq!(
-        client.set_route(routed, 0, 1),
-        Err(Error::Exception(Exception::NotPermitted))
-    );
-    assert_eq!(
-        client.set_route(routed, 1, 0),
-        Err(Error::Exception(Exception::NotPermitted))
-    );
-    assert_eq!(
-        client.set_route(routed, 128, 1),
-        Err(Error::Exception(Exception::NotPermitted))
-    );
-    client
-        .set_route(routed, 1, 2)
+    let routed = hcd
+        .open(2, 0, Speed::Full, TransferKind::Control, 8)
+        .expect("a second pipe");
+    assert_ne!(routed.keys, pipe.keys);
+    for (hub, port) in [(0, 1), (1, 0), (128, 1)] {
+        assert_eq!(
+            routed.client.set_route(hub, port),
+            Err(pipe_v1::Error::Exception(PipeException::NotPermitted)),
+            "{hub} {port}"
+        );
+    }
+    routed
+        .client
+        .set_route(1, 2)
         .expect("a full-speed device can sit behind a hub");
     assert_eq!(
-        client.control(routed, stage(26)),
-        exception(Exception::NotPermitted),
+        routed.client.control(stage(26)),
+        Err(pipe_v1::Error::Exception(PipeException::NotPermitted)),
         "split transactions are not implemented"
     );
-    let fast = client
-        .open_pipe(3, 0, Speed::High, TransferKind::Control, 64, 0)
+    let fast = hcd
+        .open(3, 0, Speed::High, TransferKind::Control, 64)
         .expect("a high-speed pipe");
     assert_eq!(
-        client.set_route(fast, 1, 2),
-        Err(Error::Exception(Exception::NotPermitted))
-    );
-    assert_eq!(
-        client.set_route(0, 1, 2),
-        Err(Error::Exception(Exception::InvalidPipe))
+        fast.client.set_route(1, 2),
+        Err(pipe_v1::Error::Exception(PipeException::NotPermitted))
     );
 
-    // Closed, never-opened and stale handles.
-    for handle in [0, 1 << 16, u32::MAX] {
+    // Holding a key is the right to use the pipe: a copy of the keys in other
+    // slots works, closing through the copy closes the pipe for every holder,
+    // and the keys left behind fail.
+    let copy_group = hcd.take_group();
+    let copy_slot = hcd.slot_of(copy_group);
+    let mut copies = [0; PIPE_KEYS];
+    for (index, (copy, &key)) in copies.iter_mut().zip(&fast.keys).enumerate() {
+        let slot = copy_slot + u32::try_from(index).expect("a small index");
+        *copy = hcd
+            .table
+            .copy_derive(
+                RawKey::from_wire(key),
+                &hcd.table,
+                slot,
+                Rights(Rights::CALL),
+            )
+            .unwrap_or_else(|error| panic!("copying a pipe key failed: {:?}", error.code()))
+            .to_wire();
+    }
+    let delegated = Pipe {
+        client: hcd.pipe_client(&copies),
+        group: copy_group,
+        keys: copies,
+    };
+    delegated.client.clear_halt().expect("a copy works");
+    delegated.client.close_pipe().expect("a copy closes");
+    // The copy and the original name a pipe that is gone now.
+    for gone in [&delegated, &fast] {
         assert_eq!(
-            client.control(handle, stage(26)),
-            exception(Exception::InvalidPipe)
-        );
-        assert_eq!(
-            client.close_pipe(handle),
-            Err(Error::Exception(Exception::InvalidPipe))
-        );
-        assert_eq!(
-            client.clear_halt(handle),
-            Err(Error::Exception(Exception::InvalidPipe))
+            gone.client.clear_halt(),
+            Err(pipe_v1::Error::Exception(PipeException::InvalidPipe))
         );
     }
-    client.close_pipe(fast).expect("close");
-    client.close_pipe(routed).expect("close");
+    hcd.release(&delegated);
+    hcd.release(&fast);
+
+    // Keys of a closed pipe keep failing, even when its table slot is reused by
+    // a new pipe.
+    routed.client.close_pipe().expect("close");
     assert_eq!(
-        client.close_pipe(routed),
-        Err(Error::Exception(Exception::InvalidPipe))
+        routed.client.control(stage(26)),
+        Err(pipe_v1::Error::Exception(PipeException::InvalidPipe))
     );
-    assert_eq!(
-        client.control(routed, stage(26)),
-        exception(Exception::InvalidPipe)
+    let reused = hcd
+        .open(2, 0, Speed::Full, TransferKind::Control, 8)
+        .expect("the slot is free again");
+    assert_ne!(
+        reused.keys, routed.keys,
+        "a reused pipe slot has a new badge"
     );
-    let reused = full(2).expect("the slot is free again");
-    assert_ne!(reused, routed, "a reused slot has a new handle");
-    assert_eq!(
-        client.clear_halt(routed),
-        Err(Error::Exception(Exception::InvalidPipe))
-    );
-    client.close_pipe(reused).expect("close");
+    for result in [
+        routed.client.clear_halt(),
+        routed.client.set_route(1, 2),
+        routed.client.close_pipe(),
+    ] {
+        assert_eq!(
+            result,
+            Err(pipe_v1::Error::Exception(PipeException::InvalidPipe))
+        );
+    }
+    reused.client.clear_halt().expect("the new pipe is fine");
+    hcd.close(&reused);
+    hcd.release(&routed);
 
     // The table has room for MAX_PIPES pipes, and no more.
-    client.close_pipe(pipe).expect("close");
-    let mut handles = [0; MAX_PIPES];
-    for handle in &mut handles {
-        *handle = full(1).expect("room for the pipe");
+    hcd.close(&pipe);
+    let mut pipes: [Option<Pipe>; MAX_PIPES] = [const { None }; MAX_PIPES];
+    for slot in &mut pipes {
+        *slot = Some(
+            hcd.open(1, 0, Speed::Full, TransferKind::Control, 8)
+                .expect("room for the pipe"),
+        );
     }
-    assert_eq!(full(1), exception(Exception::Busy));
-    for handle in handles {
-        client.close_pipe(handle).expect("close");
+    assert!(
+        matches!(
+            hcd.open(1, 0, Speed::Full, TransferKind::Control, 8),
+            Err(Error::Exception(Exception::Busy))
+        ),
+        "the table is full"
+    );
+    for slot in &mut pipes {
+        hcd.close(&slot.take().expect("an open pipe"));
     }
-    full(1)
-        .and_then(|handle| client.close_pipe(handle))
+    let last = hcd
+        .open(1, 0, Speed::Full, TransferKind::Control, 8)
         .expect("room again");
+    hcd.close(&last);
 }
 
 fn main(init_va: u64) -> ! {
@@ -389,8 +540,14 @@ fn main(init_va: u64) -> ! {
                 error.code()
             )
         });
+    let bindings = Bindings::from_imports(init.imports());
+    let stack_end = bindings
+        .open_pipe
+        .as_ref()
+        .expect("open_pipe is granted")
+        .stack_end;
     let client = Client::new(
-        Bindings::from_imports(init.imports()),
+        bindings,
         // SAFETY: this Thread is the only one calling through the client's
         // imports.
         unsafe { ExclusiveStacks::new() },
@@ -399,9 +556,13 @@ fn main(init_va: u64) -> ! {
         .data_area()
         .expect("the client shares a data area with the controller");
     assert_eq!(area.len, 4096);
-    let hcd = Hcd {
+    let mut hcd = Hcd {
         client: &client,
         area,
+        table: KeyTableKey::from_key(RawKey::from_wire(init.table)),
+        first_slot: u32::try_from(init.first_free_slot).expect("a slot fits in u32"),
+        stack_end,
+        used: [false; GROUPS],
     };
 
     assert_eq!(
@@ -409,7 +570,7 @@ fn main(init_va: u64) -> ! {
         1,
         "a device is attached"
     );
-    let (device, configuration, configuration_len, speed) = enumerate(&hcd);
+    let (device, configuration, configuration_len, speed) = enumerate(&mut hcd);
     let Some(Ok(Descriptor::Device(root))) = descriptor::walk(&device).next() else {
         panic!("the root device's descriptor is malformed");
     };
@@ -430,7 +591,7 @@ fn main(init_va: u64) -> ! {
     assert!(interfaces > 0, "the hub has an interface");
 
     check_rules(
-        &hcd,
+        &mut hcd,
         match speed {
             UsbSpeed::Low => Speed::Low,
             UsbSpeed::Full => Speed::Full,

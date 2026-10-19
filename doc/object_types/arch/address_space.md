@@ -70,6 +70,41 @@ Creates an [Invocation](../core/invocation.md) that calls `x2` in this AddressSp
 
 An AddressSpace with no KeyTable bound fails with `NotBound`. Failures leave the destination table unchanged.
 
+```mermaid
+flowchart TD
+    subgraph Caller["Caller (holds AddressSpace key + destination table key)"]
+        A["AddressSpaceKey.create_invocation_with_window(...)"]
+    end
+
+    A -->|"SVC on AddressSpace key<br/>op = CreateInvocation"| R
+
+    subgraph Regs["Register schema"]
+        R["x2 function_address (entry)<br/>x3 destination KeyTable key<br/>x4 vacant destination slot<br/>x5 stack_base<br/>x6 stack_end (exclusive)<br/>x7 minimum headroom<br/>x8 placement window (first, count)"]
+    end
+
+    R --> K1{"GRANT right on<br/>AddressSpace key?"}
+    K1 -- no --> E1["InsufficientRights"]
+    K1 -- yes --> K2{"INSTALL right on<br/>destination KeyTable?"}
+    K2 -- no --> E1
+    K2 -- yes --> K3{"destination slot vacant?"}
+    K3 -- no --> E2["slot error"]
+    K3 -- yes --> K4{"stack_base, stack_end, headroom<br/>16-byte multiples?<br/>extent nonempty, in user range,<br/>headroom positive and fits?<br/>window inside table capacity?"}
+    K4 -- no --> E3["invalid argument error"]
+    K4 -- yes --> N
+
+    subgraph Entry["New KeyEntry installed in destination table (64 bytes)"]
+        N["obj_type = Invocation<br/>rights = CALL | BADGE<br/>badge = 0<br/>payload:<br/>function_address<br/>address_space_address + generation<br/>stack_base / stack_end<br/>minimum_headroom (16-byte units)<br/>placement_first / placement_count"]
+    end
+
+    N --> RET["Returns destination-table-local RawKey"]
+
+    RET --> D1["Client may CopyDerive with a badge<br/>(needs BADGE right)"]
+    RET --> D2["CopyDerive masking BADGE off<br/>gives a CALL-only key"]
+
+    D1 --> CALL["Invocation.Call / CallWithKey<br/>target runs at function_address in the<br/>AddressSpace, on a stack inside the extent;<br/>badge arrives in x1, lent key in x0"]
+    D2 --> CALL
+```
+
 ## Implementation
 
 `Untyped.Retype` creates AddressSpaces (`size_bits` 0) from an Untyped's memory; the boot AddressSpace is created and bound by the boot code. An AddressSpace's translation-table leaves are tagged with its ASID, so switching AddressSpaces needs no TLB flush. The AddressSpace also records whether its fault handler is busy and how many faults went unhandled; see [fault delivery](../core/thread.md#fault-delivery). Retire does not free the KeyTable's memory.
