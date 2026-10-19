@@ -20,9 +20,26 @@ are in `input-implementation-plan.md`.
   in place, no version bumps.
 - Exit: `meddler check` passes on the new interface and its imports.
 
+## Done so far
+
+- The compositor owns the input stream (parts of C1, C4 and C5): `userspace/libs/compositor-core`
+  has the window list with stacking and hit-testing and the input router (pointer
+  clamped to the screen, focus and raise on the first button, an implicit grab until
+  the last button is released, `Enter`, `Leave` and `Focus` records, window-local
+  pointer positions, keys to the focused window, release of a removed device's keys,
+  resync from a snapshot), host-tested by `just test-compositor-host`.
+  `userspace/gui/compositor` is the only client of the USB HID component's `input_v1`:
+  it posts the buffers, folds the records into the router, recovers devices and
+  dropped records with `descriptor` and `snapshot`, and traces what each of three fixed
+  demonstration windows receives on the serial channel. `just test-compositor` checks
+  it under QEMU, and `just boot-compositor-test` is the Raspberry Pi 3 image. Still
+  open from the stages below: damage, clipping and blitting (C1), owning the screen
+  and a cursor (C2), `compositor_v1`, surfaces and clients (C3), and the per-client
+  event channels that carry the routed events to them (C4).
+
 ## C1: pure routing library
 
-- New pure `no_std` crate `libs/compositor-core`: window list and layers, a
+- New pure `no_std` crate `userspace/libs/compositor-core`: window list and layers, a
   bounded damage set with merge-on-overflow, clipping and blit onto slices,
   rectangle hit-testing, and the focus and implicit-grab state machine. The
   state machine produces `(target window, event)` pairs without performing I/O.
@@ -83,7 +100,7 @@ are in `input-implementation-plan.md`.
 
 ## Verification across stages
 
-- Host tests for `libs/compositor-core` at every stage, run through a `just`
+- Host tests for `userspace/libs/compositor-core` at every stage, run through a `just`
   recipe.
 - `just clippy` and `just fmt-check` for every Rust change, as the project's
   `just` workflow requires.

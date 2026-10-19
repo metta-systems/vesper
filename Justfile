@@ -26,7 +26,7 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client'
+user_components := 'compositor dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -203,6 +203,25 @@ build-usb-hid-test-hw board='rpi3': (build-components board '' '') (_build-test-
 [group("hw")]
 boot-usb-hid-test: build-usb-hid-test-hw chainofcommand
     target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'usb-hid-test-rpi3.bin' }}"
+
+# Build the compositor-test e2e kernel (the DWC2 component, the PL011 driver, the USB core, the HID component and the compositor)
+[group("test")]
+build-compositor-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'compositor-test' board)
+
+# Boot compositor-test on raspi3b with a hub on the root port and a keyboard behind it: the compositor reads the keyboard through input_v1
+[group("test")]
+test-compositor board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-compositor-test board)
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'compositor-test-' + config + '.bin' }}"
+
+# Build compositor-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor traces the routed input on the UART
+[group("hw")]
+build-compositor-test-hw board='rpi3': (build-components board '' '') (_build-test-kernel 'compositor-test' board '')
+
+# Build compositor-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a mouse and a keyboard, the compositor traces the routed input on the UART
+[group("hw")]
+boot-compositor-test: build-compositor-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'compositor-test-rpi3.bin' }}"
 
 # Build the mailbox-test e2e kernel (the mailbox component and a client wired through the firmware node)
 [group("test")]
@@ -391,7 +410,7 @@ alias ocd := openocd
 
 # Run device and chainboot tests in QEMU (rpi3), plus capability and tool tests natively
 [group("test")]
-test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-dispatch test-dispatch-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-mailbox test-mailbox-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault test-usb test-usb-core test-usb-hid
+test: test-device test-chainboot test-host test-debug-console test-key-table test-untyped test-capability test-memory test-sync test-ppc test-preempt test-preempt-rpi4 test-dispatch test-dispatch-rpi4 test-irq test-irq-rpi4 test-driver test-driver-rpi4 test-mailbox test-mailbox-rpi4 test-uart test-uart-rpi4 test-endpoint test-fp-trap test-fault test-usb test-usb-core test-usb-hid test-compositor
 
 alias t := test
 
@@ -549,7 +568,7 @@ test-chainboot:
 
 # Run capability, boot-platform and host tool tests natively
 [group("test")]
-test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host
+test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host test-compositor-host
     cargo test -p chainofcommand
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
@@ -580,6 +599,10 @@ test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hc
 [group("test")]
 test-input-host: (_host-test 'vesper-input-event' 'input_event')
 
+# Run the compositor logic tests natively: windows, hit-testing, focus, grab and input routing
+[group("test")]
+test-compositor-host: (_host-test 'vesper-compositor-core' 'compositor_core')
+
 # Test runner invoked by .cargo/config.toml runner
 [private]
 _test-runner binary_path:
@@ -606,11 +629,11 @@ _cross-clippy board='rpi3' features='':
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host
+clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host clippy-compositor-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
-clippy-pre-push: (build 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host
+clippy-pre-push: (build 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host clippy-compositor-host
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 [private]
@@ -639,6 +662,10 @@ clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy '
 # Lint the input event library tests with their native host harness
 [group("maintenance")]
 clippy-input-host: (_host-clippy 'vesper-input-event' 'input_event')
+
+# Lint the compositor logic tests with their native host harness
+[group("maintenance")]
+clippy-compositor-host: (_host-clippy 'vesper-compositor-core' 'compositor_core')
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]

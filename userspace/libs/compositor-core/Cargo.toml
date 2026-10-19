@@ -1,0 +1,38 @@
+[package]
+name = "vesper-compositor-core"
+
+description = "Pure compositor logic for Vesper: windows and their stacking order, hit-testing, and the router that turns an input producer's frames into per-window events with focus and an implicit pointer grab. No I/O."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+[dependencies]
+vesper-input-event = { workspace = true }
+
+# Shared by the compositor and its tests; host tests bring their own harness.
+[lib]
+name = "compositor_core"
+test = false
+harness = false
+
+[[test]]
+name = "compositor_core"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

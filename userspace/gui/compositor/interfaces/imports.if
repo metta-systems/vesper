@@ -1,0 +1,8 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The compositor is the only consumer of the USB HID component's input
+# interface: it reads the descriptor and the state of each device the component
+# serves, and the events arrive on the interface's io-channel.
+uses input_v1 via component usb_hid { descriptor, snapshot }

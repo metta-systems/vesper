@@ -1,0 +1,40 @@
+[package]
+name = "compositor"
+
+description = "The compositor program: the single consumer of the USB HID component's input stream, which it routes to windows with focus and an implicit pointer grab."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+qemu = ["libserial-trace/qemu", "libuser/qemu"]
+
+[dependencies]
+driver-protocol = { workspace = true }
+input-client = { workspace = true }
+libcompositor-core = { workspace = true }
+libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libserial-trace = { workspace = true }
+libuser = { workspace = true }
+usb-hid = { workspace = true }
+vesper-input-event = { workspace = true }
+
+[[bin]]
+name = "compositor"
+test = false
+
+[lints]
+workspace = true

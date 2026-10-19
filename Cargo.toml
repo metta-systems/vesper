@@ -49,11 +49,13 @@ members = [
   "kernel/tests/usb-test",
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
+  "kernel/tests/compositor-test",
   # Libraries
   "libs/address",
   "libs/alloc",
   "libs/boot",
   "libs/component-loader",
+  "userspace/libs/compositor-core",
   "libs/console",
   "libs/cpu",
   "libs/device-driver",
@@ -108,6 +110,7 @@ members = [
   "userspace/tests/mailbox/client",
   "userspace/tests/usb/client",
   "userspace/tests/input/trace",
+  "userspace/gui/compositor",
   "userspace/tests/irq/receiver",
   "userspace/dispatcher",
   "userspace/tests/preempt/spinner",
@@ -145,6 +148,12 @@ libaddress = { path = "libs/address", package = "vesper-address" }
 # liballoc = { path = "libs/alloc", package = "vesper-alloc" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libcomponent-loader = { path = "libs/component-loader", package = "vesper-component-loader" }
+vesper-input-event = { path = "libs/input-event" }
+vesper-usb-protocol = { path = "drivers/usb/protocol" }
+driver-protocol = { path = "userspace/tests/driver/protocol" }
+kickstart = { path = "kernel/kickstart" }
+nucleus = { path = "kernel/nucleus" }
+libcompositor-core ={ path = "userspace/libs/compositor-core", package = "vesper-compositor-core" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdevice-driver = { path = "libs/device-driver", package = "vesper-device-driver" }

@@ -285,6 +285,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "compositor"
+version = "0.0.1"
+dependencies = [
+ "driver-protocol",
+ "input-client",
+ "usb-hid",
+ "vesper-compositor-core",
+ "vesper-device-driver",
+ "vesper-input-event",
+ "vesper-io-channel",
+ "vesper-meddle-runtime",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-trace",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "compositor-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-component-loader",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machines",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2375,6 +2418,13 @@ dependencies = [
  "vesper-address",
  "vesper-image",
  "vesper-objects",
+]
+
+[[package]]
+name = "vesper-compositor-core"
+version = "0.0.1"
+dependencies = [
+ "vesper-input-event",
 ]
 
 [[package]]
