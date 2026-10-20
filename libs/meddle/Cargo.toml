@@ -1,5 +1,5 @@
 [package]
-name = "vesper-meddle"
+name = "metta-meddle"
 
 description = "Meddle interface definition language: parser, checks and the Rust stub generator behind meddler and interface crates' build scripts."
 

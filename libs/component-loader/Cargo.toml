@@ -1,5 +1,5 @@
 [package]
-name = "vesper-component-loader"
+name = "metta-component-loader"
 
 description = "Boot-time component provisioning for Vesper: boot-table keys, page-table chains and Frames through ordinary capability invocations, component AddressSpaces, and loading bundled EL0 component images."
 

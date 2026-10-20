@@ -10,12 +10,13 @@ core::arch::global_asm!(
     CONST_CORE_ID_MASK = const 0b11,
 );
 
+mod platform;
+
 use {
     aarch64_cpu::asm::barrier,
     core::{hash::Hasher, time::Duration},
     libconsole::console::console,
     liblog::{print, println},
-    libplatform::raspberrypi::BcmHost,
     libqemu::semihosting as semi,
     seahash::SeaHasher,
 };
@@ -31,29 +32,25 @@ unsafe extern "C" fn kernel_init(dtb: u32, max_kernel_size: u64) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
-    semi::println!("Initializing drivers");
-    // SAFETY: VERY SAFE
-    if let Err(x) = unsafe { libplatform::drivers::init() } {
-        panic!("Error initializing platform drivers: {x}");
-    }
-
-    semi::println!("Initializing devices and IRQs");
-    // Initialize all device drivers.
-    // SAFETY: Relatively safe.
-    unsafe {
-        libplatform::drivers::driver_manager().init_drivers_and_irqs();
-    }
+    semi::println!("Initializing the console");
+    let bringup = match platform::init() {
+        Ok(bringup) => bringup,
+        Err(x) => panic!("Error initializing the console: {x}"),
+    };
 
     // Route print!/println! through the console logger; without this they
     // silently no-op on the default NopLogger.
-    if libconsole::init_logger().is_err() {
+    // Chainboot runs with the MMU off, where an atomic swap never completes on
+    // the board: the logger is set with plain loads and stores.
+    // SAFETY: one core, nothing else sets a logger.
+    if unsafe { libconsole::init_logger_racy() }.is_err() {
         semi::println!("Logger already initialized");
     }
 
     // println! is usable from here on.
 
     // Transition from unsafe to safe.
-    kernel_main(dtb, max_kernel_size)
+    kernel_main(dtb, max_kernel_size, bringup)
 }
 
 // https://onlineasciitools.com/convert-text-to-ascii-art (FIGlet) with `cricket` font
@@ -63,6 +60,12 @@ const LOGO: &str = r"
  |  __|     |  _  |  |     |  _  |  _  |  _  |   _|
  |____|__|__|___._|__|__|__|_____|_____|_____|____|
 ";
+
+/// How often the LED flips while chainboot waits for the host.
+const BLINK_PERIOD: Duration = Duration::from_millis(250);
+
+/// After how many bytes of the kernel the LED flips.
+const BLINK_BYTES: u64 = 4096;
 
 fn read_u64(first: Option<u8>) -> u64 {
     let mut val: u64 = u64::from(first.or_else(|| Some(console().read_byte())).unwrap());
@@ -78,16 +81,42 @@ fn read_u64(first: Option<u8>) -> u64 {
 
 /// The main function running after the early init.
 #[inline(always)]
-fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
+fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! {
     #[cfg(test)]
     test_main();
 
     print!("{}", LOGO);
-    println!("{:>51}\n", BcmHost::board_name());
+    println!("{:>51}\n", platform::model_name(bringup.board_revision));
     println!("Preserving DTB at {:8x}", dtb);
+    println!(
+        "UART clock {} Hz ({})",
+        bringup.uart_clock.rate,
+        if bringup.uart_clock.reported {
+            "from the firmware"
+        } else {
+            "assumed, the firmware did not say"
+        }
+    );
+    println!(
+        "UART clock running: {}",
+        match bringup.clock_running {
+            Some(true) => "yes",
+            Some(false) => "no",
+            None => "the firmware did not say",
+        }
+    );
+    println!("MMU {}", platform::mmu_state());
+    match bringup.board_revision {
+        Some(revision) => println!("Board revision {revision:08x}"),
+        None => println!("Board revision unknown, the firmware did not say"),
+    }
     println!("⏪ Requesting kernel image...");
 
-    let kernel_addr: *mut u8 = BcmHost::kernel_load_address() as *mut u8;
+    let kernel_addr: *mut u8 = platform::KERNEL_LOAD_ADDRESS as *mut u8;
+
+    // The LED shows what chainboot is doing: it blinks while waiting for the host
+    // and while the kernel arrives, and goes off before the kernel runs.
+    let mut led = platform::led::Blinker::new();
 
     loop {
         console().flush();
@@ -131,6 +160,7 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
                     );
                     break 'wait_for_first b;
                 }
+                led.tick(BLINK_PERIOD);
                 libtime::time::time_manager().spin_for(Duration::from_millis(10));
             }
 
@@ -167,6 +197,9 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
         // Read the kernel byte by byte.
         for i in 0..size {
             let val = console().read_byte();
+            if i % BLINK_BYTES == 0 {
+                led.toggle();
+            }
             // SAFETY: Writing things can be unsafe.
             unsafe {
                 core::ptr::write_volatile(
@@ -196,11 +229,19 @@ fn kernel_main(dtb: u32, max_kernel_size: u64) -> ! {
         break;
     }
 
+    if let Err(why) = platform::led::set(false) {
+        println!("The LED stays as it is: {why}");
+    }
+
     println!(
         "⏪ Loaded! Executing the payload now from {:p}\n",
         kernel_addr
     );
     console().flush();
+
+    // The kernel starts with the MMU off, as the firmware starts chainboot.
+    #[cfg(feature = "mmu")]
+    platform::mmu::disable();
 
     // Use black magic to create a function pointer.
     // SAFETY: We're getting to safety soon!

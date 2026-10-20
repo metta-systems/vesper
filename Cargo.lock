@@ -203,15 +203,15 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-kicktest",
  "vesper-log",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -244,11 +244,17 @@ name = "chainboot"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
  "seahash",
+ "tock-registers",
  "vesper-console",
+ "vesper-locking",
  "vesper-log",
- "vesper-machines",
- "vesper-platforms",
+ "vesper-machine",
+ "vesper-mmio",
+ "vesper-primitives",
  "vesper-print",
  "vesper-qemu",
  "vesper-tests",
@@ -292,14 +298,14 @@ dependencies = [
  "driver-protocol",
  "fb-client",
  "input-client",
+ "metta-compositor-core",
+ "metta-meddle-runtime",
  "usb-hid",
- "vesper-compositor-core",
  "vesper-device-driver",
  "vesper-framebuffer",
  "vesper-graphics",
  "vesper-input-event",
  "vesper-io-channel",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-serial-trace",
@@ -311,16 +317,16 @@ name = "compositor-client"
 version = "0.0.1"
 dependencies = [
  "compositor-server",
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
 name = "compositor-server"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -331,10 +337,10 @@ dependencies = [
  "cfg-if",
  "driver-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-devicetree",
@@ -342,7 +348,7 @@ dependencies = [
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -478,17 +484,17 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-devicetree",
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -507,8 +513,8 @@ dependencies = [
 name = "driver-echo"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -516,8 +522,8 @@ name = "driver-echo-client"
 version = "0.0.1"
 dependencies = [
  "driver-echo",
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -527,8 +533,8 @@ dependencies = [
  "driver-echo",
  "driver-echo-client",
  "driver-protocol",
+ "metta-meddle-runtime",
  "vesper-device-driver",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",
@@ -551,10 +557,10 @@ dependencies = [
  "driver-echo",
  "driver-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-devicetree",
@@ -562,7 +568,7 @@ dependencies = [
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -619,16 +625,16 @@ dependencies = [
  "cfg-if",
  "endpoint-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -691,16 +697,16 @@ dependencies = [
  "cfg-if",
  "fault-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -710,8 +716,8 @@ dependencies = [
 name = "fb"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -719,8 +725,8 @@ name = "fb-client"
 version = "0.0.1"
 dependencies = [
  "fb",
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -730,8 +736,8 @@ dependencies = [
  "fb",
  "mailbox-client",
  "mailbox-impl",
+ "metta-meddle-runtime",
  "vesper-device-driver",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",
@@ -797,16 +803,16 @@ dependencies = [
  "cfg-if",
  "fp-trap-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -957,8 +963,8 @@ dependencies = [
 name = "input"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -966,8 +972,8 @@ name = "input-client"
 version = "0.0.1"
 dependencies = [
  "input",
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -976,11 +982,11 @@ version = "0.0.1"
 dependencies = [
  "driver-protocol",
  "input-client",
+ "metta-meddle-runtime",
  "usb-hid",
  "vesper-device-driver",
  "vesper-input-event",
  "vesper-io-channel",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-serial-trace",
@@ -1019,17 +1025,17 @@ dependencies = [
  "cfg-if",
  "irq-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-devicetree",
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -1061,11 +1067,12 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "cfg-if",
+ "metta-component-loader",
+ "metta-meddle-runtime",
  "nucleus",
  "snafu",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-devicetree",
@@ -1075,9 +1082,8 @@ dependencies = [
  "vesper-irqchip",
  "vesper-locking",
  "vesper-log",
- "vesper-machines",
+ "vesper-machine",
  "vesper-mapping",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -1162,8 +1168,8 @@ dependencies = [
 name = "mailbox"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -1171,8 +1177,8 @@ name = "mailbox-client"
 version = "0.0.1"
 dependencies = [
  "mailbox",
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
@@ -1199,10 +1205,10 @@ dependencies = [
  "driver-protocol",
  "kickstart",
  "mailbox",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-devicetree",
@@ -1210,7 +1216,7 @@ dependencies = [
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -1224,9 +1230,9 @@ dependencies = [
  "fb-client",
  "mailbox-client",
  "mailbox-impl",
+ "metta-meddle-runtime",
  "power-client",
  "vesper-device-driver",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",
@@ -1237,7 +1243,7 @@ name = "meddler"
 version = "0.0.1"
 dependencies = [
  "argh",
- "vesper-meddle",
+ "metta-meddle",
 ]
 
 [[package]]
@@ -1262,18 +1268,57 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-kicktest",
  "vesper-log",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
+]
+
+[[package]]
+name = "metta-component-loader"
+version = "0.0.1"
+dependencies = [
+ "nucleus",
+ "vesper-address",
+ "vesper-image",
+ "vesper-objects",
+]
+
+[[package]]
+name = "metta-compositor-core"
+version = "0.0.1"
+dependencies = [
+ "vesper-input-event",
+]
+
+[[package]]
+name = "metta-meddle"
+version = "0.0.1"
+dependencies = [
+ "ariadne",
+ "chumsky",
+ "logos",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "seahash",
+ "syn 3.0.6",
+]
+
+[[package]]
+name = "metta-meddle-runtime"
+version = "0.0.1"
+dependencies = [
+ "vesper-io-channel",
+ "vesper-objects",
 ]
 
 [[package]]
@@ -1346,7 +1391,7 @@ dependencies = [
  "vesper-irqchip",
  "vesper-locking",
  "vesper-log",
- "vesper-machines",
+ "vesper-machine",
  "vesper-mapping",
  "vesper-objects",
  "vesper-print",
@@ -1512,17 +1557,17 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "power"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
 name = "power-client"
 version = "0.0.1"
 dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
  "power",
- "vesper-meddle",
- "vesper-meddle-runtime",
 ]
 
 [[package]]
@@ -1533,9 +1578,9 @@ dependencies = [
  "bitbybit",
  "derive-mmio",
  "mailbox-client",
+ "metta-meddle-runtime",
  "power",
  "vesper-device-driver",
- "vesper-meddle-runtime",
  "vesper-mmio",
  "vesper-objects",
  "vesper-print",
@@ -1549,15 +1594,15 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-kicktest",
  "vesper-log",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -1587,16 +1632,16 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -1838,12 +1883,12 @@ version = "0.0.1"
 dependencies = [
  "compositor-client",
  "mailbox-client",
+ "metta-compositor-core",
+ "metta-meddle-runtime",
  "power-client",
- "vesper-compositor-core",
  "vesper-device-driver",
  "vesper-graphics",
  "vesper-io-channel",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-serial-channel",
@@ -1989,15 +2034,15 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-kicktest",
  "vesper-log",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -2145,10 +2190,10 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-exceptions",
@@ -2156,7 +2201,7 @@ dependencies = [
  "vesper-image-build",
  "vesper-io-channel",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -2200,27 +2245,27 @@ checksum = "1230ec65f13e0f9b28d789da20d2d419511893ea9dac2c1f4ef67b8b14e5da80"
 name = "usb"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
 name = "usb-client"
 version = "0.0.1"
 dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
  "usb",
- "vesper-meddle",
- "vesper-meddle-runtime",
 ]
 
 [[package]]
 name = "usb-core"
 version = "0.0.1"
 dependencies = [
+ "metta-meddle-runtime",
  "usb",
  "usb-hcd-client",
  "vesper-device-driver",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-serial-trace",
@@ -2237,11 +2282,11 @@ dependencies = [
  "cfg-if",
  "driver-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "usb-hcd",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-devicetree",
@@ -2249,7 +2294,7 @@ dependencies = [
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -2259,17 +2304,17 @@ dependencies = [
 name = "usb-hcd"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle",
- "vesper-meddle-runtime",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]
 name = "usb-hcd-client"
 version = "0.0.1"
 dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
  "usb-hcd",
- "vesper-meddle",
- "vesper-meddle-runtime",
 ]
 
 [[package]]
@@ -2295,13 +2340,13 @@ name = "usb-hid"
 version = "0.0.1"
 dependencies = [
  "input",
+ "metta-meddle-runtime",
  "usb-client",
  "usb-core",
  "usb-hcd-client",
  "vesper-device-driver",
  "vesper-input-event",
  "vesper-io-channel",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-usb-host",
@@ -2317,10 +2362,10 @@ dependencies = [
  "cfg-if",
  "driver-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-devicetree",
@@ -2328,7 +2373,7 @@ dependencies = [
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -2342,11 +2387,11 @@ dependencies = [
  "cfg-if",
  "driver-protocol",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "usb-hcd",
  "vesper-address",
  "vesper-boot",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-devicetree",
@@ -2354,7 +2399,7 @@ dependencies = [
  "vesper-image",
  "vesper-image-build",
  "vesper-kicktest",
- "vesper-machines",
+ "vesper-machine",
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
@@ -2365,10 +2410,10 @@ name = "usb-test-client"
 version = "0.0.1"
 dependencies = [
  "driver-protocol",
+ "metta-meddle-runtime",
  "usb-hcd-client",
  "vesper-device-driver",
  "vesper-io-channel",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-print",
  "vesper-usb-host",
@@ -2412,24 +2457,6 @@ dependencies = [
  "aarch64-cpu",
  "tock-registers",
  "vesper-cpu",
- "vesper-platforms",
-]
-
-[[package]]
-name = "vesper-component-loader"
-version = "0.0.1"
-dependencies = [
- "nucleus",
- "vesper-address",
- "vesper-image",
- "vesper-objects",
-]
-
-[[package]]
-name = "vesper-compositor-core"
-version = "0.0.1"
-dependencies = [
- "vesper-input-event",
 ]
 
 [[package]]
@@ -2453,7 +2480,7 @@ dependencies = [
 name = "vesper-device-driver"
 version = "0.0.1"
 dependencies = [
- "vesper-meddle-runtime",
+ "metta-meddle-runtime",
  "vesper-objects",
 ]
 
@@ -2462,14 +2489,6 @@ name = "vesper-devicetree"
 version = "0.0.1"
 dependencies = [
  "fdt-rs",
-]
-
-[[package]]
-name = "vesper-drivers"
-version = "0.0.1"
-dependencies = [
- "vesper-locking",
- "vesper-log",
 ]
 
 [[package]]
@@ -2509,9 +2528,9 @@ name = "vesper-image-build"
 version = "0.0.1"
 dependencies = [
  "goblin",
+ "metta-meddle",
  "minijinja",
  "toml",
- "vesper-meddle",
 ]
 
 [[package]]
@@ -2540,9 +2559,9 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "kickstart",
+ "metta-component-loader",
  "nucleus",
  "vesper-address",
- "vesper-component-loader",
  "vesper-cpu",
  "vesper-exceptions",
  "vesper-image",
@@ -2578,7 +2597,7 @@ name = "vesper-log"
 version = "0.0.1"
 
 [[package]]
-name = "vesper-machines"
+name = "vesper-machine"
 version = "0.0.1"
 dependencies = [
  "vesper-cpu",
@@ -2594,28 +2613,6 @@ dependencies = [
  "vesper-address",
  "vesper-log",
  "vesper-mmio",
-]
-
-[[package]]
-name = "vesper-meddle"
-version = "0.0.1"
-dependencies = [
- "ariadne",
- "chumsky",
- "logos",
- "prettyplease",
- "proc-macro2",
- "quote",
- "seahash",
- "syn 3.0.6",
-]
-
-[[package]]
-name = "vesper-meddle-runtime"
-version = "0.0.1"
-dependencies = [
- "vesper-io-channel",
- "vesper-objects",
 ]
 
 [[package]]
@@ -2644,32 +2641,6 @@ dependencies = [
  "vesper-print",
  "vesper-qemu",
  "vesper-syscalls",
-]
-
-[[package]]
-name = "vesper-platforms"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "arbitrary-int",
- "bitbybit",
- "derive-mmio",
- "snafu",
- "vesper-address",
- "vesper-boot",
- "vesper-console",
- "vesper-cpu",
- "vesper-drivers",
- "vesper-exceptions",
- "vesper-kernel-state",
- "vesper-locking",
- "vesper-log",
- "vesper-mapping",
- "vesper-mmio",
- "vesper-primitives",
- "vesper-qemu",
- "vesper-tests",
- "vesper-time",
 ]
 
 [[package]]
@@ -2738,8 +2709,8 @@ dependencies = [
 name = "vesper-usb-host"
 version = "0.0.1"
 dependencies = [
+ "metta-meddle-runtime",
  "usb-hcd-client",
- "vesper-meddle-runtime",
  "vesper-objects",
  "vesper-usb-protocol",
 ]

@@ -1,5 +1,5 @@
 [package]
-name = "vesper-compositor-core"
+name = "metta-compositor-core"
 
 description = "Pure compositor logic for Vesper: windows and their stacking order, hit-testing, and the router that turns an input producer's frames into per-window events with focus and an implicit pointer grab. No I/O."
 

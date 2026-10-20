@@ -20,7 +20,6 @@ maintenance = { status = "experimental" }
 [dependencies]
 aarch64-cpu = { workspace = true }
 libcpu = { workspace = true }
-libplatform = { workspace = true }
 tock-registers = { workspace = true }
 
 # Tests are offloaded to kernel integration tests binary.

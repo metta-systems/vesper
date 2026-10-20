@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod tests {
-    use vesper_meddle_runtime::{
+    use metta_meddle_runtime::{
         ARGUMENT_WORDS, ChannelArea, DataArea, ImportRecord, IoRec, OUTCOME_MALFORMED, OUTCOME_OK,
         Words, exception, malformed, ok, unused_words_are_zero,
     };

@@ -15,9 +15,11 @@ use {
     aarch64_cpu::registers::*,
     core::arch::global_asm,
     libcpu::endless_sleep,
-    libplatform::cpu::BOOT_CORE_ID,
     tock_registers::interfaces::{Readable, Writeable},
 };
+
+/// The core that boots; the others park.
+pub const BOOT_CORE_ID: u64 = 0;
 
 /// Type check the user-supplied entry function.
 #[macro_export]

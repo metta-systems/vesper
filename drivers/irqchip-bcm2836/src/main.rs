@@ -4,7 +4,7 @@
 
 //! Privileged IC component for the Raspberry Pi 3 interrupt controllers.
 //!
-//! Built position-independent and linked with `drivers/privileged.ld`;
+//! Built position-independent and linked with `linker/privileged.ld`;
 //! kickstart relocates it into the kernel half and the nucleus calls the
 //! exported [`libirqchip::IrqChipOps`] table (see `libirqchip`).
 

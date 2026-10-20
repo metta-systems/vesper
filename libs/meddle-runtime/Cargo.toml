@@ -1,5 +1,5 @@
 [package]
-name = "vesper-meddle-runtime"
+name = "metta-meddle-runtime"
 
 description = "Support code for Meddle-generated interface crates: word marshalling, call outcomes and Invocation bindings."
 

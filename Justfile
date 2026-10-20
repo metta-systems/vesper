@@ -11,12 +11,12 @@ board_rpi4_flags  := '-C target-cpu=cortex-a73 --cfg board_rpi4'
 rpi3_dtb          := justfile_directory() / 'targets/bcm2710-rpi-3-b-plus.dtb'
 rpi4_dtb          := justfile_directory() / 'targets/bcm2711-rpi-4-b.dtb'
 
-nucleus_link    := 'libs/platform/src/raspberrypi/linker/nucleus.ld'
-init_link       := 'libs/platform/src/raspberrypi/linker/kickstart.ld'
+nucleus_link    := 'linker/nucleus.ld'
+init_link       := 'linker/kickstart.ld'
 user_link       := 'userspace/runtime/user.ld'
-test_link       := 'libs/platform/src/raspberrypi/linker/test.ld'
+test_link       := 'linker/test.ld'
 chainboot_link  := 'bin/chainboot/src/link.ld'
-privileged_link := 'drivers/privileged.ld'
+privileged_link := 'linker/privileged.ld'
 
 fixed_rustflags := '-D warnings -Z macro-backtrace'
 # Privileged (EL1) components: position-independent, linked at 0 and relocated by kickstart
@@ -71,7 +71,7 @@ chainboot_rpi4_elf      := rpi4_hw_artifacts / image_profile / 'chainboot'
 rpi3_qemu_artifacts := target_root / rpi3_qemu / target
 rpi4_hw_artifacts   := target_root / rpi4_hw / target
 
-chainboot_serial := '/dev/tty.SLAB_USBtoUART'
+chainboot_serial := '/dev/cu.usbserial-019586E3'
 chainboot_baud   := '115200'
 
 # QEMU option fragments
@@ -259,7 +259,24 @@ build-fault-test board='rpi3': (build-components board 'qemu') (_build-test-kern
 build-chainboot board='rpi4' features='' config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'chainboot' board chainboot_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / 'chainboot' }}" "{{ images_dir / 'chainboot-' + config + '.bin' }}"
+    @just _audit-chainboot-exclusives "{{ target_root / config / target / image_profile / 'chainboot' }}"
     @echo "{{ok_label}} chainboot built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}: {{ images_dir / 'chainboot-' + config + '.bin' }}"
+
+# Fail if the chainboot ELF holds an exclusive or atomic read-modify-write instruction: chainboot runs without the data cache, where the Pi's cores never complete them and the program hangs without a sound. QEMU completes them, so only this check (and the board) can tell.
+[private]
+_audit-chainboot-exclusives elf:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Load/store-exclusive, and the LSE atomics: add, clear, xor, set, min and max loads and stores, swap, compare-and-swap.
+    # The address column is padded to the widest address, so a full-width one starts at the margin.
+    exclusive='^[[:space:]]*[0-9a-f]+:[[:space:]]+(ldx(r[bh]?|p)|ldaxr[bh]?|ldaxp|stx(r[bh]?|p)|stlxr[bh]?|stlxp|(ld|st)(add|clr|eor|set|smax|smin|umax|umin)(a|l|al)?[bh]?|swp(a|l|al)?[bh]?|cas(p)?(a|l|al)?[bh]?)[[:space:]]'
+    found=$(rust-objdump -d --no-show-raw-insn "{{ elf }}" | sed 's/<[^>]*>//g' | grep -E "${exclusive}" || true)
+    if [ -n "${found}" ]; then
+        echo "❌ {{ file_name(elf) }} contains exclusive or atomic read-modify-write instructions:"
+        echo "${found}"
+        exit 1
+    fi
+    echo "{{ ok_label }} {{ file_name(elf) }}: no exclusive or atomic read-modify-write instructions"
 
 # === Chainofcommand (host tool) ===
 
@@ -432,11 +449,11 @@ alias t := test
 test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (build-privileged 'rpi3' 'qemu') (build-drivers 'rpi3' 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=vesper-meddle --exclude=meddler --exclude=chainboot
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot
 
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=vesper-meddle --exclude=meddler --exclude=chainboot
+    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 [private]
@@ -603,8 +620,8 @@ test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'v
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 [group("test")]
-test-meddle: (_host-test 'vesper-meddle-runtime' 'words')
-    cargo test -p vesper-meddle
+test-meddle: (_host-test 'metta-meddle-runtime' 'words')
+    cargo test -p metta-meddle
 
 # Run the USB protocol logic tests natively: setup packets, descriptors, enumeration, HID boot reports
 [group("test")]
@@ -616,7 +633,7 @@ test-input-host: (_host-test 'vesper-input-event' 'input_event')
 
 # Run the compositor logic tests natively: windows, hit-testing, focus, grab and input routing
 [group("test")]
-test-compositor-host: (_host-test 'vesper-compositor-core' 'compositor_core')
+test-compositor-host: (_host-test 'metta-compositor-core' 'compositor_core')
 
 # Test runner invoked by .cargo/config.toml runner
 [private]
@@ -639,12 +656,12 @@ _cross-clippy board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=vesper-meddle --exclude=meddler \
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler \
       -- --deny warnings --allow deprecated
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host clippy-compositor-host
+clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') (_cross-clippy 'rpi3' 'mmu') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host clippy-compositor-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
@@ -667,8 +684,8 @@ clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-cli
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 [private]
-clippy-meddle: (_host-clippy 'vesper-meddle-runtime' 'words')
-    cargo clippy -p vesper-meddle -p meddler --tests -- --deny warnings --allow deprecated
+clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
+    cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
 # Lint the USB protocol host tests with their native host harness
 [private]
@@ -680,7 +697,7 @@ clippy-input-host: (_host-clippy 'vesper-input-event' 'input_event')
 
 # Lint the compositor logic tests with their native host harness
 [private]
-clippy-compositor-host: (_host-clippy 'vesper-compositor-core' 'compositor_core')
+clippy-compositor-host: (_host-clippy 'metta-compositor-core' 'compositor_core')
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
 [private]

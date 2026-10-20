@@ -459,7 +459,7 @@ pub struct PrivilegedElf {
 }
 
 impl PrivilegedElf {
-    /// Read a privileged component linked with `drivers/privileged.ld`.
+    /// Read a privileged component linked with `linker/privileged.ld`.
     ///
     /// # Panics
     ///
@@ -501,7 +501,7 @@ impl PrivilegedElf {
                 assert_eq!(
                     header.p_vaddr % PAGE_SIZE,
                     0,
-                    "{display}: segments must be page-aligned (use drivers/privileged.ld)"
+                    "{display}: segments must be page-aligned (use linker/privileged.ld)"
                 );
                 let start = usize::try_from(header.p_offset).unwrap_or(usize::MAX);
                 let end = start + usize::try_from(header.p_filesz).unwrap_or(usize::MAX);
@@ -593,7 +593,7 @@ impl PrivilegedElf {
 /// &[&PrivilegedImage]`, empty when the manifest lists none.
 ///
 /// Each entry names the component (`name`, an identifier) and its cargo
-/// `binary`, built with `drivers/privileged.ld` as a PIE.
+/// `binary`, built with `linker/privileged.ld` as a PIE.
 pub fn bundle_privileged(manifest: &str) {
     let (manifest_path, table) = load_manifest(manifest);
     let out = out_dir();

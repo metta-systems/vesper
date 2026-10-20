@@ -2,9 +2,9 @@
 
 Status: **shelved.** The drivers use [derive-mmio](https://docs.rs/derive-mmio) with
 [bitbybit](https://docs.rs/bitbybit) bitfields. Come back to this design if that combination
-proves too verbose or too limited. `libs/platform/src/raspberrypi/device_driver/bcm/gpio_libmmio.rs`
+proves too verbose or too limited. `doc/gpio_libmmio.rs`
 (a sketch that is not compiled) shows the BCM GPIO driver written against this design;
-`gpio.rs` next to it is the same driver on derive-mmio.
+`bin/chainboot/src/platform/gpio.rs` is the same driver, reduced to what chainboot needs, on derive-mmio.
 
 ## What the derive-mmio port showed
 

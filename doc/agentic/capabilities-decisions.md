@@ -191,3 +191,15 @@ needs them.
   resource manager is meant to clean up Threads stuck in the faulted state,
   which would also free those stacks; how it unwinds or retires them is not
   designed (see the [stack pools](capabilities-contract.md#stack-pools-maintainer-decision-2026-10-19) section of the contract).
+- **Chainboot with cached RAM:** the `mmu` build of chainboot maps RAM as Normal
+  non-cacheable with the data cache off, so atomic read-modify-write still does
+  not complete on the Raspberry Pi's cores (exclusives need a global monitor the
+  Pi does not have for uncached memory) and `build-chainboot` fails on any such
+  instruction. Mapping RAM write-back cacheable with the data cache on would
+  make atomics work, at the price of cache maintenance: clean the kernel image
+  and invalidate the instruction cache before the jump; clean and invalidate the
+  whole data cache by set/way before the MMU goes off, so that stale dirty lines
+  cannot overwrite the kernel later; clean the mailbox buffer before each send
+  and invalidate it after the answer, or keep the buffers in a non-cacheable
+  region. Worth doing only if chainboot needs atomics; QEMU does not model
+  caches, so the board is the test.

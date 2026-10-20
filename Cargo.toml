@@ -61,7 +61,6 @@ members = [
   "libs/cpu",
   "libs/device-driver",
   "libs/devicetree",
-  "libs/driver",
   "libs/exception",
   "libs/graphics",
   "libs/image",
@@ -81,7 +80,6 @@ members = [
   "libs/memory",
   "libs/mmio",
   "libs/object",
-  "libs/platform",
   "libs/primitives",
   "libs/print",
   "libs/qemu",
@@ -150,7 +148,7 @@ derive-mmio = { version = "0.8" }
 libaddress = { path = "libs/address", package = "vesper-address" }
 # liballoc = { path = "libs/alloc", package = "vesper-alloc" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
-libcomponent-loader = { path = "libs/component-loader", package = "vesper-component-loader" }
+libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
 vesper-input-event = { path = "libs/input-event" }
 vesper-usb-protocol = { path = "drivers/usb/protocol" }
 driver-protocol = { path = "userspace/tests/driver/protocol" }
@@ -163,12 +161,11 @@ irq-protocol = { path = "userspace/tests/irq/protocol" }
 mailbox-impl = { path = "drivers/mailbox" }
 kickstart = { path = "kernel/kickstart" }
 nucleus = { path = "kernel/nucleus" }
-libcompositor-core = { path = "userspace/libs/compositor-core", package = "vesper-compositor-core" }
+libcompositor-core = { path = "userspace/libs/compositor-core", package = "metta-compositor-core" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdevice-driver = { path = "libs/device-driver", package = "vesper-device-driver" }
 libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
-libdriver = { path = "libs/driver", package = "vesper-drivers" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
 libimage = { path = "libs/image", package = "vesper-image" }
@@ -179,10 +176,10 @@ libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
 liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
-libmachine = { path = "libs/machine", package = "vesper-machines" }
+libmachine = { path = "libs/machine", package = "vesper-machine" }
 libmapping = { path = "libs/mapping", package = "vesper-mapping" }
-libmeddle = { path = "libs/meddle", package = "vesper-meddle" }
-libmeddle-runtime = { path = "libs/meddle-runtime", package = "vesper-meddle-runtime" }
+libmeddle = { path = "libs/meddle", package = "metta-meddle" }
+libmeddle-runtime = { path = "libs/meddle-runtime", package = "metta-meddle-runtime" }
 mailbox = { path = "drivers/mailbox/server" }
 mailbox-client = { path = "drivers/mailbox/client" }
 usb-hcd = { path = "drivers/usb-hcd-dwc2/server" }
@@ -203,7 +200,6 @@ fb-client = { path = "drivers/fb/client" }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }
-libplatform = { path = "libs/platform", package = "vesper-platforms" }
 libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }

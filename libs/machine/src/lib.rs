@@ -84,7 +84,6 @@ mod lib_tests {
         }
 
         memory::mmu::post_enable_init();
-        platform::drivers::qemu_bring_up_console();
 
         test_main();
 

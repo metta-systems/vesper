@@ -1,5 +1,5 @@
 [package]
-name = "vesper-machines"
+name = "vesper-machine"
 
 description = "Vesper nanokernel shared code library, useful also for the chainboot loader."
 

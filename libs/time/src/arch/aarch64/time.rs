@@ -36,10 +36,18 @@ struct GenericTimerCounterValue(u64);
 // Global instances
 //--------------------------------------------------------------------------------------------------
 
+/// The frequency to assume when `CNTFRQ_EL0` says nothing: the Raspberry Pi 3's
+/// system counter runs at 19.2 MHz. The firmware's stub normally sets the
+/// register, and a zero there must not panic in code that cannot print yet.
+const FALLBACK_FREQUENCY: NonZeroU32 = NonZeroU32::new(19_200_000).unwrap();
+
 // @todo use InitStateLock here
 static ARCH_TIMER_COUNTER_FREQUENCY: liblocking::IRQSafeNullLock<Lazy<NonZeroU32>> =
     liblocking::IRQSafeNullLock::new(Lazy::new(|| {
-        NonZeroU32::try_from(u32::try_from(CNTFRQ_EL0.get()).unwrap()).unwrap()
+        u32::try_from(CNTFRQ_EL0.get())
+            .ok()
+            .and_then(NonZeroU32::new)
+            .unwrap_or(FALLBACK_FREQUENCY)
     }));
 
 //--------------------------------------------------------------------------------------------------

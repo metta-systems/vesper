@@ -1,8 +1,7 @@
-//! Sketch, not compiled (no `mod` declaration in `bcm/mod.rs`): the BCM GPIO driver
-//! from `gpio.rs` rewritten on the proposed pointer-based `libmmio`, which keeps
-//! tock-registers' bitfields and interface traits but never forms a reference to
-//! device memory. `libmmio` does not exist in this form yet; this shows the shape
-//! of the code and its use.
+//! Sketch of the BCM GPIO driver from `gpio.rs` rewritten on the proposed pointer-based
+//! `libmmio`, which keeps tock-registers' bitfields and interface traits but never forms
+//! a reference to device memory. `libmmio` does not exist in this form yet; this shows
+//! the shape of the code and its use.
 //!
 //! What changes against the tock-registers version:
 //! - `register_block!` takes the same rows as `register_structs!`, plus a handle
@@ -23,7 +22,7 @@ use {
     crate::device_driver::IRQNumber,
     core::{marker::PhantomData, ptr::NonNull},
     libaddress::{Address, Virtual},
-    liblocking::{IRQSafeNullLock, interface::Mutex},
+    liblocking::{interface::Mutex, IRQSafeNullLock},
     libmmio::{
         register_block,
         registers::{ReadPure, ReadPureWrite, WriteOnly},
@@ -358,7 +357,11 @@ impl GPIOInner {
     /// GPLEV reads have no side effects, so this takes `&self`.
     pub fn get_level(&self, pin: usize) -> Level {
         let (bank, bit) = locate(pin, 32);
-        self.registers.pin_level().get(bank).unwrap().is_set(pin_field(bit))
+        self.registers
+            .pin_level()
+            .get(bank)
+            .unwrap()
+            .is_set(pin_field(bit))
     }
 
     /// The function `pin` is set to, also through `&self`.

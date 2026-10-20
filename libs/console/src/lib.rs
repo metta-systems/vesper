@@ -67,3 +67,26 @@ pub fn init_logger() -> Result<(), SetLoggerError> {
     liblog::set_max_level(Level::Info); // Allow up to Info by default
     Ok(())
 }
+
+/// [`init_logger`] for code that runs with the MMU off, such as the bootloader.
+///
+/// [`init_logger`] swaps an atomic, which takes a load-exclusive and a
+/// store-exclusive; with the MMU off the memory is Device memory, where the
+/// store-exclusive of the Raspberry Pi's cores never succeeds, and the swap
+/// loops for ever without a sound. This one loads and stores.
+///
+/// # Errors
+///
+/// If a logger is set already.
+///
+/// # Safety
+///
+/// Nothing else sets a logger at the same time: one core, interrupts masked.
+pub unsafe fn init_logger_racy() -> Result<(), SetLoggerError> {
+    // SAFETY: the caller's contract.
+    unsafe {
+        liblog::set_logger_racy(&LOGGER)?;
+    }
+    liblog::set_max_level(Level::Info);
+    Ok(())
+}
