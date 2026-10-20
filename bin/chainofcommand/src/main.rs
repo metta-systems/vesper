@@ -36,10 +36,17 @@ trait FramedStream = Stream<Item = Result<Message, anyhow::Error>> + Unpin;
 type Sender = mpsc::Sender<Result<Message>>;
 type Receiver = mpsc::Receiver<Result<Message>>;
 
+/// Wait for the target to answer `m`.
+///
+/// Only the first characters of the pattern's length are the answer. What comes
+/// after them in the same chunk is the target going on ("OK" is followed by its
+/// next message at once), not a wrong answer. Every chunk is passed on to the
+/// console as it arrives, the answer and the rest alike.
 async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Result<()> {
-    // Accumulate chunks until we have enough chars for an exact match.
+    // Accumulate chunks until we have enough chars for the pattern.
     // Chunk boundaries are arbitrary (TCP/serial coalescing): "OK" may arrive
-    // as one chunk or split across several, so we can't pull one chunk per char.
+    // as one chunk or split across several, and may have more behind it, so we
+    // can't pull one chunk per char.
     let mut s = String::new();
     let want = m.chars().count();
     while s.chars().count() < want {
@@ -70,7 +77,7 @@ async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Re
             Message::Binary(_) => unreachable!(),
         }
     }
-    if s != m {
+    if !s.starts_with(m) {
         return Err(anyhow!("Failed to receive expected value {m:?}: got {s:?}"));
     }
     // to_console2
@@ -110,7 +117,7 @@ async fn send_kernel<P: ThePath>(
     let (kernel_file, kernel_size) = load_kernel(&to_console2, kernel).await?;
 
     to_console2
-        .send(Ok(Message::Text("⏩ Sending image size\r\n".into())))
+        .send(Ok(Message::Text("⏩ Sending image size .. ".into())))
         .await?;
     to_serial
         .send(Ok(Message::Binary(Bytes::copy_from_slice(
@@ -122,7 +129,7 @@ async fn send_kernel<P: ThePath>(
     expect(&to_console2, &mut from_serial, "OK").await?;
 
     to_console2
-        .send(Ok(Message::Text("⏩ Sending kernel image\r\n".into())))
+        .send(Ok(Message::Text("\r\n⏩ Sending kernel image\r\n".into())))
         .await?;
     let to_console2 = &to_console2;
     let to_serial = &to_serial;
@@ -147,7 +154,7 @@ async fn send_kernel<P: ThePath>(
 
     to_console2
         .send(Ok(Message::Text(format!(
-            "⏩ Sending image checksum {hashed_value:x}\r\n"
+            "⏩ Sending image checksum {hashed_value:x} .. "
         ))))
         .await?;
 
@@ -674,4 +681,101 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A serial line that has delivered `chunks`, with its sender, kept open so
+    /// that the line does not look closed.
+    fn serial(chunks: &[&str]) -> (Sender, Receiver) {
+        let (to_serial, from_serial) = mpsc::channel(16);
+        for chunk in chunks {
+            to_serial
+                .try_send(Ok(Message::Text((*chunk).to_owned())))
+                .expect("room for the chunks");
+        }
+        (to_serial, from_serial)
+    }
+
+    /// What `expect` passed on to the console, joined.
+    fn passed_on(console: &mut Receiver) -> String {
+        let mut text = String::new();
+        while let Ok(Ok(Message::Text(chunk))) = console.try_recv() {
+            text.push_str(&chunk);
+        }
+        text
+    }
+
+    #[tokio::test]
+    async fn the_answer_alone_matches() {
+        let (_line, mut from_serial) = serial(&["OK"]);
+        let (to_console, mut console) = mpsc::channel(16);
+        expect(&to_console, &mut from_serial, "OK")
+            .await
+            .expect("OK matches");
+        assert_eq!(passed_on(&mut console), "OK");
+    }
+
+    #[tokio::test]
+    async fn what_follows_the_answer_in_the_chunk_is_passed_on() {
+        let chunk = "OK⏪ Loaded! Executing the payload now from 0x80000\r\n\r\n";
+        let (_line, mut from_serial) = serial(&[chunk]);
+        let (to_console, mut console) = mpsc::channel(16);
+        expect(&to_console, &mut from_serial, "OK")
+            .await
+            .expect("OK and more matches");
+        assert_eq!(passed_on(&mut console), chunk);
+    }
+
+    #[tokio::test]
+    async fn an_answer_split_over_chunks_matches() {
+        let (_line, mut from_serial) = serial(&["O", "K⏪ Loaded"]);
+        let (to_console, mut console) = mpsc::channel(16);
+        expect(&to_console, &mut from_serial, "OK")
+            .await
+            .expect("a split OK matches");
+        assert_eq!(passed_on(&mut console), "OK⏪ Loaded");
+    }
+
+    #[tokio::test]
+    async fn the_rest_is_not_waited_for() {
+        // The line stays open and silent after "OK": expect must not wait for more.
+        let (_line, mut from_serial) = serial(&["OK"]);
+        let (to_console, _console) = mpsc::channel(16);
+        let answered = tokio::time::timeout(
+            Duration::from_secs(5),
+            expect(&to_console, &mut from_serial, "OK"),
+        )
+        .await;
+        assert!(matches!(answered, Ok(Ok(()))));
+    }
+
+    #[tokio::test]
+    async fn a_wrong_answer_fails() {
+        let (_line, mut from_serial) = serial(&["ERR ❌ Kernel image too big"]);
+        let (to_console, mut console) = mpsc::channel(16);
+        let error = expect(&to_console, &mut from_serial, "OK")
+            .await
+            .expect_err("ERR is not OK");
+        assert!(error.to_string().contains("ERR"));
+        // The target's words still reach the console.
+        assert_eq!(passed_on(&mut console), "ERR ❌ Kernel image too big");
+    }
+
+    #[tokio::test]
+    async fn a_wrong_answer_split_over_chunks_fails() {
+        let (_line, mut from_serial) = serial(&["E", "RR"]);
+        let (to_console, _console) = mpsc::channel(16);
+        assert!(expect(&to_console, &mut from_serial, "OK").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_closed_line_fails() {
+        let (line, mut from_serial) = serial(&[]);
+        drop(line);
+        let (to_console, _console) = mpsc::channel(16);
+        assert!(expect(&to_console, &mut from_serial, "OK").await.is_err());
+    }
 }

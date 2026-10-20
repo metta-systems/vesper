@@ -234,7 +234,7 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
     }
 
     println!(
-        "⏪ Loaded! Executing the payload now from {:p}\n",
+        "\n⏪ Loaded! Executing the payload now from {:p}\n",
         kernel_addr
     );
     console().flush();
