@@ -36,16 +36,16 @@ mod component {
     use {
         crate::trace::Trace,
         core::cell::UnsafeCell,
-        libdevice_driver::{DriverInit, INIT_VA, Turn, Turnstile, driver_init, local_key},
+        libdevice_driver::{DriverInit, INIT_VA, Turn, Turnstile, driver_init},
         libmeddle_runtime::DataArea,
         libobject::{
-            CapError, EventCountKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
-            UntypedKey, export::init_return_key, thread::ThreadReturnKey,
+            CapError, EventCountKey, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey,
+            export::init_return_key, thread::ThreadReturnKey,
         },
         usb::usb_v1::{Exception, UsbV1},
         usb_core::{
             claims::{ClaimError, Claims, HubRoute, Offer, PipeParams, UseError, offers_of},
-            devices::{AddressPool, Attachment, Device, DeviceTable},
+            devices::{AddressPool, Attachment, Device, DeviceTable, Removed},
         },
         usb_hcd_client::usb_hcd_v1::{Bindings, Client, Speed as HcdSpeed},
         usb_host::{
@@ -70,9 +70,14 @@ mod component {
     const ROOT_ADDRESS: u8 = 1;
     /// Ports of a hub the component drives.
     const MAX_PORTS: usize = 8;
+    /// Milliseconds between two looks at a port that gave up.
+    const FAILED_POLL_MS: u64 = 250;
+    /// Hubs the component drives: the root hub and those behind it.
+    const MAX_HUBS: usize = 4;
     /// Slot of the component's table where a boot test installs a Notification;
     /// the component signals it once every port of the hub has settled and a
     /// device sits behind the hub.
+    #[cfg(feature = "qemu")]
     const REPORT_SLOT: u32 = 250;
     /// Milliseconds between two looks at the root port while no device is there.
     const ROOT_POLL_MS: u32 = 100;
@@ -232,6 +237,35 @@ mod component {
         active: bool,
     }
 
+    /// A hub the core drives: what its transfers need, its control pipe and
+    /// its ports.
+    struct HubState {
+        info: HubInfo,
+        control: Pipe,
+        slots: [PortSlot; MAX_PORTS],
+        ports: usize,
+    }
+
+    /// What the ports of a hub need to know about it.
+    #[derive(Clone, Copy)]
+    struct HubInfo {
+        address: u8,
+        speed: Speed,
+        /// The hub and port the hub's own transfers take when it is a low- or
+        /// full-speed hub behind a high-speed one; the devices behind it take
+        /// the same route.
+        route: Option<Route>,
+    }
+
+    /// What running a port did beyond its own state.
+    #[derive(Default)]
+    struct Effects {
+        /// A hub was enumerated on the port.
+        started: Option<HubState>,
+        /// The addresses of the devices that went away with the port's device.
+        removed: Option<Removed>,
+    }
+
     /// What a controller's `transfer_failed` status says. The bits are those of
     /// the DWC2's host channel interrupts (`HCINT`) of the last run of the
     /// failed transfer, with two marker bits above them for split transactions
@@ -242,6 +276,9 @@ mod component {
         fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             const SPLIT: u32 = 1 << 31;
             const COMPLETE_SPLIT: u32 = 1 << 30;
+            // Set on a control transfer's failure: bits 26 and 27 are then the
+            // stage of the transfer that failed.
+            const CONTROL_STAGE: u32 = 1 << 11;
             const EVENTS: [(u32, &str); 10] = [
                 (1 << 0, "xfercompl"),
                 (1 << 1, "halted"),
@@ -262,6 +299,29 @@ mod component {
                     "start"
                 };
                 write!(formatter, " split/{phase}")?;
+            }
+            if self.0 & CONTROL_STAGE != 0 {
+                let stage = match (self.0 >> 26) & 3 {
+                    0 => "setup",
+                    1 => "data in",
+                    2 => "data out",
+                    _ => "status",
+                };
+                write!(formatter, " {stage} stage")?;
+            }
+            if self.0 & SPLIT != 0 {
+                write!(formatter, " after start[")?;
+                for (bit, name) in EVENTS {
+                    if self.0 & (bit << 12) != 0 {
+                        write!(formatter, " {name}")?;
+                    }
+                }
+                write!(
+                    formatter,
+                    " ] and {} nyet, {} restarts,",
+                    (self.0 >> 22) & 0x7,
+                    (self.0 >> 28) & 0x3
+                )?;
             }
             for (bit, name) in EVENTS {
                 if self.0 & bit != 0 {
@@ -464,28 +524,54 @@ mod component {
             }
         }
 
-        /// Run the hub driver for the hub at `hub`.
-        fn run_hub(&mut self, hub: &Enumerated) -> ! {
-            let control = match self.pipes.open(
-                u32::from(hub.address),
+        /// Open the control pipe of the hub `info` describes.
+        fn open_hub_control(&mut self, info: HubInfo, max_packet0: u16) -> Option<Pipe> {
+            let pipe = match self.pipes.open(
+                u32::from(info.address),
                 0,
-                match hub.speed {
+                match info.speed {
                     Speed::Low => HcdSpeed::Low,
                     Speed::Full => HcdSpeed::Full,
                     Speed::High => HcdSpeed::High,
                 },
                 usb_hcd_client::pipe_v1::TransferKind::Control,
-                hub.max_packet0,
+                max_packet0,
             ) {
                 Ok(pipe) => pipe,
                 Err(error) => {
                     trace!(
                         self.trace,
-                        "usb-core: no control pipe to the hub: {error:?}"
+                        "usb-core: no control pipe to the hub at address {}: {error:?}",
+                        info.address
                     );
-                    self.park()
+                    return None;
                 }
             };
+            if let Some(route) = info.route
+                && let Err(error) = pipe
+                    .client
+                    .set_route(u32::from(route.hub_address), u32::from(route.hub_port))
+            {
+                trace!(
+                    self.trace,
+                    "usb-core: the hub at address {} cannot be routed: {error:?}", info.address
+                );
+                self.pipes.close(&pipe);
+                return None;
+            }
+            Some(pipe)
+        }
+
+        /// Read the descriptor of the hub `hub` and take it over: its ports are
+        /// powered and run from the hub loop. `route` is the route the hub's
+        /// own transfers take.
+        fn start_hub(&mut self, hub: &Enumerated, route: Option<Route>) -> Option<HubState> {
+            let info = HubInfo {
+                address: hub.address,
+                speed: hub.speed,
+                route,
+            };
+            let control = self.open_hub_control(info, hub.max_packet0)?;
             let mut reply = [0; MAX_HUB_DESCRIPTOR];
             let length = u16::try_from(MAX_HUB_DESCRIPTOR).unwrap_or(u16::MAX);
             let described = self
@@ -494,9 +580,11 @@ mod component {
             let Some(descriptor) = described else {
                 trace!(
                     self.trace,
-                    "usb-core: the hub's descriptor could not be read"
+                    "usb-core: the descriptor of the hub at address {} could not be read",
+                    hub.address
                 );
-                self.park()
+                self.pipes.close(&control);
+                return None;
             };
             trace!(
                 self.trace,
@@ -513,32 +601,96 @@ mod component {
                     "usb-core: only the first {MAX_PORTS} ports are driven"
                 );
             }
+            Some(HubState {
+                info,
+                control,
+                slots: core::array::from_fn(|index| PortSlot {
+                    port: Port::new(descriptor.power_on_to_good_ms),
+                    wake_ns: 0,
+                    event: PortEvent::Start,
+                    active: index < ports,
+                }),
+                ports,
+            })
+        }
+
+        /// Forget the hubs whose address is in `addresses`: their devices are gone.
+        fn drop_hubs(&mut self, hubs: &mut [Option<HubState>], addresses: &[u8]) {
+            for slot in hubs.iter_mut() {
+                if slot
+                    .as_ref()
+                    .is_some_and(|hub| addresses.contains(&hub.info.address))
+                    && let Some(hub) = slot.take()
+                {
+                    trace!(
+                        self.trace,
+                        "usb-core: hub at address {} is gone", hub.info.address
+                    );
+                    self.pipes.close(&hub.control);
+                }
+            }
+        }
+
+        /// Drive the root hub and the hubs behind it.
+        fn run_hubs(&mut self, root: HubState) -> ! {
+            let mut hubs: [Option<HubState>; MAX_HUBS] = core::array::from_fn(|_| None);
+            hubs[0] = Some(root);
             let mut reported = false;
-            let mut slots: [PortSlot; MAX_PORTS] = core::array::from_fn(|index| PortSlot {
-                port: Port::new(descriptor.power_on_to_good_ms),
-                wake_ns: 0,
-                event: PortEvent::Start,
-                active: index < ports,
-            });
             loop {
                 let now = now_ns();
-                for index in 0..slots.len() {
-                    if slots[index].active && slots[index].wake_ns <= now {
+                for which in 0..MAX_HUBS {
+                    let Some(mut hub) = hubs[which].take() else {
+                        continue;
+                    };
+                    let mut effects = Effects::default();
+                    for index in 0..hub.ports {
+                        if !hub.slots[index].active || hub.slots[index].wake_ns > now {
+                            continue;
+                        }
                         let number = u8::try_from(index + 1).unwrap_or(u8::MAX);
+                        // Only one device on the whole bus may be waiting for its
+                        // address at a time, behind whichever hub.
                         let default_address_taken =
-                            slots.iter().enumerate().any(|(other, slot)| {
+                            hub.slots.iter().enumerate().any(|(other, slot)| {
                                 other != index && slot.port.holds_default_address()
+                            }) || hubs.iter().flatten().any(|other| {
+                                other
+                                    .slots
+                                    .iter()
+                                    .any(|slot| slot.port.holds_default_address())
                             });
+                        let (info, control) = (hub.info, &hub.control);
                         self.step_port(
-                            hub,
-                            &control,
+                            info,
+                            control,
                             number,
-                            &mut slots[index],
+                            &mut hub.slots[index],
                             default_address_taken,
+                            &mut effects,
                         );
                     }
+                    hubs[which] = Some(hub);
+                    if let Some(removed) = effects.removed {
+                        self.drop_hubs(&mut hubs, removed.addresses());
+                    }
+                    if let Some(started) = effects.started {
+                        match hubs.iter_mut().find(|slot| slot.is_none()) {
+                            Some(slot) => *slot = Some(started),
+                            None => {
+                                trace!(self.trace, "usb-core: too many hubs, not driving one");
+                                self.pipes.close(&started.control);
+                            }
+                        }
+                    }
                 }
-                if !reported && slots.iter().take(ports).all(|slot| slot.port.settled()) {
+                if !reported
+                    && hubs.iter().flatten().all(|hub| {
+                        hub.slots
+                            .iter()
+                            .take(hub.ports)
+                            .all(|slot| slot.port.settled())
+                    })
+                {
                     reported = true;
                     let behind = self.devices.len().saturating_sub(1);
                     trace!(
@@ -546,11 +698,14 @@ mod component {
                         "usb-core: every port of the hub has settled: {behind} devices behind it"
                     );
                     if behind > 0 {
+                        #[cfg(feature = "qemu")]
                         self.report();
                     }
                 }
-                let next = slots
+                let next = hubs
                     .iter()
+                    .flatten()
+                    .flat_map(|hub| hub.slots.iter())
                     .filter(|slot| slot.active)
                     .map(|slot| slot.wake_ns)
                     .min();
@@ -567,15 +722,24 @@ mod component {
         /// that may still answer at address 0; this port's reset waits for it.
         fn step_port(
             &mut self,
-            hub: &Enumerated,
+            hub: HubInfo,
             control: &Pipe,
             number: u8,
             slot: &mut PortSlot,
             default_address_taken: bool,
+            effects: &mut Effects,
         ) {
             let mut event = slot.event;
             loop {
+                let was_failed = slot.port.failed();
                 let action = slot.port.next(event);
+                if was_failed && !slot.port.failed() {
+                    // A device that never enumerated holds nothing to release.
+                    trace!(
+                        self.trace,
+                        "usb-core: hub {} port {number}: unusable device unplugged", hub.address
+                    );
+                }
                 event = match action {
                     PortAction::Idle => {
                         slot.event = PortEvent::Delayed;
@@ -584,8 +748,14 @@ mod component {
                         return;
                     }
                     PortAction::Failed => {
-                        trace!(self.trace, "usb-core: port {number}: unusable");
-                        slot.active = false;
+                        trace!(
+                            self.trace,
+                            "usb-core: hub {} port {number}: unusable until the device is unplugged",
+                            hub.address
+                        );
+                        // The port keeps being looked at, to see the unplugging.
+                        slot.event = PortEvent::Delayed;
+                        slot.wake_ns = now_ns() + FAILED_POLL_MS * 1_000_000;
                         return;
                     }
                     PortAction::Wait { milliseconds } => {
@@ -633,7 +803,7 @@ mod component {
                         PortEvent::Done
                     }
                     PortAction::Enumerate { speed } => {
-                        let ok = self.enumerate_behind(hub, number, speed);
+                        let ok = self.enumerate_behind(hub, number, speed, effects);
                         PortEvent::Enumerated { ok }
                     }
                     PortAction::Teardown => {
@@ -648,11 +818,19 @@ mod component {
                         for &address in removed.addresses() {
                             self.addresses.release(address);
                         }
+                        // The port status that ended the device, to tell an unplug from a
+                        // device that dropped off the bus by itself.
+                        let (status, change) = match event {
+                            PortEvent::Status(seen) => (seen.status, seen.change),
+                            _ => (0, 0),
+                        };
                         trace!(
                             self.trace,
-                            "usb-core: port {number}: device gone ({} addresses released)",
+                            "usb-core: hub {} port {number}: device gone ({} addresses released, port status {status:#06x} change {change:#06x})",
+                            hub.address,
                             removed.addresses().len()
                         );
+                        effects.removed = Some(removed);
                         PortEvent::Done
                     }
                 };
@@ -670,21 +848,35 @@ mod component {
         /// Enumerate the device behind port `number` of `hub`, which is reset
         /// and runs at `speed`. A low- or full-speed device behind a
         /// high-speed hub is reached with split transactions.
-        fn enumerate_behind(&mut self, hub: &Enumerated, number: u8, speed: Speed) -> bool {
+        fn enumerate_behind(
+            &mut self,
+            hub: HubInfo,
+            number: u8,
+            speed: Speed,
+            effects: &mut Effects,
+        ) -> bool {
             let Some(address) = self.addresses.take() else {
                 trace!(
                     self.trace,
-                    "usb-core: port {number}: no device address left"
+                    "usb-core: hub {} port {number}: no device address left", hub.address
                 );
                 return false;
             };
-            let route = (hub.speed == Speed::High && speed != Speed::High).then_some(Route {
-                hub_address: hub.address,
-                hub_port: number,
-            });
+            // The transaction translator of a high-speed hub serves the low- and
+            // full-speed devices behind it; those behind a low- or full-speed hub
+            // go through the translator that hub itself goes through.
+            let route = if hub.speed == Speed::High {
+                (speed != Speed::High).then_some(Route {
+                    hub_address: hub.address,
+                    hub_port: number,
+                })
+            } else {
+                hub.route
+            };
             trace!(
                 self.trace,
-                "usb-core: port {number}: enumerating a {} speed device as address {address}{}",
+                "usb-core: hub {} port {number}: enumerating a {} speed device as address {address}{}",
+                hub.address,
                 speed_name(speed),
                 if route.is_some() {
                     " through the hub's transaction translator (split transactions)"
@@ -702,7 +894,13 @@ mod component {
                 || Ok(speed),
                 |milliseconds| sleep_ms(init, milliseconds),
                 |setup, result| {
-                    trace_transfer(trace, format_args!("port {number}"), routed, setup, result);
+                    trace_transfer(
+                        trace,
+                        format_args!("hub {} port {number}", hub.address),
+                        routed,
+                        setup,
+                        result,
+                    );
                 },
             );
             match result {
@@ -715,21 +913,19 @@ mod component {
                         },
                         route,
                     );
-                    if device.configuration_len > 0
-                        && descriptor::walk(&device.device)
-                            .next()
-                            .is_some_and(|found| {
-                                matches!(found, Ok(Descriptor::Device(d)) if d.class_code == CLASS_HUB)
-                            })
-                    {
-                        trace!(self.trace, "usb-core: port {number}: nested hubs are not driven yet");
+                    let is_hub = descriptor::walk(&device.device).next().is_some_and(
+                        |found| matches!(found, Ok(Descriptor::Device(d)) if d.class_code == CLASS_HUB),
+                    );
+                    if is_hub {
+                        effects.started = self.start_hub(&device, route);
                     }
                     true
                 }
                 Err(error) => {
                     trace!(
                         self.trace,
-                        "usb-core: port {number}: enumeration failed: {error:?}"
+                        "usb-core: hub {} port {number}: enumeration failed: {error:?}",
+                        hub.address
                     );
                     self.addresses.release(address);
                     false
@@ -737,10 +933,14 @@ mod component {
             }
         }
 
-        /// Signal the boot test's Notification, if it installed one.
+        /// Signal the boot test's Notification. Only the QEMU boot tests install
+        /// one, so only images built with the `qemu` feature have this.
+        #[cfg(feature = "qemu")]
         fn report(&self) {
-            let key = NotificationKey::from_key(local_key(self.init.table, REPORT_SLOT));
-            // Nobody installs a key outside a boot test.
+            let key = libobject::NotificationKey::from_key(libdevice_driver::local_key(
+                self.init.table,
+                REPORT_SLOT,
+            ));
             let _signalled = key.signal(0);
         }
 
@@ -798,7 +998,10 @@ mod component {
             |found| matches!(found, Ok(Descriptor::Device(d)) if d.class_code == CLASS_HUB),
         );
         if is_hub {
-            core.run_hub(&root)
+            let Some(hub) = core.start_hub(&root, None) else {
+                core.park()
+            };
+            core.run_hubs(hub)
         }
         trace!(core.trace, "usb-core: the root device is not a hub");
         core.park()

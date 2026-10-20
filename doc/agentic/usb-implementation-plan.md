@@ -6,7 +6,7 @@ holds only open work. A finished item leaves it as a one-line marker in
 [usb-completed.md](usb-completed.md). Mark an item `- [x]` only after the command
 listed under Verification has passed for it.
 
-Done: USB0 (design, interfaces), USB1 (protocol crate), USB2 (DWC2 root port and EP0), most of USB3 (the hub driver and `usb-core`).
+Done: USB0 (design, interfaces), USB1 (protocol crate), USB2 (DWC2 root port and EP0), most of USB3 (the hub driver, nested hubs and `usb-core`).
 See [usb-completed.md](usb-completed.md).
 
 ## USB2 follow-ups
@@ -22,15 +22,16 @@ See [usb-completed.md](usb-completed.md).
 Done: the hub module, `usb-core` enumerating the root hub and the devices behind it, and
 the serial trace; see [usb-completed.md](usb-completed.md).
 
-- [ ] Verify split transactions on a Raspberry Pi 3: boot the `usb-core-test` image
-  (`just boot-usb-core-test`, or copy `just build-usb-core-test-hw`'s image) with a low- or full-speed device on the LAN9514 and read
-  `usb-core`'s trace on the UART. QEMU's hub is full speed and its controller has no
-  transaction translator, so nothing here runs a split end to end.
+- [ ] Split transactions through a nested high-speed hub (a Genesys GL850G behind the
+  LAN9514, `just boot-usb-core-test`): the SETUP passes and the data IN stage ends in
+  NAKs or a translator STALL; behind the LAN9514 itself the same devices enumerate.
+  Remove the status-stage `shortcut:` in `control()` once a split control read is seen
+  never to need it. Split transactions also need `Clear_TT_Buffer` after a failure
+  (USB 2.0 §11.17.5).
 - [ ] `usb_v1.control` on a claim: forward the claimant's stage to the device's control
   pipe. It needs the core's pipes shared with the exports' Threads, which today live on
   the enumeration Thread; a valid claim raises `not_permitted` until then.
-- [ ] Teardown of in-flight transfers when a device is unplugged, and nested hubs
-  (a device behind the hub that is a hub itself is traced and left alone).
+- [ ] Teardown of in-flight transfers when a device is unplugged.
 - [ ] Bring `usb-core` and the controller into the Raspberry Pi 3 boot image
   (`kernel/kickstart/image.toml`) with the shell, which holds the serial channel the
   trace uses; only one program gets a serial channel today.

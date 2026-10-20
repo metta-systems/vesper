@@ -86,7 +86,9 @@ mod component {
                 characteristics, host_channel_bit, poll_outcome, port_speed, port_status_bits,
                 port_with_reset_and_power, split_control, split_event_mask, transfer_size,
             },
-            split::{Phase, Sequence, Step, event_of, failure_status, next_pid, packet_bytes},
+            split::{
+                Event, Phase, Sequence, Step, event_of, failure_status, next_pid, packet_bytes,
+            },
         },
         vesper_usb_protocol::{
             descriptor::TransferKind as UsbKind,
@@ -143,6 +145,14 @@ mod component {
             0 => 19_200_000,
             frequency => frequency,
         }
+    }
+
+    /// What came before the failing run of a split packet, in the bits above the
+    /// channel's events: the events of the last start split (bits 12 to 21), the
+    /// complete splits answered NYET (bits 22 to 24, at most 7) and the times the
+    /// transaction was started over (bits 28 and 29, at most 3).
+    fn split_history(start_events: u32, not_yet: u32, restarts: u32) -> u32 {
+        ((start_events & 0x3ff) << 12) | (not_yet.min(7) << 22) | (restarts.min(3) << 28)
     }
 
     fn ticks_per_ms() -> u64 {
@@ -656,6 +666,11 @@ mod component {
             bytes: usize,
             mut sequence: Sequence,
         ) -> Result<Option<usize>, PipeException> {
+            // What the last start split ended with and how often a complete split
+            // was answered NYET, for the failure status.
+            let mut start_events = 0;
+            let mut not_yet = 0;
+            let deadline = now_ms() + RETRY_MS;
             loop {
                 let phase = sequence.phase();
                 let attempt = Attempt {
@@ -663,7 +678,13 @@ mod component {
                     split: split_control(target, phase == Phase::Complete),
                     pid,
                     offset,
-                    bytes,
+                    // The complete split of an OUT or SETUP carries no data (USB 2.0
+                    // §11.17.2, Figure 11-53).
+                    bytes: if phase == Phase::Complete && !target.input {
+                        0
+                    } else {
+                        bytes
+                    },
                     packets: 1,
                 };
                 let seen = self.start_attempt(index, &attempt);
@@ -671,15 +692,31 @@ mod component {
                     .wait_event(index, target, seen, |events| event_of(phase, events))
                     .map_err(|error| match error {
                         PipeException::TransferFailed { status } => PipeException::TransferFailed {
-                            status: failure_status(status, phase),
+                            status: failure_status(status, phase)
+                                | split_history(start_events, not_yet, sequence.restarts()),
                         },
                         other => other,
                     })?;
+                match phase {
+                    Phase::Start => start_events = status,
+                    Phase::Complete if event == Event::NotYet => not_yet += 1,
+                    Phase::Complete => {}
+                }
                 match sequence.next(event) {
                     Step::Issue(_) => {
                         // A run that ended on its own left the channel halted.
                         if !ChannelInterrupts::new_with_raw_value(status).halted() {
                             self.halt(index, target);
+                        }
+                        // NAKs do not count against the restarts, so time bounds them.
+                        if event == Event::Nak {
+                            if now_ms() >= deadline {
+                                return Err(PipeException::TransferFailed {
+                                    status: failure_status(status, phase)
+                                        | split_history(start_events, not_yet, sequence.restarts()),
+                                });
+                            }
+                            delay_ms(1);
                         }
                     }
                     Step::Done => {
@@ -692,11 +729,19 @@ mod component {
                     }
                     Step::Stalled => {
                         self.halt(index, target);
-                        return Err(PipeException::Stalled);
+                        // The status says which phase met the STALL and what else
+                        // the channel saw, which a bare `Stalled` would hide.
+                        return Err(PipeException::TransferFailed {
+                            status: failure_status(status, phase)
+                                | split_history(start_events, not_yet, sequence.restarts()),
+                        });
                     }
                     Step::Failed => {
                         self.halt(index, target);
-                        return Err(PipeException::TransferFailed { status });
+                        return Err(PipeException::TransferFailed {
+                            status: failure_status(status, phase)
+                                | split_history(start_events, not_yet, sequence.restarts()),
+                        });
                     }
                 }
             }
@@ -821,6 +866,9 @@ mod component {
         /// bytes of `area` from byte `offset`: the setup packet, then the data
         /// stage, which is read (OUT) or written (IN) in place. Returns the
         /// bytes of the data stage that moved.
+        ///
+        /// A `transfer_failed` status carries the stage that failed in bits 26
+        /// and 27 (0 SETUP, 1 data IN, 2 data OUT, 3 status) and bit 11.
         fn control(
             &mut self,
             pipe: &Pipe,
@@ -828,6 +876,27 @@ mod component {
             area: &DataArea,
             offset: u64,
             stage: usize,
+        ) -> Result<usize, PipeException> {
+            let mut failed_stage = 0;
+            self.control_stages(pipe, max_packet, area, offset, stage, &mut failed_stage)
+                .map_err(|error| match error {
+                    PipeException::TransferFailed { status } => PipeException::TransferFailed {
+                        status: (status & !(3 << 26)) | (failed_stage << 26) | (1 << 11),
+                    },
+                    other => other,
+                })
+        }
+
+        /// The stages of [`control`](Self::control); `failed_stage` is the stage
+        /// running when it returns.
+        fn control_stages(
+            &mut self,
+            pipe: &Pipe,
+            max_packet: u16,
+            area: &DataArea,
+            offset: u64,
+            stage: usize,
+            failed_stage: &mut u32,
         ) -> Result<usize, PipeException> {
             if stage < control::SETUP_BYTES {
                 return Err(PipeException::NotPermitted);
@@ -874,6 +943,7 @@ mod component {
             let mut moved = 0;
             if stages.has_data {
                 if stages.data_input {
+                    *failed_stage = 1;
                     moved =
                         self.run_channel(CHANNEL, target(true), Pid::Data1, DATA_OFFSET, length)?;
                     if !Self::copy_out(area, DATA_OFFSET, data_offset, moved) {
@@ -883,17 +953,36 @@ mod component {
                     if !Self::copy_in(area, data_offset, DATA_OFFSET, length) {
                         return Err(PipeException::NotPermitted);
                     }
+                    *failed_stage = 2;
                     self.run_channel(CHANNEL, target(false), Pid::Data1, DATA_OFFSET, length)?;
                     moved = length;
                 }
             }
-            self.run_channel(
+            *failed_stage = 3;
+            let status = self.run_channel(
                 CHANNEL,
                 target(stages.status_input),
                 Pid::Data1,
                 DATA_OFFSET,
                 0,
-            )?;
+            );
+            match status {
+                Ok(_) => {}
+                // A translator reports STALL for a downstream transaction that
+                // failed three times as well as for a device STALL (USB 2.0
+                // §11.17.1); the read's data is in hand and the next SETUP
+                // resynchronises the endpoint (§8.5.3.4).
+                // shortcut: hides a real STALL of a split control read's status
+                // stage, drop once the split status-stage failure is understood.
+                Err(PipeException::TransferFailed { status })
+                    if pipe.route.is_some() && stages.data_input && status & (1 << 3) != 0 =>
+                {
+                    semi::println!(
+                        "usb-hcd-dwc2: status stage of a split control read stalled: {status:#010x}"
+                    );
+                }
+                Err(error) => return Err(error),
+            }
             Ok(moved)
         }
     }

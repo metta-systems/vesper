@@ -688,6 +688,20 @@ clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-cli
 clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
     cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
+# Cross-clippy only the USB stack crates (controller, core, host library, HID) for a board with a feature set
+[private]
+_cross-clippy-usb board='rpi3' features='':
+    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+    cargo clippy {{ target_json }} \
+      {{ if features != '' { '--features=' + features } else { '' } }} \
+      {{ rust_std }} \
+      -p usb-hcd-dwc2 -p usb-core -p vesper-usb-host -p vesper-usb-protocol -p usb-hid \
+      -- --deny warnings --allow deprecated
+
+# Lint just the USB stack: the target build with and without `qemu`, and the host tests (much shorter than `clippy`)
+[group("maintenance")]
+clippy-usb: (_cross-clippy-usb 'rpi3' '') (_cross-clippy-usb 'rpi3' 'qemu') clippy-usb-host
+
 # Lint the USB protocol host tests with their native host harness
 [private]
 clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2') (_host-clippy 'usb-core' 'usb_core') (_host-clippy 'usb-hid' 'hid')

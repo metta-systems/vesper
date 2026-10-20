@@ -170,6 +170,16 @@ pub fn enumerate(
                     }
                 }
                 let (open, _, _) = pipe.as_ref().expect("a pipe is open");
+                // A low-speed control endpoint has 8-byte packets (USB 2.0 §5.5.3),
+                // so the first 8 bytes of the device descriptor are one full
+                // packet and the data stage would end early. Read the whole
+                // descriptor from such a device instead.
+                let first_read =
+                    setup.value >> 8 == u16::from(DESCRIPTOR_DEVICE) && setup.length == 8;
+                let mut setup = setup;
+                if first_read && speed == Speed::Low {
+                    setup.length = 18;
+                }
                 let length = usize::from(setup.length).min(reply.len());
                 let data = reply.get_mut(..length).unwrap_or(&mut []);
                 let result = pipes.control(open, setup, &[], data);
@@ -182,7 +192,7 @@ pub fn enumerate(
                             current = u8::try_from(setup.value).expect("a 7-bit address");
                         }
                         if descriptor_type == u16::from(DESCRIPTOR_DEVICE) {
-                            if setup.length == 8 {
+                            if first_read {
                                 max_packet = u16::from(got.get(7).copied().unwrap_or(8));
                             } else if let Some(copy) = device.get_mut(..got.len()) {
                                 copy.copy_from_slice(got);

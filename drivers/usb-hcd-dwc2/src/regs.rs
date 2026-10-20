@@ -177,8 +177,10 @@ pub struct Characteristics {
     enable: bool,
 }
 
-/// Where a split transaction's data sits in the full-speed or low-speed
-/// packet: a packet that fits one split carries `All`.
+/// Where a split transaction's data sits in the full-speed packet. Only
+/// isochronous OUT splits use it (USB 2.0 Table 8-2); the start-split token of a
+/// control, bulk or interrupt transaction must have its E field zero (§8.4.2.2),
+/// which is `Middle`.
 #[bitenum(u2, exhaustive = true)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum TransactionPosition {
@@ -472,8 +474,9 @@ pub struct Target {
 
 /// The split control of a channel that talks to `target`: disabled for a
 /// device on the root port, else a start split or a complete split
-/// (`complete`) through its hub port. A packet that fits one split carries
-/// all of its data in it.
+/// (`complete`) through its hub port. The transfers here are control and
+/// interrupt, whose start splits leave the position at zero (USB 2.0 §8.4.2.2:
+/// "the E field must be set to zero"); `All` would set it.
 #[must_use]
 pub fn split_control(target: Target, complete: bool) -> Split {
     match target.split {
@@ -481,7 +484,7 @@ pub fn split_control(target: Target, complete: bool) -> Split {
         Some(route) => Split::ZERO
             .with_port_address(u7::masked_new(route.hub_port))
             .with_hub_address(u7::masked_new(route.hub_address))
-            .with_position(TransactionPosition::All)
+            .with_position(TransactionPosition::Middle)
             .with_complete_split(complete)
             .with_enable(true),
     }

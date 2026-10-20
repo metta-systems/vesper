@@ -595,9 +595,11 @@ mod tests {
 
     #[test]
     fn split_control_wire_form_places_the_fields_where_the_manual_does() {
-        // HCSPLT: port 3 | hub 9 << 7 | position All (3) << 14 | enable (bit 31).
+        // HCSPLT: port 3 | hub 9 << 7 | enable (bit 31). The position field stays
+        // zero: USB 2.0 §8.4.2.2 has the E field of a control or interrupt
+        // start split zero (the position is for isochronous OUT only).
         let start = split_control(behind_a_hub(9, 3), false);
-        assert_eq!(start.raw_value(), 3 | (9 << 7) | (3 << 14) | (1 << 31));
+        assert_eq!(start.raw_value(), 3 | (9 << 7) | (1 << 31));
         // A complete split also sets bit 16.
         let complete = split_control(behind_a_hub(9, 3), true);
         assert_eq!(complete.raw_value(), start.raw_value() | (1 << 16));
@@ -690,14 +692,18 @@ mod tests {
     }
 
     #[test]
-    fn a_nak_or_an_error_starts_the_packet_over_until_given_up() {
-        for event in [Event::Nak, Event::Error] {
-            let mut sequence = Sequence::new();
-            for _ in 0..MAX_RESTARTS {
-                assert_eq!(sequence.next(event), Step::Issue(Phase::Start));
-            }
-            assert_eq!(sequence.next(event), Step::Failed, "{event:?}");
+    fn an_error_starts_the_packet_over_until_given_up_and_a_nak_never_counts() {
+        let mut sequence = Sequence::new();
+        for _ in 0..MAX_RESTARTS {
+            assert_eq!(sequence.next(Event::Error), Step::Issue(Phase::Start));
         }
+        assert_eq!(sequence.next(Event::Error), Step::Failed);
+        // USB 2.0 §11.17.1: a NAK leaves the error count alone.
+        let mut sequence = Sequence::new();
+        for _ in 0..=MAX_RESTARTS * 2 {
+            assert_eq!(sequence.next(Event::Nak), Step::Issue(Phase::Start));
+        }
+        assert_eq!(sequence.restarts(), 0);
         // The same from the complete split.
         let mut sequence = Sequence::new();
         sequence.next(Event::Accepted);

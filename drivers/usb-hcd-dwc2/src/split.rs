@@ -127,6 +127,12 @@ impl Sequence {
         }
     }
 
+    /// How often the transaction was started over so far.
+    #[must_use]
+    pub const fn restarts(&self) -> u32 {
+        self.restarts
+    }
+
     /// The phase to run now.
     #[must_use]
     pub const fn phase(&self) -> Phase {
@@ -156,6 +162,14 @@ impl Sequence {
             }
             (Phase::Complete, Event::Done) => Step::Done,
             (_, Event::Nak) if self.poll => Step::NoData,
+            // A NAK is the device or hub not ready yet: the start split is
+            // issued again and the error count is left alone (USB 2.0 §11.17.1).
+            // The caller bounds how long it keeps trying.
+            (_, Event::Nak) => {
+                self.phase = Phase::Start;
+                self.not_yet = 0;
+                Step::Issue(Phase::Start)
+            }
             (Phase::Complete, Event::NotYet) => {
                 self.not_yet += 1;
                 if self.not_yet > MAX_NYET {
@@ -164,7 +178,7 @@ impl Sequence {
                     Step::Issue(Phase::Complete)
                 }
             }
-            // A NAK or an error starts the packet over. Events a phase cannot
+            // An error starts the packet over. Events a phase cannot
             // produce (a result of a start split, an ACK of a complete split,
             // NYET of a start split) are errors of the hub, handled the same.
             _ => self.restart(),

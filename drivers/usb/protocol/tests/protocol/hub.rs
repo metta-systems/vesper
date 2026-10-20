@@ -142,6 +142,45 @@ fn port_at_reset() -> Port {
 }
 
 #[test]
+fn a_port_that_gave_up_takes_the_next_device_after_the_unplugging() {
+    let mut port = port_at_reset();
+    port.next(PortEvent::Done);
+    port.next(PortEvent::Delayed);
+    let resetting = status(POWER | CONNECTED | IN_RESET | LOW_SPEED, 0);
+    port.next(PortEvent::Status(resetting));
+    let done = status(POWER | CONNECTED | ENABLED | LOW_SPEED, RESET_CHANGED);
+    port.next(PortEvent::Status(done));
+    port.next(PortEvent::Done);
+    assert_eq!(
+        port.next(PortEvent::Delayed),
+        PortAction::Enumerate { speed: Speed::Low }
+    );
+    assert_eq!(
+        port.next(PortEvent::Enumerated { ok: false }),
+        PortAction::Failed
+    );
+    // Still plugged in: look again later.
+    assert_eq!(port.next(PortEvent::Delayed), PortAction::PollStatus);
+    let plugged = status(POWER | CONNECTED | LOW_SPEED, 0);
+    assert_eq!(
+        port.next(PortEvent::Status(plugged)),
+        PortAction::Wait {
+            milliseconds: POLL_MS
+        }
+    );
+    // Unplugged: the change is cleared and the port is empty again.
+    assert_eq!(port.next(PortEvent::Delayed), PortAction::PollStatus);
+    let unplugged = status(POWER, CONNECTION_CHANGED);
+    assert_eq!(
+        port.next(PortEvent::Status(unplugged)),
+        PortAction::ClearChange {
+            feature: C_PORT_CONNECTION
+        }
+    );
+    assert!(!port.failed());
+}
+
+#[test]
 fn a_deferred_reset_is_asked_for_again_at_the_next_look() {
     let mut port = port_at_reset();
     assert!(

@@ -314,7 +314,10 @@ enum PortState {
     Enumerating,
     Enumerated,
     TearingDown,
+    /// The device did not enumerate: the port waits for it to be unplugged.
     Failed,
+    /// The port is over-current and stays off.
+    OverCurrent,
 }
 
 /// The state of one downstream port of a hub: power, debounce, reset,
@@ -348,7 +351,7 @@ impl Port {
     /// Whether the port gave up.
     #[must_use]
     pub const fn failed(&self) -> bool {
-        matches!(self.state, PortState::Failed)
+        matches!(self.state, PortState::Failed | PortState::OverCurrent)
     }
 
     /// Whether the port has reached a resting state after power-on: a device is
@@ -356,7 +359,7 @@ impl Port {
     #[must_use]
     pub const fn settled(&self) -> bool {
         match self.state {
-            PortState::Enumerated | PortState::Failed => true,
+            PortState::Enumerated | PortState::Failed | PortState::OverCurrent => true,
             PortState::Empty => self.quiet,
             _ => false,
         }
@@ -402,9 +405,9 @@ impl Port {
     pub fn next(&mut self, event: PortEvent) -> PortAction {
         if let PortEvent::Status(status) = event
             && status.over_current()
-            && !matches!(self.state, PortState::Failed)
+            && !matches!(self.state, PortState::OverCurrent)
         {
-            self.state = PortState::Failed;
+            self.state = PortState::OverCurrent;
             return PortAction::Failed;
         }
         match (self.state, event) {
@@ -423,7 +426,8 @@ impl Port {
                 PortState::Empty
                 | PortState::Debouncing { .. }
                 | PortState::Resetting
-                | PortState::Enumerated,
+                | PortState::Enumerated
+                | PortState::Failed,
                 PortEvent::Delayed,
             ) => PortAction::PollStatus,
             (PortState::Empty | PortState::Debouncing { .. }, PortEvent::Done) => {
@@ -455,6 +459,8 @@ impl Port {
                 self.state = PortState::Failed;
                 PortAction::Failed
             }
+            (PortState::Failed, PortEvent::Status(status)) => self.when_failed(status),
+            (PortState::Failed, PortEvent::Done) => Self::poll_later(),
             (PortState::Enumerated, PortEvent::Status(status)) => {
                 if status.connected() && !status.connection_changed() {
                     Self::poll_later()
@@ -470,6 +476,22 @@ impl Port {
                 }
             }
             _ => PortAction::Idle,
+        }
+    }
+
+    /// A poll of a port that gave up: it waits for the device to be unplugged,
+    /// and then takes the next one like an empty port.
+    fn when_failed(&mut self, status: PortStatus) -> PortAction {
+        if status.connected() {
+            return Self::poll_later();
+        }
+        self.state = PortState::Empty;
+        if status.connection_changed() {
+            PortAction::ClearChange {
+                feature: C_PORT_CONNECTION,
+            }
+        } else {
+            Self::poll_later()
         }
     }
 
