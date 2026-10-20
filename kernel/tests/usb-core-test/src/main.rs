@@ -151,6 +151,7 @@ pub fn run() -> ! {
         &[
             &components::USB_DRIVER,
             &components::UART_DRIVER,
+            &components::MAILBOX_DRIVER,
             &components::USB_CORE_DRIVER,
             &components::DISPATCHER_DRIVER,
         ],
@@ -160,10 +161,11 @@ pub fn run() -> ! {
             let name = loaded.driver.component.name;
             let imports = init.imports();
             if name == components::USB.name {
-                // The controller: registers, no imports, and one client with
-                // a data area and a stack of its own.
+                // The controller: registers, one import (the mailbox, to power
+                // its domain), and one client with a data area and a stack of
+                // its own.
                 assert!(!init.pages().is_empty());
-                assert!(imports.is_empty());
+                assert_eq!(imports.len(), 1, "set_power_state of mailbox_v1");
                 let [area] = init.areas() else {
                     panic!("one client, one data area, found {}", init.areas().len());
                 };
@@ -178,6 +180,10 @@ pub fn run() -> ! {
                 controller_area = area.base;
             } else if name == components::UART.name {
                 // The serial driver: its registers, and a client attached.
+                assert!(!init.pages().is_empty());
+                assert!(imports.is_empty());
+            } else if name == components::MAILBOX.name {
+                // The mailbox: its registers, and the controller as a client.
                 assert!(!init.pages().is_empty());
                 assert!(imports.is_empty());
             } else {
@@ -224,10 +230,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 3,
-        "the controller, the PL011, usb-core and the root dispatcher"
+        INSTANCES + 4,
+        "the controller, the PL011, the mailbox, usb-core and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 2);
+    assert_eq!(seen, INSTANCES + 3);
     assert_eq!(client_area, controller_area, "the area usb-core was handed");
 
     // ── usb-core reports once the hub and the devices behind it are enumerated ──

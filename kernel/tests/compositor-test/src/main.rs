@@ -161,10 +161,11 @@ pub fn run() -> ! {
             let name = loaded.driver.component.name;
             let imports = init.imports();
             if name == components::USB.name {
-                // The controller: registers, no imports, and a client each
-                // for usb-core and usb-hid, each with a data area and a channel.
+                // The controller: registers, one import (the mailbox, to power
+                // its domain), and a client each for usb-core and usb-hid, each
+                // with a data area and a channel.
                 assert!(!init.pages().is_empty());
-                assert!(imports.is_empty());
+                assert_eq!(imports.len(), 1, "set_power_state of mailbox_v1");
                 assert_eq!(init.areas().len(), 2, "usb-core and usb-hid");
                 assert!(init.areas().iter().all(|area| area.channel_event != 0));
             } else if name == components::UART.name {

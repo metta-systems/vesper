@@ -362,6 +362,32 @@ impl Port {
         }
     }
 
+    /// Whether the device behind the port may still answer at address 0: the
+    /// port is being reset, or its device is not yet given an address. Only one
+    /// port of a hub may be in that state at a time, or the devices all answer
+    /// the same requests and corrupt each other's transfers.
+    #[must_use]
+    pub const fn holds_default_address(&self) -> bool {
+        matches!(
+            self.state,
+            PortState::Resetting
+                | PortState::ClearingReset { .. }
+                | PortState::Recovering { .. }
+                | PortState::Enumerating
+        )
+    }
+
+    /// Take back a [`PortAction::Reset`] that cannot run yet because another port
+    /// holds the default address: the port keeps debouncing and asks to reset
+    /// again at its next look.
+    pub fn defer_reset(&mut self) {
+        if matches!(self.state, PortState::Resetting) {
+            self.state = PortState::Debouncing {
+                stable_ms: DEBOUNCE_MS.saturating_sub(POLL_MS),
+            };
+        }
+    }
+
     /// Wait one polling step, then look at the port again.
     const fn poll_later() -> PortAction {
         PortAction::Wait {

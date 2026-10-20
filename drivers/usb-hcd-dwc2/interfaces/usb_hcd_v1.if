@@ -43,17 +43,24 @@ local interface usb_hcd_v1
     ## The request is not allowed: an argument or a destination slot is not usable.
     exception not_permitted {}
 
+    ## The controller did not come up: `step` is the step of its bring-up that
+    ## timed out. 1: the AHB master going idle, 2: the core soft reset, 3: host
+    ## mode, 4: the transmit FIFO flush, 5: the receive FIFO flush. The
+    ## controller serves nothing else.
+    exception controller_failed { card32 step; }
+
     ## Reset the root port `port` for the device attached to it, and return the
     ## speed the device runs at. Reset takes its mandated recovery time.
     reset_port(card32 port)
         returns (speed speed)
-        raises (no_device, busy);
+        raises (no_device, busy, controller_failed);
 
     ## The status bits of the root port `port`: bit 0 connected, bit 1 enabled,
     ## bit 16 connect changed, bit 17 enable changed (a reset enabled the port).
     ## A port that does not exist reports no bits.
     port_status(card32 port)
-        returns (card32 bits);
+        returns (card32 bits)
+        raises (controller_failed);
 
     ## Open a pipe to endpoint `endpoint` of device `device_address`. `endpoint`
     ## is the endpoint address of the USB specification: the number in bits 0 to
@@ -70,5 +77,5 @@ local interface usb_hcd_v1
     open_pipe(card32 first_slot, card32 device_address, card32 endpoint, speed speed)
         lends (key_table into)
         installs (pipe_v1)
-        raises (busy, not_permitted);
+        raises (busy, not_permitted, controller_failed);
 }

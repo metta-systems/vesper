@@ -142,6 +142,33 @@ fn port_at_reset() -> Port {
 }
 
 #[test]
+fn a_deferred_reset_is_asked_for_again_at_the_next_look() {
+    let mut port = port_at_reset();
+    assert!(
+        port.holds_default_address(),
+        "a port in reset answers at address 0"
+    );
+    port.defer_reset();
+    assert!(!port.holds_default_address());
+    // One poll step later the debounce is complete and the reset comes again.
+    assert_eq!(port.next(PortEvent::Delayed), PortAction::PollStatus);
+    let steady = status(POWER | CONNECTED | LOW_SPEED, 0);
+    assert_eq!(port.next(PortEvent::Status(steady)), PortAction::Reset);
+    assert!(port.holds_default_address());
+}
+
+#[test]
+fn only_a_port_between_reset_and_address_holds_the_default_address() {
+    assert!(!Port::new(0).holds_default_address());
+    let mut port_in_reset = port_at_reset();
+    port_in_reset.next(PortEvent::Done);
+    let resetting = status(POWER | CONNECTED | IN_RESET | LOW_SPEED, 0);
+    port_in_reset.next(PortEvent::Delayed);
+    port_in_reset.next(PortEvent::Status(resetting));
+    assert!(port_in_reset.holds_default_address());
+}
+
+#[test]
 fn a_connected_port_is_debounced_reset_and_enumerated() {
     let mut port = port_at_reset();
     assert_eq!(

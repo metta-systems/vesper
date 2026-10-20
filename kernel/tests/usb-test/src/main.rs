@@ -149,6 +149,7 @@ pub fn run() -> ! {
         keys,
         &[
             &components::USB_DRIVER,
+            &components::MAILBOX_DRIVER,
             &components::CLIENT_DRIVER,
             &components::DISPATCHER_DRIVER,
         ],
@@ -158,10 +159,11 @@ pub fn run() -> ! {
             let name = loaded.driver.component.name;
             let imports = init.imports();
             if name == components::USB.name {
-                // The controller: registers, no imports, and one client with
-                // a data area and a stack of its own.
+                // The controller: registers, one import (the mailbox, to power
+                // its domain), and one client with a data area and a stack of
+                // its own.
                 assert!(!init.pages().is_empty());
-                assert!(imports.is_empty());
+                assert_eq!(imports.len(), 1, "set_power_state of mailbox_v1");
                 let [area] = init.areas() else {
                     panic!("one client, one data area, found {}", init.areas().len());
                 };
@@ -174,6 +176,10 @@ pub fn run() -> ! {
                 assert_ne!(init.export_pool, 0, "the controller serves calls on a pool");
                 assert!(area.base >= DATA_WINDOW_VA);
                 controller_area = area.base;
+            } else if name == components::MAILBOX.name {
+                // The mailbox: its registers, and the controller as a client.
+                assert!(!init.pages().is_empty());
+                assert!(imports.is_empty());
             } else {
                 // The client: the three functions of `usb_hcd_v1` it uses, sharing one
                 // data area with the controller. It has no registers.
@@ -216,10 +222,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 2,
-        "the instances, the client and the root dispatcher"
+        INSTANCES + 3,
+        "the instances, the mailbox, the client and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 1);
+    assert_eq!(seen, INSTANCES + 2);
     assert_eq!(
         client_area, controller_area,
         "the area the client was handed"

@@ -105,6 +105,7 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
             None => "the firmware did not say",
         }
     );
+    println!("Counter frequency {} Hz", platform::counter_frequency());
     println!("MMU {}", platform::mmu_state());
     match bringup.board_revision {
         Some(revision) => println!("Board revision {revision:08x}"),

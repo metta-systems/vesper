@@ -2325,6 +2325,7 @@ dependencies = [
  "arbitrary-int",
  "bitbybit",
  "derive-mmio",
+ "mailbox-client",
  "usb-hcd",
  "vesper-device-driver",
  "vesper-io-channel",

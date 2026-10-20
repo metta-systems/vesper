@@ -329,8 +329,18 @@ mod component {
 
         /// Wait until a device is attached to the root port.
         fn wait_for_root_device(&mut self) {
-            while self.client.port_status(0).map_or(0, |bits| bits & 1) == 0 {
-                self.sleep(ROOT_POLL_MS);
+            loop {
+                match self.client.port_status(0) {
+                    Ok(bits) if bits & 1 != 0 => return,
+                    Ok(_) => self.sleep(ROOT_POLL_MS),
+                    Err(error) => {
+                        trace!(
+                            self.trace,
+                            "usb-core: the host controller did not come up: {error:?}"
+                        );
+                        self.park()
+                    }
+                }
             }
         }
 
@@ -512,10 +522,20 @@ mod component {
             });
             loop {
                 let now = now_ns();
-                for (index, slot) in slots.iter_mut().enumerate() {
-                    if slot.active && slot.wake_ns <= now {
+                for index in 0..slots.len() {
+                    if slots[index].active && slots[index].wake_ns <= now {
                         let number = u8::try_from(index + 1).unwrap_or(u8::MAX);
-                        self.step_port(hub, &control, number, slot);
+                        let default_address_taken =
+                            slots.iter().enumerate().any(|(other, slot)| {
+                                other != index && slot.port.holds_default_address()
+                            });
+                        self.step_port(
+                            hub,
+                            &control,
+                            number,
+                            &mut slots[index],
+                            default_address_taken,
+                        );
                     }
                 }
                 if !reported && slots.iter().take(ports).all(|slot| slot.port.settled()) {
@@ -542,7 +562,17 @@ mod component {
         }
 
         /// Run `slot`'s port until it waits.
-        fn step_port(&mut self, hub: &Enumerated, control: &Pipe, number: u8, slot: &mut PortSlot) {
+        ///
+        /// `default_address_taken` is whether another port of the hub has a device
+        /// that may still answer at address 0; this port's reset waits for it.
+        fn step_port(
+            &mut self,
+            hub: &Enumerated,
+            control: &Pipe,
+            number: u8,
+            slot: &mut PortSlot,
+            default_address_taken: bool,
+        ) {
             let mut event = slot.event;
             loop {
                 let action = slot.port.next(event);
@@ -587,6 +617,12 @@ mod component {
                             );
                         }
                         PortEvent::Done
+                    }
+                    PortAction::Reset if default_address_taken => {
+                        slot.port.defer_reset();
+                        slot.event = PortEvent::Delayed;
+                        slot.wake_ns = now_ns() + 10_000_000;
+                        return;
                     }
                     PortAction::Reset => {
                         trace!(

@@ -50,6 +50,15 @@ pub fn model_name(revision: Option<u32>) -> &'static str {
     }
 }
 
+/// What the counter frequency register holds, in Hz. The firmware's stub is meant
+/// to set it; a program that times anything by it fails without a sound when it
+/// is zero.
+#[must_use]
+pub fn counter_frequency() -> u64 {
+    use {aarch64_cpu::registers::CNTFRQ_EL0, tock_registers::interfaces::Readable};
+    CNTFRQ_EL0.get()
+}
+
 /// Whether the MMU is on, as a word.
 #[must_use]
 pub fn mmu_state() -> &'static str {

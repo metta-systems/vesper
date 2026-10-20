@@ -20,7 +20,7 @@ jtag = ["libmachine/jtag"]
 # Dummy feature, ignored in this crate.
 noserial = []
 # Run with the MMU on, on a flat identity map (see `platform::mmu`), and turn it off before the kernel runs.
-mmu = ["dep:tock-registers"]
+mmu = []
 
 [dependencies]
 aarch64-cpu = { workspace = true }
@@ -37,7 +37,7 @@ libprint = { workspace = true }
 libtime = { workspace = true }
 libqemu = { workspace = true }
 seahash = { workspace = true }
-tock-registers = { workspace = true, optional = true }
+tock-registers = { workspace = true }
 
 [dev-dependencies]
 libqemu = { workspace = true }

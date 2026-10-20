@@ -35,6 +35,8 @@ const BUFFER_LEN: usize = 1024;
 const BUFFER_BYTES: u64 = BUFFER_LEN as u64;
 /// Milliseconds between two looks for new devices.
 const RECHECK_MS: u64 = 250;
+/// Looks without a single device between two lines saying so: eight, two seconds.
+const QUIET_LOOKS: u32 = 8;
 /// Device ids asked for.
 const MAX_SUBJECT: u32 = 8;
 /// Records of one snapshot: a frame of `input_v1` holds at most 24.
@@ -147,6 +149,7 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
     let mut out = Output::new();
     let mut reported = false;
     let mut seen = 0;
+    let mut quiet_looks = 0_u32;
     loop {
         // Devices announced before a buffer was posted, or lost since.
         for subject in 1..=MAX_SUBJECT {
@@ -172,6 +175,21 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
                 // A test kernel puts a Notification at the report slot; the
                 // production image has none, and there is nobody to tell.
                 let _reported = NotificationKey::from_key(report_key(init.table)).signal(0);
+            }
+        }
+
+        // Say so while there is nothing to read: with no console on the USB side,
+        // a compositor that waits is otherwise indistinguishable from one that hangs.
+        if input.known.iter().any(|&known| known) {
+            quiet_looks = 0;
+        } else {
+            quiet_looks += 1;
+            if quiet_looks.is_multiple_of(QUIET_LOOKS) {
+                trace!(
+                    trace,
+                    "compositor: no input device yet ({} s)",
+                    u64::from(quiet_looks) * RECHECK_MS / 1000
+                );
             }
         }
 

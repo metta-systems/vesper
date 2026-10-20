@@ -412,10 +412,11 @@ device-eject: device
 
 # Build and write chainboot to SD Card, then eject
 [group("hw")]
-cb-eject board='rpi4': build-chainboot
-    cp "{{ chainboot_rpi4_bin }}" "{{ volume }}/chain_boot_rpi4.img"
-    @echo "{{copy_label}} copied chainboot to {{ volume }}/chain_boot_rpi4.img"
-    diskutil ejectAll "{{ volume }}"
+cb-eject board='rpi4': (build-chainboot board)
+    cp "{{ images_dir / 'chainboot-' + board + '.bin' }}" "{{ volume }}/{{ 'chainboot-' + board + '.bin' }}"
+    @echo "{{copy_label}} copied chainboot to {{ volume }}/{{ 'chainboot-' + board + '.bin' }}"
+    # TODO: sed proper kernel name here in config.txt
+    diskutil unmountDisk "{{ volume }}"
 
 # Build and boot via chainofcommand
 [group("hw")]

@@ -146,6 +146,7 @@ pub fn run() -> ! {
         &[
             &components::USB_DRIVER,
             &components::UART_DRIVER,
+            &components::MAILBOX_DRIVER,
             &components::USB_CORE_DRIVER,
             &components::USB_HID_DRIVER,
             &components::INPUT_TRACE_DRIVER,
@@ -157,14 +158,19 @@ pub fn run() -> ! {
             let name = loaded.driver.component.name;
             let imports = init.imports();
             if name == components::USB.name {
-                // The controller: registers, no imports, and a client each
-                // for usb-core and usb-hid, each with a data area and a channel.
+                // The controller: registers, one import (the mailbox, to power
+                // its domain), and a client each for usb-core and usb-hid, each
+                // with a data area and a channel.
                 assert!(!init.pages().is_empty());
-                assert!(imports.is_empty());
+                assert_eq!(imports.len(), 1, "set_power_state of mailbox_v1");
                 assert_eq!(init.areas().len(), 2, "usb-core and usb-hid");
                 assert!(init.areas().iter().all(|area| area.channel_event != 0));
             } else if name == components::UART.name {
                 // The serial driver: its registers, and a client attached.
+                assert!(!init.pages().is_empty());
+                assert!(imports.is_empty());
+            } else if name == components::MAILBOX.name {
+                // The mailbox: its registers, and the controller as a client.
                 assert!(!init.pages().is_empty());
                 assert!(imports.is_empty());
             } else if name == components::USB_CORE.name {
@@ -214,10 +220,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 5,
-        "the controller, the PL011, usb-core, usb-hid, input-trace and the root dispatcher"
+        INSTANCES + 6,
+        "the controller, the PL011, the mailbox, usb-core, usb-hid, input-trace and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 4);
+    assert_eq!(seen, INSTANCES + 5);
 
     // ── input-trace reports once it has read the keyboard through input_v1 ──
     let bits = NotificationKey::from_key(report)

@@ -6,6 +6,12 @@
 # core, the HID component and input-trace are programs (components with
 # `program = true`): Kickstart starts them at boot, without a device tree node.
 
+# The mailbox component, through which the controller's power domain is switched on.
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
 [[driver]]
 name = "usb"
 binary = "usb-hcd-dwc2"

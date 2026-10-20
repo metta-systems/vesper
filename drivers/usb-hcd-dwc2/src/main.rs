@@ -67,6 +67,7 @@ mod component {
             export::init_return_key, thread::ThreadReturnKey,
         },
         libuser::semihosting as semi,
+        mailbox_client::mailbox_v1::{Bindings, Client, Device},
         usb_hcd::{
             pipe_v1::{self, Exception as PipeException, PipeV1, TransferKind},
             usb_hcd_v1::{
@@ -107,8 +108,11 @@ mod component {
     const CHANNEL: usize = 0;
     /// Time one transfer may take before it is abandoned, in milliseconds.
     const TRANSFER_MS: u64 = 500;
-    /// Times a transfer is issued again after a NAK or a transaction error.
-    const ATTEMPTS: u32 = 3;
+    /// How long a transfer is issued again after a NAK or a transaction error,
+    /// in milliseconds. A device may NAK a stage of a control transfer while it
+    /// is busy (USB 2.0 §9.2.6.4 allows it 5 s for a data stage and 50 ms for the
+    /// status stage); a hub-attached device that is still starting needs this.
+    const RETRY_MS: u64 = 1000;
     /// Where the DMA page is mapped: the first device window page past the
     /// register pages.
     const DMA_VA: u64 = DEVICE_WINDOW_VA + MAX_DEVICE_PAGES as u64 * 4096;
@@ -131,13 +135,23 @@ mod component {
         CNTVCT_EL0.get()
     }
 
+    /// The frequency of the virtual counter in Hz: the register, or the Raspberry
+    /// Pi's 19.2 MHz where the firmware left it zero. With a zero every timeout
+    /// here would be none at all, and the first bring-up wait would give up.
+    fn counter_frequency() -> u64 {
+        match CNTFRQ_EL0.get() {
+            0 => 19_200_000,
+            frequency => frequency,
+        }
+    }
+
     fn ticks_per_ms() -> u64 {
-        CNTFRQ_EL0.get() / 1000
+        counter_frequency() / 1000
     }
 
     /// Nanoseconds in `ticks` ticks of the virtual counter.
     fn ticks_to_ns(ticks: u64) -> u64 {
-        ticks.saturating_mul(1_000_000_000) / CNTFRQ_EL0.get().max(1)
+        ticks.saturating_mul(1_000_000_000) / counter_frequency()
     }
 
     /// Spin for `milliseconds`.
@@ -160,13 +174,33 @@ mod component {
         true
     }
 
-    /// Wait until `done` holds, or panic after `milliseconds`. For bring-up,
-    /// where there is no client to report to.
-    fn wait_for(milliseconds: u64, what: &str, done: impl FnMut() -> bool) {
-        assert!(
-            wait_until(milliseconds, done),
-            "usb-hcd-dwc2: timed out waiting for {what}"
-        );
+    /// A step of the controller's bring-up. Its number is what
+    /// `usb_hcd_v1`'s `controller_failed` reports when the step times out.
+    #[derive(Clone, Copy, Debug)]
+    enum BringUp {
+        AhbMasterIdle = 1,
+        CoreSoftReset = 2,
+        HostMode = 3,
+        TransmitFifoFlush = 4,
+        ReceiveFifoFlush = 5,
+    }
+
+    /// Wait until `done` holds. For bring-up, where a timeout is not a panic
+    /// nobody sees but a failure the controller reports from every call.
+    ///
+    /// # Errors
+    ///
+    /// The `step` that did not finish within `milliseconds`.
+    fn wait_for(
+        milliseconds: u64,
+        step: BringUp,
+        done: impl FnMut() -> bool,
+    ) -> Result<(), BringUp> {
+        if wait_until(milliseconds, done) {
+            Ok(())
+        } else {
+            Err(step)
+        }
     }
 
     /// Host channel `index`'s registers, inside the register page at `base`.
@@ -244,15 +278,19 @@ mod component {
 
     impl Controller<'_> {
         /// Bring the core into host mode and DMA mode, with sized FIFOs.
-        fn init_core(&mut self) {
-            wait_for(100, "the AHB master to go idle", || {
+        ///
+        /// # Errors
+        ///
+        /// The step that timed out; the controller is then not usable.
+        fn init_core(&mut self) -> Result<(), BringUp> {
+            wait_for(100, BringUp::AhbMasterIdle, || {
                 self.registers.read_reset().ahb_master_idle()
-            });
+            })?;
             self.registers
                 .modify_reset(|reset| reset.with_core_soft_reset(true));
-            wait_for(100, "the core soft reset", || {
+            wait_for(100, BringUp::CoreSoftReset, || {
                 !self.registers.read_reset().core_soft_reset()
-            });
+            })?;
 
             self.registers.modify_usb_config(|config| {
                 config
@@ -260,9 +298,9 @@ mod component {
                     .with_force_host_mode(true)
             });
             // `CurMod` is set in host mode.
-            wait_for(500, "host mode", || {
+            wait_for(500, BringUp::HostMode, || {
                 self.registers.read_interrupt_status().host_mode()
-            });
+            })?;
 
             self.registers
                 .modify_ahb_config(|ahb| ahb.with_dma_enable(true));
@@ -277,14 +315,14 @@ mod component {
                     .with_tx_fifo_flush(true)
                     .with_tx_fifo_number(arbitrary_int::u5::new(0x10))
             });
-            wait_for(100, "the transmit FIFO flush", || {
+            wait_for(100, BringUp::TransmitFifoFlush, || {
                 !self.registers.read_reset().tx_fifo_flush()
-            });
+            })?;
             self.registers
                 .modify_reset(|reset| reset.with_rx_fifo_flush(true));
-            wait_for(100, "the receive FIFO flush", || {
+            wait_for(100, BringUp::ReceiveFifoFlush, || {
                 !self.registers.read_reset().rx_fifo_flush()
-            });
+            })?;
 
             // Host channel events reach the CPU through the controller's
             // interrupt line, which the interrupt Thread services. Port events
@@ -294,16 +332,17 @@ mod component {
             self.registers.write_interrupt_mask(GLOBAL_HOST_CHANNEL);
             self.registers
                 .modify_ahb_config(|ahb| ahb.with_global_interrupt_mask(true));
+            Ok(())
         }
 
-        /// Power the root port and wait for a device to connect.
+        /// Power the root port and give a device time to connect. A hub behind
+        /// the port (the Raspberry Pi's) takes seconds to come up; a device that
+        /// connects later shows in `port_status`.
         fn power_port(&mut self) {
             let port = self.registers.read_port();
             self.registers
                 .write_port(port_with_reset_and_power(port, false, true));
-            wait_for(500, "a device on the root port", || {
-                self.registers.read_port().connected()
-            });
+            wait_until(3000, || self.registers.read_port().connected());
         }
 
         /// Reset the root port `port` and report the speed of the device on it.
@@ -354,9 +393,10 @@ mod component {
             ARMED.store(false, Ordering::Release);
             channel.write_interrupt_mask(ChannelInterrupts::ZERO);
             channel.write_characteristics(characteristics(target, true).with_disable(true));
-            wait_for(10, "the channel to halt", || {
-                channel.read_interrupt().halted()
-            });
+            assert!(
+                wait_until(10, || channel.read_interrupt().halted()),
+                "usb-hcd-dwc2: timed out waiting for the channel to halt"
+            );
             channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
         }
 
@@ -546,11 +586,10 @@ mod component {
                 bytes,
                 packets,
             };
-            let mut status = 0;
-            for _attempt in 0..ATTEMPTS {
+            let deadline = now_ms() + RETRY_MS;
+            loop {
                 let seen = self.start_attempt(index, &attempt);
-                let (outcome, events) = self.wait_event(index, target, seen, channel_outcome)?;
-                status = events;
+                let (outcome, status) = self.wait_event(index, target, seen, channel_outcome)?;
                 match outcome {
                     ChannelOutcome::Complete => {
                         let remaining = Self::finish_channel(index, self.base);
@@ -564,10 +603,15 @@ mod component {
                         self.halt(index, target);
                         return Err(PipeException::TransferFailed { status });
                     }
-                    ChannelOutcome::Retry => self.halt(index, target),
+                    ChannelOutcome::Retry => {
+                        self.halt(index, target);
+                        if now_ms() >= deadline {
+                            return Err(PipeException::TransferFailed { status });
+                        }
+                        delay_ms(1);
+                    }
                 }
             }
-            Err(PipeException::TransferFailed { status })
         }
 
         /// The packets of one transfer to a device behind a high-speed hub: one
@@ -869,6 +913,9 @@ mod component {
     /// What the calls share, used only while holding a turn.
     struct Hcd {
         controller: Controller<'static>,
+        /// The bring-up step that timed out, if one did; every call then raises
+        /// `controller_failed`.
+        failed: Option<BringUp>,
         pipes: PipeTable,
         /// The interrupt pipes the poller Thread polls.
         poller: Poller,
@@ -975,12 +1022,20 @@ mod component {
 
         fn reset_port(_badge: u64, port: u32) -> Result<Speed, Exception> {
             let mut turn = TURNSTILE.enter(init());
-            hcd(&mut turn).controller.reset_port(port)
+            let hcd = hcd(&mut turn);
+            if let Some(step) = hcd.failed {
+                return Err(Exception::ControllerFailed { step: step as u32 });
+            }
+            hcd.controller.reset_port(port)
         }
 
-        fn port_status(_badge: u64, port: u32) -> u32 {
+        fn port_status(_badge: u64, port: u32) -> Result<u32, Exception> {
             let mut turn = TURNSTILE.enter(init());
-            hcd(&mut turn).controller.port_status(port)
+            let hcd = hcd(&mut turn);
+            if let Some(step) = hcd.failed {
+                return Err(Exception::ControllerFailed { step: step as u32 });
+            }
+            Ok(hcd.controller.port_status(port))
         }
 
         fn open_pipe(
@@ -1007,6 +1062,9 @@ mod component {
             };
             let mut turn = TURNSTILE.enter(init());
             let hcd = hcd(&mut turn);
+            if let Some(step) = hcd.failed {
+                return Err(Exception::ControllerFailed { step: step as u32 });
+            }
             let handle = hcd
                 .pipes
                 .open(Pipe {
@@ -1321,6 +1379,17 @@ mod component {
         }
     }
 
+    /// Ask the firmware to power the controller's domain. The controller, and
+    /// the hub behind it on the Raspberry Pi, are dead until it does.
+    ///
+    /// The answer is not checked: QEMU does not implement the request and echoes
+    /// it back, which the mailbox reads as a missing device. A domain that stays
+    /// off shows as a controller that never times in `init_core`.
+    fn power_domain(init: &DriverInit) {
+        let mailbox = Client::new(Bindings::from_imports(init.imports()));
+        let _answer = mailbox.set_power_state(Device::UsbHcd, true);
+    }
+
     /// Set up the controller and the turnstile, then service the controller's
     /// interrupt: calls run on their
     /// callers' Threads.
@@ -1357,6 +1426,7 @@ mod component {
                     error.code()
                 )
             });
+        power_domain(init);
         let mut controller = Controller {
             // SAFETY: `base` is the register page `map_device_pages` mapped
             // read/write as device memory for the driver's lifetime.
@@ -1370,8 +1440,10 @@ mod component {
             dma_bus,
             completions: EventCountKey::from_key(completions_key),
         };
-        controller.init_core();
-        controller.power_port();
+        let failed = controller.init_core().err();
+        if failed.is_none() {
+            controller.power_port();
+        }
 
         // The masters of the pipe keys sit in the slots after the DMA frame,
         // the turnstile and the completions.
@@ -1417,6 +1489,7 @@ mod component {
         unsafe {
             *HCD.0.get() = Some(Hcd {
                 controller,
+                failed,
                 pipes: PipeTable::new(),
                 poller: Poller::new(),
                 masters,
