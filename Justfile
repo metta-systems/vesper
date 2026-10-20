@@ -117,16 +117,16 @@ _cross-build crates board='rpi4' linker_script='' features='' rustflags='' image
 # === Kernel (nucleus + kickstart -> kernel-<config>.bin) ===
 
 # Build the privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
-[group("hw")]
+[private]
 build-privileged board='rpi4' image_features='': (_cross-build privileged_components board privileged_link '' pie_rustflags image_features)
 
 # Build the EL0 driver components the kickstart image bundles (with semihosting output under 'qemu')
-[group("hw")]
+[private]
 build-drivers board='rpi4' features='' image_features=features:
     {{ just_executable() }} _cross-build '{{ driver_components }}' '{{ board }}' '{{ user_link }}' '{{ if features =~ "qemu" { "qemu" } else { "" } }}' '' '{{ image_features }}'
 
 # Build kernel (features: '' for hw, 'qemu' for emulation) into target/images/kernel-<config>.bin
-[group("hw")]
+[private]
 build board='rpi4' features='' config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (build-privileged board features) (build-drivers board features) (_cross-build 'kickstart' board init_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / 'kickstart' }}" "{{ images_dir / 'kernel-' + config + '.bin' }}"
@@ -137,7 +137,7 @@ alias b := build
 
 # Build the EL0 userspace components (linked with the userspace runtime's user.ld) for the
 # image configuration `board` + `image_features`
-[group("emu")]
+[private]
 build-components board='rpi3' features='qemu' image_features=features: (_cross-build user_components board user_link features '' image_features)
 
 # Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
@@ -255,7 +255,7 @@ build-fault-test board='rpi3': (build-components board 'qemu') (_build-test-kern
 # === Chainboot ===
 
 # Build chainboot bootloader (features: '' for hw, 'qemu' for emulation) into target/images/chainboot-<config>.bin
-[group("hw")]
+[private]
 build-chainboot board='rpi4' features='' config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'chainboot' board chainboot_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / 'chainboot' }}" "{{ images_dir / 'chainboot-' + config + '.bin' }}"
@@ -328,7 +328,7 @@ _write-zellij-config bin runner_opts dtb machine=qemu_machine:
     KERNEL_BIN="{{ bin }}"
     EOF
 
-# Build and run kernel in QEMU with serial port emulation: the PL011 and the mini UART each get a pane
+# Build and run kernel in QEMU with PL011 and the mini UART each in a pane
 [group("emu")]
 zellij: (build 'rpi3' 'qemu') (_write-zellij-config kernel_rpi3_qemu_bin '' rpi3_dtb)
     zellij --layout emulation/layout.zellij
@@ -395,7 +395,7 @@ device-eject: device
 
 # Build and write chainboot to SD Card, then eject
 [group("hw")]
-cb-eject: build-chainboot
+cb-eject board='rpi4': build-chainboot
     cp "{{ chainboot_rpi4_bin }}" "{{ volume }}/chain_boot_rpi4.img"
     @echo "{{copy_label}} copied chainboot to {{ volume }}/chain_boot_rpi4.img"
     diskutil ejectAll "{{ volume }}"
@@ -658,28 +658,28 @@ _host-clippy package test features='host-tests':
       -- --deny warnings --allow deprecated
 
 # Lint the opt-in capability ABI tests with their native host harness
-[group("maintenance")]
+[private]
 clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-[group("maintenance")]
+[private]
 clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
-[group("maintenance")]
+[private]
 clippy-meddle: (_host-clippy 'vesper-meddle-runtime' 'words')
     cargo clippy -p vesper-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
 # Lint the USB protocol host tests with their native host harness
-[group("maintenance")]
+[private]
 clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2') (_host-clippy 'usb-core' 'usb_core') (_host-clippy 'usb-hid' 'hid')
 
 # Lint the input event library tests with their native host harness
-[group("maintenance")]
+[private]
 clippy-input-host: (_host-clippy 'vesper-input-event' 'input_event')
 
 # Lint the compositor logic tests with their native host harness
-[group("maintenance")]
+[private]
 clippy-compositor-host: (_host-clippy 'vesper-compositor-core' 'compositor_core')
 
 # Clippy for the host tools (chainofcommand, vesper-image-build)
@@ -695,6 +695,7 @@ hopper: build
 
 alias disasm := hopper
 
+# Build and disassemble chainboot
 [group("debug")]
 cb-hopper: (build-chainboot 'rpi3' 'qemu')
     #hopper --loader RAW --plugin arm --cpu aarch64 --variant generic --base-address 0x80000 --executable "{{ chainboot_rpi3_qemu_bin }}"
@@ -730,7 +731,7 @@ fmt-check:
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
-[group("test")]
+[private]
 audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (build-preempt-test 'rpi3') (build-dispatch-test 'rpi3') (build-irq-test 'rpi3') (build-driver-test 'rpi3') (build-mailbox-test 'rpi3') (build-uart-test 'rpi3') (build-fault-test 'rpi3') (build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
