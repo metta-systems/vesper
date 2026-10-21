@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The card clock divides the core clock, whose rate the firmware reports
+# through the mailbox, found by the firmware node's compatible string.
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { get_clock_rate }

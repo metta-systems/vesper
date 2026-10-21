@@ -191,6 +191,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
+name = "block"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "block-client"
+version = "0.0.1"
+dependencies = [
+ "block",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1795,6 +1812,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "sd-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "block",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "sd-test-client"
+version = "0.0.1"
+dependencies = [
+ "block-client",
+ "driver-protocol",
+ "vesper-block-channel",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "sdhost-bcm2835"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "block",
+ "derive-mmio",
+ "mailbox-client",
+ "metta-meddle-runtime",
+ "vesper-block-channel",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "seahash"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2453,6 +2529,13 @@ version = "0.0.1"
 dependencies = [
  "vesper-address",
  "vesper-log",
+]
+
+[[package]]
+name = "vesper-block-channel"
+version = "0.0.1"
+dependencies = [
+ "vesper-io-channel",
 ]
 
 [[package]]

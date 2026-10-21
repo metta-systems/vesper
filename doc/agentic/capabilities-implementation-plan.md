@@ -139,6 +139,9 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
 - [ ] Grow the `mailbox_v1.property` whitelist as components need tags (clock and power setters for `cprman`, memory tags for `vcsm` once their policy exists).
 - [ ] Port the rest of the old `Power::off` into `power`: the GPIO pin power-down before the halt (requires a GPIO component).
 - [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (such as `property`).
+- [ ] Switch the SD card pins (GPIO 48 to 53) to SDHOST, by whichever owner the GPIO pin functions decision in [`capabilities-decisions.md`](capabilities-decisions.md) selects, then add `test-sd` to `just test`.
+- [ ] `sdhost-bcm2835`: wait for the controller's interrupt instead of polling, and move several blocks per command (CMD18/CMD25); then bundle it in the production image and validate it on a Raspberry Pi 3.
+- [ ] A read-only filesystem over `block_v1` (exFAT or ext4), with a file-finding interface, on the way to Mimisbrunnr's own storage interface.
 
 ## Phase 7 — Time and userspace scheduling
 

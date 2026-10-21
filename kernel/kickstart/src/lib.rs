@@ -323,12 +323,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             privileged::withhold(node.start, node.size);
         }
 
-        if !node.disabled
-            && node.name != "memory"
-            && node.name != "gpio"
-            && node.name != "mmc"
-            && node.name != "smi"
-        {
+        if !node.disabled && node.name != "memory" && node.name != "gpio" && node.name != "smi" {
             // Device tree nodes may share registers (e.g. on the RPi4 an
             // interrupt controller inside the HDMI block): the first node
             // records the region, later overlapping ones are only reported.

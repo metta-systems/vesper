@@ -46,13 +46,19 @@ members = [
   "drivers/usb-hcd-dwc2",
   "drivers/usb-hcd-dwc2/client",
   "drivers/usb-hcd-dwc2/server",
+  # SD card component and its block_v1 interface crates
+  "drivers/sdhost-bcm2835",
+  "drivers/sdhost-bcm2835/client",
+  "drivers/sdhost-bcm2835/server",
   "kernel/tests/usb-test",
+  "kernel/tests/sd-test",
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
   "kernel/tests/compositor-test",
   # Libraries
   "libs/address",
   "libs/alloc",
+  "libs/block-channel",
   "libs/boot",
   "libs/component-loader",
   "userspace/libs/compositor-core",
@@ -108,6 +114,7 @@ members = [
   "userspace/tests/irq/protocol",
   "userspace/tests/mailbox/client",
   "userspace/tests/usb/client",
+  "userspace/tests/sd/client",
   "userspace/tests/input/trace",
   "userspace/gui/compositor",
   "userspace/gui/compositor/client",
@@ -147,6 +154,7 @@ cfg-if = { version = "1.0" }
 derive-mmio = { version = "0.8" }
 libaddress = { path = "libs/address", package = "vesper-address" }
 # liballoc = { path = "libs/alloc", package = "vesper-alloc" }
+libblock-channel = { path = "libs/block-channel", package = "vesper-block-channel" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
 vesper-input-event = { path = "libs/input-event" }
@@ -184,6 +192,8 @@ mailbox = { path = "drivers/mailbox/server" }
 mailbox-client = { path = "drivers/mailbox/client" }
 usb-hcd = { path = "drivers/usb-hcd-dwc2/server" }
 usb-hcd-client = { path = "drivers/usb-hcd-dwc2/client" }
+block = { path = "drivers/sdhost-bcm2835/server" }
+block-client = { path = "drivers/sdhost-bcm2835/client" }
 usb = { path = "drivers/usb/server" }
 usb-client = { path = "drivers/usb/client" }
 usb-core = { path = "drivers/usb" }

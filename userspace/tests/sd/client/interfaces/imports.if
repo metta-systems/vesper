@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The test client has no device tree node, so the chain starts from the node
+# found by its compatible string: the SD card controller.
+uses block_v1 via device compatible "brcm,bcm2835-sdhost" { blocks, submitted }
