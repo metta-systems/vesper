@@ -153,6 +153,7 @@ pub fn run() -> ! {
             &components::USB_CORE_DRIVER,
             &components::USB_HID_DRIVER,
             &components::COMPOSITOR_DRIVER,
+            &components::DRAW_DEMO_DRIVER,
             &components::DISPATCHER_DRIVER,
         ],
         &mut slots,
@@ -222,10 +223,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 7,
-        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor and the root dispatcher"
+        INSTANCES + 8,
+        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor, draw-demo and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 6);
+    assert_eq!(seen, INSTANCES + 7);
 
     // ── The compositor reports once it has read the keyboard through input_v1 ──
     let bits = NotificationKey::from_key(report)

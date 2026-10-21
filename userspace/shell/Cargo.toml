@@ -47,5 +47,11 @@ name = "shell"
 path = "src/main.rs"
 test = false
 
+# The shell's `draw` started by itself, for the compositor test image.
+[[bin]]
+name = "draw-demo"
+path = "src/draw_demo.rs"
+test = false
+
 [lints]
 workspace = true

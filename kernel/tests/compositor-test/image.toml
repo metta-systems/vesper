@@ -51,6 +51,25 @@ program = true
 serial = true
 memory = 33554432
 
+# The shell's `draw` started by itself: a window of the compositor with the
+# shell's scene and the lava lamp, so the board shows a window to move the
+# cursor over. `memory` leaves room for the table the window's Frames are lent
+# into.
+[[component]]
+name = "draw_demo"
+binary = "draw-demo"
+interfaces = "../../../userspace/shell/demo-interfaces"
+active = true
+program = true
+memory = 131072
+resources = ["font"]
+
+# The 8x8 console font the scene's text is drawn with (see
+# kernel/kickstart/image.toml).
+[[resource]]
+name = "font"
+file = "../../kickstart/resources/font8x8.bin"
+
 # The root dispatcher: Kickstart binds it once every other program and driver
 # is loaded, and registers the boot Thread with it.
 [[component]]

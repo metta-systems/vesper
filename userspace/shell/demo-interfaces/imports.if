@@ -1,0 +1,6 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# `draw-demo`: the functions of the compositor the shell's `draw` calls.
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, raise, destroy }
