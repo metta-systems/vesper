@@ -550,6 +550,29 @@ mod drawing {
     }
 
     #[test]
+    fn the_cursor_is_brightest_on_its_outline_and_darker_inside() {
+        // The sum of the colour channels, a stand-in for brightness.
+        let light = |pixel: u32| (pixel >> 16 & 0xff) + (pixel >> 8 & 0xff) + (pixel & 0xff);
+        // Screen pixels: the art is drawn doubled.
+        let outline = cursor::pixel(0, 5);
+        let inside = cursor::pixel(2, 5);
+        let deeper = cursor::pixel(6, 18);
+        assert_eq!(
+            cursor::pixel(1, 5),
+            outline,
+            "each art pixel covers two by two"
+        );
+        assert_eq!(outline >> 24, 0xff, "opaque");
+        assert!(light(outline) > light(inside), "the outline is brightest");
+        assert!(light(inside) > light(deeper), "darker towards the middle");
+        // Yellow hues: red and green over blue.
+        for pixel in [outline, inside, deeper] {
+            assert!(pixel >> 16 & 0xff > pixel & 0xff && pixel >> 8 & 0xff > pixel & 0xff);
+        }
+        assert_eq!(cursor::pixel(17, 0), 0, "outside the arrow");
+    }
+
+    #[test]
     fn the_cursor_is_drawn_last_and_clipped() {
         let mut pixels = [0_u32; 30 * 30];
         let mut canvas = canvas(&mut pixels, 30, 30);
@@ -564,12 +587,12 @@ mod drawing {
         assert_eq!(canvas.pixels.len(), 900);
         assert_eq!(
             canvas.pixels[5 * 30 + 5],
-            0xff00_0000,
-            "the hot spot is black"
+            cursor::pixel(0, 0),
+            "the hot spot"
         );
         assert_eq!(
             canvas.pixels[(5 + 3) * 30 + 5 + 1],
-            0xffff_ffff,
+            cursor::pixel(1, 3),
             "inside the arrow"
         );
         assert_eq!(
